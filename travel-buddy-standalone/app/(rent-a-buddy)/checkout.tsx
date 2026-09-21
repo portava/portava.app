@@ -6,15 +6,16 @@ import {
 import { router, useLocalSearchParams } from 'expo-router';
 import {
   ArrowLeft, Shield, CheckCircle, Info, ChevronDown, ChevronUp,
-  AlertTriangle, MapPin, CalendarCheck, Calendar, Clock,
+  AlertTriangle, MapPin, CalendarCheck, Calendar, Clock, ChevronRight,
 } from 'lucide-react-native';
 import { color, space, radius, type as t, shadow, layout, avatar } from '../../src/theme/tokens';
 import { TravelLoadingState, TravelErrorState } from '../../src/components/primitives';
 import { Stamp } from '../../src/components/ui';
 import {
   getBuddyProfile, createBooking, getBuddyBlockedDates,
-  isBookingUnavailable, bookingErrorCopy,
+  classifyBookingRefusal,
   type BuddyProfile, type BuddyPackage, type BuddyCategory, type BuddyBlockedRange,
+  type BookingRefusalAction,
 } from '../../src/services/rentABuddy';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useStickyBarInset } from '../../src/hooks/useBottomInset';
@@ -176,6 +177,14 @@ export default function RentABuddyCheckout() {
   // alert is dismissed and leaves the user staring at a Book button that cannot
   // work. This is a state of the feature, so it stays on screen.
   const [unavailableReason, setUnavailableReason] = useState<string | null>(null);
+  // Set when the server refuses for a reason the traveller can CLEAR — today,
+  // only the MVP-mode ID-verification gate. Distinct from `unavailableReason`
+  // in both directions: it carries a route to the screen that satisfies it, and
+  // it does NOT disable the Book button, because once they have verified they
+  // must be able to press it again without rebuilding the whole form.
+  // census-trust TV-2a.
+  const [actionableRefusal, setActionableRefusal] =
+    useState<{ body: string; action: BookingRefusalAction } | null>(null);
 
   const location = zoneIndex != null ? PUBLIC_ZONES[zoneIndex] : customZone;
 
@@ -244,13 +253,24 @@ export default function RentABuddyCheckout() {
     setSubmitting(false);
 
     if (!res.ok) {
-      if (isBookingUnavailable(res.error)) {
-        setUnavailableReason(bookingErrorCopy(res.error));
+      // The three-way decision lives in `rentABuddyBookingErrors.ts` and is
+      // pinned there, because its ORDER is the behaviour: the ACTIONABLE class
+      // has to beat both of the others, or the one refusal a person can do
+      // something about gets reported as one they cannot. This arm used to
+      // answer the ID-verification gate with "Something went wrong on our side
+      // … Please try again" — untrue three times over, and dismissible.
+      const refusal = classifyBookingRefusal(res.error);
+      if (refusal.kind === 'actionable') {
+        setActionableRefusal({ body: refusal.body, action: refusal.action });
         return;
       }
-      // Genuine failure — still routed through bookingErrorCopy so no raw
-      // error code can reach the user.
-      Alert.alert('Booking failed', bookingErrorCopy(res.error));
+      if (refusal.kind === 'unavailable') {
+        setUnavailableReason(refusal.body);
+        return;
+      }
+      // Genuine failure — still routed through the classifier so no raw error
+      // code can reach the user.
+      Alert.alert('Booking failed', refusal.body);
       return;
     }
     const bookingId = res.data.booking?.id;
@@ -300,6 +320,26 @@ export default function RentABuddyCheckout() {
             <View style={{ flex: 1 }}>
               <Text style={styles.unavailableTitle}>Not available yet</Text>
               <Text style={styles.unavailableBody}>{unavailableReason}</Text>
+            </View>
+          </View>
+        )}
+
+        {/* The gate the traveller can clear — persistent, and it carries the way out. */}
+        {actionableRefusal && (
+          <View style={styles.unavailableBanner} accessibilityRole="alert" testID="booking-action-banner">
+            <Shield size={15} color={color.deep} />
+            <View style={{ flex: 1 }}>
+              <Text style={styles.unavailableTitle}>Verification needed</Text>
+              <Text style={styles.unavailableBody}>{actionableRefusal.body}</Text>
+              <Pressable
+                style={({ pressed }) => [styles.refusalActionBtn, pressed && { opacity: layout.pressedOpacity }]}
+                onPress={() => router.push(actionableRefusal.action.route as any)}
+                accessibilityRole="button"
+                testID="booking-action-btn"
+              >
+                <Text style={styles.refusalActionText}>{actionableRefusal.action.label}</Text>
+                <ChevronRight size={14} color={color.onInk} />
+              </Pressable>
             </View>
           </View>
         )}
@@ -606,6 +646,13 @@ const styles = StyleSheet.create({
   },
   unavailableTitle: { ...t.bodyStrong, color: color.deep, marginBottom: 2 },
   unavailableBody: { ...t.small, color: color.deep, lineHeight: 18 },
+  refusalActionBtn: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
+    alignSelf: 'flex-start', marginTop: space.sm,
+    paddingVertical: space.sm, paddingHorizontal: space.md,
+    backgroundColor: color.deep, borderRadius: radius.sm,
+  },
+  refusalActionText: { ...t.small, fontWeight: '700', color: color.onInk },
   buddyRow: {
     flexDirection: 'row', alignItems: 'center', gap: space.md,
     padding: space.lg, backgroundColor: color.paperRaised,

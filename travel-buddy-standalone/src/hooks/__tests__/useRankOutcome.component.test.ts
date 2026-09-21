@@ -14,6 +14,9 @@
  *      when none was served (GET /discovery returns no session_id).
  *   3. (itemId, outcome) is deduplicated per mount; a different outcome on the
  *      same item still fires, which is what lets tap → save chain.
+ *   4. 'trip_add' (migration 2894) goes over the same wire as every other
+ *      outcome and through the same gate — it is a value in the existing
+ *      envelope, not a second transport.
  *
  * Run with:  pnpm test:component
  *
@@ -71,6 +74,10 @@ it.each([null, undefined])('surface %s ⇒ every report is a no-op: no token rea
     result.current.reportSave('node/1');
     result.current.reportJoin('node/1');
     result.current.reportRsvp('node/1');
+    // trip_add is gated exactly like its neighbours: PlanPickerController calls
+    // the hook unconditionally and leaves `surface` null for a source that
+    // reached it from no served feed, so this must post nothing at all.
+    result.current.reportTripAdd('node/1');
   });
   await settle();
 
@@ -124,4 +131,42 @@ it('dedups (itemId, outcome) per mount, but a stronger outcome on the same item 
 
   expect(postedBody(0).outcome).toBe('tap');
   expect(postedBody(1).outcome).toBe('save');
+});
+
+// ── 4. trip_add ───────────────────────────────────────────────────────────────
+
+it("reportTripAdd posts outcome 'trip_add' in the SAME envelope as every other outcome", async () => {
+  // The rung PlanPickerController reports when an add to a trip commits. A new
+  // transport, a new body shape or a borrowed token ('join') would all show up
+  // here: the server's zod enum 400s anything it does not recognise, and a 400
+  // is silent to the user because the whole path is fire-and-forget.
+  const { result } = await renderHook(() => useRankOutcome({ surface: 'discovery' }));
+
+  await act(async () => { result.current.reportTripAdd('node/12345'); });
+  await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+
+  const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+  expect(url).toBe('https://api.test/api/rank-events/outcome');
+  expect(init.method).toBe('POST');
+  expect(postedBody()).toEqual({
+    item_id: 'node/12345', surface: 'discovery', outcome: 'trip_add',
+  });
+});
+
+it('a save on an item does not suppress its later trip_add — the funnel rungs are distinct keys', async () => {
+  // Dedup is keyed on (itemId, outcome). `04` §8's chain is
+  // `… → save → trip_add`, so a trip_add following a save on the SAME item is
+  // the one transition the chain exists to measure; a dedup key that dropped
+  // the outcome half would erase exactly it.
+  const { result } = await renderHook(() => useRankOutcome({ surface: 'discovery' }));
+
+  await act(async () => {
+    result.current.reportSave('node/1');
+    result.current.reportTripAdd('node/1');
+    result.current.reportTripAdd('node/1');   // duplicate — dropped
+  });
+  await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+
+  expect(postedBody(0).outcome).toBe('save');
+  expect(postedBody(1).outcome).toBe('trip_add');
 });

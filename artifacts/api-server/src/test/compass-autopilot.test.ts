@@ -138,6 +138,22 @@ function makeFakeClient(store: Record<string, Row[]> = {}) {
   return {
     fakeClient: {
       from: (name: string) => builder(name),
+      /**
+       * census-compass CT-01 — `applyProposal` no longer writes
+       * `trip_plan_items` itself under any flag: a confirmed change executes
+       * ONLY as a Trip Kernel command. So the fake models the function, applying
+       * the command's patch to the canonical table exactly as the real one does.
+       * A test that wants a confirm to EXECUTE seeds `kernelFlag()` alongside
+       * `enabledFlag()`; with the flag off the confirm refuses with 503 and the
+       * proposal stays pending, which compassAutopilotKernelPath.test.ts pins.
+       */
+      rpc: async (name: string, args: any) => {
+        if (name !== "trip_kernel_execute") return { data: null, error: { message: "rpc not modelled" } };
+        const cmd = args?.p_command ?? {};
+        const patch = (cmd.payload?.patch ?? {}) as Row;
+        for (const r of tbl("trip_plan_items")) if (r.id === cmd.payload?.item_id) Object.assign(r, patch);
+        return { data: { ok: true, duplicate: false, version: 2, event_id: "e1", sequence: 1, result: null, contract_version: 2 }, error: null };
+      },
       auth: {
         getUser: (token: string) =>
           token === "valid-token"
@@ -197,6 +213,15 @@ async function api(method: string, path: string, body?: unknown, token = "valid-
 
 function enabledFlag(): Row {
   return { flag: "COMPASS_ENABLED", enabled: true };
+}
+
+/**
+ * `trip_kernel_enabled`. Seeded only by cases that need a confirm to EXECUTE:
+ * since census-compass CT-01 the confirm path goes through the Trip Kernel or
+ * it does not happen at all.
+ */
+function kernelFlag(): Row {
+  return { flag: "trip_kernel_enabled", enabled: true };
 }
 
 let citySeq = 0;
@@ -422,7 +447,8 @@ describe("Trip Autopilot", () => {
   });
 
   it("confirm applies the change; decline applies nothing", async () => {
-    const { fakeClient, store } = makeFakeClient({ feature_flags: [enabledFlag()] });
+    // CT-01: the kernel flag is what lets a confirm execute at all now.
+    const { fakeClient, store } = makeFakeClient({ feature_flags: [enabledFlag(), kernelFlag()] });
     seedTrip(store);
     seedItem(store, I1, "Brunch", at(10), { endsAt: at(11) });
     seedItem(store, I2, "Gallery", at(11, 3));

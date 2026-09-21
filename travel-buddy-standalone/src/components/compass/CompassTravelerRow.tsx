@@ -12,6 +12,18 @@
  *
  * Each card shows avatar, name, shared interests, and a Follow button.
  * Private profiles show a "Request Follow" button instead.
+ *
+ * census-compass CP-02 — "Compass consumes its Passport projection variant".
+ * The card ALSO asks `GET /api/compass/people/:userId/passport` for the one
+ * thing the ranked list cannot carry: whether this person is travelling or open
+ * to plans RIGHT NOW (§8). That endpoint has existed, gated and projected,
+ * since census-passport and no client called it — so the traveler strip is
+ * where the §35 loop ("two Passport projections per traveler") actually closes.
+ * Everything about the answer is the server's: the `allowDiscoveryPersonCard`
+ * gate decides whether there is a card at all, and the `discovery_card`
+ * projection decides which of availability / traveler state this viewer may
+ * see. A refusal, a failure and a person with nothing to say all render
+ * identically here — nothing — so the client never infers from a silence.
  */
 import React, { useEffect, useState } from 'react';
 import {
@@ -36,6 +48,48 @@ interface Props {
   limit?: number;
 }
 
+/**
+ * The slice of the `discovery_card` Passport projection this card reads.
+ * Every field is optional because the server omits whatever this viewer is not
+ * entitled to — an absent field is an answer, not an error.
+ */
+interface CompassPersonCard {
+  travelerState?: { label?: string | null } | null;
+  availability?:  { openToPlans?: boolean | null } | null;
+}
+
+/**
+ * CP-02 — the Compass person card, for one traveler, as this viewer may see it.
+ * Returns null for every unhappy path (no token, no API base, the fail-closed
+ * gate answering 404, a network fault, a body that is not what we expect).
+ */
+async function fetchCompassPersonCard(userId: string): Promise<CompassPersonCard | null> {
+  try {
+    const { freshToken } = await import('../../services/apiToken.ts');
+    const token = (await freshToken()) ?? '';
+    const base  = (process.env.EXPO_PUBLIC_API_BASE_URL ?? '').replace(/\/$/, '');
+    if (!token || !base) return null;
+    const res = await fetch(`${base}/api/compass/people/${userId}/passport`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) return null;
+    const body = await res.json();
+    const passport = (body as { passport?: CompassPersonCard } | null)?.passport;
+    return passport ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** The one line the card shows from that projection, or null for silence. */
+function presenceLineFrom(card: CompassPersonCard | null): string | null {
+  if (!card) return null;
+  const stateLabel = card.travelerState?.label?.trim();
+  if (stateLabel) return stateLabel;
+  if (card.availability?.openToPlans === true) return 'Open to plans';
+  return null;
+}
+
 function TravelerSkeleton() {
   return (
     <View style={[s.card, s.skeleton]}>
@@ -53,6 +107,18 @@ function TravelerCard({ item }: { item: CompassTravelerResult }) {
   const [requested, setRequested] = useState(d.followStatus === 'requested');
   const [inFlight, setInFlight] = useState(false);
   const [hidden, setHidden] = useState(false);
+  // CP-02 — the Passport person card for this traveler. Null until it answers,
+  // and null forever if the gate refuses: the card simply shows one line less.
+  const [presence, setPresence] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const line = presenceLineFrom(await fetchCompassPersonCard(d.userId));
+      if (!cancelled) setPresence(line);
+    })();
+    return () => { cancelled = true; };
+  }, [d.userId]);
 
   const displayName = d.displayName
     ? primaryIdentityText({ displayName: d.displayName })
@@ -160,6 +226,13 @@ function TravelerCard({ item }: { item: CompassTravelerResult }) {
       {/* Username — hidden for unfollowed private profiles */}
       {usernameSubline && !d.isPrivate ? (
         <Text style={s.username} numberOfLines={1}>{usernameSubline}</Text>
+      ) : null}
+
+      {/* Passport presence (CP-02) — traveller state or "open to plans", as
+          the server's discovery_card projection permits. Absent when it does
+          not, and the card says nothing rather than guessing. */}
+      {presence ? (
+        <Text style={s.presence} numberOfLines={1}>{presence}</Text>
       ) : null}
 
       {/* City — hidden for unfollowed private profiles */}
@@ -331,6 +404,12 @@ const s = StyleSheet.create({
     ...t.small,
     fontSize: 10,
     color: color.mute,
+    textAlign: 'center',
+  },
+  presence: {
+    ...t.small,
+    fontSize: 9,
+    color: color.success,
     textAlign: 'center',
   },
   cityRow: {

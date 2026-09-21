@@ -54,6 +54,7 @@ export type HighlightErrorKind =
   | 'not_found'
   | 'invalid_payload'
   | 'db_error'
+  | 'feature_disabled'
   | 'network_unreachable'
   | 'config_error';
 
@@ -76,6 +77,10 @@ function mapApiError<T>(status: number, body: any): HighlightResult<T> {
   const code = (body?.error as HighlightErrorKind) ?? 'db_error';
   const known: HighlightErrorKind[] = [
     'unauthenticated', 'forbidden', 'not_found', 'invalid_payload', 'db_error',
+    // ADDED: the create path refuses a §4 class this deployment cannot store
+    // with `feature_disabled`. Flattening it to `db_error` would put "something
+    // went wrong, try again" on a choice that will never work on this build.
+    'feature_disabled',
   ];
   const errorKind = known.includes(code) ? code : 'db_error';
   return { ok: false, data: null, errorKind, message: body?.message ?? `API ${status}` };
@@ -120,6 +125,16 @@ function mapHighlight(r: any): Highlight {
   };
 }
 
+/**
+ * §4 HighlightLifetime. Optional, and absent means absent — the server writes no
+ * class when none is named, because nothing in §12 assigns hour boundaries to
+ * the classes and a default would be invented product policy wearing the spec's
+ * vocabulary. PERMANENT additionally requires migration 2975; a create that
+ * names it on a database without it is refused with `feature_disabled` rather
+ * than quietly stored with an expiry.
+ */
+export type HighlightLifetimeClass = 'LIVE' | 'DAY' | 'TRIP' | 'SEASONAL' | 'PERMANENT';
+
 export interface CreateHighlightInput {
   mediaUrl: string;
   mediaType: string;
@@ -134,6 +149,7 @@ export interface CreateHighlightInput {
   filterIntensity?: number;
   mediaThumbnailUrl?: string | null;
   mediaDurationSeconds?: number | null;
+  lifetimeClass?: HighlightLifetimeClass | null;
 }
 
 export async function createHighlight(input: CreateHighlightInput): Promise<HighlightResult<Highlight>> {
@@ -158,6 +174,9 @@ export async function createHighlight(input: CreateHighlightInput): Promise<High
         filterIntensity: input.filterIntensity ?? 100,
         mediaThumbnailUrl: input.mediaThumbnailUrl ?? null,
         mediaDurationSeconds: input.mediaDurationSeconds ?? null,
+        // Omitted, not nulled: the server distinguishes "no class was chosen"
+        // from a class, and sending null would be a value.
+        ...(input.lifetimeClass ? { lifetimeClass: input.lifetimeClass } : {}),
       }),
     });
     if (!res.ok) return mapApiError<Highlight>(res.status, await res.json().catch(() => ({})));

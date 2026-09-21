@@ -42,6 +42,10 @@ import {
   scoreGemDuplicate,
   findDuplicateGems,
   findDuplicatePlaces,
+  findDuplicateEvents,
+  scanDuplicateGems,
+  scanDuplicatePlaces,
+  scanDuplicateEvents,
   DUPLICATE_THRESHOLD,
   type DedupEntity,
 } from "../lib/inputAssistance/duplicateDetection.js";
@@ -53,6 +57,8 @@ import {
 import {
   filterInfeasibleCandidates,
   getCreationDraftContexts,
+  buildCreationAssistance,
+  DUPLICATE_SCAN_UNREADABLE_POLICY_GAP,
 } from "../lib/inputAssistance/creation.js";
 import { isResolvable } from "../lib/inputAssistance/projection.js";
 import { getDuplicateCandidates } from "../services/hiddenGems/HiddenGemModerationService.js";
@@ -548,5 +554,319 @@ describe("creation context registry", () => {
     assert.ok(ctxs.includes("hidden_gem_name"));
     assert.ok(ctxs.includes("event_title"));
     assert.ok(ctxs.includes("trip_title"));
+  });
+});
+
+// ── D11 / swallowed-read inventory: the three duplicate-candidate reads ───────
+//
+// Sites (docs/architecture/swallowed-read-inventory.md):
+//   duplicateDetection.ts:215  fetchGemCandidates      — COMMENTED
+//   duplicateDetection.ts:306  findDuplicatePlaces     — SILENT
+//   duplicateDetection.ts:411  findDuplicateEvents     — SILENT
+// All three were `if (error || !data) return []`, byte-identical to the [] a
+// genuinely empty candidate pool returns.
+//
+// Owner's question — may the caller act on this emptiness as if it were an
+// answer? NO. creation.ts:286/294/301 turns these matches into `disambiguation`
+// rows; NO rows is rendered to a traveller as "nothing like this exists yet",
+// and they act on it by creating the duplicate. duplicateDetection.ts's own
+// comments record two production outages of exactly that (a 22P02 on
+// `status:'approved'`, a PGRST100 on a `country` column) in which "a traveller
+// submitting a Hidden Gem was never shown 'this may already exist' — not even
+// for an identical name at identical coordinates".
+//
+// The FIX keeps the fail-closed direction and every existing contract: the
+// legacy `findDuplicate*` entry points still resolve to [] and still never
+// throw (the guards above depend on that), and the honest answer is available
+// through `scanDuplicate*`, which returns the tree's local discriminated shape
+// { ok: true; matches } | { ok: false; reason }. Two absences no longer read
+// alike for a caller that asks.
+
+describe("D11: a duplicate-candidate pool that could not be read is not an empty one", () => {
+  it("scanDuplicateGems distinguishes an unreadable hidden_gems from a genuinely empty one", async () => {
+    const empty = await scanDuplicateGems(
+      makeFakeClient(baseTables()) as any, { name: "Sky Cafe", city: "Da Nang" },
+    );
+    assert.deepEqual(empty, { ok: true, matches: [] }, "a genuine miss is an answer");
+
+    const unread = await scanDuplicateGems(
+      makeFakeClient(baseTables(), new Set(["hidden_gems"])) as any,
+      { name: "Sky Cafe", city: "Da Nang" },
+    );
+    assert.equal(unread.ok, false, "an unreadable candidate pool must not answer 'no duplicates'");
+    assert.notDeepEqual(unread, empty, "the two absences must not read alike");
+    if (!unread.ok) {
+      assert.equal(unread.reason, "candidate_pool_unreadable");
+      assert.equal(unread.table, "hidden_gems");
+    }
+  });
+
+  it("scanDuplicatePlaces distinguishes an unreadable places from a genuinely empty one", async () => {
+    const empty = await scanDuplicatePlaces(
+      makeFakeClient(baseTables()) as any, { name: "Sky Bar", city: "Da Nang" },
+    );
+    assert.deepEqual(empty, { ok: true, matches: [] });
+
+    const unread = await scanDuplicatePlaces(
+      makeFakeClient(baseTables(), new Set(["places"])) as any, { name: "Sky Bar", city: "Da Nang" },
+    );
+    assert.equal(unread.ok, false);
+    assert.notDeepEqual(unread, empty, "the two absences must not read alike");
+    if (!unread.ok) assert.equal(unread.table, "places");
+  });
+
+  it("scanDuplicateEvents distinguishes an unreadable events from a genuinely empty one", async () => {
+    const empty = await scanDuplicateEvents(
+      makeFakeClient(baseTables()) as any, { name: "Full Moon Party", city: "Da Nang" },
+    );
+    assert.deepEqual(empty, { ok: true, matches: [] });
+
+    const unread = await scanDuplicateEvents(
+      makeFakeClient(baseTables(), new Set(["events"])) as any,
+      { name: "Full Moon Party", city: "Da Nang" },
+    );
+    assert.equal(unread.ok, false);
+    assert.notDeepEqual(unread, empty, "the two absences must not read alike");
+    if (!unread.ok) assert.equal(unread.table, "events");
+  });
+
+  it("a healthy read still scans and scores normally", async () => {
+    const scan = await scanDuplicateGems(
+      makeFakeClient(baseTables({ hidden_gems: [gemRow("g1", "Sky Cafe")] })) as any,
+      { name: "Sky Cafe", city: "Da Nang", lat: 16.0678, lng: 108.221, category: "cafe" },
+    );
+    assert.equal(scan.ok, true);
+    if (scan.ok) assert.equal(scan.matches.length, 1, "the real matcher still runs through the scan path");
+  });
+
+  it("the legacy fail-soft adapters keep their contract (still [], still never throw)", async () => {
+    const sc = makeFakeClient(baseTables(), new Set(["hidden_gems", "places", "events"]));
+    assert.deepEqual(await findDuplicateGems(sc as any, { name: "Sky Cafe", city: "Da Nang" }), []);
+    assert.deepEqual(await findDuplicatePlaces(sc as any, { name: "Sky Bar", city: "Da Nang" }), []);
+    assert.deepEqual(await findDuplicateEvents(sc as any, { name: "Full Moon", city: "Da Nang" }), []);
+  });
+});
+
+// ── D11 LAST MILE: buildCreationAssistance is the caller the ruling names ─────
+//
+// `scanDuplicate*` (proved above) can SAY that a candidate pool was unreadable,
+// but saying it changes nothing until the caller listens. Until this block,
+// `buildCreationAssistance` consumed the fail-soft `findDuplicate*` adapters,
+// which fold `{ ok: false }` straight back into the `[]` an empty pool returns —
+// so the traveller's screen was byte-identical in both cases, and the absence of
+// a "did you mean" row read as "nothing like this exists yet".
+//
+// The fix is NOT a block and NOT a log: creation still proceeds, nothing is
+// auto-merged, and an unreadable pool still proposes zero duplicates. What
+// changes is that the claim implied by zero rows is withdrawn on the wire, in
+// the convention socialIdentity.buildRecipientsUnreadable already set for this
+// exact class (a non-blocking `validation` row carrying a structured status).
+//
+// MUTATION: in creation.ts, change `take`'s else-branch to drop the table
+// (`} else { /* nothing */ }`), or drop the `unreadable.length > 0` push — the
+// first three tests below go RED.
+
+const DUP_UNREADABLE = "candidate_pool_unreadable";
+
+async function creationRows(
+  sc: any,
+  context: InputContext,
+  text: string,
+  draft: CreationDraft = {},
+) {
+  const policy = resolvePolicy(context)!;
+  return buildCreationAssistance(sc as any, {
+    context,
+    policy,
+    text,
+    userId: ME,
+    draft,
+    viewerCity: "Da Nang",
+    lat: null,
+    lng: null,
+    policyVersion: POLICY_VERSION,
+    max: policy.maxSuggestions,
+  });
+}
+
+describe("D11: creation assistance tells the traveller when the duplicate check did not run", () => {
+  it("an unreadable hidden_gems pool no longer looks like 'nothing like this exists'", async () => {
+    const empty = await creationRows(makeFakeClient(baseTables()), "hidden_gem_name", "Sky Cafe");
+    const unread = await creationRows(
+      makeFakeClient(baseTables(), new Set(["hidden_gems"])),
+      "hidden_gem_name",
+      "Sky Cafe",
+    );
+
+    assert.deepEqual(
+      empty.filter((r) => r.reason === DUP_UNREADABLE),
+      [],
+      "a genuinely empty pool is an answer and must claim nothing",
+    );
+
+    const said = unread.filter((r) => r.reason === DUP_UNREADABLE);
+    assert.equal(said.length, 1, "an unreadable pool must be stated exactly once");
+    assert.equal(said[0]!.type, "validation", "it is a non-blocking validation row (§20/§37)");
+    assert.deepEqual(
+      (said[0]!.structuredValue as any).tables,
+      ["hidden_gems"],
+      "the row names the pool that could not be read",
+    );
+    assert.equal((said[0]!.structuredValue as any).available, false);
+    assert.notDeepEqual(unread, empty, "the two absences must not read alike");
+  });
+
+  it("the row is resolvable, so §13 no-dead-rows keeps it, and it never blocks creation", async () => {
+    const unread = await creationRows(
+      makeFakeClient(baseTables(), new Set(["hidden_gems"])),
+      "hidden_gem_name",
+      "Sky Cafe",
+    );
+    const row = unread.find((r) => r.reason === DUP_UNREADABLE)!;
+    assert.ok(isResolvable(row), "a row dropDeadRows would discard tells nobody anything");
+    assert.equal(row.action?.type, "set_structured_value");
+    assert.ok((row.confidence ?? 1) < 0.5, "never in the auto-replace band (§19)");
+    assert.equal(
+      unread.some((r) => r.type === "disambiguation"),
+      false,
+      "an unreadable pool still PROPOSES nothing — the fail-closed direction is unchanged",
+    );
+  });
+
+  it("reaches the wire through the gateway, ranked and not dropped", async () => {
+    const out = await gen(
+      makeFakeClient(baseTables(), new Set(["hidden_gems"])),
+      "hidden_gem_name",
+      "Sky Cafe",
+    );
+    assert.equal(
+      out.some((r) => r.reason === DUP_UNREADABLE),
+      true,
+      "the whole point is that the CALLER is told, not an operator",
+    );
+    for (const r of out) assert.ok(isResolvable(r), "§13: every returned row resolves");
+  });
+
+  it("a healthy pool that really matches still surfaces the duplicate, and says nothing extra", async () => {
+    const out = await creationRows(
+      makeFakeClient(baseTables({ hidden_gems: [gemRow("g1", "Sky Cafe")] })),
+      "hidden_gem_name",
+      "Sky Cafe",
+    );
+    assert.equal(
+      out.filter((r) => r.type === "disambiguation").length,
+      1,
+      "the real matcher still runs through the scan path",
+    );
+    assert.equal(out.some((r) => r.reason === DUP_UNREADABLE), false);
+  });
+
+  it("the two contexts whose policy forbids `validation` are STILL silent — a stated gap, not a claim", async () => {
+    assert.deepEqual([...DUPLICATE_SCAN_UNREADABLE_POLICY_GAP], ["trip_stop_place", "event_title"]);
+    for (const context of DUPLICATE_SCAN_UNREADABLE_POLICY_GAP) {
+      const policy = resolvePolicy(context)!;
+      assert.equal(
+        policy.allowedSuggestionTypes.includes("disambiguation"),
+        true,
+        `${context} runs duplicate detection`,
+      );
+      assert.equal(
+        policy.allowedSuggestionTypes.includes("validation"),
+        false,
+        `${context} may not emit a validation row (§6) — this is why it stays silent`,
+      );
+    }
+    const unread = await creationRows(
+      makeFakeClient(baseTables(), new Set(["events"])),
+      "event_title",
+      "Full Moon Party",
+    );
+    assert.equal(
+      unread.some((r) => r.reason === DUP_UNREADABLE),
+      false,
+      "documenting the gap honestly: event_title cannot carry the row under its §6 policy",
+    );
+  });
+});
+
+// ── SAME DEFECT CLASS, second site in this file: the viewer's trip windows ────
+//
+// Found while closing the three duplicate pools; it is NOT in
+// docs/architecture/swallowed-read-inventory.md (that measurement admits it
+// under-counts). `fetchViewerTripWindows` answered a failed `trip_members` or
+// `trips` read with the same `[]` that means "you are on no other trip", and
+// `checkTripDateConflict([])` returns `{ ok: true }` — so the field emitted no
+// row, and no row on a date field reads as "your dates are clear". That is a
+// POSITIVE claim about the traveller's other trips, made out of a read that
+// never ran, on the exact question they were asking.
+//
+// MUTATION: in creation.ts, return `{ ok: true, windows: [] }` from either
+// `windowsUnreadable` branch — the first two tests below go RED.
+
+describe("D11: an unreadable trip list never becomes 'your dates are clear'", () => {
+  const draft: CreationDraft = { startDate: "2026-03-15", endDate: "2026-03-25" };
+
+  it("an unreadable trip_members withdraws the no-conflict claim instead of making it", async () => {
+    const clear = await creationRows(
+      makeFakeClient(baseTables()), "trip_title", "Spring Escape", draft,
+    );
+    const unread = await creationRows(
+      makeFakeClient(baseTables(), new Set(["trip_members"])), "trip_title", "Spring Escape", draft,
+    );
+
+    assert.deepEqual(
+      clear.filter((r) => r.reason === "trip_windows_unreadable"),
+      [],
+      "a traveller who is genuinely on no other trip is told nothing extra",
+    );
+    const said = unread.filter((r) => r.reason === "trip_windows_unreadable");
+    assert.equal(said.length, 1);
+    assert.equal(said[0]!.type, "validation");
+    assert.equal((said[0]!.structuredValue as any).table, "trip_members");
+    assert.notDeepEqual(unread, clear, "the two absences must not read alike");
+  });
+
+  it("an unreadable trips table is caught too — the second read, not just the first", async () => {
+    const unread = await creationRows(
+      makeFakeClient(
+        baseTables({ trip_members: [{ trip_id: "t1", role: "owner", user_id: ME }] }),
+        new Set(["trips"]),
+      ),
+      "trip_title",
+      "Spring Escape",
+      draft,
+    );
+    const said = unread.find((r) => r.reason === "trip_windows_unreadable");
+    assert.ok(said, "the trips read is the one that carries the dates");
+    assert.equal((said!.structuredValue as any).table, "trips");
+    assert.equal(
+      unread.some((r) => (r.structuredValue as any)?.kind === "trip_date_conflict"),
+      false,
+      "and it must not ALSO claim a specific conflict it never measured",
+    );
+  });
+
+  it("a real conflict is still surfaced, and a real all-clear still says nothing", async () => {
+    const conflict = await creationRows(
+      makeFakeClient(baseTables({
+        trip_members: [{ trip_id: "t1", role: "owner", user_id: ME }],
+        trips: [{ id: "t1", title: "Bangkok Week", start_date: "2026-03-10", end_date: "2026-03-20", status: "upcoming" }],
+      })),
+      "trip_title", "Spring Escape", draft,
+    );
+    assert.equal(
+      (conflict.find((r) => r.type === "validation")!.structuredValue as any).conflictsWithTripId,
+      "t1",
+      "the §23 validator still runs through the scan path",
+    );
+
+    const allClear = await creationRows(
+      makeFakeClient(baseTables({
+        trip_members: [{ trip_id: "t1", role: "owner", user_id: ME }],
+        trips: [{ id: "t1", title: "Bangkok Week", start_date: "2026-06-10", end_date: "2026-06-20", status: "upcoming" }],
+      })),
+      "trip_title", "Spring Escape", draft,
+    );
+    assert.deepEqual(allClear, [], "a measured all-clear is still silent — that is the honest zero");
   });
 });

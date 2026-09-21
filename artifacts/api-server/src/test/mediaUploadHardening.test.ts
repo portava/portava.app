@@ -175,6 +175,60 @@ describe("POST /api/media/upload — hardening", () => {
     assert.match(String(r.body.message ?? r.body.detail ?? JSON.stringify(r.body)), /Unrecognized|corrupt/i);
   });
 
+  // ── The magic-number sniffer, distinguished from sharp's decode failure ────
+  //
+  // MEASURED: neutering `verifyUploadedBytes`'s sniff branch (make sniffMedia's
+  // null default to the DECLARED kind) left the test above at 13 pass / 0 fail.
+  // Junk declared `image/jpeg` still ended in a rejection — but from sharp,
+  // three screens later, with the message "Corrupt or undecodable image file",
+  // which the loose /Unrecognized|corrupt/i regex also matches. So the test
+  // named after the sniffer passed without the sniffer.
+  //
+  // That matters because sharp is not a backstop on the other branch: VIDEO
+  // never reaches processImage, so for video the sniffer is the ONLY thing
+  // deciding what the bytes are. The two tests below assert the sniffer's own
+  // two verdicts by their own two messages, so neither can be satisfied by a
+  // downstream decode failure.
+
+  it("junk bytes are refused BY THE SNIFFER, not by sharp further down", async () => {
+    const client = makeClient();
+    setClients(client);
+    const junk = Buffer.from("this is definitely not an image, whatever the header says");
+    const r = await rawReq("POST", "/api/media/upload", junk, "image/jpeg");
+    assert.equal(r.status, 400, JSON.stringify(r.body));
+    assert.equal(r.body.error, "invalid_payload");
+    // The EXACT string lib/mediaPipeline.ts:verifyUploadedBytes emits when
+    // sniffMedia returns null. "Corrupt or undecodable image file" — the
+    // processImage catch in routes/posts.ts — is a DIFFERENT rejection and must
+    // not satisfy this assertion.
+    assert.equal(
+      r.body.message, "Unrecognized or corrupt media file",
+      "this must be the SNIFFER's verdict; a sharp decode failure here means the sniff branch is untested",
+    );
+    assert.equal(client._uploads.length, 0, "nothing may be stored");
+  });
+
+  it("a real, decodable PNG declared as video/mp4 is refused for the KIND MISMATCH", async () => {
+    // The case sharp cannot catch: the bytes decode perfectly, so no decode
+    // failure exists to fall back on. Only the sniffer notices that what was
+    // stored is not what was announced. Without it the request takes the VIDEO
+    // branch — no processImage, no EXIF strip — and a photo is stored as a
+    // video that every downstream consumer treats as one.
+    const client = makeClient();
+    setClients(client);
+    const realPng = await sharp({ create: { width: 16, height: 16, channels: 3, background: "#4b7" } })
+      .png()
+      .toBuffer();
+    const r = await rawReq("POST", "/api/media/upload", realPng, "video/mp4");
+    assert.equal(r.status, 400, JSON.stringify(r.body));
+    assert.equal(r.body.error, "invalid_payload");
+    assert.equal(
+      r.body.message, "Uploaded bytes are image, but video was declared",
+      "the declared/actual kind mismatch is the sniffer's second verdict",
+    );
+    assert.equal(client._uploads.length, 0, "nothing may be stored");
+  });
+
   it("uploads a valid jpeg: EXIF stripped, thumbnail created, additive response fields", async () => {
     const client = makeClient();
     setClients(client);

@@ -372,6 +372,50 @@ describe("A. Intent detection", () => {
   });
 });
 
+describe("A.1 §17.2 suppression on a conversation's cards", () => {
+  const base = {
+    canUseTripContext: true,
+    canUseCircleContext: false,
+    canUseAvailability: false,
+    canShowRecommendation: true,
+    reason: "ok",
+    tripId: TRIP_ID,
+    circleOwnerId: null,
+    tripDestination: "Cebu",
+    threadType: "trip" as const,
+  };
+  const notConsulted = {
+    consulted: false, tripId: TRIP_ID, mode: null, suppressed: false,
+    reason: null, detail: null, info: "the gate is closed", attention: null,
+  };
+  const suppressing = {
+    consulted: true, tripId: TRIP_ID, mode: "SAFETY_EVENT" as const, suppressed: true,
+    reason: "TRIP_DISRUPTION_SUPPRESSED" as const, detail: "a flight was cancelled",
+    info: null, attention: null,
+  };
+
+  it("a nightlife card is offered when the switch was NOT consulted", () => {
+    const intent = detectIntent("any good bars nearby for tonight?");
+    assert.ok(intent);
+    const cards = buildSuggestions(USER_A.id, THREAD_ID, intent!, { ...base, tripAttention: notConsulted });
+    assert.ok(cards.length > 0, "nothing is withheld on a reading we do not have");
+  });
+
+  it("the SAME nightlife card is withheld when §17.2 says the trip needs attention", () => {
+    const intent = detectIntent("any good bars nearby for tonight?");
+    assert.ok(intent);
+    const cards = buildSuggestions(USER_A.id, THREAD_ID, intent!, { ...base, tripAttention: suppressing });
+    assert.equal(cards.length, 0, "a trip in disruption does not want a nightlife card");
+  });
+
+  it("a TRANSPORT card survives suppression, because §17.2 withholds commercial, not logistics", () => {
+    const intent = detectIntent("how do we get to the airport tomorrow?");
+    assert.ok(intent, "expected a transport-ish intent");
+    const cards = buildSuggestions(USER_A.id, THREAD_ID, intent!, { ...base, tripAttention: suppressing });
+    assert.ok(cards.length > 0, "getting to the airport is exactly what a disrupted trip needs");
+  });
+});
+
 // ---------------------------------------------------------------------------
 // Section B: Privacy resolver
 // ---------------------------------------------------------------------------
@@ -421,6 +465,78 @@ describe("B. Privacy resolver", () => {
     });
     const v = await resolvePrivacyVerdict(client, USER_A.id, THREAD_ID);
     assert.equal(v.canShowRecommendation, false);
+  });
+
+  // ── §1/TR5: the verdict now reads TripTelegraphProjection ────────────────
+  //
+  // The four cases below are the ones the hand-rolled `role IN
+  // ('owner','member')` pair of selects got wrong. Each is written as the
+  // behaviour, not as "the projection was called", so they stay true if the
+  // consumption is ever done a different way.
+
+  it("trip thread: a CO-HOST gets trip context — the old rule refused them", async () => {
+    const client = makeFakeClient({
+      threads: [tripThread(THREAD_ID, TRIP_ID)],
+      tripMembers: [{ trip_id: TRIP_ID, user_id: USER_A.id, role: "co_host", status: "accepted" }],
+      profiles: [{ id: USER_A.id, show_telegraph_trip: true }],
+      trips: [{ id: TRIP_ID, destination_city: "Cebu", destination_country: "Philippines" }],
+    });
+    const v = await resolvePrivacyVerdict(client, USER_A.id, THREAD_ID);
+    assert.equal(v.canUseTripContext, true, "a co-host is crew");
+    assert.equal(v.tripDestination, "Cebu");
+  });
+
+  it("trip thread: a REMOVED member gets nothing — the old rule read role and never status", async () => {
+    const client = makeFakeClient({
+      threads: [tripThread(THREAD_ID, TRIP_ID)],
+      tripMembers: [{ trip_id: TRIP_ID, user_id: USER_A.id, role: "member", status: "removed" }],
+      profiles: [{ id: USER_A.id, show_telegraph_trip: true }],
+      trips: [{ id: TRIP_ID, destination_city: "Cebu", destination_country: "Philippines" }],
+    });
+    const v = await resolvePrivacyVerdict(client, USER_A.id, THREAD_ID);
+    assert.equal(v.canUseTripContext, false);
+    assert.equal(v.canShowRecommendation, false);
+    assert.equal(v.reason, "not_trip_member");
+    assert.equal(v.tripDestination, null, "the destination must not survive removal");
+  });
+
+  it("trip thread: a VIEWER is crew but is offered no card, because every card carries an action", async () => {
+    const client = makeFakeClient({
+      threads: [tripThread(THREAD_ID, TRIP_ID)],
+      tripMembers: [{ trip_id: TRIP_ID, user_id: USER_A.id, role: "viewer", status: "accepted" }],
+      profiles: [{ id: USER_A.id, show_telegraph_trip: true }],
+      trips: [{ id: TRIP_ID, destination_city: "Cebu" }],
+    });
+    const v = await resolvePrivacyVerdict(client, USER_A.id, THREAD_ID);
+    assert.equal(v.canUseTripContext, false);
+    assert.equal(v.reason, "not_trip_member");
+  });
+
+  it("trip thread: the destination falls back to the country when there is no city", async () => {
+    const client = makeFakeClient({
+      threads: [tripThread(THREAD_ID, TRIP_ID)],
+      tripMembers: [tripMember(USER_A.id, TRIP_ID)],
+      profiles: [{ id: USER_A.id, show_telegraph_trip: true }],
+      trips: [{ id: TRIP_ID, destination_city: null, destination_country: "Philippines" }],
+    });
+    const v = await resolvePrivacyVerdict(client, USER_A.id, THREAD_ID);
+    assert.equal(v.tripDestination, "Philippines");
+  });
+
+  it("trip thread: §17.2 is reported as NOT CONSULTED while the projection gate is closed", async () => {
+    const client = makeFakeClient({
+      threads: [tripThread(THREAD_ID, TRIP_ID)],
+      tripMembers: [tripMember(USER_A.id, TRIP_ID)],
+      profiles: [{ id: USER_A.id, show_telegraph_trip: true }],
+      trips: [{ id: TRIP_ID, destination_city: "Cebu" }],
+    });
+    const v = await resolvePrivacyVerdict(client, USER_A.id, THREAD_ID);
+    // Said out loud rather than left implied: the wiring is real and the
+    // effect is flag-capped. `suppressed` false with `consulted` false is
+    // "we do not know", and nothing is withheld on "we do not know".
+    assert.equal(v.tripAttention.consulted, false);
+    assert.equal(v.tripAttention.suppressed, false);
+    assert.ok(v.tripAttention.info, "a not-consulted reading must say why");
   });
 
   it("verdict never exposes exact GPS fields", async () => {
@@ -739,6 +855,10 @@ describe("F. Regression", () => {
       circleOwnerId: null,
       tripDestination: "Cebu",
       threadType: "trip" as const,
+      tripAttention: {
+        consulted: false, tripId: TRIP_ID, mode: null, suppressed: false,
+        reason: null, detail: null, info: "the gate is closed", attention: null,
+      },
     };
     const cards = buildSuggestions(USER_A.id, THREAD_ID, intent, verdict);
     for (const c of cards) {

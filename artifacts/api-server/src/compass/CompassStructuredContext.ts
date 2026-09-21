@@ -82,12 +82,25 @@ export function wrapUgc(text: string): string {
 // ── Coordinate scrub (defense-in-depth) ───────────────────────────────────────
 
 const COORD_KEY_RE = /^(lat|lng|lon|long|latitude|longitude)$|(_|^)(lat|lng|lon|latitude|longitude)(_|$)|Lat$|Lng$|Latitude$|Longitude$/i;
+/**
+ * A camelCase `…At` timestamp whose word before "At" ends in "l" —
+ * `requiredArrivalAt`, `expectedArrivalAt`, `estimatedArrivalAt` — ends in
+ * "lAt", which the case-insensitive `Lat$` rule above reads as a latitude.
+ * It is a time. The carve-out is exactly that class (a lowercase letter, then
+ * "At", at the end): `exactLat`, `LAT`, `arrivalLat` still go.
+ */
+const CAMEL_AT_TIMESTAMP_RE = /[a-z]At$/;
+
+/** Is this key coordinate-shaped, by the rule `stripCoordinateFields` applies? */
+export function isCoordinateKey(key: string): boolean {
+  return COORD_KEY_RE.test(key) && !CAMEL_AT_TIMESTAMP_RE.test(key);
+}
 
 /** Remove any coordinate-shaped key from a row. Returns a new object. */
 export function stripCoordinateFields<T extends Record<string, unknown>>(row: T): Partial<T> {
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(row)) {
-    if (COORD_KEY_RE.test(k)) continue;
+    if (isCoordinateKey(k)) continue;
     out[k] = v;
   }
   return out as Partial<T>;

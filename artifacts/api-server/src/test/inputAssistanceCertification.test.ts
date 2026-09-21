@@ -45,6 +45,11 @@ import {
   projectCanonicalCity,
 } from "../lib/inputAssistance/projection.js";
 import { KNOWN_CONTEXTS, resolvePolicy, POLICY_VERSION } from "../lib/inputAssistance/policyRegistry.js";
+import {
+  rebuildTelemetryEvent,
+  INPUT_TELEMETRY_EVENT_NAMES,
+  TELEMETRY_EVENT_PROPS,
+} from "../lib/inputAssistance/telemetry.js";
 import type { SearchResult } from "../routes/discoverySearch.js";
 
 // ── Stable test UUIDs ──────────────────────────────────────────────────────────
@@ -55,10 +60,11 @@ const ME_TOK = "tok-me";
 // ── Fake Supabase client (gateway harness + tableErrors + rpc capture) ──────────
 interface FakeState { [key: string]: any[] | undefined; }
 interface RpcCall { name: string; args: any; }
+interface InsertCall { table: string; rows: any[]; }
 
-function makeFakeClient(state: FakeState, tableErrors: Set<string>, rpcLog: RpcCall[]) {
+function makeFakeClient(state: FakeState, tableErrors: Set<string>, rpcLog: RpcCall[], insertLog: InsertCall[]) {
   const errorBuilder: any = {};
-  const errorFns = ["select", "eq", "neq", "in", "not", "is", "ilike", "or", "gte", "lt", "order", "limit", "range", "maybeSingle"];
+  const errorFns = ["select", "eq", "neq", "in", "not", "is", "ilike", "or", "gte", "lt", "order", "limit", "range", "maybeSingle", "insert"];
   for (const fn of errorFns) errorBuilder[fn] = () => errorBuilder;
   errorBuilder.then = (onF: any, onR: any) =>
     Promise.resolve({ data: null, error: { message: "simulated DB error" } }).then(onF, onR);
@@ -138,6 +144,18 @@ function makeFakeClient(state: FakeState, tableErrors: Set<string>, rpcLog: RpcC
           const matched = project(sourceRows.filter((r) => filters.every((f) => f(r))));
           return Promise.resolve({ data: matched[0] ?? null, error: null });
         },
+        // Writes. The §44 serve log is the first write path in this suite that
+        // is not an RPC, so the fake needed an `insert`: rows land in
+        // `insertLog` so a test can assert the SHAPE that was persisted, which
+        // is the whole question for a telemetry table.
+        insert(rows: any) {
+          const arr = Array.isArray(rows) ? rows : [rows];
+          insertLog.push({ table, rows: arr });
+          state[table] = [...(state[table] ?? []), ...arr];
+          return {
+            then: (onF: any, onR: any) => Promise.resolve({ data: null, error: null }).then(onF, onR),
+          };
+        },
         then(onF: any, onR: any) {
           const matched = project(sourceRows
             .filter((r) => filters.every((f) => f(r)))
@@ -184,10 +202,12 @@ function findCoordLeaks(obj: unknown, secrets: number[], path = "$"): string[] {
 let base: string;
 let server: Server;
 let rpcLog: RpcCall[] = [];
+let insertLog: InsertCall[] = [];
 
 function setup(state: FakeState, tableErrors: string[] = []) {
   rpcLog = [];
-  _setTestClient(makeFakeClient(state, new Set(tableErrors), rpcLog) as any, true);
+  insertLog = [];
+  _setTestClient(makeFakeClient(state, new Set(tableErrors), rpcLog, insertLog) as any, true);
 }
 
 before(async () => {
@@ -388,9 +408,17 @@ describe("§49 Failure — the endpoint never 500s mid-keystroke; degrades grace
   });
 
   it("total data-layer failure degrades to a well-formed EMPTY 200 envelope (never an error mid-keystroke)", async () => {
-    // Every table the request touches errors. The route's try/catch guarantees a
-    // 200 with an empty, well-formed envelope carrying requestId + policyVersion.
-    setup({}, ["canonical_locations", "blocks", "user_privacy_settings", "events", "trips", "profiles", "places", "hidden_gems"]);
+    // Every SUGGESTION SOURCE the request touches errors. The route's try/catch
+    // guarantees a 200 with an empty, well-formed envelope carrying requestId +
+    // policyVersion.
+    //
+    // `profiles` was in this list and has been moved to the test below. It is
+    // not a suggestion source: it is `requireUser`'s ban gate (lib/http.ts), and
+    // since A1 an unreadable `account_status` is refused before the route body
+    // runs. Erroring it here conflated two layers and would have let a change to
+    // the AUTH gate pass or fail this DATA-layer certification by accident. The
+    // data-layer guarantee is unchanged and is what this test still asserts.
+    setup({}, ["canonical_locations", "blocks", "user_privacy_settings", "events", "trips", "places", "hidden_gems"]);
     const r = await suggest({ context: "global_search", text: "da nang" });
     assert.equal(r.status, 200, "a total failure must still be a 200 (typeahead never shows an error)");
     const body = await r.json() as any;
@@ -398,6 +426,22 @@ describe("§49 Failure — the endpoint never 500s mid-keystroke; degrades grace
     assert.equal(body.context, "global_search");
     assert.ok(typeof body.requestId === "string" && body.requestId.length > 0);
     assert.ok(Array.isArray(body.suggestions), "suggestions is always a well-formed array");
+  });
+
+  it("an unreadable `profiles` is the BAN GATE failing, and outranks the never-error rule", async () => {
+    // The one exception to "typeahead never shows an error", stated on purpose
+    // rather than inherited from the list above. `profiles.account_status` is
+    // the only ban enforcement point in the system — there is no session
+    // revocation anywhere — so a request whose ban check did not run may not be
+    // served, not even an empty list. The answer is the retryable
+    // `degraded_unavailable`, which means "the check was not performed", not
+    // "you are banned" and not "there is nothing here".
+    setup({}, ["profiles"]);
+    const r = await suggest({ context: "global_search", text: "da nang" });
+    assert.equal(r.status, 503, "an unchecked ban gate must not be served a 200");
+    const body = await r.json() as any;
+    assert.equal(body.error, "degraded_unavailable");
+    assert.equal(body.retryable, true, "the client must retry, not re-authenticate");
   });
 
   it("empty result: a no-match query returns a clean 200 with an empty (or completion-only) list", async () => {
@@ -459,5 +503,315 @@ describe("§49 Telemetry — the /select write never captures raw private text (
       assert.equal(resolvePolicy(context)!.telemetryPolicy.logRawText, false,
         `${context}: no field may log raw text`);
     }
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 5. TELEMETRY — the DESTINATION (§40 SuggestionTelemetryService, §44, §57).
+//
+// Census G292 graded the server-side telemetry service NOT-BUILT with the
+// sentence "There is no server-side telemetry service, no serve log, no
+// impression record and no analytics write anywhere in lib/inputAssistance/",
+// and G263/G306/G355/G365/G366/G367 all name the same blocker: the client
+// emits nine §44 events into a sink that is `() => {}`.
+//
+// These tests are about the half that can be settled from the server: a real
+// ingest endpoint, a payload REBUILT from a per-event allow-list rather than
+// accepted, the field's own telemetryPolicy enforced at ingest, and — the rule
+// this repo keeps relearning — a bound write error answered as a RETRYABLE
+// REFUSAL rather than as a successful empty result.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+function telemetry(body: any, tok: string | null = ME_TOK) {
+  return fetch(`${base}/input-assistance/telemetry`, {
+    method: "POST",
+    headers: { "content-type": "application/json", ...(tok ? { Authorization: `Bearer ${tok}` } : {}) },
+    body: JSON.stringify(body),
+  });
+}
+
+const TELEMETRY_TABLE = "input_assistance_telemetry_events";
+// Recent by construction: the service CLAMPS a timestamp more than seven days
+// from the server's clock (a sleeping device's clock corrupts every window
+// query silently), so a hard-coded literal would rot into that branch.
+const NOW_ISH = Date.now() - 1_000;
+function telemetryRows() {
+  return insertLog.filter((c) => c.table === TELEMETRY_TABLE).flatMap((c) => c.rows);
+}
+
+describe("§44 telemetry ingest — the serve log the client had no destination for", () => {
+  it("accepts an allowlisted event and persists it to the serve log", async () => {
+    setup({ [TELEMETRY_TABLE]: [] });
+    const r = await telemetry({
+      sessionId: "sess-abc",
+      events: [
+        {
+          name: "suggestion_rendered",
+          context: "global_search",
+          fieldId: "global_search",
+          at: NOW_ISH,
+          requestId: "req-1",
+          props: { count: 5, types: "entity,recent" },
+        },
+      ],
+    });
+    const body = (await r.json()) as any;
+    assert.equal(r.status, 200, "an accepted batch answers 200");
+    assert.equal(body.ok, true);
+    assert.equal(body.accepted, 1, "the event was accepted");
+    assert.equal(body.rejected, 0);
+
+    const rows = telemetryRows();
+    assert.equal(rows.length, 1, "exactly one row was written");
+    assert.equal(rows[0].event_name, "suggestion_rendered");
+    assert.equal(rows[0].session_id, "sess-abc");
+    assert.equal(rows[0].request_id, "req-1", "§44 action/result linkage: the serve's requestId travels");
+    assert.equal(rows[0].context, "global_search");
+    assert.equal(rows[0].props.count, 5);
+    assert.equal(rows[0].props.types, "entity,recent");
+    assert.equal(typeof rows[0].policy_version, "string");
+    assert.equal(rows[0].occurred_at, new Date(NOW_ISH).toISOString());
+  });
+
+  it("REBUILDS the props from an allow-list — an unknown key cannot ride along", async () => {
+    setup({ [TELEMETRY_TABLE]: [] });
+    // THE CONTEXT HERE IS LOAD-BEARING and the first draft of this test got it
+    // wrong. It used `telegraph_message`, whose policy does not declare
+    // `suggestion_rendered` at all — so the event was refused by the POLICY
+    // gate, nothing was ever written, and every assertion below ran over an
+    // EMPTY array. The test passed with the rebuild replaced by a wholesale
+    // `{...incoming}` copy, which is precisely the mutation it exists to catch.
+    // `global_search` declares the event, so the row IS written and the rebuild
+    // is the only thing standing between these props and the table. The
+    // `rows.length === 1` assertion below is what keeps it that way.
+    const r = await telemetry({
+      sessionId: "sess-abc",
+      events: [
+        {
+          name: "suggestion_rendered",
+          context: "global_search",
+          fieldId: "global_search",
+          at: NOW_ISH,
+          props: {
+            count: 2,
+            // Every one of these is a key the allow-list for this event does
+            // not name. A denylist would have to be complete to stop them; a
+            // rebuild stops them because they are simply never copied.
+            query: "meet me at my private address tonight",
+            message: "see you at 9",
+            label: "Alice Nguyen",
+            userId: "aa000000-0000-4000-a000-000000000001",
+            note: "anything at all",
+          },
+        },
+      ],
+    });
+    const body = (await r.json()) as any;
+    assert.equal(r.status, 200);
+    assert.equal(body.accepted, 1, "the event must be ACCEPTED — otherwise the assertions below are vacuous");
+    const rows = telemetryRows();
+    assert.equal(rows.length, 1, "exactly one row must have been written for this test to mean anything");
+    assert.equal(rows[0].props.count, 2, "the allowlisted prop survives");
+    const persisted = JSON.stringify(rows);
+    for (const forbidden of ["private address", "see you at 9", "Alice Nguyen", "anything at all"]) {
+      assert.ok(!persisted.includes(forbidden), `raw content "${forbidden}" reached the serve log`);
+    }
+    for (const row of rows) {
+      for (const k of ["query", "message", "label", "userId", "note", "text", "rawText"]) {
+        assert.ok(!(k in row.props), `prop key "${k}" survived the rebuild`);
+      }
+    }
+  });
+
+  it("enforces the FIELD'S OWN telemetryPolicy — an undeclared event is refused, not stored", async () => {
+    setup({ [TELEMETRY_TABLE]: [] });
+    // telegraph_message declares METADATA_ONLY_TELEMETRY: it participates in
+    // suggestion_request_completed / suggestion_selected / action_completed and
+    // nothing else. §44 says a private-message field prefers metadata events;
+    // an impression of a RECIPIENT LIST is a list of people and this field did
+    // not opt into it.
+    const r = await telemetry({
+      sessionId: "sess-abc",
+      events: [
+        { name: "suggestion_rendered", context: "telegraph_message", fieldId: "telegraph_message", at: NOW_ISH, props: { count: 3 } },
+        { name: "suggestion_selected", context: "telegraph_message", fieldId: "telegraph_message", at: NOW_ISH + 1, props: { suggestionType: "entity" } },
+      ],
+    });
+    const body = (await r.json()) as any;
+    assert.equal(r.status, 200);
+    assert.equal(body.accepted, 1, "only the declared event is accepted");
+    assert.equal(body.rejected, 1, "the undeclared event is REFUSED, not silently dropped from the count");
+    const names = telemetryRows().map((x) => x.event_name);
+    assert.deepEqual(names, ["suggestion_selected"]);
+  });
+
+  it("refuses an unknown event name and an unknown context", async () => {
+    setup({ [TELEMETRY_TABLE]: [] });
+    const r = await telemetry({
+      sessionId: "sess-abc",
+      events: [
+        { name: "not_an_event", context: "global_search", fieldId: "global_search", at: NOW_ISH },
+        { name: "input_opened", context: "not_a_context", fieldId: "x", at: NOW_ISH },
+      ],
+    });
+    const body = (await r.json()) as any;
+    assert.equal(body.accepted, 0);
+    assert.equal(body.rejected, 2);
+    assert.equal(telemetryRows().length, 0, "nothing is written when nothing is valid");
+  });
+
+  it("a BOUND write error answers a RETRYABLE refusal — never ok:true with accepted:0", async () => {
+    // THE DEFECT CLASS THIS LOCKS. supabase-js RESOLVES on a database error
+    // rather than throwing, so a discarded `error` is byte-identical to "the
+    // write succeeded and there was nothing to do". A telemetry route that
+    // answers `{ok:true, accepted:0}` on a failed insert is indistinguishable
+    // from one whose table is simply empty, and migration 2950 is NOT APPLIED
+    // to any database — so this is the state the route is actually in today.
+    setup({ [TELEMETRY_TABLE]: [] }, [TELEMETRY_TABLE]);
+    const r = await telemetry({
+      sessionId: "sess-abc",
+      events: [{ name: "input_opened", context: "global_search", fieldId: "global_search", at: NOW_ISH }],
+    });
+    const body = (await r.json()) as any;
+    assert.equal(r.status, 503, "a failed write is a refusal, not a success");
+    assert.equal(body.ok, false);
+    assert.equal(body.retryable, true, "the caller is told the refusal is retryable");
+    assert.notEqual(body.accepted, 1);
+  });
+
+  it("an unauthenticated caller cannot write to the serve log", async () => {
+    setup({ [TELEMETRY_TABLE]: [] });
+    const r = await telemetry({ sessionId: "s", events: [{ name: "input_opened", context: "global_search", fieldId: "global_search", at: 1 }] }, null);
+    assert.ok(r.status === 401 || r.status === 403, `expected a refusal, got ${r.status}`);
+    assert.equal(telemetryRows().length, 0);
+  });
+
+  it("the batch is bounded — an oversized batch is refused whole", async () => {
+    setup({ [TELEMETRY_TABLE]: [] });
+    const events = Array.from({ length: 200 }, (_, i) => ({
+      name: "input_opened", context: "global_search", fieldId: "global_search", at: NOW_ISH + i,
+    }));
+    const r = await telemetry({ sessionId: "sess-abc", events });
+    assert.equal(r.status, 400, "an unbounded batch is a payload error, not a partial success");
+    assert.equal(telemetryRows().length, 0);
+  });
+
+  it("a device clock days out of step is CLAMPED, not trusted", async () => {
+    // A sleeping or misconfigured device reports an `at` from another year. Left
+    // alone it would corrupt every window query in a way nothing reports, and
+    // refusing the event would throw away a real impression over a bad clock.
+    setup({ [TELEMETRY_TABLE]: [] });
+    const before = Date.now();
+    const r = await telemetry({
+      sessionId: "sess-abc",
+      events: [{ name: "input_opened", context: "global_search", fieldId: "global_search", at: 1757000000000 }],
+    });
+    assert.equal(r.status, 200);
+    const rows = telemetryRows();
+    assert.equal(rows.length, 1, "the event is kept — only its timestamp is not trusted");
+    const stored = Date.parse(rows[0].occurred_at);
+    assert.ok(stored >= before - 1000 && stored <= Date.now() + 1000,
+      `clamped timestamp expected near now, got ${rows[0].occurred_at}`);
+  });
+
+  it("a STANDARD field's policy admits the whole funnel SmartInput actually emits", async () => {
+    // WHY THIS TEST EXISTS. `STANDARD_TELEMETRY` named five of §44's fourteen
+    // events while nothing read it. Now that the ingest route enforces it, a
+    // five-name list would SILENTLY DISCARD nine of the arms SmartInput emits —
+    // the ignored arm, the edited arm, the validation impression, both §10/§19
+    // acceptance events — which is the very gap Phase 11 built those call sites
+    // to close, reintroduced one layer down.
+    //
+    // Narrowing the list back is a mutation that nothing else here catches:
+    // every other assertion in this block is about REFUSAL, so a policy that
+    // refuses more passes them all. This is the counterweight.
+    setup({ [TELEMETRY_TABLE]: [] });
+    const emitted = [
+      "input_opened",
+      "query_length_changed",
+      "suggestion_request_started",
+      "suggestion_request_completed",
+      "suggestion_rendered",
+      "suggestion_selected",
+      "suggestion_dismissed",
+      "raw_search_submitted",
+      "manual_value_kept",
+      "validation_shown",
+      "correction_accepted",
+      "disambiguation_selected",
+      "action_completed",
+      "downstream_task_completed",
+    ];
+    const r = await telemetry({
+      sessionId: "sess-abc",
+      events: emitted.map((name, i) => ({
+        name, context: "global_search", fieldId: "global_search", at: NOW_ISH + i,
+      })),
+    });
+    const body = (await r.json()) as any;
+    assert.equal(r.status, 200);
+    assert.equal(body.rejected, 0, "a standard field must not refuse an arm its own SmartInput emits");
+    assert.equal(body.accepted, emitted.length);
+    assert.deepEqual(telemetryRows().map((x) => x.event_name), emitted);
+  });
+
+  // ── The vocabulary gate, tested where the policy gate cannot mask it ────────
+  //
+  // WHY THESE TWO ARE UNIT TESTS AND THE REST ARE ROUTE TESTS. The first draft
+  // proved the event-name check through the endpoint, and the check SURVIVED
+  // being deleted: an unknown name is also a name no policy declares, so the
+  // POLICY gate refused it first and the route's counts were identical either
+  // way. The name gate's real job only becomes visible when a policy DOES
+  // declare a name the §44 vocabulary does not have — which is exactly the
+  // drift that would put a row past the application and into migration 2950's
+  // `iate_event_name_known` CHECK, where it fails the whole insert batch.
+
+  it("refuses a name outside the §44 vocabulary EVEN IF a field policy declares it", () => {
+    const base = resolvePolicy("global_search")!;
+    const drifted = {
+      ...base,
+      telemetryPolicy: { logRawText: false, events: ["not_an_event"] },
+    };
+    const out = rebuildTelemetryEvent(
+      { name: "not_an_event", context: "global_search", fieldId: "global_search", at: Date.now() },
+      "sess-abc",
+      drifted,
+      POLICY_VERSION,
+      Date.now(),
+    );
+    // MUTATION-PROOF: replace the KNOWN_EVENT_NAMES check with a
+    // `name.length === 0` check and this goes red (it throws on the missing
+    // TELEMETRY_EVENT_PROPS entry instead of refusing cleanly).
+    assert.equal(out.ok, false, "a name outside the vocabulary must never be rebuilt");
+    assert.equal((out as { reason: string }).reason, "unknown_event_name");
+  });
+
+  it("every event name any registered policy declares is in the §44 vocabulary", () => {
+    // The drift ratchet between policyRegistry.ts and migration 2950's
+    // `iate_event_name_known` CHECK. A name declared by a policy but absent
+    // from the vocabulary would be accepted by the policy gate and then
+    // rejected by the DATABASE, failing the whole batch — the loudest possible
+    // place to discover a one-word typo.
+    const vocabulary = new Set<string>(INPUT_TELEMETRY_EVENT_NAMES);
+    for (const context of KNOWN_CONTEXTS) {
+      for (const name of resolvePolicy(context)!.telemetryPolicy.events) {
+        assert.ok(vocabulary.has(name), `${context} declares "${name}", which §44 does not name`);
+      }
+    }
+    // And the vocabulary and the prop allow-list are the same set, so no name
+    // can reach the rebuild without a declared prop shape.
+    assert.deepEqual(
+      [...INPUT_TELEMETRY_EVENT_NAMES].sort(),
+      Object.keys(TELEMETRY_EVENT_PROPS).sort(),
+    );
+  });
+
+  it("the suggest envelope carries SERVER TIMING (census G372 — 'the response carries no server timing')", async () => {
+    setup({ profiles: [] });
+    const r = await suggest({ context: "global_search", text: "bangkok" });
+    const body = (await r.json()) as any;
+    assert.equal(r.status, 200);
+    assert.equal(typeof body.serverMs, "number", "the serve's own latency must travel with the serve");
+    assert.ok(body.serverMs >= 0 && body.serverMs < 60_000);
   });
 });

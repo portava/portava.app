@@ -1,6 +1,6 @@
 /**
  * rankEvents — client-side helper for recording user outcomes against
- * impression rows in rank_events (tap, save, join, rsvp, attended).
+ * impression rows in rank_events (tap, save, join, rsvp, trip_add, attended).
  *
  * Pass the sessionId returned by /api/pulse or /api/events so the server can
  * narrow the impression lookup to the correct feed load.
@@ -9,7 +9,15 @@ import { freshToken as freshApiToken } from './apiToken.ts';
 
 const apiBase = () => (process.env.EXPO_PUBLIC_API_BASE_URL ?? '').replace(/\/$/, '');
 
-type OutcomeValue = 'tap' | 'save' | 'join' | 'rsvp' | 'attended';
+/**
+ * Kept in lockstep with the `Outcome` union in ../hooks/useRankOutcome.ts and
+ * with OUTCOME_VALUES in the API's src/routes/rankEvents.ts (that zod enum 400s
+ * anything else). 'trip_add' is the itinerary-commitment rung admitted by
+ * migration 2894 — a traveller put a served item into a trip. It is NOT 'join':
+ * join means "joined somebody else's plan", and a place on your own itinerary
+ * has joined nothing.
+ */
+type OutcomeValue = 'tap' | 'save' | 'join' | 'rsvp' | 'attended' | 'trip_add';
 /**
  * Kept in lockstep with the `Surface` union in ../hooks/useRankOutcome.ts and
  * with SURFACE_VALUES in the API's src/routes/rankEvents.ts (that zod enum 400s

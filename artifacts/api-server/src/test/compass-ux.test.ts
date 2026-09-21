@@ -92,7 +92,10 @@ function makeFakeDb(
         onFulfilled?: (v: unknown) => unknown,
         onRejected?:  (r: unknown) => unknown,
       ) {
-        const result = { data: [...(tableData[table] ?? [])], error: null };
+        // `count` is what a `{ count: "exact", head: true }` select resolves;
+        // the Attention Engine's interruption-cost read depends on it.
+        const rows = [...(tableData[table] ?? [])];
+        const result = { data: rows, count: rows.length, error: null };
         return Promise.resolve(result).then(onFulfilled, onRejected);
       },
 
@@ -669,7 +672,12 @@ describe("CompassNotificationEngine", () => {
       feature_flags: [],
     };
     const { db } = makeFakeDb(tableData);
-    const decision = await evaluateNotification(db, "u-np2", payload("recommendation"), { nowMinutes: 12 * 60 });
+    // A recommendation is a WORLD CHANGE (Sensing §15): outside quiet hours it
+    // is routed by the Attention Engine, so this control declares the relation
+    // and urgency that make a push legitimate — the case is about the quiet
+    // window, and src/test/compassNotificationAttention.test.ts owns the rest.
+    const p: NotificationPayload = { ...payload("recommendation"), data: { attention: { relevance: "saved", urgency: 0.8 } } };
+    const decision = await evaluateNotification(db, "u-np2", p, { nowMinutes: 12 * 60 });
     assert.equal(decision.outcome, "sent");
   });
 

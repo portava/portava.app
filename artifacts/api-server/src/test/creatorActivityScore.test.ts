@@ -734,6 +734,27 @@ function makeUrlLimitedDb(tableData: Record<string, any[]>, maxInSize: number) {
   return { db: { from: (t: string) => buildChain(t) }, rejections: () => rejections };
 }
 
+/**
+ * INSIDE THE AGGREGATOR'S WINDOWS, ALWAYS — never a calendar constant.
+ *
+ * `CreatorSignalAggregator.aggregate` derives `ago24h` / `ago7d` / `ago30d` /
+ * `ago90d` from `Date.now()` (`services/ranking/CreatorActivityScoreService.ts`)
+ * and every signal below is counted inside one of them. A fixture pinned to a
+ * fixed date is therefore a bomb with a known fuse: `2026-09-01T00:00:00Z` sat
+ * inside the 90-day window when it was written and leaves it on 2026-11-30, at
+ * which point every count in this file reads 0 and the assertions read as "the
+ * chunking regressed" rather than "the fixture expired". That is the same
+ * failure mode as the three of 2026-09-15, and this file was outside the
+ * `2026-09-1x` grep that went looking for them.
+ *
+ * Judged against the same clock the aggregator judges on, minutes back, so the
+ * row is inside the NARROWEST window (24h) on any day the suite runs. Bumping
+ * the constant to a newer date would only re-arm it.
+ */
+function recentlyIso(minutesAgo = 60): string {
+  return new Date(Date.now() - minutesAgo * 60_000).toISOString();
+}
+
 describe("CreatorSignalAggregator — owner lookup survives a large id set", () => {
   const CREATOR = "22222222-2222-4222-8222-222222222222";
   const uuid = (n: number) => `33333333-3333-4333-8333-${String(n).padStart(12, "0")}`;
@@ -744,7 +765,7 @@ describe("CreatorSignalAggregator — owner lookup survives a large id set", () 
     const { db, rejections } = makeUrlLimitedDb({
       blocks: [],
       posts_comments: authors.map((_, i) => ({
-        user_id: CREATOR, post_id: `post-${i}`, deleted_at: null, created_at: "2026-09-01T00:00:00Z",
+        user_id: CREATOR, post_id: `post-${i}`, deleted_at: null, created_at: recentlyIso(),
       })),
       posts: authors.map((a, i) => ({ id: `post-${i}`, author_id: a })),
       event_rsvps: [],
@@ -784,10 +805,10 @@ describe("CreatorSignalAggregator — no unbounded .in() reaches the database", 
   it("counts engagement for a prolific creator instead of silently reading zero", async () => {
     const posts = Array.from({ length: N }, (_, i) => ({
       id: post(i), author_id: CREATOR, status: "active",
-      post_status: "published", created_at: "2026-09-01T00:00:00Z",
+      post_status: "published", created_at: recentlyIso(120),
     }));
     const savers = Array.from({ length: N }, (_, i) => ({
-      user_id: actor(i), post_id: post(i), created_at: "2026-09-02T00:00:00Z",
+      user_id: actor(i), post_id: post(i), created_at: recentlyIso(60),
     }));
 
     const { db, rejections } = makeUrlLimitedDb({
@@ -822,5 +843,114 @@ describe("CreatorSignalAggregator — no unbounded .in() reaches the database", 
       signals.receivedPositiveActions >= N,
       `expected at least ${N} received actions, got ${signals.receivedPositiveActions}`,
     );
+  });
+});
+
+// ─── A FAILED READ IS NOT A ZERO SIGNAL ──────────────────────────────────────
+//
+// supabase-js RESOLVES `{ data: null, error }` on a database error. Every read
+// in CreatorSignalAggregator destructured `data` alone, so a 42P01, a 42703, a
+// 414 or an outage arrived as `data ?? []` — an empty result set — and the
+// surrounding `catch` never fired, because nothing threw.
+//
+// The consequence is specific and it is a claim about a person: a creator whose
+// `posts` read FAILED scored identically to a creator who has never posted, and
+// `persistActivityScore` then stamped that score with a fresh `calculated_at`,
+// asserting it had just been measured. The file's own header calls this out for
+// `trust_profiles` and refuses to persist there. For every other source the code
+// wrote a `logger.warn` and carried on — and an operator reading a log line is
+// not the caller being told.
+//
+// These tests pin the distinction ON THE RETURN VALUE, which is the only place a
+// caller can see it. They do NOT change the deliberate design rule stated in
+// `aggregate`: a non-veto input still degrades to zero rather than stopping the
+// pass. What changes is that the degradation is now reported rather than
+// indistinguishable from the truth.
+describe("CreatorSignalAggregator — an unreadable source is reported, not silently zeroed", () => {
+  const OUTAGE = { code: "57P01", message: "terminating connection due to administrator command" };
+
+  /**
+   * A fake whose named tables RESOLVE with an error — the shape supabase-js
+   * actually produces. `throwingTables` is deliberately NOT how this is
+   * modelled: a throw is the case the old code already handled.
+   */
+  function failingDb(erroringTables: string[], rowsByTable: Record<string, any[]> = {}) {
+    const build = (table: string) => {
+      const chain: any = {
+        select() { return chain; },
+        eq()     { return chain; },
+        neq()    { return chain; },
+        in()     { return chain; },
+        gte()    { return chain; },
+        is()     { return chain; },
+        or()     { return chain; },
+        order()  { return chain; },
+        limit()  { return chain; },
+        maybeSingle() { chain._one = true; return chain; },
+        single()      { chain._one = true; return chain; },
+        _one: false,
+        then(resolve: any) {
+          return Promise.resolve().then(() => {
+            if (erroringTables.includes(table)) return resolve({ data: null, error: OUTAGE });
+            const rows = rowsByTable[table] ?? [];
+            return resolve({ data: chain._one ? (rows[0] ?? null) : rows, error: null });
+          });
+        },
+      };
+      return chain;
+    };
+    return { from: build };
+  }
+
+  const WHO = "dddddddd-0000-4000-8000-000000000009";
+
+  it("a creator whose `posts` read FAILED is not reported as a creator who never posted", async () => {
+    const outage = await new CreatorSignalAggregator(failingDb(["posts"]) as any).aggregate(WHO);
+    const silent = await new CreatorSignalAggregator(failingDb([]) as any).aggregate(WHO);
+
+    // Both score the same — that part is the DELIBERATE rule and is not what is
+    // being changed. What must differ is whether the caller can tell why.
+    assert.deepEqual(
+      silent.degradedSources ?? [], [],
+      "a clean read reported a degraded source",
+    );
+    assert.ok(
+      (outage.degradedSources ?? []).length > 0,
+      "an outage on `posts` produced the same signals as an empty account, with nothing on the " +
+        "return value to tell the two apart",
+    );
+    assert.ok(
+      (outage.degradedSources ?? []).includes("posts"),
+      `expected 'posts' among the degraded sources, got ${JSON.stringify(outage.degradedSources)}`,
+    );
+  });
+
+  it("an unreadable block list reaches the caller, not only the log", async () => {
+    // `blocks` gates the participation and positive-response components. The
+    // code already knew this one was invisible downstream — it says so in a
+    // comment, and then wrote a logger.warn.
+    const signals = await new CreatorSignalAggregator(failingDb(["blocks"]) as any).aggregate(WHO);
+    assert.ok(
+      (signals.degradedSources ?? []).includes("blocks"),
+      `expected 'blocks' among the degraded sources, got ${JSON.stringify(signals.degradedSources)}`,
+    );
+  });
+
+  it("the degradation survives into the score the caller receives", async () => {
+    const signals = await new CreatorSignalAggregator(failingDb(["posts", "blocks"]) as any).aggregate(WHO);
+    const result  = computeActivityScore(WHO, signals);
+    assert.deepEqual(
+      [...result.degradedSources].sort(), ["blocks", "posts"],
+      "computeActivityScore dropped the degradation on the floor",
+    );
+  });
+
+  it("a clean pass reports an EMPTY degraded list, not an absent one", async () => {
+    // An absent field would make "no degradation" and "this build does not
+    // report degradation" the same observation at the call site — the same
+    // conflation one layer up.
+    const signals = await new CreatorSignalAggregator(failingDb([]) as any).aggregate(WHO);
+    const result  = computeActivityScore(WHO, signals);
+    assert.deepEqual(result.degradedSources, []);
   });
 });

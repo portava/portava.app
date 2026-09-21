@@ -3,14 +3,484 @@ import type { Response } from "express";
 import { requireUser, sendError } from "../lib/http";
 import { getServiceClient } from "../lib/supabase";
 import { invalidate as invalidateCompassCache } from "../compass/CompassCacheEngine.js";
-import { canViewHighlight, type HighlightVisibility, type HighlightRecord } from "../lib/highlightPermissions";
+import {
+  canViewHighlight,
+  canEngageHighlight,
+  ownHighlightRefusal,
+  type HighlightEngagement,
+  type HighlightVisibility,
+  type HighlightRecord,
+} from "../lib/highlightPermissions";
+import {
+  readResurfacingSuppressionsForOwners,
+  isSuppressed,
+  unenforceableControls,
+  FEED_ENFORCEABLE_CONTROLS,
+  feedSubjectScope,
+  RESURFACING_CONTROLS,
+  CONTROL_EFFECTS,
+  type ResurfacingSuppressions,
+} from "../services/highlights/highlightResurfacing.js";
+import {
+  readProjectionPolicies,
+  resolveLocationDisclosure,
+  LOCATION_PRECISION_LADDER,
+  PERSON_VISIBILITY_LADDER,
+  MEMORY_CONSENT_DIMENSIONS,
+  type ProjectionPolicyRead,
+} from "../services/highlights/highlightProjectionPolicy.js";
+import {
+  listResurfacingControls,
+  setResurfacingControl,
+  clearResurfacingControl,
+  readProjectionPolicyForOwner,
+  setProjectionPolicy,
+  type ControlWriteFailure,
+} from "../services/highlights/highlightControlWrites.js";
+import { executeRevocation } from "../services/highlights/highlightRevocation.js";
+import {
+  readProjectionInputs,
+  filterProjectable,
+} from "../services/highlights/highlightPublicProjection.js";
+import { probeHighlightObject } from "../services/highlights/highlightSchemaAvailability.js";
+import {
+  HIGHLIGHT_LIFETIME_CLASSES,
+  HIGHLIGHT_CLASS_DEFAULTS,
+  isHighlightLifetimeClass,
+  describeHighlightLifetime,
+  describeHighlightLifecycle,
+  type HighlightLifetimeClass,
+} from "../services/highlights/highlightLifecycle.js";
+import { pinnedFirst } from "../services/highlights/highlightRanking.js";
 import { canMessage } from "../lib/messagingPermissions";
+import { isFlagEnabled } from "../lib/featureFlags";
 import { nameVisibilitySet, presentedName } from "../lib/publicIdentity";
 import { z } from "zod";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 const router = Router();
 const UUID = /^[0-9a-f-]{36}$/i;
+
+/* ============================================================================
+ * The projected column set, named once.
+ *
+ * `archived_at` is NEW here. It has existed on `public.highlights` since
+ * migration 0026 and, until 2026-09-08, was referenced by NO TypeScript in this
+ * repository — grepped, not assumed. Spec §21 gives it a job: Archive is
+ * "retain … remove from normal browsing unless explicitly requested", the one
+ * REVERSIBLE removal, and it is a different operation from the soft delete in
+ * `deleted_at`, which is terminal. Projecting it is what lets
+ * lib/highlightPermissions.isHighlightActive tell the two apart; a read that
+ * does not project it passes `undefined`, which that function treats as "not
+ * asked for", not as "not archived".
+ *
+ * NOTE for whoever reads the RLS policy next: `highlights_select_active`
+ * (migration 2530) does NOT reference archived_at. Archive is enforced
+ * app-side, here, and a direct PostgREST read would still see archived rows.
+ * ============================================================================ */
+const HIGHLIGHT_COLUMNS =
+  "id, owner_id, media_url, media_type, video_duration_seconds, caption, location_name, location_city, location_country, visibility, expires_at, created_at, deleted_at, archived_at";
+
+/* ----------------------------------------------------------------------------
+ * §12 / §5 — the three columns migration 2723 added, projected.
+ *
+ * `lifetime_class`, `lifecycle_state` and `pinned_at` have existed on
+ * `public.highlights` since 2723 was applied to production on 2026-09-15, and
+ * census §O.3 records exactly what was missing after that: "nothing writes the
+ * column and HIGHLIGHT_COLUMNS does not project it, so `describeHighlightLifetime`
+ * still answers `unavailable` on every live read".
+ *
+ * PROJECTED THROUGH A PROBE, NOT APPENDED TO THE CONSTANT. One unknown column
+ * fails the WHOLE PostgREST select (PGRST204), so appending these three to
+ * HIGHLIGHT_COLUMNS would take every Highlight read on any deployment without
+ * 2723 from working to 500. `probeHighlightObject` already answers exactly this
+ * question in three states, is memoized for five minutes, and is the mechanism
+ * this lane uses for the two control tables. A deployment without the columns
+ * therefore keeps the reads it has and gets `unavailable` from
+ * `describeHighlightLifetime` — which is the truth, and is the state that
+ * function was written to report.
+ * -------------------------------------------------------------------------- */
+const HIGHLIGHT_CLASS_COLUMNS = ["lifetime_class", "lifecycle_state", "pinned_at"] as const;
+const HIGHLIGHT_COLUMNS_WITH_CLASS = `${HIGHLIGHT_COLUMNS}, ${HIGHLIGHT_CLASS_COLUMNS.join(", ")}`;
+
+async function highlightColumns(sc: SupabaseClient | any): Promise<{ columns: string; classProjected: boolean }> {
+  const availability = await probeHighlightObject(sc, "highlights", HIGHLIGHT_CLASS_COLUMNS);
+  // `unreadable` gets the NARROW set on purpose. The wide one would fail the
+  // read outright, and a §12 badge is not worth turning a transient probe
+  // failure into an empty profile.
+  return availability.state === "ready"
+    ? { columns: HIGHLIGHT_COLUMNS_WITH_CLASS, classProjected: true }
+    : { columns: HIGHLIGHT_COLUMNS, classProjected: false };
+}
+
+/**
+ * The expiry predicate, in one place.
+ *
+ * A NULL `expires_at` is a §4 PERMANENT Highlight — migration 2975 makes the
+ * column nullable and constrains NULL to mean exactly that. `gt("expires_at",
+ * now)` is NULL-blind: in SQL, `NULL > now` is NULL, which is not TRUE, so a
+ * PERMANENT Highlight would silently vanish from every feed the moment the
+ * migration landed. That is the failure mode of adding nullability to a column
+ * three queries filter on, and it is why this is a named helper rather than
+ * three copies of an `.or()`.
+ */
+const NOT_EXPIRED = (now = new Date()) => `expires_at.is.null,expires_at.gt.${now.toISOString()}`;
+
+/**
+ * The §4 class and §5 state of a row, for the wire.
+ *
+ * Both come from `highlightLifecycle.ts`, which is emphatic that a class is
+ * STORED or UNKNOWN and is never inferred from `expires_at - created_at`. The
+ * `provenance` travels with the value for exactly that reason: a client can
+ * tell "the owner chose DAY" from "nobody has assigned a class" from "this
+ * deployment cannot hold one", and those are three different things to render.
+ *
+ * When the columns were not projected, `describeHighlightLifetime` answers
+ * `unavailable` with the reason — which is why this passes the ROW rather than
+ * a pre-decided value, and why `classProjected` only decides whether to include
+ * the fields at all.
+ */
+function describeLifetimeFields(row: any, classProjected: boolean): Record<string, unknown> {
+  if (!classProjected) return {};
+  const lifetime = describeHighlightLifetime(row);
+  const lifecycle = describeHighlightLifecycle(row);
+  return {
+    lifetimeClass: lifetime.provenance === "stored" ? lifetime.cls : null,
+    lifetimeProvenance: lifetime.provenance,
+    lifecycleState: lifecycle.provenance === "stored" || lifecycle.provenance === "derived" ? lifecycle.state : null,
+    lifecycleProvenance: lifecycle.provenance,
+    pinnedAt: row.pinned_at ?? null,
+  };
+}
+
+/* ============================================================================
+ * §10 / §11 — the projection policy pass.
+ *
+ * Highlights/Memories Development Architecture Spec v1:
+ *   §10 "Publishing location must never exceed the owner's selected precision";
+ *       "Temporary operational location must not leak into durable public
+ *        Highlights by default."
+ *   §11 the six resurfacing controls, of which DO_NOT_RESURFACE,
+ *       KEEP_PRIVATE_FOREVER and HIDE_PERSON_FROM_RESURFACING bear on a
+ *       proactively-assembled feed.
+ *
+ * WHY THE §11 PASS RUNS ON THE FEEDS AND NOT ON THE PROFILE READ. §21 draws the
+ * line for us: "Do not resurface — retain and search privately; suppress
+ * PROACTIVE resurfacing." GET /users/:id/highlights is an explicit retrieval — a
+ * person asked for that person's Highlights — so a DO_NOT_RESURFACE control does
+ * not apply to it. GET /highlights/active and GET /highlights/following-feed are
+ * assembled by the system and are exactly what "proactive" means.
+ *
+ * THAT RATIONALE IS ABOUT §11 AND WAS BEING APPLIED TO §10 AS WELL, which was
+ * wrong and is corrected here. One section header sat over two independent
+ * passes and the sentence above was true of only the first. §10 does not
+ * distinguish proactive from explicit: a profile read PUBLISHES a Highlight's
+ * `location_name` to a viewer exactly as a feed does, and the owner's selected
+ * rung binds either way. So `applyResurfacingControls` still runs on the feeds
+ * only, and `applyLocationPrecision` now runs on all three reads that publish a
+ * location. It changed nothing on the database of the day it was written —
+ * 2721 was unapplied, the policy read answered `absent`, and `absent` is a
+ * documented no-op — which is why it was closed BEFORE the migration landed
+ * rather than after. 2721 landed on 2026-09-15 and this call site has been
+ * enforcing since, with no edit.
+ *
+ * NO OWNER BYPASS is introduced by that third call site, because neither
+ * existing one has it: GET /highlights/active clamps the viewer's own
+ * Highlights too. The Memory sibling (`protectMemoryRow`) DOES bypass for the
+ * owner, so the two surfaces disagree; which reading §10 wants is an owner
+ * decision, and matching the call sites that already exist is the choice that
+ * cannot widen disclosure.
+ *
+ * THREE STATES, NOT TWO. See services/highlights/highlightSchemaAvailability.ts.
+ * `absent` (the table does not exist in THIS database) is reported and NOT
+ * enforced; `unreadable` fails CLOSED. The difference is decided by PostgREST's
+ * own missing-object codes, never by a heuristic.
+ *
+ * WHICH STATE PRODUCTION IS IN CHANGED ON 2026-09-15. Both passes above were
+ * built while 2720 and 2721 were applied to no database, so both ran and
+ * enforced nothing on every request. `production-applied-migrations.json`
+ * records both applied on 2026-09-15 and the committed production snapshot
+ * holds both tables, so every §10 rung and §11 control a user stores is now
+ * enforced here. Nothing in this file changed to make that true, and
+ * src/test/highlightsMemoriesDeployedStorage.test.ts asserts the fact so the
+ * next reader is not left deducing it from a census sentence.
+ * ============================================================================ */
+
+/**
+ * Drop the Highlights whose owner has asked that they not be resurfaced.
+ *
+ * Returns the surviving rows. An `unreadable` control table suppresses
+ * EVERYTHING — `isSuppressed` returns true for an unreadable set by
+ * construction — which on a feed means an empty page rather than a page that
+ * silently ignores a user's "never show me this again". An `absent` table
+ * suppresses nothing and is logged.
+ *
+ * ── THE CONTROL LIST IS DERIVED, AND IT USED NOT TO BE ──────────────────────
+ * This function held `["DO_NOT_RESURFACE", "KEEP_PRIVATE_FOREVER"]` as a local
+ * constant. `CONTROL_EFFECTS` names a FOURTH control that suppresses
+ * `proactive_resurfacing` — `HIDE_TRIP` — and the loop never asked about it, so
+ * a stored HIDE_TRIP row loaded into a `ready` set and was dropped on the
+ * floor: the owner's trip came back at them with a 200 and nothing anywhere
+ * said a control had been skipped. Deriving the list from CONTROL_EFFECTS makes
+ * that particular mistake unrepeatable — a seventh control cannot be added to
+ * the vocabulary and left unenforced here by omission.
+ *
+ * ── AND ONE OF THEM CANNOT BE RESOLVED ON THIS SURFACE ──────────────────────
+ * HIDE_TRIP is keyed on a TRIP id. `public.highlights` carries no trip column
+ * (production holds 22 columns and none of them is a trip reference — asserted
+ * in src/test/highlightsMemoriesDeployedStorage.test.ts), so no join, no
+ * projection and no query here can say which trip a Highlight belongs to.
+ * `unenforceableControls` names such a control instead of letting it be
+ * skipped, and this function WITHHOLDS rather than resurfacing.
+ *
+ * That is over-suppression and it is deliberate: it is the same direction this
+ * module already takes twice — an unreadable set suppresses everything, and a
+ * set carrying an unrecognised control is downgraded whole "rather than
+ * enforcing a partial policy that looks complete". It is not §11's HIDE_TRIP,
+ * which asks for ONE trip to be hidden; census H90 stays BUILT-BUT-WRONG on
+ * exactly that, and the remedy is a trip reference on `highlights`, which is a
+ * migration and not this function's to write.
+ *
+ * Until 2026-09-15 none of this was reachable: migration 2720 was applied to no
+ * database, every probe answered `absent`, and no control was enforced at all.
+ */
+function applyResurfacingControls<T extends { id: string; owner_id: string }>(
+  rows: T[],
+  set: ResurfacingSuppressions,
+  log: { error: (obj: unknown, msg: string) => void } | undefined,
+  where: string,
+): T[] {
+  if (set.state === "absent") {
+    log?.error(
+      { reason: set.reason, where },
+      "highlights: §11 resurfacing controls are NOT DEPLOYED — feed served without them",
+    );
+    return rows;
+  }
+  if (set.state === "unreadable") {
+    log?.error(
+      { reason: set.reason, where },
+      "highlights: §11 resurfacing controls unreadable — suppressing every candidate rather than resurfacing something a user asked to forget",
+    );
+    return [];
+  }
+
+  const unenforceable = unenforceableControls(set);
+  if (unenforceable.length > 0) {
+    log?.error(
+      { unenforceable: [...unenforceable], where },
+      "highlights: §11 control(s) set on a subject this surface cannot resolve (public.highlights carries no trip reference) — " +
+        "withholding the proactive feed rather than resurfacing something a user asked to hide",
+    );
+    return [];
+  }
+
+  return rows.filter((h) => {
+    for (const c of FEED_ENFORCEABLE_CONTROLS) {
+      const subject = feedSubjectScope(c) === "highlight" ? h.id : h.owner_id;
+      if (isSuppressed(set, c, subject)) return false;
+    }
+    return true;
+  });
+}
+
+/**
+ * §10 location precision. Rewrites `location_name` / `location_city` /
+ * `location_country` on each row to the owner's selected rung.
+ *
+ * When no precision is stored — which is EVERY Highlight today, because the
+ * column does not exist — the fields are returned unchanged and the reason is
+ * logged once for the page. LOCATION_PRECISION_DEFAULT is an OWNER decision and
+ * is deliberately not taken here; picking a default would strip location text
+ * from every Highlight now on the surface.
+ */
+function applyLocationPrecision<T extends { id: string; location_name?: string | null; location_city?: string | null; location_country?: string | null }>(
+  rows: T[],
+  policies: ProjectionPolicyRead,
+  log: { error: (obj: unknown, msg: string) => void } | undefined,
+  where: string,
+): T[] {
+  if (policies.state !== "ready") {
+    // `unreadable` clamps to HIDDEN inside resolveLocationDisclosure; `absent`
+    // leaves the row alone. Both are logged, neither is silent.
+    if (policies.state === "unreadable") {
+      log?.error(
+        { reason: policies.reason, where },
+        "highlights: §10 projection policy unreadable — clamping every location to HIDDEN",
+      );
+    } else {
+      log?.error(
+        { reason: policies.reason, where },
+        "highlights: §10 owner-selected location precision is NOT DEPLOYED — locations served unclamped",
+      );
+    }
+  }
+  return rows.map((h) => {
+    const stored = policies.state === "ready" ? policies.byHighlightId.get(h.id)?.location_precision : undefined;
+    const d = resolveLocationDisclosure(h, stored ?? null, policies);
+    return { ...h, location_name: d.location_name, location_city: d.location_city, location_country: d.location_country };
+  });
+}
+
+/**
+ * The engagement gate, once. Every engagement route calls this instead of
+ * re-deriving "is this my own highlight" inline — the fork that let
+ * lib/highlightPermissions.canEngageHighlight sit exported with zero callers
+ * while three handlers each restated its rule. See that file's header for which
+ * behaviour was kept and why.
+ *
+ * Returns true when the action may proceed; otherwise it has already sent the
+ * response.
+ */
+function gateEngagement(
+  userId: string,
+  h: HighlightRecord,
+  action: HighlightEngagement,
+  res: Response,
+): boolean {
+  // `true` for viewerCanView: every caller reaches here only after
+  // resolveViewAccess returned, which is the canViewHighlight verdict for this
+  // exact viewer and row. Recomputing it here would be a second, divergable
+  // answer — the thing this reconciliation exists to remove.
+  const verdict = canEngageHighlight(userId, h, action, true);
+  if (verdict.allowed) return true;
+  if (verdict.reason === "own_highlight") {
+    sendError(res, "invalid_payload", ownHighlightRefusal(action));
+  } else {
+    sendError(res, "not_found", "Highlight not found");
+  }
+  return false;
+}
+
+/* ============================================================================
+ * Trip membership — the definition of record, not a local approximation.
+ *
+ * Every trip_only read on this surface used to compute "shares a trip" as
+ *
+ *     trip_members WHERE role IN ('owner','member')      -- and nothing else
+ *
+ * on BOTH sides of the join. That is not what the API means by a trip member.
+ * lib/http.ts requireTripMember (the definition of record, http.ts:430-478)
+ * accepts a viewer when a trip_members row exists with
+ *     role IN ('owner','co_host','member','viewer')
+ *     AND (status IS NULL OR status = 'accepted')
+ * and, when NO row exists, when trips.owner_id is the viewer. trip_members
+ * encodes "pending" in TWO columns — the legacy role='invited' and the current
+ * status='invited' — so a predicate reading only one of them is defective.
+ *
+ * The old predicate therefore ran wrong in both directions at once:
+ *   FAIL-OPEN   role='member', status='invited' (a PENDING invitee) and
+ *               role='member', status='removed' (REMOVED from the trip) both
+ *               passed, so they read the trip_only highlights of everyone on a
+ *               trip they had not joined or had been removed from.
+ *   FAIL-CLOSED co_host and viewer are accepted crew everywhere else and were
+ *               omitted; a trip owner holding no trip_members row was omitted.
+ *
+ * Migration 2337 measured the same defect in the RLS policy behind this table
+ * (highlights_select_active) and built authz.shares_accepted_trip(uuid) for it;
+ * migration 2530 applies it. This is the app-side half of that fix, and it is
+ * the ONLY place on this surface that decides trip membership.
+ *
+ * FAIL CLOSED. supabase-js RESOLVES on a database error, so an unchecked
+ * `.data` reads as an empty result. Every read here checks `.error` and
+ * returns { ok: false }; callers then withhold every trip_only highlight rather
+ * than serving one on the strength of a lookup that did not happen. That is the
+ * same answer a genuine "not shared" produces, so the response shape is
+ * unchanged — only the log line distinguishes them.
+ * ============================================================================ */
+const ACCEPTED_TRIP_ROLES = new Set(["owner", "co_host", "member", "viewer"]);
+
+function isAcceptedMembershipRow(r: { role?: string | null; status?: string | null }): boolean {
+  if (!r.role || !ACCEPTED_TRIP_ROLES.has(r.role)) return false;
+  return r.status == null || r.status === "accepted";
+}
+
+type SharesTripResult =
+  | { ok: true; shared: Set<string> }
+  | { ok: false; error: unknown };
+
+/**
+ * Which of `ownerIds` are accepted crew of a trip that `viewerId` is ALSO
+ * accepted crew of, by requireTripMember's rule applied to BOTH people.
+ * Four reads, each `.error`-checked: the viewer's membership rows and owned
+ * trips (to derive the viewer's accepted trips, owner fallback included), then
+ * the owners' rows and ownerships on exactly those trips.
+ */
+async function sharesAcceptedTrip(
+  sc: SupabaseClient,
+  viewerId: string,
+  ownerIds: string[],
+): Promise<SharesTripResult> {
+  const shared = new Set<string>();
+  const others = [...new Set(ownerIds.filter((id) => id && id !== viewerId))];
+  if (others.length === 0) return { ok: true, shared };
+
+  const [viewerRows, viewerOwned] = await Promise.all([
+    sc.from("trip_members").select("trip_id, role, status").eq("user_id", viewerId),
+    sc.from("trips").select("id").eq("owner_id", viewerId),
+  ]);
+  if (viewerRows.error) return { ok: false, error: viewerRows.error };
+  if (viewerOwned.error) return { ok: false, error: viewerOwned.error };
+
+  // requireTripMember consults the row when one exists and falls back to
+  // trips.owner_id ONLY when none does — an owner whose own row says
+  // status='removed' is denied. Same shape here.
+  const viewerRowTrips = new Set<string>();
+  const viewerTrips = new Set<string>();
+  for (const r of (viewerRows.data ?? []) as any[]) {
+    viewerRowTrips.add(r.trip_id as string);
+    if (isAcceptedMembershipRow(r)) viewerTrips.add(r.trip_id as string);
+  }
+  for (const t of (viewerOwned.data ?? []) as any[]) {
+    if (!viewerRowTrips.has(t.id as string)) viewerTrips.add(t.id as string);
+  }
+  if (viewerTrips.size === 0) return { ok: true, shared };
+  const tripIds = [...viewerTrips];
+
+  const [ownerRows, ownerOwned] = await Promise.all([
+    sc.from("trip_members").select("trip_id, user_id, role, status").in("trip_id", tripIds).in("user_id", others),
+    sc.from("trips").select("id, owner_id").in("id", tripIds).in("owner_id", others),
+  ]);
+  if (ownerRows.error) return { ok: false, error: ownerRows.error };
+  if (ownerOwned.error) return { ok: false, error: ownerOwned.error };
+
+  const ownerRowKeys = new Set<string>();
+  for (const r of (ownerRows.data ?? []) as any[]) {
+    ownerRowKeys.add(`${r.trip_id}:${r.user_id}`);
+    if (isAcceptedMembershipRow(r)) shared.add(r.user_id as string);
+  }
+  for (const t of (ownerOwned.data ?? []) as any[]) {
+    if (!ownerRowKeys.has(`${t.id}:${t.owner_id}`)) shared.add(t.owner_id as string);
+  }
+  return { ok: true, shared };
+}
+
+/**
+ * The accepted crew of one trip, by the same rule: accepted rows plus the
+ * trips.owner_id fallback when the owner holds no row. Used only to scope the
+ * `?tripId=` filter on /highlights/active; the per-highlight permission check
+ * still runs on top of it.
+ */
+async function acceptedMemberIdsOfTrip(
+  sc: SupabaseClient,
+  tripId: string,
+): Promise<{ ok: true; ids: Set<string> } | { ok: false; error: unknown }> {
+  const [rows, trip] = await Promise.all([
+    sc.from("trip_members").select("user_id, role, status").eq("trip_id", tripId),
+    sc.from("trips").select("owner_id").eq("id", tripId).maybeSingle(),
+  ]);
+  if (rows.error) return { ok: false, error: rows.error };
+  if (trip.error) return { ok: false, error: trip.error };
+  const ids = new Set<string>();
+  const rowUsers = new Set<string>();
+  for (const r of (rows.data ?? []) as any[]) {
+    rowUsers.add(r.user_id as string);
+    if (isAcceptedMembershipRow(r)) ids.add(r.user_id as string);
+  }
+  const ownerId = (trip.data as any)?.owner_id as string | null | undefined;
+  if (ownerId && !rowUsers.has(ownerId)) ids.add(ownerId);
+  return { ok: true, ids };
+}
 
 /* ============================================================================
  * Internal helper — resolve whether viewerId can access highlightId.
@@ -22,13 +492,25 @@ async function resolveViewAccess(
   viewerId: string,
   highlightId: string,
   res: Response,
+  log?: { error: (obj: unknown, msg: string) => void },
 ): Promise<{ h: HighlightRecord } | null> {
-  const { data: h } = await sc
+  // An unreadable `highlights` table is NOT a missing highlight. supabase-js
+  // RESOLVES on a DB error, so `const { data: h }` bound null and this helper —
+  // the gate in front of view, like, unlike, reply and report — answered a table
+  // outage with "Highlight not found". That is not a permission verdict and it
+  // discloses nothing to say so: we do not know whether the row exists, so
+  // db_error is both the honest answer and the safe one. §28.11.
+  const { data: h, error: hErr } = await sc
     .from("highlights")
-    .select("id, owner_id, visibility, expires_at, deleted_at")
+    .select("id, owner_id, visibility, expires_at, deleted_at, archived_at")
     .eq("id", highlightId)
     .maybeSingle();
 
+  if (hErr) {
+    log?.error({ err: hErr, highlightId }, "highlights: highlight read failed — cannot resolve access");
+    sendError(res, "db_error", hErr.message);
+    return null;
+  }
   if (!h) {
     sendError(res, "not_found", "Highlight not found");
     return null;
@@ -37,13 +519,24 @@ async function resolveViewAccess(
   const record = h as HighlightRecord;
   const ownerId = record.owner_id;
 
-  // Block check (both directions)
+  // Block check (both directions). FAIL CLOSED.
+  //
+  // supabase-js RESOLVES rather than throws on a DB error, so `.data` is null on
+  // a failed query and the old `if (blockedByMe.data || blockingMe.data)` read a
+  // blocks-table failure as "these two users are not blocked" — the highlight,
+  // and every engagement action gated by this helper, was served. That is the
+  // MEM·M6 defect that routes/memories.ts fixed on the memories surface
+  // (isBlocked() there returns true on either error); the highlights surface
+  // never got the same treatment, in this helper or in the three feed routes.
+  // Spec §10: "blocking and account deletion must suppress future social
+  // resurfacing"; §28.11: never swallow a failure into a plausible-looking
+  // permissive answer.
   if (viewerId !== ownerId) {
     const [blockedByMe, blockingMe] = await Promise.all([
       sc.from("blocks").select("blocked_id").eq("blocker_id", viewerId).eq("blocked_id", ownerId).maybeSingle(),
       sc.from("blocks").select("blocker_id").eq("blocker_id", ownerId).eq("blocked_id", viewerId).maybeSingle(),
     ]);
-    if (blockedByMe.data || blockingMe.data) {
+    if (blockedByMe.error || blockingMe.error || blockedByMe.data || blockingMe.data) {
       sendError(res, "not_found", "Highlight not found");
       return null;
     }
@@ -53,24 +546,29 @@ async function resolveViewAccess(
   let viewerFollowsOwner = viewerId === ownerId;
   let sharesTrip = viewerId === ownerId;
 
-  if (viewerId !== ownerId && (record.visibility === "circle_only" || record.visibility === "trip_only")) {
-    const [circleMember, myTripRows] = await Promise.all([
-      sc.from("circle_memberships").select("other_id").eq("user_id", ownerId).eq("other_id", viewerId).maybeSingle(),
-      sc.from("trip_members").select("trip_id").eq("user_id", viewerId).in("role", ["owner", "member"]),
-    ]);
-    viewerFollowsOwner = Boolean(circleMember.data);
+  if (viewerId !== ownerId && record.visibility === "circle_only") {
+    // `Boolean(circleMember.data)` read a resolved DB error as "not in the
+    // circle". The deny is right — withholding is the safe answer — but nothing
+    // could tell it apart from a real one, which is the entry this site carries
+    // on the unchecked-reads ledger. Same treatment as the trip_only branch
+    // below: withhold, and say why.
+    const circleMember = await sc
+      .from("circle_memberships").select("other_id").eq("user_id", ownerId).eq("other_id", viewerId).maybeSingle();
+    if (circleMember.error) {
+      log?.error({ err: circleMember.error, highlightId }, "highlights: circle membership lookup failed — withholding circle_only highlight");
+      viewerFollowsOwner = false;
+    } else {
+      viewerFollowsOwner = Boolean(circleMember.data);
+    }
+  }
 
-    if (myTripRows.data && myTripRows.data.length > 0) {
-      const myTripIds = myTripRows.data.map((r: any) => r.trip_id as string);
-      const { data: sharedTrip } = await sc
-        .from("trip_members")
-        .select("trip_id")
-        .eq("user_id", ownerId)
-        .in("role", ["owner", "member"])
-        .in("trip_id", myTripIds)
-        .limit(1)
-        .maybeSingle();
-      sharesTrip = Boolean(sharedTrip);
+  if (viewerId !== ownerId && record.visibility === "trip_only") {
+    const shares = await sharesAcceptedTrip(sc, viewerId, [ownerId]);
+    if (shares.ok) {
+      sharesTrip = shares.shared.has(ownerId);
+    } else {
+      // Withhold: sharesTrip stays false and the highlight reads as not found.
+      log?.error({ err: shares.error, highlightId }, "highlights: trip membership lookup failed — withholding trip_only highlight");
     }
   }
 
@@ -79,8 +577,34 @@ async function resolveViewAccess(
     return null;
   }
 
+  // §10/§11 — the owner's stored decisions about OTHER people. Every route
+  // behind this gate (view, like, unlike, reply, report) is `public_projection`:
+  // the viewer came to a specific Highlight. Until 2026-09-18 none of it was
+  // consulted here, so KEEP_PRIVATE_FOREVER — which CONTROL_EFFECTS declares to
+  // suppress `public_projection` and highlightRevocation.ts promises the owner
+  // reaches it — held on the two feeds and on nothing a viewer could navigate
+  // to. Same answer as every other refusal above: not_found, so a control is
+  // indistinguishable from an absence. The owner is never refused their own
+  // record (see highlightPublicProjection.ts).
+  if (viewerId !== ownerId) {
+    const inputs = await readProjectionInputs(sc, [ownerId], [highlightId]);
+    const projectable = filterProjectable([record], viewerId, "public_projection", inputs, log, "resolveViewAccess");
+    if (projectable.length === 0) {
+      sendError(res, "not_found", "Highlight not found");
+      return null;
+    }
+  }
+
   return { h: record };
 }
+
+/**
+ * §12 finiteness bounds for GET /highlights/following-feed, engaged only when
+ * `highlights_feed_bounded_enabled` is on (migration 2339). 60 is a page of
+ * highlights, not a policy about how many Highlights a person may have.
+ */
+const FOLLOWING_FEED_DEFAULT_LIMIT = 60;
+const FOLLOWING_FEED_MAX_LIMIT = 200;
 
 const EXPIRY_HOURS = [3, 6, 12, 24, 48] as const;
 const MAX_VIDEO_DURATION_SECONDS = 10;
@@ -108,6 +632,15 @@ const createHighlightSchema = z.object({
   filterIntensity: z.number().int().min(0).max(100).optional().default(100),
   mediaThumbnailUrl: z.string().min(1).nullable().optional(),
   mediaDurationSeconds: z.number().int().min(0).max(10).nullable().optional(),
+  /**
+   * §4 HighlightLifetime. OPTIONAL, and absent means absent: a Highlight
+   * created without one has NO class, which `describeHighlightLifetime` reports
+   * as "no class has been assigned". It is deliberately NOT defaulted to DAY —
+   * nothing in §12 assigns hour boundaries to the classes, so a default would
+   * be invented product policy wearing the spec's vocabulary, which is exactly
+   * what `highlightLifecycle.ts`'s header refuses to do.
+   */
+  lifetimeClass: z.enum(HIGHLIGHT_LIFETIME_CLASSES).optional(),
 });
 
 /* ============================================================================
@@ -137,7 +670,15 @@ router.post("/highlights", async (req, res) => {
     }
   }
 
-  const expiresAt = new Date(Date.now() + d.expiresInHours * 60 * 60 * 1000).toISOString();
+  // §4 PERMANENT is the one class whose STORAGE differs: a permanent Highlight
+  // is one with no expiry, so `expires_at` is NULL and migration 2975's CHECK
+  // constrains NULL to mean exactly that. Every other class keeps the expiry the
+  // caller chose — §12 gives the classes behaviour, not durations, and bucketing
+  // `expiresInHours` into them would be invented policy.
+  const permanent = d.lifetimeClass === "PERMANENT";
+  const expiresAt = permanent
+    ? null
+    : new Date(Date.now() + d.expiresInHours * 60 * 60 * 1000).toISOString();
 
   const { data, error } = await client
     .from("highlights")
@@ -152,14 +693,55 @@ router.post("/highlights", async (req, res) => {
       location_country: d.locationCountry ?? null,
       visibility: d.visibility,
       expires_at: expiresAt,
-      // filter_id / filter_intensity / media_thumbnail_url / media_duration_seconds
-      // do not exist on the live highlights table — accepted in the payload for
-      // client compatibility but not persisted.
+      // Omitted entirely when the caller named no class, so a row without one
+      // is NULL rather than a value nobody chose. `undefined` is dropped from a
+      // PostgREST insert body; `null` would be written.
+      ...(d.lifetimeClass ? { lifetime_class: d.lifetimeClass } : {}),
+      // filter_id / filter_intensity DO exist on the live highlights table.
+      //
+      // The comment that used to sit here said they did not, and it was wrong —
+      // measured 2026-09-07 against production (ajrurzioarfkagpuxfnb): both
+      // columns are present, NOT NULL, defaulting to 'original' / 100. They were
+      // added deliberately by migration 0164_write_path_drift_columns_2.sql,
+      // whose own header names this exact pair as "written by the save-story-to-
+      // highlight insert" — and routes/stories.ts does write them. So the schema
+      // was fixed, one of the two writers was updated, and this one was left
+      // validating the client's chosen filter against KNOWN_FILTER_IDS and then
+      // discarding it. Every highlight created through this route has been
+      // stored as 'original' at intensity 100 regardless of what the user chose.
+      filter_id: d.filterId,
+      filter_intensity: d.filterIntensity,
+      // media_thumbnail_url / media_duration_seconds genuinely do NOT exist
+      // live (re-measured the same day): accepted in the payload for client
+      // compatibility and deliberately not persisted. One unknown column fails
+      // the WHOLE insert (PGRST204), so this distinction is load-bearing.
     })
-    .select("id, owner_id, media_url, media_type, video_duration_seconds, caption, location_name, location_city, location_country, visibility, expires_at, created_at, deleted_at")
+    .select(HIGHLIGHT_COLUMNS)
     .single();
 
   if (error) {
+    // A PERMANENT Highlight on a database that has not run 2975 fails on the
+    // NOT NULL, and on one that has 2723 but not 2975 it would fail the CHECK.
+    // Both are REFUSED BY NAME rather than quietly retried with a 24-hour
+    // expiry: a Highlight the user asked to keep forever, stored with an
+    // expiry, is a promise broken silently — and `describeHighlightLifetime`
+    // would grade the row `invalid` anyway.
+    const code = String((error as any)?.code ?? "");
+    if (permanent && (code === "23502" || code === "23514")) {
+      req.log.error(
+        { err: error, ownerId: user.id },
+        "highlights: PERMANENT refused — highlights.expires_at is still NOT NULL or the 2975 constraint is absent; migration 2975_highlights_permanent_lifetime.sql is not applied on this database",
+      );
+      sendError(res, "feature_disabled", "Permanent highlights are not available on this deployment yet.");
+      return;
+    }
+    // A class this database cannot hold at all (2723 not applied) is the same
+    // shape of answer, and PGRST204 is how PostgREST says so.
+    if (d.lifetimeClass && code === "PGRST204") {
+      req.log.error({ err: error, ownerId: user.id }, "highlights: lifetime_class column is absent — migration 2723 is not applied on this database");
+      sendError(res, "feature_disabled", "Highlight lifetimes are not available on this deployment yet.");
+      return;
+    }
     req.log.error({ err: error }, "Failed to create highlight");
     sendError(res, "db_error", error.message);
     return;
@@ -189,11 +771,21 @@ router.get("/users/:userId/highlights", async (req, res) => {
     return;
   }
 
-  // Check blocks in both directions
+  // Check blocks in both directions. FAIL CLOSED — see resolveViewAccess above:
+  // an errored lookup used to read as "not blocked" and serve the profile's
+  // highlights. Serving an EMPTY list on an unresolvable block state is the safe
+  // answer here (it is what a genuine block returns) and keeps the route's
+  // contract; it does not pretend the user has no highlights, it declines to
+  // decide who may see them.
   const [blocker, blocked] = await Promise.all([
     client.from("blocks").select("blocked_id").eq("blocker_id", user.id).eq("blocked_id", targetId).maybeSingle(),
     client.from("blocks").select("blocked_id").eq("blocker_id", targetId).eq("blocked_id", user.id).maybeSingle(),
   ]);
+  if (blocker.error || blocked.error) {
+    req.log.error({ err: blocker.error ?? blocked.error }, "highlights: block lookup failed — failing closed");
+    res.status(200).json({ highlights: [] });
+    return;
+  }
   if (blocker.data || blocked.data) {
     res.status(200).json({ highlights: [] });
     return;
@@ -202,12 +794,17 @@ router.get("/users/:userId/highlights", async (req, res) => {
   const isOwnProfile = user.id === targetId;
 
   // Load active (non-expired, non-deleted) highlights for target user
+  const profileProjection = await highlightColumns(client);
   const { data: rows, error } = await client
     .from("highlights")
-    .select("id, owner_id, media_url, media_type, video_duration_seconds, caption, location_name, location_city, location_country, visibility, expires_at, created_at, deleted_at")
+    .select(profileProjection.columns)
     .eq("owner_id", targetId)
     .is("deleted_at", null)
-    .gt("expires_at", new Date().toISOString())
+    // §21 Archive: "remove from normal browsing unless explicitly requested".
+    // A profile view is browsing. The owner reaches archived Highlights through
+    // GET /highlights/archived, which is the explicit request.
+    .is("archived_at", null)
+    .or(NOT_EXPIRED())
     .order("created_at", { ascending: true });
 
   if (error) {
@@ -216,7 +813,11 @@ router.get("/users/:userId/highlights", async (req, res) => {
     return;
   }
 
-  const highlights = (rows ?? []) as any[];
+  // §12: "Pinned/manual order always outranks automatic ordering." Applied
+  // BEFORE any permission filtering below reorders nothing and after the query
+  // has chosen its own order, so an unpinned page keeps `ORDER BY created_at`
+  // exactly as it was. See pinnedFirst for what this deliberately does NOT do.
+  const highlights = pinnedFirst((rows ?? []) as any[]);
 
   // For non-owners, check circle (follows) + trip membership to filter restricted visibility
   let viewerFollowsOwner = false;
@@ -225,22 +826,24 @@ router.get("/users/:userId/highlights", async (req, res) => {
   if (!isOwnProfile && highlights.some((h) => ["circle_only", "trip_only"].includes(h.visibility))) {
     const sc = getServiceClient();
     if (sc) {
-      const [circleMember, tripRows] = await Promise.all([
-        sc.from("circle_memberships").select("other_id").eq("user_id", targetId).eq("other_id", user.id).maybeSingle(),
-        sc.from("trip_members").select("trip_id").eq("user_id", user.id).in("role", ["owner", "member"]),
-      ]);
-      viewerFollowsOwner = Boolean(circleMember.data);
-      if (tripRows.data && tripRows.data.length > 0) {
-        const myTripIds = tripRows.data.map((r: any) => r.trip_id as string);
-        const { data: sharedTrip } = await sc
-          .from("trip_members")
-          .select("trip_id")
-          .eq("user_id", targetId)
-          .in("role", ["owner", "member"])
-          .in("trip_id", myTripIds)
-          .limit(1)
-          .maybeSingle();
-        sharesTrip = Boolean(sharedTrip);
+      const circleMember = await sc
+        .from("circle_memberships").select("other_id").eq("user_id", targetId).eq("other_id", user.id).maybeSingle();
+      if (circleMember.error) {
+        req.log.error({ err: circleMember.error, targetId }, "highlights: circle membership lookup failed — withholding circle_only highlights");
+        viewerFollowsOwner = false;
+      } else {
+        viewerFollowsOwner = Boolean(circleMember.data);
+      }
+
+      if (highlights.some((h) => h.visibility === "trip_only")) {
+        const shares = await sharesAcceptedTrip(sc, user.id, [targetId]);
+        if (shares.ok) {
+          sharesTrip = shares.shared.has(targetId);
+        } else {
+          // Withhold the trip_only ones; everything else on the profile is
+          // still decided on its own merits.
+          req.log.error({ err: shares.error, targetId }, "highlights: trip membership lookup failed — withholding trip_only highlights");
+        }
       }
     }
   }
@@ -251,9 +854,24 @@ router.get("/users/:userId/highlights", async (req, res) => {
   }
 
   // Filter by permission
-  const visible = highlights.filter((h) =>
+  const permitted = highlights.filter((h) =>
     canViewHighlight(user.id, h as any, { viewerFollowsOwner, sharesTrip }),
   );
+
+  // §10/§11 — the owner's stored decisions about OTHER people. A profile
+  // visit is `public_projection`: nothing was resurfaced, the viewer came
+  // here — so KEEP_PRIVATE_FOREVER and a refused SHARE consent withhold, and
+  // DO_NOT_RESURFACE / a refused RESURFACE consent deliberately do not (§21:
+  // "retain and search privately; suppress proactive resurfacing"). The owner's
+  // own profile skips the read: the owner is never refused their own record.
+  // The policy read is kept and reused for the §10 location clamp below.
+  const gateClient = getServiceClient();
+  const inputs = isOwnProfile
+    ? null
+    : await readProjectionInputs(gateClient, [targetId], permitted.map((h: any) => h.id as string));
+  const visible = inputs
+    ? filterProjectable(permitted as any[], user.id, "public_projection", inputs, req.log, "GET /users/:userId/highlights")
+    : permitted;
 
   if (visible.length === 0) {
     res.status(200).json({ highlights: [] });
@@ -288,13 +906,25 @@ router.get("/users/:userId/highlights", async (req, res) => {
     }
   }
 
-  const result = visible.map((h: any) => ({
+  // §10 — clamp each location to the owner's selected precision, exactly as
+  // GET /highlights/active and GET /highlights/following-feed do. `sc` is the
+  // service client the author lookup above already required; when it is null
+  // the policy cannot be read at all, and the honest answer is the same
+  // fail-closed one `readProjectionPolicies` gives an unreadable table.
+  // `sc` may be null here — the author lookup above already tolerates that — and
+  // `readProjectionPolicies` answers `unreadable` for a null client rather than
+  // this handler inventing a state of its own. See that function's comment.
+  const policies: ProjectionPolicyRead = inputs ? inputs.policies : await readProjectionPolicies(sc, highlightIds);
+  const disclosed = applyLocationPrecision(visible as any[], policies, req.log, "GET /users/:userId/highlights");
+
+  const result = disclosed.map((h: any) => ({
     ...h,
     author,
     viewCount: viewCountMap[h.id] ?? 0,
     likeCount: likeCountMap[h.id] ?? 0,
     viewedByMe: viewedSet.has(h.id),
     likedByMe: likedSet.has(h.id),
+    ...describeLifetimeFields(h, profileProjection.classProjected),
   }));
 
   res.status(200).json({ highlights: result });
@@ -317,45 +947,60 @@ router.get("/highlights/active", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
-  // Resolve trip member IDs when tripId filter is provided
+  // Resolve the trip's ACCEPTED crew when a tripId filter is provided. This
+  // scopes the query to that crew's highlights; the per-highlight permission
+  // check below still decides each one. FAIL CLOSED: an unreadable membership
+  // is an error, and a trip with no accepted crew (or no such trip) is an empty
+  // page — it used to be an UNFILTERED page, because `data ?? []` on an errored
+  // or empty read produced a zero-size set and the filter was skipped.
   let tripMemberIds: Set<string> | null = null;
-  let viewerTripIds: string[] = [];
 
   if (filterTripId) {
-    const { data: memberRows } = await sc
-      .from("trip_members")
-      .select("user_id")
-      .eq("trip_id", filterTripId)
-      .in("role", ["owner", "member"]);
-    const ids = (memberRows ?? []).map((r: any) => r.user_id as string);
-    // Ensure the viewer is actually in the trip (or it's public — we still filter below)
-    tripMemberIds = new Set(ids);
+    const members = await acceptedMemberIdsOfTrip(sc, filterTripId);
+    if (!members.ok) {
+      req.log.error({ err: members.error, tripId: filterTripId }, "highlights: trip crew lookup failed — failing closed");
+      sendError(res, "db_error", "Could not resolve trip membership");
+      return;
+    }
+    if (members.ids.size === 0) {
+      res.status(200).json({ highlights: [] });
+      return;
+    }
+    tripMemberIds = members.ids;
   }
 
-  // Resolve trips the viewer is in (for trip_only permission checking)
-  const { data: viewerTripRows } = await sc
-    .from("trip_members")
-    .select("trip_id")
-    .eq("user_id", user.id)
-    .in("role", ["owner", "member"]);
-  viewerTripIds = (viewerTripRows ?? []).map((r: any) => r.trip_id as string);
-
-  // Get blocks list for this user (both directions)
+  // Get blocks list for this user (both directions). FAIL CLOSED.
+  //
+  // `data ?? []` on an errored query yields an EMPTY block set — nothing
+  // filtered — which is indistinguishable at the call site from "this viewer
+  // has blocked nobody". A transient blocks-table failure therefore served
+  // blocked owners' highlights into the feed. Same defect, same fix, as
+  // routes/memories.ts's discovery feed.
   const [blockedByMe, blockingMe] = await Promise.all([
     sc.from("blocks").select("blocked_id").eq("blocker_id", user.id),
     sc.from("blocks").select("blocker_id").eq("blocked_id", user.id),
   ]);
+  if (blockedByMe.error || blockingMe.error) {
+    req.log.error(
+      { err: blockedByMe.error ?? blockingMe.error },
+      "highlights: block lookup failed — failing closed",
+    );
+    sendError(res, "db_error", "Could not resolve block state");
+    return;
+  }
   const blockedIds = new Set<string>([
     ...((blockedByMe.data ?? []).map((r: any) => r.blocked_id as string)),
     ...((blockingMe.data ?? []).map((r: any) => r.blocker_id as string)),
   ]);
 
   // Build query — include trip_only so trip members can see them
+  const activeProjection = await highlightColumns(sc);
   let q = sc
     .from("highlights")
-    .select("id, owner_id, media_url, media_type, video_duration_seconds, caption, location_name, location_city, location_country, visibility, expires_at, created_at, deleted_at")
+    .select(activeProjection.columns)
     .is("deleted_at", null)
-    .gt("expires_at", new Date().toISOString())
+    .is("archived_at", null) // §21 Archive — see GET /users/:id/highlights
+    .or(NOT_EXPIRED())
     .in("visibility", ["public", "travelers_nearby", "circle_only", "trip_only"])
     .order("created_at", { ascending: false })
     .limit(limit * 5); // over-fetch to account for permission filtering
@@ -386,11 +1031,16 @@ router.get("/highlights/active", async (req, res) => {
   )];
   const followingSet = new Set<string>();
   if (circleOwnerIds.length > 0) {
-    const { data: circleRows } = await sc
+    const { data: circleRows, error: circleErr } = await sc
       .from("circle_memberships")
       .select("user_id")
       .eq("other_id", user.id)
       .in("user_id", circleOwnerIds);
+    if (circleErr) {
+      // `circleRows ?? []` on an error left followingSet empty, which withholds
+      // — right answer, silent. Withhold and say so.
+      req.log.error({ err: circleErr }, "highlights: circle membership lookup failed — withholding circle_only highlights");
+    }
     for (const r of circleRows ?? []) followingSet.add((r as any).user_id as string);
   }
 
@@ -398,33 +1048,62 @@ router.get("/highlights/active", async (req, res) => {
   const tripOnlyOwnerIds = [...new Set(
     unblocked.filter((h: any) => h.visibility === "trip_only").map((h: any) => h.owner_id as string)
   )];
-  const sharesTripSet = new Set<string>();
-  if (tripOnlyOwnerIds.length > 0 && viewerTripIds.length > 0) {
-    const { data: sharedRows } = await sc
-      .from("trip_members")
-      .select("user_id")
-      .in("user_id", tripOnlyOwnerIds)
-      .in("trip_id", viewerTripIds)
-      .in("role", ["owner", "member"]);
-    for (const r of sharedRows ?? []) sharesTripSet.add((r as any).user_id as string);
+  let sharesTripSet = new Set<string>();
+  if (tripOnlyOwnerIds.length > 0) {
+    const shares = await sharesAcceptedTrip(sc, user.id, tripOnlyOwnerIds);
+    if (shares.ok) {
+      sharesTripSet = shares.shared;
+    } else {
+      req.log.error({ err: shares.error }, "highlights: trip membership lookup failed — withholding trip_only highlights");
+    }
   }
 
-  // Permission filter
-  const visible = unblocked.filter((h: any) => {
-    if (h.owner_id === user.id) return true;
-    if (h.visibility === "public" || h.visibility === "travelers_nearby") return true;
-    if (h.visibility === "circle_only") return followingSet.has(h.owner_id as string);
-    if (h.visibility === "trip_only") return sharesTripSet.has(h.owner_id as string);
-    return false;
-  }).slice(0, limit);
+  // Permission filter — THE shared rule, not a fourth copy of it.
+  //
+  // This was an inline switch over `visibility` that restated
+  // lib/highlightPermissions.canViewHighlight. It reached the same verdict for
+  // every case the query can return, because the query already filters
+  // deleted_at / expires_at / private — which is exactly why the fork was
+  // survivable and exactly why it was dangerous: change the query and the two
+  // silently disagree. canViewHighlight re-checks expiry, deletion and (new)
+  // archive itself, so the guarantee no longer depends on the SELECT.
+  const visible = unblocked.filter((h: any) =>
+    canViewHighlight(user.id, h as HighlightRecord, {
+      viewerFollowsOwner: followingSet.has(h.owner_id as string),
+      sharesTrip: sharesTripSet.has(h.owner_id as string),
+    }),
+  ).slice(0, limit);
 
-  if (visible.length === 0) {
+  // §11 — this feed is PROACTIVE resurfacing, so the owner's resurfacing
+  // controls apply to it. Read for the owners on the page, one query.
+  const suppressed = await readResurfacingSuppressionsForOwners(
+    sc,
+    visible.map((h: any) => h.owner_id as string),
+  );
+  const surviving = applyResurfacingControls(visible as any[], suppressed, req.log, "GET /highlights/active");
+
+  if (surviving.length === 0) {
     res.status(200).json({ highlights: [] });
     return;
   }
 
-  const highlightIds = visible.map((h: any) => h.id as string);
-  const ownerIds = [...new Set(visible.map((h: any) => h.owner_id as string))];
+  // §10 — a refused RESURFACE or SHARE consent withholds from a proactive feed.
+  // The policy read doubles as the location-precision read below.
+  const policies = await readProjectionPolicies(sc, surviving.map((h: any) => h.id as string));
+  const consented = filterProjectable(
+    surviving as any[], user.id, "proactive_resurfacing", { controls: suppressed, policies }, req.log, "GET /highlights/active",
+  );
+
+  if (consented.length === 0) {
+    res.status(200).json({ highlights: [] });
+    return;
+  }
+
+  const highlightIds = consented.map((h: any) => h.id as string);
+  const ownerIds = [...new Set(consented.map((h: any) => h.owner_id as string))];
+
+  // §10 — clamp each location to the owner's selected precision.
+  const disclosed = applyLocationPrecision(consented as any[], policies, req.log, "GET /highlights/active");
 
   // Batch metrics + author profiles
   const [viewRows, likeRows, viewedRows, likedRows, profileRows] = await Promise.all([
@@ -448,16 +1127,403 @@ router.get("/highlights/active", async (req, res) => {
     profileMap[(p as any).id] = { id: (p as any).id, handle: (p as any).handle, name: presentedName(p as any, (p as any).id === user.id || allowedNames.has((p as any).id)), avatarUrl: (p as any).avatar_url ?? null };
   }
 
-  const result = visible.map((h: any) => ({
+  const result = disclosed.map((h: any) => ({
     ...h,
     author: profileMap[h.owner_id] ?? null,
     viewCount: viewCountMap[h.id] ?? 0,
     likeCount: likeCountMap[h.id] ?? 0,
     viewedByMe: viewedSet.has(h.id),
     likedByMe: likedSet.has(h.id),
+    ...describeLifetimeFields(h, activeProjection.classProjected),
   }));
 
   res.status(200).json({ highlights: result });
+});
+
+/* ============================================================================
+ * §5 / §12 — PIN and UNPIN.
+ *
+ * Highlights/Memories Development Architecture Spec v1 §12: "Pinned/manual
+ * order always outranks automatic ordering", and §5's lifecycle, which puts
+ * PINNED on the diagram.
+ *
+ * Census H142 (PIN_HIGHLIGHT) and H143 (UNPIN_HIGHLIGHT) are NOT-BUILT with the
+ * evidence "no pin column in production, no pin route, no pin in the client.
+ * migrations/2723_highlight_class_lifecycle_and_pin.sql:7 pinned_at would add
+ * one and is unapplied." The first clause is STALE: 2723 was applied to
+ * production on 2026-09-15 and `pinned_at` is in the 20260915 snapshot. The
+ * other two clauses were true until this handler and the client action next to
+ * it.
+ *
+ * WHAT THIS WRITES, AND WHAT IT DELIBERATELY DOES NOT.
+ * It writes `pinned_at` and NOTHING ELSE. It does not set
+ * `lifecycle_state = 'PINNED'`, and the reason is §5's own diagram: the
+ * transitions are DRAFT→ACTIVE, ACTIVE→EXPIRED, ACTIVE→PINNED, PINNED→HIDDEN,
+ * HIDDEN→EXPIRED. There is no PINNED→ACTIVE edge, so a stored PINNED state
+ * could never be undone without making an illegal transition — while §17's
+ * command list names UNPIN_HIGHLIGHT, which says it must be undoable. Those two
+ * halves of the spec disagree, and resolving a spec disagreement is not this
+ * lane's to do. Writing only the column means unpin is a reversal of a fact
+ * rather than an illegal move in a state machine, and
+ * `describeHighlightLifecycle` DERIVES PINNED from the column, which is the
+ * same answer without the claim.
+ * ============================================================================ */
+router.post("/highlights/:id/pin", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { client, user } = auth;
+
+  const { id } = req.params;
+  if (!UUID.test(id)) { sendError(res, "invalid_payload", "Invalid highlight id"); return; }
+
+  const { data: updated, error } = await client
+    .from("highlights")
+    .update({ pinned_at: new Date().toISOString() })
+    .eq("id", id)
+    .eq("owner_id", user.id)
+    .is("deleted_at", null)
+    .select("id, pinned_at");
+
+  if (error) {
+    if (String((error as any)?.code ?? "") === "PGRST204") {
+      req.log.error({ err: error, highlightId: id }, "highlights: pinned_at column is absent — migration 2723 is not applied on this database");
+      sendError(res, "feature_disabled", "Pinning is not available on this deployment yet.");
+      return;
+    }
+    req.log.error({ err: error, highlightId: id }, "highlights: pin failed");
+    sendError(res, "db_error", error.message);
+    return;
+  }
+  // Zero rows: not yours, not there, or already deleted — one answer to this
+  // caller, for the same reason the archive handlers give one.
+  if (!updated || (updated as any[]).length === 0) {
+    sendError(res, "not_found", "Highlight not found");
+    return;
+  }
+  res.status(200).json({ id, pinnedAt: (updated as any[])[0].pinned_at });
+});
+
+/** §17 UNPIN_HIGHLIGHT. A pin a user cannot undo is a trap, not curation. */
+router.delete("/highlights/:id/pin", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { client, user } = auth;
+
+  const { id } = req.params;
+  if (!UUID.test(id)) { sendError(res, "invalid_payload", "Invalid highlight id"); return; }
+
+  const { data: updated, error } = await client
+    .from("highlights")
+    .update({ pinned_at: null })
+    .eq("id", id)
+    .eq("owner_id", user.id)
+    .is("deleted_at", null)
+    .select("id");
+
+  if (error) {
+    if (String((error as any)?.code ?? "") === "PGRST204") {
+      sendError(res, "feature_disabled", "Pinning is not available on this deployment yet.");
+      return;
+    }
+    req.log.error({ err: error, highlightId: id }, "highlights: unpin failed");
+    sendError(res, "db_error", error.message);
+    return;
+  }
+  if (!updated || (updated as any[]).length === 0) {
+    sendError(res, "not_found", "Highlight not found");
+    return;
+  }
+  res.status(200).json({ id, pinnedAt: null });
+});
+
+/* ============================================================================
+ * §4 / §12 — which lifetime classes this DEPLOYMENT can actually hold.
+ *
+ * A client that offered PERMANENT on a database whose `expires_at` is still
+ * NOT NULL would offer a choice that fails on save. `representableLifetimeClasses`
+ * is the function that answers this and it has never had a caller;
+ * `highlightLifecycle.ts`'s header is entirely about why the answer must be
+ * measured rather than assumed.
+ *
+ * WHAT IT CAN AND CANNOT MEASURE. Column EXISTENCE is probeable through
+ * PostgREST; column NULLABILITY is not. So this endpoint answers the half it
+ * can — whether 2723 landed, which decides whether any class is storable — and
+ * marks PERMANENT `mayNotBeStorable`, because that one additionally needs
+ * 2975's nullable `expires_at` and no read on this connection can see it. The
+ * create path then refuses PERMANENT BY NAME when the database says no. A
+ * client that shows the option and reports the refusal is honest in both
+ * directions; one that claimed an availability nothing here verified would not
+ * be.
+ * ============================================================================ */
+router.get("/highlights/lifetime-classes", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { client } = auth;
+
+  const availability = await probeHighlightObject(client, "highlights", HIGHLIGHT_CLASS_COLUMNS);
+  const deployed = availability.state === "ready";
+
+  res.status(200).json({
+    deployed,
+    classes: HIGHLIGHT_LIFETIME_CLASSES.map((cls) => ({
+      cls,
+      example: HIGHLIGHT_CLASS_DEFAULTS[cls].example,
+      defaultBehavior: HIGHLIGHT_CLASS_DEFAULTS[cls].defaultBehavior,
+      // PERMANENT needs a nullable `expires_at`, which migration 2975 provides
+      // and which no probe on this connection can see. Named rather than
+      // silently offered or silently withheld.
+      mayNotBeStorable: cls === "PERMANENT",
+    })),
+    reason: deployed ? null : (availability as any).reason,
+  });
+});
+
+/* ============================================================================
+ * §10 / §11 — THE CONTROL SURFACE. The half that was missing.
+ *
+ * Highlights/Memories Development Architecture Spec v1 §10 (an owner's
+ * SELECTED location precision, person visibility and consent) and §11 (the six
+ * resurfacing controls).
+ *
+ * Both tables were applied to production on 2026-09-15 and the enforcement
+ * that reads them is live, correct and route-tested — `applyResurfacingControls`
+ * above and `resolveLocationDisclosure` on all three read paths. Census §O.2
+ * then recorded what remained: "There is no route, no service and no script by
+ * which a user can set a §11 resurfacing control or a §10 precision rung. Both
+ * tables are deployed and EMPTY, and they will stay empty." These five handlers
+ * are the writer, and with them every control this repository enforces is a
+ * control somebody can actually set.
+ *
+ * THE PATH ORDER IS LOAD-BEARING. `/highlights/resurfacing-controls` is
+ * registered BEFORE `DELETE /highlights/:id`, because Express matches in
+ * declaration order and `:id` would otherwise capture the literal segment and
+ * refuse it as a malformed UUID — a 400 on a route that exists.
+ *
+ * AUTHORIZATION IS APP-SIDE, NOT RLS. `requireUser` returns the SERVICE client,
+ * which bypasses every policy migrations 2720 and 2721 install. Every check
+ * that matters is in `services/highlights/highlightControlWrites.ts` and is
+ * exercised by src/test/highlightControlWrites.test.ts.
+ * ============================================================================ */
+
+/** One refusal mapping for all five handlers, so no two disagree. */
+function sendControlFailure(
+  res: Response,
+  reason: ControlWriteFailure,
+  detail: string,
+  log: (obj: any, msg: string) => void,
+): void {
+  switch (reason) {
+    case "invalid":
+      sendError(res, "invalid_payload", detail);
+      return;
+    case "not_owned":
+      // 404, not 403: see ownsHighlight. Telling a caller "that exists but is
+      // not yours" makes this endpoint an existence oracle for other people's
+      // Highlight ids.
+      sendError(res, "not_found", "Highlight not found");
+      return;
+    case "not_deployed":
+      // The control does not exist on this database. It is NOT an error the
+      // user caused and it is NOT a stored preference — reporting 200 here
+      // would tell somebody their Memory is protected when nothing was written.
+      log({ detail }, "highlights: §10/§11 control table is not deployed — refusing rather than reporting a stored preference");
+      sendError(res, "feature_disabled", "This privacy control is not available on this deployment.");
+      return;
+    case "unavailable":
+    case "write_unconfirmed":
+      log({ detail, reason }, "highlights: §10/§11 control write could not be confirmed — refusing rather than reporting success");
+      sendError(res, "degraded_unavailable", "We could not save that privacy setting. Please try again.");
+      return;
+  }
+}
+
+/** Every §11 control this user has set, with what each one suppresses. */
+router.get("/highlights/resurfacing-controls", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { client, user } = auth;
+
+  const listed = await listResurfacingControls(client, user.id);
+  if (!listed.ok) {
+    sendControlFailure(res, listed.reason, listed.detail, (o, m) => req.log.error(o, m));
+    return;
+  }
+
+  res.status(200).json({
+    controls: listed.value.map((c) => ({
+      control: c.control,
+      subjectType: c.subjectType,
+      subjectId: c.subjectId,
+      createdAt: c.createdAt,
+      // The surfaces the control acts on travel WITH it, derived from
+      // CONTROL_EFFECTS rather than retyped in the client. §21 insists these
+      // stay separate operations in the UX as well as the data model, and a
+      // client that has to hard-code "do-not-resurface means the feed" is one
+      // release away from disagreeing with the server about what it means.
+      suppresses: CONTROL_EFFECTS[c.control].suppresses,
+      retainsRecord: CONTROL_EFFECTS[c.control].retainsRecord,
+    })),
+    // Named so a client can render the controls it cannot yet enforce
+    // differently, rather than promising an effect the feed does not deliver.
+    // This is census H90's ceiling, stated on the wire.
+    unenforceableOnFeed: RESURFACING_CONTROLS.filter(
+      (c) =>
+        (CONTROL_EFFECTS[c].suppresses as readonly string[]).includes("proactive_resurfacing") &&
+        !(FEED_ENFORCEABLE_CONTROLS as readonly string[]).includes(c),
+    ),
+    catalogue: RESURFACING_CONTROLS.map((c) => ({
+      control: c,
+      scope: CONTROL_EFFECTS[c].scope,
+      suppresses: CONTROL_EFFECTS[c].suppresses,
+      note: CONTROL_EFFECTS[c].note,
+    })),
+  });
+});
+
+/** Set one §11 control. Idempotent on (owner, control, subject). */
+router.put("/highlights/resurfacing-controls", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { client, user } = auth;
+
+  const parsed = z
+    .object({ control: z.string(), subjectId: z.string() })
+    .safeParse(req.body ?? {});
+  if (!parsed.success) { sendError(res, "invalid_payload", "control and subjectId are required"); return; }
+
+  const set = await setResurfacingControl(client, user.id, parsed.data.control, parsed.data.subjectId);
+  if (!set.ok) {
+    sendControlFailure(res, set.reason, set.detail, (o, m) => req.log.error(o, m));
+    return;
+  }
+
+  // Fire-and-forget by contract: CompassCacheEngine.invalidate "logs but never
+  // throws". A privacy control that was STORED must not be reported as failed
+  // because a cache eviction did not land, so this does not gate the 200.
+  // CEILING, recorded rather than hidden: this evicts the SETTER's cache. A
+  // control that suppresses `public_projection` on somebody else's cached view
+  // is not reached by it — see docs/BUILD-BACKLOG.md.
+  await invalidateCompassCache(getServiceClient(), user.id, "highlight_privacy_control_changed");
+  res.status(200).json({
+    control: set.value.control,
+    subjectType: set.value.subjectType,
+    subjectId: set.value.subjectId,
+    createdAt: set.value.createdAt,
+    suppresses: CONTROL_EFFECTS[set.value.control].suppresses,
+  });
+});
+
+/** Clear one §11 control. Idempotent: clearing what is not set is a 200. */
+router.delete("/highlights/resurfacing-controls", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { client, user } = auth;
+
+  // A DELETE carries its selector in the query string as well as the body,
+  // because a fetch() DELETE with a body is awkward on React Native and a
+  // control nobody can clear is the trap the service header names.
+  const control = (req.body?.control ?? req.query.control) as unknown;
+  const subjectId = (req.body?.subjectId ?? req.query.subjectId) as unknown;
+  const confirmed = req.body?.confirm === true || req.query.confirm === "true";
+
+  const cleared = await clearResurfacingControl(client, user.id, control, subjectId, { confirmed });
+  if (!cleared.ok) {
+    sendControlFailure(res, cleared.reason, cleared.detail, (o, m) => req.log.error(o, m));
+    return;
+  }
+
+  // Fire-and-forget by contract: CompassCacheEngine.invalidate "logs but never
+  // throws". A privacy control that was STORED must not be reported as failed
+  // because a cache eviction did not land, so this does not gate the 200.
+  // CEILING, recorded rather than hidden: this evicts the SETTER's cache. A
+  // control that suppresses `public_projection` on somebody else's cached view
+  // is not reached by it — see docs/BUILD-BACKLOG.md.
+  await invalidateCompassCache(getServiceClient(), user.id, "highlight_privacy_control_changed");
+  res.status(200).json({ cleared: cleared.value.cleared });
+});
+
+/** Read one Highlight's §10 projection policy. Owner-only. */
+router.get("/highlights/:id/projection-policy", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { client, user } = auth;
+
+  const { id } = req.params;
+  if (!UUID.test(id)) { sendError(res, "invalid_payload", "Invalid highlight id"); return; }
+
+  const read = await readProjectionPolicyForOwner(client, user.id, id);
+  if (!read.ok) {
+    sendControlFailure(res, read.reason, read.detail, (o, m) => req.log.error(o, m));
+    return;
+  }
+
+  res.status(200).json({
+    highlightId: read.value.highlightId,
+    locationPrecision: read.value.locationPrecision,
+    personVisibility: read.value.personVisibility,
+    consent: read.value.consent,
+    // The ladders travel with the policy for the same reason the control
+    // catalogue does: §10's rungs COARSEN left to right and a client that
+    // reorders them renders a tightening as a loosening.
+    locationPrecisionLadder: LOCATION_PRECISION_LADDER,
+    personVisibilityLadder: PERSON_VISIBILITY_LADDER,
+    consentDimensions: MEMORY_CONSENT_DIMENSIONS,
+  });
+});
+
+/**
+ * Set one Highlight's §10 projection policy. PARTIAL — only named fields move.
+ *
+ * `location_precision` here is the OWNER'S SELECTED RUNG, which is exactly the
+ * value `resolveLocationDisclosure` combines with the visibility-implied rung
+ * through `strictestPrecision`. Because that combination can only TIGHTEN, an
+ * owner selecting a looser rung than their visibility implies does not loosen
+ * anything — which is the §10 invariant, and it is enforced on the read path
+ * rather than by refusing the write here.
+ */
+router.put("/highlights/:id/projection-policy", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { client, user } = auth;
+
+  const { id } = req.params;
+  if (!UUID.test(id)) { sendError(res, "invalid_payload", "Invalid highlight id"); return; }
+
+  const parsed = z
+    .object({
+      // `.optional()` and a null value are DIFFERENT and both are legal: absent
+      // means "leave it alone", null means "unset it". Collapsing them would
+      // make it impossible to clear a rung once chosen.
+      locationPrecision: z.string().nullable().optional(),
+      personVisibility: z.string().nullable().optional(),
+      consent: z.record(z.string(), z.union([z.boolean(), z.null()])).optional(),
+    })
+    .safeParse(req.body ?? {});
+  if (!parsed.success) { sendError(res, "invalid_payload", "Invalid projection policy payload"); return; }
+
+  const saved = await setProjectionPolicy(client, user.id, id, {
+    locationPrecision: parsed.data.locationPrecision as any,
+    personVisibility: parsed.data.personVisibility as any,
+    consent: parsed.data.consent as any,
+  });
+  if (!saved.ok) {
+    sendControlFailure(res, saved.reason, saved.detail, (o, m) => req.log.error(o, m));
+    return;
+  }
+
+  // Fire-and-forget by contract: CompassCacheEngine.invalidate "logs but never
+  // throws". A privacy control that was STORED must not be reported as failed
+  // because a cache eviction did not land, so this does not gate the 200.
+  // CEILING, recorded rather than hidden: this evicts the SETTER's cache. A
+  // control that suppresses `public_projection` on somebody else's cached view
+  // is not reached by it — see docs/BUILD-BACKLOG.md.
+  await invalidateCompassCache(getServiceClient(), user.id, "highlight_privacy_control_changed");
+  res.status(200).json({
+    highlightId: saved.value.highlightId,
+    locationPrecision: saved.value.locationPrecision,
+    personVisibility: saved.value.personVisibility,
+    consent: saved.value.consent,
+  });
 });
 
 /* ============================================================================
@@ -471,28 +1537,229 @@ router.delete("/highlights/:id", async (req, res) => {
   const { id } = req.params;
   if (!UUID.test(id)) { sendError(res, "invalid_payload", "Invalid highlight id"); return; }
 
-  const { data: existing } = await client
+  const { data: existing, error: existingErr } = await client
     .from("highlights")
     .select("id, owner_id")
     .eq("id", id)
     .is("deleted_at", null)
     .maybeSingle();
 
+  if (existingErr) {
+    req.log.error({ err: existingErr, highlightId: id }, "highlights: delete pre-read failed");
+    sendError(res, "db_error", existingErr.message);
+    return;
+  }
   if (!existing) { sendError(res, "not_found", "Highlight not found"); return; }
   if ((existing as any).owner_id !== user.id) { sendError(res, "forbidden", "Only the owner can delete this highlight"); return; }
 
-  const { error } = await client
+  // `.select("id")` is what turns this into an answer.
+  //
+  // An UPDATE with no .select() returns `data: null` and says NOTHING about how
+  // many rows it touched, so `error === null` is not "it worked" — it is "the
+  // statement ran". This runs under the caller's own RLS context, so a policy
+  // that no longer admits the row matches zero rows, errors nothing, and this
+  // handler answered 204 for a highlight still live on the owner's profile.
+  // Taking your own content down is exactly the operation that must not lie.
+  // ONE clock read for the stamp. `deleteCommittedAt` below is a SECOND,
+  // DELIBERATE read taken AFTER the write returns — it starts the §24
+  // revocation stopwatch, so folding it into this one would charge the write's
+  // own duration to the revocation. Two Date.now() reads with different jobs
+  // are fine; mixing one with a no-arg `new Date()` is what split-clock
+  // forbids, because those two silently disagree about the same instant.
+  const deletedAtMs = Date.now();
+  const { data: deleted, error } = await client
     .from("highlights")
-    .update({ deleted_at: new Date().toISOString() })
+    .update({ deleted_at: new Date(deletedAtMs).toISOString() })
     .eq("id", id)
-    .eq("owner_id", user.id);
+    .eq("owner_id", user.id)
+    .select("id");
 
   if (error) {
     req.log.error({ err: error }, "Failed to delete highlight");
     sendError(res, "db_error", error.message);
     return;
   }
+  if (!deleted || (deleted as any[]).length === 0) {
+    req.log.error({ highlightId: id, ownerId: user.id }, "highlights: delete matched zero rows — highlight NOT deleted");
+    sendError(res, "db_error", "The highlight could not be deleted. Please try again.", { exposeDetail: true });
+    return;
+  }
+  const deleteCommittedAt = Date.now();
+
+  /* §21 — revocation propagation.
+   *
+   * "Revocation propagation must cover public projection, search index,
+   *  semantic embedding, profile Highlight, Trip story derivative, Passport
+   *  reference, cached narrative, and any share link. Deletion should be
+   *  observable, retryable, and dead-lettered if a downstream cleanup
+   *  repeatedly fails."
+   *
+   * Before this, DELETE set `deleted_at` and stopped. POST /highlights/:id/report
+   * already invalidated the Compass cache for exactly the reason that applies
+   * here — "their feed should not continue to surface content they reported" —
+   * so a DELETED Highlight could outlive its own deletion in a cached Compass
+   * feed while a REPORTED one could not. The cache is the one §21 destination
+   * this repository can actually reach; the other seven are reported with their
+   * measured status (not_applicable where no such destination exists,
+   * not_implemented where one does and nothing reaches it). See
+   * services/highlights/highlightRevocation.ts — nothing in that report claims a
+   * destination was revoked that was not.
+   *
+   * The revocation does NOT gate the 204. The row is already soft-deleted and
+   * every read on this surface filters it; failing the request would tell the
+   * owner their deletion did not happen, which is false. The unreached
+   * destinations are logged with the highlight id so a repeated failure is
+   * dead-letterable. */
+  const sc = getServiceClient();
+  const report = await executeRevocation("DELETE_HIGHLIGHT", id, {
+    invalidateCache: sc
+      ? async () => {
+          await invalidateCompassCache(sc, user.id, "highlight_deleted");
+        }
+      : undefined,
+    // §24 `privacy_revocation_latency` — census H219. The soft delete above has
+    // already committed, so this is the moment the owner's decision took
+    // effect and the metric's clock starts there rather than inside the call.
+    log: req.log,
+    requestedAt: deleteCommittedAt,
+  });
+  if (!report.complete) {
+    req.log.error(
+      {
+        highlightId: id,
+        ownerId: user.id,
+        retryable: report.retryable,
+        unreached: report.outcomes.filter((o) => o.status !== "revoked" && o.status !== "not_applicable"),
+      },
+      "highlights: §21 revocation incomplete — destinations remain unrevoked after delete",
+    );
+  }
+
   res.status(204).send();
+});
+
+/* ============================================================================
+ * §21 ARCHIVE — the reversible removal, which is NOT the soft delete.
+ *
+ * Highlights/Memories Development Architecture Spec v1 §21:
+ *   "Delete, archive, do-not-resurface, and 'keep but do not personalize' are
+ *    different operations and must remain separate in both data model and UX."
+ *   Archive: "Retain canonical Memory; remove from normal browsing unless
+ *    explicitly requested."
+ *
+ * `highlights.archived_at` has existed since migration 0026 and was referenced
+ * by no TypeScript in this repository until now — so no migration is needed and
+ * no existing row is affected: every archived_at is NULL today, which is why
+ * adding `.is("archived_at", null)` to the three list reads changes nothing
+ * that is currently on anyone's screen.
+ *
+ * What makes this Archive and not a second delete:
+ *   - it is REVERSIBLE (DELETE /highlights/:id/archive clears it);
+ *   - the row is RETAINED and still explicitly retrievable by its owner
+ *     (GET /highlights/archived);
+ *   - it does NOT set deleted_at, and DELETE /highlights/:id still works on an
+ *     archived Highlight, so archiving does not consume the delete.
+ *
+ * Both writes carry `.select("id")`. An UPDATE with no .select() returns
+ * `data: null` and cannot tell one affected row from none, so `error === null`
+ * would mean only "the statement ran" — and under the caller's own RLS an
+ * update matching zero rows errors nothing at all. Same reasoning, same shape,
+ * as the soft delete above.
+ * ============================================================================ */
+router.post("/highlights/:id/archive", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { client, user } = auth;
+
+  const { id } = req.params;
+  if (!UUID.test(id)) { sendError(res, "invalid_payload", "Invalid highlight id"); return; }
+
+  const { data: updated, error } = await client
+    .from("highlights")
+    .update({ archived_at: new Date().toISOString() })
+    .eq("id", id)
+    .eq("owner_id", user.id)
+    .is("deleted_at", null)
+    .select("id, archived_at");
+
+  if (error) {
+    req.log.error({ err: error, highlightId: id }, "highlights: archive failed");
+    sendError(res, "db_error", error.message);
+    return;
+  }
+  if (!updated || (updated as any[]).length === 0) {
+    // Zero rows: not yours, not there, or already deleted. Not distinguishable
+    // without a second read, and each of the three is a 404 to this caller.
+    sendError(res, "not_found", "Highlight not found");
+    return;
+  }
+  res.status(200).json({ id, archivedAt: (updated as any[])[0].archived_at });
+});
+
+/** §21 Archive is reversible. This is the half that makes it so. */
+router.delete("/highlights/:id/archive", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { client, user } = auth;
+
+  const { id } = req.params;
+  if (!UUID.test(id)) { sendError(res, "invalid_payload", "Invalid highlight id"); return; }
+
+  const { data: updated, error } = await client
+    .from("highlights")
+    .update({ archived_at: null })
+    .eq("id", id)
+    .eq("owner_id", user.id)
+    .is("deleted_at", null)
+    .select("id");
+
+  if (error) {
+    req.log.error({ err: error, highlightId: id }, "highlights: unarchive failed");
+    sendError(res, "db_error", error.message);
+    return;
+  }
+  if (!updated || (updated as any[]).length === 0) {
+    sendError(res, "not_found", "Highlight not found");
+    return;
+  }
+  res.status(200).json({ id, archivedAt: null });
+});
+
+/* ============================================================================
+ * GET /highlights/archived — §21's "unless explicitly requested".
+ *
+ * Owner-only, and it is the ONLY read on this surface that returns archived
+ * rows. Expiry is deliberately NOT filtered here: an archived Highlight is
+ * being retained, and hiding the retained thing behind the very expiry the
+ * owner archived it to escape would make Archive indistinguishable from
+ * waiting. Deleted rows are still excluded — Delete is terminal.
+ * ============================================================================ */
+router.get("/highlights/archived", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { client, user } = auth;
+
+  const archivedProjection = await highlightColumns(client);
+  const { data: rows, error } = await client
+    .from("highlights")
+    .select(archivedProjection.columns)
+    .eq("owner_id", user.id)
+    .is("deleted_at", null)
+    .not("archived_at", "is", null)
+    .order("archived_at", { ascending: false })
+    .limit(200);
+
+  if (error) {
+    // An unreadable table is NOT "you have archived nothing". supabase-js
+    // RESOLVES on a database error, so an unbound `.error` here would answer
+    // `{ highlights: [] }` for an outage and the owner would conclude their
+    // archive was lost.
+    req.log.error({ err: error, ownerId: user.id }, "highlights: archived read failed — refusing rather than reporting an empty archive");
+    sendError(res, "degraded_unavailable", "We could not load your archived highlights. Please try again.");
+    return;
+  }
+
+  res.status(200).json({ highlights: (rows ?? []) as any[] });
 });
 
 /* ============================================================================
@@ -510,7 +1777,7 @@ router.post("/highlights/:id/view", async (req, res) => {
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
   // Verify viewer has permission to see this highlight
-  const access = await resolveViewAccess(sc, user.id, id, res);
+  const access = await resolveViewAccess(sc, user.id, id, res, req.log);
   if (!access) return;
 
   // Idempotent upsert
@@ -541,24 +1808,35 @@ router.post("/highlights/:id/like", async (req, res) => {
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
   // Enforce access before allowing engagement
-  const access = await resolveViewAccess(sc, user.id, id, res);
+  const access = await resolveViewAccess(sc, user.id, id, res, req.log);
   if (!access) return;
 
-  if (access.h.owner_id === user.id) {
-    sendError(res, "invalid_payload", "Cannot like your own highlight");
+  if (!gateEngagement(user.id, access.h, "like", res)) return;
+
+  // The upsert result was discarded. It IS issued (the await sends it), but a
+  // failed write resolved rather than threw, and this handler then answered
+  // 200 { likedByMe: true } with nothing stored — the client renders a filled
+  // heart for a like the database never took, and it survives until the next
+  // refresh contradicts it.
+  const { error: likeErr } = await sc
+    .from("highlight_likes")
+    .upsert({ highlight_id: id, user_id: user.id }, { onConflict: "highlight_id,user_id", ignoreDuplicates: true });
+  if (likeErr) {
+    req.log.error({ err: likeErr, highlightId: id }, "highlights: like write failed");
+    sendError(res, "db_error", "Could not record the like. Please try again.", { exposeDetail: true });
     return;
   }
 
-  await sc
-    .from("highlight_likes")
-    .upsert({ highlight_id: id, user_id: user.id }, { onConflict: "highlight_id,user_id", ignoreDuplicates: true });
-
-  const { count } = await sc
+  // `count ?? 0` on an errored count is a fabricated zero. The like DID land,
+  // so the request succeeded; the count is reported as null rather than as a
+  // number nobody measured.
+  const { count, error: countErr } = await sc
     .from("highlight_likes")
     .select("*", { count: "exact", head: true })
     .eq("highlight_id", id);
+  if (countErr) req.log.warn({ err: countErr, highlightId: id }, "highlights: like count unreadable after a successful like");
 
-  res.status(200).json({ likedByMe: true, likeCount: count ?? 0 });
+  res.status(200).json({ likedByMe: true, likeCount: countErr ? null : (count ?? 0) });
 });
 
 /* ============================================================================
@@ -576,17 +1854,24 @@ router.delete("/highlights/:id/like", async (req, res) => {
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
   // Enforce access before allowing engagement
-  const access = await resolveViewAccess(sc, user.id, id, res);
+  const access = await resolveViewAccess(sc, user.id, id, res, req.log);
   if (!access) return;
 
-  await sc.from("highlight_likes").delete().eq("highlight_id", id).eq("user_id", user.id);
+  const { error: unlikeErr } = await sc
+    .from("highlight_likes").delete().eq("highlight_id", id).eq("user_id", user.id);
+  if (unlikeErr) {
+    req.log.error({ err: unlikeErr, highlightId: id }, "highlights: unlike write failed");
+    sendError(res, "db_error", "Could not remove the like. Please try again.", { exposeDetail: true });
+    return;
+  }
 
-  const { count } = await sc
+  const { count, error: countErr } = await sc
     .from("highlight_likes")
     .select("*", { count: "exact", head: true })
     .eq("highlight_id", id);
+  if (countErr) req.log.warn({ err: countErr, highlightId: id }, "highlights: like count unreadable after a successful unlike");
 
-  res.status(200).json({ likedByMe: false, likeCount: count ?? 0 });
+  res.status(200).json({ likedByMe: false, likeCount: countErr ? null : (count ?? 0) });
 });
 
 /* ============================================================================
@@ -600,12 +1885,17 @@ router.get("/highlights/:id/viewers", async (req, res) => {
   const { id } = req.params;
   if (!UUID.test(id)) { sendError(res, "invalid_payload", "Invalid highlight id"); return; }
 
-  const { data: h } = await client
+  const { data: h, error: hErr } = await client
     .from("highlights")
     .select("id, owner_id")
     .eq("id", id)
     .maybeSingle();
 
+  if (hErr) {
+    req.log.error({ err: hErr, highlightId: id }, "highlights: viewers pre-read failed");
+    sendError(res, "db_error", hErr.message);
+    return;
+  }
   if (!h) { sendError(res, "not_found", "Highlight not found"); return; }
   if ((h as any).owner_id !== user.id) { sendError(res, "forbidden", "Only the owner can see viewers"); return; }
 
@@ -673,14 +1963,11 @@ router.post("/highlights/:id/reply", async (req, res) => {
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
   // Enforce access before allowing reply
-  const access = await resolveViewAccess(sc, user.id, id, res);
+  const access = await resolveViewAccess(sc, user.id, id, res, req.log);
   if (!access) return;
 
   const ownerId = access.h.owner_id;
-  if (ownerId === user.id) {
-    sendError(res, "invalid_payload", "Cannot reply to your own highlight");
-    return;
-  }
+  if (!gateEngagement(user.id, access.h, "reply", res)) return;
 
   // Enforce messaging permissions — honour the recipient's privacy settings and block rules.
   // This mirrors the canMessage gate used by POST /api/users/:userId/open-thread.
@@ -699,19 +1986,35 @@ router.post("/highlights/:id/reply", async (req, res) => {
   //   - look up all threads the replier is in
   //   - find one where BOTH users are members (2-person DM)
   //   - create a new one if none exists
-  const { data: myMemberships } = await sc
+  // These two reads decide whether a DM thread ALREADY EXISTS. `?? []` on an
+  // errored read is an empty membership list, which is indistinguishable from
+  // "these two have never spoken" — so a transient failure here did not lose a
+  // message, it CREATED A SECOND THREAD between the same two people, splitting
+  // their conversation permanently. A duplicate thread cannot be undone by
+  // retrying, so this refuses rather than guesses.
+  const { data: myMemberships, error: myMemErr } = await sc
     .from("message_thread_members")
     .select("thread_id")
     .eq("user_id", user.id);
+  if (myMemErr) {
+    req.log.error({ err: myMemErr, ownerId }, "highlight reply: thread lookup failed — refusing rather than creating a duplicate DM thread");
+    sendError(res, "degraded_unavailable", "We could not open the conversation right now. Please try again.");
+    return;
+  }
 
   const myThreadIds = (myMemberships ?? []).map((m: any) => m.thread_id as string);
   let threadId: string | null = null;
 
   if (myThreadIds.length > 0) {
-    const { data: allMembers } = await sc
+    const { data: allMembers, error: allMemErr } = await sc
       .from("message_thread_members")
       .select("thread_id, user_id")
       .in("thread_id", myThreadIds);
+    if (allMemErr) {
+      req.log.error({ err: allMemErr, ownerId }, "highlight reply: thread member lookup failed — refusing rather than creating a duplicate DM thread");
+      sendError(res, "degraded_unavailable", "We could not open the conversation right now. Please try again.");
+      return;
+    }
 
     const membersByThread: Record<string, Set<string>> = {};
     for (const m of (allMembers ?? []) as any[]) {
@@ -812,17 +2115,24 @@ router.post("/highlights/:id/report", async (req, res) => {
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
   // Enforce access — can only report highlights you can actually see
-  const access = await resolveViewAccess(sc, user.id, id, res);
+  const access = await resolveViewAccess(sc, user.id, id, res, req.log);
   if (!access) return;
 
-  if (access.h.owner_id === user.id) {
-    sendError(res, "invalid_payload", "Cannot report your own highlight");
-    return;
-  }
+  if (!gateEngagement(user.id, access.h, "report", res)) return;
 
-  await sc
+  // The report write was discarded. A 204 told the reporter their report was
+  // filed; on a failure nothing was filed, and a report nobody receives is the
+  // one kind of silence a safety surface must never produce. The compass
+  // signals below are deliberately best-effort and stay that way — they follow
+  // the report, they are not the report.
+  const { error: reportErr } = await sc
     .from("highlight_reports")
     .upsert({ highlight_id: id, reporter_id: user.id, reason }, { onConflict: "highlight_id,reporter_id" });
+  if (reportErr) {
+    req.log.error({ err: reportErr, highlightId: id, reporterId: user.id }, "highlights: report write failed — the report was NOT filed");
+    sendError(res, "db_error", "Could not submit the report. Please try again.", { exposeDetail: true });
+    return;
+  }
 
   // Compass: record negative signal + immediately end fair exposure for the reported author.
   // Import lazily to keep highlights.ts independent of the compass subsystem.
@@ -857,11 +2167,36 @@ router.get("/highlights/following-feed", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
-  // 1. Get followed user IDs
-  const { data: followRows } = await sc
+  // 1. Get followed user IDs.
+  //
+  // "NOBODY YOU FOLLOW HAS AN ACTIVE HIGHLIGHT" IS A CLAIM ABOUT OTHER PEOPLE,
+  // AND IT MUST BE TRUE. supabase-js RESOLVES on a database error, so
+  // `(followRows ?? [])` on an unreadable user_follows is an EMPTY LIST and the
+  // very next line answers `{ users: [] }` — the whole feed reported as empty
+  // from a lookup that never happened. It is the shape a sibling lane found in
+  // the Wall ("you're all caught up" with an unreadable follow graph) and in the
+  // passport ("zero stamps" for an unreadable table). §28.11.
+  //
+  // FAIL-CLOSED, shape 3 (lib/exclusionSet.ts): the follow graph scopes the
+  // ENTIRE response, so there is no narrower part left to serve honestly.
+  // `degraded_unavailable` (503, retryable) is the code for "the read could not
+  // be performed", and it is what the block read further down this same handler
+  // already does — that one refuses, this one did not.
+  //
+  // A genuinely empty follow list is still `{ users: [] }`, unchanged. The two
+  // cases are indistinguishable in the data and were indistinguishable in the
+  // response; only one of them is now.
+  const { data: followRows, error: followErr } = await sc
     .from("user_follows")
     .select("following_id")
     .eq("follower_id", user.id);
+
+  if (followErr) {
+    req.log.error({ err: followErr, viewerId: user.id },
+      "highlights: following-feed follow graph unreadable — refusing rather than reporting an empty feed");
+    sendError(res, "degraded_unavailable", "We could not load your highlights feed. Please try again.");
+    return;
+  }
 
   const followingIds = (followRows ?? []).map((r: any) => r.following_id as string);
   if (followingIds.length === 0) {
@@ -869,11 +2204,20 @@ router.get("/highlights/following-feed", async (req, res) => {
     return;
   }
 
-  // 2. Resolve blocked users (both directions) and filter them out
+  // 2. Resolve blocked users (both directions) and filter them out. FAIL CLOSED
+  //    — see /highlights/active above for why `data ?? []` on an error is a leak.
   const [blockedByMe, blockingMe] = await Promise.all([
     sc.from("blocks").select("blocked_id").eq("blocker_id", user.id),
     sc.from("blocks").select("blocker_id").eq("blocked_id", user.id),
   ]);
+  if (blockedByMe.error || blockingMe.error) {
+    req.log.error(
+      { err: blockedByMe.error ?? blockingMe.error },
+      "highlights: following-feed block lookup failed — failing closed",
+    );
+    sendError(res, "db_error", "Could not resolve block state");
+    return;
+  }
   const blockedIds = new Set<string>([
     ...((blockedByMe.data ?? []).map((r: any) => r.blocked_id as string)),
     ...((blockingMe.data ?? []).map((r: any) => r.blocker_id as string)),
@@ -884,15 +2228,51 @@ router.get("/highlights/following-feed", async (req, res) => {
     return;
   }
 
-  // 3. Fetch active (non-expired, non-deleted, non-private) highlights from followed users
-  const { data: rows, error } = await sc
+  // 3. Fetch active (non-expired, non-deleted, non-private) highlights from
+  //    followed users.
+  //
+  //    §12: "Highlights should remain finite and contextual. Do not turn the
+  //    surface into an endless feed." This query has no `.limit()` and no
+  //    cursor: it returns every active highlight of every followed user in one
+  //    response, bounded only by the 24-hour expiry. Every sibling read is
+  //    bounded — /highlights/active caps at 100, the memories discovery feed
+  //    caps at 100 — so the omission is an oversight, not a design.
+  //
+  //    Capping a feed that is uncapped today can only REMOVE highlights from
+  //    somebody's screen, and how many is finite-enough is a product decision
+  //    §12 does not make. So the cap ships behind
+  //    `highlights_feed_bounded_enabled` (migration 2339), seeded FALSE: off,
+  //    this is the unbounded query it has always been; on, it is capped and
+  //    paginated. isFlagEnabled is false-on-error, so an unreadable flag leaves
+  //    the feed unbounded rather than silently truncating it.
+  const bounded = await isFlagEnabled(sc, "highlights_feed_bounded_enabled");
+  const feedLimit = bounded
+    ? Math.min(Math.max(Number(req.query.limit ?? FOLLOWING_FEED_DEFAULT_LIMIT) || FOLLOWING_FEED_DEFAULT_LIMIT, 1), FOLLOWING_FEED_MAX_LIMIT)
+    : null;
+  const feedCursor = bounded && typeof req.query.cursor === "string" ? req.query.cursor : null;
+
+  const feedProjection = await highlightColumns(sc);
+  let feedQuery = sc
     .from("highlights")
-    .select("id, owner_id, media_url, media_type, video_duration_seconds, caption, location_name, location_city, location_country, visibility, expires_at, created_at, deleted_at")
+    .select(feedProjection.columns)
     .in("owner_id", eligibleIds)
     .is("deleted_at", null)
-    .gt("expires_at", new Date().toISOString())
+    .is("archived_at", null) // §21 Archive — see GET /users/:id/highlights
+    .or(NOT_EXPIRED())
     .neq("visibility", "private")
     .order("created_at", { ascending: true });
+
+  if (feedLimit != null) {
+    // Over-fetch, because the visibility filter in step 5 runs after this query
+    // and would otherwise shrink the page — the same defect the memories
+    // discovery feed had. `slice(0, feedLimit)` below trims the FILTERED set.
+    (feedQuery as any) = (feedQuery as any).limit(feedLimit * 5);
+  }
+  if (feedCursor) {
+    (feedQuery as any) = (feedQuery as any).gt("created_at", feedCursor);
+  }
+
+  const { data: rows, error } = await feedQuery;
 
   if (error) {
     req.log.error({ err: error }, "Failed to load following highlights feed");
@@ -915,46 +2295,68 @@ router.get("/highlights/following-feed", async (req, res) => {
   )];
 
   const circleApprovedSet = new Set<string>();
-  const sharesTripSet = new Set<string>();
+  let sharesTripSet = new Set<string>();
 
-  await Promise.all([
+  const [circleRows, shares] = await Promise.all([
     circleOwnerIds.length > 0
-      ? sc
-          .from("circle_memberships")
-          .select("user_id")
-          .eq("other_id", user.id)
-          .in("user_id", circleOwnerIds)
-          .then(({ data }) => {
-            for (const r of data ?? []) circleApprovedSet.add((r as any).user_id as string);
-          })
-      : Promise.resolve(),
+      ? sc.from("circle_memberships").select("user_id").eq("other_id", user.id).in("user_id", circleOwnerIds)
+      : Promise.resolve(null),
     tripOnlyOwnerIds.length > 0
-      ? sc
-          .from("trip_members")
-          .select("trip_id")
-          .eq("user_id", user.id)
-          .in("role", ["owner", "member"])
-          .then(async ({ data: viewerTrips }) => {
-            const vtIds = (viewerTrips ?? []).map((r: any) => r.trip_id as string);
-            if (vtIds.length === 0) return;
-            const { data: shared } = await sc
-              .from("trip_members")
-              .select("user_id")
-              .in("user_id", tripOnlyOwnerIds)
-              .in("trip_id", vtIds)
-              .in("role", ["owner", "member"]);
-            for (const r of shared ?? []) sharesTripSet.add((r as any).user_id as string);
-          })
-      : Promise.resolve(),
+      ? sharesAcceptedTrip(sc, user.id, tripOnlyOwnerIds)
+      : Promise.resolve(null),
   ]);
+  if ((circleRows as any)?.error) {
+    // `?? []` left circleApprovedSet empty, which withholds — the right answer,
+    // silently. Withhold and say so.
+    req.log.error({ err: (circleRows as any).error }, "highlights: following-feed circle membership lookup failed — withholding circle_only highlights");
+  }
+  for (const r of (circleRows as any)?.data ?? []) circleApprovedSet.add((r as any).user_id as string);
+  if (shares) {
+    if (shares.ok) {
+      sharesTripSet = shares.shared;
+    } else {
+      req.log.error({ err: shares.error }, "highlights: following-feed trip membership lookup failed — withholding trip_only highlights");
+    }
+  }
 
-  // 5. Permission filter
-  const visible = allHighlights.filter((h) => {
-    if (h.visibility === "public" || h.visibility === "travelers_nearby") return true;
-    if (h.visibility === "circle_only") return circleApprovedSet.has(h.owner_id as string);
-    if (h.visibility === "trip_only") return sharesTripSet.has(h.owner_id as string);
-    return false;
-  });
+  // 5. Permission filter, then (when bounded) the finite page.
+  // THE shared rule. This inline copy had ONE substantive divergence from
+  // canViewHighlight: no owner short-circuit. An owner who follows their own
+  // account therefore did not see their own circle_only / trip_only Highlight
+  // in their own feed, while GET /users/:id/highlights and the single-highlight
+  // gate both showed it. Reconciled onto canViewHighlight — the majority
+  // behaviour, and one that can leak nothing, since the subject is the viewer's
+  // own row. Private highlights stay out via the `.neq` on the query above.
+  const permitted = allHighlights.filter((h) =>
+    canViewHighlight(user.id, h as HighlightRecord, {
+      viewerFollowsOwner: circleApprovedSet.has(h.owner_id as string),
+      sharesTrip: sharesTripSet.has(h.owner_id as string),
+    }),
+  );
+  // 5b. §11 resurfacing controls, BEFORE the page is cut.
+  //
+  // Order matters: suppressing after slicing would leave the page short by
+  // however many rows the controls removed, and `nextCursor` would then be
+  // computed from a page whose length no longer means "full". Suppress, then
+  // cut, then derive the cursor — the same reason the visibility filter runs
+  // before the slice above.
+  const suppressed = await readResurfacingSuppressionsForOwners(
+    sc,
+    permitted.map((h: any) => h.owner_id as string),
+  );
+  const surviving = applyResurfacingControls(permitted as any[], suppressed, req.log, "GET /highlights/following-feed");
+
+  // 5c. §10 consent, ALSO before the page is cut, for the same reason. The
+  // policy read is over the pre-slice set and is reused for the location clamp.
+  const policies = await readProjectionPolicies(sc, surviving.map((h: any) => h.id as string));
+  const consented = filterProjectable(
+    surviving as any[], user.id, "proactive_resurfacing", { controls: suppressed, policies }, req.log, "GET /highlights/following-feed",
+  );
+
+  const visible = feedLimit != null ? consented.slice(0, feedLimit) : consented;
+  const nextCursor = feedLimit != null && visible.length === feedLimit
+    ? (visible[visible.length - 1]?.created_at ?? null)
+    : null;
 
   if (visible.length === 0) {
     res.status(200).json({ users: [] });
@@ -964,6 +2366,9 @@ router.get("/highlights/following-feed", async (req, res) => {
   // 6. Batch metrics + author profiles
   const highlightIds = visible.map((h: any) => h.id as string);
   const ownerIds = [...new Set(visible.map((h: any) => h.owner_id as string))];
+
+  // §10 — clamp each location to the owner's selected precision.
+  const disclosed = applyLocationPrecision(visible as any[], policies, req.log, "GET /highlights/following-feed");
 
   const [viewRows2, likeRows2, viewedRows2, likedRows2, profileRows] = await Promise.all([
     sc.from("highlight_views").select("highlight_id").in("highlight_id", highlightIds),
@@ -993,7 +2398,7 @@ router.get("/highlights/following-feed", async (req, res) => {
 
   // 7. Group by owner, preserving the order highlights came back
   const grouped = new Map<string, { profile: any; highlights: any[] }>();
-  for (const h of visible) {
+  for (const h of disclosed) {
     const ownerId = h.owner_id as string;
     if (!grouped.has(ownerId)) {
       grouped.set(ownerId, { profile: profileMap[ownerId] ?? null, highlights: [] });
@@ -1021,7 +2426,9 @@ router.get("/highlights/following-feed", async (req, res) => {
       highlights: g.highlights,
     }));
 
-  res.status(200).json({ users });
+  // nextCursor is present only while the cap is engaged; unbounded responses
+  // keep the exact shape they had before 2339.
+  res.status(200).json(feedLimit != null ? { users, nextCursor } : { users });
 });
 
 export default router;

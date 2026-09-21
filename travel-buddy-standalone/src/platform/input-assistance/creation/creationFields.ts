@@ -24,8 +24,9 @@ import { registerField, isFieldRegistered } from '../contexts/fieldRegistry.ts';
 
 /**
  * Canonical fieldIds for the creation surfaces. `gem.name` / `event.title` /
- * `trip.title` / `plan.title` match the ids used in the client audit's §50 field
- * table (section C — Creation).
+ * `trip.title` / `plan.title` match the ids used in the §50 field table, section C
+ * (Creation) — `contexts/fieldInventory.ts`, which exists as of Phase 9; this comment
+ * cited it for months while it did not.
  */
 export const CREATION_FIELD_IDS = {
   gemName: 'gem.name',

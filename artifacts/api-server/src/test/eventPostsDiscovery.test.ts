@@ -21,10 +21,25 @@ beforeEach(() => {
 
 type FakeRow = Record<string, any>;
 
-/** Builds a chainable Supabase-like fake that returns the given rows. */
-function fakeDb(tableData: Record<string, FakeRow[]>) {
+/**
+ * Builds a chainable Supabase-like fake that returns the given rows.
+ *
+ * `failTables` answers `{ data: null, error }` — the RESOLVED failure
+ * supabase-js really produces, never a throw. Without it this double modelled
+ * only success, and the cache-poisoning path below was unreachable from a test.
+ * `_reads` counts the table reads that were actually issued, so "the second call
+ * was served from the cache" can be MEASURED rather than assumed.
+ */
+function fakeDb(
+  tableData: Record<string, FakeRow[]>,
+  failTables: ReadonlySet<string> = new Set(),
+) {
+  const reads: string[] = [];
   const makeChain = (tableName: string, rows: FakeRow[]) => {
     let filtered = [...rows];
+    const failure = failTables.has(tableName)
+      ? { data: null, error: { message: `${tableName} read failed`, code: "57014" } }
+      : null;
 
     const chain: any = {
       select: (_cols: string) => chain,
@@ -44,7 +59,8 @@ function fakeDb(tableData: Record<string, FakeRow[]>) {
     chain[Symbol.iterator] = undefined;
     // Make it a thenable
     chain.then = (resolve: (v: any) => void, _reject?: any) => {
-      const result = { data: filtered, error: null };
+      reads.push(tableName);
+      const result = failure ?? { data: filtered, error: null };
       resolve(result);
       return Promise.resolve(result);
     };
@@ -53,6 +69,7 @@ function fakeDb(tableData: Record<string, FakeRow[]>) {
   };
 
   return {
+    _reads: reads,
     from: (table: string) => makeChain(table, tableData[table] ?? []),
     auth: {
       getUser: async () => ({ data: { user: null }, error: null }),
@@ -337,5 +354,73 @@ describe("Status filters", () => {
     const db = fakeDb({ post_event_links: [], posts: [post] });
     const results = await fetchEventPostsForDiscovery(makeParams({ db }));
     assert.equal(results.length, 1);
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+// The L1 cache must not be poisoned by a failed read
+// ══════════════════════════════════════════════════════════════════════════════
+//
+// Both fetch paths answered `[]` when their read RESOLVED with `.error` —
+// supabase-js resolves rather than throws — and the merged `[]` was written into
+// the 5-minute cache with a fresh timestamp. One transient error therefore
+// blanked the event-posts feed for EVERY viewer of that (city, radius) bucket
+// for the whole TTL, and nothing retried until it expired. "The city is quiet"
+// and "the database blinked" were the same served result.
+
+function linkRow() {
+  return {
+    post_id: BASE_POST.id,
+    event_id: BASE_EVENT.id,
+    posts: { ...BASE_POST },
+    events: { ...BASE_EVENT, tags: [] },
+  };
+}
+
+describe("event-posts L1 cache — a failed read is not cached", () => {
+  it("a failing read serves nothing AND caches nothing: the next call retries and succeeds", async () => {
+    const broken = fakeDb({ post_event_links: [linkRow()], posts: [] }, new Set(["post_event_links", "posts"]));
+    const first = await fetchEventPostsForDiscovery(makeParams({ db: broken }));
+    assert.equal(first.length, 0, "a failed read has nothing to serve");
+    assert.ok(broken._reads.length > 0, "the fake was never consulted — this case proves nothing");
+
+    // Same (city, radiusKm) key, healthy database, NO cache clear in between.
+    const healthy = fakeDb({ post_event_links: [linkRow()], posts: [] });
+    const second = await fetchEventPostsForDiscovery(makeParams({ db: healthy }));
+    assert.equal(second.length, 1,
+      "the blip was cached: the recovered database is not consulted for the rest of the TTL");
+    assert.ok(healthy._reads.includes("post_event_links"), "the retry must actually hit the database");
+  });
+
+  it("the healthy twin: a genuinely EMPTY result IS cached, so the join is not re-run", async () => {
+    // Without this, "never cache" would pass the case above and throw away the
+    // entire point of the cache — every viewer of a quiet city re-running the
+    // join on every request.
+    const first = fakeDb({ post_event_links: [], posts: [] });
+    const a = await fetchEventPostsForDiscovery(makeParams({ db: first }));
+    assert.equal(a.length, 0);
+    assert.ok(first._reads.length > 0, "the first call must read");
+
+    const second = fakeDb({ post_event_links: [linkRow()], posts: [] });
+    const b = await fetchEventPostsForDiscovery(makeParams({ db: second }));
+    assert.equal(second._reads.length, 0,
+      "a healthy empty result must be served from the cache, not re-fetched");
+    assert.equal(b.length, 0);
+  });
+
+  it("a PARTIAL failure still serves the healthy path, and still caches nothing", async () => {
+    // Path A unreadable, Path B fine. Event posts are a supplementary feed and
+    // have always failed open; what must not happen is the half-answer being
+    // frozen in for five minutes.
+    const post = { ...BASE_POST, discovery_places: BASE_PLACE };
+    const partial = fakeDb({ post_event_links: [linkRow()], posts: [post] }, new Set(["post_event_links"]));
+    const first = await fetchEventPostsForDiscovery(makeParams({ db: partial }));
+    assert.equal(first.length, 1, "the readable path's posts are still served");
+
+    const healthy = fakeDb({ post_event_links: [linkRow()], posts: [post] });
+    const second = await fetchEventPostsForDiscovery(makeParams({ db: healthy }));
+    assert.ok(healthy._reads.includes("post_event_links"),
+      "a half-read answer must not be cached — the next call has to try Path A again");
+    assert.equal(second.length, 1);
   });
 });
