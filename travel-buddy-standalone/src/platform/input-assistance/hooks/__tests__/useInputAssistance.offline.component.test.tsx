@@ -203,6 +203,49 @@ test('G241: a RETAINED server row still comes first, and is not duplicated', asy
   expect(String(screen.getByTestId('sources').props.children).split('|')[0]).toBe('canonical');
 });
 
+test('G201: an accepted PLACE row is replayed offline in a cached_local field — and only there', async () => {
+  // The narrow, honest half of "Places → cached recent entities": a PLACE the
+  // user explicitly accepted is retained on-device (and, since the recents
+  // store, across a restart) and replayed when the network is gone — but only
+  // for a field the authority licenses an offline surface for. `global_search`
+  // is `cached_local`; `place_picker`, the field actually named by that row, is
+  // `server_required`, so the same row is refused there. Both halves are
+  // asserted together because either alone would read as more than it is.
+  const place: InputSuggestion = {
+    id: 'srv:p1',
+    type: 'entity',
+    context: 'global_search',
+    label: 'Sundowner Rooftop',
+    entityType: 'place',
+    entityId: 'p1',
+    action: { type: 'open_entity', entityType: 'place', entityId: 'p1' },
+    source: 'canonical',
+    policyVersion: 'input-2026-08',
+  };
+  recordLocalSelection(resolveFieldPolicy(SEARCH_FIELD), place);
+  recordLocalSelection(resolveFieldPolicy(PLACE_FIELD), { ...place, context: 'place_picker' });
+
+  mockRequest.mockResolvedValue(OFFLINE);
+  // Both fields in ONE tree, so the licensed and unlicensed answers are read
+  // from the same run and neither can be explained by test ordering.
+  function Pair() {
+    const licensed = useInputAssistance({ fieldId: SEARCH_FIELD, text: '' });
+    const refused = useInputAssistance({ fieldId: PLACE_FIELD, text: '' });
+    return (
+      <>
+        <Text testID="licensed">{licensed.suggestions.map((s) => s.label).join('|')}</Text>
+        <Text testID="refused">{refused.suggestions.map((s) => s.label).join('|')}</Text>
+        <Text testID="degraded">{String(licensed.unavailable && refused.unavailable)}</Text>
+      </>
+    );
+  }
+  render(<Pair />);
+
+  await waitFor(() => expect(screen.getByTestId('degraded').props.children).toBe('true'));
+  expect(String(screen.getByTestId('licensed').props.children).split('|')).toContain('Sundowner Rooftop');
+  expect(screen.getByTestId('refused').props.children).toBe('');
+});
+
 test('G350: an offline SEARCH field with no match still offers the raw query', async () => {
   mockRequest.mockResolvedValueOnce(OFFLINE);
   render(<Probe fieldId={SEARCH_FIELD} text="zzzzqqq" />);

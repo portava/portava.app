@@ -195,7 +195,7 @@ test('a row this build cannot name is DROPPED, not repaired', () => {
       city_picker: [
         good,
         { ...good, id: 's:x', label: 'Ghost', type: 'completion' }, // not replayable
-        { ...good, id: 's:y', label: 'NoLabel', label2: 'x', ...{ label: '' } }, // empty label
+        { ...good, id: 's:y', label: '   ' }, // blank label
         { ...good, id: 's:z', label: 'BadAction', action: { type: 'launch_missiles' } },
         { ...good, id: 's:w', label: 'BadSource', source: 'somewhere_else' },
       ],
