@@ -25,7 +25,7 @@ import type { InputSuggestion } from '../../types/inputSuggestion.ts';
 import type { InputFieldPolicy } from '../../types/fieldPolicy.ts';
 
 // A personalization-enabled canonical picker (city_picker: allowPersonalization,
-// privacyClass 'personal', entityTypes include city/country).
+// privacyClass 'viewer_scoped', entityTypes include city/country).
 const cityPolicy: InputFieldPolicy = buildDefaultPolicy('city.test', 'city_picker', {
   entityTypes: ['city', 'country'],
 });

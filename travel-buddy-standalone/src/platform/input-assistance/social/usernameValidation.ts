@@ -74,22 +74,44 @@ export function isUsernameCheckable(sanitized: string): boolean {
 export interface UsernameAvailabilityResult {
   available: boolean;
   reason?: string;
+  /**
+   * §23: handles the server has CHECKED and found free, offered when the typed
+   * one is not. Absent — not empty — when the registry could not be read, so
+   * "no alternatives" and "I could not look" stay distinguishable.
+   */
+  alternatives?: string[];
 }
 
 /** Interpreted availability state — the single mapping both screens use. */
 export interface InterpretedAvailability {
   status: 'available' | 'taken';
   message: string | null;
+  /**
+   * §23's second half. Empty for an available handle (nothing to replace) and
+   * empty when the server offered none — a screen renders whatever is here and
+   * never has to decide what an omission meant.
+   */
+  alternatives: string[];
 }
 
 /**
- * Interpret a `checkUsername` response into the status + message both entry
- * points render. Available → no message; taken → the server's reason, or the
- * shared fallback. This mirrors the identity screen's existing branch exactly.
+ * Interpret a `checkUsername` response into the status + message + alternatives
+ * both entry points render. Available → no message and no offers; taken → the
+ * server's reason, or the shared fallback, plus whatever free handles it
+ * checked. Each offer is re-sanitized through `sanitizeUsername` so a handle
+ * this client would not let a user TYPE can never arrive by being offered, and
+ * anything that does not survive that pass is dropped rather than shown.
  */
 export function interpretAvailability(
   res: UsernameAvailabilityResult,
 ): InterpretedAvailability {
-  if (res.available) return { status: 'available', message: null };
-  return { status: 'taken', message: res.reason ?? USERNAME_UNAVAILABLE_MESSAGE };
+  if (res.available) return { status: 'available', message: null, alternatives: [] };
+  const alternatives = (res.alternatives ?? [])
+    .map((a) => sanitizeUsername(String(a)))
+    .filter((a) => isUsernameCheckable(a));
+  return {
+    status: 'taken',
+    message: res.reason ?? USERNAME_UNAVAILABLE_MESSAGE,
+    alternatives,
+  };
 }

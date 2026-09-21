@@ -58,6 +58,7 @@ import { useInputAssistance } from '../platform/input-assistance/hooks/useInputA
 import { mapSuggestionsToGroups, findSuggestionForRow } from '../platform/input-assistance/search/globalSearch.ts';
 import { recordSuggestionSelection } from '../platform/input-assistance/services/selectionRecorder.ts';
 import { extractActionSuggestions } from '../platform/input-assistance/search/smartActions.ts';
+import { GLOBAL_SEARCH_CAPABILITIES } from '../platform/input-assistance/contexts/clientCapabilities.ts';
 import { registerSearchFields, SEARCH_FIELD_IDS } from '../platform/input-assistance/search/searchFields.ts';
 import type { InputSessionContext, InputSuggestion } from '../platform/input-assistance/types/inputSuggestion.ts';
 
@@ -122,6 +123,17 @@ export function useGlobalSearchSuggestions(
     context: 'global_search',
     text: query,
     sessionContext,
+    // §48 capability handshake (census G343). This surface does NOT render the
+    // shared overlay: it maps rows through `globalSearch.ts` and
+    // `smartActions.ts`, which between them resolve `open_entity`,
+    // `submit_search` and `add_to_trip` and DROP everything else on arrival —
+    // `share_entity`, `drop_pin`, `open_compass`. The census's words for that
+    // were "graceful degradation, not negotiation — the server keeps spending
+    // work on rows it will never see used". Declaring the three makes it a
+    // negotiation: the serve stops building them. The declaration is derived
+    // from `DISPATCHABLE_ACTION_TYPES` itself, so it cannot drift away from
+    // what this screen really dispatches.
+    capabilities: GLOBAL_SEARCH_CAPABILITIES,
     enabled,
   });
 
