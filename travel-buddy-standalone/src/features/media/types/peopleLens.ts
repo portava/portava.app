@@ -12,9 +12,18 @@
  */
 import type { FreshnessClass, MediaContributor, MediaProjection } from './media.ts';
 
+/**
+ * Which of §27's four populations put this contributor on the lens. Three
+ * values cover the four: a "relevant creator" arrives through the follow graph
+ * and is therefore `followed`. Optional — a server that predates the field
+ * sends nothing and the lens still renders.
+ */
+export type PeopleLensRelation = 'followed' | 'trip_crew' | 'shared_moment';
+
 /** One contributor's group of perspectives in the People lens. */
 export interface PeopleLensGroup {
   contributor: MediaContributor;
+  relation: PeopleLensRelation | null;
   perspectiveCount: number;
   freshness: FreshnessClass;
   /** Newest-first sample of that person's eligible perspectives. */

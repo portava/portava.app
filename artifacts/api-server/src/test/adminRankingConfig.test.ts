@@ -564,6 +564,14 @@ describe("GET /admin/ranking/metrics", () => {
     // Backward-compatible fields
     assert.ok(typeof body.period_days === "number");
     assert.ok(typeof body.impressions === "number");
+    // `trip_adds` (migration 2894) joined the spread-in `totals` object. It is
+    // pinned here rather than left to the other suite because THIS is the test
+    // that answers "what does an admin client receive?": the response shape is
+    // documented as backward-compatible-with-additions, and an added field that
+    // no shape test names is a field a consumer can be built against and a
+    // later refactor can silently drop. The assertion is a TIGHTENING — the
+    // pin gained a key, it did not relax to accommodate one.
+    assert.ok(typeof body.trip_adds === "number", "trip_adds missing from the totals spread");
     assert.ok(typeof body.tap_through_rate === "number");
     assert.ok(body.tap_through_by_kind != null);
     assert.ok(body.exploration_slot != null);

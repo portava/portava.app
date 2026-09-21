@@ -21,6 +21,11 @@ import { requireUser, sendError, isAcceptedTripMember } from "../lib/http.js";
 const cmdLogger = rootLogger.child({ route: "telegraphCommands" });
 import { resolveContext } from "../lib/privacyResolver.js";
 import { getNearbyVenues, formatDistance, type NearbyVenue } from "../lib/venuesService.js";
+import {
+  compensateFor,
+  registrationFor,
+  type ActionContext,
+} from "../services/telegraph/actionRegistry.js";
 
 const router = Router();
 
@@ -405,25 +410,80 @@ router.post("/telegraph/commands/:commandId/confirm-action", async (req, res) =>
   const action = stored.proposedActions.find((a) => a.id === actionId);
   if (!action) { sendError(res, "not_found", `Action ${actionId} not found`); return; }
 
-  // Re-verify trip membership at confirmation time
-  if (stored.tripId && UUID.test(stored.tripId)) {
-    const isMember = await isAcceptedTripMember(client, stored.tripId, user.id);
-    if (!isMember) { sendError(res, "not_member", "You must be an accepted trip member to confirm this action"); return; }
+  /* ── §30A.10, through the registry rather than inline ──────────────────────
+   * Every executable action registers authorize / preview / execute / optional
+   * compensate. An action kind with no registration is REFUSED here rather than
+   * confirmed with three of the four hooks silently skipped — which is what a
+   * fifth kind added to buildResponse used to get.
+   */
+  const registration = registrationFor(action.kind);
+  if (!registration) {
+    cmdLogger.error({ commandId, kind: action.kind }, "unregistered executable action");
+    sendError(
+      res,
+      "invalid_payload",
+      `Action kind '${action.kind}' is not registered in TELEGRAPH_ACTION_REGISTRY, so its ` +
+        "authorize / preview / execute / compensate behaviour is undefined. It cannot be confirmed.",
+    );
+    return;
   }
 
-  // Write a positive preference event so the learner boosts this category in future briefs.
-  // Best-effort — never block the confirm response.
-  {
-    const category = (action.params.category as string | undefined) ?? INTENT_CATEGORY[stored.intent] ?? "unknown";
-    const { error: evtError } = await client.from("user_preference_events").insert({
-      user_id:           user.id,
-      recommendation_id: `${commandId}:${actionId}`,
-      category,
-      signal:            "tap",
-      trip_id:           stored.tripId ?? null,
-      created_at:        new Date().toISOString(),
+  const ctx: ActionContext = {
+    client,
+    userId: user.id,
+    tripId: stored.tripId && UUID.test(stored.tripId) ? stored.tripId : null,
+    commandId,
+    actionId,
+    label: action.label,
+    params: action.params,
+    category: (action.params.category as string | undefined) ?? INTENT_CATEGORY[stored.intent] ?? "unknown",
+  };
+
+  // AUTHORIZE — re-derived now, never taken from the card (§30A.11).
+  const authorization = await registration.authorize(ctx);
+  if (!authorization.authorized) {
+    sendError(res, "not_member", authorization.reason);
+    return;
+  }
+
+  // PREVIEW — what the person is confirming, in words, returned so a client
+  // cannot render its own guess at it.
+  const preview = registration.preview(ctx);
+
+  // EXECUTE — the one write Telegraph is entitled to. The canonical write
+  // belongs to `registration.canonicalOwner` and is not performed here.
+  const execution = await registration.execute(ctx);
+  if (execution.degraded) {
+    cmdLogger.warn({ commandId, degraded: execution.degraded }, "orchestration record did not land");
+  }
+
+  /* §30A.11: "Current source-domain capability is rechecked at execution time
+   * so expired events, revoked invitations, changed bookings, and removed
+   * memberships fail safely." The recheck is AFTER the write, because a check
+   * before it proves nothing about the instant after it — the same window
+   * `services/telegraph/unsend.ts` compensates for. If it fails, COMPENSATE
+   * removes the record and the caller is told, rather than being handed a
+   * confirmation nothing backs.
+   */
+  const recheck = await registration.authorize(ctx);
+  if (!recheck.authorized) {
+    const compensation = await compensateFor(registration, ctx, execution);
+    cmdLogger.warn(
+      { commandId, actionId, undone: compensation.undone },
+      "post-write recheck failed; orchestration record compensated",
+    );
+    res.status(409).json({
+      error: "conflict",
+      message:
+        "Your authorization for this action changed while it was being confirmed, so nothing was kept. " +
+        recheck.reason,
+      commandId,
+      actionId,
+      confirmed: false,
+      compensated: true,
+      compensation,
     });
-    if (evtError) cmdLogger.warn({ err: evtError, commandId }, "confirm preference event insert failed (best-effort)");
+    return;
   }
 
   res.json({
@@ -434,6 +494,21 @@ router.post("/telegraph/commands/:commandId/confirm-action", async (req, res) =>
     params: action.params,
     confirmed: true,
     message: `Action '${action.label}' confirmed. Proceeding…`,
+    /**
+     * §30A.10 made visible to a reader of the API rather than only to a reader
+     * of this file: which hooks ran, what was previewed, and WHO retains the
+     * canonical truth — which is never Telegraph.
+     */
+    orchestration: {
+      hooks: ["authorize", "preview", "execute", "compensate"],
+      authorized: true,
+      authorizationReason: authorization.reason,
+      preview,
+      canonicalOwner: registration.canonicalOwner,
+      recorded: execution.recorded,
+      recordDegraded: execution.degraded,
+      compensated: false,
+    },
   });
 });
 

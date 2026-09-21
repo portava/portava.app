@@ -110,6 +110,11 @@ export default function SearchScreen() {
   const [loadingMore, setLoadingMore] = useState(false);
   const [searched, setSearched] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // `refusal.coverage === 'partial'` on the last first-page response: some of
+  // the fan-out's sources answered and at least one could not be read. The rows
+  // that came back are real; what is missing behind these names is UNKNOWN, not
+  // absent — so the empty state below may not speak for it.
+  const [partialSources, setPartialSources] = useState<string[] | null>(null);
   const [timeLabel, setTimeLabel] = useState<string | null>(null);
 
   // ── Intent state ────────────────────────────────────────────────────────────
@@ -151,7 +156,13 @@ export default function SearchScreen() {
   // Routes through the P1 gateway (`global_search`) additively: gateway rows are
   // shown when available, else it degrades to the proven legacy typeahead.
   const suggestActive = !submitted && query.trim().length >= 2;
-  const { groups: suggestGroups, actionSuggestions, loading: suggestLoading, recordPick } = useGlobalSearchSuggestions(query, {
+  const {
+    groups: suggestGroups, actionSuggestions, loading: suggestLoading, recordPick,
+    // `coverage: 'nothing'` — the suggest read was refused, not empty. Carried
+    // to the panel so it does not print "no quick matches" on the server's
+    // behalf when the server never reached the table.
+    refused: suggestRefused,
+  } = useGlobalSearchSuggestions(query, {
     lat: userCoords?.lat,
     lng: userCoords?.lng,
     city: userCoords?.city,
@@ -189,6 +200,7 @@ export default function SearchScreen() {
     if (isFirstPage) {
       setLoading(true);
       setError(null);
+      setPartialSources(null);
       setTimeLabel(null);
       setSearched(true);
       setCompassFallback([]);
@@ -219,10 +231,40 @@ export default function SearchScreen() {
         return;
       }
 
+      // A REFUSAL IS NOT AN EMPTY RESULT SET, and this screen is the one the
+      // refusal envelope was built for. `coverage: "nothing"` means the server
+      // did not read the sources: it arrives as `ok: true` with `results: []`,
+      // byte-identical to a query that genuinely matched nothing.
+      //
+      // Taken as empty it did TWO things, not one. The empty state SAID nothing
+      // matched. The Compass fallback below then ACTED on that claim — a second
+      // network call and a section of screen offering alternatives to a question
+      // nobody answered.
+      //
+      // The honest destination already exists in this component: the `error`
+      // branch, with its "Tap to retry" affordance, which is what a transport
+      // failure gets. A refusal is a failure that succeeded in transport, so it
+      // belongs there. `partial` is deliberately NOT routed here — the rows it
+      // carries are real, and showing them beats refusing them.
+      if (res.data.refusal?.coverage === 'nothing') {
+        if (isFirstPage) {
+          setError('Search is unavailable right now — nothing was searched, so this is not a statement about what exists.');
+        }
+        return;
+      }
+
       const { results: newRows, nextCursor: newCursor, timeLabel: label } = res.data;
 
       if (isFirstPage) {
         setResults(newRows);
+        // Kept whether or not rows came back. With rows it qualifies them; with
+        // none it is the only thing standing between a failed source and the
+        // empty state's claim that nothing matched.
+        setPartialSources(
+          res.data.refusal?.coverage === 'partial'
+            ? (res.data.refusal.failedSources ?? [])
+            : null,
+        );
         setTimeLabel(label ?? null);
 
         if (newRows.length > 0) {
@@ -574,6 +616,33 @@ export default function SearchScreen() {
         </Pressable>
       )}
 
+      {/* PARTIAL COVERAGE — part of the search could not be run, and the rest
+          answered. `partialSources` was computed on every first page and then
+          read in exactly ONE place: inside the `isEmpty` branch below. With
+          rows on screen that branch never runs, so a short list from a
+          half-read index was indistinguishable from a complete answer — the
+          same fabrication the empty state makes, only quieter, because a list
+          implies "this is what there is".
+
+          MapSearchSheet already settled this: its NOTICE_PARTIAL is rendered
+          from coverage alone, above the results, with no reference to how many
+          rows came back (MapSearchSheet.tsx — NOTICE_PARTIAL / `allPartial`).
+          This is that, with its wording, so the two search surfaces say the
+          same sentence. Coverage decides, not row count.
+
+          `coverage: "nothing"` does not come through here: it returns before
+          `setPartialSources` and lands in the `error` branch, which says the
+          stronger thing. The `!error` guard keeps the weaker sentence from
+          softening it. */}
+      {!suggestActive && !error && partialSources && (
+        <View style={styles.partialBanner}>
+          <AlertCircle size={14} color={color.warn} />
+          <Text style={styles.partialBannerText}>
+            These results are incomplete — part of the search couldn’t be run.
+          </Text>
+        </View>
+      )}
+
       {/* Content area */}
       {suggestActive ? (
         <SearchSuggestionsPanel
@@ -586,6 +655,7 @@ export default function SearchScreen() {
           onPickResult={handleSuggestionPick}
           actionSuggestions={actionSuggestions}
           onPickAction={handleSuggestionAction}
+          refused={suggestRefused}
         />
       ) : loading ? (
         <View style={styles.center}>
@@ -602,12 +672,23 @@ export default function SearchScreen() {
           contentContainerStyle={[styles.center, { justifyContent: 'flex-start', paddingTop: space.xl }]}
           keyboardShouldPersistTaps="handled"
         >
-          <Text style={styles.emptyTitle}>No results found.</Text>
-          <Text style={styles.emptySub}>
-            {timeLabel && !needsLocationForNearby
-              ? `Nothing matched "${query.trim()}" · ${timeLabel}. Try a different term or filter.`
-              : `Nothing matched "${query.trim()}". Try a different search term or filter.`}
-          </Text>
+          {partialSources ? (
+            <>
+              <Text style={styles.emptyTitle}>Some of this search could not run.</Text>
+              <Text style={styles.emptySub}>
+                {`Part of the search failed, so this is not a statement about what exists. Try again in a moment.`}
+              </Text>
+            </>
+          ) : (
+            <>
+              <Text style={styles.emptyTitle}>No results found.</Text>
+              <Text style={styles.emptySub}>
+                {timeLabel && !needsLocationForNearby
+                  ? `Nothing matched "${query.trim()}" · ${timeLabel}. Try a different term or filter.`
+                  : `Nothing matched "${query.trim()}". Try a different search term or filter.`}
+              </Text>
+            </>
+          )}
 
           {/* Compass fallback section */}
           {(compassFallbackLoading || compassFallback.length > 0) && (
@@ -954,6 +1035,27 @@ const styles = StyleSheet.create({
   locationBannerAction: {
     ...t.small,
     fontWeight: '700' as const,
+    color: color.warn,
+  },
+  // Same chrome as the location banner: this is the same kind of statement —
+  // something about this screen is not what it looks like — and it sits in the
+  // same slot above the content.
+  partialBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.sm,
+    marginHorizontal: space.lg,
+    marginBottom: space.sm,
+    paddingHorizontal: space.md,
+    paddingVertical: 10,
+    backgroundColor: 'rgba(200,133,26,0.10)',
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: 'rgba(200,133,26,0.30)',
+  },
+  partialBannerText: {
+    flex: 1,
+    ...t.small,
     color: color.warn,
   },
   center: {

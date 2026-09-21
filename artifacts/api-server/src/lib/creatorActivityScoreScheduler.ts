@@ -95,15 +95,29 @@ export interface ActivityScoreJobSummary {
 
 async function isJobEnabled(db: any): Promise<boolean> {
   try {
-    const { data } = await db
+    const { data, error } = await db
       .from("feature_flags")
       .select("enabled")
       .eq("flag", "ACTIVITY_DISCOVERY_BOOST_ENABLED")
       .maybeSingle();
+    if (error) {
+      // Fail closed — but never SILENTLY. supabase-js resolves on a database
+      // error with `data: null`, so the unchecked read this replaces made an
+      // unreadable feature_flags table indistinguishable from the flag being
+      // off: the job skipped every tick, no creator was ever scored, and there
+      // was nothing at all in the log to say why. Same shape, same fix, as
+      // TrustEventService.isTrustEnabled.
+      logger.warn(
+        { err: error },
+        "CreatorActivityScoreScheduler: ACTIVITY_DISCOVERY_BOOST_ENABLED read FAILED — treating the job as OFF for this tick; this is NOT the flag being off",
+      );
+      return false;
+    }
     return Boolean((data as any)?.enabled);
-  } catch {
+  } catch (err) {
     // Fail-safe: if we can't read the flag, skip the job rather than run
     // unexpectedly on a degraded connection.
+    logger.warn({ err }, "CreatorActivityScoreScheduler: feature-flag read threw — treating the job as OFF for this tick");
     return false;
   }
 }
@@ -180,8 +194,19 @@ export async function runActivityScoreJob(): Promise<ActivityScoreJobSummary> {
     //                   participation, anyone receiving follows on older
     //                   content, and every zero-contribution account — who still
     //                   needs a row, because a MISSING row and a NEW_USER_BASE
-    //                   floor-10 row produce different boosts downstream
-    //                   (DiscoveryRankingService defaults a missing row to 0).
+    //                   floor-10 row are different facts downstream.
+    //
+    //                   That difference is now STATED at the consumer rather
+    //                   than left implicit here. DiscoveryRankingService used to
+    //                   default a missing row to `{ score: 0 }`, so this comment
+    //                   described a disagreement the reader could not express;
+    //                   it now resolves the three states explicitly
+    //                   (`CreatorActivityLookup`: measured / unscored /
+    //                   unavailable) and a measured 0 is no longer the same
+    //                   input as no row at all. The seeding rationale is
+    //                   unchanged — a creator with a row is a stale row the
+    //                   6-hour rule will refresh, and one without is invisible
+    //                   to the stale half forever.
     //   SELF-DRAINING — the job writes a row for every user it visits, so this
     //                   half shrinks to nothing after the first full pass and
     //                   the 6-hour staleness rule sustains the job alone
@@ -195,10 +220,25 @@ export async function runActivityScoreJob(): Promise<ActivityScoreJobSummary> {
     //                   unindexed on a table dominated by bulk OSM imports.
     const newIds = new Set<string>();
     try {
-      const { data: scoredRows } = await (db as any)
+      // AN UNREADABLE SCORES TABLE IS NOT "NOBODY HAS BEEN SCORED".
+      // This read discarded its `.error`, so a failed query produced an EMPTY
+      // `alreadyScored` set — and the anti-join below then treated every
+      // profile as never-scored. The batch would fill with users who already
+      // have fresh rows, recompute them, and starve the stale half that is the
+      // job's actual work, for as long as the table stayed unreadable. There is
+      // nothing safe to seed without this answer, so the seed half declines and
+      // the stale half (which has its own checked error) carries the tick.
+      const { data: scoredRows, error: scoredErr } = await (db as any)
         .from("creator_activity_scores")
         .select("user_id")
         .limit(SEED_SCAN_LIMIT);
+      if (scoredErr) {
+        logger.warn(
+          { err: scoredErr },
+          "CreatorActivityScoreScheduler: seed anti-join base read FAILED — skipping the seed half this tick rather than treating every profile as unscored",
+        );
+        throw scoredErr; // caught by the seed-half guard below; the stale half still runs
+      }
       const alreadyScored = new Set<string>(
         ((scoredRows as any[]) ?? []).map((r) => String(r.user_id)).filter(Boolean),
       );

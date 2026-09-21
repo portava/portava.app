@@ -328,7 +328,11 @@ export const INPUT_CONTEXT_REGISTRY: Record<InputContext, InputContextDescriptor
     defaultMode: 'free_text_assisted',
     // @mentions + #hashtags resolve to canonical refs (§26).
     entityTypes: ['user', 'place', 'trip', 'event', 'hashtag'],
-    allowedSuggestionTypes: ['entity', 'ai_suggestion', 'completion'],
+    // §10: `validation` carries the "emoji and symbols cannot be tagged" answer
+    // for a `#…` body that canonicalizes to nothing, so an unsupported tag is
+    // STATED rather than silently producing an empty list. Mirrors the server
+    // registry, which is the authority (§48).
+    allowedSuggestionTypes: ['entity', 'ai_suggestion', 'completion', 'validation'],
     privacyClass: 'public',
     offlinePolicy: 'none',
     allowPersonalization: false,
@@ -342,7 +346,8 @@ export const INPUT_CONTEXT_REGISTRY: Record<InputContext, InputContextDescriptor
     context: 'comment',
     defaultMode: 'free_text_assisted',
     entityTypes: ['user', 'place', 'trip', 'event', 'hashtag'],
-    allowedSuggestionTypes: ['entity', 'completion'],
+    // §10 — same mirror as `caption` above.
+    allowedSuggestionTypes: ['entity', 'completion', 'validation'],
     privacyClass: 'public',
     offlinePolicy: 'none',
     allowPersonalization: false,

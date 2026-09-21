@@ -10,7 +10,7 @@ import { useRentABuddyFlag } from '../../src/hooks/useRentABuddyFlag';
 import { useScreenTiming } from '../../src/hooks/useScreenTiming';
 import { useNextBestAction } from '../../src/hooks/useNextBestAction';
 import { LayoverModeSheet } from '../../src/components/layover/LayoverModeSheet';
-import type { ReadinessSummary } from '../../src/services/tripIntel';
+import type { ReadinessRead, ReadinessSummary } from '../../src/services/tripIntel';
 import {
   TripHero, TodayNextUp, SavedIdeas, TripSavedPlacesSection,
   CompassTripBrief, CompassBriefErrorBoundary, TripStamps, TripPostsSection,
@@ -21,7 +21,7 @@ import { TripHeartbeatCard } from '../../src/components/compass/TripHeartbeatCar
 import { SafeReturnSetupSheet } from '../../src/components/safeReturn/SafeReturnSetupSheet';
 import { MissedCheckinPrompt } from '../../src/components/safeReturn/MissedCheckinPrompt';
 import { getActiveSession, type SafeReturnSession } from '../../src/services/safeReturn';
-import { TripPlanSection } from '../../src/components/TripPlanSection';
+import { TripPlanSection } from '../../src/features/trips/planning/TripPlanSection';
 import { NeighborhoodMatchSection } from '../../src/components/trip/NeighborhoodMatchSection';
 import { TripAvailabilitySection } from '../../src/components/TripAvailabilitySection';
 import { TripReservationsSection } from '../../src/components/trip/TripReservationsSection';
@@ -29,6 +29,16 @@ import { ReviewsSection } from '../../src/components/ReviewsSection';
 import { TripBudgetSection } from '../../src/components/trip/TripBudgetSection';
 import { DailyBriefCard } from '../../src/components/DailyBriefCard';
 import { TripReadinessCard } from '../../src/components/trip/TripReadinessCard';
+import { TripFeasibilityCard } from '../../src/features/trips/planning/TripFeasibilityCard';
+import { TripCrewPresenceCard } from '../../src/features/trips/crew/TripCrewPresenceCard';
+import { TripDecisionsCard } from '../../src/features/trips/planning/TripDecisionsCard';
+import { TripStageSpineCard } from '../../src/components/trip/TripStageSpineCard';
+import { TripMapLayersCard } from '../../src/features/trips/map/TripMapLayersCard';
+import { TripTodayCard } from '../../src/features/trips/today/TripTodayCard.tsx';
+import { TripTimelineConflictsCard } from '../../src/features/trips/timeline/TripTimelineConflictsCard.tsx';
+import { TripCloseoutCard } from '../../src/features/trips/closeout/TripCloseoutCard.tsx';
+import { TripOfflineCard } from '../../src/features/trips/offline/TripOfflineCard.tsx';
+import { TripRescueEntry } from '../../src/features/trips/disruption/TripRescueEntry.tsx';
 import { BeforeYouGoSection } from '../../src/components/trip/BeforeYouGoSection';
 import { TripFsqPlacesSection } from '../../src/components/trip/TripFsqPlacesSection';
 import { TripDestinationInfoCard } from '../../src/components/trip/TripDestinationInfoCard';
@@ -67,6 +77,8 @@ function TripDetailScreen() {
   const navBarScrollHandler = useNavBarScrollHandler();
   const bottomInset = usePlainBottomInset();
   const live = configured && isAuthed;
+  // §17.2's mode as the Today card last read it; §17.3's entry mounts under it when not NORMAL.
+  const [attentionMode, setAttentionMode] = useState<string | null>(null);
   const { data: realTrip, loading, error: tripError, reload: reloadTrip } = useTrip(live ? id : undefined);
   // Next best action (Trip Brain wave) — fail-soft null when the server flag
   // is off or the request fails, so TodayNextUp keeps its empty state.
@@ -120,7 +132,14 @@ function TripDetailScreen() {
   const [readinessRefresh, setReadinessRefresh] = useState(false);
   // QA round 2, bug 2: single source of truth for BOTH progress gauges on this
   // page. Populated by TripReadinessCard via onSummary below.
-  const [readiness, setReadiness] = useState<ReadinessSummary | null>(null);
+  const [readinessRead, setReadinessRead] = useState<ReadinessRead | null>(null);
+  // The summary only when there IS one. `readinessRead.state === 'unavailable'`
+  // is deliberately NOT collapsed into this, because the progress ring below
+  // treats a null summary as licence to fall back to `trips.progress` — and
+  // that is how a readiness read that failed used to be painted as 0% ready.
+  const readiness: ReadinessSummary | null =
+    readinessRead?.state === 'ok' ? readinessRead.summary : null;
+  const readinessUnavailable = readinessRead?.state === 'unavailable';
   const [memberRole, setMemberRole] = useState<string | null>(null);
   /** Set when the trip is private and the API returns a minimal preview sentinel. */
   const [privateTrip, setPrivateTrip] = useState<PrivateTripPreview | null>(null);
@@ -359,13 +378,19 @@ function TripDetailScreen() {
     coverMediaType: realTrip.coverMediaType ?? null,
     // QA round 2, bug 2: prefer the readiness score — it is the only number that
     // actually counts plan items, stay, transport, budget, entry, documents and
-    // reservations (api-server/src/lib/tripReadiness.ts). Falls back to the legacy
+    // reservations (api-server/src/domain/trips/services/tripReadiness.ts). Falls back to the legacy
     // trips.progress column when the readiness flag is off, in which case the card
     // renders nothing and never reports a summary.
-    progress: readiness ? readiness.score : (realTrip.progress ?? 0),
+    // `null` when readiness could not be read: the ring must render an unknown
+    // state rather than a number. `trips.progress` is only a legitimate
+    // fallback when readiness is genuinely OFF — nothing writes that column,
+    // so on a failed read it would have shown a confident 0%.
+    progress: readiness ? readiness.score : (readinessUnavailable ? null : (realTrip.progress ?? 0)),
+    // §8: the hero renders this sentence, not the number above.
+    readinessHeadline: readiness?.explanation?.headline ?? null,
     // The hero's checklist was hard-coded to [] — it never rendered a single step.
     // Same order/labels as CATEGORIES in TripReadinessCard.tsx and
-    // READINESS_CATEGORIES in api-server/src/lib/tripReadiness.ts.
+    // READINESS_CATEGORIES in api-server/src/domain/trips/services/tripReadiness.ts.
     progressSteps: readiness
       ? ([
           ['plan', 'Plan'], ['stay', 'Stay'], ['transport', 'Transport'],
@@ -528,10 +553,78 @@ function TripDetailScreen() {
           <DailyBriefCard tripId={trip.id} date={todayDate} onGapDays={handleGapDays} />
         ) : null}
 
+        {/* ── §11 Today ────────────────────────────────────────────────────
+            The five questions in §11.2's order, from GET /today, with §17.2's
+            switch obeyed (a banner first, discovery withheld when the server
+            says so) and §10.3's sampling interval stated. An unreadable Today
+            renders as unavailable, never as a quiet day. */}
+        {live && trip.id ? <TripTodayCard tripId={trip.id} onAttention={setAttentionMode} /> : null}
+
+        {/* ── §17.3 rescue — only under a non-NORMAL switch ───────────────
+            The traveller names the problem in the server's vocabulary and gets
+            the server's plan; whether the disruption was declared is the
+            server's word (with the kernel off it says "not declared"). */}
+        {live && trip.id ? <TripRescueEntry tripId={trip.id} attentionMode={attentionMode} /> : null}
+
+        {/* ── §18 offline copy and queue ─────────────────────────────────
+            The signed bundle kept as issued, its age and version judged by the
+            server's own rule and shown stale as stale; queued changes replayed
+            on reconnect with the server's per-operation decision applied. */}
+        {live && trip.id ? <TripOfflineCard tripId={trip.id} /> : null}
+
+        {/* ── §7.3 conflicts on the timeline ───────────────────────────────
+            A day that carries a temporal conflict is named above the plan,
+            with the plans in it and the kind; a measured, clean timeline
+            shows nothing here. TR130: a conflict is not silently rendered as
+            a normal itinerary. */}
+        {live && trip.id ? <TripTimelineConflictsCard tripId={trip.id} /> : null}
+
+        {/* ── §20.3 the closeout's questions ──────────────────────────────
+            Asked once the trip is over or completed: "Did you make it to X?"
+            with the two answers RECORD_OUTCOME takes. Recorded only on the
+            server's word; refused by name without the kernel. */}
+        {live && trip.id && (deriveTripDisplayStatus(trip.status, trip.endDate) === 'completed' || trip.status === 'completed') ? <TripCloseoutCard tripId={trip.id} /> : null}
+
         {/* ── Trip Readiness — renders nothing when flag is off (null response) ── */}
         {live && trip.id ? (
-          <TripReadinessCard tripId={trip.id} refresh={readinessRefresh} onSummary={setReadiness} />
+          <TripReadinessCard tripId={trip.id} refresh={readinessRefresh} onSummary={setReadinessRead} />
         ) : null}
+
+        {/* ── §7 schedule feasibility ──────────────────────────────────────
+            Mounted next to readiness deliberately: readiness answers "have you
+            arranged this trip", feasibility answers "can you physically do it".
+            Only INFEASIBLE is a proof — the card draws the other verdicts as
+            what they are, and renders itself rather than vanishing when the
+            check could not run. */}
+        {live && trip.id ? <TripFeasibilityCard tripId={trip.id} /> : null}
+
+        {/* ── §10 crew presence ────────────────────────────────────────────
+            The first reader §10 has ever had: five migrations built presence
+            and nothing displayed it. Stale rows are shown rather than hidden —
+            §10.4 needs last-known data to remain available — but never drawn
+            like live ones. */}
+        {live && trip.id ? <TripCrewPresenceCard tripId={trip.id} /> : null}
+
+        {/* ── §8 decisions and risks ───────────────────────────────────────
+            The chain §8 describes — goal, decision task, proposals, §7
+            feasibility, risk register, recommendation — reaching a screen for
+            the first time. INSUFFICIENT_BASIS renders as itself; the card's
+            whole discipline is not letting it look like approval. */}
+        {live && trip.id ? <TripDecisionsCard tripId={trip.id} /> : null}
+
+        {/* ── §5.1 stage spine ─────────────────────────────────────────────
+            Stages, legs and plan attendance reaching a screen for the first
+            time. Orphaned references are DISPLAYED rather than tidied away:
+            the FKs make them impossible, which is exactly why silence about
+            one would be a dropped row. */}
+        {live && trip.id ? <TripStageSpineCard tripId={trip.id} /> : null}
+
+        {/* ── §14.1 TripMapProjection ──────────────────────────────────────
+            The projection's SHAPE, not its geometry: what this trip has to put
+            on a map, and — the load-bearing part — which layers could not be
+            read. A map missing its saved places looks exactly like a trip with
+            none saved, and only this line tells them apart. */}
+        {live && trip.id ? <TripMapLayersCard tripId={trip.id} /> : null}
 
         {/* ── FSQ places — renders nothing until city is ingested server-side ── */}
         {live ? (

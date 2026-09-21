@@ -167,6 +167,15 @@ export interface OutcomeInput {
   travelerMode?: TravelerMode;
   /** Optional surface label (allow-listed payload key), e.g. 'compass'. */
   surface?: string;
+  /**
+   * Sensing §5.4: the ExperienceSession envelope this outcome CLOSES, when it
+   * closes one. It rides as a SIBLING of `intel`, never inside it, so the
+   * shared I4a/I4b contract stays exactly the six keys above and every existing
+   * reader is unaffected. Typed loosely on purpose — lib/experienceSession
+   * imports this module, so a type import back would be a cycle; the shape is
+   * that module's `ExperienceSessionEnvelope` and its own guard owns it.
+   */
+  experienceSession?: Record<string, unknown>;
 }
 
 /**
@@ -192,6 +201,7 @@ export function buildOutcomeEvent(
   if (typeof input.counterfactualSameChoice === "boolean") payload.counterfactual_same_choice = input.counterfactualSameChoice;
   if (input.travelerMode) payload.traveler_mode = input.travelerMode;
   if (input.surface) payload.surface = input.surface;
+  if (input.experienceSession) payload.experience_session = input.experienceSession;
 
   const servedMs = Date.parse(input.servedAt);
   const observedMs = Date.parse(snapshot.observed_at);

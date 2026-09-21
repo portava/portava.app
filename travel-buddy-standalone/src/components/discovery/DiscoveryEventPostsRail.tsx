@@ -22,6 +22,16 @@
  *
  * Renders nothing when there are no posts (unauthenticated, or none nearby) —
  * absence of posts is not an error, so no skeleton and no empty state.
+ *
+ * A REFUSAL IS NOT THAT ABSENCE. `GET /discovery/feed` answers 200 with a
+ * `refusal` envelope when it could not look at all (`coverage: "nothing"`), and
+ * `getDiscoveryFeed` hands it through as `ok: true, posts: []`. Falling into the
+ * "no posts" branch above would delete this whole strip — pixel-identical to a
+ * city where nothing is happening — and that is a claim about the world made on
+ * the strength of a read nobody performed. So a refused load gets its own
+ * visible, plainly-worded state, the same way ForYouTab's `source === 'refused'`
+ * is kept distinct from its "No recommendations yet". `coverage: "partial"` is
+ * NOT routed there: the posts it carries are real and are shown.
  */
 import React, { useEffect, useRef, useState } from 'react';
 import { View, Text, ScrollView, StyleSheet } from 'react-native';
@@ -42,6 +52,9 @@ interface Props {
 export function DiscoveryEventPostsRail({ destination, lat, lng, radiusKm = 25 }: Props) {
   const [posts, setPosts] = useState<DiscoveryEventPost[]>([]);
   const [sessionId, setSessionId] = useState<string | null>(null);
+  // True only for `coverage: "nothing"` — the server did not read the feed, so
+  // the empty `posts` above is padding, not an answer.
+  const [refused, setRefused] = useState(false);
 
   // Feed posts are served under rank_events surface 'discovery' (serve point 7),
   // keyed to the returned sessionId — that pair is the served rank context.
@@ -55,6 +68,7 @@ export function DiscoveryEventPostsRail({ destination, lat, lng, radiusKm = 25 }
     if (!destination && (lat == null || lng == null)) {
       setPosts([]);
       setSessionId(null);
+      setRefused(false);
       return;
     }
     const myId = ++loadIdRef.current;
@@ -63,18 +77,45 @@ export function DiscoveryEventPostsRail({ destination, lat, lng, radiusKm = 25 }
       .then((res) => {
         if (cancelled || loadIdRef.current !== myId) return;
         if (res.ok) {
+          // `res.ok` is true for a refusal too — the difference is only in the
+          // envelope, which is exactly why it has to be read here.
+          setRefused(res.data.refusal?.coverage === 'nothing');
           setPosts(res.data.posts);
           setSessionId(res.data.sessionId);
         } else {
+          // Transport died. That is not the server declining to look, and the
+          // rail has never claimed anything about it.
           setPosts([]);
           setSessionId(null);
+          setRefused(false);
         }
       })
       .catch(() => {
-        if (!cancelled && loadIdRef.current === myId) { setPosts([]); setSessionId(null); }
+        if (!cancelled && loadIdRef.current === myId) {
+          setPosts([]); setSessionId(null); setRefused(false);
+        }
       });
     return () => { cancelled = true; };
   }, [destination, lat, lng, radiusKm]);
+
+  // Checked BEFORE the empty check below, which is the whole fix: a refused load
+  // arrives with zero posts and would otherwise be silently swallowed by it.
+  // Keeps the rail's own header so the strip stays where the eye expects it and
+  // the sentence has something to be about.
+  if (refused) {
+    return (
+      <View style={styles.section} testID="discovery-event-posts-rail-refused">
+        <View style={styles.header}>
+          <Radio size={14} color={color.faint} />
+          <Text style={styles.title}>Live from events</Text>
+        </View>
+        <Text style={styles.refusedText}>
+          We couldn't check what's live nearby just now — this isn't a sign that nothing is
+          happening. Pull to refresh.
+        </Text>
+      </View>
+    );
+  }
 
   if (posts.length === 0) return null;
 
@@ -120,6 +161,14 @@ const styles = StyleSheet.create({
   rail: {
     paddingHorizontal: space.lg,
     paddingRight: space.md,
+  },
+  // Sits where the card strip would be, in the rail's own gutter. Quiet by
+  // design: nothing is broken for the user, one read did not come back.
+  refusedText: {
+    ...t.small,
+    color: color.mute,
+    paddingHorizontal: space.lg,
+    lineHeight: 19,
   },
 });
 

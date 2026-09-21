@@ -229,9 +229,17 @@ export interface PrivateTripPreview {
   isPrivate: true;
   createdAt: string;
   updatedAt: string;
-  /** null when show_exact_dates is false */
+  /** null when show_exact_dates is false, or when `datesWithheld` says why */
   startDate: string | null;
   endDate: string | null;
+  /**
+   * Present, and "future_absence", only when the dates were withheld by the
+   * §6.3 absence guard (lib/privacy/absenceDisclosure.ts): the trip has not
+   * begun, so a public preview does not announce when the host is away from
+   * home. Absent otherwise, so a preview that carries no dates because of
+   * show_exact_dates looks exactly as it always did.
+   */
+  datesWithheld?: "future_absence";
   destinationLat?: number | null;
   destinationLng?: number | null;
   /** Pending join-request status for the viewer, if any. */

@@ -34,7 +34,9 @@ import {
   objectOf,
   passportCardPayload,
 } from '../../types/mapCardPayloads.ts';
-import { avatar, dot } from '../../theme/tokens.ts';
+import { avatar, dot, color } from '../../theme/tokens.ts';
+import { mayRenderAsLive, type FreshnessState } from '../../types/mapObjects.ts';
+import { freshnessLabel } from '../../features/map/truth/liveTruth.ts';
 
 /**
  * A `places` entity that came THROUGH the projection — its payload is a
@@ -190,16 +192,21 @@ function MarkerTouch({
   onPress,
   onLongPress,
   children,
+  accessibilityLabel,
 }: {
   entity: MapEntity;
   onPress: (e: MapEntity) => void;
   onLongPress?: MarkerLongPress;
   children: React.ReactNode;
+  /** Spoken for the pin. A pin whose meaning is its colour has none without this. */
+  accessibilityLabel?: string;
 }) {
   const didLongPress = useRef(false);
   return (
     <Pressable
       testID={`entity-pin-${entity.id}`}
+      accessibilityRole="button"
+      accessibilityLabel={accessibilityLabel}
       hitSlop={6}
       onPress={() => {
         // Suppress the onPress that React Native fires after onLongPress.
@@ -312,16 +319,47 @@ function TripMarker({ entity, onPress, onLongPress }: { entity: MapEntity; onPre
 
 // ── Friend marker ─────────────────────────────────────────────────────────────
 
+/**
+ * Trips spec §10.2: "marker visual treatment and accessible text expose
+ * freshness". The object's `freshness` is the server's verdict on the
+ * position's own clock (the Trip Map's crew pins carry it from
+ * `freshnessClass`; the Map's own friend objects from their producers), and
+ * the pin says it two ways — in its ring, and in the label a screen reader
+ * speaks — rather than drawing every friend pin the same. A pin with no
+ * freshness is `unknown`: muted, never live (§37 fail-closed rung).
+ */
+function pinFreshnessTreatment(freshness: FreshnessState | undefined): 'live' | 'recent' | 'stale' | 'unknown' {
+  if (freshness == null) return 'unknown';
+  if (!mayRenderAsLive(freshness)) return 'stale';
+  return freshness === 'live' ? 'live' : 'recent';
+}
+
 function FriendMarker({ entity, onPress, onLongPress }: { entity: MapEntity; onPress: (e: MapEntity) => void; onLongPress?: MarkerLongPress }) {
   const cfg = MAP_LAYER_CONFIG.friends;
   // Same shape as BuddyMarker: the avatar is on the projected payload, not on
   // the envelope. An avatar is the whole point of a friend pin — §23 puts these
   // at `approximate`, the rung where mayRenderIdentity() permits a face — so
   // this read being silently undefined blanked exactly the thing that matters.
-  const avatarUrl = friendCardPayload(objectOf(entity))?.avatarUrl ?? null;
+  const obj = objectOf(entity);
+  const avatarUrl = friendCardPayload(obj)?.avatarUrl ?? null;
+  const treatment = pinFreshnessTreatment(obj?.freshness);
+  const ringColor = treatment === 'live' ? color.signal : treatment === 'recent' ? cfg.color : color.mute;
+  const label = obj
+    ? (obj.freshness != null ? `${obj.title}, ${freshnessLabel(obj.freshness, obj.observedAt)}` : obj.title)
+    : undefined;
   return (
-    <MarkerTouch entity={entity} onPress={onPress} onLongPress={onLongPress}>
-      <View style={[pin.avatarWrap, { borderColor: cfg.color }]}>
+    <MarkerTouch entity={entity} onPress={onPress} onLongPress={onLongPress} accessibilityLabel={label}>
+      <View
+        testID={`entity-pin-freshness-${treatment}`}
+        style={[
+          pin.avatarWrap,
+          { borderColor: ringColor },
+          // A stale or unknown position is kept — §10.4: last-known data may
+          // remain useful — but drawn as what it is: dimmed, dashed, never the
+          // solid live ring.
+          (treatment === 'stale' || treatment === 'unknown') && pin.avatarWrapStale,
+        ]}
+      >
         {avatarUrl ? (
           <CachedImage source={{ uri: avatarUrl }} style={pin.friendImg} fallbackLabel="" />
         ) : (
@@ -361,6 +399,7 @@ const pin = StyleSheet.create({
     width: avatar.s28, height: avatar.s28,
     borderRadius: avatar.s28 / 2,
   },
+  avatarWrapStale: { opacity: 0.55, borderStyle: 'dashed' },
   avatarWrap: {
     width: avatar.s36, height: avatar.s36,
     borderRadius: avatar.s36 / 2,

@@ -21,8 +21,10 @@
  *                    these flags, never from `score`.
  *
  * `deriveTrustView` is a pure function exported for direct unit/component
- * testing. It does NOT read the numeric score to decide domain applicability —
- * that is derived from server-owned capability flags and travel evidence only.
+ * testing. It does NOT read the numeric score to decide domain applicability
+ * (§11). Per-domain trust (TABLE 12) is ADOPTED from `trust.domains` — the
+ * word, the applicability and the `basis` are all the server's answers, and the
+ * capability-derived rows are a fallback for a server that predates TABLE 12.
  */
 import { useCallback, useEffect, useState } from 'react';
 import { useSession } from '../../context/SessionContext.tsx';
@@ -37,6 +39,33 @@ import { freshToken } from '../../services/apiToken.ts';
 
 export type TrustConfidence = 'low' | 'medium' | 'high';
 
+/**
+ * What a domain's word RESTS ON — server-owned (`domainTrustBasis` in
+ * api-server services/passport/PassportProjectionService.ts). This is the field
+ * that makes P45's "explainable" clause real: without it a neutral-50
+ * SUBSTITUTION and a genuine MEASUREMENT print the same word and a person
+ * cannot tell them apart.
+ */
+export type DomainTrustBasis =
+  | 'measured'
+  | 'partial'
+  | 'substituted'
+  | 'not_applicable'
+  | 'unavailable'
+  /** Client-only: derived from capability flags because the server sent no
+   *  `trust.domains` (a deployment older than TABLE 12). */
+  | 'client_derived';
+
+/** One server-computed domain presentation (TABLE 12). Words only, never a number. */
+export interface ServerDomainTrust {
+  key: string;
+  domain: string;
+  /** The non-stigmatizing word the SERVER computed. Rendered verbatim. */
+  presentation: string;
+  applicable: boolean;
+  basis: DomainTrustBasis;
+}
+
 export interface TrustProjection {
   /** Qualitative standing (e.g. "Strong", "New Traveler · Verified"). */
   label: string;
@@ -45,6 +74,8 @@ export interface TrustProjection {
   score: number | null;
   /** Evidence-aware band: an 82 with high evidence ≠ an 82 with little (§10). */
   confidence: TrustConfidence;
+  /** What `confidence` was computed from — trust evidence, or a travel proxy. */
+  confidenceBasis?: 'trust_evidence' | 'travel_proxy' | 'unavailable';
   strengths: string[];
   /**
    * Ordered recovery advice — present ONLY on the owner's own view, because the
@@ -54,6 +85,8 @@ export interface TrustProjection {
    * client-side derivation from the score or the categories.
    */
   recoveryHints?: string[];
+  /** TABLE 12, server-owned. Absent only on a server older than TABLE 12. */
+  domains?: ServerDomainTrust[];
 }
 
 export interface CredentialProjection {
@@ -124,6 +157,15 @@ export interface TrustDomainRow {
   applicable: boolean;
   /** Qualitative standing, or the non-stigmatizing "Not applicable". */
   standing: string;
+  /** What `standing` rests on. See `DomainTrustBasis`. */
+  basis: DomainTrustBasis;
+  /**
+   * Human-readable disclosure for a standing that is NOT a measurement, or
+   * `null` when the word is measured and needs no qualification. Deliberately
+   * null on the measured branch: an annotation printed on every row is
+   * decoration, not a distinction.
+   */
+  basisNote: string | null;
 }
 
 export interface CapabilityChip {
@@ -202,13 +244,51 @@ const EMPTY_CAPS: PassportPositiveCapabilities = {
 };
 
 /**
+ * Copy for a standing that is not a measurement (§10 — non-stigmatizing: a
+ * missing measurement is described as an absence of records, never as a
+ * deficiency of the person).
+ */
+const BASIS_NOTE: Record<DomainTrustBasis, string | null> = {
+  measured: null,
+  partial: 'Based on part of the record so far.',
+  substituted: 'Not yet measured — shown at the neutral starting point.',
+  not_applicable: null,
+  unavailable: 'Trust records are unavailable right now.',
+  client_derived: null,
+};
+
+/**
+ * Adopt the SERVER's TABLE 12 domains verbatim. The server computed each word
+ * from the canonical category scores and said what that word rests on; the
+ * client's job is to display it, not to re-decide it. Re-deciding is exactly
+ * what this module's own header forbids ("Trust is owned by the SERVER") and
+ * what the spec's canonical-architecture rule forbids ("Other surfaces request
+ * the appropriate Passport projection instead of rebuilding … trust …
+ * independently").
+ */
+function domainsFromServer(rows: ServerDomainTrust[]): TrustDomainRow[] {
+  return rows.map((r) => {
+    const basis: DomainTrustBasis = r.basis ?? 'measured';
+    return {
+      key: String(r.key),
+      domain: String(r.domain),
+      applicable: !!r.applicable,
+      standing: String(r.presentation),
+      basis,
+      basisNote: BASIS_NOTE[basis] ?? null,
+    };
+  });
+}
+
+/**
  * Re-shape the trust slice of a PassportProjection into the display model.
  * Pure — no I/O, safe to unit-test.
  *
- * Domain applicability (TABLE 12) is derived from SERVER-OWNED capability flags
- * and travel evidence — never from the numeric score (§11). "Overall" carries
- * the server's qualitative label; in-scope specific domains read "In good
- * standing"; out-of-scope domains read the neutral "Not applicable".
+ * Domain trust (TABLE 12) comes from the SERVER when the projection carries it:
+ * the word, the applicability and the basis are all the server's answers. The
+ * capability-derived rows below are a FALLBACK for a server that predates
+ * TABLE 12 — they are marked `client_derived` so a reader can tell that this
+ * row was not measured anywhere.
  */
 export function deriveTrustView(p: TrustProjectionEnvelope): TrustView {
   const trust = p.trust ?? null;
@@ -226,14 +306,28 @@ export function deriveTrustView(p: TrustProjectionEnvelope): TrustView {
 
   const specific = (applicable: boolean): string => (applicable ? IN_GOOD_STANDING : NOT_APPLICABLE);
 
-  const domains: TrustDomainRow[] = [
-    { key: 'overall', domain: 'Overall', applicable: hasTrust, standing: hasTrust ? overall : NOT_APPLICABLE },
-    { key: 'traveler', domain: 'Traveler', applicable: hasTrust && hasTravelEvidence, standing: specific(hasTrust && hasTravelEvidence) },
-    { key: 'trip_guest', domain: 'Trip Guest', applicable: caps.canJoinPublicTrip, standing: specific(caps.canJoinPublicTrip) },
-    { key: 'trip_host', domain: 'Trip Host', applicable: caps.canHostTrip, standing: specific(caps.canHostTrip) },
-    { key: 'contributor', domain: 'Contributor', applicable: caps.canContributeLiveIntel, standing: specific(caps.canContributeLiveIntel) },
-    { key: 'buddy', domain: 'Buddy', applicable: caps.canBecomeBuddy, standing: specific(caps.canBecomeBuddy) },
-  ];
+  const legacy = (key: string, domain: string, applicable: boolean, standing: string): TrustDomainRow => ({
+    key, domain, applicable, standing, basis: 'client_derived', basisNote: null,
+  });
+
+  // An EMPTY array is treated the same as an absent one. The server never emits
+  // zero domains — TABLE 12 always returns six — so an empty array means the
+  // field did not survive transport, and blanking the surface on it would turn a
+  // serialization bug into "this person has no trust in any area".
+  const serverDomains = Array.isArray(trust?.domains) && trust!.domains!.length > 0
+    ? trust!.domains!
+    : null;
+
+  const domains: TrustDomainRow[] = serverDomains
+    ? domainsFromServer(serverDomains)
+    : [
+        legacy('overall', 'Overall', hasTrust, hasTrust ? overall : NOT_APPLICABLE),
+        legacy('traveler', 'Traveler', hasTrust && hasTravelEvidence, specific(hasTrust && hasTravelEvidence)),
+        legacy('trip_guest', 'Trip Guest', caps.canJoinPublicTrip, specific(caps.canJoinPublicTrip)),
+        legacy('trip_host', 'Trip Host', caps.canHostTrip, specific(caps.canHostTrip)),
+        legacy('contributor', 'Contributor', caps.canContributeLiveIntel, specific(caps.canContributeLiveIntel)),
+        legacy('buddy', 'Buddy', caps.canBecomeBuddy, specific(caps.canBecomeBuddy)),
+      ];
 
   // Owner-only, server-gated (§9/§10). The client passes the strings through
   // untouched — it must not invent, reorder, translate or top up hints, because

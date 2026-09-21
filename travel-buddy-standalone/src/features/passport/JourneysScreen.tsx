@@ -43,6 +43,8 @@ import {
   Star,
   ShieldCheck,
   Compass,
+  Ticket,
+  Sparkles,
 } from 'lucide-react-native';
 import { color, space, radius, type as t, avatar, icon } from '../../theme/tokens.ts';
 import {
@@ -145,6 +147,8 @@ function FeaturedJourney({ journey }: { journey: JourneyProjection }) {
   const route = deriveRoute(journey);
   const places = derivePlaces(journey);
   const people = journey.people ?? [];
+  const events = journey.events ?? [];
+  const recommendations = journey.recommendations ?? [];
 
   return (
     <View style={s.featuredCard} accessibilityLabel={`Featured journey: ${journey.title}`}>
@@ -249,6 +253,48 @@ function FeaturedJourney({ journey }: { journey: JourneyProjection }) {
               </View>
             ))}
           </View>
+        </View>
+      ) : null}
+
+      {/* Events (§14) — what happened on this journey. The server has already
+          applied event visibility, so an absent event is an event this viewer
+          may not be told about, not one to ask again for. */}
+      {events.length > 0 ? (
+        <View style={s.section}>
+          <View style={s.sectionHead}>
+            <Ticket size={icon.s14} color={color.mute} />
+            <Text style={s.sectionTitle}>Events</Text>
+          </View>
+          {events.slice(0, 6).map((e) => (
+            <View key={e.id} style={s.lineItem}>
+              <Text style={s.lineTitle} numberOfLines={1}>{e.title ?? 'Event'}</Text>
+              <Text style={s.lineMeta} numberOfLines={1}>
+                {[e.role === 'host' ? 'Hosted' : 'Attended', e.city, monthYear(e.startsAt)]
+                  .filter(Boolean)
+                  .join(' · ')}
+              </Text>
+            </View>
+          ))}
+        </View>
+      ) : null}
+
+      {/* Recommendations (§14) — the Hidden Gems this traveller contributed from
+          the journey. Coarse place only; the gem's own disclosure policy decided
+          server-side whether this viewer may even be told the gem exists. */}
+      {recommendations.length > 0 ? (
+        <View style={s.section}>
+          <View style={s.sectionHead}>
+            <Sparkles size={icon.s14} color={color.mute} />
+            <Text style={s.sectionTitle}>Recommendations</Text>
+          </View>
+          {recommendations.slice(0, 6).map((r) => (
+            <View key={r.id} style={s.lineItem}>
+              <Text style={s.lineTitle} numberOfLines={1}>{r.name ?? 'Hidden gem'}</Text>
+              <Text style={s.lineMeta} numberOfLines={1}>
+                {[r.category, r.neighborhood ?? r.city].filter(Boolean).join(' · ')}
+              </Text>
+            </View>
+          ))}
         </View>
       ) : null}
 

@@ -19,6 +19,7 @@ import type { CompassItem } from "./types.js";
 import type { CompassProfile } from "./types.js";
 import { logger } from "../lib/logger.js";
 import { isPostPublished } from "../lib/postVisibility.js";
+import { mayDiscloseGemIdentity } from "../services/hiddenGems/HiddenGemPrivacyGuard.js";
 
 /**
  * Logs a Compass candidate-source failure so a degraded feed (a source
@@ -348,23 +349,50 @@ async function fetchHiddenGems(
 ): Promise<CompassItem[]> {
   if (!profile.currentCity) return [];
   try {
-    const { data } = await db
+    const { data, error } = await db
       .from("hidden_gems")
-      .select("id, name, description, city, country, submitted_by, category, created_at")
+      // sensitivity_level and status are SELECTed, not merely filtered on,
+      // because the in-memory re-check below is the gate and it cannot judge a
+      // column it was not given. submitted_by is already here for authorId and
+      // doubles as the predicate's owner bypass.
+      .select("id, name, description, city, country, submitted_by, category, created_at, status, sensitivity_level")
       .ilike("city", profile.currentCity)
       // `hidden_gem_status` is an ENUM: pending | active | hidden | merged.
       // "approved" is NOT a label, and Postgres rejects an unknown enum literal
-      // outright (22P02) rather than matching nothing — so this read failed
-      // WHOLE and the Compass feed has never surfaced a hidden gem. This module
-      // destructures `{ data }` without inspecting `error`, and
-      // logCompassSourceFailure only fires on a rejected promise (supabase-js
-      // RETURNS PostgREST errors), so the loss had zero telemetry.
+      // outright (22P02) rather than matching nothing — so this read once failed
+      // WHOLE and the Compass feed never surfaced a hidden gem.
       // `["active"]` is discoverySearch's GEM_SEARCHABLE_STATUSES.
       .in("status", ["active"])
+      // THE DISCLOSURE FILTER, and the reason it is here rather than only below.
+      // This module runs on getServiceClient() (routes/compass.ts,
+      // routes/compassHome.ts), which BYPASSES RLS — so migration 0043's
+      // `hidden_gems_public_read: status = 'active' AND sensitivity_level =
+      // 'public'` does not apply to this read, and without this predicate a
+      // `protected` / `reveal_after_save` / `reveal_after_acceptance` gem was
+      // named, by id, to every user in its city. Four of the five
+      // sensitivity levels exist precisely to prevent that.
+      .eq("sensitivity_level", "public")
       .order("created_at", { ascending: false })
       .limit(MAX_HIDDEN_GEMS);
 
-    return ((data as any[]) ?? []).map((gem): CompassItem => ({
+    // supabase-js RESOLVES on a PostgREST error, so `{ data }` alone made "no
+    // gems in this city" and "the read failed" the same empty array —
+    // logCompassSourceFailure only ever fired on a REJECTED promise. Bind it.
+    if (error) {
+      logCompassSourceFailure("hidden_gems", error, profile.userId);
+      return [];
+    }
+
+    return ((data as any[]) ?? [])
+      // The query narrowed; this REFUSES. Both halves are deliberate: a filter
+      // in a query string is not reachable by the reader, so a later edit that
+      // drops the `.eq` above would silently re-open the disclosure. This is the
+      // same predicate the media surfaces use — HiddenGemPrivacyGuard, which is
+      // migration 0043's policy written as a function — so Compass and the media
+      // surfaces give exactly one answer, which is what that module's header
+      // already claimed and this call is what makes true.
+      .filter((gem) => mayDiscloseGemIdentity(gem as any, profile.userId ?? null))
+      .map((gem): CompassItem => ({
       id:              `gem:${gem.id}`,
       type:            "hidden_gem",
       title:           gem.name ?? null,

@@ -157,7 +157,13 @@ function makeFakeClient(tables: Record<string, FakeTable> = {}) {
           if (pendingOp.type === "delete") {
             const toDelete = new Set(filtered.map((r) => r.id));
             table.rows = table.rows.filter((r) => !toDelete.has(r.id));
-            filtered = [];
+            // postgrest returns the DELETED rows when `.select()` is chained; the
+            // fake used to answer `[]`, which is what a delete that matched
+            // NOTHING returns. Any caller that counts affected rows to decide
+            // what it may do next (eventWaitlistSweeper promotes exactly as many
+            // users as its DELETE really freed) therefore saw "nothing was
+            // deleted" for a delete that removed every row it asked for.
+            filtered = filtered.slice();
           } else if (pendingOp.type === "update") {
             const updateData = (pendingOp as { type: "update"; data: Row }).data;
             filtered = filtered.reduce<Row[]>((acc, row) => {

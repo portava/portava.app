@@ -39,6 +39,22 @@ import {
   normalizeLocationName,
   resolveGeoAlias,
 } from "../lib/canonicalLocations.js";
+import {
+  transliterate,
+  stripEmoji,
+  containsEmoji,
+  stripsEmoji,
+  normalizeQuery,
+  bestCorrection,
+  correctTypos,
+  typoConfidence,
+  weightedDistance,
+  keyboardAdjacent,
+  buildTypoCorrectionRow,
+  APPLY_CONFIDENCE,
+  SUGGEST_CONFIDENCE,
+  NATIVE_CITY_NAMES,
+} from "../lib/inputAssistance/queryNormalizer.js";
 
 // ── Stable test UUIDs ──────────────────────────────────────────────────────────
 const ME = "aa000000-0000-4000-a000-000000000001";
@@ -400,5 +416,219 @@ describe("POST /suggest — non-geographic paths unchanged", () => {
     assert.ok(city, "global_search should still surface the canonical city");
     assert.equal(city.action.type, "open_entity");
     assert.equal(city.structuredValue, undefined);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 9. §10 / §40 QueryNormalizer — the three clauses that had no implementation
+//
+// Before `lib/inputAssistance/queryNormalizer.ts` there was no normalizer
+// service at all: gateway.ts called `applyAliases` + `sanitizeQuery` +
+// `normalizeLocationName` inline. Transliteration was closed-up LATIN variants
+// only (danang / hochiminh), emoji were not handled anywhere, and typo
+// tolerance was the fixed ~60-key alias table with NO confidence measure. The
+// three blocks below are the three clauses, each proved pure-then-end-to-end.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const BANGKOK = canonCity("Bangkok", { country: "Thailand", countryCode: "TH", lat: 13.7563, lng: 100.5018 });
+const HCMC_FOR_SCRIPT = HCMC;
+
+/** A discovery_places row shaped exactly as `searchPlaces` selects it. */
+function place(id: string, name: string, city: string) {
+  return {
+    id, name, city, blurb: null, image_url: null, header_image_source: null,
+    image_source_type: null, image_accuracy_status: null, category: "bar",
+    primary_category: "bar", lat: 16.06, lng: 108.22, canonical_location_id: null,
+    created_at: "2026-01-01T00:00:00Z", submitted_by: null, status: "active",
+    saved_count: 0,
+  };
+}
+
+describe("QueryNormalizer (§10) — transliteration where supported", () => {
+  it("romanizes Thai, Han and Cyrillic queries to the canonical Latin key", () => {
+    // MUTATION-PROOF: empty NATIVE_CITY_NAMES (or drop the Thai rows) → these
+    // return the native string unchanged and every assertion below goes RED.
+    assert.equal(transliterate("กรุงเทพ"), "bangkok");
+    assert.equal(transliterate("เชียงใหม่"), "chiang mai");
+    assert.equal(transliterate("胡志明市"), "ho chi minh");
+    assert.equal(transliterate("Москва"), "moscow");
+  });
+
+  it("generalizes past the dictionary: an unlisted Cyrillic word still romanizes", () => {
+    // Пхукет is NOT in NATIVE_CITY_NAMES — the per-character map handles it.
+    assert.equal(NATIVE_CITY_NAMES["пхукет"], undefined);
+    const out = transliterate("Пхукет");
+    assert.match(out, /^[a-z ]+$/, `expected Latin output, got ${JSON.stringify(out)}`);
+    assert.ok(out.includes("uket"), `expected a Phuket-like romanization, got ${out}`);
+  });
+
+  it("never touches a Latin query (no destructive normalization)", () => {
+    for (const s of ["Bangkok", "Đà Nẵng", "Ho Chi Minh City", "sky bar"]) {
+      assert.equal(transliterate(s), s);
+    }
+  });
+});
+
+describe("POST /suggest — a native-script query resolves to the canonical city (§10)", () => {
+  it('"กรุงเทพ" (Thai) resolves to the stored Bangkok row', async () => {
+    // RED BEFORE THE FIX: the gateway alias-expanded and sanitized the raw Thai
+    // string and queried `search_key ilike %กรุงเทพ%`, which matches no row.
+    setup({ ...GEO_STATE, canonical_locations: [DA_NANG, HCMC, PHU_QUOC, BANGKOK] });
+    const r = await post({ context: "city_picker", text: "กรุงเทพ" });
+    const body = (await r.json()) as any;
+    const hit = body.suggestions.find((s: any) => s.entityId === BANGKOK.id);
+    assert.ok(hit, `expected Bangkok among: ${JSON.stringify(body.suggestions.map((s: any) => s.label))}`);
+    assert.equal(hit.label, "Bangkok"); // display spelling preserved (§10)
+  });
+
+  it('"胡志明市" (Han) resolves to the stored Ho Chi Minh City row', async () => {
+    const r = await post({ context: "city_picker", text: "胡志明市" });
+    const body = (await r.json()) as any;
+    const hit = body.suggestions.find((s: any) => s.entityId === HCMC_FOR_SCRIPT.id);
+    assert.ok(hit, `expected HCMC among: ${JSON.stringify(body.suggestions.map((s: any) => s.label))}`);
+  });
+});
+
+describe("QueryNormalizer (§10) — punctuation and emoji appropriate to field context", () => {
+  it("strips emoji (and their joiners/flags) from a resolving field's search key", () => {
+    assert.equal(stripEmoji("rooftop 🔥 bar"), "rooftop bar");
+    assert.equal(stripEmoji("da nang 🇻🇳"), "da nang");
+    assert.equal(stripEmoji("café"), "café"); // letters with diacritics are not emoji
+    assert.ok(containsEmoji("🔥"));
+    assert.ok(!containsEmoji("bangkok"));
+  });
+
+  it("is field-context-aware: a caption keeps the user's emoji, a picker does not", () => {
+    assert.equal(stripsEmoji("place_picker"), true);
+    assert.equal(stripsEmoji("caption"), false);
+    assert.equal(normalizeQuery("Sky Bar 🔥", { context: "place_picker" }).query, "Sky Bar");
+    assert.equal(normalizeQuery("great trip 🔥", { context: "caption" }).query, "great trip 🔥");
+  });
+});
+
+describe("POST /suggest — an emoji no longer kills a place match (§10)", () => {
+  it('"Sky Bar 🔥" still finds the Sky Bar place', async () => {
+    // RED BEFORE THE FIX: `sanitizeQuery` strips only `(),`, so the emoji
+    // survived into `name.ilike.%Sky Bar 🔥%` and matched nothing.
+    setup({
+      ...GEO_STATE,
+      discovery_places: [place("place-sky", "Sky Bar", "Da Nang")],
+      blocks: [],
+    });
+    const r = await post({ context: "place_picker", text: "Sky Bar 🔥" });
+    const body = (await r.json()) as any;
+    const hit = body.suggestions.find((s: any) => s.entityId === "place-sky");
+    assert.ok(hit, `expected Sky Bar among: ${JSON.stringify(body.suggestions.map((s: any) => [s.label, s.entityType]))}`);
+    assert.equal(hit.entityType, "place");
+  });
+});
+
+describe("QueryNormalizer (§10) — phone/keyboard typo tolerance with a confidence measure", () => {
+  it("models keyboard adjacency: a neighbouring-key slip costs less than a far one", () => {
+    // MUTATION-PROOF: setting ADJACENT_SUBSTITUTION_COST to 1 makes these equal
+    // and this assertion RED — the keyboard model is then not doing anything.
+    assert.equal(keyboardAdjacent("a", "w"), true);
+    assert.equal(keyboardAdjacent("a", "p"), false);
+    assert.ok(
+      weightedDistance("bwngkok", "bangkok") < weightedDistance("bpngkok", "bangkok"),
+      "an adjacent-key substitution must score closer than a non-adjacent one",
+    );
+  });
+
+  it("computes a confidence and only corrects above the threshold", () => {
+    assert.ok(typoConfidence("bangkkok", "bangkok") >= APPLY_CONFIDENCE);
+    assert.equal(typoConfidence("bangkok", "bangkok"), 1);
+    assert.ok(typoConfidence("helsinki", "bangkok") < SUGGEST_CONFIDENCE);
+    assert.equal(bestCorrection("bangkkok")?.to, "bangkok");
+    assert.equal(bestCorrection("resturaunt")?.to, "restaurant");
+    assert.equal(bestCorrection("siargoa")?.to, "siargao");
+  });
+
+  it("refuses to correct what it must not: short tokens, vocabulary words, handles", () => {
+    assert.equal(bestCorrection("cebu"), null, "an exact vocabulary word is not a typo");
+    assert.equal(bestCorrection("bkk"), null, "3 letters is too short to correct safely");
+    assert.equal(bestCorrection("zzzzzzzzz"), null, "nothing is close enough");
+    // A handle is identity: correcting @wanderer into a city would be the worst
+    // possible outcome, so the '@' sigil disables correction entirely.
+    assert.equal(normalizeQuery("@bangkkok", { context: "telegraph_recipient" }).correction, null);
+  });
+
+  it("refuses an AMBIGUOUS correction even when the raw score is high (§19)", () => {
+    // Two vocabulary entries exactly one edit away: no unique winner, so no
+    // guess. MUTATION-PROOF: deleting the `tied` branch in bestCorrection makes
+    // this return one of them and the assertion goes RED.
+    const vocab = ["paris", "parid"];
+    assert.equal(bestCorrection("parit", vocab), null);
+    // …and with the tie removed, the same input does correct.
+    assert.equal(bestCorrection("parit", ["paris"])?.to, "paris");
+  });
+
+  it("corrects one token inside a phrase, never two at once", () => {
+    const out = correctTypos("bangkkok street food");
+    assert.equal(out.text, "bangkok street food");
+    assert.equal(out.correction?.from, "bangkkok");
+    assert.equal(out.correction?.disposition, "applied");
+  });
+
+  it("the correction row is an editable offer, never a silent replacement (§2/§22)", () => {
+    const row = buildTypoCorrectionRow("trip_destination", "v-test", {
+      from: "bangkkok", to: "bangkok", confidence: 0.875, disposition: "applied",
+    });
+    assert.equal(row.type, "correction");
+    assert.equal(row.action?.type, "replace_text");
+    assert.ok((row.confidence ?? 1) < 0.99, "a correction must never reach the exact-match band");
+    assert.match(row.subtitle ?? "", /bangkkok/, "the user's raw input stays visible (§2)");
+  });
+});
+
+describe("POST /suggest — a misspelling OUTSIDE the alias table now resolves (§10)", () => {
+  it('"bangkkok" resolves to the canonical Bangkok row', async () => {
+    // RED BEFORE THE FIX: SEARCH_ALIASES knows "bankok"/"bangok" and NOT
+    // "bangkkok", so the query went to the DB verbatim and matched nothing.
+    setup({ ...GEO_STATE, canonical_locations: [DA_NANG, HCMC, PHU_QUOC, BANGKOK] });
+    const r = await post({ context: "city_picker", text: "bangkkok" });
+    const body = (await r.json()) as any;
+    const hit = body.suggestions.find((s: any) => s.entityId === BANGKOK.id);
+    assert.ok(hit, `expected Bangkok among: ${JSON.stringify(body.suggestions.map((s: any) => s.label))}`);
+  });
+
+  it("a correction is SURFACED as a row where the policy allows one", async () => {
+    setup({ ...GEO_STATE, canonical_locations: [DA_NANG, HCMC, PHU_QUOC, BANGKOK] });
+    const r = await post({ context: "trip_destination", text: "bangkkok" });
+    const body = (await r.json()) as any;
+    const corr = body.suggestions.find((s: any) => s.type === "correction");
+    assert.ok(corr, `expected a correction row among: ${JSON.stringify(body.suggestions.map((s: any) => [s.label, s.type]))}`);
+    assert.equal(corr.structuredValue?.to, "bangkok");
+    assert.ok(corr.structuredValue?.confidence >= APPLY_CONFIDENCE);
+  });
+
+  it("a query that already resolves is NEVER rerouted by the corrector", async () => {
+    // The guarantee that makes correction safe to ship: the user's own spelling
+    // gets the first query, and the corrected key is only ever a SECOND attempt
+    // after that returned nothing.
+    setup({ ...GEO_STATE, canonical_locations: [DA_NANG, HCMC, PHU_QUOC, BANGKOK] });
+    const r = await post({ context: "city_picker", text: "da nang" });
+    const body = (await r.json()) as any;
+    assert.ok(body.suggestions.some((s: any) => s.entityId === DA_NANG.id));
+    assert.ok(!body.suggestions.some((s: any) => s.type === "correction"));
+  });
+});
+
+describe("POST /suggest — an emoji hashtag answers instead of going silent (§10)", () => {
+  it('"#🔥" returns a validation row naming the unsupported characters', async () => {
+    // RED BEFORE THE FIX: `canonicalizeHashtag('#🔥')` returns null and the
+    // sigil branch returned [], so the field produced no row and no reason.
+    const r = await post({ context: "caption", text: "#🔥" });
+    const body = (await r.json()) as any;
+    const v = body.suggestions.find((s: any) => s.type === "validation");
+    assert.ok(v, `expected a validation row; got ${JSON.stringify(body.suggestions)}`);
+    assert.equal(v.structuredValue?.reason, "unsupported_characters");
+  });
+
+  it("an ordinary hashtag is untouched by that branch", async () => {
+    const r = await post({ context: "caption", text: "#food" });
+    const body = (await r.json()) as any;
+    assert.ok(!body.suggestions.some((s: any) => s.type === "validation"));
+    assert.ok(body.suggestions.some((s: any) => s.entityType === "hashtag"));
   });
 });

@@ -19,6 +19,7 @@ import { _setTestClient } from "../lib/http.js";
 import compassRouter from "../routes/compass.js";
 import { invalidateFlagsCache } from "../compass/flags.js";
 import { clearCompassProfileCache } from "../compass/CompassProfileService.js";
+import { orPredicate } from "./helpers/postgrestOrFilter.js";
 import {
   isEventInRange,
   isPublicItem,
@@ -78,7 +79,7 @@ function makeFakeClient(state: FakeState) {
       neq(col: string, val: any) { filters.push((r: any) => r[col] !== val); return b; },
       in(col: string, vals: any[]){ filters.push((r: any) => vals.includes(r[col])); return b; },
       not()                      { return b; },
-      or()                       { return b; },
+      or(expr: string)           { filters.push(orPredicate(expr)); return b; },
       is()                       { return b; },
       like()                     { return b; },
       ilike()                    { return b; },
@@ -549,6 +550,10 @@ describe("GET /api/compass/recommendations?surface=passport — non-empty result
           city:         "Cebu",
           country:      "PH",
           category:     "sightseeing",
+          // NOT NULL DEFAULT 'public' in the schema, so a real row always carries
+          // it; a fixture that omits it is not a smaller row, it is an impossible
+          // one, and it makes a fail-closed reader look like a regression.
+          sensitivity_level: "public",
           submitted_by: null,
           status:       "active",
           created_at:   new Date(Date.now() - 86_400_000).toISOString(),
@@ -1422,5 +1427,92 @@ describe("GET /api/compass/recommendations?surface=traveler", () => {
     const rec = body.recommendations.find((r: any) => r.id === TRAV_PRIV_AV);
     assert.ok(rec, "followed private traveler must appear");
     assert.equal(rec.data.avatarUrl, "https://example.test/priv.jpg", "follower sees the avatar of a private account");
+  });
+});
+
+// ── GET /api/compass/recommendations?surface=trip — §17.2 the priority switch ─
+//
+// Trips spec §17.2 / census-trips TR319: the trip brief consults the trip's
+// priority switch through the real health projection. While an open regroup
+// still expects someone (SAFETY_EVENT), commercial and entertainment items are
+// withheld and the response says so; the static safety note is never withheld.
+// Everyone arrived → nothing withheld, and the SAME nightlife item is served —
+// which is what makes the first assertion mean something.
+
+describe("GET /api/compass/recommendations?surface=trip — §17.2 the priority switch (TR319)", () => {
+  const TRIP_ID = "00000000-0000-0000-0000-00000000f001";
+  const tripState = (arrival: "en_route" | "arrived") => makeState({
+    feature_flags: [
+      { flag: "COMPASS_ENABLED", enabled: true },
+      { flag: "trip_operational_projections_enabled", enabled: true },
+    ],
+    profiles: [
+      { id: ALICE_ID, spoken_languages: ["en"], budget_style: null, travel_styles: [], travel_group_style: null, city: "Cebu" },
+    ],
+    user_location_state: [{ user_id: ALICE_ID, city: "Cebu", updated_at: new Date().toISOString() }],
+    trips: [{ id: TRIP_ID, owner_id: ALICE_ID, version: 3, title: "Cebu", destination_city: "Cebu", start_date: "2026-09-12", end_date: "2026-09-15", status: "active", timezone: "Asia/Manila" }],
+    trip_members: [
+      { trip_id: TRIP_ID, user_id: ALICE_ID, role: "owner", status: "accepted" },
+      { trip_id: TRIP_ID, user_id: BOB_ID, role: "member", status: "accepted" },
+    ],
+    hidden_gems: [
+      // "sightseeing", not "nightlife": nightlife gems are time-gated upstream of this surface, and a
+      // fixture the calm case cannot serve would make the suppressed case vacuous.
+      { id: "00000000-0000-0000-0000-000000000ee2", name: "Taoist Temple viewpoint", description: "The crowd-free ledge", city: "Cebu", country: "PH", category: "sightseeing", submitted_by: null, status: "active", sensitivity_level: "public", created_at: new Date(Date.now() - 86_400_000).toISOString() },
+      { id: "00000000-0000-0000-0000-000000000ee3", name: "Colon Street pharmacy", description: "Open 24 hours", city: "Cebu", country: "PH", category: "pharmacy", submitted_by: null, status: "active", sensitivity_level: "public", created_at: new Date(Date.now() - 86_400_000).toISOString() },
+    ],
+    ...({
+      trip_meeting_checkpoints: [{ id: "cp1", trip_id: TRIP_ID, label: "Fountain", purpose: "regroup", status: "open" }],
+      trip_meeting_checkpoint_participants: [
+        { checkpoint_id: "cp1", user_id: ALICE_ID, arrival_state: "arrived" },
+        { checkpoint_id: "cp1", user_id: BOB_ID, arrival_state: arrival },
+      ],
+    } as any),
+  });
+
+  it("someone still expected at an open regroup: the viewpoint is withheld, the pharmacy and the safety note stay, and the response says why", async () => {
+    const server = await listen(makeTestApp(makeFakeClient(tripState("en_route"))));
+    try {
+      const { status, body } = await req(server, "GET", `/api/compass/recommendations?surface=trip&tripId=${TRIP_ID}&city=Cebu&sessionId=s-suppressed`, { token: "alice-tok" });
+      assert.equal(status, 200);
+      assert.ok(body.attention, "the brief carries the switch reading");
+      assert.equal(body.attention.consulted, true);
+      assert.equal(body.attention.mode, "SAFETY_EVENT");
+      assert.equal(body.attention.suppressed, true);
+      assert.equal(body.attention.reason, "TRIP_DISRUPTION_SUPPRESSED");
+      assert.ok(body.attention.withheld >= 1, `withheld ${body.attention.withheld}`);
+      const cats = body.recommendations.map((r: any) => r.category);
+      assert.ok(!cats.includes("sightseeing"), `sightseeing must be withheld; got ${JSON.stringify(cats)}`);
+      assert.ok(cats.includes("pharmacy"), `the pharmacy stays; got ${JSON.stringify(cats)}`);
+      assert.ok(body.recommendations.some((r: any) => r.type === "safety_tip"), "the static safety note is never withheld");
+    } finally { await close(server); }
+  });
+
+  it("everyone arrived: nothing withheld, and the same viewpoint IS served", async () => {
+    const server = await listen(makeTestApp(makeFakeClient(tripState("arrived"))));
+    try {
+      const { status, body } = await req(server, "GET", `/api/compass/recommendations?surface=trip&tripId=${TRIP_ID}&city=Cebu&sessionId=s-calm`, { token: "alice-tok" });
+      assert.equal(status, 200);
+      assert.equal(body.attention.consulted, true);
+      assert.equal(body.attention.mode, "NORMAL");
+      assert.equal(body.attention.suppressed, false);
+      assert.equal(body.attention.withheld, 0);
+      const cats = body.recommendations.map((r: any) => r.category);
+      assert.ok(cats.includes("sightseeing"), `the viewpoint is served when nothing suppresses it; got ${JSON.stringify(cats)}`);
+    } finally { await close(server); }
+  });
+
+  it("gate closed: not consulted, nothing withheld, and the reading says so — never a silent default", async () => {
+    const state = tripState("en_route");
+    state.feature_flags = [{ flag: "COMPASS_ENABLED", enabled: true }, { flag: "trip_operational_projections_enabled", enabled: false }];
+    const server = await listen(makeTestApp(makeFakeClient(state)));
+    try {
+      const { status, body } = await req(server, "GET", `/api/compass/recommendations?surface=trip&tripId=${TRIP_ID}&city=Cebu&sessionId=s-gated`, { token: "alice-tok" });
+      assert.equal(status, 200);
+      assert.equal(body.attention.consulted, false);
+      assert.equal(body.attention.suppressed, false);
+      assert.match(body.attention.info, /not readable/);
+      assert.ok(body.recommendations.map((r: any) => r.category).includes("sightseeing"));
+    } finally { await close(server); }
   });
 });
