@@ -419,6 +419,41 @@ const ALLOWLIST = new Set([
   // Delete these two if 2332 is ever reversed, in the same change.
   "grant:portava_featured.anon.select",
   "grant:portava_featured.authenticated.select",
+
+  // ── PENDING LIVE APPLY: 2964_map_telemetry_disabled_discards.sql ───────────
+  //
+  // Unlike every entry above, these three are NOT a case of live being
+  // deliberately different from what a migration claims. They are a migration
+  // that has not run anywhere yet, and the reason it has not is structural
+  // rather than an oversight: `live-db.yml` applies migrations only from `main`
+  // (its "apply to the sanctioned CI project" step is skipped on a branch), and
+  // hand-applying an unmerged branch's migrations to the shared CI database is
+  // the recorded root cause of `CI (live DB)` being red on main's own sha
+  // across five consecutive scheduled runs. Trading this visible red for that
+  // invisible one is not a fix. Same posture, and the same wording, as
+  // checkMissingLiveColumns.ts's 2745 and 2810/2813 entries.
+  //
+  // WHAT IS AND IS NOT BROKEN WHILE THESE ARE ALLOWLISTED, stated rather than
+  // implied — and here the answer is NOTHING, structurally. 2964's only caller
+  // is routes/mapTelemetry.ts on the path where `map_telemetry_enabled` is
+  // FALSE, and that call is `sc.rpc(...)` with the result checked: on a
+  // database that lacks the function PostgREST answers 404, the route logs a
+  // warning and still returns 200. So the collection-off path writes NOTHING,
+  // which is precisely the promise 2964 exists to keep — it simply keeps it
+  // without the operational counter until the apply lands. The failure mode of
+  // a missing table here is a lost diagnostic, never a lost request and never a
+  // widened collection.
+  //
+  // REHEARSED, not assumed: applied and re-applied on a throwaway PostgreSQL
+  // 16, with all four privacy guards armed (an added identity column, a
+  // non-hour bucket_hour, a direct service_role INSERT, an `authenticated`
+  // EXECUTE — each refused).
+  //
+  // Remove all three once the merge-to-main apply is certified in
+  // docs/migrations.md — NOT when the migration merges.
+  "table:map_telemetry_disabled_discards",
+  "function:record_map_telemetry_disabled_discard",
+  "index:map_telemetry_disabled_discards_expiry_idx",
 ]);
 
 // ── Environment ───────────────────────────────────────────────────────────────

@@ -60,6 +60,7 @@
   "src/test/livePulse.test.ts",
   "src/test/localGuideSelfPromotion.test.ts",
   "src/test/mapCommands.test.ts",
+  "src/test/mapProjectionLiveDb.test.ts",
   "src/test/mapSearchLib.test.ts",
   "src/test/mapSearchRoutes.test.ts",
   "src/test/mapTravelers.test.ts",

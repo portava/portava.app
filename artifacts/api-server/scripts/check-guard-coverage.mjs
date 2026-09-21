@@ -611,6 +611,34 @@ const RUNTIME_TARGET_GATES = [
     ],
     provedBy: 'src/test/wallFirstPageLiveDb.test.ts',
   },
+  {
+    file: 'src/test/mapProjectionLiveDb.test.ts',
+    reason:
+      'The Map gateway driven against a real PostgreSQL. Same three-mode decision as W146 above, made at ' +
+      'module scope before any Supabase code loads, with MAP_LIVE_LOCAL_DB_URL as the variable that selects ' +
+      'LOCAL: assertDisposableLocalBenchmarkTarget then refuses a missing, blank, remote, production, ' +
+      'hostile-loopback-spelling or mismatched target, and only on success opens the SAME write latch W146 ' +
+      'uses — one latch, because approval is a property of the target and not of the fixture family. REMOTE ' +
+      'is every other named target, including a malformed or non-http one where the loopback predicate fails ' +
+      'closed, and takes the unweakened front door. NO TARGET reaches nothing, and the file asserts that ' +
+      'inertness at module scope rather than assuming it. This harness additionally WRITES A FEATURE FLAG, ' +
+      'which is the one write here that could change a deployed system rather than only add fixture rows, so ' +
+      'setExistingFlag is latched like the fixture paths and refuses to create a flag row that does not ' +
+      'already exist. The latch itself lives in src/test/helpers/liveMapCorpus.ts, which is NOT listed ' +
+      'here and deliberately so: it takes a client as a parameter and creates none, so this check does ' +
+      'not classify it as a reacher and an entry for it would be a shape assertion about a file the ' +
+      'reachability scan cannot see. Its three refusals are proven BEHAVIOURALLY instead, by the ' +
+      'database-free suite at the bottom of the harness, which drives each write path against a Proxy ' +
+      'that throws if it is touched at all and asserts the refusal is a DisposableTargetError.',
+    requires: [
+      'const CONFIGURED_LOCAL_DB = process.env["MAP_LIVE_LOCAL_DB_URL"] ?? "";',
+      'const LOCAL_MODE_SELECTED = A_TARGET_IS_NAMED && CONFIGURED_LOCAL_DB.trim() !== "";',
+      'const REMOTE_TARGET_NAMED = A_TARGET_IS_NAMED && !LOCAL_MODE_SELECTED;',
+      'assertDisposableLocalBenchmarkTarget(SUPABASE_URL, CONFIGURED_LOCAL_DB);',
+      'await import("../lib/ciSupabaseGuard.mjs");',
+    ],
+    provedBy: 'src/test/mapProjectionLiveDb.test.ts',
+  },
 ];
 
 /**

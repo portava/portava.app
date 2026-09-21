@@ -308,6 +308,67 @@ is not a licence.
 4. **B3 — curated ops loads**, **B8 — PR #393 or a scope amendment**,
    **B9 — the §12 ladder reading**, **B11 — four commissioned captures.**
 
+## The Map gateway HAS been driven against a real database — here is how
+
+The session-permission control blocks `portava-ci` and production alike, but it
+does not block a **disposable local PostgreSQL**, and the repository already had
+the machinery for one: W146 built a loopback PostgREST plus a Supabase shim so
+the Wall's first page could be measured against a real planner. The same stack
+runs the Map gateway, and `src/test/mapProjectionLiveDb.test.ts` is the harness.
+
+**Bring it up.** PostgreSQL 16 on `127.0.0.1:5433` with the replayed chain
+(`artifacts/api-server/scripts/local-db/up.sh` creates `portava_local`), then:
+
+```
+# PostgREST over the replayed database
+postgrest <<'CONF'
+db-uri = "postgres://authenticator:pgrst@127.0.0.1:5433/portava_local"
+db-schemas = "public, auth"
+db-anon-role = "anon"
+jwt-secret = "super-secret-jwt-token-with-at-least-32-characters-long"
+server-host = "127.0.0.1"
+server-port = 3998
+CONF
+
+# The supabase-js shape over it: /rest/v1/* is REAL, only /auth/v1/* is stubbed
+PGRST_ORIGIN=http://127.0.0.1:3998 SHIM_PORT=4002 node supashim.mjs
+
+SUPABASE_URL=http://127.0.0.1:4002 \
+MAP_LIVE_LOCAL_DB_URL=http://127.0.0.1:4002 \
+SUPABASE_SERVICE_ROLE_KEY=<service_role jwt for that secret> \
+  node --import tsx/esm --test src/test/mapProjectionLiveDb.test.ts
+```
+
+**What it establishes, and it is not small.** The gateway is not broken and was
+never the blocker: with a real `map_projection_enabled` row set TRUE, `GET
+/api/map/projection` answers `enabled: true`, names nine sources, serves seeded
+places through the real `places` read with real columns, excludes one seeded
+outside the bbox, and reports a §24 `protection` pass that accounts for every
+object served. The dark-gateway state that blocks ~30 census rows is a
+DEPLOYMENT fact and nothing else.
+
+**M223's gate, now observed rather than argued.** The same route, same seed: a
+future offset answers `enabled: true` in `forecast` mode; a past offset answers
+`enabled: true` with `forecast: null`. So the criterion read literally —
+`enabled: true` PLUS a non-null forecast — would close Time Machine for every
+past offset. The gate is `enabled === true`. That correction was previously
+argued from source; it is now measured.
+
+**What it is NOT.** A loopback PostgREST over a disposable PostgreSQL. It is a
+real-schema gate on the gateway's reads and on the flag contract; it is not
+evidence about any deployed database, and NO census row whose criterion names
+production or `portava-ci` may be closed on it. The harness prints its own
+target on every run so the two cannot be confused.
+
+**A finding from arming it, recorded because it nearly produced a false green.**
+The viewport is enforced TWICE — `loadViewportPlaceRows` filters in SQL, and
+`aggregateForViewport` separately drops any object outside `request.bbox`.
+Deleting the SQL filter outright left the first version of the suite GREEN,
+because the aggregator caught the row on the way out. The case now also asserts
+`places.rows`, so the read is pinned as well as the outcome. Measured arming:
+SQL filter removed → RED; aggregator drop removed → GREEN, correctly, since the
+other gate still stands; both removed → RED.
+
 ## Blockers that are not decisions
 
 - **Production migration chain 2217 → 2201 → 2218 → 2224 → 2295 is BLOCKED by
