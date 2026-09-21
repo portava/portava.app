@@ -219,17 +219,28 @@ export const KNOWN_WRITERLESS_READS: Record<
       "as venue reference data, not personal location. Populated out of band.",
   },
   canonical_locations: {
-    readers: 4,
+    readers: 5,
     classification: "external-seed",
     note:
       "Canonical city/region reference rows, also in REFERENCE_LOCATION_TABLES. Populated out " +
-      "of band rather than by application code. FOUR readers since 2026-09-14, each a literal " +
+      "of band rather than by application code. FIVE readers since 2026-09-21, each a literal " +
       "`.from(\"canonical_locations\")` and each a plain reference lookup, never a write: " +
       "lib/mapTravelers.ts, lib/inputAssistance/personalization.ts, routes/discoverySearch.ts, " +
-      "and — the one that moved this count from 3 — lib/inputAssistance/taskContext.ts, which " +
-      "resolves a cityId to a display name for an assistance task's context and fails soft to " +
-      "no city constraint. The count is raised rather than the entry deleted: it is the only " +
-      "thing that notices the FIFTH reader.",
+      "lib/inputAssistance/taskContext.ts (which resolves a cityId to a display name for an " +
+      "assistance task's context and fails soft to no city constraint), and — the one that " +
+      "moved this count from 4 — `resolveVenueBindings` in lib/inputAssistance/gateway.ts. " +
+      "THE PREVIOUS NOTE SAID THIS ENTRY IS 'the only thing that notices the FIFTH reader', " +
+      "and it did exactly that: the reader below was written on 2026-09-21 and this check is " +
+      "what caught it, in CI, on a tree whose author had run every other guard green. So the " +
+      "count is raised again rather than the entry deleted, on the same reasoning. " +
+      "WHAT THE FIFTH READER DOES, so a later reader can judge it without opening the file: " +
+      "it resolves §17/G109 venue bindings, reading id/kind/name/display_name/country/" +
+      "country_code for the deduped set of `discovery_places.canonical_location_id` links in " +
+      "ONE batched `.in('id', …)` per request, only for GEO_PICKER_CONTEXTS. It is a SELECT " +
+      "and nothing else, and it fails CLOSED: a failed read suppresses the binding entirely " +
+      "rather than emitting one with a null country, because §17 prefills dependent fields " +
+      "from that value and an outage rendered as `country: null` would write 'this venue is " +
+      "in no country' into a field the user can see.",
   },
 };
 

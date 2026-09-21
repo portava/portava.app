@@ -23,17 +23,25 @@ export interface SuggestionGroupProps {
   renderLeading?: (s: InputSuggestion) => React.ReactNode;
 }
 
+/**
+ * The section header on its own, so a VIRTUALIZED container can emit it as a
+ * list ROW rather than as the top of a nested subtree (§33 "virtualize large
+ * suggestion groups"). One definition, so the flat and virtualized paths cannot
+ * drift into announcing the section differently to a screen reader.
+ */
+export function SuggestionSectionHeader({ label }: { label: string }) {
+  return (
+    <Text style={styles.header} accessibilityRole="header" numberOfLines={1}>
+      {label.toUpperCase()}
+    </Text>
+  );
+}
+
 export function SuggestionGroup({ section, onSelect, activeId, renderLeading }: SuggestionGroupProps) {
   if (!section.suggestions.length) return null;
   return (
     <View style={styles.group}>
-      <Text
-        style={styles.header}
-        accessibilityRole="header"
-        numberOfLines={1}
-      >
-        {section.label.toUpperCase()}
-      </Text>
+      <SuggestionSectionHeader label={section.label} />
       <SuggestionList
         suggestions={section.suggestions}
         onSelect={onSelect}

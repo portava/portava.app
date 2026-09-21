@@ -146,7 +146,35 @@ export interface FreshnessState {
  * §29 — Privacy classification of the field's content. Drives telemetry
  * (private_message never logs raw text, §44) and projection eligibility.
  */
-export type PrivacyClass = 'public' | 'personal' | 'sensitive' | 'private_message';
+/**
+ * §6 `privacyClass` — the field's privacy posture.
+ *
+ * THIS UNION IS THE SERVER'S, VERBATIM (`lib/inputAssistance/types.ts`), and it
+ * did not used to be. The client declared a DIFFERENT four-member taxonomy
+ * (`public | personal | sensitive | private_message`) of which only two members
+ * were shared with the server's five, so the two sides could not be compared at
+ * all — and this value is not decorative on either of them:
+ *
+ *   - it decides whether a field's suggestions may enter the shared suggestion
+ *     cache (`services/suggestionCache.ts`);
+ *   - it decides whether a selection payload carrying the user's raw typed text
+ *     may be SENT (`services/selectBody.ts`);
+ *   - it derives the field's telemetry policy (`contexts/inputPolicies.ts`);
+ *   - and, on the server, it is a fail-closed gate on the selection-memory
+ *     write (`lib/inputAssistance/personalization.ts`).
+ *
+ * With two vocabularies a server policy change could not reach any of them.
+ * `test/inputPolicyContractParity.test.ts` now pins the two registries value
+ * for value, and where the two sides disagreed the STRICTER classification won
+ * on both — `hidden_gem_name` and `comment` were `public` here while the server
+ * called them sensitive/viewer-scoped, which is the direction that leaks.
+ */
+export type PrivacyClass =
+  | 'public'
+  | 'viewer_scoped'
+  | 'owner_only'
+  | 'sensitive_location'
+  | 'private_message';
 
 /**
  * §32 — How the field degrades offline. Live intelligence is NEVER represented
