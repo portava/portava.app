@@ -23,10 +23,10 @@
  * every downstream arm checking its own type gate — one missed check and the
  * field is assisted again.
  */
-import { test, describe } from 'node:test';
+import { test, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { resolvePolicy } from '../lib/inputAssistance/policyRegistry.js';
+import { resolvePolicy, KNOWN_CONTEXTS } from '../lib/inputAssistance/policyRegistry.js';
 
 describe('§23 — display_name is manual', () => {
   test('the server policy declares no assistance and no suggestion types', () => {
@@ -61,5 +61,55 @@ describe('§23 — display_name is manual', () => {
     const u = resolvePolicy('username')!;
     assert.equal(u.mode, 'search');
     assert.ok(u.allowedSuggestionTypes.includes('entity'));
+  });
+});
+
+// ── ADDED 2026-09-21 by G340 ─────────────────────────────────────────────────
+//
+// The client used to assert some of these against its own local table. That
+// table is gone (G340: the client resolves from `GET /input-assistance/
+// policies`), so a client-side assertion about what a context PERMITS can only
+// check a fixture the client seeded itself. The values are this side's to
+// state, so the assertions moved here, where the real registry is.
+//
+// `DestinationBar.cityPicker.test.ts` keeps the other half — that the row reads
+// these from the authority and reacts when they change.
+describe('G340 — the values the client can no longer assert for itself', () => {
+  it('G85: city_picker really does permit what the Destination row needs', () => {
+    const p = resolvePolicy('city_picker');
+    assert.ok(p, 'city_picker must exist in the authority');
+    assert.equal(p!.allowPersonalization, true, 'the recents row requires personalization');
+    assert.equal(p!.zeroStateAssistance, true, 'the zero-character state must be served');
+    assert.equal(
+      p!.privacyClass,
+      'public',
+      'a public list is the only kind the client may retain in its process-global cache',
+    );
+  });
+
+  it('display_name stays manual once the endpoint is the only thing the client reads', () => {
+    // The whole point of G340 is that the client stopped keeping its own copy.
+    // So this is now the ONLY place the ruling lives, and it is what every
+    // client will be handed.
+    const p = resolvePolicy('display_name');
+    assert.ok(p);
+    assert.equal(p!.mode, 'no_assistance');
+    assert.deepEqual(p!.allowedSuggestionTypes, []);
+    assert.deepEqual(p!.entityTypes, [], 'a profile-edit field must not search other people');
+    assert.equal(p!.zeroStateAssistance, false, 'and it offers nothing at zero characters either');
+  });
+
+  it('every context the endpoint serves carries a zeroStateAssistance boolean', () => {
+    // It moved here from the client in G340. A context that silently lacked it
+    // would be served `undefined`, which the client narrows to `false` — safe,
+    // but it would silently disable a zero-state the authority meant to grant.
+    const missing = KNOWN_CONTEXTS.filter(
+      (c) => typeof resolvePolicy(c)?.zeroStateAssistance !== 'boolean',
+    );
+    assert.deepEqual(missing, [], `contexts missing zeroStateAssistance: ${missing.join(', ')}`);
+
+    // Non-vacuity: it is not uniformly false.
+    const on = KNOWN_CONTEXTS.filter((c) => resolvePolicy(c)?.zeroStateAssistance === true);
+    assert.ok(on.length >= 10, `expected many zero-state contexts, got ${on.length}`);
   });
 });

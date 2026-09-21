@@ -150,6 +150,29 @@ function synthRoute(entityType: EntityType | undefined, entityId: string | undef
     case 'event': return `/event/${entityId}`;
     case 'plan': return '/plan';
     case 'hashtag': return `/hashtag/${entityId}`;
+    // ── 2026-09-21 (G340) — three the authority already serves ──────────────
+    // `global_search`'s `entityTypes` include `circle`, `post` and `stamp`.
+    // Without a case here `synthRoute` returned null and `tryEntityRow` DROPPED
+    // the row: a served Stamp or Post suggestion never reached the panel at
+    // all, whatever its label said. That is a harder failure than the mis-icon
+    // the `RESULT_TYPE_BY_ENTITY` widening exposed, and it was invisible for
+    // the same reason — this switch is keyed on a union the client had narrower
+    // than the server's.
+    //
+    // The emitted shapes are the ones `searchNav.tsx#resolveRoute` documents
+    // and normalises: `/stamps/:slug` becomes `/stamp/:slug` (plural backend,
+    // singular app file), and `/circle/:id` becomes `/circle?ownerId=:id`
+    // because the app has only a singleton circle screen. Emitting the
+    // pre-normalisation form keeps ONE place that knows about that quirk.
+    case 'post': return `/post/${entityId}`;
+    case 'stamp': return `/stamps/${entityId}`;
+    case 'circle': return `/circle/${entityId}`;
+    // `activity`, `vibe`, `language` and `interest` stay null DELIBERATELY.
+    // The app has no route for any of them — `activity` and `vibe` have no
+    // screen at all, and `language`/`interest` are static value pickers, not
+    // navigable entities. This function's contract is "no dead rows", so a
+    // dropped row is the correct outcome; synthesising a path to a screen that
+    // does not exist would trade an invisible row for a broken tap.
     default: return null;
   }
 }

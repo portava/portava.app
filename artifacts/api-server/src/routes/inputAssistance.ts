@@ -166,6 +166,7 @@ router.get(
         debounceMs: p.debounceMs,
         offlinePolicy: p.offlinePolicy,
         privacyClass: p.privacyClass,
+        zeroStateAssistance: p.zeroStateAssistance,
       };
     }
 

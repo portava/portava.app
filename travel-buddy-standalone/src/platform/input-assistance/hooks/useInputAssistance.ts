@@ -27,6 +27,7 @@ import type { InputFieldPolicy } from '../types/fieldPolicy.ts';
 import type { InputSuggestion, InputSessionContext, WritingDraft } from '../types/inputSuggestion.ts';
 import { resolveFieldPolicy } from '../contexts/fieldRegistry.ts';
 import { getContextDescriptor } from '../contexts/inputContexts.ts';
+import { offlineSurfaceAllowed } from '../contexts/policyFallback.ts';
 import {
   capabilitySignature,
   type ClientCapabilities,
@@ -340,8 +341,35 @@ export function useInputAssistance(
           // freezing a stale list — or, for an empty field, the §34 local
           // zero-state. With nothing local to retain it is `[]`, the old
           // behaviour.
+          //
+          // ── §32 ENFORCEMENT, AND WHY IT NARROWS THE PARAGRAPH ABOVE ───────
+          //
+          // Everything above is the §33 rule "network loss: RETAIN local/cached
+          // suggestions", and it is right for a field the authority says HAS an
+          // offline surface. `offlinePolicy` names which fields those are, and
+          // for `server_required` and `unavailable` the answer is none: the
+          // field is assisted only with a network, or not assisted at all.
+          //
+          // Retaining rows for such a field is not a smaller version of the
+          // feature — it is assistance the authority declined to license, shown
+          // at the one moment nothing can re-check it. For `place_picker`,
+          // `event_location`, `address` and the six others the authority marks
+          // `server_required`, those rows are places and people resolved under
+          // conditions that no longer hold.
+          //
+          // This is the line the union alignment did NOT buy. Making both sides
+          // spell `server_required` the same way let the value ARRIVE intact;
+          // only a consumer that branches on it changes what the user sees.
+          // Until this branch existed, `offlinePolicy` was still read by
+          // nothing, and G13's behavioural half stayed open no matter how
+          // exactly the two registries agreed.
+          //
+          // `offlineSurfaceAllowed` fails CLOSED on a value this build cannot
+          // name, so a newer server's offline vocabulary retains nothing rather
+          // than everything.
+          const mayRetain = offlineSurfaceAllowed(policy.offlinePolicy);
           setUnavailable(true);
-          setSuggestions(local ?? []);
+          setSuggestions(mayRetain ? (local ?? []) : []);
           setLoading(false);
         } else {
           // Transient error: keep whatever is on screen, just stop the spinner.

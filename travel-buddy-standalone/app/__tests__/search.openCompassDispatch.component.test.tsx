@@ -246,6 +246,18 @@ import { requestSuggestions } from '../../src/platform/input-assistance/services
 import { sharedSuggestionCache } from '../../src/platform/input-assistance/services/suggestionCache';
 import type { InputSuggestion } from '../../src/platform/input-assistance/types/inputSuggestion';
 
+// ── SEEDED 2026-09-21 (G340) ────────────────────────────────────────────────
+// `useInputAssistance` derives its policy from the context descriptor, which
+// since G340 comes from `GET /input-assistance/policies` rather than a local
+// table. With nothing fetched every context resolves CONSERVATIVE — mode
+// `no_assistance`, an unreachable `minChars` — so the hook correctly makes no
+// request and renders no rows, and every assertion below about suggestions
+// would be vacuous. Seeding states the premise these tests always relied on.
+import { INPUT_CONTEXTS as _SEED_CONTEXTS } from '../../src/platform/input-assistance/types/inputContext.ts';
+import { _seedPolicyForTests as _seedPolicy } from '../../src/platform/input-assistance/services/policyStore.ts';
+_seedPolicy(_SEED_CONTEXTS);
+
+
 const mockRequest = requestSuggestions as jest.Mock;
 const mockRouterPush = (jest.requireMock('expo-router') as any).router.push as jest.Mock;
 

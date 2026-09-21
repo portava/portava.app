@@ -19,6 +19,18 @@ import {
 } from '../../contexts/fieldRegistry.ts';
 import { GEO_FIELD_IDS } from '../../geographic/geoFields.ts';
 
+// ── SEEDED 2026-09-21 (G340) ────────────────────────────────────────────────
+// `registerField` derives its policy from the context descriptor, which now
+// comes from the authority rather than from a local table. Without a seeded
+// policy every context resolves conservative (`no_assistance`), which is the
+// correct cold-start answer and makes any assertion about a context's MODE
+// vacuous. Seeding states the premise these tests were always relying on:
+// "the authority has answered, and permits assistance here".
+import { INPUT_CONTEXTS } from '../../types/inputContext.ts';
+import { _seedPolicyForTests } from '../../services/policyStore.ts';
+_seedPolicyForTests(INPUT_CONTEXTS);
+
+
 test('registerCreationFields registers each creation name/title field in its context', () => {
   _resetCreationRegistration();
   for (const fieldId of Object.keys(CREATION_FIELD_CONTEXTS)) unregisterField(fieldId);
