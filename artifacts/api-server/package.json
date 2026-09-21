@@ -68,6 +68,7 @@
     "check:admin-guard": "node --import tsx/esm src/scripts/checkAdminGuard.ts",
     "check:layover-cutover": "node --import tsx/esm src/scripts/checkLayoverCutover.ts",
     "check:guard-reachability": "node --import tsx/esm src/scripts/checkGuardReachability.ts",
+    "check:route-shadowing": "node --import tsx/esm src/scripts/checkRouteShadowing.ts",
     "check:guard-coverage": "node scripts/check-guard-coverage.mjs",
     "check:route-auth-gate": "node scripts/check-route-auth-gate.mjs",
     "check:deletion-coverage": "node --import tsx/esm src/scripts/checkDeletionCoverage.ts",
