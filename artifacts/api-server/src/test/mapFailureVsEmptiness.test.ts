@@ -272,12 +272,28 @@ describe("GET /api/map/projection — travelers layer tells a failure from an em
     );
   });
 
+  it("refuses the WHOLE request when profiles cannot be read", async () => {
+    // `profiles` is one of the four eligibility reads, but `main` now also
+    // reads it to verify account status before the route produces anything,
+    // and refuses the request outright when that read fails. That is strictly
+    // stronger than dropping the layer from `sources` — there is no envelope
+    // to misread at all — so this case is pinned where it now lives rather
+    // than being folded in with the three reads that still reach the layer.
+    const r = await projection(
+      "social_zone",
+      baseState({ profiles: { error: { message: "permission denied" } } }),
+    );
+    assert.equal(r.status, 503);
+    assert.equal(r.body.error, "degraded_unavailable");
+    assert.equal(r.body.objects, undefined, "a refused request claims no objects");
+    assert.equal(r.body.sources, undefined, "and claims no sources");
+  });
+
   it("does NOT name the source when a PRIVACY read fails", async () => {
-    // profiles is one of the four reads that decide who is eligible. Losing it
-    // means eligibility is unknown — the layer suppresses (unchanged) and now
-    // also declines to claim it looked.
+    // Each of these decides who is eligible. Losing one means eligibility is
+    // unknown — the layer suppresses (unchanged) and now also declines to
+    // claim it looked.
     for (const table of [
-      "profiles",
       "location_preferences",
       "profile_privacy_settings",
       "user_privacy_settings",
@@ -380,42 +396,48 @@ describe("GET /api/map/projection — events layer tells a failure from an empty
 
 const READ_OPTS = { viewerId: USER, lat: POS.lat, lng: POS.lng, radiusKm: 50 };
 
-describe("listMapTravelers reports WHY it returned nobody", () => {
+describe("listMapTravelers tells a failed read from an empty one", () => {
+  // `main` landed this same fix with a NULL sentinel rather than the tagged
+  // union this branch proposed: `listMapTravelers` returns
+  // `MapTravelerPayload[] | null`, where null means "a read this function
+  // depends on failed". The distinction these tests exist for — a failure is
+  // never delivered as an empty list — is main's, so main's shape is what is
+  // asserted here. What the union carried and null does not is WHICH read
+  // failed, so each failing site keeps its own case below to pin that the site
+  // is covered at all.
   beforeEach(() => _clearMapTravelersCache());
 
-  it("an empty city is ok:true with an empty list", async () => {
+  it("an empty city is an empty list, not null", async () => {
     const r = await listMapTravelers(
       makeClient(baseState({ user_location_state: [] })) as any,
       { ...READ_OPTS, blockedSet: new Set<string>() },
     );
-    assert.equal(r.ok, true);
-    assert.ok(r.ok && r.travelers.length === 0);
+    assert.notEqual(r, null, "an empty city is a fact about the world, not a failure to look");
+    assert.equal(r!.length, 0);
   });
 
-  it("a populated city is ok:true with the traveler", async () => {
+  it("a populated city is the traveler", async () => {
     const r = await listMapTravelers(makeClient(baseState()) as any, {
       ...READ_OPTS,
       blockedSet: new Set<string>(),
     });
-    assert.ok(r.ok && r.travelers.length === 1 && r.travelers[0]!.id === TRAVELER);
+    assert.ok(r !== null && r.length === 1 && r[0]!.id === TRAVELER);
   });
 
-  it("a candidate read failure is a NAMED refusal, not an empty city", async () => {
+  it("a candidate read failure refuses, rather than reporting an empty city", async () => {
     const r = await listMapTravelers(
       makeClient(baseState({ user_location_state: { error: { message: "boom" } } })) as any,
       { ...READ_OPTS, blockedSet: new Set<string>() },
     );
-    assert.equal(r.ok, false);
-    assert.equal(r.ok === false && r.reason, "candidate_read_failed");
+    assert.equal(r, null);
   });
 
-  it("a privacy read failure is its own named refusal", async () => {
+  it("a privacy read failure refuses too — eligibility is unknown, not false", async () => {
     const r = await listMapTravelers(
       makeClient(baseState({ profiles: { error: { message: "boom" } } })) as any,
       { ...READ_OPTS, blockedSet: new Set<string>() },
     );
-    assert.equal(r.ok, false);
-    assert.equal(r.ok === false && r.reason, "privacy_read_failed");
+    assert.equal(r, null);
   });
 
   it("an unresolvable block set refuses rather than returning an empty list", async () => {
@@ -423,20 +445,19 @@ describe("listMapTravelers reports WHY it returned nobody", () => {
       ...READ_OPTS,
       blockedSet: null,
     });
-    assert.equal(r.ok, false);
-    assert.equal(r.ok === false && r.reason, "blocks_unknown");
+    assert.equal(r, null);
   });
 
   it("a FAILED read is never cached — the next read sees the recovered table", async () => {
     // The 20 s candidate cache is keyed on the rounded viewport and shared by
     // every viewer. Caching a failed read held the layer empty for the rest of
     // the window and, worse, erased the fact that anything had failed: the
-    // cache hit is served as ok:true.
+    // cache hit is served as a successful empty.
     const failed = await listMapTravelers(
       makeClient(baseState({ user_location_state: { error: { message: "boom" } } })) as any,
       { ...READ_OPTS, blockedSet: new Set<string>() },
     );
-    assert.equal(failed.ok, false);
+    assert.equal(failed, null);
 
     // Same viewport, same cache key, healthy client, no cache clear in between.
     const recovered = await listMapTravelers(makeClient(baseState()) as any, {
@@ -444,7 +465,7 @@ describe("listMapTravelers reports WHY it returned nobody", () => {
       blockedSet: new Set<string>(),
     });
     assert.ok(
-      recovered.ok && recovered.travelers.length === 1,
+      recovered !== null && recovered.length === 1,
       "a transient failure must not hold the viewport empty for the cache window",
     );
   });
