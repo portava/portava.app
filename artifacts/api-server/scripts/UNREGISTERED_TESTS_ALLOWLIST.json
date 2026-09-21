@@ -60,6 +60,7 @@
   "src/test/livePulse.test.ts",
   "src/test/localGuideSelfPromotion.test.ts",
   "src/test/mapCommands.test.ts",
+  "src/test/mapProjectionLiveDb.test.ts",
   "src/test/mapSearchLib.test.ts",
   "src/test/mapSearchRoutes.test.ts",
   "src/test/mapTravelers.test.ts",
@@ -69,6 +70,8 @@
   "src/test/mediaLib.test.ts",
   "src/test/mediaNoveltyRanking.test.ts",
   "src/test/mediaUploadHardening.test.ts",
+  "src/test/meetupRlsLive.test.ts",
+  "src/test/memoryKernelTransactionLive.test.ts",
   "src/test/memoryLifecycleLive.test.ts",
   "src/test/memoryProjectionLifecycleLive.test.ts",
   "src/test/messaging.test.ts",
@@ -140,7 +143,10 @@
   "src/test/stamps-revoke-restore.test.ts",
   "src/test/stamps.test.ts",
   "src/test/tripCrewMap.test.ts",
+  "src/test/tripKernelLive.test.ts",
   "src/test/tripNotFound.test.ts",
   "src/test/tripPrivacy.test.ts",
-  "src/test/trustAdminAuditInsertSchemaDrift.test.ts"
+  "src/test/trustAdminAuditInsertSchemaDrift.test.ts",
+  "src/test/wallFirstPageLiveDb.test.ts",
+  "src/test/wallSessionIntentLiveDb.test.ts"
 ]

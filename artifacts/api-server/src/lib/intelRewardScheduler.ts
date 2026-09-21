@@ -33,6 +33,18 @@
  * and reconsidered next pass. With the flag OFF the candidate is marked
  * `not_required` and the pre-I4a behaviour is byte-for-byte unchanged.
  *
+ * THE REVERSAL SWEEP (`09` §11 "reversals are possible"). Booking is only half a
+ * ledger. The pass anti-joins an already-rewarded contribution out of every later
+ * pass, so before this a credit booked for a contribution the world LATER
+ * contradicted could never be taken back — `2170:38-39`'s CHECK (qiu >= 0) /
+ * CHECK (earned_units >= 0) plus INSERT+SELECT-only grants left no representable
+ * opposite. Migration 2900 supersedes those two CHECKs with a sign-BY-ROLE rule
+ * (only a row that NAMES the entry it reverses may be negative; nothing becomes
+ * mutable), and step 5 below books the compensating entry through
+ * services/ledger/RewardReversal.ts. It fires ONLY on an explicit
+ * `contradicted` classification: an ABSENT attribution row is an unfinalized
+ * outcome, not a contradiction, and must never produce a debit.
+ *
  * Gated on `intel_rewards`, fail-closed, self-rescheduling — the house scheduler
  * shape (see intelPromotionScheduler / intelCoverageScheduler). Off ⇒ an inert
  * no-op that reads and writes nothing. NON-CASH only: cash_amount is 0, enforced
@@ -43,6 +55,7 @@ import { getServiceClient } from "./supabase.js";
 import { logger } from "./logger.js";
 import { isFlagEnabled } from "./featureFlags.js";
 import { recordEarnedReward } from "../services/intel/RewardService.js";
+import { reverseEarnedReward, reversalKeyFor } from "../services/ledger/RewardReversal.js";
 import {
   buildRewardEligibilityContext,
   candidateQiu,
@@ -82,10 +95,16 @@ export interface RewardPassResult {
   booked: number;   // ledger rows newly written this pass
   replayed: number; // already-rewarded contributions re-seen (no new row)
   ineligible: number;
+  /**
+   * Compensating entries newly written this pass — credits taken back because
+   * the outcome contradicted the served state. Reported so a sweep can never be
+   * silent; a debit nobody can see is worse than no debit at all.
+   */
+  reversed: number;
 }
 
 const EMPTY: RewardPassResult = {
-  skipped: true, reason: null, candidates: 0, booked: 0, replayed: 0, ineligible: 0,
+  skipped: true, reason: null, candidates: 0, booked: 0, replayed: 0, ineligible: 0, reversed: 0,
 };
 
 const snapKey = (subjectId: string, zoneId: string | null | undefined, claimType: string): string =>
@@ -114,7 +133,11 @@ interface ObsRow {
   claim_type: string; moderation_state: string;
 }
 interface ConsentRow { user_id: string; enabled: boolean; withdrawn_at: string | null }
-interface LedgerRow { actor_id: string; idempotency_key: string | null }
+interface LedgerRow {
+  id: string; actor_id: string; idempotency_key: string | null;
+  /** Non-null ⇒ this row IS a compensating entry (2900). */
+  reverses_entry_id: string | null;
+}
 interface AttributionRow { observation_id: string; contradiction: boolean; outcome_score: number | string | null }
 
 export async function runIntelRewardPass(opts: { client?: any; now?: Date } = {}): Promise<RewardPassResult> {
@@ -140,7 +163,7 @@ export async function runIntelRewardPass(opts: { client?: any; now?: Date } = {}
       .limit(MAX_SNAPSHOTS);
     if (snapErr) { logger.warn({ err: snapErr }, "reward pass: served-snapshot read failed"); return { ...EMPTY, reason: "error" }; }
     const snapshots = (snapData ?? []) as SnapshotRow[];
-    if (snapshots.length === 0) return { skipped: false, reason: null, candidates: 0, booked: 0, replayed: 0, ineligible: 0 };
+    if (snapshots.length === 0) return { skipped: false, reason: null, candidates: 0, booked: 0, replayed: 0, ineligible: 0, reversed: 0 };
 
     const servedConfidence = new Map<string, number | null>();
     const servedSubjects = new Set<string>();
@@ -149,7 +172,7 @@ export async function runIntelRewardPass(opts: { client?: any; now?: Date } = {}
       servedConfidence.set(snapKey(s.subject_id, s.zone_id, s.claim_type), s.confidence);
       servedSubjects.add(s.subject_id);
     }
-    if (servedSubjects.size === 0) return { skipped: false, reason: null, candidates: 0, booked: 0, replayed: 0, ineligible: 0 };
+    if (servedSubjects.size === 0) return { skipped: false, reason: null, candidates: 0, booked: 0, replayed: 0, ineligible: 0, reversed: 0 };
 
     // 2. Observations behind those served subjects — narrowed to the served subject
     //    set so we never scan the whole corpus. Filtered in TS to the exact served
@@ -163,7 +186,7 @@ export async function runIntelRewardPass(opts: { client?: any; now?: Date } = {}
     const behindServed = observations.filter(
       (o) => o.id && o.actor_id && servedConfidence.has(snapKey(o.subject_id, o.zone_id, o.claim_type)),
     );
-    if (behindServed.length === 0) return { skipped: false, reason: null, candidates: 0, booked: 0, replayed: 0, ineligible: 0 };
+    if (behindServed.length === 0) return { skipped: false, reason: null, candidates: 0, booked: 0, replayed: 0, ineligible: 0, reversed: 0 };
 
     const actorIds = [...new Set(behindServed.map((o) => o.actor_id))];
 
@@ -181,11 +204,20 @@ export async function runIntelRewardPass(opts: { client?: any; now?: Date } = {}
     // filter, not the safety net — a stale read here can only cost a replay, never a
     // double credit.
     const ledgerRows = await fetchIn<LedgerRow>(
-      db, "intel_reward_ledger", "actor_id, idempotency_key", "actor_id", actorIds,
+      db, "intel_reward_ledger", "id, actor_id, idempotency_key, reverses_entry_id", "actor_id", actorIds,
     );
     const alreadyRewarded = new Set<string>();
+    // (actor|key) → the ORIGINAL entry's id, so the sweep below can name the row
+    // it compensates. Reversals are excluded: a reversal is not an earning, and
+    // reversing one would re-credit an earning that existed once.
+    const originalEntryIdFor = new Map<string, string>();
+    const alreadyReversed = new Set<string>();
     for (const l of ledgerRows) {
-      if (l.idempotency_key) alreadyRewarded.add(`${l.actor_id}|${l.idempotency_key}`);
+      if (l.reverses_entry_id) { alreadyReversed.add(l.reverses_entry_id); continue; }
+      if (l.idempotency_key) {
+        alreadyRewarded.add(`${l.actor_id}|${l.idempotency_key}`);
+        originalEntryIdFor.set(`${l.actor_id}|${l.idempotency_key}`, l.id);
+      }
     }
 
     // 3b. The honest oracle input: with the closed loop ON, read this pass's
@@ -209,7 +241,7 @@ export async function runIntelRewardPass(opts: { client?: any; now?: Date } = {}
       honest ? classifyAttribution(attributionByObs.get(observationId) ?? []) : "not_required";
 
     // 4. Grade + book. A per-candidate error never aborts the pass.
-    const tally = { candidates: 0, booked: 0, replayed: 0, ineligible: 0 };
+    const tally = { candidates: 0, booked: 0, replayed: 0, ineligible: 0, reversed: 0 };
     for (const o of behindServed) {
       const key = rewardKeyFor(o.id);
       if (alreadyRewarded.has(`${o.actor_id}|${key}`)) continue;
@@ -258,7 +290,44 @@ export async function runIntelRewardPass(opts: { client?: any; now?: Date } = {}
       }
     }
 
-    if (tally.booked > 0 || tally.replayed > 0) {
+    // 5. REVERSAL SWEEP. A contribution that was rewarded and is NOW contradicted
+    //    by a reported outcome gets a compensating entry — the property `09` §11
+    //    calls "reversals are possible". Only an explicit `contradicted`
+    //    classification qualifies: `absent` and `ungraded` mean the outcome is
+    //    not finalized, and absence of evidence must never become evidence of
+    //    absence. With the attribution flag OFF, `attributionFor` returns
+    //    `not_required` for every candidate and this loop books nothing, so the
+    //    pre-I4a behaviour is unchanged.
+    for (const o of behindServed) {
+      const key = rewardKeyFor(o.id);
+      const originalEntryId = originalEntryIdFor.get(`${o.actor_id}|${key}`);
+      if (!originalEntryId) continue;                      // never rewarded ⇒ nothing to take back
+      if (alreadyReversed.has(originalEntryId)) continue;  // already compensated
+      if (attributionFor(o.id) !== "contradicted") continue;
+
+      try {
+        const res = await reverseEarnedReward(db, {
+          originalEntryId,
+          reason: "attribution_contradicted",
+        });
+        if (res.ok && !(res as any).replayed) {
+          tally.reversed++;
+          logger.info(
+            { actor: o.actor_id, observation: o.id, entry: originalEntryId, key: reversalKeyFor(originalEntryId) },
+            "reward pass: credit reversed — the reported outcome contradicts the served state",
+          );
+        } else if (!res.ok) {
+          logger.warn(
+            { actor: o.actor_id, observation: o.id, entry: originalEntryId, reason: res.reason },
+            "reward pass: reversal refused",
+          );
+        }
+      } catch (err) {
+        logger.warn({ err, actor: o.actor_id, observation: o.id }, "reward pass: reversal threw (continuing)");
+      }
+    }
+
+    if (tally.booked > 0 || tally.replayed > 0 || tally.reversed > 0) {
       logger.info(tally, "reward pass complete");
     }
     return { skipped: false, reason: null, ...tally };

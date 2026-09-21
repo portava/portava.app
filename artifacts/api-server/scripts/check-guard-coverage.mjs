@@ -136,6 +136,61 @@ const CREDENTIAL_NAME_RE = new RegExp(
 );
 const CREATE_CLIENT_RE = /(?:^|[^A-Za-z0-9_$.])createClient[ \t]*\(/;
 
+/**
+ * The file with its comments removed, for the reachability scan.
+ *
+ * A credential name inside a comment is not a use of that credential, and a
+ * `createClient(` inside a comment constructs nothing. Scanning the raw text
+ * classified 32 unit tests as able to reach Supabase because their header says
+ * how to RUN them. That is a guard failing on correct code, which is how guards
+ * get deleted.
+ *
+ * Deliberately conservative in the direction that keeps the guarded set LARGER:
+ * string literals are NOT parsed, so a `//` inside a string (a URL, say)
+ * truncates the rest of that line — which can only ever make this script see
+ * LESS credential usage on that line than is there... except that the whole
+ * point is the opposite direction, so read that again: dropping the tail of a
+ * line can only cause a file to be classified UNREACHABLE that should have been
+ * REACHABLE. That is the one way this can be wrong, and it is bounded to lines
+ * where a string literal contains `//` AND a credential name appears after it
+ * on the same line. No file in the tree does that today; the CI-surface rule
+ * below and the exemption list are the backstop if one ever does.
+ */
+function stripComments(text) {
+  let out = '';
+  let inBlock = false;
+  for (const raw of text.split('\n')) {
+    let line = raw;
+    if (inBlock) {
+      const end = line.indexOf('*/');
+      if (end === -1) { out += '\n'; continue; }
+      line = line.slice(end + 2);
+      inBlock = false;
+    }
+    // Whichever opens FIRST wins. This file carries its own copy of the
+    // stripper because it is .mjs and cannot import the .ts one; it therefore
+    // also carried the .ts one's bug — scanning for '/*' before '//' let an
+    // ordinary line comment containing a glob or URL open a block comment that
+    // ran to the next '*/' anywhere in the file, blanking real code. See
+    // src/scripts/lib/stripComments.ts and src/test/stripComments.test.ts,
+    // which is the test for the shared one; this copy must stay in step.
+    for (;;) {
+      const block = line.indexOf('/*');
+      const lineComment = line.indexOf('//');
+      if (block === -1 && lineComment === -1) break;
+      if (lineComment !== -1 && (block === -1 || lineComment < block)) {
+        line = line.slice(0, lineComment);
+        break;
+      }
+      const end = line.indexOf('*/', block + 2);
+      if (end === -1) { line = line.slice(0, block); inBlock = true; break; }
+      line = line.slice(0, block) + line.slice(end + 2);
+    }
+    out += line + '\n';
+  }
+  return out;
+}
+
 /** An `import "…/ciSupabaseGuard.mjs";` statement — not a mention of the name. */
 const GUARD_IMPORT_RE = /^[ \t]*import[ \t]+["'][^"']*ciSupabaseGuard\.mjs["'][ \t]*;?[ \t]*$/m;
 /** The same, for the read-only audit front door. */
@@ -299,6 +354,19 @@ const READ_ONLY_AUDIT_ENTRY_POINTS = [
       'the point: the cache-dominance figure it reports is meaningless against an empty CI project.',
   },
   {
+    file: 'src/scripts/check-media-bucket-privacy.ts',
+    reason:
+      'Reports the public/private state of the media buckets against the media_private_buckets_enabled flag ' +
+      '(audit SEC-02). Everything it sends, in full: ONE PostgREST SELECT of feature_flags.enabled for that one ' +
+      'flag, and storage.getBucket for each of post-media and profile-media. No INSERT/UPDATE/DELETE, no ' +
+      '.insert/.update/.upsert/.delete/.rpc, and nothing that mutates a bucket — it reads the flags and prints a ' +
+      'cutover verdict for a human. Moved here from the hand-run EXEMPT list once check:security named it from a ' +
+      'script a workflow runs: an exemption reading "CI never invokes it" stops being true the moment anything in ' +
+      'CI mentions the path, and a front door that refuses an unsanctioned target survives that change where a ' +
+      'list entry does not. It exits 2 rather than reporting a state it could not establish.',
+  },
+
+  {
     file: 'src/scripts/checkMediaUrlsExternalOnly.ts',
     reason:
       'ENFORCES the 2026-08-12 ruling that posts.media_urls holds EXTERNAL references only, post_media being ' +
@@ -432,6 +500,184 @@ const READ_ONLY_AUDIT_ENTRY_POINTS = [
 ];
 
 // ─────────────────────────────────────────────────────────────────────────────
+// RUNTIME TARGET GATES — a THIRD form of coverage, and the narrowest.
+//
+// WHAT IT IS, AND HOW IT DIFFERS FROM AN EXEMPTION
+// ------------------------------------------------
+// An EXEMPT entry says "CI cannot invoke this file", and means the file is
+// UNGUARDED: hand it a production URL from a laptop and it talks to production.
+// An entry here says something stronger and entirely different: the file DOES
+// decide its own target at runtime, before it opens any connection and before
+// it loads any fixture, and it refuses every target but one. It is covered, not
+// excused. "CI does not run it" is NOT a reason to be on this list and does not
+// appear in any entry below.
+//
+// The shape a gate must have to be recognised — all four, verified from source
+// on every run by REQUIRED_GATE_TOKENS below:
+//   1. it selects the disposable local target EXPLICITLY, from a dedicated
+//      variable, never by inferring "this URL looks local";
+//   2. every other named target falls through to the ordinary front door
+//      `src/lib/ciSupabaseGuard.mjs`, whose production denylist is untouched;
+//   3. the refusal happens before any write-capable client is constructed and
+//      before any fixture is seeded — a latch the assertion opens is the only
+//      thing that lets the write paths run at all;
+//   4. the refusals are PROVED by a test that needs no database, named in
+//      `provedBy`, which this check requires to exist and to exercise the
+//      assertion by name.
+//
+// WHY STATIC DETECTION CANNOT SEE IT, STATED PLAINLY
+// --------------------------------------------------
+// This checker recognises coverage by GUARD_IMPORT_RE, which matches a STATIC
+// side-effect import — `import "…/ciSupabaseGuard.mjs";` on a line of its own.
+// That is deliberate: the guard works by ES module evaluation order, so a
+// static first import is the only form that refuses before anything else loads.
+// The two files below cannot use that form, for the reason the guard's own
+// header asks for. The guard must NOT run when the target is the disposable
+// loopback database (a loopback host has no Supabase project ref, so the
+// allowlist has nothing to bind to and the guard would refuse a database it was
+// never meant to protect). Deciding that requires reading the environment,
+// which a static import cannot wait for. So the guard is reached by
+// `await import("../lib/ciSupabaseGuard.mjs")` inside the else branch — a
+// dynamic specifier, invisible to a regex that matches import STATEMENTS.
+//
+// The gap is therefore in the DETECTOR, not in the protection. Listing the two
+// files here records that judgement where a diff shows it, and makes the check
+// verify the protection's shape instead of taking it on trust.
+//
+// MUTATION LOG — this rule was made to fail before it was trusted to pass.
+// Each mutation was applied ALONE, `node scripts/check-guard-coverage.mjs` was
+// run, and the source was restored before the next one.
+//
+//   G1  latch pre-opened in the helper (APPROVED_TARGET seeded non-null)   red
+//   G2  `requireApprovedTarget("seedCorpus")` deleted                      red
+//   G3  `requireApprovedTarget("teardownCorpus")` deleted                  red
+//   G4  harness stops reaching the front door on the remote branch         red
+//   G5  the explicit-selection declaration renamed away                    red
+//   G6  an entry whose reason argues "CI never invokes this file"          red
+//   G7  one token dropped, 5 -> 4                                        GREEN
+//       REPORTED, NOT HIDDEN: 4 is the floor and 4 remained, so this is the
+//       rule behaving as written rather than a hole. G7b crosses it:
+//   G7b two tokens dropped, 5 -> 3                                         red
+//   G8  provedBy repointed at a file that never calls the assertion        red
+//   G9  a gated file also listed in EXEMPT                                 red
+//   G10 a bare identifier used as a gate token                             red
+//   G11 an entry naming a file that does not exist                         red
+//
+// G5 and G10 were GREEN on the first pass and the rule was strengthened for
+// them rather than the results being written down as acceptable: the tokens
+// became whole statements (a bare identifier matches at every use site, so
+// renaming its declaration left the check green) and a four-token floor was
+// added (deleting tokens one at a time hollows out an entry that still reads
+// as verified).
+// ─────────────────────────────────────────────────────────────────────────────
+const RUNTIME_TARGET_GATES = [
+  {
+    file: 'src/test/wallFirstPageLiveDb.test.ts',
+    reason:
+      'W146, the Wall first-page benchmark. It decides its own target in three mutually exclusive modes at ' +
+      'module scope, before before() runs and before any Supabase code is loaded. LOCAL requires an operator ' +
+      'to name the one disposable database in W146_LOCAL_DB_URL; assertDisposableLocalBenchmarkTarget then ' +
+      'refuses a missing, blank, remote, production, hostile-loopback-spelling, or mismatched target, and ' +
+      'only on success opens the corpus write latch. REMOTE — every other named target, including a ' +
+      'malformed or non-http one, where the loopback predicate fails closed — takes `await ' +
+      'import("../lib/ciSupabaseGuard.mjs")`, the ordinary front door, unweakened. NO TARGET reaches nothing: ' +
+      'the benchmark skips, no client is constructed, the latch stays shut, and the file asserts that ' +
+      'inertness at module scope rather than assuming it. A bare loopback SUPABASE_URL nobody configured is ' +
+      'NOT local mode and takes the guarded branch.',
+    requires: [
+      'const CONFIGURED_LOCAL_DB = process.env.W146_LOCAL_DB_URL ?? "";',
+      'const LOCAL_MODE_SELECTED = A_TARGET_IS_NAMED && CONFIGURED_LOCAL_DB.trim() !== "";',
+      'const REMOTE_TARGET_NAMED = A_TARGET_IS_NAMED && !LOCAL_MODE_SELECTED;',
+      'assertDisposableLocalBenchmarkTarget(SUPABASE_URL, CONFIGURED_LOCAL_DB);',
+      'await import("../lib/ciSupabaseGuard.mjs");',
+    ],
+    provedBy: 'src/test/wallFirstPageLiveDb.test.ts',
+  },
+  {
+    file: 'src/test/helpers/liveWallCorpus.ts',
+    reason:
+      'The W146 fixture helper, and the file that actually issues the benchmark writes. It holds the latch ' +
+      'the harness above opens: APPROVED_TARGET starts null, only ' +
+      'assertDisposableLocalBenchmarkTarget sets it, and requireApprovedTarget() throws a ' +
+      'DisposableTargetError at the top of both seedCorpus and teardownCorpus. So the two write paths refuse ' +
+      'while the latch is shut, whatever client they are handed — the gate is not on the connection, it is ' +
+      'on the write. The helper is imported by the harness, never executed on its own.',
+    requires: [
+      'let APPROVED_TARGET: string | null = null;',
+      'export function assertDisposableLocalBenchmarkTarget(',
+      'function requireApprovedTarget(',
+      'requireApprovedTarget("seedCorpus")',
+      'requireApprovedTarget("teardownCorpus")',
+    ],
+    provedBy: 'src/test/wallFirstPageLiveDb.test.ts',
+  },
+  {
+    file: 'src/test/mapProjectionLiveDb.test.ts',
+    reason:
+      'The Map gateway driven against a real PostgreSQL. Same three-mode decision as W146 above, made at ' +
+      'module scope before any Supabase code loads, with MAP_LIVE_LOCAL_DB_URL as the variable that selects ' +
+      'LOCAL: assertDisposableLocalBenchmarkTarget then refuses a missing, blank, remote, production, ' +
+      'hostile-loopback-spelling or mismatched target, and only on success opens the SAME write latch W146 ' +
+      'uses — one latch, because approval is a property of the target and not of the fixture family. REMOTE ' +
+      'is every other named target, including a malformed or non-http one where the loopback predicate fails ' +
+      'closed, and takes the unweakened front door. NO TARGET reaches nothing, and the file asserts that ' +
+      'inertness at module scope rather than assuming it. This harness additionally WRITES A FEATURE FLAG, ' +
+      'which is the one write here that could change a deployed system rather than only add fixture rows, so ' +
+      'setExistingFlag is latched like the fixture paths and refuses to create a flag row that does not ' +
+      'already exist. The latch itself lives in src/test/helpers/liveMapCorpus.ts, which is NOT listed ' +
+      'here and deliberately so: it takes a client as a parameter and creates none, so this check does ' +
+      'not classify it as a reacher and an entry for it would be a shape assertion about a file the ' +
+      'reachability scan cannot see. Its three refusals are proven BEHAVIOURALLY instead, by the ' +
+      'database-free suite at the bottom of the harness, which drives each write path against a Proxy ' +
+      'that throws if it is touched at all and asserts the refusal is a DisposableTargetError.',
+    requires: [
+      'const CONFIGURED_LOCAL_DB = process.env["MAP_LIVE_LOCAL_DB_URL"] ?? "";',
+      'const LOCAL_MODE_SELECTED = A_TARGET_IS_NAMED && CONFIGURED_LOCAL_DB.trim() !== "";',
+      'const REMOTE_TARGET_NAMED = A_TARGET_IS_NAMED && !LOCAL_MODE_SELECTED;',
+      'assertDisposableLocalBenchmarkTarget(SUPABASE_URL, CONFIGURED_LOCAL_DB);',
+      'await import("../lib/ciSupabaseGuard.mjs");',
+    ],
+    provedBy: 'src/test/mapProjectionLiveDb.test.ts',
+  },
+  {
+    file: 'src/test/mapProjectionPerf.test.ts',
+    reason:
+      'M256(a), the projection latency harness, which is REGISTERED and therefore runs on every CI suite ' +
+      'pass — in its in-process arm, where it constructs no client at all and names no target. It acquires ' +
+      'the ability to reach a database only when BOTH PORTAVA_PERF_SUPABASE_URL and ' +
+      'PORTAVA_PERF_SERVICE_ROLE_KEY are set, and that request is gated at module scope before any ' +
+      'Supabase code loads: PORTAVA_PERF_LOCAL_DB_URL selects LOCAL and ' +
+      'assertDisposableLocalBenchmarkTarget refuses a missing, blank, remote, production or mismatched ' +
+      'target while opening the shared write latch only on success; every other named live target is ' +
+      'REMOTE and takes the unweakened front door, exiting 2. A bare loopback URL nobody configured is ' +
+      'NOT local mode. This harness WRITES — 120 fixture places and a feature flag — so the latch matters ' +
+      'here as much as it does for the corpus helpers, and the flag write additionally refuses to create a ' +
+      'row that does not already exist. Until 2026-09-21 the two live variables were read only to compute ' +
+      'the printed arm LABEL while the double ran regardless, so a live label over fake numbers was the ' +
+      'defect being fixed, not a hypothetical.',
+    requires: [
+      'const CONFIGURED_LOCAL_DB = process.env["PORTAVA_PERF_LOCAL_DB_URL"] ?? "";',
+      'const LOCAL_MODE_SELECTED = LIVE_REQUESTED && CONFIGURED_LOCAL_DB.trim() !== "";',
+      'const REMOTE_TARGET_NAMED = LIVE_REQUESTED && !LOCAL_MODE_SELECTED;',
+      'assertDisposableLocalBenchmarkTarget(LIVE_URL, CONFIGURED_LOCAL_DB);',
+      'await import("../lib/ciSupabaseGuard.mjs");',
+    ],
+    provedBy: 'src/test/mapProjectionPerf.test.ts',
+  },
+];
+
+/**
+ * The test that proves a gate must actually exercise it. Named here rather than
+ * inside the entries because it is the same claim for every gate: a `provedBy`
+ * file that never calls the assertion proves nothing.
+ */
+const GATE_PROOF_TOKENS = [
+  'assertDisposableLocalBenchmarkTarget(',
+  'DisposableTargetError',
+  'approvedDisposableTarget()',
+];
+
+// ─────────────────────────────────────────────────────────────────────────────
 // THE EXEMPT LIST. Every entry needs a reason, and the reason must say what
 // makes CI unable to invoke this file — not that the file is harmless.
 //
@@ -523,10 +769,27 @@ const EXEMPT = [
   //
   // NOTE for whoever next re-derives the patterns: matching the bare text
   // SUPABASE_ also matches error messages and comments, so the "can reach
-  // Supabase directly" population is an over-count, and some other exemptions
-  // here may rest on the same kind of false positive. Narrowing the pattern
-  // would shrink the guarded set, so it is deliberately NOT done in this change
-  // — it needs its own review.
+  // Supabase directly" population was an over-count, and some exemptions here
+  // may still rest on that kind of false positive.
+  //
+  // THE COMMENT HALF OF THAT HAS SINCE BEEN FIXED (see stripComments below):
+  // the reachability scan now runs over the file with comments removed. That
+  // was the review this note asked for, and it was forced by measurement, not
+  // by tidiness — 32 pure unit tests were being flagged whose ONLY mention of a
+  // credential name is the run instruction in their own doc comment:
+  //
+  //   * Run: SUPABASE_URL=http://127.0.0.1:9 SUPABASE_SERVICE_ROLE_KEY=dummy \
+  //
+  // Those files construct no client and issue no request. With them flagged,
+  // check:guard-coverage — the FIRST check in check:all — was red on nothing,
+  // and this script's own siblings say what happens next: "a permanently-red
+  // check is one `|| true` away from being no check at all".
+  //
+  // THE STRING-LITERAL HALF IS DELIBERATELY NOT FIXED. The trips.ts precedent
+  // above was a string literal in an error message, and a string holding a
+  // credential name is code that ran; only a comment is guaranteed not to be.
+  // So a file naming SUPABASE_SERVICE_ROLE_KEY inside a string is still
+  // REACHABLE here, and still has to be judged by a human.
 
   // ── Manual seed / backfill / ops tooling. CI invokes none of it. ──────────
   //
@@ -542,7 +805,6 @@ const EXEMPT = [
     ['src/scripts/backfill-media-assets.ts', 'one-shot backfill of media asset rows'],
     ['src/scripts/backfillLandmarkCategories.ts', 'one-shot backfill of landmark categories'],
     ['src/scripts/backfillStampCountries.ts', 'one-shot backfill of stamp country codes'],
-    ['src/scripts/check-media-bucket-privacy.ts', 'manual audit of storage bucket privacy flags'],
     ['src/scripts/fix-demo-events-city.ts', 'manual repair of demo event city fields'],
     ['src/scripts/fix-demo-memories.ts', 'manual repair of demo memory rows'],
     ['src/scripts/fix-demo-stamps.ts', 'manual repair of demo stamp rows'],
@@ -610,9 +872,241 @@ const EXEMPT = [
   //
   // The exemption is NOT taken on trust — assertPinnedTestEnv() below re-reads
   // package.json on every run and fails if the pin is gone.
+  //
+  // Three entries left this list when the reachability scan became
+  // comment-aware: dailyBriefCleanup, eventAgendaItems and stamps mentioned a
+  // credential name ONLY in a comment, so they were never reachable and never
+  // needed an exemption. The check's own staleness rule is what surfaced them —
+  // it refuses an EXEMPT entry for a file it no longer classifies as reaching
+  // Supabase, precisely so a narrowed pattern cannot quietly retire exemptions
+  // that are still load-bearing.
   ...[
-    'src/test/dailyBriefCleanup.test.ts',
-    'src/test/eventAgendaItems.test.ts',
+    'src/test/unissuedSupabaseWrites.test.ts',
+    'src/test/unissuedWrites.test.ts',
+  ].map((file) => ({
+    file,
+    pinnedTestEnv: true,
+    reason:
+      'Proves that a `void` supabase write with no .then/.catch/await issues NO HTTP request — PostgrestBuilder ' +
+      'calls _fetch inside then(). That fact can only be established against a REAL client, which is precisely why ' +
+      'the defect survived: a hand-written fake cannot tell "constructed" from "sent", and one in this suite was ' +
+      'written around it. So these call createClient deliberately. They are not reachers in any meaningful sense: ' +
+      'each installs its OWN counting `fetch` through `global.fetch`, so no request can leave the process whatever ' +
+      'the URL, and the URL is the loopback discard port besides. EXEMPTION MEANS UNGUARDED, NOT SAFE — if either ' +
+      'file is ever changed to let the real fetch through, the exemption is void and it must import the guard.',
+  })),
+
+  {
+    file: 'src/test/helpers/postgrestOracle.ts',
+    reason:
+      'THE CONFORMANCE ORACLE. It builds the REAL @supabase/supabase-js client on purpose: it is the ' +
+      'reference half of the harness that contract-checks every in-memory Supabase double in ' +
+      'src/test/helpers/ against the client they stand in for. That comparison is the only thing that can ' +
+      'catch a fake written AROUND a client behaviour — which is how a fake came to record an insert ' +
+      'EAGERLY and twenty writes that issued no HTTP request at all stayed green for months. It is a helper, ' +
+      'not an entry point: no package script names it, so CI never invokes it directly; it runs only when a ' +
+      'test imports it. That is not why it is safe, though, and the exemption does not rest on it. It is ' +
+      'safe because it CANNOT DIAL ANYTHING: createClient is given an injected fetch that emulates a ' +
+      'PostgREST server over in-memory tables and is the only transport the client has, and the URL it is ' +
+      'handed is the literal "http://oracle.invalid" — a name reserved never to resolve — written in the ' +
+      'file rather than read from the environment. It names no Supabase credential variable at all. ' +
+      'EXEMPTION MEANS UNGUARDED, NOT SAFE — if the injected fetch is ever removed, or the URL ever comes ' +
+      'from the environment, the exemption is void and this file must import the guard.',
+  },
+
+  {
+    file: 'src/test/mediaAccessFailClosed.test.ts',
+    pinnedTestEnv: true,
+    reason:
+      'Registered unit test for the media access relay. It names SUPABASE_URL only to SET it, to the hardcoded ' +
+      'literal "http://sb.example.test", and to restore whatever was there afterwards — mediaAccess builds a ' +
+      'storage URL out of that variable, so the test has to give it one to assert on. It constructs NO client: ' +
+      'it calls createClient nowhere, and injects its fakes through _setTestServiceClient. That in-file ' +
+      'override is a STRONGER pin than the CI one, in the same way snapshotFreshnessGuard.test.ts is: it moves ' +
+      'with the file rather than with package.json, and it cannot inherit whatever an operator .env names ' +
+      'because it overwrites it. pinnedTestEnv is set because CI invokes it and the CI-surface rule requires ' +
+      'the flag of any exemption CI runs; the loopback pin is the weaker of the two. EXEMPTION MEANS ' +
+      'UNGUARDED, NOT SAFE — if this file is ever changed to construct a client, the exemption is void.',
+  },
+
+  {
+    file: 'src/test/notificationPushTokenRegistryUnreadable.test.ts',
+    pinnedTestEnv: true,
+    reason:
+      'Registered unit test for the push-token registry read, over a REAL createClient for the same reason '
+      + 'notificationIssuance.test.ts is: the question is whether supabase-js RESOLVES a PostgREST 500 into an '
+      + '{error} the caller then ignores, and a hand-written double cannot answer it -- a double that returns '
+      + 'whatever the test asked for proves the test, not the client. It also keys its induced failure on the '
+      + 'exact projected column (select=push_token) rather than on the table, because notification_devices is read '
+      + 'elsewhere in the same handler and a table-wide failure would trip a different branch. That precision only '
+      + 'exists on the wire. It names NO Supabase credential variable: the URL and key are the in-file literals '
+      + '"http://supabase.test" and "test-service-role-key", and the client is handed an injected counting fetch as '
+      + 'its ONLY transport, so no request can leave the process whatever the environment holds -- a stronger pin '
+      + 'than the CI one, in the same way mediaAccessFailClosed.test.ts is. pinnedTestEnv is set because CI invokes '
+      + 'it and the CI-surface rule requires the flag on any exemption CI runs. EXEMPTION MEANS UNGUARDED, NOT SAFE '
+      + '-- if the injected fetch is ever removed, or either literal ever comes from the environment, the exemption '
+      + 'is void and this file must import the guard.',
+  },
+
+  {
+    file: 'src/test/authSignupStatusNoClient.test.ts',
+    pinnedTestEnv: true,
+    reason:
+      'Registered unit test for GET /auth/signup-status on the NO-SERVICE-CLIENT path. It names SUPABASE_URL and '
+      + 'SUPABASE_SERVICE_ROLE_KEY only to `delete` them from process.env, before a dynamic import() of '
+      + 'src/lib/supabase.js — which is the ONLY way to reach that branch, because isServiceClientReady is a '
+      + 'load-time const evaluated when the module is first imported, so the runner\'s own credentials would '
+      + 'otherwise pin it true forever. The detector here is NAME-BASED and cannot tell a read of a credential '
+      + 'from a DELETION of one, so it classified the file as a reacher on the strength of the two lines that '
+      + 'take the credentials AWAY. The file constructs no client, calls createClient nowhere, and after those '
+      + 'two deletes there is no URL left in the environment for anything to dial. Its whole subject is that the '
+      + 'route must answer 503 {signupsEnabled:false} rather than open signups when nothing is readable — a '
+      + 'fail-CLOSED assertion, which is why removing the credentials is the fixture and not a bypass. '
+      + 'EXEMPTION MEANS UNGUARDED, NOT SAFE — if this file ever stops deleting those variables, or ever '
+      + 'constructs a client, the exemption is void and it must import the guard.',
+  },
+
+  {
+    file: 'src/test/wallSessionIntentLiveDbStatus.test.ts',
+    pinnedTestEnv: true,
+    reason:
+      'W146 ANNOUNCEMENT half of the Wall session-intent live harness. Its whole job is to make the ordinary '
+      + 'suite SAY, on every run, that src/test/wallSessionIntentLiveDb.test.ts (which DOES import the strict '
+      + 'guard front door, and is therefore unregisterable in the curated test script) was not verified against '
+      + 'a database. It reads process.env.SUPABASE_URL and process.env.SUPABASE_SERVICE_ROLE_KEY at exactly two '
+      + 'lines, and uses both only to COMPOSE THE BANNER STRING that names what is missing. The detector here is '
+      + 'NAME-BASED and cannot tell a read that dials from a read that describes. Measured on this file: zero '
+      + 'createClient, zero getServiceClient, zero .from(, zero fetch, zero import of src/lib/supabase. '
+      + 'Importing the strict guard here would make the file exit 2 on every ordinary run — which is precisely '
+      + 'the silence it exists to prevent, so the exemption is not a convenience but the requirement. '
+      + 'EXEMPTION MEANS UNGUARDED, NOT SAFE — if this file ever constructs a client or issues a request, the '
+      + 'exemption is void and it must import the guard or leave the curated list.',
+  },
+
+  {
+    file: 'src/test/notificationIssuance.test.ts',
+    pinnedTestEnv: true,
+    reason:
+      'Registered unit test that answers "is the notification actually SENT" over a REAL createClient, for the ' +
+      'reason the rabLifecycle suites below do: PostgrestBuilder calls _fetch inside then(), so a void write ' +
+      'with no continuation issues no request at all, and a hand-written double cannot tell a CONSTRUCTED ' +
+      'builder from a SENT one — it is the same seam unissuedWrites.test.ts uses. It also asserts ORDER (the ' +
+      'dedupe read precedes the insert), which only exists on the wire. The client is handed its own transport ' +
+      '(global: { fetch: makeRecordingFetch(...) }), so the installed fetch is never consulted and no request ' +
+      'leaves the process, and SUPA_URL is the hardcoded literal "http://supabase.test" declared in the file ' +
+      'rather than read from the environment. pinnedTestEnv because CI invokes it and the CI-surface rule ' +
+      'requires the flag of any exemption CI runs. EXEMPTION MEANS UNGUARDED, NOT SAFE.',
+  },
+
+  {
+    file: 'src/test/rabLifecycleTransitions.test.ts',
+    pinnedTestEnv: true,
+    reason:
+      'Registered unit test in the rabLifecycle family, built the same way and exempt for the same reasons as ' +
+      'the three below. It proves that six booking transitions are COMPARE-AND-SWAP — that the write itself ' +
+      'carries the expected-status predicate rather than a read having checked it first — and that question ' +
+      'is only answerable against a real client, because what distinguishes the two is the request that goes ' +
+      'on the wire. The client is handed its own transport (global: { fetch: makeRecordingFetch(...) }), so ' +
+      'the installed fetch is never consulted and no request leaves the process, and SUPA_URL is the ' +
+      'hardcoded literal "http://supabase.test" declared in the file rather than read from the environment. ' +
+      'pinnedTestEnv because CI invokes it. EXEMPTION MEANS UNGUARDED, NOT SAFE.',
+  },
+
+  {
+    file: 'src/test/rabLifecycleRestrictions.test.ts',
+    pinnedTestEnv: true,
+    reason:
+      'Registered unit test in the same family as the two rabLifecycle suites below, built the same way and ' +
+      'for the same reason: it drives the real routes over a REAL createClient because the question is ' +
+      'whether the restriction path READS what it claims to and the route ISSUES what it claims to, and a ' +
+      'hand-written double answers that by construction rather than by measurement. The client is handed its ' +
+      'own transport (global: { fetch: makeRecordingFetch(...) }), so the installed fetch is never consulted ' +
+      'and no request leaves the process, and SUPA_URL is the hardcoded literal "http://supabase.test" ' +
+      'declared in the file rather than read from the environment. pinnedTestEnv because CI invokes it and ' +
+      'the CI-surface rule requires the flag of any exemption CI runs. EXEMPTION MEANS UNGUARDED, NOT SAFE.',
+  },
+
+  {
+    file: 'src/test/rabLifecycleNoShowAttribution.test.ts',
+    pinnedTestEnv: true,
+    reason:
+      'Registered unit test that proves the no-show attribution path over a REAL createClient, for the same ' +
+      'reason as rabLifecycleCounters below: the question is whether the route ISSUES the write the sweeper ' +
+      'later reads, and a hand-written double answers that question by construction rather than by ' +
+      'measurement. Same two in-file pins: the client is given its own transport ' +
+      '(global: { fetch: makeRecordingFetch(...) }), so the installed fetch is never reached and no request ' +
+      'leaves the process, and the URL is the hardcoded literal "http://supabase.test" declared in the file ' +
+      'rather than read from the environment. pinnedTestEnv because the test script names it and the ' +
+      'CI-surface rule requires the flag of any exemption CI invokes. EXEMPTION MEANS UNGUARDED, NOT SAFE — ' +
+      'void the moment the real fetch is let through or the URL comes from the environment.',
+  },
+
+  {
+    file: 'src/test/rabLifecycleCounters.test.ts',
+    pinnedTestEnv: true,
+    reason:
+      'Registered unit test that drives the real Rent-a-Buddy routes over a REAL createClient, deliberately. ' +
+      'What it proves is that three lifecycle counters move with the WRITE the route issues rather than with a ' +
+      'read set, and a hand-written double cannot tell a CONSTRUCTED PostgrestBuilder from a SENT request — ' +
+      'that distinction is precisely how twenty unissued writes stayed green for months, so the fake that ' +
+      'cannot see it is the wrong instrument here. Two facts in the file itself, both stronger than the CI ' +
+      'pin, keep it off the network: the client is handed its OWN transport, ' +
+      'createClient(SUPA_URL, SUPA_KEY, { global: { fetch: makeRecordingFetch(...) } }), so the installed ' +
+      'fetch is never consulted and no request can leave the process; and SUPA_URL is the hardcoded literal ' +
+      '"http://supabase.test" declared in the file, never read from the environment, so an operator .env ' +
+      'cannot redirect it. It carries pinnedTestEnv because CI does invoke it — the test script names it — ' +
+      'and the CI-surface rule requires that flag of any exemption CI runs; the loopback pin is a third, ' +
+      'weaker pin on top of the two above. EXEMPTION MEANS UNGUARDED, NOT SAFE — if this file is ever changed ' +
+      'to let the real fetch through, or to take its URL from the environment, the exemption is void and it ' +
+      'must import the guard.',
+  },
+
+  {
+    file: 'src/test/guardReachability.test.ts',
+    pinnedTestEnv: true,
+    reason:
+      'The mutation suite for check:guard-reachability. It sets SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY as CHILD ' +
+      'PROCESS environment for a spawned checker — to hardcoded literals, the loopback discard port and "dummy" — ' +
+      'in the one case that proves the manual-claim verdict does NOT move with the ambient environment. That case ' +
+      'exists because the verdict once DID move, so the credential names have to appear in it. The test constructs ' +
+      'no client and issues no request; it reads the spawned process\'s exit code and printed counts. EXEMPTION ' +
+      'MEANS UNGUARDED, NOT SAFE.',
+  },
+
+  {
+    file: 'src/test/guardCoverageReachability.test.ts',
+    // pinnedTestEnv for the same reason as the entries below: `pnpm test` names
+    // it and pins SUPABASE_URL on the command line.
+    pinnedTestEnv: true,
+    reason:
+      'The mutation suite for THIS script. It is classified reachable because it writes probe files whose ' +
+      'CONTENT quotes credential names as fixture text — including one case that exists specifically to prove ' +
+      'a credential name in a string literal is still treated as reachable, which is the narrowing this ' +
+      'script must NOT do. Building those fixtures by concatenation to dodge the pattern would be evading ' +
+      'the guard this file exists to defend, so the fixture text stays literal and the exemption is taken ' +
+      'openly. The test constructs no client and issues no request; it spawns this script as a child ' +
+      'process and reads its exit code and printed counts. EXEMPTION MEANS UNGUARDED, NOT SAFE.',
+  },
+
+  {
+    file: 'src/test/snapshotFreshnessGuard.test.ts',
+    // pinnedTestEnv because the CI-surface rule requires it of any exemption CI
+    // invokes, and because the premise is true here as well: `pnpm test` names
+    // this file and pins SUPABASE_URL on the command line. Its own hardcoded
+    // override is an ADDITIONAL, stronger pin on top of that, not a substitute
+    // for it — so the conditional re-check of package.json still applies.
+    pinnedTestEnv: true,
+    reason:
+      'Registered unit test that spawns src/scripts/checkFlagSchemaPrerequisites.ts as a CHILD PROCESS and ' +
+      'sets SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY for it to hardcoded literals — the loopback discard ' +
+      'port and the string "dummy" — AFTER spreading process.env, so the override wins and the child cannot ' +
+      'inherit whatever an operator .env names. That is a stronger pin than the pinnedTestEnv entries below, ' +
+      'which rely on package.json: this one is in the file itself and moves with it. The test constructs no ' +
+      'client and issues no request of its own. EXEMPTION MEANS UNGUARDED, NOT SAFE — if this file is ever ' +
+      'changed to pass the ambient credentials through, the exemption is void and it must import the guard.',
+  },
+
+  ...[
     'src/test/events-extension.test.ts',
     'src/test/mediaAccess.test.ts',
     'src/test/mediaFileWidthTransform.test.ts',
@@ -622,8 +1116,14 @@ const EXEMPT = [
     'src/test/mediaUploadHardening.test.ts',
     'src/test/messaging.test.ts',
     'src/test/ogImageVisibility.test.ts',
-    'src/test/stamps.test.ts',
     'src/test/storyMediaOwnership.test.ts',
+    // ADDED 2026-09-16 with the verification phase's privacy/authorization lane.
+    // Same shape as its neighbours above, checked rather than assumed: it names
+    // SUPABASE_URL only to save and restore the string around its own express
+    // server, injects a fake through `_setTestClient`, calls `createClient`
+    // nowhere, and every fetch it issues is to 127.0.0.1 on a port it opened
+    // itself. It is in the `test` script, so the loopback pin below covers it.
+    'src/test/verifyAuthzVoiceMediaOwnership.test.ts',
   ].map((file) => ({
     file,
     pinnedTestEnv: true,
@@ -831,10 +1331,15 @@ for (const abs of sourceFiles) {
 
   if (GUARD_MACHINERY.has(rel)) continue; // the guard is not its own client
 
-  const importsStrictGuard = GUARD_IMPORT_RE.test(text);
-  const importsReadOnlyGuard = READONLY_GUARD_IMPORT_RE.test(text);
+  // Comments stripped for BOTH questions. A commented-out credential name is
+  // not a use of it, and — the direction that matters more — a commented-out
+  // guard import is not a guard: `// import "…/ciSupabaseGuard.mjs";` must not
+  // count as opting in.
+  const code = stripComments(text);
+  const importsStrictGuard = GUARD_IMPORT_RE.test(code);
+  const importsReadOnlyGuard = READONLY_GUARD_IMPORT_RE.test(code);
   const importsGuard = importsStrictGuard || importsReadOnlyGuard;
-  const canReach = CREDENTIAL_NAME_RE.test(text) || CREATE_CLIENT_RE.test(text);
+  const canReach = CREDENTIAL_NAME_RE.test(code) || CREATE_CLIENT_RE.test(code);
 
   if (importsReadOnlyGuard) readOnlyImporters.add(rel);
 
@@ -975,6 +1480,131 @@ for (const entry of EXEMPT) {
   exemptByFile.set(entry.file, entry);
 }
 
+// ── RUNTIME TARGET GATES: verified from source, in both directions. ─────────
+//
+// This is the narrow coverage rule, and it is narrow in three senses: the list
+// is closed and short, each entry must still CONTAIN the gate for the entry to
+// count, and the entry is rejected outright if its reason rests on CI not
+// running the file. A gate that is deleted, renamed or weakened stops matching
+// here and the file is reported as an ordinary unguarded reacher.
+if (!Array.isArray(RUNTIME_TARGET_GATES) || RUNTIME_TARGET_GATES.length === 0) {
+  problem(
+    'RUNTIME_TARGET_GATES in artifacts/api-server/scripts/check-guard-coverage.mjs is empty or is not an ' +
+      'array. With it empty, "these files gate their own target at runtime" is a claim about a set this ' +
+      'check can no longer describe. Restore the entries and their reasons.',
+  );
+}
+
+/** A reason that rests on CI not invoking the file. That is an EXEMPT reason. */
+const CI_DOES_NOT_RUN_IT_RE =
+  /\bCI\b[^.]{0,60}\b(?:never|does not|doesn't|cannot|can't|will not|won't)\b[^.]{0,40}\b(?:run|runs|invoke|invokes|reach|reaches|execute|executes)\b|\b(?:never|not)\s+(?:invoked|run|executed)\s+(?:by|in|on)\s+CI\b/i;
+
+const gateByFile = new Map();
+for (const entry of RUNTIME_TARGET_GATES) {
+  if (typeof entry?.file !== 'string' || entry.file === '') {
+    problem(`A RUNTIME_TARGET_GATES entry has no 'file': ${JSON.stringify(entry)}.`);
+    continue;
+  }
+  if (typeof entry.reason !== 'string' || entry.reason.trim().length < 120) {
+    problem(
+      `RUNTIME_TARGET_GATES entry '${entry.file}' has no usable reason. An entry here asserts that the file ` +
+        'refuses every target but one, at runtime, before it writes. That claim has to be spelled out — ' +
+        'which variable selects the target, what is refused, and where the refusal sits relative to the ' +
+        'first write.',
+    );
+    continue;
+  }
+  if (CI_DOES_NOT_RUN_IT_RE.test(entry.reason)) {
+    problem(
+      `RUNTIME_TARGET_GATES entry '${entry.file}' argues from CI not invoking the file. That is the premise ` +
+        'of an EXEMPT entry, and EXEMPTION MEANS UNGUARDED. This list is for files that protect themselves ' +
+        'wherever they are run, including from a laptop with a production .env. If the protection is really ' +
+        '"CI does not run it", move the entry to EXEMPT and accept that the file is unguarded.',
+    );
+    continue;
+  }
+  // A FLOOR, not just non-empty. Deleting tokens one at a time is how a gate
+  // gets hollowed out while the entry still looks verified: each of the four
+  // shape requirements at the top of RUNTIME_TARGET_GATES needs at least one
+  // token, so an entry that can no longer name four has stopped describing a
+  // gate. Tokens must be whole statements, not bare identifiers — an identifier
+  // matches at every use site, so renaming its declaration would leave the
+  // check green.
+  const MIN_GATE_TOKENS = 4;
+  if (!Array.isArray(entry.requires) || entry.requires.length < MIN_GATE_TOKENS) {
+    problem(
+      `RUNTIME_TARGET_GATES entry '${entry.file}' names ` +
+        `${Array.isArray(entry.requires) ? entry.requires.length : 0} 'requires' token(s); at least ` +
+        `${MIN_GATE_TOKENS} are needed, one per element of the gate's shape (explicit selection, the ` +
+        'refusing assertion, the front door for every other target, and the latched write path). Fewer ' +
+        'than that and the entry is taken on trust, which is exactly what this list exists to avoid.',
+    );
+    continue;
+  }
+  const bareIdentifiers = entry.requires.filter((t) => /^[A-Za-z_$][\w$]*$/.test(t));
+  if (bareIdentifiers.length > 0) {
+    problem(
+      `RUNTIME_TARGET_GATES entry '${entry.file}' requires bare identifier(s) ` +
+        `${bareIdentifiers.map((t) => JSON.stringify(t)).join(', ')}. A bare name matches at every use ` +
+        'site, so the declaration could be renamed or deleted and this check would stay green. Require the ' +
+        'statement.',
+    );
+    continue;
+  }
+  if (gateByFile.has(entry.file)) {
+    problem(`RUNTIME_TARGET_GATES lists '${entry.file}' twice. A duplicated entry hides which reason is in force.`);
+    continue;
+  }
+  if (exemptByFile.has(entry.file)) {
+    problem(
+      `'${entry.file}' is in BOTH RUNTIME_TARGET_GATES and EXEMPT. The two say opposite things — one that ` +
+        'the file refuses every target but one, the other that it is unguarded and CI merely cannot reach ' +
+        'it. Pick the one that is true and delete the other.',
+    );
+    continue;
+  }
+  const abs = join(PKG_ROOT, entry.file);
+  if (!existsSync(abs)) {
+    problem(
+      `RUNTIME_TARGET_GATES names '${entry.file}', which does not exist. A stale entry is a line a reviewer ` +
+        'reads as a verified runtime protection on a file that is not there. Remove it.',
+    );
+    continue;
+  }
+  // Comments stripped: a gate described in a comment is not a gate.
+  const gateCode = stripComments(readFileSync(abs, 'utf8'));
+  const absent = entry.requires.filter((tok) => !gateCode.includes(tok));
+  if (absent.length > 0) {
+    problem(
+      `RUNTIME_TARGET_GATES names '${entry.file}', but its gate is no longer in the file's CODE. Missing: ` +
+        `${absent.map((t) => JSON.stringify(t)).join(', ')}. The entry claims a runtime refusal that this ` +
+        'file no longer performs, so the file is now an unguarded reacher wearing a coverage entry. Restore ' +
+        'the gate, or delete the entry and import a guard front door.',
+    );
+    continue;
+  }
+  const proofAbs = join(PKG_ROOT, entry.provedBy ?? '');
+  if (typeof entry.provedBy !== 'string' || !existsSync(proofAbs)) {
+    problem(
+      `RUNTIME_TARGET_GATES entry '${entry.file}' names no existing 'provedBy' test. The gate's refusals ` +
+        'must be proved by a test that needs no database — otherwise the only evidence for this entry is ' +
+        'the entry.',
+    );
+    continue;
+  }
+  const proofCode = stripComments(readFileSync(proofAbs, 'utf8'));
+  const unproved = GATE_PROOF_TOKENS.filter((tok) => !proofCode.includes(tok));
+  if (unproved.length > 0) {
+    problem(
+      `RUNTIME_TARGET_GATES entry '${entry.file}' names '${entry.provedBy}' as its proof, but that file does ` +
+        `not exercise the gate: missing ${unproved.map((t) => JSON.stringify(t)).join(', ')}. A proof that ` +
+        'never calls the assertion proves nothing.',
+    );
+    continue;
+  }
+  gateByFile.set(entry.file, entry);
+}
+
 const { scripts: ciScripts, files: ciFiles } = deriveCiSurface(pkg);
 if (ciScripts.size === 0) {
   problem(
@@ -988,10 +1618,21 @@ const pinnedOk = assertPinnedTestEnv(pkg);
 
 // ── The rule. ───────────────────────────────────────────────────────────────
 const unguardedOnCiSurface = [];
+const runtimeGated = [];
 const exemptUsed = new Set();
+
+const gatesUsed = new Set();
 
 for (const { rel, importsGuard } of reachable) {
   if (importsGuard) {
+    if (gateByFile.has(rel)) {
+      problem(
+        `${rel} both imports a Supabase guard front door statically and is listed in RUNTIME_TARGET_GATES. ` +
+          'The entry exists only because a static import is impossible here; it is now possible, so the ' +
+          'entry is stale and misleading. Remove it.',
+      );
+      gatesUsed.add(rel);
+    }
     if (exemptByFile.has(rel)) {
       problem(
         `${rel} both imports a Supabase guard front door and is listed in EXEMPT. The exemption is stale ` +
@@ -1000,6 +1641,17 @@ for (const { rel, importsGuard } of reachable) {
       );
       exemptUsed.add(rel);
     }
+    continue;
+  }
+
+  const gate = gateByFile.get(rel);
+  if (gate) {
+    // COVERED, not excused. The entry was verified above against the file's own
+    // code, so reaching here means the runtime gate is present. CI surface is
+    // deliberately not consulted: a runtime gate holds wherever the file runs,
+    // which is the whole difference between this list and EXEMPT.
+    gatesUsed.add(rel);
+    runtimeGated.push(rel);
     continue;
   }
 
@@ -1038,13 +1690,24 @@ for (const { rel, importsGuard } of reachable) {
     `${rel} can reach Supabase (it names a Supabase credential env var or calls createClient) but neither ` +
       `imports a guard front door (${GUARD_REL}, or ${READONLY_GUARD_REL} for the read-only audits) ` +
       'nor appears on the EXEMPT list in ' +
-      'artifacts/api-server/scripts/check-guard-coverage.mjs. ' +
+      'artifacts/api-server/scripts/check-guard-coverage.mjs, ' +
+      'nor gates its own target at runtime in the verified shape RUNTIME_TARGET_GATES describes. ' +
       (onCiSurface
         ? 'CI INVOKES IT, so it must import the guard — add the import as the first import in the file. '
         : 'If CI never invokes it, add an EXEMPT entry saying WHY CI cannot invoke it, and note that the ' +
           'exemption means the file is unguarded rather than safe. ') +
       'The guard is opt-in; a file that does not opt in is not covered by anything, whatever the guard\'s ' +
       'header says about "every process that can reach Supabase".',
+  );
+}
+
+for (const [file] of gateByFile) {
+  if (gatesUsed.has(file)) continue;
+  problem(
+    `RUNTIME_TARGET_GATES names '${file}', but this check no longer classifies it as able to reach ` +
+      'Supabase. Either the file stopped touching Supabase — in which case delete the entry — or the ' +
+      'reachability patterns stopped seeing how it does, in which case OTHER unguarded reachers are being ' +
+      'missed too. Both need a human.',
   );
 }
 
@@ -1072,7 +1735,8 @@ for (const [file] of exemptByFile) {
 notes.push(
   `${sourceFiles.length} source file(s) scanned under artifacts/api-server/src/; ${reachable.length} can ` +
     `reach Supabase directly; ${guarded.length} import a guard front door (${guardedStrict.length} strict, ` +
-    `${guardedReadOnly.length} read-only-audit); ${exemptByFile.size} exempt with a written reason.`,
+    `${guardedReadOnly.length} read-only-audit); ${runtimeGated.length} carry a verified runtime target gate ` +
+    `(${runtimeGated.join(', ') || 'none'}); ${exemptByFile.size} exempt with a written reason.`,
 );
 notes.push(
   `CI surface derived from .github/workflows/ + package.json: script(s) ${[...ciScripts].sort().join(', ') || 'none'}; ` +
@@ -1088,6 +1752,14 @@ notes.push(
     'here inspects the SQL a script sends. That was established by reading them; what is enforced here is ' +
     'that the set is closed, so granting the capability to a further file is a diff in ' +
     'READ_ONLY_AUDIT_ENTRY_POINTS rather than an import nobody notices.',
+);
+notes.push(
+  'RUNTIME TARGET GATES are coverage, not exemption, and the distinction is load-bearing: an EXEMPT file is ' +
+    'unguarded and merely out of CI\'s reach, while a gated file refuses every target but the one explicitly ' +
+    'configured, wherever it runs. What this check verifies is the gate\'s SHAPE — that the selector, the ' +
+    'assertion, the dynamic front-door import and the latched write paths are all still in the file\'s code, ' +
+    'and that a database-free test exercises them by name. What it does NOT verify is that the refusal is ' +
+    'correct; that is what the named test is for, and it is run by the ordinary suite.',
 );
 
 console.log('');
@@ -1125,5 +1797,18 @@ if (problems.length > 0) {
 console.log('');
 console.log(
   `All ${reachable.length} Supabase-reaching file(s) accounted for: ${guarded.length} guarded, ` +
-    `${exemptByFile.size} exempt with a reason.`,
+    `${runtimeGated.length} runtime-target-gated, ${exemptByFile.size} exempt with a reason.`,
 );
+// The three categories must actually partition the reachable set. Without this,
+// a file could fall out of every category and still be printed as accounted for.
+{
+  const accounted = guarded.length + runtimeGated.length + exemptUsed.size;
+  if (accounted !== reachable.length) {
+    problem(
+      `The report says all ${reachable.length} reachable files are accounted for, but the three categories ` +
+        `cover ${accounted} of them (${guarded.length} guarded + ${runtimeGated.length} runtime-gated + ` +
+        `${exemptUsed.size} exempt-and-used). The categories no longer partition the set, so the summary ` +
+        'line is claiming more than the check established.',
+    );
+  }
+}

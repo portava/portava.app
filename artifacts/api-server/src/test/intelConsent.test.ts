@@ -41,11 +41,54 @@ function consentDb() {
   };
 }
 
+/** Assert the read SUCCEEDED and hand back the state — never a silent default. */
+function unwrap(r: Awaited<ReturnType<typeof getIntelConsentState>>) {
+  assert.equal(r.ok, true, `consent read failed: ${JSON.stringify(r)}`);
+  return (r as { ok: true; state: any }).state;
+}
+
+/** A client whose consent read RESOLVES with an error (the real supabase-js shape). */
+function unreadableConsentDb() {
+  return {
+    from() {
+      const b: any = {
+        select() { return b; },
+        eq() { return b; },
+        maybeSingle() { return Promise.resolve({ data: null, error: { code: "42501", message: "permission denied" } }); },
+      };
+      return b;
+    },
+  };
+}
+
+describe("D4 consent — an unreadable row is not a consent history", () => {
+  it("THE GATE still fails closed: an unreadable row is NOT consent", async () => {
+    assert.equal(await hasValidIntelConsent(unreadableConsentDb() as any, A), false);
+  });
+
+  it("THE SCREEN reports the failure instead of 'you have never consented'", async () => {
+    // The old return was { enabled:false, consentedAt:null, withdrawnAt:null } —
+    // indistinguishable from a person who never granted anything. The settings
+    // toggle then reads "off", and switching it on re-stamps consent_version and
+    // consented_at over the record of what they actually agreed to and when.
+    const r = await getIntelConsentState(unreadableConsentDb() as any, A);
+    assert.equal(r.ok, false, "a rejected consent read was returned as a consent state");
+    assert.equal((r as any).reason, "db_error");
+  });
+
+  it("NO ROW is still a real answer — default-off, ok:true", async () => {
+    const r = await getIntelConsentState(consentDb() as any, A);
+    assert.equal(r.ok, true);
+    assert.equal((r as any).state.enabled, false);
+    assert.equal((r as any).state.consentedAt, null);
+  });
+});
+
 describe("D4 consent — model", () => {
   it("defaults to NO valid consent when no row exists (fail-closed)", async () => {
     const db = consentDb();
     assert.equal(await hasValidIntelConsent(db as any, A), false);
-    const st = await getIntelConsentState(db as any, A);
+    const st = unwrap(await getIntelConsentState(db as any, A));
     assert.equal(st.enabled, false);
     assert.equal(st.consentVersion, null);
     assert.equal(st.currentDisclosureVersion, INTEL_CONSENT_DISCLOSURE_VERSION);
@@ -56,7 +99,7 @@ describe("D4 consent — model", () => {
     const out = await setIntelConsent(db as any, A, true);
     assert.equal(out.ok, true);
     assert.equal(await hasValidIntelConsent(db as any, A), true);
-    const st = await getIntelConsentState(db as any, A);
+    const st = unwrap(await getIntelConsentState(db as any, A));
     assert.equal(st.enabled, true);
     // Version + consent instant are recorded, and the version is the SERVER constant,
     // not anything the caller supplied (the caller passes only `enabled`).
@@ -70,7 +113,7 @@ describe("D4 consent — model", () => {
     await setIntelConsent(db as any, A, true);
     await setIntelConsent(db as any, A, false);
     assert.equal(await hasValidIntelConsent(db as any, A), false);
-    const st = await getIntelConsentState(db as any, A);
+    const st = unwrap(await getIntelConsentState(db as any, A));
     assert.equal(st.enabled, false);
     assert.ok(st.withdrawnAt, "withdrawn_at recorded");
     // The prior consent evidence is preserved as an audit trail.
@@ -84,7 +127,7 @@ describe("D4 consent — model", () => {
     await setIntelConsent(db as any, A, false);
     await setIntelConsent(db as any, A, true);
     assert.equal(await hasValidIntelConsent(db as any, A), true);
-    const st = await getIntelConsentState(db as any, A);
+    const st = unwrap(await getIntelConsentState(db as any, A));
     assert.equal(st.enabled, true);
     assert.equal(st.withdrawnAt, null);
   });

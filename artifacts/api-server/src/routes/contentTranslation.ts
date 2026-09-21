@@ -13,6 +13,7 @@
 import { Router } from 'express';
 import { requireUser, sendError, isAcceptedTripMember } from '../lib/http.js';
 import { getServiceClient } from '../lib/supabase.js';
+import { isBlockedBetween } from '../lib/blockGuard.js';
 import { asyncHandler } from '../lib/asyncHandler.js';
 import {
   translateContentFields,
@@ -58,12 +59,14 @@ async function authorizePost(
     if ((post as any).author_id !== viewerId) return null;
   }
 
-  // Block check: either direction
-  const { count: blockCount } = await sc
-    .from('blocks')
-    .select('id', { count: 'exact', head: true })
-    .or(`and(blocker_id.eq.${viewerId},blocked_id.eq.${(post as any).author_id}),and(blocker_id.eq.${(post as any).author_id},blocked_id.eq.${viewerId})`);
-  if ((blockCount ?? 0) > 0) return null;
+  // Block check: either direction.
+  //
+  // FAIL-CLOSED, shape 1 (exclusionSet.ts): this gates ONE interaction —
+  // translating ONE post for ONE viewer — so an unreadable `blocks` table
+  // denies exactly that and nothing else. It used to read `{ count }` only:
+  // supabase-js resolves on a DB error with `count: null`, `?? 0` made that
+  // zero, and a blocked viewer got the author's post translated for them.
+  if (await isBlockedBetween(sc, viewerId, (post as any).author_id)) return null;
 
   // Private post: only the author
   if (visibility === 'private') {
@@ -144,12 +147,10 @@ async function authorizeEvent(
   const e = ev as any;
 
   // Block check — overrides all other relationships.
-  const { data: blockRows } = await sc
-    .from('blocks')
-    .select('id')
-    .or(`and(blocker_id.eq.${viewerId},blocked_id.eq.${e.host_id}),and(blocker_id.eq.${e.host_id},blocked_id.eq.${viewerId})`)
-    .limit(1);
-  if (((blockRows as any[]) ?? []).length > 0) return null;
+  // FAIL-CLOSED, shape 1: one viewer, one event. An unreadable `blocks` table
+  // denies this translation only. `(blockRows ?? []).length > 0` read a DB
+  // error as "no block row" and handed the host's event to a blocked viewer.
+  if (await isBlockedBetween(sc, viewerId, e.host_id)) return null;
 
   // Host always has access.
   if (e.host_id === viewerId) return e;
@@ -267,12 +268,10 @@ async function authorizeBio(
     .maybeSingle();
   if (!profile || !(profile as any).bio) return null;
 
-  // Block check
-  const { count: blockCount } = await sc
-    .from('blocks')
-    .select('id', { count: 'exact', head: true })
-    .or(`and(blocker_id.eq.${viewerId},blocked_id.eq.${profileId}),and(blocker_id.eq.${profileId},blocked_id.eq.${viewerId})`);
-  if ((blockCount ?? 0) > 0) return null;
+  // Block check.
+  // FAIL-CLOSED, shape 1: one viewer, one bio. Same `count ?? 0` defect as
+  // authorizePost — an unreadable table counted as zero blocks.
+  if (await isBlockedBetween(sc, viewerId, profileId)) return null;
 
   if (!(profile as any).is_private) return profile as any;
   if (profileId === viewerId) return profile as any;

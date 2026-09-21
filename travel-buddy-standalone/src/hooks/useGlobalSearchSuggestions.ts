@@ -8,21 +8,50 @@
  *
  * Contract (identical return shape to `useSearchSuggestions`, so the search
  * screen swaps one hook for another):
- *   - The legacy hook ALWAYS runs and is the fallback — its proven behavior is
- *     never removed.
- *   - The gateway hook runs in parallel and, when it actually returns rows,
- *     those grouped rows are shown instead (mapped to the same `SuggestGroup`
- *     shape the panel renders).
+ *   - The legacy hook is the FALLBACK, and it runs exactly while it is needed:
+ *     until the gateway has answered once on this mount, and again from the
+ *     moment the gateway reports itself `unavailable`. See A08 below.
+ *   - The gateway hook and, when the legacy hook is running, the legacy hook
+ *     both produce grouped rows; the gateway's are shown whenever it actually
+ *     has rows (mapped to the same `SuggestGroup` shape the panel renders).
  *   - DEGRADE GRACEFULLY (§38): if `/input-assistance/suggest` is absent
  *     (404/offline → `unavailable`) or returns nothing, we keep the legacy
  *     groups. We NEVER show an empty gateway list over a live legacy list — the
  *     switch to the gateway only happens when it has rows, and both hooks keep
  *     their previous groups visible while a newer request is in flight.
  *
+ * A08 — ONE SEARCH SYSTEM, NOT TWO
+ * ================================
+ * census-discovery A08 measured what this file used to do: *"the client runs
+ * it on every keystroke in parallel with the gateway … Two requests per
+ * keystroke, one canonical path"*, and named the remedy — *"stop invoking the
+ * legacy hook when the gateway is `available`"*.
+ *
+ * The legacy typeahead is now gated on `legacyEnabled` rather than left
+ * permanently on. It runs:
+ *   - before the gateway has produced a single suggestion on this mount (the
+ *     PROVING window — a gateway that has never answered is not yet a
+ *     fallback-free path), and
+ *   - whenever the gateway reports `unavailable` (§38's own signal: 404 or
+ *     offline), at which point the latch releases and the proven typeahead is
+ *     back on the very next keystroke.
+ *
+ * Why retiring the duplicate request is not retiring a second opinion: A08
+ * measured that `/discovery/suggest` *"is not a parallel matcher — it calls the
+ * same `dispatchSearch` (`routes/discoverySearch.ts:2491`)"* the gateway calls
+ * (`lib/inputAssistance/gateway.ts:27,384`). The two paths return the same
+ * matcher's answer; only the trip is duplicated.
+ *
+ * Note the ONE behaviour that changes beyond request count: while the legacy
+ * hook is off it holds no groups, so `preferGateway` must not fall back to an
+ * empty legacy list. It is therefore true unconditionally when the legacy hook
+ * is not running — the gateway is then the only source, and its loading state,
+ * not a blank list, is what the panel shows.
+ *
  * This hook is the reversible seam: to disable the gateway wiring, the search
  * screen imports `useSearchSuggestions` again — nothing else changes.
  */
-import { useCallback, useMemo } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useSearchSuggestions, type UseSearchSuggestionsOpts } from './useSearchSuggestions.ts';
 import type { SuggestGroup } from '../services/discovery.ts';
 import { useInputAssistance } from '../platform/input-assistance/hooks/useInputAssistance.ts';
@@ -53,6 +82,17 @@ export interface GlobalSearchSuggestionsResult {
    *  'legacy' when the proven typeahead is (the default + fallback). */
   source: 'gateway' | 'legacy';
   /**
+   * The SHOWN source answered with a REFUSAL, not a result: it did not read its
+   * sources, and `groups` therefore holds whatever was on screen before rather
+   * than an answer. A panel that renders "no matches" must consult this first,
+   * or it states on the server's behalf that there is nothing to find.
+   *
+   * Always `false` on the gateway path: the gateway reports its own outage
+   * through `unavailable`, which is what makes this hook fall back at all, so a
+   * legacy refusal is never what the gateway is showing.
+   */
+  refused: boolean;
+  /**
    * §35 — record an EXPLICIT pick of a shown row as selection memory. Call it
    * from the screen's suggestion-pick handler. Fire-and-forget, fail-soft, and a
    * no-op for a legacy-typeahead row or a non-recordable one, so a caller may
@@ -66,9 +106,6 @@ export function useGlobalSearchSuggestions(
   opts: UseGlobalSearchSuggestionsOpts = {},
 ): GlobalSearchSuggestionsResult {
   const { lat, lng, city, tz, surface = 'search', enabled = true } = opts;
-
-  // Proven path — always active as the fallback. Never regresses.
-  const legacy = useSearchSuggestions(query, { lat, lng, city, enabled });
 
   // Bounded session context forwarded to the gateway (§16/§41). Coarse coords +
   // timezone + surface only — never persistent preferences.
@@ -88,6 +125,22 @@ export function useGlobalSearchSuggestions(
     enabled,
   });
 
+  // A08 — has the gateway ever answered on this mount? A latch, not a snapshot:
+  // one answer retires the duplicate request, and `unavailable` releases it
+  // again so §38's fallback is one keystroke away, not a reload away.
+  const [gatewayProven, setGatewayProven] = useState(false);
+  useEffect(() => {
+    if (gateway.unavailable) { setGatewayProven(false); return; }
+    if (gateway.suggestions.length > 0) setGatewayProven(true);
+  }, [gateway.unavailable, gateway.suggestions]);
+
+  // The fallback runs exactly while it is the fallback for something.
+  const legacyEnabled = enabled && (!gatewayProven || gateway.unavailable);
+
+  // Proven path — the fallback. `enabled: false` stops its fetching entirely
+  // (useSearchSuggestions.ts:49), which is the whole of the A08 consolidation.
+  const legacy = useSearchSuggestions(query, { lat, lng, city, enabled: legacyEnabled });
+
   const gatewayGroups = useMemo(
     () => mapSuggestionsToGroups(gateway.suggestions, query),
     [gateway.suggestions, query],
@@ -100,11 +153,14 @@ export function useGlobalSearchSuggestions(
   );
 
   const gatewayHasRows = gatewayGroups.some((g) => g.items.length > 0);
-  // Prefer the gateway ONLY when it is enabled, available, and actually has
-  // content — grouped rows OR a smart-action chip (an "add to trip" parse can
-  // yield an action with no search rows; it must still surface). Otherwise fall
-  // back to the legacy list (never empty over a live list).
-  const preferGateway = enabled && !gateway.unavailable && (gatewayHasRows || gatewayActions.length > 0);
+  // Prefer the gateway when it is enabled, available, and either
+  //   - it actually has content — grouped rows OR a smart-action chip (an "add
+  //     to trip" parse can yield an action with no search rows; it must still
+  //     surface) — so it never replaces a live legacy list with an empty one; or
+  //   - the legacy hook is not running (A08), in which case the gateway is the
+  //     only source and falling back would mean falling back to nothing.
+  const preferGateway =
+    enabled && !gateway.unavailable && (!legacyEnabled || gatewayHasRows || gatewayActions.length > 0);
 
   // §35 — the write half of Phase 8 personalization for this surface. Before
   // this existed, `global_search` selection memory had exactly one writer in the
@@ -127,6 +183,7 @@ export function useGlobalSearchSuggestions(
     actionSuggestions: preferGateway ? gatewayActions : [],
     loading: preferGateway ? gateway.loading : legacy.loading,
     source: preferGateway ? 'gateway' : 'legacy',
+    refused: preferGateway ? false : legacy.refused,
     recordPick,
   };
 }

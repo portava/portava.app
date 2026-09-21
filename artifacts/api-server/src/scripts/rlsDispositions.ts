@@ -516,3 +516,508 @@ export const RLS_DISPOSITIONS: Record<string, RlsDisposition> = {
   "weather_cache": { class: "DENY_ALL_BY_DESIGN", policyCount: 0, reason: "Baseline-derived 2026-08-19: RLS enabled, zero policies in the committed baseline -- deny-all by construction (only service_role, which bypasses RLS, can read/write this table). Mechanically classified; not yet reviewed for a table-specific justification." },
   "wishlist_places": { class: "RLS_REQUIRED", policyCount: 1 },
 };
+
+/* ════════════════════════════════════════════════════════════════════════════
+ * RLS POLICY SHAPE RULES — lane B5, 2026-09-07
+ * ════════════════════════════════════════════════════════════════════════════
+ *
+ * Three defect classes that 2334 / 2337 / 2530 / 2531 spent a day repairing by
+ * hand, expressed as rules that src/test/rlsPolicyShapeLive.test.ts evaluates
+ * against the CI database's live pg_policies on every live-db run, so the NEXT
+ * policy of the same shape fails in CI instead of in an audit.
+ *
+ *   1. A policy that reaches trip_members without BOTH a role gate and a
+ *      status gate. trip_members encodes "pending" in two columns (legacy
+ *      role='invited', current status='invited'); a predicate reading one of
+ *      them admits pending invitees. Includes policies that reach the table
+ *      through a public function that carries the defect.
+ *   2. A FOR ALL policy with no WITH CHECK. Postgres then reuses USING as the
+ *      write check, which is only correct when USING already IS the intended
+ *      write predicate.
+ *   3. A SELECT policy that admits on `auth.uid() = ANY(<array column>)` with
+ *      no crew gate — an array of ids is a grant list, not a membership, and
+ *      2337 measured a stranger listed in one reading the row.
+ *
+ * THESE ARE TEXTUAL. They read the deparsed policy expression as a string and
+ * pattern-match it. That is exactly the heuristic that mis-counted 2337's
+ * scope in both directions (it reported 24; the true number was 34), and the
+ * only honest way to run a textual check is:
+ *
+ *   - say so (this paragraph);
+ *   - enumerate what it CANNOT see and carry that as a captured list, not as
+ *     silence: UNGATED_TRIP_MEMBERS_FUNCTIONS below was read from pg_proc on
+ *     portava-ci, not guessed;
+ *   - pass what it cannot decide only through an EXPLICIT, REVIEWED, NAMED
+ *     allowlist that may only shrink — every entry says why it is there and
+ *     what removes it;
+ *   - FAIL when it examines nothing (assertSnapshotExamined).
+ *
+ * A green run here means "no policy of these three textual shapes exists on
+ * CI outside the named lists". It does not mean the RLS is correct.
+ */
+
+/** One row of public.pg_policies_snapshot_v2() (migration 2532). */
+export interface PolicySnapshotRow {
+  tablename: string;
+  policyname: string;
+  /** 'SELECT' | 'INSERT' | 'UPDATE' | 'DELETE' | 'ALL' as pg_policies spells it. */
+  cmd: string;
+  /** pg_policies.roles::text, e.g. "{public}", "{authenticated}", "{service_role}". */
+  roles: string;
+  permissive?: string | null;
+  qual: string | null;
+  with_check: string | null;
+}
+
+export const policyKey = (r: Pick<PolicySnapshotRow, "tablename" | "policyname">): string =>
+  `${r.tablename}::${r.policyname}`;
+
+const combinedExpr = (r: PolicySnapshotRow): string => `${r.qual ?? ""} ${r.with_check ?? ""}`;
+const normalise = (s: string | null | undefined): string => (s ?? "").replace(/\s+/g, "");
+
+/** Parses "{a,b}" into its members. */
+export function parseRoles(roles: string): string[] {
+  return roles.replace(/^\{|\}$/g, "").split(",").map((s) => s.trim().replace(/^"|"$/g, "")).filter(Boolean);
+}
+export const isServiceRoleOnly = (roles: string): boolean => {
+  const rs = parseRoles(roles);
+  return rs.length > 0 && rs.every((r) => r === "service_role");
+};
+
+/* ── Rule 1: trip_members reachability ─────────────────────────────────────── */
+
+export const TRIP_MEMBERS_TEXT_RE = /\btrip_members\b/;
+export const ROLE_GATE_RE = /\brole\b/;
+export const STATUS_GATE_RE = /\bstatus\b/;
+/** The 2334/2337 helpers. Each encodes lib/http.ts requireTripMember exactly. */
+export const AUTHZ_CREW_HELPER_RE =
+  /\bauthz\.(is_trip_crew|shares_accepted_trip|is_accepted_trip_member|accepted_trip_role|accepted_trip_ids)\s*\(/;
+
+/**
+ * public functions whose BODY reads trip_members with NO status gate, so any
+ * policy calling them inherits the defect without ever naming the table.
+ * CAPTURED from pg_proc on portava-ci 2026-09-07 (every public/authz function
+ * whose prosrc mentions trip_members was read); recapture when functions
+ * change. Deliberately NOT listed here because 2337 repointed them at
+ * authz.is_trip_crew: public.is_accepted_trip_member, can_see_post,
+ * can_post_to_trip, can_see_postcard.
+ */
+export const UNGATED_TRIP_MEMBERS_FUNCTIONS: ReadonlyArray<string> = [
+  // EMPTY as of 2026-09-09, and that is the finished state, not a gap.
+  //
+  // It held `can_see_trip` (repaired by 2534, which routes it through
+  // authz.is_trip_crew) and `shares_trip_with` (dropped by 2533). Both
+  // migrations are now applied to portava-ci, and the live catalogue agrees:
+  // `pg_trip_members_readers_snapshot()` returns exactly ONE row —
+  // authz.is_trip_crew, mentions_role AND mentions_status, and in `authz`, not
+  // `public`. compareUngatedFunctionList's `liveUngated` (public-schema, no
+  // status gate) is therefore the empty set, which is what this list must now
+  // equal. The live suite reported both entries stale by name and told us to
+  // remove them; this is that removal.
+  //
+  // A NEW ungated reader repopulates this list through the `unlisted` half of
+  // compareUngatedFunctionList — an empty list is not a disabled rule.
+];
+
+/** One row of public.pg_trip_members_readers_snapshot() (migration 2532). */
+export interface TripMembersReaderRow {
+  schema_name: string;
+  function_name: string;
+  mentions_role: boolean;
+  mentions_status: boolean;
+}
+
+/**
+ * The live set of `public` boolean functions that read trip_members without a
+ * status gate, versus the captured list. Both differences are failures: a
+ * function missing from the list is a reach the rule cannot see; a listed
+ * function that is gone or gated is a stale entry that would keep excusing
+ * its callers as "known open" forever.
+ */
+export function compareUngatedFunctionList(
+  live: ReadonlyArray<TripMembersReaderRow>,
+  // Takes the captured list for the same reason evaluatePolicySnapshot does: a
+  // test of "2533 makes this entry stale" must be able to state the list that
+  // held it, and the shipped list is now empty because 2533 landed.
+  captured: ReadonlyArray<string> = UNGATED_TRIP_MEMBERS_FUNCTIONS,
+): { unlisted: string[]; stale: string[] } {
+  const liveUngated = new Set(
+    live.filter((r) => r.schema_name === "public" && !r.mentions_status).map((r) => r.function_name),
+  );
+  const listed = new Set(captured);
+  return {
+    unlisted: [...liveUngated].filter((f) => !listed.has(f)).sort(),
+    stale: [...listed].filter((f) => !liveUngated.has(f)).sort(),
+  };
+}
+/**
+ * The "reaches trip_members through one of these functions" matcher.
+ *
+ * TAKES THE LIST, and returns null for an EMPTY one. Both matter, and the
+ * second is why this is a function with a parameter rather than the one-liner
+ * it was. `new RegExp("\\b(?:public\\.)?()\\s*\\(")` — what the old form built
+ * once the list emptied — has an empty alternation group, so it matches ANY
+ * expression containing a `(`. Every policy in the database would have read as
+ * `ungated_via_function` the moment 2533 and 2534 let the list shrink to
+ * nothing: a guard that turns into a false-positive generator at exactly the
+ * point its subject is fixed. The parameter is so a test can pass `[]` and
+ * `["can_see_trip"]` without the module constant having to be either.
+ */
+export function ungatedFunctionPattern(fns: ReadonlyArray<string>): RegExp | null {
+  if (fns.length === 0) return null;
+  return new RegExp(`\\b(?:public\\.)?(${fns.join("|")})\\s*\\(`);
+}
+
+export type TripMembersVerdict =
+  | { kind: "not_applicable" }
+  | { kind: "gated_by_helper"; via: string }
+  | { kind: "gated_inline" }
+  | { kind: "ungated_direct" }
+  | { kind: "ungated_via_function"; via: string };
+
+export function tripMembersVerdict(row: PolicySnapshotRow): TripMembersVerdict {
+  const expr = combinedExpr(row);
+  if (TRIP_MEMBERS_TEXT_RE.test(expr)) {
+    return ROLE_GATE_RE.test(expr) && STATUS_GATE_RE.test(expr) ? { kind: "gated_inline" } : { kind: "ungated_direct" };
+  }
+  const ungatedRe = ungatedFunctionPattern(UNGATED_TRIP_MEMBERS_FUNCTIONS);
+  const fn = ungatedRe ? expr.match(ungatedRe) : null;
+  if (fn) return { kind: "ungated_via_function", via: fn[1] };
+  const helper = expr.match(AUTHZ_CREW_HELPER_RE);
+  if (helper) return { kind: "gated_by_helper", via: `authz.${helper[1]}` };
+  return { kind: "not_applicable" };
+}
+
+export interface ReviewedAllowlistEntry {
+  key: string;
+  reason: string;
+  reviewedBy: string;
+  date: string;
+}
+export interface KnownOpenEntry {
+  key: string;
+  /** What the rule reports for it today; the stale-entry check verifies this is still true. */
+  kind: string;
+  reason: string;
+  since: string;
+  /** The event that makes this entry stale. When it happens, the entry MUST be removed. */
+  removeWhen: string;
+}
+
+/**
+ * Policies that name trip_members and are CORRECT without a status gate.
+ * Reviewed, not inherited.
+ */
+export const TRIP_MEMBERS_REVIEWED_ALLOWLIST: ReadonlyArray<ReviewedAllowlistEntry> = [
+  {
+    key: "trip_members::trip_members_insert",
+    reason:
+      "Policy ON the membership table itself; WITH CHECK gates on trips.owner_id, which governs who may CREATE a membership row. A status gate here would be circular (2337 header, 'FOUR are correct as written').",
+    reviewedBy: "migration 2337 (lane 2337) / lane B5",
+    date: "2026-09-07",
+  },
+  {
+    key: "trip_members::trip_members_delete",
+    reason:
+      "Policy ON the membership table itself; USING gates on trips.owner_id, which governs who may REMOVE a membership row. Same reasoning as trip_members_insert.",
+    reviewedBy: "migration 2337 (lane 2337) / lane B5",
+    date: "2026-09-07",
+  },
+];
+
+/**
+ * Policies the rule reports as UNGATED that are known, recorded, and NOT yet
+ * fixed. May only shrink. Adding a row here to make CI green is the one thing
+ * this list exists to prevent — every row names the event that removes it.
+ */
+export const TRIP_MEMBERS_KNOWN_OPEN: ReadonlyArray<KnownOpenEntry> = [
+  // EMPTY as of 2026-09-09. Every entry named the migration that would remove
+  // it, and all of them landed on portava-ci:
+  //
+  //   highlights::highlights_select_active   2530 rewrote the trip_only branch
+  //   the seventeen can_see_trip callers     2534 routed can_see_trip through
+  //                                          authz.is_trip_crew
+  //
+  // The live suite reported them stale by name — "These TRIP_MEMBERS_KNOWN_OPEN
+  // entries are FIXED (or gone) on this database" — which is the shrink-only
+  // discipline working exactly as designed: an entry excuses a policy only for
+  // as long as the policy is still broken, and the check fails until somebody
+  // deletes the excuse.
+  //
+  // An entry is added back only by writing the reason and the removeWhen. A
+  // policy that reaches trip_members ungated and is NOT listed here reports as
+  // an offender, so an empty list is the strictest state, not the weakest.
+];
+
+/* ── Rule 2: FOR ALL without WITH CHECK ─────────────────────────────────────── */
+
+export type ForAllVerdict =
+  | "not_applicable"
+  | "has_with_check"
+  | "exempt_service_role_only"
+  | "exempt_deny_all"
+  | "exempt_service_predicate"
+  | "reuses_using";
+
+/**
+ * A FOR ALL policy with no WITH CHECK reuses USING for INSERT/UPDATE. Three
+ * shapes are exempt because reuse cannot widen them: TO service_role only
+ * (bypasses RLS anyway), USING (false) (deny-all), and USING
+ * (auth.role() = 'service_role') (service-only by predicate). Everything else
+ * must be in the captured baseline.
+ */
+export function forAllWriteCheckVerdict(row: PolicySnapshotRow): ForAllVerdict {
+  if (row.cmd !== "ALL") return "not_applicable";
+  if (row.with_check != null) return "has_with_check";
+  if (isServiceRoleOnly(row.roles)) return "exempt_service_role_only";
+  const q = normalise(row.qual);
+  if (q === "false" || q === "(false)") return "exempt_deny_all";
+  if (q === "(auth.role()='service_role'::text)" || q === "auth.role()='service_role'::text") return "exempt_service_predicate";
+  return "reuses_using";
+}
+
+/**
+ * CAPTURED from portava-ci 2026-09-07: every FOR ALL policy for a non-service
+ * role with no WITH CHECK whose USING is neither deny-all nor service-only.
+ * NOT INDIVIDUALLY REVIEWED. Each entry carries exactly one fact: on this
+ * policy, USING doubles as the write check. For most (`auth.uid() = user_id`)
+ * that is the intended write predicate. For some it is visibly not —
+ * trip_checklists::trip_checklists_members and
+ * trip_checklist_items::trip_checklist_items_members are `USING
+ * (can_see_trip(trip_id))`, so anyone who can SEE the trip (including any
+ * viewer of a PUBLIC trip) can INSERT, UPDATE and DELETE its checklist rows.
+ * That is reported, not excused, by being here.
+ *
+ * SHRINK-ONLY. A new FOR ALL policy without WITH CHECK fails the live guard;
+ * an entry here that gains WITH CHECK fails the stale check until removed.
+ */
+export const FOR_ALL_WITHOUT_WITH_CHECK_BASELINE: ReadonlyArray<string> = [
+  // THREE ENTRIES REMOVED 2026-09-09, for the reason this baseline is
+  // shrink-only: the live suite reported them as no longer FOR ALL-without-
+  // WITH CHECK and demanded their removal, and the live snapshot agrees.
+  //
+  //   trip_checklist_items::trip_checklist_items_members   now cmd=SELECT,
+  //   trip_checklists::trip_checklists_members             USING can_see_trip(trip_id)
+  //     — 2534 moved the write half onto the API's write rules, so neither is a
+  //       FOR ALL policy any more and neither can reuse USING as its WITH CHECK.
+  //   trip_reminders::trip_reminders_own                   GONE. 2535 replaced
+  //     0079's FOR ALL-with-no-WITH-CHECK policy with four verb-scoped ones
+  //     (the same supersession this PR records in audit:schema's allowlist).
+  //
+  // A baseline entry asserts "this policy still reuses its USING as its write
+  // check". Leaving a fixed one keeps excusing the next policy that regresses
+  // into the same shape.
+  "buddy_availability_exceptions::bae_own_write",
+  "buddy_services::bs_own_write",
+  "compass_conversation_messages::compass_conversation_messages_owner",
+  "compass_feedback::compass_feedback_owner",
+  "compass_recent_context::compass_recent_context_owner",
+  "compass_settings::compass_settings_owner",
+  "event_cohosts::event_cohosts_host_write",
+  "event_drafts::event_drafts_own",
+  "event_media::event_media_uploader_write",
+  "event_posts::event_posts_author_write",
+  "event_reminders::event_reminders_own",
+  "event_saves::event_saves_own",
+  "event_share_links::event_share_links_creator_manage",
+  "location_sessions::lsess_own",
+  "location_snapshots::lsnap_own",
+  "memories::memories_owner_all",
+  "memory_items::memory_items_via_memory",
+  "memory_likes::memory_likes_own",
+  "memory_saves::memory_saves_own",
+  "passport_memories::passport_memories_owner_all",
+  "passport_visibility_preferences::passport_visibility_preferences_owner",
+  "profile_emergency_contacts::pec_own",
+  "rent_buddy_addons::rb_addon_own",
+  "rent_buddy_applications::rb_apps_own",
+  "rent_buddy_availability::rb_avail_own",
+  "rent_buddy_match_preferences::rb_match_prefs_own",
+  "rent_buddy_offers::rb_offers_buddy",
+  "rent_buddy_package_stops::rb_pkg_stops_own",
+  "rent_buddy_packages::rb_pkg_own",
+  "rent_buddy_profiles::rb_profiles_own",
+  "rent_buddy_requests::rb_requests_own",
+  "rent_buddy_safety_checkins::rb_checkin_own",
+  "rent_buddy_saved::rb_saved_own",
+  "rent_buddy_tips::rb_tips_own",
+  "rent_buddy_training_checklist::rb_train_own",
+  "rent_buddy_waitlist::rb_waitlist_own",
+  "route_legs::route_legs_owner_all",
+  "route_stops::route_stops_owner_all",
+  "safe_return_sessions::srs_own",
+  "stamp_admires::sa_admirer_write",
+  "stamp_campaigns::stamp_campaigns_admin_all",
+  "stamp_definitions::stamp_definitions_admin_all",
+  "traveler_passports::traveler_passports_own",
+  "trip_area_preferences::tap_own",
+  "trip_budget::trip_budget_owner",
+  "trip_crew_location_preferences::crew_prefs_self_write",
+  "trip_crew_location_sessions::crew_sessions_self",
+  "trip_destinations::trip_destinations_manage",
+  "trip_invite_links::trip_invite_links_owner",
+  "trip_traveler_passports::trip_traveler_passports_own",
+  "user_mutes::Users can manage their own mutes",
+  "user_privacy_settings::Users can manage their own privacy settings",
+  "user_restrictions::Users can manage their own restrictions",
+  "user_saves::Users can manage their own saves",
+  "user_stamp_showcase::uss_owner_all",
+  "wishlist_places::Users manage own wishlist places",
+];
+
+/* ── Rule 3: array-column grants without a crew gate ───────────────────────── */
+
+/** `auth.uid() = ANY (<column>)` — a column, not an ARRAY[...] literal. */
+export const ARRAY_GRANT_RE = /auth\.uid\(\)\s*=\s*ANY\s*\(\s*(?!ARRAY\b)[A-Za-z_][A-Za-z0-9_.]*\s*\)/;
+
+export type ArrayGrantVerdict = "not_applicable" | "array_grant_with_crew_gate" | "array_grant_ungated";
+
+export function arrayGrantVerdict(row: PolicySnapshotRow): ArrayGrantVerdict {
+  if (row.cmd !== "SELECT" && row.cmd !== "ALL") return "not_applicable";
+  if (isServiceRoleOnly(row.roles)) return "not_applicable";
+  const q = row.qual ?? "";
+  if (!ARRAY_GRANT_RE.test(q)) return "not_applicable";
+  return AUTHZ_CREW_HELPER_RE.test(q) ? "array_grant_with_crew_gate" : "array_grant_ungated";
+}
+
+export const ARRAY_GRANT_KNOWN_OPEN: ReadonlyArray<KnownOpenEntry> = [
+  // EMPTY as of 2026-09-09. It held
+  // trip_crew_location_sessions::crew_session_owner_select, whose USING was
+  // `auth.uid() = ANY(allowed_member_ids)` with no membership, status or expiry
+  // test — a stranger listed in the array read the session, and that branch
+  // dominated crew_sessions_recipients_read completely. 2531 repaired it to
+  // owner-only and is applied to portava-ci: the live policy now reads
+  // `SELECT ... USING (auth.uid() = user_id)`, with no array grant at all
+  // (measured off pg_policies_snapshot_v2). The live suite reported the entry
+  // stale by name, exactly as its own removeWhen predicted.
+  //
+  // The gated array grant that remains — crew_sessions_recipients_read, with
+  // `= ANY (allowed_member_ids)` AND authz.is_trip_crew(trip_id) AND a status
+  // and expiry test — is array_grant_with_crew_gate, which is not an offence
+  // and never needed an entry.
+];
+
+/* ── Evaluation ────────────────────────────────────────────────────────────── */
+
+/**
+ * Two policies that must be present in ANY snapshot of this database. If they
+ * are missing the snapshot is not the database we think it is — wrong project,
+ * empty result, truncated page — and every rule above would pass vacuously.
+ */
+export const SNAPSHOT_SENTINELS: ReadonlyArray<string> = [
+  "trip_members::trip_members_insert",
+  "trip_readiness_items::tri_member_read",
+];
+
+/** Throws unless the snapshot examined something real. Vacuity is failure. */
+export function assertSnapshotExamined(rows: ReadonlyArray<PolicySnapshotRow>): void {
+  if (rows.length === 0) {
+    throw new Error("RLS policy snapshot returned ZERO policies. A check that examines nothing must fail, not pass.");
+  }
+  const keys = new Set(rows.map(policyKey));
+  const missing = SNAPSHOT_SENTINELS.filter((k) => !keys.has(k));
+  if (missing.length > 0) {
+    throw new Error(
+      `RLS policy snapshot is missing sentinel policies ${missing.join(", ")} — this is not the database these rules were written against (${rows.length} rows examined).`,
+    );
+  }
+}
+
+export interface PolicyShapeReport {
+  examined: number;
+  tripMembersOffenders: string[];
+  tripMembersStaleKnownOpen: string[];
+  tripMembersMissingReviewed: string[];
+  forAllOffenders: string[];
+  forAllStaleBaseline: string[];
+  arrayGrantOffenders: string[];
+  arrayGrantStaleKnownOpen: string[];
+}
+
+/**
+ * The dispositions an evaluation runs against. Defaults to the module constants;
+ * a caller may substitute its own.
+ *
+ * WHY THIS PARAMETER EXISTS. The mutation tests used to assert against whatever
+ * the shipped lists happened to contain — "a NEW policy calling can_see_trip is
+ * an offender" only holds while `can_see_trip` is in
+ * UNGATED_TRIP_MEMBERS_FUNCTIONS, and "applying 2530 makes the highlights entry
+ * STALE" only holds while that entry exists. Both were true when written and
+ * both stopped being true on 2026-09-09, when 2530/2533/2534 reached portava-ci
+ * and the shrink-only rule required the lists to empty. Five unit tests broke
+ * for the RIGHT reason and could not be re-expressed, because the mechanism
+ * they prove had no way to be handed a list.
+ *
+ * Coupling a guard's tests to the guard's current data makes the data
+ * un-shrinkable. The rules are what deserve the tests; the lists are just
+ * today's input.
+ */
+export interface PolicyDispositions {
+  reviewed: ReadonlyArray<ReviewedAllowlistEntry>;
+  tripMembersKnownOpen: ReadonlyArray<KnownOpenEntry>;
+  arrayGrantKnownOpen: ReadonlyArray<KnownOpenEntry>;
+  forAllBaseline: ReadonlyArray<string>;
+}
+
+export const SHIPPED_DISPOSITIONS: PolicyDispositions = {
+  reviewed: TRIP_MEMBERS_REVIEWED_ALLOWLIST,
+  tripMembersKnownOpen: TRIP_MEMBERS_KNOWN_OPEN,
+  arrayGrantKnownOpen: ARRAY_GRANT_KNOWN_OPEN,
+  forAllBaseline: FOR_ALL_WITHOUT_WITH_CHECK_BASELINE,
+};
+
+/** Pure. The live test feeds it pg_policies_snapshot_v2(); the unit test feeds it fixtures. */
+export function evaluatePolicySnapshot(
+  rows: ReadonlyArray<PolicySnapshotRow>,
+  dispositions: PolicyDispositions = SHIPPED_DISPOSITIONS,
+): PolicyShapeReport {
+  const byKey = new Map(rows.map((r) => [policyKey(r), r] as const));
+  const reviewed = new Set(dispositions.reviewed.map((e) => e.key));
+  const tmKnown = new Map(dispositions.tripMembersKnownOpen.map((e) => [e.key, e] as const));
+  const agKnown = new Map(dispositions.arrayGrantKnownOpen.map((e) => [e.key, e] as const));
+  const baseline = new Set(dispositions.forAllBaseline);
+
+  const tripMembersOffenders: string[] = [];
+  const forAllOffenders: string[] = [];
+  const arrayGrantOffenders: string[] = [];
+
+  for (const r of rows) {
+    const key = policyKey(r);
+    const tm = tripMembersVerdict(r);
+    if ((tm.kind === "ungated_direct" || tm.kind === "ungated_via_function") && !reviewed.has(key) && !tmKnown.has(key)) {
+      tripMembersOffenders.push(`${key} [${tm.kind}${"via" in tm ? ` via ${tm.via}` : ""}]`);
+    }
+    if (forAllWriteCheckVerdict(r) === "reuses_using" && !baseline.has(key)) {
+      forAllOffenders.push(`${key} USING ${r.qual}`);
+    }
+    if (arrayGrantVerdict(r) === "array_grant_ungated" && !agKnown.has(key)) {
+      arrayGrantOffenders.push(key);
+    }
+  }
+
+  const tripMembersStaleKnownOpen = dispositions.tripMembersKnownOpen.filter((e) => {
+    const r = byKey.get(e.key);
+    if (!r) return true; // policy gone: entry is stale
+    return tripMembersVerdict(r).kind !== e.kind;
+  }).map((e) => e.key);
+  const tripMembersMissingReviewed = dispositions.reviewed.filter((e) => !byKey.has(e.key)).map((e) => e.key);
+  const forAllStaleBaseline = dispositions.forAllBaseline.filter((k) => {
+    const r = byKey.get(k);
+    return !r || forAllWriteCheckVerdict(r) !== "reuses_using";
+  });
+  const arrayGrantStaleKnownOpen = dispositions.arrayGrantKnownOpen.filter((e) => {
+    const r = byKey.get(e.key);
+    return !r || arrayGrantVerdict(r) !== e.kind;
+  }).map((e) => e.key);
+
+  return {
+    examined: rows.length,
+    tripMembersOffenders: tripMembersOffenders.sort(),
+    tripMembersStaleKnownOpen,
+    tripMembersMissingReviewed,
+    forAllOffenders: forAllOffenders.sort(),
+    forAllStaleBaseline,
+    arrayGrantOffenders: arrayGrantOffenders.sort(),
+    arrayGrantStaleKnownOpen,
+  };
+}

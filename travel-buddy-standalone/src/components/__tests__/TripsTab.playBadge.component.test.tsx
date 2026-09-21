@@ -49,6 +49,11 @@ jest.mock('expo-image', () => {
 
 // ── Fixture factory ───────────────────────────────────────────────────────────
 
+/** A date `days` from the real clock, as the 'YYYY-MM-DD' TripRow expects. */
+function isoDaysFromNow(days: number): string {
+  return new Date(Date.now() + days * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+}
+
 function makeTrip(overrides: Partial<TripRow> = {}): TripRow {
   return {
     id: 'trip-1',
@@ -57,8 +62,19 @@ function makeTrip(overrides: Partial<TripRow> = {}): TripRow {
     destinationCity: 'Tokyo',
     destinationCountry: 'Japan',
     neighborhoods: [],
-    startDate: '2026-09-01',
-    endDate: '2026-09-15',
+    // Dated from the REAL clock, not from constants.
+    //
+    // These were '2026-09-01' and '2026-09-15' beside `status: 'active'`, which
+    // made the fixture contradict itself the moment the wall clock passed the
+    // 15th: it still claimed to be an active trip while its window said the
+    // trip was over. TripsTab renders by the window, so at 00:00 UTC on
+    // 2026-09-16 the video cover stopped rendering and both play-badge
+    // assertions failed — on main, not on any branch.
+    //
+    // A trip whose fixture says `active` should BE active whenever the suite
+    // runs. Moving the constants to newer fixed dates would only re-arm it.
+    startDate: isoDaysFromNow(-7),
+    endDate: isoDaysFromNow(7),
     status: 'active',
     visibility: 'public',
     travelStyle: null,

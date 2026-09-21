@@ -443,7 +443,7 @@ describe("TrustCapService", () => {
       created_at: new Date().toISOString(),
     });
     const db = makeTrustClient(tables);
-    await liftCap(db, "cap-lift", ADMIN);
+    await liftCap(db, { capId: "cap-lift", userId: USER_A, liftedBy: ADMIN });
     const cap = tables.trust_caps.find((c) => c.id === "cap-lift");
     assert.ok(cap.lifted_at, "lifted_at should be set");
   });

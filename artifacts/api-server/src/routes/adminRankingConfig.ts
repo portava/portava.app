@@ -176,12 +176,24 @@ router.put("/admin/ranking/config", asyncHandler(async (req, res) => {
     return;
   }
 
-  // Read current value for audit log
-  const { data: existing } = await sc
+  // Read current value for audit log.
+  // Best-effort by design (an unreadable prior value must not block an admin
+  // config change), but supabase-js RESOLVES on a DB error, so leaving `error`
+  // unbound wrote `old_value: null` into ranking_config_audit_log as though the
+  // key had never been set — a FALSE audit record, indistinguishable from a
+  // genuine first write. Bind it and say so in the log when that happens.
+  const { data: existing, error: existingErr } = await sc
     .from("ranking_config")
     .select("value")
     .eq("key", key)
     .maybeSingle();
+
+  if (existingErr) {
+    req.log?.warn(
+      { err: existingErr, key },
+      "ranking_config prior-value read failed — audit row will record old_value=null though a prior value may exist",
+    );
+  }
 
   const oldValue = existing ? Number((existing as any).value) : null;
 

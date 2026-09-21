@@ -295,6 +295,17 @@ jobs:
         shell: bash
         run: bash .github/scripts/pnpm-run.sh scripts @workspace/scripts test:dead-routes
 
+      # The acceptance criteria for the standing nine-question Compass eval.
+      # These run WITHOUT a model provider, a database or a server: they test the
+      # criteria themselves against synthetic transcripts, including transcripts
+      # built to fail one criterion at a time. The eval they gate cannot run here
+      # -- it needs a writable project and a provider -- which is exactly why its
+      # criteria are unit-tested somewhere that can.
+      - name: 'scripts: test:compass-eval-criteria'
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        shell: bash
+        run: bash .github/scripts/pnpm-run.sh scripts @workspace/scripts test:compass-eval-criteria
+
       - name: 'scripts: check:rent-buddy-contract'
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         shell: bash

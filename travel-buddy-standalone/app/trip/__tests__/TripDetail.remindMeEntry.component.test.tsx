@@ -106,7 +106,7 @@ jest.mock('../../../src/hooks/useBackend', () => ({
 // NOTE: intentional stub — not under test here.
 jest.mock('../../../src/services/tripIntel', () => ({
   ...jest.requireActual('../../../src/services/tripIntel'),
-  fetchTripReadiness: jest.fn().mockResolvedValue(null),
+  fetchTripReadiness: jest.fn().mockResolvedValue({ state: 'off' }),
 }));
 // NOTE: intentional stub — not under test here.
 jest.mock('../../../src/services/safeReturn', () => ({
@@ -159,7 +159,7 @@ jest.mock('../../../src/components/safeReturn/SafeReturnSetupSheet',  () => ({ S
 // NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/safeReturn/MissedCheckinPrompt',   () => ({ MissedCheckinPrompt:    () => null }));
 // NOTE: intentional stub — not under test here.
-jest.mock('../../../src/components/TripPlanSection',                  () => ({ TripPlanSection:         () => null }));
+jest.mock('../../../src/features/trips/planning/TripPlanSection',                  () => ({ TripPlanSection:         () => null }));
 // NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/TripAvailabilitySection',          () => ({ TripAvailabilitySection: () => null }));
 // NOTE: intentional stub — not under test here.
