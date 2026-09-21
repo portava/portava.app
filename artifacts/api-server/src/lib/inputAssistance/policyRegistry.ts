@@ -377,3 +377,45 @@ export function resolvePolicy(context: InputContext, fieldId?: string): InputFie
   if (!base) return null;
   return { ...base, fieldId: fieldId && fieldId.length <= 120 ? fieldId : base.fieldId };
 }
+
+// ── §48 parity: the privacy classes this registry RAISES (census G31) ─────────
+//
+// Eight contexts were classed `public` here while the client registry — whose
+// copy of this member gates the shared suggestion cache, the select payload and
+// the derived telemetry policy — classed them personal or sensitive. The two
+// sides ran on different four- and five-member vocabularies, so nothing had
+// ever compared them; when they were compared, 14 of 29 disagreed. The rule
+// applied was STRICTER-SIDE-WINS in both directions, never looser, and these
+// are the eight where the client was the stricter one.
+//
+// APPLIED AS A TABLE RATHER THAN EDITED INTO THE SEEDS ABOVE, for two reasons
+// worth stating because the shape looks unusual:
+//
+//   1. It is the whole of the raise, auditable in one place against the client
+//      registry it mirrors, instead of eight `privacyClass:` lines scattered
+//      through 300 lines of unrelated policy.
+//   2. Every line number above keeps pointing at what it pointed at. A dozen
+//      rows of `docs/architecture/census-input-intelligence.md` cite this file
+//      by line, and inserting eight lines through the middle of it would have
+//      silently repointed all of them — the exact defect §12.4 of that document
+//      records ("five pointers into useInputAssistance.ts were already wrong …
+//      a citation that resolves is not a citation that is right").
+//
+// `artifacts/api-server/src/test/inputPolicyContractParity.test.ts` asserts the
+// RESULT — this registry and the client's must agree, context for context — so
+// this table cannot drift from the thing it exists to match.
+const PRIVACY_CLASS_PARITY_RAISES: Partial<Record<InputContext, PrivacyClass>> = {
+  trip_title: 'viewer_scoped',
+  plan_title: 'viewer_scoped',
+  compass_prompt: 'viewer_scoped',
+  passport_homebase: 'viewer_scoped',
+  language: 'viewer_scoped',
+  interest: 'viewer_scoped',
+  generic_text: 'viewer_scoped',
+  address: 'sensitive_location',
+};
+
+for (const [context, privacyClass] of Object.entries(PRIVACY_CLASS_PARITY_RAISES)) {
+  const entry = REGISTRY[context as InputContext];
+  if (entry) entry.privacyClass = privacyClass as PrivacyClass;
+}
