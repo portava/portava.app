@@ -76,6 +76,8 @@ export const SCAN_DIRS = [
   resolve(__dir, "../lib"),
   resolve(__dir, "../compass"),
   resolve(__dir, "../scripts"),
+  resolve(__dir, "../domain"),
+  resolve(__dir, "../server"),
 ];
 export const BASELINE = resolve(API_ROOT, "baseline/20260819_baseline_structure.sql");
 export const MIGRATION_DIRS = [

@@ -47,6 +47,11 @@ import { TOGGLEABLE_LAYERS, KIND_TO_ENTITY_TYPE, mapObjectsToEntities } from '..
 import { MapCarousel } from '../../src/components/map/MapCarousel.tsx';
 import type { MapCarouselRef } from '../../src/components/map/MapCarousel.tsx';
 import { MapStoreProvider, useMapStore, deriveMapCapabilities } from '../../src/stores/mapStore.tsx';
+import {
+  crowdFlowObjectCount as countServedCrowdFlow,
+  temporalProducerReachable,
+} from '../../src/features/map/state/mapMachine.ts';
+import { useTemporalProducerProbe } from '../../src/hooks/useTemporalProducerProbe.ts';
 import { resolveBack } from '../../src/features/map/state/mapMachine.ts';
 import { activeIntent } from '../../src/features/map/intent/intentModel.ts';
 import {
@@ -75,15 +80,15 @@ import {
   dismissProposal,
   type TripStop,
   type OptimizeProposal,
-} from '../../src/features/map/trip/tripMapModel.ts';
+} from '../../src/features/trips/map/tripMapModel.ts';
 import {
   composeTripMap,
   persistOptimizeAcceptance,
   type ComposedTripMap,
-} from '../../src/features/map/trip/tripMapSources.ts';
-import { fetchTripPlanMap, reorderPlanItems, createPlanItem } from '../../src/services/tripPlan.ts';
+} from '../../src/features/trips/map/tripMapSources.ts';
+import { fetchTripPlanMap, reorderPlanItems, createPlanItem } from '../../src/features/trips/planning/tripPlan.ts';
 import { listSaved } from '../../src/services/discoveryBookmarks.ts';
-import { getCrewMap } from '../../src/services/tripCrewLocation.ts';
+import { getCrewMap } from '../../src/features/trips/crew/tripCrewLocation.ts';
 import { fetchTripRoutePlan } from '../../src/services/routePlan.ts';
 import { getActiveSession } from '../../src/services/safeReturn.ts';
 import { fetchCompassRecommendations } from '../../src/services/compass.ts';
@@ -110,6 +115,7 @@ import { useSession } from '../../src/context/SessionContext.tsx';
 import { proposeMeetHere, type MeetTarget } from '../../src/features/map/meet/meetHereModel.ts';
 import { countBucket, durationBucketMs } from '../../src/features/map/telemetry/mapTelemetry.ts';
 import { deriveMapEntryPoint } from '../../src/features/map/telemetry/mapTelemetry.ts';
+import { whyShownOpenedPayload } from '../../src/features/map/telemetry/whyShownOpened.ts';
 import { firstParam } from '../../src/lib/routeParams.ts';
 import type { MapEntryPoint } from '../../src/features/map/telemetry/mapTelemetry.ts';
 import { MapLongPressMenu } from '../../src/components/map/MapLongPressMenu.tsx';
@@ -903,7 +909,6 @@ function FullScreenMapScreenInner() {
   // ── Entity layer filter state ───────────────────────────────────────────────
   // enabledLayers now lives in the store (initialised by FullScreenMapScreen
   // wrapper which passes the mode-aware initial value to MapStoreProvider).
-  const [filterSheetOpen, setFilterSheetOpen] = useState(false);
 
   // Restore persisted layer preferences on mount — skipped in circle/passport mode
   // so the preset is not overwritten by stored prefs.
@@ -1118,7 +1123,24 @@ function FullScreenMapScreenInner() {
       if (cancelled) return;
       placesFetchedRef.current = true;
       setPlacesLoading(false);
-      if (res.ok && Array.isArray(res.data?.places)) {
+      // A REFUSAL SATISFIES BOTH HALVES OF THE TEST BELOW and is not a result.
+      // `coverage: "nothing"` arrives as `ok: true` with a `places` that really
+      // is an array — an EMPTY one, because the server never read the table — so
+      // it took the success path, emptied the pins and CLEARED `placesError`.
+      //
+      // Clearing the error is what did the damage: `placesEmpty` is
+      // `… && !placesError && legacyPlaces.length === 0`, so wiping the error is
+      // exactly what switches the zero-results state ON. The outage rendered as a
+      // confident claim that this area has nothing in it.
+      //
+      // `placesError` is the honest destination and it already exists — it draws
+      // the error card with a retry, which is the right offer for a transient
+      // read failure. `partial` is NOT routed here: the places it carries are
+      // real, and drawing them beats refusing them.
+      if (res.ok && res.data?.refusal?.coverage === 'nothing') {
+        setPlaces([]);
+        setPlacesError('Could not read nearby places — this is not a statement about what is here.');
+      } else if (res.ok && Array.isArray(res.data?.places)) {
         setPlaces(res.data.places);
         setPlacesError(null);
       } else {
@@ -1220,10 +1242,25 @@ function FullScreenMapScreenInner() {
   // The derivation runs against the objects the gateway returned, NOT against
   // the post-layer/post-zoom projection: whether the world contains aggregate
   // movement is a fact about the data, not about what the user has switched on.
+  // The derivation lives in mapMachine.ts beside the gate it feeds, so
+  // census-map M221's criterion ("with a projection response carrying >= 1
+  // crowd_flow object, CROWD_FLOW is enterable; with zero it is not") has
+  // addressable code to test. The inline reduce that used to be here could not
+  // be reached from any test.
   const crowdFlowObjectCount = useMemo(
-    () => defaultObjects.reduce((n, o) => (o.kind === 'crowd_flow' ? n + 1 : n), 0),
+    () => countServedCrowdFlow({ objects: defaultObjects }),
     [defaultObjects],
   );
+  // §15 — one request per map session asking the temporal producer whether it
+  // is reachable. Fails closed while in flight, so the scrubber appears only
+  // once the producer has said yes. See the hook's header for why it is a
+  // separate request rather than a read of useTemporalEntities.
+  const temporalProbe = useTemporalProducerProbe({
+    lat: fallbackLat,
+    lng: fallbackLng,
+    enabled: mode !== 'passport',
+  });
+
   const capabilities = useMemo(
     () =>
       deriveMapCapabilities({
@@ -1233,13 +1270,24 @@ function FullScreenMapScreenInner() {
         // it was opened for. No trip, no session to start, no mode to enter.
         locateFriendsScopeId: tripId,
         viewerId: userId ?? null,
-        // §15 — the temporal producer rides the SAME gateway flag the NOW
-        // projection does, so "the gateway answered for this session" is the
-        // honest presence check that the per-offset source is reachable. Legacy
-        // (per-layer) means the gateway is off/unreachable → no source to scrub.
-        timeMachineProducerEnabled: entitiesSource !== 'legacy',
+        // §15 — THE PRODUCER'S OWN ANSWER, not a proxy for it.
+        //
+        // This read `entitiesSource !== 'legacy'` — "the NOW gateway answered
+        // for this session" — on the reasoning that the temporal route rides
+        // the same map_projection_enabled flag, so one implies the other. That
+        // is defensible and it is not what census-map M223 asks for, which is
+        // the temporal route's own `enabled`. The proxy is also strictly
+        // weaker: the two share a flag but not a code path, and a temporal
+        // route that is deployed-but-broken answers the proxy's question yes.
+        //
+        // useTemporalEntities cannot supply this. It fetches only while the
+        // mode is ALREADY active and the offset is not NOW, both downstream of
+        // this very capability, so at NOW it never answers and wiring it here
+        // would close Time Machine at NOW — a regression with a passing test
+        // behind it. Hence the one-shot probe.
+        timeMachineProducerEnabled: temporalProducerReachable(temporalProbe),
       }),
-    [crowdFlowObjectCount, isFlagEnabled, tripId, userId, entitiesSource],
+    [crowdFlowObjectCount, isFlagEnabled, tripId, userId, temporalProbe],
   );
   useEffect(() => {
     // The store bails out when the record says the same thing, so this settles
@@ -2566,7 +2614,7 @@ function FullScreenMapScreenInner() {
         // The header owns the city name now; showing it twice is noise.
         title={null}
         topInset={mapHeaderStackOffset(insets.top) + MAP_FILTER_CHIPS_HEIGHT}
-        onFiltersPress={() => dispatchMapEvent({ type: 'OPEN_OVERLAY', overlay: 'LAYERS' })}
+        onFiltersPress={() => dispatchMapEvent({ type: 'OPEN_OVERLAY', overlay: 'FILTERS' })}
         // §30 RECENTER — return camera control to the machine (FOLLOW_USER).
         // The button's own easeTo does the move; this records the intent.
         onRecenter={() => dispatchMapEvent({ type: 'RECENTER' })}
@@ -2601,7 +2649,7 @@ function FullScreenMapScreenInner() {
         compassResults={compassOverrideEntities !== null}
         activeIndex={activeIndex}
         onIndexChange={handleCarouselIndexChange}
-        onFiltersPress={() => setFilterSheetOpen(true)}
+        onFiltersPress={() => dispatchMapEvent({ type: 'OPEN_OVERLAY', overlay: 'FILTERS' })}
         onBeforeNavigate={() => { pushedToDetailRef.current = true; }}
         passportLoading={mode === 'passport' ? passportLoading : undefined}
         passportError={mode === 'passport' ? passportError : undefined}
@@ -2817,11 +2865,15 @@ function FullScreenMapScreenInner() {
           onClose={() => dispatchMapEvent({ type: 'CLEAR_SELECTION' })}
           onWhyPress={(obj) => {
             setWhyObject(obj);
-            emitMapEvent('why_shown_opened', {
-              ref: describeMapObject(obj),
-              lineCount: obj.provenance?.lines.length ?? 0,
-              provenanceRefs: obj.sourceRefs,
-            });
+            // §35's `lineCount` means "how many provenance lines the §9 panel
+            // SHOWED", and the panel below is `buildWhyPanel(obj)` — which
+            // synthesises its evidence whenever the server sent no
+            // `provenance.lines`. Computing the payload from the raw object
+            // reported 0 for every synthesised panel, i.e. for the common case.
+            // The rule lives in one place now; see whyShownOpened.ts.
+            // `WhyShownSheet` is rendered below without a `now` prop, so the
+            // event and the panel resolve against the same default clock.
+            emitMapEvent('why_shown_opened', whyShownOpenedPayload(obj));
           }}
           contributionsEnabled={contributionsEnabled}
           onContribute={setContributeObject}
@@ -3234,10 +3286,17 @@ function FullScreenMapScreenInner() {
         context={layerContext}
       />
 
-      {/* Layer filter bottom sheet */}
+      {/* ── §33 FILTERS overlay ──────────────────────────────────────────────
+          This sheet used to be driven by a plain `useState` that bypassed the
+          machine entirely, so `MAP_OVERLAYS`' declared `'FILTERS'` state was
+          never entered by anything outside the reducer's own tests — a dead
+          state in the machine and a sheet outside it (census-map M226). It is
+          the machine's now, which is what makes D1 mutual exclusion real:
+          opening Filters closes Layers, Search and Intent, and hardware back
+          resolves through `resolveBack` like every other overlay. */}
       <MapFilterSheet
-        visible={filterSheetOpen}
-        onClose={() => setFilterSheetOpen(false)}
+        visible={overlayOpen('FILTERS')}
+        onClose={() => dispatchMapEvent({ type: 'CLOSE_OVERLAY', overlay: 'FILTERS' })}
         enabledLayers={enabledLayers}
         onChangeEnabledLayers={setEnabledLayers}
       />

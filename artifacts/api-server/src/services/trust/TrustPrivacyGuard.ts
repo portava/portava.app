@@ -10,7 +10,7 @@
  *  - Admin can receive full internal data via a separate path
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { getTrustProfile, type PublicTrustLevel } from "./TrustScoreService.js";
+import { getTrustProfileResult, type PublicTrustLevel } from "./TrustScoreService.js";
 import { getRestrictionState, type RestrictionType } from "./TrustRestrictionService.js";
 import { getRecoveryStatus } from "./TrustRecoveryService.js";
 
@@ -46,6 +46,18 @@ export interface SafeTrustSummary {
    * from the payload exactly as `restrictionsDegraded` is.
    */
   probationUnknown?: boolean;
+  /**
+   * True when `publicLevel` and `strengths` are the NEW-ACCOUNT default because
+   * `trust_profiles` could not be read — not because this traveller is new.
+   *
+   * The same distinction `restrictionsDegraded` carries, applied to the read it
+   * was missing from. Before `getTrustProfileResult` existed, an unreadable
+   * profile arrived as `null` — byte-identical to a brand-new account — and a
+   * Highly Trusted traveller was presented to their peers as "New Traveler"
+   * with no strengths, silently. The level is still defaulted (there is no
+   * honest level to invent), but a caller can now tell the two apart.
+   */
+  profileUnavailable?: boolean;
 }
 
 const LEVEL_LABELS: Record<PublicTrustLevel, string> = {
@@ -90,12 +102,13 @@ export async function getSafeTrustSummary(
   db: SupabaseClient,
   userId: string,
 ): Promise<SafeTrustSummary> {
-  const [profile, restrictions, recovery] = await Promise.all([
-    getTrustProfile(db, userId),
+  const [profileRead, restrictions, recovery] = await Promise.all([
+    getTrustProfileResult(db, userId),
     getRestrictionState(db, userId),
     getRecoveryStatus(db, userId),
   ]);
 
+  const profile = profileRead.state === "ok" ? profileRead.profile : null;
   const publicLevel: PublicTrustLevel = profile?.public_level ?? "new_traveler";
 
   // Top 2 strongest categories (above 60)
@@ -126,6 +139,7 @@ export async function getSafeTrustSummary(
       ? { restrictionsDegraded: true, restrictionsDegradedReason: restrictions.degradedReason }
       : {}),
     ...(recovery.probationUnknown ? { probationUnknown: true } : {}),
+    ...(profileRead.state === "unavailable" ? { profileUnavailable: true } : {}),
   };
 }
 
@@ -135,13 +149,16 @@ export interface PublicTrustBadge {
   level: PublicTrustLevel;
   label: string;
   strengths: string[];
+  /** See SafeTrustSummary.profileUnavailable — the badge is a default, not a reading. */
+  profileUnavailable?: boolean;
 }
 
 export async function getPublicTrustBadge(
   db: SupabaseClient,
   userId: string,
 ): Promise<PublicTrustBadge> {
-  const profile = await getTrustProfile(db, userId);
+  const profileRead = await getTrustProfileResult(db, userId);
+  const profile = profileRead.state === "ok" ? profileRead.profile : null;
   const level: PublicTrustLevel = profile?.public_level ?? "new_traveler";
 
   const strengths = profile
@@ -152,7 +169,10 @@ export async function getPublicTrustBadge(
         .map(([cat]) => CATEGORY_LABELS[cat] ?? cat)
     : [];
 
-  return { userId, level, label: LEVEL_LABELS[level], strengths };
+  return {
+    userId, level, label: LEVEL_LABELS[level], strengths,
+    ...(profileRead.state === "unavailable" ? { profileUnavailable: true } : {}),
+  };
 }
 
 /** Strip internal fields before any LLM or external exposure */

@@ -48,12 +48,24 @@ router.post("/me/crypto-devices", async (req, res) => {
   // If a fingerprint is provided, check whether this device is already registered.
   // This prevents duplicate entries across app restarts.
   if (deviceFingerprint) {
-    const { data: existing } = await sc
+    // supabase-js RESOLVES on a DB error, so an unbound `error` made an
+    // unreadable devices table look like "this fingerprint is new" and fell
+    // through to the INSERT — minting a SECOND device id for the same physical
+    // device. The client stores the new id, and the original row keeps the
+    // public_key and key_package_count the peers already trust, so the device's
+    // crypto identity is orphaned. Refuse rather than fork it.
+    const { data: existing, error: existingErr } = await sc
       .from("devices")
       .select("id, platform, public_key, key_package_count, created_at, last_seen_at")
       .eq("user_id", user.id)
       .eq("device_fingerprint", deviceFingerprint)
       .maybeSingle();
+
+    if (existingErr) {
+      req.log.error({ err: existingErr }, "devices: fingerprint lookup failed — refusing to register a duplicate device");
+      sendError(res, "db_error", "Failed to register device");
+      return;
+    }
 
     if (existing) {
       // Update last_seen_at and return the existing record

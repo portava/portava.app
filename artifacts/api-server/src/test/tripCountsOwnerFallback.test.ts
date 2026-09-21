@@ -10,7 +10,7 @@
 
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { countUserTrips } from "../lib/tripCounts.js";
+import { countUserTrips } from "../domain/trips/services/tripCounts.js";
 
 const OWNER_ID   = "user-owner-no-membership-row";
 const MEMBER_ID  = "user-member-with-membership-row";

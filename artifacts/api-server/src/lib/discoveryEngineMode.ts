@@ -59,6 +59,10 @@ import {
   parseDiscoveryCohort, COHORT_NONE,
   type DiscoveryCohort, type CohortParseReason,
 } from "./discoveryCohort.js";
+// `12` "Stop conditions" — the automatic half of the stop. `disable_discovery_pde`
+// is a human pulling a lever; this is the system pulling it when the evidence
+// instrument itself is failing. It can only ever resolve DOWNWARD, to legacy.
+import { evaluateStopConditions } from "./discoveryStopConditions.js";
 
 export const DISCOVERY_ENGINE_MODE_FLAG = "DISCOVERY_ENGINE_MODE";
 export const DISCOVERY_PDE_KILL_SWITCH  = "disable_discovery_pde";
@@ -66,6 +70,105 @@ export const DISCOVERY_PDE_KILL_SWITCH  = "disable_discovery_pde";
 export type DiscoveryEngineMode = "legacy" | "shadow" | "pde";
 
 const VALID_MODES: readonly string[] = ["legacy", "shadow", "pde"];
+
+/**
+ * `01` §8's FIVE REQUIRED STATES — what an operator SELECTS.
+ *
+ *   "Required states:
+ *    - OFF: existing behavior byte-identical.
+ *    - SHADOW: new engine computes but does not affect UI.
+ *    - COMPARE: old and new rankings logged for analysis.
+ *    - PARTIAL: small cohort/surface rollout.
+ *    - ON: PDE controls selected surfaces."
+ *   (docs/specs/discovery-architecture-v1/discovery-v1-01-discovery-engine.md:179-185)
+ *
+ * WHY A SECOND VOCABULARY RATHER THAN FIVE MODES
+ * ==============================================
+ * `DiscoveryEngineMode` above is not a state. It is the EXECUTION PATH — the
+ * three branches routes/discovery.ts actually has: fall through (legacy), the
+ * shadow observation at :1921, the per-viewer ranker at :1816. Widening it to
+ * five would hand the route two values it cannot branch on, and a mode that
+ * silently does nothing is worse than an absent one.
+ *
+ * So the two ideas are separated. The state is selected; the path is
+ * dispatched. COMPARE runs the shadow path — which is already the thing that
+ * logs old-vs-new into `discovery_shadow_serves` — and PARTIAL runs the pde
+ * path under its cohort. Neither needs a route change, and neither invents a
+ * fourth branch that would have to be kept in step with the other three.
+ *
+ * HOW THE STATE STAYS VISIBLE IN THE DATA
+ * ======================================
+ * Two states share each of two paths, so the path alone can no longer say
+ * which state produced a row. `reason` carries it: `resolved_compare` and
+ * `resolved_partial` are distinct tokens, and `reason` is ALREADY written next
+ * to the mode by both instruments the route uses — `discovery_shadow_serves`
+ * (routes/discovery.ts:1955-1956) and the `rank_events` feature vector
+ * (:2271-2272). "It was shadow" and "it was shadow because someone asked for a
+ * comparison" therefore stay different facts in storage, which is the same rule
+ * `ModeReason` was created for.
+ */
+export const DISCOVERY_ENGINE_STATES = ["off", "shadow", "compare", "partial", "on"] as const;
+
+export type DiscoveryEngineState = (typeof DISCOVERY_ENGINE_STATES)[number];
+
+/**
+ * Accepted `metadata.mode` spellings → the state they select.
+ *
+ * A Map, not an object literal: an object lookup answers `constructor`,
+ * `toString` and `__proto__` out of Object.prototype, so a hand-typed
+ * `"mode": "constructor"` would resolve to a truthy value and be admitted. A
+ * Map has no prototype chain to inherit from, so an unknown key is `undefined`
+ * and nothing else.
+ *
+ * `legacy` / `shadow` / `pde` are kept as the primary spellings because they
+ * are what migration 2091 seeded and what production carries today: reading
+ * this table must never be the reason a live row stops resolving. `off` and
+ * `on` are accepted alongside them so §8's own words can be typed.
+ */
+const STATE_ALIASES = new Map<string, DiscoveryEngineState>([
+  ["legacy", "off"], ["off", "off"],
+  ["shadow", "shadow"],
+  ["compare", "compare"],
+  ["partial", "partial"],
+  ["pde", "on"], ["on", "on"],
+]);
+
+/**
+ * Every spelling `parseEngineState` accepts, as a plain array.
+ *
+ * Exported for ONE reason: `routes/admin.ts` validates the operator's
+ * `metadata.mode` against a list of its own, and until this export existed that
+ * list was the literal `["legacy", "shadow", "pde"]`. The resolver grew
+ * `compare` and `partial`; the admin route did not, so two of the five states
+ * `01` §8 requires could be resolved but never SELECTED through the product's
+ * own admin surface. A capability the shipping product cannot reach is not a
+ * capability, and a second hand-maintained copy of this list is how it happened.
+ * Deriving it here means the next state added is selectable the day it lands.
+ */
+export const ACCEPTED_ENGINE_MODE_SPELLINGS: readonly string[] = [...STATE_ALIASES.keys()];
+
+/** Which execution path each state dispatches. */
+export const ENGINE_STATE_PATH: Readonly<Record<DiscoveryEngineState, DiscoveryEngineMode>> = {
+  off: "legacy", shadow: "shadow", compare: "shadow", partial: "pde", on: "pde",
+};
+
+/**
+ * Parse `metadata.mode` into a state. Null for anything unrecognised, which
+ * the caller turns into `legacy` — the pre-existing `mode_invalid` behaviour,
+ * unchanged for every value that was invalid before.
+ *
+ * The VALID_MODES cross-check is not decoration: it is the assertion that
+ * every state this module admits dispatches a path routes/discovery.ts can
+ * actually branch on. Add a state whose path the route does not know and the
+ * parse fails closed rather than resolving to a branch that silently does
+ * nothing.
+ */
+export function parseEngineState(raw: unknown): DiscoveryEngineState | null {
+  if (typeof raw !== "string") return null;
+  const state = STATE_ALIASES.get(raw);
+  if (state === undefined) return null;
+  return VALID_MODES.includes(ENGINE_STATE_PATH[state]) ? state : null;
+}
 
 /**
  * Why the resolver returned what it did. Recorded on every serve observation so
@@ -78,11 +181,21 @@ export type ModeReason =
   | "flag_unreadable"      // getFlagRow returned null on error
   | "mode_missing"         // enabled, but metadata carries no mode
   | "mode_invalid"         // enabled, but metadata.mode is not one of the three
-  | "kill_switch_engaged"  // mode was pde, but the stop is engaged
+  | "kill_switch_engaged"  // mode was pde, but the MANUAL stop is engaged
+  | "stop_condition"       // mode was non-legacy, but a `12` stop condition has tripped
   | "no_client"            // no service client available
-  | "resolved";            // the configured mode was used as-is
+  | "partial_cohort_unbounded"  // PARTIAL selected over cohort kind=all — refused
+  | "resolved_compare"     // COMPARE selected: the shadow path, asked for as a comparison
+  | "resolved_partial"     // PARTIAL selected: the pde path, bounded to a cohort
+  | "resolved";            // the configured state was used as-is
 
 export interface ResolvedMode {
+  /**
+   * `01` §8's state — what was SELECTED. Always `off` on any fallback, because
+   * every fallback lands on the legacy path and `off` is that path's state.
+   */
+  state:  DiscoveryEngineState;
+  /** The execution path dispatched — what routes/discovery.ts branches on. */
   mode:   DiscoveryEngineMode;
   reason: ModeReason;
   /**
@@ -104,7 +217,7 @@ export interface ResolvedMode {
 }
 
 const LEGACY = (reason: ModeReason): ResolvedMode => ({
-  mode: "legacy", reason, cohort: COHORT_NONE, cohortReason: "absent",
+  state: "off", mode: "legacy", reason, cohort: COHORT_NONE, cohortReason: "absent",
 });
 
 // ── Cache (mechanic M5) ───────────────────────────────────────────────────────
@@ -153,15 +266,16 @@ async function resolveUncached(sc: any): Promise<ResolvedMode> {
 
     const raw = (row.metadata as Record<string, unknown> | null)?.mode;
     if (raw === undefined || raw === null) return LEGACY("mode_missing");
-    if (typeof raw !== "string" || !VALID_MODES.includes(raw)) {
+    const state = parseEngineState(raw);
+    if (state === null) {
       logger.warn(
-        { mode: raw, flag: DISCOVERY_ENGINE_MODE_FLAG },
-        "discoveryEngineMode: metadata.mode is not one of legacy|shadow|pde — falling back to legacy",
+        { mode: raw, flag: DISCOVERY_ENGINE_MODE_FLAG, states: DISCOVERY_ENGINE_STATES },
+        "discoveryEngineMode: metadata.mode is not one of the five `01` §8 states — falling back to legacy",
       );
       return LEGACY("mode_invalid");
     }
 
-    const mode = raw as DiscoveryEngineMode;
+    const mode = ENGINE_STATE_PATH[state];
 
     // D3=B — the stop is consulted ONLY for pde. Reading it on every request
     // would double the flag traffic to protect a path that is not running, and
@@ -185,7 +299,33 @@ async function resolveUncached(sc: any): Promise<ResolvedMode> {
     // and not others. Forced here rather than left to every call site to
     // remember.
     if (mode === "legacy") {
-      return { mode, reason: "resolved", cohort: COHORT_NONE, cohortReason: "absent" };
+      return { state, mode, reason: "resolved", cohort: COHORT_NONE, cohortReason: "absent" };
+    }
+
+    // `12` Stop conditions — "Stop rollout if: event rejection rises,
+    // recommendation logging gaps appear…". Consulted for every NON-legacy mode,
+    // shadow included: shadow costs real reads and writes real observations off
+    // the same instrument whose failure is being detected, so continuing to
+    // shadow through a logging fault produces a comparison nobody should trust.
+    //
+    // Deliberately AFTER the legacy short-circuit above, so a tripped condition
+    // can never rewrite the reason a legacy request was legacy, and after the
+    // manual stop, so `kill_switch_engaged` stays the reported reason when a
+    // human has already halted pde. It reads no database and cannot throw.
+    //
+    // Latency of the halt is bounded by this resolver's 30-second cache, not by
+    // the evaluator: a condition that trips mid-TTL takes effect on the next
+    // uncached resolution. Stated because "it halts" and "it halts within 30
+    // seconds" are different promises.
+    const stop = evaluateStopConditions();
+    if (stop.tripped.length > 0) {
+      logger.warn(
+        { mode, tripped: stop.tripped, attempts: stop.attempts,
+          eventRejectionRate: stop.eventRejectionRate, loggingGapRate: stop.loggingGapRate,
+          unenforced: stop.unenforced },
+        "discoveryEngineMode: a 12 stop condition has tripped — serving legacy",
+      );
+      return LEGACY("stop_condition");
     }
 
     const parsed = parseDiscoveryCohort((row.metadata as Record<string, unknown> | null)?.cohort);
@@ -196,7 +336,30 @@ async function resolveUncached(sc: any): Promise<ResolvedMode> {
       );
     }
 
-    return { mode, reason: "resolved", cohort: parsed.cohort, cohortReason: parsed.reason };
+    // PARTIAL means "small cohort/surface rollout" (§8). `kind: "all"` is D6=C —
+    // everyone — so PARTIAL over it is ON wearing PARTIAL's label: a rollout
+    // that is in fact total, recorded and rolled back as though it were not.
+    // Refused rather than narrowed, and refused to `legacy` rather than to some
+    // guessed percentage, because the configuration has to say who.
+    //
+    // Only `all` is refused. An absent or unusable cohort already includes
+    // NOBODY (the warning above), which is the safe end of this same axis and
+    // is left resolving exactly as `shadow` does, so the two non-legacy states
+    // do not disagree about what an unreadable cohort means.
+    if (state === "partial" && parsed.cohort.kind === "all") {
+      logger.warn(
+        { state, flag: DISCOVERY_ENGINE_MODE_FLAG },
+        "discoveryEngineMode: PARTIAL over cohort kind=all is a total rollout — serving legacy; select `pde` to reach everyone",
+      );
+      return LEGACY("partial_cohort_unbounded");
+    }
+
+    const reason: ModeReason =
+      state === "compare" ? "resolved_compare"
+      : state === "partial" ? "resolved_partial"
+      : "resolved";
+
+    return { state, mode, reason, cohort: parsed.cohort, cohortReason: parsed.reason };
   } catch (err) {
     // isKillSwitchEngaged already fails closed internally; this catch covers
     // anything else and keeps the resolver total.

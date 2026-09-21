@@ -86,7 +86,7 @@ const CLAUSE_RENAME_RE =
   /\bRENAME\s+(?:COLUMN\s+)?"?([A-Za-z0-9_]+)"?\s+TO\s+"?([A-Za-z0-9_]+)"?/gi;
 
 /**
- * Split SQL into statements on top-level `;`, leaving `$$ ... $$` bodies intact
+ * Split SQL into statements on top-level `;`, leaving `$tag$ ... $tag$` bodies intact
  * so a procedural block is one statement rather than several fragments.
  */
 export function splitStatements(sql: string): string[] {
@@ -94,12 +94,27 @@ export function splitStatements(sql: string): string[] {
   let cur = "";
   let i = 0;
   while (i < sql.length) {
-    if (sql.startsWith("$$", i)) {
-      const end = sql.indexOf("$$", i + 2);
-      const stop = end === -1 ? sql.length : end + 2;
-      cur += sql.slice(i, stop);
-      i = stop;
-      continue;
+    // Dollar quoting, with the TAG, not just `$$`.
+    //
+    // This used to recognise `$$` alone, so every `DO $mig$ ... $mig$` and
+    // `CREATE FUNCTION ... $body$ ... $body$` in the corpus was shredded at
+    // each `;` INSIDE the block, and each fragment was handed to callers as if
+    // it were a top-level statement. Postgres accepts any `$tag$`, this repo's
+    // migrations use named tags throughout, and a caller asking "what does this
+    // statement do" cannot get a true answer from a third of a plpgsql body.
+    // The symptom that found it: checkSecurityDefinerOracles could not see that
+    // migration 2775's DO block installs a kernel calling trip_proposal_tally,
+    // and reported that function as referenced by nothing.
+    if (sql[i] === "$") {
+      const tag = /^\$[A-Za-z_][A-Za-z0-9_]*\$|^\$\$/.exec(sql.slice(i));
+      if (tag) {
+        const t = tag[0];
+        const end = sql.indexOf(t, i + t.length);
+        const stop = end === -1 ? sql.length : end + t.length;
+        cur += sql.slice(i, stop);
+        i = stop;
+        continue;
+      }
     }
     const ch = sql[i]!;
     if (ch === ";") { out.push(cur); cur = ""; i++; continue; }
@@ -188,11 +203,50 @@ function createTablesIn(sql: string, unmodelled: Set<string>): Map<string, Set<s
   return out;
 }
 
-/** Strip `--` line comments and `/* *\/` blocks so DDL regexes don't match prose. */
+/**
+ * Strip `--` line comments and `/* *\/` blocks so DDL regexes don't match prose.
+ *
+ * WHICHEVER OPENS FIRST WINS. The two-pass version this replaced removed every
+ * block comment and only then every line comment, so a `--` comment CONTAINING
+ * a block opener — `-- see the /* note *\/ above`, or an ordinary `-- path/*` —
+ * opened a block that ran to the next close marker anywhere in the file, taking
+ * real DDL with it.
+ *
+ * The identical bug in the TypeScript stripper (src/scripts/lib/stripComments.ts)
+ * was erasing 2,510 lines of real code across 12 files when it was found. This
+ * one erases NOTHING today: measured across all 466 migration and baseline SQL
+ * files, the two implementations agree byte for byte, because no `--` comment in
+ * the corpus happens to contain a block opener. It is fixed anyway — the reason
+ * the TypeScript one survived so long is that nobody had tested the stripper
+ * itself, and "it does not bite yet" is the state every one of these bugs was in
+ * the day before it did.
+ *
+ * DELIBERATELY NOT PARSED: string literals and dollar-quoted bodies. A `--`
+ * inside `'a--b'` truncates that line, which can only ever REMOVE text and never
+ * invent it, so a caller asking "is this DDL present" gets a false NO rather
+ * than a false YES. Unchanged from the previous behaviour.
+ */
 export function stripSqlComments(sql: string): string {
-  return sql
-    .replace(/\/\*[\s\S]*?\*\//g, " ")
-    .replace(/--[^\n]*/g, " ");
+  let out = "";
+  let i = 0;
+  while (i < sql.length) {
+    const line = sql.indexOf("--", i);
+    const block = sql.indexOf("/*", i);
+    if (line === -1 && block === -1) { out += sql.slice(i); break; }
+    if (line !== -1 && (block === -1 || line < block)) {
+      // Everything from here to the newline is a line comment, `/*` included.
+      out += sql.slice(i, line) + " ";
+      const nl = sql.indexOf("\n", line);
+      if (nl === -1) break;
+      i = nl;
+      continue;
+    }
+    out += sql.slice(i, block) + " ";
+    const end = sql.indexOf("*\/", block + 2);
+    if (end === -1) break;
+    i = end + 2;
+  }
+  return out;
 }
 
 /**

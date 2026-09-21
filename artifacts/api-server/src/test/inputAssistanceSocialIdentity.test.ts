@@ -357,3 +357,70 @@ describe("username validation (§23)", () => {
     assert.equal((await checkUsernameAvailability(sc, "Good_Name", ME)).available, true); // folds case, valid
   });
 });
+
+// ── D11 / swallowed-read inventory: the two SILENT socialIdentity sites ──────
+//
+//   socialIdentity.ts:214  resolveRecipientSuggestions — `if (error) return []`
+//   socialIdentity.ts:402  searchExistingHashtags      — `if (error || !data) return []`
+//
+// Owner's question — may the caller act on this emptiness as if it were an
+// answer?
+//
+//   :214 NO. The caller (gateway.ts:302) returns the list straight to the
+//        /input-assistance response, where an empty recipient picker reads as
+//        "there is nobody here to send to". This file's OWN doctrine names
+//        that defect in as many words (socialIdentity.ts:57-60: "What was wrong
+//        was that it did so SILENTLY: the field produced no reference, no row
+//        and no reason, so the user saw an empty list and could not tell an
+//        unsupported character from a network failure") and its own answer is
+//        a non-blocking `validation` row (buildHashtagValidation, :67). The fix
+//        reuses exactly that. Fail-closed is unchanged: STILL no recipients.
+//
+//   :402 NO, and this one makes a POSITIVE false claim. An unreadable
+//        `hashtags` table left `existing` empty, so resolveHashtagRefSuggestions
+//        fell through to `{ isNew: true }` and labelled the tag "New tag" — a
+//        tag that may have thousands of posts. Novelty is an assertion about
+//        the registry, and it must not be made out of a read that failed.
+
+describe("D11 — an unreadable recipient pool is not an empty one (socialIdentity.ts:214)", () => {
+  it("a failed profiles read is not byte-identical to 'nobody matches'", async () => {
+    const genuine = await gen(makeFakeClient(recipientState()), "telegraph_recipient", "zzzznobody");
+    const unread  = await gen(makeFakeClient(recipientState(), new Set(["profiles"])), "telegraph_recipient", "");
+
+    assert.equal(genuine.length, 0, "a genuine no-match is still an empty list");
+    assert.notDeepEqual(unread, genuine, "the two absences must not read alike");
+
+    // Fail-closed direction kept: still NO recipients, only a row saying why.
+    assert.equal(unread.filter((s) => s.type !== "validation").length, 0,
+      "an unreadable pool must still surface zero recipients");
+    const row = unread.find((s) => s.type === "validation");
+    assert.ok(row, "the caller must be told the pool was unreadable");
+    assert.equal((row!.action as any)?.value?.kind, "recipient_search_status");
+    assert.equal((row!.action as any)?.value?.reason, "recipients_unreadable");
+    // §13 no dead rows — it must survive dropDeadRows to reach the client.
+    assert.ok(row!.action != null || row!.entityId != null, "the row must be resolvable");
+  });
+});
+
+describe("D11 — an unreadable hashtag registry must not be called 'New tag' (socialIdentity.ts:402)", () => {
+  const hashtagState = (rows: any[] = []) => ({
+    hashtags: rows, profiles: [], blocks: [], user_privacy_settings: [],
+    user_follows: [], friend_requests: [], user_friendships: [],
+  });
+
+  it("a genuinely new tag is still labelled New tag", async () => {
+    const out = await gen(makeFakeClient(hashtagState()), "comment", "#brandnewtag");
+    const ref = out.find((s) => s.entityType === "hashtag");
+    assert.ok(ref, "the typed slug still resolves");
+    assert.equal(ref!.subtitle, "New tag");
+  });
+
+  it("an unreadable hashtags table does NOT assert novelty", async () => {
+    const out = await gen(makeFakeClient(hashtagState(), new Set(["hashtags"])), "comment", "#brandnewtag");
+    const ref = out.find((s) => s.entityType === "hashtag");
+    assert.ok(ref, "the typed slug must still resolve (fail-closed, not fail-absent)");
+    assert.notEqual(ref!.subtitle, "New tag",
+      "novelty is a claim about the registry; a failed read may not make it");
+    assert.equal(ref!.reason, "hashtag_registry_unreadable");
+  });
+});

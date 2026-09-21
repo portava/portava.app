@@ -26,6 +26,9 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { getRestrictionState, DegradedPermissionCheckError } from "./trust/TrustRestrictionService.js";
+import { logger as rootLogger } from "../lib/logger.js";
+
+const log = rootLogger.child({ service: "interactionPermissions" });
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -110,6 +113,32 @@ export interface InteractionPermissions {
   safetyWarnings: string[];
   reasonCodes: string[];
   context: InteractionContext;
+
+  /**
+   * At least one read this verdict rests on FAILED, so parts of the answer are
+   * a floor rather than the truth.
+   *
+   * The relationship reads (`user_friendships`, `friend_requests`,
+   * `user_follows`) are INCLUSION signals: a failed one yields `data: null`,
+   * reads as "no such relationship", and can only ever make the verdict MORE
+   * restrictive — so permission itself stays safe. What is NOT safe is the
+   * `relationshipLabel` and the capability set, which callers render to people
+   * ("you are not connected to this user", a greyed-out Message button). Saying
+   * that on the strength of a read that failed is a fabrication. The same shape
+   * was fixed in lib/messagingPermissions.ts (`degraded` there); this is that
+   * fix for the engine 15+ routes actually call.
+   *
+   * A caller may choose to say nothing, or to offer a retry, instead of saying
+   * something false. It must NOT treat `degraded` as permission to widen
+   * anything — the verdict is already the restrictive one.
+   */
+  degraded?: boolean;
+  /**
+   * Which reads failed, by table (plus the direction where a table is read
+   * twice). Present only when `degraded` is true. Diagnostic, not a contract:
+   * do not branch on the strings.
+   */
+  degradedReads?: string[];
 }
 
 // ---------------------------------------------------------------------------
@@ -433,6 +462,59 @@ export async function resolveInteractionPermissions(
   // Extract values — for optional Phase 2 tables, ignore table-missing errors
   const targetProfile = (profileRes as any).data as { id: string; is_private: boolean; tag_permission: string } | null;
 
+  // ── Read failures are OBSERVED, not inferred from an empty result ─────────
+  // supabase-js RESOLVES on a database error, and `Promise.allSettled` above
+  // normalises a rejection into the same `{ data: null, error }` shape. So for
+  // every one of these reads `data: null` means EITHER "no such row" OR "the
+  // read failed", and nothing downstream could tell them apart because `.error`
+  // was never bound. `realError` is the only failure signal there is.
+  //
+  // A "table missing" error is NOT a failure here: several of these are Phase 2
+  // tables that may not be migrated yet, and their absence genuinely means
+  // "nobody has one of these".
+  const degradedReads: string[] = [];
+  const realError = (res: any): any =>
+    res && res.error && !isTableMissingError(res.error) ? res.error : null;
+
+  /**
+   * The relationship reads are INCLUSION signals: a failed one reads as "no
+   * such relationship" and can only ever make the verdict MORE restrictive, so
+   * permission stays safe. What was missing is any signal at all — a friend
+   * losing access to a friends-only profile during a bad database minute looked
+   * exactly like the privacy setting working. Each failure is now named, and
+   * the verdict is marked `degraded` for the caller.
+   *
+   * `user_interaction_cooldowns` and `user_mutes` are listed for observation
+   * only; their direction is unchanged by this commit and is discussed below.
+   */
+  const observedReads: Array<[label: string, res: any]> = [
+    ["profiles", profileRes],
+    ["user_friendships", friendshipRes],
+    ["friend_requests(viewer→target)", outReqRes],
+    ["friend_requests(target→viewer)", inReqRes],
+    ["user_follows(viewer→target)", vFollowsTRes],
+    ["user_follows(target→viewer)", tFollowsVRes],
+    ["user_interaction_cooldowns(message_request)", msgCooldownRes],
+    ["user_interaction_cooldowns(nudge)", nudgeCooldownRes],
+    ["user_interaction_cooldowns(friend_request)", friendReqCooldownRes],
+    ["user_interaction_cooldowns(follow)", followCooldownRes],
+    ["user_mutes", muteRes],
+    ["user_restrictions", restrictionRes],
+  ];
+  for (const [label, res] of observedReads) {
+    const err = realError(res);
+    if (!err) continue;
+    degradedReads.push(label);
+    log.error(
+      { err, read: label, viewerId, targetUserId },
+      "resolveInteractionPermissions: read failed; the verdict below is a floor, not the truth",
+    );
+  }
+  // NOT captured as a const here: the context queries below push to
+  // `degradedReads` too, and `mark()` is called after them. Reading the length
+  // at mark-time is the whole point — a snapshot taken here would silently drop
+  // every context-read failure from the contract it is meant to report.
+
   const isFriend = Boolean((friendshipRes as any).data);
   const hasOutgoingFriendReq = Boolean((outReqRes as any).data);
   const hasIncomingFriendReq = Boolean((inReqRes as any).data);
@@ -444,8 +526,19 @@ export async function resolveInteractionPermissions(
     : ((msgSettingsRes as any).data as { message_privacy: string; allow_message_requests: boolean } | null);
 
   // Cooldown: active if row exists and not expired (or no expiry = permanent)
+  //
+  // DIRECTION UNCHANGED, and recorded rather than quietly kept: a cooldown row
+  // is a DENY signal (the follow cooldown is set for 90 days after a block), so
+  // `return false` on error is fail-OPEN — an unreadable
+  // `user_interaction_cooldowns` lets a previously-blocked viewer follow again.
+  // Flipping it to fail-CLOSED would block a legitimate pair's friend request
+  // and follow for the duration of an outage, which is a behaviour change for
+  // 15+ routes and belongs to whoever owns the cooldown policy, not to a
+  // read-hygiene pass. What this commit does supply is the signal that was
+  // missing entirely: the failure is logged and named in `degradedReads` above,
+  // so the fail-open is now observable instead of silent.
   function isActiveCooldown(res: { data: { expires_at: string | null } | null; error: any } | any): boolean {
-    if ((res as any).error && !isTableMissingError((res as any).error)) return false; // skip on error
+    if ((res as any).error && !isTableMissingError((res as any).error)) return false; // skip on error — see note above
     if (!(res as any).data) return false;
     const exp = (res as any).data.expires_at as string | null;
     return !exp || new Date(exp) > new Date();
@@ -457,26 +550,95 @@ export async function resolveInteractionPermissions(
   if (nudgeCooldownActive) safetyWarnings.push("nudge_cooldown");
   const followCooldownActive = isActiveCooldown(followCooldownRes);
 
+  // `isMuted` is currently CONSUMED BY NOTHING — `canMute` is unconditionally
+  // true in every return below. Left in place (deleting it would also delete
+  // the only record that the mute read happens at all) but named here so the
+  // next reader does not mistake it for a live decision.
   const isMuted = (muteRes as any).error && !isTableMissingError((muteRes as any).error)
     ? false
     : Boolean((muteRes as any).data);
+  void isMuted;
 
-  const readReceiptsHidden = (restrictionRes as any).error && !isTableMissingError((restrictionRes as any).error)
-    ? false
+  // ── user_restrictions — FAIL-CLOSED ──────────────────────────────────────
+  // A row here means the target has RESTRICTED the viewer, so an empty result
+  // is the permissive answer and this read was fail-open by construction:
+  // `? false` said "not restricted" about a table that could not be read,
+  // which is the same class of defect as the `blocks` read two branches up —
+  // and that one re-throws (`critList`) precisely so "no block" is never said
+  // on the strength of a failed query.
+  //
+  // Why this does NOT re-throw like `blocks`: `blocks` is a pre-existing table
+  // whose absence is impossible and whose verdict gates every interaction, so
+  // aborting is proportionate. `user_restrictions` is an optional Phase 2 table
+  // feeding one context flag; throwing would take down profile resolution for
+  // 15+ routes because a read-receipt hint blinked. So it fails closed IN ITS
+  // OWN DIRECTION — assume the restriction is in force — and marks the verdict
+  // degraded so the caller knows the flag is a precaution, not an observation.
+  //
+  // A missing table (42P01 — Phase 2 not migrated) still means "no restrictions
+  // exist", which is a real answer and stays `false`.
+  const restrictionErr = realError(restrictionRes);
+  const readReceiptsHidden = restrictionErr
+    ? true
     : Boolean((restrictionRes as any).data);
+  if (restrictionErr) {
+    log.error(
+      { err: restrictionErr, viewerId, targetUserId },
+      "resolveInteractionPermissions: user_restrictions unreadable — assuming the viewer IS restricted " +
+        "rather than reporting 'not restricted' from a read that failed",
+    );
+  }
 
   if (readReceiptsHidden) safetyWarnings.push("read_receipts_hidden");
 
   // ── Context queries ───────────────────────────────────────────────────────
+  //
+  // These three used to be the LAST reads in this function that could change
+  // the verdict without anyone knowing they had failed, and they were failing
+  // in three distinct ways at once:
+  //
+  //   1. DATA-ONLY. `const { data: vTrips } = await …` never bound `.error`, so
+  //      an unreadable `trip_members` produced `data: null`, `ids.length === 0`
+  //      and the answer "you share no trip" — indistinguishable from the truth.
+  //   2. `.catch(() => false)` IS DEAD CODE for a database error. supabase-js
+  //      RESOLVES on one; postgrest-js even catches fetch failures itself and
+  //      resolves `{ error: { message: "TypeError: fetch failed" }, status: 0 }`
+  //      (measured against supabase-js 2.108.2). So the catch only ever fires
+  //      on a WIRING bug — `sc` not being a query builder — and answered `false`
+  //      silently for that too. It is kept, because a wiring bug must not take
+  //      down profile resolution, but it now says what happened.
+  //   3. Their results feed the same verdict every read above is now careful to
+  //      mark `degraded`, so they could quietly downgrade an answer while the
+  //      contract on that answer said nothing was wrong. The file's own promise
+  //      was inconsistent with itself.
+  //
+  // DIRECTION IS UNCHANGED for the two membership reads, deliberately:
+  // `sharedTrip` and `sharedCircle` are permission-ELEVATING inclusion signals
+  // (`if (!directMsgOk && sharedTrip) directMsgOk = true`), so a failed read
+  // resolving to `false` can only ever make the verdict MORE restrictive. The
+  // defect was never the direction — it was that nothing was told. The fix is
+  // the SIGNAL.
+  const noteContextFailure = (label: string, err: unknown, wiring = false): void => {
+    degradedReads.push(label);
+    log.error(
+      { err, read: label, viewerId, targetUserId, wiringBug: wiring },
+      wiring
+        ? "resolveInteractionPermissions: context query THREW — supabase-js resolves on db errors, so this is a wiring bug, not an unhealthy database"
+        : "resolveInteractionPermissions: context read failed; treated as 'no shared context', which withholds reach the pair may be entitled to",
+    );
+  };
+
   const [sharedTrip, sharedCircle, rabPreBooking] = await Promise.all([
     // shared trip: two-step (viewer's trips → check if target is also member)
     (async (): Promise<boolean> => {
-      const { data: vTrips } = await sc.from("trip_members").select("trip_id").eq("user_id", viewerId).in("role", ["owner", "member"]);
+      const { data: vTrips, error: vTripsErr } = await sc.from("trip_members").select("trip_id").eq("user_id", viewerId).in("role", ["owner", "member"]);
+      if (vTripsErr) { noteContextFailure("trip_members(viewer)", vTripsErr); return false; }
       const ids = (vTrips ?? []).map((m: any) => m.trip_id as string);
       if (ids.length === 0) return false;
-      const { data: shared } = await sc.from("trip_members").select("trip_id").eq("user_id", targetUserId).in("role", ["owner", "member"]).in("trip_id", ids).limit(1).maybeSingle();
+      const { data: shared, error: sharedErr } = await sc.from("trip_members").select("trip_id").eq("user_id", targetUserId).in("role", ["owner", "member"]).in("trip_id", ids).limit(1).maybeSingle();
+      if (sharedErr) { noteContextFailure("trip_members(target)", sharedErr); return false; }
       return Boolean(shared);
-    })().catch(() => false),
+    })().catch((err) => { noteContextFailure("trip_members", err, true); return false; }),
 
     // shared circle
     Promise.resolve(
@@ -485,7 +647,10 @@ export async function resolveInteractionPermissions(
         .or(`and(user_id.eq.${targetUserId},other_id.eq.${viewerId}),and(user_id.eq.${viewerId},other_id.eq.${targetUserId})`)
         .limit(1)
         .maybeSingle(),
-    ).then((r: any) => Boolean(r.data)).catch(() => false),
+    ).then((r: any) => {
+      if (r?.error) { noteContextFailure("circle_memberships", r.error); return false; }
+      return Boolean(r?.data);
+    }).catch((err) => { noteContextFailure("circle_memberships", err, true); return false; }),
 
     // RaB pre-booking — the window in which the off-app-payment warning applies.
     //
@@ -501,6 +666,15 @@ export async function resolveInteractionPermissions(
     // The status set below is the pre-session lifecycle in real labels:
     // requested → pending → confirmed → scheduled. Erring wide is the
     // fail-closed direction for a safety warning.
+    //
+    // DIRECTION CHANGED here, and only here. Unlike the two reads above, this
+    // one does not elevate permission — it raises a safety WARNING, so `false`
+    // is the permissive answer and an unreadable table suppressing the warning
+    // is fail-OPEN. The comment directly above already records this file's
+    // ruling that "erring wide is the fail-closed direction for a safety
+    // warning"; that ruling is now applied to the error path too. The cost of
+    // erring wide is an off-app-payment caution shown to a pair who may have no
+    // booking; the cost of erring narrow is withholding it from a pair who do.
     Promise.resolve(
       sc.from("rent_buddy_bookings")
         .select("id")
@@ -508,7 +682,10 @@ export async function resolveInteractionPermissions(
         .in("status", ["requested", "pending", "confirmed", "scheduled"])
         .limit(1)
         .maybeSingle(),
-    ).then((r: any) => Boolean(r.data)).catch(() => false),
+    ).then((r: any) => {
+      if (r?.error) { noteContextFailure("rent_buddy_bookings", r.error); return true; }
+      return Boolean(r?.data);
+    }).catch((err) => { noteContextFailure("rent_buddy_bookings", err, true); return true; }),
   ]);
 
   ctx.sharedTrip = sharedTrip;
@@ -518,10 +695,23 @@ export async function resolveInteractionPermissions(
 
   if (rabPreBooking) safetyWarnings.push("rab_off_app_payment_risk");
 
+  /**
+   * Stamp the degraded marker onto a verdict. Every return AFTER the batch of
+   * reads above goes through this; the earlier returns (self, account state,
+   * block, trust restriction) are decided before any of those reads and cannot
+   * be degraded by them.
+   */
+  const mark = (v: InteractionPermissions): InteractionPermissions =>
+    degradedReads.length > 0 ? { ...v, degraded: true, degradedReads: [...degradedReads] } : v;
+
   // ── PRIORITY 5: Target profile must exist ────────────────────────────────
   if (!targetProfile) {
-    reasonCodes.push("target_not_found");
-    return { ...ALL_FALSE, targetUserId, viewerId, relationshipLabel: "unavailable", profileVisibility: "unavailable", canBlock: false, canReport: false, safetyWarnings, reasonCodes, context: ctx };
+    // "not found" is a claim about the target. When the `profiles` read itself
+    // failed, that claim is a fabrication — the profile may well exist — so the
+    // reason code says which of the two actually happened. The verdict is
+    // ALL_FALSE either way, so nothing is widened by telling the truth here.
+    reasonCodes.push(realError(profileRes) ? "target_lookup_failed" : "target_not_found");
+    return mark({ ...ALL_FALSE, targetUserId, viewerId, relationshipLabel: "unavailable", profileVisibility: "unavailable", canBlock: false, canReport: false, safetyWarnings, reasonCodes, context: ctx });
   }
 
   // Privacy: privacy_settings overrides profiles.is_private when present
@@ -554,7 +744,7 @@ export async function resolveInteractionPermissions(
     // visible. This lets the follow route (and any future surface) transparently
     // redirect a follow-of-private-profile into a friend request while still
     // enforcing suspension/cooldown/existing-request guards.
-    return {
+    return mark({
       ...ALL_FALSE,
       targetUserId,
       viewerId,
@@ -571,7 +761,7 @@ export async function resolveInteractionPermissions(
       safetyWarnings,
       reasonCodes,
       context: ctx,
-    };
+    });
   }
 
   // ── Messaging ─────────────────────────────────────────────────────────────
@@ -619,7 +809,7 @@ export async function resolveInteractionPermissions(
   if (!allowTagging) { canTag = false; canTagPending = false; }
 
   // ── Final permissions ─────────────────────────────────────────────────────
-  return {
+  return mark({
     targetUserId,
     viewerId,
     relationshipLabel,
@@ -671,5 +861,5 @@ export async function resolveInteractionPermissions(
     safetyWarnings,
     reasonCodes,
     context: ctx,
-  };
+  });
 }

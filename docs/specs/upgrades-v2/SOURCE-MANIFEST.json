@@ -1,0 +1,87 @@
+[
+  {
+    "source": "/Users/areyouok/Downloads/compass-phase1-spec.md",
+    "bundled": "sources/compass-phase1-spec.md",
+    "sha256": "dcf1a0581c45d6a70301dd827ab4bfb8fa868f76a39e4d0d4cbabcbd40c15f12"
+  },
+  {
+    "source": "/Users/areyouok/Documents/portava/docs/compass/master-roadmap.md",
+    "bundled": "sources/compass-master-roadmap.md",
+    "sha256": "a7a73ec432c923b562719634210f0a974d8a001ae9b24558465d3a15ece2f9a6"
+  },
+  {
+    "source": "/Users/areyouok/Documents/portava/docs/trust/verified-foundation-plan.md",
+    "bundled": "sources/trust-verified-foundation-plan.md",
+    "sha256": "193ce14385f68ffd5d31aa423aaae38a08a28c6de3451b802b7c23a3bdb7b7b6"
+  },
+  {
+    "source": "/Users/areyouok/Documents/Portava_Sensing_World_Experience_Intelligence_Upgrade_Architecture_v1.docx",
+    "bundled": "sources/sensing-upgrade-v1.docx",
+    "sha256": "08f5465c083fa9e06d90f50ec144ab2d89530c04668b42945f3a16f2982f8d4f"
+  },
+  {
+    "source": "/Users/areyouok/Downloads/Portava_Discovery_Architecture_v1/00_README.md",
+    "bundled": "sources/discovery-v1/00_README.md",
+    "sha256": "f6fe166eba9399602e545986c8b6bf291cb32d346e7fe04c4bb919ff3fa027fc"
+  },
+  {
+    "source": "/Users/areyouok/Downloads/Portava_Discovery_Architecture_v1/01_Portava_Discovery_Engine.md",
+    "bundled": "sources/discovery-v1/01_Portava_Discovery_Engine.md",
+    "sha256": "5060b13ca8c8bc0fc8a20f31d47a9297a723585031a217d44e097c596e369216"
+  },
+  {
+    "source": "/Users/areyouok/Downloads/Portava_Discovery_Architecture_v1/02_Trails.md",
+    "bundled": "sources/discovery-v1/02_Trails.md",
+    "sha256": "f7072dd7dc9a73c78110296a2aef69558f44ed70b9f45e8fbe95c9507e840192"
+  },
+  {
+    "source": "/Users/areyouok/Downloads/Portava_Discovery_Architecture_v1/03_Trending.md",
+    "bundled": "sources/discovery-v1/03_Trending.md",
+    "sha256": "f11d4422c2385c05c8c41e30c7e43c4de1b68789aa8e53454c8d1d810d57b077"
+  },
+  {
+    "source": "/Users/areyouok/Downloads/Portava_Discovery_Architecture_v1/04_Behavior_Engine.md",
+    "bundled": "sources/discovery-v1/04_Behavior_Engine.md",
+    "sha256": "ac934ff8abbaa356417f3cb97ba6b8fb1270b60c5bd2ac12c50361cd0e3f3b8b"
+  },
+  {
+    "source": "/Users/areyouok/Downloads/Portava_Discovery_Architecture_v1/05_Graph_Engine.md",
+    "bundled": "sources/discovery-v1/05_Graph_Engine.md",
+    "sha256": "3b279a2fa456d87820799f13e0fd144847d695a9576dcf6a12f64c08061c262f"
+  },
+  {
+    "source": "/Users/areyouok/Downloads/Portava_Discovery_Architecture_v1/06_Recommendation_Engine.md",
+    "bundled": "sources/discovery-v1/06_Recommendation_Engine.md",
+    "sha256": "3e500fd933aee0404e43ec2aa2797f370e0f81eb65054e690e8f1212b6b17419"
+  },
+  {
+    "source": "/Users/areyouok/Downloads/Portava_Discovery_Architecture_v1/07_Creator_Economy.md",
+    "bundled": "sources/discovery-v1/07_Creator_Economy.md",
+    "sha256": "208c9bac59b53a7e63ebc89f51031b81ef658c0400d994e7ac018fb9004196a7"
+  },
+  {
+    "source": "/Users/areyouok/Downloads/Portava_Discovery_Architecture_v1/08_Portava_Revenue_Model.md",
+    "bundled": "sources/discovery-v1/08_Portava_Revenue_Model.md",
+    "sha256": "9b336148cb2b6f6a4c476cddb079dea1958022d8a7949fa28f52090cf6853a14"
+  },
+  {
+    "source": "/Users/areyouok/Downloads/Portava_Discovery_Architecture_v1/09_Payment_Architecture.md",
+    "bundled": "sources/discovery-v1/09_Payment_Architecture.md",
+    "sha256": "0197464bb3ab88b203c7c00de1a00ebc07dcc4599b2a31d8ec8c9af9988953ef"
+  },
+  {
+    "source": "/Users/areyouok/Downloads/Portava_Discovery_Architecture_v1/10_Database_Architecture.md",
+    "bundled": "sources/discovery-v1/10_Database_Architecture.md",
+    "sha256": "391979b4f3dc0145139eba6be46229f7f90b91295cf3a7740756671745ae4f46"
+  },
+  {
+    "source": "/Users/areyouok/Downloads/Portava_Discovery_Architecture_v1/11_API_Specification.md",
+    "bundled": "sources/discovery-v1/11_API_Specification.md",
+    "sha256": "8dd14ffb29dd2c43cd72284fe599b1143967801ba4ab37cd60f8c8a773b12d1d"
+  },
+  {
+    "source": "/Users/areyouok/Downloads/Portava_Discovery_Architecture_v1/12_Claude_Code_Implementation.md",
+    "bundled": "sources/discovery-v1/12_Claude_Code_Implementation.md",
+    "sha256": "4841cecb6442a9450f7b25c51bb308fd29f2de4f449c7c8cd17387069004ea58"
+  }
+]

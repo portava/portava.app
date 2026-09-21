@@ -18,11 +18,22 @@
  * Fail-closed and self-rescheduling, following intelProjectionScheduler. Runs a
  * touch ahead of the projection so a freshly promoted claim is ready for the next
  * aggregation pass.
+ *
+ * SECOND, INDEPENDENT STEP PER TICK (2430): the per-scope Live allowlist's expiry
+ * sweep, lib/intelLiveScopePromotion.runLiveScopeExpiryPass. Same tick, its OWN
+ * flag (intel_live_scope_promotion_enabled), its own result — so the claim
+ * promotion above and the scope lifecycle below can be switched independently
+ * and neither's failure hides the other's. This scheduler is where the intel
+ * spine's promotion stage already lives, which is why the scope sweep rides
+ * here rather than in a new worker. It never PROMOTES a scope (that is a human
+ * decision — see the module header of intelLiveScopePromotion); it only turns
+ * "past the horizon" into an explicit withdrawn('expired') row.
  */
 import { getServiceClient } from "./supabase.js";
 import { logger } from "./logger.js";
 import { isFlagEnabled } from "./featureFlags.js";
 import { emitPromotionDomainEvents } from "./intelDomainEvents.js";
+import { runLiveScopeExpiryPass } from "./intelLiveScopePromotion.js";
 
 const STARTUP_DELAY_MS = 2 * 60 * 1000; // ahead of the projection's 3-minute startup
 const INTERVAL_MS = 5 * 60 * 1000;
@@ -77,15 +88,36 @@ export async function runIntelPromotionPass(opts: { client?: any; now?: Date } =
   }
 }
 
+/**
+ * One scheduler tick: the claim promotion pass, then the live-scope expiry
+ * sweep. Each is gated by its own flag and each failure is contained, so a
+ * thrown claim pass still lets the sweep run and vice versa. Exported so the
+ * composition is testable without timers.
+ */
+export async function runIntelPromotionTick(opts: { client?: any; now?: Date } = {}): Promise<{
+  promotion: PromotionResult;
+  scopeExpiry: Awaited<ReturnType<typeof runLiveScopeExpiryPass>>;
+}> {
+  const promotion = await runIntelPromotionPass(opts).catch((err) => {
+    logger.warn({ err }, "intel promotion pass failed");
+    return { promoted: 0, skipped: true, reason: "error" } as PromotionResult;
+  });
+  const scopeExpiry = await runLiveScopeExpiryPass(opts).catch((err) => {
+    logger.warn({ err }, "intel live-scope expiry pass failed");
+    return { skipped: true, reason: "error" as const, expired: 0 };
+  });
+  return { promotion, scopeExpiry };
+}
+
 export function startIntelPromotionScheduler(): void {
   if (_timer !== null) return;
   logger.info(
-    { startupDelayMs: STARTUP_DELAY_MS, intervalMs: INTERVAL_MS, flag: "intel_claim_projection_crowd" },
-    "IntelPromotionScheduler scheduled (no-op until the flag is enabled)",
+    { startupDelayMs: STARTUP_DELAY_MS, intervalMs: INTERVAL_MS, flag: "intel_claim_projection_crowd", scopeExpiryFlag: "intel_live_scope_promotion_enabled" },
+    "IntelPromotionScheduler scheduled (no-op until the flags are enabled)",
   );
   _timer = setTimeout(function tick() {
-    void runIntelPromotionPass()
-      .catch((err) => logger.warn({ err }, "intel promotion pass failed"))
+    void runIntelPromotionTick()
+      .catch((err) => logger.warn({ err }, "intel promotion tick failed"))
       .finally(() => { _timer = setTimeout(tick, INTERVAL_MS); });
   }, STARTUP_DELAY_MS);
 }

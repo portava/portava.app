@@ -199,8 +199,28 @@ export default function NewTrip() {
       if (typeof draft.endDate === 'string') setEndDate(draft.endDate);
       if (typeof draft.notes === 'string') setTripNotes(draft.notes);
       if (typeof draft.tripNotes === 'string') setTripNotes(draft.tripNotes);
-    } catch {
-      setNlError('Could not generate a draft. Fill the form manually.');
+    } catch (err) {
+      // AN OUTAGE IS NOT A VERDICT ON THE USER'S SENTENCE.
+      // This catch used to set one message for everything, so a missing API
+      // key, a 429, a provider 500 or a dropped connection all rendered as
+      // "Could not generate a draft" — telling someone their words were
+      // unusable when the extractor never ran.
+      //
+      // `draftTripFromText` throws an Error whose message IS the server's
+      // error code, and exactly one of those codes means "we read your text
+      // and could not make a draft from it": `invalid_payload`. Every other
+      // code — degraded_unavailable (503, retryable), server_not_configured,
+      // upstream_error, rate_limited — and every transport failure that never
+      // reached the server at all mean the draft service did not run. The
+      // default therefore points at the service, not at the traveller: being
+      // wrong in that direction costs a needless retry, while being wrong in
+      // the other direction tells a user something false about themselves.
+      const code = err instanceof Error ? err.message : '';
+      setNlError(
+        code === 'invalid_payload'
+          ? 'Could not generate a draft. Fill the form manually.'
+          : 'Pre-fill is unavailable right now — fill the form manually or try again.',
+      );
     } finally {
       setNlBusy(false);
     }

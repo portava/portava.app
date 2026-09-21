@@ -63,18 +63,86 @@ export async function createCap(
   };
 }
 
-/** Lift a specific cap (admin or expiry) */
+/**
+ * Read one cap, SCOPED TO THE USER it is claimed to belong to.
+ *
+ * The seam exists so an admin surface does not have to reach into `trust_caps`
+ * itself — `services/trust/` owns that table — and so the three answers stay
+ * three. supabase-js RESOLVES on a database error, so a caller writing
+ * `const { data } = await …` cannot tell "no such cap for this user" from
+ * "the table could not be read", and reads the outage as a clean not-found.
+ * That is the shape that turns a transient failure into a confident 404 at a
+ * gate, so the states are returned rather than collapsed.
+ */
+export type CapLookup =
+  | { state: "ok"; cap: TrustCap & { liftedAt: string | null } }
+  | { state: "not_found" }
+  | { state: "unavailable"; reason: string };
+
+export async function getCapForUser(
+  db: SupabaseClient,
+  input: { capId: string; userId: string },
+): Promise<CapLookup> {
+  const { data, error } = await db
+    .from("trust_caps")
+    .select("id, user_id, category, ceiling_score, reason_code, source_event_id, expires_at, lifted_at, created_at")
+    .eq("id", input.capId)
+    .eq("user_id", input.userId)
+    .maybeSingle();
+  if (error) return { state: "unavailable", reason: error.message ?? (error as any).code ?? "db_error" };
+  if (!data) return { state: "not_found" };
+  const d = data as any;
+  return {
+    state: "ok",
+    cap: {
+      id:            d.id,
+      userId:        d.user_id,
+      category:      d.category,
+      ceilingScore:  d.ceiling_score,
+      reasonCode:    d.reason_code,
+      sourceEventId: d.source_event_id,
+      expiresAt:     d.expires_at,
+      liftedAt:      d.lifted_at ?? null,
+      createdAt:     d.created_at,
+    },
+  };
+}
+
+/**
+ * Lift one specific cap (admin or expiry).
+ *
+ * ── THE CAP MUST BELONG TO THE USER IT IS BEING LIFTED FOR ──────────────────
+ * This filtered on `id` alone. A cap id is the only thing an admin surface
+ * passes, and the user id travelling beside it was used for the audit row and
+ * the cache invalidation and NOT for the update — so lifting cap X "for user A"
+ * lifted user B's ceiling, filed an audit row saying it happened to A, and left
+ * B's cached compass standing on a score that had just changed. Scoping is a
+ * required argument rather than an optional one precisely so no future caller
+ * can reintroduce that by omission.
+ *
+ * ── AND THE OUTCOME IS OBSERVED, NOT ASSUMED ───────────────────────────────
+ * The update carried no `.select()`, so "lifted one cap" and "matched nothing"
+ * were the same resolved value: lifting a nonexistent id, an already-lifted cap,
+ * or another user's cap all returned success. The `.select("id")` makes the
+ * difference visible and the boolean makes callers handle it — a removal that
+ * lifted nothing must never be reported or audited as a removal.
+ *
+ * Returns true when a cap was actually lifted, false when nothing matched.
+ * Throws only on a database error: not-found and unreadable stay distinct.
+ */
 export async function liftCap(
   db: SupabaseClient,
-  capId: string,
-  liftedBy: string,
-): Promise<void> {
-  const { error } = await db
+  input: { capId: string; userId: string; liftedBy: string },
+): Promise<boolean> {
+  const { data, error } = await db
     .from("trust_caps")
-    .update({ lifted_at: new Date().toISOString(), lifted_by: liftedBy })
-    .eq("id", capId)
-    .is("lifted_at", null);
+    .update({ lifted_at: new Date().toISOString(), lifted_by: input.liftedBy })
+    .eq("id", input.capId)
+    .eq("user_id", input.userId)
+    .is("lifted_at", null)
+    .select("id");
   if (error) throw new Error(`liftCap DB error: ${error.message}`);
+  return Array.isArray(data) && data.length > 0;
 }
 
 /** Expire all caps whose expires_at has passed (call from cleanup job) */
@@ -86,9 +154,13 @@ export async function expireOldCaps(db: SupabaseClient): Promise<number> {
       .lt("expires_at", new Date().toISOString())
       .is("lifted_at", null)
       .select("id");
-    if (error) return 0;
+    if (error) {
+      logger.warn({ err: error }, "expireOldCaps failed (non-fatal) — expired ceilings stay in force until the next pass");
+      return 0;
+    }
     return (data as any[])?.length ?? 0;
-  } catch {
+  } catch (err) {
+    logger.warn({ err }, "expireOldCaps threw (non-fatal)");
     return 0;
   }
 }
@@ -150,31 +222,38 @@ export async function liftCapsBySourceEvents(
   }
 }
 
-export interface ActiveCapsResult {
-  caps: TrustCap[];
-  /**
-   * True when trust_caps could not be read. DISTINCT from `caps: []`.
-   *
-   * "This user has no ceilings" and "I could not find out whether this user has
-   * ceilings" are opposite facts about a moderation subject, and the empty array
-   * asserted the first while meaning the second — the old body destructured
-   * `const { data }` and dropped `error` entirely, and supabase-js RETURNS
-   * errors rather than throwing, so every failure became a clean empty list.
-   */
-  failed: boolean;
-}
-
+/** Get all active caps for a user */
 /**
- * Get all active caps for a user, saying whether the read succeeded.
+ * The THREE-state caps read: caps were READ, or the table could not be read.
  *
- * Prefer this over `getActiveCaps` anywhere the answer informs a decision or is
- * shown to an admin: a silently-empty cap list reads as "nothing is holding this
- * account down", which is the single most misleading thing this table can say.
+ * `getActiveCaps` is deliberately fail-SOFT — it returns `[]` and logs, so a
+ * Passport projection is not taken down by a caps read. That is right for a
+ * display path and wrong for a GATE, and census-trust A17 found a gate that had
+ * therefore written its own read rather than use the service:
+ * `CompassActiveUserRewardEngine.hasActiveTrustCap` treats an unreadable table
+ * as CAPPED and withholds the boost, which `getActiveCaps` cannot express.
+ *
+ * So the service offers both postures instead of a caller choosing between
+ * obeying the rule and being correct.
+ *
+ * `unavailable` is DISTINCT from `ok` with an empty list. "This user has no
+ * ceilings" and "I could not find out whether this user has ceilings" are
+ * opposite facts about a moderation subject, and the old body asserted the
+ * first while meaning the second: it destructured `const { data }` and dropped
+ * `error` entirely, and supabase-js RETURNS errors rather than throwing, so
+ * every failure became a clean empty list. Prefer this over `getActiveCaps`
+ * anywhere the answer informs a decision or is shown to an admin — a
+ * silently-empty cap list reads as "nothing is holding this account down",
+ * which is the single most misleading thing this table can say.
  */
+export type ActiveCapsRead =
+  | { state: "ok"; caps: TrustCap[] }
+  | { state: "unavailable"; reason: string };
+
 export async function getActiveCapsResult(
   db: SupabaseClient,
   userId: string,
-): Promise<ActiveCapsResult> {
+): Promise<ActiveCapsRead> {
   try {
     const now = new Date().toISOString();
     const { data, error } = await db
@@ -184,39 +263,63 @@ export async function getActiveCapsResult(
       .is("lifted_at", null)
       .or(`expires_at.is.null,expires_at.gt.${now}`);
     if (error) {
-      logger.warn({ err: error, userId }, "getActiveCaps read failed — cap list is unknown, not empty");
-      return { caps: [], failed: true };
+      logger.warn({ err: error, userId }, "getActiveCapsResult read failed — reporting unavailable so a GATE can fail closed");
+      return { state: "unavailable", reason: String((error as any).message ?? (error as any).code ?? "db_error") };
     }
     return {
+      state: "ok",
       caps: ((data as any[]) ?? []).map((d) => ({
-        id:            d.id,
-        userId:        d.user_id,
-        category:      d.category,
-        ceilingScore:  d.ceiling_score,
-        reasonCode:    d.reason_code,
-        sourceEventId: d.source_event_id,
-        expiresAt:     d.expires_at,
-        createdAt:     d.created_at,
-      })),
-      failed: false,
+        id: d.id, userId: d.user_id, category: d.category, ceilingScore: d.ceiling_score,
+        reasonCode: d.reason_code, sourceEventId: d.source_event_id,
+        expiresAt: d.expires_at, createdAt: d.created_at,
+      })) as TrustCap[],
     };
   } catch (err) {
-    logger.warn({ err, userId }, "getActiveCaps threw — cap list is unknown, not empty");
-    return { caps: [], failed: true };
+    logger.warn({ err, userId }, "getActiveCapsResult threw — reporting unavailable");
+    return { state: "unavailable", reason: "threw" };
   }
 }
 
 /**
- * Array-only view of {@link getActiveCapsResult}, kept for call sites that have
- * no way to render the difference. It cannot distinguish a failed read from an
- * uncapped user — use getActiveCapsResult wherever that distinction can be shown.
+ * Array-only view of the same read, kept for call sites that have no way to
+ * render the difference. It CANNOT distinguish a failed read from an uncapped
+ * user — use {@link getActiveCapsResult} wherever that distinction can be shown.
  */
 export async function getActiveCaps(
   db: SupabaseClient,
   userId: string,
 ): Promise<TrustCap[]> {
-  return (await getActiveCapsResult(db, userId)).caps;
+  try {
+    const now = new Date().toISOString();
+    const { data, error } = await db
+      .from("trust_caps")
+      .select("id, user_id, category, ceiling_score, reason_code, source_event_id, expires_at, created_at")
+      .eq("user_id", userId)
+      .is("lifted_at", null)
+      .or(`expires_at.is.null,expires_at.gt.${now}`);
+    // Read-side view (recovery status, admin user page): stays fail-soft so a
+    // Passport projection is not taken down by a caps read, but it is logged —
+    // an empty list from a failed read must leave evidence. The SCORING read of
+    // the same table (TrustScoreService.loadCaps) fails closed.
+    if (error) {
+      logger.warn({ err: error, userId }, "getActiveCaps read failed — returning no caps to a display path (degraded)");
+      return [];
+    }
+    return ((data as any[]) ?? []).map((d) => ({
+      id:            d.id,
+      userId:        d.user_id,
+      category:      d.category,
+      ceilingScore:  d.ceiling_score,
+      reasonCode:    d.reason_code,
+      sourceEventId: d.source_event_id,
+      expiresAt:     d.expires_at,
+      createdAt:     d.created_at,
+    }));
+  } catch {
+    return [];
+  }
 }
+
 
 /** Apply caps triggered by a confirmed serious event */
 export async function applyEventCaps(
@@ -230,12 +333,23 @@ export async function applyEventCaps(
   // Keys are lowercase — callers must have already lowercased eventType
   // (TrustEventService.recordTrustEvent normalizes on entry; confirmEvent passes the
   // stored value which is always lowercase after that normalization).
+  //
+  // Keys must be the EMITTED vocabulary, not the TRUST_EVENT_TYPES constant
+  // name. The location findings are written by recordLocationTrustEvent as
+  // `gps_${suspicionReason}` — `gps_impossible_speed` and `gps_coordinate_jump`
+  // — so the entry here was `coordinate_jump` for a type nobody has ever
+  // emitted, exactly the mismatch CHECKIN_CLUSTER_EVENT_TYPES documents for the
+  // gaming scan. A coordinate jump is emitted at 'moderate' and is applied
+  // rather than queued, so today this entry is reached only if one is ever
+  // confirmed through the adjudicated path; the key is corrected so that path
+  // caps the right thing when it happens, and so the map stops naming an event
+  // that does not exist.
   const capMap: Record<string, { category: TrustCategory; ceiling: number; reasonCode: string; expiresInDays?: number }[]> = {
     plan_no_show:              [{ category: "plan_attendance",  ceiling: 60, reasonCode: "no_show",              expiresInDays: 30 }],
     behavior_report_confirmed: [{ category: "respect_safety",  ceiling: 40, reasonCode: "behavior_confirmed" }],
     fake_gps_confirmed:        [{ category: "location_honesty", ceiling: 35, reasonCode: "fake_gps_confirmed"                      }],
     gps_impossible_speed:      [{ category: "location_honesty", ceiling: 55, reasonCode: "impossible_speed",     expiresInDays: 14 }],
-    coordinate_jump:           [{ category: "location_honesty", ceiling: 55, reasonCode: "coordinate_jump",      expiresInDays: 7  }],
+    gps_coordinate_jump:       [{ category: "location_honesty", ceiling: 55, reasonCode: "coordinate_jump",      expiresInDays: 7  }],
     content_removed:           [{ category: "content_quality",  ceiling: 50, reasonCode: "content_removed",      expiresInDays: 30 }],
     message_report_confirmed:  [{ category: "communication",    ceiling: 45, reasonCode: "message_report",       expiresInDays: 60 }],
   };

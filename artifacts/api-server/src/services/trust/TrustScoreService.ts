@@ -8,6 +8,13 @@
  * Derives public trust level and persists to trust_profiles.
  *
  * Triggered after new events are applied or caps change.
+ *
+ * FAIL-CLOSED ON READ: if trust_settings, trust_events or trust_caps cannot be
+ * read, `recalculateTrustScore` THROWS and writes nothing. Every caller already
+ * treats a rejection as "this recalculation did not happen" (the scheduler
+ * counts it in recalcFailures; the admin paths `.catch(() => {})`). The
+ * alternative — score against empty inputs — persists a neutral, uncapped,
+ * "measured and empty" profile over a real one.
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { TrustCategory } from "./TrustEventService.js";
@@ -39,8 +46,19 @@ const logger = rootLogger.child({ service: "TrustScoreService" });
 export class TrustInputUnavailableError extends Error {
   /** Which input failed — 'settings' | 'events' | 'caps'. */
   readonly input: TrustScoreInput;
-  constructor(input: TrustScoreInput, detail: string) {
-    super(`trust ${input} unavailable — refusing to persist a score: ${detail}`);
+  /**
+   * The message keeps the `trust_<input> read failed` wording the three throw
+   * sites already used, because that is what callers and tests read it by. The
+   * CLASS is the addition: `input` says which read failed without parsing prose,
+   * and `instanceof` lets a caller separate "could not read" from any other
+   * throw. Anything catching a plain Error is unaffected.
+   */
+  constructor(input: TrustScoreInput, detail: string, userId?: string) {
+    super(
+      `recalculateTrustScore: trust_${input} read failed` +
+      (userId ? ` for ${userId}` : "") +
+      ` — ${detail} (refusing to persist a score)`,
+    );
     this.name = "TrustInputUnavailableError";
     this.input = input;
   }
@@ -53,15 +71,34 @@ function describeDbError(error: any): string {
   return String(error?.message ?? error?.code ?? "db_error");
 }
 
-export type PublicTrustLevel =
-  | "new_traveler"
-  | "building_trust"
-  | "reliable_traveler"
-  | "trusted_traveler"
-  | "highly_trusted"
-  | "city_trusted";
+/**
+ * The public trust levels, as a RUNTIME vocabulary.
+ *
+ * The union used to exist only in the type system, so nothing could ask at
+ * runtime "is this string one of the six?" — and `publicTrustLabel` answers an
+ * unrecognised level with the "New Traveler" default rather than complaining.
+ * That combination means a writer persisting a level outside this list degrades
+ * every reader's label silently. Exported so a test can assert the writer's
+ * output against the declared set instead of against `typeof x === "string"`,
+ * which is the assertion that let the question go unasked.
+ */
+export const PUBLIC_TRUST_LEVELS = [
+  "new_traveler",
+  "building_trust",
+  "reliable_traveler",
+  "trusted_traveler",
+  "highly_trusted",
+  "city_trusted",
+] as const;
 
-const ALL_CATEGORIES: TrustCategory[] = [
+export type PublicTrustLevel = (typeof PUBLIC_TRUST_LEVELS)[number];
+
+/** Narrow an arbitrary persisted value to a declared public trust level. */
+export function isPublicTrustLevel(value: unknown): value is PublicTrustLevel {
+  return typeof value === "string" && (PUBLIC_TRUST_LEVELS as readonly string[]).includes(value);
+}
+
+export const ALL_CATEGORIES: TrustCategory[] = [
   "plan_attendance","host_quality","communication","respect_safety",
   "location_honesty","content_quality","community_value",
   "guide_accuracy","passport_authenticity",
@@ -107,17 +144,19 @@ async function loadSettings(db: SupabaseClient): Promise<Settings> {
   {
     const { data, error } = await db.from("trust_settings").select("*").eq("id", 1).maybeSingle();
     if (error) {
-      // NOT "use defaults". The weights and the six level thresholds are what
-      // turn nine category numbers into `overall_score` and `public_level`, and
-      // `public_level` is a capability grant. Silently swapping an admin's
-      // configured thresholds for the built-in ones and then WRITING the result
-      // publishes a score computed under rules nobody chose. Absence of a row is
-      // still legitimately "defaults" (see below) — a failed READ is not.
+      // A failed read is NOT "use the defaults". The defaults are what the
+      // engine ships with; the row is what an admin has set. The weights and
+      // the six level thresholds are what turn nine category numbers into
+      // `overall_score` and `public_level`, and `public_level` is a capability
+      // grant — so scoring against the wrong weights and persisting the result
+      // publishes a score computed under rules nobody chose, silently. The
+      // recalculation aborts and the existing profile stands.
       logger.warn({ err: error }, "loadSettings failed — refusing to score");
       throw new TrustInputUnavailableError("settings", describeDbError(error));
     }
-    // A missing row IS a legitimate "use the defaults": trust_settings is a
-    // singleton whose columns all carry the same defaults this object holds.
+    // A missing row IS a legitimate "use the defaults" (the seed migration not
+    // yet run): trust_settings is a singleton whose columns all carry the same
+    // defaults this object holds, so there is nothing to disagree with.
     if (!data) return DEFAULT_SETTINGS;
     const d = data as any;
     // Fall back to the default ONLY when the stored value is null/absent/NaN —
@@ -181,10 +220,16 @@ async function loadEvents(db: SupabaseClient, userId: string): Promise<any[]> {
     // handed canHostTrip / canUseCrewLocation / canContributeLiveIntel to every
     // account that had previously been below reliable.
     //
+    // Since migration 2371 it is worse still: the fabricated row also records
+    // evidence_count = 0, which means MEASURED AND EMPTY — the read failure is
+    // stamped as a measurement.
+    //
     // A user who genuinely has no events is a DIFFERENT case and is still
     // handled downstream — it reaches the caller as an empty array, not as this.
+    // The recalculation aborts; the previous profile stays as it was, and the
+    // scheduler counts the failure and retries next pass.
     logger.warn({ err: error, userId }, "loadEvents failed — refusing to score");
-    throw new TrustInputUnavailableError("events", describeDbError(error));
+    throw new TrustInputUnavailableError("events", describeDbError(error), userId);
   }
   return (data as any[]) ?? [];
 }
@@ -211,8 +256,9 @@ async function loadCaps(
     // ceiling of 40 out of the profile, and re-granting the capabilities the
     // ceiling existed to withhold. Failing the whole recalculation is the only
     // safe direction: a stale capped row beats a fresh uncapped one.
+    // Abort instead; the capped profile stands.
     logger.warn({ err: error, userId }, "loadCaps failed — refusing to score");
-    throw new TrustInputUnavailableError("caps", describeDbError(error));
+    throw new TrustInputUnavailableError("caps", describeDbError(error), userId);
   }
   const caps: Record<string, number> = {};
   for (const row of (data as any[]) ?? []) {
@@ -303,6 +349,32 @@ export interface TrustScoreResult {
   public_level: PublicTrustLevel;
   categories: Record<TrustCategory, number>;
   capsApplied: string[];
+  /**
+   * How much evidence stands behind the scores (Passport §9 "Trust Confidence",
+   * §10 "an 82 with high evidence is not equivalent to an 82 with little").
+   *
+   *   evidenceWeight — decay-weighted count of the applied/confirmed events in
+   *                    the 365-day scoring window: the same quantity, decay and
+   *                    window the category scores are built from.
+   *   evidenceCount  — the undecayed count of those events.
+   *
+   * `null` means NOT YET MEASURED — a profile written before migration 2371 or
+   * by a build that predates it — and must not be read as zero. `0` means
+   * measured and empty: every score on the row is the neutral 50 with nothing
+   * behind it. Banding into words is the presenting surface's decision.
+   */
+  evidenceWeight?: number | null;
+  evidenceCount?: number | null;
+}
+
+/**
+ * Total decayed weight and raw count of the events a recalculation scored.
+ * Exported for tests; the numbers are persisted by recalculateTrustScore.
+ */
+export function measureEvidence(events: readonly any[], halfLifeDays: number): { weight: number; count: number } {
+  let weight = 0;
+  for (const e of events) weight += decayWeight(e.created_at, halfLifeDays);
+  return { weight: Math.round(weight * 1000) / 1000, count: events.length };
 }
 
 /** Recalculate all scores for a user and persist to trust_profiles */
@@ -344,6 +416,7 @@ export async function recalculateTrustScore(
   ) / 100;
 
   const public_level = scoreToLevel(overall, settings);
+  const evidence = measureEvidence(events, halfLife);
 
   // Persist (non-fatal — return computed result even if persist fails)
   {
@@ -364,6 +437,26 @@ export async function recalculateTrustScore(
       updated_at:            new Date().toISOString(),
     }, { onConflict: "user_id" });
     if (upsertError) logger.warn({ err: upsertError, userId }, "trust_profiles persist failed (non-fatal)");
+    else {
+      // The evidence columns are written in a SEPARATE statement on purpose.
+      // Migration 2371 adds them; a database that has not applied it (production
+      // at the time of writing) rejects a statement that names them (PGRST204)
+      // — and PostgREST rejects the WHOLE statement. Folding them into the
+      // upsert above would therefore stop every score persist on such a
+      // database, silently, exactly as lib/mediaAssets did for three weeks
+      // (see migration 2336's header). Here only the evidence write is lost,
+      // it is logged with the migration number, and the score still lands.
+      const { error: evidenceError } = await db
+        .from("trust_profiles")
+        .update({ evidence_weight: evidence.weight, evidence_count: evidence.count })
+        .eq("user_id", userId);
+      if (evidenceError) {
+        logger.warn(
+          { err: evidenceError, userId },
+          "trust_profiles evidence persist failed (non-fatal) — is migration 2371_trust_profiles_evidence applied?",
+        );
+      }
+    }
   }
 
   return {
@@ -372,6 +465,8 @@ export async function recalculateTrustScore(
     public_level,
     categories: categories as Record<TrustCategory, number>,
     capsApplied,
+    evidenceWeight: evidence.weight,
+    evidenceCount: evidence.count,
   };
 }
 
@@ -383,38 +478,187 @@ export async function recalculateTrustScore(
  * identity card, TrustScreen and the Rent-a-Buddy card can never disagree: it
  * returns exactly `trust_profiles.overall_score` — the weighted, decay-aware,
  * cap-clamped number recalculateTrustScore persists — rounded to an integer for
- * display. It performs NO recalculation and NO write (safe on a GET path); a
- * user with no row yet reads `null` (rendered as the non-stigmatizing "New
- * Traveler" label, never a fabricated number).
+ * display. It performs NO recalculation and NO write (safe on a GET path).
+ *
+ * `null` MEANS TWO THINGS AND THE DOCBLOCK USED TO NAME ONLY ONE. It said "a
+ * user with no row yet reads null (rendered as the non-stigmatizing 'New
+ * Traveler' label, never a fabricated number)". An UNREADABLE `trust_profiles`
+ * also reads `null`, and "New Traveler" is then a fabricated fact about a person
+ * — exactly the number the sentence promised never to invent, wearing a label
+ * instead of a digit.
+ *
+ * The return type stays `number | null` because both callers
+ * (`lib/trustScore.computeTrustScore` and
+ * `PassportProjectionService.buildTrustSummary`) ALREADY establish the third
+ * state for themselves — one through `getTrustProfileResult`, the other through
+ * `SafeTrustSummary.profileUnavailable` — and widen it into a `degraded` flag on
+ * their own responses. Widening this signature would churn both for a state they
+ * already hold. What was genuinely missing is that an outage passed through here
+ * SILENTLY: nothing logged, so a null from a broken database looked exactly like
+ * a null from a new account in the logs as well as in the type.
+ *
+ * A caller that does NOT separately establish the state must use
+ * `getTrustProfileResult` directly. There is a test pinning that both current
+ * callers do.
  */
 export async function getDisplayTrustScore(
   db: SupabaseClient,
   userId: string,
 ): Promise<number | null> {
-  const profile = await getTrustProfile(db, userId);
-  if (!profile || profile.overall_score === null || profile.overall_score === undefined) return null;
+  const read = await getTrustProfileResult(db, userId);
+  if (read.state === "unavailable") {
+    logger.warn(
+      { userId, reason: read.reason },
+      "getDisplayTrustScore: trust_profiles unreadable — returning null, which a caller that has not " +
+        "established the state for itself will render as 'New Traveler'",
+    );
+    return null;
+  }
+  if (read.state !== "ok") return null;
+  const profile = read.profile;
+  if (profile.overall_score === null || profile.overall_score === undefined) return null;
   const n = Number(profile.overall_score);
   return Number.isFinite(n) ? Math.round(n) : null;
 }
 
-/** Load current trust profile without recalculating */
+/**
+ * The BATCH display read — many users, one query, three states.
+ *
+ * ── WHY THE SERVICE HAD TO GROW THIS ─────────────────────────────────────────
+ *
+ * `TrustScoreService:353-364` names `getDisplayTrustScore` "the single source
+ * every Passport surface must read", and census-trust A17 records eleven direct
+ * `trust_profiles` / `trust_caps` reads outside `services/trust` that ignore it.
+ * Three of those eleven are LIST paths — an events host list, the buddy
+ * marketplace, the pulse feed — and they read the table directly for a reason
+ * the rule did not answer: the canonical helper is per-user, so obeying it on a
+ * fifty-row feed meant fifty round trips. There was no honest way to comply.
+ *
+ * So the seam is widened rather than the rule waived, exactly as
+ * `listRestrictionsForAudit` did for the restriction table.
+ *
+ * ── AND IT REFUSES, BECAUSE ALL THREE CALLERS FAILED OPEN ────────────────────
+ *
+ * Every one of those three wrote `const { data: trustRows } = await …` with the
+ * error unbound. supabase-js RESOLVES on a database failure, so an unreadable
+ * `trust_profiles` produced an empty result — "nobody has any trust" — and two
+ * of the three then substituted the neutral 50 for every missing user, which is
+ * census-passport P45's defect ("every user is described as an Established
+ * member") reproduced three more times. A map that cannot be built is reported
+ * as unavailable; a map that is genuinely empty is reported as an empty map.
+ */
+export type DisplayTrustScoresRead =
+  | { state: "ok"; scores: Map<string, number> }
+  | { state: "unavailable"; reason: string };
+
+export async function getDisplayTrustScores(
+  db: SupabaseClient,
+  userIds: readonly string[],
+): Promise<DisplayTrustScoresRead> {
+  const ids = [...new Set(userIds)].filter(Boolean);
+  if (ids.length === 0) return { state: "ok", scores: new Map() };
+
+  const { data, error } = await db
+    .from("trust_profiles")
+    .select("user_id, overall_score")
+    .in("user_id", ids);
+
+  if (error) {
+    logger.warn(
+      { err: error, count: ids.length },
+      "getDisplayTrustScores: trust_profiles unreadable — reporting unavailable rather than an empty score map",
+    );
+    return { state: "unavailable", reason: String((error as any).message ?? (error as any).code ?? "db_error") };
+  }
+
+  const scores = new Map<string, number>();
+  for (const r of ((data as Array<{ user_id: string; overall_score: unknown }>) ?? [])) {
+    // A row whose score is null or unparseable is NOT a zero and NOT a 50: it is
+    // a user with no usable score, and it stays absent from the map so the caller
+    // makes that decision explicitly.
+    //
+    // The null check is separate and comes FIRST because `Number(null)` is 0 and
+    // `Number.isFinite(0)` is true — so the obvious one-liner turns a null score
+    // into a hard zero, which is a fabricated measurement of the worst kind: the
+    // lowest one available. Caught by src/test/trustSeamOwnership.test.ts on the
+    // seam's first run, in the seam written to stop exactly this.
+    const raw = r.overall_score;
+    if (raw === null || raw === undefined || raw === "") continue;
+    const n = Number(raw);
+    if (Number.isFinite(n)) scores.set(r.user_id, Math.round(n));
+  }
+  return { state: "ok", scores };
+}
+
+/**
+ * The THREE-state read of `trust_profiles`: the profile was READ, the user has
+ * no profile yet, or the row could not be read AT ALL.
+ *
+ * ── WHY THIS EXISTS ─────────────────────────────────────────────────────────
+ * `lib/http.ts` and `services/ranking/CreatorActivityScoreService.ts` both cite
+ * `TrustProfileRead` / `getTrustProfileResult` HERE as the canonical union for
+ * exactly this distinction ("ok | absent | unavailable, with the failure
+ * carrying its own reason") and copy it. It did not exist. `getTrustProfile`
+ * was a TWO-state read: supabase-js RESOLVES on a database error, `.error` was
+ * never bound, and `if (!data) return null` collapsed an unreadable row onto
+ * the same `null` a brand-new account produces. Every consumer then applied the
+ * new-account default, so an unreadable `trust_profiles` displayed a Highly
+ * Trusted traveller as "New Traveler" — a downgrade shown to their peers as
+ * fact, built out of a database hiccup, with nothing logged.
+ *
+ * `getTrustProfile` keeps its `| null` signature (both non-ok states collapse to
+ * null) so callers that cannot express the difference are unchanged; callers
+ * that CAN read this instead.
+ */
+export type TrustProfileRead =
+  | { state: "ok"; profile: TrustScoreResult }
+  | { state: "absent" }
+  | { state: "unavailable"; reason: string };
+
+export async function getTrustProfileResult(
+  db: SupabaseClient,
+  userId: string,
+): Promise<TrustProfileRead> {
+  const { data, error } = await db
+    .from("trust_profiles")
+    .select("*")
+    .eq("user_id", userId)
+    .maybeSingle();
+  if (error) {
+    const reason = String((error as any).message ?? (error as any).code ?? "db_error");
+    logger.warn({ err: error, userId }, "trust_profiles unreadable — not a new account");
+    return { state: "unavailable", reason };
+  }
+  if (!data) return { state: "absent" };
+  return { state: "ok", profile: shapeProfile(userId, data) };
+}
+
+/** Load current trust profile without recalculating. `null` for absent OR unreadable. */
 export async function getTrustProfile(
   db: SupabaseClient,
   userId: string,
 ): Promise<TrustScoreResult | null> {
-  try {
-    const { data } = await db
-      .from("trust_profiles")
-      .select("*")
-      .eq("user_id", userId)
-      .maybeSingle();
-    if (!data) return null;
+  const read = await getTrustProfileResult(db, userId);
+  return read.state === "ok" ? read.profile : null;
+}
+
+function shapeProfile(userId: string, data: unknown): TrustScoreResult {
+  {
     const d = data as any;
+    const num = (v: unknown): number | null => {
+      if (v === null || v === undefined) return null;
+      const n = Number(v);
+      return Number.isFinite(n) ? n : null;
+    };
     return {
       userId,
       overall_score: d.overall_score,
       public_level:  d.public_level,
       capsApplied:   [],
+      // NULL (pre-2371 row, or a database without the columns) stays null:
+      // "not measured" is a different answer from "measured, nothing there".
+      evidenceWeight: num(d.evidence_weight),
+      evidenceCount:  num(d.evidence_count),
       categories: {
         plan_attendance:       d.plan_attendance,
         host_quality:          d.host_quality,
@@ -427,7 +671,5 @@ export async function getTrustProfile(
         passport_authenticity: d.passport_authenticity,
       },
     };
-  } catch {
-    return null;
   }
 }

@@ -38,6 +38,7 @@ import {
   extractCitations,
   resolveCitationPath,
   resolveCoveredFiles,
+  SKIP_DIRS,
 } from "../../scripts/check-doc-citations.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -243,6 +244,221 @@ describe("evaluateCitations over a synthetic tree", () => {
 
 // ---------------------------------------------------------------------------
 
+describe("Expo dynamic-route paths — `app/messages/[id].tsx`", () => {
+  /**
+   * WHY THE GRAMMAR HAS SQUARE BRACKETS IN IT.
+   *
+   * The client is an Expo Router app, so its route files are literally named
+   * `[id].tsx`, `[slug].tsx`, `[handle].tsx`. The path segment class excluded
+   * `[` and `]`, which made those citations INVISIBLE — and invisible is worse
+   * than unchecked here, because the line-local inheritance rule then resolves a
+   * following bare `:NNN` against whatever file WAS visible.
+   *
+   * Measured on the real corpus: census-telegraph.md:780 cites
+   * `app/messages/[id].tsx:1247-1252` and `:1260-1266` side by side. The first
+   * was not extracted at all; the second inherited `src/services/messaging.ts`
+   * (767 lines) from earlier on the line and was reported as out of range. The
+   * citation was right and the grammar was wrong — a false failure and a missed
+   * one from a single omission. 62 lines across docs/architecture/ carry a
+   * bracketed path.
+   */
+  it("extracts a bracketed route path as its own citation", () => {
+    const { citations } = extractCitations("see `app/messages/[id].tsx:1247-1252`");
+    assert.equal(citations.length, 1);
+    assert.equal(citations[0]?.file, "app/messages/[id].tsx");
+    assert.equal(citations[0]?.spec, "1247-1252");
+  });
+
+  it("a following bare :NNN inherits the BRACKETED file, not the one before it", () => {
+    // This is the whole point. Without brackets in the grammar the second spec
+    // silently belongs to messaging.ts.
+    const { citations } = extractCitations(
+      "`src/services/messaging.ts:238`, then `app/messages/[id].tsx:1247-1252` and `:1260-1266`",
+    );
+    assert.deepEqual(
+      citations.map((c) => `${c.file}:${c.spec}`),
+      ["src/services/messaging.ts:238", "app/messages/[id].tsx:1247-1252", "app/messages/[id].tsx:1260-1266"],
+    );
+  });
+
+  it("resolves a bracketed path by its real basename", () => {
+    const byBasename = new Map<string, string[]>([
+      ["[id].tsx", ["travel-buddy-standalone/app/messages/[id].tsx"]],
+    ]);
+    assert.deepEqual(
+      resolveCitationPath("app/messages/[id].tsx", byBasename),
+      ["travel-buddy-standalone/app/messages/[id].tsx"],
+    );
+  });
+
+  it("does not swallow a markdown link into the path", () => {
+    // `[text](path.ts:12)` must not extract `[text](path.ts` — the closing
+    // paren and the opening one are outside the segment class, so the path can
+    // only be what follows `(`.
+    const { citations } = extractCitations("[the runner](scripts/run.ts:12) does it");
+    assert.deepEqual(citations.map((c) => c.file), ["scripts/run.ts"]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+
+describe("an anchor that holds in TWO candidate files decides nothing", () => {
+  /**
+   * THE HOLE THIS CLOSES, AND WHY IT IS A RATCHET AT ZERO.
+   *
+   * `holding.length === 0` was the only anchor failure. "Holds for at least one
+   * candidate" is the right rule when the other candidates are wrong — a 45-line
+   * `app/messages/[id].tsx` beside a 2973-line one is decided by line count
+   * before the anchor is ever consulted. It is the WRONG rule when two
+   * candidates are BOTH long enough and the anchor sits in both, because then
+   * the check is green and neither the checker nor a reader knows which file the
+   * citation meant. Edit the file the author actually meant and the citation
+   * stays green on the strength of the copy they did not mean: a stale citation
+   * wearing a passing anchor, indistinguishable from a correct one.
+   *
+   * MEASURED BEFORE IT WAS WRITTEN, over the real corpus at 3eaf2436f: 648
+   * ambiguous citations, of which 413 have two or more candidates long enough to
+   * contain the cited line, of which 30 carry an anchor, of which 0 hold in more
+   * than one file. So this forbids a shape that does not yet exist rather than
+   * grandfathering one that does — the strongest kind of ratchet, and the reason
+   * it could be added without repointing a single citation.
+   *
+   * The remedy is always available and always cheap: spell enough of the path to
+   * name one file.
+   */
+  const tree: Record<string, string> = {
+    "docs/x/GUIDE.md": [
+      "both copies carry it: `services/discovery.ts:2#sharedLine`",
+      "only the server copy carries it: `services/discovery.ts:3#serverOnly`",
+    ].join("\n"),
+    "artifacts/api-server/src/services/discovery.ts": ["a", "sharedLine here", "serverOnly here"].join("\n"),
+    "travel-buddy-standalone/src/services/discovery.ts": ["a", "sharedLine here", "clientOnly here"].join("\n"),
+  };
+  const byBasename = new Map<string, string[]>([
+    ["discovery.ts", [
+      "artifacts/api-server/src/services/discovery.ts",
+      "travel-buddy-standalone/src/services/discovery.ts",
+    ]],
+    ["GUIDE.md", ["docs/x/GUIDE.md"]],
+  ]);
+  const readFile = (rel: string): string | null => tree[rel] ?? null;
+  const res = evaluateCitations({ coveredFiles: ["docs/x/GUIDE.md"], readFile, byBasename });
+
+  it("refuses the citation whose anchor holds in both files", () => {
+    assert.equal(res.undecidable.length, 1);
+    assert.equal(res.undecidable[0]?.cited, "services/discovery.ts:2#sharedLine");
+    assert.match(String(res.undecidable[0]?.reason), /holds at :2 in 2 different files/);
+    assert.match(
+      String(res.undecidable[0]?.detail),
+      /artifacts\/api-server\/src\/services\/discovery\.ts AND travel-buddy-standalone\/src\/services\/discovery\.ts/,
+    );
+  });
+
+  it("leaves alone the citation an anchor DOES decide", () => {
+    // `serverOnly` is on line 3 of the server copy and nowhere in the client
+    // copy, so the anchor picks one file. That is an ambiguous path made
+    // unambiguous by its anchor, which is exactly what an anchor is for — and
+    // charging it here would make the pass a false positive on 30 real
+    // citations.
+    assert.equal(
+      res.undecidable.some((f) => f.cited.includes("#serverOnly")),
+      false,
+    );
+  });
+
+  it("does not double-charge: an undecidable anchor is not ALSO a bad anchor", () => {
+    assert.equal(res.badAnchor.length, 0);
+  });
+
+  it("SEEN GOING RED: make the second anchor shared and the count rises to 2", () => {
+    // A green run proves nothing until it has been seen go red. Mutate the
+    // client copy so `serverOnly` appears there too, and the citation that
+    // passed above must now be refused.
+    const mutated: Record<string, string> = { ...tree,
+      "travel-buddy-standalone/src/services/discovery.ts": ["a", "sharedLine here", "serverOnly here"].join("\n") };
+    const red = evaluateCitations({
+      coveredFiles: ["docs/x/GUIDE.md"],
+      readFile: (rel: string): string | null => mutated[rel] ?? null,
+      byBasename,
+    });
+    assert.equal(red.undecidable.length, 2);
+  });
+
+  it("SEEN GOING GREEN: spelling the path to name one file clears it", () => {
+    // The documented remedy has to actually work, or the pass is a trap.
+    const spelled: Record<string, string> = { ...tree,
+      "docs/x/GUIDE.md": "`artifacts/api-server/src/services/discovery.ts:2#sharedLine`" };
+    const green = evaluateCitations({
+      coveredFiles: ["docs/x/GUIDE.md"],
+      readFile: (rel: string): string | null => spelled[rel] ?? null,
+      byBasename,
+    });
+    assert.equal(green.undecidable.length, 0);
+    assert.equal(green.badAnchor.length, 0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+
+describe("an anchored citation that goes OUT OF RANGE is still an anchored citation", () => {
+  /**
+   * THE DEFECT THIS PINS, AND HOW IT WAS FOUND.
+   *
+   * `anchored` used to be incremented AFTER the range checks, so a citation
+   * whose file had shrunk past the cited line bailed out before ever being
+   * counted. MIN_ANCHORED_CITATIONS sits AT the measured count by the
+   * SHRINK-ONLY rule, so one moved file dropped the count below the floor and
+   * the checker exited 2 with "restore the anchors, or lower the floor" — about
+   * a citation whose anchor nobody had touched. The failure was real; the
+   * diagnosis pointed at the wrong thing, and at an exit code that means "this
+   * checker could not run honestly" rather than "your citation is stale".
+   *
+   * Found by mutation, not by reading: changing a live citation in
+   * wall-certification.md from `WallDiversityService.ts:218#applyFeedDiversity`
+   * to `:263` in a 254-line file produced exit 2 and that message. With the
+   * count taken first, the same mutation now produces exit 1 and names the
+   * range failure. The floor asks how many claims in the corpus are ANCHORED,
+   * which is a property of the text; whether an anchor currently HOLDS is what
+   * badAnchor is for.
+   */
+  const tree: Record<string, string> = {
+    "docs/x/GUIDE.md": [
+      "anchored and true: `src/thing.ts:2#beta`",
+      "anchored, file has shrunk past it: `src/thing.ts:99#beta`",
+      "anchored, file gone entirely: `src/ghost.ts:1#beta`",
+      "not anchored, also past the end: `src/thing.ts:98`",
+    ].join("\n"),
+    "src/thing.ts": ["alpha", "beta", "gamma"].join("\n"),
+  };
+  const byBasename = new Map<string, string[]>([
+    ["thing.ts", ["src/thing.ts"]],
+    ["GUIDE.md", ["docs/x/GUIDE.md"]],
+  ]);
+  const readFile = (rel: string): string | null => tree[rel] ?? null;
+  const res = evaluateCitations({ coveredFiles: ["docs/x/GUIDE.md"], readFile, byBasename });
+
+  it("counts all three anchored citations, including the two that cannot resolve", () => {
+    assert.equal(res.total, 4);
+    assert.equal(res.anchored, 3);
+  });
+
+  it("reports both unresolvable citations as RANGE failures", () => {
+    assert.deepEqual(
+      res.badRange.map((f) => f.cited).sort(),
+      ["src/ghost.ts:1#beta", "src/thing.ts:98", "src/thing.ts:99#beta"],
+    );
+  });
+
+  it("charges neither of them a second time as a broken anchor", () => {
+    // One defect, one finding. A citation pointing past the end of its file is
+    // stale for one reason, and reporting it twice would inflate the count the
+    // CLI prints and make the fix look bigger than it is.
+    assert.deepEqual(res.badAnchor, []);
+  });
+});
+
+// ---------------------------------------------------------------------------
+
 describe("the real corpus — every covered citation resolves and every anchor holds", () => {
   const { files, missing } = resolveCoveredFiles(REPO_ROOT, COVERED);
 
@@ -258,7 +474,9 @@ describe("the real corpus — every covered citation resolves and every anchor h
         if (e.isSymbolicLink()) continue;
         const full = path.join(dir, e.name);
         if (e.isDirectory()) {
-          if (e.name === ".git" || e.name === "node_modules") continue;
+          // The script's own skip list, so the two walkers cannot disagree
+          // about which tree a citation resolves against (see SKIP_DIRS).
+          if (SKIP_DIRS.has(e.name)) continue;
           walk(full);
         } else if (e.isFile()) {
           const rel = path.relative(REPO_ROOT, full);
@@ -288,11 +506,101 @@ describe("the real corpus — every covered citation resolves and every anchor h
       res.badAnchor.map((f) => `${f.doc}:${f.line} ${f.cited} — ${String(f.reason)}`),
       [],
     );
+    // A citation written in a shape NO pass can bind is not counted, not
+    // checked and not reported, so an empty badRange/badAnchor says nothing
+    // about it. Eight such citations sat in this corpus until 2026-09-16 and
+    // four of them were stale. Asserting it HERE is what stops that recurring.
+    assert.deepEqual(
+      res.unbindable.map((f) => `${f.doc}:${f.line} ${f.cited} — ${String(f.reason)}`),
+      [],
+    );
     assert.ok(
       res.anchored >= MIN_ANCHORED_CITATIONS,
       `${res.anchored} anchored citations, floor ${MIN_ANCHORED_CITATIONS}`,
     );
   });
+});
+
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+
+/**
+ * A BARE `:NNN#anchor` WHOSE ANCHOR CONTAINS A QUOTE IS MATCHED BY NO PASS.
+ *
+ * The SPACE form was refused when it was found; the QUOTE form reaches the same
+ * hole by a different route and was left open until 2026-09-16. ANCHOR excludes
+ * `"` and `'` because it also reads UNBACKTICKED prose, where a quote ends the
+ * anchor. So in `` `:12#a("b",` `` INHERITED_RE matches `a(`, stops at the
+ * quote, and then demands a closing backtick that is several characters away.
+ * FULL_ANCHOR_RE needs the path spelled out. The unbindable refusal wanted
+ * whitespace and there is none. Result: not counted, not checked, not reported.
+ *
+ * Unlike the space form, this shape WAS in use when it was refused — eight
+ * citations over fifteen occurrences across four censuses, FOUR of them stale.
+ * These cases are written so that a future loosening of the refusal (say, back
+ * to `\s` alone) fails here rather than silently un-checking those citations
+ * again.
+ */
+describe("a bare `:NNN#anchor` with a QUOTE in the anchor is refused, not ignored", () => {
+  const src = ['alpha', '.ilike("home_country", pat)', 'gamma'].join("\n");
+  const byBasename = new Map<string, string[]>([
+    ["thing.ts", ["src/thing.ts"]],
+    ["GUIDE.md", ["docs/x/GUIDE.md"]],
+  ]);
+  const evalOne = (doc: string) =>
+    evaluateCitations({
+      coveredFiles: ["docs/x/GUIDE.md"],
+      readFile: (rel: string): string | null =>
+        rel === "docs/x/GUIDE.md" ? doc : rel === "src/thing.ts" ? src : null,
+      byBasename,
+    });
+
+  it("refuses a DOUBLE-quoted anchor", () => {
+    const res = evalOne('`src/thing.ts` reads at `:2#.ilike("home_country",`');
+    assert.equal(res.unbindable.length, 1);
+    assert.match(String(res.unbindable[0]?.cited), /home_country/);
+  });
+
+  it("refuses a SINGLE-quoted anchor", () => {
+    const res = evalOne("`src/thing.ts` reads at `:2#x('my_cities',`");
+    assert.equal(res.unbindable.length, 1);
+  });
+
+  it("still refuses the SPACE form the rule was originally written for", () => {
+    const res = evalOne("`src/thing.ts` reads at `:2#count: rows.length`");
+    assert.equal(res.unbindable.length, 1);
+  });
+
+  it("a quote-anchored citation is NOT silently counted as a passing citation", () => {
+    // The whole point: before the fix this produced total=0 and zero findings,
+    // which reads identically to a document with no citations in it.
+    const res = evalOne('`src/thing.ts` reads at `:2#.ilike("home_country",`');
+    assert.equal(res.badAnchor.length, 0);
+    assert.equal(res.badRange.length, 0);
+    assert.equal(res.unbindable.length, 1);
+  });
+
+  it("spelling the path is the fix, and then the anchor is actually CHECKED", () => {
+    const ok = evalOne('`src/thing.ts:2#.ilike("home_country", pat)`');
+    assert.equal(ok.unbindable.length, 0);
+    assert.equal(ok.badAnchor.length, 0);
+    assert.equal(ok.badRange.length, 0);
+
+    // and a WRONG line now fails, which is the capability that was missing
+    const stale = evalOne('`src/thing.ts:1#.ilike("home_country", pat)`');
+    assert.equal(stale.unbindable.length, 0);
+    assert.equal(stale.badAnchor.length, 1);
+  });
+
+  it("a FULL citation whose anchor holds a quote is fine and stays fine", () => {
+    // Only the BARE inherited form was ever affected. `mapObjects.ts:105#"x",`
+    // shapes bind through FULL_ANCHOR_RE and must not be caught by the refusal.
+    const res = evalOne('`src/thing.ts:2#.ilike("home_country", pat)`');
+    assert.equal(res.unbindable.length, 0);
+    assert.equal(res.total, 1);
+  });
+
 });
 
 // ---------------------------------------------------------------------------

@@ -10,6 +10,7 @@ import { useEffect, useState, useRef, useCallback } from 'react';
 import type { DiscoveryItem, TravelerPick } from '../data/discovery.ts';
 import { getCommunityPlaces } from '../services/discovery.ts';
 import type { CommunityPlaceItem, DiscoveryPlace } from '../services/discovery.ts';
+import { communityBylineText } from '../features/discovery/communityByline.ts';
 
 function timeAgo(isoString: string): string {
   const diff = Date.now() - new Date(isoString).getTime();
@@ -22,6 +23,36 @@ function timeAgo(isoString: string): string {
   return `${Math.floor(days / 7)}w ago`;
 }
 
+/**
+ * The served submitter, mapped to the byline shape the wall cards take.
+ * census-discovery C19 / §6 D2 — this is `useCommunityDiscovery.ts:37` and
+ * `:59`, the two lines D2 names.
+ *
+ * `name` is now DERIVED, not copied: it is resolved from the canonical
+ * (`displayName`, `handle`) pair, so the legacy wire field — which bakes
+ * `@username` in when the server withheld the name — is never read and can be
+ * retired server-side without blanking a byline. `displayName` is carried
+ * through unchanged so the card can re-resolve the same decision rather than
+ * trust a string it was handed.
+ *
+ * Returned as a standalone value rather than an inline literal because the
+ * legacy fixture type (`src/__fixtures__/discovery.ts`, another lane's file)
+ * has no `displayName` member yet; a fresh literal would trip the
+ * excess-property check while the wire genuinely carries the field.
+ */
+function toByline(
+  by: CommunityPlaceItem['submittedBy'],
+): { id: string; name: string; displayName: string | null; avatarUrl: string; handle: string | null } | null {
+  if (!by) return null;
+  return {
+    id:          by.id,
+    name:        communityBylineText(by),
+    displayName: by.displayName ?? null,
+    avatarUrl:   by.avatarUrl ?? `https://i.pravatar.cc/120?u=${by.id}`,
+    handle:      by.handle ?? null,
+  };
+}
+
 function toDiscoveryItem(item: CommunityPlaceItem): DiscoveryItem {
   return {
     id:           item.id,
@@ -31,14 +62,7 @@ function toDiscoveryItem(item: CommunityPlaceItem): DiscoveryItem {
     city:         item.city,
     blurb:        item.blurb ?? '',
     imageUrl:     item.imageUrl ?? undefined,
-    submittedBy:  item.submittedBy
-      ? {
-          id:        item.submittedBy.id,
-          name:      item.submittedBy.name,
-          avatarUrl: item.submittedBy.avatarUrl ?? `https://i.pravatar.cc/120?u=${item.submittedBy.id}`,
-          handle:    item.submittedBy.handle ?? null,
-        }
-      : undefined,
+    submittedBy:  toByline(item.submittedBy) ?? undefined,
     savedCount:   item.savedCount,
     rating:       item.rating ?? null,
     source:       (item.source ?? 'traveler') as DiscoveryItem['source'],
@@ -53,14 +77,8 @@ function toDiscoveryItem(item: CommunityPlaceItem): DiscoveryItem {
 function toTravelerPick(item: CommunityPlaceItem): TravelerPick {
   return {
     id:     item.id,
-    user:   item.submittedBy
-      ? {
-          id:        item.submittedBy.id,
-          name:      item.submittedBy.name,
-          avatarUrl: item.submittedBy.avatarUrl ?? `https://i.pravatar.cc/120?u=${item.submittedBy.id}`,
-          handle:    item.submittedBy.handle ?? null,
-        }
-      : { name: 'Traveler', avatarUrl: 'https://i.pravatar.cc/120' },
+    user:   toByline(item.submittedBy)
+      ?? { name: 'Traveler', avatarUrl: 'https://i.pravatar.cc/120' },
     place:  item.name,
     note:   item.note ?? '',
     city:   item.city,
@@ -106,9 +124,20 @@ interface CommunityDiscoveryState {
   /** All community items as DiscoveryPlace[] for DiscoveryMapView. */
   places: DiscoveryPlace[];
   loading: boolean;
+  /**
+   * The server REFUSED the community read and served nothing.
+   *
+   * Owner ruling, 2026-09-14: "A distinguishable response body alone is
+   * insufficient if consumers still treat it as successful empty data." A
+   * refusal reaches this hook as `ok: true` with `items: []` — identical, to
+   * every line below, to a city with no hidden gems in it. This flag is the
+   * only thing that keeps the two apart, and the cache decision below is the
+   * first consumer of it.
+   */
+  refused: boolean;
 }
 
-const EMPTY: CommunityDiscoveryState = { gems: [], picks: [], places: [], loading: false };
+const EMPTY: CommunityDiscoveryState = { gems: [], picks: [], places: [], loading: false, refused: false };
 
 // ── Module-level stale-while-revalidate cache ─────────────────────────────────
 // Persists across navigation so returning to the Explore tab shows content
@@ -129,7 +158,7 @@ export function useCommunityDiscovery(city: string | null, sortBy?: string | nul
   // previously-seen content without waiting for any network call.
   const [state, setState] = useState<CommunityDiscoveryState>(() => {
     if (cachedEntry) return { ...cachedEntry.state, loading: false };
-    if (city) return { gems: [], picks: [], places: [], loading: true };
+    if (city) return { gems: [], picks: [], places: [], loading: true, refused: false };
     return EMPTY;
   });
   const abortRef = useRef<AbortController | null>(null);
@@ -163,10 +192,24 @@ export function useCommunityDiscovery(city: string | null, sortBy?: string | nul
         }
       }
 
-      const fresh: CommunityDiscoveryState = { gems, picks, places, loading: false };
+      // `coverage: "nothing"` means the server did not read the table. The empty
+      // arrays above are padding, not a result.
+      const refused = result.data.refusal?.coverage === 'nothing';
+      const fresh: CommunityDiscoveryState = { gems, picks, places, loading: false, refused };
       setState(fresh);
-      // Update module cache for the next mount
-      if (cKey) _communityCache.set(cKey, { state: fresh, at: Date.now() });
+      // Update the module cache for the next mount — BUT NEVER WITH A REFUSAL.
+      //
+      // Owner ruling, 2026-09-14: "Do not cache rate limits or outages as 'this
+      // location does not exist.'" This cache is that sentence's shape on the
+      // client: it is module-level, it survives navigation, the mount effect
+      // below serves from it without a network call for five minutes, and a
+      // refused read used to enter it as an ordinary empty result. One failed
+      // request therefore emptied the city's hidden gems for five minutes from
+      // the device's own memory — and because nothing re-fetched, nothing could
+      // notice the server had recovered.
+      //
+      // A `partial` refusal IS cached: the items it carries are real.
+      if (cKey && !refused) _communityCache.set(cKey, { state: fresh, at: Date.now() });
     } catch {
       if (!ctrl.signal.aborted) {
         setState((prev) => ({ ...prev, loading: false }));

@@ -38,6 +38,7 @@ import {
 import {
   ACTIVITY_LEVELS,
   CONFIDENCE_STATES,
+  COVERAGE_STATES,
   FRESHNESS_STATES,
   FRESHNESS_THRESHOLDS_SECONDS,
   KIND_DEFAULT_PRIORITY,
@@ -47,6 +48,7 @@ import {
   RENDERING_PRIORITY,
   SOURCE_CLASSES,
   TREND_STATES,
+  TRUTH_CLASSES,
 } from "../lib/mapObjects.js";
 
 const __dir = dirname(fileURLToPath(import.meta.url));
@@ -155,6 +157,14 @@ describe("Map Object contract — server and app mirrors agree", () => {
 
   test("MAP_ACTIONS is identical, in order", () => {
     assert.deepEqual(appStringArray("MAP_ACTIONS"), [...MAP_ACTIONS]);
+  });
+
+  test("TRUTH_CLASSES and COVERAGE_STATES are identical, in order (Sensing §5.1 / §4.4)", () => {
+    // The server side is pinned to lib/wallProjection's vocabulary at compile
+    // time, so this is really a check on the app mirror — and the review gate
+    // for a new truth class reaching the wire.
+    assert.deepEqual(appStringArray("TRUTH_CLASSES"), [...TRUTH_CLASSES]);
+    assert.deepEqual(appStringArray("COVERAGE_STATES"), [...COVERAGE_STATES]);
   });
 
   test("CONFIDENCE_STATES matches the intel pipeline's own bands", () => {

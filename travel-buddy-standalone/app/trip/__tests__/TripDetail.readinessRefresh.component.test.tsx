@@ -107,7 +107,7 @@ jest.mock('../../../src/hooks/useBackend', () => ({
 
 // ── fetchTripReadiness spy ────────────────────────────────────────────────────
 // This is the key mock: we capture every call so we can assert refresh=true.
-const mockFetchTripReadiness = jest.fn().mockResolvedValue(null);
+const mockFetchTripReadiness = jest.fn().mockResolvedValue({ state: 'off' });
 jest.mock('../../../src/services/tripIntel', () => ({
   ...jest.requireActual('../../../src/services/tripIntel'),
   fetchTripReadiness: (...args: unknown[]) => mockFetchTripReadiness(...args),
@@ -164,7 +164,7 @@ jest.mock('../../../src/components/safeReturn/SafeReturnSetupSheet',  () => ({ S
 // NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/safeReturn/MissedCheckinPrompt',   () => ({ MissedCheckinPrompt:    () => null }));
 // NOTE: intentional stub — not under test here.
-jest.mock('../../../src/components/TripPlanSection',                  () => ({ TripPlanSection:         () => null }));
+jest.mock('../../../src/features/trips/planning/TripPlanSection',                  () => ({ TripPlanSection:         () => null }));
 // NOTE: intentional stub — not under test here.
 jest.mock('../../../src/components/TripAvailabilitySection',          () => ({ TripAvailabilitySection: () => null }));
 // NOTE: intentional stub — not under test here.

@@ -10,9 +10,9 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { logger as rootLogger } from "../../lib/logger.js";
 import { getActiveCapsResult } from "./TrustCapService.js";
+import { getTrustProfileResult } from "./TrustScoreService.js";
 
 const logger = rootLogger.child({ service: "TrustRecoveryService" });
-import { getTrustProfile } from "./TrustScoreService.js";
 
 export interface RecoveryStep {
   category: string;
@@ -30,7 +30,6 @@ export interface RecoveryStatus {
   lowestCategory: string | null;
   lowestScore: number | null;
   suggestedSteps: RecoveryStep[];
-  overallProgress: number; // 0–100 % toward 50 (neutral)
   /**
    * True when the probation read FAILED, so `onProbation: false` /
    * `probationEndsAt: null` above are a guess, not an answer.
@@ -49,6 +48,26 @@ export interface RecoveryStatus {
    * "could not tell" rather than "no ceilings apply".
    */
   activeCapsUnknown: boolean;
+  /**
+   * 0–100 % toward 50 (neutral), or NULL when there is no profile to measure.
+   *
+   * WAS `number`, and the no-profile branch returned the constant 50 — a
+   * measurement-shaped value where no measurement exists, which is the same
+   * defect census-passport records as P45 in a larger form ("every user is
+   * described as an Established member"). Nothing outside this file reads the
+   * field, which is why it could sit there: an unconsumed fabrication is still a
+   * fabrication on the API surface, and the next consumer would have inherited
+   * it silently.
+   */
+  overallProgress: number | null;
+  /**
+   * The trust profile could not be READ — not "the user has none".
+   *
+   * Same three-state shape `SafeTrustSummary` and `PublicTrustBadge` already
+   * use, and deliberately the same field name: a caller that learns to check one
+   * has learned to check all three.
+   */
+  profileUnavailable?: boolean;
 }
 
 const STEP_TEMPLATES: Record<string, (count: number) => string> = {
@@ -74,8 +93,13 @@ async function buildRecoverySteps(
   db: SupabaseClient,
   userId: string,
 ): Promise<RecoveryStep[]> {
-  const profile = await getTrustProfile(db, userId);
-  if (!profile) return [];
+  // getTrustProfileResult, not getTrustProfile: the lossy wrapper returns null
+  // for "absent" and "unreadable" alike, and its own docblock says so. Steps are
+  // empty either way -- but a caller that cannot tell an empty list from an
+  // unreadable one will render "nothing to do" over an outage.
+  const read = await getTrustProfileResult(db, userId);
+  if (read.state !== "ok") return [];
+  const profile = read.profile;
 
   const neutral = 50;
   const steps: RecoveryStep[] = [];
@@ -108,35 +132,47 @@ export async function getRecoveryStatus(
   db: SupabaseClient,
   userId: string,
 ): Promise<RecoveryStatus> {
-  const [profile, capsResult, probation] = await Promise.all([
-    getTrustProfile(db, userId),
+  const [profileRead, capsRead, probation] = await Promise.all([
+    getTrustProfileResult(db, userId),
     getActiveCapsResult(db, userId),
     db.from("trust_profiles").select("on_probation, probation_ends_at").eq("user_id", userId).maybeSingle(),
   ]);
 
-  const caps = capsResult.caps;
-  const activeCapsUnknown = capsResult.failed;
+  // The cap read reports its own failure rather than an empty list: a ceiling
+  // nobody could read is not "no ceilings apply". `activeCapsCount: 0` below is
+  // therefore only a count when `activeCapsUnknown` is false.
+  const caps = capsRead.state === "ok" ? capsRead.caps : [];
+  const activeCapsUnknown = capsRead.state !== "ok";
 
   // `error` is READ, not discarded: without this the line below turns any failed
-  // read into the confident claim "not on probation".
+  // read into the confident claim "not on probation". It is the SAME table
+  // getTrustProfileResult just reported on, so when that read failed this one
+  // has too — which is why the two are surfaced together below.
   const probationUnknown = Boolean((probation as any)?.error);
   if (probationUnknown) {
     logger.warn(
       { err: (probation as any).error, userId },
-      "probation read failed — onProbation is unknown, not false",
+      "trust_profiles probation read failed — onProbation is unknown, not false; reported as probationUnknown alongside profileUnavailable",
     );
   }
   const onProbation = probationUnknown ? false : Boolean((probation.data as any)?.on_probation);
   const probationEndsAt = probationUnknown ? null : ((probation.data as any)?.probation_ends_at ?? null);
+  const unavailable = profileRead.state === "unavailable" || probationUnknown;
 
-  if (!profile) {
+  if (profileRead.state !== "ok") {
     return {
       userId, onProbation, probationEndsAt, probationUnknown, activeCapsUnknown,
       activeCapsCount: caps.length,
       lowestCategory: null, lowestScore: null,
-      suggestedSteps: [], overallProgress: 50,
+      suggestedSteps: [],
+      // NOT 50. There is no profile, so there is no progress toward neutral to
+      // report; 50 is exactly the neutral value a real measurement could hold,
+      // which makes the fabrication indistinguishable from a reading.
+      overallProgress: null,
+      ...(unavailable ? { profileUnavailable: true } : {}),
     };
   }
+  const profile = profileRead.profile;
 
   const entries = Object.entries(profile.categories);
   const [lowestCat, lowestScore] = entries.reduce(
