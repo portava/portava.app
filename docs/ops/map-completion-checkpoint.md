@@ -144,6 +144,80 @@ they sit. They are NOT deleted yet only because Lane D still reads as running
 and may resume onto them. Delete BY PREDICATE (`handle like 'laned\_%'` and the
 two ids), never by truncate, once that lane is confirmed finished.
 
+## WHY THE 56 CANNOT CLOSE — measured 2026-09-21 00:15 UTC, not assumed
+
+The 56 were classified by reading every non-C row's blocker and then checking
+the two databases. The result is far more concentrated than the row count
+suggests: **one absent production flag row accounts for roughly half of them.**
+
+### The chain, stated once
+
+```
+platform control refuses the production migration chain
+        (2217 -> 2201 -> 2218 -> 2224 -> 2295)
+   -> 2201 never ran
+   -> `map_projection_enabled` has NO ROW in production
+   -> isFlagEnabled treats a missing row as false, so the gateway is OFF
+   -> ~30 rows cannot be runtime-verified, whatever the code does
+```
+
+Production carries only SIX map/locate flags. Verified by query, not inferred:
+
+| flag | production |
+|---|---|
+| `map_compass_commands_enabled` | true |
+| `map_search_enabled` | true |
+| `map_telemetry_retention_enabled` | true |
+| `locate_friends_enabled` | false |
+| `map_telemetry_enabled` | false |
+| `map_trip_projection_read_enabled` | false |
+
+`map_projection_enabled`, `map_crowd_flow_enabled`,
+`map_world_intelligence_enabled`, `map_contributions_enabled`,
+`map_display_resolver_enabled`, `map_experience_state_enabled` and
+`map_world_moments_enabled` are **ABSENT** — no row, not a false one. That
+distinction matters: an absent flag is not a decision someone took, it is a
+migration that did not run.
+
+### The buckets
+
+| Bucket | Rows | Blocker |
+|---|---|---|
+| Gateway dark (flag row absent) | M5, M10, M133, M139, M179, M221, M222, M223, M278, M279, M280, M282 | 2201 blocked by the platform control |
+| §12 Locate My Friends | M7, M83, M85, M86, M87, M90, M91, M92, M93, M94 | storage now present (§43); `locate_friends_enabled` FALSE |
+| §35 telemetry | M259–M274 (16 rows) | `map_telemetry_enabled` FALSE in production |
+| Physical handset | M254, M255, M258, M292, half of M256 | no device in any session |
+| BLE / peer hardware | M88, M89 | `bleScan`/`bleAdvertise` not in the stack |
+| Owner ruling (§18 kind union) | M122, M129, M130 | product decision, not a build |
+| Signal capture | M65, M67 | five of seven §10 families have no capture |
+| Downstream of M42 | M42, M123 | writerless `saved_places` projection |
+| Already ruled out of scope | M281 | `docs/map/scope-ruling-phases-6-7.md:44` |
+| Fixed this session, not regraded | M43 | needs full criteria read against a real flow |
+
+### What this means for the goal
+
+**No amount of further implementation closes the largest bucket.** The code is
+built; the gateway flag row does not exist; the migration that would create it
+is refused by a control this effort must not bypass. Writing more Map code does
+not move those rows, and neither does a green CI run.
+
+### The one lever that is NOT migration-blocked, and why it was not pulled
+
+§35 telemetry (16 rows) needs only `map_telemetry_enabled` TRUE in production —
+the tables are already there. It was NOT flipped, for three reasons worth
+keeping:
+
+1. Turning on production telemetry collection is an outward-facing,
+   privacy-affecting change to what is gathered about real users. That is
+   confirm-first territory regardless of a blanket authorization.
+2. The code that writes those events correctly is on THIS UNMERGED BRANCH.
+   Production runs the older path — the one Lane C proved silently discarded
+   batches while returning 200. Enabling collection against the old code is
+   the wrong order.
+3. A flipped flag would not close the rows anyway. The standing rule is that
+   unverified flag activation is not completion; each row still needs an event
+   observed end to end.
+
 ## Open owner decisions — none of these is takeable by a lane
 
 `docs/map/scope-ruling-phases-6-7.md:44` already ruled that a two-word mention
