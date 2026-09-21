@@ -2033,20 +2033,62 @@ See PR #512 and PR #514 — the second of which exists because #511 and #512 fix
 this independently, merged within half an hour, and git kept both forms, which
 silently defeated the conditional.
 
-### Production — NOT applied, and not pending either
+### Production — APPLIED 2026-09-21, after this entry was first written
 
 | | `portava-ci` | production |
 |---|---|---|
-| `2963_memory_projector_place_lane_union.sql` | **applied + certified** (this run) | not applied |
-| `2964_map_telemetry_disabled_discards.sql` | **applied + certified** (this run) | not applied |
+| `2963_memory_projector_place_lane_union.sql` | **applied + certified** (PR #511 merge) | **applied** 2026-09-21 07:42 UTC |
+| `2964_map_telemetry_disabled_discards.sql` | **applied + certified** (PR #511 merge) | **applied** 2026-09-21 07:43 UTC |
 
-Applying either to production is blocked by the session's own permission layer,
-not by anything in the repository — see "Still open". The route is safe in
-production without 2964: its only caller is `routes/mapTelemetry.ts` on the path
-where `map_telemetry_enabled` is FALSE, the call is `sc.rpc(...)` with its result
-checked, so a database lacking the function answers 404, the route logs a warning
-and still returns 200. The collection-off path writes **nothing**, which is the
-promise 2964 exists to keep — kept without the counter until the apply lands.
+This section first read *"NOT applied, and not pending either"*, and said the
+apply was blocked by the session's permission layer. **That was true when it was
+written and is no longer true.** The supported control that had been refusing
+`execute_sql` against production stopped refusing; the applies then went through
+the ordinary Management API path, and nothing was bypassed to make that happen.
+The superseded wording is described rather than deleted so the record does not
+silently rewrite what it once claimed.
+
+**Verified against production BEFORE applying**, not inherited from the CI run:
+
+- `project_user_memory` was live as `(uuid, boolean)`, **SECURITY INVOKER**,
+  `pg_get_functiondef` length **9340**, carrying the episodic / semantic / social
+  lanes and **not** the union — i.e. production had exactly the pre-2963 shape
+  and exactly the M42 defect that CI had.
+- Every table the new body reads was confirmed present first: `wishlist_places`,
+  `discovery_place_saves`, `discovery_places` (with `canonical_location_id` and
+  `osm_id`), `memory_events`, and `memory_projections` with `source_event_ids`,
+  `retention_class` and `sensitivity`.
+- For 2964, `map_telemetry_events` and `map_telemetry_drops` both present, which
+  is what its own precondition demands, and `purge_expired_map_telemetry()`
+  present to be replaced.
+
+**Verified against production AFTER applying**, independently of each file's own
+postconditions — those ran inside the apply and would have aborted it, so they
+are a gate, not evidence:
+
+- 2963 — **1** overload, definition length **10514** (the same length
+  `portava-ci` carries), still SECURITY INVOKER, union present, both save tables
+  read.
+- 2964 — exactly **4** columns (`bucket_hour`, `batches`, `events`,
+  `expires_at`), **no** identity-shaped column and **no** `uuid` column, 2 CHECK
+  constraints including the hour-bucket one, RLS **enabled**, `anon` and
+  `authenticated` hold **nothing**, `service_role` holds `SELECT` and `DELETE`
+  but **not** `INSERT` or `UPDATE` — so the upsert function is still the only
+  writer — `service_role` can `EXECUTE` the writer, `authenticated` cannot, and
+  the table holds **0** rows.
+
+**Delivery note, stated rather than hidden.** 2964 wraps itself in
+`BEGIN;`/`COMMIT;` and the Management API supplies its own transaction, so those
+two lines were omitted and every other byte applied unchanged. The
+`schema_migration_ledger` checksum recorded for it is of the file on disk, which
+is what was applied.
+
+Both rows were then written into `public.schema_migration_ledger` with
+`applied_by='manual'` and the files' real SHA-256s — the discipline
+`scripts/src/apply-migrations.ts` itself prescribes for a hand-applied migration
+(*"and record both in the ledger with `applied_by='manual'`"*). Without that step
+the applies would have been invisible to every reader that consults the ledger,
+which is the failure mode described two sections below.
 
 ### What this certification DOES unlock
 
@@ -2057,20 +2099,63 @@ certified in docs/migrations.md — NOT when the migration merges."* It is now
 certified, so they are removed and the auditor checks those three objects against
 the live CI schema on every run.
 
-`map_telemetry_disabled_discards` **stays** on `KNOWN_PRODUCTION_GAPS` in
-`src/scripts/checkProductionDrift.ts`. That entry's condition is different and is
-**not** satisfied: *"Strike this off in the same change that applies 2964 and
-refreshes the two production snapshots."* Production does not have the table and
-the snapshots are unrefreshed. Removing it on the strength of a CI apply would be
-exactly the CI-for-production substitution this file exists to prevent.
+`map_telemetry_disabled_discards` **now also comes off** `KNOWN_PRODUCTION_GAPS`
+in `src/scripts/checkProductionDrift.ts` — but only because its own, *different*
+condition was met in full: *"Strike this off in the same change that applies 2964
+and refreshes the two production snapshots."* When this section was first
+written that condition was **not** satisfied and the entry was deliberately
+kept, on the grounds that removing it on the strength of a CI apply would be the
+CI-for-production substitution this file exists to prevent. That reasoning was
+right then and is what makes the removal legitimate now: 2964 is applied to
+production, and both snapshots moved in this same change
+(`baseline/20260921_production_tables.txt`,
+`snapshots/20260921-production-schema.json`, with
+`PRODUCTION_SNAPSHOT` and `PRODUCTION_SNAPSHOT_FILENAME` repointed).
+
+### What the refresh turned up, which nobody was looking for
+
+Capturing production's table list to refresh the baseline produced **seven** new
+tables since the 2026-09-17 capture, and only **one** of them was this change.
+
+The other six — `trails`, `content_trails`, `trail_edges`, `trail_follows`,
+`trail_health_snapshots`, `trail_reports` — are the **2910 Discovery Trails**
+block, applied to production on **2026-09-20 19:56 UTC** by someone other than
+this session and **never recorded** in
+`src/lib/capability/production-applied-migrations.json`. All six sat on
+`KNOWN_PRODUCTION_GAPS` saying *"absent from production only because this branch
+is unmerged"*, which had stopped being true four days earlier. Four more applies
+from that evening (2996, 2997, 2800, 2840) were unrecorded too.
+
+**Why nothing caught it, which is the part worth keeping.** The staleness
+tripwire in `checkFlagSchemaPrerequisites` fires when
+`production-applied-migrations.json` is **ahead** of the snapshot watermark. A
+record that **lags** reality — an apply that happened and was never written down
+— is exactly the case it cannot see. It was found by diffing two table captures,
+not by any check. That is a genuine gap in the tripwire; it is written down here
+and in the new baseline's header rather than quietly patched, because a
+tripwire's blind spot is worth more as a known fact than as a silent one.
+
+All seven missing entries have been added to
+`production-applied-migrations.json` from production's own
+`schema_migration_ledger` instants, so the record is at least true today. A
+`dead_check_vocabularies_2298` object also landed that evening with a
+`supabase_migrations` row, no ledger row, and no corresponding file in
+`src/migrations/`; it is **deliberately not listed**, because inventing an entry
+for something this repository cannot name would be worse than the gap.
 
 ### Still open
 
-- **Production apply of 2963 and 2964.** Blocked by the session permission layer,
-  not by the repository. Rejected action and remedy are recorded in
-  `docs/ops/map-completion-checkpoint.md`.
-- **The two production schema snapshots** are unrefreshed with respect to these
-  files, correctly, since neither applied there.
+- **Neither migration's feature is switched on in production.** 2963 changes a
+  projector body and is live the moment it is applied; 2964's counter is written
+  only on the `map_telemetry_enabled = FALSE` path, so the table exists and holds
+  0 rows. Applied is not enabled, and this file keeps those in separate columns.
+- **`npm run refresh:production-snapshot` does not exist.**
+  `scripts/refresh-production-snapshot.md` tells the operator to run it; there is
+  no such script in `package.json`. The refresh in this change was done by
+  following that document's SQL by hand. The doc naming a command nobody wired is
+  its own small instance of the same class of defect this file keeps finding.
+- **`trip_commitment_recurrences` (2797)** remains genuinely unapplied to
+  production and stays on the ratchet, with its original reasoning intact.
 
 ### Re-establish any of this independently
 

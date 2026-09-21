@@ -58,8 +58,21 @@
  * derived from it. A capture describes one instant; a new instant gets a new file
  * and this constant moves. That is the whole refresh.
  */
+/**
+ * REFRESH OF 2026-09-21 07:55 UTC, taken right after 2963 and 2964 were applied
+ * to production. Two objects moved and no others: the table
+ * `map_telemetry_disabled_discards` and the function
+ * `record_map_telemetry_disabled_discard`. 2963 replaces a function BODY, which
+ * this file records nothing about — a capture of names cannot see a body, and
+ * pretending otherwise is how a snapshot starts being believed for things it
+ * never measured.
+ *
+ * The 09-20 capture was NOT overwritten, for the same reason the 09-16 note
+ * below gives: a capture describes one instant, a new instant gets a new file,
+ * and this constant moves. That is the whole refresh.
+ */
 /** The capture every reader should grade against. Change this on a refresh. */
-export const PRODUCTION_SNAPSHOT_FILENAME = "20260920-production-schema.json";
+export const PRODUCTION_SNAPSHOT_FILENAME = "20260921-production-schema.json";
 
 /** Resolved against this directory, which is where the captures live. */
 export const PRODUCTION_SNAPSHOT_URL = new URL(

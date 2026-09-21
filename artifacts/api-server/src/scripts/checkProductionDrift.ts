@@ -75,7 +75,7 @@ const BASELINE_DIR = join(API_SERVER_ROOT, "baseline");
  * stale silently on the next refresh, which is how two cases in
  * productionDriftExtraction.test.ts came to assert the opposite of the truth.
  */
-export const PRODUCTION_SNAPSHOT = "20260917_production_tables.txt";
+export const PRODUCTION_SNAPSHOT = "20260921_production_tables.txt";
 
 /**
  * `unmerged-pr` HAS NO MEMBERS AS OF 2026-09-15, AND IS KEPT — ruling, with the
@@ -156,27 +156,45 @@ export const KNOWN_PRODUCTION_GAPS: Record<string, Gap> = {
   // the feature is not on. docs/TRIPS-PRODUCTION-ACTIVATION.md keeps those two
   // states in separate columns for this reason.
 
-  // ── Map §35, the collection-off correction ────────────────────────────────
-  map_telemetry_disabled_discards: {
-    classification: "unapplied",
-    note:
-      "Map §35 (2964) — the hourly, viewer-less counter that replaced the " +
-      "viewer-linked `map_telemetry_drops` row routes/mapTelemetry.ts used to " +
-      "write while `map_telemetry_enabled` was FALSE. 2202 promises \"nothing is " +
-      "collected until switched on\", and a row naming an account and a map " +
-      "session broke that promise; this table keeps the 63772b76c discard " +
-      "diagnostic with no identity column to fill. REHEARSED on a throwaway " +
-      "PostgreSQL 16 (apply, re-apply, all postconditions, and all four privacy " +
-      "guards armed: an added identity column, a non-hour bucket_hour, a direct " +
-      "service_role INSERT and an authenticated EXECUTE are each refused). NOT " +
-      "yet applied to production because 2964 travels with the rest of the Map " +
-      "migration chain, whose application is the deployment step this branch has " +
-      "not reached. The route is SAFE in production without it: the RPC 404s, " +
-      "the error is logged non-fatally, and the collection-off path writes " +
-      "nothing at all — which is the promise being kept, just without the " +
-      "counter. Strike this off in the same change that applies 2964 and " +
-      "refreshes the two production snapshots.",
-  },
+  // ── STRUCK OFF 2026-09-21: seven tables, on two very different grounds ────
+  //
+  // map_telemetry_disabled_discards (2964) — STRUCK because its own removal
+  // condition was met, in full and in one change. That entry read: "Strike this
+  // off in the same change that applies 2964 and refreshes the two production
+  // snapshots." 2964 was applied to production on 2026-09-21 07:43 UTC from
+  // merged main fd0b3a6f4, after the same file was applied and certified on
+  // portava-ci by the merge of PR #511; both snapshots
+  // (baseline/20260921_production_tables.txt and
+  // snapshots/20260921-production-schema.json) were refreshed in this change,
+  // and PRODUCTION_SNAPSHOT above moved with them. The apply was verified
+  // against production independently of 2964's own postconditions: exactly four
+  // columns, no identity-shaped and no uuid column, the hour-bucket CHECK
+  // present, RLS on, anon and authenticated holding nothing, and service_role
+  // holding SELECT and DELETE but NOT INSERT or UPDATE — so the upsert function
+  // remains the only writer, which is the whole point of the table.
+  //
+  // trails, content_trails, trail_edges, trail_follows, trail_health_snapshots,
+  // trail_reports (2910) — STRUCK for the opposite reason: not because this
+  // change applied them, but because their entries had QUIETLY BECOME FALSE.
+  // All six said "absent from production only because this branch is unmerged".
+  // 2910_discovery_trails.sql was applied to production on 2026-09-20 19:56 UTC
+  // by someone other than this session, and all six tables have existed there
+  // since. Nothing noticed for four days.
+  //
+  // WHY NOTHING NOTICED, which is the part worth keeping: the staleness
+  // tripwire in checkFlagSchemaPrerequisites fires only when
+  // production-applied-migrations.json is AHEAD of the snapshot watermark. A
+  // record that LAGS reality — an apply that happened and was never written
+  // down — is precisely the case it cannot see. These six were found by
+  // capturing production's table list and diffing it against the 09-17
+  // baseline, not by any check. That gap is real and is written down here and
+  // in the new baseline's header rather than patched over; the seven missing
+  // entries have been added to production-applied-migrations.json in this
+  // change so the record is at least true today.
+  //
+  // This ratchet fails in BOTH directions, so leaving six entries claiming a
+  // table is absent when it is present would fail the check — correctly. An
+  // entry nobody prunes stops being read.
 
   // ── Trips §23, the one Trips table that is genuinely NOT in production ─────
   trip_commitment_recurrences: {
@@ -593,13 +611,17 @@ export const KNOWN_PRODUCTION_GAPS: Record<string, Gap> = {
   // Trips §5.1 block above establishes that a table nothing writes satisfies
   // nothing — a gap entry that omits that is hiding the more important half.
 
-  // Discovery Trails, migration 2910 — six tables, one migration, one block.
-  trails:                 { classification: "unapplied", note: "Discovery Trails (2910). Created and written by the trail service; behind the trails flag. Absent from production only because this branch is unmerged." },
-  trail_edges:            { classification: "unapplied", note: "Discovery Trails (2910). Same block as trails; one writer. The edge set is what makes a trail a path rather than a list." },
-  trail_follows:          { classification: "unapplied", note: "Discovery Trails (2910). Same block; two writers (follow and unfollow). Viewer-scoped." },
-  trail_health_snapshots: { classification: "unapplied", note: "Discovery Trails (2910). Same block; one writer. A snapshot table — absent means no history, not a broken read." },
-  trail_reports:          { classification: "unapplied", note: "Discovery Trails (2910). Same block; one writer. Moderation intake for a surface that is not live in production." },
-  content_trails:         { classification: "unapplied", note: "Discovery Trails (2910). Same block; two writers. The join from a trail to the content it threads." },
+  // Discovery Trails, migration 2910 — all six STRUCK OFF 2026-09-21. 2910 was
+  // applied to production on 2026-09-20 19:56 UTC and every one of these tables
+  // now exists there, so the six entries that said "absent from production only
+  // because this branch is unmerged" had become false statements. See the
+  // struck-off block at the top of this record for how they were found and why
+  // no check caught it.
+  //
+  // WHAT THEIR PRESENCE DOES NOT ESTABLISH, stated so it is not overclaimed:
+  // the tables are applied, the surface is not on. Nothing here says the trails
+  // flag is TRUE in production, and a table reachable by its writer and read by
+  // nothing is exactly the state the 2760-2763 block was left in.
 
   // Creator economy, migrations 2920/2921 — gated by a flag 2922 seeds FALSE.
   creator_attributions:    { classification: "unapplied", note: "Creator economy (2920). Written by services/creators/CreatorAttributionService.ts, every path gated on creator_attribution_enabled — which migration 2922 seeds FALSE. So it would be created empty and STAY empty after the merge: enabling it is a separate owner decision, and census-discovery 17.2 records that four of the six creator types have no value-event producer at all." },

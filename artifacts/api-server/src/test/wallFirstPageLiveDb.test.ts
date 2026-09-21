@@ -222,6 +222,11 @@ interface Recorded {
   p50: number;
   p95: number;
   reads: number;
+  // The REST origin the measured client actually points at, captured from the
+  // client object itself rather than from the env var it was built from. The
+  // summary quotes this so the "live database" label in the measurement doc is
+  // bound to the object that produced the numbers, not to the suite's name.
+  clientRestUrl: string;
 }
 const recorded: Partial<Recorded> = {};
 
