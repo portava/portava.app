@@ -70,6 +70,7 @@ import { FROZEN_LEGACY_FILES, findRogueFrozenFiles } from "./frozenLegacyFiles.j
 import { FROZEN_ROOT_FILES } from "./frozenRootFiles.js";
 import { isMissing, type Claim, type LiveSchema } from "./lib/schemaClaimResolution.js";
 import { isOptionAInForce } from "./lib/sensingPostureOnDisk.js";
+import { partitionClaims, staleEntries } from "./lib/conditionalClaims.js";
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
@@ -983,6 +984,11 @@ async function main(): Promise<void> {
   let filesAudited = 0;
 
   const authzOnly: string[] = [];
+  // Conditional claims that did not apply to THIS database, and the entries
+  // that matched a real claim. Both are reported: an exemption nobody can see
+  // in the output is an exemption nobody can review.
+  const notApplicable: string[] = [];
+  const conditionalMatched = new Set<string>();
   for (const dir of MIGRATION_DIRS) {
     let files: string[];
     try {
@@ -1009,9 +1015,12 @@ async function main(): Promise<void> {
           authzOnly.push(`${file}: ${name}`);
         }
       }
-      const missing = claims.filter(
-        (c) => !ALLOWLIST.has(c.key) && isMissing(c, live),
-      );
+      // Conditional claims are resolved in lib/conditionalClaims.ts, which is
+      // importable and under test; this script only reports what it decides.
+      const part = partitionClaims(file, claims, live, ALLOWLIST);
+      for (const m of part.matched) conditionalMatched.add(m);
+      notApplicable.push(...part.notApplicable);
+      const missing = part.missing;
       if (missing.length > 0) {
         filesWithGaps++;
         missingCount += missing.length;
@@ -1046,6 +1055,29 @@ async function main(): Promise<void> {
         "the authz copy would be masked by the public one:",
     );
     for (const n of [...live.collidingFunctionNames].sort()) console.log(`  · ${n}`);
+  }
+
+  if (notApplicable.length > 0) {
+    console.log(
+      `\nNOTE: ${notApplicable.length} conditional claim(s) did not apply to this database. ` +
+        "These migrations repair objects that exist only where an out-of-band programme was " +
+        "installed; where it was not, the file correctly creates nothing. Enforced in full " +
+        "wherever the precondition holds — see CONDITIONAL_CLAIMS:",
+    );
+    for (const n of notApplicable) console.log(`  · ${n}`);
+  }
+
+  // STALENESS: an entry that matches no claim is a dead exemption, and a dead
+  // exemption is how a real gap gets carried for months. Fail rather than warn.
+  const staleConditional = staleEntries(conditionalMatched);
+  if (staleConditional.length > 0) {
+    console.error(
+      `\n✖ ${staleConditional.length} CONDITIONAL_CLAIMS entr(y/ies) matched no claim in the ` +
+        "migration named. The file no longer claims that object (or was renamed), so the entry " +
+        "is exempting nothing and must be deleted or corrected:",
+    );
+    for (const x of staleConditional) console.error(`  · ${x.file} → ${x.key}`);
+    process.exit(1);
   }
 
   console.log(
