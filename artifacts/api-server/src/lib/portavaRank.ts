@@ -12,10 +12,18 @@
  * availability fit, proximity) and trusted humans (social proximity,
  * trust-weighted engagement) over raw virality.
  *
- * The module is PURE and dependency-free: callers assemble a ViewerContext
- * and Candidates from whatever data their surface already loads, and get
- * back a scored, diversified, exploration-mixed ordering. Missing signals
- * simply contribute 0 — every surface can adopt it incrementally.
+ * The module is PURE: callers assemble a ViewerContext and Candidates from
+ * whatever data their surface already loads, and get back a scored,
+ * diversified, exploration-mixed ordering. Missing signals simply contribute
+ * 0 — every surface can adopt it incrementally.
+ *
+ * It has exactly ONE import, and it is deliberate: `trailAffinityContribution`
+ * from lib/discoveryTrailAffinity.ts. The Trail modifier's cap is enforced in
+ * that module rather than restated here, because a cap written down twice is a
+ * cap that can disagree with itself — and `02_Trails.md` §11's bound is the
+ * whole reason Trails is allowed near this file at all (see
+ * TRAIL_AFFINITY_MAX_CONTRIBUTION). Nothing else may be added: this stays a
+ * scoring kernel, not a place where data is loaded.
  *
  * Phases:
  *   v1 (now)  — hand-tuned DEFAULT_WEIGHTS, deterministic exploration.
@@ -23,6 +31,10 @@
  *               funnel (see rank_events logging in PORTAVA-ALGORITHM.md).
  *   v3        — per-user weight deltas + embedding recall for candidates.
  */
+
+import {
+  trailAffinityContribution, TRAIL_AFFINITY_MAX_CONTRIBUTION,
+} from "./discoveryTrailAffinity.js";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -107,6 +119,25 @@ export interface ViewerContext {
    * "capped local_momentum as modifiers only").
    */
   localMomentum?: Record<string, number>;
+  /**
+   * place_id → Trail affinity in [0, 1]
+   * (services/trails/TrailService.loadViewerTrailModifier, assembled into the
+   * request by lib/discoveryModifiers.ts): how strongly this place sits in a
+   * Trail the VIEWER FOLLOWS, already scaled by `02` §11 Trail health and by
+   * DV-25 Trail momentum before it arrives here.
+   *
+   * UNLIKE `localMomentum` this one IS user-dependent — it is the viewer's own
+   * follow graph — which is why it is a per-request input and never cacheable
+   * across viewers (`06` §4: "Candidate caches may be user-independent. Final
+   * ranking must not be.").
+   *
+   * Absent ⇒ 0 for every candidate, which is the behaviour of every deployment
+   * where `discovery_ranking_modifiers_enabled` is off or migration 2910 is not
+   * applied. Its contribution is HARD-CAPPED at TRAIL_AFFINITY_MAX_CONTRIBUTION
+   * regardless of weights, for the reason ROADMAP step 7 gives: trails are "a
+   * future MODIFIER to the ranker, never a parallel engine".
+   */
+  trailAffinity?: Record<string, number>;
 }
 
 export interface RankWeights {
@@ -133,6 +164,13 @@ export interface RankWeights {
    * an admin weight override cannot turn a modifier into a driver.
    */
   localMomentum: number;
+  /**
+   * Weight on the Trail-affinity modifier. Same contract as `localMomentum`:
+   * the contribution is clamped to TRAIL_AFFINITY_MAX_CONTRIBUTION inside
+   * `trailAffinityContribution`, so an admin weight override cannot turn the
+   * modifier into a driver.
+   */
+  trailAffinity: number;
   kindPrior: Partial<Record<CandidateKind, number>>;
 }
 
@@ -197,6 +235,9 @@ export const DEFAULT_WEIGHTS: RankWeights = {
   capacityOpen: 0.1,
   seenPenalty: -0.6,
   localMomentum: LOCAL_MOMENTUM_MAX_CONTRIBUTION,   // the weight IS the cap; see above
+  trailAffinity: TRAIL_AFFINITY_MAX_CONTRIBUTION,   // 0.10 — the owner's approved
+                                                    // initial setting, 2026-09-14;
+                                                    // see lib/discoveryTrailAffinity.ts
   kindPrior: { event: 0.15, plan: 0.15, gem: 0.05, buddy: 0.0, post: 0.0 },
 };
 
@@ -312,7 +353,7 @@ export function scoreCandidate<T extends RankCandidate>(
   const viewerCity = (ctx.city ?? '').toLowerCase();
   const cityHit = !!viewerCity && (c.city ?? '').toLowerCase().includes(viewerCity);
   f.cityMatch = cityHit ? w.cityMatch : 0;
-  f.neighborhoodMatch = cityHit && c.neighborhood ? w.neighborhoodMatch : 0;
+  f.neighborhoodMatch = cityHit && neighborhoodMatches(ctx.neighborhood, c.neighborhood) ? w.neighborhoodMatch : 0;
 
   f.distance = w.distance * distanceScore(c.distanceKm);
   f.actionability = w.actionability * actionabilityScore(c.startsAt, nowMs);
@@ -337,6 +378,18 @@ export function scoreCandidate<T extends RankCandidate>(
   f.localMomentum = momentum > 0
     ? Math.min(LOCAL_MOMENTUM_MAX_CONTRIBUTION, Math.max(0, w.localMomentum * momentum))
     : 0;
+
+  // Trail affinity — the second CAPPED modifier, clamped the same way and for
+  // the same reason (`docs/architecture/02_Trails.md:5-12`: trails are "a
+  // future MODIFIER to the ranker, never a parallel engine"). The clamp lives
+  // in lib/discoveryTrailAffinity.trailAffinityContribution so the cap has ONE
+  // definition; a negative or non-finite affinity contributes 0 rather than a
+  // penalty, because a place belonging to no Trail says nothing bad about it.
+  // Keyed by candidate id, exactly as localMomentum is, so a surface that maps
+  // place ids to candidate ids needs no second key space.
+  f.trailAffinity = trailAffinityContribution(
+    ctx.trailAffinity?.[c.id] ?? 0, w.trailAffinity,
+  );
 
   let score = 0;
   for (const k of Object.keys(f)) score += f[k];
@@ -377,14 +430,15 @@ export interface DiversityOptions {
 /**
  * Greedy re-rank: repeatedly pick the best remaining candidate after applying
  * repetition penalties against the last `window` picks. Keeps feeds from
- * collapsing into one loud author or one content type — table stakes for a
- * feed that must mix posts, events, plans, and people.
+ * collapsing into one loud author, one content type, one place or one
+ * neighbourhood — see repetitionPenalty and DiversityOptions at the file end.
  */
 export function diversify<T extends RankCandidate>(
   scored: ScoredCandidate<T>[], opts: DiversityOptions = {},
 ): ScoredCandidate<T>[] {
-  const authorPenalty = opts.authorPenalty ?? 0.35;
-  const kindPenalty = opts.kindPenalty ?? 0.15;
+  // Resolved once; the derivation of each magnitude — and the reason two of
+  // the four have no default — is on DiversityOptions, merged at the file end.
+  const pen = resolveDiversityPenalties(opts);
   const window = Math.max(1, opts.window ?? 3);
 
   const pool = [...scored].sort((a, b) => b.score - a.score);
@@ -397,8 +451,7 @@ export function diversify<T extends RankCandidate>(
       const c = pool[i];
       let penalty = 0;
       for (const r of recent) {
-        if (c.candidate.authorId && r.candidate.authorId === c.candidate.authorId) penalty += authorPenalty;
-        if (r.candidate.kind === c.candidate.kind) penalty += kindPenalty;
+        penalty += repetitionPenalty(c.candidate, r.candidate, pen);
       }
       const val = c.score - penalty;
       if (val > bestVal) { bestVal = val; bestIdx = i; }
@@ -488,4 +541,215 @@ export function rankCandidates<T extends RankCandidate>(
     : diversify(scored, opts.diversity ?? {});
   return opts.exploration === false ? diversified
     : injectExploration(diversified, ctx, opts.exploration ?? {});
+}
+
+// ── Diversity, continued: the axes and their magnitudes ──────────────────────
+//
+// MERGED RATHER THAN INSERTED, for the reason lib/discoveryPde.ts states at its
+// own merged block: the lines above are the target of anchored citations in
+// docs/architecture and docs/discovery, this file is in the COVERED registry of
+// scripts/check-doc-citations.mjs, and shifting one silently repoints somebody
+// else's evidence. Adding below the last cited line moves nothing.
+
+export interface DiversityOptions {
+  /**
+   * Same canonical place (`candidate.placeId`) and same geography
+   * (`candidate.neighborhood`) as a prior pick inside the window.
+   *
+   * DELIBERATELY UNDEFAULTED, and that absence is the substance of this pair
+   * rather than an oversight in it.
+   *
+   * `authorPenalty` 0.35 and `kindPenalty` 0.15 are v1 hand-tuned constants:
+   * they arrived with the engine (commit b542f4456, "Portava ranking engine
+   * v1") carrying no recorded derivation, and this file's own header still
+   * describes v1 as hand-tuned. There is therefore no METHOD here to derive a
+   * third and fourth magnitude from, and choosing one by resemblance to 0.35 or
+   * 0.15 would be inventing a ranking constant and presenting it as an
+   * inference — which is worse than leaving the number open, because it reads
+   * as settled.
+   *
+   * The two constants in this file that DO carry a derivation
+   * (LOCAL_MOMENTUM_MAX_CONTRIBUTION, TRAIL_AFFINITY_MAX_CONTRIBUTION) each say
+   * in their own comment that an owner ruling set them and only another may
+   * change them. These two need exactly that and nothing else.
+   *
+   * So: absent means zero, which is byte-identical ordering for every caller in
+   * the tree today, and the axis turns on the moment a ruled value is passed —
+   * either at a `diversity: { ... }` call site (the Discovery one is the
+   * `rankCandidates` call in lib/discoveryPde.ts) or as a named constant here
+   * beside the two above.
+   *
+   * THE TWO AXES ARE NOT EQUALLY READY. `placePenalty` needs only a magnitude:
+   * `placeId` is already set on every Discovery candidate. `geoPenalty` needs a
+   * magnitude AND a key — no call site in the tree sets `candidate.neighborhood`,
+   * and lib/discoveryPde.ts deliberately still does not, because threading it
+   * would also switch on the `neighborhoodMatch` weight above, which rewards
+   * label PRESENCE rather than geo relevance and which DB-backed places cannot
+   * earn. That module's closing note states the decision and names what would
+   * unblock it; it is an owner call, not an oversight here.
+   */
+  placePenalty?: number;
+  geoPenalty?: number;
+}
+
+/** The four repetition magnitudes, resolved once per `diversify` call. */
+export interface ResolvedDiversityPenalties {
+  author: number;
+  kind: number;
+  place: number;
+  geo: number;
+}
+
+function resolveDiversityPenalties(opts: DiversityOptions): ResolvedDiversityPenalties {
+  return {
+    author: opts.authorPenalty ?? 0.35,
+    kind:   opts.kindPenalty ?? 0.15,
+    // No default — see the note on DiversityOptions above.
+    place:  opts.placePenalty ?? 0,
+    geo:    opts.geoPenalty ?? 0,
+  };
+}
+
+/**
+ * How much `c` is penalised for following `r` inside the re-rank window.
+ *
+ * The place and geography clauses are guarded on the CANDIDATE's own key, like
+ * `authorId` and unlike `kind` (which is required and so always comparable).
+ * Without that guard every candidate lacking a place id would count as a repeat
+ * of every other one through `null === null`, and a penalty every candidate
+ * incurs equally cannot reorder anything — it is a constant, not diversity.
+ */
+export function repetitionPenalty(
+  c: RankCandidate, r: RankCandidate, pen: ResolvedDiversityPenalties,
+): number {
+  let penalty = 0;
+  if (c.authorId && r.authorId === c.authorId) penalty += pen.author;      // creator
+  if (r.kind === c.kind) penalty += pen.kind;                              // content type
+  if (c.placeId && r.placeId === c.placeId) penalty += pen.place;          // place
+  if (neighborhoodMatches(c.neighborhood, r.neighborhood)) penalty += pen.geo;   // geography
+  return penalty;
+}
+
+// ── DV-54, the geography KEY: neighborhoodMatch is a comparison, not a label ──
+//
+// Appended below the last line of this file rather than edited into the blocks
+// above, for the reason lib/discoveryPde.ts gives at its own merged block:
+// anchored citations in docs/architecture and docs/discovery point INTO this
+// file by line, and inserting a line silently repoints somebody else's
+// evidence. Two lines changed in place above (`f.neighborhoodMatch` in
+// `scoreCandidate`, and the geography clause of `repetitionPenalty`); nothing
+// moved.
+//
+// WHAT THIS FEATURE USED TO COMPUTE, AND WHY IT WAS WRONG:
+//
+//     f.neighborhoodMatch = cityHit && c.neighborhood ? w.neighborhoodMatch : 0
+//
+// `cityHit` is true for every candidate on any surface that stamps one city on
+// the whole request — which is exactly what lib/discoveryPde.ts does
+// (`city: viewer.city` on every candidate). The remaining term is `c.neighborhood`
+// being TRUTHY. So the feature paid 0.2 for CARRYING A LABEL. That is a
+// data-completeness bonus wearing the name of a relevance match, and it is not
+// even evenly available: an OSM place with an `addr:suburb` tag earns it and a
+// curated row whose `places.neighborhood` column was mapped onto `address`
+// cannot, so the ranker quietly preferred one SOURCE over another.
+//
+// WHAT IT COMPUTES NOW: the candidate's neighbourhood label compared against
+// the VIEWER's, both normalised. Presence earns nothing — a candidate with a
+// label and no viewer neighbourhood to compare it to scores exactly 0, which is
+// the anti-regression `src/test/discoveryDiversityAxes.test.ts` pins.
+//
+// `cityHit` IS KEPT AS A GUARD, deliberately. Neighbourhood names are not
+// globally unique — "Chinatown", "Old Town", "Downtown" and "Centro" name a
+// different place in every city that has one — and without the city term a
+// viewer whose neighbourhood is Chinatown/San Francisco would earn credit on
+// Chinatown/Bangkok. The weight's own comment has said "stacked on top of
+// cityMatch" since v1; this makes that stacking load-bearing rather than
+// decorative.
+//
+// THE WEIGHT STAYS 0.2, AND HERE IS WHY THAT IS REASONABLE NOW THAT IT MEANS
+// RELEVANCE. It was never argued when the feature meant presence — it was a v1
+// hand-tuned number like the rest of DEFAULT_WEIGHTS. Read against its
+// neighbours it sits where a geography REFINEMENT belongs:
+//   • below `cityMatch` 0.45 — the coarse geo signal must dominate the fine
+//     one, so being in the right city is worth more than being in the right
+//     part of it, and no neighbourhood match can rescue a wrong-city candidate;
+//   • below `categoryAffinity` 0.4 and `interestTag` 0.3 — ROADMAP step 7's
+//     "taste as the spine": a place in the viewer's own neighbourhood must not
+//     outrank one their taste prefers, on geography alone;
+//   • above `verifiedBonus` 0.15 and `LOCAL_MOMENTUM_MAX_CONTRIBUTION` 0.15 —
+//     a viewer-specific geo match is a stronger claim than a global modifier.
+// So it breaks ties between candidates the viewer's taste rates alike and moves
+// nothing that taste has already separated. That is the intended altitude, and
+// test N6 in src/test/discoveryDiversityAxes.test.ts VERIFIES the effect rather
+// than asserting it: two otherwise identical candidates, one matching, and the
+// matching one is ordered first — with the same fixture ordered the other way
+// when neither matches.
+//
+// This is an ordinary implementation choice with a recorded derivation, not an
+// owner decision. If the funnel ever contradicts it, v2's fitted weights
+// (see this file's header) replace it along with everything else here.
+
+/**
+ * Fold a geography label to a comparable key: trimmed, case-folded,
+ * diacritic-stripped, inner whitespace collapsed.
+ *
+ * "Le Marais", "le marais", "LE  MARAIS " and "Le Marais" written with a
+ * decomposed é elsewhere in the string all reduce to one key, because the two
+ * sides of this comparison come from DIFFERENT PRODUCERS — an OSM
+ * `addr:suburb` tag typed by a mapper, and a `places.neighborhood` column typed
+ * by a curator — and exact string equality between two humans' spellings is a
+ * comparison that quietly never fires.
+ *
+ * Returns '' for anything that is not a usable label (null, undefined,
+ * whitespace, punctuation-only). Callers treat '' as "no key", never as a key
+ * that matches another ''.
+ */
+export function normaliseGeoLabel(v: string | null | undefined): string {
+  if (typeof v !== 'string') return '';
+  return v
+    .normalize('NFD')
+    .replace(/\p{Diacritic}/gu, '')
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/**
+ * True when two geography labels name the same neighbourhood.
+ *
+ * ABSENT IS NEVER A MATCH. Two candidates with no label do not share a
+ * neighbourhood, and a candidate with a label does not match a viewer who has
+ * none — that guard is the whole difference between this feature and the
+ * presence bonus it replaces, and it is the same guard `repetitionPenalty`
+ * needs so that a page of unlabelled candidates does not penalise itself
+ * through `null === null`.
+ */
+export function neighborhoodMatches(
+  a: string | null | undefined, b: string | null | undefined,
+): boolean {
+  const ka = normaliseGeoLabel(a);
+  if (!ka) return false;
+  return ka === normaliseGeoLabel(b);
+}
+
+/**
+ * The viewer half of the geography comparison — declaration-merged onto
+ * `ViewerContext` above for the line-stability reason stated at the top of this
+ * block.
+ */
+export interface ViewerContext {
+  /**
+   * The viewer's own neighbourhood label, in whatever spelling its producer
+   * used — `neighborhoodMatches` normalises both sides, so no caller has to.
+   *
+   * ABSENT ⇒ `f.neighborhoodMatch` is 0 for EVERY candidate, labelled or not.
+   * That is the correct default and also today's production behaviour on every
+   * surface but Discovery: a surface that cannot say where the viewer is has
+   * not thereby learned that labelled places are better.
+   *
+   * Discovery supplies it from the viewer's own recent place-view history —
+   * see `loadViewerNeighborhood` at the end of lib/discoveryPde.ts, which says
+   * exactly which rows it derives from and what it cannot see.
+   */
+  neighborhood?: string | null;
 }

@@ -832,6 +832,20 @@ const WRITTEN_SURFACES = [
  * yet permit it. This comparison is INFORMATIONAL ONLY (see the header) and
  * carries no exit code, so naming it here reports the pending state rather than
  * blocking on it.
+ *
+ * MEMBERSHIP OF THIS LIST IS A CLAIM, NOT A WISH. A value belongs here only
+ * once some writer in THIS TREE actually sends it; otherwise the "ABSENT" line
+ * it produces reads as "the database is behind the code" when the truth is that
+ * no code writes it at all, and the one report built to surface lost signal
+ * would be manufacturing a finding.
+ *
+ * 'trip_add' (2894) qualifies as of the same change that added it here:
+ * travel-buddy-standalone's PlanPickerController reports it through
+ * useRankOutcome → POST /api/rank-events/outcome when a traveller adds a served
+ * Discovery item to a trip, and SURFACE/OUTCOME validation in
+ * routes/rankEvents.ts already accepts it. It will print ABSENT against any
+ * database that has not had 2894 applied — including production, where 2894
+ * refuses until 2297 lands. That is the pending state reported, not a failure.
  */
 const WRITTEN_OUTCOMES = [
   "impression",
@@ -842,6 +856,7 @@ const WRITTEN_OUTCOMES = [
   "attended",
   "analytics",
   "dismiss",
+  "trip_add",
 ] as const;
 
 /**

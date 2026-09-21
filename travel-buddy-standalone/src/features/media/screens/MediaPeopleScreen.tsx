@@ -68,7 +68,9 @@ function PeopleGroupSection({
   group: PeopleLensGroup;
   onOpenMedia?: (media: MediaProjection) => void;
 }) {
-  const { contributor: c, perspectiveCount } = group;
+  const { contributor: c, perspectiveCount, relation } = group;
+  const relationLabel =
+    relation === 'trip_crew' ? 'Trip Crew' : relation === 'shared_moment' ? 'Shared Moment' : null;
   return (
     <View style={styles.group}>
       <View style={styles.header}>
@@ -85,9 +87,9 @@ function PeopleGroupSection({
             {c.verified ? <BadgeCheck size={15} color="#3DD6C4" strokeWidth={2.4} /> : null}
           </View>
           <Text style={styles.meta} numberOfLines={1}>
-            {c.trustLabel
-              ? c.trustLabel
-              : `${perspectiveCount} ${perspectiveCount === 1 ? 'perspective' : 'perspectives'}`}
+            {relationLabel ??
+              c.trustLabel ??
+              `${perspectiveCount} ${perspectiveCount === 1 ? 'perspective' : 'perspectives'}`}
           </Text>
         </View>
         <FreshnessBadge freshness={group.freshness} />

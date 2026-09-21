@@ -8,6 +8,7 @@
  *   DELETE /api/wall/session-intent
  *   POST   /api/wall/impression       { objectId, objectType, session? }
  *   POST   /api/wall/action           { objectId, objectType, action, session? }
+ *   POST   /api/wall/revalidate       { objectIds }
  *
  * FAIL-SOFT BY DESIGN (spec §34 / §40). The Wall is flag-gated OFF server-side,
  * so `feature_disabled` and "not configured / not authenticated" are NORMAL,
@@ -67,7 +68,7 @@ export type FetchQuickMediaResult =
   | { ok: false; error: string };
 
 export type SessionIntentResult =
-  | { ok: true; sessionIntent: StructuredIntent }
+  | { ok: true; sessionIntent: StructuredIntent; resolution: IntentResolution | null } // W71
   | { ok: false; error: string; disabled?: boolean };
 
 /** A safe, empty response — used for "not configured", "disabled", parse fail. */
@@ -240,9 +241,9 @@ export async function setSessionIntent(text: string): Promise<SessionIntentResul
       const code = await readErrorCode(res);
       return { ok: false, error: code, disabled: code === 'feature_disabled' };
     }
-    const body = (await res.json()) as { sessionIntent?: StructuredIntent };
+    const body = (await res.json()) as { sessionIntent?: StructuredIntent; intentResolution?: string };
     if (!body.sessionIntent) return { ok: false, error: 'malformed_response' };
-    return { ok: true, sessionIntent: body.sessionIntent };
+    return { ok: true, sessionIntent: body.sessionIntent, resolution: readIntentResolution(body.intentResolution) }; // W71
   } catch (err: any) {
     return { ok: false, error: err?.message ?? 'Network error' };
   }
@@ -300,6 +301,59 @@ export async function sendImpression(target: WallMutationTarget): Promise<void> 
   });
 }
 
+// ── POST /wall/revalidate (spec §31 revalidate eligibility, §37 takedowns) ───
+
+/**
+ * Ask the server which of these cached objects the viewer may STILL be shown.
+ *
+ * The answer is an ALLOWLIST, and the failure modes are deliberately
+ * indistinguishable from "nothing is eligible" only where that is the safe
+ * reading. Three distinct outcomes:
+ *
+ *   { ok: true,  eligibleObjectIds }  — authoritative. Anything absent from the
+ *                                       list has been taken down, deleted,
+ *                                       blocked, hidden or narrowed out, and the
+ *                                       caller MUST drop it.
+ *   { ok: false }                     — the server was not reached (offline, or
+ *                                       the app is not configured). NOT a
+ *                                       verdict: the caller leaves the cache
+ *                                       alone and retries later, because
+ *                                       deleting a whole cached feed on a flaky
+ *                                       connection would destroy the offline
+ *                                       behaviour §31 requires.
+ *
+ * The distinction matters: an empty `eligibleObjectIds` from a REACHED server is
+ * a real "all of it is gone", and is honoured.
+ */
+export async function revalidateCachedObjects(
+  objectIds: string[],
+): Promise<{ ok: true; eligibleObjectIds: string[] } | { ok: false; error: string }> {
+  const ids = [...new Set(objectIds)].filter((id) => typeof id === 'string' && id.length > 0);
+  if (ids.length === 0) return { ok: true, eligibleObjectIds: [] };
+  if (!isSupabaseConfigured || !apiBase()) return { ok: false, error: 'not_configured' };
+  const token = await freshToken();
+  if (!token) return { ok: false, error: 'not_authenticated' };
+  try {
+    const res = await fetch(`${apiBase()}/api/wall/revalidate`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ objectIds: ids.slice(0, 50) }),
+    });
+    if (!res.ok) {
+      const code = await readErrorCode(res);
+      // The Wall being switched off is not a moderation verdict about the cache.
+      return { ok: false, error: code };
+    }
+    const body = (await res.json()) as { eligibleObjectIds?: unknown };
+    const eligible = Array.isArray(body?.eligibleObjectIds)
+      ? body.eligibleObjectIds.filter((x): x is string => typeof x === 'string')
+      : [];
+    return { ok: true, eligibleObjectIds: eligible };
+  } catch (err: any) {
+    return { ok: false, error: err?.message ?? 'Network error' };
+  }
+}
+
 /** Record a user action on an object. Carries ONLY ids + verb (never text). */
 export async function sendAction(
   target: WallMutationTarget,
@@ -311,4 +365,43 @@ export async function sendAction(
     action,
     ...(target.session ? { session: target.session } : {}),
   });
+}
+
+// ── W71: the four outcomes of a session-intent parse ─────────────────────────
+//
+// APPENDED AT THE END OF THIS FILE ON PURPOSE. `docs/architecture/census-wall.md`
+// cites this file by LINE NUMBER, and inserting these declarations next to the
+// code that uses them silently moved four of those pointers. Everything new
+// goes below the last pre-existing export so no existing citation shifts. That
+// is not tidiness: a census pointer that has quietly slid a few lines is
+// indistinguishable from one that was always wrong.
+
+/**
+ * Which of the four outcomes produced the server's interpretation (Wall §17 /
+ * census W71). `engine_unavailable` is an OUTAGE of the shared Global Input
+ * Intelligence engine: the request succeeded, the steer still applies, and
+ * NOTHING was established about what the user said. It must never be rendered
+ * as "nothing matched" — that reports an outage as a fact about the user.
+ */
+export type IntentResolution =
+  | 'resolved'
+  | 'resolved_no_entities'
+  | 'no_text'
+  | 'engine_unavailable';
+
+const KNOWN_INTENT_RESOLUTIONS: readonly string[] = [
+  'resolved',
+  'resolved_no_entities',
+  'no_text',
+  'engine_unavailable',
+];
+
+/**
+ * An unrecognised or absent value becomes null — "the server did not say" —
+ * never a verdict. A server older than this field says nothing, and inventing
+ * `resolved_no_entities` on its behalf would put words in its mouth about the
+ * user's words.
+ */
+function readIntentResolution(raw: string | undefined): IntentResolution | null {
+  return KNOWN_INTENT_RESOLUTIONS.includes(raw ?? '') ? (raw as IntentResolution) : null;
 }

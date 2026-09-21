@@ -22,8 +22,16 @@
  */
 
 import { Router } from "express";
+import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { logger as rootLogger } from "../lib/logger.js";
+import {
+  tripKernelClient,
+  readCommandEnvelope,
+  executeTripCommand,
+  sendKernelRejection,
+  setTripVersionHeader,
+} from "../domain/trips/commands/tripKernel.js";
 
 const chatLogger = rootLogger.child({ route: "telegraphChat" });
 import { requireUser, sendError } from "../lib/http.js";
@@ -42,19 +50,69 @@ const UUID = /^[0-9a-f-]{36}$/i;
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
+/**
+ * The answer a membership check may give, as three outcomes rather than two.
+ *
+ * census-telegraph §20.7: this helper used to discard the read's error and
+ * return a bare boolean. supabase-js RESOLVES on a database error rather than
+ * throwing, so an unreadable `message_thread_members` produced
+ * `{ data: null, error }`, the `!data` branch fired, and every caller told the
+ * traveller *"You are not an active member of this thread"* — a positive,
+ * specific statement about their relationship to their own conversation, made
+ * from a read that never happened.
+ *
+ * That is not the T344/T363 defect: it denies rather than admits, and a refusal
+ * is not a plausible empty state. It is still false, and it is false in the one
+ * direction that matters to somebody who needs the conversation — a 403 tells
+ * the client the answer is SETTLED and there is nothing to retry, so the app
+ * will not recover when the table does.
+ *
+ * `unreadable` is the third outcome, and it is the same posture the six reads
+ * this file already fixed take (`degraded_unavailable`, the only code
+ * `lib/http.ts` marks retryable). §20.7 declined to make this change on the
+ * grounds that it alters the contract of live routes; it is made here because
+ * the alternative contract — "we assert you are not a member" — is a claim the
+ * server is not entitled to, and because the same file already accepted exactly
+ * this contract change for its other six reads.
+ */
+type ThreadMembership = "member" | "not_member" | "unreadable";
+
 async function verifyThreadMember(
   client: any,
   threadId: string,
   userId: string,
-): Promise<boolean> {
-  const { data } = await client
+): Promise<ThreadMembership> {
+  const { data, error } = await client
     .from("message_thread_members")
     .select("user_id, left_at")
     .eq("thread_id", threadId)
     .eq("user_id", userId)
     .maybeSingle();
-  if (!data) return false;
-  return (data as any).left_at === null;
+  if (error) {
+    chatLogger.error({ threadId, userId, message: (error as any).message }, "thread membership read failed");
+    return "unreadable";
+  }
+  if (!data) return "not_member";
+  return (data as any).left_at === null ? "member" : "not_member";
+}
+
+/**
+ * The refusal every caller of `verifyThreadMember` sends, in one place so the
+ * two outcomes cannot drift apart at five call sites. Returns true when it
+ * refused, so the caller reads as one line.
+ */
+function refuseUnlessMember(res: any, membership: ThreadMembership, deniedMessage: string): boolean {
+  if (membership === "member") return false;
+  if (membership === "unreadable") {
+    sendError(
+      res,
+      "degraded_unavailable",
+      "We could not check your membership of this conversation just now. Please try again shortly.",
+    );
+    return true;
+  }
+  sendError(res, "forbidden", deniedMessage);
+  return true;
 }
 
 // ── GET /api/threads/:threadId/telegraph/suggestions ─────────────────────────
@@ -71,11 +129,8 @@ router.get("/threads/:threadId/telegraph/suggestions", async (req, res) => {
   }
 
   // Verify active membership
-  const isMember = await verifyThreadMember(client, threadId, user.id);
-  if (!isMember) {
-    sendError(res, "forbidden", "You are not an active member of this thread");
-    return;
-  }
+  const membership = await verifyThreadMember(client, threadId, user.id);
+  if (refuseUnlessMember(res, membership, "You are not an active member of this thread")) return;
 
   // Optionally run intent detection on a new message body
   const messageText = typeof req.query.message === "string" ? req.query.message : null;
@@ -123,7 +178,7 @@ router.get("/threads/:threadId/telegraph/suggestions", async (req, res) => {
   }
 
   // Return current active (non-expired, non-dismissed) suggestions for this user+thread
-  const { data: suggestions } = await client
+  const { data: suggestions, error: suggestionsErr } = await client
     .from("telegraph_chat_suggestions")
     .select(
       "id, intent_type, title, reason, category, action_type, location_context, time_context, created_at, expires_at",
@@ -135,6 +190,13 @@ router.get("/threads/:threadId/telegraph/suggestions", async (req, res) => {
     .order("created_at", { ascending: false })
     .limit(2);
 
+  if (suggestionsErr) {
+    chatLogger.error({ err: suggestionsErr, threadId, userId: user.id },
+      "telegraph suggestions read failed — refusing rather than answering that there are none");
+    sendError(res, "degraded_unavailable",
+      "We could not load Telegraph suggestions right now. Please try again shortly.");
+    return;
+  }
   res.status(200).json({ suggestions: suggestions ?? [] });
 });
 
@@ -153,20 +215,24 @@ router.post(
       return;
     }
 
-    const isMember = await verifyThreadMember(client, threadId, user.id);
-    if (!isMember) {
-      sendError(res, "forbidden", "Not a thread member");
-      return;
-    }
+    const membership = await verifyThreadMember(client, threadId, user.id);
+    if (refuseUnlessMember(res, membership, "Not a thread member")) return;
 
-    // Fetch suggestion data before updating so we can write the preference event
-    const { data: suggestion } = await client
+    // Fetch suggestion data before updating so we can write the preference event.
+    // The event is best-effort (see the warn below), so a failed READ does not
+    // refuse the dismiss — but it must not be indistinguishable from "there was
+    // no such suggestion", which is what discarding the error made it.
+    const { data: suggestion, error: suggestionErr } = await client
       .from("telegraph_chat_suggestions")
       .select("category, intent_type")
       .eq("id", suggestionId)
       .eq("user_id", user.id)
       .eq("thread_id", threadId)
       .maybeSingle();
+    if (suggestionErr) {
+      chatLogger.error({ err: suggestionErr, suggestionId, threadId },
+        "dismiss preference read failed — no preference event will be written, and that is a failure, not an absent suggestion");
+    }
 
     const { error } = await client
       .from("telegraph_chat_suggestions")
@@ -219,11 +285,8 @@ router.post(
       return;
     }
 
-    const isMember = await verifyThreadMember(client, threadId, user.id);
-    if (!isMember) {
-      sendError(res, "forbidden", "Not a thread member");
-      return;
-    }
+    const membership = await verifyThreadMember(client, threadId, user.id);
+    if (refuseUnlessMember(res, membership, "Not a thread member")) return;
 
     const parsed = AddToPlanSchema.safeParse(req.body);
     if (!parsed.success) {
@@ -232,26 +295,47 @@ router.post(
     }
     const { tripId, title, dayDate, startsAt } = parsed.data;
 
-    // Verify the acting user is an accepted member of the chosen trip
-    const { data: membership } = await client
+    // Verify the acting user is an accepted member of the chosen trip.
+    // §20.7 again: an unreadable `trip_members` used to answer "You are not an
+    // accepted member of that trip" from a read that never happened.
+    const { data: tripMembership, error: tripMembershipErr } = await client
       .from("trip_members")
       .select("role")
       .eq("trip_id", tripId)
       .eq("user_id", user.id)
       .in("role", ["owner", "member"])
       .maybeSingle();
-    if (!membership) {
+    if (tripMembershipErr) {
+      chatLogger.error(
+        { threadId, tripId, userId: user.id, message: (tripMembershipErr as any).message },
+        "trip membership read failed",
+      );
+      sendError(
+        res,
+        "degraded_unavailable",
+        "We could not check your membership of that trip just now. Please try again shortly.",
+      );
+      return;
+    }
+    if (!tripMembership) {
       sendError(res, "forbidden", "You are not an accepted member of that trip");
       return;
     }
 
     // Load suggestion for title/context
-    const { data: suggestion } = await client
+    const { data: suggestion, error: suggestionErr } = await client
       .from("telegraph_chat_suggestions")
       .select("id, title, location_context, time_context")
       .eq("id", suggestionId)
       .eq("user_id", user.id)
       .maybeSingle();
+    if (suggestionErr) {
+      chatLogger.error({ err: suggestionErr, suggestionId, threadId },
+        "suggestion read failed on the add-to-trip path — refusing rather than reporting the suggestion as nonexistent");
+      sendError(res, "degraded_unavailable",
+        "We could not open that suggestion right now. Please try again shortly.");
+      return;
+    }
     if (!suggestion) {
       sendError(res, "not_found", "Suggestion not found");
       return;
@@ -259,7 +343,44 @@ router.post(
 
     const itemTitle = title ?? (suggestion as any).title ?? "Telegraph suggestion";
 
-    const { data: planItem, error: planErr } = await client
+    // Trip Kernel path (§4.1 ADD_PLAN, capability crew). The thread-member and
+    // trip-member checks above are the authorization; the kernel re-checks
+    // crew. The direct insert names eight columns and leaves category, status,
+    // sort_order, visibility, lock_type and location_is_private at their table
+    // defaults; the kernel's defaults are the same values, and
+    // location_is_private is sent explicitly so the row matches under a 2500
+    // function too. Off => the insert below.
+    const kernel = await tripKernelClient();
+    let kernelPlanItem: { id: string; title: string } | null = null;
+    if (kernel) {
+      const env = readCommandEnvelope(req);
+      if (!env.ok) { sendError(res, "invalid_payload", env.message); return; }
+      const r = await executeTripCommand(kernel, {
+        commandId: randomUUID(),
+        tripId,
+        actorUserId: user.id,   // always from token
+        expectedTripVersion: env.expectedTripVersion,
+        idempotencyKey: env.idempotencyKey,
+        type: "ADD_PLAN",
+        payload: {
+          title: itemTitle,
+          source_type: "telegraph",
+          source_id: suggestionId,
+          day_date: dayDate ?? null,
+          starts_at: startsAt ?? null,
+          notes: (suggestion as any).location_context ?? null,
+          location_is_private: true,
+        },
+      });
+      if (!r.ok) { sendKernelRejection(res, r, req.log); return; }
+      setTripVersionHeader(res, r.version);
+      kernelPlanItem = { id: r.result.id, title: r.result.title };
+    }
+
+    // trip-kernel:legacy-path — flag-off twin of ADD_PLAN above.
+    const { data: planItem, error: planErr } = kernelPlanItem
+      ? { data: kernelPlanItem, error: null }
+      : await client
       .from("trip_plan_items")
       .insert({
         trip_id: tripId,
@@ -305,18 +426,22 @@ router.post(
       return;
     }
 
-    const isMember = await verifyThreadMember(client, threadId, user.id);
-    if (!isMember) {
-      sendError(res, "forbidden", "Not a thread member");
-      return;
-    }
+    const membership = await verifyThreadMember(client, threadId, user.id);
+    if (refuseUnlessMember(res, membership, "Not a thread member")) return;
 
-    const { data: suggestion } = await client
+    const { data: suggestion, error: suggestionErr } = await client
       .from("telegraph_chat_suggestions")
       .select("id, title, location_context, time_context, trip_id, circle_id")
       .eq("id", suggestionId)
       .eq("user_id", user.id)
       .maybeSingle();
+    if (suggestionErr) {
+      chatLogger.error({ err: suggestionErr, suggestionId, threadId },
+        "suggestion read failed on the meetup prefill path — refusing rather than reporting the suggestion as nonexistent");
+      sendError(res, "degraded_unavailable",
+        "We could not open that suggestion right now. Please try again shortly.");
+      return;
+    }
     if (!suggestion) {
       sendError(res, "not_found", "Suggestion not found");
       return;
@@ -366,21 +491,28 @@ router.post(
       return;
     }
 
-    const isMember = await verifyThreadMember(client, threadId, user.id);
-    if (!isMember) {
-      sendError(res, "forbidden", "Not a thread member");
-      return;
-    }
+    const membership = await verifyThreadMember(client, threadId, user.id);
+    if (refuseUnlessMember(res, membership, "Not a thread member")) return;
 
     // Never write server-readable plaintext into an end-to-end encrypted thread.
     // A direct thread can be e2ee and telegraph suggestions surface in DMs, so a
     // poll body (JSON plaintext) would violate the E2EE invariant (audit MSG-3).
     // Mirror the messaging media/text handlers' e2ee_thread refusal.
-    const { data: threadMeta } = await client
+    const { data: threadMeta, error: threadMetaErr } = await client
       .from("message_threads")
       .select("is_e2ee")
       .eq("id", threadId)
       .maybeSingle();
+    if (threadMetaErr) {
+      // An unreadable flag read as `is_e2ee: false` and let a plaintext poll
+      // body through the one gate that exists to stop it. Same refusal as
+      // routes/messaging.ts on the media path, which binds this identical read.
+      chatLogger.error({ err: threadMetaErr, threadId },
+        "thread E2EE flag read failed on the poll path — refusing rather than admitting plaintext into an E2EE thread");
+      sendError(res, "degraded_unavailable",
+        "We could not verify this conversation right now. Please try again shortly.");
+      return;
+    }
     if ((threadMeta as any)?.is_e2ee === true) {
       sendError(res, "e2ee_thread", "Polls are not supported on end-to-end encrypted threads");
       return;
@@ -394,12 +526,19 @@ router.post(
 
     const { options, question } = parsed.data;
 
-    const { data: suggestion } = await client
+    const { data: suggestion, error: suggestionErr } = await client
       .from("telegraph_chat_suggestions")
       .select("id, title")
       .eq("id", suggestionId)
       .eq("user_id", user.id)
       .maybeSingle();
+    if (suggestionErr) {
+      chatLogger.error({ err: suggestionErr, suggestionId, threadId },
+        "suggestion read failed on the poll path — refusing rather than reporting the suggestion as nonexistent");
+      sendError(res, "degraded_unavailable",
+        "We could not open that suggestion right now. Please try again shortly.");
+      return;
+    }
     if (!suggestion) {
       sendError(res, "not_found", "Suggestion not found");
       return;

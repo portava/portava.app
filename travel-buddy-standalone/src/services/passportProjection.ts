@@ -88,6 +88,42 @@ export interface JourneyPerson {
   avatarUrl: string | null;
 }
 
+/**
+ * An event that happened on this Trip (§14).
+ *
+ * Server-projected at the viewer's permitted event visibility — a `friends_only`
+ * event reaches only a viewer with the relationship, an `invite_only` one only
+ * the owner — so this screen renders whatever arrives and never re-decides it.
+ * OPTIONAL for the same forward-compatible reason `people` is: an older server
+ * omits the field entirely.
+ */
+export interface JourneyEvent {
+  id: string;
+  title: string | null;
+  city: string | null;
+  country: string | null;
+  startsAt: string | null;
+  endsAt: string | null;
+  /** The passport owner's own relationship to the event. */
+  role: 'host' | 'attendee';
+}
+
+/**
+ * Something the traveller recommends out of this Trip (§14) — a Hidden Gem they
+ * contributed. The server has already applied the gem disclosure policy, so a
+ * gem that is still pending, protected or merged never arrives here at all.
+ */
+export interface JourneyRecommendation {
+  id: string;
+  kind: 'hidden_gem';
+  name: string | null;
+  category: string | null;
+  city: string | null;
+  country: string | null;
+  neighborhood: string | null;
+  createdAt: string | null;
+}
+
 /** One Trip projected into the Journeys view (§14). */
 export interface JourneyProjection {
   tripId: string;
@@ -107,6 +143,10 @@ export interface JourneyProjection {
   featured: boolean;
   /** Forward-compatible people context (see JourneyPerson). */
   people?: JourneyPerson[];
+  /** Events that happened on this Trip, at the viewer's permitted visibility. */
+  events?: JourneyEvent[];
+  /** Hidden Gems the traveller contributed out of this Trip. */
+  recommendations?: JourneyRecommendation[];
 }
 
 /** Grouped chronological projection: year → country → city → Trip (TABLE 26). */

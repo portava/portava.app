@@ -172,8 +172,22 @@ function pickDate(row: any): string | null {
   return row.earned_at ?? row.awarded_at ?? row.unlocked_at ?? row.created_at ?? null;
 }
 
+/**
+ * One half of the unified read, plus whether that half could be read AT ALL.
+ *
+ * `stamps: []` used to be the answer to both "this traveller has none" and
+ * "the table could not be read". supabase-js RESOLVES on a database error, so
+ * neither the caller's `try/catch` nor an exception could tell them apart, and
+ * the passport rendered a failed read as a truthful claim that a person has
+ * earned nothing. `readFailed` is the only carrier of the difference.
+ */
+interface HalfRead {
+  stamps: UnifiedStamp[];
+  readFailed: boolean;
+}
+
 /** Read v2 achievement stamps (non-revoked), with definition + composited art. */
-async function readV2(sc: any, userId: string): Promise<UnifiedStamp[]> {
+async function readV2(sc: any, userId: string): Promise<HalfRead> {
   try {
     const { data, error } = await sc
       .from("user_stamps")
@@ -183,14 +197,14 @@ async function readV2(sc: any, userId: string): Promise<UnifiedStamp[]> {
       )
       .eq("user_id", userId)
       .eq("is_revoked", false);
-    if (error || !Array.isArray(data)) return [];
+    if (error || !Array.isArray(data)) return { stamps: [], readFailed: true };
 
     const rows = data as any[];
     // Resolve composited artwork for the catalog ids in one batch.
     const catalogIds = [...new Set(rows.map((r) => r.catalog_id).filter((x): x is string => typeof x === "string"))];
     const artMap = await readArtwork(sc, catalogIds);
 
-    return rows.map((r) => ({
+    return { readFailed: false, stamps: rows.map((r) => ({
       source: "v2_achievement" as const,
       // v2 achievements are awarded only by StampAwardEngine via the service
       // role (never self-inserted), so they are canonical facts → verified (§12).
@@ -209,21 +223,23 @@ async function readV2(sc: any, userId: string): Promise<UnifiedStamp[]> {
       name: r.stamp_definitions?.name ?? null,
       rarity: r.stamp_definitions?.rarity ?? null,
       artworkUrl: r.catalog_id ? (artMap.get(r.catalog_id) ?? null) : null,
-    }));
+    })) };
   } catch {
-    return [];
+    // A PostgREST failure RESOLVES; reaching here means a genuine throw
+    // (transport abort, bad client). Either way we did not see the shelf.
+    return { stamps: [], readFailed: true };
   }
 }
 
 /** Read v1 GPS stamps. Tolerates schema drift (locked column, date column). */
-async function readV1(sc: any, userId: string): Promise<UnifiedStamp[]> {
+async function readV1(sc: any, userId: string): Promise<HalfRead> {
   try {
     const { data, error } = await sc
       .from("passport_stamps")
       .select("*")
       .eq("user_id", userId);
-    if (error || !Array.isArray(data)) return [];
-    return (data as any[])
+    if (error || !Array.isArray(data)) return { stamps: [], readFailed: true };
+    return { readFailed: false, stamps: (data as any[])
       .filter((r) => r.locked !== true) // live table has a `locked` flag; skip locked
       .map((r) => ({
         source: "v1_gps" as const,
@@ -246,9 +262,9 @@ async function readV1(sc: any, userId: string): Promise<UnifiedStamp[]> {
         name: null,
         rarity: null,
         artworkUrl: null,
-      }));
+      })) };
   } catch {
-    return [];
+    return { stamps: [], readFailed: true };
   }
 }
 
@@ -285,6 +301,16 @@ export interface UnifiedStampResult {
   count: number;
   /** Breakdown for observability / debugging. */
   breakdown: { v2: number; v1: number; deduped: number };
+  /**
+   * TRUE when EITHER half of the unified read failed, so `stamps` / `count` are
+   * a floor rather than a total.
+   *
+   * A passport is a CLAIM ABOUT A PERSON. "You have no stamps" and "we could
+   * not read the stamp tables" are different statements and only one of them is
+   * about the traveller; rendering the second as the first is false, not
+   * degraded. Callers that present a count to a human must consult this.
+   */
+  readFailed: boolean;
 }
 
 /**
@@ -292,7 +318,9 @@ export interface UnifiedStampResult {
  * Sorted newest-first by earnedAt.
  */
 export async function buildUnifiedStamps(sc: any, userId: string): Promise<UnifiedStampResult> {
-  const [v2, v1] = await Promise.all([readV2(sc, userId), readV1(sc, userId)]);
+  const [v2r, v1r] = await Promise.all([readV2(sc, userId), readV1(sc, userId)]);
+  const v2 = v2r.stamps;
+  const v1 = v1r.stamps;
 
   const byKey = new Map<string, UnifiedStamp>();
   for (const s of v2) byKey.set(dedupKey(s), s);   // v2 first — wins ties
@@ -313,6 +341,8 @@ export async function buildUnifiedStamps(sc: any, userId: string): Promise<Unifi
     stamps,
     count: stamps.length,
     breakdown: { v2: v2.length, v1: v1.length, deduped: dedupedFromV1 },
+    // EITHER half failing makes the total a floor, not a count.
+    readFailed: v2r.readFailed || v1r.readFailed,
   };
 }
 

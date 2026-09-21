@@ -25,6 +25,9 @@
  */
 import { describe, it, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
+import { readdirSync, readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import mapProjectionRouter, {
   _clearProtectedZoneCache,
@@ -453,5 +456,115 @@ describe("memory through GET /api/map/projection", () => {
     assert.deepEqual(r.body.producers.memory, { refusal: null, collected: 1 });
     assert.equal(r.body.protection.suppressed, 1);
     assert.equal(r.body.protection.coarsened, 0);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// M42 / M123 — the PLACE lane's SQL contract, and the two ways a fix can be
+// silently ineffective.
+//
+// WHY THIS IS A MIGRATION-TEXT GUARD AND NOT A BEHAVIOURAL ONE
+// ============================================================
+// `project_user_memory` is SQL. The producer above is DOWNSTREAM of it: it
+// reads `memory_remembers_for_user`, which reads `memory_projections`, which
+// the projector writes. So NOTHING in this file's TypeScript can be wrong for
+// M42, and nothing in it can be made right — a fake-client assertion about the
+// union would be exactly the false green the fake-client trap produces, since
+// `filters.push(r => r[col] === val)` cannot model a SQL join at all. The
+// BEHAVIOURAL proof for M42 is executed against a seeded portava-ci and is
+// recorded in the Lane D report, not here.
+//
+// What CAN be pinned here, statically and without a database, are the two
+// preconditions any correct fix must satisfy. Both were found by executing the
+// real thing against portava-ci on 2026-09-20, and PR #451 as written violates
+// both.
+//
+//  1. SIGNATURE PRESERVATION. The live function is
+//     `project_user_memory(p_user_id uuid, p_enforce_flag boolean DEFAULT true)`
+//     and its only caller is `project_user_memory_with_retraction`, which
+//     invokes `project_user_memory(p_user_id, false)` — two arguments. A
+//     `CREATE OR REPLACE FUNCTION` that declares a DIFFERENT parameter list
+//     does not replace anything: PostgreSQL overloads on the argument list, so
+//     the old body survives untouched and the new one is dead code nothing
+//     calls. Verified on portava-ci: applying PR #451's one-argument form left
+//     TWO `project_user_memory` entries in `pg_proc`, and the real call site
+//     still reached the `saved_places` body.
+//
+//  2. LANE PRESERVATION. The function carries FOUR lanes — episodic (city
+//     visits), semantic (interests / travel styles), social (follows) and
+//     place. A replacement body containing only the PLACE lane silently
+//     deletes the other three. PR #451's body contains zero occurrences of
+//     `episodic`, `semantic` or `social`.
+//
+// Neither defect is reachable by a test that greps for the union table names,
+// which is what PR #451's own test does — both of PR #451's bugs pass it.
+describe("M42/M123 — project_user_memory's redefinition contract", () => {
+  // The real migrations directory. The env override exists ONLY so the
+  // mutation log for these three cases can be produced without writing into
+  // src/migrations/, which this lane does not own; unset, it is the real dir.
+  const MIG =
+    process.env.PORTAVA_MIGRATIONS_DIR_FOR_TEST ??
+    join(dirname(fileURLToPath(import.meta.url)), "../migrations");
+
+  /** Every migration that REDEFINES public.project_user_memory, in apply order. */
+  function projectorRedefinitions(dir: string): Array<{ file: string; params: string; body: string }> {
+    const out: Array<{ file: string; params: string; body: string }> = [];
+    for (const file of readdirSync(dir).filter((f) => f.endsWith(".sql")).sort()) {
+      const sql = readFileSync(join(dir, file), "utf8");
+      // The name must be followed by '(' — never match project_user_memory_with_retraction.
+      const re = /CREATE\s+OR\s+REPLACE\s+FUNCTION\s+public\.project_user_memory\s*\(([^)]*)\)/gi;
+      let m: RegExpExecArray | null;
+      while ((m = re.exec(sql)) !== null) {
+        out.push({ file, params: m[1], body: sql.slice(m.index) });
+      }
+    }
+    return out;
+  }
+
+  /** The parameter list reduced to `name type` pairs, defaults and comments stripped. */
+  function normaliseParams(params: string): string {
+    return params
+      .replace(/--[^\n]*/g, " ")
+      .split(",")
+      .map((p) => p.replace(/\s+DEFAULT\s+[\s\S]*$/i, "").trim().replace(/\s+/g, " ").toLowerCase())
+      .filter((p) => p !== "")
+      .join(", ");
+  }
+
+  it("finds the projector redefinitions it is meant to guard (anti-vacuity)", () => {
+    const defs = projectorRedefinitions(MIG);
+    // If this ever reaches zero the two guards below become trivially true, so
+    // the count is asserted before they run.
+    assert.ok(defs.length >= 4, `expected >=4 project_user_memory redefinitions, found ${defs.length}`);
+  });
+
+  it("every redefinition keeps ONE signature — a differing parameter list overloads instead of replacing", () => {
+    const defs = projectorRedefinitions(MIG);
+    const signatures = new Map<string, string[]>();
+    for (const d of defs) {
+      const key = normaliseParams(d.params);
+      signatures.set(key, [...(signatures.get(key) ?? []), d.file]);
+    }
+    assert.equal(
+      signatures.size,
+      1,
+      `project_user_memory is redefined under ${signatures.size} different signatures, which creates an ` +
+        `overload rather than a replacement — the old body keeps running. Signatures: ` +
+        JSON.stringify(Object.fromEntries(signatures)),
+    );
+    // And that one signature is the one the live caller uses.
+    assert.equal([...signatures.keys()][0], "p_user_id uuid, p_enforce_flag boolean");
+  });
+
+  it("the LAST redefinition still carries all four lanes", () => {
+    const defs = projectorRedefinitions(MIG);
+    const last = defs[defs.length - 1];
+    for (const lane of ["episodic", "semantic", "social", "place"]) {
+      assert.ok(
+        new RegExp(`'${lane}'`).test(last.body),
+        `the final redefinition (${last.file}) has no '${lane}' lane — replacing the body with a ` +
+          `PLACE-only function silently deletes the other three memory types`,
+      );
+    }
   });
 });

@@ -19,7 +19,7 @@ jest.mock('../../services/tripIntel.ts', () => ({
   fetchArrivalBoard: jest.fn(),
 }));
 
-import { ArrivalBoard } from '../tripCrew/ArrivalBoard.tsx';
+import { ArrivalBoard } from '../../features/trips/crew/ArrivalBoard.tsx';
 import { fetchArrivalBoard } from '../../services/tripIntel.ts';
 
 const mockFetch = fetchArrivalBoard as jest.Mock;

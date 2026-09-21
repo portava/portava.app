@@ -1,0 +1,502 @@
+
+PORTAVA
+Trips Development Architecture
+Developer Specification v4
+Trip Kernel • Journey Graph • Coordination • Temporal Freedom • Live Intelligence • Safety • Memory
+Engineering goal: make Trips the canonical operating system for a journey — before, during, and after travel.
+Architecture target: mobile + API + Supabase/Postgres + Compass orchestration + event/projection infrastructure
+
+1. Executive Architecture
+Trips is not an itinerary list. It is Portava’s canonical journey runtime: the domain that coordinates people, commitments, plans, places, transport, bookings, live conditions, social presence, safety state, and outcomes for a defined journey.
+Primary invariant
+A Trip surface may present or orchestrate plans, but all consequential state changes must pass through the Trip Kernel. No Map, Compass, Telegraph, Discovery, Buddy, or UI component may independently invent canonical trip state.
+
+WORLD INTELLIGENCE      PERSONAL CONTEXT      SOCIAL GRAPH        \                    |                    /         \                   |                   /               TEMPORAL FREEDOM ENGINE                         |                    TRIP KERNEL          ┌──────────────┼──────────────┐       Commands         State         Events          └──────────────┼──────────────┘                         |                    CONTEXT GRAPH      ┌──────────┬───────┼───────┬──────────┐   Compass      Map   Discovery  Crew    Safety      └──────────┴───────┼───────┴──────────┘                      EXECUTION                         |                      OUTCOME                  Memory + Intel
+1.1 Core responsibilities
+Responsibility
+Trips owns
+Canonical journey state
+Trip identity, stages, legs, commitments, plans, participants, permissions, active phase.
+Coordination
+Group availability, attendance, subgroups, meeting points, proposals, votes, readiness.
+Execution
+Now/Next, free windows, route chains, plan start/complete, transport, disruption recovery.
+Context distribution
+Stable typed projections for Compass, Map, Telegraph, Discovery, Safety, Passport, Memory.
+History
+Immutable domain events, decisions, snapshots, replay references, durable outcomes.
+
+1.2 Non-goals
+Trips does not become a booking engine, payment ledger, generic messaging system, or global location tracker. It coordinates those capabilities through contracts. Specialist domains retain ownership of regulated or sensitive state.
+
+2. Domain Model and Bounded Context
+2.1 Canonical domain objects
+Trip ├─ TripStage[] │   ├─ TripLeg[] │   ├─ Commitment[] │   ├─ Plan[] │   ├─ ReservationRef[] │   └─ TransportSegment[] ├─ TripParticipant[] ├─ TripGoal[] ├─ TripDecisionTask[] ├─ TripRisk[] ├─ TripPresence[] ├─ TripCrew/Subgroup[] ├─ SavedIdea[] ├─ TripProposal[] ├─ TripSnapshot[] └─ TripOutcome[]
+Object
+Purpose
+Ownership
+Trip
+Journey container and versioned aggregate root.
+Trip Kernel
+TripStage
+A bounded stay/context in a city, region, cruise stop, event, or long-stay location.
+Trip Kernel
+TripLeg
+Movement/context transition: stay, transit, layover, road trip, day trip, event, cruise stop.
+Trip Kernel
+Commitment
+Hard/soft obligation with required arrival semantics.
+Trip Kernel / source adapter
+Plan
+Executable or proposed real-world activity.
+Trip Kernel
+Presence
+Temporary availability and contextual status; privacy scoped and expiring.
+Presence subsystem
+Outcome
+What actually happened; basis for Memory/Passport/Intel projections.
+Trip Kernel
+
+2.2 Aggregate boundary
+The Trip aggregate owns ordering and invariants that require a coherent version. Large read models are projections, not transactionally embedded payloads. High-volume ephemeral signals (location samples, crowd intel, chat messages) remain in their specialist stores and are referenced by stable IDs.
+2.3 Canonical IDs
+Identity rule
+Never substitute one domain ID for another because names or coordinates look similar. All cross-domain linkage uses explicit foreign keys or reconciliation records. Place, hidden-gem, event, booking, buddy, and flight IDs remain distinct until a canonical bridge exists.
+
+
+3. Trip Lifecycle and State Machines
+3.1 Primary lifecycle
+IDEA → PLANNING → BOOKED → PRE_DEPARTURE → TRAVELING     → IN_DESTINATION → RETURNING → COMPLETED → MEMORYAlternative states: DISRUPTED | CANCELLED | ABANDONED | ARCHIVED
+Lifecycle is computed from canonical facts plus explicit user actions. Do not store boolean soup such as isActive/isStarted/isFinished/isTraveling when a single state machine can express the semantics.
+3.2 Active operational phase
+Phase
+Primary UI / behavior
+ARRIVAL_DAY
+Arrival logistics, accommodation, crew arrivals, payments/connectivity basics.
+FREE_TIME
+Temporal Freedom windows, Saved Ideas, nearby opportunities, social availability.
+ACTIVE_PLAN
+Current activity, participants, next constraint, leave-by time if relevant.
+TRANSIT
+Route, destination, ETA, group progress, transport state.
+NIGHTLIFE
+Live vibe, crowd movement, queue/entry constraints, crew state, safe return.
+REST
+Suppress low-value interruptions and avoid aggressive recommendation churn.
+DEPARTURE_DAY
+Checkout, baggage, airport timing, remaining viable opportunities.
+DISRUPTED
+Recovery-first UX. Entertainment/commercial surfaces are deprioritized.
+
+3.3 Plan state machine
+DRAFT → PROPOSED → CONFIRMED → IN_PROGRESS → COMPLETED                      ↘ AT_RISK ↘ MOVED                      ↘ CANCELLED                      ↘ SKIPPED
+State transitions must be commands with authorization, validation, audit, and idempotency. UI must not directly update plan status columns.
+
+4. Trip Kernel: Command + Event Architecture
+4.1 Command boundary
+TripCommand {  commandId: UUID  tripId: UUID  actorUserId: UUID  expectedTripVersion?: bigint  idempotencyKey: string  type: TripCommandType  payload: unknown  clientObservedAt?: timestamptz}Examples:ADD_PLAN | MOVE_PLAN | CONFIRM_PLAN | CANCEL_PLANJOIN_PLAN | LEAVE_PLAN | CREATE_SUBGROUP | SET_PRESENCECREATE_PROPOSAL | ACCEPT_PROPOSAL | COMPLETE_ACTIVITY
+The command service validates schema, actor capability, aggregate version, temporal/spatial consistency, dependent commitments, and sensitive-domain boundaries. Successful commands write canonical state plus an immutable domain event in the same database transaction where feasible.
+4.2 Domain events
+trip.plan_addedtrip.plan_movedtrip.plan_confirmedtrip.commitment_at_risktrip.free_window_createdtrip.participant_joinedtrip.proposal_acceptedtrip.stage_startedtrip.trip_disruptedtrip.trip_completed
+4.3 Event envelope
+TripEvent {  eventId  tripId  aggregateVersion  sequence  type  actorUserId?  causationId?  correlationId?  payload  occurredAt  recordedAt  schemaVersion}
+4.4 Delivery
+Use an outbox pattern for asynchronous consumers. State transaction writes domain event + outbox row. Workers publish/retry idempotently. Consumers persist processed event IDs or use deterministic projection version checks.
+
+5. Database Schema
+5.1 Core relational tables
+Table
+Key columns / notes
+trips
+id, owner_user_id, title, lifecycle_state, current_stage_id, home_timezone, version, created_at, updated_at
+trip_stages
+id, trip_id, stage_type, place_id/city_id, timezone, starts_at, ends_at, state, sequence
+trip_legs
+id, trip_id, from_stage_id, to_stage_id, leg_type, starts_at, ends_at, source_ref
+trip_participants
+trip_id, user_id, role, membership_state, joined_at, permissions_version
+trip_commitments
+id, trip_id, stage_id, type, starts_at, required_arrival_at, place_id, flexibility, source_ref
+trip_plans
+id, trip_id, stage_id, status, starts_at, ends_at, place_id, privacy_scope, source_type, version
+trip_plan_participants
+plan_id, user_id, attendance_state, role
+trip_goals
+id, trip_id, type, priority, status, evidence_json
+trip_decision_tasks
+id, trip_id, type, deadline_at, consequence, assigned_user_id, status
+trip_risks
+id, trip_id, likelihood, impact, trigger_json, mitigation_json, status
+trip_presence
+trip_id, user_id, presence_state, visibility, observed_at, expires_at, confidence
+trip_proposals
+id, trip_id, proposal_type, payload_json, status, expires_at, affected_version
+trip_events
+event_id, trip_id, aggregate_version, sequence, type, payload_json, occurred_at
+trip_snapshots
+id, trip_id, aggregate_version, snapshot_json, engine_versions_json, created_at
+trip_outcomes
+id, trip_id, stage_id, plan_id, outcome_type, occurred_at, evidence_json
+
+5.2 Foreign-key policy
+Cross-domain references use explicit *_id plus optional source_ref/source_type. Never encode foreign IDs into generic text fields. All traveler-visible place identity must resolve through the canonical place bridge where available; unresolved external/manual places remain typed as unresolved, not falsely canonical.
+5.3 Data classes
+Class
+Examples
+Retention principle
+Canonical durable
+Trip, stages, confirmed plans, participant membership.
+Until deletion/retention policy.
+Operational
+Decision tasks, risks, transient execution state.
+Expire/archive after operational usefulness.
+Ephemeral sensitive
+Precise presence, safety/location states.
+Short TTL; strict access.
+Derived
+Today/Map/Compass projections.
+Rebuildable; TTL/freshness metadata.
+Historical evidence
+Events, decision ledger, snapshots.
+Policy-controlled; minimize payloads.
+
+
+6. Authorization, RLS, and Policy Layer
+6.1 Roles are not permissions
+Host, co-host, member, guest, local, and buddy are coarse roles. Capabilities are derived from role + trip policy + plan membership + privacy scope. Application code calls policy functions rather than scattering host checks.
+canViewTrip(actor, trip)canInviteParticipant(actor, trip)canEditTrip(actor, trip)canCreatePlan(actor, trip)canModifyPlan(actor, plan)canManageBooking(actor, trip)canSeePresence(actor, subject, trip)canSeePreciseLocation(actor, subject, trip)canManageSafety(actor, trip)
+6.2 RLS principles
+Default deny client writes to sensitive coordination/safety tables unless an explicit safe client path exists.
+Membership does not imply precise location access, payment access, document access, or safety access.
+Service-role mutations still pass application authorization and command validation; service role is not business authorization.
+Policy tests must include negative assertions for anonymous, non-member, removed member, guest, host, and service-facing paths.
+6.3 Privacy scopes
+PRIVATE | SELECTED_PARTICIPANTS | CREW | FRIENDS_NEARBY | TRIP | PUBLIC
+Public Trip content must not leak lodging detail, exact private location, future absence from home, safety state, or unconsented participant data.
+
+7. Temporal and Spatial Consistency Engine
+7.1 Commitment model
+Commitment {  startsAt  requiredArrivalAt  placeId  latenessTolerance  prepDuration  flexibility  confidence}
+7.2 Core invariant
+previous.end+ route(previous.place, next.place, future_departure_time)+ required_buffer(next)<= next.requiredArrivalAt
+Confirmed timelines may contain known conflicts only when explicitly overridden and visibly marked. A conflict is not silently rendered as a normal itinerary.
+7.3 Freedom windows
+FreedomWindow {  beginsAt  endsAt  origin  requiredDestination  participants  hardConstraints[]  confidence}
+Trips queries the Temporal Freedom Engine for gaps between commitments. Discovery, Compass, Saved Ideas, and Buddy matching consume these windows rather than independently calculating “free time.”
+7.4 Spatial consistency checks
+Check
+Example failure
+Travel feasibility
+Dinner in Da Nang 19:00; Hoi An event 19:30.
+Place identity
+External booking and hidden gem share a name but not canonical identity.
+Stage locality
+Plan belongs to a stage whose location/timezone does not contain it.
+Route availability
+Plan is feasible by taxi but transport mode policy says no taxi.
+
+
+8. Goals, Decisions, Readiness, and Risk
+8.1 Goal graph
+Trip goals capture why the journey exists and prevent optimization around generic engagement. Goals may be personal or shared and can be weighted without forcing every participant to share the same priorities.
+TripGoal {  type: NIGHTLIFE | FOOD | BEACH | CULTURE | SOCIAL | REST | BUSINESS | CUSTOM  scope: PERSONAL | SHARED  priority: 0..1  status: UNSERVED | PARTIAL | SATISFIED | DROPPED  evidence[]}
+8.2 Decision tasks
+Unresolved decisions are first-class work items. Their urgency depends on deadline, availability decay, dependency impact, and consequence — not merely chronological due date.
+decisionUrgency = f(timeRemaining, availabilityDecay, downstreamImpact, consequence)
+8.3 Readiness
+Readiness is an explanatory projection, not a gamified truth score. It reports critical unresolved items before departure and by upcoming day/stage.
+8.4 Risk register
+Risk
+Trigger
+Mitigation
+Tight arrival
+Flight ETA shifts beyond threshold.
+Move/cancel downstream plan; alert affected participants.
+Weather-sensitive activity
+Forecast confidence + event dependency crosses threshold.
+Prepare indoor fallback.
+Late check-in
+Arrival estimate exceeds desk policy.
+Contact property / alternate entry plan.
+Crew transport mismatch
+Party size > available vehicle capacity.
+Split transport or prebook larger vehicle.
+
+
+9. Collaborative Coordination Model
+9.1 Attendance
+PlanScope: ALL_CREW | OPTIONAL | SUBGROUP | SOLOAttendance: INTERESTED | GOING | MAYBE | CANT_GO | LEFT
+Group Trips should not assume every plan applies to every participant. Attendance is an explicit relation so downstream transport, reservation, meeting-point, and budget calculations use the actual party.
+9.2 Subgroups
+Temporary subgroups allow crews to split and later recombine without forking the entire Trip. A subgroup can own a meetup, shared transport, and temporary presence sharing while the parent Trip remains canonical.
+9.3 Proposal governance
+TripProposal {  type  proposedBy  affectedObjects[]  rationale  impactSummary  decisionRule: HOST | MAJORITY | UNANIMOUS | ANYONE  status  expiresAt}
+Important shared mutations should be proposed when policy requires consensus. Compass may create a proposal, but cannot silently mutate other participants’ commitments.
+9.4 Impact preview
+Before a proposal that changes a confirmed plan is accepted, compute downstream impact: affected reservations, transport, participants, commitment conflicts, cancellation costs, and safety/return implications.
+
+10. Presence, Location, and Crew State
+10.1 Presence is contextual, not “online”
+AVAILABLE | FREE | GETTING_READY | TRANSITING | AT_PLAN | RESTING | RETURNING | OFFLINE
+Presence communicates real-world availability without requiring continuous exact GPS. Every presence row carries observed_at, expires_at, source, confidence, and visibility.
+10.2 Location freshness
+LIVE | RECENT | LAST_KNOWN | OFFLINE
+The Trip Map must never draw a stale location as if it were current. Marker visual treatment and accessible text must expose freshness. Last-known data may remain useful but is not live truth.
+10.3 Adaptive sensing
+Use geofences, significant location changes, navigation callbacks, semantic checkpoints, and explicit user actions before constant GPS. Increase sensing frequency only when execution/safety requires it. Battery and privacy are system constraints.
+10.4 Offline Locate My Friends integration
+At large events or degraded connectivity, Trip Crew can consume the separate proximity/peer-relay subsystem: cached event maps, last-known positions, opt-in Bluetooth proximity, meeting checkpoints, and temporary relay metadata. This must not create covert persistent tracking.
+
+11. Trip Today Projection and Execution UX
+11.1 Today projection
+TripTodayProjection {  tripId  stageId  nowState  currentPlan?  nextCommitment?  freeWindows[]  crewSummary  opportunities[]  risks[]  unresolvedActions[]  pulseSignals[]  generatedAt  sourceTripVersion  freshness}
+11.2 Primary questions
+The Today surface should answer, in order: what is happening now, what is next, who is with me, what can I do, and has anything changed that requires action.
+11.3 Execution actions
+Action
+Command/result
+Start plan
+START_PLAN → state IN_PROGRESS; publishes active context.
+Where next?
+Queries feasible opportunity portfolio using current crew/time/world state.
+Replan today
+Creates a candidate diff; important shared mutations become proposals.
+I am bored
+Builds short FreedomWindow + experience candidates without changing commitments.
+Return / regroup
+Creates route/meeting operation and switches context priority.
+
+11.4 Attention model
+IGNORE | PASSIVE | SURFACE | NOTIFY | INTERRUPT
+Trip events must pass an attention policy. Do not convert every social or live-intel change into a push notification.
+
+12. Compass Trip Orchestration Contract
+12.1 Tool surface
+getTripContext(tripId)getTodayState(tripId)getCrewState(tripId)getFreedomWindows(tripId)getCommitments(tripId)getSavedIdeas(tripId)getLiveConditions(tripId)simulatePlan(tripId, proposal)createProposal(tripId, change)replanDay(tripId, constraints)findMeetingPoint(tripId, participants)explainTripDecision(decisionId)
+12.2 Hard boundary
+Compass authority
+Compass may explain, compose, compare, ask high-value clarifying questions, and propose actions. It may not bypass authorization, invent canonical flight/booking/place facts, relax safety constraints, expand certified freedom windows, or mutate shared commitments without the command/policy path.
+
+12.3 Minimum-question planning
+Before asking the traveler, calculate value-of-information. Ask only for unknown facts capable of materially changing feasibility, authorization, cost, or recommendation quality. Known low-impact uncertainty remains represented as uncertainty rather than becoming questionnaire friction.
+12.4 Graceful AI failure
+Trips must remain operational without Compass. Today, commitments, route chains, confirmed plans, crew state, safety state, and notifications are deterministic services/projections; AI is not a safety dependency.
+
+13. Experience Compiler and Opportunity Engine
+13.1 From content to executable experience
+place/content+ freedom window+ participants+ live conditions+ transport+ opening/queue constraints+ goals/preferences+ next commitment= ExecutableTripExperience
+13.2 Activity primitives
+EAT | SEE | MEET | DRINK | SHOP | WALK | REST | PHOTO | EXPLORE | PLAY | LEARN | NIGHTLIFE | TRANSIT
+Each candidate may define minimum/ideal duration, compressibility, interruptibility, reversibility, cost, energy cost, reservation requirement, queue distribution, accessibility constraints, and failure/recovery routes.
+13.3 Opportunity events
+OpportunityEvent {  trigger  previousFreedomWindow?  newFreedomWindow?  opportunitiesAdded[]  opportunitiesRemoved[]  significance  expiresAt  reasonCodes[]}
+Notify only when the action universe changes enough to matter. “Weather changed” is raw data; “your saved rooftop is no longer viable, but an indoor plan now fits” is an opportunity-state change.
+
+14. Map and Route Architecture
+14.1 Trip Map projection
+TripMapProjection {  stage  hotel/private anchors (access controlled)  active plans  confirmed commitments  saved ideas  crew presence summaries  route chains  meetup points  live opportunities  safety/logistics points  generatedAt  sourceTripVersion}
+14.2 Route chains
+Trips optimizes sequences, not isolated origin/destination pairs. Route chains carry expected departure/arrival, future-time traffic/transit assumptions, cost, party size, reliability, and fallback route references.
+Hotel → Dinner → Bar → Club → Hotel
+14.3 Smart meeting point service
+Meeting-point computation minimizes group burden subject to next commitments, accessibility, party size, venue suitability, privacy policy, and transport reliability. The service returns explanation and alternative candidates rather than a magic coordinate.
+14.4 Map safety
+Sensitive anchors such as hotel/private lodging must never be included in public or broad social projections. Traveler pins obey presence visibility and freshness contracts. Clusters and aggregate counts may be used where exact identity/location is unnecessary.
+
+15. Transport, Booking, and External References
+15.1 Transport segment
+TransportSegment {  mode  fromPlaceId  toPlaceId  plannedDeparture  plannedArrival  state: PLANNED | BOOKED | WAITING | IN_PROGRESS | COMPLETED | DISRUPTED  providerRef?  partySize  reliability}
+15.2 Booking reference boundary
+Trips stores booking references and operational facts needed for coordination, not payment credentials. Booking ownership remains with the booking/provider domain. Cancellation/refund policies are imported as versioned facts and treated with provenance/confidence.
+15.3 Invalidation semantics
+When replanning invalidates a booked activity, the planner must return explicit side effects: booking at risk, cancellation deadline, potential cost, affected participants, and required user confirmation. Automatic replanning may not silently cancel purchases.
+15.4 Compensating actions
+Booking/reservation history is append-only operational truth: confirmed then cancelled, not confirmed row deleted. Compensation is represented as a new state/event so replay remains accurate.
+
+16. Trip Pulse and World Intelligence
+16.1 Context-filtered live signals
+Trip Pulse is not a generic city feed. It projects world intelligence through the active Trip context: stage, current location band, goals, saved ideas, commitments, crew, and attention state.
+Signal
+Trip interpretation
+Crowd rising
+Saved nightlife venue may be better now; queue risk may increase later.
+Rain arriving
+Invalidate weather-sensitive plan; create indoor fallback opportunity.
+Taxi demand high
+Increase future transport uncertainty/cost for affected route chains.
+Event delayed
+New free window may appear or downstream commitment may conflict.
+Friend nearby
+Potential meetup opportunity subject to both parties’ privacy/presence.
+
+16.2 Provenance
+SignalEstimate {  value  confidence  sourceClass  observedAt  expiresAt  fallbackUsed  contradictorySources[]}
+Contradictory sources increase uncertainty; the system must not silently select whichever source makes a recommendation easier.
+16.3 Trip-to-intelligence contribution
+Completed actions may generate privacy-safe operational observations — actual travel times, queues, venue status, plan duration — only through explicit contribution policy. Temporary personal state is not automatically public intelligence.
+
+17. Disruption, Safe Return, and Rescue
+17.1 Trip health
+HEALTHY → ATTENTION → AT_RISK → DISRUPTED
+Health is a summary projection. It does not replace concrete risks/reason codes.
+17.2 Disruption priority switch
+NORMAL:          discovery / execution / socialAT_RISK:         logistics / affected commitments / recoverySAFETY_EVENT:    safety / official help / location coordination
+Commercial recommendations and entertainment discovery are suppressed when a severe operational or safety state requires the user’s attention.
+17.3 Trip Rescue
+A rescue entry point routes to typed problems such as missed transport, hotel issue, lost crew, no ride, travel-document issue, stranded traveler, or emergency assistance. Compass can organize context but must escalate to airline, airport, embassy/consulate, local emergency, or human support where appropriate.
+17.4 Safe Return integration
+Safe Return can attach to solo, subgroup, or full-crew execution contexts. Status sharing is opt-in, purpose-limited, and time-limited. It exposes operational states such as RETURNING/ARRIVED/NEEDS_HELP rather than unnecessary continuous location.
+
+18. Offline, Sync, and Multi-Device
+18.1 Local cache
+The mobile client stores a signed/versioned offline bundle containing next commitments, active plan, selected route, meeting points, critical addresses, cached map tiles where permitted, and the most recent certified context. Stale/live-unavailable must be visible.
+18.2 Offline operation queue
+QueuedTripOperation {  operationId  tripId  expectedTripVersion?  type  payload  clientOccurredAt  idempotencyKey}
+Offline-safe operations include join/leave plan, ready/presence changes, complete activity, save idea, and selected low-risk edits. Sensitive or high-conflict mutations may require revalidation after reconnect.
+18.3 Conflict resolution
+Data
+Strategy
+Saved ideas / reactions
+Merge set operations with idempotency.
+Presence
+Newest valid observation with expiry/confidence; never simple last-write-wins across stale devices.
+Confirmed booking/time
+Optimistic concurrency; explicit conflict/proposal.
+Membership/permissions
+Server authority; stale offline writes rejected/reconciled.
+
+18.4 Multi-device continuity
+Server aggregate version is canonical. Clients may cache current version and projections; they must not declare local write time as authoritative ordering across devices.
+
+19. Projections and APIs
+19.1 Projection set
+TripTodayProjectionTripTimelineProjectionTripMapProjectionTripCrewProjectionTripCompassProjectionTripSafetyProjectionTripMemoryProjectionTripPassportProjection
+Every projection includes generatedAt, sourceTripVersion, projectionSchemaVersion, and freshness status. Consumers reject or visibly degrade on stale/incompatible critical projections.
+19.2 Internal API
+GET  /trips/:id/contextGET  /trips/:id/todayGET  /trips/:id/mapGET  /trips/:id/crewGET  /trips/:id/timelinePOST /trips/:id/commandsPOST /trips/:id/simulateGET  /trips/:id/decisions/:decisionId/explainGET  /trips/:id/snapshots/:version
+19.3 Write rule
+API rule
+Public/mobile write endpoints issue typed commands. They do not expose broad direct CRUD over canonical Trip tables.
+
+19.4 Projection workers
+Projection workers consume domain events/outbox entries and are idempotent by event ID + aggregate version. Rebuild jobs can regenerate projections from canonical state/events without changing business state.
+
+20. Memory, Passport, and Post-Trip Lifecycle
+20.1 Outcome-first projection
+Operational logs do not become permanent memory wholesale. Durable post-trip projections are based on meaningful outcomes: places visited, activities completed, people intentionally associated, stamps, media, milestones, and user-approved story elements.
+20.2 Trip closeout
+COMPLETED  → stop/expire temporary presence  → dissolve temporary crews where appropriate  → reconcile uncertain plan outcomes  → close operational decision tasks  → preserve decision/audit evidence per policy  → project Passport/Memory candidates  → archive rebuildable operational projections
+20.3 Minimal reconciliation
+When evidence is incomplete, ask only the smallest useful post-trip question set. Example: “Did you make it to Hoi An?” instead of forcing the user to mark every plan manually.
+20.4 Trip-specific vs durable preference
+“We avoided seafood on this trip” is contextual. It must not automatically become a permanent user preference. Durable preference projection requires the separate memory inference policy and confidence/evidence thresholds.
+
+21. Observability and Decision Ledger
+21.1 Required metrics
+Metric
+Purpose
+trip_command_rejected_total by reason
+Authorization/version/invariant failure visibility.
+projection_lag_seconds
+Read-model freshness.
+temporal_conflict_total
+Detect impossible schedules.
+plan_at_risk_total
+Operational health.
+opportunity_created_total / accepted / completed
+Real-world opportunity conversion.
+notification_actionability_rate
+Avoid notification spam.
+stale_presence_render_attempt_total
+Privacy/truth contract regression.
+trip_event_replay_mismatch_total
+Determinism regression.
+
+21.2 Decision ledger
+TripDecision {  decisionId  tripId  type  inputs  sources  assumptions  constraints  result  confidence  engineVersions  calculatedAt}
+Any consequential automated suggestion/replan should be explainable from stored inputs and versioned algorithms without retaining unnecessary sensitive raw data.
+21.3 North-star product metric
+Optimize for successful real-world action and coordination, not screen time. A high-quality Trip session may involve very little in-app time if plans execute smoothly.
+
+22. Snapshots, Replay, Simulation, and CI
+22.1 Snapshot contract
+TripSnapshot {  tripId  aggregateVersion  lifecycleState  stageId  activePlanId?  nextCommitmentId?  freeWindowSummary  crewSummary  riskSummary  sourceRefs  engineVersions  createdAt}
+22.2 Deterministic replay
+Engineering can replay a Trip from a snapshot plus ordered events and compare resulting canonical/projection state. Event payloads are schema-versioned. Migration adapters are deterministic and covered by fixtures.
+22.3 Decision-diff CI
+Planner/coordination changes run against historical or synthetic Trip scenarios and report changed decisions, increased/decreased conservatism, new conflicts, and unexplained large diffs. Safety/authorization invariants block merge regardless of product experiment.
+22.4 Property invariants
+Earlier hard commitment cannot increase the preceding certified free window.
+Closed-before-arrival activity cannot remain executable.
+Removed participant cannot receive future precise trip presence through that Trip.
+Unknown place identity cannot be silently treated as a canonical place match.
+Projection sourceTripVersion may never exceed canonical aggregate version.
+Duplicate command with the same idempotency key cannot produce duplicate state transition.
+
+23. Test Matrix and Certification Scenarios
+Scenario
+Must prove
+Solo 3-day city trip
+Lifecycle, Today, free windows, saved-to-plan conversion.
+6-person nightlife trip
+Attendance, subgroup split/rejoin, presence privacy, route chain.
+Flight delay on arrival
+Dependency propagation; downstream proposal/replan.
+Offline member for 6h
+Queue/reconnect, stale presence, no destructive last-write-wins.
+Concurrent host edits
+Optimistic concurrency and impact preview.
+Rain invalidates tour
+Risk trigger, fallback opportunity, booking side-effect explanation.
+Cross-timezone multi-city
+Correct instant ordering and stage local-time display.
+Layover nested in journey
+Trip leg delegates layover execution while preserving journey context.
+Member removed mid-plan
+Authorization revoked immediately; sensitive projections updated.
+Long-stay 45 days
+Recurring commitments, routine-aware context, no bloated itinerary model.
+Trip closeout
+Presence expiry, crew closure, outcome reconciliation, Memory/Passport candidates.
+
+23.1 Required test layers
+Unit tests cover pure invariants/policies. Database tests cover RLS, FK/unique constraints, idempotency, and migrations. Service integration tests cover command→event→projection. Mobile tests cover state-driven UI and degraded/offline behavior. Scenario/replay tests cover cross-domain lifecycle behavior.
+
+24. Migration and Rollout Plan
+Phase 0 — Inventory and compatibility
+Map the existing Trip tables/routes/services to the new kernel. Freeze semantic drift by documenting current write paths, direct table mutations, stage/plan types, membership logic, Map/Compass dependencies, and existing events. Do not big-bang rewrite.
+Phase 1 — Kernel foundation
+Add trip versioning, command service, policy layer, idempotency, event/outbox tables.
+Introduce canonical Trip/Stage/Plan/Commitment contracts with compatibility adapters.
+Ratchet direct writes: new code must use commands; legacy paths are enumerated and reduced.
+Phase 2 — Today + temporal consistency
+Build TripTodayProjection, commitments, FreedomWindow integration, temporal/spatial conflict detection.
+Wire Compass read tools to canonical projections; AI cannot mutate directly.
+Phase 3 — Crew coordination
+Attendance, subgroups, presence TTL/freshness, proposals/governance, smart meetup service.
+Phase 4 — World intelligence + opportunity
+Trip Pulse, Opportunity Events, Experience Compiler, route-chain optimization, event-driven replan.
+Phase 5 — resilience and lifecycle
+Offline operation queue, deterministic replay, closeout, Memory/Passport projections, long-stay support.
+Phase 6 — rollout certification
+Enable by scenario/feature capability after invariant/replay certification. Product features may be enabled in pre-launch environments, but safety, security, privacy, cost, and irreversible-action gates remain independent controls.
+
+25. Engineering Definition of Done
+Trips vNext is architecturally complete when the following are true:
+One typed Trip Kernel owns consequential canonical writes through commands.
+Every accepted command is authorized, validated, idempotent, version-aware, audited, and emits a domain event.
+Map, Compass, Discovery, Telegraph, Safety, Buddy, Passport, and Memory consume explicit Trip projections/contracts rather than duplicating Trip semantics.
+Confirmed itineraries cannot silently contain impossible temporal/spatial relationships.
+Presence and exact location are purpose-limited, privacy-scoped, freshness-labeled, and automatically expire.
+Group changes support impact preview/governance when other participants are affected.
+Offline writes reconcile without destructive last-write-wins behavior.
+Nested layovers and multi-city stages fit the same journey graph.
+Trip state can be replayed and planner changes can be decision-diffed in CI.
+Post-trip operational data expires/projects cleanly into durable outcomes without over-persisting sensitive/transient state.
+Final architecture principle
+Trips is the Portava real-world coordination protocol. New capabilities should integrate by consuming Trip Context, issuing Trip Commands where appropriate, emitting/consuming typed events, and projecting outcomes — not by adding another isolated itinerary feature.
+
+Appendix A — Recommended package boundaries
+src/domain/trips/  contracts/  commands/  events/  policies/  invariants/  services/  projections/  replay/src/features/trips/  today/  timeline/  crew/  map/  planning/  disruption/server/trips/  commandRoute  readRoutes  outboxWorker  projectionWorkers  integrationAdapters
+Appendix B — Initial reason-code families
+TRIP_AUTH_*TRIP_VERSION_*TRIP_TEMPORAL_*TRIP_SPATIAL_*TRIP_PRIVACY_*TRIP_PRESENCE_*TRIP_BOOKING_*TRIP_DISRUPTION_*TRIP_PROJECTION_*TRIP_IDENTITY_*TRIP_OFFLINE_*

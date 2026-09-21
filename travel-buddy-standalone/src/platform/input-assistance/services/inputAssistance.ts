@@ -22,6 +22,7 @@ import type {
 } from '../types/inputSuggestion.ts';
 import { INPUT_POLICY_VERSION } from '../contexts/inputContexts.ts';
 import { buildSuggestBody } from './suggestBody.ts';
+import { parseSuggestBody, type RawSuggestBody } from './suggestResponse.ts';
 
 function apiBase(): string {
   return process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
@@ -82,17 +83,19 @@ export async function requestSuggestions(
       };
     }
 
-    const body = (await res.json()) as {
-      requestId?: string;
-      policyVersion?: string;
-      suggestions?: InputSuggestion[];
-    };
+    // The envelope's coercions live in `suggestResponse.ts` — a pure module —
+    // because this one imports the Supabase-backed token helper and therefore
+    // cannot be reached by a node:test. Inline, they were unprovable.
+    const parsed = parseSuggestBody((await res.json()) as RawSuggestBody);
 
     return {
       ok: true,
-      requestId: body.requestId ?? '',
-      policyVersion: body.policyVersion ?? INPUT_POLICY_VERSION,
-      suggestions: Array.isArray(body.suggestions) ? body.suggestions : [],
+      requestId: parsed.requestId,
+      policyVersion: parsed.policyVersion ?? INPUT_POLICY_VERSION,
+      suggestions: parsed.suggestions,
+      // §44/§57 serve latency (census G372). ABSENT, never 0, when the server
+      // did not send it — see suggestResponse.ts.
+      serverMs: parsed.serverMs,
     };
   } catch (e) {
     const aborted = e instanceof Error && e.name === 'AbortError';

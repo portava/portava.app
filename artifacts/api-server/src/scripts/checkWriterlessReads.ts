@@ -43,9 +43,12 @@
  * --------------------------------------
  * Three legitimate shapes, and the ratchet below records which is which:
  *   - externally seeded reference data (`fsq_places`, `canonical_locations`)
- *   - a deliberately empty, human-curated allowlist — `intel_live_promoted_scopes`
- *     is documented as exactly this in migration 2179, and its emptiness is the
- *     fail-closed default, not a bug
+ *   - a deliberately empty, human-curated allowlist — `protected_zones` is
+ *     documented as exactly this in migration 2217, and its emptiness is the
+ *     fail-closed default, not a bug. (`intel_live_promoted_scopes` was the
+ *     other example until 2430 gave it a service-owned writer for the human
+ *     decision to travel through; an allowlist whose writer exists but whose
+ *     trigger is a person is no longer this check's business.)
  *   - a legacy decoy superseded by another table, pending removal
  * Each entry must say which, and why. An entry with no reason is a dead lane
  * wearing a note.
@@ -78,6 +81,12 @@ export const SERVER_DIRS = [
   resolve(API_ROOT, "src/services"),
   resolve(API_ROOT, "src/lib"),
   resolve(API_ROOT, "src/compass"),
+  // census-trips §61 moved the Trips kernel, its services and its projections
+  // to src/domain/trips/ and the routers to src/server/trips/. Their writes
+  // attribute tables (trip_crew_location_preferences, trip_readiness_items)
+  // that would otherwise read as written by nothing; their reads are judged.
+  resolve(API_ROOT, "src/domain"),
+  resolve(API_ROOT, "src/server"),
 ];
 /** Additional places a WRITE may live. Reads here are not judged. */
 export const WRITER_ONLY_DIRS = [
@@ -103,6 +112,21 @@ export const KNOWN_WRITERLESS_READS: Record<
   { readers: number; classification: "external-seed" | "human-allowlist" | "legacy-decoy" | "dead-lane"; note: string }
 > = {
   // ── DEAD LANES — each of these must reach zero ────────────────────────────
+  circle_member_visibility_overrides: {
+    readers: 2,
+    classification: "dead-lane",
+    note:
+      "The table is real (0108_circle_schema_tracked.sql:250, present in both live schemas) and " +
+      "carries an owner-writable RLS policy (user_id = auth.uid()), so a client COULD write it " +
+      "directly — but nothing does. No server TS, no client TS, no SQL, and the " +
+      "app/circle-context-settings.tsx screen that would own the preference never names the " +
+      "table. Both readers are lib/mediaVisibility (the directional hide_from_me / hide_me_from " +
+      "resolver), added with the §6.1 contextual-visibility enforcement: the READ half is now " +
+      "correct and mutation-proved, and with no producer it simply finds no rows and allows, " +
+      "which is the same answer the surfaces gave before it existed. Nothing regressed; the " +
+      "feature is inert until the settings screen writes a row. Needs the write path, or a " +
+      "product ruling that the preference is not shipping — in which case the readers go with it.",
+  },
   circles: {
     readers: 9,
     classification: "dead-lane",
@@ -169,15 +193,13 @@ export const KNOWN_WRITERLESS_READS: Record<
       "itself a map of exactly what it protects.' service_role only. Emptiness is the correct " +
       "fail-closed default.",
   },
-  intel_live_promoted_scopes: {
-    readers: 1,
-    classification: "human-allowlist",
-    note:
-      "Migration 2179's per-scope Live allowlist. It starts EMPTY so that turning the global " +
-      "intel_limited_live flag on exposes nothing until a scope is explicitly promoted after a " +
-      "density gate and human review — the fix for a single-global-flag over-exposure bug. " +
-      "This is why wall_live_for_you_enabled should stay off: it would serve an empty strip.",
-  },
+  // intel_live_promoted_scopes — STRUCK OFF 2026-09-07. Migration 2430 gave it a
+  // writer (system_promote/withdraw/expire_intel_live_scope, called only by
+  // lib/intelLiveScopePromotion.ts behind intel_live_scope_promotion_enabled,
+  // seeded FALSE). It is STILL a human-curated allowlist — the writer records a
+  // human decision with provenance, horizon and withdrawal; nothing promotes a
+  // scope on its own. The table is still empty in production; that is now a
+  // pending owner decision (which scope, on what evidence), not a missing lane.
   route_flow_contribution_consent: {
     readers: 1,
     classification: "human-allowlist",
@@ -197,11 +219,17 @@ export const KNOWN_WRITERLESS_READS: Record<
       "as venue reference data, not personal location. Populated out of band.",
   },
   canonical_locations: {
-    readers: 3,
+    readers: 4,
     classification: "external-seed",
     note:
       "Canonical city/region reference rows, also in REFERENCE_LOCATION_TABLES. Populated out " +
-      "of band rather than by application code.",
+      "of band rather than by application code. FOUR readers since 2026-09-14, each a literal " +
+      "`.from(\"canonical_locations\")` and each a plain reference lookup, never a write: " +
+      "lib/mapTravelers.ts, lib/inputAssistance/personalization.ts, routes/discoverySearch.ts, " +
+      "and — the one that moved this count from 3 — lib/inputAssistance/taskContext.ts, which " +
+      "resolves a cityId to a display name for an assistance task's context and fails soft to " +
+      "no city constraint. The count is raised rather than the entry deleted: it is the only " +
+      "thing that notices the FIFTH reader.",
   },
 };
 
