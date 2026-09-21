@@ -2239,11 +2239,19 @@ It wants an owner and a deliberate decision, not a drive-by `WHERE true`.
   the section directly above. Whoever owns the journey-shadow programme should
   decide whether it is repaired, replaced or dropped; it is not this lane's to
   guess at.
-- **2965 is not yet on `main`.** It lives on `claude/fix-2963-canon-saves-delete`
-  and is applied to production ahead of its own merge, because production was
-  actively broken and waiting for a merge is still waiting. `portava-ci` still
-  carries the unqualified form until that branch merges and the apply step runs
-  from `main`, so the live memory suites stay red there until then.
+- **2965's sufficiency is still unproven, and that is the one thing left on it.**
+  It merged to `main` as #515 at 09:08 UTC (`2c982d5eb`), so `portava-ci` gets
+  the qualified form on the first apply run from `main` after that merge.
+  Production already had it — applied ahead of the merge, because production was
+  actively broken and waiting for a merge is still waiting. But **nothing has yet
+  executed the qualified body under an armed `safeupdate` guard**, in either
+  database: the Management API session both applies ran through does not preload
+  `supautils`, which is precisely how 2963 got through. The live memory suites on
+  that post-merge `main` run are the first and only thing that can confirm
+  `WHERE true` is enough. Until that run is read, "fixed" is a well-argued
+  expectation rather than a measurement. If it is still red, #515's own header
+  names the next move (`TRUNCATE`, rejected there only for being untestable from
+  the authoring session, not for locking — `_canon_saves` is session-private).
 - **Neither migration's feature is switched on in production.** 2963 changes a
   projector body and is live the moment it is applied; 2964's counter is written
   only on the `map_telemetry_enabled = FALSE` path, so the table exists and holds
