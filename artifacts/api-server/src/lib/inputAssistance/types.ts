@@ -176,6 +176,18 @@ export interface InputFieldPolicy {
 
   allowedSuggestionTypes: AssistanceType[];
   entityTypes?: EntityType[];
+  /**
+   * §14 — does this context offer useful ZERO-CHARACTER suggestions?
+   *
+   * MOVED HERE FROM THE CLIENT 2026-09-21 (G340). It was the last piece of
+   * per-context policy that existed ONLY in the client's local table, so
+   * deleting that table would have deleted it. It is policy, not chrome: it
+   * decides whether an empty field issues a request at all, and the server
+   * already builds a zero-character answer (`gateway.ts#zeroCharGeoDefaults`)
+   * that a client can only ask for if it knows the field has one. Defaults to
+   * FALSE, so a context that says nothing offers no zero-state.
+   */
+  zeroStateAssistance?: boolean;
 
   allowPersonalization: boolean;
   allowLiveContext: boolean;

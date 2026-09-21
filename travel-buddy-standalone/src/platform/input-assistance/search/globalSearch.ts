@@ -57,6 +57,27 @@ const RESULT_TYPE_BY_ENTITY: Record<EntityType, string> = {
   hashtag: 'hashtags',
   language: 'languages',
   interest: 'interests',
+  // ── 2026-09-21 — the five added when `EntityType` was widened to the
+  // server's set. This map's "compile error rather than a silently mis-iconed
+  // row" promise was real but was only ever exhaustive over the CLIENT's
+  // narrower union: `global_search`'s authority entityTypes already include
+  // `circle`, `post` and `stamp`, and `plan_title`/`buddy_service` include
+  // `activity`. A served value outside the old union did not reach this map as
+  // a compile error — it fell to the `|| 'places'` default below and rendered
+  // as a Place, with a MapPin, in the Places group. Widening the union turned
+  // that latent mis-route into the compile error the comment always promised.
+  //
+  // `circles`, `posts` and `stamps` are the strings the panel already speaks:
+  // `searchNav.tsx#TypeIcon` has a case for each and `resolveRoute` documents
+  // all three. `activities` and `vibes` have no icon case and no route rule, so
+  // they fall to TypeIcon's `default` (a neutral Sparkles) — which is the point:
+  // a generic icon is honest about an unrecognised row, a MapPin is not. The
+  // row still only renders when the server supplied a real destination route.
+  activity: 'activities',
+  circle: 'circles',
+  post: 'posts',
+  stamp: 'stamps',
+  vibe: 'vibes',
 };
 
 /** Human group labels (rendered uppercase by the panel's group header style). */
@@ -73,6 +94,11 @@ const GROUP_LABEL: Record<string, string> = {
   hashtags: 'Hashtags',
   languages: 'Languages',
   interests: 'Interests',
+  activities: 'Activities',
+  circles: 'Circles',
+  posts: 'Posts',
+  stamps: 'Stamps',
+  vibes: 'Vibes',
   [QUERY_GROUP_TYPE]: 'Search for',
 };
 
@@ -124,6 +150,29 @@ function synthRoute(entityType: EntityType | undefined, entityId: string | undef
     case 'event': return `/event/${entityId}`;
     case 'plan': return '/plan';
     case 'hashtag': return `/hashtag/${entityId}`;
+    // ── 2026-09-21 (G340) — three the authority already serves ──────────────
+    // `global_search`'s `entityTypes` include `circle`, `post` and `stamp`.
+    // Without a case here `synthRoute` returned null and `tryEntityRow` DROPPED
+    // the row: a served Stamp or Post suggestion never reached the panel at
+    // all, whatever its label said. That is a harder failure than the mis-icon
+    // the `RESULT_TYPE_BY_ENTITY` widening exposed, and it was invisible for
+    // the same reason — this switch is keyed on a union the client had narrower
+    // than the server's.
+    //
+    // The emitted shapes are the ones `searchNav.tsx#resolveRoute` documents
+    // and normalises: `/stamps/:slug` becomes `/stamp/:slug` (plural backend,
+    // singular app file), and `/circle/:id` becomes `/circle?ownerId=:id`
+    // because the app has only a singleton circle screen. Emitting the
+    // pre-normalisation form keeps ONE place that knows about that quirk.
+    case 'post': return `/post/${entityId}`;
+    case 'stamp': return `/stamps/${entityId}`;
+    case 'circle': return `/circle/${entityId}`;
+    // `activity`, `vibe`, `language` and `interest` stay null DELIBERATELY.
+    // The app has no route for any of them — `activity` and `vibe` have no
+    // screen at all, and `language`/`interest` are static value pickers, not
+    // navigable entities. This function's contract is "no dead rows", so a
+    // dropped row is the correct outcome; synthesising a path to a screen that
+    // does not exist would trade an invisible row for a broken tap.
     default: return null;
   }
 }

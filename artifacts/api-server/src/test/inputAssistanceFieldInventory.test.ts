@@ -34,7 +34,8 @@ import {
   inventoriedFieldIds,
   mountedFieldIds,
 } from "../../../../travel-buddy-standalone/src/platform/input-assistance/contexts/fieldInventory.ts";
-import { INPUT_CONTEXT_REGISTRY } from "../../../../travel-buddy-standalone/src/platform/input-assistance/contexts/inputContexts.ts";
+import { getContextDescriptor } from "../../../../travel-buddy-standalone/src/platform/input-assistance/contexts/inputContexts.ts";
+import { INPUT_CONTEXTS } from "../../../../travel-buddy-standalone/src/platform/input-assistance/types/inputContext.ts";
 import { isCacheablePrivacyClass } from "../../../../travel-buddy-standalone/src/platform/input-assistance/services/suggestionCache.ts";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -235,9 +236,23 @@ describe("§50 field inventory (G356) — every registered field is inventoried"
 
 describe("§50 field inventory (G357) — the recorded attributes are checkable", () => {
   it("every row's context is a real InputContext, and the merged row is complete", () => {
+    // ── 2026-09-21 (G340) ────────────────────────────────────────────────
+    // This used to index `INPUT_CONTEXT_REGISTRY`, the client's local
+    // 29-context table, which is deleted: the client resolves policy from
+    // `GET /input-assistance/policies` now. The assertion below is UNCHANGED in
+    // substance, and that is the point — the §50 row must be MERGED from
+    // whatever the resolver returns, never copied, so the two cannot disagree.
+    // With no policy fetched (which is the case under node:test) the resolver
+    // returns the conservative policy for every context, and the merge must
+    // still agree with it member for member. A row that carried its own copy
+    // of the policy would now be caught here.
+    const contexts = new Set<string>(INPUT_CONTEXTS);
     for (const rec of FIELD_INVENTORY) {
-      const d = INPUT_CONTEXT_REGISTRY[rec.context];
-      assert.ok(d, `${rec.fieldId} names context "${rec.context}", which is not in the registry`);
+      assert.ok(
+        contexts.has(rec.context),
+        `${rec.fieldId} names context "${rec.context}", which is not an InputContext`,
+      );
+      const d = getContextDescriptor(rec.context);
       const row = fieldInventoryRow(rec.fieldId);
       assert.ok(row, `${rec.fieldId} must resolve to a merged §50 row`);
       // The four attributes the registry owns are MERGED, never copied — so they
