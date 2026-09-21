@@ -455,7 +455,7 @@ of the field→mode table.
 | --- | --- | --- | --- |
 | G55 | Unicode normalization and safe whitespace folding | C | `lib/canonicalLocations.ts:90-101` (NFD + collapse); client `services/queryNormalization.ts:38-52`. |
 | G56 | Case-insensitive matching | C ᵖ | `routes/discoverySearchHelpers.ts:163-179` `matchTier` lowercases both sides; every DB predicate is `ilike`. Pre-existing Discovery work. |
-| G57 | Diacritic-insensitive matching while preserving display spelling | W | The fold is correct in code — `canonicalLocations.ts:117#STROKE_FOLD` is an explicit stroke-letter map (`đ→d`, `ø→o`, `ł→l`, …) because NFD does not decompose them, and `canonicalLocations.ts:150#searchKey` composes it with the diacritic strip. The **stored** side needs the `search_key` column from migration 2220, and this is now a MEASURED production fact rather than an inference: read against the live production database on 2026-09-21, `canonical_locations.search_key` is ABSENT, `input_normalize_city_key` is ABSENT, and `pg_trgm` is NOT installed; `canonical_locations` itself exists with 31 rows and only the legacy `normalized_name`. The `schema_migration_ledger` DOES carry `2220_canonical_locations_search_key.sql`, but with `applied_by='backfill'` and its own note that the row "asserts only that this filename existed in src/migrations/" — schema and ledger agree, and **the ledger is not evidence of application**. `2220_canonical_locations_search_key.sql:9-18` records that the legacy key for "Đà Nẵng" is the broken string `"a nang"`. `canonicalLocations.ts:589#suggestCanonicalLocationsFolded` queries both columns and tolerates the missing one, so in production the fold silently degrades to a column that cannot match. **The gap is deployment, not code, and this lane must not author a replay of 2220.** WHAT WOULD TURN THIS RED: 2220 applied to production (the integrating agent is doing this) plus a post-apply read showing `search_key` present and a typed "da nang" resolving "Đà Nẵng" through the stored column, not through the application-side alias table. |
+| G57 | Diacritic-insensitive matching while preserving display spelling | W | The fold is correct in code — `canonicalLocations.ts:117#STROKE_FOLD` is an explicit stroke-letter map (`đ→d`, `ø→o`, `ł→l`, …) because NFD does not decompose them, and `canonicalLocations.ts:150#searchKey` composes it with the diacritic strip. The **stored** side needs the `search_key` column from migration 2220, and this is now a MEASURED production fact rather than an inference: read against the live production database on 2026-09-21, `canonical_locations.search_key` is ABSENT, `input_normalize_city_key` is ABSENT, and `pg_trgm` is NOT installed; `canonical_locations` itself exists with 31 rows and only the legacy `normalized_name`. The `schema_migration_ledger` DOES carry `2220_canonical_locations_search_key.sql`, but with `applied_by='backfill'` and its own note that the row "asserts only that this filename existed in src/migrations/" — schema and ledger agree, and **the ledger is not evidence of application**. `2220_canonical_locations_search_key.sql:9-18` records that the legacy key for "Đà Nẵng" is the broken string `"a nang"`. `canonicalLocations.ts:714#suggestCanonicalLocationsFolded` queries both columns and tolerates the missing one, so in production the fold silently degrades to a column that cannot match. **The gap is deployment, not code, and this lane must not author a replay of 2220.** WHAT WOULD TURN THIS RED: 2220 applied to production (the integrating agent is doing this) plus a post-apply read showing `search_key` present and a typed "da nang" resolving "Đà Nẵng" through the stored column, not through the application-side alias table. |
 | G58 | Alias resolution and known abbreviations | C | `canonicalLocations.ts:177-192` `CITY_GEO_ALIASES` — `hcmc`/`saigon`/`sai gon`/`hochiminh` → `ho chi minh`, `danang` → `da nang`, `krung thep` → `bangkok`; applied in application code at `:199-202`, so it works with or without 2220. |
 | G59 | Common misspelling tolerance | C ᵖ | `discoverySearchHelpers.ts:63-95` `SEARCH_ALIASES` (~30 curated travel-domain misspellings) plus `canonicalLocations.ts:161-164` (`siargoa`, `nyc`) and `:186` (`phu qouc`, the spec's own example). The bulk is pre-existing Discovery work. |
 | G60 | Local-language and English-name variants | C | `canonicalLocations.ts:180-191` — `saigon`, `sai gon`, `krung thep` resolve to the English canonical row. |
@@ -769,7 +769,7 @@ declared and read by nothing (G30). What follows is what actually exists.
 | id | Requirement | V | Evidence / divergence |
 | --- | --- | --- | --- |
 | G231 | Keyword-stuffing resistance in business / Buddy / user descriptions | C | `lib/inputAssistance/rankingSignals.ts:207#export function spamRisk` is the heuristic: token repetition above a prose floor, upper-case ratio over a minimum length, and separator-chained keyword lists, combined by taking the STRONGEST rather than summing so a listing is not punished twice for one habit. It runs over every dispatched row's `title + subtitle` — the fields a business / Buddy / user listing authors — inside `projection.ts`'s signal stack, and demotes by at most `SPAM_MAX_PENALTY`. A clean listing scores 0 and is unchanged. Proven end-to-end in `src/test/inputAssistanceRankingSignals.test.ts`: `"Bangkok Tour Bangkok Tour Bangkok Tour Bangkok"` loses to `"Bangkok Tour Collective"` on the query both match exactly, and both are still returned. MUTATION: `spamRisk → 0` reddens four assertions. **What this is NOT**: it is not moderation, not a block, and not a Buddy-specific rule — §36's other six controls are unaffected and G232 (alias abuse) still has no detector. |
-| G232 | Alias abuse detection | **N** | *Verdict unchanged; blocker replaced, because the earlier text described only the half that cannot be abused and missed the half that can.* THE STATIC HALF, unchanged: the alias tables this layer resolves through (`lib/canonicalLocations.ts:177#export const CITY_GEO_ALIASES`, `routes/discoverySearchHelpers.ts:63-95`) are curated constants in the source tree, so no user can put an entry in them. THE HALF THAT IS WRITABLE, found this pass: `canonical_locations.aliases` is a DB column that GROWS at runtime — `lib/canonicalLocations.ts:360#if (norm !== row.normalized_name && !(row.aliases ?? []).includes(norm)) {` appends the incoming place's normalized name to whatever row was matched, and rule 1 of `matchCanonical` matches on a shared PROVIDER ID alone (`lib/canonicalLocations.ts:283#const byProvider = rows.find`), so a caller who knows a real row's provider id can attach an arbitrary `place.name` to it through the authenticated, rate-limited `POST /locations/resolve` (`routes/locations.ts:108#const result = await resolveCanonicalLocation(db, place);`; 60/min, `name` up to 200 chars). Nothing detects that. WHY NO DETECTOR WAS BUILT IN THIS LAYER, and this is the argument rather than a deferral: **no suggestion path reads that column.** `suggestCanonicalLocationsFolded` queries `search_key` and `normalized_name` only (`lib/canonicalLocations.ts:603-606`), so a poisoned alias cannot reach a suggestion today. A detector placed here would guard a set this layer does not consult — protection that reads as protection and stops nothing. The reachable damage is to canonical IDENTITY MERGING (`lib/canonicalLocations.ts:305#(row.aliases ?? []).includes(norm);`), which belongs to the write path, not to input intelligence, and is reported to the integrator as an out-of-scope finding rather than patched from here. EVIDENCE THAT WOULD CLOSE IT: a plausibility rule on the alias APPEND in `buildRowPatch` (an incoming name that shares no token with the row it is being attached to is not a variant of it), and a test that the provider-id path cannot attach an unrelated name. |
+| G232 | Alias abuse detection | **C** | *`N` -> `C` by the integrating lane on 2026-09-21, on the bar THIS ROW set for itself: "a plausibility rule on the alias APPEND in `buildRowPatch` ... and a test that the provider-id path cannot attach an unrelated name." Both now exist.* THE STATIC HALF was never abusable and is unchanged: the alias tables this layer resolves through (`lib/canonicalLocations.ts:177#export const CITY_GEO_ALIASES`, `routes/discoverySearchHelpers.ts:63-95`) are curated constants in the source tree. THE WRITABLE HALF, which the previous pass found and correctly declined to patch from inside this layer: `canonical_locations.aliases` GROWS at runtime, and rule 1 of `matchCanonical` matches on a shared PROVIDER ID alone (`lib/canonicalLocations.ts:283#const byProvider = rows.find`), so a caller who knows a real row's provider id could attach an arbitrary `place.name` to it through `POST /locations/resolve`. THE GUARD IS ON THE APPEND, NOT THE READ, because refusing to read aliases would break the variants the set exists for: `lib/canonicalLocations.ts:425#export function isPlausibleAlias` requires a shared NON-GENERIC word, or one of four carve-outs this module already implements elsewhere — spacing (`danang`/`da nang`), the stroke/diacritic fold (`searchKey`, migration 2220), the shipped abbreviation dictionary (`saigon`), or an in-order initialism (`hcmc`). THE PROVIDER-ID MATCH IS UNTOUCHED AND THAT IS ASSERTED, not assumed: an implausible name still identifies the row, still returns it, and still backfills its coordinates — a refused alias must never become a refused resolution. Proven at `src/test/canonicalLocations.test.ts:397#alias poisoning: the write is refused, the RESOLUTION is not`, and the BOUNDARY is measured in both directions: removing the guard reddens 3 tests including the end-to-end one, and making it refuse everything reddens 3 including the legitimate-variant append. WHY THIS DOES NOT ALSO CLOSE A SUGGESTION-SIDE ROW: the previous pass's measurement still holds — `suggestCanonicalLocationsFolded` queries `search_key` and `normalized_name` only (`lib/canonicalLocations.ts:728-731`), so no suggestion path reads this column. The damage this closes is to canonical IDENTITY MERGING, which is why the fix is in the write path. STATED LIMIT: two names sharing one rare word still pass, so this narrows the hole rather than closing it, and a row whose every word is generic accepts appends only through the four carve-outs — the fail-closed direction. TURNS RED WHEN: a provider-id match appends a name sharing nothing with the row, or when a refused alias starts costing the resolution. |
 | G233 | Impersonation protections for people and businesses | W | *§9.5 already retracted half this row's evidence (the flags are not dropped) and left one reason standing: "nothing in the suggestion path detects or demotes an impersonating handle. No confusable/homoglyph comparison exists anywhere in the layer." Built 2026-09-21 — and the verdict STILL does not move, for two reasons §9.5 did not reach.* CLOSED by §8.4: the flags are no longer dropped, so a viewer CAN tell the real account from the copy (G180). CLOSED this pass: a confusable comparison now exists and demotes — `lib/inputAssistance/rankingSignals.ts:404#export function handleSignature` folds the substitutions a confusable handle actually uses (digit-for-letter, doubled letter, separators, `rn`→`m`) and `lib/inputAssistance/rankingSignals.ts:436#export function applyImpersonationRisk` demotes an unverified person row whose handle folds to the SAME signature as a verified-or-official row in that answer. It is wired, not defined-and-unread: `lib/inputAssistance/gateway.ts:772#const antiImpersonation = applyImpersonationRisk(diversified);` runs between the diversity term and the rank. Signature EQUALITY, not edit distance, on purpose: a distance threshold fires on @sarah_travels vs @sara_travels — two real people — and nothing here could tell those apart from an impersonation. A demotion, not a removal, for SpamRisk's reason: co-occurrence with a verified twin is a suspicion, not a finding. `account_status` filtering is unchanged and still pre-existing (`socialIdentity.ts`, `test/inputAssistanceInvariants.test.ts` item 1). **STILL WRONG, and why the verdict stands.** (a) The rule is WITHIN-RESPONSE: an impersonator that appears without its target is untouched, because there is no verified twin to compare against and no handle index is consulted. That hole is pinned by an assertion rather than described — `src/test/inputAssistanceRankingSignals.test.ts` §8, "THE HOLE, pinned" — which also shows the same row IS demoted when its target is present, so the boundary is measured, not assumed. (b) BUSINESSES are not covered at all: `verified`/`isOfficial` exist only on `profiles` (`routes/discoverySearch.ts:706-707`), and a `places` / `hidden_gems` row carries no verification flag of any kind, so there is no genuine-listing signal for a venue to be impersonated AGAINST. The row names people AND businesses; half a requirement is not the requirement. EVIDENCE THAT WOULD CLOSE IT: a handle/name index the suggestion path can consult without its target being present, and a verification signal on business listings. |
 | G234 | Duplicate entity suppression | C | `duplicateDetection.ts:241-370`; `gateway.ts:389-400` (per-id dedup across types) and `:534-546` (collapse a duplicate's redundant entity row). |
 | G235 | Rate limits on suggestion-affecting submissions | C ᵖ | `routes/inputAssistance.ts:153` (`input_assist_suggest`, 90/min) and `:275` (`input_assist_select`, 60/min), on the pre-existing `lib/rateLimit` buckets. |
@@ -3159,3 +3159,95 @@ The denominator is unchanged at **373**. No row was added, removed or merged in
 this wave. One genuine requirement was found with **no row** — whether the
 assistance surface tells a user about the 30-day username cooldown that
 `PATCH /me/profile` enforces — and it is reported here rather than inserted.
+
+---
+
+## 17. `G232` closes on the bar it set for itself, in the write path
+
+`G232` ("Alias abuse detection") was left `N` by the §36 lane with an argument
+that was right and a boundary that was right: the alias *tables* this layer
+resolves through are curated source constants that no user can write, and a
+detector placed in the suggestion layer would have guarded a column that layer
+does not read — `suggestCanonicalLocationsFolded` queries `search_key` and
+`normalized_name` only. That measurement was re-verified here and still holds.
+
+What the lane also did was write down, in the row, exactly what would close it:
+
+> a plausibility rule on the alias APPEND in `buildRowPatch` (an incoming name
+> that shares no token with the row it is being attached to is not a variant of
+> it), and a test that the provider-id path cannot attach an unrelated name.
+
+Both now exist, in `lib/canonicalLocations.ts` — the write path, which is where
+the reachable damage was.
+
+### 17.1 The defect, stated once
+
+`matchCanonical`'s first rule is *"shared provider id → same location, always"*,
+with no name or country comparison. That is correct: a provider id **is** the
+identity. But `buildRowPatch` then appended the **incoming** name to that row's
+alias set unconditionally, and both `matchCanonical`'s later name test and
+`resolveCanonicalLocation`'s candidate query **read** aliases. `POST
+/locations/resolve` is authenticated and rate-limited, but `place.id` and
+`place.name` are entirely caller-supplied and provider ids travel in the app's
+own place payloads — so a caller holding a real row's provider id could attach
+an arbitrary name to that place, and from then on that name resolved to it.
+
+### 17.2 The guard is on the append, and the resolution is asserted intact
+
+Refusing to **read** aliases would break the variants the set exists for.
+Refusing an implausible **write** keeps the set meaning what it says.
+
+`isPlausibleAlias` requires a shared non-generic word, or one of four carve-outs
+this module already implements elsewhere rather than four new inventions:
+spacing (`danang` / `da nang`), the stroke/diacritic fold (`searchKey`, migration
+2220), the shipped abbreviation dictionary (`saigon`), and an in-order initialism
+(`hcmc`). Generic geographic particles do not count as evidence, so "San Juan" is
+not a plausible alias of "San Francisco".
+
+**A refused alias must never become a refused resolution**, and that is asserted
+rather than assumed: the end-to-end test sends an unrelated name on a real
+provider id and pins that the row is still identified, still returned, and still
+has its empty coordinates backfilled — only the alias set does not grow.
+
+### 17.3 The boundary is measured in both directions
+
+Two mutations, each applied and watched:
+
+| mutation | result |
+| --- | --- |
+| `isPlausibleAlias` always true (the pre-fix behaviour) | **3 red**, including the end-to-end poisoning test |
+| `isPlausibleAlias` always false (a guard that refuses everything) | **3 red**, including the legitimate-variant append |
+
+A guard proven only in the refusing direction is a guard that could be refusing
+everything. Both directions are pinned.
+
+### 17.4 Limits, stated rather than papered over
+
+Two names that share one rare word still pass, so this narrows the hole rather
+than closing it. A row whose every word is generic accepts appends only through
+the four carve-outs — the fail-closed direction. And **no existing data was at
+risk either way**: `canonical_locations` carries zero rows with a non-empty
+alias array in production and zero rows at all on portava-ci, measured rather
+than assumed, so the rule could not reject a real variant that already exists.
+That also means the question "does the token rule reject real variants in
+practice?" has no empirical answer yet — the first real appends will be the test.
+
+Nothing in `routes/locations.ts` was widened and no rate limit was relaxed.
+
+### 17.5 Headline
+
+| Measure | Value |
+| --- | --- |
+| **Denominator — testable requirements** | **373** |
+| BUILT-AND-CORRECT | **273** |
+| BUILT-BUT-WRONG | **49** |
+| NOT-BUILT | **47** |
+| CANNOT-VERIFY | **4** |
+| **CONSTRUCTED%** = (C+W)/373 | **322 / 373 = 86.3 %** |
+| **CORRECT%** (raw) = C/373 | **273 / 373 = 73.2 %** |
+| **CORRECT% (spec-attributable)** = (C-23<sup>p</sup>)/373 | **250 / 373 = 67.0 %** |
+| **THE GAP** = W/373 | **49 / 373 = 13.1 %** |
+| CANNOT-VERIFY share | **4 / 373 = 1.1 %** |
+
+`N → C`, so CONSTRUCTED moves for the first time this wave: this one is new
+code, not an accounting correction. The denominator is unchanged at 373.
