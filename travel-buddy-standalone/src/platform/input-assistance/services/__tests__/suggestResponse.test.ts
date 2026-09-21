@@ -118,7 +118,13 @@ test('§48: the global search bar declares LESS than the shared overlay', () => 
   // is that one surface really is narrower than the other. If these ever
   // become equal, the declaration has stopped describing anything.
   assert.ok(GLOBAL_SEARCH_ACTION_TYPES.length > 0);
-  for (const dead of ['share_entity', 'drop_pin', 'open_compass'] as const) {
+  // `open_compass` was in this list and has been REMOVED, because §43/G305
+  // gave it a dispatch target in the same wave (`app/search.tsx:497`, routing
+  // through `prefillMessage`). Leaving it here would have been an assertion
+  // that a shipped feature does not exist. `share_entity` and `drop_pin` still
+  // genuinely have no target on that screen, so the test still proves the
+  // search bar declares LESS than the overlay rather than becoming a tautology.
+  for (const dead of ['share_entity', 'drop_pin'] as const) {
     assert.equal(
       GLOBAL_SEARCH_ACTION_TYPES.includes(dead),
       false,

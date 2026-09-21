@@ -44,9 +44,14 @@ const PUBLIC_POLICY: LocalZeroStatePolicy = {
   privacyClass: 'public',
   maxSuggestions: 3,
 };
+// `viewer_scoped` is the real `PrivacyClass` member for "this list is the
+// viewer's". This fixture said `'personal'`, which is not a member of that
+// union at all — and the gate it exercises answered CACHEABLE for it, which is
+// how the denylist-vs-allowlist defect in `suggestionCache.ts` was found. The
+// name is kept for the test titles; the value is now one the code recognises.
 const PERSONAL_POLICY: LocalZeroStatePolicy = {
   context: 'telegraph_recipient',
-  privacyClass: 'personal',
+  privacyClass: 'viewer_scoped',
   maxSuggestions: 3,
 };
 
@@ -154,6 +159,33 @@ test('fail-closed: an unresolvable policy retains nothing and offers nothing', (
   recordLocalSelection(null, city('Bangkok', 'c1'));
   assert.deepEqual(localZeroState(null), []);
   assert.deepEqual(localZeroState({ ...PUBLIC_POLICY, privacyClass: null }), []);
+});
+
+test('fail-closed: a privacy class this BUILD does not recognise is refused', () => {
+  // §48's whole premise is that client and server versions skew. A server that
+  // classifies a field with a class newer than this build would hand us a
+  // string that is not in the union. The gate must refuse it, not admit it:
+  // a denylist answers "cacheable" for everything it has not heard of, which
+  // is the leaking direction and is exactly what this used to do.
+  //
+  // The cast is the POINT of the test — it reproduces what crosses the wire,
+  // which the compile-time type cannot police. Removing it would delete the
+  // only assertion that covers the skew case.
+  const unknown = { ...PUBLIC_POLICY, privacyClass: 'crew_scoped' as LocalZeroStatePolicy['privacyClass'] };
+
+  assert.equal(mayRetainLocally(unknown), false, 'an unrecognised class must not be retainable');
+  recordLocalSelection(unknown, city('Bangkok', 'c1'));
+  assert.deepEqual(localZeroState(unknown), [], 'and must read nothing back');
+
+  // MUTATION-PROOF, and it is the mutation that matters: restore the denylist
+  // (`return !UNCACHEABLE_PRIVACY_CLASSES.has(privacyClass)`) in
+  // services/suggestionCache.ts and both assertions above go RED, because an
+  // unknown class is absent from any deny set and therefore "cacheable".
+  //
+  // The control: explicitly public data is STILL cached. An allowlist that
+  // refused everything would pass the two assertions above and would have
+  // silently disabled the cache for the one class it exists to serve.
+  assert.equal(mayRetainLocally(PUBLIC_POLICY), true, 'public data is still cacheable');
 });
 
 test('a row that is not an ANSWER is never replayed into an empty field', () => {

@@ -134,7 +134,17 @@ test('§44: the installed sink carries NO raw text onto the wire', async () => {
     'telegraph.message',
     'telegraph_message',
     { length: 22, text: 'meet me at the secret bar', query: 'secret bar' },
-    { events: 'all', captureRawText: false },
+    // The policy shape is `types/fieldPolicy.ts#InputTelemetryPolicy`:
+    // `{ logRawText: boolean; events: InputTelemetryEventName[] }`. This call
+    // originally read `{ events: 'all', captureRawText: false }` — BOTH fields
+    // wrong. `'all'` was a sentinel the §48 pass removed in the same wave
+    // (census G33: an explicit list on both sides, because a server policy that
+    // NARROWS a field's vocabulary could not be expressed by a sentinel), and
+    // `isEventAllowed` now does `policy.events.includes(name)`, which on the
+    // string 'all' is false — so this event never reached the sink and the
+    // assertion below read `p.batches[0]` of an empty array. `captureRawText`
+    // has never been a field of this type; the scrub reads `logRawText`.
+    { logRawText: false, events: ['query_length_changed'] },
   );
   await handle.batcher.flush();
 

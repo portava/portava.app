@@ -44,24 +44,48 @@ import type { PrivacyClass } from '../types/inputContext.ts';
  * re-runs the block/age gate on every keystroke — which is the behaviour a
  * viewer-scoped list should have had all along.
  */
-const UNCACHEABLE_PRIVACY_CLASSES: ReadonlySet<PrivacyClass> = new Set<PrivacyClass>([
-  'viewer_scoped',
-  'owner_only',
-  'sensitive_location',
-  'private_message',
-]);
+// ── ALLOWLIST, NOT DENYLIST — changed 2026-09-21, and this is the reason ─────
+//
+// This gate was a DENYLIST of four private classes, with a doc comment
+// promising it was "fail-CLOSED on an unknown or missing class". Those two
+// statements disagreed, and the code was the weaker one: it failed closed on
+// `null`/`undefined` only. Any string that was not one of the four listed
+// classes — including one this build has never heard of — came back
+// CACHEABLE.
+//
+// THAT IS A REACHABLE RUNTIME PATH, not a hypothetical. `privacyClass` arrives
+// in the SERVER's field policy, and §48 exists precisely because client and
+// server versions skew: a server that classifies a new field as, say,
+// `crew_scoped` would hand this build a class it cannot recognise, and the
+// denylist would answer "cacheable" — retaining a viewer-scoped list in a
+// process-global map keyed by typed text, served back without a round trip
+// that could re-check eligibility. The newer and more careful the server, the
+// worse the failure. It was found by a test fixture that used `'personal'`, a
+// string that has never been a member of this union; the fixture was wrong and
+// the answer it got was worse.
+//
+// The allowlist inverts it: `public` is cacheable and NOTHING else is. That is
+// what the paragraph above already said in prose — "the same list is the same
+// for everyone, which is exactly why the cache is safe there AND ONLY THERE" —
+// so this is the code catching up with its own stated contract. A new private
+// class added server-side is now refused by default rather than admitted by
+// default, and adding a genuinely public class is a deliberate edit here.
+//
+// The cost asymmetry is unchanged and still decides the direction: being wrong
+// this way costs one extra request; being wrong the other way retains a list
+// of people.
+const CACHEABLE_PRIVACY_CLASSES: ReadonlySet<PrivacyClass> = new Set<PrivacyClass>(['public']);
 
 /**
  * True when a field's suggestions may be held in the shared cache.
  *
- * Fail-CLOSED on an unknown or missing class: a field whose policy could not be
- * resolved is treated as uncacheable, because the cost of being wrong in that
- * direction is one extra request and the cost of being wrong in the other is a
- * retained list of people.
+ * Fail-CLOSED on an unknown, unrecognised or missing class. `privacyClass` is
+ * typed, but it crosses the wire from the server, so the runtime check cannot
+ * rely on the type: an unrecognised string is refused, not admitted.
  */
 export function isCacheablePrivacyClass(privacyClass: PrivacyClass | null | undefined): boolean {
   if (privacyClass == null) return false;
-  return !UNCACHEABLE_PRIVACY_CLASSES.has(privacyClass);
+  return CACHEABLE_PRIVACY_CLASSES.has(privacyClass);
 }
 
 export interface SuggestionCacheOptions {

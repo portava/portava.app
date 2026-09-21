@@ -91,9 +91,17 @@ export const SDK_CAPABILITIES: ClientCapabilities = {
  * `open_entity` and `submit_search` are resolved by the grouped-row bridge
  * (`search/globalSearch.ts` routes the first and submits the second);
  * `DISPATCHABLE_ACTION_TYPES` is the chip lane's own set. Everything else —
- * `share_entity`, `drop_pin`, `open_compass`, `replace_text`,
- * `set_structured_value` — has no target on that screen and is dropped there
- * today, which is exactly what this list now says out loud.
+ * `share_entity`, `drop_pin`, `replace_text`, `set_structured_value` — has no
+ * target on that screen and is dropped there today, which is exactly what this
+ * list now says out loud.
+ *
+ * `open_compass` USED TO BE in that dead list and is not any more: §43/G305
+ * gave it a target in the same wave as this file, routing through
+ * `prefillMessage` — the handoff Compass already accepts from Layover — at
+ * `app/search.tsx:497#getOpenCompassTarget`. It reaches this list on its own
+ * because the list SPREADS `DISPATCHABLE_ACTION_TYPES` rather than restating
+ * it, which is the lock-step rule below working as intended: the chip lane
+ * added a target, and the declaration followed without anyone editing it.
  *
  * Adding a target is: extend the screen's dispatcher AND the set it is derived
  * from, in lock-step. That is the same rule `smartActions.ts` already states,
