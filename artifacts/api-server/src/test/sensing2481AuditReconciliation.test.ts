@@ -103,17 +103,36 @@ describe("the reconciliation is exactly two entries, both conditional", () => {
   // shape of hole this whole effort keeps finding — a passing test that means
   // less than it looks — so it is closed here by name.
   for (const [label, file] of [["auditMigrationsVsLive", AUDIT], ["checkMissingLiveColumns", COLUMNS]] as const) {
-    test(`${label} carries NO unconditional 2481 skip alongside the gated one`, () => {
+    test(`${label} carries EXACTLY ONE 2481 exclusion, and it is the gated one`, () => {
       const src = read(file);
-      // A bare Set member: the filename as a quoted array element, at line
-      // start, which is how both auditors' SKIP_FILES literals are written.
-      const bareMember = new RegExp(String.raw`^\s*"${MIGRATION.replace(/\./g, "\\.")}",\s*$`, "m");
-      assert.doesNotMatch(
-        src,
-        bareMember,
-        "a permanent literal beside the gated add makes the gate a no-op — the skip would " +
-          "survive a move to Option A and hide real drift",
+      const esc = MIGRATION.replace(/\./g, "\\.");
+
+      // An EXECUTABLE exclusion is one of two shapes, and prose mentioning the
+      // filename is neither — these files carry paragraphs of reasoning that
+      // name it, and counting those would make this assertion meaningless.
+      //   (a) a bare array member inside a SKIP_FILES / ALLOWLIST literal
+      //   (b) a `.add("2481…")` call
+      const bareMember = new RegExp(String.raw`^\s*"${esc}",\s*$`, "gm");
+      const setAdd = new RegExp(String.raw`\.add\(\s*"${esc}"\s*\)`, "g");
+
+      const bare = src.match(bareMember) ?? [];
+      const adds = src.match(setAdd) ?? [];
+
+      assert.equal(
+        bare.length,
+        0,
+        `${label}: a permanent literal beside the gated add makes the gate a no-op — the ` +
+          "skip would survive a move to Option A and hide real drift. That is exactly what " +
+          "#511 and #512 produced when both merged.",
       );
+      assert.equal(
+        adds.length,
+        1,
+        `${label}: expected exactly ONE posture-gated exclusion for 2481, found ${adds.length}. ` +
+          "Two would make the file's behaviour depend on which one a reader noticed.",
+      );
+      // And that one add must sit inside the posture gate, not anywhere else.
+      assert.match(src, GUARDED_SKIP, `${label}: the sole exclusion must be posture-gated`);
     });
   }
 

@@ -1938,3 +1938,154 @@ what was wrong.
 
     SELECT rolname, rolbypassrls FROM pg_roles WHERE rolname = 'service_role';
     -- expect rolbypassrls = true — this is why the server path is unaffected
+
+---
+
+## 2026-09-21 — PR #511 merged: 2963 and 2964 applied to `portava-ci` and CERTIFIED
+
+Run [35569016879](https://github.com/portava/portava.app/actions/runs/35569016879),
+`push` on `main` at the merge commit `fd0b3a6f4`. No `workflow_dispatch`.
+
+**This entry certifies `portava-ci` ONLY.** Production has neither file. That
+distinction is load-bearing and is restated under "Production" below, because the
+whole point of the counter 2964 creates is a privacy promise, and a reader who
+took this as a production certification would believe a promise is being kept
+where the table does not exist.
+
+### What applied
+
+Two files, quoted from the applier rather than inferred from `audit:schema`:
+
+```
+Applying 2 migration(s), in canonical order:
+  · 2963_memory_projector_place_lane_union.sql
+  · 2964_map_telemetry_disabled_discards.sql
+
+  → 2963_memory_projector_place_lane_union.sql: applied + recorded (one transaction)
+  → 2964_map_telemetry_disabled_discards.sql: applied + recorded (one transaction)
+
+apply-migrations PASSED — 2 migration(s) applied and recorded in
+public.schema_migration_ledger, each in one transaction with its ledger row.
+```
+
+The step that produced this — *"migrations — apply to the sanctioned CI project"* —
+is **skipped on every branch run** and only executes from `main`. That is why both
+files sat on the drift ratchet for the life of PR #511 and why merging, not a
+session write, was the supported control for applying them.
+
+### certify:migrations — all five stages, quoted from the run
+
+```
+certify:migrations PASSED — every stage reached a verdict and every verdict was a pass:
+  ✔ 1 ledger
+  ✔ 2 schema objects
+  ✔ 3 grants and RLS
+  ✔ 4 critical postconditions
+  ✔ 5 app checks
+```
+
+- **1 ledger** — `check:migration-ledger PASSED — project hwokxgbmezheskbzskfr has
+  a ledger row for every one of the 579 migration file(s) in src/migrations/.`
+  195 files had a recorded sha256 and matched it; 384 carry no comparable
+  checksum (2254's backfill rows, which assert only that the filename existed).
+- **2 schema objects** — `2 migration(s) in scope (ledger rows tagged
+  run=35569016879): 2963…, 2964…`, so this is **not** the vacuous case where
+  nothing applied. See the caveat on its object count below.
+- **3 grants and RLS** — `RLS is enabled on every table a scoped migration enabled
+  it on; no client role holds an ungranted write privilege on a table these
+  migrations created.` Unlike the 2972 entry above, this stage is **meaningful
+  here**: 2964 genuinely creates a table (`map_telemetry_disabled_discards`) and
+  enables RLS on it, so the stage had something in scope to look at.
+- **4 critical postconditions** — `3 assertion block(s) re-run against the
+  committed database` and `every scoped migration declared at least one
+  assertion`. Three is exactly right and worth checking rather than nodding at:
+  2963 carries one postcondition block, 2964 carries a precondition block and a
+  postcondition block. **So 2964's privacy guards were re-executed against the
+  real CI database**, not merely against the throwaway PostgreSQL they were armed
+  on: no identity-shaped column, no uuid column, exactly four columns, the
+  hour-bucket CHECK present, no client-role rights, no direct `service_role`
+  INSERT/UPDATE, exactly one writer overload.
+- **5 app checks** — `audit:schema` exited 0 over 575 files / 6529 claimed
+  objects (*"Live schema contains every object claimed by the migrations"*), and
+  `check:missing-live-columns PASSED` over 579 files / 3873 column declarations.
+
+### CAVEAT — STAGE 2's "2 declared object(s) present"
+
+Two files applied and the stage reports two declared objects, which reads like one
+object per file and is **not** what it means. The stage counts objects its own
+extractor recognises from the migration text; 2964 alone creates a table, a
+function and an index. Do not quote this number as an inventory of what 2964
+built. What does establish that inventory is STAGE 5's `audit:schema` — which
+resolves every claimed object against the live schema and passed — together with
+STAGE 4's re-run of 2964's own postcondition, which asserts the table's exact
+shape and grants.
+
+### Also cleared by this run: `main`'s four-day 2481 red
+
+```
+⤳ 2481_sensing_sessions_option_a_issuer.sql (skipped: known superseded/drifted)
+```
+
+`schema drift` had failed on every scheduled run on `main` since 2026-09-17, on
+the same unchanged commit, because two name-keyed auditors read 2481's
+**deliberate** non-apply as drift. Both now carry a posture-derived exclusion.
+See PR #512 and PR #514 — the second of which exists because #511 and #512 fixed
+this independently, merged within half an hour, and git kept both forms, which
+silently defeated the conditional.
+
+### Production — NOT applied, and not pending either
+
+| | `portava-ci` | production |
+|---|---|---|
+| `2963_memory_projector_place_lane_union.sql` | **applied + certified** (this run) | not applied |
+| `2964_map_telemetry_disabled_discards.sql` | **applied + certified** (this run) | not applied |
+
+Applying either to production is blocked by the session's own permission layer,
+not by anything in the repository — see "Still open". The route is safe in
+production without 2964: its only caller is `routes/mapTelemetry.ts` on the path
+where `map_telemetry_enabled` is FALSE, the call is `sc.rpc(...)` with its result
+checked, so a database lacking the function answers 404, the route logs a warning
+and still returns 200. The collection-off path writes **nothing**, which is the
+promise 2964 exists to keep — kept without the counter until the apply lands.
+
+### What this certification DOES unlock
+
+`2964`'s three claims come off the pending-apply ALLOWLIST in
+`src/scripts/auditMigrationsVsLive.ts` in the same change as this entry, because
+that entry's own condition was *"Remove all three once the merge-to-main apply is
+certified in docs/migrations.md — NOT when the migration merges."* It is now
+certified, so they are removed and the auditor checks those three objects against
+the live CI schema on every run.
+
+`map_telemetry_disabled_discards` **stays** on `KNOWN_PRODUCTION_GAPS` in
+`src/scripts/checkProductionDrift.ts`. That entry's condition is different and is
+**not** satisfied: *"Strike this off in the same change that applies 2964 and
+refreshes the two production snapshots."* Production does not have the table and
+the snapshots are unrefreshed. Removing it on the strength of a CI apply would be
+exactly the CI-for-production substitution this file exists to prevent.
+
+### Still open
+
+- **Production apply of 2963 and 2964.** Blocked by the session permission layer,
+  not by the repository. Rejected action and remedy are recorded in
+  `docs/ops/map-completion-checkpoint.md`.
+- **The two production schema snapshots** are unrefreshed with respect to these
+  files, correctly, since neither applied there.
+
+### Re-establish any of this independently
+
+    -- against portava-ci
+    SELECT filename, applied_by, applied_at, left(checksum, 12)
+      FROM public.schema_migration_ledger WHERE filename >= '2963' ORDER BY filename;
+    -- expect 2963 and 2964, applied_by='ci', each with a real sha256
+
+    SELECT count(*) FROM information_schema.columns
+     WHERE table_schema='public' AND table_name='map_telemetry_disabled_discards';
+    -- expect 4 — bucket_hour, batches, events, expires_at, and nothing else
+
+    SELECT has_table_privilege('service_role','public.map_telemetry_disabled_discards','INSERT');
+    -- expect false — the route writes through record_map_telemetry_disabled_discard(integer)
+
+    SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
+     WHERE n.nspname='public' AND p.proname='project_user_memory';
+    -- expect 1 — 2963 replaces the (uuid, boolean) signature, it does not overload it
