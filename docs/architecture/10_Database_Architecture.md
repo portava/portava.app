@@ -286,7 +286,7 @@ human decides per file (`:908-931`).
 
 Step 5 runs on PRs; step 3 does not. `audit:schema` fails (exit 1) when a migration file claims an
 object the live catalog does not have, and it has **no post-cutover exemption** — its `SKIP_FILES`
-set holds four named files and nothing else (`auditMigrationsVsLive.ts:142-163`). So a PR adding
+set holds five named files and nothing else (`auditMigrationsVsLive.ts:142-201`). So a PR adding
 `2310_whatever.sql` is red on `schema-drift` from the moment it is pushed until somebody applies
 that migration to the CI project. `2120_canonical_events.sql:8-13` states this in its own header
 as expected behaviour, not a finding.

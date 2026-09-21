@@ -161,6 +161,43 @@ const SKIP_FILES = new Set([
   // into the post-cutover band (renumber >= "2100") and apply it then, deleting
   // this skip at that point.
   "2095_discovery_place_photos.sql",
+  // 2481_sensing_sessions_option_a_issuer.sql — OPTION A ONLY; DELIBERATELY NOT
+  // APPLIED, AND MUST NOT BE. Not drift: the database is right and this auditor
+  // cannot see why.
+  //
+  // The file's own header says it: "OPTION A ONLY (SENSING_AUTH_POSTURE =
+  // authenticated_only). Do NOT apply under Option B." On 2026-09-16 the owner
+  // put Sensing on Option B staged — SENSING_AUTH_POSTURE is `anonymous_capable`
+  // (src/lib/sensingAuthPosture.ts) — so the file is never run. Two reasons it
+  // must not be, both structural rather than stylistic: the second conjunct of
+  // its CHECK is `issuance_class = 'authenticated_profile'`, which makes an
+  // attested- or unattested-device session UNREPRESENTABLE even though
+  // production accepts all three classes; and it hangs a `profiles` foreign key
+  // off a sensing table that Option B exists to keep free of account identity.
+  //
+  // WHY THIS ENTRY EXISTS AT ALL. portava-ci carried 2481 from an earlier Option
+  // A rehearsal, so CI refused two issuance classes production accepts — the
+  // divergence recorded (not papered over) in the Option B commit, which also
+  // recorded that reverting 2481 on CI was owed. That revert has since happened:
+  // `sensing_contribution_sessions` is present (2480 is applied and stays), and
+  // `issued_to_profile_id`, `revoke_sensing_sessions_for_profile` and
+  // `sensing_contribution_sessions_issuer_idx` are all absent. Its
+  // schema_migration_ledger row is deliberately retained so the applier does not
+  // replay the file; only the objects were reverted.
+  //
+  // This auditor is name-keyed against the files on disk and has no notion of a
+  // posture, so it reads "file present, objects absent" as drift. Every file it
+  // reports is assumed to be a migration that SHOULD have been applied; 2481 is
+  // the one that should not. An ALLOWLIST entry would be wrong here — that list
+  // is for objects where live deliberately differs from an applied migration,
+  // and 2481 is not applied at all.
+  //
+  // DELETE THIS SKIP IF SENSING EVER MOVES TO OPTION A — i.e. if
+  // SENSING_AUTH_POSTURE becomes `authenticated_only` and 2481 is applied. From
+  // that moment its three objects must exist live, and this entry would hide
+  // their absence. See docs/architecture/census-sensing.md and
+  // docs/architecture/sensing-auth-posture-decision.md.
+  "2481_sensing_sessions_option_a_issuer.sql",
 ]);
 
 /**

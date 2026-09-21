@@ -256,6 +256,33 @@ const SKIP_FILES = new Set<string>([
   // Superseded by 0134_rent_buddy_schema_rebuild.sql — the buddy_* compat
   // views still exist live but the columns declared here were renamed.
   "0050_rent_a_buddy.sql",
+  // 2481_sensing_sessions_option_a_issuer.sql — OPTION A ONLY; DELIBERATELY NOT
+  // APPLIED, AND MUST NOT BE. The file declares exactly one column,
+  // sensing_contribution_sessions.issued_to_profile_id, and its absence is the
+  // posture rather than a lag.
+  //
+  // THE FILE, not the column, is the unit here — which is why this is a
+  // SKIP_FILES entry and not an ALLOWLIST one. ALLOWLIST says "this column is
+  // pending a live apply, remove the entry once the apply is certified"; 2481
+  // is never to be applied, so an entry phrased that way would be waiting for
+  // something that must not happen. On 2026-09-16 the owner put Sensing on
+  // Option B staged (SENSING_AUTH_POSTURE = `anonymous_capable`,
+  // src/lib/sensingAuthPosture.ts), under which the file is never run: the
+  // second conjunct of its CHECK is `issuance_class = 'authenticated_profile'`,
+  // which makes attested- and unattested-device sessions unrepresentable
+  // although production accepts all three, and it hangs a `profiles` foreign key
+  // off a sensing table Option B exists to keep free of account identity.
+  // portava-ci carried 2481 from an earlier Option A rehearsal; that revert has
+  // since happened, and 2480's own objects (the table included) remain applied
+  // and are still checked here.
+  //
+  // This entry and the one in src/scripts/auditMigrationsVsLive.ts are the same
+  // ruling stated to two name-keyed checkers; the fuller version is there.
+  // DELETE BOTH IF SENSING EVER MOVES TO OPTION A — i.e. if
+  // SENSING_AUTH_POSTURE becomes `authenticated_only` and 2481 is applied. From
+  // that moment this column must exist live, and this entry would hide its
+  // absence. See docs/architecture/census-sensing.md.
+  "2481_sensing_sessions_option_a_issuer.sql",
 ]);
 
 // Tables entirely absent from live (migrations reference them but they haven't
