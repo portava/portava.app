@@ -14,6 +14,15 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { recordMediaAsset, completeVideoTranscode, type RecordAssetInput } from "../lib/mediaAssets.js";
+import {
+  claimMediaProcessing,
+  completeMediaProcessing,
+  failMediaProcessing,
+  recoverStaleMediaProcessing,
+  softDeleteMediaAsset,
+  retryMediaProcessing,
+  type ProcessingClaim,
+} from "../services/media/MediaLifecycleService.js";
 
 // ── Minimal fake Supabase client ──────────────────────────────────────────────
 
@@ -352,5 +361,275 @@ describe("migration-2089 constraint simulation", () => {
     assert.equal(calls[0].row.processing_status, "ready");
     assert.equal(calls[0].row.width, null);
     assert.equal(calls[0].row.height, null);
+  });
+});
+
+
+/**
+ * ── MediaLifecycleService ────────────────────────────────────────────────────
+ *
+ * Every state transition here is a CONDITIONAL update. PostgREST answers an
+ * UPDATE that matches ZERO rows with `error: null`, so "no error" is not proof
+ * a write happened — each transition selects the row back and checks it. These
+ * fakes all answer "no rows matched, no error", which is exactly the lost-race
+ * shape, and every assertion below is that the service reports failure.
+ */
+describe("MediaLifecycleService — lost processing claim", () => {
+  it("does not return a claim when the conditional update returns zero rows", async () => {
+    const client = {
+      from(table: string) {
+        if (table !== "media_assets") return {
+          upsert: async () => ({ error: null }),
+        };
+        const builder: any = {
+          select: () => builder,
+          eq: () => builder,
+          maybeSingle: async () => ({
+            data: {
+              id: "asset-race",
+              processing_status: "processing",
+              processing_attempt_count: 0,
+              processing_terminal: false,
+            },
+            error: null,
+          }),
+          update: () => builder,
+          then: (resolve: any) => Promise.resolve({ data: null, error: null }).then(resolve),
+        };
+        return builder;
+      },
+    };
+    assert.equal(await claimMediaProcessing(client as any, "asset-race"), null);
+  });
+
+  it("refuses a terminal asset and one whose retry clock has not come round", async () => {
+    const asset = (over: Record<string, unknown>) => ({
+      from: () => {
+        const b: any = {
+          select: () => b,
+          eq: () => b,
+          update: () => b,
+          maybeSingle: async () => ({
+            data: {
+              id: "a1",
+              processing_status: "failed",
+              processing_attempt_count: 1,
+              processing_terminal: false,
+              ...over,
+            },
+            error: null,
+          }),
+        };
+        return b;
+      },
+    });
+    assert.equal(await claimMediaProcessing(asset({ processing_terminal: true }) as any, "a1"), null);
+    assert.equal(
+      await claimMediaProcessing(
+        asset({ processing_next_retry_at: "2999-01-01T00:00:00.000Z" }) as any,
+        "a1",
+      ),
+      null,
+      "an asset whose next retry is in the future is not due",
+    );
+    assert.equal(
+      await claimMediaProcessing(
+        asset({ processing_lease_until: "2999-01-01T00:00:00.000Z" }) as any,
+        "a1",
+      ),
+      null,
+      "an asset under a live lease belongs to another worker",
+    );
+  });
+});
+
+function makeLifecycleZeroMatchClient(opts: {
+  staleRow?: Record<string, unknown>;
+  updatedRow?: Record<string, unknown> | null;
+} = {}): any {
+  const staleRow = opts.staleRow;
+  const updatedRow = opts.updatedRow ?? null;
+  return {
+    from(table: string) {
+      let updating = false;
+      const builder: any = {
+        select: () => builder,
+        eq: () => builder,
+        lt: () => builder,
+        limit: () => builder,
+        update: () => {
+          updating = true;
+          return builder;
+        },
+        maybeSingle: async () => ({
+          data: updating ? updatedRow : staleRow ?? null,
+          error: null,
+        }),
+        then: (resolve: any) => Promise.resolve({
+          data: updating ? updatedRow : (table === "media_assets" && staleRow ? [staleRow] : []),
+          error: null,
+        }).then(resolve),
+      };
+      return builder;
+    },
+  };
+}
+
+describe("MediaLifecycleService — conditional completion/failure/recovery matches", () => {
+  const claim: ProcessingClaim = {
+    assetId: "asset-race",
+    attemptNumber: 1,
+    leaseToken: "lease-old",
+    leaseUntil: "2025-01-01T00:00:00.000Z",
+  };
+
+  it("does not complete when a stale lease token matches zero asset rows", async () => {
+    const result = await completeMediaProcessing(makeLifecycleZeroMatchClient(), claim, {
+      width: 100,
+      height: 100,
+    });
+    assert.equal(result, false);
+  });
+
+  it("refuses to complete without positive dimensions (migration 2089)", async () => {
+    await assert.rejects(
+      () => completeMediaProcessing(makeLifecycleZeroMatchClient(), claim, { width: 0, height: 100 }),
+      /positive dimensions required/,
+    );
+    await assert.rejects(
+      () => completeMediaProcessing(makeLifecycleZeroMatchClient(), claim, { width: 100, height: -1 }),
+      /positive dimensions required/,
+    );
+  });
+
+  it("does not fail when a stale lease token matches zero asset rows", async () => {
+    const result = await failMediaProcessing(makeLifecycleZeroMatchClient(), claim, "transcode failed");
+    assert.equal(result.ok, false);
+  });
+
+  it("goes terminal only at the attempt cap, and schedules a retry below it", async () => {
+    const below = await failMediaProcessing(makeLifecycleZeroMatchClient(), claim, "boom", { maxAttempts: 3 });
+    assert.equal(below.terminal, false);
+    assert.ok(below.nextRetryAt, "a non-terminal failure must carry a retry time");
+    const atCap = await failMediaProcessing(
+      makeLifecycleZeroMatchClient(),
+      { ...claim, attemptNumber: 3 },
+      "boom",
+      { maxAttempts: 3 },
+    );
+    assert.equal(atCap.terminal, true);
+    assert.equal(atCap.nextRetryAt, null, "a terminal failure must NOT schedule another retry");
+  });
+
+  it("does not count stale recovery when the conditional update matches zero rows", async () => {
+    const client = makeLifecycleZeroMatchClient({
+      staleRow: {
+        id: claim.assetId,
+        processing_attempt_count: claim.attemptNumber,
+        processing_lease_token: claim.leaseToken,
+      },
+    });
+    assert.equal(await recoverStaleMediaProcessing(client, { now: new Date("2025-01-01T00:00:00.000Z") }), 0);
+  });
+});
+
+describe("MediaLifecycleService — owner-only deletion and retry", () => {
+  const OWNER = "11111111-1111-4111-8111-111111111111";
+  const STRANGER = "22222222-2222-4222-8222-222222222222";
+  const ASSET = "33333333-3333-4333-8333-333333333333";
+
+  function assetClient(row: Record<string, unknown> | null) {
+    const writes: Array<{ table: string; row: any }> = [];
+    const client: any = {
+      writes,
+      from(table: string) {
+        const b: any = {
+          select: () => b,
+          eq: () => b,
+          maybeSingle: async () => ({ data: row, error: null }),
+          update: (payload: any) => { writes.push({ table, row: payload }); return b; },
+          insert: async (payload: any) => { writes.push({ table, row: payload }); return { error: null }; },
+          then: (resolve: any) => Promise.resolve({ data: null, error: null }).then(resolve),
+        };
+        return b;
+      },
+    };
+    return client;
+  }
+
+  it("refuses a stranger and a missing asset, and writes nothing in either case", async () => {
+    const owned = assetClient({ id: ASSET, owner_user_id: OWNER, purge_status: "not_requested" });
+    assert.deepEqual(
+      await softDeleteMediaAsset(owned, ASSET, STRANGER),
+      { ok: false, alreadyDeleted: false, purgeScheduled: false },
+    );
+    assert.deepEqual(owned.writes, [], "a refused delete must not write");
+
+    const missing = assetClient(null);
+    assert.deepEqual(
+      await softDeleteMediaAsset(missing, ASSET, OWNER),
+      { ok: false, alreadyDeleted: false, purgeScheduled: false },
+    );
+    assert.deepEqual(missing.writes, []);
+
+    assert.deepEqual(
+      await retryMediaProcessing(assetClient({ id: ASSET, owner_user_id: OWNER }), ASSET, STRANGER),
+      { ok: false, alreadyQueued: false },
+    );
+  });
+
+  it("is idempotent: an already owner_deleted asset reports alreadyDeleted and re-writes nothing", async () => {
+    const client = assetClient({
+      id: ASSET, owner_user_id: OWNER,
+      moderation_status: "owner_deleted", purge_status: "pending",
+    });
+    assert.deepEqual(
+      await softDeleteMediaAsset(client, ASSET, OWNER),
+      { ok: true, alreadyDeleted: true, purgeScheduled: false },
+    );
+    assert.deepEqual(client.writes, []);
+  });
+
+  it("does not re-queue an asset already queued or in flight, and never revives a purged one", async () => {
+    for (const status of ["queued", "processing"]) {
+      const client = assetClient({ id: ASSET, owner_user_id: OWNER, processing_status: status });
+      assert.deepEqual(await retryMediaProcessing(client, ASSET, OWNER), { ok: true, alreadyQueued: true });
+      assert.deepEqual(client.writes, [], `a ${status} asset must not be re-queued`);
+    }
+    const purged = assetClient({
+      id: ASSET, owner_user_id: OWNER, processing_status: "failed", purge_status: "completed",
+    });
+    assert.deepEqual(await retryMediaProcessing(purged, ASSET, OWNER), { ok: false, alreadyQueued: false });
+    assert.deepEqual(purged.writes, [], "a purged asset has no bytes left to process");
+  });
+
+  it("uses only CHECK-legal status values when it does transition", async () => {
+    // 0191 processing_status vocabulary + the §36 moderation vocabulary that
+    // 2250 lays down (re-asserted by 2470). A value outside either set would be
+    // rejected by Postgres at runtime, where no unit test would see it.
+    const PROCESSING = new Set([
+      "local", "queued", "uploading", "uploaded", "scanning",
+      "processing", "moderating", "ready", "failed", "rejected", "removed", "expired",
+    ]);
+    const MODERATION = new Set([
+      "processing", "active", "limited", "rejected", "removed", "owner_deleted",
+      "pending", "approved", "flagged",
+    ]);
+    const client = assetClient({
+      id: ASSET, owner_user_id: OWNER, moderation_status: "approved", purge_status: "not_requested",
+    });
+    const result = await softDeleteMediaAsset(client, ASSET, OWNER);
+    assert.equal(result.ok, true);
+    await result.purge;
+    const retryClient = assetClient({ id: ASSET, owner_user_id: OWNER, processing_status: "failed" });
+    await retryMediaProcessing(retryClient, ASSET, OWNER);
+    for (const w of [...client.writes, ...retryClient.writes]) {
+      if (typeof w.row?.processing_status === "string") {
+        assert.ok(PROCESSING.has(w.row.processing_status), `illegal processing_status ${w.row.processing_status}`);
+      }
+      if (typeof w.row?.moderation_status === "string") {
+        assert.ok(MODERATION.has(w.row.moderation_status), `illegal moderation_status ${w.row.moderation_status}`);
+      }
+    }
   });
 });

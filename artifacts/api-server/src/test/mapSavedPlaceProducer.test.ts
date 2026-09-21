@@ -33,9 +33,11 @@ import {
   SAVED_PLACE_PRIVACY_CLASS,
   projectSavedPlace,
   readSavedPlacePins,
-  type SavedPlaceRowLike,
+  resolveDiscoveryVenue,
+  type SavedVenueKeyLike,
   type SavedPlaceVenueLike,
 } from "../lib/mapProducers/savedPlaceProducer.js";
+import { _clearPlaceIdBridgeCache } from "../lib/placeIdBridge.js";
 import {
   KIND_DEFAULT_PRIORITY,
   MAP_OBJECT_KINDS,
@@ -64,8 +66,19 @@ function iso(offsetMinutes: number): string {
   return new Date(NOW + offsetMinutes * 60_000).toISOString();
 }
 
-function saved(over: Partial<SavedPlaceRowLike> & { user_id?: string } = {}): SavedPlaceRowLike & { user_id: string } {
-  return { id: "sp-1", user_id: VIEWER, place_id: DP_ID, saved_at: iso(-1440), ...over };
+/**
+ * A save ROW, in a table saves actually land in. `saved_places` — the table
+ * this producer used to read — has ZERO writers in production, so it is never
+ * seeded here: a fixture in a writerless table is a fixture that cannot fail.
+ * These rows are `discovery_place_saves`, the DiscoveryWall bookmark path.
+ */
+function saved(over: Partial<{ place_id: string; saved_at: string; user_id: string }> = {}) {
+  return { user_id: VIEWER, place_id: DP_ID, saved_at: iso(-1440), ...over };
+}
+
+/** The venue key the pin is drawn under — one per saved VENUE, never per row. */
+function key(over: Partial<SavedVenueKeyLike> = {}): SavedVenueKeyLike {
+  return { key: `dp:${DP_ID}`, savedAt: iso(-1440), ...over };
 }
 
 function venue(over: Partial<SavedPlaceVenueLike> = {}): SavedPlaceVenueLike {
@@ -82,8 +95,8 @@ function venue(over: Partial<SavedPlaceVenueLike> = {}): SavedPlaceVenueLike {
   };
 }
 
-function pin(savedOver: Partial<SavedPlaceRowLike> = {}, venueOver: Partial<SavedPlaceVenueLike> = {}): MapObject {
-  const o = projectSavedPlace(saved(savedOver), venue(venueOver));
+function pin(savedOver: Partial<SavedVenueKeyLike> = {}, venueOver: Partial<SavedPlaceVenueLike> = {}): MapObject {
+  const o = projectSavedPlace(key(savedOver), resolveDiscoveryVenue(venue(venueOver)));
   assert.ok(o, "expected a pin");
   return o as MapObject;
 }
@@ -115,7 +128,7 @@ describe("the saved_place kind is part of the contract", () => {
 describe("projectSavedPlace — shape", () => {
   it("is a saved_place at the saved-place tier, place_level, and servable", () => {
     const o = pin();
-    assert.equal(o.id, "saved:sp-1");
+    assert.equal(o.id, `saved:dp:${DP_ID}`);
     assert.equal(o.kind, "saved_place");
     assert.equal(o.privacyClass, "place_level");
     assert.equal(o.privacyClass, SAVED_PLACE_PRIVACY_CLASS);
@@ -144,11 +157,12 @@ describe("projectSavedPlace — shape", () => {
     assert.equal((pin().payload as { canonicalPlaceId: string | null }).canonicalPlaceId, CANONICAL);
   });
 
-  it("refuses a venue that is not the saved place's venue, or one it cannot draw", () => {
-    assert.equal(projectSavedPlace(saved(), venue({ id: "someone-elses-venue" })), null);
-    assert.equal(projectSavedPlace(saved(), venue({ lat: null, lng: null })), null);
-    assert.equal(projectSavedPlace(saved(), venue({ lat: 91 })), null);
-    assert.equal(projectSavedPlace(saved({ id: "" }), venue()), null);
+  it("refuses a venue it cannot draw, and a pin with no venue key", () => {
+    assert.equal(resolveDiscoveryVenue(venue({ lat: null, lng: null })), null);
+    assert.equal(resolveDiscoveryVenue(venue({ lat: 91 })), null);
+    assert.equal(resolveDiscoveryVenue(venue({ id: "" })), null);
+    assert.equal(projectSavedPlace(key(), null), null);
+    assert.equal(projectSavedPlace(key({ key: "" }), resolveDiscoveryVenue(venue())), null);
   });
 
   it("falls back to a generic title rather than serving an empty one", () => {
@@ -186,7 +200,11 @@ describe("saved_place through the §24 gate", () => {
 
 function world(over: FakeState = {}): FakeState {
   return {
-    saved_places: [saved(), saved({ id: "sp-other", user_id: OTHER, place_id: DP_ID })],
+    // Deliberately EMPTY: the producer must not read the writerless table.
+    saved_places: [],
+    discovery_place_saves: [saved(), saved({ user_id: OTHER })],
+    wishlist_places: [],
+    places: [],
     discovery_places: [venue()],
     ...over,
   };
@@ -197,15 +215,37 @@ function client(state: FakeState) {
 }
 
 describe("readSavedPlacePins — the viewer's own wishlist", () => {
+  beforeEach(() => _clearPlaceIdBridgeCache());
+
   it("reads only the viewer's rows", async () => {
     const r = await readSavedPlacePins(client(world()), VIEWER, { bbox: BBOX });
     assert.ok(r.ok);
     if (!r.ok) return;
     assert.equal(r.report.saved, 1);
-    assert.deepEqual(r.pins.map((p: MapObject) => p.id), ["saved:sp-1"]);
+    assert.deepEqual(r.pins.map((p: MapObject) => p.id), [`saved:dp:${DP_ID}`]);
     const serialized = JSON.stringify(r.pins);
-    assert.ok(!serialized.includes("sp-other"), "another user's save reached the viewer");
-    assert.ok(!serialized.includes(OTHER));
+    assert.ok(!serialized.includes(OTHER), "another user's save reached the viewer");
+  });
+
+  it("reads NOTHING from the writerless saved_places, however full it is", async () => {
+    // The founding defect pinned from the other side: a fixture in
+    // `saved_places` must have NO effect, because production never writes one.
+    // If this row ever draws a pin the producer has drifted back onto the dead
+    // table, and the layer is empty again in the real world.
+    const r = await readSavedPlacePins(
+      client(
+        world({
+          discovery_place_saves: [],
+          saved_places: [{ id: "sp-ghost", user_id: VIEWER, place_id: DP_ID, saved_at: iso(-10) }],
+        }),
+      ),
+      VIEWER,
+      { bbox: BBOX },
+    );
+    assert.ok(r.ok);
+    if (!r.ok) return;
+    assert.deepEqual(r.pins, []);
+    assert.equal(r.report.saved, 0);
   });
 
   it("is viewport-scoped on the venue coordinate", async () => {
@@ -221,20 +261,23 @@ describe("readSavedPlacePins — the viewer's own wishlist", () => {
   });
 
   it("read failures are refusals, not empty layers", async () => {
-    const a = await readSavedPlacePins(client(world({ saved_places: { error: { message: "down" } } })), VIEWER, { bbox: BBOX });
+    const a = await readSavedPlacePins(client(world({ discovery_place_saves: { error: { message: "down" } } })), VIEWER, { bbox: BBOX });
     assert.deepEqual(a, { ok: false, reason: "saved_read_failed" });
     const b = await readSavedPlacePins(client(world({ discovery_places: { error: { message: "down" } } })), VIEWER, { bbox: BBOX });
     assert.deepEqual(b, { ok: false, reason: "places_read_failed" });
+    const c = await readSavedPlacePins(client(world({ wishlist_places: { error: { message: "down" } } })), VIEWER, { bbox: BBOX });
+    assert.deepEqual(c, { ok: false, reason: "wishlist_read_failed" });
   });
 
   it("reports the cap when the wishlist is longer than the read", async () => {
     const rows = Array.from({ length: MAX_SAVED_PLACE_ROWS + 1 }, (_v: unknown, i: number) =>
-      saved({ id: `sp-${i}`, place_id: `dp-${i}` }),
+      saved({ place_id: `dp-${i}` }),
     );
-    const r = await readSavedPlacePins(client(world({ saved_places: rows, discovery_places: [] })), VIEWER, { bbox: BBOX });
+    const r = await readSavedPlacePins(client(world({ discovery_place_saves: rows, discovery_places: [] })), VIEWER, { bbox: BBOX });
     assert.ok(r.ok);
     if (!r.ok) return;
     assert.equal(r.report.saved, MAX_SAVED_PLACE_ROWS);
+    assert.equal(r.report.discoverySaves, MAX_SAVED_PLACE_ROWS);
     assert.equal(r.report.capped, true);
   });
 });
@@ -256,6 +299,7 @@ describe("saved_place through GET /api/map/projection", () => {
   beforeEach(() => {
     _clearProtectedZoneCache();
     _clearFlowZoneCache();
+    _clearPlaceIdBridgeCache();
   });
   afterEach(async () => {
     if (app) await app.close();
@@ -273,18 +317,18 @@ describe("saved_place through GET /api/map/projection", () => {
     const objs = r.body.objects as MapObject[];
     assert.equal(objs.length, 1);
     assert.equal(objs[0].kind, "saved_place");
-    assert.equal(objs[0].id, "saved:sp-1");
+    assert.equal(objs[0].id, `saved:dp:${DP_ID}`);
     assert.equal(objs[0].privacyClass, "place_level");
     assert.equal(objs[0].renderingPriority, RENDERING_PRIORITY.saved_place);
     assert.ok(r.body.sources.includes("saved"));
     assert.deepEqual(r.body.producers.saved_place, { refusal: null, collected: 1 });
     // The kind filter round-trips through parseKinds/filterKinds.
-    assert.ok(!JSON.stringify(r.body).includes("sp-other"));
+    assert.ok(!JSON.stringify(r.body).includes(OTHER));
   });
 
   it("another viewer sees their own list, not this one", async () => {
     const r = await serve(gatewayWorld(), OTHER, `bbox=${BBOX_STR}&zoom=14&kinds=saved_place`);
-    assert.deepEqual((r.body.objects as MapObject[]).map((o: MapObject) => o.id), ["saved:sp-other"]);
+    assert.deepEqual((r.body.objects as MapObject[]).map((o: MapObject) => o.id), [`saved:dp:${DP_ID}`]);
   });
 
   it("is not read when the kind is not requested", async () => {
@@ -295,7 +339,7 @@ describe("saved_place through GET /api/map/projection", () => {
 
   it("a read failure is a refusal in the envelope", async () => {
     const r = await serve(
-      gatewayWorld({ saved_places: { error: { message: "down" } } }),
+      gatewayWorld({ discovery_place_saves: { error: { message: "down" } } }),
       VIEWER,
       `bbox=${BBOX_STR}&zoom=14&kinds=saved_place`,
     );

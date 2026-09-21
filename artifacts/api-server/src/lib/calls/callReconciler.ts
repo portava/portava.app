@@ -48,21 +48,34 @@ export interface RoomAdminPort {
   listRoomNames?(): Promise<Set<string>>;
 }
 
+/**
+ * Apply one event to one session.
+ *
+ * RETURNS WHETHER THIS CALL ACTUALLY MOVED THE SESSION. Both early exits below
+ * — an illegal transition and a lost compare-and-set — are silent no-ops, and
+ * returning `void` made them indistinguishable from a transition that applied.
+ * Callers that announce the outcome (publishing `call.ended`, emitting
+ * analytics) were therefore announcing transitions they did not perform: a
+ * `call.ended` with `reason: "blocked"` broadcast for a call that ended
+ * moments earlier by other means, and a duplicate `ended` row in analytics.
+ * Every existing caller ignores the return value, so this widening is additive.
+ */
 export async function applyEvent(
   store: CallStore, admin: RoomAdminPort,
   session: CallSession & { roomName: string },
   event: CallEvent, nowIso: string,
-): Promise<void> {
+): Promise<boolean> {
   const result = transition(session, event, nowIso);
-  if (!result.ok) return; // illegal for current state → duplicate/no-op
+  if (!result.ok) return false; // illegal for current state → duplicate/no-op
   const applied = await store.applyTransition(session.id, session.status, result.status, result.patch);
-  if (!applied) return;   // lost the CAS race → someone else already did it
+  if (!applied) return false;   // lost the CAS race → someone else already did it
   if (result.terminateRoom) {
     await admin.endRoom(session.roomName).catch(() => { /* teardown retried by sweep */ });
   }
   if (result.status !== 'active') {
     await store.writeCallHistoryMessage({ ...session, status: result.status, endedAt: nowIso }).catch(() => {});
   }
+  return true;
 }
 
 // ── Webhook entry point ──────────────────────────────────────────────────────

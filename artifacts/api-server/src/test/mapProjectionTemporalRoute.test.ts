@@ -59,7 +59,14 @@ const MIN = 60_000;
 
 interface TableSpec {
   rows?: any[];
-  error?: { message: string };
+  /**
+   * `code` is optional and NOT decoration: PostgREST returns SQLSTATE `42P01`
+   * for a relation that does not exist, which is precisely the state the M10
+   * refusal arm reproduces (2217 unapplied). A fixture that could only carry a
+   * message would have to describe that condition in prose, and a reader could
+   * not tell it apart from an invented failure.
+   */
+  error?: { message: string; code?: string };
 }
 type FakeState = Record<string, TableSpec | any[]>;
 
@@ -576,5 +583,232 @@ describe("historical — read, never reconstruct", () => {
     assert.equal(hist.freshness, "historical");
     assert.equal(hist.activity, "busy");
     assert.notEqual(hist.kind, "prediction");
+  });
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+// M10 / M280 — Time Machine as a PRIMARY MAP SURFACE, and Phase 5 behind it.
+//
+// The census's criterion, verbatim:
+//
+//   "2217 is applied to production *and* `map_projection_enabled` is TRUE
+//    there, and `GET /api/map/projection/temporal?offset=+60m` answers
+//    `enabled: true` with a non-null `forecast`."
+//
+// The cases above already prove the individual producers. What was never
+// asserted as its own statement is the CRITERION: both halves of the envelope,
+// together, at +60m, plus the refusal arm that the same criterion's other
+// sentence names. M280 adds nothing of its own — the census says "Nothing else
+// in the phase has a blocker of its own" — so its acceptance is M10's positive
+// arm plus §15's already-correct rows (M106–M111) re-executed in the same run;
+// those five live in travel-buddy-standalone and are named in the report rather
+// than re-implemented here.
+//
+// ── A CONTRACT DISCREPANCY, RECORDED RATHER THAN PAPERED OVER ───────────────
+// The census writes the request as `?offset=+60m`. This route does not accept
+// that parameter: `parseTemporalTarget` is handed `offsetMinutes`, `at`,
+// `windowStartsAt` and `windowEndsAt`, and nothing else. `?offset=+60m` is
+// therefore an `invalid_payload` today. The last case below pins that fact so
+// the gap is visible and falsifiable, instead of being hidden by a test that
+// quietly used the working spelling. Which of the two moves — the census's
+// wording or the route's parameter list — is an owner call, not a lane's.
+// ═════════════════════════════════════════════════════════════════════════════
+describe("M10 — the §15 criterion, stated as the criterion", () => {
+  /** A curated §24 zone far from ZONE_A, so it protects nothing in this viewport. */
+  const FAR_ZONE = {
+    id: "m10-zone-far",
+    category: "medical_facility",
+    action: null,
+    privacy_floor: null,
+    shape: "circle",
+    center_lat: 10.0,
+    center_lng: 100.0,
+    radius_meters: 100,
+    ring: null,
+    jurisdiction: "VN",
+    policy_ref: "portava/map-spec-24-m10",
+    active: true,
+  };
+
+  function m10State(nowMs: number, over: StateOver = {}): FakeState {
+    return baseState(nowMs, {
+      // `protected_zones` READABLE and non-empty — 2217 applied AND curated,
+      // which is the state the criterion's first half describes.
+      protected_zones: [FAR_ZONE],
+      events: [
+        {
+          id: "m10-ev-1",
+          host_id: OTHER_HOST,
+          title: "Riverside fireworks",
+          location_name: "Han River",
+          location_lat: ZONE_A.lat,
+          location_lng: ZONE_A.lng,
+          show_exact_location: true,
+          starts_at: new Date(nowMs + 40 * MIN).toISOString(),
+          ends_at: new Date(nowMs + 100 * MIN).toISOString(),
+          visibility: "public",
+          state: "published",
+          age_min: null, age_max: null, trust_score_min: null, verified_only: false,
+        },
+      ],
+      ...over,
+    });
+  }
+
+  it("POSITIVE ARM: flag TRUE + 2217 applied ⇒ enabled:true with a NON-NULL forecast at +60m", async () => {
+    const now = Date.now();
+    const res = await temporal(m10State(now), `bbox=${BBOX}&offsetMinutes=60`);
+
+    assert.equal(res.status, 200);
+    assert.equal(res.body.enabled, true, "the criterion's first half");
+    assert.notEqual(res.body.forecast, null, "the criterion's second half — a NULL forecast is not a Time Machine");
+    assert.equal(res.body.target.mode, "forecast");
+    assert.equal(
+      res.body.target.at,
+      new Date(now + 60 * MIN).toISOString().slice(0, 16) + res.body.target.at.slice(16),
+      "the answer must be about the offset that was asked for",
+    );
+
+    // "non-null forecast" must mean a forecast that FORECAST something, not an
+    // empty report object. A zeroed report would satisfy `!== null` and would be
+    // the vacuous pass this arm exists to exclude.
+    assert.ok(
+      res.body.forecast.events + res.body.forecast.itinerary + res.body.forecast.plan.published >= 1,
+      `forecast is non-null but counts nothing: ${JSON.stringify(res.body.forecast)}`,
+    );
+    const preds = predictions(res.body);
+    assert.ok(preds.length >= 1, "a non-null forecast that served no prediction is an empty Time Machine");
+    // §37, restated on the wire: a prediction is never an observation.
+    for (const p of preds) {
+      assert.equal(p.observedAt, undefined);
+      assert.notEqual(p.freshness, "live");
+    }
+  });
+
+  it("REFUSAL ARM: protected_zones unreadable ⇒ protection_unreadable, never an empty success", async () => {
+    const now = Date.now();
+    const res = await temporal(
+      m10State(now, {
+        protected_zones: { error: { message: 'relation "public.protected_zones" does not exist', code: "42P01" } },
+      }),
+      `bbox=${BBOX}&offsetMinutes=60`,
+    );
+
+    assert.equal(res.status, 200);
+    assert.equal(res.body.enabled, false, "an unreadable §24 policy must not serve a forecast");
+    assert.equal(res.body.refusal, "protection_unreadable");
+    assert.deepEqual(res.body.objects, []);
+    assert.equal(res.body.forecast, null);
+    assert.equal(res.body.protection, null);
+  });
+
+  it("ANTI-VACUITY: the two arms differ only in the policy read — same offset, same events", async () => {
+    // Without this, "the refusal arm returned nothing" is indistinguishable from
+    // "there was nothing to return". The positive arm above and this one are the
+    // SAME fixture; only `protected_zones` changes.
+    const now = Date.now();
+    const ok = await temporal(m10State(now), `bbox=${BBOX}&offsetMinutes=60`);
+    // The §24 policy is cached for 30 s inside the route. Without this clear the
+    // second request reuses the FIRST one's zone list and never sees the read
+    // failure at all — the case would then compare a response with itself and
+    // pass for the wrong reason. (It did, before this line was added.)
+    _clearTemporalProtectedZoneCache();
+    const bad = await temporal(
+      m10State(now, { protected_zones: { error: { message: "boom" } } }),
+      `bbox=${BBOX}&offsetMinutes=60`,
+    );
+    assert.ok(ok.body.objects.length > 0, "the positive arm must actually serve something");
+    assert.equal(bad.body.objects.length, 0);
+    assert.notEqual(ok.body.enabled, bad.body.enabled);
+  });
+
+  it("ANTI-VACUITY: flag FALSE ⇒ enabled:false with a null forecast, and no refusal", async () => {
+    const now = Date.now();
+    const res = await temporal(
+      m10State(now, { feature_flags: [{ flag: "map_projection_enabled", enabled: false }] }),
+      `bbox=${BBOX}&offsetMinutes=60`,
+    );
+    assert.equal(res.body.enabled, false);
+    assert.equal(res.body.forecast, null);
+    assert.equal("refusal" in res.body, false, "a deliberate off switch is not a refusal");
+  });
+
+  it("CONTRACT GAP: the census's `?offset=+60m` spelling is NOT accepted by this route", async () => {
+    // Pinned deliberately. `parseTemporalTarget` reads offsetMinutes / at /
+    // windowStartsAt / windowEndsAt; `offset` is not in that list, so the
+    // criterion as written cannot be executed verbatim against this build.
+    // If the route later grows the alias, this case goes red and whoever added
+    // it must decide what the criterion now says — which is the point.
+    const now = Date.now();
+    const res = await temporal(m10State(now), `bbox=${BBOX}&offset=%2B60m`);
+    assert.equal(res.status, 400, "if this is no longer 400, the alias landed — update the census wording");
+    assert.equal(res.body.error ?? res.body.code, "invalid_payload");
+  });
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+// M280 — Phase 5, Temporal Intelligence.
+//
+// "M10 does — 2217 applied, then `map_projection_enabled` TRUE in production,
+//  in that order. Nothing else in the phase has a blocker of its own."
+//
+// So the phase's acceptance is M10's positive arm PLUS the §15 rows already
+// graded C (M106–M111) still holding. Five of those six are client-side
+// constants and components; the one this package can re-execute is the
+// producer contract they all rest on — that a forecast object is a
+// DISCRIMINATED kind carrying confidence and never a live freshness (M106,
+// M110), which is what makes "historical and forecast, unmistakably different"
+// true on the wire rather than only in a type.
+// ═════════════════════════════════════════════════════════════════════════════
+describe("M280 — Phase 5 holds when M10's positive arm holds", () => {
+  it("ORDER: 2217 before the flag. The reverse order serves nothing at all", async () => {
+    const now = Date.now();
+    // The state a production "flip 2201 first" produces: flag TRUE, table absent.
+    const flipFirst = await temporal(
+      baseState(now, {
+        protected_zones: { error: { message: 'relation "public.protected_zones" does not exist', code: "42P01" } },
+      }),
+      `bbox=${BBOX}&offsetMinutes=60`,
+    );
+    assert.equal(flipFirst.body.enabled, false);
+    assert.equal(flipFirst.body.refusal, "protection_unreadable");
+
+    // The state the correct order produces: table present (even empty), flag TRUE.
+    const correctOrder = await temporal(baseState(now), `bbox=${BBOX}&offsetMinutes=60`);
+    assert.equal(correctOrder.body.enabled, true);
+    assert.notEqual(correctOrder.body.forecast, null);
+  });
+
+  it("M106/M110 on the wire: every served forecast object is a prediction, never live, never observed", async () => {
+    const now = Date.now();
+    const res = await temporal(
+      baseState(now, {
+        protected_zones: [],
+        events: [
+          {
+            id: "m280-ev", host_id: OTHER_HOST, title: "Night set",
+            location_name: "Sky Bar", location_lat: ZONE_A.lat, location_lng: ZONE_A.lng,
+            show_exact_location: true,
+            starts_at: new Date(now + 40 * MIN).toISOString(),
+            ends_at: new Date(now + 100 * MIN).toISOString(),
+            visibility: "public", state: "published",
+            age_min: null, age_max: null, trust_score_min: null, verified_only: false,
+          },
+        ],
+      }),
+      `bbox=${BBOX}&offsetMinutes=60`,
+    );
+    assert.equal(res.body.enabled, true);
+    const preds = predictions(res.body);
+    assert.ok(preds.length >= 1, "no prediction served — the rest of this case would be vacuous");
+    for (const p of preds) {
+      assert.equal(p.kind, "prediction");
+      assert.notEqual(p.freshness, "live", "§37: a prediction must never look live");
+      assert.equal(p.observedAt, undefined, "§37: a prediction was never observed");
+    }
+    // And the historical arm is the OTHER branch — not the same objects relabelled.
+    const past = await temporal(baseState(now, { protected_zones: [] }), `bbox=${BBOX}&offsetMinutes=-1440`);
+    assert.equal(past.body.target.mode === "forecast", false, "a negative offset must not be a forecast");
+    assert.equal(past.body.forecast, null, "the historical arm reports history, not forecast");
   });
 });

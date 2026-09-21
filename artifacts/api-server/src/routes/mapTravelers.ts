@@ -58,6 +58,14 @@ router.get("/map/travelers", async (req, res) => {
       radiusKm,
       blockedSet,
     });
+    // `null` means the read (or the block-state lookup it depends on) FAILED.
+    // Serving it as `travelers: []` would tell the client the area is empty on
+    // the strength of a database error — the defect listMapTravelers' failure
+    // channel exists to end. A 5xx is the honest answer.
+    if (travelers === null) {
+      sendError(res, "db_error", "Could not load map travelers");
+      return;
+    }
     res.json({ travelers, generatedAt: new Date().toISOString() });
   } catch (err) {
     req.log.error({ err }, "map/travelers failed");

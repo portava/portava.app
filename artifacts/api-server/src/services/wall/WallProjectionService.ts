@@ -112,6 +112,23 @@ export interface ProjectViewerContext {
    *  Ask Compass handoff. Off (default) attaches no Compass action — Compass
    *  never occupies a permanent panel and is opt-in per object. */
   compassHandoffEnabled?: boolean;
+  /**
+   * Canonical object ids the viewer already has SAVED (`post_saves`). Drives
+   * `viewerSaved` on the projection so the bookmark is server truth and survives
+   * a remount, and so the `save` action carries the correct label. Absent ⇒ the
+   * save state is unknown and the action still offers "Save" (the canonical
+   * endpoint is idempotent), never a false "Saved".
+   */
+  savedObjectIds?: Set<string>;
+  /**
+   * Objects the viewer has explicitly said they are not interested in (spec §7
+   * quiet control / §32 hide signal), read back from the canonical engagement
+   * store. Dropped before projection: this is a VIEWER VISIBILITY filter, not a
+   * ranking term — the object is not demoted, it is not shown to this viewer at
+   * all. This is the leg that closes the Wall loop (§41): engage → signal →
+   * future Wall relevance.
+   */
+  suppressedObjectIds?: Set<string>;
 }
 
 const POST_LIKE_TYPES: ReadonlySet<WallObjectType> = new Set<WallObjectType>([
@@ -229,6 +246,20 @@ function buildActions(c: WallCandidate, viewer: ProjectViewerContext): WallActio
   const actions: WallAction[] = [
     { type: "open_object", label: "Open", targetType: c.objectType, targetId: c.canonicalObjectId },
   ];
+  // spec §2 "save". A post-like object has a CANONICAL save store (`post_saves`,
+  // routes/mediaFeed POST/DELETE /posts/:id/save), so the Wall emits the action
+  // and the client writes through that endpoint. The Wall owns neither the store
+  // nor the toggle — it names the action and reports the current state.
+  if (POST_LIKE_TYPES.has(c.objectType)) {
+    const saved = viewer.savedObjectIds?.has(c.canonicalObjectId) ?? false;
+    actions.push({
+      type: "save",
+      label: saved ? "Saved" : "Save",
+      targetType: "post",
+      targetId: c.canonicalObjectId,
+      params: { saved },
+    });
+  }
   // A place-linked object may lead to the canonical place — one action, not the
   // full Map/Trip/Compass/Buddy stack (spec §7: intelligence is optional).
   if (c.place) {
@@ -266,6 +297,29 @@ function buildActions(c: WallCandidate, viewer: ProjectViewerContext): WallActio
       ...(c.opportunityArea ? { params: { area: c.opportunityArea } } : {}),
     });
   }
+  // spec §2 "message". Offered ONLY on a Buddy opportunity, and only because the
+  // consolidated RAB booking gate (enforceBookingCreationGates, run by
+  // WallCandidateLoaders before the candidate exists) has already established
+  // that this viewer may transact with this Buddy. The Wall does NOT re-derive
+  // the messaging policy for ordinary social objects: `canMessage` is
+  // services/interactionPermissions' decision and costs 13 reads per target,
+  // which a feed page cannot afford and must not approximate. Where the Wall
+  // cannot cheaply KNOW the viewer is authorized, it offers no message action at
+  // all rather than offering one that fails — an absent action is the common
+  // case for a plain social post (§7).
+  if (
+    c.objectType === "contextual_opportunity" &&
+    (c.opportunityKind === "buddy_dispatch" || c.opportunityKind === "buddy_around") &&
+    c.actor &&
+    c.actor.userId !== viewer.viewerId
+  ) {
+    actions.push({
+      type: "message",
+      label: "Message",
+      targetType: "user",
+      targetId: c.actor.userId,
+    });
+  }
   // Discovery objects reaching outside the follow graph may offer a follow, only
   // when the viewer does not already follow the actor (spec §13).
   if (
@@ -295,6 +349,12 @@ function projectOne(c: WallCandidate, viewer: ProjectViewerContext): WallProject
     media: c.media && c.media.length > 0 ? c.media : undefined,
     text: c.text ?? undefined,
     place: c.place ?? undefined,
+    // Server-resolved save state (spec §2). Only post-like objects have a
+    // canonical save store, so every other type omits the field rather than
+    // asserting `false` about a concept that does not apply to it.
+    ...(POST_LIKE_TYPES.has(c.objectType)
+      ? { viewerSaved: viewer.savedObjectIds?.has(c.canonicalObjectId) ?? false }
+      : {}),
     actions: buildActions(c, viewer),
   };
 
@@ -348,7 +408,15 @@ export async function projectObjects(
   if (candidates.length === 0) return [];
 
   // Eligibility first (pure) — narrows the set the block read has to cover.
-  const eligible = candidates.filter(passesEligibility);
+  // The viewer's own not-interested suppressions are applied in the SAME pass:
+  // an object the viewer hid is not shown to them again (spec §7/§32/§41). This
+  // is a visibility decision, not a ranking one — it removes the object from the
+  // feed rather than scoring it down, so it holds identically in Following,
+  // where no relevance reordering is permitted at all (TABLE 1).
+  const suppressed = viewer.suppressedObjectIds;
+  const eligible = candidates.filter(
+    (c) => passesEligibility(c) && !(suppressed?.has(c.canonicalObjectId) ?? false),
+  );
   if (eligible.length === 0) return [];
 
   const blockedAuthorIds = await loadBlockedAuthorIds(

@@ -26,6 +26,7 @@ import {
   fetchVisualCoverage,
   requestView,
   shouldShowRequestPrompt,
+  viewRequestOutcomeLine,
 } from '../services/viewRequest.ts';
 import type { VisualCoverage, ViewRequestOutcome } from '../types/viewRequest.ts';
 
@@ -149,17 +150,16 @@ export function RequestAViewPrompt({ placeId, city = null, coverageScore = null 
   );
 }
 
-/** A single calm line for the request outcome — success OR a refusal reason. */
+/**
+ * A single calm line for the request outcome — success OR a refusal reason.
+ * The wording decision itself lives in the PURE `viewRequestOutcomeLine`, so the
+ * "a zero that was never counted is not a zero" rule is unit-tested rather than
+ * buried in a render.
+ */
 function ResultLine({ outcome }: { outcome: ViewRequestOutcome }) {
-  if (outcome.ok) {
-    const line =
-      outcome.recipientCount > 0
-        ? 'Asked nearby contributors — fresh perspectives will appear here as they arrive.'
-        : 'Noted. No contributors are nearby yet — we’ll ask as soon as someone can help.';
-    return <Text style={s.resultOk}>{line}</Text>;
-  }
+  const line = viewRequestOutcomeLine(outcome);
   // Calm refusal — a single line, never an error toast storm.
-  return <Text style={s.resultMuted}>{outcome.message}</Text>;
+  return <Text style={outcome.ok ? s.resultOk : s.resultMuted}>{line}</Text>;
 }
 
 const s = StyleSheet.create({

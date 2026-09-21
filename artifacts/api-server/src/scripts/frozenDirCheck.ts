@@ -162,6 +162,10 @@ export function checkNonExecutableOverlap(
 /** Directory names never descended into during the unlisted-root sweep. */
 export const DEFAULT_SKIP_DIR_NAMES = new Set([
   "node_modules", ".git", ".cache", ".local", "dist", "build", ".next",
+  // Claude Code agent worktrees (a second checkout of this repo under
+  // .claude/worktrees/<agent>/): every canonical migration reappears there
+  // as a copy and would be reported as an unlisted root. Not part of the tree.
+  ".claude",
   "coverage", ".replit", ".config", "android", "ios", "vendor",
 ]);
 

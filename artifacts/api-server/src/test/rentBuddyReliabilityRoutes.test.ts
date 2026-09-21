@@ -92,6 +92,7 @@ function makeFakeClient(opts: FakeOpts) {
     let op: "read" | "write" = "read";
     let payload: Record<string, any> = {};
     const eqs: Record<string, any> = {};
+    const ins: Record<string, any[]> = {};
     const orderSpecs: Array<{ col: string; ascending: boolean }> = [];
 
     const b: any = {
@@ -101,7 +102,7 @@ function makeFakeClient(opts: FakeOpts) {
       upsert: (p: any) => { op = "write"; payload = p; return b; },
       delete: () => { op = "write"; return b; },
       eq: (col: string, val: any) => { eqs[col] = val; return b; },
-      neq: () => b, in: () => b, not: () => b, is: () => b,
+      neq: () => b, in: (col: string, vals: any[]) => { ins[col] = vals; return b; }, not: () => b, is: () => b,
       gte: () => b, lte: () => b, gt: () => b, lt: () => b,
       like: () => b, ilike: () => b, contains: () => b, overlaps: () => b,
       order: (col: string, orderOpts?: { ascending?: boolean }) => {
@@ -114,7 +115,21 @@ function makeFakeClient(opts: FakeOpts) {
       then: (resolve: any, reject: any) => {
         let data: any;
         if (op === "write") {
-          data = null;
+          // The booking-lifecycle handlers now compare-and-set: the status they
+          // require rides in the same UPDATE as the new one, and `.select("id")`
+          // makes it RETURNING so a statement that matched NOTHING is
+          // distinguishable from one that applied. `data = null` answered both
+          // the same way, which is exactly the ambiguity those handlers exist to
+          // remove — so model the predicates for the table that carries them.
+          if (table === "rent_buddy_bookings") {
+            const target = (opts.bookingExists ?? true) ? booking : null;
+            const matches = !!target
+              && Object.entries(eqs).every(([col, val]) => (target as any)[col] === val)
+              && Object.entries(ins).every(([col, vals]) => vals.includes((target as any)[col]));
+            data = matches ? [{ id: (target as any).id }] : [];
+          } else {
+            data = null;
+          }
         } else if (table === "rent_buddy_saved") {
           data = opts.savedRows ?? [];
         } else if (table === "rent_buddy_safety_checkins") {

@@ -68,6 +68,11 @@ export default function EditTrip() {
   // ── Multi-city ────────────────────────────────────────────────────────────
   const [multiCity, setMultiCity] = useState(false);
   const [destinations, setDestinations] = useState<DestinationEntry[]>([]);
+  // An unreadable destinations list used to render as an EMPTY multi-city
+  // editor — the trip's existing stops invisible, and the user free to re-add
+  // them as duplicates against rows that are still there. Empty and unread are
+  // now different, and the editor is not shown for the second.
+  const [destinationsError, setDestinationsError] = useState<string | null>(null);
 
   // Synchronous guard: prevents re-entry on a rapid double-tap before the
   // setBusy(true) state update has caused a re-render and updated the
@@ -110,6 +115,7 @@ export default function EditTrip() {
   // Load existing destinations when multi-city is toggled on
   useEffect(() => {
     if (!multiCity || !id || !live) return;
+    setDestinationsError(null);
     listDestinations(id).then((rows) => {
       if (rows.length > 0) {
         setDestinations(rows.map((r) => ({
@@ -124,7 +130,10 @@ export default function EditTrip() {
           departureDate: r.departure_date,
         })));
       }
-    }).catch(() => {});
+    }).catch(() => {
+      setDestinations([]);
+      setDestinationsError("Couldn't load this trip's stops. Editing them now could duplicate stops that are already saved.");
+    });
   }, [multiCity, id, live]);
 
   const pickCover = useCallback(async () => {
@@ -305,11 +314,15 @@ export default function EditTrip() {
           </View>
 
           {multiCity ? (
-            <DestinationListEditor
-              tripId={id}
-              destinations={destinations}
-              onChange={setDestinations}
-            />
+            destinationsError ? (
+              <Text style={styles.errorText}>{destinationsError}</Text>
+            ) : (
+              <DestinationListEditor
+                tripId={id}
+                destinations={destinations}
+                onChange={setDestinations}
+              />
+            )
           ) : (
             <Pressable style={styles.pickerField} onPress={() => setPlaceOpen(true)}>
               <MapPin size={15} color={place ? color.signal : color.faint} />

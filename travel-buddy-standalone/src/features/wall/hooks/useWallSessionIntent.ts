@@ -18,6 +18,7 @@
 
 import { useCallback, useState } from 'react';
 import { clearSessionIntent, setSessionIntent } from '../services/wallApi.ts';
+import type { IntentResolution } from '../services/wallApi.ts';
 import type { StructuredIntent, StructuredIntentFilter } from '../types/wallProjection.ts';
 
 export interface UseWallSessionIntentOptions {
@@ -37,6 +38,15 @@ export interface UseWallSessionIntentResult {
   pending: boolean;
   error: string | null;
   /**
+   * Which of the four outcomes the server reported for the last steer (§17 /
+   * census W71), or null when the server did not say. `engine_unavailable`
+   * means the shared input engine was DOWN: the steer still applies, but no
+   * chip's absence may be presented as "nothing matched your words".
+   */
+  resolution: IntentResolution | null;
+  /** True only when the last steer failed because the shared engine was down. */
+  engineUnavailable: boolean;
+  /**
    * Steer the feed with `text`. When a canonical entity was chosen from
    * typeahead, pass its `filterSeed` so the structured chip renders immediately
    * (spec §17: structured filters, not raw strings) even before / without the
@@ -53,6 +63,7 @@ export function useWallSessionIntent(
   const [intentText, setIntentText] = useState<string | null>(opts.initialText ?? null);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [resolution, setResolution] = useState<IntentResolution | null>(null);
 
   const clearIntent = useCallback(() => {
     // Restore prior state immediately — the feed hook sees a null steer and
@@ -60,6 +71,7 @@ export function useWallSessionIntent(
     setIntentText(null);
     setStructuredIntent(null);
     setError(null);
+    setResolution(null);
     // Best-effort: also clear any server-stored intent.
     void clearSessionIntent();
   }, []);
@@ -87,16 +99,28 @@ export function useWallSessionIntent(
       setStructuredIntent(seeded);
       setPending(true);
       setError(null);
+      setResolution(null);
       try {
         const res = await setSessionIntent(trimmed);
         if (res.ok) {
           // The server's interpretation is authoritative — it supersedes the seed.
           setStructuredIntent(res.sessionIntent);
+          setResolution(res.resolution);
+          // AN OUTAGE IS NOT A FINDING (census W71). A 200 whose resolution is
+          // `engine_unavailable` carries zero filters because the shared engine
+          // was down, not because the user's words matched nothing. Surfacing it
+          // as an error is what lets the UI say "we could not interpret that
+          // right now" instead of implying the user asked for something that
+          // does not exist. Steering by raw text is unaffected.
+          if (res.resolution === 'engine_unavailable') {
+            setError('input_engine_unavailable');
+          }
         } else {
           // Steering by text still applies; keep the client seed (if any) so an
           // entity chip survives an unavailable/disabled server.
           setStructuredIntent(seeded);
           setError(res.error);
+          setResolution(null);
         }
       } finally {
         setPending(false);
@@ -111,6 +135,8 @@ export function useWallSessionIntent(
     active: intentText != null,
     pending,
     error,
+    resolution,
+    engineUnavailable: resolution === 'engine_unavailable',
     setIntent,
     clearIntent,
   };

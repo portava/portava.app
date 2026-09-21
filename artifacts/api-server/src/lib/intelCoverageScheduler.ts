@@ -18,7 +18,7 @@
 import { getServiceClient } from "./supabase.js";
 import { logger } from "./logger.js";
 import { isFlagEnabled } from "./featureFlags.js";
-import { computeCoverageScore } from "./coverageScore.js";
+import { computeCoverageScore, coverageState, type CoverageState } from "./coverageScore.js";
 import { MISSION_TRIGGER_THRESHOLDS } from "./missionGeneration.js";
 import { generateMissions } from "../services/intel/CoverageService.js";
 import {
@@ -53,6 +53,12 @@ export interface CoveragePassResult {
   cells: number;
   snapshots: number;
   missionsCreated: number;
+  /**
+   * Census of the coverage_state values this pass wrote. Present on every
+   * result, including a skipped one, so "no cells" and "never ran" are
+   * different readings rather than the same zero.
+   */
+  coverageStates?: Record<CoverageState, number>;
 }
 
 const FAMILY_QUESTION: Record<string, string> = {
@@ -94,7 +100,10 @@ export async function runIntelCoveragePass(opts: { client?: any; now?: Date } = 
   // Explicit null means "no client"; undefined means "use the service client"
   // (the house pattern — see intelPromotionScheduler / intelRetentionScheduler).
   const db = "client" in opts && opts.client !== undefined ? opts.client : getServiceClient();
-  const empty: CoveragePassResult = { skipped: true, reason: null, zones: 0, cells: 0, snapshots: 0, missionsCreated: 0 };
+  const empty: CoveragePassResult = {
+    skipped: true, reason: null, zones: 0, cells: 0, snapshots: 0, missionsCreated: 0,
+    coverageStates: { covered: 0, no_coverage: 0, unknown: 0 },
+  };
   if (!db) return { ...empty, reason: "no_client" };
   if (!(await isFlagEnabled(db, COVERAGE_FLAG))) return { ...empty, reason: "disabled" };
 
@@ -137,7 +146,10 @@ export async function runIntelCoveragePass(opts: { client?: any; now?: Date } = 
       for (const c of claims) if (!zk.has(zoneKey(c.zone_id))) { zk.add(zoneKey(c.zone_id)); zones.push(c.zone_id); }
       for (const o of observations) if (!zk.has(zoneKey(o.zone_id))) { zk.add(zoneKey(o.zone_id)); zones.push(o.zone_id); } }
     if (subjectIds.size === 0) {
-      return { skipped: false, reason: null, zones: 0, cells: 0, snapshots: 0, missionsCreated: 0 };
+      return {
+        skipped: false, reason: null, zones: 0, cells: 0, snapshots: 0, missionsCreated: 0,
+        coverageStates: { covered: 0, no_coverage: 0, unknown: 0 },
+      };
     }
     const subjects = [...subjectIds];
 
@@ -170,18 +182,25 @@ export async function runIntelCoveragePass(opts: { client?: any; now?: Date } = 
     const demand6h = demandByZone(saves.filter((s) => Date.parse(s.saved_at) >= missionWindowMs), membership);
     const city = cityByZone(membership, placeCity);
 
-    // 3. assemble + score cells; persist only real gaps (score > 0)
+    // 3. assemble + score cells; persist EVERY scored cell, not only the gaps.
+    //    Migration 2958 added coverage_state because a coverage answer and a
+    //    missing row are different things: dropping score === 0 made "this cell
+    //    is covered" indistinguishable from "nothing has ever looked at this
+    //    cell". Mission generation still keys off the gaps below.
     const cells = buildCoverageCells({ zones, claims, observations, demand, city, nowMs });
     const scored = cells.map((cell) => ({ cell, breakdown: computeCoverageScore(cell) }));
+    const states: Record<CoverageState, number> = { covered: 0, no_coverage: 0, unknown: 0 };
+    for (const { cell } of scored) states[coverageState(cell)] += 1;
     const gaps = scored.filter((s) => s.breakdown.score > 0);
 
-    if (gaps.length > 0) {
-      const rows = gaps.map(({ cell, breakdown }) => ({
+    if (scored.length > 0) {
+      const rows = scored.map(({ cell, breakdown }) => ({
         city: cell.city,
         zone_id: cell.zoneId,
         claim_family: cell.claimFamily,
         demand_events: cell.demandEvents,
         claim_missing: cell.claimMissing,
+        coverage_state: coverageState(cell),
         freshest_age_ratio: cell.freshestAgeRatio ?? null,
         current_confidence: cell.currentConfidence,
         required_confidence: cell.requiredConfidence ?? null,
@@ -252,7 +271,10 @@ export async function runIntelCoveragePass(opts: { client?: any; now?: Date } = 
     if (gaps.length > 0 || missionsCreated > 0) {
       logger.info({ zones: zones.length, cells: cells.length, snapshots: gaps.length, missionsCreated }, "coverage pass complete");
     }
-    return { skipped: false, reason: null, zones: zones.length, cells: cells.length, snapshots: gaps.length, missionsCreated };
+    return {
+      skipped: false, reason: null, zones: zones.length, cells: cells.length,
+      snapshots: scored.length, missionsCreated, coverageStates: states,
+    };
   } catch (err) {
     logger.warn({ err }, "coverage pass threw");
     return { ...empty, reason: "error" };

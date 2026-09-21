@@ -246,6 +246,30 @@ export interface InputSuggestion {
   confidence?: number;
   freshness?: FreshnessState;
 
+  /**
+   * §20 display context — verification / trust, where appropriate.
+   *
+   * `searchTravelers` has always SELECTED `verified` and `is_official`
+   * (`routes/discoverySearch.ts:161`, `:163`) and the §42 projection whitelist
+   * dropped both, so no suggestion could carry them and §20's "user
+   * verification / trust context" row had no field to live in. These two are
+   * the SAME public badges the profile and search surfaces already render —
+   * they are not a raw trust vector, a ranking feature, or a policy decision,
+   * which is what §42 forbids. Absent (not `false`) for every row that is not
+   * a person.
+   */
+  verified?: boolean;
+  official?: boolean;
+
+  /**
+   * §20/§24 Hidden Gem protection label. `'approximate'` when the gem may carry
+   * a centroid, `'hidden'` when its sensitivity level denies placement
+   * entirely. Derived from `metadata.coordsPrecision`, the vocabulary the map
+   * surface already badges, and NEVER from a coordinate — `'exact'` is not in
+   * the union because the gem search path cannot produce one.
+   */
+  locationPrecision?: 'approximate' | 'hidden';
+
   source:
     | 'canonical'
     | 'recent'
@@ -315,4 +339,17 @@ export interface SuggestResponse {
   context: InputContext;
   fieldId?: string;
   suggestions: InputSuggestion[];
+  /**
+   * §44/§57 — the serve's OWN wall-clock cost in milliseconds, measured around
+   * candidate generation in routes/inputAssistance.ts. Additive and optional so
+   * an older client is unaffected.
+   *
+   * This is the number no client can compute: a device only ever observes
+   * server time PLUS network. The client hands it back on
+   * `suggestion_request_completed` alongside the round trip it did see, and the
+   * difference between the two is the network. Census G372 ("No latency
+   * instrumentation anywhere; the response carries no server timing") is the
+   * row this field answers the first half of.
+   */
+  serverMs?: number;
 }

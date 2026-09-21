@@ -28,6 +28,7 @@ const AT = "2026-09-01T00:00:00.000Z";
 function ctx(opts: { interests?: string[]; preferredCities?: string[] } = {}): WallViewerContext {
   return {
     followedCreatorIds: new Set<string>(),
+    followGraphKnown: true,
     viewerTripIds: new Set<string>(),
     currentCity: null,
     currentCountry: null,

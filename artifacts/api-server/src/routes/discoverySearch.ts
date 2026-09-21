@@ -6,7 +6,12 @@
  * from @workspace/api-zod, supplemented by a server-side sanitization pass.
  *
  * Privacy rules (server-side, fail-closed):
- *   - Private accounts (is_private=true) excluded entirely.
+ *   - Private accounts (is_private=true) the viewer does not follow are
+ *     returned as a LOCKED PREVIEW (no avatar/location/matchedReason,
+ *     canAccess=false) — never silently excluded, so a private account is
+ *     discoverable everywhere or nowhere, matching /api/users/search. See
+ *     searchTravelers below; this line used to say "excluded entirely", which
+ *     the code has not done since the locked-preview contract landed.
  *   - Suspended/banned/deleted accounts excluded (account_status filter).
  *   - Profile-discovery opt-outs excluded (fail-closed on query error).
  *   - Blocked users excluded in both directions; block lookup failure is
@@ -61,6 +66,7 @@ import {
   haversineKm,
   type SearchQueryContext,
 } from "./discoverySearchHelpers.js";
+import { readTripWindows, fitInstantToWindows } from "../domain/trips/services/TripFreedomConsumers.js";
 import {
   suggestCanonicalLocations,
   normalizeLocationName,
@@ -68,16 +74,52 @@ import {
 } from "../lib/canonicalLocations";
 import type { SensitivityLevel } from "../services/hiddenGems/HiddenGemPrivacyGuard.js";
 import { nameVisibilitySet } from "../lib/publicIdentity";
+import { buildConsumerProjection, buildListIdentityProjections } from "../services/passport/PassportConsumerProjections.js";
+import { allowDiscoveryPersonCard } from "../services/passport/PassportConsumerAccess.js";
 // The canonical author-side block rule for a `discovery_places` row. Shared with
 // routes/discovery.ts (which re-exports it) rather than re-implemented here —
 // two copies of a privacy rule is how these two serve points drifted apart in
 // the first place.
-import { submitterIsVisible } from "../lib/blocks.js";
+import { fetchBlockedSet, submitterIsVisible } from "../lib/blocks.js";
+// B05 / G277's CountryResolver. Consumed, never re-spelled — a second country
+// list inside a product surface is how two lists disagree.
+import { searchCountryRegistry, toCountryCode } from "../lib/countryCodes.js";
+import { resolvePlaceIdBridge } from "../lib/placeIdBridge.js";
+import { isFlagEnabled } from "../lib/featureFlags.js";
+// Trips' projection contract (census-discovery A10 / D3, Trips spec §25) and
+// Discovery's consumer of it. Gated by the CAPABILITY
+// discovery_trip_projection_enabled && trips-schema-ready, not by the flag
+// alone: production has no trips.version and the readers fail closed on it, so
+// a flag flipped onto missing schema would empty every trips and plans search.
+// The not-ready branch is the legacy read below. See
+// lib/discoveryTripProjectionConsumer.ts.
 import {
-  logDiscoveryServe,
+  searchTripDiscoveryProjections,
+  readTripDiscoveryProjections,
+  tripDiscoveryAdmits,
+} from "../domain/trips/contracts/tripDiscoveryProjection.js";
+import {
+  discoveryTripProjectionGate,
+  recordDiscoveryTripSource,
+  acceptTripDiscoveryProjections,
+  tripCardSourceFromProjection,
+  type DiscoveryTripCardSource,
+  type DiscoveryPlanParentTrip,
+} from "../lib/discoveryTripProjectionConsumer.js";
+import {
   DiscoveryServePoint,
   searchTypeToItemKind,
 } from "../lib/discoveryServeLog.js";
+// D11 / `11` §9 — "A failure must not masquerade as success." One vocabulary for
+// every Discovery refusal; see lib/discoveryRefusal.ts for why the status stays
+// 200 and the refusal rides in the envelope. `logServeUnlessRefused` is
+// deliberately used INSTEAD of logDiscoveryServe at the two serve points below:
+// a refused response must not reach the exposure denominator.
+import {
+  discoveryRefusal,
+  sendDiscoveryRefusal,
+  logServeUnlessRefused,
+} from "../lib/discoveryRefusal.js";
 
 const router = Router();
 const logger = rootLogger.child({ route: "discoverySearch" });
@@ -89,6 +131,12 @@ const SEARCH_TYPES = [
   "places", "hidden_gems", "hashtags", "posts", "circles",
   "stamps", "activities", "cities", "countries", "languages",
   "interests", "vibes",
+  // Map spec §27's ninth heading, "Saved items". The client has carried the
+  // whole branch since map search was written — MAP_SEARCH_RESULT_TYPES ends in
+  // 'saved', SavedSearchResult carries a savedKind discriminant, frameFor has a
+  // 'saved' case — and it was unreachable because this list had no member that
+  // produced one. See searchSaved below.
+  "saved",
 ] as const;
 
 // Exported (additive, behavior-preserving) so the Global Input Intelligence
@@ -348,6 +396,17 @@ function sqlPattern(q: string): string {
   return `%${q.replace(/[,()]/g, "").replace(/[%_]/g, "\\$&")}%`;
 }
 
+/**
+ * Split a list of ids into pages. PostgREST puts `.in()` lists in the URL, so an
+ * unbounded list becomes a request too long for the gateway to forward — a
+ * failure that arrives as a resolved error and reads as "no rows".
+ */
+function chunkIds<T>(items: T[], size: number): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
+  return out;
+}
+
 function decodeCursor(cursor: string | undefined): number {
   if (!cursor) return 0;
   try {
@@ -364,26 +423,18 @@ function encodeCursor(offset: number): string {
 
 // ── Blocked-user set (fail-closed) ────────────────────────────────────────────
 //
-// Returns null on any error. Callers that receive null MUST return [] —
-// never expose content when the block state is unknown.
-
-async function fetchBlockedSet(sc: any, userId: string): Promise<Set<string> | null> {
-  try {
-    const { data, error } = await sc
-      .from("blocks")
-      .select("blocker_id, blocked_id")
-      .or(`blocker_id.eq.${userId},blocked_id.eq.${userId}`);
-    if (error) return null;
-    const set = new Set<string>();
-    for (const b of (data ?? [])) {
-      if ((b as any).blocker_id === userId) set.add((b as any).blocked_id);
-      else set.add((b as any).blocker_id);
-    }
-    return set;
-  } catch {
-    return null;
-  }
-}
+// `fetchBlockedSet` is lib/blocks' — the one bidirectional, fail-closed block
+// reader every people-exposing surface shares (map travelers, circle
+// locations, the input-assistance gateway, GET /discovery). This file carried
+// a byte-for-byte private copy of it until 2026-09-07. Passport §263: "Do not
+// implement blocking independently per surface"; Telegraph §285: "No subsystem
+// may independently 'rediscover' a blocked relationship." Two copies of a
+// privacy rule agree until the day one of them is edited — which is how
+// submitterIsVisible drifted between this route and the feed (see the import
+// above). Re-exported so a test can assert identity rather than resemblance.
+// Contract unchanged: null on any error, and callers that receive null MUST
+// return [] — never expose content when the block state is unknown.
+export { fetchBlockedSet };
 
 // ── Age-restricted profile set (fail-closed) ──────────────────────────────────
 //
@@ -405,6 +456,69 @@ export async function fetchAgeRestrictedSet(sc: any): Promise<Set<string> | null
   } catch {
     return null;
   }
+}
+
+// ── Buddy launch-eligibility gate (inert until seeded ON) ─────────────────────
+//
+// Global Input Intelligence §29 (row G71 of census-input-intelligence): a Buddy
+// suggestion must pass "service category, availability, launch/safety/payment
+// eligibility". `type=buddies` applied exactly one predicate —
+// `buddy_verified_at IS NOT NULL` — and never asked whether the Rent-a-Buddy
+// marketplace is LAUNCHED. `rent_buddy_enabled` is false in production, so a
+// verified buddy was searchable on a surface whose marketplace does not exist.
+//
+// The launch leg is closed here. It sits behind its OWN capability flag,
+// `discovery_buddy_launch_gate_enabled` (migration 2360, seeded FALSE), because
+// Discovery is live and this repository's rule is that nothing changes what a
+// user sees until someone deliberately flips a flag. Both reads are
+// isFlagEnabled — fail-closed — and the two closures point in the SAFE
+// direction each time:
+//   gate absent / false / unreadable   → legacy behaviour, buddies unchanged
+//   gate ON, rent_buddy_enabled false  → buddies withheld
+//   gate ON, rent_buddy_enabled UNREADABLE → buddies withheld (an eligibility
+//                                        gate that cannot be established is
+//                                        not passed)
+// The category and availability legs of G71 remain open — see
+// docs/architecture/census-discovery.md B03.
+//
+// Applied inside searchTravelers(isBuddy) so the input-assistance gateway
+// (lib/inputAssistance/gateway.ts → dispatchSearch) inherits the same rule.
+
+/** Literal name so check-flag-polarity resolves the read. */
+export const DISCOVERY_BUDDY_LAUNCH_GATE_FLAG = "discovery_buddy_launch_gate_enabled";
+/** The marketplace's master switch, read by routes/rentABuddy.ts. */
+const RENT_BUDDY_LAUNCH_FLAG = "rent_buddy_enabled";
+
+// The GATE read is cached 30 s (mirrors discoveryServeLog / compass/flags.ts):
+// type=all fans out through buddies on every search, and an uncached read
+// would add a round-trip per search for a flag that changes once. The
+// marketplace flag is read only when the gate is on, and is NOT cached, so a
+// launch or un-launch is visible on the next request.
+const BUDDY_GATE_TTL_MS = 30_000;
+let _buddyGateCache: { value: boolean; at: number } | null = null;
+
+/** Invalidate the gate cache. Exported for tests. */
+export function invalidateBuddyLaunchGateCache(): void {
+  _buddyGateCache = null;
+}
+
+async function buddyLaunchGateActive(sc: any): Promise<boolean> {
+  if (_buddyGateCache && Date.now() - _buddyGateCache.at < BUDDY_GATE_TTL_MS) {
+    return _buddyGateCache.value;
+  }
+  const value = await isFlagEnabled(sc, DISCOVERY_BUDDY_LAUNCH_GATE_FLAG);
+  _buddyGateCache = { value, at: Date.now() };
+  return value;
+}
+
+/**
+ * True when buddy results must be WITHHELD: the gate is on and the marketplace
+ * is not (or cannot be shown to be) launched. Exported for its unit test — the
+ * route-level fake cannot fail one flag read while answering another.
+ */
+export async function buddiesWithheldByLaunchGate(sc: any): Promise<boolean> {
+  if (!(await buddyLaunchGateActive(sc))) return false;
+  return !(await isFlagEnabled(sc, RENT_BUDDY_LAUNCH_FLAG));
 }
 
 // ── Owner account-status guard ─────────────────────────────────────────────────
@@ -456,11 +570,14 @@ async function searchTravelers(
   ctx?: SearchQueryContext,
 ): Promise<SearchResult[]> {
   if (blockedSet === null || ageRestrictedSet === null) return [];
+  // Launch eligibility (G71) before any row is read: a buddy the marketplace
+  // has not launched is not a candidate. Inert until the gate flag is on.
+  if (isBuddy && await buddiesWithheldByLaunchGate(sc)) return [];
   try {
     const pat = sqlPattern(q);
     let query = sc
       .from("profiles")
-      .select("id, handle, username, name, avatar_url, is_private, home_city, home_country, account_status, verified, is_official, show_profile_picture_publicly")
+      .select("id, handle, username, name, display_name, avatar_url, is_private, home_city, home_country, account_status, verified, is_official, show_profile_picture_publicly")
       .or(`name.ilike.${pat},handle.ilike.${pat},username.ilike.${pat}`)
       .neq("id", userId)
       .in("account_status", ["active"])
@@ -470,7 +587,13 @@ async function searchTravelers(
     if (isBuddy) query = query.not("buddy_verified_at", "is", null);
 
     const { data, error } = await query;
-    if (error || !data) return [];
+    // supabase-js RESOLVES on a read failure, so `error` here is an outage and
+    // `return []` makes it byte-identical to a query that matched nothing —
+    // `11` §9's masquerade, through the back door of a destructure. `!data`
+    // without an error is a shape anomaly, not a failed read, and keeps the
+    // empty answer it always had.
+    if (error) throw new DiscoverySearchReadError("profiles", error);
+    if (!data) return [];
 
     const rows = (data as any[]).filter(
       (p: any) => !blockedSet.has(p.id as string) && !ageRestrictedSet.has(p.id as string),
@@ -531,29 +654,38 @@ async function searchTravelers(
       ...(friendsAsB ?? []).map((e: any) => e.user_a as string),
     ]);
 
+    // §35 / census-passport P169 — identity comes from the Passport batch
+    // projection, not from this file. The name rule, the private-preview rule,
+    // the picture opt-out and the badge are ONE implementation shared with the
+    // Compass traveler list; what stays here is the part that is genuinely
+    // Discovery's (the @handle fallback, the location preview, the follow /
+    // request action state). `nameVisibilitySet` is read inside the projection,
+    // so this costs no extra round trip — the same one read for the whole page.
+    const identity = await buildListIdentityProjections(sc, nameSafe as any[], {
+      viewerId: userId,
+      following: followingSet,
+      friends: friendSet,
+      // Already resolved above for C09's hidden-name match rule; handing it over
+      // keeps this search at ONE `profile_privacy_settings` read, not two.
+      allowedRealNames: allowedNames,
+    });
+
     const type: Exclude<SearchType, "all"> = isBuddy ? "buddies" : "travelers";
     const mapped: SearchResult[] = nameSafe.map((p: any): SearchResult => {
-      // Name defaults to @handle unless the subject opted in (or is the viewer).
-      const nameAllowed = p.id === userId || allowedNames.has(p.id as string);
-      const presented = nameAllowed ? ((p.name as string | null) ?? null) : null;
+      const ident = identity.get(p.id as string);
+      // A row the projection does not know is a row whose profile vanished
+      // between the two reads. Fall back to the most restrictive answer rather
+      // than to the raw columns: no name, no avatar, locked.
+      const presented = ident?.presentedName ?? null;
       const fallbackLabel = presented ?? (p.handle as string) ?? "?";
       const isFollowing = followingSet.has(p.id as string);
-      const isFriend = friendSet.has(p.id as string);
-      // Private accounts the viewer doesn't already follow get a locked
-      // preview: no avatar/location/matchedReason leak, canAccess=false.
-      // Once followed, the row behaves exactly like a public traveler.
-      const isPrivate = ((p.is_private as boolean) ?? false) && !isFollowing;
-      // Independent of is_private: a PUBLIC profile's owner can still opt out
-      // of showing their photo to non-followers/non-friends via
-      // show_profile_picture_publicly. isPrivate's own gate above already
-      // covers the case where the account itself is private.
-      const showAvatar = isFollowing || isFriend || (p as any).show_profile_picture_publicly !== false;
+      const isPrivate = ident ? ident.lockedPreview : true;
       return {
         id: p.id,
         type,
         title: presented ?? (p.handle as string) ?? "",
         subtitle: p.handle ? `@${p.handle as string}` : null,
-        avatarUrl: (!isPrivate && showAvatar) ? ((p.avatar_url as string | null) ?? null) : null,
+        avatarUrl: ident?.avatarUrl ?? null,
         imageUrl: null,
         fallbackInitials: initials(fallbackLabel),
         locationPreview: isPrivate
@@ -571,13 +703,16 @@ async function searchTravelers(
         metadata: null,
         createdAt: null,
         startsAt: null,
-        verified: (p.verified as boolean) ?? false,
+        verified: ident?.verified ?? false,
         isOfficial: (p.is_official as boolean) ?? false,
       };
     });
 
     return mapped;
-  } catch {
+  } catch (err) {
+    // Everything this function already swallowed, it keeps swallowing. Only
+    // the named read error re-enters the route's catch arm and refuses.
+    if (err instanceof DiscoverySearchReadError) throw err;
     return [];
   }
 }
@@ -627,7 +762,13 @@ async function searchEvents(
 
     const { data, error } = await evQ.range(offset, offset + fetchLimit - 1);
 
-    if (error || !data) return [];
+    // supabase-js RESOLVES on a read failure, so `error` here is an outage and
+    // `return []` makes it byte-identical to a query that matched nothing —
+    // `11` §9's masquerade, through the back door of a destructure. `!data`
+    // without an error is a shape anomaly, not a failed read, and keeps the
+    // empty answer it always had.
+    if (error) throw new DiscoverySearchReadError("events", error);
+    if (!data) return [];
 
     const rows = (data as any[]).filter(
       (e: any) => !blockedSet.has(e.host_id as string) && !ageRestrictedSet.has(e.host_id as string),
@@ -681,14 +822,66 @@ async function searchEvents(
       };
     });
 
+    // Trips §7.3 (census-trips TR133): with a trip in context, each event is
+    // placed against the trip's freedom windows — the engine's windows, not a
+    // local notion of free time — and the ones that fit lead, stably. Windows
+    // that cannot be read are reported as such on every row, never guessed.
+    if (ctx?.tripId) {
+      const read = await readTripWindows(sc, ctx.tripId, userId);
+      for (const r of mapped) {
+        const fit = read.ok ? fitInstantToWindows(read.projection, r.startsAt) : null;
+        r.metadata = {
+          ...(r.metadata ?? {}),
+          tripFit: fit
+            ? { verdict: fit.verdict, windowId: fit.windowId, conflictingCommitmentIds: fit.conflictingCommitmentIds, reason: fit.reason, decisionId: fit.decisionId, info: fit.info }
+            : { verdict: "NOT_CONSULTED", windowId: null, conflictingCommitmentIds: [], reason: null, decisionId: null, info: read.ok ? "" : read.info },
+        };
+      }
+    }
+
     return mapped;
-  } catch {
+  } catch (err) {
+    // Everything this function already swallowed, it keeps swallowing. Only
+    // the named read error re-enters the route's catch arm and refuses.
+    if (err instanceof DiscoverySearchReadError) throw err;
     return [];
   }
 }
 
+/** Trips §7.3 (TR133): rows whose tripFit is FITS first, stably; untouched when nothing carries a verdict. */
+function leadWithTripFit(rows: SearchResult[]): SearchResult[] {
+  if (!rows.some((r) => (r.metadata as any)?.tripFit)) return rows;
+  const fits = rows.filter((r) => (r.metadata as any)?.tripFit?.verdict === "FITS");
+  const rest = rows.filter((r) => (r.metadata as any)?.tripFit?.verdict !== "FITS");
+  return [...fits, ...rest];
+}
+
 /**
  * Trips — public only; blocked/suspended owners excluded.
+ *
+ * Two sources for the candidate rows, one CAPABILITY between them —
+ * `discovery_trip_projection_enabled` (migration 2550, seeded FALSE) AND the
+ * `trips` schema the projection reader names (migration 2420):
+ *
+ *   NOT READY (the seed; every failure to read the flag; and a flag that is ON
+ *   over a database whose `trips` lacks a required column, which is production
+ *   today) — the legacy read below, byte-identical to before: same columns,
+ *   same predicates, same order, same range. Pinned by
+ *   src/test/discoveryTripProjectionConsumer.test.ts.
+ *
+ *   READY — searchTripDiscoveryProjections, the Trip-owned contract
+ *   (domain/trips/contracts/tripDiscoveryProjection.ts; Trips spec §25, census-discovery A10/D3).
+ *   Discovery no longer states the visibility rule; it consumes
+ *   `discoverable`. A read that fails AFTER the probe passed
+ *   (TRIP_PROJECTION_UNAVAILABLE — a transient error, a revoked grant, a
+ *   schema-cache lag) is `[]`, never a crash and never a leak; the capability
+ *   decides the branch, so there is no silent fallback that would hide it.
+ *   The owner's non-member privacy toggles then apply to a searcher; see
+ *   lib/discoveryTripProjectionConsumer.ts for why that is accepted.
+ *
+ * Both sources feed ONE card mapping, so the two paths cannot drift in what a
+ * card shows. The blocked / age-restricted / active-owner filters run on
+ * both, here, on ownerId — they are Trust and Discovery rules, not Trip ones.
  */
 async function searchTrips(
   sc: any, q: string, userId: string,
@@ -698,59 +891,103 @@ async function searchTrips(
 ): Promise<SearchResult[]> {
   if (blockedSet === null || ageRestrictedSet === null) return [];
   try {
-    const pat = sqlPattern(q);
-    let trQ: any = sc
-      .from("trips")
-      .select("id, title, destination_city, destination_country, owner_id, cover_url, start_date, status, visibility, created_at")
-      .or(`title.ilike.${pat},destination_city.ilike.${pat},destination_country.ilike.${pat}`)
-      .eq("visibility", "public")
-      .eq("show_in_discovery", true)
-      // `trip_status` is an ENUM: draft | planning | upcoming | active |
-      // completed | cancelled | archived. "deleted" and "banned" are NOT
-      // labels, and Postgres rejects an unknown enum literal outright (22P02)
-      // rather than matching nothing — so `type=trips` search errored out and
-      // fell into the `if (error || !data) return []` below on every request.
-      //
-      // Same shape as the events fix above: a denylist of real labels that also
-      // drops unpublished `draft` trips the broken filter would have surfaced.
-      .not("status", "in", '("draft","cancelled","archived")')
-      .order("start_date", { ascending: true });
-    // Apply time-intent date bounds to trip start_date when present
-    if (ctx?.startsAfter)  trQ = trQ.gte("start_date", ctx.startsAfter.slice(0, 10));
-    if (ctx?.startsBefore) trQ = trQ.lt("start_date",  ctx.startsBefore.slice(0, 10));
-    const { data, error } = await trQ.range(offset, offset + fetchLimit - 1);
+    let cards: DiscoveryTripCardSource[];
 
-    if (error || !data) return [];
+    const gate = await discoveryTripProjectionGate(sc);
+    recordDiscoveryTripSource("trips", gate);
 
-    const rows = (data as any[]).filter(
-      (t: any) => !blockedSet.has(t.owner_id as string) && !ageRestrictedSet.has(t.owner_id as string),
+    if (gate.source === "projection") {
+      const r = await searchTripDiscoveryProjections(sc, {
+        text: q,
+        startsAfter: ctx?.startsAfter,
+        startsBefore: ctx?.startsBefore,
+        offset,
+        limit: fetchLimit,
+      });
+      if (!r.ok) {
+        logger.warn({ reason: r.reason, detail: r.detail }, "trip discovery projection unavailable; trips search returns nothing");
+        return [];
+      }
+      const { accepted, rejected } = acceptTripDiscoveryProjections(r.projections);
+      if (rejected > 0) logger.warn({ rejected }, "trip discovery projections of an unreadable schema version dropped");
+      cards = accepted.map(tripCardSourceFromProjection);
+    } else {
+      const pat = sqlPattern(q);
+      let trQ: any = sc
+        .from("trips")
+        .select("id, title, destination_city, destination_country, owner_id, cover_url, start_date, status, visibility, created_at")
+        .or(`title.ilike.${pat},destination_city.ilike.${pat},destination_country.ilike.${pat}`)
+        .eq("visibility", "public")
+        .eq("show_in_discovery", true)
+        // `trip_status` is an ENUM: draft | planning | upcoming | active |
+        // completed | cancelled | archived. "deleted" and "banned" are NOT
+        // labels, and Postgres rejects an unknown enum literal outright (22P02)
+        // rather than matching nothing — so `type=trips` search errored out and
+        // fell into the `if (error || !data) return []` below on every request.
+        //
+        // Same shape as the events fix above: a denylist of real labels that also
+        // drops unpublished `draft` trips the broken filter would have surfaced.
+        .not("status", "in", '("draft","cancelled","archived")')
+        .order("start_date", { ascending: true });
+      // Apply time-intent date bounds to trip start_date when present
+      if (ctx?.startsAfter)  trQ = trQ.gte("start_date", ctx.startsAfter.slice(0, 10));
+      if (ctx?.startsBefore) trQ = trQ.lt("start_date",  ctx.startsBefore.slice(0, 10));
+      const { data, error } = await trQ.range(offset, offset + fetchLimit - 1);
+
+      // The same line P1 removed from the plans path, and for the same reason:
+      // supabase-js RESOLVES on a read failure, so `error` here is a real outage
+      // and `return []` makes it byte-identical to a query that matched nothing.
+      // This is the branch production takes (§6 D3: 2420 unapplied, 2550 seeded
+      // FALSE). `!data` without an error is a shape anomaly, not a failed read,
+      // and keeps the empty answer it always had.
+      if (error) throw new DiscoverySearchReadError("trips", error);
+      if (!data) return [];
+
+      cards = (data as any[]).map((t: any): DiscoveryTripCardSource => ({
+        id: t.id as string,
+        ownerId: t.owner_id as string,
+        title: (t.title as string | null) ?? null,
+        destinationCity: (t.destination_city as string | null) ?? null,
+        destinationCountry: (t.destination_country as string | null) ?? null,
+        coverUrl: (t.cover_url as string | null) ?? null,
+        startDate: (t.start_date as string | null) ?? null,
+        status: t.status as string,
+        createdAt: (t.created_at as string | null) ?? null,
+      }));
+    }
+
+    const rows = cards.filter(
+      (t) => !blockedSet.has(t.ownerId) && !ageRestrictedSet.has(t.ownerId),
     );
     if (rows.length === 0) return [];
 
-    const ownerIds = [...new Set(rows.map((t: any) => t.owner_id as string))];
+    const ownerIds = [...new Set(rows.map((t) => t.ownerId))];
     const activeOwnerSet = await fetchActiveOwnerSet(sc, ownerIds);
 
     return rows
-      .filter((t: any) => activeOwnerSet.has(t.owner_id as string))
-      .map((t: any): SearchResult => ({
+      .filter((t) => activeOwnerSet.has(t.ownerId))
+      .map((t): SearchResult => ({
         id: t.id,
         type: "trips",
-        title: (t.title as string) ?? (t.destination_city as string) ?? "",
-        subtitle: [(t.destination_city as string | null), (t.destination_country as string | null)].filter(Boolean).join(", ") || null,
+        title: t.title ?? t.destinationCity ?? "",
+        subtitle: [t.destinationCity, t.destinationCountry].filter(Boolean).join(", ") || null,
         avatarUrl: null,
-        imageUrl: (t.cover_url as string | null) ?? null,
-        fallbackInitials: initials((t.title as string) ?? ""),
-        locationPreview: [(t.destination_city as string | null), (t.destination_country as string | null)].filter(Boolean).join(", ") || null,
+        imageUrl: t.coverUrl ?? null,
+        fallbackInitials: initials(t.title ?? ""),
+        locationPreview: [t.destinationCity, t.destinationCountry].filter(Boolean).join(", ") || null,
         matchedReason: null,
         actionState: null,
         privacyState: { isPublic: true },
         accessState: { canAccess: true },
-        destinationRoute: `/trip/${t.id as string}`,
-        metadata: { ownerId: t.owner_id, status: t.status },
-        createdAt: (t.created_at as string | null) ?? null,
-        startsAt: (t.start_date as string | null) ?? null,
+        destinationRoute: `/trip/${t.id}`,
+        metadata: { ownerId: t.ownerId, status: t.status },
+        createdAt: t.createdAt ?? null,
+        startsAt: t.startDate ?? null,
       }));
-  } catch {
+  } catch (err) {
+    // Everything this function already swallowed, it keeps swallowing. Only the
+    // named read error re-enters the route's catch arm and becomes a refusal.
+    if (err instanceof DiscoverySearchReadError) throw err;
     return [];
   }
 }
@@ -776,7 +1013,13 @@ async function searchPlans(
       .order("created_at", { ascending: false })
       .range(offset, offset + fetchLimit - 1);
 
-    if (error || !data) return [];
+    // supabase-js RESOLVES on a read failure, so `error` here is an outage and
+    // `return []` makes it byte-identical to a query that matched nothing —
+    // `11` §9's masquerade, through the back door of a destructure. `!data`
+    // without an error is a shape anomaly, not a failed read, and keeps the
+    // empty answer it always had.
+    if (error) throw new DiscoverySearchReadError("trip_plan_items", error);
+    if (!data) return [];
 
     const items = (data as any[]).filter(
       (p: any) => !blockedSet.has(p.creator_id as string) && !ageRestrictedSet.has(p.creator_id as string),
@@ -784,37 +1027,80 @@ async function searchPlans(
     if (items.length === 0) return [];
 
     const tripIds = [...new Set(items.map((p: any) => p.trip_id as string))];
-    const { data: trips } = await sc
-      .from("trips")
-      .select("id, visibility, show_in_discovery, owner_id, status, start_date")
-      .in("id", tripIds)
-      // Same dead literals as searchTrips above ("deleted" / "banned" are not
-      // `trip_status` labels), and worse here: the result is destructured as
-      // `const { data: trips }` with the error never inspected, so `trips` was
-      // undefined, `allowedTrips` empty, and EVERY plan was dropped as
-      // "no allowed parent trip". `type=plans` returned [] on every request.
-      .not("status", "in", '("draft","cancelled","archived")');
 
-    const allowedTrips = (trips ?? []).filter(
-      (t: any) =>
+    // The parent trips, from one of two sources behind the same capability as
+    // searchTrips above (flag AND schema). Either way each candidate carries
+    // `admitted` — may THIS viewer see this trip's plans — decided by Trip
+    // semantics, and `ownerId` / `startDate` for the Discovery-owned filters
+    // that follow.
+    let parents: DiscoveryPlanParentTrip[];
+
+    const gate = await discoveryTripProjectionGate(sc);
+    recordDiscoveryTripSource("plans", gate);
+
+    if (gate.source === "projection") {
+      // Not filtered by discoverability in SQL: the by-id reader returns the
+      // owner's own private trip too, and tripDiscoveryAdmits — Trips' rule,
+      // not restated here — decides per viewer. A failed read is `[]`.
+      const r = await readTripDiscoveryProjections(sc, tripIds);
+      if (!r.ok) {
+        logger.warn({ reason: r.reason, detail: r.detail }, "trip discovery projection unavailable; plans search returns nothing");
+        return [];
+      }
+      const { accepted, rejected } = acceptTripDiscoveryProjections(r.projections);
+      if (rejected > 0) logger.warn({ rejected }, "trip discovery projections of an unreadable schema version dropped");
+      // startDate is the projection's — null when the owner hides exact dates,
+      // in which case the time-intent bound below passes the trip exactly as
+      // it passes a trip with no start_date today. The contract carries no
+      // separate bounding date for the by-id reader (reported, not worked
+      // around by reading `trips` here).
+      parents = accepted.map((p): DiscoveryPlanParentTrip => ({
+        id: p.tripId,
+        ownerId: p.ownerId,
+        startDate: p.startDate,
+        admitted: tripDiscoveryAdmits(p, userId),
+      }));
+    } else {
+      const { data: trips, error: tripsErr } = await sc
+        .from("trips")
+        .select("id, visibility, show_in_discovery, owner_id, status, start_date")
+        .in("id", tripIds)
+        // Same dead literals as searchTrips above ("deleted" / "banned" are not
+        // `trip_status` labels). The error USED to be dropped here, and this is
+        // the branch production takes (§6 D3: 2420 unapplied, 2550 seeded FALSE),
+        // so a `trips` outage emptied `parents`, dropped every plan as "no
+        // allowed parent trip", and answered 200 {results: []} — D11's masquerade.
+        .not("status", "in", '("draft","cancelled","archived")');
+      if (tripsErr) throw new DiscoverySearchReadError("trips", tripsErr);
+      parents = ((trips ?? []) as any[]).map((t: any): DiscoveryPlanParentTrip => ({
+        id: t.id as string,
+        ownerId: t.owner_id as string,
+        startDate: (t.start_date as string | null) ?? null,
         // Public trips: also require show_in_discovery so owners who opted out are excluded.
         // Caller-owned trips are always visible regardless of the flag.
-        (((t.visibility as string) === "public" && t.show_in_discovery === true) ||
-          (t.owner_id as string) === userId) &&
-        !blockedSet.has(t.owner_id as string) &&
-        !ageRestrictedSet.has(t.owner_id as string) &&
+        admitted:
+          ((t.visibility as string) === "public" && t.show_in_discovery === true) ||
+          (t.owner_id as string) === userId,
+      }));
+    }
+
+    const allowedTrips = parents.filter(
+      (t) =>
+        t.admitted &&
+        !blockedSet.has(t.ownerId) &&
+        !ageRestrictedSet.has(t.ownerId) &&
         // Time-intent: filter by parent trip's start_date when bounds are present
-        (!ctx?.startsAfter  || !(t.start_date as string | null) || (t.start_date as string) >= ctx.startsAfter.slice(0, 10)) &&
-        (!ctx?.startsBefore || !(t.start_date as string | null) || (t.start_date as string) <  ctx.startsBefore.slice(0, 10)),
+        (!ctx?.startsAfter  || !t.startDate || t.startDate >= ctx.startsAfter.slice(0, 10)) &&
+        (!ctx?.startsBefore || !t.startDate || t.startDate <  ctx.startsBefore.slice(0, 10)),
     );
 
-    const allowedOwnerIds: string[] = [...new Set<string>(allowedTrips.map((t: any) => t.owner_id as string))];
+    const allowedOwnerIds: string[] = [...new Set<string>(allowedTrips.map((t) => t.ownerId))];
     const activeTripOwnerSet = await fetchActiveOwnerSet(sc, allowedOwnerIds);
 
     const visibleTripIds = new Set<string>(
       allowedTrips
-        .filter((t: any) => activeTripOwnerSet.has(t.owner_id as string))
-        .map((t: any) => t.id as string),
+        .filter((t) => activeTripOwnerSet.has(t.ownerId))
+        .map((t) => t.id),
     );
 
     return items
@@ -837,9 +1123,9 @@ async function searchPlans(
         createdAt: (p.created_at as string | null) ?? null,
         startsAt: null,
       }));
-  } catch {
-    return [];
-  }
+  // Everything this arm swallowed before, it still swallows. The ONE thing it
+  // must not swallow is the read failure it was itself hiding, re-raised so the
+  } catch (err) { if (err instanceof DiscoverySearchReadError) throw err; return []; }
 }
 
 /**
@@ -880,7 +1166,13 @@ async function searchPlaces(
       .order("saved_count", { ascending: false })
       .range(offset, offset + fetchLimit - 1);
 
-    if (error || !data) return [];
+    // supabase-js RESOLVES on a read failure, so `error` here is an outage and
+    // `return []` makes it byte-identical to a query that matched nothing —
+    // `11` §9's masquerade, through the back door of a destructure. `!data`
+    // without an error is a shape anomaly, not a failed read, and keeps the
+    // empty answer it always had.
+    if (error) throw new DiscoverySearchReadError("discovery_places", error);
+    if (!data) return [];
 
     const mapped = (data as any[])
       .filter((p: any) => submitterIsVisible(p.submitted_by, blockedSet))
@@ -939,8 +1231,316 @@ async function searchPlaces(
       });
     }
     return rankByMatchTier(mapped, q);
-  } catch {
+  } catch (err) {
+    // Everything this function already swallowed, it keeps swallowing. Only
+    // the named read error re-enters the route's catch arm and refuses.
+    if (err instanceof DiscoverySearchReadError) throw err;
     return [];
+  }
+}
+
+/**
+ * §27 "Saved items" — the ninth search heading, and the only VIEWER-SCOPED one.
+ *
+ * WHY THIS EXISTS
+ * ===============
+ * The Map spec §27 lists nine result headings and the client has carried all
+ * nine since map search was written: `MAP_SEARCH_RESULT_TYPES` ends in
+ * `'saved'`, `SavedSearchResult` carries a `savedKind` discriminant,
+ * `frameFor` has a `case 'saved'` with its own FOCUS_TRIP / FOCUS_AREA /
+ * FOCUS_PLACE ladder, and `SERVER_TYPE_TO_MAP_TYPE` holds `saved` and
+ * `wishlist` keys. Every one of those was unreachable: `SEARCH_TYPES` — the
+ * wire vocabulary the client's own coverage test derives from this file — had
+ * no `saved` member, so no result of that type could ever arrive. census-map
+ * M201 recorded the whole heading as BUILT-BUT-WRONG for exactly that reason.
+ *
+ * THE TWO TABLES SAVES ACTUALLY LAND IN
+ * =====================================
+ * Not `public.saved_places`. That table has zero writers anywhere in the repo
+ * (see lib/mapProducers/savedPlaceProducer.ts, which was moved off it by #446,
+ * and scripts/checkWriterlessReads). Real saves land in:
+ *
+ *   `wishlist_places`        POST /api/wishlist — every TripWishlistPicker save,
+ *                            including the Map's own long-press. `place_id` is
+ *                            TEXT in the SERVED id space (`db/<uuid>`,
+ *                            `comm/<uuid>`, an OSM key), with a `place_data`
+ *                            snapshot beside it.
+ *   `discovery_place_saves`  POST /api/discovery/community/:id/save — the
+ *                            DiscoveryWall bookmark. `place_id` is a
+ *                            `discovery_places.id` uuid.
+ *
+ * Neither is a superset of the other, so reading one alone loses a whole save
+ * path. Both are read here, bridged onto one venue key, and deduped.
+ *
+ * WHY IT DOES NOT CALL `readSavedPlacePins`
+ * =========================================
+ * That function is the map gateway's PRIVACY-COMPLETE saved read, and
+ * src/test/gatewayBypassGuard.test.ts names routes/mapProjection.ts as its one
+ * approved caller. Search is not a projection: it has no viewport, no §24
+ * protection pass and no MapObject envelope. Calling it from here would either
+ * break that guard or widen it to a caller that does none of the work it
+ * guarantees. So this lane issues its own, narrower read of the same two
+ * tables and produces a plain SearchResult like every other lane.
+ *
+ * WHAT IT DOES NOT DO. A save is private to the person who made it, so this
+ * lane never reads another user's rows: `user_id` is the authenticated
+ * viewer's and nothing widens it. A blocked submitter's venue is filtered out
+ * with the same `submitterIsVisible` rule searchPlaces applies — blocking
+ * someone should not be undone by having saved their venue earlier.
+ */
+const SAVED_SOURCE_ROW_CAP = 200;
+const SAVED_ID_CHUNK = 50;
+
+interface WishlistSaveRow { place_id?: unknown; place_data?: unknown; saved_at?: unknown }
+interface DiscoverySaveRow { place_id?: unknown; saved_at?: unknown }
+
+/** The snapshot `place_data` shape this lane reads. Every field optional. */
+function snapshotOf(raw: unknown): { name: string | null; city: string | null; lat: number | null; lng: number | null } {
+  const d = (raw ?? {}) as Record<string, unknown>;
+  const num = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) ? v : null);
+  const str = (v: unknown): string | null => (typeof v === "string" && v.trim() !== "" ? v : null);
+  return {
+    name: str(d.name) ?? str(d.title),
+    city: str(d.city) ?? str(d.locationPreview),
+    lat: num(d.lat) ?? num(d.latitude),
+    lng: num(d.lng) ?? num(d.longitude),
+  };
+}
+
+/** Case-insensitive substring match, the in-memory twin of the SQL `ilike`. */
+function matchesQuery(q: string, ...fields: Array<string | null>): boolean {
+  const needle = q.trim().toLowerCase();
+  if (needle === "") return false;
+  return fields.some((f) => typeof f === "string" && f.toLowerCase().includes(needle));
+}
+
+/**
+ * What `searchSaved` could not read, named. Empty means the shelf is COMPLETE
+ * and its emptiness is trustworthy; non-empty means the rows returned are real
+ * but are not all of them.
+ *
+ * These strings ride out on `refusal.failedSources` exactly as `searchAll`'s do,
+ * so a client has one vocabulary for "part of this answer is missing" whether
+ * the missing part is a whole search type or one table inside a type.
+ */
+type SavedCoverage = { results: SearchResult[]; degradedSources: string[] };
+
+async function searchSaved(
+  sc: any, q: string, userId: string,
+  blockedSet: Set<string> | null,
+  offset: number, fetchLimit: number,
+): Promise<SavedCoverage> {
+  const degradedSources: string[] = [];
+  if (blockedSet === null) return { results: [], degradedSources };
+  try {
+    const [wishRes, dpsRes] = await Promise.all([
+      sc.from("wishlist_places")
+        .select("place_id, place_data, saved_at")
+        .eq("user_id", userId)
+        .order("saved_at", { ascending: false })
+        .limit(SAVED_SOURCE_ROW_CAP),
+      sc.from("discovery_place_saves")
+        .select("place_id, saved_at")
+        .eq("user_id", userId)
+        .order("saved_at", { ascending: false })
+        .limit(SAVED_SOURCE_ROW_CAP),
+    ]);
+
+    // supabase-js RESOLVES on a DB error, so an unreadable table and an empty
+    // one arrive identically. Read each independently: one table being
+    // unreadable must not silently turn the other's saves into "no saves".
+    //
+    // READING THEM INDEPENDENTLY WAS ONLY HALF OF IT. The comment above was
+    // true of the DIRECTION and false of the mechanism: `error` was never
+    // bound, so an unreadable table was not detected at all — it was treated
+    // as empty. When BOTH were unreadable the lane answered `[]`, which the
+    // route serves as `200 { results: [] }` with no `refusal`: a claim that
+    // this person has saved nothing, made without reading either table that
+    // holds their saves. `saved` is the one VIEWER-SCOPED search type, so it is
+    // the heading whose emptiness the user knows for a fact is wrong.
+    //
+    // A total outage rejects. ONE unreadable table still serves the other's
+    // rows, which is a real half-answer rather than a lie — the two tables are
+    // written by paths that never write each other's.
+    //
+    // THAT HALF-ANSWER IS NO LONGER SILENT. It used to be, and the reason was
+    // structural rather than chosen: `dispatchSearch` returned a bare array
+    // with no channel to carry `coverage: "partial"`, so the lane's only two
+    // vocabulary words were "here are some rows" and "nothing was readable" —
+    // and the second is an untruth in the other direction when one table DID
+    // answer. The channel exists now (`SavedCoverage` above,
+    // `dispatchSearchWithCoverage` below), so the lane says which table it
+    // could not read and the route turns that into `coverage: "partial"` with
+    // `failedSources`. The user is told their shelf is incomplete instead of
+    // being shown a short one that looks whole.
+    //
+    // The REFUSAL is unchanged and deliberately not relaxed: both tables
+    // unreadable still throws, because then there is no half to serve. Pinned
+    // both ways by `src/test/discoverySavedRefusal.test.ts` (R1 and R5).
+    const wishUnreadable = !!wishRes?.error;
+    const dpsUnreadable = !!dpsRes?.error;
+    if (wishUnreadable && dpsUnreadable) {
+      throw new DiscoverySearchReadError(
+        "wishlist_places+discovery_place_saves",
+        wishRes?.error ?? dpsRes?.error,
+      );
+    }
+    if (wishUnreadable) degradedSources.push("wishlist_places");
+    if (dpsUnreadable) degradedSources.push("discovery_place_saves");
+    const wishRows: WishlistSaveRow[] = Array.isArray(wishRes?.data) ? wishRes.data : [];
+    const dpsRows: DiscoverySaveRow[] = Array.isArray(dpsRes?.data) ? dpsRes.data : [];
+
+    const savedAtOf = (r: { saved_at?: unknown }): string | null =>
+      typeof r.saved_at === "string" ? r.saved_at : null;
+
+    /** venueId (a discovery_places.id) → the most recent moment it was saved. */
+    const byVenue = new Map<string, string | null>();
+    const noteVenue = (id: string, at: string | null): void => {
+      const prev = byVenue.get(id);
+      if (prev === undefined) { byVenue.set(id, at); return; }
+      if (at && (!prev || at > prev)) byVenue.set(id, at);
+    };
+
+    for (const r of dpsRows) {
+      if (typeof r.place_id === "string" && r.place_id !== "") noteVenue(r.place_id, savedAtOf(r));
+    }
+
+    /** Wishlist rows that reach no discovery_places row — snapshot only. */
+    const snapshotOnly: Array<{ servedId: string; savedAt: string | null; snap: ReturnType<typeof snapshotOf> }> = [];
+    const wishlist = wishRows.filter((r): r is WishlistSaveRow & { place_id: string } =>
+      typeof r.place_id === "string" && r.place_id !== "");
+
+    const servedIds = [...new Set(wishlist.map((r) => r.place_id))];
+    const bridged = new Map<string, Set<string>>();
+    for (const page of chunkIds(servedIds, SAVED_ID_CHUNK)) {
+      // noCache: an OSM venue's discovery_places row is created lazily on first
+      // save, so a cached known-empty from before that save would drop it.
+      const { toCanonical, degraded } = await resolvePlaceIdBridge(sc, page, { noCache: true });
+      // A degraded bridge does not lose the save — an unbridged wishlist row
+      // falls through to `snapshotOnly` below and still lists from the snapshot
+      // the save itself recorded. What it loses is the AUTHORITATIVE row: the
+      // venue's current name, category, photo and coordinates. That is a real
+      // degradation of this shelf and it is reported rather than absorbed,
+      // because before `lib/placeIdBridge.ts` bound its error there was nothing
+      // here that could tell "this place has no discovery_places row" from
+      // "we could not find out".
+      if (degraded && !degradedSources.includes("discovery_places")) {
+        degradedSources.push("discovery_places");
+      }
+      for (const [served, ids] of toCanonical) bridged.set(served, ids);
+    }
+
+    for (const r of wishlist) {
+      const ids = bridged.get(r.place_id);
+      if (ids && ids.size > 0) {
+        // Deterministic when one served id mirrors onto several rows.
+        noteVenue([...ids].sort()[0] as string, savedAtOf(r));
+        continue;
+      }
+      snapshotOnly.push({ servedId: r.place_id, savedAt: savedAtOf(r), snap: snapshotOf(r.place_data) });
+    }
+
+    // ── resolve the authoritative venue rows, filtered by the query ──────────
+    const pat = sqlPattern(q);
+    const venues: any[] = [];
+    for (const page of chunkIds([...byVenue.keys()], SAVED_ID_CHUNK)) {
+      const { data, error } = await sc
+        .from("discovery_places")
+        .select("id, name, city, blurb, image_url, primary_category, category, lat, lng, submitted_by")
+        .in("id", page)
+        .eq("status", "active")
+        .or(`name.ilike.${pat},city.ilike.${pat},blurb.ilike.${pat}`);
+      // `discovery_places` is the authoritative row behind every venue save, and
+      // there is no second source for it. `continue` dropped every save in a
+      // failed page with no signal at all — the same masquerade, one level down.
+      // Every OTHER reader of this table in this file throws here: `searchPlaces`
+      // and `searchActivities` both do. `searchSaved` was the one that did not.
+      if (error) throw new DiscoverySearchReadError("discovery_places", error);
+      if (!Array.isArray(data)) continue;
+      venues.push(...data);
+    }
+
+    const out: SearchResult[] = [];
+    for (const v of venues) {
+      if (!v || typeof v.id !== "string") continue;
+      if (!submitterIsVisible(v.submitted_by, blockedSet)) continue;
+      const name = (v.name as string | null) ?? "";
+      out.push({
+        id: v.id,
+        type: "saved",
+        title: name,
+        subtitle: ((v.primary_category ?? v.category) as string | null) ?? null,
+        avatarUrl: null,
+        imageUrl: (v.image_url as string | null) ?? null,
+        fallbackInitials: initials(name),
+        locationPreview: (v.city as string | null) ?? null,
+        matchedReason: "Saved",
+        actionState: { isSaved: true },
+        privacyState: null,
+        accessState: { canAccess: true },
+        destinationRoute: `/place/${v.id}`,
+        metadata: {
+          // The client's SavedSearchResult discriminant. Stated by the server
+          // rather than assumed by the adapter, so a future saved Trip or Area
+          // can arrive through the same heading without a second wire type.
+          savedKind: "place",
+          category: v.primary_category ?? v.category,
+          lat: (v.lat as number | null) ?? null,
+          lng: (v.lng as number | null) ?? null,
+          savedAt: byVenue.get(v.id) ?? null,
+        },
+        createdAt: byVenue.get(v.id) ?? null,
+        startsAt: null,
+      });
+    }
+
+    // ── the snapshot tail ────────────────────────────────────────────────────
+    // A wishlist save whose served id reaches no discovery_places row is still
+    // a save the person made, and dropping it would make the heading lie about
+    // its own contents. It is matched against the snapshot the save recorded
+    // and placed from the snapshot's coordinates — never from anywhere else.
+    for (const s of snapshotOnly) {
+      if (!matchesQuery(q, s.snap.name, s.snap.city)) continue;
+      const name = s.snap.name ?? "";
+      if (name === "") continue;
+      out.push({
+        id: s.servedId,
+        type: "saved",
+        title: name,
+        subtitle: null,
+        avatarUrl: null,
+        imageUrl: null,
+        fallbackInitials: initials(name),
+        locationPreview: s.snap.city,
+        matchedReason: "Saved",
+        actionState: { isSaved: true },
+        privacyState: null,
+        accessState: { canAccess: true },
+        destinationRoute: `/place/${s.servedId}`,
+        metadata: {
+          savedKind: "place",
+          lat: s.snap.lat,
+          lng: s.snap.lng,
+          savedAt: s.savedAt,
+          fromSnapshot: true,
+        },
+        createdAt: s.savedAt,
+        startsAt: null,
+      });
+    }
+
+    // Most recently saved first, then the caller's page. Match-tier ranking is
+    // applied by dispatchSearch, as it is for every other non-place lane.
+    out.sort((a, b) => String(b.createdAt ?? "").localeCompare(String(a.createdAt ?? "")));
+    return { results: out.slice(offset, offset + fetchLimit), degradedSources };
+  } catch (err) {
+    // Re-raise ONLY the named read error, on `searchPlans`' precedent: the arm
+    // keeps swallowing everything it already swallowed, and lets the one thing
+    // that means "a table could not be read" reach the route's catch arm and
+    // become a refusal. A bare `catch { return []; }` here undid both throws
+    // above without leaving a trace.
+    if (err instanceof DiscoverySearchReadError) throw err;
+    return { results: [], degradedSources };
   }
 }
 
@@ -971,7 +1571,13 @@ async function searchHiddenGems(
       .order("created_at", { ascending: false })
       .range(offset, offset + fetchLimit - 1);
 
-    if (error || !data) return [];
+    // supabase-js RESOLVES on a read failure, so `error` here is an outage and
+    // `return []` makes it byte-identical to a query that matched nothing —
+    // `11` §9's masquerade, through the back door of a destructure. `!data`
+    // without an error is a shape anomaly, not a failed read, and keeps the
+    // empty answer it always had.
+    if (error) throw new DiscoverySearchReadError("hidden_gems", error);
+    if (!data) return [];
 
     const rows = (data as any[]).filter(
       (g: any) => !blockedSet.has(g.submitted_by as string) && !ageRestrictedSet.has(g.submitted_by as string),
@@ -1013,7 +1619,10 @@ async function searchHiddenGems(
         startsAt: null,
         };
       });
-  } catch {
+  } catch (err) {
+    // Everything this function already swallowed, it keeps swallowing. Only
+    // the named read error re-enters the route's catch arm and refuses.
+    if (err instanceof DiscoverySearchReadError) throw err;
     return [];
   }
 }
@@ -1034,7 +1643,13 @@ async function searchHashtags(
       .order("usage_count", { ascending: false })
       .range(offset, offset + fetchLimit - 1);
 
-    if (error || !data) return [];
+    // supabase-js RESOLVES on a read failure, so `error` here is an outage and
+    // `return []` makes it byte-identical to a query that matched nothing —
+    // `11` §9's masquerade, through the back door of a destructure. `!data`
+    // without an error is a shape anomaly, not a failed read, and keeps the
+    // empty answer it always had.
+    if (error) throw new DiscoverySearchReadError("hashtags", error);
+    if (!data) return [];
 
     return (data as any[]).map((h: any): SearchResult => ({
       id: h.id,
@@ -1054,7 +1669,10 @@ async function searchHashtags(
       createdAt: (h.created_at as string | null) ?? null,
       startsAt: null,
     }));
-  } catch {
+  } catch (err) {
+    // Everything this function already swallowed, it keeps swallowing. Only
+    // the named read error re-enters the route's catch arm and refuses.
+    if (err instanceof DiscoverySearchReadError) throw err;
     return [];
   }
 }
@@ -1096,7 +1714,13 @@ async function searchPosts(
       .order("created_at", { ascending: false })
       .range(offset, offset + fetchLimit - 1);
 
-    if (error || !data) return [];
+    // supabase-js RESOLVES on a read failure, so `error` here is an outage and
+    // `return []` makes it byte-identical to a query that matched nothing —
+    // `11` §9's masquerade, through the back door of a destructure. `!data`
+    // without an error is a shape anomaly, not a failed read, and keeps the
+    // empty answer it always had.
+    if (error) throw new DiscoverySearchReadError("posts", error);
+    if (!data) return [];
 
     const rows = (data as any[]).filter(
       (p: any) =>
@@ -1136,7 +1760,10 @@ async function searchPosts(
           startsAt: null,
         };
       });
-  } catch {
+  } catch (err) {
+    // Everything this function already swallowed, it keeps swallowing. Only
+    // the named read error re-enters the route's catch arm and refuses.
+    if (err instanceof DiscoverySearchReadError) throw err;
     return [];
   }
 }
@@ -1160,7 +1787,13 @@ async function searchCircles(
       .order("created_at", { ascending: false })
       .range(offset, offset + fetchLimit - 1);
 
-    if (error || !data) return [];
+    // supabase-js RESOLVES on a read failure, so `error` here is an outage and
+    // `return []` makes it byte-identical to a query that matched nothing —
+    // `11` §9's masquerade, through the back door of a destructure. `!data`
+    // without an error is a shape anomaly, not a failed read, and keeps the
+    // empty answer it always had.
+    if (error) throw new DiscoverySearchReadError("circles", error);
+    if (!data) return [];
 
     const rows = (data as any[]).filter(
       (c: any) => !blockedSet.has(c.owner_id as string) && !ageRestrictedSet.has(c.owner_id as string),
@@ -1190,7 +1823,10 @@ async function searchCircles(
         createdAt: (c.created_at as string | null) ?? null,
         startsAt: null,
       }));
-  } catch {
+  } catch (err) {
+    // Everything this function already swallowed, it keeps swallowing. Only
+    // the named read error re-enters the route's catch arm and refuses.
+    if (err instanceof DiscoverySearchReadError) throw err;
     return [];
   }
 }
@@ -1211,7 +1847,13 @@ async function searchStamps(
       .order("name", { ascending: true })
       .range(offset, offset + fetchLimit - 1);
 
-    if (error || !data) return [];
+    // supabase-js RESOLVES on a read failure, so `error` here is an outage and
+    // `return []` makes it byte-identical to a query that matched nothing —
+    // `11` §9's masquerade, through the back door of a destructure. `!data`
+    // without an error is a shape anomaly, not a failed read, and keeps the
+    // empty answer it always had.
+    if (error) throw new DiscoverySearchReadError("stamp_definitions", error);
+    if (!data) return [];
 
     return (data as any[]).map((s: any): SearchResult => ({
       id: s.id,
@@ -1231,7 +1873,10 @@ async function searchStamps(
       createdAt: (s.created_at as string | null) ?? null,
       startsAt: null,
     }));
-  } catch {
+  } catch (err) {
+    // Everything this function already swallowed, it keeps swallowing. Only
+    // the named read error re-enters the route's catch arm and refuses.
+    if (err instanceof DiscoverySearchReadError) throw err;
     return [];
   }
 }
@@ -1266,7 +1911,13 @@ async function searchActivities(
       .order("saved_count", { ascending: false })
       .range(offset, offset + fetchLimit - 1);
 
-    if (error || !data) return [];
+    // supabase-js RESOLVES on a read failure, so `error` here is an outage and
+    // `return []` makes it byte-identical to a query that matched nothing —
+    // `11` §9's masquerade, through the back door of a destructure. `!data`
+    // without an error is a shape anomaly, not a failed read, and keeps the
+    // empty answer it always had.
+    if (error) throw new DiscoverySearchReadError("discovery_places", error);
+    if (!data) return [];
 
     return (data as any[])
       .filter((p: any) => submitterIsVisible(p.submitted_by, blockedSet))
@@ -1301,7 +1952,10 @@ async function searchActivities(
       createdAt: (p.created_at as string | null) ?? null,
       startsAt: null,
     }));
-  } catch {
+  } catch (err) {
+    // Everything this function already swallowed, it keeps swallowing. Only
+    // the named read error re-enters the route's catch arm and refuses.
+    if (err instanceof DiscoverySearchReadError) throw err;
     return [];
   }
 }
@@ -1334,9 +1988,15 @@ async function searchCities(
         .eq("allow_profile_discovery", false),
     ]);
 
-    if (profileResult.error || !profileResult.data) return [];
-    // Fail-closed: unknown opt-out state → return nothing (location signals must not leak)
-    if (optOutResult.error) return [];
+    if (profileResult.error) throw new DiscoverySearchReadError("profiles", profileResult.error);
+    if (!profileResult.data) return [];
+    // Fail-closed: unknown opt-out state → return nothing (location signals must
+    // not leak). The DIRECTION was right and stays right — a refusal serves the
+    // same empty collection. What changes is that it SAYS so: `return []` alone
+    // was byte-identical to "no city matched", so a caller could not tell a
+    // privacy-preserving refusal from a search result, which is the masquerade
+    // D11 forbids whichever way the default leans.
+    if (optOutResult.error) throw new DiscoverySearchReadError("profile_privacy_settings", optOutResult.error);
     const optOutSet = new Set<string>(
       ((optOutResult.data as any[]) ?? []).map((r: any) => r.user_id as string),
     );
@@ -1381,7 +2041,10 @@ async function searchCities(
     }
     await attachCentroids(sc, results, CANONICAL_CITY_KINDS);
     return results;
-  } catch {
+  } catch (err) {
+    // Everything this function already swallowed, it keeps swallowing. Only
+    // the named read error re-enters the route's catch arm and refuses.
+    if (err instanceof DiscoverySearchReadError) throw err;
     return [];
   }
 }
@@ -1405,9 +2068,79 @@ async function attachCentroids(
   }
 }
 
+/** Build one `countries` row. Shared by both legs so the shape cannot fork. */
+function countryResult(
+  name: string,
+  source: "registry" | "profile",
+  countryCode: string | null,
+): SearchResult {
+  const key = name.toLowerCase();
+  return {
+    id: `country:${key}`,
+    type: "countries",
+    title: name,
+    subtitle: null,
+    avatarUrl: null,
+    imageUrl: null,
+    fallbackInitials: initials(name),
+    locationPreview: null,
+    matchedReason: null,
+    actionState: null,
+    privacyState: null,
+    accessState: { canAccess: true },
+    destinationRoute: `/country/${encodeURIComponent(key)}`,
+    // §27's position contract: `lat`/`lng` are always PRESENT, null included, so
+    // "this row has no position" is a value rather than a missing key.
+    // `canonical_locations` models kind='country' but holds no country rows
+    // today, so in practice a country carries a null position until the registry
+    // is seeded — the honest answer rather than a centroid averaged out of
+    // whatever cities happen to exist. `attachCentroids` fills it when it can.
+    //
+    // `source` is provenance and it is load-bearing: `registry` means the row
+    // came from the ISO-3166-1 table and is the same for every viewer;
+    // `profile` means no canonical country resolved and the row exists only
+    // because somebody typed it into `home_country`.
+    metadata: { lat: null, lng: null, source, countryCode },
+    createdAt: null,
+    startsAt: null,
+  };
+}
+
 /**
- * Countries — aggregated from active, non-private, non-blocked, non-discovery-opted-out profiles.
- * Same privacy model as cities.
+ * Countries — the canonical ISO-3166-1 registry, joined with the free-text
+ * names `profiles.home_country` carries that the registry cannot resolve.
+ *
+ * WHY THE REGISTRY LEG EXISTS (census-discovery B05 / GII G277)
+ * ============================================================
+ * This function used to aggregate `profiles.home_country` and nothing else, so
+ * the set of countries that EXISTED as a suggestion was a function of who had
+ * signed up: Iceland was not a country on this surface until an Icelander was.
+ * B05 is careful to call that a CONSTRUCTION defect rather than a leak — the
+ * read was and is opt-out filtered — and its stated blocker was that the fix
+ * "needs a canonical country registry Discovery does not own".
+ *
+ * That blocker is no longer true. `lib/countryCodes.ts` is ISO-3166-1 alpha-2
+ * with canonical English names, an alias index and a diacritic-insensitive
+ * fold; it is pure data with no I/O, it is in this package, and
+ * `lib/stamps/countryLookup.ts` already consumes it. Discovery consumes the
+ * SAME module rather than growing a second country list — the rule C32 and
+ * DC-24 exist to enforce, applied to names instead of ranking.
+ *
+ * THE PROFILE LEG IS KEPT, and keeping it is the point. A traveller may have
+ * typed a home country the ISO table has no row for. Dropping that row to make
+ * the function tidy would delete a real answer, so a free-text name the
+ * registry cannot resolve still lists, carrying `source: "profile"`.
+ *
+ * WHY A FAILED PRIVACY READ STILL REFUSES THE WHOLE BUCKET
+ * =======================================================
+ * The registry leg needs no privacy read, so the obvious next move is to serve
+ * it when `profiles` or `profile_privacy_settings` could not be read. It does
+ * not, and that is deliberate: a registry-only page is missing every free-text
+ * country only `profiles` knows, and a body that is short by an unknown amount
+ * is indistinguishable from a complete one. That is exactly the masquerade D11
+ * forbids — "we did not look" served as "we looked, and this is all there is".
+ * The bucket has one answer and one refusal; making half of it answerable
+ * would need an intra-bucket partial the response envelope does not have.
  */
 async function searchCountries(
   sc: any, q: string,
@@ -1432,16 +2165,31 @@ async function searchCountries(
         .eq("allow_profile_discovery", false),
     ]);
 
-    if (profileResult.error || !profileResult.data) return [];
-    // Fail-closed: unknown opt-out state → return nothing (location signals must not leak)
-    if (optOutResult.error) return [];
+    if (profileResult.error) throw new DiscoverySearchReadError("profiles", profileResult.error);
+    if (!profileResult.data) return [];
+    // Fail-closed: unknown opt-out state → return nothing (location signals must
+    // not leak). The DIRECTION was right and stays right — a refusal serves the
+    // same empty collection. What changes is that it SAYS so: `return []` alone
+    // was byte-identical to "no city matched", so a caller could not tell a
+    // privacy-preserving refusal from a search result, which is the masquerade
+    // D11 forbids whichever way the default leans.
+    if (optOutResult.error) throw new DiscoverySearchReadError("profile_privacy_settings", optOutResult.error);
     const optOutSet = new Set<string>(
       ((optOutResult.data as any[]) ?? []).map((r: any) => r.user_id as string),
     );
 
-    const seen = new Set<string>();
-    const results: SearchResult[] = [];
-    let skipped = 0;
+    // ── Leg 1: the canonical registry. Pure, viewer-independent, no I/O. ──────
+    // Asked for the whole page the caller could reach, because the offset is
+    // applied to the MERGED list below and not to either leg on its own.
+    const registry = searchCountryRegistry(q, offset + fetchLimit);
+    const takenCodes = new Set<string>(registry.map((m) => m.code));
+    const takenKeys = new Set<string>(registry.map((m) => m.name.toLowerCase()));
+    const merged: SearchResult[] = registry.map((m) => countryResult(m.name, "registry", m.code));
+
+    // ── Leg 2: free-text names the registry could not resolve. ───────────────
+    // Same privacy model as before, unchanged: blocked, age-restricted and
+    // discovery-opted-out profiles contribute nothing.
+    const tail: SearchResult[] = [];
     for (const p of (profileResult.data as any[])) {
       if (
         blockedSet.has(p.id as string) ||
@@ -1450,39 +2198,31 @@ async function searchCountries(
       ) continue;
       const country = ((p.home_country as string | null) ?? "").trim();
       if (!country) continue;
+      // A typed name the registry DOES know is the same country under a
+      // different spelling ("japan", "Holland"), so it folds into the canonical
+      // row instead of appearing beside it.
+      const code = toCountryCode(country);
+      if (code !== null && takenCodes.has(code)) continue;
       const key = country.toLowerCase();
-      if (seen.has(key)) continue;
-      seen.add(key);
-      if (skipped < offset) { skipped++; continue; }
-      results.push({
-        id: `country:${key}`,
-        type: "countries",
-        title: country,
-        subtitle: null,
-        avatarUrl: null,
-        imageUrl: null,
-        fallbackInitials: initials(country),
-        locationPreview: null,
-        matchedReason: null,
-        actionState: null,
-        privacyState: null,
-        accessState: { canAccess: true },
-        destinationRoute: `/country/${encodeURIComponent(country.toLowerCase())}`,
-        // Same contract as cities. `canonical_locations` models kind='country'
-        // (canonicalLocations.kindClass maps it to the admin class) but holds
-        // no country rows today, so in practice a country result carries a null
-        // position until the registry is seeded — a null the client reads as
-        // "not placeable", which is the honest answer rather than a centroid
-        // averaged out of whatever cities happen to exist.
-        metadata: { lat: null, lng: null, source: "profile" },
-        createdAt: null,
-        startsAt: null,
-      });
-      if (results.length >= fetchLimit) break;
+      if (takenKeys.has(key)) continue;
+      takenKeys.add(key);
+      if (code !== null) takenCodes.add(code);
+      tail.push(countryResult(country, "profile", code));
     }
+
+    // The registry head is ALREADY ranked, by rungs that know how each row was
+    // reached. The tail is not, so it is match-tier ranked here — the ordering
+    // `dispatchSearch` used to apply to the whole bucket, kept for the half it
+    // is still the right answer for.
+    merged.push(...rankByMatchTier(tail, q));
+
+    const results = merged.slice(offset, offset + fetchLimit);
     await attachCentroids(sc, results, CANONICAL_COUNTRY_KINDS);
     return results;
-  } catch {
+  } catch (err) {
+    // Everything this function already swallowed, it keeps swallowing. Only
+    // the named read error re-enters the route's catch arm and refuses.
+    if (err instanceof DiscoverySearchReadError) throw err;
     return [];
   }
 }
@@ -1520,10 +2260,35 @@ function searchStatic<T extends Exclude<SearchType, "all">>(
 
 // ── Single-type dispatch ───────────────────────────────────────────────────────
 
-// Exported (additive) as the single per-type candidate generator. The
-// input-assistance gateway calls INTO this (same per-type query + privacy +
-// ranking code paths) rather than forking a parallel search implementation.
-// The existing /discovery/search and /discovery/suggest handlers are unchanged.
+/**
+ * A single-type search plus what it could not read.
+ *
+ * `results` are REAL rows in every case — a degraded source removes rows from
+ * the answer, it never fabricates them. `degradedSources` empty means the
+ * answer is complete and its emptiness is trustworthy.
+ */
+export interface DispatchCoverage {
+  results: SearchResult[];
+  degradedSources: string[];
+}
+
+/**
+ * Exported (additive) as the single per-type candidate generator. The
+ * input-assistance gateway calls INTO this (same per-type query + privacy +
+ * ranking code paths) rather than forking a parallel search implementation.
+ *
+ * SIGNATURE DELIBERATELY UNCHANGED. This is now a thin projection of
+ * `dispatchSearchWithCoverage` onto its `results`, because the alternative —
+ * widening the return type — is a change across eighteen call sites and four
+ * censuses' citations for the benefit of the one caller that can act on the
+ * extra field. A caller that only wants rows keeps getting rows.
+ *
+ * WHAT THIS WRAPPER DROPS, SAID PLAINLY: the coverage. A caller of
+ * `dispatchSearch` cannot distinguish a complete answer from a partial one, and
+ * that is a real limitation of this form rather than an absence of the
+ * information. `GET /discovery/search` uses the coverage form below for exactly
+ * that reason. Anything that renders results to a person should too.
+ */
 export async function dispatchSearch(
   sc: any,
   q: string,
@@ -1533,6 +2298,57 @@ export async function dispatchSearch(
   type: Exclude<SearchType, "all">,
   offset: number,
   fetchLimit: number,
+  ctx?: SearchQueryContext,
+): Promise<SearchResult[]> {
+  const { results } = await dispatchSearchWithCoverage(
+    sc, q, userId, blockedSet, ageRestrictedSet, type, offset, fetchLimit, ctx,
+  );
+  return results;
+}
+
+/**
+ * The coverage-bearing form. Same search, same privacy gate, same ranking —
+ * it additionally reports which of the type's underlying tables could not be
+ * read, so a route can answer `coverage: "partial"` instead of serving a short
+ * list that looks whole.
+ *
+ * Only `saved` can be intra-type partial today, and that is a property of the
+ * data rather than of this function: it is the one type whose rows come from
+ * two independently-written tables, either of which can fail while the other
+ * answers. Every other type reads one corpus, so its failure is total and
+ * arrives as a `DiscoverySearchReadError` that the route turns into
+ * `coverage: "nothing"`. The `sink` is threaded through the switch rather than
+ * special-cased above it so that a second multi-source type acquires the
+ * behaviour by pushing into it, not by growing a second mechanism.
+ */
+export async function dispatchSearchWithCoverage(
+  sc: any,
+  q: string,
+  userId: string,
+  blockedSet: Set<string> | null,
+  ageRestrictedSet: Set<string> | null,
+  type: Exclude<SearchType, "all">,
+  offset: number,
+  fetchLimit: number,
+  ctx?: SearchQueryContext,
+): Promise<DispatchCoverage> {
+  const degradedSources: string[] = [];
+  const results = await dispatchOne(
+    sc, q, userId, blockedSet, ageRestrictedSet, type, offset, fetchLimit, degradedSources, ctx,
+  );
+  return { results, degradedSources };
+}
+
+async function dispatchOne(
+  sc: any,
+  q: string,
+  userId: string,
+  blockedSet: Set<string> | null,
+  ageRestrictedSet: Set<string> | null,
+  type: Exclude<SearchType, "all">,
+  offset: number,
+  fetchLimit: number,
+  degradedSink: string[],
   ctx?: SearchQueryContext,
 ): Promise<SearchResult[]> {
   // For location-aware types (travelers, events, trips, plans, buddies):
@@ -1555,7 +2371,10 @@ export async function dispatchSearch(
     }
     case "events": {
       const raw = await searchEvents(sc, q, userId, blockedSet, ageRestrictedSet, 0, pool, ctx);
-      return rankCombined(raw, q, ctx?.userCity, { upcomingFirst: true }).slice(offset, offset + fetchLimit);
+      // Trips §7.3 (TR133): after the match-tier ranking, the events that fit
+      // the trip's windows lead — a stable partition, so the ranking's order
+      // survives within each half. A no-op when no trip was in context.
+      return leadWithTripFit(rankCombined(raw, q, ctx?.userCity, { upcomingFirst: true })).slice(offset, offset + fetchLimit);
     }
     case "trips": {
       const raw = await searchTrips(sc, q, userId, blockedSet, ageRestrictedSet, 0, pool, ctx);
@@ -1566,6 +2385,13 @@ export async function dispatchSearch(
       return rankCombined(raw, q, ctx?.userCity, { upcomingFirst: true }).slice(offset, offset + fetchLimit);
     }
     case "places":      return searchPlaces(sc, q, blockedSet, offset, fetchLimit, ctx);
+    // Already ordered most-recently-saved-first inside the lane; rankByMatchTier
+    // is a stable sort, so an exact-name save still leads without losing that.
+    case "saved": {
+      const saved = await searchSaved(sc, q, userId, blockedSet, offset, fetchLimit);
+      for (const s of saved.degradedSources) if (!degradedSink.includes(s)) degradedSink.push(s);
+      return rankByMatchTier(saved.results, q);
+    }
     case "hidden_gems": return rankByMatchTier(await searchHiddenGems(sc, q, userId, blockedSet, ageRestrictedSet, offset, fetchLimit), q);
     case "hashtags":    return rankByMatchTier(await searchHashtags(sc, q, offset, fetchLimit),                                         q);
     case "posts":       return rankByMatchTier(await searchPosts(sc, q, userId, blockedSet, ageRestrictedSet, offset, fetchLimit),      q);
@@ -1573,7 +2399,16 @@ export async function dispatchSearch(
     case "stamps":      return rankByMatchTier(await searchStamps(sc, q, offset, fetchLimit),                                          q);
     case "activities":  return rankByMatchTier(await searchActivities(sc, q, blockedSet, offset, fetchLimit),                          q);
     case "cities":      return rankByMatchTier(await searchCities(sc, q, blockedSet, ageRestrictedSet, offset, fetchLimit),            q);
-    case "countries":   return rankByMatchTier(await searchCountries(sc, q, blockedSet, ageRestrictedSet, offset, fetchLimit),         q);
+    // Countries manage their own ordering, on `searchPlaces`' precedent two
+    // lines above, and the reason is a defect a test caught rather than a
+    // preference. `rankByMatchTier` scores the TITLE against the raw query, so
+    // it cannot see that a row was reached through an ALIAS: "United Kingdom"
+    // does not contain "uk", so every country a person names colloquially —
+    // uk, holland, bali, dubai — scored tier 0 and sorted behind any country
+    // whose spelling happened to contain the letters. `searchCountries` ranks
+    // the registry head by rungs that know how each row was reached, and
+    // match-tier ranks the free-text tail itself.
+    case "countries":   return searchCountries(sc, q, blockedSet, ageRestrictedSet, offset, fetchLimit);
     case "languages":   return rankByMatchTier(searchStatic(q, COMMON_LANGUAGES, "languages", "/language", offset, fetchLimit),        q);
     case "interests":   return rankByMatchTier(searchStatic(q, COMMON_INTERESTS, "interests", "/interest", offset, fetchLimit),        q);
     case "vibes":       return rankByMatchTier(searchStatic(q, COMMON_VIBES,     "vibes",     "/vibe",     offset, fetchLimit),        q);
@@ -1583,21 +2418,48 @@ export async function dispatchSearch(
 
 // ── type=all fan-out ───────────────────────────────────────────────────────────
 //
-// All 17 non-"all" types run in parallel at FAN_LIMIT items each.
+// 17 of the 18 non-"all" types run in parallel at FAN_LIMIT items each.
+//
+// `saved` is the one deliberately LEFT OUT. It is the only viewer-scoped type
+// — the person's own saves, not a public corpus — and this fan-out feeds the
+// app's ONE global search as well as the map's. Folding a private, always-
+// matching bucket into "All" would change what every other surface shows, and
+// what census-discovery and census-input-intelligence measure, for the sake of
+// one Map spec heading. Map search asks for it explicitly alongside `all`
+// instead (src/components/map/MapSearchSheet.tsx), which is a decision this
+// lane can make about its own surface. Whether "All" should include your saves
+// is an owner's call, not a side effect.
 // Results are merged round-robin so no type dominates the top.
 // The merged pool is sliced at [globalOffset, globalOffset+limit].
 // hasMore = pool.length > globalOffset + limit.
 
 const FAN_LIMIT = 20;
 
+/**
+ * The 17 buckets, in the exact order of the `settled` array below.
+ *
+ * A bucket that REJECTS is named from here rather than merely counted: "some of
+ * this answer is missing" without saying which part is not a usable answer
+ * either. These strings ride out on `refusal.failedSources`.
+ */
+const FAN_SOURCES = [
+  "travelers", "buddies", "events", "trips", "plans", "places", "hidden_gems",
+  "hashtags", "posts", "circles", "stamps", "activities", "cities", "countries",
+  "languages", "interests", "vibes",
+] as const;
+
 async function searchAll(
   sc: any, q: string, userId: string,
   blockedSet: Set<string> | null, ageRestrictedSet: Set<string> | null,
   globalOffset: number, limit: number,
   ctx?: SearchQueryContext,
-): Promise<{ results: SearchResult[]; hasMore: boolean; nextCursor: string | null }> {
+): Promise<{
+  results: SearchResult[]; hasMore: boolean; nextCursor: string | null;
+  /** Buckets whose read FAILED. Empty on the healthy path. */
+  unreadableSources: string[];
+}> {
   if (blockedSet === null || ageRestrictedSet === null) {
-    return { results: [], hasMore: false, nextCursor: null };
+    return { results: [], hasMore: false, nextCursor: null, unreadableSources: [] };
   }
 
   const settled = await Promise.allSettled([
@@ -1626,9 +2488,24 @@ async function searchAll(
   // searchPlaces already handles its own ordering — re-ranking by title here is still
   // OK for the "all" tab because diversity matters more than proximity when mixing types.
   // upcomingFirst is a no-op for types without startsAt (travelers, places, etc.)
-  const rawBuckets: SearchResult[][] = settled.map((r) => {
-    const items = r.status === "fulfilled" ? r.value : [];
-    return rankCombined(items, q, ctx?.userCity, { upcomingFirst: true });
+  // A REJECTED bucket used to become `[]` right here, and that `[]` then merged
+  // into the answer indistinguishably from a bucket that was read and matched
+  // nothing. `DiscoverySearchReadError` exists precisely so a swallowed
+  // supabase-js read error re-enters the route's catch arm and becomes a
+  // refusal — and `Promise.allSettled` catches it before that arm ever sees it.
+  // So `type=all`, which is the DEFAULT type and what the global search bar
+  // sends, answered `200 { results: [...] }` with a silently missing bucket and
+  // no refusal on it: D11's masquerade, on the route where a user is most
+  // likely to meet it. The names go out on the refusal instead.
+  const unreadableSources: string[] = [];
+  const rawBuckets: SearchResult[][] = settled.map((r, i) => {
+    if (r.status !== "fulfilled") {
+      const source = FAN_SOURCES[i] ?? `bucket_${i}`;
+      logger.warn({ err: r.reason, source }, "discovery/search type=all: source unreadable");
+      unreadableSources.push(source);
+      return [];
+    }
+    return rankCombined(r.value, q, ctx?.userCity, { upcomingFirst: true });
   });
 
   // ── Intent-category promotion ─────────────────────────────────────────────
@@ -1668,7 +2545,7 @@ async function searchAll(
   const page = merged.slice(globalOffset, globalOffset + limit);
   const hasMore = merged.length > globalOffset + limit;
   const nextCursor = hasMore ? encodeCursor(globalOffset + limit) : null;
-  return { results: page, hasMore, nextCursor };
+  return { results: page, hasMore, nextCursor, unreadableSources };
 }
 
 // ── Route handler ─────────────────────────────────────────────────────────────
@@ -1752,7 +2629,12 @@ router.get("/discovery/search", async (req, res) => {
   const rawIntentSafety   = typeof req.query.intentSafety       === "string" ? req.query.intentSafety.trim()       : null;
   const rawIntentLocHint  = typeof req.query.intentLocationHint === "string" ? req.query.intentLocationHint.trim() : null;
 
+  // Trips §7.3 (TR133): a trip in context, for the event results. UUID or nothing.
+  const rawTripId = typeof req.query.tripId === "string" ? req.query.tripId.trim() : "";
+  const ctxTripId = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(rawTripId) ? rawTripId : null;
+
   const ctx: SearchQueryContext = {
+    tripId: ctxTripId,
     lat,
     lng,
     tz,
@@ -1789,17 +2671,34 @@ router.get("/discovery/search", async (req, res) => {
   }
 
   try {
-    // Fail-closed: unknown block or age-restriction state → return empty results, never leak content
+    // Fail-closed: unknown block or age-restriction state → serve NOTHING, never
+    // leak content. `fetchBlockedSet` returns null for "could not be read", not
+    // for "there are none", and the two must not be confused.
+    //
+    // D11: the fail-closed DIRECTION was always right and is unchanged. What was
+    // wrong is that it was SILENT — the per-type search functions collapse a null
+    // set to [], so a transient blocks-table failure left this route answering
+    // `200 { results: [] }`, the same body it gives a query that genuinely
+    // matches nothing. The read is refused explicitly now, so the caller is told
+    // the difference instead of being handed a search result that is not one.
     const [blockedSet, ageRestrictedSet] = await Promise.all([
       fetchBlockedSet(sc, user.id),
       fetchAgeRestrictedSet(sc),
     ]);
+    if (!blockedSet || !ageRestrictedSet) {
+      sendDiscoveryRefusal(
+        res,
+        { results: [], nextCursor: null, hasMore: false, query: effectiveQ, type, timeLabel: ctx.timeLabel },
+        discoveryRefusal("transient_db", "visibility_state_unreadable", "GET /discovery/search"),
+      );
+      return;
+    }
 
     // Stage 0b — serve point 8. Search ranks nothing and logs nothing today; a
     // grep of this file for rankCandidates / rankItemsForDiscovery /
     // drsRankItems / logImpression returns nothing at all.
     const logSearchServe = (results: SearchResult[]) => {
-      void logDiscoveryServe(sc, {
+      logServeUnlessRefused(res, sc, {
         userId: user.id,
         servePoint: DiscoveryServePoint.SEARCH,
         route: "GET /discovery/search",
@@ -1809,22 +2708,83 @@ router.get("/discovery/search", async (req, res) => {
     };
 
     if (type === "all") {
-      const { results, hasMore, nextCursor } = await searchAll(sc, effectiveQ, user.id, blockedSet, ageRestrictedSet, offset, limit, ctx);
-      res.status(200).json({ results, nextCursor, hasMore, query: effectiveQ, type, timeLabel: ctx.timeLabel });
+      const { results, hasMore, nextCursor, unreadableSources } =
+        await searchAll(sc, effectiveQ, user.id, blockedSet, ageRestrictedSet, offset, limit, ctx);
+      const body = { results, nextCursor, hasMore, query: effectiveQ, type, timeLabel: ctx.timeLabel };
+      if (unreadableSources.length > 0) {
+        // "partial" as long as ANY source answered, even when this page happens
+        // to be empty: the buckets that were read are a real result, and their
+        // emptiness is trustworthy. Only a fan-out where every source failed
+        // carries "nothing" — an empty collection that is empty BECAUSE of the
+        // failure, which is what that word means. `failedSources` says which
+        // absences are not evidence of absence.
+        sendDiscoveryRefusal(
+          res,
+          body,
+          discoveryRefusal(
+            "transient_db", "search_sources_unreadable", "GET /discovery/search",
+            unreadableSources.length === FAN_SOURCES.length ? "nothing" : "partial",
+            unreadableSources,
+          ),
+        );
+      } else {
+        res.status(200).json(body);
+      }
+      // Not suppressed on a partial: those items really were served, and
+      // dropping them would under-count exposure — see logServeUnlessRefused.
       logSearchServe(results);
     } else {
       // Fetch limit+1 to detect hasMore without false positives
       const fetchLimit = limit + 1;
-      const raw = await dispatchSearch(sc, effectiveQ, user.id, blockedSet, ageRestrictedSet, type, offset, fetchLimit, ctx);
+      const { results: raw, degradedSources } =
+        await dispatchSearchWithCoverage(sc, effectiveQ, user.id, blockedSet, ageRestrictedSet, type, offset, fetchLimit, ctx);
       const hasMore = raw.length > limit;
       const results = raw.slice(0, limit);
       const nextCursor = hasMore ? encodeCursor(offset + limit) : null;
-      res.status(200).json({ results, nextCursor, hasMore, query: effectiveQ, type, timeLabel: ctx.timeLabel });
+      const body = { results, nextCursor, hasMore, query: effectiveQ, type, timeLabel: ctx.timeLabel };
+      if (degradedSources.length > 0) {
+        // INTRA-TYPE PARTIAL. The `type=all` branch above has carried this since
+        // 2026-09-14 for a whole bucket that failed; this is the same statement
+        // one level down, for a table that failed INSIDE a bucket.
+        //
+        // `saved` is why it exists and is the only type that can reach it today:
+        // its rows come from `wishlist_places` and `discovery_place_saves`, two
+        // tables written by two paths that never write each other's, so one can
+        // fail while the other answers. Before this, that answered
+        // `200 { results: [...] }` with no `refusal` — a SHORT shelf presented
+        // as a WHOLE one, on the single search heading whose contents the person
+        // knows for a fact, because they are their own saves. Silence there is
+        // not a small defect: it is the `11` §9 masquerade with some rows in
+        // front of it, which is harder to notice than the empty version.
+        //
+        // "partial", never "nothing": rows WERE served and they are real.
+        // Refusing whole here would be the untruth in the opposite direction,
+        // and the total-outage case already has its own throw in `searchSaved`.
+        sendDiscoveryRefusal(
+          res,
+          body,
+          discoveryRefusal(
+            "transient_db", "search_sources_unreadable", "GET /discovery/search",
+            "partial", degradedSources,
+          ),
+        );
+      } else {
+        res.status(200).json(body);
+      }
+      // Not suppressed on a partial, for the same reason the `all` branch is
+      // not: those items really were served, and dropping them from the serve
+      // log would under-count exposure.
       logSearchServe(results);
     }
   } catch (err) {
     logger.warn({ err, q: effectiveQ, type }, "discovery/search failed");
-    res.status(200).json({ results: [], nextCursor: null, hasMore: false, query: effectiveQ, type, timeLabel: null });
+    // D11 / `11` §9. Same body as before plus the one key that tells the caller
+    // this is a failure and not a search that found nothing.
+    sendDiscoveryRefusal(
+      res,
+      { results: [], nextCursor: null, hasMore: false, query: effectiveQ, type, timeLabel: null },
+      discoveryRefusal("transient_db", "search_failed", "GET /discovery/search"),
+    );
   }
 });
 
@@ -1947,7 +2907,18 @@ router.get("/discovery/suggest", async (req, res) => {
   const isHandleQuery = rawInput.startsWith("@");
   const q = sanitizeQuery(applyAliases(isHandleQuery ? rawInput.slice(1) : rawInput)).slice(0, 80);
   if (q.length < 2) {
-    res.status(200).json({ query: q, groups: [] });
+    // `11` §9 class 1, VALIDATION — and the one place in this lane where a
+    // validation refusal is NOT a 4xx. This fires on every keystroke of a
+    // typeahead; a 400 here would turn normal typing into a stream of client
+    // errors, and the input is not invalid, it is merely not yet enough. So the
+    // 200 stays and the refusal names why the groups are empty. Contrast
+    // /discovery/search, whose `q` is a required parameter and whose
+    // `invalid_payload` 400 is left exactly as it is.
+    sendDiscoveryRefusal(
+      res,
+      { query: q, groups: [] },
+      discoveryRefusal("validation", "query_too_short", "GET /discovery/suggest"),
+    );
     return;
   }
 
@@ -1984,7 +2955,16 @@ router.get("/discovery/suggest", async (req, res) => {
       fetchAgeRestrictedSet(sc),
     ]);
     if (!blockedSet || !ageRestrictedSet) {
-      res.status(200).json({ query: q, groups: [] });
+      // D11: the early return and its fail-closed direction are unchanged; only
+      // the silence is fixed. This body used to be byte-identical to the two
+      // others this route can send (too-short query, and the catch below), which
+      // is the row C14 certified as correct and the owner's D11 ruling
+      // supersedes.
+      sendDiscoveryRefusal(
+        res,
+        { query: q, groups: [] },
+        discoveryRefusal("transient_db", "visibility_state_unreadable", "GET /discovery/suggest"),
+      );
       return;
     }
 
@@ -1993,10 +2973,20 @@ router.get("/discovery/suggest", async (req, res) => {
       ? SUGGEST_PLAN.filter((p) => p.type === "travelers" || p.type === "buddies")
       : SUGGEST_PLAN;
 
+    // The same back door `searchAll` had: a REJECTED type became an empty group,
+    // indistinguishable from a type that was read and matched nothing, so a
+    // typeahead could lose a whole category to an outage and say nothing about
+    // it. Collected by PLAN INDEX rather than pushed, so the names come out in
+    // plan order however the parallel reads finish.
+    const unreadableAt = new Array<string | null>(plan.length).fill(null);
     const [typedResults, canonicalRows] = await Promise.all([
-      Promise.all(plan.map((p) =>
+      Promise.all(plan.map((p, i) =>
         dispatchSearch(sc, q, user.id, blockedSet, ageRestrictedSet, p.type, 0, p.limit, ctx)
-          .catch(() => [] as SearchResult[]),
+          .catch((err: unknown) => {
+            logger.warn({ err, type: p.type, q }, "discovery/suggest: type unreadable");
+            unreadableAt[i] = p.type;
+            return [] as SearchResult[];
+          }),
       )),
       isHandleQuery
         ? Promise.resolve([] as CanonicalRow[])
@@ -2022,13 +3012,28 @@ router.get("/discovery/suggest", async (req, res) => {
     });
 
     const servedGroups = orderSuggestGroups(groups, q).slice(0, MAX_SUGGEST_GROUPS);
-    res.status(200).json({
-      query: q,
-      groups: servedGroups,
-    });
+    const unreadableTypes = unreadableAt.filter((t): t is string => t !== null);
+    const body = { query: q, groups: servedGroups };
+    if (unreadableTypes.length > 0) {
+      // "partial" while ANY type answered: those groups are real, and
+      // `useSearchSuggestions` renders and caches a partial for exactly that
+      // reason while refusing to cache a "nothing". Only a fan-out where every
+      // type failed carries "nothing".
+      sendDiscoveryRefusal(
+        res,
+        body,
+        discoveryRefusal(
+          "transient_db", "suggest_sources_unreadable", "GET /discovery/suggest",
+          unreadableTypes.length === plan.length ? "nothing" : "partial",
+          unreadableTypes,
+        ),
+      );
+    } else {
+      res.status(200).json(body);
+    }
     // Stage 0b — serve point 9. Flattened in the order the groups are served,
     // so `position` reflects what the user actually saw top to bottom.
-    void logDiscoveryServe(sc, {
+    logServeUnlessRefused(res, sc, {
       userId: user.id,
       servePoint: DiscoveryServePoint.SUGGEST,
       route: "GET /discovery/suggest",
@@ -2039,8 +3044,99 @@ router.get("/discovery/suggest", async (req, res) => {
     });
   } catch (err) {
     logger.warn({ err, q }, "discovery/suggest failed");
-    res.status(200).json({ query: q, groups: [] });
+    sendDiscoveryRefusal(
+      res,
+      { query: q, groups: [] },
+      discoveryRefusal("transient_db", "suggest_failed", "GET /discovery/suggest"),
+    );
+  }
+});
+
+// ── GET /api/discovery/people/:userId/passport ────────────────────────────────
+//
+// §21 TABLE 22, Discovery row: "identity, verification, availability, Open to
+// Plans, shared context, permitted trust summary". That is the discovery_card
+// variant verbatim, so this route builds NOTHING — it authorises the request and
+// returns what the one Passport assembler produced for this viewer (§35).
+//
+// The search list above ranks people; this is the card one of those rows opens.
+// The two agree by construction: the same subject the list withholds
+// (`allow_profile_discovery = false`, or age-restricted) is refused here by the
+// shared gate, and blocking / account status are settled inside the assembler,
+// which answers a blocked relationship with the variant's restricted shape
+// rather than a 404 — the client must not be able to tell "blocked" from
+// "does not exist" by the status code.
+router.get("/discovery/people/:userId/passport", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const { userId } = req.params;
+  if (!/^[0-9a-f-]{36}$/i.test(userId)) {
+    sendError(res, "invalid_payload", "Invalid user id");
+    return;
+  }
+
+  const rl = checkRateLimit("discovery_person_card", user.id, 60, 60_000);
+  if (!rl.allowed) {
+    res.setHeader("Retry-After", Math.ceil(rl.retryAfterMs / 1000).toString());
+    sendError(res, "rate_limited", "Too many requests. Please wait.");
+    return;
+  }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  const gate = await allowDiscoveryPersonCard(sc, userId);
+  if (!gate.allowed) { sendError(res, "not_found", "User not found"); return; }
+
+  try {
+    const passport = await buildConsumerProjection(sc, "discovery_card", userId, user.id);
+    if (!passport) { sendError(res, "not_found", "User not found"); return; }
+    res.status(200).json({ passport });
+  } catch (err) {
+    logger.warn({ err, userId }, "discovery person card projection failed");
+    sendError(res, "db_error", "Could not load person card");
   }
 });
 
 export default router;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// A read this file MUST NOT answer with an empty list.
+//
+// DECLARED HERE, AT THE END OF THE FILE, ON PURPOSE. 37 census rows and four
+// sibling censuses cite `routes/discoverySearch.ts` by line. Declaring this
+// type next to its use shifted 79 of those anchors, and repointing 79
+// citations across documents this lane does not own — to fix a defect in one
+// function — is a worse trade than one out-of-place declaration. Class bodies
+// are evaluated at module load and this one is referenced only from a request
+// handler, so the ordering is a reading inconvenience and not a TDZ hazard.
+//
+// WHAT IT IS FOR. Every per-type search function in this file swallows its own
+// failures and returns `[]`. For most of them the DIRECTION is a deliberate
+// fail-closed choice and is right. What it costs is the one thing owner ruling
+// D11 and `11` §9 forbid: that `[]` is byte-identical to the `[]` a query which
+// genuinely matched nothing produces, so the route answers `200 { results: [] }`
+// for an outage, with no `refusal` on it.
+//
+// supabase-js RESOLVES on a read failure. A discarded `error` therefore does not
+// throw, never reaches the route's catch arm, and never becomes a refusal — the
+// masquerade arrives through the back door of a destructure rather than through
+// the front door the refusal envelope guards.
+//
+// Throwing this type is how such a read re-enters the front door: the route's
+// catch arm answers it with `transient_db` / `search_failed` and
+// `coverage: "nothing"`, which is the truth. It is a NAMED type rather than a
+// bare Error so the per-type catch arms keep swallowing everything they already
+// swallowed and re-raise only this.
+// ─────────────────────────────────────────────────────────────────────────────
+export class DiscoverySearchReadError extends Error {
+  /** The relation that could not be read, for the log and the alert. */
+  readonly relation: string;
+  constructor(relation: string, cause?: unknown) {
+    super(`discovery search: ${relation} could not be read`, { cause });
+    this.name = "DiscoverySearchReadError";
+    this.relation = relation;
+  }
+}

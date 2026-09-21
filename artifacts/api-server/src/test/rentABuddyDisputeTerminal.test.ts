@@ -80,6 +80,8 @@ function makeClient() {
       _filters:     [] as Array<[string, string, any]>,
       _insertData:  null as any,
       _updateData:  null as any,
+      _inFilters:   [] as Array<[string, any[]]>,
+      _isDelete:    false,
       _maybeSingle: false,
       _limit:       1000,
 
@@ -94,6 +96,10 @@ function makeClient() {
       // unused filter helpers needed by the router internals
       or()                    { return this; },
       lte()                   { return this; },
+      // `.in("status", […])` — the booking transitions are compare-and-set:
+      // the required source status rides in the same UPDATE as the write.
+      in(col: string, vals: any[]) { this._inFilters.push([col, vals]); return this; },
+      delete()                { this._isDelete = true; return this; },
 
       async then(resolve: (v: any) => void) {
         const result = await this._resolve();
@@ -111,13 +117,31 @@ function makeClient() {
           return { data: null, error: null };
         }
 
+        // A DELETE. Reached by /dispute's orphan cleanup when its
+        // compare-and-set matched nothing.
+        if (this._isDelete) {
+          if (t === "rent_buddy_disputes") {
+            const eqId = this._filters.find(([, col]) => col === "id");
+            if (eqId) state.disputes = state.disputes.filter((d: any) => d.id !== eqId[2]);
+          }
+          return { data: null, error: null };
+        }
+
         if (this._updateData !== null) {
           if (t === "rent_buddy_bookings") {
-            for (const [, col, val] of this._filters) {
-              if (col === "id" && state.bookings[val]) {
-                Object.assign(state.bookings[val], this._updateData);
-              }
-            }
+            // PostgREST applies EVERY predicate and, when the statement is
+            // RETURNING, answers with the rows it CHANGED. Honouring only
+            // `.eq("id")` and always answering `{data: null}` made a
+            // compare-and-set that matched nothing look exactly like one that
+            // applied — the ambiguity the CAS exists to remove.
+            const eqId = this._filters.find(([, col]) => col === "id");
+            const row: any = eqId ? state.bookings[eqId[2]] ?? null : null;
+            const matches = !!row
+              && this._filters.every(([, col, val]) => col === "id" || row[col] === val)
+              && this._inFilters.every(([col, vals]) => vals.includes(row[col]));
+            if (!matches) return { data: this._maybeSingle ? null : [], error: null };
+            Object.assign(row, this._updateData);
+            return { data: this._maybeSingle ? { id: row.id } : [{ id: row.id }], error: null };
           }
           return { data: null, error: null };
         }

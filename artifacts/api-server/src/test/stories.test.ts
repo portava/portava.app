@@ -21,6 +21,37 @@ import { _setTestClient } from "../lib/http.js";
 interface Row { [k: string]: any; }
 interface FakeTable { rows: Row[]; nextInsertError?: string; }
 
+
+/**
+ * Evaluate a PostgREST `or(...)` body against one row. Understands the two
+ * forms these routes emit: top-level `col.op.val` alternatives and
+ * `and(col.op.val,col.op.val)` conjunctions of them.
+ */
+function orMatches(expr: string, row: Row): boolean {
+  const split = (s: string): string[] => {
+    const out: string[] = []; let depth = 0, cur = "";
+    for (const ch of s) {
+      if (ch === "(") depth++;
+      if (ch === ")") depth--;
+      if (ch === "," && depth === 0) { out.push(cur); cur = ""; continue; }
+      cur += ch;
+    }
+    if (cur.trim()) out.push(cur);
+    return out.map((x) => x.trim()).filter(Boolean);
+  };
+  const one = (c: string): boolean => {
+    const and = c.match(/^and\((.*)\)$/s);
+    if (and) return split(and[1]).every(one);
+    const m = c.match(/^(\w+)\.(\w+)\.(.*)$/s);
+    if (!m) return false;
+    const [, col, op, val] = m;
+    if (op === "is") return (row[col] ?? null) === (val === "null" ? null : val);
+    if (op === "gt") return String(row[col] ?? "") > val;
+    return String(row[col]) === val;
+  };
+  return split(expr).some(one);
+}
+
 function makeFakeClient(tables: Record<string, FakeTable> = {}) {
   const db: Record<string, FakeTable> = {
     feature_flags:    tables.feature_flags    ?? { rows: [{ flag: "stories_enabled", enabled: true }] },
@@ -108,6 +139,13 @@ function makeFakeClient(tables: Record<string, FakeTable> = {}) {
       lt(col: string, val: any)    { filtered = filtered.filter((r) => r[col] < val); return obj; },
       gte(col: string, val: any)   { filtered = filtered.filter((r) => r[col] >= val); return obj; },
       lte(col: string, val: any)   { filtered = filtered.filter((r) => r[col] <= val); return obj; },
+      // PostgREST `.or(...)`. Needed since the story block check became
+      // lib/blockGuard's single `.or(and(...),and(...)).limit(1)` query — one
+      // query instead of two `.maybeSingle()` reads, because a MUTUAL block is
+      // two rows and `.maybeSingle()` raised on them, making the STRONGEST
+      // block state read as "not blocked". Without this method the route throws
+      // and a crash-500 would be mistaken for a refusal.
+      or(expr: string)             { filtered = filtered.filter((r) => orMatches(expr, r)); return obj; },
       is(col: string, val: any)    { filtered = filtered.filter((r) => val === null ? r[col] == null : r[col] === val); return obj; },
       ilike(col: string, pat: string) {
         const re = new RegExp(pat.replace(/%/g, ".*"), "i");

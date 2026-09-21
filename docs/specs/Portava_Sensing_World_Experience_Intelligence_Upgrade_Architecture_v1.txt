@@ -1,0 +1,275 @@
+
+PORTAVA
+Sensing + World / Experience Intelligence
+Upgrade Architecture for Developers
+UPGRADE, DO NOT REBUILD
+This design extends Portava's existing intelligence, map, discovery, wall, Compass, Trips, Telegraph, Memories, safety, and projection infrastructure. Existing canonical tables, lifecycle states, RLS, outbox/event patterns, feature gates, projections, and proven production paths are to be reused wherever they already satisfy the contract.
+Developer architecture v1.0 · September 2026
+
+1. Non-Negotiable Upgrade Directive
+Claude must treat this work as a compatibility-preserving upgrade of the existing Portava architecture. Do not replace working systems with parallel substitutes. Do not introduce a second lifecycle, a second place identity, a second social presence model, or a second intelligence truth store merely because the new feature needs richer signals.
+PRIMARY RULEEXISTING PORTAVA      +NEW SENSING / WORLD-EXPERIENCE INTELLIGENCE      ↓EXTEND CANONICAL CONTRACTS      ↓ADD NARROW NEW PRIMITIVES ONLY WHERE NO CANONICAL OWNER EXISTS      ↓MIGRATE CONSUMERS INCREMENTALLY      ↓CERTIFY BEHAVIOR
+Inspect the real repository, migrations, schema, enums, feature flags, schedulers, RLS, services, projections and tests before changing anything.
+Never invent columns, enums, foreign keys or authority models.
+Never semantically substitute one domain ID for another.
+Preserve null / unknown when canonical fact is unavailable.
+Do not weaken existing privacy, authorization, safety or GPS stripping to make the feature easier.
+Do not mass-fix unrelated architecture during this upgrade.
+Prefer stacked, reviewable PRs and mutation-proven tests over a large rewrite.
+Existing Map / Discovery / Wall / Compass paths must continue to function while new projections are partial or feature-gated.
+2. Product Thesis
+Portava should learn about places, crowds and experiences from many small privacy-reduced contributions without building a permanent movement history of individuals.
+DEVICE SIGNALS   ↓PRIVACY-REDUCED CONTRIBUTIONS   ↓PRESENCE / FLOW / CROWD / VIBE   ↓WORLD + EXPERIENCE STATE   ↓FORECAST / OPPORTUNITY / SAFETY EVIDENCE   ↓MAP · DISCOVERY · WALL · COMPASS · TRIPS · LAYOVER · TELEGRAPH   ↓EXPERIENCE SESSION   ↓OUTCOME / MEMORY / CALIBRATION
+Hard semantic separations:
+Busy ≠ good.
+Crowded ≠ unsafe.
+Rapid movement ≠ dancing.
+Inference ≠ observation.
+Prediction ≠ current truth.
+No coverage ≠ quiet.
+User dislike ≠ bad venue.
+One device ≠ a crowd.
+Promotional claim ≠ observed reality.
+World anomaly ≠ safety incident.
+3. Privacy and Identity Architecture
+Encryption is required but is not sufficient. The World Intelligence path should avoid receiving permanent identity-linked raw signals whenever possible. Social location features may require identity; intelligence contribution does not.
+                   DEVICE LOCATION / MOTION                           │             ┌─────────────┴─────────────┐             ↓                           ↓      SOCIAL / PERSONAL             WORLD INTELLIGENCE      purpose-specific              privacy-reduced      identity may exist            no permanent user FK             │                           │      Trip / Friends / Buddy        on-device preprocessing             │                           ↓      separate policy              short-lived credential                                         ↓                                rotating contribution ID                                         ↓                                      ingest                                         ↓                              privacy / cohort gate                                         ↓                                    aggregate
+Required security properties:
+TLS in transit and encrypted storage at rest.
+Short-lived rotating contribution identifiers; no stable anonymous identifier that becomes a tracking identity.
+World-intelligence contribution records should not carry a permanent profiles.id / account user_id foreign key unless a narrowly justified, reviewed security requirement proves it necessary.
+Separate contribution eligibility/authentication from signal ingest where practical: eligibility proves an authorized participating device; ingest receives an opaque short-lived credential.
+Raw precise location should be reduced on-device or inside a narrow trusted boundary as early as practical.
+Sensitive-location suppression, rare-path suppression, cohort thresholds, anti-differencing controls and minimum independence requirements.
+Purpose-scoped authorization: collect, retain, aggregate, infer, personalize, surface and share are distinct permissions/policies.
+Raw contribution retention is short; aggregated/de-identified state may live longer according to explicit policy.
+Social location data never silently becomes anonymous crowd intelligence, and anonymous crowd contributions never silently become social location.
+4. Sensing System Architecture
+4.1 Device sensing boundary
+The device is the first privacy boundary. Prefer feature extraction over uploading raw continuous streams.
+RAW DEVICE INPUTS (where OS permission and policy allow)- location- motion / accelerometer-derived features- speed / heading- dwell / transition timing- optional proximity primitives- optional coarse acoustic energy/rhythm ONLY under separate explicit permission              ↓ ON DEVICENORMALIZED SIGNAL FEATURES- spatial bucket / canonical-place candidate- temporal bucket- movement_state- motion_energy- periodicity- dwell_bucket- arrival / departure transition- transport-mode likelihood- confidence / sensor health
+4.2 Contribution session
+Use the existing consent / feature architecture where possible, but introduce a canonical contribution-session contract if no equivalent exists. It should represent authorization and sampling policy, not world truth.
+IntelligenceContributionSession- session_id- opaque / rotating contribution credential- purpose_scopes- foreground_or_background- precision_ceiling- sampling_policy- retention_policy- privacy_budget- starts_at- expires_at- revoked_at?- client_capability/version
+Do not add this table blindly. First search for existing route-flow contribution consent, location consent, session or device authorization structures and extend/reconcile rather than duplicate.
+4.3 Signal ingest
+DEVICE  ↓Contribution Eligibility / Credential  ↓Signal Ingest API  ↓Schema validation  ↓Replay / idempotency protection  ↓Precision reduction / canonical-place or zone assignment  ↓Privacy eligibility  ↓Short-lived contribution store  ↓Aggregation
+Ingest must fail explicitly on schema/permission/infrastructure failure; never return a plausible empty world.
+Rate-limit and anti-replay per credential/device security boundary.
+Reject impossible timestamps, malformed precision, invalid purpose scopes and stale credentials.
+Do not put precise GPS in canonical event payloads. Use canonical IDs, coarse references and privacy-reduced derivatives.
+4.4 Aggregation and independence
+Portava must reason about independent evidence, not raw device count. Correlated devices moving together can overstate crowd confidence.
+CONTRIBUTIONS   ↓correlation / independence grouping   ↓cohort threshold   ↓spatial + temporal aggregation   ↓coverage estimate   ↓aggregate observation
+One person/device never becomes 'crowd'.
+A Trip crew, tour group, bus or duplicated devices should not necessarily count as independent confirmations.
+Track coverage separately from estimated activity.
+Aggregate flow publication must suppress rare origin→destination paths.
+5. Intelligence Engines
+These are shared platform engines. Product surfaces consume projections; they do not reimplement the logic.
+Engine
+Owns
+Must Not Claim
+Primary Output
+Presence
+confidence that activity exists in a place/zone
+public person identity
+PresenceObservation / coverage
+Crowd
+density / momentum / arrival-departure balance
+safety or quality
+CrowdState
+Flow
+aggregate movement between areas
+individual trajectory
+FlowState / edges
+Vibe
+energy/social/dance-likelihood inference
+literal behavior without sufficient evidence
+VibeState
+Experience
+combined venue/event quality-of-now state
+personal preference as world truth
+ExperienceState
+World Dynamics
+change, anomalies, hotspots, neighborhood/city rhythm
+cause when unknown
+WorldState / WorldMoment
+Forecast
+future state with calibration
+observed current fact
+ForecastState
+Opportunity
+user-specific action relevance
+canonical world truth
+OpportunityProjection
+5.1 Canonical truth classes
+OBSERVEDCORROBORATEDINFERREDPREDICTEDCONFLICTINGSTALEUNKNOWN
+Every server-built state consumed by Map / Discovery / Wall / Compass should carry truth class, confidence, freshness and coverage. Prediction must never be rendered indistinguishably from observation.
+5.2 Vibe inference
+candidate signals:motion_energy+ movement periodicity+ bounded spatial movement+ dwell+ arrival velocity+ departure velocity+ density+ event / venue context+ optional user observations+ optional explicitly-permitted acoustic energy features              ↓VibeState- energy- sociality- dance_likelihood- volatility- momentum- scene/context tags where legitimately sourced- confidence- coverage- freshness- provenance summary
+Example: high periodic motion + bounded movement + long dwell + nightclub context may increase dance_likelihood. It does not authorize the statement 'everyone is dancing.'
+5.3 Experience state
+ExperienceState├── Crowd│   ├── density│   ├── momentum│   └── flow├── Vibe│   ├── energy│   ├── sociality│   ├── dance_likelihood│   └── momentum├── Behavior│   ├── dwell│   ├── stickiness│   ├── conversion│   └── departures├── Friction│   ├── queue│   ├── access│   ├── wait│   └── transport├── Dynamics│   ├── heating_up│   ├── peaking│   ├── cooling│   └── anomaly└── Truth    ├── confidence    ├── coverage    ├── freshness    └── provenance
+5.4 Experience session
+This is the bridge between recommendation/action and outcome. It is not a raw tracking history.
+WORLD STATE    ↓OPPORTUNITY    ↓ACTION    ↓EXPERIENCE SESSION    ↓OUTCOME    ↓MEMORY / CALIBRATION (when permitted)
+6. Platform Integration Contract
+CANONICAL ENTITIES        +WORLD / EXPERIENCE STATE        +USER / TRIP / SOCIAL CONTEXT        +SAFETY / POLICY        ↓CONTEXT KERNEL        ↓OPPORTUNITY ENGINE        ↓FEATURE-SPECIFIC PROJECTIONS        ↓MAP · DISCOVERY · WALL · HOME · COMPASS · TRIPS · LAYOVER · TELEGRAPH
+Feature clients and React components must not independently calculate crowd, vibe, safety, opportunity, experience value or world-change state.
+7. Required Tweaks: Map
+Keep current Map layer census and fallback behavior for compatibility; do not rewrite the Map gateway.
+Add server-built ExperienceState to place/event Map projections rather than separate overlapping vibe pins.
+Promote world_pulse into meaningful transient world-change projections: heating up, forming, moving, clearing, unexpected activity, event spillover, traveler surge.
+Render crowd_flow / traveler_flow primarily as privacy-safe directional geometry rather than ordinary pins.
+Add TemporaryWorldObject only if no existing canonical temporary-object contract exists; do not fake permanent Place rows for transient clusters.
+Add semantic zoom: city→neighborhood/world dynamics; district→hotspots/flows; place→vibe/crowd/queue.
+Add truth/freshness/coverage metadata and visually distinguish predicted from observed state.
+Add display resolver / clutter budget so safety, mode, zoom, user intent and relevance decide what renders.
+Safety constraints outrank opportunity/vibe. A dangerous place must never simultaneously be promoted as 'best move now.'
+Map remains a projection consumer, never owner of world truth.
+8. Required Tweaks: Discovery
+Discovery becomes 'what is worth considering now or soon,' not merely static relevance/popularity.
+Rank using live ExperienceState, forecast, travel time, friction, compatibility, freshness, safety and Opportunity value.
+Keep search/retrieval truth separate from recommendation ranking; a quiet venue still exists in search.
+Introduce server-built DiscoveryCandidate / projection with why-now, why-for-user, confidence, freshness and truth class.
+Strengthen Hidden Gems with behavioral evidence such as stickiness, conversion, organic arrivals and repeat activity, but create candidates—not automatic canonical gems.
+Support intent modes using the same shared intelligence: Right Now, Tonight, Explore, Quiet, Social, High Energy, Nearby, Trip.
+9. Required Tweaks: Wall
+Wall consumes meaningful state transitions, not repeated snapshots of unchanged state.
+Examples: place warming→building, event starting, saved place peaking, crowd shift, hidden gem emerging, Trip opportunity opening, safety notice activation.
+Add a server-built WallMoment / equivalent projection with subject, transition, occurred_at, relevance window, reason, truth class, freshness and expiry.
+Preserve Wall as chronological/current-life architecture. Do not turn it into an opaque engagement-maximizing ranking feed.
+Live Now strip should consume current projections; chronological Wall records transitions/history. Do not duplicate both.
+Personalization controls whether a canonical world event matters to a user; it must not rewrite the world event.
+10. Required Tweaks: Compass and Home
+Compass becomes the primary decision consumer:
+USER CONTEXT+ WORLD STATE+ EXPERIENCE STATE+ FORECAST+ TRIP / LAYOVER+ TIME / FRICTION+ SAFETY+ CURRENT EXPERIENCE        ↓DECISIONGO NOW · GO SOON · WAIT · STAY · SWITCH · SKIP · RETURN
+Compass must ground natural-language claims in structured truth. Low-confidence dance_likelihood cannot become 'everyone is dancing.'
+Current Experience value introduces switching cost so Compass does not constantly tell users to abandon a good experience.
+Home should consume a UserNowProjection / equivalent assembled server-side rather than query many domains independently.
+Home is the answer to 'what matters right now'; Compass is 'what should I do about it?'
+11. Required Tweaks: Trips and Layover
+Add TripWorldContext / equivalent projection containing current world state, nearby opportunities, disruptions, ExperienceSessions and crew context.
+World Intelligence may propose Trip changes; it may not directly mutate canonical Trip plans. Consequential changes still pass through Trip Kernel/command path.
+Layover Temporal Freedom Engine should intersect feasibility with live Experience value, forecast, friction and safe-return constraints.
+Use peak interception: can the user reach the experience before its useful window decays?
+12. Required Tweaks: Telegraph
+Share canonical references to ExperienceState / Opportunity / WorldMoment / SafetyNotice rather than copying stale prose.
+Shared live objects may indicate that state changed since sharing.
+Telegraph coordination can consume live intelligence to build Plans/Rendezvous, but must not expose anonymous intelligence contributors.
+Nearby & Available remains separate from anonymous contribution sensing.
+13. Required Tweaks: Memories and Passport
+Raw passive sensing must never automatically become Memory.
+Bridge through ExperienceSession and outcome/significance eligibility.
+Passport consumes meaningful visited/experienced outcomes—not raw movement logs.
+World Intelligence, personal Memory and social location remain separate retention/permission domains.
+14. Required Tweaks: Places, Events and Hidden Gems
+Do not bloat durable places rows with current_vibe/current_crowd/current_energy fields; keep dynamic state in projections.
+Events may expose runtime inferred/official phases, but source classes and truth classes remain distinct.
+Temporary activity must not be forced onto nearest place ID when ownership is unknown.
+HiddenGemCandidate should be distinct from canonical Hidden Gem approval if the repo already separates candidates/review.
+15. Required Tweaks: Search, Create and Attention
+Search can use live state as ranking context while preserving lexical/entity correctness.
+Autocomplete may surface live/inferred suggestions but must label them as current intelligence, not durable metadata.
+Create content and structured intelligence observation must be separate commands. A post saying 'dead' cannot directly mutate CrowdState.
+Attention Engine is mandatory: World changes route through relevance, novelty, urgency, half-life, user availability, interruption cost and attention budget before NOTIFY / WALL / SILENT / IGNORE.
+16. Required Tweaks: Safety and Trust
+WORLD INTELLIGENCE    ↓ evidence / anomalySAFETY CANDIDATE    ↓existing safety policy / review / authority    ↓CANONICAL SAFETY ASSERTION
+World anomalies never auto-promote to danger.
+Crowded remains ordinary intelligence unless safety-specific evidence/policy authorizes unsafe density.
+Do not weaken the existing safety review/privacy path.
+Source reliability / signal reliability are not the same as person Trust Score.
+Do not score a user as trustworthy because their passive movement looks 'normal.'
+17. Required Tweaks: Presence, Rent-a-Buddy, Locate My Friends
+Promote a shared platform Presence architecture, but keep privacy classes distinct: private device presence, aggregate intelligence presence, social presence, Trip crew, Buddy, public discovery.
+Reuse low-level sensor/proximity infrastructure where possible, not consent/policy semantics.
+Locate My Friends may use identity/peer relay/checkpoints under group permissions; anonymous World Intelligence may not reverse-resolve contributors.
+RAB may consume public/aggregate area intelligence and authorized Buddy presence, but never infer or expose individual anonymous contributors.
+18. Required Platform Tweaks
+18.1 Context Kernel
+UserContextTemporalContextSpatialContextTripContextSocialContextExperienceContextWorldContextSafetyContextAttentionContext
+18.2 Temporal semantics
+observed_ateffective_fromeffective_untilexpires_atfreshnesspredicted_for
+Use shared semantics where possible; do not force all domains into one table.
+18.3 Entity reconciliation
+Observed activity cluster     ↓Place?Event?Temporary world object?Unknown?
+Never assign to the nearest place merely to satisfy a foreign key.
+18.4 Revocation / lineage
+raw contribution      ↓aggregate      ↓world inference      ↓ExperienceSession?      ↓Memory?
+Define what revocation removes, expires, prevents and may retain as genuinely de-identified aggregate. Do not let implementation accident decide retention.
+19. Suggested Logical Contracts (Do Not Blindly Materialize)
+These names describe responsibilities. Claude must first inspect existing tables/types/services and map them onto canonical owners before deciding whether a new table/type is needed.
+Logical Contract
+Responsibility
+IntelligenceContributionSession
+authorization, sampling, purpose and revocation
+PrivacyReducedContribution
+short-lived signal features without permanent identity
+PresenceObservation
+aggregate place/zone activity + coverage
+CrowdState
+density, momentum, arrivals/departures
+FlowState
+privacy-safe directional aggregate movement
+VibeState
+energy/social/dance-likelihood + truth metadata
+ExperienceState
+combined crowd/vibe/behavior/friction/dynamics
+WorldMoment
+meaningful transient change
+ForecastState
+future state + horizon/calibration
+OpportunityProjection
+user-specific action relevance
+ExperienceSession
+actual attended/ongoing experience bridge
+ExperienceOutcome
+result / calibration / optional feedback
+20. Failure Semantics and Invariants
+Schema/permission/infrastructure failure ≠ no activity.
+Insufficient coverage ≠ quiet.
+Expired/stale state ≠ current.
+Prediction ≠ observation.
+Inference confidence may only decrease through conflict unless new evidence supports an increase.
+No product surface may fabricate world state to make UI look complete.
+Safety suppression/constraint must win over opportunity promotion.
+Anonymous intelligence may not be reverse-linked to a Portava account.
+Existing legacy fallbacks must not be suppressed merely because a new gateway/projection is partially enabled.
+All consequential canonical mutations use existing command/service/RLS patterns, not client direct writes.
+21. Incremental Implementation Sequence
+S0 — Audit / mapping: Inventory current consent, route-flow contribution, device/session, map projection, intel observations/claims/snapshots, wall, discovery, Compass, schedulers, RLS, outbox and feature flags. Produce reuse map; no mutation.
+S1 — Privacy contract: Define purpose scopes, contribution credential/session, rotating IDs, retention, precision ladder, sensitive locations, cohort thresholds and revocation using existing policy primitives.
+S2 — Ingest + aggregation: Add minimal privacy-reduced ingest and aggregate/coverage path. Certify anti-replay, no permanent user FK, TTL, unknown-vs-quiet, and failure observability.
+S3 — Presence / Crowd / Flow: Wire server-built states through existing intelligence projection architecture. Do not yet add vibe.
+S4 — Vibe / ExperienceState: Add inference with explicit truth metadata; mutation/property test rapid-movement≠dancing and no-coverage≠quiet.
+S5 — Map upgrade: Add ExperienceState, flow geometry, WorldMoment, semantic zoom and display resolver without replacing legacy map gateway/fallback.
+S6 — Discovery + Wall: Server-built DiscoveryCandidate and WallMoment projections; certify no client truth duplication.
+S7 — Compass + Home: Decision grounding, current-experience switching cost, UserNowProjection.
+S8 — Trips / Layover / Telegraph: Consume existing world/experience contracts; preserve each domain's canonical mutation owner.
+S9 — ExperienceSession + outcome: Close recommendation→experience→outcome loop; keep Memory eligibility separate.
+S10 — Remaining consumers: Search/Create/Notifications/RAB/Passport/Hidden Gems/Event runtime projections.
+S11 — Shadow / calibration: Run forecast/vibe in shadow mode, compare against later evidence, track version lineage and model calibration before aggressive surfacing.
+22. PR / Repo Safety Strategy
+One architectural responsibility per PR where practical.
+Do not combine unrelated schema cleanup, Trust work, Safety work or legacy refactors into sensing PRs.
+Prefer additive migrations with postconditions; no destructive migration unless separately reviewed.
+Every new server contract gets positive tests, RLS/authz negatives, stale/unknown cases and malformed input cases.
+Use static ratchets for forbidden direct writes, identity joins or bad literals where helpful.
+Mutation-prove critical invariants: no permanent identity link, no single-device crowd, no prediction-as-observation, no anomaly-as-safety, no client-computed vibe.
+Feature flags should allow shadow/read-only rollout. Do not claim LIVE until highest-level gate, schema, policy, scheduler, data dependency and production path are satisfied.
+23. Paste-Ready Claude Code Directive
+You are upgrading Portava. Do NOT rebuild or replace the existing architecture.Mission:Implement the Sensing + World / Experience Intelligence architecture incrementally by extending canonical Portava services, schemas, projections, policies, RLS, events/outbox, schedulers and feature gates that already exist.Before mutation:1. Audit the real repo and DB contracts.2. Map every proposed responsibility onto existing owners.3. Identify exactly what can be reused, what needs extension, and what is truly missing.4. Stop and report any semantic/schema conflict instead of inventing a substitute.Hard prohibitions:- no second intel lifecycle- no parallel Place identity- no fake nearest-place linkage- no permanent user_id/profile FK in anonymous World Intelligence unless a reviewed security requirement proves it necessary- no client-side world/vibe/crowd/safety truth calculation- no weakening existing RLS/privacy/safety/GPS stripping- no "official_feed string means authority"- no crowd => unsafe- no rapid movement => dancing- no no-coverage => quiet- no prediction rendered as observation- no raw sensing => Memory- no unrelated mass refactorArchitecture:device sensing -> on-device feature reduction -> short-lived opaque contribution credential -> privacy-reduced ingest -> cohort/independence/coverage gate -> Presence/Crowd/Flow -> Vibe -> ExperienceState -> WorldDynamics -> Forecast -> Opportunity -> feature projections -> ExperienceSession -> Outcome/Calibration.Security/privacy:Encrypt in transit and at rest. Prefer rotating short-lived contribution IDs and no permanent account identity in the World Intelligence store. Keep social/personal location paths separate. Apply purpose limitation, precision ceilings, TTLs, sensitive-location suppression, rare-path suppression, anti-differencing and explicit revocation.Upgrade consumers, do not rebuild:Map: ExperienceState, WorldMoment, directional flow geometry, semantic zoom, truth/freshness/coverage, safety precedence, display resolver; preserve current gateway and fallback.Discovery: live Opportunity ranking with server-built reasons.Wall: meaningful state transitions, not repeated snapshots.Compass/Home: structured decision grounding and UserNowProjection.Trips/Layover: consume World/Experience context but preserve Trip Kernel / Safe Return canonical mutation rules.Telegraph: share canonical live object references, not copied stale prose.Memories/Passport: only through ExperienceSession/outcome eligibility; never raw sensing.Search/Create/Attention/Safety/Trust/RAB/Presence: integrate through existing platform boundaries and preserve semantic separations.Implementation order:S0 audit onlyS1 privacy/consent/contribution contractS2 ingest + aggregation + coverageS3 Presence/Crowd/FlowS4 Vibe/ExperienceStateS5 MapS6 Discovery/WallS7 Compass/HomeS8 Trips/Layover/TelegraphS9 ExperienceSession/outcomeS10 remaining consumersS11 shadow/calibrationFor every step:- show exact reused objects- show exact new objects- show migrations- show RLS/authz- show feature flags- show tests/mutations- show live reachability- show final diff/stat- do not merge automatically
+24. Developer Completion Checklist
+World Intelligence store cannot trivially resolve a contribution to a Portava account.
+Location contribution and social live-location permissions are separate.
+Raw contribution TTL and aggregate retention are explicit.
+Coverage is first-class and unknown is preserved.
+Crowd, vibe, forecast and safety have separate semantics.
+All surfaces consume shared server-built truth.
+Map / Discovery / Wall remain compatible during partial rollout.
+Compass language is grounded in structured truth metadata.
+ExperienceSession closes action→outcome without becoming a surveillance log.
+Memory eligibility is separate from sensing.
+Shadow-mode calibration exists before predictive claims are broadly surfaced.
+No new architecture silently breaks current certified production paths.

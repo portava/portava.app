@@ -14,7 +14,7 @@
  *   1. FLAG GATE      media_request_a_view_enabled off / unreadable ⇒ refuse.
  *   2. THROTTLE       per-viewer AND per-place fixed windows (lib/rateLimit);
  *      + DEDUPE       a near-duplicate OPEN request for the same (place, family)
- *                     is refused.
+ *                     is refused, and an UNREADABLE ledger is refused too.
  *   3. SAFETY         a place hosting a restrictive Hidden Gem / protected
  *                     location is refused, and an UNDETERMINED gem lookup is
  *                     refused (never guess).
@@ -24,7 +24,7 @@
  *
  * Pre-launch empty (no eligible contributors, no coverage) is normal: the
  * request is still recorded with recipient_count 0 — a graceful, non-erroring
- * outcome.
+ * outcome, marked `recipientsDetermined: false` when the registry was unread.
  */
 import { isFlagEnabled } from "../../lib/featureFlags.js";
 import { checkRateLimit } from "../../lib/rateLimit.js";
@@ -71,7 +71,7 @@ export type ViewRequestRefusal =
   | "protected_location"
   | "safety_undetermined";
 
-export interface CreateViewRequestResult {
+export interface CreateViewRequestResult extends ViewRequestRecipientDetermination {
   ok: boolean;
   reason?: ViewRequestRefusal | "db_error";
   /** The media_view_requests ledger row id (on success). */
@@ -142,15 +142,15 @@ export async function createViewRequest(
 
   // ── 2c. Dedupe near-duplicate open requests ────────────────────────────────
   const openRows = await readOpenRequests(sc, input.subjectId, input.claimFamily);
-  if (isDuplicateOpenRequest(openRows, { subjectId: input.subjectId, claimFamily: input.claimFamily })) {
-    return { ok: false, reason: "duplicate" };
-  }
+  // `null` ⇒ the ledger was UNREADABLE. It used to arrive as `[]`, which isDuplicateOpenRequest reads as "not a duplicate" — the ONE control of the four whose read failure OPENED it.
+  if (openRows === null) return { ok: false, reason: "db_error" };
+  if (isDuplicateOpenRequest(openRows, { subjectId: input.subjectId, claimFamily: input.claimFamily })) return { ok: false, reason: "duplicate" };
 
   // ── 3. OPT-IN-ONLY recipient selection (fail-closed on block read) ─────────
   const candidates = await readOptedInContributors(sc, input.city ?? null);
   const blocked = await fetchBlockedSet(sc, input.requesterId); // null ⇒ ask nobody
   const recipients = selectEligibleRecipients({
-    candidates,
+    candidates: candidates ?? [], // null ⇒ registry unreadable ⇒ ask nobody (unchanged)
     requesterId: input.requesterId,
     blocked,
   });
@@ -204,12 +204,29 @@ export async function createViewRequest(
     missionCandidateId,
     recipientCount: recipients.length,
     recipients,
+    // The discriminator. `recipientCount: 0` is the pre-launch answer AND the
+    // answer a failed registry read produced; this is what tells them apart.
+    recipientsDetermined: candidates !== null,
   };
 }
 
 // ── DB read seams (small, so tests only mock what is used) ─────────────────────
 
-async function readOpenRequests(sc: any, subjectId: string, claimFamily: string): Promise<OpenRequestRow[]> {
+/**
+ * The open-request ledger for the dedupe control.
+ *
+ * Returns `null` — NOT `[]` — when the read did not run. `[]` is a real answer
+ * ("no open request for this place + family"), and it is the answer that lets a
+ * request through. Making a failed read produce it turned control 2 into the
+ * only one of the four that a database outage could open; `null` cannot be
+ * handed to isDuplicateOpenRequest at all, so the caller has to decide in the
+ * open, and it decides the same way every other control does: refuse.
+ */
+async function readOpenRequests(
+  sc: any,
+  subjectId: string,
+  claimFamily: string,
+): Promise<OpenRequestRow[] | null> {
   try {
     const { data, error } = await sc
       .from("media_view_requests")
@@ -217,14 +234,14 @@ async function readOpenRequests(sc: any, subjectId: string, claimFamily: string)
       .eq("subject_id", subjectId)
       .eq("status", "open")
       .limit(200);
-    if (error || !data) return [];
+    if (error || !Array.isArray(data)) return null;
     return (data as any[]).map((r) => ({
       subjectId: r.subject_id,
       claimFamily: r.claim_family,
       status: r.status,
     }));
   } catch {
-    return [];
+    return null;
   }
 }
 
@@ -233,8 +250,13 @@ async function readOpenRequests(sc: any, subjectId: string, claimFamily: string)
  * We select rows already filtered to opted_in AND eligible at the DB, but the
  * pure selector re-checks both (defence in depth: the truth gate is the pure
  * function, not the query).
+ *
+ * `null` ⇒ the registry could not be read. The fail-closed direction is
+ * unchanged — the caller still asks nobody — but "we asked 0 people because 0
+ * were eligible" and "we asked 0 people because we could not tell who was" are
+ * different facts, and the result now carries which one happened.
  */
-async function readOptedInContributors(sc: any, city: string | null): Promise<ContributorOptIn[]> {
+async function readOptedInContributors(sc: any, city: string | null): Promise<ContributorOptIn[] | null> {
   try {
     let q = sc
       .from("media_view_request_optins")
@@ -244,14 +266,14 @@ async function readOptedInContributors(sc: any, city: string | null): Promise<Co
       .limit(1000);
     if (city) q = q.eq("city", city);
     const { data, error } = await q;
-    if (error || !data) return [];
+    if (error || !Array.isArray(data)) return null;
     return (data as any[]).map((r) => ({
       contributorId: r.contributor_id,
       optedIn: r.opted_in === true,
       eligible: r.eligible === true,
     }));
   } catch {
-    return [];
+    return null;
   }
 }
 
@@ -283,4 +305,23 @@ export async function setContributorOptIn(
     .upsert(row, { onConflict: "contributor_id" });
   if (error) return { ok: false, reason: String((error as any).message ?? "db_error") };
   return { ok: true };
+}
+
+/**
+ * Whether the recipient count in a CreateViewRequestResult was MEASURED.
+ *
+ * Declared here rather than inline in CreateViewRequestResult because the
+ * interface sits above this file's last doc-cited line (182) and
+ * may only be edited one line for one line; an `extends` is that one line.
+ *
+ * `recipientCount: 0` has two causes and they are not the same fact:
+ *   • the opt-in registry was read and nobody was eligible — the normal
+ *     pre-launch outcome, and a genuine answer;
+ *   • the registry could not be read at all, so nobody could be selected.
+ * Both ask nobody (the fail-closed direction this service already had). Only
+ * the second is a count that was never taken, and only this flag says so.
+ */
+export interface ViewRequestRecipientDetermination {
+  /** false ⇒ the opt-in registry was unreadable, so `recipientCount` is not a measurement. */
+  recipientsDetermined?: boolean;
 }

@@ -20,6 +20,9 @@
  */
 
 import type { SupabaseClient } from '@supabase/supabase-js';
+// Telegraph §13.2 `member.joined` — census T185 measured both sync paths as
+// silent to open clients.
+import { publishToThread } from './telegraphEvents.js';
 
 export async function syncTripChatMembers(
   tripId: string,
@@ -28,23 +31,56 @@ export async function syncTripChatMembers(
   const now = new Date().toISOString();
 
   // 1. Resolve or create the trip thread (idempotent).
-  const { data: existing } = await sc
+  //
+  // The read must be checked: supabase-js resolves a failed read as
+  // `{ data: null }`, which is indistinguishable here from "no thread yet". Read
+  // that way, the else-branch INSERTs a second 'trip' thread for a trip that
+  // already has one — and this function then upserts every accepted member into
+  // the new row, so the crew's chat history stays on the orphaned thread. Fail
+  // closed with the null this function already uses for "could not sync".
+  const { data: existing, error: existingErr } = await sc
     .from('message_threads')
     .select('id, title')
     .eq('trip_id', tripId)
     .eq('thread_type', 'trip')
     .maybeSingle();
 
+  if (existingErr) {
+    console.error(`syncTripChatMembers: thread lookup failed for trip ${tripId}: ${existingErr.message}`);
+    return null;
+  }
+
   let threadId: string;
 
   if (existing) {
     threadId = (existing as any).id;
   } else {
-    const { data: trip } = await sc
+    // ── A DURABLE TITLE MUST NOT COME FROM A READ THAT NEVER HAPPENED ────────
+    // census T344/T363, §17.8 item 2, §18.4. supabase-js RESOLVES on a database
+    // failure, so a dropped error arrived here as `data: null` — which this
+    // branch read as "the trip has no title" and wrote `'Trip Chat'` onto a row
+    // it is about to INSERT. That is the worst consequence in this class and
+    // §18.4 says why: unlike a 404, it does not go away when the outage does.
+    // The thread keeps the generic title for the life of the trip, nothing
+    // logs, and no later healthy sync revisits it — the create branch runs
+    // once.
+    //
+    // Refuse with the `null` this function already uses for "could not sync",
+    // which every caller already handles. A trip row that is genuinely absent
+    // is a different world and still gets the generic title below.
+    const { data: trip, error: tripErr } = await sc
       .from('trips')
       .select('title, destination_city')
       .eq('id', tripId)
       .maybeSingle();
+
+    if (tripErr) {
+      console.error(
+        `syncTripChatMembers: trip read failed for trip ${tripId}: ${tripErr.message} ` +
+          `— refusing to create a thread whose DURABLE title would be a generic guess`,
+      );
+      return null;
+    }
 
     const title = trip
       ? `${(trip as any).title}${(trip as any).destination_city ? ` · ${(trip as any).destination_city}` : ''}`
@@ -67,26 +103,75 @@ export async function syncTripChatMembers(
   }
 
   // 2. Read currently-accepted trip members.
-  const { data: acceptedRows } = await sc
+  //
+  // ── AN UNREADABLE ROSTER IS NOT AN EMPTY ROSTER ────────────────────────────
+  // census T344/T363. This read is the INPUT to step 5, which sets
+  // `left_at = now()` for every thread member not in the accepted set. With the
+  // error dropped, supabase-js resolved an unreadable `trip_members` as
+  // `data: null`, `?? []` made it "this trip has no accepted members", and step
+  // 5 evicted THE ENTIRE CREW — owner included — from their own chat. That is
+  // not a plausible empty read; it is a destructive write driven by a read that
+  // never happened.
+  //
+  // And it does not heal. Step 4 clears `left_at` only when the trip ROLE
+  // CHANGED, deliberately (see its comment): a member with `left_at` set is
+  // presumed to have left of their own accord. So every subsequent HEALTHY sync
+  // reads an evicted crew and leaves it evicted, and each member is answered
+  // 403 "Not a member of this thread" on a conversation they never left.
+  //
+  // Refusing with `null` — the value this function already uses for "could not
+  // sync", which every caller already handles — is the only answer the evidence
+  // supports: we do not know who belongs in this thread, so we change nothing.
+  const { data: acceptedRows, error: acceptedErr } = await sc
     .from('trip_members')
     .select('user_id, role')
     .eq('trip_id', tripId)
     .in('role', ['owner', 'member']);
 
+  if (acceptedErr) {
+    console.error(
+      `syncTripChatMembers: accepted-member read failed for trip ${tripId}: ${acceptedErr.message} ` +
+        `— refusing to reconcile rather than evicting a crew this read could not see`,
+    );
+    return null;
+  }
+
   const accepted = (acceptedRows ?? []) as Array<{ user_id: string; role: string }>;
   const acceptedIds = new Set(accepted.map((r) => r.user_id));
 
   // 3. Read current thread members (including those who already left).
-  const { data: currentMembers } = await sc
+  //
+  // Dropped, this read fails in BOTH directions at once: an unreadable roster
+  // looks like a thread with no members, so step 4 re-INSERTS every accepted
+  // member (a duplicate row, or a unique-violation for the whole sync) and step
+  // 5 removes nobody, so a member the trip really removed keeps thread access
+  // with nothing said. Same refusal as above.
+  const { data: currentMembers, error: currentErr } = await sc
     .from('message_thread_members')
     .select('user_id, left_at, role')
     .eq('thread_id', threadId);
+
+  if (currentErr) {
+    console.error(
+      `syncTripChatMembers: thread roster read failed for trip ${tripId}: ${currentErr.message} ` +
+        `— refusing to reconcile against a roster this read could not see`,
+    );
+    return null;
+  }
 
   const currentById = new Map(
     ((currentMembers ?? []) as any[]).map((m) => [m.user_id, m]),
   );
 
   // 4. Upsert accepted members (restore if they had left_at set).
+  //
+  // Telegraph §13.2 `member.joined` (census T185): this loop already KNOWS who
+  // is new — `currentById` is the roster as it was before any write — so the
+  // event is emitted exactly where the newcomer is created, and only for a row
+  // whose insert SUCCEEDED. There are two sync implementations in this tree
+  // (this one and `services/groupChatSync.ts`, reached from different routes),
+  // and both emit, because an event that fires on one of two paths is worse
+  // than one that fires on neither: a client would learn to trust it.
   for (const { user_id, role } of accepted) {
     const existing = currentById.get(user_id);
     if (!existing) {
@@ -101,6 +186,10 @@ export async function syncTripChatMembers(
         console.error(`syncTripChatMembers: member insert failed for trip ${tripId}: ${insErr.message}`);
         return null;
       }
+      void publishToThread(sc, threadId, {
+        type: 'member.joined',
+        payload: { userId: user_id, source: 'trip_sync', tripId, joinedAt: now },
+      });
     } else if (existing.role !== role) {
       // Only restore (clear left_at) when the trip role actually changed.
       // A member whose role is unchanged but who has left_at set chose to leave
@@ -142,23 +231,44 @@ export async function syncCircleChatMembers(
   const now = new Date().toISOString();
 
   // 1. Resolve or create the circle thread.
-  const { data: existing } = await sc
+  // Same failure mode as the trip branch above — an unreadable message_threads
+  // must not be mistaken for "this circle has no thread yet".
+  const { data: existing, error: existingErr } = await sc
     .from('message_threads')
     .select('id')
     .eq('circle_owner_id', circleOwnerId)
     .eq('thread_type', 'circle')
     .maybeSingle();
 
+  if (existingErr) {
+    console.error(`syncCircleChatMembers: thread lookup failed for circle ${circleOwnerId}: ${existingErr.message}`);
+    return null;
+  }
+
   let threadId: string;
 
   if (existing) {
     threadId = (existing as any).id;
   } else {
-    const { data: ownerProfile } = await sc
+    // Same rule as the trip branch, same reason: this title is INSERTed and
+    // never revisited, so an unreadable `profiles` would name the owner's own
+    // circle `'Trusted Circle'` permanently. §17.8 item 2 named the two `trips`
+    // reads; these two `profiles` reads are the same defect in the circle half
+    // of the same two functions, and closing one group without the other would
+    // leave the class open by exactly the shape it was closed for.
+    const { data: ownerProfile, error: ownerProfileErr } = await sc
       .from('profiles')
       .select('name, handle')
       .eq('id', circleOwnerId)
       .maybeSingle();
+
+    if (ownerProfileErr) {
+      console.error(
+        `syncCircleChatMembers: owner profile read failed for circle ${circleOwnerId}: ` +
+          `${ownerProfileErr.message} — refusing to create a thread whose DURABLE title would be a generic guess`,
+      );
+      return null;
+    }
 
     const title = ownerProfile
       ? `${(ownerProfile as any).name ?? (ownerProfile as any).handle ?? 'Circle'}'s Trusted Circle`
@@ -181,10 +291,25 @@ export async function syncCircleChatMembers(
   }
 
   // 2. Read accepted circle members (owner + members of owner's circle).
-  const { data: memberRows } = await sc
+  //
+  // Same rule as the trip branch: this is the input to step 5, and an
+  // unreadable `circle_memberships` read as an empty circle evicts every member
+  // but the owner. The circle branch does restore on the next healthy sync
+  // (step 4 here clears `left_at`, which the trip branch does not) — but a
+  // recoverable eviction is still an eviction, and between the two syncs every
+  // member is told they are not in a circle chat they never left.
+  const { data: memberRows, error: memberErr } = await sc
     .from('circle_memberships')
     .select('other_id')
     .eq('user_id', circleOwnerId);
+
+  if (memberErr) {
+    console.error(
+      `syncCircleChatMembers: circle member read failed for circle ${circleOwnerId}: ${memberErr.message} ` +
+        `— refusing to reconcile rather than evicting members this read could not see`,
+    );
+    return null;
+  }
 
   const memberIds = ((memberRows ?? []) as any[]).map((r) => r.other_id);
 
@@ -194,11 +319,20 @@ export async function syncCircleChatMembers(
     ...memberIds.map((id) => ({ user_id: id, role: 'member' })),
   ];
 
-  // 3. Read current thread members.
-  const { data: currentMembers } = await sc
+  // 3. Read current thread members. Refused for the same reason as the trip
+  // branch's step 3.
+  const { data: currentMembers, error: currentErr } = await sc
     .from('message_thread_members')
     .select('user_id, left_at, role')
     .eq('thread_id', threadId);
+
+  if (currentErr) {
+    console.error(
+      `syncCircleChatMembers: thread roster read failed for circle ${circleOwnerId}: ${currentErr.message} ` +
+        `— refusing to reconcile against a roster this read could not see`,
+    );
+    return null;
+  }
 
   const currentById = new Map(
     ((currentMembers ?? []) as any[]).map((m) => [m.user_id, m]),
@@ -219,6 +353,11 @@ export async function syncCircleChatMembers(
         console.error(`syncCircleChatMembers: member insert failed for circle ${circleOwnerId}: ${insErr.message}`);
         return null;
       }
+      // Telegraph §13.2 `member.joined` — see the trip branch above.
+      void publishToThread(sc, threadId, {
+        type: 'member.joined',
+        payload: { userId: user_id, source: 'circle_sync', circleOwnerId, joinedAt: now },
+      });
     } else if (ex.left_at !== null || ex.role !== role) {
       const { error: updErr } = await sc
         .from('message_thread_members')
