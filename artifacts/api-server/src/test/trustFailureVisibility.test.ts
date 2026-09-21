@@ -289,13 +289,15 @@ describe("Trust caps: an unreadable cap list is not an empty one", () => {
   it("getActiveCapsResult distinguishes a failed read from an uncapped user", async () => {
     const tables = baseTables();
     const failing = makeClient(tables, [{ table: "trust_caps", op: "select" }]);
+    // The read reports three states (`ActiveCapsRead`), not a caps-plus-flag
+    // pair: the distinction asserted here is the same one, in the shape the
+    // service settled on.
     const failed = await getActiveCapsResult(failing, USER_A);
-    assert.deepEqual(failed.caps, []);
-    assert.equal(failed.failed, true, "'I could not tell' must not be reported as 'no ceilings apply'");
+    assert.equal(failed.state, "unavailable", "'I could not tell' must not be reported as 'no ceilings apply'");
 
     const clean = await getActiveCapsResult(makeClient(baseTables()), USER_A);
-    assert.deepEqual(clean.caps, []);
-    assert.equal(clean.failed, false, "a genuinely uncapped user must NOT be flagged as a failure");
+    assert.equal(clean.state, "ok", "a genuinely uncapped user must NOT be flagged as a failure");
+    if (clean.state === "ok") assert.deepEqual(clean.caps, []);
   });
 
   it("liftCapsBySourceEvents reports a failed lift instead of returning a clean zero", async () => {

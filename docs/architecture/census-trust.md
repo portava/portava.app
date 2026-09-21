@@ -149,19 +149,19 @@ Not counted here. Checked because the brief asked what it marked wrong.
 | C3 | Severity classification; serious/severe → `pending_review`, excluded from scoring (`:6-7`) | C | `recordTrustEvent:274-276`; `loadEvents:118` reads only applied/confirmed; `trust.test.ts:236`. |
 | C4 | Gated by `trust_engine_enabled`; events and scoring share one gate (`:80-86`) | C | `isTrustEnabled:83-94` (fail-closed); imported by the scheduler (`trustMaintenanceScheduler.ts:294`); `trust.test.ts:336`, `trust-integration.test.ts:975`. |
 | C5 | "Serious/severe events are queued for admin review" (`:11`) | **W → C** | Measured: only the status was set. The queue an admin reads is `trust_reviews` (`trust-admin.ts:98-127`); no row was written for a pending event; `confirmEvent:82-85` and `dismissEvent:178-181` closed a review "for this event" that never existed; `getPendingEvents:317-332` had no route. `recordAdjudicatedTrustEvent`'s own comment records the gap (`:409-412`). Built: `queueEventForReview:330-362` writes an open `event_review` row keyed by `source_event_id`, non-fatal and logged; `GET /admin/trust/events/pending` (`trust-admin.ts:138-147`). Pinned by `trustCensusRepairs.test.ts` §1–§2. Production impact today: none (0 pending events); the next one will be visible. |
-| C6 | Never auto-bans (`:11`) | C | `applyRestriction` has exactly one non-test caller, `adminApplyRestriction` (`TrustAdminService.ts:261#const restriction = await applyRestriction(db, {`), reached only from the admin route. |
+| C6 | Never auto-bans (`:11`) | C | `applyRestriction` has exactly one non-test caller, `adminApplyRestriction` (`TrustAdminService.ts:311#const restriction = await applyRestriction(db, {`), reached only from the admin route. |
 | C7 | The counterpart of an event is recorded explicitly in `metadata[counterparty_user_id]`, never inferred from `source_id` (`:32-45`) | C | `recordTrustEvent:249-252`; `TrustGamingDetectionService.readCounterparty:26-34`; `trustMutualRings.test.ts`. |
 | C8 | Nine category scores + weighted overall; exponential decay; cap ceilings; public level; persist to `trust_profiles` (`TrustScoreService.ts:1-10`) | C | `recalculateTrustScore:261-352`; `scoreToLevel:217-224`; `trust.test.ts:350-398`. |
 | C9 | Slow to earn, immediate to lose — the ramp applies only to positive movement (`:162-188`) | C | `computeCategoryScore:189-215`; `trustAsymmetryAndMaintenance.test.ts` pins the asymmetry and the worked example (56, not 80). |
 | C10 | `getDisplayTrustScore` is THE display number; no second engine (`:353-364`; `lib/trustScore.ts:1-25`) | C | `lib/trustScore.ts:124-149` delegates; `PassportProjectionService.ts:1295#getDisplayTrustScore` and `routes/rentABuddy.ts:1237` read through it; `passportTrustConsistency.test.ts`. |
 | C11 | `getTrustProfile` "loads the current profile" (`:375`) — and a failed read is not a missing profile | **W** | `:376-410` never destructures `error`; `null` means both. Five readers collapse an unreachable engine into "New Traveler"/`score: null`: `getDisplayTrustScore:365`, `getSafeTrustSummary:91`, `getPublicTrustBadge:136`, `getRecoveryStatus:89`, `computeTrustScore:131`. **PR #467 adds `getTrustProfileResult()` (ok/absent/unavailable) and switches ONE reader — Passport's domain builder.** Not fixed here: a second error-aware read in the same file would duplicate #467's hunk. Recommended as a #467 follow-up (§4). |
-| C12 | Caps: create, enforce as ceilings, expire on schedule (`TrustCapService.ts:1-6`) | C | `TrustCapService.ts:35#createCap`, the ceiling applied at `TrustScoreService.ts:318#caps`, `TrustCapService.ts:149#expireOldCaps` driven by the scheduler (`lib/trustMaintenanceScheduler.ts:642#capsExpired = await expireOldCaps(db);`); `trust.test.ts:400-475`. |
+| C12 | Caps: create, enforce as ceilings, expire on schedule (`TrustCapService.ts:1-6`) | C | `TrustCapService.ts:35#createCap`, the ceiling applied at `TrustScoreService.ts:398#caps`, `TrustCapService.ts:149#expireOldCaps` driven by the scheduler (`lib/trustMaintenanceScheduler.ts:642#capsExpired = await expireOldCaps(db);`); `trust.test.ts:400-475`. |
 | C13 | `applyEventCaps` keys on the event vocabulary the emitters actually write (`:166-180`) | **W → C** | `coordinate_jump` named a type nobody emits; `recordLocationTrustEvent:375-396` writes `gps_coordinate_jump`. Corrected (`:186`). Residual, **owner decision**: `plan_no_show` and `fake_gps_confirmed` have ceilings and no emitter; `content_removed` and `message_report_confirmed` were wired by the emitter pass. **Correction (2026-09-07, second pass):** this row cited `event_host_no_show (serious, −15, routes/events.ts:3473)` as an emitter. Nothing emits it — `:3473` is the attendance route (`event_attendance_confirmed`), and the no-show emitter at `:3575` writes `event_no_show` (−5 moderate). Which serious findings deserve a ceiling is policy, listed in §5; the per-type evidence is in [trust-unproduced-vocabulary.md](trust-unproduced-vocabulary.md). |
 | C14 | Every cap a moderation finding created is lifted when the finding is reversed (`:93-108`) | C | `liftCapsBySourceEvents:110-128`; wired through `revokeModerationTrustConsequences:112-155` from `routes/admin.ts:1835#void revokeModerationTrustConsequences(sc, adminUserId, userId, reason ?? "Account restore`. |
 | C15 | `getRestrictionState()` is the enforcement seam — "never query trust_restrictions directly in route code" (`TrustRestrictionService.ts:175-179`) | **W** | `routes/admin.ts:1319-1322` selects `trust_restrictions` directly for the admin user view (read-only, includes `reason`). Low impact; **owner: admin route.** |
 | C16 | Degraded reads are labelled: fail-open (table missing) vs fail-closed (query error), and callers must never show a restriction message for a failed check (`:50-80`) | C | `getRestrictionState:180-250`; consumers honour it (`routes/trips.ts:218-227`, `interactionPermissions.ts:326-337`); `trust.test.ts:906-1043`. |
 | C17 | `expireOldRestrictions` — "call from cleanup job" (`:264`) | **W → C** | Had no caller. Enforcement already ignored expired rows, so nothing was over-enforced, but the row stayed `lifted_at IS NULL` and every admin view listed a lapsed restriction as active. Now step 1b of the pass (`trustMaintenanceScheduler.ts:308-318`) and the function reads its `error` (`:264-287`). `trustCensusRepairs.test.ts` §4. |
-| C18 | Recovery status: probation, lowest category, ordered steps, `overallProgress` "0–100 % toward 50" (`TrustRecoveryService.ts:1-8`, `TrustRecoveryService.ts:34#0–100 % toward 50 (neutral), or NULL when there is no profile to measure.`) | **W** | Steps and probation are correct (`trust.test.ts:726-770`). But a user with **no profile** is returned `overallProgress: 50` (`:107`) — a constant where a measurement belongs, the same shape as P45 in miniature. Unconsumed today (`getSafeTrustSummary` reads only `onProbation` and `suggestedSteps`), and PR #455 is about to surface recovery to the owner. Left as W: the honest value is `null`, which changes the field's type, and #455 is the PR editing the consumer. |
+| C18 | Recovery status: probation, lowest category, ordered steps, `overallProgress` "0–100 % toward 50" (`TrustRecoveryService.ts:1-8`, `TrustRecoveryService.ts:52#0–100 % toward 50 (neutral), or NULL when there is no profile to measure.`) | **W** | Steps and probation are correct (`trust.test.ts:726-770`). But a user with **no profile** is returned `overallProgress: 50` (`:107`) — a constant where a measurement belongs, the same shape as P45 in miniature. Unconsumed today (`getSafeTrustSummary` reads only `onProbation` and `suggestedSteps`), and PR #455 is about to surface recovery to the owner. Left as W: the honest value is `null`, which changes the field's type, and #455 is the PR editing the consumer. |
 | C19 | Probation ends when `probation_ends_at` passes (`trustMaintenanceScheduler.ts:26-27`) | C | `clearExpiredProbation:138-155`; `trust-integration.test.ts:842`. |
 | C20 | Reporter identity never exposed; raw deltas/internal scores not returned; restrictions human-readable; pending_review invisible to the subject — at the API (`TrustPrivacyGuard.ts:1-10`) | C | `getSafeTrustSummary:81-121`, `RESTRICTION_MESSAGES:61-66`, `isEventLlmSafe:150-156`; `trust.test.ts:660-725`. The table-level contradiction was A8. |
 | C21 | Every admin write creates a `trust_admin_actions` row (`TrustAdminService.ts:1-6`) | C | `logAdminAction` at `:87,184,200,214,247,282,311`; route-level inserts at `trust-admin.ts:323-330` and `:426-435`; `trustAdminAuditInsertSchemaDrift.test.ts` pins the columns. |
@@ -493,10 +493,10 @@ still true at `3ca68cb06`, because a restatement that is not re-executed is just
 
 | id | was | now | re-executed at this commit |
 |---|---|---|---|
-| A3 | `NB → C` | C | `artifacts/api-server/src/services/trust/TrustScoreService.ts:294#export function measureEvidence` still computes the decayed evidence weight and count, and `artifacts/api-server/src/services/trust/TrustScoreService.ts:371#.update({ evidence_weight: evidence.weight, evidence_count: evidence.count })` still persists both. The migration that holds the columns is present at `artifacts/api-server/src/migrations/2371_trust_profiles_evidence.sql:1#-- 2371_trust_profiles_evidence.sql`. NULL still means not measured, 0 still means measured empty. |
+| A3 | `NB → C` | C | `artifacts/api-server/src/services/trust/TrustScoreService.ts:374#export function measureEvidence` still computes the decayed evidence weight and count, and `artifacts/api-server/src/services/trust/TrustScoreService.ts:451#.update({ evidence_weight: evidence.weight, evidence_count: evidence.count })` still persists both. The migration that holds the columns is present at `artifacts/api-server/src/migrations/2371_trust_profiles_evidence.sql:1#-- 2371_trust_profiles_evidence.sql`. NULL still means not measured, 0 still means measured empty. |
 | A8 | `W → C` | C | `artifacts/api-server/src/migrations/2370_trust_tables_privileges.sql:1#-- 2370_trust_tables_privileges.sql` is in the tree and still carries the REVOKE-then-grant-service_role shape with the RAISE-on-residue postcondition. **The row's caveat is unchanged and matters more than the verdict: applied to CI, NOT to production** — this pass made no production read and no production change, so A8's `C` is a statement about the migration, not about the live grants. |
 | C5 | `W → C` | C | `artifacts/api-server/src/services/trust/TrustEventService.ts:374#async function queueEventForReview` still writes the open `event_review` row, called on the pending-review path, and the admin queue that reads it is still routed at `artifacts/api-server/src/routes/trust-admin.ts:155#router.get("/admin/trust/events/pending", async (req, res) => {`. |
-| C13 | `W → C` | C | The cap table still keys on the type the emitter actually writes: `artifacts/api-server/src/services/trust/TrustCapService.ts:316#gps_coordinate_jump:       [{ category: "location_honesty", ceiling: 55, reasonCode: "coordinate_jump",      expiresInDays: 7  }],`. The residual owner decision on unproduced ceilings is unchanged and stays in §5's list. |
+| C13 | `W → C` | C | The cap table still keys on the type the emitter actually writes: `artifacts/api-server/src/services/trust/TrustCapService.ts:352#gps_coordinate_jump:       [{ category: "location_honesty", ceiling: 55, reasonCode: "coordinate_jump",      expiresInDays: 7  }],`. The residual owner decision on unproduced ceilings is unchanged and stays in §5's list. |
 | C17 | `W → C` | C | `artifacts/api-server/src/services/trust/TrustRestrictionService.ts:333#export async function expireOldRestrictions(db: SupabaseClient): Promise<number> {` still binds its own error, and it still has the caller it lacked: `lib/trustMaintenanceScheduler.ts:653#restrictionsExpired = await expireOldRestrictions(db);`. |
 | C27 | `W → C` | C | `artifacts/api-server/src/routes/trust-admin.ts:86#const SETTING_BOUNDS: Record<string, SettingBound> = {` still bounds each key structurally and `artifacts/api-server/src/routes/trust-admin.ts:103#export function trustSettingRejection(key: string, value: unknown): string` still rejects a value outside it before the write. |
 
@@ -578,7 +578,7 @@ transient one — in which the admin's number is the stored value. The admin get
 `{ ok: true }`, an audit row saying `score_override`, and no change.
 
 The ceiling itself is
-`artifacts/api-server/src/services/trust/TrustScoreService.ts:318#if (caps[cat] !== undefined && score > caps[cat]) {`
+`artifacts/api-server/src/services/trust/TrustScoreService.ts:398#if (caps[cat] !== undefined && score > caps[cat]) {`
 — a strict one-directional clamp — and `trust_caps` carries only
 `ceiling_score`, with no floor column anywhere.
 
@@ -1123,11 +1123,11 @@ cannot be requested against "the scoring model is missing".
 
 | What is undecided | What the code does today, and where |
 |---|---|
-| **Category weights** — nine categories summing to 1.00 | `services/trust/TrustScoreService.ts:76#const DEFAULT_SETTINGS: Settings = {`: plan_attendance .180, respect_safety .150, location_honesty .130, host_quality .120, communication .100, and .080 each for content_quality, community_value, guide_accuracy, passport_authenticity. Overridable per-deployment from `trust_settings`; production holds one row at **all defaults**. |
-| **Level thresholds** — six public levels | Same constant: building_trust 35, reliable 50, trusted 65, highly_trusted 78, city_trusted 90, below which `new_traveler`. `services/trust/TrustScoreService.ts:257#function scoreToLevel(score: number, s: Settings): PublicTrustLevel {`. These are the numbers a user sees a word for. |
+| **Category weights** — nine categories summing to 1.00 | `services/trust/TrustScoreService.ts:125#const DEFAULT_SETTINGS: Settings = {`: plan_attendance .180, respect_safety .150, location_honesty .130, host_quality .120, communication .100, and .080 each for content_quality, community_value, guide_accuracy, passport_authenticity. Overridable per-deployment from `trust_settings`; production holds one row at **all defaults**. |
+| **Level thresholds** — six public levels | Same constant: building_trust 35, reliable 50, trusted 65, highly_trusted 78, city_trusted 90, below which `new_traveler`. `services/trust/TrustScoreService.ts:337#function scoreToLevel(score: number, s: Settings): PublicTrustLevel {`. These are the numbers a user sees a word for. |
 | **Decay** | Exponential, half-life **90 days**, same constant. |
-| **Scoring window** | **365 days**, hard-coded, not a setting: `services/trust/TrustScoreService.ts:144#const since = new Date(Date.now() - 365 * 24 * 60 * 60 * 1000).toISOString();`. Evidence older than a year is invisible to the score — including a confirmed serious finding, whose survival then depends entirely on its cap. |
-| **The earn/lose asymmetry** | `services/trust/TrustScoreService.ts:200#const EARN_CONFIDENCE_WEIGHT = 5;`: positive movement is scaled by a confidence ramp so a single good event cannot max a category; negative movement applies at full strength immediately, with no ramp. Slow to earn, instant to lose. That is a **product posture**, not a tuning constant, and no document states it. |
+| **Scoring window** | **365 days**, hard-coded, not a setting: `services/trust/TrustScoreService.ts:198#const since = new Date(Date.now() - 365 * 24 * 60 * 60 * 1000).toISOString();`. Evidence older than a year is invisible to the score — including a confirmed serious finding, whose survival then depends entirely on its cap. |
+| **The earn/lose asymmetry** | `services/trust/TrustScoreService.ts:280#const EARN_CONFIDENCE_WEIGHT = 5;`: positive movement is scaled by a confidence ramp so a single good event cannot max a category; negative movement applies at full strength immediately, with no ramp. Slow to earn, instant to lose. That is a **product posture**, not a tuning constant, and no document states it. |
 | **Per-event deltas — 50 declared event types** | `services/trust/TrustEventService.ts` `TRUST_EVENT_TYPES`, e.g. `services/trust/TrustEventService.ts:815#IDENTITY_VERIFIED:        { category: "respect_safety" as TrustCategory,  delta: 10, severity: "minor" as TrustSeverity },`. Range +10 (identity_verified, first_event_joined, first_event_hosted) to −20 (behavior_report_confirmed, fake_gps_confirmed). One delta point ≈ 5 score points. |
 | **Severity routing** | minor/moderate apply immediately; serious/severe route to `pending_review` and are excluded from the score until an admin adjudicates. Severity does **not** change the delta — it selects the route and the ceiling. |
 | **Caps (ceilings) per finding** | `TrustCapService.applyEventCaps`: no_show → 60 for 30 d, behavior_confirmed → 40 **permanent**, fake_gps → 35 permanent, impossible_speed → 55 for 14 d, coordinate_jump → 55 for 7 d, content_removed → 50 for 30 d, message_report → 45 for 60 d. The expiries are where "how long does a finding bite" actually lives, and they were chosen, not ratified. |
@@ -1164,7 +1164,7 @@ C22 stays **W**. This section does not choose; it makes the choice cheap to make
 before-state precisely and pinning it in tests, so that converting one semantics into the other
 cannot happen by accident.
 
-**What the code does today.** `services/trust/TrustAdminService.ts:362#const cap = await createCap(db, {` writes a
+**What the code does today.** `services/trust/TrustAdminService.ts:412#const cap = await createCap(db, {` writes a
 `trust_caps` row with `ceiling_score = newScore` and `reason_code = 'admin_override'`. It then
 upserts `trust_profiles` directly "for immediate effect" — and on its own next line awaits
 `recalculateTrustScore`, which recomputes from events and overwrites that upsert before the
@@ -1357,7 +1357,7 @@ is the statement that hid the real defect. Re-executed at this tree, against a c
 | `trust_profiles.overall_score` on the same row | 48.5 — describing the OLD score | 48.5, still agreeing with the category |
 | `trust_admin_actions` rows with `action_type='score_override'` | **1**, recording an override the engine never applied | **0** |
 
-`recalculateTrustScore` is deliberately FAIL-CLOSED (`services/trust/TrustScoreService.ts:159#recalculateTrustScore: trust_events read failed for`),
+`recalculateTrustScore` is deliberately FAIL-CLOSED (`services/trust/TrustScoreService.ts:232#throw new TrustInputUnavailableError("events", describeDbError(error), userId);`),
 and `adminOverrideScore` swallowed that throw with `.catch(() => {})` — **after** writing the
 admin's raw number straight into `trust_profiles` "for immediate effect". So:
 
@@ -1366,7 +1366,7 @@ admin's raw number straight into `trust_profiles` "for immediate effect". So:
 * On the **failure** path the raw write **stood, permanently**. An upward 90 against a
   `behavior_confirmed` ceiling of 40 therefore granted exactly the relief the ruling says an admin
   does not have — bypassing `loadCaps`' `Math.min` entirely rather than losing to it
-  (`services/trust/TrustScoreService.ts:186#caps[row.category] = cur !== undefined ? Math.min(cur, row.ceiling_score) : row.ceiling_score;`).
+  (`services/trust/TrustScoreService.ts:266#caps[row.category] = cur !== undefined ? Math.min(cur, row.ceiling_score) : row.ceiling_score;`).
   The row was left internally inconsistent (a category value no `overall_score` or `public_level`
   on it corresponds to), the admin was told `{ ok: true }`, and the audit log — the one record
   whose whole purpose is to be trustworthy — recorded it as applied.
@@ -1382,27 +1382,27 @@ checked, and a failure was reported and audited as a success.
 
 ### 15.3 What was changed — one function, and nothing else
 
-`services/trust/TrustAdminService.ts:362#const cap = await createCap(db, {` still writes the
+`services/trust/TrustAdminService.ts:412#const cap = await createCap(db, {` still writes the
 `trust_caps` ceiling exactly as before; the cap row IS the durable ceiling and it is unchanged.
 What changed, in `adminOverrideScore` alone:
 
 1. **The raw `trust_profiles` upsert is gone.** `recalculateTrustScore` is now the only writer of a
    scored column, so no number reaches a category without passing through `loadCaps`' `Math.min`.
 2. **The recalculation's failure is no longer swallowed** —
-   `services/trust/TrustAdminService.ts:371#const recalculated = await recalculateTrustScore(db, targetUserId);`
+   `services/trust/TrustAdminService.ts:421#const recalculated = await recalculateTrustScore(db, targetUserId);`
    — the same rule `confirmEvent`, `dismissEvent` and `adminResolveReview` already apply to their
    own transitions. No `score_override` audit row is written for an override the engine did not
    apply. The cap row is deliberately NOT rolled back: it is the ceiling, and the next successful
    recalculation applies it.
 3. **The persisted value is READ BACK, not computed** —
-   `services/trust/TrustAdminService.ts:374#const read = await getTrustProfileResult(db, targetUserId);`
-   and `services/trust/TrustAdminService.ts:381#const persistedScore = Number((read.profile.categories as Record<string, unknown>)[category]);`
+   `services/trust/TrustAdminService.ts:424#const read = await getTrustProfileResult(db, targetUserId);`
+   and `services/trust/TrustAdminService.ts:431#const persistedScore = Number((read.profile.categories as Record<string, unknown>)[category]);`
    — because `recalculateTrustScore` persists non-fatally: it logs and returns the computed result
    even when its own upsert failed. Returning the computed number would be this function asserting
    a persist it had not observed. A persisted value above the ceiling now throws.
 4. **The result and the audit row say what HAPPENED.** `adminOverrideScore` returns
    `{ ok, category, persistedScore, ceilingBinding }` and logs the same, where `ceilingBinding`
-   (`services/trust/TrustAdminService.ts:391#const ceilingBinding =`) is true only when the admin's
+   (`services/trust/TrustAdminService.ts:441#const ceilingBinding =`) is true only when the admin's
    number is what is holding the score down — false when the natural score already sits below it,
    and false when a LOWER ceiling (a moderation cap, another admin's override) is the binding one.
    **An upward override reads `false`.** That is CAP semantics reported out loud instead of applied
@@ -1433,7 +1433,7 @@ Four mutations, each run and each **RED**:
 | P1 | restore the raw `trust_profiles` upsert before the recalculation | case 3 |
 | P2 | swallow the recalculation failure again (`.catch(() => {})`) | case 3 |
 | P3 | report `ceilingBinding` unconditionally `true` | case 2 |
-| P4 | invert the ceiling comparison in `recalculateTrustScore` (`services/trust/TrustScoreService.ts:318#if (caps[cat] !== undefined && score > caps[cat]) {` → `<`) — reverted immediately; the file is unchanged | cases 1 and 2 |
+| P4 | invert the ceiling comparison in `recalculateTrustScore` (`services/trust/TrustScoreService.ts:398#if (caps[cat] !== undefined && score > caps[cat]) {` → `<`) — reverted immediately; the file is unchanged | cases 1 and 2 |
 
 P4 exists because P1–P3 leave case 1 green whatever they do to the implementation, and a case that
 cannot fail is worse than no case (§LANE-RULES 4). It also demonstrates that case 1 measures the
@@ -1447,7 +1447,7 @@ so the follow-up is a read-and-build:
 
 | name | what it is | what it would take |
 |---|---|---|
-| **PIN semantics** | the admin's number IS the score until lifted; events stop moving that category; an admin can GRANT standing, not only withhold it | a `floor_score` column on `trust_caps` (a migration the integration owner must number), a second fold in `TrustScoreService.loadCaps` beside the `Math.min` at `services/trust/TrustScoreService.ts:186#caps[row.category] = cur !== undefined ? Math.min(cur, row.ceiling_score) : row.ceiling_score;`, and a `Math.max` applied AFTER the ceiling in `recalculateTrustScore`. §14.4's five-row table is the rewrite list: each row names the assertion that must change by name |
+| **PIN semantics** | the admin's number IS the score until lifted; events stop moving that category; an admin can GRANT standing, not only withhold it | a `floor_score` column on `trust_caps` (a migration the integration owner must number), a second fold in `TrustScoreService.loadCaps` beside the `Math.min` at `services/trust/TrustScoreService.ts:266#caps[row.category] = cur !== undefined ? Math.min(cur, row.ceiling_score) : row.ceiling_score;`, and a `Math.max` applied AFTER the ceiling in `recalculateTrustScore`. §14.4's five-row table is the rewrite list: each row names the assertion that must change by name |
 | **Relief from a moderation ceiling** | an admin override taking precedence over a `behavior_confirmed` cap in the same category | the `Math.min` fold above becoming reason-code aware. **NOT a `Math.max` swap** — that is mutation O2 and it would let ANY cap lift a score. Needs the authority question answered first: today an admin cannot grant relief and §14.4 records that as intended, not accidental |
 | **Expiry** | a review date on an override | `adminOverrideScore` passing an `expiresAt` to `createCap`. The sweeper already handles it (`expireOldCaps` filters `expires_at < now`) and cannot sweep the null this function writes. Mutation O1 pins today's permanence |
 | **Two admins overriding each other** | whose override wins, and whose removal clears whose | today: ceilings fold with `Math.min` so the LOWER wins regardless of who set it or when, and `adminRemoveOverride` lifts every active `admin_override` in the category, so one admin's removal clears another's. Mutation O4 pins the removal half. Needs a rule before it needs code |
@@ -1865,7 +1865,7 @@ Implementation's own report was deliberately withheld from that role.
 
 Both halves are now true, and neither is taken on the builder's word:
 
-- The route is `artifacts/api-server/src/routes/trust-admin.ts:391#router.post(` — behind
+- The route is `artifacts/api-server/src/routes/trust-admin.ts:396#router.post(` — behind
   `requireAdmin`, mounted at `artifacts/api-server/src/routes/index.ts:222#trustAdminRouter`,
   **awaiting** `adminOverrideScore` and returning the read-back `persistedScore` and
   `ceilingBinding` rather than a bare `ok`.
@@ -1882,7 +1882,7 @@ hold; the spelling difference is recorded rather than smoothed over.
 
 | id | was | now | evidence |
 |---|---|---|---|
-| C22 | W | **C** | **The row's own settlement condition, met and independently re-derived.** §15 wrote it in: *"a `POST /admin/trust/users/:userId/score-override` on `routes/trust-admin.ts` behind `requireAdmin`, plus a route test asserting the ceiling on the row."* The route is `artifacts/api-server/src/routes/trust-admin.ts:391#router.post(`, behind `requireAdmin`, mounted at `artifacts/api-server/src/routes/index.ts:222#trustAdminRouter`; it **awaits** `adminOverrideScore` and returns the read-back `persistedScore` and `ceilingBinding` instead of a bare `ok`, so a ceiling that did not persist cannot be reported as one that did. An independent Verification role — given the checklist and the code but **not** the builder's report — re-ran all four of §15.4's named mutations and **all four go red**; P4, inverting the ceiling comparison at `artifacts/api-server/src/services/trust/TrustScoreService.ts:186#Math.min`, reddens 16 cases across six describe blocks, so CAP semantics are pinned by behaviour rather than by a comment. The built path spells `/score/override` where the row wrote `/score-override`; the capability and its test are what the criterion names, and the spelling difference is recorded rather than smoothed over. **Turns red if** any of §14.4's four characterization assertions starts failing, if the route loses `requireAdmin`, if `adminOverrideScore` stops being awaited, or if `ceilingBinding` is reported unconditionally. |
+| C22 | W | **C** | **The row's own settlement condition, met and independently re-derived.** §15 wrote it in: *"a `POST /admin/trust/users/:userId/score-override` on `routes/trust-admin.ts` behind `requireAdmin`, plus a route test asserting the ceiling on the row."* The route is `artifacts/api-server/src/routes/trust-admin.ts:396#router.post(`, behind `requireAdmin`, mounted at `artifacts/api-server/src/routes/index.ts:222#trustAdminRouter`; it **awaits** `adminOverrideScore` and returns the read-back `persistedScore` and `ceilingBinding` instead of a bare `ok`, so a ceiling that did not persist cannot be reported as one that did. An independent Verification role — given the checklist and the code but **not** the builder's report — re-ran all four of §15.4's named mutations and **all four go red**; P4, inverting the ceiling comparison at `artifacts/api-server/src/services/trust/TrustScoreService.ts:266#Math.min`, reddens 16 cases across six describe blocks, so CAP semantics are pinned by behaviour rather than by a comment. The built path spells `/score/override` where the row wrote `/score-override`; the capability and its test are what the criterion names, and the spelling difference is recorded rather than smoothed over. **Turns red if** any of §14.4's four characterization assertions starts failing, if the route loses `requireAdmin`, if `adminOverrideScore` stops being awaited, or if `ceilingBinding` is reported unconditionally. |
 
 > **Trust, at this tree: 108 requirements · 85 BUILT-AND-CORRECT · 15 BUILT-BUT-WRONG ·
 > 6 NOT-BUILT · 2 CANNOT-VERIFY → CONSTRUCTED 100 / 108 = 92.6 % · CORRECT 85 / 108 = 78.7 %.**
