@@ -2359,3 +2359,394 @@ It wants an owner and a deliberate decision, not a drive-by `WHERE true`.
     SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
      WHERE n.nspname='public' AND p.proname='project_user_memory';
     -- expect 1 — 2963 replaces the (uuid, boolean) signature, it does not overload it
+
+---
+
+## 2976 — THE JOURNEY SHADOW GLOBAL STOP WAS INOPERATIVE IN PRODUCTION
+
+`public.global_journey_shadow_stop_v1(uuid)` is the emergency stop for the
+Journey shadow-segmentation programme — a location-tracking research
+programme. It is `SECURITY DEFINER`, `EXECUTE` to `service_role` only, and it
+**could not run**. Every call through PostgREST raised and rolled back, so
+**the stop did nothing at all**: the flags stayed on, the cohorts stayed live,
+the sessions stayed open.
+
+This is the second instance of the defect class 2963/2965 established, found by
+the sweep recorded there rather than reported by anyone.
+
+### The defect
+
+The installed body carried **three** unqualified deletes, mid-body, **after**
+the four correctly-qualified `UPDATE`s that actually stop collection:
+
+    DELETE FROM public.journey_shadow_ground_truth;
+    DELETE FROM public.journey_observations;
+    DELETE FROM public.journey_segment_revisions;
+
+Production runs `session_preload_libraries = supautils`, whose `safeupdate`
+guard raises *"DELETE requires a WHERE clause"* for PostgREST-role sessions.
+The first delete raised, and the transaction — including the flag disable, the
+stage deactivation and the cohort/issuance revocations — rolled back.
+
+### Why it was absent from this repository — established, not guessed
+
+It was authored in `2127_journey_shadow_controlled_rollout.sql` **SECTION 9**,
+on branch `origin/fix/rls-hardening-signin-flake` (commit `46b1f0383`,
+2026-08-23; itself a renumber of `2123` from `cf9730823`, 2026-08-21). That
+branch **was never merged** — `git merge-base --is-ancestor 46b1f0383 origin/main`
+is false — but the migration **was applied to production**. Its intended callers
+were authored on the same unmerged branch and are likewise absent from `main`:
+
+| authored on the unmerged branch | purpose |
+|---|---|
+| `src/routes/adminJourney.ts` | `POST /admin/journey-shadow/stop` |
+| `src/services/journey/JourneyShadowRolloutService.ts:187` | `globalJourneyShadowStop()` |
+| `src/test/journeyControlledRolloutMigration.test.ts:1639` | the live case that would have caught it |
+
+So the RPC has **no live caller today**. The body installed in production is
+byte-identical to the body authored in 2127: **the defect was authored, not
+introduced by drift.** The repo already half-knew — `lib/crowdFlowProducer.ts:351`
+records *"src/migrations/** — no CREATE TABLE journey_observations"* as a blocker.
+
+The programme is **dormant**. Measured 2026-09-21: every journey table holds
+**0 rows**, no `COMPASS_JOURNEY_*` flag is enabled, no open journey session
+exists. The repair is preventive — the control is fixed before the programme it
+guards is ever switched on.
+
+### The contract: disable **and** erase, and why that was not assumed
+
+Unrestricted deletion was treated as a question, not a given. Four independent
+lines of evidence say erasure is intended:
+
+1. The function's own installed `COMMENT` says so verbatim — *"…ends issued
+   sessions, deletes all observations, segment revisions, and ground-truth rows."*
+2. `revoke_journey_shadow_cohort_v1` is the **per-assignment analogue**, already
+   in production, already correctly scoped, and it **does** erase.
+3. `purge_journey_observations_on_session_revocation` calls itself an *"Atomic
+   erasure boundary (not queue-only)"* and erases synchronously at session end.
+4. `lib/d6Classifications.ts` classifies all three deleted tables **ERASE**
+   under ruling 3 — `journey_observations` is *"The single clearest erase in the set."*
+
+**Audit evidence is not destroyed, and that was checked rather than asserted.**
+The tables the deletion rulings RETAIN or ANONYMIZE are exactly the ones this
+function never deletes from: `journey_revocation_jobs`
+(`RETAIN_LEGAL_SECURITY` — *"DELETION AUDIT EVIDENCE"*), `journey_retention_health`,
+`journey_shadow_qa_reports`, and the cohort-assignment / session-issuance /
+stage rows, which are **updated to revoked, not removed**. Ground truth is a
+30-day-bounded per-subject QA record, not a ledger.
+
+### The qualification is the real predicate, not `WHERE true`
+
+`WHERE true` — which is what 2965 legitimately used, against a TEMP table
+private to its own session — is **wrong here**, and is not used. These are
+real, shared, person-level tables. The stop's scope already had a name written
+into this very function: its last statement scopes the session end to
+`journey_purpose = 'journey_observation_v1'`. The deletes now use the same one.
+
+That is not a tautology. `location_sessions` also holds `live_share`,
+`trip_check_in` and `auto` sessions; a row attached to one of those is not this
+stop's to erase and now survives it. The predicate selects every row *today*
+only because these tables currently hold nothing but programme data — a property
+of the data, not of the predicate.
+
+`journey_segment_revisions` takes a **second** clause. It is the one table of
+the three with **no foreign key** on `location_session_id` (its only FKs are
+`user_id → profiles CASCADE` and `supersedes_id → self`), so a revision could
+outlive its session row; the participant clause
+(`user_id IN (SELECT user_id FROM journey_shadow_cohort_assignments)`) closes
+that hole. The other two are `NOT NULL` with `ON DELETE CASCADE`, so the
+session-purpose clause alone is complete for them.
+
+### Atomicity was kept, deliberately
+
+The alternative — let the revocations commit and queue the erasure — was
+rejected. A stop that swallows an erasure failure and returns a success payload
+tells an admin that personal data is gone when it is not, which is the
+silent-partial-success mode this repo keeps removing. Kept atomic, the caller
+gets the whole stop or an error it can retry, never a false success. Atomicity
+was only unsafe *before* because erasure was guaranteed to raise.
+
+### Shape: top-level replacement, and the certify trap AVOIDED
+
+2965's surgery pattern sprang `certify:migrations` stage 4 twice (see *"A TRAP IN
+`certify:migrations` THAT 2965 SPRANG"*). 2976 avoids **both** halves:
+
+— and #516 has since made the reasoning exact, which also corrected what this
+section used to claim. Stage 4 does **not** re-run "every `DO` block": it
+collects only blocks `isAssertionOnlyDoBlock()` accepts, then holds back the
+ones `isPreconditionDoBlock()` recognises. So of 2976's three blocks:
+
+| block | contains | stage 4 |
+|---|---|---|
+| `$pre$` | assertions only, tagged a precondition | **held back** by #516 |
+| `$mig$` | the guarded apply, via `EXECUTE` | **never collected** — not assertion-only |
+| `$post$` | assertions only, not a precondition | **re-run**, and it tolerates every state the file can leave |
+
+`$pre$` is nonetheless written to tolerate the post-state as well — it accepts
+the pre-image *and* the post-image and returns quietly on the latter, raising
+only on an unrecognised body — so it is correct inside the applier's own
+transaction on a second apply, rather than relying on #516 to excuse it.
+
+This is asserted, not asserted-about: `journeyShadowGlobalStopDeleteScope.test.ts`
+case (7) **imports** `isAssertionOnlyDoBlock` and `isPreconditionDoBlock` from
+`src/scripts/lib/migrationSqlBlocks.ts` and classifies 2976's real blocks with
+them. An earlier version of that test *replicated* those functions, because they
+were unreachable inside `certifyMigrations.ts`; #516 lifted them out precisely so
+they could be exercised, so the copy is gone.
+
+Spelling the definition out in full is also the point: **a live object no file
+describes is its own defect, and is half of why this happened.** The safety of
+replacing rather than patching comes from the `$pre$` **md5 gate** — the body is
+replaced only if what is installed is byte-for-byte the body the file was
+written against (`05e711b9fb218e42171988c1c56b8d26`, 2891 bytes, captured
+verbatim in `artifacts/api-server/src/test/fixtures/global_journey_shadow_stop_v1.preimage.sql`).
+
+### Applied to production 2026-09-21, and verified independently
+
+Recorded in `schema_migration_ledger` with `applied_by='manual'` and the file's
+real SHA-256. **That checksum has since been re-recorded**, and deliberately so:
+the chain-replayability repair above changed the file, so the sha256 on the row
+(`b28ddcb9…`) no longer named any file on `main`. It is now
+`3c080a723b9adf06f7c16dacf157837384877a6b5afa0baba9dfd25ca1d67437`, with the
+supersession, the old value and the reason appended to the row's own `notes`.
+
+**A ledger row naming a checksum no file has is the exact failure mode this
+document keeps cataloguing**, so it was corrected rather than left to rot — and
+the correction is a metadata write only. **No DDL was run on production for it.**
+
+**What changed is the migration, not the object**, and that is measured rather
+than asserted. Production still reads `md5(pg_get_functiondef)` =
+`ff476d8897d0ffac32e439800edc33e9`, length **4218**, `proacl`
+`{postgres=X/postgres,service_role=X/postgres}` — identical to what the row
+recorded on apply. The *repaired* file, replayed onto a local PostgreSQL 16.13
+carrying the captured pre-image, produces **exactly those bytes**, so the new
+file text still describes the installed object byte for byte.
+
+**Delivery differences, stated rather than implied:** the Management API supplies
+its own transaction, so the file's self-wrapped `BEGIN;`/`COMMIT;` was omitted
+from the text sent; the file's long evidence header was abridged in transit; and
+the ledger checksum hashes the **file on disk**, not the text the API received.
+
+Verified **independently of the migration's own postconditions**: `0` unqualified
+deletes (was 3), `4` `journey_purpose` scope references, `0` tautological `WHERE`
+clauses, participant clause present, exactly `1` overload, signature still
+`(p_actor uuid)`, `SECURITY DEFINER` with `search_path=''`, ACL
+`{postgres=X/postgres,service_role=X/postgres}`, `anon` and `authenticated`
+refused `EXECUTE`.
+
+**The stop was NOT invoked on production.** All journey tables remain at 0 rows.
+
+### What was proven, and what was NOT
+
+The reproduction was run on the local disposable PostgreSQL under an **armed**
+guard — not on plain PostgreSQL, which is the trap that let 2963 through.
+
+| | result |
+|---|---|
+| pre-image body, guard armed | raised *"DELETE requires a WHERE clause"*, **whole stop rolled back**: flags still on, cohorts still live, sessions still open |
+| repaired body, guard armed | completed; flags 0, stages 0, live assignments 0, live issuances 0, open sessions 0 |
+| scoping | exactly the 3 deliberately out-of-scope rows survived; the orphaned segment revision was caught by the participant clause |
+| authorization | `anon` and `authenticated` refused at runtime (*permission denied for function*); a non-admin actor refused even via `service_role` |
+
+**And it transfers to production as evidence rather than inference:** the local
+database and production now carry the **same bytes** —
+`pg_get_functiondef` md5 `ff476d8897d0ffac32e439800edc33e9`, length `4218`, on
+both. Production was separately confirmed to run
+`session_preload_libraries = supautils`.
+
+**NOT PROVEN, and not claimed.** The local guard is an **effect** proxy, not the
+real syntactic one. `supautils`' `safeupdate` refuses a DELETE whose parse tree
+carries no qualification — whether or not the table has rows — and it fires on
+statements executed *inside* a plpgsql function. Plain PostgreSQL offers no hook
+that can see an inner statement's text, and `safeupdate` is **not an installable
+extension** (`pg_available_extensions` returns nothing matching). The guard used
+instead raises the same message when a single DELETE empties a table that had
+rows, in a fixture seeded so that a correctly-scoped delete leaves rows behind.
+That establishes the rollback behaviour, the scoping and the authorization; it
+does **not** establish that this specific `safeupdate` build accepts this
+specific predicate.
+
+**And the Management API proves nothing about the guard** — confirmed by direct
+probe on `portava-ci`, not assumed: with `SET safeupdate.enabled = 'true'` an
+unqualified `DELETE` **SUCCEEDED**, deleting every row. That is the exact mistake
+that cost this project a production outage on 2026-09-21, and no check run there
+is presented here as evidence about a guarded session.
+
+**`portava-ci` could not rehearse this at all**: the function does not exist
+there (`count(*)` over `pg_proc` is **0**, verified 2026-09-21), so the
+sufficiency argument rests on the byte-identity above rather than on a CI suite.
+
+That absence was first written up here as *the design working* — `2976`'s
+precondition **refused**, *"global_journey_shadow_stop_v1 is absent … will not
+create one from nothing."* **That reading was half right, and the wrong half
+was a defect.** See below.
+
+### The refusal on an absent object was ALSO a chain-replayability defect
+
+**The invariant:** every file in the canonical chain must replay cleanly onto a
+database built from that chain. A migration that **aborts** the replay is broken
+however right it is about production, because it stops every later file running.
+
+2976 failed that, and the failure was not hypothetical — CI caught it:
+
+    ##[error]local-db: 2976_journey_shadow_global_stop_delete_scope.sql failed
+             and is not in KNOWN_UNREPLAYABLE.json
+    ERROR: 2976: public.global_journey_shadow_stop_v1 is absent.
+
+The object is absent from a chain-built database **by construction**: it was
+authored in `2127` SECTION 9 on a branch that never merged, so no file in the
+chain creates it. The same abort would have hit `live-db.yml`'s apply to
+`portava-ci` after merge, turning `main` red for the same reason.
+
+**The fix is a quiet skip, in all three blocks, from one observation.** Each
+block re-derives the same catalog fact itself, so the skip and the assertions
+can never disagree about what happened:
+
+| block | on an absent object |
+|---|---|
+| `$pre$` | `RAISE NOTICE`, `RETURN` |
+| `$mig$` | `RAISE NOTICE`, `RETURN` — so nothing is created from nothing, and the `REVOKE`/`GRANT`/`COMMENT` cannot raise either |
+| `$post$` | `RAISE NOTICE`, `RETURN` — there is nothing to assert |
+
+**A postcondition that fires on a deliberate no-op is the same class of false
+failure as the `certify:migrations` `$pre$` trap** — a guard reporting a
+migration that worked as a migration that broke. That is why `$post$` had to
+move too, and why it skips on the *same* observation rather than a second one.
+
+**What is deliberately NOT weakened.** *Absent → skip* and *present but
+unrecognised → refuse* are different branches and stay different. If the
+function exists but its body is neither the recorded pre-image nor the
+post-state, `$pre$` still **raises** and still refuses to overwrite a body it has
+not read. The md5 gate is untouched; the header's reasoning about not creating
+the object from nothing is still true, and is now enforced by the `$mig$` gate in
+behaviour rather than by an abort.
+
+### The auditor's claim metadata had to follow the no-op
+
+Making 2976 conditional made its **claim metadata wrong**, and `audit:schema`
+(`auditMigrationsVsLive.ts`) caught it against portava-ci:
+
+    ✖ 2976_journey_shadow_global_stop_delete_scope.sql
+        missing function global_journey_shadow_stop_v1
+
+The auditor is name-keyed to text: it reads the `CREATE OR REPLACE FUNCTION`
+inside the guarded `$mig$` block and records an **unconditional** promise that
+the object exists live. After the repair that promise is false on any
+chain-built database — 2976 applies, correctly no-ops, and creates nothing.
+**The migration was right and the claim was wrong.**
+
+**Neither existing exemption was honest.** `SKIP_FILES` means *"superseded or
+known-drifted"* and prints exactly that; 2976 is current, correct and applied.
+The `ALLOWLIST` means *"the object does not exist and live deliberately
+differs"*, permanently — but the object **does** exist in production, which is
+the database whose ACLs are worth guarding. So a third category was added with
+an accurate name, `CONDITIONAL_CLAIMS`: *a claim a migration makes only when a
+precondition holds in the target database.*
+
+**The condition is deliberately not "is the function there".** That shortcut is
+circular — it reduces to *never report this object missing* and would stop the
+auditor noticing if someone **dropped the stop on production**. The condition
+keys instead on something 2976 never creates and cannot fake: the programme's
+own tables, authored by 2127 alongside the function. Measured 2026-09-21:
+
+| database | journey tables | effect |
+|---|---|---|
+| production | all 9 present | claim **enforced in full** — a dropped stop is drift |
+| portava-ci | **0** present | programme never installed; nothing to audit |
+
+`some`, not `every`: the exemption applies only when the programme is wholly
+absent, so losing one table does not buy an escape from the audit.
+
+Like 2481's posture skip, **it expires by itself.** If 2127 ever merges and the
+tables land on portava-ci, the claim is enforced there again with nobody
+remembering this entry. And a **staleness assertion fails the run** if an entry
+matches no claim — a dead exemption is how a real gap gets carried for months.
+Every non-applying claim is printed, never silently dropped.
+
+The decision lives in `src/scripts/lib/conditionalClaims.ts` rather than inside
+the auditor, because that script's first import is the read-only Supabase front
+door and exits 2 without credentials — so nothing in it can be imported and
+asserted on. `conditionalClaimAudit.test.ts` covers both databases' shapes, and
+case (3) pins the part that matters: **programme installed + stop missing must
+still fail.**
+
+**Why not `KNOWN_UNREPLAYABLE.json`.** That registry exists and 2976 would have
+been accepted into it. It was rejected for two reasons. Its own `_rule` says an
+entry is *"a fact about the replay, not permission to ignore the file"* — and
+this failure was avoidable, not inherent. And it is read only by
+`scripts/local-db/up.sh`: an entry would have silenced the throwaway CI job while
+leaving the `portava-ci` apply to abort exactly as before. **It would have hidden
+half the defect.**
+
+**Proven on a real PostgreSQL 16.13**, all four branches, and the original
+failure reproduced first:
+
+| database state | original 2976 | repaired 2976 |
+|---|---|---|
+| function **absent** | `ERROR: … is absent` (exit 3) | 3 × `NOTICE`, `COMMIT`, exit 0, function still absent |
+| **pre-image** installed (md5 `05e711b9…`, 2891) | — | applies; installed body is **md5 `ff476d88…`, 4218 — byte-identical to production** |
+| **post-state** (re-apply) | — | `NOTICE: already applied`, exit 0, bytes unchanged |
+| **unrecognised body** | — | `ERROR: … REFUSING rather than overwriting` (exit 3) |
+
+The pre-image fixture reproducing production's exact `pg_get_functiondef` md5 on
+a *local* PostgreSQL 16 is itself the check that the capture is faithful.
+
+### Still open
+
+- **The programme's TypeScript never landed.** `routes/adminJourney.ts` and
+  `services/journey/JourneyShadowRolloutService.ts` exist only on
+  `fix/rls-hardening-signin-flake`. Until one of them is merged, the repaired
+  stop has **no caller** — the RPC is reachable only by hand through
+  `service_role`. Porting or retiring that branch is an ownership decision, not
+  this lane's to take. **2976 deliberately does not retire the function**: the
+  contract for retiring it is a verified canonical replacement covering its
+  callers, and there is none.
+
+  Bringing the object into the repository made it visible to
+  `check:security-definer-oracles`, which had never seen it, and it failed — a
+  SECURITY DEFINER function nothing references. **That finding is correct and is
+  now ledgered**, not silenced: `src/scripts/SECURITY_DEFINER_ORACLES.json` gains
+  a `PENDING-OWNER` entry. The check's standing warning — that Supabase default
+  privileges leave `EXECUTE` with `anon` and `authenticated` — **does not hold
+  here**, and the entry says so with the measurement: production's `proacl` reads
+  exactly `postgres=X/postgres | service_role=X/postgres`, and
+  `has_function_privilege` returns `anon` **false**, `authenticated` **false**,
+  `service_role` **true** (2026-09-21). So it is not reachable with a user token
+  and answers nobody's authorization question. A **`REVOKE` was not** used as the
+  fix — the check forbids it, and it was already done anyway.
+
+  One thing that entry records is stronger than its neighbours': a fresh replay
+  of the chain does not produce a narrowly-granted function, **it produces no
+  function at all** (see the no-op above). Production is the only database that
+  has it.
+
+  **The test must not manufacture a caller for it.** That check resolves a
+  reference edge from any quoted `"<name>"` token in `src/`, so a test asserting
+  *about* this function can accidentally register as something *calling* it —
+  the weakest reference kind, and the one the check's own report calls "the one a
+  stale test fixture produces". `journeyShadowGlobalStopDeleteScope.test.ts`
+  therefore writes that one pattern's quotes as `\x27`, with the reason in a
+  comment beside it. Suppressing the finding by accident would have been worse
+  than the finding.
+- **The rest of 2127 is still out-of-band.** This lane brought ONE object into
+  the repository. The other ~30 `journey_*` functions in production, and the nine
+  tables, remain described by no file on `main`.
+
+### Re-establish any of this independently
+
+    -- against production
+    SELECT md5(pg_get_functiondef(p.oid)), length(pg_get_functiondef(p.oid))
+      FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+     WHERE n.nspname = 'public' AND p.proname = 'global_journey_shadow_stop_v1';
+    -- expect ff476d8897d0ffac32e439800edc33e9 / 4218
+
+    SELECT has_function_privilege('anon','public.global_journey_shadow_stop_v1(uuid)','EXECUTE'),
+           has_function_privilege('authenticated','public.global_journey_shadow_stop_v1(uuid)','EXECUTE'),
+           has_function_privilege('service_role','public.global_journey_shadow_stop_v1(uuid)','EXECUTE');
+    -- expect false, false, true
+
+    SELECT filename, applied_by, left(checksum, 12)
+      FROM public.schema_migration_ledger
+     WHERE filename = '2976_journey_shadow_global_stop_delete_scope.sql';
+    -- expect applied_by='manual', checksum 3c080a723b9a (was b28ddcb90521 before the
+    --        chain-replayability repair; the row's notes record the supersession)
