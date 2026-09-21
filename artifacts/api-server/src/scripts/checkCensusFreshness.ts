@@ -2109,6 +2109,30 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "travel-buddy-standalone/src/platform/input-assistance/hooks/__tests__/useInputAssistance.zeroState.component.test.tsx",
     "artifacts/api-server/src/test/inputAssistanceSelectionMemoryLiveDbStatus.test.ts",
     "travel-buddy-standalone/scripts/run-node-tests.mjs",
+    // ── ADDED 2026-09-21 by §31, for the offline substrate ──────────────────
+    // Ten files the eight rows §31.3 moves cite as their evidence. Four of them
+    // are SHIPPED DATA, which is the unusual half and the reason this block is
+    // not optional: G197's `C` rests on 250 country names and G198's on ~270
+    // city names, so an edit to either artifact can falsify a verdict without
+    // touching a line of executable code. A census that grades a data file and
+    // does not watch it is the same inversion as one that grades a test and
+    // does not watch it.
+    "travel-buddy-standalone/src/platform/input-assistance/data/countries.ts",
+    "travel-buddy-standalone/src/platform/input-assistance/data/cities.ts",
+    "travel-buddy-standalone/src/platform/input-assistance/data/languages.ts",
+    "travel-buddy-standalone/src/platform/input-assistance/data/interests.ts",
+    "travel-buddy-standalone/src/platform/input-assistance/services/localDictionary.ts",
+    "travel-buddy-standalone/src/platform/input-assistance/services/__tests__/localDictionary.test.ts",
+    "travel-buddy-standalone/src/platform/input-assistance/services/localRecentsStore.ts",
+    "travel-buddy-standalone/src/platform/input-assistance/services/__tests__/localRecentsPersistence.test.ts",
+    "travel-buddy-standalone/src/platform/input-assistance/services/installLocalRecents.ts",
+    "travel-buddy-standalone/src/platform/input-assistance/hooks/__tests__/useInputAssistance.offline.component.test.tsx",
+    // G198's bound IS this file's key set, and G197's country pin is measured
+    // against this one — they are cited as the artifacts the new ones are
+    // derived from and pinned to, so a rename or a trimmed list there moves a
+    // verdict here.
+    "travel-buddy-standalone/src/lib/cityCentroids.ts",
+    "travel-buddy-standalone/src/lib/countryCentroids.ts",
     // ── ADDED 2026-09-21 by §14 (the scattered §27–§56 rows) ────────────────
     // Every path below is cited as EVIDENCE by a row §14 moved or re-read, and
     // scope-coverage measured the census at exactly its 98% floor before them:

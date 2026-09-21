@@ -37,6 +37,7 @@ import { sharedSuggestionCache, SuggestionCache, isCacheablePrivacyClass } from 
 import { createSequenceGuard } from '../services/raceGuard.ts';
 import { finalizeSuggestions, narrowToQuery } from '../services/suggestionRanking.ts';
 import { localZeroState } from '../services/localZeroState.ts';
+import { offlineLocalRows } from '../services/localDictionary.ts';
 import { emitInputEvent } from '../services/inputTelemetry.ts';
 
 export interface UseInputAssistanceOptions {
@@ -367,9 +368,34 @@ export function useInputAssistance(
           // `offlineSurfaceAllowed` fails CLOSED on a value this build cannot
           // name, so a newer server's offline vocabulary retains nothing rather
           // than everything.
+          //
+          // ── AND WHAT THE GATE HAD NOTHING TO OPEN ONTO (§32, G197/G198) ───
+          //
+          // The paragraph above is about RETAINING. For nine contexts the
+          // answer is "retain nothing", and the branch is exact. For the other
+          // twenty it was "retain whatever is left" — which, on a COLD start,
+          // is nothing: the SWR cache is empty, no row has been accepted yet,
+          // and `local` is `null`. So the licensed surfaces still produced an
+          // empty panel, and `static_dictionary` in particular licensed a
+          // SHIPPED LIST THAT DID NOT EXIST. `contexts/fieldInventory.ts` said
+          // so in as many words about the country picker.
+          //
+          // `offlineLocalRows` is the substrate that gate now opens onto: the
+          // retained rows FIRST (they are rows the server projected, and they
+          // outrank anything shipped), then the field's licensed dictionaries
+          // — countries / languages / interests for `static_dictionary`, plus
+          // the compact city index for `cached_local` — then the raw query for
+          // a field licensed to show one. It re-applies this same
+          // `offlineSurfaceAllowed` check and the §29 privacy predicate
+          // internally, so the licence cannot be lost by a second caller.
+          //
+          // It is reached ONLY from this arm. A transient error keeps what is
+          // on screen; an online serve is served alone. A shipped row appears
+          // when, and only when, the authority is unreachable and the
+          // authority said this field may answer without it.
           const mayRetain = offlineSurfaceAllowed(policy.offlinePolicy);
           setUnavailable(true);
-          setSuggestions(mayRetain ? (local ?? []) : []);
+          setSuggestions(mayRetain ? offlineLocalRows(policy, trimmed, local ?? []) : []);
           setLoading(false);
         } else {
           // Transient error: keep whatever is on screen, just stop the spinner.
