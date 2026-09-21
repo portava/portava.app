@@ -91,6 +91,60 @@ async function purge(userId: string): Promise<void> {
   await sc.from("blocks").delete().eq("blocker_id", userId);
   await sc.from("compass_user_preferences").delete().eq("user_id", userId);
   await sc.from("compass_graph_edges").delete().eq("src_key", userId);
+  // The PLACE-lane sources (see the M42 block below). Deleted per user, so a
+  // failed run cannot leave saves behind that make a later run's anti-vacuity
+  // check pass for the wrong reason.
+  await sc.from("wishlist_places").delete().eq("user_id", userId);
+  await sc.from("discovery_place_saves").delete().eq("user_id", userId);
+}
+
+// ── M42's PLACE lane: the three id-space bridges 2963 introduced ─────────────
+//
+// Fixed ids rather than random so a stranded row is identifiable by eye. The
+// `discovery_places` rows are the only fixtures here that are NOT user-scoped,
+// so they are deleted by id in `after` and the suite holds the shared-database
+// slot while it runs, which is what keeps them from colliding with a suite
+// beside this one.
+const M42_PLACE_BY_ID = "a0000042-0000-4000-8000-000000000001";
+const M42_PLACE_BY_OSM = "a0000042-0000-4000-8000-000000000002";
+const M42_PLACE_BY_DPS = "a0000042-0000-4000-8000-000000000003";
+const M42_OSM_ID = "node/9904242";
+const M42_PLACE_IDS = [M42_PLACE_BY_ID, M42_PLACE_BY_OSM, M42_PLACE_BY_DPS];
+
+async function seedUnionOnlySaves(userId: string): Promise<void> {
+  await sc.from("discovery_places").upsert(
+    [
+      { id: M42_PLACE_BY_ID, name: "M42 bridge · db/<uuid>", place_type: "cafe" },
+      { id: M42_PLACE_BY_OSM, name: "M42 bridge · osm_id", place_type: "viewpoint", osm_id: M42_OSM_ID },
+      { id: M42_PLACE_BY_DPS, name: "M42 bridge · discovery_place_saves", place_type: "museum" },
+    ],
+    { onConflict: "id" },
+  );
+
+  // Bridge 1 + 2: wishlist_places, whose place_id is TEXT across four id-spaces.
+  const { error: wErr } = await sc.from("wishlist_places").insert([
+    {
+      user_id: userId,
+      place_id: `db/${M42_PLACE_BY_ID}`,
+      place_data: {},
+      saved_at: new Date(Date.now() - 3 * 86_400_000).toISOString(),
+    },
+    {
+      user_id: userId,
+      place_id: M42_OSM_ID,
+      place_data: {},
+      saved_at: new Date(Date.now() - 2 * 86_400_000).toISOString(),
+    },
+  ]);
+  if (wErr) throw new Error(`could not seed wishlist_places: ${wErr.message}`);
+
+  // Bridge 3: discovery_place_saves, whose place_id is already a uuid.
+  const { error: dErr } = await sc.from("discovery_place_saves").insert({
+    user_id: userId,
+    place_id: M42_PLACE_BY_DPS,
+    saved_at: new Date(Date.now() - 86_400_000).toISOString(),
+  });
+  if (dErr) throw new Error(`could not seed discovery_place_saves: ${dErr.message}`);
 }
 
 /** One pass for one user — the unit `project_all_memory` fans out to. */
@@ -137,6 +191,9 @@ before(async () => {
 after(async () => {
   if (!CREDS || !sc) return;
   await purge(userA); await purge(userB);
+  // Not user-scoped, so `purge` cannot reach them. Deleted AFTER the saves that
+  // reference them, because discovery_place_saves.place_id is a FK.
+  await sc.from("discovery_places").delete().in("id", M42_PLACE_IDS);
   for (const id of [userA, userB]) if (id) await deleteFixtureUser(sc, id);
 });
 
@@ -295,5 +352,114 @@ describe("a failing pass leaves no partial state", () => {
       .select("id", { count: "exact", head: true }).eq("user_id", orphan);
     assert.equal(count ?? 0, 0, "no rows for a user that cannot own them");
     assert.equal((await projections(userA)).length, before, "and other users are untouched");
+  });
+});
+
+/**
+ * M42 — the PLACE lane, through the path that actually runs it.
+ *
+ * WHY THIS BLOCK EXISTS, and why it is HERE rather than anywhere cheaper.
+ *
+ * census-map M42 ("Gold marker = Saved / Passport / Memory") turns on two
+ * things: that `project_user_memory`'s PLACE lane reads the
+ * `discovery_place_saves` + `wishlist_places` union instead of the writerless
+ * `saved_places`, and that a `memory_projections` row with
+ * `subject_type = 'place'` EXISTS for a user whose saves are ONLY union-sourced.
+ *
+ * The second half was once "proven" against a local plain PostgreSQL and the
+ * row was moved to C on that basis. That was wrong, and expensively so: 2963
+ * shipped `DELETE FROM _canon_saves;` unqualified, which plain PostgreSQL
+ * permits and this database REFUSES — `session_preload_libraries = supautils`,
+ * whose safeupdate guard raises "DELETE requires a WHERE clause" for
+ * PostgREST-role sessions. The statement sits mid-body, after the episodic,
+ * semantic and social inserts, so every call raised and rolled back the whole
+ * transaction: the projector produced NOTHING, in CI and in production, and
+ * `memoryProjectionScheduler` only `logger.warn`s the rejection so it failed
+ * silently. 2965 qualified the delete.
+ *
+ * So the test is in a LIVE suite deliberately. It calls
+ * `project_user_memory_with_retraction` through PostgREST, which is the session
+ * the guard is armed in — the one environment where the defect can appear. A
+ * green run here means something a green run on a guard-free database does not.
+ *
+ * ANTI-VACUITY is structural rather than asserted in prose: `saved_places` is
+ * EMPTY on this project (0 rows, whole table), so the pre-2963 body could not
+ * have produced a place projection for this user or any other. The check below
+ * measures it rather than trusting that.
+ *
+ * All THREE id-space bridges are exercised, because M42's remedy names the
+ * bridge and a lane that resolved only one of them would still drop saves:
+ *   db/<uuid>   -> discovery_places.id
+ *   node/<id>   -> discovery_places.osm_id
+ *   <uuid>      -> discovery_place_saves.place_id, already in the id-space
+ */
+describe("M42 — the PLACE lane projects union-sourced saves (guarded path)", () => {
+  it("anti-vacuity: saved_places is empty, so the OLD body could project nothing", async (t) => {
+    if (!CREDS) return t.skip("credentials absent");
+    const { count, error } = await sc
+      .from("saved_places")
+      .select("user_id", { count: "exact", head: true });
+    assert.equal(error, null, "saved_places must be readable for this check to mean anything");
+    assert.equal(
+      count ?? 0,
+      0,
+      "saved_places has rows: the pre-2963 lane could have produced a place projection " +
+        "from them, and this suite's M42 result would no longer isolate the union",
+    );
+  });
+
+  it("a user with ONLY union-sourced saves gets a place projection per bridge", async (t) => {
+    if (!CREDS) return t.skip("credentials absent");
+    await purge(userA);
+    await seedUnionOnlySaves(userA);
+
+    // The pass that matters. If the delete were still unqualified this REJECTS
+    // with "DELETE requires a WHERE clause" and `pass` throws — the failure this
+    // block exists to catch, arriving as an error rather than an empty result.
+    await pass(userA);
+
+    const places = (await projections(userA)).filter((p) => p.subject_type === "place");
+    const ids = places.map((p) => p.subject_id).sort();
+
+    assert.deepEqual(
+      ids,
+      [...M42_PLACE_IDS].sort(),
+      "every bridge must resolve: db/<uuid> -> id, node/<id> -> osm_id, and the " +
+        "already-resolved discovery_place_saves uuid",
+    );
+    for (const p of places) {
+      assert.equal(p.memory_type, "place", "the PLACE lane writes place memory");
+      assert.equal(p.visibility, "private", "§19: projected memory is private by default");
+    }
+  });
+
+  it("the saved_place EVENTS name the union, not the writerless table", async (t) => {
+    if (!CREDS) return t.skip("credentials absent");
+    const rows = (await events(userA)).filter((e) => e.subject_type === "place");
+    assert.equal(
+      rows.length,
+      M42_PLACE_IDS.length,
+      "one saved_place event per resolved venue",
+    );
+    const { data } = await sc
+      .from("memory_events")
+      .select("source_ref")
+      .eq("user_id", userA)
+      .eq("subject_type", "place")
+      .limit(1);
+    const table = (data?.[0] as any)?.source_ref?.table ?? "";
+    assert.equal(
+      table,
+      "wishlist_places+discovery_place_saves",
+      "provenance must name the union the lane actually read",
+    );
+  });
+
+  it("a second pass adds no duplicate place memory — the lane is idempotent too", async (t) => {
+    if (!CREDS) return t.skip("credentials absent");
+    const before = (await projections(userA)).filter((p) => p.subject_type === "place").length;
+    await pass(userA);
+    const after_ = (await projections(userA)).filter((p) => p.subject_type === "place").length;
+    assert.equal(after_, before, "MIN(saved_at) dedupe holds across passes");
   });
 });

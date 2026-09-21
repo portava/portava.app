@@ -25,7 +25,7 @@ test('registerSocialFields registers telegraph.recipient in the telegraph_recipi
   assert.equal(policy!.context, 'telegraph_recipient');
   assert.equal(policy!.mode, 'search'); // recipient search, not a picker
   // Account-enumeration-resistant recipient search is a personal-privacy field.
-  assert.equal(policy!.privacyClass, 'personal');
+  assert.equal(policy!.privacyClass, 'viewer_scoped');
   assert.deepEqual(policy!.entityTypes, ['user']);
   // minChars override → zero-state recents/crew/followed at 0 chars (§14).
   assert.equal(policy!.minChars, 0);

@@ -152,7 +152,9 @@ export async function updateMyProfile(patch: UpdateProfileInput): Promise<Profil
 
 /* ---------- Username check ---------- */
 
-export async function checkUsername(username: string): Promise<{ available: boolean; reason?: string }> {
+export async function checkUsername(
+  username: string,
+): Promise<{ available: boolean; reason?: string; alternatives?: string[] }> {
   if (!isSupabaseConfigured || !apiBase()) return { available: false, reason: 'Backend not configured' };
   const token = await freshToken();
   if (!token) return { available: false, reason: 'Not signed in' };

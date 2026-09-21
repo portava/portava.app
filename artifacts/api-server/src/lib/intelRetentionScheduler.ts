@@ -497,9 +497,91 @@ export async function runSensingSessionCleanup(
   }
 }
 
+/** The house window, `docs/ops/retention-policy.md:3` — "Window: 90 days". */
+export const INPUT_TELEMETRY_RETENTION_DAYS = 90;
+
+/**
+ * Bound `input_assistance_telemetry_events` (migration 2950) to the house
+ * 90-day window.
+ *
+ * ── WHY THIS PASS HAD TO SHIP WITH THE SINK ──────────────────────────────────
+ * The §44 telemetry sink is now attached at app boot
+ * (`travel-buddy-standalone/app/_layout.tsx`), so this table is the first thing
+ * in the Input Intelligence lane that ACCUMULATES. This file's own header
+ * records what happens when a store lands without its sweeper twice over —
+ * migration 2315 shipped a purge function whose only reference in the repository
+ * was its own definition, and `location_snapshots` carried `expires_at` for
+ * months with nothing enforcing it, so readers filtered on expiry, the feature
+ * looked correct, and rows accumulated forever. Turning on collection without
+ * this pass would have been the third.
+ *
+ * ── WHY IT IS A DIRECT DELETE AND NOT AN RPC ────────────────────────────────
+ * Every other pass here calls a `purge_*` SQL function its own migration
+ * defined. 2950 defines none, and writing a migration is not this lane's to do.
+ * A bounded DELETE over a timestamp column needs no function — and inventing a
+ * migration to have one would have been the worse answer, because the migration
+ * that owns this table is already committed and unapplied.
+ *
+ * ── WHY THERE IS NO FEATURE FLAG ─────────────────────────────────────────────
+ * The house instinct is to ship an irreversible DELETE switched off. That is the
+ * wrong polarity for a RETENTION control — `runMapTelemetryRetentionSweep`'s
+ * header argues it at length: a retention flag shipped off declares a 90-day
+ * privacy promise and then does not keep it. A flag here would need a seed row,
+ * a seed row needs a migration, and the effect of shipping it unseeded is that
+ * the promise is never kept. `sensing_credential_cleanup` sets the precedent for
+ * `flag: null` and gives the test for when it applies: a flag protects rows a
+ * reader can still see. These rows are not such rows. They carry no account id
+ * by construction (2950 RAISEs if one is ever added), and every §57 metric over
+ * them is windowed, so deleting rows past 90 days changes no answer
+ * `scripts/reportInputMetrics.ts` can give inside its own window.
+ *
+ * ── AND IT IS A NO-OP TODAY, WHICH IS THE POINT ──────────────────────────────
+ * 2950 is unapplied to production and to portava-ci, so the table does not exist
+ * and this pass reports `error` rather than a purge. On the day the migration
+ * lands the bound is ALREADY enforced, rather than being one more thing someone
+ * has to remember to turn on afterwards.
+ */
+export async function runInputTelemetryRetentionSweep(
+  opts: { client?: any; now?: Date } = {},
+): Promise<SweepResult> {
+  // Explicit null means "no client"; undefined means "use the service client".
+  // NOT `opts.client ?? getServiceClient()` — see runIntelRetentionSweep's note
+  // on why `??` opened a socket in CI.
+  const db = "client" in opts && opts.client !== undefined ? opts.client : getServiceClient();
+  if (!db) return { purged: 0, skipped: true, reason: "no_client" };
+
+  const now = opts.now ?? new Date();
+  const cutoff = new Date(
+    now.getTime() - INPUT_TELEMETRY_RETENTION_DAYS * 24 * 60 * 60 * 1000,
+  ).toISOString();
+
+  try {
+    // `received_at` (the server's own clock), never `occurred_at` (the device's).
+    // A device with a clock two years fast would otherwise keep its rows past the
+    // window, and one two years slow would have them deleted on arrival.
+    const { data, error } = await db
+      .from("input_assistance_telemetry_events")
+      .delete()
+      .lt("received_at", cutoff)
+      .select("id");
+    if (error) {
+      logger.warn({ err: error }, "input telemetry retention sweep failed");
+      return { purged: 0, skipped: true, reason: "error" };
+    }
+    const purged = Array.isArray(data) ? data.length : 0;
+    // A count and nothing else. WHICH events expired is a fact about sessions.
+    if (purged > 0) logger.info({ purged }, "input telemetry retention removed expired rows");
+    return { purged, skipped: false, reason: null };
+  } catch (err) {
+    logger.warn({ err }, "input telemetry retention sweep threw");
+    return { purged: 0, skipped: true, reason: "error" };
+  }
+}
+
 export const RETENTION_PASSES: readonly RetentionPass[] = [
   { name: "intel_retention_sweep", flag: "intel_retention_sweep_enabled", run: runIntelRetentionSweep },
   { name: "intel_contribution_retention", flag: "intel_contribution_retention_enabled", run: runIntelContributionRetentionSweep },
+  { name: "input_telemetry_retention", flag: null, run: runInputTelemetryRetentionSweep },
   { name: "map_telemetry_retention", flag: "map_telemetry_retention_enabled", run: runMapTelemetryRetentionSweep },
   { name: "presence_cleanup", flag: "presence_cleanup_enabled", run: runPresenceCleanup },
   { name: "sensing_credential_cleanup", flag: null, run: runSensingCredentialCleanup },
