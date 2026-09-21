@@ -207,6 +207,27 @@ export const KNOWN_PRODUCTION_GAPS: Record<string, Gap> = {
   trip_meeting_checkpoints: { classification: "unapplied", note: "Trips §10.4 / §11.3 (2794) — meeting checkpoints: a chosen §14.3 candidate with its explanation, a meet-by and a status (census-trips §52, TR177/TR198). Written only by the kernel (CREATE_MEETING_CHECKPOINT / CLOSE_MEETING_CHECKPOINT); read by routes/tripMeetingCheckpoints, TripHealthProjection (REGROUP_OPEN), the map's meetup layer and the offline bundle, all under trip_operational_projections_enabled; absent from every database but the local replica until this branch merges and the owner's Batch C applies it." },
   trip_meeting_checkpoint_participants: { classification: "unapplied", note: "Trips §10.4 (2794) — who is expected at a meeting checkpoint and their arrival state. Written only by the kernel (CREATE_MEETING_CHECKPOINT / SET_MEETING_ARRIVAL); read under the same flag as trip_meeting_checkpoints." },
 
+  // ── Trips §23, the one Trips table that is genuinely NOT in production ─────
+  //
+  // Landed here by the ledger reconciliation, not by the Trips lane: 2797 was
+  // applied to portava-ci on 2026-09-17 and its file reached `main` only now, so
+  // this ratchet saw the declaration for the first time. Entry text is carried
+  // verbatim from claude/portava-continuation-uqta94, which authored it for the
+  // same file, so the two branches state one ruling rather than two.
+  trip_commitment_recurrences: {
+    classification: "unapplied",
+    note:
+      "Trips §23 (2797) — recurring commitments as a RULE in local wall-clock " +
+      "time. REHEARSED on portava-ci 2026-09-17 (preconditions, the 15 refusal " +
+      "probes and the final count(*) = 2 all fired) and deliberately NOT applied " +
+      "to production. Its writer is 2798, whose five command branches are also " +
+      "CI-only, so the table would reach production writerless and readerless — " +
+      "the same argument the 2760-2763 block made, and 2797 is the last table " +
+      "still making it. Applying 2797/2798/2799 to production is an owner " +
+      "decision that has not been taken; when it is, strike this off in the same " +
+      "change that refreshes the two production snapshots.",
+  },
+
   // ── A guarantee the docs rest on, that production does not have ───────────
   protected_zones: {
     classification: "unapplied",
