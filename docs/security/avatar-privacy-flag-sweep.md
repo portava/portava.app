@@ -59,7 +59,7 @@ not just add the column to the select.
    anonymous crawler (no `viewerId` at all), same severity class as the og-image.png fix
    above.
 
-2. **`routes/discoverySearch.ts:272,349`** (`searchTravelers`). Existing gate:
+2. **`routes/discoverySearch.ts:275,352`** (`searchTravelers`). Existing gate:
    `isPrivate = p.is_private && !isFollowing` — only hides the avatar for a **private**
    profile the searcher doesn't follow. A `is_private=false` (public) profile with the
    photo flag off is not covered by this condition at all; `avatarUrl` falls straight

@@ -27,6 +27,101 @@ import { publishToUsers } from '../lib/telegraphEvents';
 
 export type TranslationStatusValue = 'pending' | 'translated' | 'failed' | 'skipped';
 
+/**
+ * What `messages.language_detection_source` is allowed to claim.
+ *
+ * This column is a DURABLE, QUERYABLE ASSERTION about how the message's
+ * language was decided, so each value has to be something we actually know:
+ *
+ *   'provider'                      the provider read the text and named a language.
+ *   'sender_preference'             the sender's profile was read and it carried a
+ *                                   stated language, which we then used.
+ *   'default'                       the sender's profile was READ SUCCESSFULLY and
+ *                                   stated no language (no row, or both columns
+ *                                   null/blank), so the server's default was used.
+ *   'sender_preference_unreadable'  the sender's profile COULD NOT BE READ. We do
+ *                                   not know whether a preference exists. The
+ *                                   server's default was used as a placeholder and
+ *                                   this value says so.
+ *
+ * WHY THE FOURTH VALUE EXISTS, rather than folding a failed read into 'default'.
+ * This tree's rule, applied in `LayoverPrivacyGuard` (`preferences_unreadable`),
+ * `LayoverReplanService` (`plan_unreadable`), `SafeReturnNotificationService`
+ * (`trip_unreadable`) and `highlightResurfacing` (`state: 'unreadable'`), is that
+ * AN UNREADABLE X IS NOT AN EMPTY X. 'default' is a positive statement — "we
+ * looked, and the sender has stated nothing" — and a `profiles` outage is not
+ * entitled to make it. The naming follows the same house convention
+ * (`<thing>_unreadable`) so the value reads the same way as its siblings.
+ *
+ * NO MIGRATION IS NEEDED and none was written: `language_detection_source` is a
+ * plain nullable `text` column with no CHECK constraint in `migrations/` or in
+ * `baseline/20260819_baseline_structure.sql`. `migrations/0009_translation.sql`
+ * carries a trailing COMMENT listing the original three values; it is not a
+ * constraint and applied migrations are checksummed against the live ledger, so
+ * it is deliberately left alone. THIS type is the vocabulary of record.
+ */
+export type LanguageDetectionSource =
+  | 'provider'
+  | 'sender_preference'
+  | 'default'
+  | 'sender_preference_unreadable';
+
+/**
+ * The answer to "what language did the sender say they write in?", carrying the
+ * third state that a bare `string` cannot.
+ *
+ * `preferredLanguage: null` means NO LANGUAGE IS KNOWN, and `unreadable` says
+ * which kind of not-known it is. Keeping them as two fields rather than one
+ * sentinel string is deliberate: the language is consumed as a language and the
+ * provenance is consumed as provenance, and a caller that only needs one of them
+ * cannot accidentally spend the other.
+ */
+export interface SenderLanguagePreference {
+  /** The language the sender actually stated, or null if none is known. */
+  readonly preferredLanguage: string | null;
+  /** True ONLY when the read failed — "we do not know", never "they stated nothing". */
+  readonly unreadable: boolean;
+}
+
+/**
+ * senderLanguageFrom — the single interpreter of the sender-preference read.
+ *
+ * WHAT THIS REPLACES, at five call sites in `routes/messaging.ts` and
+ * `routes/groupChat.ts`:
+ *
+ *     const { data: senderProfile } = await sc.from('profiles')…
+ *     const senderLanguage = (senderProfile as any)?.preferred_language
+ *       ?? (senderProfile as any)?.preferred_message_language ?? 'en';
+ *
+ * supabase-js RESOLVES on a database error, so `data` was null and `error` was
+ * never bound: a sender who chose English, a sender who chose nothing, and a
+ * `profiles` read that FAILED all became the identical string `'en'`. The
+ * pipeline then wrote `language_detection_source: 'sender_preference'` for all
+ * three, which is a durable false claim in two of them. It lives here, next to
+ * the vocabulary it feeds, because five copies of a coalesce is how the same
+ * defect came to exist in five places.
+ *
+ * `error` is typed `unknown` on purpose — callers pass a PostgrestError and the
+ * only thing this needs from it is whether it is there.
+ */
+export function senderLanguageFrom(
+  row: { preferred_language?: string | null; preferred_message_language?: string | null } | null | undefined,
+  error: unknown,
+): SenderLanguagePreference {
+  // The read failed. We know nothing, and saying nothing is the honest answer.
+  if (error) return { preferredLanguage: null, unreadable: true };
+
+  const stated =
+    (row as any)?.preferred_language ?? (row as any)?.preferred_message_language ?? null;
+
+  // A blank string is a column that was written but says nothing; it is a
+  // preference in the schema's eyes and not one in the user's. Treated as
+  // "stated nothing" rather than passed on as a language code, which is what
+  // the old `?? 'en'` chain did (`'' ?? 'en'` is `''`).
+  const language = typeof stated === 'string' && stated.trim() !== '' ? stated : null;
+  return { preferredLanguage: language, unreadable: false };
+}
+
 export interface TranslationDisplayFields {
   displayBody: string | null;
   originalBody: string | null;
@@ -38,6 +133,27 @@ export interface TranslationDisplayFields {
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
+
+/**
+ * The language a message is stamped with when nothing better is known.
+ *
+ * Named rather than inlined because it is used in two arms that mean DIFFERENT
+ * things ('default' and 'sender_preference_unreadable') and reading the same
+ * literal in both is what made them look interchangeable in the first place.
+ */
+const DEFAULT_SOURCE_LANGUAGE = 'en';
+
+/**
+ * The language code written when NO language is known — ISO 639-2's `und`,
+ * "undetermined".
+ *
+ * Distinct from DEFAULT_SOURCE_LANGUAGE above, and the distinction is the whole
+ * point: `'en'` is a guess that a reader cannot tell from a stated preference,
+ * whereas `und` says on its face that nothing was established. `routes/messaging.ts`
+ * already writes exactly this code when a per-viewer translation read fails, so
+ * this is the tree's convention rather than a new one.
+ */
+const UNKNOWN_LANGUAGE = 'und';
 
 async function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   let timer: ReturnType<typeof setTimeout>;
@@ -89,8 +205,19 @@ export interface TranslationPipelineInput {
   body: string;
   senderId: string;
   threadId: string;
-  /** Sender's preferred language (used as fallback if detection fails). */
-  senderPreferredLanguage?: string;
+  /**
+   * The language the sender STATED, used as a fallback if provider detection
+   * fails. `null` (or omitted) means no language is known — either because the
+   * sender stated none or because the read failed, and
+   * `senderPreferenceUnreadable` is what tells those two apart.
+   */
+  senderPreferredLanguage?: string | null;
+  /**
+   * True ONLY when the sender-preference read FAILED. Callers get this from
+   * `senderLanguageFrom(data, error)`; omitting it means "the read succeeded",
+   * which is the safe default for the one caller that has no read to report.
+   */
+  senderPreferenceUnreadable?: boolean;
   logger?: Logger;
 }
 
@@ -104,30 +231,87 @@ export async function translateMessageForThread(
   sc: SupabaseClient,
   input: TranslationPipelineInput,
 ): Promise<void> {
-  const { messageId, body, senderId, threadId, senderPreferredLanguage, logger } = input;
+  const {
+    messageId,
+    body,
+    senderId,
+    threadId,
+    senderPreferredLanguage,
+    senderPreferenceUnreadable,
+    logger,
+  } = input;
 
   if (!TRANSLATION_ENABLED) return;
 
   try {
     // 1. Get all thread members (other than the sender).
-    const { data: members } = await sc
+    //
+    // census T344/T363. Dropped, this read ENDED the pipeline in silence: an
+    // unreadable `message_thread_members` resolved as `data: null`, `?? []` made
+    // it "this thread has nobody else in it", and the early return below fired.
+    // No translation row was written for anybody and nothing anywhere recorded
+    // that a thread had gone untranslated — the outcome is byte-identical to a
+    // thread the sender is alone in.
+    //
+    // There is no honest row to write instead: without the roster there are no
+    // recipient ids to key one by. What the failure is owed is a LOUD, and the
+    // pipeline's own contract ("never throws") means that loud is a log at
+    // error level, the level its outer catch already uses.
+    const { data: members, error: membersErr } = await sc
       .from('message_thread_members')
       .select('user_id')
       .eq('thread_id', threadId)
       .neq('user_id', senderId);
 
+    if (membersErr) {
+      logger?.error(
+        { messageId, threadId, err: membersErr.message },
+        'thread roster unreadable — no recipient can be translated for, and this is not a solo thread',
+      );
+      return;
+    }
+
     const recipientIds: string[] = (members ?? []).map((m: any) => m.user_id);
     if (recipientIds.length === 0) return;
 
     // 2. Detect source language (provider, with fallback to sender preference).
+    //
+    // The message is translated and stamped with an `original_language` in
+    // every branch — what differs is only the CLAIM about where that language
+    // came from, which is the whole point of `language_detection_source`.
+    //
+    // THE ARMS BELOW USED TO BE TWO, AND ONE OF THOSE TWO WAS UNREACHABLE.
+    // The fallback read `senderPreferredLanguage ?? 'en'` and then
+    // `senderPreferredLanguage ? 'sender_preference' : 'default'`, and every
+    // caller pre-coalesced its profile read to `'en'`, so the ternary was
+    // handed a truthy string no matter what had happened upstream: 'default'
+    // could only fire on a stored EMPTY-STRING preference, which no writer in
+    // this tree produces. The effect was that a `profiles` outage minted a row
+    // asserting the sender had chosen English. Now the caller passes null plus
+    // a flag, so all three arms are reachable and each says a true thing.
     let sourceLanguage: string;
-    let detectionSource: 'provider' | 'sender_preference' | 'default';
+    let detectionSource: LanguageDetectionSource;
     try {
       sourceLanguage = await detectWithRetry(body, 1);
       detectionSource = 'provider';
     } catch {
-      sourceLanguage = senderPreferredLanguage ?? 'en';
-      detectionSource = senderPreferredLanguage ? 'sender_preference' : 'default';
+      if (senderPreferredLanguage) {
+        sourceLanguage = senderPreferredLanguage;
+        detectionSource = 'sender_preference';
+      } else if (senderPreferenceUnreadable) {
+        // No language, and we do not even know whether one exists.
+        sourceLanguage = DEFAULT_SOURCE_LANGUAGE;
+        detectionSource = 'sender_preference_unreadable';
+        logger?.warn(
+          { messageId, senderId },
+          'sender language preference unreadable — stamping a placeholder language, not a stated one',
+        );
+      } else {
+        // A successful read that found no preference. This is the honest
+        // 'default': we looked, and the sender has stated nothing.
+        sourceLanguage = DEFAULT_SOURCE_LANGUAGE;
+        detectionSource = 'default';
+      }
     }
 
     // Update the message with detected language.
@@ -139,10 +323,29 @@ export async function translateMessageForThread(
     // 3. Fetch recipient language preferences.
     // preferred_language (user-chosen in Settings) takes priority over
     // preferred_message_language (legacy auto-translate field).
-    const { data: profiles } = await sc
+    //
+    // ── THE OTHER END OF THE SAME DEFECT §16 FIXED FOR THE SENDER ────────────
+    // census T344/T363, named by census-telegraph §16.4 as the consequence that
+    // lane found inside its own file and did not fix. With the error dropped,
+    // an unreadable `profiles` gave EVERY recipient the map's default —
+    // `preferredLanguage: 'en'`, `autoTranslate: true` — and §16.4 read that as
+    // a degradation rather than a false claim. Executing it shows it is a false
+    // claim: when the source language is also 'en', which is the common case,
+    // the same-language arm below writes `status: 'skipped'` with
+    // `target_language: 'en'` for each recipient, and that row asserts, durably
+    // and queryably, that this recipient reads English and needed nothing. Not
+    // one byte about that recipient was read.
+    const { data: profiles, error: profilesErr } = await sc
       .from('profiles')
       .select('id, preferred_language, preferred_message_language, auto_translate_messages')
       .in('id', recipientIds);
+
+    if (profilesErr) {
+      logger?.warn(
+        { messageId, threadId, recipients: recipientIds.length, err: profilesErr.message },
+        'recipient language preferences unreadable — recording failed translations, not skipped ones',
+      );
+    }
 
     const profileMap: Record<string, { preferredLanguage: string; autoTranslate: boolean }> = {};
     for (const p of profiles ?? []) {
@@ -156,6 +359,28 @@ export async function translateMessageForThread(
 
     // 4. Process each recipient.
     for (const recipientId of recipientIds) {
+      // The read FAILED, so nothing is known about this recipient's language or
+      // their auto-translate setting. `failed` is §18's own word for "we did not
+      // translate this", it is what `buildDisplayFields` already renders as the
+      // untouched original with no banner — so what the reader SEES is unchanged
+      // — and `error_message` carries which failure it was. `target_language`
+      // is NOT NULL and no preference was read, so it takes `und`, the code this
+      // tree already writes for an undetermined language in the same situation
+      // (`routes/messaging.ts`, the per-viewer translation read).
+      if (profilesErr) {
+        await upsertTranslation(sc, {
+          messageId,
+          recipientId,
+          sourceLanguage,
+          targetLanguage: UNKNOWN_LANGUAGE,
+          translatedBody: null,
+          provider: null,
+          status: 'failed',
+          errorMessage: 'recipient_preferences_unreadable',
+        });
+        continue;
+      }
+
       const prefs = profileMap[recipientId] ?? { preferredLanguage: 'en', autoTranslate: true };
       const targetLanguage = prefs.preferredLanguage;
 

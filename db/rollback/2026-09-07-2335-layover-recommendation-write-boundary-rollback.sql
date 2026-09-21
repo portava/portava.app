@@ -1,0 +1,111 @@
+-- Rollback for 2335_layover_recommendation_write_boundary.sql
+-- Applied to portava-ci (hwokxgbmezheskbzskfr) on 2026-09-07. NOT applied to
+-- production (ajrurzioarfkagpuxfnb) — that remains an owner decision. Production
+-- was READ ONLY during this work and still carries the pre-2335 state.
+--
+-- WHAT 2335 DID
+-- =============
+-- Two independent changes. Either section below may be run without the other.
+--
+--   SECTION 1  Replaced the `layover_recs_owner` policy on
+--              public.layover_recommendations — a FOR ALL policy with a USING
+--              clause and NO WITH CHECK, which PostgreSQL therefore reused as
+--              the write check — with a FOR SELECT policy carrying the same
+--              USING predicate, and narrowed the table grants to
+--              authenticated=SELECT, service_role=SELECT/INSERT/UPDATE/DELETE,
+--              anon=nothing.
+--
+--   SECTION 2  Revoked TRUNCATE (only TRUNCATE) from anon and authenticated on
+--              layover_sessions, layover_events, layover_plan_stops and
+--              airport_profiles.
+--
+-- ⚠ READ THIS BEFORE RUNNING SECTION 1
+-- ====================================
+-- Section 1 RESTORES A WRITABLE SAFETY TABLE. With it re-run, any authenticated
+-- user holding a normal end-user token can INSERT and UPDATE rows in
+-- `layover_recommendations` for their own session, and can therefore set
+-- `safety_rating`, `return_buffer_min` and `hard_return_time` — the
+-- server-computed values that tell a traveller when they must head back to the
+-- airport to make their flight — to anything at all. That was verified as
+-- ALLOWED on portava-ci before 2335, not merely inferred from the catalog.
+--
+-- That is the defect 2335 fixed, restored on purpose. It is offered because a
+-- rollback that cannot reach the prior state is not a rollback. It should not be
+-- run to "undo 2335" as a whole.
+--
+-- Diagnose first. Every writer of this table in the tree authenticates as
+-- service_role (services/airport/LayoverRecommendationService.ts:311,315;
+-- routes/airport.ts:1872), and service_role's grants are UNCHANGED by 2335
+-- except that TRUNCATE — which nothing calls — is no longer granted. So if a
+-- server write started failing after 2335, section 1 is very unlikely to be the
+-- cause; check first whether the caller is using the service key at all.
+--
+-- If the failing caller is an END-USER token writing this table directly, that
+-- is the behaviour 2335 deliberately removed and the fix is to route the write
+-- through the API, not to re-open the table.
+
+-- ═════════════════════════════════════════════════════════════════════════════
+-- SECTION 1 — restore the pre-2335 policy and grants on layover_recommendations
+-- ⚠ RE-OPENS THE FINDING. See the warning above. Run only with intent.
+-- ═════════════════════════════════════════════════════════════════════════════
+-- BEGIN;
+--
+-- DROP POLICY IF EXISTS "layover_recs_owner" ON public.layover_recommendations;
+--
+-- -- Verbatim reconstruction of migrations/0127_layover_system.sql:142-151,
+-- -- including the absent WITH CHECK that is the defect.
+-- CREATE POLICY "layover_recs_owner"
+--   ON public.layover_recommendations FOR ALL TO authenticated
+--   USING (
+--     session_id IN (
+--       SELECT id FROM public.layover_sessions WHERE user_id = auth.uid()
+--     )
+--   );
+--
+-- -- The pre-2335 grant set, as measured on both databases on 2026-09-07: the
+-- -- full ALTER DEFAULT PRIVILEGES set to all three roles.
+-- GRANT ALL ON public.layover_recommendations TO anon, authenticated, service_role;
+--
+-- COMMIT;
+--
+-- (Left commented deliberately. Uncomment the block to run it. A rollback that
+--  makes a safety table writable by the person it advises should cost one
+--  deliberate edit, not one careless paste.)
+
+-- ═════════════════════════════════════════════════════════════════════════════
+-- SECTION 2 — restore TRUNCATE to anon and authenticated on the sibling tables
+-- ⚠ Re-grants a privilege that ROW-LEVEL SECURITY DOES NOT POLICE. A role
+--   holding TRUNCATE empties the table whatever the policies say — including
+--   every live layover session, the whole layover audit trail, and all 3,206
+--   airport profiles. Idempotent; safe to run twice; not safe to run casually.
+-- ═════════════════════════════════════════════════════════════════════════════
+-- BEGIN;
+--
+-- GRANT TRUNCATE ON public.layover_sessions   TO anon, authenticated;
+-- GRANT TRUNCATE ON public.layover_events     TO anon, authenticated;
+-- GRANT TRUNCATE ON public.layover_plan_stops TO anon, authenticated;
+-- GRANT TRUNCATE ON public.airport_profiles   TO anon, authenticated;
+--
+-- COMMIT;
+
+-- ═════════════════════════════════════════════════════════════════════════════
+-- VERIFY (safe to run at any time; reads only)
+-- ═════════════════════════════════════════════════════════════════════════════
+-- SELECT tablename, policyname, cmd,
+--        with_check IS NULL AS with_check_is_null
+--   FROM pg_policies
+--  WHERE tablename = 'layover_recommendations';
+--   -- post-2335 : cmd = 'SELECT'  (with_check_is_null = true, correct for SELECT)
+--   -- pre-2335  : cmd = 'ALL'     (with_check_is_null = true — THE DEFECT)
+--
+-- SELECT table_name, grantee, string_agg(privilege_type, ',' ORDER BY privilege_type)
+--   FROM information_schema.role_table_grants
+--  WHERE table_schema = 'public'
+--    AND table_name IN ('layover_recommendations','layover_sessions',
+--                       'layover_events','layover_plan_stops','airport_profiles')
+--    AND grantee IN ('anon','authenticated','service_role')
+--  GROUP BY table_name, grantee
+--  ORDER BY table_name, grantee;
+--   -- post-2335 : layover_recommendations has NO anon row; authenticated = SELECT;
+--   --             service_role = DELETE,INSERT,SELECT,UPDATE. No sibling table
+--   --             lists TRUNCATE for anon or authenticated.

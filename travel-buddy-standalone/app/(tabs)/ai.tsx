@@ -23,9 +23,10 @@ import { useAiWritingAssist } from '../../src/hooks/useAiWritingAssist.ts';
 import {
   CompassStarters,
   AiWritingAssist,
-  buildCompassStarters,
+  startersFromSuggestions,
   COMPASS_FIELD_IDS,
 } from '../../src/platform/input-assistance';
+import { useInputAssistance } from '../../src/platform/input-assistance/hooks/useInputAssistance.ts';
 import { color, space, radius, type as t, shadow, avatar } from '../../src/theme/tokens';
 
 type ChatEntry =
@@ -64,6 +65,19 @@ export default function AiChat() {
     optedIn: aiOptIn,
     city: currentCity ?? null,
     sessionContext: { surface: 'compass' },
+  });
+  // census-compass CG-01: the starters are the SHARED LAYER's, served by the
+  // gateway at zero characters (the field's policy has minChars 0), never a
+  // list this screen keeps. Requested only while the empty-field assist bar is
+  // showing; the adapter turns the served rows into chips.
+  const showStarters = input.trim() === '' && entries.length > 0;
+  const starterAssist = useInputAssistance({
+    context: 'compass_prompt',
+    fieldId: COMPASS_FIELD_IDS.compassPrompt,
+    text: '',
+    city: currentCity ?? null,
+    sessionContext: { surface: 'compass' },
+    enabled: showStarters,
   });
   const scroll = useRef<ScrollView>(null);
   const navScrollHandler = useNavBarScrollHandler();
@@ -396,7 +410,7 @@ export default function AiChat() {
         <View style={styles.assistBar}>
           {input.trim() === '' && entries.length > 0 ? (
             <CompassStarters
-              starters={buildCompassStarters({ surface: 'compass', cityName: currentCity ?? null })}
+              starters={startersFromSuggestions(starterAssist.suggestions)}
               onSelect={(prompt) => setInput(prompt)}
             />
           ) : null}

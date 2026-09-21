@@ -124,8 +124,8 @@ jest.mock('../../services/messaging', () => ({
   ...jest.requireActual('../../services/messaging'),
   openTripChat: jest.fn().mockResolvedValue({ ok: false }),
 }));
-jest.mock('../../services/tripPlan', () => ({
-  ...jest.requireActual('../../services/tripPlan'),
+jest.mock('../../features/trips/planning/tripPlan', () => ({
+  ...jest.requireActual('../../features/trips/planning/tripPlan'),
   createPlanItem: jest.fn(),
 }));
 jest.mock('../../services/discoveryBookmarks', () => ({

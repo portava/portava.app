@@ -404,3 +404,184 @@ describe("E. Itinerary intent at confidence 0.3 falls through to conversation", 
     assert.equal(body.payload, null, "plain conversation reply carries no payload");
   });
 });
+
+// ── F. "Which trip is this user on" — one rule, and an unreadable read is not "none" ──
+//
+// CT-02 (Trips `:25`): consume typed Trip projections rather than DUPLICATING
+// Trip semantics. The plan half was done; SELECTION was re-derived in five
+// modules with three rules. These cases pin the seam that replaced them
+// (compass/CompassCurrentTrip.ts) and, more importantly, the defect the
+// duplication was hiding: `toolGetCurrentTrip` bound no `error` on any of its
+// three selection reads, so an unreadable `trip_members` produced
+// "No active or upcoming trip." — telling a traveller who is on a trip that
+// they are not on one.
+
+import {
+  resolveCurrentTrip, resolveUserTrips,
+  TOOL_TRIP_STATUSES, CONTEXT_TRIP_STATUSES,
+} from "../compass/CompassCurrentTrip.js";
+import { toolGetCurrentTrip } from "../compass/CompassTools.js";
+import { buildTripContextLines } from "../compass/CompassTripContext.js";
+
+const BOB_ID = "b1b1b1b1-bbbb-bbbb-bbbb-000000000002";
+
+/**
+ * A fake client that can return a POSTGREST ERROR for a named table, which the
+ * harness above cannot: its `throwTables` throws from `.from()`, and the real
+ * failure is `{ data: null, error }` coming back from an awaited builder.
+ * A test that can only make the client throw cannot see this bug at all.
+ */
+function errorClient(state: {
+  trips?: any[];
+  tripMembers?: any[];
+  tripPlanItems?: any[];
+  errorTables?: string[];
+}) {
+  const db: Record<string, any[]> = {
+    trips:           state.trips ?? [],
+    trip_members:    state.tripMembers ?? [],
+    trip_plan_items: state.tripPlanItems ?? [],
+  };
+  const errorTables = new Set(state.errorTables ?? []);
+
+  function builder(table: string, rows: any[]): any {
+    let filtered = [...rows];
+    const err = errorTables.has(table)
+      ? { message: `${table} unavailable`, code: "57014" }
+      : null;
+    const settle = () => (err ? { data: null, error: err } : { data: filtered, error: null });
+    const b: any = {
+      select: () => b,
+      eq: (c: string, v: any) => { filtered = filtered.filter(r => r[c] === v); return b; },
+      neq: (c: string, v: any) => { filtered = filtered.filter(r => r[c] !== v); return b; },
+      is: (c: string, v: any) => { filtered = filtered.filter(r => v === null ? r[c] == null : r[c] === v); return b; },
+      in: (c: string, vs: any[]) => { filtered = filtered.filter(r => vs.includes(r[c])); return b; },
+      gte: () => b, lte: () => b, order: () => b, limit: () => b,
+      maybeSingle: () => Promise.resolve(err ? { data: null, error: err } : { data: filtered[0] ?? null, error: null }),
+      then: (resolve: any) => resolve(settle()),
+    };
+    return b;
+  }
+  return { from: (t: string) => builder(t, db[t] ?? []) } as any;
+}
+
+const tripRow = (o: Record<string, unknown> = {}) => ({
+  id: TRIP_ID, owner_id: BOB_ID, title: "Lisbon", destination_city: "Lisbon",
+  destination_country: "PT", start_date: todayYmd(), end_date: ymdPlus(3),
+  status: "active", timezone: null, version: 1, ...o,
+});
+
+describe("F. Compass resolves ONE current trip, and says when it could not", () => {
+  it("an unreadable trip_members is `unread`, never `none`", async () => {
+    const c = errorClient({ trips: [tripRow()], errorTables: ["trip_members"] });
+    const out = await resolveCurrentTrip(c, BOB_ID);
+    assert.equal(out.status, "unread");
+    assert.match((out as any).reason, /trip_members/);
+  });
+
+  it("an unreadable trips table is `unread` too", async () => {
+    const c = errorClient({ tripMembers: [{ trip_id: TRIP_ID, user_id: BOB_ID, role: "member" }], errorTables: ["trips"] });
+    const out = await resolveCurrentTrip(c, BOB_ID);
+    assert.equal(out.status, "unread");
+  });
+
+  it("a user genuinely on no trip is `none` — the two outcomes are distinct", async () => {
+    const out = await resolveCurrentTrip(errorClient({}), BOB_ID);
+    assert.equal(out.status, "none");
+  });
+
+  it("owner and accepted member are one union, deduped, active preferred then earliest start", async () => {
+    const c = errorClient({
+      trips: [
+        tripRow({ id: TRIP_ID, status: "upcoming", start_date: ymdPlus(30) }),
+        tripRow({ id: "eeee0000-eeee-eeee-eeee-000000000009", owner_id: "someone-else", status: "active" }),
+      ],
+      tripMembers: [{ trip_id: "eeee0000-eeee-eeee-eeee-000000000009", user_id: BOB_ID, role: "member" }],
+    });
+    const set = await resolveUserTrips(c, BOB_ID);
+    assert.equal(set.status, "ok");
+    assert.equal((set as any).trips.length, 2, "owned ∪ member, deduped");
+    const out = await resolveCurrentTrip(c, BOB_ID);
+    assert.equal(out.status, "ok");
+    assert.equal((out as any).trip.id, "eeee0000-eeee-eeee-eeee-000000000009", "the active trip wins over an earlier-listed upcoming one");
+  });
+
+  it("the two status rules that have always disagreed are both still stated, and differ by exactly `draft`", () => {
+    // Not resolved here: whether a draft trip is "current" is the owner's call.
+    // Pinned so that quietly unifying them is a test failure, not a silent
+    // behaviour change on one of the two surfaces.
+    assert.deepEqual([...TOOL_TRIP_STATUSES], ["active", "upcoming", "planning"]);
+    assert.deepEqual([...CONTEXT_TRIP_STATUSES], ["active", "upcoming", "planning", "draft"]);
+    const extra = CONTEXT_TRIP_STATUSES.filter((s) => !(TOOL_TRIP_STATUSES as readonly string[]).includes(s));
+    assert.deepEqual(extra, ["draft"]);
+  });
+
+  it("get_current_trip tells the assistant the trips could not be READ, not that there are none", async () => {
+    const c = errorClient({ trips: [tripRow()], errorTables: ["trip_members"] });
+    const out: any = await toolGetCurrentTrip(c, BOB_ID);
+    assert.equal(out.trip, null);
+    assert.match(String(out.info), /could not be read/i);
+    assert.doesNotMatch(String(out.info), /No active or upcoming trip/i,
+      "an unreadable membership table must never be reported as 'no trip'");
+  });
+
+  it("get_current_trip still says 'no trip' when there genuinely is none", async () => {
+    const out: any = await toolGetCurrentTrip(errorClient({}), BOB_ID);
+    assert.equal(out.trip, null);
+    assert.match(String(out.info), /No active or upcoming trip/i);
+  });
+
+  it("the always-on trip context block goes quiet on an unreadable membership, and never grounds on a guess", async () => {
+    const c = errorClient({ trips: [tripRow()], errorTables: ["trip_members"] });
+    assert.deepEqual(await buildTripContextLines(c, BOB_ID), []);
+  });
+
+  it("the always-on trip context block still grounds on a readable active trip", async () => {
+    const c = errorClient({ trips: [tripRow()] });
+    const lines = await buildTripContextLines(c, BOB_ID);
+    assert.ok(lines.length > 0, "an active trip must still produce a context block");
+    assert.match(lines[0]!, /Active trip/);
+    assert.match(lines[0]!, /Lisbon/);
+  });
+});
+
+// ── G. The same question, the same answer, on every Compass surface ───────────
+//
+// CT-02's failure mode is not aesthetic. When "which trip is the user on" is
+// re-derived per surface, two surfaces answer about DIFFERENT trips from the
+// same data and the traveller has no way to tell which one they are talking to.
+// Compass Live grounded its rolling context on `.limit(1)` — whichever active
+// trip the database happened to return first — while the tool sorted by earliest
+// start. These cases pin them to one answer.
+
+import { buildLiveRollingContext } from "../compass/CompassLiveEngine.js";
+
+describe("G. Live and the tool resolve the SAME current trip", () => {
+  const LATER = "eeee0000-eeee-eeee-eeee-00000000000a";
+  const EARLIER = "eeee0000-eeee-eeee-eeee-00000000000b";
+
+  /** Both active; the one that started EARLIER is the trip in progress. */
+  const twoActive = () => errorClient({
+    trips: [
+      // Deliberately listed later-start-first: an unordered `.limit(1)` takes
+      // this one, which is the behaviour under test.
+      tripRow({ id: LATER,   start_date: todayYmd(),  end_date: ymdPlus(5) }),
+      tripRow({ id: EARLIER, start_date: ymdPlus(-3), end_date: ymdPlus(2) }),
+    ],
+  });
+
+  it("Live grounds on the trip the tool calls current, not on whichever row came back first", async () => {
+    const c = twoActive();
+    const tool: any = await toolGetCurrentTrip(c, BOB_ID);
+    const live = await buildLiveRollingContext(c, BOB_ID, null, Date.now());
+    assert.equal(tool.trip.id, EARLIER, "the tool orders by earliest start");
+    assert.equal(live.tripId, tool.trip.id,
+      "Live and the tool must not describe different trips from the same data");
+  });
+
+  it("Live still grounds on nothing when no trip is active", async () => {
+    const c = errorClient({ trips: [tripRow({ status: "upcoming", start_date: ymdPlus(10) })] });
+    const live = await buildLiveRollingContext(c, BOB_ID, null, Date.now());
+    assert.equal(live.tripId, null, "an upcoming trip is not a trip in progress");
+  });
+});

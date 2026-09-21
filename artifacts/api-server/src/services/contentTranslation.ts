@@ -118,6 +118,27 @@ export async function detectAndStoreLanguage(
     } else if (entityType === 'event') {
       await sc.from('events').update({ original_language: lang }).eq('id', entityId);
     } else if (entityType === 'trip') {
+      // trip-kernel:non-aggregate(trips.original_language)
+      //
+      // A DERIVED column: the detected language of the title/notes the user
+      // just wrote. It carries no decision and no state of its own — re-running
+      // detection over the same text reproduces it exactly.
+      //
+      // Not a Trip Command, and the reason is specific to how this runs. Both
+      // trip callers (routes/trips.ts:356 create, :978 patch) invoke
+      // detectAndStoreLanguage FIRE-AND-FORGET, after their own write has
+      // already returned the new trips.version to the client in X-Trip-Version.
+      // A command here would land a SECOND version bump moments later, for a
+      // column the client never sent and cannot see, and the client's very next
+      // If-Match write — with the version this API just told it to hold — would
+      // be refused TRIP_VERSION_CONFLICT. The user would experience their own
+      // successful save as having invalidated their own concurrency token,
+      // non-deterministically, depending on how long the language provider took.
+      //
+      // The write is also inherently late and lossy (the provider is retried
+      // and may fail; the catch below swallows it), which is acceptable for a
+      // derived hint and would not be acceptable for a command that must emit
+      // a trip_events row consumers subscribe to.
       await sc.from('trips').update({ original_language: lang }).eq('id', entityId);
     } else if (entityType === 'bio') {
       // Store in the dedicated bio_original_language column — never touch
@@ -161,13 +182,32 @@ export async function translateContentFields(
   if (sourceLanguage === targetLanguage) return skipped;
 
   // 1. Cache hit?
-  const { data: cached } = await sc
+  //
+  // This read is not just a cost optimisation, it is the guard on the upsert at
+  // the bottom of the function. That upsert is keyed on
+  // (entity_type, entity_id, target_language), so treating an unreadable
+  // content_translations as a cache MISS re-runs the provider and then writes
+  // the result over the row it could not read — and when the fresh attempt
+  // fails validation (`status: 'failed'`, `translated_fields: {}`), a perfectly
+  // good stored translation is replaced by a failure sentinel that the next
+  // reader will serve as "translation unavailable". Return the existing
+  // `skipped` sentinel instead: no provider spend, no overwrite, and the caller
+  // falls back to the original text exactly as it does when translation is off.
+  const { data: cached, error: cacheErr } = await sc
     .from('content_translations')
     .select('translated_fields, status, source_language')
     .eq('entity_type', entityType)
     .eq('entity_id', entityId)
     .eq('target_language', targetLanguage)
     .maybeSingle();
+
+  if (cacheErr) {
+    logger?.warn(
+      { entityType, entityId, targetLanguage, err: cacheErr.message },
+      'content_translation_cache_read_failed',
+    );
+    return skipped;
+  }
 
   if (cached && (cached as any).status === 'translated') {
     const tf = (cached as any).translated_fields as TranslatedFields ?? {};

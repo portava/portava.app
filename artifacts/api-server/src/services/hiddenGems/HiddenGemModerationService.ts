@@ -23,12 +23,25 @@ export async function reportGem(
   reason: string,
   notes?: string,
 ): Promise<{ ok: boolean; alreadyReported: boolean }> {
-  const { data: existing } = await db
+  // This read is the one-report-per-reporter guard, and its answer decides
+  // whether we INSERT. A failed read resolves as `{ data: null }` — identical to
+  // "this reporter has not reported this gem" — and the insert below then files
+  // a SECOND report from the same person and bumps `report_count` again. That
+  // count is exactly the "pile of reports is evidence someone should look"
+  // signal this file documents; letting one reporter inflate it on their own is
+  // the weaponisation `resolveGemReport` is written to prevent. Throw, like the
+  // insert failure below does — the routes already turn that into a db_error.
+  const { data: existing, error: existingErr } = await db
     .from("hidden_gem_reports")
     .select("id")
     .eq("gem_id", gemId)
     .eq("reporter_id", reporterId)
     .maybeSingle();
+
+  if (existingErr) {
+    logger.warn({ err: existingErr, gemId, reporterId }, "reportGem: duplicate-report lookup failed");
+    throw existingErr;
+  }
 
   if (existing) return { ok: true, alreadyReported: true };
 

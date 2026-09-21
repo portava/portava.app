@@ -31,6 +31,8 @@
  */
 
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { TRUTH_WORDS } from "../lib/compassDecision.js";
+import { isTruthClass, truthClassMayRenderAsObservation, type TruthClass } from "../lib/truthClass.js";
 import type { CompassItem, CompassProfile } from "./types.js";
 import { isCircleMember } from "./CompassMemoryService.js";
 
@@ -488,6 +490,22 @@ export function buildWhyThisText(factors: RankingFactor[]): string | null {
     `${parts[0]}, ${parts[1]}, and ${parts[2]}`;
 
   return `Recommended for you: ${joined}.`;
+}
+
+/**
+ * CPV2-02 — the GENERATED EXPLANATION retains the evidence's qualification.
+ * An explanation built over a datum whose truth class is not an observation
+ * (predicted / inferred / conflicting / stale / unknown) says so, in the same
+ * words the decision surface uses (lib/compassDecision TRUTH_WORDS) rather
+ * than a second list. An observed or corroborated datum is left untouched;
+ * an absent class is left untouched too — nothing is qualified as "unknown"
+ * merely because a producer said nothing, which would make every explanation
+ * hedge and none of them mean it.
+ */
+export function qualifyWhyThis(text: string | null, truthClass: TruthClass | null | undefined): string | null {
+  if (text === null) return null;
+  if (!isTruthClass(truthClass) || truthClassMayRenderAsObservation(truthClass)) return text;
+  return `${text} (${TRUTH_WORDS[truthClass]})`;
 }
 
 // ── Profile normalisation (for callers with partial profiles, e.g. tools) ─────
