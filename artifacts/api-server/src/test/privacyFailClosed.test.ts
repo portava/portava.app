@@ -180,7 +180,7 @@ describe("privacy fail-closed", () => {
       const v = await loadCollectionVisibility(sc, OWNER, "public");
       assert.equal(v.stamps, false, "stamps must be withheld when the tier could not be read");
       assert.equal(v.memories, false, "memories must be withheld — the column defaults to 'circle'");
-      assert.equal(v.unavailable, true, "the caller must be able to say 'we could not check'");
+      assert.equal(v.readFailed, true, "the caller must be able to say 'we could not check'");
     });
 
     it("unreadable preference row DENIES stamps and memories to a circle caller too", async () => {
@@ -202,7 +202,9 @@ describe("privacy fail-closed", () => {
       // untouched; this fix changes only the FAILURE path.
       const sc = makeClient({ db: { passport_visibility_preferences: [] } }) as any;
       const v = await loadCollectionVisibility(sc, OWNER, "public");
-      assert.equal(v.unavailable, false, "absent != unreadable");
+      // main omits the flag entirely on a successful read rather than setting it
+      // false, so the assertion is "not a read failure", not "false".
+      assert.notEqual(v.readFailed, true, "absent != unreadable");
       assert.equal(v.stamps, true);
       assert.equal(v.memories, true);
     });
@@ -214,7 +216,7 @@ describe("privacy fail-closed", () => {
       const v = await loadCollectionVisibility(sc, OWNER, "public");
       assert.equal(v.stamps, false);
       assert.equal(v.memories, false);
-      assert.equal(v.unavailable, false);
+      assert.notEqual(v.readFailed, true);
     });
   });
 

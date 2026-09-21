@@ -117,10 +117,20 @@ export const RESTRICTED_PRIVACY_SETTINGS: Readonly<PrivacySettings> = Object.fre
   precise_location_visible: false,
 });
 
+/**
+ * TRUE only for a genuinely ABSENT TABLE.
+ *
+ * PGRST204 ("column not found") was here and is deliberately gone: column drift
+ * is not a missing table, and every caller below treats "missing table" as the
+ * benign case, so counting a schema mismatch as one turns it into a silent
+ * privacy fail-open. The message probe now requires "relation" as well, so that
+ * `column "x" does not exist` cannot sneak through it either.
+ */
 function isTableMissingErr(e: any): boolean {
   if (!e) return false;
-  return e.code === "42P01" || e.code === "PGRST204" || e.code === "PGRST205" ||
-    String(e.message ?? "").toLowerCase().includes("does not exist");
+  if (e.code === "42P01" || e.code === "PGRST205") return true;
+  const msg = String(e.message ?? "").toLowerCase();
+  return msg.includes("relation") && msg.includes("does not exist");
 }
 
 /**
