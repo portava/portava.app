@@ -1,80 +1,51 @@
 /**
- * Global Input Intelligence §48 — the server is the policy AUTHORITY; the client
- * registry is a MIRROR of it, not a second opinion.
+ * Global Input Intelligence §48 — ONE policy registry, and the wire it travels
+ * on.
  *
- * Run: node --import tsx/esm --test src/test/inputPolicyContractParity.test.ts
+ * Run: node --import tsx --test src/test/inputPolicyContractParity.test.ts
  *
- * WHY
- * ---
- * §48's whole promise is one policy contract, versioned server-side, so a policy
- * change ships without a client release. There is no policy ENDPOINT today, so
- * the client re-declares all 29 contexts in
+ * ── WHAT THIS FILE WAS, AND WHY MOST OF IT IS GONE (2026-09-21, G340) ────────
+ *
+ * This suite existed because there were TWO policy registries — this one, and a
+ * hand-maintained 29-context table in
  * `travel-buddy-standalone/src/platform/input-assistance/contexts/inputContexts.ts`.
- * That is a duplicated source of truth, and a re-audit measured how far the two
- * had drifted: `minChars` differed on 20 of 29 contexts, `offlinePolicy` on 26
- * (the two unions are not even the same taxonomy), and — the one that matters —
- * `allowPersonalization` on 14.
+ * It measured how far they had drifted and pinned the members that were
+ * load-bearing for privacy, because a test was the only lever available: it
+ * could report that the two disagreed, but it could never make a shipped app
+ * obey the newer one.
  *
- * `allowPersonalization` is a PRIVACY gate on both sides:
- *   • server `personalization.recordSelection` refuses to store anything for a
- *     context whose policy has it false;
- *   • client `selectBody.selectionFromSuggestion` refuses to SEND anything for
- *     the same reason — and the payload it would otherwise send carries
- *     `query`: the user's RAW typed text, up to 200 characters.
+ * The drift it measured was real and some of it ran the wrong way —
+ * `allowPersonalization` differed on 14 contexts, `privacyClass` on 14,
+ * `offlinePolicy` on 26, `allowedSuggestionTypes` on 26, `entityTypes` on 13.
  *
- * Client-true / server-false therefore meant the client believed `caption` and
- * `comment` were personalization-enabled: any surface that wired the SDK's
- * accept handler to one of those fields would have transmitted the user's raw
- * caption/comment text to `/input-assistance/select`, where the server discards
- * it — after it has already left the device and reached the request log. The
- * §49 Telemetry certification ("caption / comment / telegraph_message record
- * NOTHING") was true of STORAGE and silent about transmission.
+ * G340 removed the cause. The client's table is DELETED; it fetches
+ * `GET /input-assistance/policies` and resolves from what this side says. There
+ * is no second table to drift, so there is nothing left to compare, and the
+ * seven per-context comparison cases that used to live here were deleted rather
+ * than repaired — a comparison with one operand is not a weaker test, it is not
+ * a test.
  *
- * No surface wires those fields today, so this was latent, not live. This test
- * makes it impossible to reintroduce: the client's privacy gate must equal the
- * server's, context for context.
+ * ── WHAT IS STILL WORTH ASSERTING, AND IT IS NOT NOTHING ─────────────────────
  *
- * MUTATION-PROOF: flip `allowPersonalization` on either side for any single
- * context and this test goes RED naming that context.
+ * Deleting the table removed the drift. It did NOT remove the wire, and the
+ * wire has its own failure mode: this side can serve a value the client cannot
+ * name. That is the normal §48 skew — a newer server, an older app — not an
+ * exotic case, and it is what the remaining cases cover.
  *
- * The other two dimensions are REPORTED, not asserted. They are real §48 debt,
- * but `minChars` and `offlinePolicy` are legitimately allowed to be tuned per
- * side today (the client's offline taxonomy is a different, device-side
- * vocabulary), and pinning them here would freeze that debt instead of
- * describing it. Asserting only the privacy-load-bearing field is the honest
- * line.
+ *   1. THE VOCABULARIES MUST MATCH, member for member. A `privacyClass` this
+ *      build invents is a class the client's cache gate cannot recognise; an
+ *      `offlinePolicy` it invents is one the client's offline gate cannot act
+ *      on; an `entityType` it invents is a row the client cannot route. The
+ *      client narrows all three to their strictest member at runtime
+ *      (`contexts/policyFallback.ts#sanitizeServedPolicy`), so a mismatch
+ *      degrades safely — but it degrades SILENTLY, and a field quietly serving
+ *      nothing is the failure this project keeps finding the expensive way.
  *
- * ── 2026-09-21: `privacyClass` JOINS THE ASSERTED SET (census G31, G33) ──────
+ *   2. THE CLIENT MUST NOT GROW A SECOND TABLE AGAIN. The regression guard is
+ *      cheap and the thing it guards against took months to find.
  *
- * The census read `privacyClass` as "declared and read by nothing". That is
- * true of THIS side and false of the other one, and the difference is the
- * defect. On the client it gates three things: whether a field's suggestions
- * may enter the process-global `sharedSuggestionCache`, whether the select
- * payload carrying the user's raw typed text may be SENT, and what telemetry
- * policy the field gets. On this side it gated nothing at all.
- *
- * And the two sides were not even speaking the same language. The client
- * declared a FOUR-member taxonomy — `public | personal | sensitive |
- * private_message` — of which exactly two members existed here. Measured
- * before the fix, 14 of 29 contexts disagreed, and two of the disagreements ran
- * the wrong way:
- *
- *   `hidden_gem_name`   server `sensitive_location`  client `public`
- *   `comment`           server `viewer_scoped`       client `public`
- *
- * `public` was the client's own condition for `captureRawText: true`, so the
- * client's telemetry gate said "log the raw text" for a Hidden Gem name and a
- * comment body while the authority said sensitive. Latent only because
- * `setTelemetrySink` is called from no non-test file — the same shape as the
- * `allowPersonalization` finding, one member over, and the reason this test
- * exists at all.
- *
- * The fix took the STRICTER side on both registries, never the looser, and
- * added the gate this side was missing
- * (`lib/inputAssistance/personalization.ts#MEMORABLE_PRIVACY_CLASSES`).
- * `telemetryPolicy` is pinned for the same reason, one layer down: census G33
- * recorded that the two sides declared different SHAPES for it, so a server
- * policy change to it could not reach the client even in principle.
+ *   3. `telemetryPolicy`'s SHAPE still matters (census G33), because the client
+ *      derives its own from `privacyClass` rather than being served one.
  */
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
@@ -97,6 +68,8 @@ interface ClientDescriptor {
   minChars: string;
   offlinePolicy: string;
   defaultMode: string;
+  /** null when the entry's list could not be resolved — reported, never silently []. */
+  entityTypes: string[] | null;
   /** null when the entry's list could not be resolved — reported, never silently 0. */
   allowedSuggestionTypes: string[] | null;
 }
@@ -108,6 +81,23 @@ const SERVER_PRIVACY_CLASSES = [
   "owner_only",
   "sensitive_location",
   "private_message",
+] as const;
+
+/** This side's offline union, restated here so the client's is compared to a
+ *  named list rather than to whatever the client happens to declare. */
+/** This side's entity union, restated so the comparison names a list. */
+const SERVER_ENTITY_TYPES = [
+  "city", "country", "neighborhood", "place", "hidden_gem", "user", "trip",
+  "event", "plan", "buddy", "hashtag", "language", "interest",
+  "activity", "circle", "post", "stamp", "vibe",
+] as const;
+
+const SERVER_OFFLINE_POLICIES = [
+  "static_dictionary",
+  "cached_local",
+  "recent_only",
+  "server_required",
+  "unavailable",
 ] as const;
 
 const CLIENT_POLICY_TYPES = path.join(
@@ -123,13 +113,71 @@ const CLIENT_POLICY_DERIVATION = path.join(
   "travel-buddy-standalone/src/platform/input-assistance/contexts/inputPolicies.ts",
 );
 
+/**
+ * Strip comments before parsing a union.
+ *
+ * NOT incidental. The first version of `readClientEntityTypeUnion` matched
+ * `=([\s\S]*?);` against the raw file, and the client's `EntityType`
+ * declaration carries an explanatory comment BETWEEN its members — a comment
+ * containing a semicolon. The non-greedy match stopped there and returned 13 of
+ * 18 members, and the `members.length > 0` guard below happily accepted it.
+ *
+ * A parse that silently returns a SUBSET is worse than one that returns
+ * nothing: the too-short list made the union comparison fail against a real
+ * source file that was in fact correct, and the same bug in the other direction
+ * would have passed a union that was genuinely short. The guards check for
+ * emptiness; nothing checked for truncation. Removing comments first removes
+ * the class of bug rather than this instance of it.
+ */
+function withoutComments(src: string): string {
+  return src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
+}
+
 /** Parse the client's `PrivacyClass` union members out of its declaration. */
 function readClientPrivacyClassUnion(): Set<string> {
-  const src = fs.readFileSync(CLIENT_CONTEXT_TYPES, "utf8");
+  const src = withoutComments(fs.readFileSync(CLIENT_CONTEXT_TYPES, "utf8"));
   const m = /export type PrivacyClass =([\s\S]*?);/.exec(src);
   assert.ok(m, "the client must declare a PrivacyClass union");
   const members = [...m![1]!.matchAll(/'([a-z_]+)'/g)].map((x) => x[1]!);
   assert.ok(members.length > 0, "the PrivacyClass union parsed to nothing — the declaration's shape changed");
+  // TRUNCATION guard, not just an emptiness guard — see `withoutComments`.
+  assert.equal(
+    members.length,
+    5,
+    `the PrivacyClass union parsed to ${members.length} members, expected 5. A parse that silently returns a SUBSET makes every comparison below meaningless.`,
+  );
+  return new Set(members);
+}
+
+/** Parse the client's `OfflineInputPolicy` union members out of its declaration. */
+function readClientOfflineUnion(): Set<string> {
+  const src = withoutComments(fs.readFileSync(CLIENT_CONTEXT_TYPES, "utf8"));
+  const m = /export type OfflineInputPolicy =([\s\S]*?);/.exec(src);
+  assert.ok(m, "the client must declare an OfflineInputPolicy union");
+  const members = [...m![1]!.matchAll(/'([a-z_]+)'/g)].map((x) => x[1]!);
+  assert.ok(members.length > 0, "the OfflineInputPolicy union parsed to nothing — the declaration's shape changed");
+  // TRUNCATION guard, not just an emptiness guard — see `withoutComments`.
+  assert.equal(
+    members.length,
+    5,
+    `the OfflineInputPolicy union parsed to ${members.length} members, expected 5. A parse that silently returns a SUBSET makes every comparison below meaningless.`,
+  );
+  return new Set(members);
+}
+
+/** Parse the client's `EntityType` union members out of its declaration. */
+function readClientEntityTypeUnion(): Set<string> {
+  const src = withoutComments(fs.readFileSync(CLIENT_CONTEXT_TYPES, "utf8"));
+  const m = /export type EntityType =([\s\S]*?);/.exec(src);
+  assert.ok(m, "the client must declare an EntityType union");
+  const members = [...m![1]!.matchAll(/'([a-z_]+)'/g)].map((x) => x[1]!);
+  assert.ok(members.length > 0, "the EntityType union parsed to nothing — the declaration's shape changed");
+  // TRUNCATION guard, not just an emptiness guard — see `withoutComments`.
+  assert.equal(
+    members.length,
+    18,
+    `the EntityType union parsed to ${members.length} members, expected 18. A parse that silently returns a SUBSET makes every comparison below meaningless.`,
+  );
   return new Set(members);
 }
 
@@ -178,52 +226,17 @@ function readClientRegistry(): Map<string, ClientDescriptor> {
       offlinePolicy: field("offlinePolicy") ?? "(default)",
       defaultMode: field("defaultMode") ?? "(default)",
       allowedSuggestionTypes: types,
+      entityTypes: (() => {
+        const raw = /entityTypes:\s*(\[[^\]]*\])/.exec(body)?.[1];
+        return raw === undefined ? null : [...raw.matchAll(/'([^']+)'/g)].map((x) => x[1]!);
+      })(),
     });
   }
   return out;
 }
 
 describe("§48 — the client policy registry mirrors the server authority", () => {
-  it("declares exactly the same 29 contexts the server does", () => {
-    const client = readClientRegistry();
-    assert.ok(
-      client.size >= 20,
-      `the client registry must parse (got ${client.size} contexts) — if this is 0 the file layout changed and every assertion below would be vacuous`,
-    );
-    const serverNames = [...KNOWN_CONTEXTS].sort();
-    const clientNames = [...client.keys()].sort();
-    assert.deepEqual(clientNames, serverNames, "the two registries must cover the identical context set");
-  });
 
-  it("agrees with the server on allowPersonalization for EVERY context (privacy gate)", () => {
-    const client = readClientRegistry();
-    const mismatches: string[] = [];
-    for (const ctx of KNOWN_CONTEXTS) {
-      const server = resolvePolicy(ctx);
-      assert.ok(server, `server policy missing for ${ctx}`);
-      const c = client.get(ctx);
-      assert.ok(c, `client descriptor missing for ${ctx}`);
-      if (c!.allowPersonalization !== server!.allowPersonalization) {
-        mismatches.push(
-          `${ctx}: server=${server!.allowPersonalization} client=${c!.allowPersonalization}`,
-        );
-      }
-    }
-    assert.deepEqual(
-      mismatches,
-      [],
-      "allowPersonalization is a privacy gate on BOTH sides — the client's copy decides whether the user's RAW typed text is SENT to /input-assistance/select at all, and the server's decides whether it is stored. They must not disagree:\n  " +
-        mismatches.join("\n  "),
-    );
-
-    // Not vacuous: the registry genuinely splits, so an all-true or all-false
-    // client copy could not pass by accident.
-    const enabled = KNOWN_CONTEXTS.filter((c) => resolvePolicy(c)!.allowPersonalization);
-    assert.ok(
-      enabled.length > 0 && enabled.length < KNOWN_CONTEXTS.length,
-      "the server registry must contain BOTH personalization-enabled and personalization-disabled contexts",
-    );
-  });
 
   // ── 2026-09-21: `allowedSuggestionTypes` and `defaultMode`, RATCHETED ───────
   //
@@ -251,81 +264,16 @@ describe("§48 — the client policy registry mirrors the server authority", () 
   //
   // The real fix is G340 (a policy endpoint with the local registry demoted to
   // a cold-start fallback), which deletes the mirror rather than aligning it.
-  const MAX_SUGGESTION_TYPE_DRIFT = 27;
-  const MAX_DEFAULT_MODE_DRIFT = 3;
+  // LOWERED 2026-09-21 (27 -> 26, and mode 3 -> 2) when the owner ruled
+  // `display_name` MANUAL and the server was brought to the client's shape.
+  // That is the ratchet working as its comment instructs: lower it on each
+  // fix, never raise it. The remaining 26 are the ones G340 deletes.
+  const MAX_ENTITY_TYPE_DRIFT = 13;
+  const MAX_SUGGESTION_TYPE_DRIFT = 26;
+  const MAX_DEFAULT_MODE_DRIFT = 2;
 
-  it(`drifts from the server on allowedSuggestionTypes in at most ${MAX_SUGGESTION_TYPE_DRIFT} contexts`, () => {
-    const client = readClientRegistry();
-    const unresolved: string[] = [];
-    const drifted: string[] = [];
-    for (const ctx of KNOWN_CONTEXTS) {
-      const server = resolvePolicy(ctx)!;
-      const c = client.get(ctx);
-      assert.ok(c, `client descriptor missing for ${ctx}`);
-      if (c!.allowedSuggestionTypes === null) { unresolved.push(ctx); continue; }
-      const a = [...server.allowedSuggestionTypes].sort().join(",");
-      const b = [...c!.allowedSuggestionTypes!].sort().join(",");
-      if (a !== b) drifted.push(`${ctx}: server=[${a}] client=[${b}]`);
-    }
-    // An unresolvable entry is NOT a pass. If the client file's layout changes
-    // so the lists stop parsing, every context would silently read "no drift".
-    assert.deepEqual(
-      unresolved,
-      [],
-      `these client entries' allowedSuggestionTypes could not be resolved, so the count below would understate the drift:\n  ${unresolved.join("\n  ")}`,
-    );
-    assert.ok(
-      drifted.length <= MAX_SUGGESTION_TYPE_DRIFT,
-      `allowedSuggestionTypes drift grew to ${drifted.length} (ceiling ${MAX_SUGGESTION_TYPE_DRIFT}). LOWER the ceiling when you fix one; never raise it:\n  ${drifted.join("\n  ")}`,
-    );
-  });
 
-  it(`drifts from the server on defaultMode in at most ${MAX_DEFAULT_MODE_DRIFT} contexts`, () => {
-    const client = readClientRegistry();
-    const drifted: string[] = [];
-    for (const ctx of KNOWN_CONTEXTS) {
-      const server = resolvePolicy(ctx)!;
-      const c = client.get(ctx);
-      assert.ok(c, `client descriptor missing for ${ctx}`);
-      if (c!.defaultMode !== "(default)" && c!.defaultMode !== server.mode) {
-        drifted.push(`${ctx}: server=${server.mode} client=${c!.defaultMode}`);
-      }
-    }
-    // Not vacuous: the parse must actually be finding modes.
-    const parsed = [...client.values()].filter((c) => c.defaultMode !== "(default)").length;
-    assert.ok(parsed >= 20, `defaultMode parsed for only ${parsed} contexts — the layout changed and this assertion is empty`);
-    assert.ok(
-      drifted.length <= MAX_DEFAULT_MODE_DRIFT,
-      `defaultMode drift grew to ${drifted.length} (ceiling ${MAX_DEFAULT_MODE_DRIFT}). This one decides whether a field is ASSISTED AT ALL, so a new entry here is a bigger deal than a type-list difference:\n  ${drifted.join("\n  ")}`,
-    );
-  });
 
-  it("agrees with the server on privacyClass for EVERY context", () => {
-    const client = readClientRegistry();
-    const mismatches: string[] = [];
-    for (const ctx of KNOWN_CONTEXTS) {
-      const server = resolvePolicy(ctx)!;
-      const c = client.get(ctx);
-      assert.ok(c, `client descriptor missing for ${ctx}`);
-      if (c!.privacyClass !== server.privacyClass) {
-        mismatches.push(`${ctx}: server=${server.privacyClass} client=${c!.privacyClass}`);
-      }
-    }
-    assert.deepEqual(
-      mismatches,
-      [],
-      "privacyClass decides, on the CLIENT, whether a field's suggestions may be cached process-wide, whether the raw typed text may be sent to /input-assistance/select, and what telemetry policy the field derives. The server's copy is the authority. They must not disagree:\n  " +
-        mismatches.join("\n  "),
-    );
-
-    // Not vacuous: the registry genuinely spreads across the union, so an
-    // all-public client copy could not pass by accident.
-    const distinct = new Set(KNOWN_CONTEXTS.map((c) => resolvePolicy(c)!.privacyClass));
-    assert.ok(
-      distinct.size >= 3,
-      `the server registry must use at least three privacy classes (got ${[...distinct].join(", ")})`,
-    );
-  });
 
   it("uses ONE privacy vocabulary — the client declares no member this side has never heard of", () => {
     // This is the assertion the value comparison above cannot make on its own.
@@ -338,6 +286,79 @@ describe("§48 — the client policy registry mirrors the server authority", () 
       [...SERVER_PRIVACY_CLASSES].sort(),
       "the client's PrivacyClass union must be this side's, member for member",
     );
+  });
+
+  it("uses ONE offline vocabulary — the client declares no member this side has never heard of", () => {
+    // Promoted from REPORTED to ASSERTED on 2026-09-21, when G340's policy
+    // endpoint made the old justification untenable. This file used to say the
+    // client's offline taxonomy was "a different, device-side vocabulary" and
+    // that pinning it "would freeze that debt instead of describing it". That
+    // was too generous to it, and the measurement is in the case below.
+    const clientUnion = readClientOfflineUnion();
+    assert.deepEqual(
+      [...clientUnion].sort(),
+      [...SERVER_OFFLINE_POLICIES].sort(),
+      "the client's OfflineInputPolicy union must be this side's, member for member — /input-assistance/policies now SERVES this field, so a member the client cannot name is a value it will be handed and cannot act on",
+    );
+  });
+
+
+
+  it("uses ONE entity vocabulary — the client can name every class this side serves", () => {
+    // Added 2026-09-21. Unlike the two above, this one was NOT merely a tidy-up:
+    // when it was first written the client's union was short by five members
+    // (`activity`, `circle`, `post`, `stamp`, `vibe`), four of which this side
+    // serves TODAY in `global_search`, `plan_title` and `buddy_service`.
+    //
+    // Two defects were behind that gap on the client, and the second is the
+    // reason this is asserted rather than left to the runtime narrowing: a
+    // served `stamp` was rendered as a Place (a wrong icon, a wrong group), and
+    // — worse — its row was DROPPED entirely, because the client's route
+    // synthesiser had no case for it either. Neither failure announces itself.
+    const clientUnion = readClientEntityTypeUnion();
+    const served = new Set<string>();
+    for (const ctx of KNOWN_CONTEXTS) {
+      for (const e of resolvePolicy(ctx)?.entityTypes ?? []) served.add(e);
+    }
+    const unnameable = [...served].filter((e) => !clientUnion.has(e)).sort();
+    assert.deepEqual(
+      unnameable,
+      [],
+      `this side serves entity classes the client cannot name: ${unnameable.join(", ")}`,
+    );
+
+    // And the whole union, not just the part in use — so the NEXT member added
+    // here is what goes red, rather than the first context that starts serving it.
+    assert.deepEqual(
+      [...SERVER_ENTITY_TYPES].sort(),
+      [...clientUnion].sort(),
+      "the client's EntityType union must be this side's, member for member",
+    );
+  });
+
+  it("the client declares NO context table — one registry, and it is this one", () => {
+    // THE REGRESSION GUARD. G340 deleted
+    // `inputContexts.ts#INPUT_CONTEXT_REGISTRY`, the 29-context table that was
+    // the second source of truth this whole file used to measure. Re-adding one
+    // would restore the drift silently: every other case here would keep
+    // passing, because none of them compares per-context values any more.
+    //
+    // Matched on the DECLARATION, not on a substring, so the word may still
+    // appear in the prose that explains why it is gone.
+    const src = fs.readFileSync(CLIENT_REGISTRY, "utf8");
+    const declarations = [
+      /export\s+const\s+INPUT_CONTEXT_REGISTRY/,
+      /export\s+const\s+INPUT_POLICY_VERSION\s*=/,
+    ];
+    for (const re of declarations) {
+      assert.equal(
+        re.test(src),
+        false,
+        `${CLIENT_REGISTRY} re-declares ${re.source} — the client must resolve policy from GET /input-assistance/policies, not from a local copy`,
+      );
+    }
+    // Non-vacuity: the file still exists and still exports the resolver.
+    assert.match(src, /export function getContextDescriptor/);
   });
 
   it("agrees with the server on the SHAPE of telemetryPolicy (census G33)", () => {
