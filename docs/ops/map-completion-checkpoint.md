@@ -35,7 +35,7 @@ an absence.
 | A — Map interface | `src/features/map/**`, map components | **LANDED** (merge of `worktree-agent-a8607f93b9412b6a6`) |
 | B — Map backend | `routes/map*`, `lib/mapProducers/**` | **LANDED** (`c36aac77d`) |
 | C — Sensing | §35 telemetry, `routes/mapTelemetry.ts` | **LANDED** (`bca43861b`) |
-| D — Integrations | seeded-CI fixtures, cross-lane capture | **STALLED** — 0 commits, transcript silent since 22:04 |
+| D — Integrations | seeded-CI fixtures, cross-lane capture | **LANDED** (`2337c2b80`) — reported at 00:40 after a 2h silence |
 | Integration owner | shared files, migrations, census, citations | this session |
 
 Lane A's shared-file patches are landed (`8d82a324d`): M43's
@@ -130,19 +130,17 @@ false. The single `true` is `map_telemetry_retention_enabled`, set 2026-09-16,
 which predates this effort. Both telemetry tables are at zero rows — Lane C
 cleaned up by predicate as it said it did.
 
-**SEEDED ROWS LANE D LEFT BEHIND — cleanup owed, NOT yet done:**
+**LANE D'S SEEDED ROWS ARE GONE — re-verified after its report, at 00:45.**
+An earlier reading of this file said cleanup was owed; that was true at 23:55
+and is now stale. Lane D cleaned up after that measurement and before
+reporting. Confirmed by query rather than taken from its report: zero rows
+matching `0dd0dd00%` in `auth.users`, `profiles` or `memory_projections`, zero
+handles matching `laned%`, and exactly ONE `project_user_memory` overload — the
+second one it created while testing PR #451 was dropped.
 
-```
-auth.users        0dd0dd00-0000-4000-8000-00000000d42a
-public.profiles   0dd0dd00-0000-4000-8000-00000000d42a  laned_m42_fixture
-public.profiles   0dd0dd00-0000-4000-8000-00000000d42b  laned_m42_friend
-```
-
-Created 22:00:01 and 22:00:29, minutes before Lane D's transcript stopped
-advancing at 22:04. They are inert fixture identities and harm nothing where
-they sit. They are NOT deleted yet only because Lane D still reads as running
-and may resume onto them. Delete BY PREDICATE (`handle like 'laned\_%'` and the
-two ids), never by truncate, once that lane is confirmed finished.
+That temporary overload is worth recording because it is the only schema
+mutation any lane made to CI in this effort. Lane D disclosed it unprompted,
+and the state matches the disclosure.
 
 ## WHY THE 56 CANNOT CLOSE — measured 2026-09-21 00:15 UTC, not assumed
 
@@ -217,6 +215,43 @@ keeping:
 3. A flipped flag would not close the rows anyway. The standing rule is that
    unverified flag activation is not completion; each row still needs an event
    observed end to end.
+
+### PR #451 WOULD NOT FIX M42, AND WOULD DELETE THREE MEMORY LANES
+
+Lane D's headline, verified here against primary sources before it was relayed,
+and reported on PR #451 itself.
+
+PR #451 diagnoses M42 correctly — `project_user_memory`'s PLACE lane reads
+`saved_places`, a table with no writers — and its union SQL is right. Its
+DELIVERY is wrong, in three ways:
+
+1. **It overloads instead of replacing.** It declares
+   `project_user_memory(p_user_id uuid)`. The live function is
+   `project_user_memory(uuid, boolean)` — queried directly on portava-ci.
+   PostgreSQL overloads on the argument list, so this ADDS a function. The only
+   caller, `project_user_memory_with_retraction`, passes two arguments and
+   still reaches the old `saved_places` body. **M42 stays broken while the
+   migration reports success.**
+2. **Its body is PLACE-only.** The live function carries four lanes — episodic,
+   semantic, social, place — confirmed by query. PR #451's body contains none
+   of the first three. The overload defect is currently MASKING a worse one: fix
+   the signature without restoring the lanes and it becomes a silent regression.
+3. **Its postconditions cannot catch either** — found here, not by the lane.
+   The DO block selects `pg_get_functiondef` filtered on `proname` alone, with
+   no signature, `INTO` a scalar. In plpgsql `SELECT … INTO` over multiple rows
+   assigns one without raising, so with two overloads it can inspect the NEW
+   function and pass every check.
+
+**The plan's framing was wrong.** It said 2963 was needed "only if PR #451 does
+not land first". The choice is not 2963-or-451; landing 451 unamended is the
+worst outcome available. Either amend its body under `2310` or take `2963` —
+never both. `2310` is free on this branch and PR #451 is `mergeable_state:
+dirty` regardless.
+
+A validated replacement body is at
+`<scratchpad>/laneD-PATCH-2963_memory_projector_place_lane_union.sql`. NOT
+applied: the coordinating session owns database mutations, and the production
+apply is behind the same platform control as the rest of the chain.
 
 ### The highest-value work that is genuinely unblocked
 
