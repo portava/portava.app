@@ -87,3 +87,76 @@ describe("computeTripStatus — the injected clock", () => {
     assert.equal(trip("2026-09-12", null, new Date("2099-01-01T00:00:00.000Z")), "active");
   });
 });
+
+// ── THE UTC-vs-ZONE VARIANT, PINNED SO IT NEEDS NO WAITING ───────────────────
+//
+// The cases above fix both clocks and are safe. A LATER defect got past them,
+// because it was not a pinned constant at all: `tripKernelExpansion.test.ts`
+// derived its window from `Date.now()` — correctly — and then formatted it
+// with `.toISOString()`, which is UTC, while `computeTripStatus` judges against
+// `todayInTimezone(trip.timezone)`. For the hour between 23:00 UTC and UTC
+// midnight, a zone ahead of UTC is already on the next date, so "tomorrow in
+// UTC" is TODAY there and an upcoming trip reads `active`.
+//
+// It fired in CI at 23:28 UTC on 2026-09-20. The fix was proven by mutation
+// inside that window, which is the only hour it could be proven in — and that
+// is exactly the property this block removes. `now` is PINNED to the failing
+// instant, so these run identically at any hour of any day.
+//
+// 2026-09-20T23:36:47Z is 00:36 on the 21st in Lisbon (UTC+1, WEST).
+describe("computeTripStatus — a window derived in UTC is not a window derived in the trip's zone", () => {
+  const LISBON = "Europe/Lisbon";
+  const BOUNDARY = new Date("2026-09-20T23:36:47.000Z");
+  const DAY_MS = 24 * 60 * 60 * 1_000;
+
+  /** How the defect formatted the bounds: UTC, regardless of the trip's zone. */
+  const utcOffset = (days: number) =>
+    new Date(BOUNDARY.getTime() + days * DAY_MS).toISOString().slice(0, 10);
+  /** How they are formatted now: through the same function the code judges with. */
+  const zoneOffset = (days: number) =>
+    todayInTimezone(LISBON, new Date(BOUNDARY.getTime() + days * DAY_MS));
+
+  it("the two derivations genuinely disagree at this instant — otherwise nothing below is a test", () => {
+    // Anti-vacuity. If these ever agreed, both cases would pass for free.
+    assert.equal(utcOffset(1), "2026-09-21");
+    assert.equal(zoneOffset(1), "2026-09-22");
+    assert.equal(todayInTimezone(LISBON, BOUNDARY), "2026-09-21");
+  });
+
+  it("REPRODUCES THE DEFECT: a UTC-derived +1/+5 window reads `active`, not `upcoming`", () => {
+    // start_date == today-in-Lisbon, so the trip has already begun there.
+    const status = computeTripStatus(
+      "Lisboa", "Lisboa", utcOffset(1), utcOffset(5), "upcoming", LISBON, BOUNDARY,
+    );
+    assert.equal(status, "active");
+  });
+
+  it("THE FIX: a zone-derived +1/+5 window reads `upcoming` at the same instant", () => {
+    const status = computeTripStatus(
+      "Lisboa", "Lisboa", zoneOffset(1), zoneOffset(5), "upcoming", LISBON, BOUNDARY,
+    );
+    assert.equal(status, "upcoming");
+  });
+
+  it("the fuse is as wide as the offset — thirteen hours at UTC+13, not one", () => {
+    // Pacific/Auckland, and the date is deliberate. On 2026-09-20 Auckland is
+    // UTC+12, so the window opens at 12:00 UTC — my first draft of this case
+    // used 11:36 UTC and FAILED, because at that instant Auckland was still on
+    // the same date. NZDT starts 2026-09-27, so 2026-10-05 is UTC+13 and the
+    // window opens an hour earlier, at 11:00 UTC. The width of the fuse is the
+    // size of the offset, which is the point: at UTC+1 it is one hour a day.
+    const AUCKLAND = "Pacific/Auckland";
+    const midday = new Date("2026-10-05T11:36:47.000Z");
+    const utc1 = new Date(midday.getTime() + DAY_MS).toISOString().slice(0, 10);
+    const zone1 = todayInTimezone(AUCKLAND, new Date(midday.getTime() + DAY_MS));
+    assert.notEqual(utc1, zone1);
+    assert.equal(
+      computeTripStatus("Auckland", "Auckland", utc1, utc1, "upcoming", AUCKLAND, midday),
+      "active",
+    );
+    assert.equal(
+      computeTripStatus("Auckland", "Auckland", zone1, zone1, "upcoming", AUCKLAND, midday),
+      "upcoming",
+    );
+  });
+});
