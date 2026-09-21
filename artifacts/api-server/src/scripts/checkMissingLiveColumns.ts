@@ -266,45 +266,6 @@ const ALLOWLIST = new Set<string>([
   "layover_recommendations.travel_time_source",  // 2745 — where the row's travel figure came from
 ]);
 
-// ── 2481: NOT PENDING AN APPLY — PENDING NEVER ───────────────────────────────
-//
-// Every other entry above means "this column is coming; remove the entry when
-// the apply is certified". This one is the opposite and is kept separate so it
-// cannot be read as the same kind of promise.
-// `sensing_contribution_sessions.issued_to_profile_id` is declared by
-// 2481_sensing_sessions_option_a_issuer.sql, whose first line reads "OPTION A
-// ONLY ... Do NOT apply under Option B; under Option B this file is never run
-// and the column never exists." The owner took Option B in #510. The column is
-// absent live because it MUST be absent, and it is never coming while the
-// posture holds.
-//
-// The check reads migrations on disk and columns in the live schema and cannot
-// know a file must never run, so it reports this one as missing on every run —
-// the second half of main's standing 2481 red (the other half is
-// auditMigrationsVsLive.ts, which carries the same reasoning at more length,
-// including why the stale-looking schema_migration_ledger row for 2481 is
-// load-bearing and must not be pruned).
-//
-// DERIVED FROM THE POSTURE, NOT PINNED. Under Option A this column must exist
-// and its absence is a real finding, so the entry is conditional on the
-// constant that decides which posture is in force. Flip
-// lib/sensingAuthPosture.ts back to `authenticated_only` and this allowance
-// disappears on the next run rather than silently outliving the decision that
-// justified it. The constant is read as TEXT rather than imported — importing it
-// would widen the sensing stack's importer set, which §9.1 guards on purpose;
-// scripts/lib/sensingPostureOnDisk.ts carries the reasoning and fails closed.
-//
-// WHAT IS AND IS NOT BROKEN WHILE THIS IS ALLOWED: nothing, and structurally so
-// rather than by luck. Under Option B no session is profile-issued, so there is
-// no value this column would hold; §3's rule is that a contribution record must
-// not carry a permanent account key, and 2481 was the narrowly-justified
-// exception Option A needed. Without Option A the exception is not needed and
-// not taken. VERIFIED ON portava-ci 2026-09-21: the column, both constraints,
-// the index and revoke_sensing_sessions_for_profile are all absent, while
-// 2480's own table is present.
-if (!isOptionAInForce()) {
-  ALLOWLIST.add("sensing_contribution_sessions.issued_to_profile_id");
-}
 
 // ── Superseded / known-drifted migration files ────────────────────────────────
 //
@@ -341,8 +302,39 @@ const SKIP_FILES = new Set<string>([
   // SENSING_AUTH_POSTURE becomes `authenticated_only` and 2481 is applied. From
   // that moment this column must exist live, and this entry would hide its
   // absence. See docs/architecture/census-sensing.md.
-  "2481_sensing_sessions_option_a_issuer.sql",
+  //
+  // THE ENTRY ITSELF IS NOT HERE — see the conditional immediately below.
 ]);
+
+// ── 2481's skip, DERIVED from the posture rather than pinned beside it ────────
+//
+// The ruling above is #512's and it is right about the MECHANISM: the file is
+// the unit, not the column, because ALLOWLIST means "pending a live apply,
+// remove the entry once the apply is certified" and 2481 is never to be
+// applied. #511 reached the same ruling and put it in ALLOWLIST instead, which
+// was the wrong list for exactly that reason; that entry is gone.
+//
+// What #511 had right is that the entry must EXPIRE BY ITSELF. "Delete both if
+// Sensing ever moves to Option A" is an instruction to a future reader, and a
+// security-posture auditor should not depend on one being remembered. Deriving
+// the skip from the constant that decides the question — lib/sensingAuthPosture.ts,
+// a reviewed diff being the only way it moves — makes the deletion automatic.
+//
+// Both PRs merged within half an hour of each other and git kept both forms
+// without a conflict. Because a Set add is idempotent the duplication was
+// invisible at runtime, and it silently defeated the gate: measured on the
+// merge commit with the posture flipped to `authenticated_only`,
+// isOptionAInForce() correctly withheld the add while the permanent literal
+// skipped 2481 anyway — so the auditor would have been blind to the very drift
+// it exists to catch, on the one posture where those objects MUST exist.
+//
+// The constant is read as TEXT, not imported: importing it would widen the
+// sensing stack's importer set, which sensingCensusRederivation.test.ts §9.1
+// guards on purpose. scripts/lib/sensingPostureOnDisk.ts carries the reasoning
+// and fails closed — an unreadable posture grants nothing.
+if (!isOptionAInForce()) {
+  SKIP_FILES.add("2481_sensing_sessions_option_a_issuer.sql");
+}
 
 // Tables entirely absent from live (migrations reference them but they haven't
 // been applied yet).  Columns on these tables are skipped — the table-missing

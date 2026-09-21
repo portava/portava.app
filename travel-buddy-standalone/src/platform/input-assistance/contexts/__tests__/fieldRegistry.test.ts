@@ -37,21 +37,32 @@ test('buildDefaultPolicy derives a coherent default from the context descriptor'
   assert.equal(p.debounceMs, DEFAULT_DEBOUNCE_MS);
   assert.ok(p.minChars >= 0);
   assert.ok(Array.isArray(p.allowedSuggestionTypes));
-  // Public field → telemetry may capture text.
-  assert.equal(p.telemetryPolicy.captureRawText, true);
+  // §44/G33 — the shape is the server's, and the server sets `logRawText`
+  // false on every one of its 29 contexts. A `public` class buys the FULL
+  // event vocabulary, not permission to log the user's typed text.
+  assert.equal(p.telemetryPolicy.logRawText, false);
+  assert.ok(p.telemetryPolicy.events.includes('suggestion_rendered'));
 });
 
 test('private_message context never captures raw text in telemetry (§44)', () => {
   const p = buildDefaultPolicy('telegraph.message', 'telegraph_message');
   assert.equal(p.privacyClass, 'private_message');
-  assert.equal(p.telemetryPolicy.captureRawText, false);
+  assert.equal(p.telemetryPolicy.logRawText, false);
+  // And it gets the NARROWED vocabulary, mirroring the server's
+  // METADATA_ONLY_TELEMETRY — not merely the same list with a flag off.
+  assert.deepEqual(p.telemetryPolicy.events, [
+    'suggestion_request_completed',
+    'suggestion_selected',
+    'action_completed',
+  ]);
 });
 
 test('overriding privacyClass re-derives the telemetry policy', () => {
-  // A public context overridden to sensitive must flip captureRawText off.
-  const p = buildDefaultPolicy('gem.location', 'place_picker', { privacyClass: 'sensitive' });
-  assert.equal(p.privacyClass, 'sensitive');
-  assert.equal(p.telemetryPolicy.captureRawText, false);
+  // A public context overridden to sensitive_location must not keep the public
+  // context's derived telemetry policy.
+  const p = buildDefaultPolicy('gem.location', 'place_picker', { privacyClass: 'sensitive_location' });
+  assert.equal(p.privacyClass, 'sensitive_location');
+  assert.equal(p.telemetryPolicy.logRawText, false);
 });
 
 test('overrides are shallow-merged and cannot change fieldId/context', () => {

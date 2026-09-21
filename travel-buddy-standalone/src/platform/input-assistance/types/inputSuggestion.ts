@@ -7,6 +7,7 @@
  * NOT expose raw trust vectors or hidden policy decisions. The parallel
  * `POST /input-assistance/suggest` build targets these same shapes.
  */
+import type { ClientCapabilities } from '../contexts/clientCapabilities.ts';
 import type {
   AssistanceType,
   EntityType,
@@ -126,6 +127,14 @@ export interface SuggestRequest {
   draft?: WritingDraft;
   /** §18 IANA timezone for temporal phrasing (optional, coarse). */
   tz?: string | null;
+  /**
+   * §48 (census G343) — the capability handshake's REQUEST half: which
+   * assistance types this surface can render and which action types it can
+   * resolve. Optional, and omitting it is served exactly as before the
+   * handshake existed. It can only ever NARROW: the server intersects it with
+   * the field's own §6 policy, so nothing here can widen what a field may emit.
+   */
+  client?: ClientCapabilities;
 }
 
 /**
@@ -159,6 +168,15 @@ export interface InputSessionContext {
 export interface SuggestResponse {
   requestId: string;
   policyVersion: string;
+  /** §48 (census G341) — the ENVELOPE's shape version, independent of the
+   *  policy's. Absent from a serve older than 2026-09-21; absent means 1. */
+  schemaVersion?: number;
+  /** §48 (census G343) — what the serve honoured of what this client declared. */
+  capabilities?: {
+    schemaVersion: number;
+    suggestionTypes: AssistanceType[];
+    withheldForClient: number;
+  };
   suggestions: InputSuggestion[];
 }
 
@@ -184,5 +202,7 @@ export type SuggestResult =
        * see alone.
        */
       serverMs?: number;
+      /** §48 — the serve's response-shape version (census G341). */
+      schemaVersion?: number;
     }
   | { ok: false; aborted: boolean; unavailable: boolean; error: string };

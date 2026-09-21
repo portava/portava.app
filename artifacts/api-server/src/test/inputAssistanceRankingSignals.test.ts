@@ -49,6 +49,9 @@ import {
   applyTripFit,
   INFEASIBLE_DEMOTION,
   TRIP_FIT_BOOST,
+  handleSignature,
+  applyImpersonationRisk,
+  IMPERSONATION_DEMOTION,
 } from "../lib/inputAssistance/rankingSignals.js";
 import {
   resolveTaskConstraint,
@@ -738,6 +741,187 @@ describe("§18 task feasibility end-to-end (G122/G124/G125/G96/G107)", () => {
     assert.ok(
       (events[0].confidence ?? 0) > (events[1].confidence ?? 0),
       "and it must lead BECAUSE of the window demotion, not by input order",
+    );
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 8. §36 Impersonation (G233) — a confusable-handle demotion
+//
+// What existed was `account_status` filtering (a different fact about a
+// different account) and, since Phase 9, the verified/official BADGES — which
+// tell a reader what the genuine account looks like and do nothing to the copy.
+// A handle built to be misread as a verified account's ranked exactly like any
+// other substring match.
+//
+// G233 STAYS BUILT-BUT-WRONG after this, deliberately, and the last two tests
+// here are what that costs: an impersonator that appears without its target is
+// untouched, and BUSINESSES are not covered at all because no venue row carries
+// a verification flag to be impersonated against.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+describe("§36 impersonation (G233) — the confusable signature", () => {
+  it("folds the substitutions an impersonating handle actually uses", () => {
+    // MUTATION-PROOF: delete any one `.replace(...)` in handleSignature → the
+    // corresponding equality below goes RED.
+    const real = handleSignature("@portava");
+    assert.equal(handleSignature("@p0rtava"), real, "digit-for-letter");
+    assert.equal(handleSignature("@portavaa"), real, "a doubled letter");
+    assert.equal(handleSignature("@port_ava"), real, "a separator");
+    assert.equal(handleSignature("PORTAVA"), real, "case");
+    assert.equal(handleSignature("@po" + "rn" + "ava"), handleSignature("@pomava"), "rn → m");
+  });
+
+  it("does NOT collapse two genuinely different handles", () => {
+    // The narrowness IS the design: an edit-distance rule would fire on two
+    // real people with similar names, and nothing here could tell those apart
+    // from an impersonation.
+    assert.notEqual(handleSignature("@sarah_travels"), handleSignature("@sara_travels"));
+    assert.notEqual(handleSignature("@bangkok_eats"), handleSignature("@bangkok_beats"));
+    assert.equal(handleSignature("@ab"), "", "too short to be a handle");
+    assert.equal(handleSignature(null), "");
+    assert.equal(handleSignature("@___"), "", "nothing survives the fold");
+  });
+
+  it("demotes the unverified twin, never the verified one, and never removes a row", () => {
+    // MUTATION-PROOF: return `rows` unchanged from applyImpersonationRisk → RED.
+    const rows = [
+      { entityType: "user", subtitle: "@p0rtava", confidence: 0.9 },
+      { entityType: "user", subtitle: "@portava", confidence: 0.85, verified: true },
+    ];
+    const out = applyImpersonationRisk(rows);
+    assert.equal(out.length, 2, "a suspicion is not a moderation verdict — both rows survive");
+    assert.ok(Math.abs(out[0]!.confidence! - (0.9 - IMPERSONATION_DEMOTION)) < 1e-9);
+    assert.equal(out[1]!.confidence, 0.85, "the genuine account is untouched");
+    assert.ok(out[0]!.confidence! < out[1]!.confidence!, "and the genuine account now leads");
+    assert.ok(out[0]!.confidence! > 0, "a demotion is never a deletion");
+  });
+
+  it("is byte-identical when nothing in the answer is verified", () => {
+    const rows = [
+      { entityType: "user", subtitle: "@p0rtava", confidence: 0.9 },
+      { entityType: "user", subtitle: "@portava", confidence: 0.85 },
+    ];
+    assert.equal(applyImpersonationRisk(rows), rows, "the identity case returns the SAME array");
+  });
+
+  it("never fires on a row that is not a person, whatever its subtitle says", () => {
+    const rows = [
+      { entityType: "place", subtitle: "@portava", confidence: 0.9 },
+      { entityType: "user", subtitle: "@portava", confidence: 0.85, official: true },
+    ];
+    const out = applyImpersonationRisk(rows);
+    assert.equal(out[0]!.confidence, 0.9, "a venue is not an impersonating handle");
+  });
+});
+
+describe("§36 impersonation end-to-end (G233) — through POST /input-assistance/suggest", () => {
+  const REAL = "bb000000-0000-4000-a000-000000000002";
+  const FAKE = "cc000000-0000-4000-a000-000000000003";
+
+  function person(id: string, handle: string, name: string, verified: boolean) {
+    return {
+      id, handle, username: handle, name, display_name: name, avatar_url: null,
+      is_private: false, home_city: null, home_country: null, account_status: "active",
+      verified, is_official: false, show_profile_picture_publicly: true,
+    };
+  }
+
+  it("the verified account leads its confusable copy on the query they both match", async () => {
+    // RED BEFORE THE FIX: with no impersonation term the two rows scored the
+    // same match tier (both titles are "Portava Travel"), order fell back to
+    // input order, and the FAKE — seeded first for exactly this reason — led.
+    setup({
+      profiles: [
+        person(FAKE, "p0rtava", "Portava Travel", false),
+        person(REAL, "portava", "Portava Travel", true),
+      ],
+      profile_privacy_settings: [
+        { user_id: FAKE, show_real_name: true, allow_profile_discovery: true },
+        { user_id: REAL, show_real_name: true, allow_profile_discovery: true },
+      ],
+      blocks: [], user_privacy_settings: [], user_follows: [], friend_requests: [],
+      user_friendships: [], canonical_locations: [],
+    });
+
+    const r = await suggest({ context: "global_search", text: "Portava Travel" });
+    const body = await r.json() as any;
+    const people = body.suggestions.filter((s: any) => s.entityType === "user");
+    assert.equal(people.length, 2, "both rows are still RETURNED — a demotion, not a removal");
+    assert.equal(people[0].entityId, REAL, "the verified account must lead");
+    assert.equal(people[0].verified, true, "and the reader is told which one it is (§28 G180)");
+    assert.ok(
+      (people[0].confidence ?? 0) > (people[1].confidence ?? 0),
+      "and it must lead BECAUSE of confidence, not by luck of input order",
+    );
+  });
+
+  it("CONTROL: two unrelated handles are left at an identical score", async () => {
+    // Without this the test above could pass for a reason that has nothing to
+    // do with the term — the trust boost alone would also lift the verified row.
+    // Here NEITHER row is verified, so nothing may move.
+    setup({
+      profiles: [
+        person(FAKE, "sara_travels", "Sara Travel", false),
+        person(REAL, "sarah_travels", "Sara Travel", false),
+      ],
+      profile_privacy_settings: [
+        { user_id: FAKE, show_real_name: true, allow_profile_discovery: true },
+        { user_id: REAL, show_real_name: true, allow_profile_discovery: true },
+      ],
+      blocks: [], user_privacy_settings: [], user_follows: [], friend_requests: [],
+      user_friendships: [], canonical_locations: [],
+    });
+
+    const r = await suggest({ context: "global_search", text: "Sara Travel" });
+    const body = await r.json() as any;
+    const people = body.suggestions.filter((s: any) => s.entityType === "user");
+    assert.equal(people.length, 2);
+    assert.equal(
+      people[0].confidence, people[1].confidence,
+      "two similar but unverified handles must stay indistinguishable",
+    );
+  });
+
+  it("THE HOLE, pinned: an impersonator ALONE in the answer is not demoted (why G233 stays W)", async () => {
+    // This is not a wish — it is the boundary of the rule, asserted so nobody
+    // reads the term as broader coverage than it has. No verified twin is in
+    // this answer, so there is nothing to compare against and the copy ranks
+    // exactly as it did before. Closing it needs a handle index the suggestion
+    // path does not have.
+    setup({
+      profiles: [person(FAKE, "p0rtava", "Portava Travel", false)],
+      profile_privacy_settings: [{ user_id: FAKE, show_real_name: true, allow_profile_discovery: true }],
+      blocks: [], user_privacy_settings: [], user_follows: [], friend_requests: [],
+      user_friendships: [], canonical_locations: [],
+    });
+
+    const r = await suggest({ context: "global_search", text: "Portava Travel" });
+    const body = await r.json() as any;
+    const people = body.suggestions.filter((s: any) => s.entityType === "user");
+    assert.equal(people.length, 1);
+    const alone = people[0].confidence ?? 0;
+
+    // The same row, with its target present, IS demoted — so the number above
+    // is the undemoted score and this comparison is not vacuous.
+    setup({
+      profiles: [
+        person(FAKE, "p0rtava", "Portava Travel", false),
+        person(REAL, "portava", "Portava Travel", true),
+      ],
+      profile_privacy_settings: [
+        { user_id: FAKE, show_real_name: true, allow_profile_discovery: true },
+        { user_id: REAL, show_real_name: true, allow_profile_discovery: true },
+      ],
+      blocks: [], user_privacy_settings: [], user_follows: [], friend_requests: [],
+      user_friendships: [], canonical_locations: [],
+    });
+    const r2 = await suggest({ context: "global_search", text: "Portava Travel" });
+    const body2 = await r2.json() as any;
+    const withTarget = body2.suggestions.find((s: any) => s.entityId === FAKE);
+    assert.ok(
+      (withTarget.confidence ?? 0) < alone,
+      "co-occurrence is the whole trigger — that is the coverage G233 still lacks",
     );
   });
 });

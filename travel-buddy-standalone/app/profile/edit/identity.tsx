@@ -83,6 +83,8 @@ export default function IdentityScreen() {
 
   const [usernameStatus, setUsernameStatus] = useState<UsernameStatus>('idle');
   const [usernameMessage, setUsernameMessage] = useState<string | null>(null);
+  // §23: free handles offered when the typed one is not available.
+  const [usernameAlternatives, setUsernameAlternatives] = useState<string[]>([]);
   const usernameTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const saveLockRef = useRef(false);
   const savedThenBack = useSavedThenBack(setSaveState);
@@ -135,6 +137,7 @@ export default function IdentityScreen() {
     setForm((f) => ({ ...f, username: cleaned }));
     setUsernameStatus('idle');
     setUsernameMessage(null);
+    setUsernameAlternatives([]);
 
     if (usernameTimer.current) clearTimeout(usernameTimer.current);
     if (!cleaned || cleaned === (profile?.username ?? '')) return;
@@ -152,6 +155,8 @@ export default function IdentityScreen() {
       const interpreted = interpretAvailability(res);
       setUsernameStatus(interpreted.status);
       setUsernameMessage(interpreted.message);
+      // §23's second half: the field says what is wrong AND where to go next.
+      setUsernameAlternatives(interpreted.alternatives);
     }, 500);
   }, [profile?.username]);
 
@@ -362,6 +367,22 @@ export default function IdentityScreen() {
           {usernameMessage ? (
             <FieldHint tone={usernameStatus === 'available' ? 'success' : 'error'}>{usernameMessage}</FieldHint>
           ) : null}
+          {usernameAlternatives.length > 0 ? (
+            <View style={st.usernameAltRow} accessibilityRole="list">
+              <Text style={st.usernameAltLead}>Try:</Text>
+              {usernameAlternatives.map((alt) => (
+                <Pressable
+                  key={alt}
+                  onPress={() => handleUsernameChange(alt)}
+                  style={st.usernameAltChip}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Use the username ${alt}`}
+                >
+                  <Text style={st.usernameAltChipText}>@{alt}</Text>
+                </Pressable>
+              ))}
+            </View>
+          ) : null}
           <FieldHint>3-24 chars, letters/numbers/underscores/periods</FieldHint>
         </View>
 
@@ -492,6 +513,15 @@ const st = StyleSheet.create({
     flexDirection: 'row', alignItems: 'center', gap: space.xs,
   },
   atSign: { fontSize: 16, color: PP.inkMuted, fontWeight: '600' },
+  usernameAltRow: {
+    flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: space.xs,
+  },
+  usernameAltLead: { fontSize: 12, color: PP.inkMuted, fontWeight: '600' },
+  usernameAltChip: {
+    borderWidth: 1, borderColor: PP.border, borderRadius: 999,
+    paddingHorizontal: space.sm, paddingVertical: 4, backgroundColor: '#FFFDF7',
+  },
+  usernameAltChipText: { fontSize: 13, color: PP.ink, fontWeight: '600' },
   usernameInput: { flex: 1 },
   bioInput: { minHeight: 96, paddingTop: space.md },
   locationDisplay: {

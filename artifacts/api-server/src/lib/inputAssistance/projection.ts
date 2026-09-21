@@ -29,6 +29,7 @@ import {
   gemLocationPrecision,
   type TemporalWindow,
 } from './rankingSignals';
+import type { CanonicalVenueBinding } from './geoResolver';
 import type {
   InputContext,
   InputSuggestion,
@@ -62,6 +63,14 @@ export interface ProjectionSignals {
   demoted?: boolean;
   /** §15 TripFit: this row sits inside the active Trip's city. */
   tripFit?: boolean;
+  /**
+   * §17/G109 structured binding for a VENUE row, resolved once per request by
+   * the gateway (the country lives on `canonical_locations`, so it needs a read
+   * this pure projector must not make). Null or absent means no binding — which
+   * is also what an unreadable canonical row produces, deliberately: see
+   * `resolveVenueBindings` for why an outage must not render as `country: null`.
+   */
+  venueBinding?: CanonicalVenueBinding | null;
 }
 
 /**
@@ -131,6 +140,12 @@ export function projectSearchResult(
     source,
     policyVersion,
   };
+
+  // §17/G109: selecting a venue prefills City / Country / Coordinates /
+  // Timezone. Set only when the gateway resolved one, so a row with no binding
+  // carries no key and the client cannot mistake an absent binding for a venue
+  // that is in no city.
+  if (signals.venueBinding) suggestion.structuredValue = signals.venueBinding;
 
   // Only copy display-safe optional fields — NEVER internal metadata (§42).
   if (r.subtitle) suggestion.subtitle = r.subtitle;

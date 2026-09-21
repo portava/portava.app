@@ -701,6 +701,25 @@ const EXEMPT = [
       'insert-if-absent), so it is not a read-only-audit door. EXEMPTION MEANS UNGUARDED, NOT SAFE — the safety ' +
       'is the four hard gates in the script, not this list.',
   },
+  {
+    file: 'src/scripts/reportInputMetrics.ts',
+    reason:
+      'OPERATOR-RUN reader for §57\'s nine Product Success Metrics over the §44 serve log '
+      + '(input_assistance_telemetry_events, migration 2950). It reaches Supabase for real, through '
+      + 'getServiceClient(), and it is deliberately pointed at WHICHEVER DEPLOYMENT IS BEING MEASURED — which '
+      + 'is production, because that is where the metrics that matter live. That is why neither door fits: the '
+      + 'strict front door allows only the sanctioned CI project, and the read-only audit door asserts '
+      + 'non-production, so both would refuse the one target the script exists for. The "process is SUPPOSED '
+      + 'to talk to production" case, same as backfillPlacePhotos.ts above.\n'
+      + 'CI NEVER INVOKES IT, which is the claim this entry has to make and which was measured rather than '
+      + 'assumed: its only package script is report:input-metrics, that script is named by no workflow, no '
+      + 'other script and no import path, and check:guard-coverage\'s own CI-surface derivation agrees — it '
+      + 'reported this file under "If CI never invokes it", not under "CI INVOKES IT".\n'
+      + 'READ-ONLY by construction: it issues SELECTs and nothing else — zero insert, upsert, update, delete '
+      + 'or rpc call anywhere in the file — so an operator who runs it against production cannot change a row '
+      + 'there. EXEMPTION MEANS UNGUARDED, NOT SAFE — the safety is that it only reads, and if this file ever '
+      + 'gains a write the exemption is void.',
+  },
   // ── Application code. The server is SUPPOSED to talk to production. ───────
   {
     file: 'src/lib/supabase.ts',
@@ -981,6 +1000,26 @@ const EXEMPT = [
       + 'the silence it exists to prevent, so the exemption is not a convenience but the requirement. '
       + 'EXEMPTION MEANS UNGUARDED, NOT SAFE — if this file ever constructs a client or issues a request, the '
       + 'exemption is void and it must import the guard or leave the curated list.',
+  },
+
+  {
+    file: 'src/test/inputAssistanceSelectionMemoryLiveDbStatus.test.ts',
+    pinnedTestEnv: true,
+    reason:
+      'G226 ANNOUNCEMENT half of the §35 selection-memory live harness — the same construction as '
+      + 'wallSessionIntentLiveDbStatus.test.ts above, for the same reason, and exempt on the same terms. Its '
+      + 'whole job is to make the ordinary suite SAY, on every run, that '
+      + 'src/test/inputAssistanceSelectionMemoryLiveDb.test.ts (which DOES import the strict guard front door, '
+      + 'and is therefore unregisterable in the curated test script) was not verified against a database. It '
+      + 'reads process.env.SUPABASE_URL and process.env.SUPABASE_SERVICE_ROLE_KEY at exactly two lines, and '
+      + 'uses both only to COMPOSE THE BANNER STRING naming what is missing. The detector here is NAME-BASED '
+      + 'and cannot tell a read that dials from a read that describes. MEASURED ON THIS FILE rather than '
+      + 'asserted: zero createClient, zero getServiceClient, zero .from(, zero fetch, zero import of '
+      + 'src/lib/supabase. Importing the strict guard here would make the file exit 2 on every ordinary run, '
+      + 'which is precisely the silence it exists to prevent, so the exemption is the requirement rather than '
+      + 'a convenience. pinnedTestEnv because CI invokes it and the CI-surface rule requires the flag of any '
+      + 'exemption CI runs. EXEMPTION MEANS UNGUARDED, NOT SAFE — if this file ever constructs a client or '
+      + 'issues a request, the exemption is void and it must import the guard or leave the curated list.',
   },
 
   {
