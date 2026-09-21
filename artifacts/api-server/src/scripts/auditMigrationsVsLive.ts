@@ -198,7 +198,15 @@ const SKIP_FILES = new Set([
   // that moment its three objects must exist live, and this entry would hide
   // their absence. See docs/architecture/census-sensing.md and
   // docs/architecture/sensing-auth-posture-decision.md.
-  "2481_sensing_sessions_option_a_issuer.sql",
+  //
+  // THE ENTRY ITSELF IS NOT HERE — it is added below, conditionally, so that
+  // "delete this skip if Sensing moves to Option A" is enforced rather than
+  // asked for. #511 and #512 fixed this independently and both merged; the
+  // merge kept both, which DEFEATED the conditional (a Set add is idempotent,
+  // so a permanent literal here skips 2481 whatever the gate decides). Measured
+  // on the merge commit: with the posture flipped to `authenticated_only`,
+  // isOptionAInForce() correctly withheld the add AND the auditor still skipped
+  // the file. One mechanism now, and it is the gated one.
 ]);
 
 // ── 2481: A FILE THAT MUST NEVER RUN, AND A SKIP THAT EXPIRES BY ITSELF ──────
