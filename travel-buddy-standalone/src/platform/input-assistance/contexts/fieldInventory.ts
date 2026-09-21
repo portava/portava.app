@@ -137,7 +137,7 @@ export const FIELD_INVENTORY: readonly FieldInventoryRecord[] = [
     zeroState: 'Recent conversations / Trip Crew / followed, served by the gateway at zero characters (§14).',
     validation: null,
     knownIssues: [
-      'privacyClass is `personal`; before Phase 9 the shared suggestion cache stored these person lists under the typed query like any public field.',
+      'privacyClass is `viewer_scoped`; before Phase 9 the shared suggestion cache stored these person lists under the typed query like any public field.',
     ],
     migrationStatus: MOUNTED,
   },
@@ -297,7 +297,7 @@ export const FIELD_INVENTORY: readonly FieldInventoryRecord[] = [
     zeroState: 'None while unmounted.',
     validation: null,
     knownIssues: [
-      'Registered and unmounted. Its privacyClass is `sensitive`, so it is the one unmounted field whose migration carries a privacy obligation rather than only a UX one.',
+      'Registered and unmounted. Its privacyClass is `sensitive_location`, so it is the one unmounted field whose migration carries a privacy obligation rather than only a UX one.',
     ],
     migrationStatus: UNMOUNTED,
   },

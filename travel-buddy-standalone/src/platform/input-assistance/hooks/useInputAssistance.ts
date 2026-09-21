@@ -27,6 +27,10 @@ import type { InputFieldPolicy } from '../types/fieldPolicy.ts';
 import type { InputSuggestion, InputSessionContext, WritingDraft } from '../types/inputSuggestion.ts';
 import { resolveFieldPolicy } from '../contexts/fieldRegistry.ts';
 import { getContextDescriptor } from '../contexts/inputContexts.ts';
+import {
+  capabilitySignature,
+  type ClientCapabilities,
+} from '../contexts/clientCapabilities.ts';
 import { requestSuggestions } from '../services/inputAssistance.ts';
 import { sharedSuggestionCache, SuggestionCache, isCacheablePrivacyClass } from '../services/suggestionCache.ts';
 import { createSequenceGuard } from '../services/raceGuard.ts';
@@ -55,6 +59,16 @@ export interface UseInputAssistanceOptions {
   draft?: WritingDraft;
   /** §18 IANA timezone for temporal phrasing (optional, coarse). */
   tz?: string | null;
+  /**
+   * §48 (census G343) — what THIS surface can render and dispatch, declared to
+   * the server so it stops building rows the surface drops on arrival. Omit it
+   * and the request is exactly what it was before the handshake existed.
+   *
+   * `contexts/clientCapabilities.ts` holds the two declarations that exist:
+   * the shared overlay's (wide, and honest about it) and the global search
+   * bar's (genuinely narrower — three action types).
+   */
+  capabilities?: ClientCapabilities;
   /** Master switch — false clears results and stops all fetching. */
   enabled?: boolean;
 }
@@ -82,7 +96,7 @@ export interface UseInputAssistanceResult {
 export function useInputAssistance(
   opts: UseInputAssistanceOptions,
 ): UseInputAssistanceResult {
-  const { fieldId, text, context, sessionContext, aiAssist, city, draft, tz, enabled = true } = opts;
+  const { fieldId, text, context, sessionContext, aiAssist, city, draft, tz, capabilities, enabled = true } = opts;
 
   const policy = useMemo(
     () => resolveFieldPolicy(fieldId, context),
@@ -98,6 +112,13 @@ export function useInputAssistance(
   // now state: SmartInput puts it on the field's TelemetryField and every event
   // the field emits names the serve it belongs to.
   const [requestId, setRequestId] = useState<string | null>(null);
+
+  // §48 — the capability signature is part of the cache identity. Two surfaces
+  // sharing a fieldId but declaring different capabilities receive DIFFERENT
+  // lists from the same serve, and a shared key would let the narrower surface
+  // hand the wider one a list the server had already thinned. An undeclared
+  // caller's signature is '' — today's key exactly, byte for byte.
+  const capKey = useMemo(() => capabilitySignature(capabilities), [capabilities]);
 
   // Per-instance sequence guard + abort controller + debounce timer.
   const guardRef = useRef(createSequenceGuard());
@@ -177,7 +198,8 @@ export function useInputAssistance(
     // Cache hit → serve instantly, no network (§33 SWR). An opted-in AI request
     // keys separately (via the effective fieldId) so it never collides with the
     // field's non-AI cache entry for the same text.
-    const cacheFieldId = aiAssist === true ? `${fieldId}::ai:${aiKey}` : fieldId;
+    const baseFieldId = capKey ? `${fieldId}::cap:${capKey}` : fieldId;
+    const cacheFieldId = aiAssist === true ? `${baseFieldId}::ai:${aiKey}` : baseFieldId;
     const cacheKey = SuggestionCache.key(cacheFieldId, trimmed, latKey, lngKey);
     // §29 — the field's declared privacyClass decides whether its suggestions
     // may live in the process-global cache at all. A `personal` / `sensitive` /
@@ -276,6 +298,8 @@ export function useInputAssistance(
           city: aiAssist === true ? city : undefined,
           draft: aiAssist === true ? draft : undefined,
           tz: aiAssist === true ? tz : undefined,
+          // §48 capability handshake — omitted when the caller declared none.
+          client: capabilities,
         },
         ctrl.signal,
       ).then((res) => {
@@ -332,7 +356,11 @@ export function useInputAssistance(
     // sessionContext is intentionally referenced via sessionKey/latKey/lngKey
     // to avoid re-running on unstable object identity.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [trimmed, enabled, policy, fieldId, latKey, lngKey, sessionKey, aiKey]);
+    // `capabilities` is addressed through `capKey` below, which is its identity
+    // for this effect; depending on the object itself would re-fetch on every
+    // render that produced an equal declaration.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [trimmed, enabled, policy, fieldId, latKey, lngKey, sessionKey, aiKey, capKey]);
 
   // Abort any in-flight request on unmount.
   useEffect(() => () => { abortRef.current?.abort(); }, []);

@@ -128,7 +128,7 @@ test('§33: with nothing cached, an unavailable endpoint still yields an empty l
 });
 
 test('§29: an uncacheable (personal) field never READS a local list, even one already cached', async () => {
-  // telegraph_recipient is privacyClass `personal`. It never writes to the
+  // telegraph_recipient is privacyClass `viewer_scoped`. It never writes to the
   // shared cache — so seed the cache DIRECTLY, which isolates the read guard
   // from the write guard and makes the assertion about this branch only. A list
   // of PEOPLE must never be re-shown without a round trip that can re-check
