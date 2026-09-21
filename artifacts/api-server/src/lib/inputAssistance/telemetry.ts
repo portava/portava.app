@@ -317,6 +317,96 @@ export type RecordOutcome =
   | { recorded: number }
   | { recorded: 0; refusal: { retryable: boolean; reason: string } };
 
+// ── Permanent failures, and the one that is a privacy signal ─────────────────
+//
+// EVERY write failure used to be answered `retryable: true`, including a CHECK
+// violation — which the doc comment below already listed among the failures it
+// binds. The comment and the code disagreed, and the code was the wrong one.
+// Two things follow from that, and only one of them is about privacy.
+//
+// 1. A POISON PILL. A row that violates a CHECK can NEVER be accepted. Telling
+//    the client to retry it means the batch is retried forever and every event
+//    queued behind it never lands — a PERMANENT failure reported as transient,
+//    which is the same class of dishonesty as `{ok:true, accepted:0}` over a
+//    broken ingest that this file's header already refuses.
+//
+// 2. A PRIVACY SIGNAL, and it is the loudest one this subsystem can produce.
+//    `iate_props_no_raw_text` fires only when a row reaching the database still
+//    carries one of migration 2950's thirteen forbidden keys. But the server
+//    REBUILDS every event from a per-name allow-list before it gets here, so
+//    that constraint firing means the allow-list and the database's forbidden
+//    list DISAGREE — the last line of defence caught something the earlier
+//    lines were supposed to make impossible. Logged as a generic "write
+//    failed", it is indistinguishable from a network blip.
+//
+// WHAT IS DELIBERATELY NOT LOGGED: the props. Logging the offending blob to
+// diagnose a raw-text leak would write the raw text into the log — the exact
+// harm the constraint exists to prevent, moved somewhere with weaker controls.
+// Only the constraint name, the event name and WHICH forbidden keys were
+// present are recorded, and those key names come from a fixed list in this file
+// rather than from the payload.
+//
+// THIS IS NOT §57's PRIVACY-INCIDENT METRIC (G371) AND MUST NOT BE READ AS ONE.
+// A fired constraint is a NEAR MISS: the gate held and nothing leaked. An
+// incident is a leak that happened, and this table stores no account id, so
+// "it happened to someone" is not a fact it can hold. G371 is settled by
+// production security and audit logs, by someone with access to them.
+
+/** PostgreSQL SQLSTATEs that no retry can ever turn into a success. */
+const PERMANENT_SQLSTATES: ReadonlySet<string> = new Set([
+  '23514', // check_violation
+  '23502', // not_null_violation
+  '23503', // foreign_key_violation
+  '23505', // unique_violation
+  '22001', // string_data_right_truncation
+]);
+
+/** The constraint migration 2950 names for the raw-text key refusal. */
+const RAW_TEXT_CONSTRAINT = 'iate_props_no_raw_text';
+
+/**
+ * Mirrors the key list in migration 2950's `iate_props_no_raw_text` CHECK.
+ * Used ONLY to name which keys were present in a refused row — never to filter,
+ * because the rebuild allow-list upstream is what does the filtering, and a
+ * second filter here would mask the disagreement this exists to surface.
+ */
+export const FORBIDDEN_PROP_KEYS: readonly string[] = [
+  'text', 'query', 'rawText', 'raw_text', 'message',
+  'label', 'labels', 'name', 'handle', 'username', 'title', 'body', 'caption',
+];
+
+function sqlState(err: unknown): string {
+  const code = (err as { code?: unknown })?.code;
+  return typeof code === 'string' ? code : '';
+}
+
+function constraintName(err: unknown): string {
+  const e = err as { constraint?: unknown; message?: unknown } | null;
+  if (typeof e?.constraint === 'string') return e.constraint;
+  // PostgREST does not always surface `constraint`; the name appears in the
+  // message when it does not.
+  const msg = typeof e?.message === 'string' ? e.message : '';
+  return msg.includes(RAW_TEXT_CONSTRAINT) ? RAW_TEXT_CONSTRAINT : '';
+}
+
+/**
+ * Which forbidden keys the rows carried. Key NAMES only — the values are never
+ * read, and the names are matched against this file's own list rather than
+ * enumerated from the payload, so a novel key cannot smuggle itself into a log
+ * line by being present.
+ */
+export function forbiddenKeysPresent(rows: readonly TelemetryRow[]): string[] {
+  const hit = new Set<string>();
+  for (const r of rows) {
+    const props = (r as { props?: unknown }).props;
+    if (!props || typeof props !== 'object') continue;
+    for (const k of FORBIDDEN_PROP_KEYS) {
+      if (Object.prototype.hasOwnProperty.call(props, k)) hit.add(k);
+    }
+  }
+  return [...hit].sort();
+}
+
 /**
  * Write rebuilt rows to the serve log.
  *
@@ -333,13 +423,71 @@ export async function recordTelemetryEvents(
   if (rows.length === 0) return { recorded: 0 };
   try {
     const { error } = await db.from(TELEMETRY_TABLE).insert(rows as TelemetryRow[]);
-    if (error) {
-      if (log) log.warn({ err: error, count: rows.length }, 'input telemetry ingest write failed');
-      return { recorded: 0, refusal: { retryable: true, reason: 'write_failed' } };
-    }
+    if (error) return classifyWriteFailure(error, rows, log, 'write_failed');
   } catch (err) {
-    if (log) log.warn({ err, count: rows.length }, 'input telemetry ingest write threw');
-    return { recorded: 0, refusal: { retryable: true, reason: 'write_threw' } };
+    return classifyWriteFailure(err, rows, log, 'write_threw');
   }
   return { recorded: rows.length };
+}
+
+/**
+ * Decide whether a write failure can ever succeed on a retry, and surface the
+ * one kind that is a privacy signal.
+ *
+ * The default stays RETRYABLE: a missing table, a network fault or an unknown
+ * error is transient until proven otherwise, and the honest answer to "I do not
+ * recognise this" is to let the client try again. Only a SQLSTATE this file
+ * names as permanent flips that.
+ */
+function classifyWriteFailure(
+  err: unknown,
+  rows: readonly TelemetryRow[],
+  log: { warn: (obj: unknown, msg?: string) => void; error?: (obj: unknown, msg?: string) => void } | undefined,
+  fallbackReason: string,
+): RecordOutcome {
+  const state = sqlState(err);
+  const constraint = constraintName(err);
+
+  if (constraint === RAW_TEXT_CONSTRAINT || (state === '23514' && constraint === '')) {
+    // The loudest thing this subsystem can say. The server REBUILDS every event
+    // from a per-name allow-list before it reaches here, so this constraint
+    // firing means that allow-list and migration 2950's forbidden-key list
+    // DISAGREE. Nothing leaked — the gate held — but a line of defence that was
+    // supposed to be unreachable was reached.
+    //
+    // The props are NOT logged. Logging the offending blob to diagnose a
+    // raw-text leak would write the raw text into the log, which is the harm
+    // the constraint exists to prevent moved somewhere with weaker controls.
+    // Only key NAMES, matched against this file's own list, travel.
+    const report = {
+      constraint: RAW_TEXT_CONSTRAINT,
+      sqlstate: state || 'unknown',
+      count: rows.length,
+      eventNames: [...new Set(rows.map((r) => r.event_name))].sort(),
+      forbiddenKeysPresent: forbiddenKeysPresent(rows),
+    };
+    const emit = log?.error ?? log?.warn;
+    if (emit) {
+      emit(
+        report,
+        'INPUT TELEMETRY PRIVACY GUARD FIRED: the serve-log rebuild allow-list admitted a key migration 2950 forbids',
+      );
+    }
+    return { recorded: 0, refusal: { retryable: false, reason: 'forbidden_props_key' } };
+  }
+
+  if (PERMANENT_SQLSTATES.has(state)) {
+    // A poison pill. Retrying cannot turn this into a success, and telling the
+    // client otherwise means every event queued behind it never lands.
+    if (log) {
+      log.warn(
+        { sqlstate: state, constraint: constraint || 'unknown', count: rows.length },
+        'input telemetry ingest refused permanently — the batch can never be accepted',
+      );
+    }
+    return { recorded: 0, refusal: { retryable: false, reason: `constraint_violation:${state}` } };
+  }
+
+  if (log) log.warn({ err, count: rows.length }, `input telemetry ingest ${fallbackReason}`);
+  return { recorded: 0, refusal: { retryable: true, reason: fallbackReason } };
 }

@@ -436,10 +436,27 @@ router.post(
 
     const result = await recordTelemetryEvents(sc, rows, logger);
     if ('refusal' in result) {
+      // A PERMANENT refusal is answered 422, not 503 with a Retry-After. The
+      // distinction is not cosmetic: 503 + Retry-After tells the batcher this
+      // batch will succeed later, and for a constraint violation that is false
+      // — the row can never be accepted, so the client would retry forever and
+      // every event queued behind it would never land. A permanent failure
+      // dressed as a transient one is the same dishonesty as an empty success
+      // over a broken ingest, which this route's header already refuses.
+      if (!result.refusal.retryable) {
+        res.status(422).json({
+          ok: false,
+          retryable: false,
+          reason: result.refusal.reason,
+          accepted: 0,
+          rejected,
+        });
+        return;
+      }
       res.setHeader('Retry-After', '60');
       res.status(503).json({
         ok: false,
-        retryable: result.refusal.retryable,
+        retryable: true,
         reason: result.refusal.reason,
         accepted: 0,
         rejected,

@@ -2309,6 +2309,34 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     // never called. That absence is load-bearing for two verdicts, so the file
     // that would end it must age this census.
     "travel-buddy-standalone/src/platform/input-assistance/index.ts",
+    // ── ADDED 2026-09-21, third widening of the day ──────────────────────────
+    // The eleven paths check:census-scope-coverage reported as CITED-BUT-
+    // UNWATCHED after §22 and §23 landed, which took measured coverage to 93%
+    // against a 0.98 floor. The floor was NOT touched — it is a ratchet, and
+    // lowering it is the one response the check itself calls never right.
+    //
+    // THE CITY PICKER, three files. G85's whole account now turns on them:
+    // DestinationBar is the surface that declares `city_picker`, its test is
+    // what pins the declaration, and `app/trip/edit.tsx` is cited as the idiom
+    // the declaration follows — if any of the three changes, G85's evidence
+    // has moved and this census should age.
+    "travel-buddy-standalone/src/components/discovery/DestinationBar.tsx",
+    "travel-buddy-standalone/src/components/discovery/__tests__/DestinationBar.cityPicker.test.ts",
+    "travel-buddy-standalone/app/trip/edit.tsx",
+    // §23's own guard.
+    "artifacts/api-server/src/test/inputTelemetryPrivacyGuard.test.ts",
+    // THE SEVEN MAP FILES §22 NAMES. These belong to census-map's subject, not
+    // this one, and they are listed here anyway: §22's re-evaluation of the
+    // five Map flags reasons about what these deployed consumers do, so a
+    // change to any of them can make §22's argument wrong. A census must watch
+    // the files its own evidence names, whoever else also grades them.
+    "artifacts/api-server/src/routes/mapProjection.ts",
+    "artifacts/api-server/src/routes/mapProjectionTemporal.ts",
+    "artifacts/api-server/src/lib/mapDisplayResolver.ts",
+    "artifacts/api-server/src/lib/mapProjection.ts",
+    "artifacts/api-server/src/lib/mapProducers/worldMomentProducer.ts",
+    "artifacts/api-server/src/routes/locateFriends.ts",
+    "artifacts/api-server/src/routes/safeReturn.ts",
   ],
   "census-discovery.md": [
     // ── ADDED 2026-09-15 by §43: the registry B05 now rests on ──────────────
