@@ -259,10 +259,25 @@ const REGISTRY: Record<InputContext, InputFieldPolicy> = {
     entityTypes: ['user'],
     privacyClass: 'viewer_scoped',
   }),
+  // MANUAL, by owner decision 2026-09-21. `display_name` is the field on which
+  // a person edits THEIR OWN name; the previous shape served `entity` rows over
+  // `entityTypes: ['user']`, which made typing your own name search OTHER
+  // PEOPLE and offer them back — a people-search mounted on a profile-edit
+  // field. Nothing in §23 asks for it and no client ever surfaced it, so the
+  // capability existed on the wire and nowhere else. The client registry has
+  // always declared this field `no_assistance`; the authority now agrees.
+  //
+  // `no_assistance` rather than merely an empty type list, because the gateway
+  // short-circuits on the MODE and returns before issuing any read. An empty
+  // list would still walk the request path and depend on every downstream arm
+  // checking its own gate — one missed check and the field is assisted again.
   display_name: policy('display_name', {
-    mode: 'search',
-    allowedSuggestionTypes: ['entity'],
-    entityTypes: ['user'],
+    mode: 'no_assistance',
+    allowedSuggestionTypes: [],
+    entityTypes: [],
+    minChars: 99,
+    maxSuggestions: 0,
+    offlinePolicy: 'unavailable',
     privacyClass: 'viewer_scoped',
   }),
   hashtag: policy('hashtag', {

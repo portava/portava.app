@@ -251,8 +251,12 @@ describe("§48 — the client policy registry mirrors the server authority", () 
   //
   // The real fix is G340 (a policy endpoint with the local registry demoted to
   // a cold-start fallback), which deletes the mirror rather than aligning it.
-  const MAX_SUGGESTION_TYPE_DRIFT = 27;
-  const MAX_DEFAULT_MODE_DRIFT = 3;
+  // LOWERED 2026-09-21 (27 -> 26, and mode 3 -> 2) when the owner ruled
+  // `display_name` MANUAL and the server was brought to the client's shape.
+  // That is the ratchet working as its comment instructs: lower it on each
+  // fix, never raise it. The remaining 26 are the ones G340 deletes.
+  const MAX_SUGGESTION_TYPE_DRIFT = 26;
+  const MAX_DEFAULT_MODE_DRIFT = 2;
 
   it(`drifts from the server on allowedSuggestionTypes in at most ${MAX_SUGGESTION_TYPE_DRIFT} contexts`, () => {
     const client = readClientRegistry();
