@@ -2200,6 +2200,55 @@ not read. The md5 gate is untouched; the header's reasoning about not creating
 the object from nothing is still true, and is now enforced by the `$mig$` gate in
 behaviour rather than by an abort.
 
+### The auditor's claim metadata had to follow the no-op
+
+Making 2976 conditional made its **claim metadata wrong**, and `audit:schema`
+(`auditMigrationsVsLive.ts`) caught it against portava-ci:
+
+    ✖ 2976_journey_shadow_global_stop_delete_scope.sql
+        missing function global_journey_shadow_stop_v1
+
+The auditor is name-keyed to text: it reads the `CREATE OR REPLACE FUNCTION`
+inside the guarded `$mig$` block and records an **unconditional** promise that
+the object exists live. After the repair that promise is false on any
+chain-built database — 2976 applies, correctly no-ops, and creates nothing.
+**The migration was right and the claim was wrong.**
+
+**Neither existing exemption was honest.** `SKIP_FILES` means *"superseded or
+known-drifted"* and prints exactly that; 2976 is current, correct and applied.
+The `ALLOWLIST` means *"the object does not exist and live deliberately
+differs"*, permanently — but the object **does** exist in production, which is
+the database whose ACLs are worth guarding. So a third category was added with
+an accurate name, `CONDITIONAL_CLAIMS`: *a claim a migration makes only when a
+precondition holds in the target database.*
+
+**The condition is deliberately not "is the function there".** That shortcut is
+circular — it reduces to *never report this object missing* and would stop the
+auditor noticing if someone **dropped the stop on production**. The condition
+keys instead on something 2976 never creates and cannot fake: the programme's
+own tables, authored by 2127 alongside the function. Measured 2026-09-21:
+
+| database | journey tables | effect |
+|---|---|---|
+| production | all 9 present | claim **enforced in full** — a dropped stop is drift |
+| portava-ci | **0** present | programme never installed; nothing to audit |
+
+`some`, not `every`: the exemption applies only when the programme is wholly
+absent, so losing one table does not buy an escape from the audit.
+
+Like 2481's posture skip, **it expires by itself.** If 2127 ever merges and the
+tables land on portava-ci, the claim is enforced there again with nobody
+remembering this entry. And a **staleness assertion fails the run** if an entry
+matches no claim — a dead exemption is how a real gap gets carried for months.
+Every non-applying claim is printed, never silently dropped.
+
+The decision lives in `src/scripts/lib/conditionalClaims.ts` rather than inside
+the auditor, because that script's first import is the read-only Supabase front
+door and exits 2 without credentials — so nothing in it can be imported and
+asserted on. `conditionalClaimAudit.test.ts` covers both databases' shapes, and
+case (3) pins the part that matters: **programme installed + stop missing must
+still fail.**
+
 **Why not `KNOWN_UNREPLAYABLE.json`.** That registry exists and 2976 would have
 been accepted into it. It was rejected for two reasons. Its own `_rule` says an
 entry is *"a fact about the replay, not permission to ignore the file"* — and
