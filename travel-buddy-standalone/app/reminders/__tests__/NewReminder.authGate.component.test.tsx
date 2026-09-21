@@ -37,8 +37,8 @@ jest.mock('../../../src/services/trips.ts', () => ({
 }));
 
 const mockFetchTripPlan = jest.fn(async () => ({ items: [] }));
-jest.mock('../../../src/services/tripPlan.ts', () => ({
-  ...jest.requireActual('../../../src/services/tripPlan.ts'),
+jest.mock('../../../src/features/trips/planning/tripPlan.ts', () => ({
+  ...jest.requireActual('../../../src/features/trips/planning/tripPlan.ts'),
   fetchTripPlan: (...args: unknown[]) => mockFetchTripPlan(...args),
 }));
 

@@ -54,8 +54,39 @@ export async function hasValidIntelConsent(sc: any, actorId: string | null | und
   }
 }
 
-/** Read the full consent state for the settings surface. Fail-soft to a default-off state. */
-export async function getIntelConsentState(sc: any, actorId: string): Promise<IntelConsentState> {
+export type IntelConsentStateResult =
+  | { ok: true; state: IntelConsentState }
+  | { ok: false; reason: "db_error" | "no_client_or_actor" };
+
+/**
+ * Read the full consent state for the SETTINGS surface.
+ *
+ * WHY THIS IS NOT FAIL-SOFT, WHILE `hasValidIntelConsent` ABOVE IS. They answer
+ * different questions and a failed read means opposite things to each.
+ *
+ *   the GATE asks "may we capture?"  — an unreadable row must answer NO. It does,
+ *                                      and must keep doing so: rendering "could
+ *                                      not read" as "consented" is the one
+ *                                      outcome that is never acceptable.
+ *   the SCREEN asks "what did I agree to?" — an unreadable row used to answer
+ *                                      { enabled:false, consentedAt:null,
+ *                                        withdrawnAt:null }, i.e. "you have
+ *                                        never consented", to a person who had.
+ *
+ * That second one is not harmless, and it is not merely cosmetic. supabase-js
+ * resolves on a database error, so the old code could not tell the two apart —
+ * and the screen it feeds has a toggle. A consenting user shown "off" who
+ * switches it on reaches PUT /v1/intel/consent, whose upsert stamps a NEW
+ * consent_version and a NEW consented_at and clears withdrawn_at. The
+ * evidentiary record of WHICH disclosure they agreed to and WHEN — the whole
+ * reason those columns are server-stamped and service-role-only — is silently
+ * rewritten by a transient read failure.
+ *
+ * So the read now reports its failure and the route answers db_error. The user
+ * sees "we could not load this", which is true, instead of a false history of
+ * their own consent.
+ */
+export async function getIntelConsentState(sc: any, actorId: string): Promise<IntelConsentStateResult> {
   const base: IntelConsentState = {
     enabled: false,
     consentVersion: null,
@@ -63,23 +94,29 @@ export async function getIntelConsentState(sc: any, actorId: string): Promise<In
     withdrawnAt: null,
     currentDisclosureVersion: INTEL_CONSENT_DISCLOSURE_VERSION,
   };
-  if (!sc || !actorId) return base;
+  if (!sc || !actorId) return { ok: false, reason: "no_client_or_actor" };
   try {
     const { data, error } = await sc
       .from("intel_contribution_consent")
       .select("enabled, consent_version, consented_at, withdrawn_at")
       .eq("user_id", actorId)
       .maybeSingle();
-    if (error || !data) return base;
+    if (error) return { ok: false, reason: "db_error" };
+    // NO ROW is a real, readable answer: this person has never granted consent.
+    // That is the only case the default-off state may be returned for.
+    if (!data) return { ok: true, state: base };
     return {
-      enabled: data.enabled === true,
-      consentVersion: data.consent_version ?? null,
-      consentedAt: data.consented_at ?? null,
-      withdrawnAt: data.withdrawn_at ?? null,
-      currentDisclosureVersion: INTEL_CONSENT_DISCLOSURE_VERSION,
+      ok: true,
+      state: {
+        enabled: data.enabled === true,
+        consentVersion: data.consent_version ?? null,
+        consentedAt: data.consented_at ?? null,
+        withdrawnAt: data.withdrawn_at ?? null,
+        currentDisclosureVersion: INTEL_CONSENT_DISCLOSURE_VERSION,
+      },
     };
   } catch {
-    return base;
+    return { ok: false, reason: "db_error" };
   }
 }
 
@@ -119,7 +156,11 @@ export async function setIntelConsent(
       .from("intel_contribution_consent")
       .upsert(row, { onConflict: "user_id" });
     if (error) return { ok: false, reason: "db_error" };
-    return { ok: true, state: await getIntelConsentState(sc, actorId) };
+    // The write landed. If the read-back fails we must NOT hand the client a
+    // default-off state — that would show a user who just granted consent that
+    // they have none. Report the write's success without a state.
+    const readBack = await getIntelConsentState(sc, actorId);
+    return readBack.ok ? { ok: true, state: readBack.state } : { ok: true };
   } catch {
     return { ok: false, reason: "db_error" };
   }

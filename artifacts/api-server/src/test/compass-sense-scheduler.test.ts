@@ -310,6 +310,13 @@ describe("Compass Sense background scheduler", () => {
       if (userId === HANG_USER) return new Promise(() => {}); // never resolves
       return runSense(sc, userId, opts);
     }) as any);
+    // The scheduler unrefs its per-user timer on purpose (a sweep must never
+    // hold the process open), so while the hanging user is the only pending
+    // work nothing else keeps the event loop alive and the runner cancels the
+    // test before the 50 ms budget fires ("Promise resolution is still pending
+    // but the event loop has already resolved"). The test holds the loop
+    // itself for the duration of the sweep.
+    const keepAlive = setInterval(() => {}, 10);
 
     try {
       const summary = await runSenseSweep(daytime);
@@ -322,6 +329,7 @@ describe("Compass Sense background scheduler", () => {
       assert.equal(nudges.length, 1);
       assert.equal(nudges[0]!.user_id, ACTIVE_USER);
     } finally {
+      clearInterval(keepAlive);
       _setTestRunSense(null);
       _setTestPerUserTimeoutMs(null);
     }

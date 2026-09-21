@@ -8,19 +8,41 @@
  *   "blocked"        — block relationship exists between viewer and target (either direction)
  *   "unavailable"    — account is deactivated, suspended, or deleted
  *
- * SAFETY: every privacy input is FAIL-CLOSED.
- *   • block check       — throws on any DB error.
- *   • account state     — a genuinely ABSENT table (42P01 / PGRST205) is skipped;
- *                         any OTHER error (RLS denial, connection failure,
- *                         PGRST204 missing-column) yields "unavailable". It used
- *                         to test `if (!acctErr && acct?.state)`, so a failed read
- *                         read as "no restriction" and a deactivated / banned /
- *                         deleted profile stayed fully visible.
- *   • privacy settings  — a failed read no longer collapses to `null` (which every
- *                         caller's `?.show_x === false` test read as "opted in").
- *                         `privacySettingsUnavailable` is raised so callers can
- *                         withhold, and the profile is treated as non-public.
+ * SAFETY: block check is FAIL-CLOSED (throws on DB error, not on missing table).
+ * Account-state check is FAIL-CLOSED too: a genuinely ABSENT table is skipped,
+ * any other error yields "unavailable" rather than "still active".
+ *
+ * ── PRIVACY SETTINGS: WHY AN UNREADABLE TABLE IS NOT "NO RESTRICTIONS" ──────
+ * `profile_privacy_settings` holds the opt-OUTS. Every consumer of the row
+ * reads it as `privacySettings?.show_X === false`, so a `null` row means "no
+ * restriction configured" and everything is disclosed. supabase-js RESOLVES on
+ * a database error, which makes an unreadable table indistinguishable from an
+ * unconfigured one — so until 2026-09-08 an outage on that one table PUBLISHED
+ * profiles their owners had restricted: `profile_visibility` fell back to the
+ * `profiles` row (commonly "public" → "full"), and every `show_*` opt-out was
+ * silently ignored.
+ *
+ * That is the permissive direction, so it is closed here, and closing it costs
+ * the VIEWER visibility rather than costing the request: a failed read of the
+ * settings table now yields RESTRICTED_PRIVACY_SETTINGS — a synthetic row with
+ * every disclosure switch off and `profile_visibility: "private"`. Two
+ * properties make that the right instrument:
+ *
+ *   • It needs no change at any of the ~10 call sites. They already ask
+ *     `show_followers === false` / `profile_visibility === "private"`, and the
+ *     substitute answers both correctly without a new branch to forget.
+ *   • It does NOT fail the request. An approved friendship still grants
+ *     "followers_only" (friendship is owner-approved at every non-public
+ *     tier); a stranger gets "limited_preview" — an empty list, not a 500.
+ *
+ * The substitute is NEVER handed to the profile OWNER (see the self-view branch
+ * below): an owner's own settings screen rendered from an all-off synthetic row
+ * would show them a lie they could save back over their real settings. The
+ * owner gets `privacySettings: null` plus `privacySettingsUnavailable: true`,
+ * so an owner-facing caller can say "could not load" instead of "all off".
  */
+
+import { logger } from "./logger.js";
 
 export type VisibilityLevel = "full" | "followers_only" | "limited_preview" | "blocked" | "unavailable";
 
@@ -50,26 +72,55 @@ export interface ProfileVisibilityResult {
   visibility: VisibilityLevel;
   privacySettings: PrivacySettings | null;
   /**
-   * TRUE when profile_privacy_settings could not be READ (as distinct from
-   * "the owner has no row", which is a successful read and leaves this false).
-   * A caller that gates content on `privacySettings?.show_x === false` MUST
-   * withhold that content when this is true — the flags are unknown, not false.
+   * True when `profile_privacy_settings` could not be READ (a resolved
+   * PostgREST error), as opposed to the user simply having no row.
+   *
+   * `privacySettings` alone cannot carry that distinction: `null` is what an
+   * unconfigured user looks like. A caller that renders settings back to their
+   * owner MUST branch on this rather than presenting the fallback as fact.
    */
-  privacySettingsUnavailable: boolean;
+  privacySettingsUnavailable?: boolean;
 }
 
 /**
- * TRUE only for a genuinely ABSENT TABLE. PGRST204 ("column not found") is
- * deliberately NOT here: column drift is not a missing table, and treating it as
- * one turns a schema mismatch into a silent privacy fail-open. The message probe
- * likewise requires "relation" so that `column "x" does not exist` does not
- * sneak through it.
+ * The privacy row assumed when `profile_privacy_settings` cannot be read for a
+ * NON-OWNER viewer. Every disclosure switch is off and the tier is the
+ * approval-required one, so an outage withholds rather than publishes.
+ *
+ * `allow_messages_from: "nobody"` is the restrictive member of the enum
+ * validated at routes/profile.ts (`everyone | friends | followers | nobody`).
+ * `delayed_posting_default` is not a disclosure control — it schedules the
+ * owner's own posts — so it keeps the column's own default rather than being
+ * flipped for the sake of symmetry.
+ *
+ * Frozen: it is handed out by reference to every caller of a failed read, and a
+ * caller that mutated it would poison every subsequent one.
  */
+export const RESTRICTED_PRIVACY_SETTINGS: Readonly<PrivacySettings> = Object.freeze({
+  profile_visibility:      "private",
+  show_real_name:          false,
+  show_current_city:       false,
+  show_home_country:       false,
+  show_visited_places:     false,
+  show_upcoming_trips:     false,
+  show_past_trips:         false,
+  show_posts:              false,
+  show_stamps:             false,
+  show_friends:            false,
+  show_followers:          false,
+  allow_messages_from:     "nobody",
+  allow_friend_requests:   false,
+  allow_follow:            false,
+  allow_tagging:           false,
+  allow_profile_discovery: false,
+  delayed_posting_default: false,
+  precise_location_visible: false,
+});
+
 function isTableMissingErr(e: any): boolean {
   if (!e) return false;
-  if (e.code === "42P01" || e.code === "PGRST205") return true;
-  const msg = String(e.message ?? "").toLowerCase();
-  return msg.includes("relation") && msg.includes("does not exist");
+  return e.code === "42P01" || e.code === "PGRST204" || e.code === "PGRST205" ||
+    String(e.message ?? "").toLowerCase().includes("does not exist");
 }
 
 /**
@@ -87,32 +138,63 @@ export async function resolveProfileVisibility(
   targetProfileRow: { is_private?: boolean | null; passport_visibility?: string | null; account_status?: string | null },
 ): Promise<ProfileVisibilityResult> {
   // ── Owner always gets full access ─────────────────────────────────────────
+  //
+  // The owner's access does not depend on this read — it is "full" either way —
+  // so the read's failure is not a disclosure question. It is a TRUTHFULNESS
+  // question: the settings are handed back for the owner's own rendering, and
+  // `null` there says "you have configured nothing", which an unreadable table
+  // must not be allowed to say. Hence the explicit `privacySettingsUnavailable`
+  // rather than the restricted substitute — see the module header.
   if (viewerId === targetId) {
-    let ps: any = null;
+    let ps: PrivacySettings | null = null;
+    let unavailable = false;
     try {
+      // `.error` is the real failure path: supabase-js RESOLVES on a database
+      // error, and postgrest-js catches fetch errors itself, so a network fault
+      // resolves too (measured against 2.108.2: `{ error: { message:
+      // "TypeError: fetch failed", code: "" }, status: 0 }`). The surrounding
+      // catch is only for a client that is not a PostgREST builder at all. It
+      // is treated the same way here because the consequence — withholding one
+      // profile — is proportionate either way.
       const res = await sc
         .from("profile_privacy_settings")
         .select("*")
         .eq("user_id", targetId)
         .maybeSingle();
-      ps = res.data ?? null;
-    } catch {
-      ps = null;
+      if (res.error && isTableMissingErr(res.error)) {
+        // The table does not exist. "You have configured nothing" is then the
+        // truth, not a cover story, so this is NOT reported as unavailable.
+        logger.warn({ err: res.error, targetId }, "profileVisibility: profile_privacy_settings table absent (self-view)");
+      } else if (res.error) {
+        unavailable = true;
+        logger.error(
+          { err: res.error, targetId },
+          "profileVisibility: owner self-view could not read profile_privacy_settings — " +
+            "returning privacySettingsUnavailable rather than an empty settings row",
+        );
+      } else {
+        ps = (res.data as PrivacySettings | null) ?? null;
+      }
+    } catch (err) {
+      unavailable = true;
+      logger.error({ err, targetId }, "profileVisibility: owner self-view privacy read threw");
     }
-    // The owner is never gated by their own flags, so an unreadable row cannot
-    // leak anything here.
-    return { visibility: "full", privacySettings: ps, privacySettingsUnavailable: false };
+    return { visibility: "full", privacySettings: ps, privacySettingsUnavailable: unavailable };
   }
 
   // ── 1. Account status — profile row first (fast path), then state table ───
   const profileAccountStatus = targetProfileRow.account_status ?? null;
   if (profileAccountStatus && profileAccountStatus !== "active") {
-    return { visibility: "unavailable", privacySettings: null, privacySettingsUnavailable: false };
+    return { visibility: "unavailable", privacySettings: null };
   }
 
   // Fallback: query user_account_states. FAIL-CLOSED on any error other than a
-  // genuinely absent table — an RLS denial or a connection failure tells us
-  // NOTHING about the account's state, and must not be read as "still active".
+  // genuinely ABSENT table — an RLS denial, a connection failure or a
+  // missing-column PGRST204 tells us NOTHING about the account's state, and the
+  // old `if (!acctErr && acct?.state)` read every one of them as "still active",
+  // so a deactivated, banned or deleted profile stayed fully visible for the
+  // duration of the error. An absent table is different in kind: there is no
+  // state to read, so there is no restriction to honour.
   try {
     const { data: acct, error: acctErr } = await sc
       .from("user_account_states")
@@ -122,15 +204,15 @@ export async function resolveProfileVisibility(
       .maybeSingle();
     if (acctErr) {
       if (!isTableMissingErr(acctErr)) {
-        return { visibility: "unavailable", privacySettings: null, privacySettingsUnavailable: false };
+        return { visibility: "unavailable", privacySettings: null };
       }
       // table genuinely absent → no restriction to read
     } else if (acct?.state) {
-      return { visibility: "unavailable", privacySettings: null, privacySettingsUnavailable: false };
+      return { visibility: "unavailable", privacySettings: null };
     }
   } catch (e: any) {
     if (!isTableMissingErr(e)) {
-      return { visibility: "unavailable", privacySettings: null, privacySettingsUnavailable: false };
+      return { visibility: "unavailable", privacySettings: null };
     }
     /* table missing → no restriction */
   }
@@ -143,11 +225,18 @@ export async function resolveProfileVisibility(
       .or(`and(blocker_id.eq.${viewerId},blocked_id.eq.${targetId}),and(blocker_id.eq.${targetId},blocked_id.eq.${viewerId})`);
     if (blockErr) throw new Error(`Block check failed: ${blockErr.message}`);
     if ((blockRows ?? []).length > 0) {
-      return { visibility: "blocked", privacySettings: null, privacySettingsUnavailable: false };
+      return { visibility: "blocked", privacySettings: null };
     }
   }
 
-  // ── 3. Privacy settings ────────────────────────────────────────────────────
+  // ── 3. Privacy settings (FAIL-CLOSED — see module header) ─────────────────
+  //
+  // A read failure here used to leave `privacySettings = null`, which is the
+  // shape of a user who configured nothing: the tier fell back to the profiles
+  // row and every `show_*` opt-out downstream was skipped. `isTableMissingErr`
+  // still distinguishes the one case where "no settings" is the honest answer —
+  // the table does not exist at all (a tree without migration 0069 applied) —
+  // from a table that exists and could not be read.
   let privacySettings: PrivacySettings | null = null;
   let privacySettingsUnavailable = false;
   try {
@@ -156,35 +245,39 @@ export async function resolveProfileVisibility(
       .select("*")
       .eq("user_id", targetId)
       .maybeSingle();
-    if (psErr) {
-      // A genuinely absent table is the pre-launch case this used to cover; any
-      // other error means the flags are UNKNOWN, and `null` is indistinguishable
-      // from "no row / all defaults on" at every call site.
-      if (!isTableMissingErr(psErr)) privacySettingsUnavailable = true;
+    if (!psErr) {
+      privacySettings = (ps as PrivacySettings | null) ?? null;
+    } else if (isTableMissingErr(psErr)) {
+      logger.warn(
+        { err: psErr, targetId },
+        "profileVisibility: profile_privacy_settings table absent — no privacy row exists to honour",
+      );
     } else {
-      privacySettings = ps ?? null;
+      privacySettingsUnavailable = true;
+      privacySettings = RESTRICTED_PRIVACY_SETTINGS;
+      logger.error(
+        { err: psErr, targetId, viewerId },
+        "profileVisibility: profile_privacy_settings unreadable — withholding under " +
+          "RESTRICTED_PRIVACY_SETTINGS rather than disclosing as if unconfigured",
+      );
     }
-  } catch (e: any) {
-    if (!isTableMissingErr(e)) privacySettingsUnavailable = true;
+  } catch (err) {
+    privacySettingsUnavailable = true;
+    privacySettings = RESTRICTED_PRIVACY_SETTINGS;
+    logger.error({ err, targetId, viewerId }, "profileVisibility: privacy read threw — withholding");
   }
 
   // ── 4. Effective visibility level ─────────────────────────────────────────
   // Derive effective visibility: privacy settings row wins; fall back to the
   // profile-level fields.  All three privacy tiers must be mapped so that
   // callers without a profile_privacy_settings row still get the correct tier.
-  //
-  // When the settings row was UNREADABLE we cannot know the canonical tier, so
-  // the profiles-row fallback is not trustworthy either: treat the profile as
-  // approval-required ("private") rather than inferring "public" from a source
-  // the owner may have overridden.
-  const profileVis = privacySettingsUnavailable
-    ? "private"
-    : privacySettings?.profile_visibility ??
-      (targetProfileRow.passport_visibility === "private" || targetProfileRow.is_private
-        ? "private"
-        : targetProfileRow.passport_visibility === "followers_only"
-        ? "followers_only"
-        : "public");
+  const profileVis =
+    privacySettings?.profile_visibility ??
+    (targetProfileRow.passport_visibility === "private" || targetProfileRow.is_private
+      ? "private"
+      : targetProfileRow.passport_visibility === "followers_only"
+      ? "followers_only"
+      : "public");
 
   if (profileVis === "public") {
     return { visibility: "full", privacySettings, privacySettingsUnavailable };

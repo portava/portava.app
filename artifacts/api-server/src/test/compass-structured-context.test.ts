@@ -261,6 +261,14 @@ describe("leak prevention — blocked/muted users and coordinates", () => {
     });
     assert.deepEqual(out, { name: "x", city: "Cebu" });
   });
+
+  it("a camelCase `…At` timestamp ending in \"lAt\" (requiredArrivalAt, expectedArrivalAt) is a time, not a coordinate — kept; every coordinate shape still goes", () => {
+    const out = stripCoordinateFields({
+      requiredArrivalAt: "2026-09-13T11:00:00.000Z", expectedArrivalAt: "2026-09-13T11:32:00.000Z", estimatedArrivalAt: null, arrivalAtBound: "x", startsAt: "y",
+      lat: 1, lng: 2, LAT: 3, latitude: 4, longitude: 5, exact_lat: 6, center_lng: 7, exactLat: 8, arrivalLat: 9, placeLatitude: 10, publicLng: 11, location_lat: 12,
+    });
+    assert.deepEqual(out, { requiredArrivalAt: "2026-09-13T11:00:00.000Z", expectedArrivalAt: "2026-09-13T11:32:00.000Z", estimatedArrivalAt: null, arrivalAtBound: "x", startsAt: "y" });
+  });
 });
 
 describe("UGC delimiters — data not instructions", () => {

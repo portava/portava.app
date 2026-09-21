@@ -32,6 +32,8 @@ import {
   Map as MapIcon,
   ShieldCheck,
   Stamp,
+  Route as RouteIcon,
+  Images,
 } from 'lucide-react-native';
 import { color, space, radius, type as t, avatar, icon } from '../../theme/tokens.ts';
 import {
@@ -39,6 +41,7 @@ import {
   type PassportWorld,
   type WorldCountry,
   type WorldCity,
+  type WorldTrip,
 } from './usePassportWorld.ts';
 
 // Deep-link target for the main Map in passport ("my stamps") mode. Mirrors the
@@ -70,6 +73,73 @@ function StatTile({ value, label }: { value: number; label: string }) {
       <Text style={s.statLabel}>{label}</Text>
     </View>
   );
+}
+
+// ── Trip → Places → Memories (§26 levels 4-6) ───────────────────────────────────
+//
+// Rendered UNDER the city it belongs to, from what the server already grouped
+// and already filtered. This block decides nothing about visibility: a Place or
+// a Memory that is not in the payload is one this viewer may not be shown, and
+// asking again is not this screen's job. Coarse labels only — no coordinates
+// exist in the payload to render.
+
+function TripBlock({ trip }: { trip: WorldTrip }) {
+  const label = trip.title ?? (trip.tripId ? 'Trip' : 'Not on a trip');
+  const dates = trip.startDate ? monthYear(trip.startDate) : null;
+  return (
+    <View style={s.tripBlock} testID={`my-world-trip-${trip.tripId ?? 'untripped'}`}>
+      <View style={s.tripHead}>
+        <RouteIcon size={icon.s14} color={color.mute} />
+        <Text style={s.tripTitle} numberOfLines={1}>
+          {label}
+        </Text>
+        <Text style={s.tripMeta}>
+          {dates ? `${dates} · ` : ''}
+          {trip.stampCount} {trip.stampCount === 1 ? 'stamp' : 'stamps'}
+        </Text>
+      </View>
+
+      {trip.places.length > 0 ? (
+        <View style={s.placeWrap}>
+          {trip.places.map((p) => (
+            <View key={p.key} style={s.placeChip}>
+              <MapPin size={icon.s14} color={color.deep} />
+              <Text style={s.placeChipText} numberOfLines={1}>
+                {p.name}
+              </Text>
+            </View>
+          ))}
+        </View>
+      ) : null}
+
+      {trip.memories.length > 0 ? (
+        <View style={s.memoryList}>
+          {trip.memories.slice(0, 5).map((m) => (
+            <View key={m.id} style={s.memoryRow}>
+              <Images size={icon.s14} color={color.faint} />
+              <Text style={s.memoryText} numberOfLines={1}>
+                {m.title ?? 'Memory'}
+              </Text>
+            </View>
+          ))}
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
+const MONTHS = [
+  'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+  'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+];
+
+/** Coarse "Mon YYYY" — deliberately month-level, never a precise day (§23). */
+function monthYear(dateStr: string | null): string | null {
+  if (!dateStr) return null;
+  const ms = Date.parse(dateStr);
+  if (!Number.isFinite(ms)) return null;
+  const d = new Date(ms);
+  return `${MONTHS[d.getUTCMonth()]} ${d.getUTCFullYear()}`;
 }
 
 // ── City row (leaf) ─────────────────────────────────────────────────────────────
@@ -128,6 +198,9 @@ function CountrySection({ country }: { country: WorldCountry }) {
           </Text>
           <Text style={s.countryMeta}>
             {country.cityCount} {country.cityCount === 1 ? 'city' : 'cities'} ·{' '}
+            {country.tripCount > 0
+              ? `${country.tripCount} ${country.tripCount === 1 ? 'trip' : 'trips'} · `
+              : ''}
             {country.stampCount} {country.stampCount === 1 ? 'stamp' : 'stamps'}
           </Text>
         </View>
@@ -136,7 +209,18 @@ function CountrySection({ country }: { country: WorldCountry }) {
 
       <View style={s.cityList}>
         {country.cities.map((c) => (
-          <CityRow key={c.key} city={c} onPress={open} />
+          <View key={c.key}>
+            <CityRow city={c} onPress={open} />
+            {/* §26 levels 4-6. Absent when the server sent none — the hierarchy
+                then stops at City exactly as it did before. */}
+            {c.trips.length > 0 ? (
+              <View style={s.tripList} testID={`my-world-trips-${c.key}`}>
+                {c.trips.map((tr) => (
+                  <TripBlock key={tr.tripId ?? 'untripped'} trip={tr} />
+                ))}
+              </View>
+            ) : null}
+          </View>
         ))}
       </View>
     </View>
@@ -247,6 +331,7 @@ export default function MyWorldScreen({ worldOverride }: MyWorldScreenProps = {}
             <View style={s.statsRow}>
               <StatTile value={world.totalCountries} label="Countries" />
               <StatTile value={world.totalCities} label="Cities" />
+              <StatTile value={world.totalTrips} label="Trips" />
               <StatTile value={world.totalStamps} label="Stamps" />
             </View>
 
@@ -476,6 +561,68 @@ const s = StyleSheet.create({
     color: color.mute,
     fontFamily: 'Courier',
     fontSize: 13,
+  },
+
+  // ── §26 levels 4-6: Trip → Places → Memories ──────────────────────────────
+  tripList: {
+    paddingLeft: space.lg,
+    paddingBottom: space.sm,
+    gap: space.xs,
+  },
+  tripBlock: {
+    borderLeftWidth: 2,
+    borderLeftColor: color.haze,
+    paddingLeft: space.sm,
+    paddingVertical: space.xs,
+    gap: space.xs,
+  },
+  tripHead: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.xs,
+  },
+  tripTitle: {
+    ...t.small,
+    color: color.ink,
+    fontWeight: '600',
+    flexShrink: 1,
+  },
+  tripMeta: {
+    ...t.small,
+    color: color.faint,
+    marginLeft: 'auto',
+  },
+  placeWrap: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: space.xs,
+  },
+  placeChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: space.sm,
+    paddingVertical: 4,
+    borderRadius: radius.pill,
+    backgroundColor: color.haze,
+  },
+  placeChipText: {
+    ...t.small,
+    color: color.deep,
+    maxWidth: 160,
+  },
+  memoryList: {
+    gap: 2,
+  },
+  memoryRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.xs,
+  },
+  memoryText: {
+    ...t.small,
+    color: color.mute,
+    flexShrink: 1,
   },
 
   // States

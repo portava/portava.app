@@ -270,3 +270,175 @@ describe("gateway bypass guard (§19)", () => {
     }
   });
 });
+
+// ═════════════════════════════════════════════════════════════════════════════
+// M133 / M139 — the CLIENT half of "never place raw database rows on the map".
+//
+// The server half is in src/test/mapProjection.test.ts: with the flag TRUE and
+// `protected_zones` readable the gateway answers `enabled: true` with objects
+// and a non-empty `sources`; with the flag FALSE it answers `enabled: false`.
+// That is the INPUT the client branches on. This block pins what the client
+// then DOES with it, which is the half the census's M133 sentence names:
+//
+//   "the client's `usedGateway` is true, and the per-layer fallback in
+//    useMapEntities does NOT run."
+//
+// WHY THIS IS A STRUCTURAL GUARD AND NOT A MOUNTED-HOOK TEST.
+// `useMapEntities` is a React hook in travel-buddy-standalone, and this file is
+// in the api-server package, which cannot mount it. A mounted-hook assertion
+// belongs beside the hook, and adding one there is work for whoever owns that
+// file — it is not blocked by anything.
+//
+// It is worth saying what this is NOT blocked on, because the lane plan claimed
+// otherwise and the claim is stale. The plan records the standalone `node:test`
+// runner as dark (`--import tsx/esm` → ERR_REQUIRE_CYCLE_MODULE before any test
+// executes). Re-measured on this tree: `travel-buddy-standalone/scripts/
+// run-node-tests.mjs` already selects the loader by Node major — `tsx` below 24,
+// `tsx/esm` at 24 and above — and a full run is 6286/6286 green. So the client
+// runner executes, and a mounted-hook proof of this property is available to
+// whoever owns the hook. What this file can do, and does, is pin the property on
+// the source the way the §19 guard above it does.
+//
+// WHAT IT PINS, AND WHY EACH ONE IS THE FAILURE THAT ACTUALLY HAPPENED:
+//
+//   1. `gatewayObjects` is assigned ONLY under `res.data.enabled`. Assigning it
+//      on `res.ok` alone would make a flag-off `enabled: false` envelope look
+//      like a served one — `usedGateway` true, fallback skipped, map blank.
+//      This is the blank-map hazard `mapProtectionUnreadable.test.ts` closed at
+//      the server end, restated at the client end.
+//   2. EVERY per-layer fetcher call sits inside `if (!usedGateway) {`. One
+//      `attempt(...)` left outside that block is a layer that keeps fetching
+//      raw rows past a serving gateway — §19's violation, and invisible,
+//      because the data still looks right.
+//   3. The fallback block is non-empty and names every toggleable layer, so a
+//      future edit cannot make this guard vacuous by deleting the fallback.
+// ═════════════════════════════════════════════════════════════════════════════
+
+const USE_MAP_ENTITIES = resolve(
+  SRC, "..", "..", "..", "travel-buddy-standalone", "src", "hooks", "useMapEntities.ts",
+);
+
+/** The body of the first `if (<head>) {` … `}` block at `head`, brace-matched. */
+function blockAfter(src: string, head: string): { start: number; end: number } {
+  const at = src.indexOf(head);
+  assert.ok(at >= 0, `useMapEntities.ts no longer contains \`${head}\` — this guard is inert`);
+  const open = src.indexOf("{", at + head.length - 1);
+  assert.ok(open >= 0, `no block opens after \`${head}\``);
+  let depth = 0;
+  for (let i = open; i < src.length; i++) {
+    if (src[i] === "{") depth++;
+    else if (src[i] === "}") {
+      depth--;
+      if (depth === 0) return { start: open, end: i };
+    }
+  }
+  assert.fail(`unbalanced braces after \`${head}\``);
+}
+
+describe("M133/M139 — a serving gateway owns every layer (client branch)", () => {
+  const src = () => readFileSync(USE_MAP_ENTITIES, "utf8");
+
+  test("the guard is reading the real hook", () => {
+    const s = src();
+    assert.ok(s.length > 5_000, "useMapEntities.ts is implausibly small — wrong file?");
+    assert.ok(s.includes("const usedGateway"), "the hook no longer computes usedGateway");
+  });
+
+  test("gatewayObjects is assigned ONLY under res.data.enabled — `res.ok` alone is the blank map", () => {
+    const s = src();
+    const assignments = s
+      .split("\n")
+      .map((l, i) => ({ l: l.trim(), i: i + 1 }))
+      .filter(({ l }) => /^gatewayObjects\s*=/.test(l));
+    assert.equal(
+      assignments.length, 1,
+      `expected exactly one assignment to gatewayObjects, found ${assignments.length} at lines ` +
+        `${assignments.map((a) => a.i).join(", ")} — each one is a separate way to claim the ` +
+        `gateway served when it did not`,
+    );
+
+    // It must live inside the `res.ok && res.data.enabled` block.
+    const gate = blockAfter(s, "if (res.ok && res.data.enabled)");
+    const at = s.indexOf("gatewayObjects =", s.indexOf("let gatewayObjects") + 20);
+    assert.ok(
+      at > gate.start && at < gate.end,
+      "gatewayObjects is assigned outside the `res.ok && res.data.enabled` guard: an " +
+        "`enabled: false` envelope would then count as a served one and the fallback would " +
+        "be skipped for a gateway that served nothing",
+    );
+  });
+
+  test("usedGateway is derived from gatewayObjects, not from the flag or the status code", () => {
+    const s = src();
+    assert.match(
+      s,
+      /const usedGateway = gatewayObjects !== null;/,
+      "usedGateway must be 'did the gateway hand me objects', not 'did the request succeed'",
+    );
+  });
+
+  test("EVERY per-layer fetcher runs only inside `if (!usedGateway)` — no layer outruns the gateway", () => {
+    const s = src();
+    const fallback = blockAfter(s, "if (!usedGateway)");
+
+    // Every call to the `attempt(...)` helper — the one and only way a per-layer
+    // transport is started — must be inside that block.
+    const calls = [...s.matchAll(/\battempt\(\s*'([a-z]+)'/g)].map((m) => ({
+      layer: m[1],
+      at: m.index ?? -1,
+    }));
+    assert.ok(
+      calls.length >= 5,
+      `expected the five toggleable layers to have fallback fetchers, found ${calls.length} — ` +
+        `if the fallback was removed this guard has nothing left to protect`,
+    );
+
+    const outside = calls.filter((c) => c.at < fallback.start || c.at > fallback.end);
+    assert.deepEqual(
+      outside.map((c) => c.layer), [],
+      "these layers start a per-layer fetch outside the `if (!usedGateway)` block. A serving " +
+        "gateway has already applied §31 ranking, the §24 protection gate and viewport " +
+        "aggregation to that layer; fetching it again serves the raw rows §19 forbids, and " +
+        "routes around a fail-closed decision through a fail-open transport.",
+    );
+
+    // Anti-vacuity from the other side: the five layers are all named, so a
+    // guard that passed because the block was empty would fail here instead.
+    assert.deepEqual(
+      calls.map((c) => c.layer).sort(),
+      ["buddies", "events", "friends", "gems", "trips"],
+      "the fallback no longer covers exactly the five toggleable layers",
+    );
+  });
+
+  test("M139: the on-device normalisers are reachable ONLY through that fallback", () => {
+    const s = src();
+    const fallback = blockAfter(s, "if (!usedGateway)");
+
+    // clientProjection.ts's projectors ARE the "client reconstructing Portava
+    // intelligence rules" §19 names. They are legitimate on the legacy path and
+    // illegitimate past a serving gateway. They are called inside the per-layer
+    // fetchers, so the property to pin is that no projector is invoked in the
+    // hook's own body outside the fallback region.
+    const PROJECTORS = ["projectBuddy", "projectTrip", "projectFriend", "projectGemLocal", "projectEventLocal"];
+    for (const p of PROJECTORS) {
+      const calls = [...s.matchAll(new RegExp(`\\b${p}\\(`, "g"))].map((m) => m.index ?? -1);
+      assert.ok(calls.length > 0, `${p} is no longer called at all — was it renamed?`);
+    }
+
+    // The fetchers that call them are themselves only started from the fallback,
+    // which the previous case proved. What is left to pin is that the merge step
+    // cannot smuggle a locally-normalised object onto a gateway response: the
+    // merged list is the gateway's objects plus the per-layer results, and the
+    // per-layer results are empty whenever the fallback did not run.
+    assert.match(
+      s,
+      /const merged = \(gatewayObjects \?\? \[\]\)\.concat\(\.\.\.perLayer\);/,
+      "the merge no longer has the shape this guard reasons about",
+    );
+    assert.ok(
+      s.indexOf("const fetches:") < fallback.start,
+      "the fetch list must be declared before the fallback block, and filled only inside it",
+    );
+  });
+});

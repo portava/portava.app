@@ -52,6 +52,22 @@ export interface MessageRequest {
   requestId: string;
   previewText: string | null;
   createdAt: string;
+  /**
+   * Telegraph §22 contextual origin — why this person is reaching out.
+   *
+   * `verified` means the SERVER established it (today only `trip`, and only
+   * when both parties are accepted members). Everything else is the sender's
+   * own assertion and must be rendered as one: see
+   * src/features/telegraph/lib/requestOriginLabel.ts.
+   *
+   * null until migration 2813 is applied AND its flag is on, which is the state
+   * of every deployment today.
+   */
+  origin?: {
+    type: 'event' | 'trip' | 'nearby' | 'bump' | 'buddy' | 'profile';
+    id: string | null;
+    verified: boolean;
+  } | null;
   sender: {
     id: string;
     handle: string;
@@ -90,6 +106,18 @@ export interface ThreadSummary {
     subtype?: string | null;
   } | null;
   unreadCount?: number;
+  /**
+   * Telegraph §19's second half: how many meetups in this thread are waiting on
+   * an answer from the viewer (a pending RSVP, or a time poll they have not
+   * voted in). Server: artifacts/api-server/src/domain/telegraph/policies/needsAction.ts.
+   *
+   * ABSENT IS NOT ZERO. The server OMITS this field when the inputs could not
+   * be read, precisely so that "we do not know" cannot be rendered as "nothing
+   * to do". Render the badge only on `> 0`; render nothing on `undefined`.
+   */
+  needsActionCount?: number;
+  /** Which kinds of answer are outstanding. Empty when nothing is. */
+  needsActionReasons?: Array<'rsvp_pending' | 'time_vote_pending'>;
   tripCity?: string | null;
   isAiLastMessage?: boolean;
   /**
@@ -179,6 +207,31 @@ export interface Message {
   uploadState?: 'uploading' | 'failed' | null;
   /** 0–1 upload progress fraction (local only). */
   uploadProgress?: number;
+  /**
+   * Telegraph §22 travel scam signals, computed server-side for the RECIPIENT
+   * and absent on the caller's own messages and on clean ones. The client
+   * RENDERS this; it never computes it — the detector must not be tunable by
+   * the person it watches.
+   */
+  safetySignals?: import('../features/telegraph/types/index.ts').MessageSafetySignals | null;
+  /**
+   * Telegraph §22 "stranger media ... until accepted". The server decides
+   * (`domain/telegraph/policies/senderConnectedness.ts`) and fails CLOSED
+   * there: an unreadable relationship table reports every sender as
+   * unconnected.
+   *
+   * ABSENT vs FALSE, and why they are not the same here. `false` is a server
+   * that looked and says "you have not connected with this person" — shield.
+   * `undefined` is a server that does not implement the control at all (an
+   * older deployment than this client), and shielding every photo in every
+   * thread because the server is old would be a worse failure than not
+   * shielding: the control would look broken rather than absent. So call sites
+   * shield on an explicit `false` and the ceiling is recorded rather than
+   * hidden — on a server without this field the control is OFF.
+   */
+  senderConnected?: boolean;
+  /** True when the relationship could not be established at all. */
+  senderConnectednessDegraded?: boolean;
 }
 
 export type MsgErrorKind =

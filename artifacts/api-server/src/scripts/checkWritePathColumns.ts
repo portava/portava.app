@@ -103,7 +103,7 @@ import { extractSchemaReferences } from "./lib/schemaReferenceExtract.js";
 
 const __dir = dirname(fileURLToPath(import.meta.url));
 const API_ROOT = resolve(__dir, "../..");
-const SCAN_DIRS = [resolve(__dir, "../routes"), resolve(__dir, "../services")];
+const SCAN_DIRS = [resolve(__dir, "../routes"), resolve(__dir, "../services"), resolve(__dir, "../domain"), resolve(__dir, "../server")];
 const VERBOSE = process.argv.includes("--verbose");
 const PRINT_UNRESOLVED_ALLOWLIST = process.argv.includes(
   "--print-unresolved-allowlist",
@@ -142,6 +142,38 @@ const ALLOWLIST = new Set<string>([
   "intel_claims.observation_id",
   "intel_claims.source_label",
   "intel_claims.lineage",
+  //
+  // trip_reservations.cancelled_at (2784) and trip_crew_location_sessions
+  // .subgroup_id (2780) — Trips §41 batch. Written by routes/tripReservations
+  // DELETE (cancel, not erase) and read by TripCrewLocationService.getCrewMap,
+  // both only under trip_operational_projections_enabled, whose prerequisite
+  // probe covers the column. This branch is not on main and live-db.yml
+  // applies only from main; remove once that apply is certified.
+  "trip_reservations.cancelled_at",
+  "trip_crew_location_sessions.subgroup_id",
+  //
+  // safe_return_sessions.subgroup_id (2794) — Trips §52: a Safe Return attached
+  // to a subgroup execution context (§17.4). Written by SafeReturnService.
+  // createSession only when the caller names a subgroup, which the route
+  // verifies against trip_subgroups (2780, itself pending apply). Remove once
+  // 2794 is applied to the live schema.
+  "safe_return_sessions.subgroup_id",
+  //
+  // Trips §43 (2783 — goal scope): trip_goals.scope / .weight are read by
+  // TripOpportunityProjection (goals served by an experience) under
+  // trip_operational_projections_enabled. Absent from portava-ci until this
+  // branch reaches main. Remove once 2783 is applied there.
+  "trip_goals.scope",
+  "trip_goals.weight",
+  //
+  // Telegraph §12–§22 (2810 — the message kernel): messages.lifecycle_state is
+  // written by server/telegraph/commandRoute's typed door, which is the ONLY
+  // writer, and it is behind a flag seeded FALSE. Absent from portava-ci until
+  // this branch reaches main. It is also carried by
+  // checkMissingLiveColumns' allowlist, which reads the live schema from the
+  // other direction — both entries come out together when 2810's apply is
+  // certified, and leaving one behind is the mistake to watch for.
+  "messages.lifecycle_state",
 ]);
 
 // Tables that are not real live relations and should be skipped entirely
@@ -154,6 +186,48 @@ const SKIP_TABLES = new Set<string>([
   // (IG unit I1). Written by lib/intelProjection, read by lib/intelReplay.
   // Remove once 2273 is applied to the live schema.
   "intel_state_snapshot_versions",
+  //
+  // Trips §41 batch, 2780/2781/2784 — absent from portava-ci until this branch
+  // reaches main (live-db.yml applies only from main). Every site behind
+  // trip_operational_projections_enabled: TripDecisionLedger.persistTripDecision
+  // / readTripDecisionFrom (trip_decisions), TripCloseoutService §20.2
+  // dissolve (trip_subgroups), TripCrewLocationService subgroup-scoped shares
+  // (trip_subgroup_members), GET .../reservations/:id/history
+  // (trip_reservation_events). Remove once the apply is certified.
+  "trip_decisions",
+  "trip_subgroups",
+  "trip_subgroup_members",
+  "trip_reservation_events",
+  //
+  // Trips §41–§45, 2782 (transport segments) and 2785 (disruptions) — the same
+  // pending-apply state as the four above. Every read sits behind
+  // trip_operational_projections_enabled: TripHealthProjection (trip_disruptions,
+  // §17.2), TripTodayProjection / TripImpactState / server/trips/readRoutes/tripMapProjection
+  // (trip_transport_segments, §8.4 triggers, §9.4 impact, §14.1 logistics).
+  "trip_disruptions",
+  // Trips §47, 2793 — trip_transport_policies, written by PUT /trips/:tripId/transport-policy
+  // under trip_operational_projections_enabled; absent from portava-ci until this branch
+  // reaches main. Remove once 2793 is applied to the live schema.
+  "trip_transport_policies",
+  "trip_transport_segments",
+  // Trips §52, 2794 — meeting checkpoints, written only by the kernel; read by
+  // routes/tripMeetingCheckpoints, health, the map and the offline bundle under
+  // trip_operational_projections_enabled. Absent from portava-ci until this
+  // branch reaches main. Remove once 2794 is applied to the live schema.
+  "trip_meeting_checkpoints",
+  "trip_meeting_checkpoint_participants",
+  //
+  // Telegraph §12–§22, 2811 (message_reactions) and 2812
+  // (telegraph_report_evidence) — the same pending-apply state, and the same
+  // rule: applying an unmerged branch's migrations to the shared CI database
+  // would leave it ahead of main with no commit accounting for it.
+  // message_reactions is written only by server/telegraph/commandRoute's
+  // typed door; telegraph_report_evidence only by services/telegraphReportEvidence
+  // at report time. Both sit behind flags seeded FALSE, so neither is reachable
+  // on any deployment today — which is also why T283/T284 read W and not C.
+  // Remove each once its apply is certified in docs/migrations.md.
+  "message_reactions",
+  "telegraph_report_evidence",
 ]);
 
 // ── Unresolvable-site allowlist ───────────────────────────────────────────────
@@ -171,7 +245,69 @@ const SKIP_TABLES = new Set<string>([
 //   pnpm run check:write-path-columns -- --print-unresolved-allowlist
 //
 // Burn this list down — every entry is a hole in the check.
+//
+// 2026-09-15: twenty-two entries LEFT this list at once, and none of them by
+// being excused. `resolvePayload` in lib/schemaReferenceExtract.ts learned to
+// read a `.map(cb)` / `.flatMap(cb)` callback's returned object literal, which
+// is how every batch writer in this tree builds its rows: the array is
+// variable-length so it can never BE a literal, but the row SHAPE always is,
+// and the columns a batch insert writes are exactly that shape's keys. 31 more
+// write/read sites are now checked against the live schema, and the entries
+// that described them as unreadable were deleted because they stopped being
+// true — not trimmed to make a count line up. The extension is pinned by
+// src/test/schemaReferenceMapPayloads.test.ts.
 const UNRESOLVED_ALLOWLIST = new Map<string, number>([
+  // ── Telegraph §1–§11 and §12–§22: the typed-envelope shape ────────────────
+  // These lanes route every write through a validated envelope, so the payload
+  // handed to supabase is a NAME (`validated.payload`, `row`, `patch`) rather
+  // than an object literal, and the select lists are built from exported column
+  // constants rather than written inline. That is the same construction the
+  // Trips kernel uses and it is the reason the extractor cannot see them — the
+  // trade is deliberate: a literal at every call site is resolvable here and
+  // duplicates the schema at a dozen sites instead of naming it once.
+  //
+  // WHAT THIS COSTS, stated rather than waved at: each of these is a blind spot
+  // where a phantom column could reach the database unseen by THIS check. What
+  // still covers them is the zod schema the envelope validates against, the
+  // migration's own postconditions, and check:missing-live-columns reading the
+  // live schema from the other direction.
+  ["src/domain/telegraph/policies/conversationCapabilityPolicy.ts|select|select list not statically resolvable", 1],
+  ["src/routes/messaging.ts|insert|payload partially resolvable", 1],
+  ["src/routes/telegraphCoordination.ts|select|select list not statically resolvable", 2],
+  ["src/routes/telegraphKinds.ts|select|select list not statically resolvable", 1],
+  ["src/routes/telegraphLifecycle.ts|select|select list not statically resolvable", 1],
+  ["src/routes/telegraphLifecycle.ts|update|payload not statically resolvable", 2],
+  ["src/routes/telegraphMemory.ts|insert|payload not statically resolvable", 1],
+  ["src/routes/telegraphMemory.ts|select|select list not statically resolvable", 2],
+  ["src/server/telegraph/readReceiptsRoute.ts|select|select list not statically resolvable", 1],
+  ["src/services/telegraphSearch.ts|select|select list not statically resolvable", 1],
+  // ── Creator ledger: the row MAPPERS (07 §2 / 09 §7.2) ────────────────────
+  // `services/creators/CreatorAttributionService.ts` hands supabase a NAME at
+  // three sites, because both payloads come from mappers in
+  // `lib/creatorLedgerRows.ts`:
+  //
+  //     const row  = toCreatorAttributionRow(model.attribution);
+  //     const rows = built.entries.map((e) => toCreatorEarningEntryRow(e, id));
+  //     const row  = { ...toCreatorAttributionRow(held.attribution), supersedes_id };
+  //
+  // Inlining the literal at each site duplicates an eighteen-column schema
+  // three times instead of naming it once, and the third site would have to
+  // restate all eighteen to add one key. The mapper stays.
+  //
+  // WHAT THIS COSTS, and what covers it — unlike the entries above, this blind
+  // spot is not merely stated, it is COVERED, and the cover shipped in the same
+  // change: `src/test/creatorLedgerRowSchemaDrift.test.ts` reads both mappers'
+  // returned keys statically and requires each to be a column 2920 / 2921
+  // declares, plus `supersedes_id`, which the mapper does not produce and no
+  // mapper-reading check would ever see. Three mutations (a phantom key in
+  // either mapper, and 2920 renaming supersedes_id) all go red.
+  //
+  // That test is a MIGRATION check, not a live-schema one — strictly weaker
+  // than what this script does. `check:missing-live-columns` reads the live
+  // schema from the other direction and is what closes the remaining half.
+  ["src/services/creators/CreatorAttributionService.ts|insert|payload not statically resolvable", 1],
+  ["src/services/creators/CreatorAttributionService.ts|insert|payload partially resolvable", 1],
+  ["src/services/creators/CreatorAttributionService.ts|upsert|payload not statically resolvable", 1],
   // ── Dynamic table names (adminGeocode — runtime table dispatch) ───────────
   ["src/routes/adminGeocode.ts|select|dynamic table name", 2],
   ["src/routes/adminGeocode.ts|update|dynamic table name", 2],
@@ -215,36 +351,37 @@ const UNRESOLVED_ALLOWLIST = new Map<string, number>([
   ["src/routes/rentABuddyMarketplace.ts|select|select list not statically resolvable", 3],
 
   // ── Insert/upsert payloads built at runtime ───────────────────────────────
-  ["src/routes/circle.ts|upsert|payload not statically resolvable", 1],
   // 3 sites: feed-section registration + the two /compass/ask uiBlock
   // registration upserts (chat recommendation tokens) — row arrays built
   // dynamically from RecommendationRow; columns verified by the feed paths.
   ["src/routes/compass.ts|upsert|payload not statically resolvable", 3],
   ["src/routes/compass.ts|upsert|payload partially resolvable", 2],
-  // E2EE key-package upload — payload built from a dynamic array of base64 strings.
-  ["src/routes/keyPackages.ts|insert|payload not statically resolvable", 1],
-  // mediaFeed impression logging — upsert row array built at runtime.
-  ["src/routes/mediaFeed.ts|insert|payload not statically resolvable", 1],
-  ["src/routes/meetups.ts|insert|payload not statically resolvable", 2],
-  ["src/routes/memories.ts|insert|payload not statically resolvable", 2],
+  // ── DC-19's batch POST /rank-events (routes/rankEvents.ts) ────────────────
+  //
+  // This entry USED to read "the only one of that file's five that could not be
+  // rewritten", and explained that a `.map` result is a call expression so there
+  // is no literal form of "one row per element of a variable-length array".
+  // The first half was a fair description of the site. The second was a
+  // description of the EXTRACTOR, stated as if it were a property of the code,
+  // and it stopped being true on 2026-09-15: resolvePayload now reads the map
+  // callback's row literal. The site did not change; what could see it did.
+  //
+  // So the batch's two `insert(bare)` statements — the pre-2891 shape and its
+  // retry — are now fully resolved and column-checked. What remains is the ONE
+  // `insert(rows)`, where rows is `bare.map((r, idx) => ({ ...r, recommendation_id }))`:
+  // `recommendation_id` is visible and checked, `...r` spreads a callback
+  // PARAMETER, which no same-file lookup can reach. Hence `partially
+  // resolvable`, not unresolvable — and the hidden half is `bare`, which the
+  // two sites beside it check in full.
+  ["src/routes/rankEvents.ts|insert|payload partially resolvable", 1],
+  // Bumped 1 -> 2 on 2026-09-09: a second runtime-built insert payload.
+  // Back to 1 on 2026-09-15: that second payload was the `.map` one, and it
+  // resolves now. The survivor is the payload built by a helper call.
   ["src/routes/rentABuddy.ts|insert|payload not statically resolvable", 1],
-  ["src/routes/rentABuddyMarketplace.ts|insert|payload not statically resolvable", 1],
-  ["src/routes/rentABuddyMarketplace.ts|upsert|payload not statically resolvable", 1],
-  ["src/routes/rentABuddySpec.ts|upsert|payload not statically resolvable", 2],
-  // Dynamic array built from AI extraction output — columns verified by the surrounding route logic.
-  ["src/routes/tripReservations.ts|insert|payload not statically resolvable", 1],
-  ["src/routes/routePlan.ts|insert|payload not statically resolvable", 2],
-  ["src/routes/stampShowcase.ts|insert|payload not statically resolvable", 1],
-  ["src/routes/telegraphChat.ts|insert|payload not statically resolvable", 1],
+  // 2 -> 1 on 2026-09-15: the map-built leg insert resolves now.
+  ["src/routes/routePlan.ts|insert|payload not statically resolvable", 1],
   ["src/routes/telegraphChat.ts|update|payload not statically resolvable", 1],
-  ["src/routes/trips-expansion.ts|insert|payload not statically resolvable", 1],
-  ["src/routes/trips.ts|insert|payload not statically resolvable", 1],
-  ["src/services/groupChatSync.ts|upsert|payload not statically resolvable", 2],
   ["src/services/hiddenGems/HiddenGemService.ts|update|payload not statically resolvable", 2],
-  // MediaFeedRankingService: storeRankingSnapshots builds the upsert row array dynamically.
-  // Columns: viewer_id, item_id, surface, session_id, position, final_score, reason_codes, served_at.
-  ["src/services/ranking/MediaFeedRankingService.ts|upsert|payload not statically resolvable", 1],
-  ["src/services/safeReturn/SafeReturnService.ts|insert|payload not statically resolvable", 1],
 
   // ── Partially-resolvable payloads (static keys + dynamic spread/computed) ─
   ["src/routes/messaging.ts|update|payload partially resolvable", 1],
@@ -254,7 +391,6 @@ const UNRESOLVED_ALLOWLIST = new Map<string, number>([
   ["src/routes/trust-admin.ts|update|payload partially resolvable", 1],
   ["src/services/notifications/NotificationPreferenceService.ts|upsert|payload partially resolvable", 1],
   ["src/services/rentBuddy/ReliabilityCounters.ts|update|payload partially resolvable", 1],
-  ["src/services/trust/TrustAdminService.ts|upsert|payload partially resolvable", 1],
 
   // ── Dynamic table name (messaging — dispatches to per-channel tables) ─────
   ["src/routes/messaging.ts|select|dynamic table name", 1],
@@ -328,6 +464,112 @@ const UNRESOLVED_ALLOWLIST = new Map<string, number>([
   ["src/services/hiddenGems/HiddenGemService.ts|select|select list not statically resolvable", 5],
   // ReliabilityCounters: one select list built at runtime from a scoring formula.
   ["src/services/rentBuddy/ReliabilityCounters.ts|select|select list not statically resolvable", 1],
+
+  // ── Sites this branch's other lanes added, ledgered 2026-09-09 ────────────
+  //
+  // These twenty sites appeared in one CI run because `main` had not moved for
+  // three days while trust, memories, messaging, rent-a-buddy, highlights,
+  // layover and account-deletion work accumulated. They are new BLIND SPOTS,
+  // not new defects: each is a site the extractor cannot resolve, so the
+  // column check simply does not cover it. Ledgered rather than rewritten,
+  // with the reason per group, because rewriting live code in six lanes this
+  // change does not otherwise touch buys a guard improvement at the cost of
+  // behaviour risk in code nobody here is testing.
+  //
+  // Three MORE sites were in this batch and are deliberately NOT here:
+  // routes/tripStructure.ts, routes/tripDecisions.ts and
+  // server/trips/readRoutes/tripMapProjection.ts each passed a table NAME to a shared read
+  // helper, which made every column on the three §5 read routes invisible to
+  // this check — on the newest tables in the schema, where a missing column is
+  // hardest to notice. Those three were rewritten to build the query at the
+  // call site instead, so they resolve and are checked.
+  //
+  // Registry- and dispatch-driven table names. Genuinely dynamic: the table is
+  // the loop variable of a registry of projections/derivatives, so there is no
+  // literal to write.
+  ["src/services/memoryProjections/derivativeRegistry.ts|select|dynamic table name", 4],
+  ["src/services/memoryProjections/derivativeRegistry.ts|update|dynamic table name", 1],
+  ["src/services/memoryProjections/derivativeRegistry.ts|upsert|dynamic table name", 1],
+  ["src/services/memoryProjections/derivativeRegistryRead.ts|select|dynamic table name", 1],
+  ["src/services/highlights/highlightProjectionPolicy.ts|select|dynamic table name", 1],
+  ["src/services/highlights/highlightResurfacing.ts|select|dynamic table name", 1],
+  ["src/services/highlights/highlightSchemaAvailability.ts|select|dynamic table name", 1],
+  // DeletionDryRun walks the deletion graph, whose whole point is that the
+  // table list is data, not code.
+  ["src/services/accountDeletion/DeletionDryRun.ts|select|dynamic table name", 1],
+  // rentABuddy: one more dispatch site beside the four already ledgered above.
+  ["src/routes/rentABuddy.ts|select|dynamic table name", 1],
+  //
+  // Select lists composed at runtime.
+  // 6 -> 5 (2026-09-13, integration owner): the Highlights and Memories lane
+  // moved the gem-ceiling protection inside `enrichMemories`, and one select
+  // that had been composed at runtime became statically resolvable. The guard
+  // fails closed on a SHRINKING blind-spot count precisely so the ledger gets
+  // trimmed instead of quietly over-claiming; found by the credentialled
+  // check:all job, which is the only place this check actually executes.
+  ["src/routes/memories.ts|select|select list not statically resolvable", 5],
+  // 4 → 5: the §12–§22 lane added one more select built from a column constant
+  // (the needs-action read). Bumped consciously rather than by regeneration.
+  ["src/routes/messaging.ts|select|select list not statically resolvable", 6],
+  // `readAll` is ONE generic pager called with three different relations
+  // (the canonical view and both source ledgers). The table name is a
+  // parameter by design — folding it into three copies of the same paging
+  // loop to satisfy a static extractor would be the worse trade.
+  ["src/services/ledger/CanonicalShareReader.ts|select|dynamic table name", 1],
+  ["src/routes/adminFeatured.ts|select|select list not statically resolvable", 1],
+  //
+  // Payloads built at runtime.
+  ["src/routes/admin.ts|insert|payload not statically resolvable", 1],
+  // The upsert rows come from a `.map`, so the row literal resolves; one
+  // spread inside it does not, which is what "partially" names.
+  ["src/services/airport/LayoverRecommendationService.ts|upsert|payload partially resolvable", 1],
+  ["src/routes/adminFeatured.ts|update|payload partially resolvable", 1],
+  ["src/routes/events.ts|update|payload partially resolvable", 2],
+  // ── Highlights §12 projection + §6.2 voice: REVEALED, not introduced ──────
+  //
+  // PROVENANCE, because it matters for reading this entry. These nine sites did
+  // not appear when the table name at their call site was a module constant:
+  // the extractor bucketed the whole chain as `dynamic table name` and never
+  // reached the select list or the payload. Making the table literal (so the
+  // columns COULD be checked) is what surfaced the second layer underneath. The
+  // count went up because the check can see further, not because new blind
+  // spots were written.
+  //
+  // WHY A LITERAL IS THE WRONG FIX AT EACH OF THEM:
+  //
+  // `routes/highlights.ts` — the select list is `highlightColumns(sc).columns`,
+  // and that function is a RUNTIME SCHEMA PROBE (`routes/highlights.ts:106-114`).
+  // It returns HIGHLIGHT_COLUMNS_WITH_CLASS when `probeHighlightObject` finds
+  // the §12 class columns live, and the NARROW HIGHLIGHT_COLUMNS when it does
+  // not — deliberately, so a transient probe failure degrades a badge instead of
+  // emptying a profile. Writing either literal at the call site would not merely
+  // duplicate the list, it would PIN ONE OF THE TWO and delete the fallback.
+  // What still covers these: the projection is derived FROM the live schema, so
+  // by construction it cannot name a column the probe did not just confirm —
+  // a stronger guarantee than this check gives a hand-written literal.
+  //
+  // `services/highlights/highlightControlWrites.ts` — the list is
+  // `[...RESURFACING_COLUMNS, "created_at"].join(", ")`. That array is the single
+  // source of truth and is ALSO the argument to `probeHighlightObject`, so a
+  // literal here would let the probed set and the selected set drift apart
+  // silently, which is the failure this check exists to prevent.
+  //
+  // `routes/telegraphVoice.ts` — the payload is `voiceMessageRow(...)`, a pure
+  // builder that exists precisely so the §6.2 row shape can be asserted without
+  // a database (`services/telegraph/voice.ts`). Inlining it at the route would
+  // trade a tested constructor for an untested object literal. Its eleven
+  // columns were checked against the live CI schema on 2026-09-16 and all
+  // eleven resolve.
+  //
+  // WHAT THIS COSTS, stated rather than waved at: these nine sites are blind to
+  // THIS check. What still covers them is check:missing-live-columns reading the
+  // live schema from the other direction, the migrations' own postconditions,
+  // and — for the two Highlights entries — the runtime probe that produces the
+  // list in the first place.
+  ["src/routes/highlights.ts|select|select list not statically resolvable", 4],
+  ["src/routes/telegraphVoice.ts|insert|payload not statically resolvable", 1],
+  ["src/services/highlights/highlightControlWrites.ts|select|select list not statically resolvable", 4],
+
 ]);
 
 // ── Read-path baseline ────────────────────────────────────────────────────────

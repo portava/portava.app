@@ -18,6 +18,7 @@ import assert from "node:assert/strict";
 import http from "node:http";
 import express from "express";
 import { _setTestClient } from "../lib/http.js";
+import { ACCEPTED_ENGINE_MODE_SPELLINGS } from "../lib/discoveryEngineMode.js";
 import { _setTestServiceClient } from "../lib/supabase.js";
 import adminRouter from "../routes/admin.js";
 
@@ -378,7 +379,21 @@ describe("PATCH /admin/feature-flags/:flag/metadata", () => {
       { metadata: { mode: "pdee" } },
     );
     assert.equal(status, 400);
-    assert.match(JSON.stringify(body), /legacy \| shadow \| pde/);
+    // DERIVED, not a literal. This used to pin `/legacy \| shadow \| pde/`, which
+    // was the whole vocabulary when `01` §8 had three states in reach. The
+    // resolver now has five states and seven accepted spellings, and the admin
+    // route derives its allow-list from the resolver so the two cannot drift —
+    // so a literal here would fail on a message that had become MORE complete,
+    // which is a test rotting rather than a defect. Asserting every accepted
+    // spelling is named is strictly stronger: it fails if the message goes stale
+    // OR if a state silently stops being offered.
+    for (const spelling of ACCEPTED_ENGINE_MODE_SPELLINGS) {
+      assert.match(
+        JSON.stringify(body), new RegExp(`\\b${spelling}\\b`),
+        `the refusal must name "${spelling}" as an accepted value — an operator ` +
+          `who cannot see the vocabulary cannot correct the typo`,
+      );
+    }
   });
 
   it("refuses a missing mode key on a constrained flag", async () => {

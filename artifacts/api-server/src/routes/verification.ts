@@ -32,6 +32,15 @@ export const router = Router();
 const VERIFICATION_SESSION_LIMIT = 3;
 const VERIFICATION_SESSION_WINDOW_MS = 24 * 60 * 60 * 1_000; // 24 h
 
+/**
+ * `trust_events.source_type` for the identity-verification award.
+ *
+ * Deliberately NOT exported: `src/test/verificationTrustIdempotency.test.ts`
+ * asserts the literal instead, so a rename here has to be made in two places
+ * and cannot silently carry the test along with it.
+ */
+const TRUST_SOURCE_TYPE = "identity_verification";
+
 // ── Schema ────────────────────────────────────────────────────────────────────
 const TEST_HINTS = ["approve", "fail_document", "fail_selfie", "fail_underage"] as const;
 
@@ -70,9 +79,32 @@ async function applyVerifiedProfile(
   // and its presence guard that used to sit here are gone: the property is
   // statically typed and always defined, and the old guard silently skipped the
   // trust award for as long as it was left in place after the event shipped.
+  //
+  // ── THE DEDUP KEY IS NOT OPTIONAL ON THIS PATH ────────────────────────────
+  // `TrustEventService.isDuplicate` opens with `if (!sourceId) return "new"`, so
+  // an emitter that passes no source has no idempotency key: every call is a
+  // first call, and the 24 h dedup window the census grades as C1 is bypassed by
+  // omission rather than by failure. This emitter used to do exactly that.
+  //
+  // Provider webhooks are at-least-once BY DESIGN, and this route's own handler
+  // returns 5xx on a persist failure specifically so the provider retries (audit
+  // H5) — so the one path here built to be re-entered was the one path with no
+  // key, and every redelivery of the same session charged another +10
+  // respect_safety until the daily earning cap absorbed it. V-1 defines the hook
+  // per TRANSITION to `verified`, not per delivery.
+  //
+  // The provider session id is the right key: it is the identity of the
+  // verification attempt, it is stable across redeliveries of the same event,
+  // and it is what `identity_verifications.provider_session_id` is keyed on, so
+  // the ledger row and the verification row name the same thing. `sourceType`
+  // must travel with it — the dedup read filters on BOTH, so a session id left
+  // under the default "system" source would look keyed and still never match the
+  // row it wrote.
   await recordTrustEvent(client, {
     userId,
     eventType: "identity_verified",
+    sourceType: TRUST_SOURCE_TYPE,
+    sourceId: result.providerSessionId,
     ...TRUST_EVENT_TYPES.IDENTITY_VERIFIED,
   }).catch(() => {/* fire-and-forget — never block the webhook response */});
 }
@@ -86,17 +118,31 @@ export async function persistResult(
 ): Promise<void> {
   if (!client) return;
 
-  // Fetch the row by provider_session_id to get the user_id if not supplied
+  // Fetch the row by provider_session_id to get the user_id if not supplied.
+  //
+  // THE SECOND DOOR INTO THE H5 DROP. The webhook handler below already returns
+  // 5xx when the PERSIST fails, so the provider retries instead of losing the
+  // event. It could still lose the event here: supabase-js RESOLVES on a
+  // database error, so an unreadable `identity_verifications` produced
+  // `data: null` — indistinguishable from a genuinely unknown session — and the
+  // `return` two lines down is a SILENT SUCCESS. persistResult resolved,
+  // webhookHandler answered 200, the provider marked the event delivered and
+  // stopped retrying, and the user's KYC result was gone for good with nothing
+  // logged. Rethrow so the 5xx path handles it exactly as a persist failure.
   let targetUserId = userId;
   if (!targetUserId) {
-    const { data } = await client
+    const { data, error } = await client
       .from("identity_verifications")
       .select("user_id")
       .eq("provider_session_id", result.providerSessionId)
       .maybeSingle();
+    if (error) throw new Error(`lookup identity_verifications by session: ${error.message}`);
     targetUserId = (data as any)?.user_id;
   }
-  if (!targetUserId) return; // unknown session — ignore
+  // A READ that succeeded and found nothing. This one really is an unknown
+  // session — an event for a provider session this deployment never created —
+  // and dropping it is correct.
+  if (!targetUserId) return;
 
   const patch: Record<string, unknown> = {
     status:         result.status,
@@ -106,9 +152,27 @@ export async function persistResult(
     document_country: result.documentCountry ?? null,
     updated_at:     new Date().toISOString(),
   };
+  // THE REDACTION HANDLE IS NOT A SUCCESS FIELD. `provider_verification_ref` is
+  // the only handle anyone holds on the VENDOR's copy of the government ID, and
+  // services/identityVerification/providerErasure.ts reads that column and
+  // nothing else — a null one is reported as "nothing to redact". A failed,
+  // expired or canceled attempt uploaded the same document as a verified one,
+  // so persisting the handle only on success left those copies unredactable
+  // permanently, by us and by the user. Both adapters set it for every state
+  // deliberately (persona.ts "Set for every state, because a DECLINED inquiry
+  // still left a government ID at Persona"; stripeIdentity.ts the same) — this
+  // was the one place that threw it away.
+  //
+  // ABSENT IS UNKNOWN, NOT "NO REF". Webhooks arrive more than once and a later
+  // event may omit a field an earlier one carried, so an unconditional
+  // `?? null` would let the second event ERASE the handle the first supplied —
+  // silently, and with exactly the effect of never having stored it. Write the
+  // column only when the adapter produced a handle; leave it alone otherwise.
+  if (typeof result.providerVerificationRef === "string" && result.providerVerificationRef.length > 0) {
+    patch.provider_verification_ref = result.providerVerificationRef;
+  }
   if (result.status === "verified") {
-    patch.verified_at               = result.verifiedAt ?? new Date().toISOString();
-    patch.provider_verification_ref = result.providerVerificationRef ?? null;
+    patch.verified_at = result.verifiedAt ?? new Date().toISOString();
   }
 
   const { error: updErr } = await client
@@ -190,7 +254,7 @@ router.post("/verification/session", asyncHandler(async (req, res) => {
       user_id:             user.id,
       provider:            session.provider,
       provider_session_id: session.providerSessionId,
-      status:              "pending",
+      status:              "created",   // V-1 + 0161 default + first lifecycle state — see test/verificationSessionCreatedStatus.test.ts
       expires_at:          session.expiresAt,
     })
     .select("id, provider_session_id, expires_at")
@@ -199,8 +263,14 @@ router.post("/verification/session", asyncHandler(async (req, res) => {
   if (insertError) {
     // Postgres unique-index violation on uq_identity_verifications_active (code 23505)
     if ((insertError as any).code === "23505") {
-      // Return existing active session
-      const { data: active } = await sc
+      // Return existing active session.
+      // supabase-js RESOLVES on a DB error, so an unbound `error` made an
+      // unreadable identity_verifications look like "the unique index fired but
+      // there is no active session" — an impossible state that fell through to
+      // the generic handler below and reported the KYC session as a raw 23505
+      // db_error, so the client never learns it already has a live session and
+      // the user is stuck unable to start or resume verification.
+      const { data: active, error: activeErr } = await sc
         .from("identity_verifications")
         .select("id, provider_session_id, expires_at, status")
         .eq("user_id", user.id)
@@ -208,6 +278,12 @@ router.post("/verification/session", asyncHandler(async (req, res) => {
         .order("created_at", { ascending: false })
         .limit(1)
         .maybeSingle();
+
+      if (activeErr) {
+        req.log.error({ err: activeErr }, "verification: active-session lookup failed after 23505 — cannot return the existing session");
+        sendError(res, "db_error", "Could not read your existing verification session");
+        return;
+      }
 
       if (active) {
         res.status(200).json({
@@ -247,8 +323,38 @@ export const webhookHandler = async (req: any, res: any) => {
   let provider;
   try {
     provider = getIdentityProvider();
-  } catch {
-    res.sendStatus(200); // provider not configured; treat as irrelevant
+  } catch (err: any) {
+    // ── "NOT CONFIGURED" IS NOT "IRRELEVANT" ─────────────────────────────────
+    // This branch used to discard the error unbound and answer 200 under the
+    // comment "provider not configured; treat as irrelevant". 200 is not
+    // irrelevant to a provider: Stripe Identity and Persona both read a 2xx as
+    // FINAL DELIVERY and stop retrying.
+    //
+    // And this is not an exotic branch. `getIdentityProvider()` throwing is the
+    // NORMAL behaviour of a production deployment on the default
+    // IDENTITY_PROVIDER=mock — it is the mechanism that satisfies the plan's
+    // privacy invariant 4 ("the mock provider is refused in production").
+    // So the invariant that keeps the mock out of production was, through this
+    // branch, also the thing that made the public webhook endpoint accept every
+    // real event, write nothing, log nothing, and report success. Invariant 5
+    // says an unverified webhook must "never silently accept"; that is a
+    // statement about the RESPONSE, and this was the silent acceptance.
+    //
+    // 5xx, for the same reason the persist failure below returns 5xx (audit
+    // H5): the event is valid and unread, the fault is on this side, and the
+    // provider should retry or dead-letter rather than have this server destroy
+    // it. 400 is NOT used — that is reserved for a signature that actually
+    // failed, and reporting a local misconfiguration as the caller's bad
+    // signature sends the operator looking in the wrong system.
+    //
+    // The response body stays empty: the factory's message names env vars and
+    // provider configuration, and this endpoint is reachable by anyone.
+    req.log?.error?.(
+      { err },
+      "verification webhook: identity provider unavailable — refusing with 503 so the provider " +
+        "retries; answering 200 here silently destroyed every delivered KYC result",
+    );
+    res.sendStatus(503);
     return;
   }
 
@@ -315,12 +421,28 @@ router.get("/verification/status", asyncHandler(async (req, res) => {
     return;
   }
 
-  // Profile verification level
-  const { data: profile } = await sc
+  // Profile verification level.
+  //
+  // `error` is bound because supabase-js RESOLVES on a database error: an
+  // unreadable `profiles` and a user who has genuinely never verified both
+  // arrive as `data: null`, and `?? "none"` turned the first into the second.
+  // That is a false statement about a person ("you are not verified") that they
+  // cannot act on, and it is the reading direction that matters here — ID
+  // verification GATES real things elsewhere in this system (Rent-a-Buddy's
+  // MVP mode refuses a booking without it, routes/rentABuddyRollout.ts), so a
+  // client that caches "none" from a hiccup shows a verified user a
+  // verification wall. Say the read failed instead of answering for it.
+  const { data: profile, error: profileErr } = await sc
     .from("profiles")
     .select("verification_level, verified_at")
     .eq("id", user.id)
     .maybeSingle();
+
+  if (profileErr) {
+    req.log.error({ err: profileErr, userId: user.id }, "verification status: profile level fetch failed");
+    sendError(res, "db_error", "Could not read your verification level");
+    return;
+  }
 
   res.status(200).json({
     verificationRow:   row ?? null,

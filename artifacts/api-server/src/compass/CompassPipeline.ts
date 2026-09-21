@@ -8,8 +8,19 @@
  *                          (exclude / demote, fail-closed, gated OFF by default;
  *                          see CompassLiveConstraints.ts). An excluded item is
  *                          never scored, so no score can override it (AT-14).
+ *   2c. Safety attention → Trips §17: while a SEVERE SAFETY STATE holds the
+ *                          traveller's attention (an active Safe Return
+ *                          session), commercial and entertainment candidates
+ *                          are withheld and only safety/logistics ones are
+ *                          scored. UNGATED — no flag, no projection. See
+ *                          CompassSafetyAttention.ts.
  *   3. Privacy Guard    → sanitise (strip GPS, hotel addr, admin notes, etc.)
- *   4. Scoring Engine   → rank (per-type weighted formula)
+ *   4. Scoring Engine   → rank (per-type weighted formula), plus the SHARED
+ *                          platform projections for the turn in flight
+ *                          (census-compass CCL-05): the nine-context kernel and,
+ *                          behind its own flag, the opportunity projections,
+ *                          as bounded named ranking factors. See the block at
+ *                          `askProjections` below.
  *   5. Plan B           → next-best same-category alternative for every pick a
  *                          live constraint took out or displaced.
  *
@@ -25,7 +36,8 @@ import type { CompassItem, CompassProfile, CompassContext } from "./types.js";
 import { runSafetyFilter } from "./CompassSafetyFilter.js";
 import { runEligibilityCheck } from "./CompassEligibilityEngine.js";
 import { sanitizeItem } from "./CompassPrivacyGuard.js";
-import { scoreItem, type ScoreResult } from "./CompassScoringEngine.js";
+import { kernelRankingForItem, scoreItem, type ScoreResult } from "./CompassScoringEngine.js";
+import { currentAskProjections, type AskRankingProjections } from "./CompassPlatformContext.js";
 import {
   annotateCandidate,
   loadMemoryPreferenceTags,
@@ -41,7 +53,15 @@ import {
   type PlanBConstrainedCandidate,
   type PlanBEntry,
 } from "./CompassLiveConstraints.js";
+import {
+  applySafetyAttention,
+  safetyAttentionFrom,
+  safetyAttentionOnTheWire,
+  SUPPRESSIBLE_ITEM_TYPES,
+  type SafetyAttentionReading,
+} from "./CompassSafetyAttention.js";
 import { logger } from "../lib/logger.js";
+import { fetchCompassFlags } from "./flags.js";
 
 export interface PipelineResult {
   item:             CompassItem;
@@ -85,6 +105,25 @@ export interface PipelineLiveConstraintsSummary {
   planB:           PlanBEntry[];
 }
 
+/**
+ * CCL-05 — decision exposure for the shared projections, the same way
+ * `liveConstraints` exposes the live stage. `consumed` false means no turn
+ * established projections for this run (the feed, a job, a pre-CCL-05 caller):
+ * every count is 0 and the ranking is byte-for-byte the pre-CCL-05 ranking.
+ */
+export interface PipelineSharedProjectionsSummary {
+  consumed:          boolean;
+  /** Candidates the kernel carried a subject for. */
+  subjectsMatched:   number;
+  /** Candidates the projections actually moved (boost > 0). */
+  boosted:           number;
+  /**
+   * Opportunity projections available to the ranker — null when the caller's
+   * `opportunity_engine_enabled` read did not admit them. Null ≠ 0.
+   */
+  opportunitiesSeen: number | null;
+}
+
 export interface PipelineSummary {
   inputCount:    number;
   blockedCount:  number;
@@ -94,6 +133,13 @@ export interface PipelineSummary {
   /** IG-07 — candidates a Live hard constraint excluded before ranking. */
   liveExcludedCount: number;
   liveConstraints:   PipelineLiveConstraintsSummary;
+  /**
+   * Trips §17 — the severe-safety switch as consulted for this viewer, and how
+   * many commercial/entertainment candidates it withheld before scoring.
+   */
+  safetyAttention:   ReturnType<typeof safetyAttentionOnTheWire>;
+  /** CCL-05 — what the shared platform projections contributed to this ranking. */
+  sharedProjections: PipelineSharedProjectionsSummary;
 }
 
 /** Injectable gate overrides for testing (do not use in production). */
@@ -121,23 +167,32 @@ export interface PipelineTestOverrides {
   liveIntel?: LiveIntelStageOverrides;
 }
 
-/** Load all COMPASS_ feature flags in a single DB query. */
+/**
+ * Load all COMPASS_ feature flags for this pipeline run.
+ *
+ * This used to be its own copy of the query, with its own `try/catch` that
+ * never fired (supabase-js RESOLVES on a database error) and its own answer for
+ * a failed read: an empty map, i.e. "every flag off". That is safe for the
+ * capability flags and it is NOT safe for `COMPASS_<TYPE>_SAFETY_BLOCK`, which
+ * rule 15 of runSafetyFilter — fed from this very map — reads as an emergency
+ * stop. An empty map lifted every one of those stops.
+ *
+ * It now delegates to compass/flags.ts `fetchCompassFlags`, the single loader
+ * shared with CompassFrontLoadEngine and this module's own `getFlags`, so all
+ * three agree on what unreadable means. Deliberately the UNCACHED entry point:
+ * the pipeline wants the live flag state for the batch it is about to score,
+ * not a value up to 30 s old.
+ */
 async function loadFlags(db: SupabaseClient | null): Promise<Record<string, boolean>> {
-  if (!db) return {};
-  try {
-    const { data } = await db
-      .from("feature_flags")
-      .select("flag, enabled")
-      .like("flag", "COMPASS_%");
-    const out: Record<string, boolean> = {};
-    for (const row of (data as any[]) ?? []) {
-      out[row.flag] = Boolean(row.enabled);
-    }
-    return out;
-  } catch (err) {
-    logger.warn({ err }, "Compass feed: COMPASS_* feature flag lookup failed — degraded to all-defaults");
-    return {};
+  const load = await fetchCompassFlags(db);
+  if (!load.ok) {
+    logger.warn(
+      { err: load.error },
+      "Compass feed: COMPASS_* feature flag lookup failed — degraded to the fail-safe answer " +
+        "(see compass/flags.ts fetchCompassFlags)",
+    );
   }
+  return load.flags;
 }
 
 /**
@@ -172,6 +227,31 @@ export async function runPipeline(
   const worldModel = await getCityWorldModel(db, profile.currentCity ?? null);
   const now = new Date();
 
+  // CCL-05 — the shared platform projections for the turn in flight.
+  //
+  // `docs/specs/upgrades-v2/01-COMPASS-v2.md:13` puts them BETWEEN context
+  // assembly and this, the existing ranking owner; census-compass §26.3 held
+  // the row open on exactly that gap ("The ranking owner, CompassPipeline,
+  // still ranks without them"). `/compass/ask` establishes them around its
+  // tool-calling loop (routes/compass.ts, `runWithAskProjections`), so they
+  // arrive here without CompassTools — which merely forwards candidates — having
+  // to carry a kernel it has no use for.
+  //
+  // Read ONCE per batch: every candidate in this run is ranked against the same
+  // turn's world. A caller that established none reads null and ranks exactly as
+  // it did before CCL-05 — no boost, and no invented factor.
+  let askProjections: AskRankingProjections | null = null;
+  try {
+    askProjections = currentAskProjections();
+  } catch (err) {
+    // Not swallowed: the projections are an INPUT to the rank, so a failure to
+    // read them is reported and then degraded honestly to "no projections".
+    logger.warn({ err }, "Compass pipeline: shared projections unreadable — ranking without them (CCL-05)");
+    askProjections = null;
+  }
+  let kernelSubjectsMatched = 0;
+  let kernelBoosted = 0;
+
   const safetyFn     = _testOverrides?.safetyFilter     ?? runSafetyFilter;
   const eligibilityFn = _testOverrides?.eligibilityCheck ?? runEligibilityCheck;
   const scoreFn      = _testOverrides?.scoreItem         ?? scoreItem;
@@ -200,13 +280,39 @@ export async function runPipeline(
     survivors.push(item);
   }
 
+  // Gate 2c (Trips §17, census-compass CT-11): while a severe safety state has
+  // the traveller's attention, a commercial or entertainment candidate is
+  // withheld HERE — before the live stage reads intel for it and before it is
+  // sanitised or scored. It is never scored, so no score can put it back, which
+  // is the same ordering rule AT-14 gives the live exclusions below.
+  //
+  // `profile.safeReturnActive` is the safe_return_sessions read the profile
+  // already carries, so this stage adds no query. Only the "go out and spend"
+  // item types are governed; a notification, a person or a trip passes.
+  const safetyReading: SafetyAttentionReading = safetyAttentionFrom(profile.safeReturnActive === true);
+  const safetyHeld = applySafetyAttention(
+    survivors,
+    safetyReading,
+    // The descriptive fields a candidate adapter fills in. `type` is included
+    // deliberately: a `hidden_gem` names no category of its own, and the type
+    // word is the only term some adapters supply.
+    (it) => [
+      String(it.type),
+      ...(it.interestTags ?? []),
+      typeof it["category"] === "string" ? it["category"] : null,
+      typeof it["title"] === "string" ? it["title"] : null,
+    ],
+    { suppressible: (it) => SUPPRESSIBLE_ITEM_TYPES.has(it.type) },
+  );
+  const attended = safetyHeld.kept;
+
   // Gate 2b (IG-07): Live intel as HARD constraints, BEFORE privacy/scoring.
   // Null whenever the stage may not run (gate off / Live not servable) — then
   // nothing below changes. A stage failure is contained: it never throws into
   // the feed and never fabricates a claim.
   let liveStage: Awaited<ReturnType<typeof prepareLiveIntelStage>> = null;
   try {
-    liveStage = await prepareLiveIntelStage(db, survivors, profile, _testOverrides?.liveIntel);
+    liveStage = await prepareLiveIntelStage(db, attended, profile, _testOverrides?.liveIntel);
   } catch (err) {
     logger.warn({ err }, "Compass pipeline: live-intel stage failed — continuing without live constraints");
     liveStage = null;
@@ -214,7 +320,7 @@ export async function runPipeline(
   const liveExcluded: LiveExclusionRecord[] = [];
   const liveDemoted: PipelineLiveConstraintsSummary["demoted"] = [];
 
-  for (const item of survivors) {
+  for (const item of attended) {
     const liveIntel = liveStage?.annotations.get(item.id);
 
     // A Live EXCLUSION removes the candidate here — before it is sanitised or
@@ -244,6 +350,18 @@ export async function runPipeline(
       ? [...annotation.factors, wm.factor]
       : annotation.factors;
 
+    // CCL-05 — the shared world / experience / forecast / opportunity
+    // projections, valued for THIS candidate. Bounded and named, the same shape
+    // the world-model boost above uses; zero and factor-less whenever the
+    // kernel carries nothing about this candidate, could not look, or the
+    // viewer declared no preference to rank by.
+    const kernelRank = kernelRankingForItem(sanitized, askProjections);
+    if (kernelRank.subjectId !== null) kernelSubjectsMatched++;
+    if (kernelRank.boost > 0) {
+      kernelBoosted++;
+      rankingFactors = [...rankingFactors, ...kernelRank.factors];
+    }
+
     // IG-07 — a Live DEMOTION (queue above tolerance, packed vs quiet intent)
     // and any 'emerging' soft influence subtract a documented, bounded penalty;
     // the grounded live factors join the "Why this" factors.
@@ -258,7 +376,7 @@ export async function runPipeline(
 
     const result: PipelineResult = {
       item:             sanitized,
-      finalScore:       Math.max(0, scored.finalScore + annotation.memoryBoost + wm.boost - livePenalty),
+      finalScore:       Math.max(0, scored.finalScore + annotation.memoryBoost + wm.boost + kernelRank.boost - livePenalty),
       safetyPassed:     true,
       eligiblePassed:   true,
       privacySanitized: true,
@@ -279,7 +397,7 @@ export async function runPipeline(
   // so "did the constraint change the pick?" is decided honestly.
   let planB: PlanBEntry[] = [];
   if (liveStage && (liveExcluded.length > 0 || liveDemoted.length > 0)) {
-    const excludedItems = new Map(survivors.map((i) => [i.id, i] as const));
+    const excludedItems = new Map(attended.map((i) => [i.id, i] as const));
     const constrained: PlanBConstrainedCandidate[] = [
       ...liveExcluded.map((e) => ({
         item: excludedItems.get(e.itemId)!,
@@ -328,6 +446,15 @@ export async function runPipeline(
       excluded:        liveExcluded,
       demoted:         liveDemoted,
       planB,
+    },
+    safetyAttention: safetyAttentionOnTheWire(safetyReading, safetyHeld.withheld),
+    sharedProjections: {
+      consumed:          askProjections !== null,
+      subjectsMatched:   kernelSubjectsMatched,
+      boosted:           kernelBoosted,
+      // null ≠ 0: null is "the flag did not admit the opportunity half",
+      // 0 is "it did, and nothing was promoted".
+      opportunitiesSeen: askProjections?.opportunities ? askProjections.opportunities.length : null,
     },
   };
 }

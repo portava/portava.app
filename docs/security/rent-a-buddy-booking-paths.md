@@ -201,7 +201,7 @@ updated_at`.
 
 ### 1.5 Spec-request — `rentABuddySpec.ts:408-549`
 
-Live, mounted route (`routes/index.ts:169`), reachable from mobile at
+Live, mounted route (`routes/index.ts:236#router.use(rentABuddySpecRouter)`), reachable from mobile at
 `/api/buddies/:buddyId/request` via the alias rewrite
 (`artifacts/api-server/src/lib/specAliasRewrite.ts:20-22` rewrites
 `/api/buddies/:id*` → `/api/rent-a-buddy/buddies/:id*`). **No client call

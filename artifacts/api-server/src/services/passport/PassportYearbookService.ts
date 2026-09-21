@@ -74,7 +74,7 @@ import {
   type TravelDnaPrefs,
   type TravelTrait,
 } from "./PassportTravelIdentityService.js";
-import { deriveTravelSignals, loadCollectionVisibility } from "./PassportProjectionService.js";
+import { deriveTravelSignals, loadCollectionVisibility, type PassportCollectionVisibility } from "./PassportProjectionService.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Shape
@@ -678,7 +678,7 @@ export async function buildYearbook(
     loadCollectionVisibility(sc, userId, perms.callerCtx).catch(() => {
       failed.add("stamps");
       failed.add("memories");
-      return { stamps: false, memories: false, unavailable: true };
+      return { stamps: false, memories: false, readFailed: true } as PassportCollectionVisibility;
     }),
     buildJourneys(sc, userId, journeyPerms).catch(() => {
       failed.add("journeys");
@@ -697,16 +697,17 @@ export async function buildYearbook(
     loadTravelDnaPrefs(sc, userId).catch(() => ({ prefs: new Map(), applied: false }) as TravelDnaPrefs),
   ]);
 
-  // `loadCollectionVisibility` does not THROW when the preference row is
-  // unreadable — PostgREST resolves `{data:null, error}` — so the `.catch()`
-  // above never fired for the commonest failure. It now reports `unavailable`
-  // instead, which is the same "we could not check" answer the catch produces.
-  // (Marked per-collection on the DENIED side only: the owner's own view still
-  // permits both, and an unreadable preference row is no reason to hide an
-  // owner's content from themselves.)
-  if (visibility.unavailable === true) {
-    if (!visibility.stamps) failed.add("stamps");
-    if (!visibility.memories) failed.add("memories");
+  // An unreadable preference row is a READ failure, not a visibility choice.
+  // `loadCollectionVisibility` fails closed on it, and without this the
+  // yearbook would tell the viewer the owner had hidden the collection — a
+  // statement about a person assembled from a database hiccup. (The `.catch`
+  // arm above cannot carry this: a PostgREST failure RESOLVES, so that arm
+  // fires only on a genuine throw.) The owner's own view is unaffected:
+  // `readFailed` still leaves `visibility.stamps === true` for the owner, and
+  // only a collection actually WITHHELD is marked unavailable.
+  if (visibility.readFailed === true) {
+    if (visibility.stamps !== true) failed.add("stamps");
+    if (visibility.memories !== true) failed.add("memories");
   }
 
   const canSeeStamps = visibility.stamps === true && !failed.has("stamps");

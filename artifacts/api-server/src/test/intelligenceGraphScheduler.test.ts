@@ -36,6 +36,13 @@ const FAKE_REPORT = {
   citiesModeled: 1,
   citiesScored: 1,
   strongestCity: "Cebu",
+  // The rebuild also revokes experience nodes whose source Memory is gone or
+  // no longer public-world (Highlights/Memories §28.8); a scheduled run reports
+  // what that sweep removed. PRESENT AND ZEROED, not absent: the field is
+  // optional precisely so "swept, removed nothing" and "never swept" stay
+  // different states, and a fixture that omitted it would be asserting the
+  // wrong one.
+  experienceRevocations: { examined: 0, nodesDeleted: 0, edgesDeleted: 0, undecided: 0, unresolved: false },
 };
 
 describe("IntelligenceGraphScheduler", () => {

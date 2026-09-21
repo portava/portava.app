@@ -1,0 +1,62 @@
+-- 2551_revoke_increment_hashtag_usage_count.sql
+--
+-- WHAT: withdraw EXECUTE on public.increment_hashtag_usage_count(uuid) from
+-- `authenticated` (and from PUBLIC and `anon`, which do not hold it today --
+-- named so the end state is asserted rather than assumed). service_role and
+-- postgres keep it.
+--
+-- WHY. The function is SECURITY DEFINER and its entire body is
+--
+--     UPDATE hashtags SET usage_count = usage_count + 1, updated_at = now()
+--     WHERE id = p_hashtag_id;
+--
+-- with no dedup, no rate limit, and no check on who is calling. Every function
+-- in `public` is reachable over PostgREST as POST /rpc/<name>, so the grant
+-- made that UPDATE a primitive any signed-in account could invoke directly.
+--
+-- The bypass is the point. `hashtags` has RLS enabled and its write policy is
+-- `hashtags_admin_write: FOR ALL TO public USING (false)`, so `authenticated`
+-- cannot UPDATE the table at all -- the table grant it holds is inert. A
+-- SECURITY DEFINER function runs as its owner and does not consult that policy.
+-- This function was therefore the ONLY path by which a user token could move
+-- usage_count, which is the number the trending surface is built on.
+--
+-- And nothing calls it. The application's tagging path is
+-- upsert_hashtag_usage_and_increment, added in the same migration (0044) and
+-- documented there as existing specifically to prevent the double-counting this
+-- function permits: it inserts a hashtag_usage row ON CONFLICT DO NOTHING and
+-- increments only when a new row lands. TaggingService.ts calls that one.
+-- Measured before writing this: 0 of 808 surviving RLS policies reference
+-- increment_hashtag_usage_count, no other function body, view or trigger names
+-- it, and its name appears as a string literal in none of the 1,761 TypeScript
+-- files under src/. Repository-wide it has 16 mentions and every one of them is
+-- a documentation table or a duplicate copy of migration 0043/0044.
+--
+-- SEVERITY, STATED HONESTLY: public.hashtags held 0 rows when this was written,
+-- so the UPDATE matches nothing today and there is no counter to inflate yet.
+-- That is the argument for doing this now rather than an argument that it does
+-- not matter -- the door is being closed before the room is furnished.
+--
+-- WHY A REVOKE AND NOT A DROP. A DROP is not reversible by a grant, and whether
+-- this function should exist at all is a question for whoever owns tagging. A
+-- REVOKE moves no rows, is undone by one GRANT statement, and leaves that
+-- decision open. The function stays ledgered in
+-- src/scripts/SECURITY_DEFINER_ORACLES.json as DEAD until it is answered.
+--
+-- WHY THIS IS SAFE WHERE THE SAME REMEDY IS NOT. Revoking EXECUTE on a
+-- SECURITY DEFINER function that an RLS POLICY calls BREAKS THE TABLE: the
+-- policy expression is evaluated as the querying role and the EXECUTE privilege
+-- is checked there, so a plain SELECT then raises "permission denied for
+-- function". That was measured on the CI project for both `language sql` and
+-- `language plpgsql` before this migration was written. It does not apply here
+-- for the reason stated above: no policy references this function. Do NOT
+-- generalise this migration into a sweep over the other SECURITY DEFINER
+-- functions the Supabase advisor lists -- eleven of them ARE policy-referenced
+-- and the same statement would take those tables down for every end-user token.
+--
+-- REVERSIBLE:
+--   GRANT EXECUTE ON FUNCTION public.increment_hashtag_usage_count(uuid) TO authenticated;
+
+REVOKE EXECUTE ON FUNCTION public.increment_hashtag_usage_count(uuid) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION public.increment_hashtag_usage_count(uuid) FROM anon;
+REVOKE EXECUTE ON FUNCTION public.increment_hashtag_usage_count(uuid) FROM authenticated;

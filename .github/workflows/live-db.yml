@@ -107,6 +107,35 @@ on:
   schedule:
     - cron: '17 6 * * *'
   workflow_dispatch:
+    inputs:
+      # THE ONLY WAY TO REACH apply-migrations' --apply-unproven FROM CI.
+      #
+      # 2254 seeded 388 ledger rows with applied_by='backfill' and no real
+      # checksum. That table's own comment says such a row asserts only that
+      # the FILENAME existed — it is not proof of an apply. The applier
+      # therefore skips those files rather than replay them, because replaying
+      # a migration that DID run is the destructive direction and nothing in
+      # the ledger can tell the two cases apart.
+      #
+      # When a check proves a specific backfilled file did NOT in fact run
+      # (audit:schema, check:missing-live-columns, or a later migration's
+      # postcondition failing on its absent objects), the applier's own
+      # remedy is `--apply-unproven <file>`. It is deliberately NOT a bare
+      # switch: a human names each file, one at a time, having established
+      # for each that its objects are genuinely missing.
+      #
+      # This input preserves that contract exactly. It is empty by default, so
+      # push, schedule and pull_request runs are byte-for-byte unchanged and
+      # no file is ever replayed unattended; only a hand-typed dispatch that
+      # names files can pass it, and the apply step below still refuses to run
+      # anywhere but the default branch.
+      apply_unproven:
+        description: >-
+          Comma-separated migration filenames whose backfill ledger row has
+          been PROVEN false (objects verified absent). Leave empty for a
+          normal apply. Each file must be idempotent or genuinely unapplied.
+        required: false
+        default: ''
 
 permissions:
   contents: read
@@ -377,7 +406,19 @@ jobs:
             exit 1
           fi
 
+      # fetch-depth: 0, and this job alone needs it. check:census-freshness
+      # (src/scripts/checkCensusFreshness.ts) ages each census document by
+      # diffing `<its declared head_commit>..HEAD`. Under actions/checkout's
+      # default depth of 1 that commit is not in the clone, so `git diff` exits
+      # `Invalid revision range` for EVERY document that declares one, and the
+      # check reports "cannot be checked" and fails — correctly, since an
+      # unmeasurable census must never read as fresh, but permanently, in the
+      # only environment whose verdict counts. A guard that can be green only on
+      # a developer's full clone gets routed around. Full history makes it
+      # measure what it claims instead of weakening what it accepts.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       # ALLOWLIST, not a denylist. One implementation of the policy, in
       # .github/scripts/assert-nonprod-supabase.sh.
@@ -505,6 +546,37 @@ jobs:
             exit 1
           fi
           echo "GATE live_pulse: PERMITTED — verdict line present."
+
+      # check:security — the security/privacy guard subset as ONE attributable
+      # suite. It overlaps check:all above on purpose: what it adds is not more
+      # coverage but a security-shaped VERDICT — only exit 0 passes, a check that
+      # CANNOT RUN fails rather than skips, and the security guards that remain
+      # UNENFORCED are counted by name on every run, so "all security checks
+      # passed" cannot be read as more than it means.
+      #
+      # It runs HERE and not in ci.yml because it contains
+      # check:authorization-contract, which reads the live CI database. In a
+      # credential-free job that exits 2 and the suite fails — by design, since an
+      # unrunnable security check must never read as a clean one.
+      - name: 'check:security (security + privacy guard subset)'
+        shell: bash
+        run: |
+          set -uo pipefail
+          LOG="$RUNNER_TEMP/api-check-security.log"
+
+          bash .github/scripts/pnpm-run.sh artifacts/api-server @workspace/api-server check:security 2>&1 | tee "$LOG"
+          rc=${PIPESTATUS[0]}
+
+          {
+            echo "### api-server check:security"
+            echo ""
+            grep -E '^(✔ PASSED|✘ FAILED|NOT ENFORCED|UNKNOWN)' "$LOG" || echo "(no labelled lines — read the log)"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [ "$rc" -ne 0 ]; then
+            echo "::error::api-server check:security failed (exit $rc). The ✘ FAILED lines above name the specific check. An exit code other than 0 is never a pass here — 2 means the check could not run, which is a block and not a skip."
+            exit "$rc"
+          fi
 
   # ───────────────────────────────────────────────────────────────────────────
   # Migration / schema drift.
@@ -702,7 +774,21 @@ jobs:
       - name: 'migrations — apply to the sanctioned CI project'
         if: ${{ !cancelled() && steps.install.outcome == 'success' && github.ref == 'refs/heads/main' }}
         shell: bash
-        run: bash .github/scripts/pnpm-run.sh scripts @workspace/scripts db:apply-migrations
+        #
+        # The --apply-unproven tail is empty on every push, schedule and PR
+        # run, so those invocations are unchanged. It is non-empty only on a
+        # workflow_dispatch that typed filenames into the input above; the
+        # applier still exits 2 if the flag arrives without a file list, so a
+        # malformed dispatch fails loudly rather than applying everything.
+        env:
+          APPLY_UNPROVEN: ${{ github.event.inputs.apply_unproven || '' }}
+        run: |
+          if [ -n "${APPLY_UNPROVEN}" ]; then
+            echo "::notice::apply-migrations: replaying ${APPLY_UNPROVEN} — a dispatch named these files as having a backfill ledger row proven false."
+            bash .github/scripts/pnpm-run.sh scripts @workspace/scripts db:apply-migrations --apply-unproven "${APPLY_UNPROVEN}"
+          else
+            bash .github/scripts/pnpm-run.sh scripts @workspace/scripts db:apply-migrations
+          fi
 
       # CERTIFICATION. A separate process, reading the catalog, because an
       # applier's own report is a claim about a request and not about a
@@ -1122,6 +1208,31 @@ jobs:
         run: |
           set -uo pipefail
           bash .github/scripts/run-live-suite.sh memory-lifecycle artifacts/api-server @workspace/api-server test:memory-lifecycle
+
+      # The two command kernels, executed. Every other trip*/memory* suite runs
+      # against a double or against the TypeScript wrapped around the RPC; these
+      # two run the PL/pgSQL. trip_kernel_execute alone is 103,400 characters and
+      # nothing in CI had ever executed a line of it — census-trips §35 certified
+      # it BY HAND through the management API, which is a snapshot and not a
+      # guard. memoryKernelTransactionLive.test.ts had existed for some time with
+      # a package script and no caller at all (MEMORY_LIVE_KERNEL_SUITE_NEVER_RUNS
+      # on the blocker ledger); it is wired here in the same change, because a
+      # live suite nothing invokes is the same failure one level up from a live
+      # suite that skips itself, and invisible to the pass>0/skipped==0 rule
+      # below for exactly the reason that rule only sees suites somebody listed.
+      - name: 'test:trip-kernel-live (the §35 vertical slice, idempotency, version conflict)'
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        shell: bash
+        run: |
+          set -uo pipefail
+          bash .github/scripts/run-live-suite.sh trip-kernel-live artifacts/api-server @workspace/api-server test:trip-kernel-live
+
+      - name: 'test:memory-kernel-transaction (§17 atomicity against the real function)'
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        shell: bash
+        run: |
+          set -uo pipefail
+          bash .github/scripts/run-live-suite.sh memory-kernel-transaction artifacts/api-server @workspace/api-server test:memory-kernel-transaction
 
       # Two RLS policy shapes that took down whole tables in production on
       # 2026-08-28: a policy selecting FROM its own table (42P17 recursion, every
