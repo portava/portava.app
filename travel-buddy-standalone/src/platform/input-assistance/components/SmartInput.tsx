@@ -48,6 +48,7 @@ import {
   type TelemetryField,
 } from '../services/inputTelemetry.ts';
 import { recordSuggestionSelection } from '../services/selectionRecorder.ts';
+import { recordLocalSelection } from '../services/localZeroState.ts';
 import { color, space, radius, type as t } from '../../../theme/tokens.ts';
 
 export interface SmartInputProps extends Omit<TextInputProps, 'onChange'> {
@@ -235,6 +236,15 @@ export const SmartInput = forwardRef<TextInput, SmartInputProps>(function SmartI
       // accept (never on view/hover/type), never awaits, never throws, and never
       // gates or changes the selection above. `value` is the query that led here.
       recordSuggestionSelection(s, { policy, query: value });
+      // §34 "prefer local" — the DEVICE-side half of the same explicit accept.
+      // `recordSuggestionSelection` above writes the server's selection memory
+      // (`input_selection_history`), which is absent from production and, being
+      // a round trip, cannot answer the next open of this field instantly. This
+      // keeps the accepted row in the process-local ring buffer so the field's
+      // zero-state is available with no network at all. Same trigger, same
+      // explicit-accept-only rule (§35), and gated by the field's privacyClass
+      // so a viewer-scoped row is never retained — see localZeroState.ts.
+      recordLocalSelection(policy, s);
       setActiveIndex(-1);
     },
     [fieldId, policy, telemetryField, onSelectSuggestion, onChangeText, value, requestId],
