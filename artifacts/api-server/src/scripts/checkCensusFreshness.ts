@@ -1598,6 +1598,21 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     // `_clear*Cache()` hooks to DEFEAT the cache. It was unwatched, and adding
     // its citation pushed census-map to exactly its coverage floor.
     "artifacts/api-server/src/test/geoZoneSeed.test.ts",
+    // ── ADDED 2026-09-21, M42 ───────────────────────────────────────────────
+    // The PLACE-lane repair chain and the live suite that proves it. M42's
+    // verdict now rests on these three: 2963 repoints the lane at the union of
+    // the two tables saves actually land in, 2965 qualifies the `_canon_saves`
+    // DELETE that 2963 left unguarded (which the supautils safeupdate guard
+    // rejects in every PostgREST-role session, so every call raised and the
+    // whole projection rolled back), and the live suite asserts a place
+    // projection THROUGH THE POSTGREST PATH rather than in a database where the
+    // guard is unarmed. Citing them without watching them is exactly the
+    // inversion this scope check exists to catch: the row claiming something IS
+    // right would have been the unguarded half. Coverage 95% -> 97%; the floor
+    // stays at 96%.
+    "artifacts/api-server/src/migrations/2963_memory_projector_place_lane_union.sql",
+    "artifacts/api-server/src/migrations/2965_memory_projector_canon_saves_delete_guard.sql",
+    "artifacts/api-server/src/test/memoryProjectionLifecycleLive.test.ts",
     "artifacts/api-server/src/lib/mapProducers/",
     "artifacts/api-server/src/lib/mapObjects.ts",
     "artifacts/api-server/src/lib/mapProjectionTripContract.ts",
