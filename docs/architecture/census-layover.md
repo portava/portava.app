@@ -6749,12 +6749,17 @@ for the two-line change L154 is.
 
 ### 28.4 What this means for §27.7's counts
 
-The bucket **memberships** above are wrong in §27.7; the **totals** in its table
-are not restated here, because moving two rows between buckets without
-re-reading the other 92 would produce a second table as unreliable as the first.
-§27.7's totals stand as a partition whose two named members are now known to be
-misfiled — which is strictly more honest than a corrected-looking table nobody
-re-derived. The next measuring pass owns the re-derivation, and should add a
+The bucket **memberships** above are wrong in §27.7 for **FOUR** rows, not two,
+and the count is written out because the first draft of this section said "two"
+and was itself wrong: **L296** (a flag, 28.1), **L203** (the location grant
+store, 28.2), and **L144** and **L154** (28.3), which §27.7 filed under the
+absent crew tables on evidence that those tables were absent. They are not.
+
+The **totals** in §27.7's table are not restated here, because moving four rows
+between buckets without re-reading the other 90 would produce a second table as
+unreliable as the first. §27.7's totals stand as a partition with four named
+members now known to be misfiled — which is strictly more honest than a
+corrected-looking table nobody re-derived. The next measuring pass owns the re-derivation, and should add a
 **blocked-on-a-flag** bucket when it does: L296 proves there is at least one
 member, and §23.3 had no such bucket either.
 
