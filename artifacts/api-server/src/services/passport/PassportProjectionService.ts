@@ -1146,18 +1146,56 @@ function buildDomainTrust(
   const basisOf = (...keys: string[]): DomainTrustBasis =>
     domainTrustBasis(state, keys.filter(isMeasured).length, keys.length);
 
+  /**
+   * Q3, owner decision 2026-09-22: **a SUBSTITUTED standing must not print a
+   * rating word.** When no category the domain averages was present, the score
+   * being worded is the neutral 50 that `mean()`/`c()` substituted, and
+   * `presentationWord(50)` is "Established" — so a person nobody measured was
+   * told they were an established member of the community, in six domains at
+   * once. census-passport §3 measured that as 56 of 58 production accounts.
+   *
+   * WHAT DELIBERATELY DOES NOT CHANGE, because the decision preserves it:
+   *   - `applicable` stays TRUE. "We have not measured you" is not "this domain
+   *     does not apply to you"; collapsing them would destroy the distinction
+   *     `not_applicable` exists to carry.
+   *   - `basis` and its note are untouched. The note explains; this fixes the
+   *     WORD, which is what a reader takes at a glance.
+   *   - `measured` and `partial` keep their real word. A partial mean is not a
+   *     measurement of everything, but it IS evidence, and blanking it would be
+   *     the opposite failure — refusing to say what was actually observed.
+   *
+   * "Not yet rated" is not new vocabulary: it is the phrasing the client
+   * already uses for a domain with no standing to show, so no client change is
+   * needed to render it.
+   */
+  const NOT_YET_RATED = "Not yet rated";
+  const wordFor = (score: number, basis: DomainTrustBasis): string =>
+    basis === "substituted" ? NOT_YET_RATED : presentationWord(score);
+
+  /** One row, worded through `wordFor` so the basis and the word cannot diverge. */
+  const row = (key: string, domain: string, score: number, basis: DomainTrustBasis): DomainTrust =>
+    ({ key, domain, presentation: wordFor(score, basis), applicable: true, basis });
+
   const domains: DomainTrust[] = [
-    { key: "overall",     domain: "Overall",     presentation: presentationWord(overallScore), applicable: true, basis: domainTrustBasis(state, overallMeasured ? 1 : 0, 1) },
-    { key: "traveler",    domain: "Traveler",    presentation: presentationWord(mean(c("respect_safety"), c("communication"), c("location_honesty"), c("passport_authenticity"))), applicable: true, basis: basisOf("respect_safety", "communication", "location_honesty", "passport_authenticity") },
-    { key: "trip_guest",  domain: "Trip Guest",  presentation: presentationWord(mean(c("plan_attendance"), c("respect_safety"), c("communication"))), applicable: true, basis: basisOf("plan_attendance", "respect_safety", "communication") },
-    { key: "trip_host",   domain: "Trip Host",   presentation: presentationWord(c("host_quality")), applicable: true, basis: basisOf("host_quality") },
-    { key: "contributor", domain: "Contributor", presentation: presentationWord(mean(c("content_quality"), c("community_value"), c("guide_accuracy"))), applicable: true, basis: basisOf("content_quality", "community_value", "guide_accuracy") },
+    row("overall", "Overall", overallScore, domainTrustBasis(state, overallMeasured ? 1 : 0, 1)),
+    row("traveler", "Traveler",
+        mean(c("respect_safety"), c("communication"), c("location_honesty"), c("passport_authenticity")),
+        basisOf("respect_safety", "communication", "location_honesty", "passport_authenticity")),
+    row("trip_guest", "Trip Guest",
+        mean(c("plan_attendance"), c("respect_safety"), c("communication")),
+        basisOf("plan_attendance", "respect_safety", "communication")),
+    row("trip_host", "Trip Host", c("host_quality"), basisOf("host_quality")),
+    row("contributor", "Contributor",
+        mean(c("content_quality"), c("community_value"), c("guide_accuracy")),
+        basisOf("content_quality", "community_value", "guide_accuracy")),
     // Buddy is a contextual projection (§20): "Not applicable" unless the user
     // actually offers a buddy service. A domain that does not apply has no
     // inputs, so `basisOf()` reports not_applicable rather than a vacuous
     // "measured".
     isBuddy
-      ? { key: "buddy", domain: "Buddy", presentation: presentationWord(mean(c("host_quality"), c("respect_safety"), c("communication"))), applicable: true, basis: basisOf("host_quality", "respect_safety", "communication") }
+      ? row("buddy", "Buddy",
+            mean(c("host_quality"), c("respect_safety"), c("communication")),
+            basisOf("host_quality", "respect_safety", "communication"))
       : { key: "buddy", domain: "Buddy", presentation: "Not applicable", applicable: false, basis: basisOf() },
   ];
   return domains;

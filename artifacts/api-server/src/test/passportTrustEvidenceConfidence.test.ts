@@ -291,15 +291,18 @@ describe("P50 §4 — a fabricated band no longer overrides a measured public le
 
 // ── §5 — the D-WORD boundary is still un-taken ───────────────────────────────
 
-describe("P50 §5 — what was NOT changed: D-WORD remains the owner's", () => {
-  it("the substituted neutral 50 still reads 'Established', and still says so", async () => {
-    // Removing the fabricated CONFIDENCE band is an engineering fix. Choosing a
-    // different WORD for a domain whose categories were never measured is the
-    // owner's standing D-WORD decision, and this assertion exists so that
-    // taking it is a deliberate diff rather than a side effect of this pass.
+describe("P50 §5 — D-WORD was DECIDED 2026-09-22; this moved on purpose", () => {
+  it("the substituted neutral 50 no longer reads 'Established', and still says why", async () => {
+    // This block previously asserted the opposite and said so: the choice of a
+    // different WORD for a never-measured domain "is the owner's standing
+    // D-WORD decision, and this assertion exists so that taking it is a
+    // deliberate diff rather than a side effect". The owner took it (Q3). This
+    // is that deliberate diff. The two neighbouring facts the decision
+    // preserves — the basis, and applicable staying true — are still pinned.
     const p = (await buildPassportProjection(db(null), OWNER, OWNER, { resolveViewerContext: resolver(SELF) }))!;
     const overall = (p.trust!.domains as any[]).find((d) => d.key === "overall")!;
-    assert.equal(overall.presentation, "Established");
+    assert.equal(overall.presentation, "Not yet rated");
+    assert.notEqual(overall.presentation, "Established");
     assert.equal(overall.basis, "substituted");
     assert.equal(overall.applicable, true);
   });

@@ -1,4 +1,48 @@
-# Consolidated decisions awaiting the owner
+# Consolidated decisions — ANSWERED 2026-09-22
+
+**All six were decided by the owner on 2026-09-22.** The rulings are recorded
+verbatim in substance below; the analysis that produced each question follows
+unchanged beneath, so the reasoning a decision was taken against stays readable.
+
+**These decisions authorize the work. They do NOT move a verdict.** No census
+row changes on the strength of a ruling — each still needs its own acceptance
+evidence, measured after the change lands. Anyone tempted to mark a row `C`
+because a decision exists should read this sentence again.
+
+| | ruling |
+|---|---|
+| **Q1** | **APPROVED — nullable trust scores.** The nine category columns and `overall_score` become nullable, NULL = not scored. Remove fabricated neutral defaults; update calculations and consumers. An unmeasured category must not contribute an invented 50. **Preserve legitimate measured values — do NOT mass-convert existing 50s without evidence of their origin.** Rehearse the migration and verify partially measured, entirely unmeasured, and negative-evidence cases before enabling the engine. |
+| **Q2** | **APPROVED — structured restriction-sweep result.** Port `{expired, truncated, failed}` and bounded processing onto current main *while preserving main's scheduler wiring*. The caller must distinguish failure, partial completion, and an idle successful sweep. Verify repeated batches eventually process all eligible restrictions **without starvation**. |
+| **Q3** | **APPROVED — "Not yet rated" for substituted standing.** Preserve `basis`, `basisNote` and `applicable` semantics. A substituted score must not produce "Established". Keep genuinely measured and partial states faithful to their evidence, and keep `unavailable` distinct from `not_applicable`. |
+| **Q4** | **APPROVED — replace the contradictory `TierGuide`.** Use the existing basis explanation instead of the conflicting band table. Preserve useful explanatory access, and preserve the confidence fix distinguishing absent evidence from unreadable evidence. Do not redesign the hero. **Close #454 and #467 only AFTER their remaining useful changes are integrated and verified; link their replacements.** |
+| **Q5** | **APPROVED — complete the safety-review writer.** Land the useful remainder of #456 against current main. **A service with no production caller is not completion**: connect the authorized review workflow, enforce reviewer eligibility, and verify an actual review produces the intended audit record. Preserve migration 2311 and existing data. Then rebase and re-measure #465 in the established dependency order. |
+| **Q6** | **APPROVED — own-message rejoin exception.** A currently authorized, rejoined member may read their own earlier messages; other senders' messages remain subject to the new membership window. Implement consistently in the shared predicate **AND** the database queries that currently filter those rows out. Thread identity, active membership, tenant boundaries, deletion rules and every other authorization requirement stay **outside and mandatory for both branches** of the condition. Do not widen `visible_from_at`. An accessible own message must not reveal inaccessible quoted messages, previews, or another sender's protected attachments. Test pagination, search, direct retrieval, media access, coordination, Memory and Compass consumers, including requests made while membership is inactive. Finish the rehearsed deployment sequence and enable the history flag only after the intended application version and all prerequisites are verified. |
+
+## Standing constraints attached to these rulings
+
+* **Q1 does not authorize a backfill.** "Preserve legitimate measured values;
+  do not mass-convert existing 50s without evidence of their origin" means a
+  real 50 and a substituted 50 are indistinguishable in the current schema, so
+  a blanket `UPDATE ... SET x = NULL WHERE x = 50` would destroy measurements.
+  Any conversion needs per-row evidence, or none happens.
+* **Q5 restates the test for done**: a caller, not a service. The same standard
+  applies to Q6 — a carve-out in the predicate that fourteen SQL pre-filters
+  discard before it runs is not implemented, it is merely written.
+* **Q4's close condition is a sequence**, not a permission: #454 and #467 stay
+  open until their remaining useful changes are integrated *and verified*, and
+  the replacements are linked from them.
+
+## Where the work is happening
+
+The integration head is frozen while its checks complete. Implementation runs
+in isolated worktrees and is batched back by the integration lead. Q1 and Q3
+share `PassportProjectionService.ts`, so they are held by the lead rather than
+split across agents.
+
+---
+
+# The analysis these decisions were taken against
+
 
 Six decisions, one list. Five come from the Trust/Safety/Passport PRs still
 open; the sixth is Telegraph's §14.3 rejoin question, folded in here rather

@@ -157,8 +157,15 @@ describe("P45/P50 — the basis reaches the response on every trust path", () =>
     // distinguishes this card from a measured one that happens to score 50.
     const applicable = p.trust!.domains.filter((d) => d.applicable);
     assert.equal(applicable.length, 5);
-    assert.ok(applicable.every((d) => d.presentation === "Established"),
-      `all applicable domains are the neutral substitution, got ${applicable.map((d) => d.presentation).join(",")}`);
+    // Q3 (owner decision 2026-09-22): a substituted domain is no longer worded
+    // "Established". The PROPERTY this line was checking — that every
+    // applicable domain here is the neutral substitution rather than a
+    // measurement — is unchanged and is now asserted through `basis`, which is
+    // the field that actually carries it, plus the word the decision chose.
+    assert.ok(applicable.every((d) => d.basis === "substituted"),
+      `all applicable domains should be substituted, got ${applicable.map((d) => d.basis).join(",")}`);
+    assert.ok(applicable.every((d) => d.presentation === "Not yet rated"),
+      `a substitution must not be worded as a standing, got ${applicable.map((d) => d.presentation).join(",")}`);
   });
 
   it("an UNREADABLE trust_profiles reports 'unavailable' AND degraded, and no evidence numbers", async () => {
