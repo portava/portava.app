@@ -306,10 +306,34 @@ counts as **231 C / 159 W / 58 N / 3 X of 451** (220 non-correct):
 | this census (does NOT credit unguarded absences) | 231 | **51.2 %** | **86.5 %** |
 | a reader who credits all 21 | 252 | 55.9 % | 91.1 % |
 
-So the concession is worth **3.7 points**, not the 24.8-point collapse the old
-sentence implied. Stating it correctly makes the ruling *easier* to defend
-rather than harder, which is the argument for fixing arithmetic rather than
-leaving a number that flatters the position by being wrong in its favour.
+So the concession is worth **4.7 points** — 55.9 minus 51.2 — not the
+24.8-point collapse the old sentence implied. Stating it correctly makes the
+ruling *easier* to defend rather than harder, which is the argument for fixing
+arithmetic rather than leaving a number that flatters the position by being
+wrong in its favour.
+
+**THE SUBTRACTION WAS ALSO WRONG, CORRECTED 2026-09-22.** The paragraph above
+read "3.7 points" from the day it was written. Its own table gives 51.2 % and
+55.9 %, whose difference is 4.7, and the two counts it rests on — 231 and 252
+of the same denominator, 451 — differ by 21 rows, which is 4.66 % of 451. Three
+statements of one quantity and the prose disagreed with both of the others. It
+is corrected to 4.7 and the derivation is written beside it so the next reader
+can check it without re-deriving the population.
+
+**THE RULING IS UNCHANGED AND IS THE POINT.** The 21 rows stay UNCREDITED. Each
+is a prohibition — an absence nothing in the tree guards — and an unverified
+prohibition is not a constructed guarantee: nothing fails if it silently stops
+holding. 231 is this census's count; 252 is what a reader gets by crediting
+absences nobody can fail. Correcting the gap makes the concession *larger* than
+the document previously admitted, which is the direction that costs the ruling
+something, and it is still the right ruling.
+
+**231 IS AS OF THAT MEASUREMENT, NOT AS OF THIS DOCUMENT'S END.** It was
+`check:census-integrity`'s count when this paragraph was written. §33 through
+§36 move rows after it; the current headline is in §36.7 and the tool is the
+authority for it. The denominator is 451 in both readings and in every later
+one — no row was added, removed, or moved out of the population to produce any
+figure here.
 
 ### Method caveat, inherited
 
@@ -7460,8 +7484,8 @@ is the checksum the ledger row itself records.
 | Where | What it says | Status |
 | --- | --- | --- |
 | `docs/architecture/census-telegraph.md:138#not on this branch` | *"in open PR #472 — **not on this branch**"* | The FILE is on this branch as of 2026-09-15. The PR is still open and still unmerged. |
-| `docs/architecture/census-telegraph.md:424#The exception that is not in HEAD` | *"`migrations/2325_…`, the route that calls it, and `test/telegraphUnsendBeforeSeen.test.ts`"* | The migration is here; **the route and the test are not**. The heading remains true of what it grades. |
-| `docs/architecture/census-telegraph.md:1151#Five files:` | lists 2325 among five | Accurate as a description of PR #472, which still carries all five. One of the five is now also in this tree. |
+| `docs/architecture/census-telegraph.md:448#The exception that is not in HEAD` | *"`migrations/2325_…`, the route that calls it, and `test/telegraphUnsendBeforeSeen.test.ts`"* | The migration is here; **the route and the test are not**. The heading remains true of what it grades. |
+| `docs/architecture/census-telegraph.md:1175#Five files:` | lists 2325 among five | Accurate as a description of PR #472, which still carries all five. One of the five is now also in this tree. |
 
 Only the migration file came across, and that is not an accident of effort: a
 ledger row names a FILE, and the file is the whole of what was owed. Bringing the

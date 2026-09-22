@@ -427,7 +427,19 @@ import {
  * at `:782`. Those 24 were repointed by reading the claim and every one gained
  * an `#anchor`, which is what takes them out of this check's population for
  * good. 188 -> 186. */
-export const MAX_DEAD_TARGETS = 186;
+/* LOWERED 2026-09-22 while correcting the §2 concession arithmetic. That edit
+ * added 24 lines to census-telegraph.md and moved FIVE cross-document pointers,
+ * all of which turned out to be wrong ALREADY — the shift only made one of them
+ * land on a blank line instead of on unrelated prose, which is the difference
+ * between a citation this check can see and one it cannot. The two census-media
+ * pointers name WHERE IN census-telegraph a citation lives; grep put the two
+ * MediaProjectionService.ts:1502 citations at :346 and :1164, and both pointers
+ * were stale by 18 and 45 lines respectively. No `#anchor` was added to those
+ * two on purpose: the target line's own text IS a citation, so an anchor would
+ * nest a `#` inside an anchor and no pass could read it — the one case where
+ * the standing "anchor it while you are there" instruction does not apply, and
+ * it is written down here rather than left as an apparent omission. 186 -> 185. */
+export const MAX_DEAD_TARGETS = 185;
 
 /** Pinned to a commit by its own declaration; its lines must not track HEAD. */
 const PINNED_DOCS = new Set(['docs/architecture/mobile-reachability-ledger.md']);

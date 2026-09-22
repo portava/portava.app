@@ -2297,7 +2297,7 @@ by offset, because this section's code displaced them:
 `loadPlaceNeighborhoods` 323→338, `[ctx, neighborhoods]` 433→448,
 `loadTaggedPostIds` 902→1106, `loadTaggedMedia` 949→1153 in this document, and
 the Hidden Gems bucket 861→1065 in `census-highlights-memories.md`.
-`census-telegraph.md` cites the same file twice at `:978`, now `:1182`, and both
+`census-telegraph.md` cites the same file twice at `:978`, now `:1164`, and both
 were repointed — the third time in four sections that an anchored citation has
 caught its own decay, and the reason this paragraph can say the repoint is right
 rather than hope so.
@@ -2505,7 +2505,7 @@ weak test.
    - `docs/architecture/census-highlights-memories.md:469` cites the My World
      "gems" bucket at line 1091 of MediaProjectionService; it is now at
      `artifacts/api-server/src/services/media/MediaProjectionService.ts:1378#key: "gems"`.
-   - `docs/architecture/census-telegraph.md:301` and `docs/architecture/census-telegraph.md:1119`
+   - `docs/architecture/census-telegraph.md:346` and `docs/architecture/census-telegraph.md:1164`
      both cite the owner-scoped table read at line 1214; it is now at
      `artifacts/api-server/src/services/media/MediaProjectionService.ts:1502#.from(table)`.
    - `docs/architecture/census-trust.md:738` cites the viewer profile select at
