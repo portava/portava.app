@@ -8159,10 +8159,14 @@ re-armed between the two statements no longer matches, so a clock reading from
 before they pressed it cannot revoke what they just set. Dropping it turns the
 sweep into "delete the rows I saw a moment ago", and the test for that race
 fails 25/3 when it is dropped. The delete is safe precisely because every reader
-already refuses to render these rows past `expires_at` — `routes/availability.ts`
-at `:86`, `:151` and `:618`, `PassportProjectionService#loadQuickStatus`,
-`SharedContextService#loadActiveQuickStatus` — so it removes data nothing was
-allowed to show, which is a privacy improvement rather than a behaviour change.
+already refuses to render these rows past `expires_at` —
+`routes/availability.ts:87#  const quickStatus = qs && (qs as any).expires_at > new Date().toISOString()`,
+`routes/availability.ts:152#  if (!data || (data as any).expires_at <= new Date().toISOString()) {`,
+`routes/availability.ts:250#    if ((r as any).expires_at > now) qsMap[(r as any).user_id] = r;`,
+`services/passport/PassportProjectionService.ts:883#      .from("quick_availability_status")` and
+`services/passport/SharedContextService.ts:104#      .from("quick_availability_status")` —
+so it removes data nothing was allowed to show, which is a privacy improvement
+rather than a behaviour change.
 **The delete is qualified** (`.lte("expires_at", …)`): this database's supautils
 safeupdate guard rejects an unqualified one in a PostgREST-role session, and a
 sweep that could ever be unqualified is a sweep that could delete everybody's
