@@ -550,7 +550,29 @@ describes, caught by running the dump.
 
 ---
 
-## 8. Commits
+## 8. Files touched, against the ownership list
+
+| file | ownership clause |
+| --- | --- |
+| `src/services/memories.ts` | named |
+| `src/services/highlights.ts` | named |
+| `src/hooks/useHighlightSources.ts` | `src/hooks/useHighlight*.ts` |
+| `src/components/highlights/HighlightSourcesDisclosure.tsx` | `src/components/highlights/**` |
+| `src/components/highlights/__tests__/HighlightSourcesDisclosure.component.test.tsx` | tests under the same directory |
+| `app/highlights/archived.tsx` | `app/highlights/**` |
+| `app/highlights/__tests__/archived.sources.component.test.tsx` | `app/highlights/**` |
+| `src/services/__tests__/memories.operationId.component.test.ts` | tests under `src/services/` — **flagging this one**: it is the only directory `jest.config.js` and `scripts/run-node-tests.mjs` discover service tests in, and the three existing highlights service suites already live there. Read as "test files under those same directories" |
+| `src/services/__tests__/highlights.sources.component.test.ts` | same |
+| `LANE_REPORT.md` | required output |
+
+`git diff --stat 561a0a7b0..HEAD` is exactly those ten files. Nothing under
+`artifacts/api-server/**`, nothing under `docs/architecture/`, nothing in
+`src/navigation/`, `src/theme/`, `app/(tabs)/**`, `app/memory/**` or
+`src/features/**`. Diffing the exported symbols of both services against the
+base commit: **two additions in `memories.ts`, one in `highlights.ts`, zero
+removals.**
+
+## 9. Commits
 
 ```
 a4c10f3ed  §19 client operation ids and a conflict the client can see (H175, H178)
