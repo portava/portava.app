@@ -8079,10 +8079,20 @@ that none could.
 
 ## §31 — Nearby becomes a referent: buckets that cannot hold a coordinate, an order that cannot disclose one, and a precise fix that stops following the account
 
-Written by the TELEGRAPH LANE 3 (location, proximity and privacy) worktree,
-branched at `e43fc628a`. **Nothing here is merged and no flag was enabled.**
-`head_commit` is not re-declared for the census as a whole; this section
-measures only the rows it names, at `e43fc628a` plus the commits below.
+Written by the TELEGRAPH LANE 3 (location, proximity and privacy) worktree.
+**Nothing here is merged and no flag was enabled.** `head_commit` is not
+re-declared for the census as a whole; this section measures only the rows it
+names.
+
+PROVENANCE, stated rather than rounded off: the worktree was checked out at
+`857ad9fb9` and every measurement below was taken there. The branch had since
+advanced to `e43fc628a` (the offline-substrate merge), so this lane's commits
+were REBASED onto it and the census checks, the citation check and the suites
+covering every file touched were re-run on the rebased tree. `857ad9fb9` is an
+ancestor of `e43fc628a`, and nothing between them touches a file this section
+grades — the overlap is two shared ledgers, `CENSUS_STALENESS_ACKNOWLEDGED.json`
+and `checkCensusFreshness.ts`, both of which this lane also edits and both of
+which rebased without conflict.
 
 Seven rows move, all `N → W`, and none moves to `C`. The reason is the same for
 all seven and is stated once here rather than seven times: the surface built
@@ -8288,9 +8298,10 @@ Stated plainly, because a reader must not have to discover it:
    process with a 60-minute TTL. After a restart, or on a second instance, every
    precise share degrades to approximate until the owning device publishes
    again. That is the safe direction and it is a real limitation. A durable
-   binding needs one `device_id` column on `user_location_state`; this lane did
-   not add a migration, because a rule that lives behind an unapplied migration
-   enforces nothing.
+   binding needs one `device_id` column on `user_location_state`, and this lane
+   did not add it: a rule that lives behind an unapplied migration enforces
+   nothing, and the enforcement above runs today. (2998 adds no column — it
+   seeds one feature-flag row, for the reason in item 1.)
 3. **Only `/me/location-state` is device-bound.** `trip_crew_location_sessions`
    and the Safe Return live share are still keyed by account, so T235 is closed
    on the self-read path and open on the two sharing paths.
