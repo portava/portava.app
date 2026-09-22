@@ -331,8 +331,9 @@ const READ_ONLY_AUDIT_ENTRY_POINTS = [
       'FOUR SELECTs, all reads: two to_regclass() existence probes for the two ledger tables; ' +
       '`select filename, checksum, applied_by, applied_at, notes from public.schema_migration_ledger`; ' +
       '`select version, name from supabase_migrations.schema_migrations`; and ' +
-      '`select table_name, column_name, is_nullable, column_default, data_type from ' +
-      "information_schema.columns where table_schema = 'public'`. Neither ledger read carries a WHERE " +
+      '`select table_schema, table_name, column_name, is_nullable, column_default, data_type from ' +
+      'information_schema.columns` over every non-system schema (public AND authz — reading only public ' +
+      'would report every authz object absent). Neither ledger read carries a WHERE ' +
       'clause, deliberately — a band filter cannot be expressed in SQL over either table without ' +
       "producing a wrong answer (a text `>=` on the CLI table's mixed-format version column excludes " +
       "every post-cutover row; a numeric cast over the hand ledger's filename scoops up imported files " +

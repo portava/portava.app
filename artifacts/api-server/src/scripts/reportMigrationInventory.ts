@@ -54,8 +54,11 @@
  *   2. `select filename, checksum, applied_by, applied_at, notes from
  *      public.schema_migration_ledger` (no WHERE — see below);
  *   3. `select version, name from supabase_migrations.schema_migrations`;
- *   4. `select table_name, column_name, is_nullable, column_default,
- *      data_type from information_schema.columns where table_schema='public'`.
+ *   4. `select table_schema, table_name, column_name, is_nullable,
+ *      column_default, data_type from information_schema.columns` over every
+ *      non-system schema — public AND authz, because reading only public would
+ *      report every authz object absent and a false "missing" is as damaging
+ *      here as a false "applied".
  * No INSERT, UPDATE, DELETE, DDL, RPC or auth-admin call. It never writes a
  * ledger row; when it finds something that needs writing it prints that fact
  * and exits, which is the whole of the owner's ruling.
@@ -448,6 +451,7 @@ console.log("");
 // ── The live catalog, for the probes ────────────────────────────────────────
 
 interface ColumnRow {
+  table_schema: string;
   table_name: string;
   column_name: string;
   is_nullable: string;
@@ -455,20 +459,28 @@ interface ColumnRow {
   data_type: string;
 }
 
+// NOT `where table_schema = 'public'`. extractDeclaredObjects() keeps the
+// schema a migration actually writes, and this repository puts real objects
+// outside public — `authz.is_active_thread_member(uuid)` is 2402's central
+// object. Reading only public would report every authz object ABSENT, which is
+// a confident answer about the wrong thing: exactly the failure this whole
+// script exists to stop, with the sign flipped.
 let columnRows: ColumnRow[];
 try {
   columnRows = await liveQuery<ColumnRow>(
-    "select table_name, column_name, is_nullable, column_default, data_type " +
-      "from information_schema.columns where table_schema = 'public'",
+    "select table_schema, table_name, column_name, is_nullable, column_default, data_type " +
+      "from information_schema.columns " +
+      "where table_schema not in ('pg_catalog', 'information_schema') " +
+      "and table_schema not like 'pg_toast%' and table_schema not like 'pg_temp%'",
   );
 } catch (err) {
   fail(`could not read information_schema.columns on ${projectRef}: ${(err as Error).message}`);
 }
 
-const liveTables = new Set(columnRows.map((r) => `public.${r.table_name}`));
+const liveTables = new Set(columnRows.map((r) => `${r.table_schema}.${r.table_name}`));
 const liveColumns = new Map<string, ColumnRow>();
 for (const r of columnRows) {
-  liveColumns.set(`public.${r.table_name}.${r.column_name}`, r);
+  liveColumns.set(`${r.table_schema}.${r.table_name}.${r.column_name}`, r);
 }
 
 /** The property this probe compares, named in the report. */
@@ -510,7 +522,6 @@ const ATTRIBUTION_METHOD =
   "block or a dynamic EXECUTE is not seen, so exclusivity is a claim about statements spelled in the " +
   "ordinary way.";
 
-const declaredByFile = new Map<string, string[]>();
 const filesByObject = new Map<string, string[]>();
 for (const filename of filenames) {
   let sql: string;
@@ -519,9 +530,7 @@ for (const filename of filenames) {
   } catch (err) {
     fail(`could not read ${filename}: ${(err as Error).message}`);
   }
-  const keys = extractDeclaredObjects(sql).map((d) => d.key);
-  declaredByFile.set(filename, keys);
-  for (const key of keys) {
+  for (const key of extractDeclaredObjects(sql).map((d) => d.key)) {
     const owners = filesByObject.get(key) ?? [];
     owners.push(filename);
     filesByObject.set(key, owners);
