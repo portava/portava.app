@@ -146,16 +146,7 @@ describe("§17 the seventeen commands are all accounted for — declared or expl
     }
     // Nothing in the "not declared" list is invented: every entry is a §17 name.
     for (const n of notDeclared) assert.ok(SPEC_17.includes(n), `${n} is not a §17 command name`);
-    // The extensions are marked as such by not being §17 names, and the list is
-    // PINNED so a third one cannot arrive without this assertion being read.
-    //
-    // UNHIDE_HIGHLIGHT joined UPDATE_MEMORY in this lane. §17 lists
-    // HIDE_HIGHLIGHT and names no inverse of it, but §21 requires Archive to be
-    // REVERSIBLE and §17's first sentence requires every canonical write to
-    // cross this boundary — so the un-archive is a command whether or not §17
-    // named it. What shipped before was a direct `.update({ archived_at: null })`
-    // that emitted nothing, leaving the event log permanently disagreeing with
-    // the row (src/test/highlightEventReplay.test.ts makes that executable).
+    // Both pinned BY NAME (§17/§21 reasoning: lib/memoryCommandBus.ts header).
     const extensions = [...declared].filter((d) => !SPEC_17.includes(d));
     assert.deepEqual(extensions, ["UPDATE_MEMORY", "UNHIDE_HIGHLIGHT"]);
   });

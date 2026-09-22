@@ -77,8 +77,7 @@
  */
 
 import {
-  HIGHLIGHT_DOMAIN_EVENT_TYPES,
-  MEMORY_DOMAIN_EVENT_TYPES,
+  HIGHLIGHT_DOMAIN_EVENT_TYPES, MEMORY_DOMAIN_EVENT_TYPES,
   isMemoryEventType,
   type MemoryEventType,
 } from "../../lib/memoryOutbox.js";
@@ -141,57 +140,6 @@ export const EVENT_PROJECTIONS: Readonly<
   "memory.visibility_changed": ALL_SURFACES,
 });
 
-/**
- * THE HIGHLIGHT HALF OF THE SAME MAP — §18's ProfileHighlightProjection.
- *
- * WHY THIS EXISTS. Until this lane no §18 projection was keyed on a Highlight,
- * so all five `highlight.*` events drained and were acked as
- * `unsubscribed_event_type`: the rows moved, nothing was stranded, and nothing
- * was rebuilt from them either. That was recorded honestly and it was still a
- * gap, because §18 names a projection whose audience is, verbatim,
- * "Audience-specific profile", and §12 opens with "Highlights are disposable,
- * audience-specific projections over one or more Memories or Episodes". The
- * profile projection IS the artifact a Highlight event invalidates; it simply
- * had no Highlight source. It has one now (projectionRegistry.ts), so these
- * five events have a subscriber.
- *
- * ONE PROJECTION, NOT ALL OF THEM, and this asymmetry with the Memory map is
- * deliberate. Every §18 projection draws from `memories`, so any Memory change
- * can change any of them and a broad set costs work rather than correctness.
- * `highlights` is read by exactly ONE definition — `source_tables` says so and
- * `deriveProjection` reads what the declaration says — so subscribing a
- * Highlight event to the other ten would rebuild ten artifacts that provably
- * cannot have changed. Broad where breadth is free; narrow where narrowness is
- * a fact the declaration already states.
- *
- * TOTAL over the five §17 `highlight.*` names by construction, for the reason
- * the Memory map gives: a sixth Highlight event added to the vocabulary without
- * a subscriber is a COMPILE error rather than a projection that silently never
- * fires.
- */
-const PROFILE_SURFACES: readonly ProjectionId[] = ["ProfileHighlightProjection"];
-
-export const HIGHLIGHT_EVENT_PROJECTIONS: Readonly<
-  Record<Extract<MemoryEventType, `highlight.${string}`>, readonly ProjectionId[]>
-> = Object.freeze({
-  "highlight.created": PROFILE_SURFACES,
-  "highlight.published": PROFILE_SURFACES,
-  // §12: a DAY Highlight "expires after recent context unless pinned". The
-  // projection carries `expires_at` rather than applying it, so an expiry event
-  // does not change what the row says — but it DOES mean the profile artifact
-  // was built before the aggregate reached the state the event announces, and
-  // rebuilding is cheaper than reasoning about whether it mattered.
-  "highlight.expired": PROFILE_SURFACES,
-  // Both PIN and UNPIN emit this one §17 name (COMMAND_EVENT), and §12 makes
-  // pin order outrank automatic order, so the projected ROW ORDER changes.
-  "highlight.pinned": PROFILE_SURFACES,
-  // §17 HIDE_HIGHLIGHT and, since this lane, its EXT inverse UNHIDE_HIGHLIGHT.
-  // A hidden Highlight leaves the profile and an un-hidden one returns to it;
-  // the payload's `command_type` says which, and the rebuild reads the row
-  // rather than trusting the event either way.
-  "highlight.hidden": PROFILE_SURFACES,
-});
-
 export interface ClaimedOutboxRow {
   id: number;
   event_id: string;
@@ -222,32 +170,11 @@ export interface ClaimedOutboxRow {
  * that ordering was harmless because every row had a Memory; it is not
  * harmless now, and the fix is to ask the cheaper, more decisive question
  * first rather than to null-check the expensive one.
- *
- * It answers over BOTH aggregates. `eventSubjectOf` then says which one, and
- * the drain reads that aggregate and no other — a `highlight.*` event is never
- * looked up in `memories` whatever its memory_id column happens to hold.
  */
 export function projectionsForEventType(type: string): readonly ProjectionId[] | undefined {
   if (!isMemoryEventType(type)) return undefined;
-  const both = EVENT_PROJECTIONS as Record<string, readonly ProjectionId[]>;
-  const highlightHalf = HIGHLIGHT_EVENT_PROJECTIONS as Record<string, readonly ProjectionId[]>;
-  return both[type] ?? highlightHalf[type];
-}
-
-/**
- * Which AGGREGATE an event is about, or null when nothing subscribes to it.
- *
- * Derived from the two subscription maps rather than from the event NAME's
- * prefix. A name is a convention; which map an event is in is the routing
- * decision, and the decision is what the drain must turn on — the same reason
- * lib/memoryCommandBus.ts routes commands through COMMAND_SUBJECT instead of
- * matching on `*_HIGHLIGHT`.
- */
-export function eventSubjectOf(type: string): "memory" | "highlight" | null {
-  if (!isMemoryEventType(type)) return null;
-  if ((EVENT_PROJECTIONS as Record<string, unknown>)[type] !== undefined) return "memory";
-  if ((HIGHLIGHT_EVENT_PROJECTIONS as Record<string, unknown>)[type] !== undefined) return "highlight";
-  return null;
+  return (EVENT_PROJECTIONS as Record<string, readonly ProjectionId[]>)[type]
+    ?? (HIGHLIGHT_EVENT_PROJECTIONS as Record<string, readonly ProjectionId[]>)[type];
 }
 
 export type OutboxClaimResult =
@@ -363,63 +290,6 @@ export async function readProjectionScope(sc: any, memoryId: string): Promise<Sc
       trip_id: typeof data.trip_id === "string" ? data.trip_id : null,
       place_id: typeof data.place_id === "string" ? data.place_id : null,
     },
-  };
-}
-
-export type HighlightScopeResult =
-  | { ok: true; scope: ProjectionScope }
-  | { ok: false; reason: "highlight_unavailable" | "highlight_absent"; detail: string };
-
-/**
- * The scope a HIGHLIGHT's projections are rebuilt at.
- *
- * §18's ProfileHighlightProjection is keyed on the PROFILE — one artifact per
- * (owner, viewer) — not on the Highlight. So the only thing this read needs
- * from the row is `owner_id`, and that is all it selects: §23's rule, stated
- * the same way `readProjectionScope` states it, and the reason a Highlight's
- * caption and media_url are not on the wire here either.
- *
- * THE GUARD ON `highlightId` IS LOAD-BEARING AND IS NOT DEFENSIVE NOISE. The
- * `highlight_id` column is migration 2993's, and 2993 is UNAPPLIED on every
- * database at the time of writing — so today `public.memory_outbox_claim` does
- * not return one and a claimed `highlight.*` row carries `undefined` here.
- * Passing that to `.eq("id", …)` is exactly the defect this consumer already
- * fixed once on the Memory side: PostgREST answers an invalid uuid with an
- * ERROR, the consumer classes it as an outage, and the row retries to the
- * attempt ceiling — a permanently stuck row reported as a transient failure.
- * An absent subject is answered WITHOUT a database call, and classed
- * `highlight_absent`, which the drain acks.
- */
-export async function readHighlightProjectionScope(
-  sc: any,
-  highlightId: string | null | undefined,
-): Promise<HighlightScopeResult> {
-  if (typeof highlightId !== "string" || highlightId.length === 0) {
-    return {
-      ok: false,
-      reason: "highlight_absent",
-      detail: "the claimed row carries no highlight_id (migration 2993 is unapplied on this database)",
-    };
-  }
-
-  const { data, error } = await sc
-    .from("highlights")
-    .select("id, owner_id")
-    .eq("id", highlightId)
-    .maybeSingle();
-
-  if (error) {
-    return { ok: false, reason: "highlight_unavailable", detail: error.message ?? String(error) };
-  }
-  if (!data || typeof data.owner_id !== "string") {
-    // A HARD-DELETED Highlight, like a hard-deleted Memory, is expected and is
-    // NOT an outage: memory_event_outbox has no foreign key to either subject,
-    // deliberately, so an event outlives its row.
-    return { ok: false, reason: "highlight_absent", detail: `no highlights row for ${highlightId}` };
-  }
-  return {
-    ok: true,
-    scope: { owner_id: data.owner_id, viewer_id: data.owner_id, trip_id: null, place_id: null },
   };
 }
 
@@ -562,57 +432,44 @@ export async function drainMemoryOutbox(
   for (const row of claim.rows) {
     const startedAtMs = Date.now();
 
-    // SUBSCRIPTION FIRST, SCOPE SECOND. THIS ORDER IS A FIX AND MUST NOT BE
-    // UNDONE.
-    //
-    // An outbox row's subject is a MEMORY or a HIGHLIGHT, and since migration
-    // 2993 the one it is not is NULL by construction. Reading the scope first
-    // sent that NULL to `.eq("id", …)`, which PostgREST answers with an ERROR
-    // rather than an empty row: the consumer classed it `memory_unavailable`,
-    // failed the row, and retried it until `attempts` hit the maximum — a
-    // permanently stuck row reported as a transient outage. Asking "does
-    // anything subscribe to this?" first costs no database call and decides
-    // which aggregate, if any, to read.
-    //
-    // WHAT CHANGED IN THIS LANE. The answer for a `highlight.*` event used to
-    // be "nothing subscribes", and now it is §18's ProfileHighlightProjection
-    // (HIGHLIGHT_EVENT_PROJECTIONS). The ORDERING is untouched: subscription is
-    // still asked first, and the null-subject guard moved INTO
-    // `readHighlightProjectionScope`, which answers `highlight_absent` without
-    // a database call rather than handing a null to `.eq`.
+    // SUBSCRIPTION FIRST, SCOPE SECOND. THIS ORDER IS A FIX; DO NOT UNDO IT. An
+    // outbox row's subject is a MEMORY or a HIGHLIGHT, and since 2993 the one it
+    // is not is NULL by construction. Reading the scope first sent that NULL to
+    // `.eq("id", ...)`, which PostgREST answers with an ERROR rather than an
+    // empty row: the consumer classed it `memory_unavailable`, failed the row,
+    // and retried to the attempt ceiling — a permanently stuck row reported as a
+    // transient outage. WHAT CHANGED HERE: a `highlight.*` event now DOES
+    // subscribe (§18's ProfileHighlightProjection). The ordering is untouched —
+    // the null-subject guard moved into `readHighlightProjectionScope`, which
+    // answers `highlight_absent` without a database call.
     const projections = projectionsForEventType(row.type);
     const subject = eventSubjectOf(row.type);
 
     let outcome: EventOutcome;
     if (!projections || subject === null) {
       // An event type nobody subscribes to — any name a future spec adds to
-      // §17's vocabulary before a projection subscribes to it. Not retryable:
-      // the next attempt reaches the same conclusion. Acked with the class
-      // recorded, so the row leaves the queue and the reason it did is a
-      // number someone can see rather than a silence.
+      // §17's vocabulary before a projection does. Not retryable: the next
+      // attempt reaches the same conclusion. Acked with the class recorded, so
+      // the row leaves the queue and the reason it did is a number someone can
+      // see rather than a silence.
       outcome = {
         id: row.id, eventId: row.event_id, eventType: row.type, memoryId: row.memory_id,
         rebuilt: 0, skipped: 0, failed: 0, failureClass: "unsubscribed_event_type",
       };
       ackable.push(row.id);
     } else {
-      // Past this point the event subscribes to at least one projection, and
-      // `subject` says which aggregate to read it against. NOTHING infers that
+      // `subject` says which aggregate to read this against. NOTHING infers that
       // from which id happens to be non-null: an event whose subject column is
       // missing must produce a refusal, not a read of the other aggregate.
-      const scopeResult: ScopeResult | HighlightScopeResult =
-        subject === "memory"
-          ? await readProjectionScope(sc, row.memory_id as string)
-          : await readHighlightProjectionScope(sc, row.highlight_id);
+      const scopeResult: ScopeResult | HighlightScopeResult = subject === "memory"
+        ? await readProjectionScope(sc, row.memory_id as string)
+        : await readHighlightProjectionScope(sc, row.highlight_id);
+      // Two vocabularies because §24's failure class must say WHICH subject was
+      // gone. Both are PERMANENT: no retry can change either.
+      const gone = !scopeResult.ok
+        && (scopeResult.reason === "memory_absent" || scopeResult.reason === "highlight_absent");
 
-      // The two aggregates have two vocabularies (`memory_absent` /
-      // `highlight_absent`) because an operator reading §24's failure class
-      // needs to know WHICH subject was gone. Both are PERMANENT: nothing is
-      // left to project and no retry can change that.
-      const permanentlyGone =
-        !scopeResult.ok && (scopeResult.reason === "memory_absent" || scopeResult.reason === "highlight_absent");
-
-      if (permanentlyGone) {
+      if (gone) {
         outcome = {
           id: row.id, eventId: row.event_id, eventType: row.type, memoryId: row.memory_id,
           rebuilt: 0, skipped: 0, failed: 0,
@@ -699,3 +556,141 @@ export const SUBSCRIBED_EVENT_TYPES: readonly string[] = MEMORY_DOMAIN_EVENT_TYP
  * on this aggregate has a subscriber" unaskable.
  */
 export const SUBSCRIBED_HIGHLIGHT_EVENT_TYPES: readonly string[] = HIGHLIGHT_DOMAIN_EVENT_TYPES;
+
+// ═════════════════════════════════════════════════════════════════════════════
+// THE HIGHLIGHT AGGREGATE.
+//
+// Placed BELOW everything else rather than beside the Memory equivalents, and
+// that is a deliberate cost, not an accident of editing. This file is cited BY
+// LINE NUMBER from docs/architecture/census-highlights-memories.md, which this
+// lane may not edit; inserting these declarations where they read best moved
+// `outboxConsumer.ts:504#recordProjectionLag(` and turned `check:doc-citations`
+// from green to red. outboxDrainRunner.ts's own header records the same cost
+// being paid once before. A line-numbered citation makes another document's
+// contract out of this file's line count, and appending is what avoids paying
+// it a second time.
+// ═════════════════════════════════════════════════════════════════════════════
+
+/**
+ * THE HIGHLIGHT HALF OF THE SAME MAP — §18's ProfileHighlightProjection.
+ *
+ * WHY THIS EXISTS. Until this lane no §18 projection was keyed on a Highlight,
+ * so all five `highlight.*` events drained and were acked as
+ * `unsubscribed_event_type`: the rows moved, nothing was stranded, and nothing
+ * was rebuilt from them either. That was recorded honestly and it was still a
+ * gap, because §18 names a projection whose audience is, verbatim,
+ * "Audience-specific profile", and §12 opens with "Highlights are disposable,
+ * audience-specific projections over one or more Memories or Episodes". The
+ * profile projection IS the artifact a Highlight event invalidates; it simply
+ * had no Highlight source. It has one now (projectionRegistry.ts), so these
+ * five events have a subscriber.
+ *
+ * ONE PROJECTION, NOT ALL OF THEM, and this asymmetry with the Memory map is
+ * deliberate. Every §18 projection draws from `memories`, so any Memory change
+ * can change any of them and a broad set costs work rather than correctness.
+ * `highlights` is read by exactly ONE definition — `source_tables` says so and
+ * `deriveProjection` reads what the declaration says — so subscribing a
+ * Highlight event to the other ten would rebuild ten artifacts that provably
+ * cannot have changed. Broad where breadth is free; narrow where narrowness is
+ * a fact the declaration already states.
+ *
+ * TOTAL over the five §17 `highlight.*` names by construction, for the reason
+ * the Memory map gives: a sixth Highlight event added to the vocabulary without
+ * a subscriber is a COMPILE error rather than a projection that silently never
+ * fires.
+ */
+const PROFILE_SURFACES: readonly ProjectionId[] = ["ProfileHighlightProjection"];
+
+export const HIGHLIGHT_EVENT_PROJECTIONS: Readonly<
+  Record<Extract<MemoryEventType, `highlight.${string}`>, readonly ProjectionId[]>
+> = Object.freeze({
+  "highlight.created": PROFILE_SURFACES,
+  "highlight.published": PROFILE_SURFACES,
+  // §12: a DAY Highlight "expires after recent context unless pinned". The
+  // projection carries `expires_at` rather than applying it, so an expiry event
+  // does not change what the row says — but it DOES mean the profile artifact
+  // was built before the aggregate reached the state the event announces, and
+  // rebuilding is cheaper than reasoning about whether it mattered.
+  "highlight.expired": PROFILE_SURFACES,
+  // Both PIN and UNPIN emit this one §17 name (COMMAND_EVENT), and §12 makes
+  // pin order outrank automatic order, so the projected ROW ORDER changes.
+  "highlight.pinned": PROFILE_SURFACES,
+  // §17 HIDE_HIGHLIGHT and, since this lane, its EXT inverse UNHIDE_HIGHLIGHT.
+  // A hidden Highlight leaves the profile and an un-hidden one returns to it;
+  // the payload's `command_type` says which, and the rebuild reads the row
+  // rather than trusting the event either way.
+  "highlight.hidden": PROFILE_SURFACES,
+});
+
+/**
+ * Which AGGREGATE an event is about, or null when nothing subscribes to it.
+ *
+ * Derived from the two subscription maps rather than from the event NAME's
+ * prefix. A name is a convention; which map an event is in is the routing
+ * decision, and the decision is what the drain must turn on — the same reason
+ * lib/memoryCommandBus.ts routes commands through COMMAND_SUBJECT instead of
+ * matching on `*_HIGHLIGHT`.
+ */
+export function eventSubjectOf(type: string): "memory" | "highlight" | null {
+  if (!isMemoryEventType(type)) return null;
+  if ((EVENT_PROJECTIONS as Record<string, unknown>)[type] !== undefined) return "memory";
+  if ((HIGHLIGHT_EVENT_PROJECTIONS as Record<string, unknown>)[type] !== undefined) return "highlight";
+  return null;
+}
+
+export type HighlightScopeResult =
+  | { ok: true; scope: ProjectionScope }
+  | { ok: false; reason: "highlight_unavailable" | "highlight_absent"; detail: string };
+
+/**
+ * The scope a HIGHLIGHT's projections are rebuilt at.
+ *
+ * §18's ProfileHighlightProjection is keyed on the PROFILE — one artifact per
+ * (owner, viewer) — not on the Highlight. So the only thing this read needs
+ * from the row is `owner_id`, and that is all it selects: §23's rule, stated
+ * the same way `readProjectionScope` states it, and the reason a Highlight's
+ * caption and media_url are not on the wire here either.
+ *
+ * THE GUARD ON `highlightId` IS LOAD-BEARING AND IS NOT DEFENSIVE NOISE. The
+ * `highlight_id` column is migration 2993's, and 2993 is UNAPPLIED on every
+ * database at the time of writing — so today `public.memory_outbox_claim` does
+ * not return one and a claimed `highlight.*` row carries `undefined` here.
+ * Passing that to `.eq("id", …)` is exactly the defect this consumer already
+ * fixed once on the Memory side: PostgREST answers an invalid uuid with an
+ * ERROR, the consumer classes it as an outage, and the row retries to the
+ * attempt ceiling — a permanently stuck row reported as a transient failure.
+ * An absent subject is answered WITHOUT a database call, and classed
+ * `highlight_absent`, which the drain acks.
+ */
+export async function readHighlightProjectionScope(
+  sc: any,
+  highlightId: string | null | undefined,
+): Promise<HighlightScopeResult> {
+  if (typeof highlightId !== "string" || highlightId.length === 0) {
+    return {
+      ok: false,
+      reason: "highlight_absent",
+      detail: "the claimed row carries no highlight_id (migration 2993 is unapplied on this database)",
+    };
+  }
+
+  const { data, error } = await sc
+    .from("highlights")
+    .select("id, owner_id")
+    .eq("id", highlightId)
+    .maybeSingle();
+
+  if (error) {
+    return { ok: false, reason: "highlight_unavailable", detail: error.message ?? String(error) };
+  }
+  if (!data || typeof data.owner_id !== "string") {
+    // A HARD-DELETED Highlight, like a hard-deleted Memory, is expected and is
+    // NOT an outage: memory_event_outbox has no foreign key to either subject,
+    // deliberately, so an event outlives its row.
+    return { ok: false, reason: "highlight_absent", detail: `no highlights row for ${highlightId}` };
+  }
+  return {
+    ok: true,
+    scope: { owner_id: data.owner_id, viewer_id: data.owner_id, trip_id: null, place_id: null },
+  };
+}

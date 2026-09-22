@@ -12,41 +12,33 @@
  *       plausible-looking empty history without structured error state."
  *
  * CENSUS: section 18's twelve rows - MemoryTimelineProjection,
- *         PassportMemoryProjection, ProfileHighlightProjection,
- *         TripMemoryProjection, PlaceMemoryProjection, PeopleMemoryProjection,
- *         CompassMemoryProjection, PublicMemoryProjection, SearchEmbedding,
- *         NarrativeDerivative, MapTrailDerivative, and derivative registration -
- *         eight BUILT-BUT-WRONG, four NOT-BUILT
- *         (docs/architecture/census-highlights-memories.md, section 18).
+ *         PassportMemoryProjection, ProfileHighlightProjection, TripMemoryProjection,
+ *         PlaceMemoryProjection, PeopleMemoryProjection, CompassMemoryProjection,
+ *         PublicMemoryProjection, SearchEmbedding, NarrativeDerivative,
+ *         MapTrailDerivative, and derivative registration - eight BUILT-BUT-WRONG,
+ *         four NOT-BUILT (docs/architecture/census-highlights-memories.md, §18).
  *
- * WHAT A PROJECTION IS HERE. Three things, or it is not one:
- *   1. it DECLARES what it derives from (`source_tables`, `builder_version`),
- *   2. it is REBUILDABLE from those sources by a pure function of the rows, and
- *   3. it can say whether it is STALE, by comparing the source version it was
- *      built from against the sources as they are now.
- * Definitions live in this file and are pure. The database half - registration,
- * staleness and revocation - is derivativeRegistry.ts, so a builder cannot
- * quietly acquire an I/O dependency and stop being replayable.
+ * WHAT A PROJECTION IS HERE. Three things, or it is not one: 1. it DECLARES what it
+ * derives from (`source_tables`, `builder_version`), 2. it is REBUILDABLE from those
+ * sources by a pure function of the rows, and 3. it can say whether it is STALE, by
+ * comparing the source version it was built from against the sources as they are
+ * now. Definitions live in this file and are pure; the database half - registration,
+ * staleness and revocation - is derivativeRegistry.ts, so a builder cannot quietly
+ * acquire an I/O dependency and stop being replayable.
  *
- * FIELD WHITELISTS ARE THE PRIVACY MECHANISM, AND ARE LOAD-BEARING. Each builder
- * hands `project()` the WHOLE canonical row plus whatever it computed, and
- * `project()` copies only the whitelisted keys. This is deliberate: an earlier
- * draft assembled a literal containing exactly the whitelisted fields, which
- * made the whitelist decorative - deleting it changed no output and broke no
- * test. Written this way, deleting the narrowing step leaks coordinates and
+ * FIELD WHITELISTS ARE THE PRIVACY MECHANISM, AND ARE LOAD-BEARING. Each builder hands
+ * `project()` the WHOLE canonical row plus whatever it computed, and `project()` copies
+ * only the whitelisted keys. An earlier draft assembled a literal containing exactly the
+ * whitelisted fields, which made the whitelist decorative - deleting it changed no output
+ * and broke no test. Written this way, deleting the narrowing step leaks coordinates and
  * hidden-user lists into the public projection, and the suite says so.
  */
 
 import type { SignificanceExplanation } from "./significance.js";
-// §10's ladder and consent reader, imported rather than restated. Both are pure
-// functions; neither drags I/O into this module, and the one-way direction
-// (memoryProjections -> highlights) is checked: services/highlights imports
-// nothing from services/memoryProjections, so this closes no ESM cycle.
-import {
-  clampLocationToPrecision,
-  consentFromRow,
-  isLocationPrecision,
-} from "../highlights/highlightProjectionPolicy.js";
+// §10's ladder and consent reader, imported rather than restated: a retyped privacy
+// ladder is the defect this codebase has already had twice. Both are pure, and
+// services/highlights imports nothing from here, so no ESM cycle is closed.
+import { clampLocationToPrecision, consentFromRow, isLocationPrecision } from "../highlights/highlightProjectionPolicy.js";
 
 export type ProjectionId =
   | "MemoryTimelineProjection"
@@ -76,8 +68,8 @@ export type ProjectionAudience =
 
 /**
  * A projection this repository cannot honestly build yet says so, loudly.
- * NOT_CONFIGURED is not "empty": callers must surface a refusal, never a page
- * that reads as "you have no memories" (28.11).
+ * NOT_CONFIGURED is not "empty": callers must surface a refusal, never a page that
+ * reads as "you have no memories" (28.11).
  */
 export type ProjectionAvailability = "BUILDABLE" | "NOT_CONFIGURED";
 
@@ -112,67 +104,7 @@ export interface MemoryTagRow {
 }
 
 export interface MemoryItemRow {
-  memory_id: string;
-  media_url: string;
-  media_type: string;
-  position: number;
-}
-
-/**
- * The canonical row shape read from `public.highlights`, for the §18 row whose
- * subject is a HIGHLIGHT rather than a Memory (§12).
- *
- * MEASURED against `src/lib/capability/snapshots/20260922-production-schema.json`
- * (watermark 20260922155706): every column below is on the deployed table.
- * `lifetime_class`, `lifecycle_state` and `pinned_at` arrived with migration
- * 2723, applied to production at 20260915080401.
- *
- * WHAT IS DELIBERATELY NOT HERE. `caption`, `media_url`, `media_type`,
- * `location_name` and `filter_*` are columns this projection must never carry
- * and therefore never reads. That is the same discipline the field whitelist
- * enforces on the way out, applied one step earlier on the way in: a column
- * that is never selected cannot leak through a whitelist someone widens later.
- * `lifecycle_state` is absent because nothing in this server writes it and
- * services/highlights/highlightLifecycle.ts DERIVES the lifecycle instead — a
- * projection reading a column no writer maintains would publish a stale
- * constant.
- */
-export interface HighlightSourceRow {
-  id: string;
-  owner_id: string;
-  visibility: string;
-  created_at: string;
-  /** Present since 2723's predecessor; the staleness digest's input. */
-  updated_at: string | null;
-  expires_at: string | null;
-  /** §21's terminal soft delete. */
-  deleted_at: string | null;
-  /** §21's REVERSIBLE hide — §17's HIDE_HIGHLIGHT. Not the delete. */
-  archived_at: string | null;
-  pinned_at: string | null;
-  lifetime_class: string | null;
-  location_city: string | null;
-  location_country: string | null;
-}
-
-/**
- * One row of `public.highlight_projection_policies` (migration 2721, applied to
- * production at 20260915055812), narrowed to the two dimensions an
- * audience-specific projection can act on.
- *
- * WHY ONLY TWO. `consentEnforcement()` in services/highlights/
- * highlightPublicProjection.ts derives, rather than lists, which §10 consent
- * dimensions any surface in this repository actually reads: SHARE and
- * RESURFACE. STORE, PERSONALIZE and CONTRIBUTE_TO_AGGREGATE_INTEL are stored
- * and read by nothing, and a projection that pretended to enforce one of them
- * would be inventing a gate the rest of the system does not have. SHARE is the
- * dimension a profile surface is about; RESURFACE belongs to the feed and is
- * not this projection's question.
- */
-export interface HighlightPolicyRow {
-  highlight_id: string;
-  location_precision: string | null;
-  consent_share: boolean | null;
+  memory_id: string; media_url: string; media_type: string; position: number;
 }
 
 /** What a projection is being built FOR. Every builder must respect it. */
@@ -192,29 +124,8 @@ export interface ProjectionInput {
   items: readonly MemoryItemRow[];
   /** Section 8 output, owner-facing only. Absent is normal, not an error. */
   significance?: ReadonlyMap<string, SignificanceExplanation>;
-  /**
-   * §12's Highlights, for the projections that declare `highlights` among their
-   * source tables.
-   *
-   * OPTIONAL, AND ABSENT MEANS "NO HIGHLIGHT ROWS" RATHER THAN "UNKNOWN". The
-   * read that populates it is `readProjectionSources`, which only performs it
-   * for a projection whose definition asks for it — so a builder never has to
-   * tell a missing read from an empty table, because the only caller that can
-   * produce the first is the one that refuses instead. A DIRECT caller that
-   * builds from rows it loaded itself (routes/memories.ts does exactly that)
-   * simply omits it and gets the Memory half alone, unchanged.
-   *
-   * THE POLICIES TRAVEL WITH THE ROWS, IN ONE OBJECT, AND THAT SHAPE IS THE
-   * POINT. A §10 policy set that could be omitted separately would let a
-   * caller build an audience-specific surface from Highlights whose owner's
-   * consent and precision were never read — and an absent policy set is not
-   * "no policy", it is a read that did not happen. Making them one field means
-   * the compiler refuses that call rather than the reviewer having to catch it.
-   */
-  highlights?: {
-    readonly rows: readonly HighlightSourceRow[];
-    readonly policies: readonly HighlightPolicyRow[];
-  };
+  /** §12's Highlights AND §10's policy over them — ONE field; see HighlightSourceRow. */
+  highlights?: { readonly rows: readonly HighlightSourceRow[]; readonly policies: readonly HighlightPolicyRow[] };
 }
 
 export type ProjectedRow = Record<string, unknown>;
@@ -268,77 +179,36 @@ function mediaCount(input: ProjectionInput, memoryId: string): number {
 }
 
 const TIMELINE_FIELDS = [
-  "memory_id", "occurred_at", "ended_at", "title", "caption", "place_id",
-  "location_city", "location_country", "trip_id", "event_id", "media_count",
-  "people", "visibility", "state", "significance_score", "significance_tier",
-] as const;
+  "memory_id", "occurred_at", "ended_at", "title", "caption", "place_id", "location_city",
+  "location_country", "trip_id", "event_id", "media_count", "people", "visibility",
+  "state", "significance_score", "significance_tier"] as const;
 
 const PUBLIC_FIELDS = [
-  "memory_id", "owner_id", "occurred_at", "title", "caption",
-  "location_city", "location_country", "media_count",
-] as const;
+  "memory_id", "owner_id", "occurred_at", "title", "caption", "location_city",
+  "location_country", "media_count"] as const;
 
 const COMPASS_FIELDS = [
-  "memory_id", "occurred_at", "place_id", "canonical_location_id",
-  "location_city", "location_country", "trip_id", "event_id", "confidence_note",
+  "memory_id", "occurred_at", "place_id", "canonical_location_id", "location_city",
+  "location_country", "trip_id", "event_id", "confidence_note",
 ] as const;
 
 const TRIP_FIELDS = [
   "memory_id", "occurred_at", "title", "place_id", "location_city",
-  "location_country", "media_count", "people",
-] as const;
+  "location_country", "media_count", "people"] as const;
 
 const PLACE_FIELDS = [
   "memory_id", "occurred_at", "title", "place_id", "canonical_location_id",
-  "location_city", "location_country", "visit_index",
-] as const;
+  "location_city", "location_country", "visit_index"] as const;
 
 const PEOPLE_FIELDS = ["memory_id", "occurred_at", "title", "location_city", "location_country", "person_id"] as const;
 
 const MAP_TRAIL_FIELDS = ["memory_id", "occurred_at", "lat", "lng", "place_id", "precision"] as const;
 
-/**
- * PassportMemoryProjection's whitelist. SPLIT OUT of ProfileHighlightProjection's
- * in this lane and deliberately left identical field-for-field: the two are
- * different §18 rows with different audiences, and sharing one constant meant a
- * field the profile needed could not be added without also widening what
- * Passport publishes. Two names, so the two can diverge on purpose rather than
- * by accident.
- */
-const PASSPORT_FIELDS = [
-  "memory_id", "occurred_at", "title", "location_city", "location_country", "media_count", "audience",
-] as const;
-
-/**
- * ProfileHighlightProjection's whitelist. The last five fields are the
- * HIGHLIGHT half.
- *
- * §12 (:357): "Highlights are disposable, audience-specific projections over
- * one or more Memories or Episodes." §18's ProfileHighlightProjection is the
- * row whose audience is, verbatim, "Audience-specific profile". Until this lane
- * this builder read only `memories`, so §17's five `highlight.*` events had NO
- * §18 projection keyed on their subject and drained as
- * `unsubscribed_event_type`.
- *
- * `source` is what keeps the two halves distinguishable rather than blended: a
- * reader can always tell a projected Memory from a projected Highlight, and
- * `memory_id` and `highlight_id` are never both non-null on one row.
- *
- * `caption` IS STILL ABSENT, from both halves. `public.highlights.caption` is
- * free text the owner wrote and is exactly what §10 keeps off an
- * audience-specific surface, so the highlight half carries NO text at all
- * rather than smuggling a caption through `title`.
- *
- * `expires_at` and `pinned` are CARRIED rather than APPLIED. §12's expiry is a
- * read-time predicate ("Expires after recent context unless pinned"); a builder
- * that filtered on a clock would stop being a pure function of its rows and
- * could not be replayed, which is 28.12's requirement and the reason
- * `deriveProjection` is pure once the read has happened.
- */
 const PROFILE_HIGHLIGHT_FIELDS = [
   "memory_id", "occurred_at", "title", "location_city", "location_country", "media_count", "audience",
-  "highlight_id", "source", "pinned", "lifetime_class", "expires_at",
 ] as const;
+/** ProfileHighlightProjection's own. The five extra fields are §12's Highlight half. */
+const PROFILE_FIELDS = [...PROFILE_HIGHLIGHT_FIELDS, "highlight_id", "source", "pinned", "lifetime_class", "expires_at"] as const;
 
 /**
  * The eleven section 18 rows. Order matches the spec table so the two can be
@@ -389,7 +259,7 @@ const DEFINITIONS: ProjectionDefinition[] = [
     builder_version: "passport@1",
     source_tables: ["memories", "memory_items"],
     destination: "passport.memories",
-    field_whitelist: PASSPORT_FIELDS,
+    field_whitelist: PROFILE_HIGHLIGHT_FIELDS,
     emits_significance: false,
     build(input) {
       // Passport shows places reached, so a Memory with no place at all is not
@@ -402,7 +272,7 @@ const DEFINITIONS: ProjectionDefinition[] = [
           occurred_at: occurredAt(m),
           media_count: mediaCount(input, m.id),
           audience: "OWNER_OR_PUBLIC_PER_PASSPORT_POLICY",
-        }, PASSPORT_FIELDS));
+        }, PROFILE_HIGHLIGHT_FIELDS));
     },
   },
   {
@@ -410,22 +280,14 @@ const DEFINITIONS: ProjectionDefinition[] = [
     audience: "AUDIENCE_SPECIFIC_PROFILE",
     availability: "BUILDABLE",
     unavailable_reason: "",
-    // @2 because the builder gained a second source. The output for an input
-    // with no `highlights` is byte-identical to @1's, which is what keeps the
-    // route at routes/memories.ts serving the same rows; the version moves
-    // anyway, because a registration written by a builder that CAN read
-    // Highlights is not the same artifact as one written by a builder that
-    // cannot, and §18 registers `builder_version` precisely so that difference
-    // is legible.
     builder_version: "profile-highlight@2",
     source_tables: ["memories", "memory_items", "highlights"],
     destination: "profile.highlights",
-    field_whitelist: PROFILE_HIGHLIGHT_FIELDS,
+    field_whitelist: PROFILE_FIELDS,
     emits_significance: false,
     build(input) {
       const viewer = input.scope.viewer_id ?? null;
       const isOwner = viewer !== null && viewer === input.scope.owner_id;
-
       const fromMemories = ownerVisible(input)
         .filter((m) => {
           if (m.state !== "published") return false;
@@ -440,95 +302,12 @@ const DEFINITIONS: ProjectionDefinition[] = [
         .map((m) => project({
           ...m,
           memory_id: m.id,
-          highlight_id: null,
-          source: "memory",
           occurred_at: occurredAt(m),
-          media_count: mediaCount(input, m.id),
-          audience: isOwner ? "OWNER" : "VIEWER",
-          // A Memory is not pinnable and has no lifetime class; both are
-          // Highlight concepts (§12). Written explicitly so the row shape is
-          // uniform rather than depending on project()'s null padding.
-          pinned: false,
-          lifetime_class: null,
-          expires_at: null,
-        }, PROFILE_HIGHLIGHT_FIELDS));
-
-      // ── §12's Highlights. See PROFILE_HIGHLIGHT_FIELDS for why this half
-      // exists and what it deliberately does not carry. ────────────────────
-      //
-      // §10's POLICY IS APPLIED HERE, IN THE BUILDER, and it reuses
-      // services/highlights/highlightProjectionPolicy.ts rather than restating
-      // the ladder. A retyped copy of a privacy ladder is the defect this
-      // codebase has already had twice (FEED_ENFORCEABLE_CONTROLS and
-      // consentEnforcement both say so in their own words), and the second
-      // copy is always the one that stops being updated.
-      const policyFor = new Map<string, HighlightPolicyRow>(
-        (input.highlights?.policies ?? []).map((p) => [p.highlight_id, p]),
-      );
-      const fromHighlights = (input.highlights?.rows ?? [])
-        .filter((h) => h.owner_id === input.scope.owner_id)
-        // §21 keeps the three removals separate, and a profile is BROWSING:
-        // `deleted_at` is the terminal soft delete, `archived_at` is the
-        // reversible hide whose whole definition is "remove from normal
-        // browsing unless explicitly requested". Neither belongs on a profile,
-        // INCLUDING the owner's own — the owner reaches archived Highlights
-        // through the explicit request, which is a different surface.
-        .filter((h) => h.deleted_at === null && h.archived_at === null)
-        // §23 for a Highlight is `highlights.owner_id`, and `public.highlights`
-        // carries no allow-list and no hidden-user list: the only audience
-        // distinction the row can support is public / not public. A builder
-        // that guessed a friendship here would be inventing an authorization
-        // the table cannot express, so anything not `public` is owner-only.
-        .filter((h) => isOwner || h.visibility === "public")
-        // §10 SHARE, EXPLICIT-FALSE-ONLY, and deliberately not `!mayProject`.
-        // highlightPublicProjection.ts made that choice for the live profile
-        // read and gives the reason there: `unknown` (no policy row) is the
-        // state almost every Highlight is in, and refusing on it would empty
-        // the surface rather than honour a decision nobody made. The owner
-        // always sees their own.
-        .filter((h) => isOwner || consentFromRow(policyFor.get(h.id) ?? null, "SHARE") !== "withheld")
-        .map((h) => project({
-          ...h,
-          // §10's precision ladder, applied BEFORE the whitelist rather than
-          // after: `clampLocationToPrecision` empties the fields on the object
-          // the whitelist then copies, so a rung of HIDDEN cannot survive by
-          // being re-read from `...h`. The owner is not clamped — the ladder
-          // governs PUBLICATION, and a policy row with an unparseable rung
-          // clamps to HIDDEN rather than to the default, which is the same
-          // fail-closed answer resolveLocationDisclosure gives.
-          ...(isOwner ? {} : clampHighlightLocation(h, policyFor.get(h.id) ?? null)),
-          memory_id: null,
-          highlight_id: h.id,
-          source: "highlight",
-          // §3.1 occurred_at. `highlights` has no start time; `created_at` is
-          // when the Highlight was made and is the only instant the row has.
-          occurred_at: h.created_at,
-          // Never the caption. See PROFILE_HIGHLIGHT_FIELDS.
-          title: null,
-          // `public.highlights` is one media_url per row — it is the 24-hour
-          // Stories shape — so the count is 1 and is not a guess.
-          media_count: 1,
-          audience: isOwner ? "OWNER" : "VIEWER",
-          pinned: h.pinned_at !== null,
-          lifetime_class: h.lifetime_class,
-          expires_at: h.expires_at,
-        }, PROFILE_HIGHLIGHT_FIELDS));
-
-      // §12: "Pinned/manual order always outranks automatic ordering." Applied
-      // across BOTH halves, not within each, so a pinned Highlight outranks a
-      // newer Memory rather than merely a newer Highlight. The id tiebreak
-      // keeps the order total, which is what makes a rebuild byte-identical.
-      return [...fromMemories, ...fromHighlights].sort((a, b) => {
-        const ap = a.pinned === true ? 0 : 1;
-        const bp = b.pinned === true ? 0 : 1;
-        if (ap !== bp) return ap - bp;
-        const at = String(a.occurred_at ?? "");
-        const bt = String(b.occurred_at ?? "");
-        if (at !== bt) return bt.localeCompare(at);
-        return String(a.memory_id ?? a.highlight_id ?? "").localeCompare(
-          String(b.memory_id ?? b.highlight_id ?? ""),
-        );
-      });
+          media_count: mediaCount(input, m.id), audience: isOwner ? "OWNER" : "VIEWER",
+          // A Memory is not pinnable and has no lifetime class: both are §12 Highlight
+          highlight_id: null, source: "memory", pinned: false, lifetime_class: null, expires_at: null,
+        }, PROFILE_FIELDS));
+      return orderProfileHighlights([...fromMemories, ...highlightHalf(input, isOwner)]);
     },
   },
   {
@@ -721,39 +500,6 @@ const DEFINITIONS: ProjectionDefinition[] = [
 
 export const PROJECTION_DEFINITIONS: readonly ProjectionDefinition[] = Object.freeze(DEFINITIONS);
 
-/**
- * §10's location ladder for one Highlight, for a NON-OWNER reader.
- *
- * Three cases, and the middle one is the one that matters:
- *   no policy row        — no owner-selected precision. The row's location is
- *                          left UNCHANGED, which is exactly what
- *                          `resolveLocationDisclosure` does on this surface:
- *                          LOCATION_PRECISION_DEFAULT is an unmade owner
- *                          decision (P.2) and is not made here either.
- *   a valid rung         — clamped to it.
- *   a row with a rung the ladder does not contain — clamped to HIDDEN. FAIL
- *                          CLOSED: a value the CHECK should have refused is
- *                          evidence something is wrong, and publishing on it
- *                          would be publishing on a policy nobody can read.
- *
- * `location_name` is not in this projection's whitelist and so never reaches a
- * row; it is passed through the clamp anyway so the ladder is applied whole
- * rather than in the subset this projection happens to carry today.
- */
-function clampHighlightLocation(
-  h: HighlightSourceRow,
-  policy: HighlightPolicyRow | null,
-): { location_city: string | null; location_country: string | null } {
-  const stored = policy?.location_precision ?? null;
-  if (stored === null) return { location_city: h.location_city, location_country: h.location_country };
-  const rung = isLocationPrecision(stored) ? stored : "HIDDEN";
-  const clamped = clampLocationToPrecision(
-    { location_name: null, location_city: h.location_city, location_country: h.location_country },
-    rung,
-  );
-  return { location_city: clamped.location_city, location_country: clamped.location_country };
-}
-
 /** ~11 km grid. Coarse enough that the point is a city, not a doorway. */
 function coarsen(v: number | null): number | null {
   return v === null ? null : Math.round(v * 10) / 10;
@@ -780,33 +526,25 @@ export function listProjectionIds(): ProjectionId[] {
 export function sourceVersionOf(
   memories: readonly MemorySourceRow[],
   /**
-   * The Highlight half of the same question, for ProfileHighlightProjection.
+   * The Highlight half, for ProfileHighlightProjection.
    *
    * BACKWARD-COMPATIBLE BY CONSTRUCTION: with no highlights the output is
-   * byte-identical to what this function returned before the parameter existed,
-   * `v1` tag and all. That matters because a registration written by the old
-   * code carries a `v1` digest, and a comparison that changed shape would
-   * report every existing registration STALE on the first pass after deploy —
-   * a correct-looking stampede over projections nothing had changed.
-   *
-   * Highlight entries are keyed `highlight:<id>` so a caller reading
-   * `changed_memory_ids` can still tell which aggregate moved; they cannot
-   * collide with a Memory id, which is a bare uuid.
+   * byte-identical to what this returned before the parameter existed, `v1` tag
+   * and all. A registration written by the old code carries a `v1` digest, and a
+   * comparison that changed shape would report every existing registration STALE
+   * on the first pass after deploy — a stampede dressed as a correct answer.
    */
   highlights: readonly HighlightSourceRow[] = [],
   /**
    * §10 policy rows, folded in BY CONTENT rather than by a timestamp.
    *
-   * A policy is an input to this projection exactly as a row is: tightening
-   * `location_precision` or withdrawing SHARE changes what the derivative may
-   * carry. Left out of the digest, an owner could narrow their own publication
-   * and the registry would go on reporting the old, wider artifact FRESH —
-   * which is §18's cleanup graph failing at the one moment it exists for.
-   *
-   * By CONTENT and not `updated_at` on purpose: the two fields that decide the
-   * output are the two in the digest, so nothing can change the outcome
-   * without moving it, and nothing that does not change the outcome forces a
-   * rebuild.
+   * A policy is an input exactly as a row is: tightening `location_precision` or
+   * withdrawing SHARE changes what the derivative may carry. Left out, an owner
+   * could narrow their own publication and the registry would go on reporting the
+   * old, wider artifact FRESH — §18's cleanup graph failing at the one moment it
+   * exists for. By CONTENT and not `updated_at`: the two fields that decide the
+   * output are the two in the digest, so nothing can change the outcome without
+   * moving it and nothing that cannot change it forces a rebuild.
    */
   policies: readonly HighlightPolicyRow[] = [],
 ): {
@@ -818,12 +556,13 @@ export function sourceVersionOf(
   for (const h of [...highlights].sort((a, b) => a.id.localeCompare(b.id))) {
     // `updated_at` is nullable on `highlights` (rows written before the column
     // existed). `created_at` is NOT NULL and never moves, so falling back to it
-    // makes such a row a CONSTANT in the digest rather than an absent one —
-    // which is honest: nothing about that row can be observed to have changed.
+    // makes such a row a CONSTANT in the digest rather than an absent one — which
+    // is honest: nothing about that row can be observed to have changed.
     per[`highlight:${h.id}`] = h.updated_at ?? h.created_at;
   }
-  for (const p of [...policies].sort((a, b) => a.highlight_id.localeCompare(b.highlight_id))) {
-    per[`policy:${p.highlight_id}`] = `${p.location_precision ?? "-"}/${p.consent_share === null || p.consent_share === undefined ? "-" : String(p.consent_share)}`;
+  for (const pol of [...policies].sort((a, b) => a.highlight_id.localeCompare(b.highlight_id))) {
+    const share = pol.consent_share === null || pol.consent_share === undefined ? "-" : String(pol.consent_share);
+    per[`policy:${pol.highlight_id}`] = `${pol.location_precision ?? "-"}/${share}`;
   }
   const text = Object.entries(per).map(([id, v]) => `${id}@${v}`).join("|");
   let h1 = 0x811c9dc5, h2 = 0x9e3779b9;
@@ -849,4 +588,183 @@ export function scopeKeyOf(id: ProjectionId, scope: ProjectionScope): string {
     scope.person_id ? `person:${scope.person_id}` : null,
   ].filter((p): p is string => p !== null);
   return `${id}|${parts.join("|")}`;
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// §12's HIGHLIGHT HALF OF §18's ProfileHighlightProjection.
+//
+// Appended rather than written beside the definition it belongs to, and that is
+// a deliberate cost rather than an accident of editing. This file is cited BY
+// LINE NUMBER from docs/architecture/census-highlights-memories.md — :159, :339,
+// :392, :415, :443, :457 and :501 — which this lane may not edit. Declaring
+// these where they read best moved every one of those anchors and turned
+// `check:doc-citations` from green to red. A line-numbered citation makes
+// another document's contract out of this file's line count; appending is what
+// avoids paying that. services/memoryProjections/outboxDrainRunner.ts records
+// the same cost being paid once before, for the same reason.
+// ═════════════════════════════════════════════════════════════════════════════
+
+/**
+ * The canonical row shape read from `public.highlights`, for the §18 row whose
+ * subject is a HIGHLIGHT rather than a Memory (§12).
+ *
+ * MEASURED against `src/lib/capability/snapshots/20260922-production-schema.json`
+ * (watermark 20260922155706): every column below is on the deployed table.
+ * `lifetime_class` and `pinned_at` arrived with migration 2723, applied to
+ * production at 20260915080401.
+ *
+ * WHAT IS DELIBERATELY NOT HERE. `caption`, `media_url`, `media_type`,
+ * `location_name` and the filter columns are ones this projection must never
+ * carry and therefore never reads — the same discipline the field whitelist
+ * enforces on the way out, applied one step earlier on the way in: a column
+ * never selected cannot leak through a whitelist someone widens later.
+ * `lifecycle_state` is absent because nothing in this server writes it and
+ * services/highlights/highlightLifecycle.ts DERIVES the lifecycle instead; a
+ * projection reading a column no writer maintains would publish a stale
+ * constant.
+ */
+export interface HighlightSourceRow {
+  id: string;
+  owner_id: string;
+  visibility: string;
+  created_at: string;
+  /** Nullable on rows written before the column existed. */
+  updated_at: string | null;
+  expires_at: string | null;
+  /** §21's terminal soft delete. */
+  deleted_at: string | null;
+  /** §21's REVERSIBLE hide — §17's HIDE_HIGHLIGHT. Not the delete. */
+  archived_at: string | null;
+  pinned_at: string | null;
+  lifetime_class: string | null;
+  location_city: string | null;
+  location_country: string | null;
+}
+
+/**
+ * One row of `public.highlight_projection_policies` (migration 2721, applied to
+ * production at 20260915055812), narrowed to the two dimensions an
+ * audience-specific projection can act on.
+ *
+ * WHY ONLY TWO. `consentEnforcement()` in services/highlights/
+ * highlightPublicProjection.ts DERIVES which §10 consent dimensions any surface
+ * in this repository actually reads: SHARE and RESURFACE. STORE, PERSONALIZE and
+ * CONTRIBUTE_TO_AGGREGATE_INTEL are stored and read by nothing, and a projection
+ * that pretended to enforce one of them would be inventing a gate the rest of
+ * the system does not have. SHARE is what a profile surface is about; RESURFACE
+ * belongs to the feed and is not this projection's question.
+ */
+export interface HighlightPolicyRow {
+  highlight_id: string;
+  location_precision: string | null;
+  consent_share: boolean | null;
+}
+
+/**
+ * §12's Highlights, projected for one profile audience.
+ *
+ * §10's POLICY IS APPLIED HERE, IN THE BUILDER, and it reuses
+ * services/highlights/highlightProjectionPolicy.ts rather than restating the
+ * ladder. The live profile read of `highlights` already enforces the same two
+ * rules; a §18 derivative that did not would be a SECOND path to the same rows
+ * with the gate missing, which is exactly the shape §28.6 names.
+ */
+function highlightHalf(input: ProjectionInput, isOwner: boolean): ProjectedRow[] {
+  const policyFor = new Map<string, HighlightPolicyRow>(
+    (input.highlights?.policies ?? []).map((pol) => [pol.highlight_id, pol]),
+  );
+  return (input.highlights?.rows ?? [])
+    .filter((h) => h.owner_id === input.scope.owner_id)
+    // §21 keeps the three removals separate, and a profile is BROWSING:
+    // `deleted_at` is the terminal soft delete and `archived_at` is the
+    // reversible hide whose whole definition is "remove from normal browsing
+    // unless explicitly requested". Neither belongs on a profile, INCLUDING the
+    // owner's own — the owner reaches archived Highlights through the explicit
+    // request, which is a different surface.
+    .filter((h) => h.deleted_at === null && h.archived_at === null)
+    // §23 for a Highlight is `highlights.owner_id`, and the table carries no
+    // allow-list and no hidden-user list: the only audience distinction the row
+    // can support is public / not public. A builder that guessed a friendship
+    // here would be inventing an authorization the table cannot express.
+    .filter((h) => isOwner || h.visibility === "public")
+    // §10 SHARE, EXPLICIT-FALSE-ONLY, and deliberately not `!mayProject`.
+    // highlightPublicProjection.ts made that choice for the live profile read
+    // and gives the reason there: `unknown` (no policy row) is the state nearly
+    // every Highlight is in, and refusing on it would empty the surface rather
+    // than honour a decision nobody made. The owner always sees their own.
+    .filter((h) => isOwner || consentFromRow(policyFor.get(h.id) ?? null, "SHARE") !== "withheld")
+    .map((h) => project({
+      ...h,
+      // §10's precision ladder, applied BEFORE the whitelist rather than after:
+      // the clamp empties the fields on the object the whitelist then copies, so
+      // a rung of HIDDEN cannot survive by being re-read from `...h`. The owner
+      // is not clamped — the ladder governs PUBLICATION.
+      ...(isOwner ? {} : clampHighlightLocation(h, policyFor.get(h.id) ?? null)),
+      memory_id: null,
+      highlight_id: h.id,
+      source: "highlight",
+      // §3.1 occurred_at. `highlights` has no start time; `created_at` is when
+      // the Highlight was made and is the only instant the row has.
+      occurred_at: h.created_at,
+      // Never the caption. See PROFILE_FIELDS' neighbours: this half carries NO
+      // text at all rather than smuggling a caption through `title`.
+      title: null,
+      // `public.highlights` is one media_url per row — the 24-hour Stories shape
+      // — so the count is 1 and is not a guess.
+      media_count: 1,
+      audience: isOwner ? "OWNER" : "VIEWER",
+      pinned: h.pinned_at !== null,
+      lifetime_class: h.lifetime_class,
+      expires_at: h.expires_at,
+    }, PROFILE_FIELDS));
+}
+
+/**
+ * §12: "Pinned/manual order always outranks automatic ordering."
+ *
+ * Applied across BOTH halves rather than within each, so a pinned Highlight
+ * outranks a newer Memory and not merely a newer Highlight. The id tiebreak
+ * keeps the order TOTAL, which is what makes a rebuild byte-identical.
+ */
+function orderProfileHighlights(rows: ProjectedRow[]): ProjectedRow[] {
+  return rows.sort((a, b) => {
+    const ap = a.pinned === true ? 0 : 1;
+    const bp = b.pinned === true ? 0 : 1;
+    if (ap !== bp) return ap - bp;
+    const at = String(a.occurred_at ?? "");
+    const bt = String(b.occurred_at ?? "");
+    if (at !== bt) return bt.localeCompare(at);
+    return String(a.memory_id ?? a.highlight_id ?? "").localeCompare(String(b.memory_id ?? b.highlight_id ?? ""));
+  });
+}
+
+/**
+ * §10's location ladder for one Highlight, for a NON-OWNER reader.
+ *
+ * Three cases, and the middle one is the one that matters:
+ *   no policy row  — no owner-selected precision. The row's location is left
+ *                    UNCHANGED, which is what `resolveLocationDisclosure` does
+ *                    on this surface: LOCATION_PRECISION_DEFAULT is an unmade
+ *                    owner decision and is not made here either.
+ *   a valid rung   — clamped to it.
+ *   a rung the ladder does not contain — clamped to HIDDEN. FAIL CLOSED: a value
+ *                    the CHECK should have refused is evidence something is
+ *                    wrong, and publishing on it would be publishing on a policy
+ *                    nobody can read.
+ *
+ * `location_name` is not in this projection's whitelist and so never reaches a
+ * row; it is passed through the clamp anyway so the ladder is applied whole
+ * rather than in the subset this projection happens to carry today.
+ */
+function clampHighlightLocation(
+  h: HighlightSourceRow,
+  policy: HighlightPolicyRow | null,
+): { location_city: string | null; location_country: string | null } {
+  const stored = policy?.location_precision ?? null;
+  if (stored === null) return { location_city: h.location_city, location_country: h.location_country };
+  const clamped = clampLocationToPrecision(
+    { location_name: null, location_city: h.location_city, location_country: h.location_country },
+    isLocationPrecision(stored) ? stored : "HIDDEN",
+  );
+  return { location_city: clamped.location_city, location_country: clamped.location_country };
 }
