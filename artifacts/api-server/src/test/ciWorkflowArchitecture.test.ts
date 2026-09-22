@@ -291,6 +291,81 @@ describe("CI architecture — a re-run cannot inherit somebody else's slot", () 
     assert.ok((statSync(DECIDER).mode & 0o111) !== 0, "live-db-slot-decide.sh is not executable");
   });
 
+  // ── THE FORFEIT CLAUSE (2026-09-21) ────────────────────────────────────────
+  //
+  // Measured on run 35612480282. Its queue job hit the 45-minute timeout and
+  // FAILED; its three slot-gated DB jobs were skipped, correctly. But
+  // `api-server-check-all` carries `if: !cancelled()`, so it started anyway,
+  // and its `verify` step re-asked this predicate — which said YES, because the
+  // run was the oldest in_progress run. It was the oldest BECAUSE it was still
+  // running, and still running BECAUSE that job had been told it held the slot.
+  // Seven consecutive runs sat in that loop, each occupying ~90 minutes against
+  // a 45-minute timeout.
+  //
+  // These cases pin both halves of the fix: a forfeited run stops blocking
+  // others, and — the half that keeps this from being an eviction — a run that
+  // is merely SLOW is never dropped.
+
+  it("a run whose queue job FAILED stops blocking the runs behind it", () => {
+    const listing =
+      "2026-09-21T13:47:00Z 35612480282 forfeited\n" + "2026-09-21T14:29:15Z 35624863434 held\n";
+    assert.deepEqual(
+      decide("35624863434", listing),
+      { holder: "35624863434", code: 0 },
+      "the later run must acquire: the run ahead of it demonstrably never held the slot",
+    );
+  });
+
+  it("a forfeited run is refused its OWN slot, so its verify step fails instead of proceeding", () => {
+    // This is the half that actually stops the database being touched. Without
+    // it the run keeps working on a claim its queue job never won.
+    const listing =
+      "2026-09-21T13:47:00Z 35612480282 forfeited\n" + "2026-09-21T14:29:15Z 35624863434 held\n";
+    const r = decide("35612480282", listing);
+    assert.equal(r.code, 1, "a run that forfeited must not be told it holds the slot");
+    assert.notEqual(r.holder, "35612480282");
+  });
+
+  it("does NOT evict a run that is merely slow — only one that already lost", () => {
+    // The mutual-exclusion property this whole tier exists for. A run whose
+    // queue job succeeded or is still running keeps the slot until its jobs
+    // finish, however long that takes.
+    const listing =
+      "2026-09-21T13:47:00Z 35612480282 held\n" + "2026-09-21T14:29:15Z 35624863434 held\n";
+    assert.deepEqual(
+      decide("35624863434", listing),
+      { holder: "35612480282", code: 1 },
+      "waiting is the price of a shared mutable database; evicting an active user is not on the menu",
+    );
+  });
+
+  it("an UNKNOWN claim keeps a run blocking — the annotation fails closed", () => {
+    // `annotate_claims` emits `held` when the Actions API cannot be reached or
+    // the job cannot be found, and a two-field line means `held` too. Either
+    // way the behaviour must be the pre-fix behaviour, never "assume it is
+    // done with the database".
+    const twoField = "2026-09-21T13:47:00Z 35612480282\n2026-09-21T14:29:15Z 35624863434\n";
+    assert.deepEqual(decide("35624863434", twoField), { holder: "35612480282", code: 1 });
+    const explicitHeld = "2026-09-21T13:47:00Z 35612480282 held\n2026-09-21T14:29:15Z 35624863434 held\n";
+    assert.deepEqual(decide("35624863434", explicitHeld), { holder: "35612480282", code: 1 });
+  });
+
+  it("a claim value it cannot name is REFUSED, not ignored", () => {
+    const listing = "2026-09-21T13:47:00Z 35612480282 probably\n2026-09-21T14:29:15Z 35624863434 held\n";
+    assert.equal(
+      decide("35624863434", listing).code,
+      3,
+      "a listing that did not parse is not a listing that proves the database is free",
+    );
+  });
+
+  it("when EVERY active run has forfeited, nobody holds the slot — including us", () => {
+    // Not "the slot is free". This run still has to establish its own claim,
+    // and it cannot do that by being the oldest of an empty set.
+    const listing = "2026-09-21T13:47:00Z 35612480282 forfeited\n2026-09-21T14:29:15Z 35624863434 forfeited\n";
+    assert.equal(decide("35624863434", listing).code, 1);
+  });
+
   it("refuses the exact attempt-2 bypass measured on 2026-09-05", () => {
     // The listing as it stood at 13:17:47: main's attempt 2 had just restarted
     // (run_started_at 13:17:42) while PR #408's run, started 12:49:56, was

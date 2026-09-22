@@ -49,6 +49,24 @@ import { recordLocalSelection, clearLocalZeroState } from '../../services/localZ
 import { clearRecentSelections } from '../../services/suggestionHistory.ts';
 import type { InputSuggestion } from '../../types/inputSuggestion.ts';
 
+// ── SEEDED 2026-09-21 (G340) ────────────────────────────────────────────────
+// `useInputAssistance` derives its policy from the context descriptor, which
+// since G340 comes from `GET /input-assistance/policies` rather than a local
+// table. With nothing fetched every context resolves CONSERVATIVE — mode
+// `no_assistance`, an unreachable `minChars` — so the hook correctly makes no
+// request and renders no rows, and every assertion below about suggestions
+// would be vacuous. Seeding states the premise these tests always relied on.
+import { INPUT_CONTEXTS as _SEED_CONTEXTS } from '../../types/inputContext.ts';
+import { _seedPolicyForTests as _seedPolicy } from '../../services/policyStore.ts';
+// `telegraph_recipient` is seeded VIEWER-SCOPED on purpose: the §29 cases below
+// exist to prove an uncacheable field never reads or writes the process-global
+// cache, and that is only a real assertion if the authority actually classifies
+// it as one. The blanket template is `public`, which is the one class the cache
+// admits — seeding it unchanged would have made those cases pass for the wrong
+// reason.
+_seedPolicy(_SEED_CONTEXTS, { telegraph_recipient: { privacyClass: 'viewer_scoped' } });
+
+
 const mockRequest = requestSuggestions as jest.MockedFunction<typeof requestSuggestions>;
 
 const FIELD = 'test.zerostate.destination';
