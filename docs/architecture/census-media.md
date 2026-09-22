@@ -421,9 +421,9 @@ testable structure by §3 and §4.1. Narrative.
 | MD37 | `sourceType` is the eight-value set camera/library/provider/official/community/generated/screenshot/derivative | **W** | `2250:98-108` adds the CHECK — as a **superset including the legacy `'user'`**, documented as such (*"legacy default (0191); kept, not rewritten"*). `0191:31` still defaults `source_type` to `'user'`, so every row written on the dark path lands outside the §6 vocabulary. |
 | MD38 | `version` — the asset is a versioned aggregate | **W** | `0191:36` `version INTEGER NOT NULL DEFAULT 1` exists; no writer increments it and no reader compares it. A column, not a concurrency contract. |
 | MD39 | `capturedAt` is distinct from `uploadedAt` | **C** | `lib/mediaAssets.ts:26-50` is an unusually candid header: the column, the type and every consumer existed but *"NO production caller ever supplied a non-null value"*. `capturedAtFromImageBytes` (`:69-84`) now reads EXIF from the raw buffer **before** `processImage` strips it, and rejects anything outside `[1990-01-01, now+24h]` — an implausible capture time stays `null` rather than becoming a lie. |
-| MD40 | `MediaAttachment` contract (asset↔entity link) | **C** | `0191:46-58`, with `UNIQUE (media_asset_id, entity_type, entity_id)`. Read on a live path at `services/wall/WallCandidateLoaders.ts:212`. |
+| MD40 | `MediaAttachment` contract (asset↔entity link) | **C** | `0191:46-58`, with `UNIQUE (media_asset_id, entity_type, entity_id)`. Read on a live path at `services/wall/WallCandidateLoaders.ts:243#.select("entity_id, is_cover, position, media_assets(captured_at)")`. *(POINTER REFRESH 2026-09-22 (§17): the Wall lane moved this read 31 lines and the old pointer landed on a bare `}`. Re-read at this head — the same table, the same four projected columns, the same `entity_type`/`entity_id` predicate. The only edit inside the block wraps the envelope in `rowsOrThrow`, which raises a PostgREST `{ error }` into the catch that already stood there; that catch returns the same empty map the swallowed error produced, so the contract this row grades is untouched.)* |
 | MD41 | `entityType` covers post/postcard/memory/trip/place/event/hidden_gem/shared_moment/observation | **W** | `0191:49` is bare `TEXT` with **no CHECK** — nine required values, zero enforced. `2250:47-51` explicitly asserts only position/is_cover/visibility_override. Writers exist for `memory` (`PassportMemoryService.ts:133`) and `hidden_gem` (`HiddenGemService.ts:150`); `shared_moment` and `observation` have none. |
-| MD42 | `position` / `isCover` ordering and cover selection | **C** | `0191:51-52` plus the partial cover index `:60-61`; read at `WallCandidateLoaders.ts:212-221`. |
+| MD42 | `position` / `isCover` ordering and cover selection | **C** | `0191:51-52` plus the partial cover index `:60-61`; read at `services/wall/WallCandidateLoaders.ts:243#.select("entity_id, is_cover, position, media_assets(captured_at)")` and applied at `services/wall/WallCandidateLoaders.ts:260#if (!cur || (cover && !cur.cover) || (cover === cur.cover && position < cur.position)) {` — cover wins, then lowest `position`. *(POINTER REFRESH 2026-09-22 (§17): repointed after the Wall lane's edits; the selection expression is byte-identical.)* |
 | MD43 | `visibilityOverride` on the attachment | **W** | `0191:53` `visibility_override TEXT` exists and **nothing reads it**: no non-test reference outside `database.types.ts`. A stored override that no serving path consults is not an override. |
 | MD44 | A single asset participates in multiple product objects without duplicating the underlying file | **W** | The *schema* makes it possible (`UNIQUE (media_asset_id, entity_type, entity_id)` allows fan-out from one asset). The *product* does the opposite: `.agents/memory/posts-media-urls-vs-post-media.md` records that `posts.media_urls` and `post_media` are *"separate stores that are not kept in sync"*, that `routes/posts.ts` creation *"writes `media_urls` and inserts no `post_media` row in the same handler"*, and that `lib/mediaAccess.ts` authorises by `.contains("media_urls",[publicUrl])` as a **distinct branch** from its `post_media` branch. The file's identity is duplicated across two stores that can disagree, and the canonical third is dark. |
 
@@ -625,7 +625,7 @@ all — `MediaProjectionService.ts:864-866` sorts by `capturedAt` and `:472-475`
 | MD189 | Social relevance | **C** | `portavaRank.ts:194` `socialProof 0.25` plus the follow-graph terms. |
 | MD190 | Novelty | **C** | `portavaRank.ts:198` `seenPenalty`; `MediaFeedRankingService.ts:16` per-viewer per-session fatigue. |
 | MD191 | Privacy | **C** | Not a score term by design — privacy resolves as a **gate** before ranking (`lib/mediaEligibility.filterEligibleMediaCandidates`, `services/ranking/EligibilityChecker.ts`), which is the correct construction of the requirement. |
-| MD192 | Safety | **C** | Same gate: moderation states that must never reach a social surface are refused upstream (`WallCandidateLoaders.ts:1119`; `lib/mediaEligibility`). |
+| MD192 | Safety | **C** | Same gate: moderation states that must never reach a social surface are refused upstream (`services/wall/WallCandidateLoaders.ts:1155#moderation states that must never reach a social surface (media_assets).`; `lib/mediaEligibility`). *(POINTER REFRESH 2026-09-22 (§17): repointed 1119→1155 after the Wall lane's edits; the deny-list's members are byte-identical, and §9's standing caveat about which LAYER that list runs on (media_assets, not post_media) is unchanged.)* |
 | MD193 | Diversity | **C** | `MediaFeedRankingService.ts:17` — a diversity re-ranking pass over city, category and creator; `portavaRank.diversify`. |
 | MD194 | Objective: Expected Real-World Utility | **W** | `portavaRank.ts:192` `actionability 0.9`, commented *"the Portava edge: things you can DO"*, is a genuine partial. It is a property of the *candidate kind*, not a prediction of the viewer's real-world action, and it is outweighed in the media path by the engagement multipliers stacked on top of it. |
 | MD195 | Objective: Experience Fit | **N** | No experience-fit term in either ranker. |
@@ -766,7 +766,7 @@ predate Media v2 and the spec inherited them.
 | MD270 | Privacy validation | **C** | `lib/mediaLocationVisibility` choke point + `lib/protectedLocations` + the boundary scrub. |
 | MD271 | Context qualification | **C** | `resolveMediaEntities` + `lib/mediaEligibility.filterEligibleMediaCandidates`. |
 | MD272 | Intelligence eligibility | **C** | `mediaEvidenceEligibility.computeIntelligenceEligibility`, called at `lib/mediaAssets.ts:129`. |
-| MD273 | Distribution | **C** | `lib/mediaEligibility.filterEligibleMediaCandidates` is the fail-closed distribution gate; `WallCandidateLoaders.ts:1119` names the moderation states that must never reach a social surface. |
+| MD273 | Distribution | **C** | `lib/mediaEligibility.filterEligibleMediaCandidates` is the fail-closed distribution gate; `services/wall/WallCandidateLoaders.ts:1155#moderation states that must never reach a social surface (media_assets).` names the moderation states that must never reach a social surface. *(POINTER REFRESH 2026-09-22 (§17): repointed 1119→1155; members byte-identical.)* |
 | MD274 | `MediaModerationStatus = processing \| active \| limited \| rejected \| removed \| owner_deleted` | **W** | `2250:26-46` adds the §36 vocabulary as a **superset** alongside the legacy `pending \| approved \| flagged \| rejected`, documents the mapping, and deliberately **updates no row** and leaves the DEFAULT as the legacy `'pending'`. So the canonical vocabulary is admissible and unused: every row in existence carries a legacy value. Conservative and correct as a migration; not §36 as a live state machine. |
 
 ### §37 Video Requirements
@@ -864,7 +864,7 @@ Judged by responsibility, not by name — the divergence is recorded in each row
 | id | Requirement | V | Evidence |
 | --- | --- | --- | --- |
 | MD338 | MediaAssetService | **W** | `lib/mediaAssets.ts` is the module, and `:118` makes every write a no-op under the seeded-off flag. The service exists and cannot act. |
-| MD339 | MediaAttachmentService | **W** | Same module (`recordMediaAsset` writes both), same gate. Attachments are written on the Memory and Hidden-Gem paths (`PassportMemoryService.ts:133`, `HiddenGemService.ts:150`) and are read on one live path (`WallCandidateLoaders.ts:212`) — so the read side works against rows the write side cannot create. |
+| MD339 | MediaAttachmentService | **W** | Same module (`recordMediaAsset` writes both), same gate. Attachments are written on the Memory and Hidden-Gem paths (`PassportMemoryService.ts:133`, `HiddenGemService.ts:150`) and are read on one live path (`services/wall/WallCandidateLoaders.ts:243#.select("entity_id, is_cover, position, media_assets(captured_at)")`) — so the read side works against rows the write side cannot create. *(POINTER REFRESH 2026-09-22 (§17): repointed after the Wall lane's edits. Counted rather than assumed — `from("media_attachments")` occurs 8 times in non-test `artifacts/api-server/src`, the same 8 before and after that lane, and the Wall read named here is the same one. The asymmetry this row grades is a WRITE-side gap and no Wall edit can close or widen it, so **W** stands.)* |
 | MD340 | MediaProjectionService | **C** | `services/media/MediaProjectionService.ts:1-23`. |
 | MD341 | MediaContextResolver | **C** | `MediaActionResolver.resolveMediaEntities` (`:197-260`) + `MediaExperienceResolver.ts`. Merged into two modules rather than named separately. |
 | MD342 | MediaPrivacyGateway | **C** | `lib/mediaLocationVisibility.ts` (the choke point, `:354,468,542`) + `lib/mediaEligibility` + `lib/media/mediaLocationSafety.scrubPreciseLocation` as the boundary backstop. |
@@ -1207,7 +1207,7 @@ the four things cited in its place is inert).
 ### 9.3 The distribution gate was fail-closed at one level and fail-open at the next
 
 MD273 read **C**: *"`filterEligibleMediaCandidates` is the fail-closed distribution gate"*,
-plus a second clause naming line 1119 of `services/wall/WallCandidateLoaders.ts` as the place
+plus a second clause naming line 1155 (line 1119 when that paragraph was written) of `services/wall/WallCandidateLoaders.ts` as the place
 *"the moderation states that must never reach a social surface"* are listed. The two clauses
 are about different code, and the row read them as one gate.
 
@@ -3120,3 +3120,42 @@ surfaced their error to callers and still nobody noticed, because nothing compar
 flag's *code* against production's *schema*. MD106 is one row; `media_intent_signals` was
 one of **68 tables that 41 migrations declare and production does not have**. That
 inventory is reported, not repaired, and it is not this census's to close.
+
+---
+
+## 17. Pointer refresh 2026-09-22 — one counted file, five citations repaired, no verdict moved
+
+`check:census-freshness` reported this census STALE against exactly one counted file:
+`artifacts/api-server/src/services/wall/WallCandidateLoaders.ts` (+135 / −67 since this
+census's declared `head_commit` `1fe72289b`). The change is the Wall lane's
+failure-vs-empty work (PR #459), graded in `docs/architecture/census-wall.md` §15. It is
+named here because this census counts that file, not because this census grades that work.
+
+**The five rows and prose lines that cite it were re-read, and the measurement is the
+point, not the topic.** The lane's edit wraps PostgREST result envelopes in a
+`rowsOrThrow` helper so a `{ data: null, error }` — which supabase-js RESOLVES rather
+than throws — reaches the `catch` block that was already written for it. Inside
+`loadCapturedAtByEntity`, the one function this census actually reads, that catch logs
+and returns the same empty map the swallowed error already produced, so **the resulting
+state is identical and no gate, column, predicate or deny-list member changed.**
+
+What was measured rather than assumed:
+
+- **MD40 / MD42** — the `media_attachments` read: same table, same four projected
+  columns (`entity_id, is_cover, position, media_assets(captured_at)`), same
+  `entity_type` / `entity_id` predicate, and a byte-identical cover-then-position
+  selection expression. Only its line number moved, 212 → 243.
+- **MD339** — "read on ONE live path." Counted, not assumed:
+  `from("media_attachments")` occurs **8 times in non-test `artifacts/api-server/src` at
+  this head and 8 times at `origin/main`**, and the Wall read named by the row is the
+  same one in both. The asymmetry the row grades is a WRITE-side gap, which no Wall edit
+  can open or close. **W stands.**
+- **MD192 / MD273** — the moderation deny-list moved 1119 → 1155 and its members are
+  byte-identical. §9's caveat about which layer it runs on is untouched.
+
+**No verdict moved, and this is NOT a re-measurement of this census** — 450 rows, 301 C /
+81 W / 66 N / 2 X stand as §16 left them. Two of the five citations had gone DEAD (they
+landed on a bare `}`), which is what `check:citation-targets` counts; all five were
+repointed by reading the claim and anchored so `check:doc-citations` holds them from
+here. The file is named in
+`artifacts/api-server/src/scripts/CENSUS_STALENESS_ACKNOWLEDGED.json` with this argument.
