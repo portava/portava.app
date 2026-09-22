@@ -73,6 +73,33 @@
  * MEMORY sources only, and `linkHighlightSources` refuses any other type by
  * name rather than writing it unchecked.
  *
+ * ── STATICALLY RESOLVABLE, AND WHY THAT IS NOT A STYLE PREFERENCE ──────────
+ * Every `.from()` here names `"highlight_sources"` as a STRING LITERAL and
+ * every `.select()` list is a literal too. That is not duplication for its own
+ * sake. `check:write-path-columns` resolves both through the TypeScript AST and
+ * diffs the columns it finds against the LIVE schema; `.from(CONST)` resolves
+ * to `<dynamic>`, at which point the extractor abandons the site and NONE of
+ * its columns is verified against anything. This module is the only TypeScript
+ * writer `public.highlight_sources` has, so a blind spot here has no second
+ * reader to catch it. The identifier form shipped that way, the check went red
+ * on the integration head naming all four sites, and this is the remedy the
+ * check itself prescribes — not `UNRESOLVED_ALLOWLIST`, which would have hidden
+ * the four permanently.
+ *
+ * What the identifier form bought, and how it is bought back: the joined array
+ * was ALSO the argument to `probeHighlightObject`, so the probed set and the
+ * selected set could not drift. Literals can. So they are pinned by assertion
+ * instead — `src/test/highlightSourceLinks.test.ts` runs the same extractor
+ * over this file and fails if any site names a column the probe does not check,
+ * or if the probe checks one no query names. That is a strictly better trade:
+ * the assertion runs with no credentials, in every container, and the coupling
+ * it replaces was never checked anywhere.
+ *
+ * `HIGHLIGHT_SOURCES_TABLE` and `HIGHLIGHT_SOURCES_COLUMNS` remain the single
+ * source of truth for the PROBE and for every error message. Only the query
+ * call sites are literal, because only the query call sites are what the
+ * extractor reads.
+ *
  * It also does not REBUILD a Highlight from its sources. Knowing what a
  * Highlight was built from is the precondition for §28.12's rebuild, not the
  * rebuild itself; census H93 stays BUILT-BUT-WRONG on that and this header is
@@ -318,9 +345,13 @@ export async function linkHighlightSources(
 
   try {
     const { data, error } = await sc
-      .from(HIGHLIGHT_SOURCES_TABLE)
+      // LITERAL table name and LITERAL select list, both deliberately — see
+      // the "STATICALLY RESOLVABLE" note in this file's header. The pair is
+      // pinned to HIGHLIGHT_SOURCES_COLUMNS by
+      // src/test/highlightSourceLinks.test.ts, which fails if either drifts.
+      .from("highlight_sources")
       .upsert(rows, { onConflict: "highlight_id,source_type,source_id" })
-      .select([...HIGHLIGHT_SOURCES_COLUMNS, "created_at"].join(", "));
+      .select("highlight_id, source_type, source_id, provenance, created_at");
     if (error) {
       return fail("unavailable", `${HIGHLIGHT_SOURCES_TABLE} write failed: ${String((error as any)?.message ?? error)}`);
     }
@@ -381,8 +412,8 @@ export async function readHighlightSources(
 
   try {
     const { data, error } = await sc
-      .from(HIGHLIGHT_SOURCES_TABLE)
-      .select([...HIGHLIGHT_SOURCES_COLUMNS, "created_at"].join(", "))
+      .from("highlight_sources")
+      .select("highlight_id, source_type, source_id, provenance, created_at")
       .eq("highlight_id", highlightId);
     if (error) {
       return fail("unavailable", `${HIGHLIGHT_SOURCES_TABLE} read failed: ${String((error as any)?.message ?? error)}`);
@@ -421,7 +452,7 @@ export async function highlightIdsProjecting(
 
   try {
     const { data, error } = await sc
-      .from(HIGHLIGHT_SOURCES_TABLE)
+      .from("highlight_sources")
       .select("highlight_id, source_type, source_id")
       .eq("source_type", "MEMORY")
       .eq("source_id", memoryId);
