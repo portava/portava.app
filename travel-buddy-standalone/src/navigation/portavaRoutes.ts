@@ -670,6 +670,19 @@ export const PORTAVA_ROUTES: PortavaRouteDefinition[] = [
     deepLink: '/passport/shared-context',
   },
   {
+    key: 'story-archive',
+    path: 'story-archive',
+    title: 'Story Archive',
+    // Reached from Passport -> owner menu -> Content. Owner-only, and the
+    // server enforces it: both listings filter on the caller's own id and take
+    // no target user, so there is no parameter to point somewhere else.
+    parent: 'tab-passport',
+    icon: 'Archive',
+    requiresAuth: true,
+    ownerOnly: true,
+    deepLink: '/story-archive',
+  },
+  {
     key: 'passport-journeys',
     path: 'passport/journeys',
     title: 'Journeys',
