@@ -285,8 +285,17 @@ import {
  * repaired by reading the claim (the gem disclosure at :274, `add_to_trip` at
  * :592, the thread-rollback case at :502) and given anchors, so doc-citations
  * now holds them. The ceiling is the measurement, not a choice between 235 and
- * 238. */
-export const MAX_DEAD_TARGETS = 210;
+ * 238.
+ *
+ * RE-MEASURED 2026-09-22 by the Telegraph lifecycle lane: 208. That lane's own
+ * edits shifted FOUR citations onto blank lines (`routes/availability.ts` :161
+ * and :706, `server/telegraph/commandRoute.ts` :70, and
+ * `domain/telegraph/commands/telegraphCommands.ts` :97), and repairing them by
+ * READING the claim found two more that were already dead at the same sites —
+ * `commandRoute.ts:271`/:306 and `telegraphCommands.ts:121`. All six were
+ * repointed and given anchors, so doc-citations holds them now and an offset
+ * repair cannot bring them back. */
+export const MAX_DEAD_TARGETS = 208;
 
 /** Pinned to a commit by its own declaration; its lines must not track HEAD. */
 const PINNED_DOCS = new Set(['docs/architecture/mobile-reachability-ledger.md']);

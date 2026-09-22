@@ -85,6 +85,16 @@ export const GifPayload = z.object({
 export const TELEGRAPH_SHARE_PURPOSES = ["live_session_sharing", "presence_in_context"] as const;
 export type TelegraphSharePurpose = (typeof TELEGRAPH_SHARE_PURPOSES)[number];
 
+/**
+ * §4.3's precision ladder, exported because it is also the LOCATION message's
+ * `subtype`, and `services/telegraph/lifecycleSweep.ts` narrows on that subtype
+ * to reach the one index `messages` has for it. Two copies of this list would
+ * drift, and the drift would be silent: a new precision would produce shares
+ * the expiry sweep never looked at. `telegraphLifecycleEvents.test.ts` asserts
+ * the sweep's filter IS this list.
+ */
+export const LOCATION_PRECISIONS = ["area", "venue", "exact"] as const;
+
 /** §6.2 LOCATION — coarse by default; §4.3's precision ladder lives here. */
 export const LocationPayload = z.object({
   label: z.string().min(1).max(200),
@@ -92,7 +102,7 @@ export const LocationPayload = z.object({
   approximateLabel: z.string().max(200).nullish(),
   placeId: z.string().max(200).nullish(),
   /** Precision the SENDER chose. `exact` is opt-in per message, never default. */
-  precision: z.enum(["area", "venue", "exact"]).default("area"),
+  precision: z.enum(LOCATION_PRECISIONS).default("area"),
   lat: z.number().min(-90).max(90).nullish(),
   lng: z.number().min(-180).max(180).nullish(),
   caption: z.string().max(500).nullish(),

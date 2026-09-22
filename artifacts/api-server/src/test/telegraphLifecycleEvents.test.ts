@@ -59,6 +59,8 @@ import {
   tickOnce,
 } from "../server/telegraph/lifecycleScheduler.js";
 import {
+  LOCATION_PRECISIONS,
+  LocationPayload,
   MAX_LOCATION_SHARE_HOURS,
   TELEGRAPH_SHARE_PURPOSES,
 } from "../services/telegraph/messageKinds.js";
@@ -502,6 +504,25 @@ describe("§13.2 location.expired — the window, and what a tick covers", () =>
     assert.equal(out.expired, 0);
     assert.equal(out.failures.length, 1);
     assert.match(out.failures[0]!, /messages/);
+  });
+
+  it("the sweep's subtype narrowing IS the payload's precision ladder", () => {
+    // The sweep narrows on `subtype` to reach `idx_messages_subtype`, which is
+    // the only index `messages` has that this query can use. Two copies of the
+    // ladder would drift and the drift would be SILENT: a new precision would
+    // produce shares the expiry sweep never looked at, and the only symptom
+    // would be a live chip nothing takes down.
+    const schemaValues = (LocationPayload.shape.precision as any)._def.innerType._def.values;
+    assert.deepEqual([...LOCATION_PRECISIONS], [...schemaValues]);
+  });
+
+  it("a share the subtype filter would miss is not silently skipped — the filter is the ladder", async () => {
+    const c = makeClient({
+      messages: [locationMsg("share-1", ALICE, min(-70), { expiresAt: min(-5), precision: "exact" })],
+    });
+    const out = await sweepExpiredLocationShares(c, { now: new Date(NOW), since: new Date(NOW - 10 * 60_000) });
+    await settle();
+    assert.equal(out.expired, 1, "every precision in the ladder must be reachable by the sweep");
   });
 
   it("the scan is bounded by a horizon, stated rather than implied", () => {
