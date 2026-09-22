@@ -298,8 +298,25 @@ import {
  * here and they cannot silently rot back. The net is one BELOW the old ceiling
  * rather than level with it because the anchors also moved one previously
  * unanchored citation out of this check's population. The number below is what
- * the tool measured at that tree, not a target chosen for it. */
-export const MAX_DEAD_TARGETS = 209;
+ * the tool measured at that tree, not a target chosen for it.
+ *
+ * LOWERED 2026-09-22, 209 -> 201, by the Telegraph domain/commands/authorization
+ * lane. Also not a sweep. That lane made three edits inside `domain/telegraph/`
+ * — a `dispatchTable` import in `contracts/conversationSearch.ts` and
+ * `commands/telegraphCommands.ts`, and one in `policies/attentionLadder.ts` —
+ * plus a comment in `routes/telegraphCommands.ts`, and the shifts broke
+ * seventeen citations across census-telegraph, census-discovery and
+ * census-compass. Every one was repointed by READING the claim and finding the
+ * line that carries it: `:390` was the confirm-action block's own sentence about
+ * re-verifying trip membership, `:34` was the `create_meetup_draft` intent, `:80`
+ * and `:158` were the safe-metadata allowlist and where it is applied, and
+ * 3586's `:412` and `:398` were the authorize hook and the ownership refusal —
+ * the last two had been imprecise BEFORE the shift and now point at the lines
+ * that actually carry those two claims. All of them gained an `#anchor`, which
+ * is why the net is eight below rather than level: the anchors moved eight
+ * previously unanchored citations out of this check's population and into
+ * doc-citations', where a rot is named rather than merely counted. */
+export const MAX_DEAD_TARGETS = 201;
 
 /** Pinned to a commit by its own declaration; its lines must not track HEAD. */
 const PINNED_DOCS = new Set(['docs/architecture/mobile-reachability-ledger.md']);

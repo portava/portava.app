@@ -30,6 +30,7 @@
  */
 
 import type { TelegraphReason } from "../contracts/telegraphReasonCodes.js";
+import { dispatchTable } from "../contracts/dispatchTable.js";
 
 /** §13.1, verbatim and in the spec's order. */
 export const TELEGRAPH_COMMANDS = [
@@ -94,14 +95,25 @@ export function isIssuable(command: string): command is IssuableCommand {
  * `SEND_MESSAGE` here gets told the route that sends messages, rather than
  * "unknown command" — which is the difference between a contract and a wall.
  */
-export const LEGACY_PATH_COMMANDS: Readonly<Record<string, string>> = {
+export const LEGACY_PATH_COMMANDS: Readonly<Record<string, string>> = dispatchTable({
   SEND_MESSAGE: "POST /api/threads/:threadId/messages",
   EDIT_MESSAGE: "PATCH /api/messages/:messageId",
   DELETE_MESSAGE: "DELETE /api/messages/:messageId",
   ACCEPT_REQUEST: "POST /api/message-requests/:requestId/accept",
   DECLINE_REQUEST: "POST /api/message-requests/:requestId/decline",
-  CREATE_DECISION: "POST /api/telegraph-chat/create-meetup or /start-poll",
-  CAST_VOTE: "the meetup RSVP surface (meetup_time_votes)",
+  // Two doors each, and BOTH are named. §8's general decision shipped on the
+  // coordination route — `kind: DECISION` with four resolution rules, a
+  // deadline and options, answered by `kind: VOTE` — while these entries still
+  // sent every caller to the meetup shape, and `CAST_VOTE` named a TABLE rather
+  // than an endpoint anyone could be sent to. Naming only the general home
+  // would be the same mistake reversed: T83's meetup triple and T167's RSVP are
+  // both C and are still the right door for a meetup.
+  CREATE_DECISION:
+    "POST /api/threads/:threadId/coordination with kind DECISION (general), " +
+    "or POST /api/telegraph-chat/create-meetup or /start-poll (meetup shape)",
+  CAST_VOTE:
+    "POST /api/threads/:threadId/coordination with kind VOTE (general), " +
+    "or the meetup RSVP surface (meetup_time_votes)",
   SHARE_LOCATION: "POST /api/me/safe-return/sessions (Safe Return live share)",
   STOP_LOCATION_SHARE: "POST /api/me/safe-return/sessions/:id/live-share/stop",
   SET_AVAILABILITY: "POST /api/me/availability-windows",
@@ -117,18 +129,71 @@ export const LEGACY_PATH_COMMANDS: Readonly<Record<string, string>> = {
   // exist when it does is worse than no refusal: it sends them away from the
   // route that would have worked.
   SET_COORDINATION_STATUS: "POST /api/threads/:threadId/coordination with kind COORDINATION",
-};
+  // §9's CoordinationSession IS this command, on the same route. This entry
+  // used to sit in UNIMPLEMENTED_COMMANDS below, saying "no coordination
+  // session ENTITY exists (census T85/T168)" — for exactly as long as it took
+  // §9's coordination surface to build one and for nobody to come back here.
+  // A session now has an id (the opening message's own), a startedBy, a
+  // recordable DISRUPTED and an endedAt set only on COMPLETE or CANCELLED
+  // (`services/telegraph/coordination.ts` projectCoordinationSession), and the
+  // route that opens one is mounted with no flag and no migration behind it.
+  // The sentence above SET_COORDINATION_STATUS applies here unchanged: a
+  // refusal that says a thing does not exist when it does sends a caller away
+  // from the route that would have worked.
+  CREATE_COORDINATION_SESSION: "POST /api/threads/:threadId/coordination with kind COORDINATION_SESSION",
+});
 
 /**
- * §13.1 commands that exist nowhere at all.
+ * §13.1 commands that exist nowhere at all — DERIVED, not hand-listed.
  *
- * Named so the endpoint's refusal can distinguish "go there instead" from
- * "this does not exist yet", which are different answers and lead a caller to
- * different actions.
+ * The endpoint's refusal distinguishes "go there instead" (409) from "this does
+ * not exist yet" (501), which are different answers and lead a caller to
+ * different actions. Which commands are in which category is a FACT ABOUT THE
+ * OTHER TWO LISTS, so it is computed from them rather than maintained beside
+ * them.
+ *
+ * WHY DERIVED, AND IT IS NOT TIDINESS. This list was hand-written and it went
+ * stale in the direction that costs a caller the most. It held
+ * `CREATE_COORDINATION_SESSION` with the note "no coordination session ENTITY
+ * exists (census T85/T168)" — accurate when written, and still sitting here
+ * long after §9's coordination surface shipped one. So `POST
+ * /api/telegraph/commands` answered **501 "nothing in this repository
+ * implements it"** about a command `POST /api/threads/:threadId/coordination`
+ * implements today, with no flag and no migration behind it. That is the exact
+ * failure `SET_COORDINATION_STATUS` was moved out of this list for, one entry
+ * earlier and in this file's own words. A hand list rots silently in that
+ * direction because nothing fails when it does; a derivation cannot.
+ *
+ * TODAY IT IS EMPTY, and that is a measurement: all eighteen §13.1 commands
+ * have a home — sixteen in `LEGACY_PATH_COMMANDS`, two in `ISSUABLE_COMMANDS`.
+ * The 501 branch in `server/telegraph/commandRoute.ts` is therefore currently
+ * unreachable, and it is still the RIGHT branch: a nineteenth command added to
+ * `TELEGRAPH_COMMANDS` with nowhere to go lands here automatically and gets the
+ * 501 rather than a bare "Unknown command", which would tell a caller that a
+ * name the SPECIFICATION uses was invented. `unimplementedCommandsFrom` below
+ * is the rule, unit-tested against a hypothetical command so the behaviour is
+ * covered while the live answer is empty.
+ *
+ * Having a home is NOT the same as being reachable. `UNSEND_MESSAGE` and
+ * `ADD_REACTION` are issuable here and answer `feature_disabled` on every
+ * deployment, because their schema (2810/2811) is in no database. That is the
+ * ceiling on census T161/T163, and this list cannot express it — a command with
+ * a door that is locked is not a command with no door.
  */
-export const UNIMPLEMENTED_COMMANDS: readonly string[] = [
-  "CREATE_COORDINATION_SESSION",  // §9 — no coordination session ENTITY exists (census T85/T168)
-];
+export function unimplementedCommandsFrom(
+  commands: readonly string[],
+  issuable: readonly string[],
+  legacy: Readonly<Record<string, string>>,
+): string[] {
+  const hasHome = new Set<string>(issuable);
+  return commands.filter(
+    (c) => !hasHome.has(c) && !Object.prototype.hasOwnProperty.call(legacy, c),
+  );
+}
+
+export const UNIMPLEMENTED_COMMANDS: readonly string[] = Object.freeze(
+  unimplementedCommandsFrom(TELEGRAPH_COMMANDS, ISSUABLE_COMMANDS, LEGACY_PATH_COMMANDS),
+);
 
 /** One command, as the wire carries it. */
 export interface TelegraphCommandEnvelope {

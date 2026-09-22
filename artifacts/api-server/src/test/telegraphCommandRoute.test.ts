@@ -41,6 +41,7 @@ import {
   ISSUABLE_COMMANDS,
   LEGACY_PATH_COMMANDS,
   UNIMPLEMENTED_COMMANDS,
+  unimplementedCommandsFrom,
 } from "../domain/telegraph/commands/telegraphCommands.js";
 
 const ALICE = "aaaaaaaa-0000-4000-8000-000000000001";
@@ -253,11 +254,41 @@ describe("POST /telegraph/commands — the door", () => {
     assert.match(String(body.message), /POST \/api\/threads\/:threadId\/messages/);
   });
 
-  it("answers 501 for a §13.1 command nothing implements", async () => {
+  // This test used to send `CREATE_COORDINATION_SESSION` and assert 501. That
+  // command stopped being unimplemented when §9's coordination surface shipped
+  // a CoordinationSession (census T85 W -> C), and `UNIMPLEMENTED_COMMANDS` was
+  // not updated, so the endpoint told callers the capability did not exist for
+  // as long as this test pinned the stale answer in place. It now sends a
+  // command that IS still §13.1's and IS still homeless — and today there is
+  // none, so the two halves are asserted separately:
+  //
+  //   - the live list is empty, which is a measurement of the tree, and
+  //   - the RULE that produces the 501 still works, checked against a
+  //     hypothetical nineteenth command, so the branch keeps its coverage while
+  //     being unreachable in fact.
+  //
+  // See src/test/telegraphCreateCoordinationSession.test.ts for the 409 this
+  // command now correctly gets.
+  it("no §13.1 command is homeless today — the 501 branch is unreachable, by measurement", () => {
+    assert.deepEqual([...UNIMPLEMENTED_COMMANDS], []);
+  });
+
+  it("the 501 rule still holds: a §13.1 command with no home is unimplemented", () => {
+    const derived = unimplementedCommandsFrom(
+      [...TELEGRAPH_COMMANDS, "TELEPORT_USER"],
+      ISSUABLE_COMMANDS,
+      LEGACY_PATH_COMMANDS,
+    );
+    assert.deepEqual(derived, ["TELEPORT_USER"],
+      "a spec-named command with neither an issuable slot nor a legacy home must be reported " +
+      "unimplemented, so the door answers 501 rather than 'you made that up'");
+  });
+
+  it("answers 400 — not 501 — for a name §13.1 does not use", async () => {
     _setTestClient(makeClient(), true);
-    const { status, body } = await post({ type: "CREATE_COORDINATION_SESSION", conversationId: THREAD, params: {} });
-    assert.equal(status, 501);
-    assert.equal(body.error, "not_implemented");
+    const { status, body } = await post({ type: "MAKE_ESPRESSO", conversationId: THREAD, params: {} });
+    assert.equal(status, 400);
+    assert.match(String(body.message ?? ""), /Unknown command/);
   });
 
   it("answers 400 for a command nobody has heard of", async () => {
