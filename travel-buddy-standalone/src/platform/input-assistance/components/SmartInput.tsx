@@ -51,6 +51,7 @@ import { SuggestionOverlay } from './SuggestionOverlay.tsx';
 import { moveAccessibilityFocusTo, shouldRestoreFieldFocus } from './a11yFocus.ts';
 import { overlayFit, DEFAULT_OVERLAY_MAX_HEIGHT } from './overlayFit.ts';
 import { SDK_CAPABILITIES } from '../contexts/clientCapabilities.ts';
+import { offlineSurfaceAllowed } from '../contexts/policyFallback.ts';
 import {
   emitInputEvent,
   emitSuggestionsRendered,
@@ -477,6 +478,14 @@ export const SmartInput = forwardRef<TextInput, SmartInputProps>(function SmartI
             visible
             loading={loading}
             unavailable={unavailable}
+            // §32 — the AUTHORITY's answer to "may this field be assisted with
+            // no network at all", read from the resolved policy and re-derived
+            // through the same predicate the hook's retention gate uses rather
+            // than passed down from it. It selects the degraded SENTENCE only:
+            // the rows are already gone by here, dropped by
+            // `useInputAssistance.ts#mayRetain`, and nothing on this path can
+            // bring one back.
+            offlineSurface={offlineSurfaceAllowed(policy?.offlinePolicy)}
             suggestions={suggestions}
             onSelect={handleSelect}
             activeId={activeId}
