@@ -74,6 +74,7 @@ import {
 } from '../../src/components/layover/layoverDeadlineCache';
 import { describeDeadline } from '../../src/components/layover/layoverReturnFacts';
 import { LayoverOfflinePlanCard } from '../../src/components/layover/LayoverOfflinePlanCard';
+import { layoverSensingCadence } from '../../src/lib/layoverSensingCadence';
 import {
   cacheCertifiedPlan,
   readCachedPlan,
@@ -179,12 +180,30 @@ export default function LayoverDashboardScreen() {
     return () => clearInterval(timer);
   }, []);
 
-  // The countdown ticks locally, but usable-window/plan-fit math must stay
-  // canonical: silently re-pull the overview every 60s while active so the
-  // safety numbers never overstate remaining margin.
+  /**
+   * The countdown ticks locally, but usable-window/plan-fit math must stay
+   * canonical: silently re-pull the overview while active so the safety numbers
+   * never overstate remaining margin.
+   *
+   * census L157 — THE CADENCE IS THE CERTIFIED RUNG'S, not a constant. This ran
+   * every 60 seconds whether the traveller had four hours or four minutes, so
+   * the numbers somebody acts on while walking back to an airport aged exactly
+   * as fast as the ones they read over lunch. `layoverSensingCadence` maps the
+   * SERVER's `returnState` onto the interval and nothing here re-derives a rung
+   * from a clock — a second escalation rule on the client is the defect L115
+   * forbids of the map, in a different place.
+   *
+   * NORMAL is unchanged at 60 s: only the sharp end tightens.
+   */
   const sessionStatus = overview?.session.status;
+  const certifiedReturnState = overview?.safeReturn?.returnState ?? overview?.window.returnState ?? null;
+  const cadence = layoverSensingCadence({
+    sessionStatus,
+    returnState: certifiedReturnState,
+  });
+  const refreshIntervalMs = cadence.intervalMs;
   useEffect(() => {
-    if (!id || sessionStatus !== 'active') return;
+    if (!id || sessionStatus !== 'active' || refreshIntervalMs == null) return;
     const timer = setInterval(async () => {
       // A silent refresh KEEPS the last certified overview when the read fails
       // — it must never blank the screen a traveller is acting on. What it must
@@ -193,9 +212,9 @@ export default function LayoverDashboardScreen() {
       // screen's load down with it (census L156).
       const read = await getLayoverOverview(id).catch(() => null);
       if (read?.ok) setOverview(read.overview);
-    }, 60_000);
+    }, refreshIntervalMs);
     return () => clearInterval(timer);
-  }, [id, sessionStatus]);
+  }, [id, sessionStatus, refreshIntervalMs]);
 
   // §15.1's abort, lifted out of `LayoverSafeReturnCard` so that more than one
   // control can fire it (census L42, L123). Declared here, above every early
