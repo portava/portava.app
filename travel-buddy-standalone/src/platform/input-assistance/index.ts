@@ -205,6 +205,15 @@ export { installInputTelemetryTransport } from './services/telemetryTransport.ts
 // ── components ───────────────────────────────────────────────────────────────
 export { SmartInput, type SmartInputProps } from './components/SmartInput.tsx';
 export { SuggestionOverlay, type SuggestionOverlayProps } from './components/SuggestionOverlay.tsx';
+// §32/§27 — the degraded sentence, exported because a surface that renders its
+// own overlay (a bottom sheet, a picker) must be able to say the same three
+// things rather than inventing a fourth.
+export {
+  degradedNotice,
+  type DegradedNotice,
+  type DegradedNoticeKind,
+  type DegradedNoticeParams,
+} from './components/degradedNotice.ts';
 export { SuggestionList, type SuggestionListProps } from './components/SuggestionList.tsx';
 export {
   SuggestionGroup,
