@@ -146,9 +146,9 @@ describe("§17 the seventeen commands are all accounted for — declared or expl
     }
     // Nothing in the "not declared" list is invented: every entry is a §17 name.
     for (const n of notDeclared) assert.ok(SPEC_17.includes(n), `${n} is not a §17 command name`);
-    // The one extension is marked as such by not being a §17 name.
+    // Both pinned BY NAME (§17/§21 reasoning: lib/memoryCommandBus.ts header).
     const extensions = [...declared].filter((d) => !SPEC_17.includes(d));
-    assert.deepEqual(extensions, ["UPDATE_MEMORY"]);
+    assert.deepEqual(extensions, ["UPDATE_MEMORY", "UNHIDE_HIGHLIGHT"]);
   });
 
   /**

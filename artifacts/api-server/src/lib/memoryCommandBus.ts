@@ -83,24 +83,24 @@
  *     state for a command to move out of. See MEMORY_COMMAND_TYPES_NOT_DECLARED.
  *   * SET_RESURFACING_POLICY (§17) is NOT declared: its subject is not one
  *     aggregate. See MEMORY_COMMAND_TYPES_NOT_DECLARED for the measurement.
- *   * No SECOND event stream. PIN/UNPIN/HIDE_HIGHLIGHT write into the SAME
- *     four tables as the Memory commands, keyed on the `highlight_id` column
- *     migration 2993 adds beside `memory_id`. §17 lists one outbox and one
- *     vocabulary of fourteen event names, five of them `highlight.*`; 2710
- *     already wrote both kinds into one CHECK constraint. Splitting the stream
- *     would duplicate the drain loop, the lease, the ack path and §24's
- *     projection-lag metric.
- *   * An outbox CONSUMER now exists and is wired: services/memoryProjections/
- *     outboxDrainRunner.ts is imported and started from src/index.ts, and it
- *     is deliberately not flag-gated, because the PRODUCER is — an outbox row
- *     can only exist if a kernel function wrote it. It claims rows via
- *     public.memory_outbox_claim, rebuilds the §18 projections each
- *     `memory.*` event invalidates, and acks. What is still NOT built is a
- *     projection worker for the `highlight.*` half: those events drain and are
- *     acked with the class `unsubscribed_event_type`, because no §18
- *     projection in projectionRegistry.ts is keyed on a Highlight. So the rows
- *     move and nothing is stranded; nothing is rebuilt from them either, and
- *     the code says which of the two it is rather than implying the first.
+ *   * UNHIDE_HIGHLIGHT is declared as an EXT, on the UPDATE_MEMORY precedent.
+ *     §17 names HIDE_HIGHLIGHT and no inverse, but names PIN and UNPIN as a
+ *     pair — so the omission is an asymmetry in §17, not a ruling that Archive
+ *     is one-way. §21 settles it: Archive IS the reversible removal, so the
+ *     undo is a canonical write and §17's first sentence puts every canonical
+ *     write across this boundary. What it replaces is DELETE /highlights/:id/
+ *     archive's bare `.update({ archived_at: null })`, which emitted nothing,
+ *     leaving the log's last word `highlight.hidden` while the row was visible
+ *     — a §18 rebuild then withheld a Highlight its owner had restored, and
+ *     nothing later contradicted the hide. services/memoryProjections/
+ *     highlightEventReplay.ts makes that divergence executable. 2993 as
+ *     written refuses the name (MEMORY_COMMAND_UNKNOWN_TYPE), so the gap is
+ *     audited, not silent. No SECOND event stream either: the Highlight
+ *     commands write the SAME four tables keyed on 2993's `highlight_id`.
+ *   * The outbox CONSUMER is wired (services/memoryProjections/
+ *     outboxDrainRunner.ts, started from src/index.ts, not flag-gated because
+ *     the PRODUCER is) and BOTH halves now have subscribers: HIGHLIGHT_EVENT_
+ *     PROJECTIONS maps the five `highlight.*` names to §18's profile row.
  *   * No aggregate version / optimistic concurrency (§19 H178). `memories` has
  *     no `current_version` column (§3.1) and adding one is a separate change.
  */
@@ -328,9 +328,9 @@ export const MEMORY_COMMAND_TYPES = [
   // every command the system can issue, whatever it is issued against.
   "PIN_HIGHLIGHT",      // §17 — highlights.pinned_at = now()
   "UNPIN_HIGHLIGHT",    // §17 — highlights.pinned_at = null
-  "HIDE_HIGHLIGHT",     // §17 — highlights.archived_at = now(); §21's
-                        //       REVERSIBLE hide. deleted_at is terminal and is
-                        //       a different operation, not this one.
+  "HIDE_HIGHLIGHT", "UNHIDE_HIGHLIGHT",  // §17's archived_at = now(), and EXT's = null. §21's
+                        //       REVERSIBLE hide; deleted_at is terminal and is a different
+                        //       operation. §17 names no inverse — see the EXT note in the header.
 ] as const;
 export type MemoryCommandType = (typeof MEMORY_COMMAND_TYPES)[number];
 
@@ -357,7 +357,7 @@ export const COMMAND_SUBJECT: Readonly<Record<MemoryCommandType, "memory" | "hig
   UPDATE_MEMORY: "memory",
   PIN_HIGHLIGHT: "highlight",
   UNPIN_HIGHLIGHT: "highlight",
-  HIDE_HIGHLIGHT: "highlight",
+  HIDE_HIGHLIGHT: "highlight", UNHIDE_HIGHLIGHT: "highlight",
 };
 
 export const HIGHLIGHT_COMMAND_TYPES = MEMORY_COMMAND_TYPES
@@ -440,10 +440,10 @@ export const COMMAND_EVENT: Readonly<Record<MemoryCommandType, MemoryEventType>>
   // nobody subscribed to.
   PIN_HIGHLIGHT: "highlight.pinned",
   UNPIN_HIGHLIGHT: "highlight.pinned",
-  // §21's reversible hide, which is `archived_at`. Not highlight.expired:
-  // expiry is what `expires_at` does on its own, and not a deletion event
-  // either — §21 keeps Archive and Delete separate in the data model.
-  HIDE_HIGHLIGHT: "highlight.hidden",
+  // §21's reversible hide, `archived_at`. Not highlight.expired (expiry is what
+  // `expires_at` does on its own) and not a deletion event — §21 keeps Archive and
+  // Delete separate. The EXT inverse shares the name, as UNPIN shares PIN's.
+  HIDE_HIGHLIGHT: "highlight.hidden", UNHIDE_HIGHLIGHT: "highlight.hidden",
 };
 
 /** §23's capability vocabulary, per command. Re-checked by the SQL function. */
@@ -468,7 +468,7 @@ export const COMMAND_CAPABILITY: Readonly<Record<MemoryCommandType, "none" | "ow
   // Memory commands re-check memories.owner_id.
   PIN_HIGHLIGHT: "owner",
   UNPIN_HIGHLIGHT: "owner",
-  HIDE_HIGHLIGHT: "owner",
+  HIDE_HIGHLIGHT: "owner", UNHIDE_HIGHLIGHT: "owner",
 };
 
 // ── Command envelope ─────────────────────────────────────────────────────────
