@@ -2845,3 +2845,74 @@ a *local* PostgreSQL 16 is itself the check that the capture is faithful.
      WHERE filename = '2976_journey_shadow_global_stop_delete_scope.sql';
     -- expect applied_by='manual', checksum 3c080a723b9a (was b28ddcb90521 before the
     --        chain-replayability repair; the row's notes record the supersession)
+
+---
+
+## 2991 APPLIED TO portava-ci, AND WHY A PR CAN NEED THAT AT ALL
+
+`audit:schema` went red on PR 521 with two missing columns:
+
+    ✖ 2991_message_translations_confidence.sql
+        missing column message_translations.confidence
+        missing column message_translations.provider_version
+
+**The failure was real and the code was fine.** The `schema drift` job runs
+`db:apply-migrations:dry-run` — which writes nothing, by design, because a PR
+must not mutate the shared CI database as a side effect of being opened — and
+then runs `audit:schema`, which measures the *live* schema. So a PR that adds a
+migration file fails its own audit until somebody applies it. The dry run says
+so in the same log, one step earlier:
+
+    Would apply 2 migration(s), IN THIS ORDER:
+        1. 2991_message_translations_confidence.sql   [shape=unwrapped]
+        2. 2998_nearby_reachable_flag.sql             [shape=unwrapped]
+
+Only 2991 was reported missing: 2998's claimed objects already exist on CI, so
+it is pending in the LEDGER sense and satisfied in the OBJECT sense — the exact
+distinction the inventory work exists to keep apart, and the reason "pending"
+and "missing" are two different counts in that log.
+
+**What was done.** 2991 applied to **portava-ci (`hwokxgbmezheskbzskfr`) only**,
+via the Supabase MCP, and ledgered with `applied_by='manual'` and a note that
+records the discrepancy between the executed text and the committed file: the
+outer `BEGIN`/`COMMIT` were dropped because the MCP call supplies its own
+transaction, and the header comment block was not re-sent. The checksum in the
+ledger is of the committed file, which is the convention 2966 and 2976 set.
+Both the `$pre$` and `$post$` blocks ran inside that transaction and passed, and
+the result was re-verified independently afterwards rather than taken from the
+migration's own say-so.
+
+**Production was not touched.** `ajrurzioarfkagpuxfnb` does not have these two
+columns and does not need them yet: nothing deployed writes a confidence reading,
+and `upsertTranslation` retries once without both columns on the undefined-column
+refusal, so an unapplied 2991 degrades T242 to "treat every translation as
+not-certain" rather than breaking translation. That is the migration's own stated
+design, not a concession made here — and it is why T240 and T242 stay `W`.
+
+### Re-establish independently
+
+    -- against portava-ci
+    SELECT column_name, is_nullable, column_default
+      FROM information_schema.columns
+     WHERE table_schema='public' AND table_name='message_translations'
+       AND column_name IN ('confidence','provider_version');
+    -- expect two rows, both is_nullable='YES', both column_default NULL
+
+    SELECT pg_get_constraintdef(c.oid)
+      FROM pg_constraint c JOIN pg_class t ON t.oid=c.conrelid
+      JOIN pg_namespace n ON n.oid=t.relnamespace
+     WHERE n.nspname='public' AND t.relname='message_translations'
+       AND c.conname='message_translations_confidence_check';
+    -- expect CHECK (((confidence IS NULL) OR (confidence = ANY (ARRAY['high'::text, 'low'::text]))))
+
+    SELECT filename, applied_by, left(checksum, 12)
+      FROM public.schema_migration_ledger
+     WHERE filename = '2991_message_translations_confidence.sql';
+    -- expect applied_by='manual', checksum 5af2de56c5da
+
+**The postcondition that forbids a DEFAULT is not boilerplate.** The table held
+0 rows on CI when this was applied, so nothing was backfilled and nothing could
+be invalidated — but the same apply against a populated database leaves every
+historical row NULL, which is the one true statement available about a reading
+nobody took. A default would have asserted, of every one of those rows, that
+somebody measured it.
