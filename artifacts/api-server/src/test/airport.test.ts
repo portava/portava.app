@@ -824,12 +824,36 @@ describe("adviseLeaving", () => {
     return { ...base, arrivalTime: "2026-03-10T01:00:00.000Z", departureTime: "2026-03-10T11:00:00.000Z", layoverMinutes: 600 };
   }
 
-  it("says yes with reasons for a roomy window", () => {
+  /**
+   * CHANGED 2026-09-22 with the entry gate (census-layover L48), and it was
+   * asserting the defect.
+   *
+   * It read `adviseLeaving(airport, s, w)` with no entry fact and expected
+   * `"yes"` — a confident affirmative on "can I leave the airport?" while the
+   * same response listed the visa requirement in `unknowns[]`. That pairing is
+   * the finding L48 names. An absent entry fact is now UNRESOLVED, so the
+   * unqualified call answers `entry_unverified`, and the clock's yes needs a
+   * confirmed corridor to stand.
+   *
+   * Both halves are asserted, so what moved is visible: the window is the same
+   * window, and the only thing that changed is whether the border was checked.
+   */
+  it("says yes with reasons for a roomy window, once entry is confirmed", () => {
+    const s = sessionFor("long");
+    const w = computeWindow(airport, s, new Date(s.arrivalTime).getTime());
+    const advice = adviseLeaving(airport, s, w, {
+      entry: { state: "permitted", corridor: { passportCountry: "NZ", destinationCountry: "TW" }, status: "visa_free" },
+    });
+    assert.equal(advice.verdict, "yes");
+    assert.ok(advice.reasons.length > 0);
+  });
+
+  it("the same roomy window withholds that yes when the border was never checked", () => {
     const s = sessionFor("long");
     const w = computeWindow(airport, s, new Date(s.arrivalTime).getTime());
     const advice = adviseLeaving(airport, s, w);
-    assert.equal(advice.verdict, "yes");
-    assert.ok(advice.reasons.length > 0);
+    assert.equal(advice.verdict, "entry_unverified");
+    assert.ok(advice.reasonCodes.includes("ENTRY_NOT_CONFIRMED"));
   });
 
   it("says no when buffers eat the whole window", () => {

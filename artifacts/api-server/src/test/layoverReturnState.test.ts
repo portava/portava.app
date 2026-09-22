@@ -194,7 +194,7 @@ describe("adviseLeaving — Appendix A reason codes", () => {
   const tz = "Asia/Taipei";
   const c = wallTimeToUtc(tz, "2026-06-15T14:00")!.getTime();
 
-  it("entry is never confirmed on this tree, and the code says so on every verdict", () => {
+  it("entry unconfirmed carries the code on every verdict, whatever the traveller intends", () => {
     for (const wants of [true, false]) {
       const session = sessionWith(c - 8 * 60 * MIN, c, null, { wantsToLeave: wants });
       const w = computeWindow(airportIn(tz), session, c - 7 * 60 * MIN);
@@ -215,7 +215,15 @@ describe("adviseLeaving — Appendix A reason codes", () => {
     const airport = airportIn(tz);
     const roomy = sessionWith(c - 9 * 60 * MIN, c, null);
     const wRoomy = computeWindow(airport, roomy, c - 8 * 60 * MIN);
-    const aRoomy = adviseLeaving(airport, roomy, wRoomy);
+    // The entry fact is supplied because this test is about the CLOCK's reason
+    // code, and a call that supplies none no longer reaches "yes" at all — it
+    // reaches "entry_unverified", which would make the assertion below pass for
+    // a reason that has nothing to do with usable time. Staging a permitted
+    // corridor keeps the two questions apart: the clock is roomy AND the border
+    // is open, so "yes" is the clock's own answer.
+    const aRoomy = adviseLeaving(airport, roomy, wRoomy, {
+      entry: { state: "permitted", corridor: { passportCountry: "TW", destinationCountry: "TW" }, status: "visa_free" },
+    });
     assert.equal(aRoomy.verdict, "yes");
     assert.ok(!aRoomy.reasonCodes.includes("INSUFFICIENT_USABLE_TIME"));
 
