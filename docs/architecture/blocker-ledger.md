@@ -1012,7 +1012,7 @@ consumer shape this ledger's P2 section exists to track.
 
 **And the tree's only current posture on visas is the opposite one.** The three
 places the word appears are Layover disclaimers:
-`services/airport/LayoverSafetyEngine.ts:585` — *"Verify visa rules"* — and
+`services/airport/LayoverSafetyEngine.ts:586` — *"Verify visa rules"* — and
 `:619`, `:628`, whose comment states that entry is **never confirmed on this
 tree**. A capability asserting that a user may PROVIDE visa assistance would be
 the first thing in the product implying the platform stands behind that, and it
