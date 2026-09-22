@@ -62,6 +62,25 @@ export function LayoverPeopleSection({
   // managed to read that setting.
   const unmeasured = presence.degraded;
   const withheldByChoice = !unmeasured && (presence.withheld?.length ?? 0) > 0;
+  /**
+   * census L128 — THE RUNG IS THE SERVER'S STATEMENT, NOT THE ARRAY'S LENGTH.
+   *
+   * `level` is `disclosePresence`'s own answer about WHICH §14 rung it served
+   * (LayoverPrivacyGuard.ts:468). `L0_AGGREGATE` means the count was the whole
+   * disclosure, so identities are not shown here however many happen to be in
+   * `travelers` — the array is not the authority on what was disclosed.
+   *
+   * ABSENT `level` is NOT treated as L0. A server that predates the privacy
+   * guard states no rung at all, and inventing one for it would be this client
+   * making the §14 decision rather than reading it.
+   *
+   * IMPLEMENTED, NOT IN FORCE. Aggregate-first is gated server-side on
+   * `layover_presence_ladder_enabled` (migration 2740, seeded FALSE and
+   * unapplied), so every response today is `L2_DISCOVERY` and this branch is
+   * dark in production. It exists so that enabling the flag is a server
+   * decision that needs no client change — not because the rung is live.
+   */
+  const aggregateOnly = presence.level === 'L0_AGGREGATE';
   return (
     <View style={styles.card}>
       <View style={styles.headRow}>
@@ -89,16 +108,23 @@ export function LayoverPeopleSection({
         <View style={styles.presenceBox}>
           {presenceCount > 0 && !unmeasured && !withheldByChoice ? (
             <>
-              <View style={styles.avatarRow}>
-                {travelers.slice(0, 6).map((p) => (
-                  <View key={p.id} style={styles.avatarWrap}>
-                    <Avatar uri={p.avatarUrl} name={p.name ?? p.handle} size={32} style={styles.avatarRing} />
-                  </View>
-                ))}
-              </View>
+              {!aggregateOnly && (
+                <View style={styles.avatarRow} testID="layover-presence-travelers">
+                  {travelers.slice(0, 6).map((p) => (
+                    <View key={p.id} style={styles.avatarWrap}>
+                      <Avatar uri={p.avatarUrl} name={p.name ?? p.handle} size={32} style={styles.avatarRing} />
+                    </View>
+                  ))}
+                </View>
+              )}
               <Text style={styles.presenceText}>
                 {presenceCount} {presenceCount === 1 ? 'traveler is' : 'travelers are'} also on a layover here
               </Text>
+              {aggregateOnly && (
+                <Text style={styles.presenceUnknown} testID="layover-presence-aggregate-only">
+                  Only the number is shared here — not who they are.
+                </Text>
+              )}
             </>
           ) : unmeasured ? (
             <Text style={styles.presenceUnknown} testID="layover-presence-unmeasured">

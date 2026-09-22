@@ -348,7 +348,28 @@ export interface LayoverOfflineBundle {
   mapGeometry: OfflineCapability<never>;
   route: OfflineCapability<never>;
   flightStatus: OfflineCapability<never>;
-  crewMeetingPoint: OfflineCapability<never>;
+  /**
+   * §16 L154 — the crew meeting point, cached for offline.
+   *
+   * TYPED `<string>`, AND THE OLD `<never>` WAS THE WHOLE DEFECT. In
+   * `OfflineCapability<T>`, `value` is `T | null`; at `T = never` that collapses
+   * to `null`, so this field could not hold a label however the server behaved.
+   * L154 could never have been closed from the server side alone — there was no
+   * shape on this side of the wire for the answer to land in.
+   *
+   * `layover_crews.meeting_point_label` exists and `LayoverCrewSection` already
+   * renders it on the ONLINE crew screen (`crew.meetingPointLabel`). This is the
+   * OFFLINE half: the one thing about a crew worth surviving the network dying
+   * is where to meet them.
+   *
+   * NOT YET SERVED. `buildOfflineBundle`
+   * (artifacts/api-server/src/services/airport/LayoverDegradedService.ts) still
+   * returns `unavailable("no_crew_storage")` unconditionally, and its own type
+   * is still `<never>`. So today every response makes this unavailable and the
+   * card renders the unavailable branch. The client is ready; the server is one
+   * `available(label)` call away. See the report for LO-API.
+   */
+  crewMeetingPoint: OfflineCapability<string>;
   translationPhrases: OfflineCapability<never>;
   stops: Array<{ title: string; durationMin: number; travelMin: number; insideAirport: boolean }>;
 }
@@ -367,6 +388,38 @@ export type AbortEffect =
 
 export type ReturnNowStatusCapability = 'enabled' | 'flag_on_readers_not_widened' | 'flag_off';
 
+/**
+ * §15.1 L144 — WHY the crew was not told, in the server's vocabulary.
+ *
+ * ── WHY THIS IS OPEN AND NOT A CLOSED UNION ──────────────────────────────────
+ * It was `'no_crew_storage' | null`, and `'no_crew_storage'` HAS BEEN FALSE
+ * SINCE 2026-09-16: `layover_crews` / `layover_crew_members` exist,
+ * `LayoverCrewStore` reads and writes them, and `LayoverCrewSection` puts a
+ * crew on screen. A closed union whose only member is a stale sentence cannot
+ * hold the answer, so the transport was sealed shut from this end — the same
+ * shape of defect as `crewMeetingPoint: OfflineCapability<never>` above.
+ *
+ * It is `string` rather than a rewritten union because THE VOCABULARY IS THE
+ * SERVER'S. That follows the precedent already set on this wire for exactly
+ * this kind of field — `LayoverPresenceAnswer.withheld` and `degradedReasons`
+ * are both documented `string[]`. A client union would silently narrow a reason
+ * it had not been taught, and `returnToAirportNow` casts the body whole, so a
+ * narrowed union would be a lie the compiler could not catch.
+ *
+ * KNOWN MEMBERS TODAY, and neither is a policy decision:
+ *   `no_crew_storage`  what the server still sends unconditionally
+ *                      (LayoverSafeReturnService.ts:383), now stale.
+ *
+ * ── WHAT THIS CLIENT DELIBERATELY DOES NOT DECIDE ────────────────────────────
+ * Whether a crew SHOULD be told that one of its members aborted is a
+ * DISCLOSURE ABOUT THAT TRAVELLER, not plumbing, and it is the owner's call —
+ * so nothing here initiates a notification, offers a control that would, or
+ * asks the server to send one. This type and `describeCrewNotification` only
+ * let the ABORTING TRAVELLER read back what the server says already happened
+ * about them, which they are owed either way.
+ */
+export type CrewNotifyUnavailableReason = string;
+
 /** The 200 body of POST /airport/sessions/:id/return-now. */
 export interface ReturnNowSuccess {
   ok: true;
@@ -376,8 +429,9 @@ export interface ReturnNowSuccess {
   posture: SafeReturnPosture;
   cancelledStopIds: string[];
   effects: AbortEffect[];
+  /** User ids the server says it told. Empty is an ANSWER, not a placeholder. */
   crewNotified: string[];
-  crewNotifyUnavailableReason: 'no_crew_storage' | null;
+  crewNotifyUnavailableReason: CrewNotifyUnavailableReason | null;
   statusApplied: boolean;
   statusCapability: ReturnNowStatusCapability;
 }
@@ -1618,4 +1672,148 @@ export function joinLayoverCrew(sessionId: string, crewId: string): Promise<Crew
 
 export function leaveLayoverCrew(sessionId: string): Promise<CrewActionOutcome> {
   return crewAction(airportUrl('sessions', sessionId, 'crew', 'leave'));
+}
+
+// ── §25.2 / census L269 — Layover Discovery ───────────────────────────────────
+
+/**
+ * One gem, narrowed to what the layover surface actually renders.
+ *
+ * NOT `HiddenGem` from `services/hiddenGems.ts`. That type carries thirty-odd
+ * fields — verification level, save counts, submitter, gem state, confidence —
+ * none of which this surface shows, and importing it would make a layover card
+ * a consumer of the whole Hidden Gems contract for four strings. It is a
+ * SEPARATE READ of the same wire, not a second vocabulary: every field below is
+ * named for the column the route serialises.
+ */
+export interface LayoverDiscoveryGem {
+  id: string;
+  name: string;
+  neighborhood: string | null;
+  /**
+   * The gem's OWN floor, as the server published it (`minimum_layover_minutes`).
+   * Null when the row carries none — which is not zero, and is not "fits".
+   */
+  minimumLayoverMinutes: number | null;
+}
+
+/**
+ * census L269 — why there is, or is not, a Discovery answer.
+ *
+ * `gated_off` IS NOT A FAILURE AND IS NOT AN EMPTY LIST. It is the third thing,
+ * and the reason it needs its own member is that `feature_disabled` answers
+ * **404 — the same status as `not_found`** (`lib/http.ts` STATUS). A reader
+ * keyed on the status code cannot tell "this capability is switched off" from
+ * "the read failed", and the two must render differently: off shows NO CARD,
+ * failed shows the server's refusal.
+ *
+ * It carries no message on purpose. `sendError(res, "feature_disabled")` is
+ * called with no sentence, so the envelope's `message` is the literal string
+ * `"feature_disabled"` — a code, not traveller-facing copy. There is nothing
+ * honest to quote, and nothing needs quoting, because the surface renders
+ * nothing.
+ */
+export type LayoverDiscoveryRead =
+  | { ok: true; gems: LayoverDiscoveryGem[] }
+  | { ok: false; reason: 'gated_off' }
+  | {
+      ok: false;
+      reason: 'unavailable' | 'unreachable' | 'refused';
+      message: string;
+      retryable: boolean;
+    };
+
+/** The only sentence here not written by the server — the device reached nobody. */
+const DISCOVERY_UNREACHABLE = "We couldn't reach Portava. Check your connection and try again.";
+
+function toDiscoveryGem(row: Record<string, unknown>): LayoverDiscoveryGem | null {
+  const id = typeof row.id === 'string' ? row.id : null;
+  const name = typeof row.name === 'string' ? row.name.trim() : '';
+  // A row with no id cannot be keyed and a row with no name cannot be read.
+  // Dropping it is right; rendering a blank chip would not be.
+  if (!id || !name) return null;
+  const minimum = row.minimum_layover_minutes ?? row.minimumLayoverMinutes;
+  const neighborhood = row.neighborhood;
+  return {
+    id,
+    name,
+    neighborhood: typeof neighborhood === 'string' && neighborhood.trim() ? neighborhood : null,
+    minimumLayoverMinutes: typeof minimum === 'number' && Number.isFinite(minimum) ? minimum : null,
+  };
+}
+
+/**
+ * §25.2 Layover Discovery — the gems this layover's CERTIFIED window permits.
+ *
+ * ── `availableMinutes` IS NOT DERIVED HERE ───────────────────────────────────
+ * It is the server's own `window.usableMinutes`, handed down from the overview.
+ * Nothing on this path subtracts a deadline from a clock: the route filters on
+ * `minLayoverMinutes` itself, and a second arithmetic on this side would be a
+ * second feasibility answer about the same layover — which is what
+ * `LayoverReturnPanel.tsx` was deleted at `a718beb5` for.
+ *
+ * ── WHAT THE DISCOVERY-MODE FLAG DOES AND DOES NOT CHANGE HERE ───────────────
+ * `layover_discovery_mode_enabled` (migration 2971) narrows what the SERVER
+ * serves — a Discovery serve in an airport session is restricted to the
+ * certified action universe rather than to distance alone. It is not on this
+ * response's envelope and this reader does not look for it: the flag changes
+ * WHICH gems arrive, never the shape, so this consumer is correct in both flag
+ * states by construction and needs no change when the gate moves. The two
+ * flags this reader CAN observe are `hidden_gems_enabled` and
+ * `hidden_gems_layover_enabled`, and both surface as `feature_disabled`.
+ *
+ * Resolves in every case; it never throws, because its one caller renders the
+ * refusal and a rejected promise would render nothing at all.
+ */
+export async function getLayoverDiscovery(
+  availableMinutes: number,
+  city: string | null,
+): Promise<LayoverDiscoveryRead> {
+  const params = new URLSearchParams({ availableMinutes: String(availableMinutes) });
+  if (city) params.set('city', city);
+
+  let res: Response;
+  try {
+    res = await authedFetch(`${apiBase()}/api/hidden-gems/layover-safe?${params.toString()}`);
+  } catch {
+    return { ok: false, reason: 'unreachable', message: DISCOVERY_UNREACHABLE, retryable: true };
+  }
+
+  let json: Record<string, any> = {};
+  try { json = await res.json(); } catch { /* falls through to the status check */ }
+
+  if (!res.ok) {
+    // THE CODE, NOT THE STATUS — see `LayoverDiscoveryRead`.
+    if (json.error === 'feature_disabled') return { ok: false, reason: 'gated_off' };
+    // `retryable` is the server's own flag (`isRetryableErrorCode`), read off
+    // the response rather than re-derived from a status-code rule here.
+    const message = typeof json.message === 'string' ? json.message : DISCOVERY_UNREACHABLE;
+    const retryable = json.retryable === true;
+    if (json.error === 'db_error' || json.error === 'server_not_configured') {
+      return { ok: false, reason: 'unavailable', message, retryable };
+    }
+    return { ok: false, reason: 'refused', message, retryable };
+  }
+
+  // A 200 whose body has no `gems` ARRAY is not an empty list. The route always
+  // sends one on success, so its absence is a contract mismatch, and answering
+  // `[]` to it would be the failed-read-as-empty-result this whole type exists
+  // to prevent.
+  if (!Array.isArray(json.gems)) {
+    return {
+      ok: false,
+      reason: 'refused',
+      message: DISCOVERY_UNREACHABLE,
+      retryable: false,
+    };
+  }
+
+  const gems: LayoverDiscoveryGem[] = [];
+  for (const row of json.gems as unknown[]) {
+    if (row && typeof row === 'object') {
+      const gem = toDiscoveryGem(row as Record<string, unknown>);
+      if (gem) gems.push(gem);
+    }
+  }
+  return { ok: true, gems };
 }
