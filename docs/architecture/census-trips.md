@@ -5112,7 +5112,7 @@ re-derives and cites rather than argues.
   (`server/trips/readRoutes/tripProjections.ts:501#/trips/:tripId/simulate`). TR393:
   `trip_command_rejected_total` by reason has existed in the kernel client
   and been asserted three times (`domain/trips/commands/tripKernel.ts:536#readTripCommandRejectedTotal`,
-  `src/test/tripKernel.test.ts:110#counter`). TR379 and TR75: 2520's map
+  `src/test/tripKernel.test.ts:129#counter`). TR379 and TR75: 2520's map
   projection worker consumes the outbox, idempotent by event id through
   `trip_map_projection_applied` and retried by `attempts`
   (`src/migrations/2520_trip_map_projection_worker.sql:53#trip_map_projection_applied`),

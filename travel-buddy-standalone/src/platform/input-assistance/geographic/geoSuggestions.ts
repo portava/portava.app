@@ -19,7 +19,7 @@
 import type { Place, PlaceType } from '../../../lib/location/placeTypes.ts';
 import type { InputSuggestion } from '../types/inputSuggestion.ts';
 import type { AssistanceType, EntityType, InputContext } from '../types/inputContext.ts';
-import { INPUT_POLICY_VERSION } from '../contexts/inputContexts.ts';
+import { inputPolicyVersion } from '../contexts/inputContexts.ts';
 import { foldForMatch } from '../services/queryNormalization.ts';
 import { entityTypeForPlace } from './canonicalBinding.ts';
 
@@ -136,7 +136,9 @@ export function placeToSuggestion(
     source: opts.source ?? 'canonical',
     reason: opts.reason,
     structuredValue: place,
-    policyVersion: INPUT_POLICY_VERSION,
+    // What this client HOLDS, not what it was built against — a locally-built
+    // geo row must not claim a policy version the authority never served it.
+    policyVersion: inputPolicyVersion(),
   };
 }
 
