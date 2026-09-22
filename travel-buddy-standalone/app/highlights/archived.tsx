@@ -22,6 +22,19 @@
  *
  * 2. IT DOES NOT OFFER DELETE. Un-archive is the action here. Collapsing the
  *    two on one screen is the §21 sentence above, undone.
+ *
+ * ── §12 PROVENANCE, ADDED HERE ─────────────────────────────────────────────
+ *
+ * Each row can be expanded to ask `GET /highlights/:id/sources` what the
+ * Highlight is built from (census H93). It is collapsed by default and fetched
+ * only on expand: that read is one owner-scoped request per Highlight, and a
+ * list issuing N of them on mount would have to render something for every row
+ * before any answer arrived — and the only honest thing to render then is
+ * "unknown", which teaches a reader to ignore the field. See
+ * `src/hooks/useHighlightSources.ts`.
+ *
+ * EXACTLY ONE ROW IS EXPANDED AT A TIME, which is also why the requests cannot
+ * fan out: opening a second row closes the first.
  */
 import React, { useCallback, useEffect, useState } from 'react';
 import {
@@ -32,6 +45,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ArrowLeft, Archive, RotateCcw } from 'lucide-react-native';
 import { color, space, radius, type as t } from '../../src/theme/tokens';
 import { DisplayMediaImage } from '../../src/components/ui/DisplayMediaImage';
+import { HighlightSourcesDisclosure } from '../../src/components/highlights/HighlightSourcesDisclosure';
 import {
   fetchArchivedHighlights,
   unarchiveHighlight,
@@ -66,6 +80,8 @@ export default function ArchivedHighlightsScreen() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
+  /** §12 provenance. At most one open at a time — see the header. */
+  const [sourcesOpenId, setSourcesOpenId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -126,35 +142,42 @@ export default function ArchivedHighlightsScreen() {
       ) : (
         <ScrollView contentContainerStyle={s.list} testID="archived-highlights-list">
           {(highlights ?? []).map((h) => (
-            <View key={h.id} style={s.row} testID={`archived-highlight-${h.id}`}>
-              <DisplayMediaImage
-                uri={h.mediaUrl}
-                width={56}
-                height={56}
-                style={s.thumb}
-                alt={h.caption ?? 'Archived highlight'}
-              />
-              <View style={s.body}>
-                <Text style={s.rowTitle} numberOfLines={1}>{h.caption ?? 'Highlight'}</Text>
-                <Text style={s.rowNote} numberOfLines={1}>
-                  {[h.locationName, h.locationCity, h.locationCountry].filter(Boolean).join(', ') || 'No location'}
-                </Text>
+            <View key={h.id} style={s.card}>
+              <View style={s.row} testID={`archived-highlight-${h.id}`}>
+                <DisplayMediaImage
+                  uri={h.mediaUrl}
+                  width={56}
+                  height={56}
+                  style={s.thumb}
+                  alt={h.caption ?? 'Archived highlight'}
+                />
+                <View style={s.body}>
+                  <Text style={s.rowTitle} numberOfLines={1}>{h.caption ?? 'Highlight'}</Text>
+                  <Text style={s.rowNote} numberOfLines={1}>
+                    {[h.locationName, h.locationCity, h.locationCountry].filter(Boolean).join(', ') || 'No location'}
+                  </Text>
+                </View>
+                {busyId === h.id ? (
+                  <ActivityIndicator size="small" color={color.signal} />
+                ) : (
+                  <Pressable
+                    onPress={() => void restore(h.id)}
+                    disabled={busyId !== null}
+                    style={s.restore}
+                    testID={`archived-highlight-restore-${h.id}`}
+                    accessibilityRole="button"
+                    accessibilityLabel="Restore this highlight"
+                  >
+                    <RotateCcw size={16} color={color.ink} />
+                    <Text style={s.restoreText}>Restore</Text>
+                  </Pressable>
+                )}
               </View>
-              {busyId === h.id ? (
-                <ActivityIndicator size="small" color={color.signal} />
-              ) : (
-                <Pressable
-                  onPress={() => void restore(h.id)}
-                  disabled={busyId !== null}
-                  style={s.restore}
-                  testID={`archived-highlight-restore-${h.id}`}
-                  accessibilityRole="button"
-                  accessibilityLabel="Restore this highlight"
-                >
-                  <RotateCcw size={16} color={color.ink} />
-                  <Text style={s.restoreText}>Restore</Text>
-                </Pressable>
-              )}
+              <HighlightSourcesDisclosure
+                highlightId={h.id}
+                expanded={sourcesOpenId === h.id}
+                onToggle={() => setSourcesOpenId((cur) => (cur === h.id ? null : h.id))}
+              />
             </View>
           ))}
         </ScrollView>
@@ -180,6 +203,7 @@ const s = StyleSheet.create({
   retry: { paddingHorizontal: space.lg, paddingVertical: space.sm, borderRadius: radius.pill, borderWidth: 1, borderColor: color.haze },
   retryText: { ...t.bodyStrong, color: color.ink, fontSize: 14 },
   list: { paddingHorizontal: space.lg, paddingVertical: space.md, gap: space.md },
+  card: { gap: space.xs },
   row: { flexDirection: 'row', alignItems: 'center', gap: space.md },
   thumb: { width: 56, height: 56, borderRadius: radius.sm, backgroundColor: color.haze },
   body: { flex: 1, gap: 2 },
