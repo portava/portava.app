@@ -90,8 +90,11 @@ shape, and each one is a reason section 5 chooses double-entry instead:
    constants.** `lib/rentBuddyEarningsLedger.ts:37,66` reads `rent_buddy_fee_rules` with a default
    of **22 %**; `routes/rentABuddyMarketplace.ts:2191-2195` takes `ledger[0].platform_fee_percent`
    — an arbitrary row's rate — and applies it to *every* completed booking, defaulting to 22 %;
-   `routes/rentABuddy.ts:6237` hard-codes **0.15**. The last of these is exactly the defect
-   `docs/rent-buddy-audit.md:401-405` filed against "Task #1701 / #1703"; it is still open.
+   the earnings summary hard-coded **0.15**. The last of these is exactly the defect
+   `docs/rent-buddy-audit.md:401-405` filed against "Task #1701 / #1703". **CLOSED, verified 2026-09-22:**
+   all three literals are gone and one resolver reads `rent_buddy_fee_rules`
+   (`artifacts/api-server/src/lib/rentBuddyFeeSchedule.ts:104#export async function resolveFeeSchedule(`),
+   with no numeric fallback arm. See `08` §2.3's 2026-09-22 correction for the measurement.
 4. **Aggregates are computed in the API process over an unbounded select.**
    `routes/rentABuddy.ts:6229-6268` and `routes/rentABuddyMarketplace.ts:2149-2196` pull booking
    rows and sum them in JavaScript with no pagination — PostgREST's default row cap silently
@@ -557,8 +560,8 @@ Recorded because both read as current otherwise.
   exists live as a seven-value enum (`baseline:635-643`) — and has neither reader nor writer, which
   is a different and worse problem than not existing.
 - **`docs/rent-buddy-audit.md:401-405`** (hard-coded 15 % platform fee) was filed against Task
-  #1701/#1703 and is **still open** at `routes/rentABuddy.ts:6237`, now alongside *two* other
-  independent fee computations (§1.3.3).
+  #1701/#1703 and was open at the earnings summary alongside *two* other independent fee
+  computations (§1.3.3). **CLOSED, verified 2026-09-22** — see §1.3.3 and `08` §2.3.
 - **`docs/rent-buddy-product.md:203-207`** maps migration `0048` to *"Marketplace: platform fee,
   payment modes"*. In the archived root tree, `migrations/0048_booking_stay_connected.sql` is a
   two-column ALTER about connection opt-ins; the marketplace file is
