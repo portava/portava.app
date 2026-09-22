@@ -1479,6 +1479,23 @@ async function loadVisibilityPrefs(sc: SupabaseClient, userId: string): Promise<
 }
 
 /**
+ * Collection gate, fail-closed on an unreadable preference row.
+ *
+ * The owner always sees their own passport (an unreadable preference row is not
+ * a reason to hide someone's own content from them); every other caller is
+ * DENIED when the tier could not be read.
+ */
+function collectionPermits(
+  read: VisibilityPrefsRead,
+  key: "stamps_visible" | "memories_visible",
+  caller: CallerContext,
+): boolean {
+  if (caller === "owner") return true;
+  if (read.readFailed) return false;
+  return tierPermits((read.prefs as any)?.[key], caller);
+}
+
+/**
  * Which passport COLLECTIONS this caller may aggregate over (§22 / TABLE 24).
  *
  * This is the very gate step 7 (stamps) and step 9 (memories) of
