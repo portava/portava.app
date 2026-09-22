@@ -8316,6 +8316,45 @@ sibling (`listWindowsForOwners`) was the smaller change. The `location_sessions`
 / `trip_crew_location_sessions` device columns were not added, for the reason in
 31.6.2. No verdict was moved for a row this lane did not build against.
 
+### 31.9 A live defect this lane found on the way past, and closed
+
+`lib/mapTravelers.ts#effectiveDiscoveryVisibility` is the opt-in gate for the
+Discovery live traveler map — a route that is mounted, authenticated and NOT
+behind a flag (`routes/index.ts:213#router.use(mapTravelersRouter)`). Reading it
+to build the bucket ladder on top of it turned up this:
+
+**The column carries two vocabularies and the gate only knew one.** The module
+speaks `no_location | city_only | neighborhood | venue_tagged`, mirroring
+`services/location/LocationPermissionService.ts:49#off:                  "no_location",`. The LIVE table
+constrains the same column to `everyone | circle | trip_members | nobody`
+(`location_preferences_discovery_visibility_check` in
+`artifacts/api-server/baseline/20260819_baseline_structure.sql`). The gate hid a person only
+when the value was exactly `no_location` — **a value that CHECK does not
+admit** — so on a real database the column could not hide anyone:
+
+* `nobody`, a person who asked to be discoverable by NO ONE, fell through as an
+  unrecognised string and was published at the ~2.2 km area grid;
+* `circle` and `trip_members`, audience restrictions the traveler map has no way
+  to honour because it takes a viewport rather than an audience, were likewise
+  published to every viewer.
+
+Read as a denylist of one value the defect is invisible. The gate is now an
+ALLOWLIST — `lib/mapTravelers.ts:142#const PUBLISHABLE_DISCOVERY_VIS` — so a
+value nobody has taught the module about costs a person a pin on a map instead
+of costing them the setting they chose. `everyone`, the live default and a real
+unrestricted grant, still publishes.
+
+Four assertions in `test/mapTravelers.test.ts` pin it, and both mutations land:
+restoring the denylist reading reddens three, and turning the Set into an
+object literal reddens the inherited-key one.
+
+**NO CENSUS-MAP VERDICT IS MOVED HERE.** This is census-telegraph, the defect is
+on a Map surface, and moving a row in another census on the strength of a fix
+made while passing is exactly the kind of cross-grading that produces a verdict
+nobody measured. The Map lane should read this section and decide; the
+acknowledgement ledger names the two files so it will be asked to.
+
+
 ### 31.8 The headline, restated from the rows
 
 Seven rows moved `N → W` and nothing else changed, so the previous headline
