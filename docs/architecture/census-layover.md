@@ -7226,3 +7226,103 @@ Enabling the flag on an unknown build would narrow what a traveller is shown on
 the strength of code nobody has confirmed is running. The flag stays off. The
 remaining step is an owner's or a deploy environment's, not this session's, and
 it is a DEPLOYMENT VERIFICATION gap — correctly classified, not relabelled.
+
+## §36 — 2026-09-22 (integration): a sweep of the census's own absence claims, and the one verdict it moves
+
+This section re-tested every Layover row whose CURRENT statement rests on an
+absence — "returns nothing", "Absent", "no caller", "does not exist". There are
+27 such rows. An absence claim is the class that rots fastest, because the code
+it describes can acquire the missing thing without anyone revisiting the row.
+
+**One verdict moves. Two reasons are corrected without moving. Two re-tested
+TRUE and are recorded as such, because a sweep that reports only its hits
+overstates the rot it found.**
+
+### L276 moves N → W, and it is the row §34 leaned on
+
+| id | was | now | why |
+|---|---|---|---|
+| L276 | N | **W** | Both limbs of "consume crowd/queue/mobility signals; publish de-identified airport observations" are now wired to the feature surface. The row's stated reason is false. |
+
+The reason as written is `grep -rn liveClaimRead services/airport/` returns
+nothing. **It does not return nothing.** `LayoverRecommendationService` imports
+the Live read and AWAITS it twice, in the candidate loop:
+
+`services/airport/LayoverRecommendationService.ts:100#try { readable = await liveLabelsServable(db as any); } catch { readable = false; }`
+
+`services/airport/LayoverRecommendationService.ts:108#envelopes = await readLiveClaimEnvelopes(db as any, c.subjectId, { claimTypes: LAYOVER_LIVE_CLAIM_TYPES, now });`
+
+"Nothing is published either" is false as well. The publish limb is a live
+route, not a library function:
+
+`routes/airport.ts:2768#router.post("/airport/sessions/:id/observations", async (req, res) => {`
+
+which calls `submitTravellerObservation` at `routes/airport.ts:2797`, backed by
+`2982_layover_traveller_observation_submissions.sql` — **applied to production**,
+manifest version `20260916121232`. And it is genuinely DE-IDENTIFIED, which is
+the word the requirement uses: the observer handle is an HMAC over (user,
+airport) under a server pepper that throws rather than falling back to a
+constant (`services/layover/LayoverObservationService.ts:215#export function travellerObserverHandle(userId: string, airportRef: string): string {`).
+
+**Why W and not C.** The publish limb is live. The consume limb is not: it sits
+behind `layover_live_intersection_enabled`, and that flag has **no row at all**
+on production — measured 2026-09-22, the `feature_flags` select returns zero
+rows, because 2851 is unapplied. So `isFlagEnabled` fails closed and the
+intersection reads nothing for every traveller. That is exactly L128's shape,
+graded W there, and a requirement naming two things is not satisfied by one.
+
+### §34's precedent citation is wrong, and its verdicts still stand
+
+§34 held six rows at `N` and cited L276 as "the controlling case, graded `N` on
+exactly this shape", quoting its grep-returns-nothing reason. **I cited a
+precedent without re-testing its facts** — the same defect this census has now
+recorded four times against other people's rows, committed here against my own,
+in a section whose entire subject was stale reasons.
+
+What survives, and why the six rows do NOT move:
+
+* The PRINCIPLE is untouched and does not depend on L276. Capability that the
+  feature surface never calls is not built, because the requirement is about
+  what a traveller meets. That is the grading rule in force, stated
+  independently of any row.
+* The six rows' own facts were measured directly, not inherited from L276:
+  `grep -rn "routeCorridorProvider\|returnRouteRisk\|independentRouteCount\|assessReturnRisk" src/services/airport/ src/routes/` returns ZERO lines, and
+  `LAYOVER_TRAVEL_TIME_PROVIDER` is still `noRoutedProvider`. Re-measured for
+  this section; unchanged.
+
+So L60, L68, L69, L70, L71 and L282 stay `N`. What changes is that L276 is no
+longer an example of the shape, and §34 should have said so.
+
+§34 also claims "One change wires all six". That is too glib and is corrected
+here: `RouteCorridorProvider` and `TravelTimeProvider` are DIFFERENT PORTS —
+`corridor(q) => CorridorResult` versus `estimate(q) => TravelTimeResult` — so
+there is no one-line repoint available and an adapter has to exist first.
+
+### Two reasons corrected, verdicts held
+
+| id | the stated reason | what is actually true | verdict |
+|---|---|---|---|
+| L30 | "Absent. No checkpoint is ever observed or recorded." | `layover_checkpoints` is no longer absent from the TREE — `2992_layover_decision_record_and_operational_tables.sql` creates it. 2992 is unapplied on production, so nothing is observed or recorded, which is the half the row actually scores. Storage existing only as an unapplied file is `N` by the H24 precedent. | N |
+| L180 group | "`LayoverAirportTruth.ts` is **not touched by this pass and still has no caller outside its test.**" | False. It has six callers under `src/services/`: `LayoverFeasibility.ts`, `LayoverEnvelope.ts`, `LayoverEventReplanner.ts`, `LayoverSafetyEngine.ts`, `layoverMaturity.ts` and `LayoverObservationService.ts`. That grouped row's verdict cell reads `W / C`, which this census's integrity tool does not parse as a verdict, so no count depends on it — but the sentence is quoted as evidence elsewhere and is wrong. | unchanged |
+
+### Two claims re-tested TRUE — recorded so the sweep is not read as one-sided
+
+Finding stale absence claims does not establish that absence claims are
+generally stale. These two were tested by the same method and hold:
+
+* **L25 / L264** — `layover_snapshots` really does not exist. No `CREATE TABLE`
+  for it anywhere in `src/migrations/`. The spec's central versioned artifact is
+  still absent, and every row that rests on that stands.
+* **L194** — `layover_events` really has no dedup index. `0127_layover_system.sql`
+  creates `layover_events_session_idx` and `layover_events_user_idx` and nothing
+  on `dedup_key`.
+
+### Headline after this section
+
+| bucket | was (§33) | now |
+|---|---|---|
+| BUILT-AND-CORRECT | 79 | 79 |
+| BUILT-BUT-WRONG | 124 | **125** |
+| NOT-BUILT | 93 | **92** |
+| CONTRADICTED | 0 | 0 |
+| total | 296 | 296 |
