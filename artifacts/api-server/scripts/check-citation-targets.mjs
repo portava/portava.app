@@ -288,6 +288,13 @@ import {
  * 238.
  *
  * LOWERED 2026-09-22, 210 -> 209, at the four-lane Telegraph/Input integration.
+ * LOWERED 2026-09-22, 209 -> 207, by the §6/§7 rich-messaging lane. Adding the
+ * T80 edit-history writer shifted every line of `routes/messaging.ts` after the
+ * import block, so all 172 file:line citations to it — and the 76 bare `:NNN`
+ * continuations that inherit it — were repointed through the diff's exact
+ * insertion map and each anchored one re-verified against the line it names.
+ * Two citations that had been dangling before that pass now land on real code,
+ * because the bare continuations had been stale and the remap put them right.
  * Not a sweep: the history-privacy lane threaded a visibility window through
  * `compass/TelegraphConversationTools.ts`, which moved five citations in
  * census-telegraph onto blank lines and closing braces. They were repointed by
@@ -331,7 +338,14 @@ import {
  * `domain/telegraph/commands/telegraphCommands.ts`. Neither lane could have
  * measured this number, which is the reason the ceiling is re-measured after a
  * merge instead of inherited from whichever branch landed last. */
-export const MAX_DEAD_TARGETS = 206;
+/* RE-MEASURED AGAIN 2026-09-22 at the saved-messages merge. That lane
+ * inserted seven import lines into `routes/messaging.ts`, which renumbered
+ * EVERY line of the file and moved 248 citations across five documents; it
+ * repointed them and measured 207 in its own worktree. This tree measures
+ * something else again, for the same reason as the merge above: the repairs
+ * are disjoint and no branch can see the union. The value below is the
+ * measurement at the merged tree: 205. */
+export const MAX_DEAD_TARGETS = 205;
 
 /** Pinned to a commit by its own declaration; its lines must not track HEAD. */
 const PINNED_DOCS = new Set(['docs/architecture/mobile-reachability-ledger.md']);

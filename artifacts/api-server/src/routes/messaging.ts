@@ -71,6 +71,13 @@ import {
 } from '../services/messageTranslation';
 import { shouldRetranslateOnLanguageChange } from '../lib/retranslateGate';
 import {
+  EDIT_HISTORY_UNAVAILABLE,
+  editHistoryRow,
+  isEditHistorySchemaAbsent,
+  nextEditVersion,
+  orderEditsNewestFirst,
+} from '../services/telegraph/messageEdits.js';
+import {
   syncTripChatMembers,
   syncCircleChatMembers,
 } from '../services/groupChatSync';
@@ -3567,12 +3574,76 @@ router.patch('/threads/:threadId/messages/:messageId', async (req, res) => {
   if (m.sender_id !== user.id) { sendError(res, 'forbidden', 'Only the sender can edit this message'); return; }
 
   const now = new Date().toISOString();
+
+  // ── §7.5 version history (T80) ────────────────────────────────────────────
+  // The previous body is recorded BEFORE `messages.body` is overwritten, and
+  // the ordering is the guarantee, not a style choice: overwrite-then-record
+  // loses the old text for good the first time the record fails. See
+  // `services/telegraph/messageEdits.ts` for why the absent-table branch is
+  // narrow and why it degrades loudly instead of refusing.
+  const previousBody = (m.body as string | null) ?? null;
+  let recordedVersion: number | null = null;
+  let historyUnavailable = false;
+
+  const { data: existingEdits, error: existingEditsErr } = await sc
+    .from('message_edits')
+    .select('version')
+    .eq('message_id', messageId);
+
+  if (existingEditsErr && isEditHistorySchemaAbsent(existingEditsErr)) {
+    // Migration 2811 is unapplied on this deployment. Let the edit through,
+    // but do not pretend a version was kept.
+    historyUnavailable = true;
+    req.log.warn({ messageId, err: existingEditsErr },
+      'message_edits absent — editing without version history (migration 2811 unapplied)');
+  } else if (existingEditsErr) {
+    // NOT the schema gap: an unreadable history means the next version number
+    // is unknown, and writing the body now would lose `previousBody` with
+    // nothing recording it.
+    req.log.error({ err: existingEditsErr, messageId },
+      'message_edits read failed on edit — refusing rather than overwriting the body unrecorded');
+    sendError(res, 'degraded_unavailable', 'We could not record this edit right now. Please try again shortly.');
+    return;
+  } else {
+    const version = nextEditVersion(((existingEdits ?? []) as any[]).map((e) => ({ version: Number(e.version) })));
+    const { error: insertEditErr } = await sc
+      .from('message_edits')
+      .insert(editHistoryRow({ messageId, editorId: user.id, version, previousBody, editedAt: now }));
+
+    if (insertEditErr && isEditHistorySchemaAbsent(insertEditErr)) {
+      historyUnavailable = true;
+      req.log.warn({ messageId, err: insertEditErr },
+        'message_edits absent on insert — editing without version history');
+    } else if (insertEditErr) {
+      req.log.error({ err: insertEditErr, messageId, version },
+        'message_edits insert failed — refusing the edit so the previous body survives');
+      sendError(res, 'degraded_unavailable', 'We could not record this edit right now. Please try again shortly.');
+      return;
+    } else {
+      recordedVersion = version;
+    }
+  }
+
   const { error: updateErr } = await sc
     .from('messages')
     .update({ body: newBody, edited_at: now })
     .eq('id', messageId);
 
   if (updateErr) {
+    // Compensate the version row we already wrote. Left behind it would claim
+    // an edit that never happened AND burn that version number under
+    // UNIQUE (message_id, version), so the next real edit would collide.
+    if (recordedVersion !== null) {
+      const { error: rollbackErr } = await sc
+        .from('message_edits')
+        .delete()
+        .eq('message_id', messageId)
+        .eq('version', recordedVersion);
+      if (rollbackErr) {
+        req.log.error({ err: rollbackErr, messageId, version: recordedVersion },
+          'message_edits compensation failed — an orphan version row remains for this message');
+      }
+    }
     req.log.error({ err: updateErr }, 'message edit failed');
     sendError(res, 'db_error', updateErr.message);
     return;
@@ -3585,6 +3656,11 @@ router.patch('/threads/:threadId/messages/:messageId', async (req, res) => {
     body: newBody,
     deleted: false,
     editedAt: now,
+    // §7.5's second noun, and an honest report when it could not be kept. A
+    // client must not offer "view edit history" off an edit that recorded none.
+    versionHistory: historyUnavailable
+      ? { recorded: false, version: null, reason: EDIT_HISTORY_UNAVAILABLE }
+      : { recorded: true, version: recordedVersion },
   });
 
   // Realtime: notify other members the message body changed.
@@ -3618,6 +3694,109 @@ router.patch('/threads/:threadId/messages/:messageId', async (req, res) => {
     senderPreferenceUnreadable: senderLanguage.unreadable,
     logger: req.log,
   }).catch(() => {});
+});
+
+/* ---------------------------------------------------------------------------
+ * GET /api/threads/:threadId/messages/:messageId/edits
+ * ---------------------------------------------------------------------------
+ * Telegraph §7.5 / census T80 — the READ half of version history. Without it
+ * the PATCH writer above would be another write-only table, which is exactly
+ * the shape T119 recorded against `saved_messages`.
+ *
+ * A previous body IS message content, so it is authorized like message content
+ * and RE-AUTHORIZED at read time (§14.2 "read authorization is dynamic"):
+ *   - the caller is an ACTIVE member of the message's thread;
+ *   - the message is not deleted/unsent — §7.4 says an unsent message leaves
+ *     normal retrieval, and its drafts must not outlive it;
+ *   - the message is inside the caller's §14.3 history window when the bound
+ *     is on, so a member who joined later cannot read back through it.
+ *
+ * FAILS CLOSED. supabase-js RESOLVES a PostgREST refusal as `{data: null,
+ * error}`, so every read here is error-checked and an unreadable table becomes
+ * a named 503 — never `{ versions: [] }`, which would assert to the caller that
+ * this message has never been edited.
+ *
+ * INERT: no client calls this route today.
+ */
+router.get('/threads/:threadId/messages/:messageId/edits', async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+  const { threadId, messageId } = req.params;
+  if (!isUuid(threadId)) { sendError(res, 'invalid_payload', 'Invalid thread id'); return; }
+  if (!isUuid(messageId)) { sendError(res, 'invalid_payload', 'Invalid message id'); return; }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, 'server_not_configured', 'Service client not ready'); return; }
+
+  const boundOn = await historyBoundEnabled(sc);
+  const { data: membership, error: membershipErr } = await sc
+    .from('message_thread_members')
+    .select(membershipSelect('user_id, left_at', boundOn))
+    .eq('thread_id', threadId)
+    .eq('user_id', user.id)
+    .maybeSingle();
+
+  if (membershipErr) { refuseUnreadableAccess(req, res, 'message_thread_members', { err: membershipErr, threadId, userId: user.id }); return; }
+  if (!membership) { sendError(res, 'forbidden', 'Not a member of this thread'); return; }
+  if ((membership as any).left_at !== null && (membership as any).left_at !== undefined) {
+    sendError(res, 'forbidden', 'You no longer have access to this thread');
+    return;
+  }
+
+  const { data: msgRow, error: msgErr } = await sc
+    .from('messages')
+    .select('id, thread_id, sender_id, body, deleted_at, edited_at, created_at')
+    .eq('id', messageId)
+    .eq('thread_id', threadId)
+    .maybeSingle();
+
+  if (msgErr) {
+    req.log.error({ err: msgErr, messageId, threadId },
+      'edit history: messages read failed — refusing rather than reporting the message as nonexistent');
+    sendError(res, 'degraded_unavailable', 'We could not read that message right now. Please try again shortly.');
+    return;
+  }
+  if (!msgRow) { sendError(res, 'not_found', 'Message not found'); return; }
+  const msg = msgRow as any;
+  // §7.4: an unsent/deleted message is out of normal retrieval, and so are the
+  // bodies it used to have. Returning them here would make the edit history a
+  // way to read back exactly what deletion was meant to take away.
+  if (msg.deleted_at) { sendError(res, 'not_found', 'Message not found'); return; }
+
+  const visibleFrom = visibleFromOf(membership as any, boundOn);
+  if (!withinWindow(msg.created_at, visibleFrom)) {
+    sendError(res, 'forbidden', 'That message is outside the part of this conversation you can see');
+    return;
+  }
+
+  const { data: editRows, error: editErr } = await sc
+    .from('message_edits')
+    .select('version, previous_body, editor_id, edited_at')
+    .eq('message_id', messageId);
+
+  if (editErr) {
+    // Both branches refuse; they differ only in what the log says. An absent
+    // table is a deployment fact (migration 2811) and an unreadable one is an
+    // outage, and NEITHER is "this message has never been edited".
+    if (isEditHistorySchemaAbsent(editErr)) {
+      req.log.warn({ messageId, err: editErr }, 'edit history unavailable: message_edits absent (migration 2811 unapplied)');
+      sendError(res, 'degraded_unavailable', EDIT_HISTORY_UNAVAILABLE);
+      return;
+    }
+    req.log.error({ err: editErr, messageId }, 'message_edits read failed — refusing rather than reporting no edit history');
+    sendError(res, 'degraded_unavailable', 'We could not load this message’s edit history right now. Please try again shortly.');
+    return;
+  }
+
+  res.status(200).json({
+    messageId,
+    threadId,
+    senderId: (msg.sender_id as string | null) ?? null,
+    currentBody: (msg.body as string | null) ?? null,
+    editedAt: (msg.edited_at as string | null) ?? null,
+    versions: orderEditsNewestFirst(((editRows ?? []) as any[])),
+  });
 });
 
 /* ---------------------------------------------------------------------------

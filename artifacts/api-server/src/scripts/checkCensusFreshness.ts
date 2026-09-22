@@ -1598,6 +1598,14 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     // UNIMPLEMENTED_COMMANDS is EMPTY so the §13.1 partition stays exhaustive.
     // §33 rests T168 on that file; this census must therefore age with it.
     "artifacts/api-server/src/test/telegraphCommandRoute.test.ts",
+    // ADDED 2026-09-22 for the saved-messages lane. T80's evidence is this file:
+    // it is what pins that an edit records the PREVIOUS body, that a missing
+    // `message_edits` table degrades loudly (`recorded: false` and a 503, never
+    // `{versions: []}`), and that the history read re-authorizes like the message
+    // content it is. T80 stays W on a DEPLOYMENT ceiling — migration 2811 is
+    // unapplied to production — so this census must age with the file that would
+    // notice if the code stopped behaving that way.
+    "artifacts/api-server/src/test/telegraphMessageEditHistory.test.ts",
     // WIDENED 2026-09-22 by the location/proximity/privacy lane
     // (census-telegraph §31): §4's Nearby surface and §30A.2's
     // ReachablePersonProjection are built here, and §17.8/§30A.7's device-bound
