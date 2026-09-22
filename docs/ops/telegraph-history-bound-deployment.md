@@ -1,6 +1,63 @@
 # Telegraph history bound: the production measurement, and the two-step deployment
 
-**Status: MEASURED, NOT DEPLOYED.** This file records what production actually
+**Status: APPLIED 2026-09-22, FLAG STILL OFF, AND THE FLIP IS BLOCKED ON A DEPLOY.**
+See §0 for what happened and why the last step waits.
+
+## 0. What was applied, and why the flag is still false
+
+`2400_telegraph_history_bound.sql` (sha256 `e878b280…`) applied to production
+`ajrurzioarfkagpuxfnb` at **05:40 UTC**, and
+`2966_telegraph_history_bound_close.sql` (sha256 `a865c2f7…`) at **05:42 UTC**,
+both by the integrating lead through the Supabase Management API, both ledgered
+in `public.schema_migration_ledger` with `applied_by = 'manual'` and a delivery
+note recording that the files' leading `--` header comments were not transmitted
+while every executable statement was sent verbatim and in file order. 2400's two
+`COMMENT ON` payloads were read back afterwards and match the file character for
+character.
+
+**2400 ALONE WOULD HAVE CLOSED NOTHING, which is why the package is both.** Every
+one of the 18 membership rows predates 2400, so every one would have kept
+`visible_from_at = NULL`, and NULL is unbounded by design. The read-side gate was
+correct and inert; what was missing was the data it reads. 2966 supplies it.
+
+**The effect was predicted read-only BEFORE the apply and measured after, and the
+two agree exactly:**
+
+| | predicted | measured |
+|---|---|---|
+| rows bounded | 6 (all `trip`) | 6 — `circle 1/0`, `direct 11/0`, `trip 6/6` |
+| rows left NULL | 12 | 12 |
+| (member, own message) pairs hidden | **0** | **0** |
+| (member, other-sender message) pairs now outside the window | 3 | 3 |
+| flag `telegraph_history_bound_enabled` | `false` | `false` |
+| trigger hardening in `prosrc` | present | present |
+
+Nothing a reader sees has changed, because the flag is still off. That is the
+point of splitting the steps: **the apply is the safe half.**
+
+### Why the flip does NOT follow immediately
+
+The flag's own description promises that turning it on bounds a specific list of
+surfaces. Four of the doors that list implies — attachments and media bytes
+(`lib/mediaAccess.ts`), reconnect/stream replay (`routes/telegraphStream.ts`),
+the group-chat thread read (`routes/groupChat.ts`) and Compass retrieval
+(`compass/TelegraphConversationTools.ts`) — **do not read the bound on
+`origin/main`**, which is what production deploys. Measured: each of those four
+files contains zero references to `groupChatHistoryBound` / `visibleFromOf` on
+`origin/main`, and three each on this branch.
+
+So flipping the flag before this branch merges and deploys would bind the paths
+main already covers while leaving those four open, and would advertise a complete
+bound while delivering a partial one. A promise the code does not keep is worse
+than an unbounded reader — this document says so about the flag description, and
+the rule does not get an exception when the shortfall is ours.
+
+**The flip is therefore ordered after the deploy**, exactly as §3 Step 3 → Step 4
+already required, and it is the one step of this package that has NOT been taken.
+
+---
+
+**Original status header, kept for the record: MEASURED, NOT DEPLOYED.** This file records what production actually
 holds today and what applying migration `2400_telegraph_history_bound.sql`
 would and would not change. It does not record a deployment, because none has
 happened. The apply itself waits on the history-privacy lane's rehearsal; see
