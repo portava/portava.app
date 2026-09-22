@@ -1574,9 +1574,9 @@ cannot supply.
 | Surface | §9 (`cdfff599`) | Now (`743ae78f`) | Evidence |
 | --- | --- | --- | --- |
 | `certification` on `/overview` | Published, **not read** | **Read and rendered** | `LayoverOverview.certification` (`src/services/layover.ts:349`), `summarizeCertification` (`src/components/layover/layoverReturnFacts.ts:143#summarizeCertification`), rendered `LayoverSafeReturnCard.tsx:89` and `LayoverCompassCard.tsx:60` |
-| `safeReturn` posture | Published, **not read** | **Read and rendered** | `LayoverOverview.safeReturn` (`layover.ts:351`), `postureHeadline` (`layoverReturnFacts.ts:170#postureHeadline`), used `LayoverSafeReturnCard.tsx:81`; `returnRoutePrimary` hoists the card above the hero (`app/layover/[id].tsx:413#returnRoutePrimary`) |
+| `safeReturn` posture | Published, **not read** | **Read and rendered** | `LayoverOverview.safeReturn` (`layover.ts:351`), `postureHeadline` (`layoverReturnFacts.ts:170#postureHeadline`), used `LayoverSafeReturnCard.tsx:81`; `returnRoutePrimary` hoists the card above the hero (`app/layover/[id].tsx:537#returnRoutePrimary`) |
 | `offlineBundle` | Published, **not read** | **Read and displayed; still not cached** | `LayoverOverview.offlineBundle` (`layover.ts:353`), `bundleFreshness`/`describeDeadline` (`layoverReturnFacts.ts:54, 92`). **`AsyncStorage` appears nowhere** under `app/layover/`, `src/components/layover/`, `src/services/layover.ts` or `src/context/LayoverSessionContext.tsx` — grep, not recollection |
-| `POST /:id/return-now` | Wired, **no client function** | **Reachable by gesture** | `returnToAirportNow` (`layover.ts:909#returnToAirportNow`) → `LayoverSafeReturnCard.tsx:96`, mounted at `app/layover/[id].tsx:391#<LayoverSafeReturnCard` |
+| `POST /:id/return-now` | Wired, **no client function** | **Reachable by gesture** | `returnToAirportNow` (`layover.ts:957#returnToAirportNow`) → `LayoverSafeReturnCard.tsx:96`, mounted at `app/layover/[id].tsx:515#<LayoverSafeReturnCard` |
 | `POST /:id/compass` | **Dark** — `askCompass` had no importer | **Reachable by gesture** | `LayoverCompassCard.tsx:24, 48`, mounted at `app/layover/[id].tsx:346` |
 | `runLayoverTool` (12 §12 tools) | Callable, **not passed to the model** | **Unchanged** | `LayoverCompassService.ts:726-736` still says DECLARED, NOT YET PASSED TO THE MODEL. A reachable endpoint is not a reachable tool |
 | `GET /:id/safety` | Dark — `LayoverRecommendationScreen.tsx` imported by nothing | **Still dark** | `grep -rn LayoverRecommendationScreen app/ src/` outside its own file: no hits. `getSessionSafety` still has that one importer and it is unmounted |
@@ -1587,8 +1587,8 @@ cannot supply.
 | id | Was | Now | Evidence at `743ae78f` |
 | --- | --- | --- | --- |
 | L2 | W | **C** | Both halves that kept it `W` are closed. The header is consumed — `summarizeCertification` (`layoverReturnFacts.ts:143#summarizeCertification`) renders the server's own `engineVersion`/`confidence`/`bufferPercentile` rather than a client restatement of them — and the client's DUPLICATE thresholds are gone with the file that held them: `LayoverReturnPanel.tsx` no longer exists (`git rm`, commit `a718beb5`). Grepped for surviving threshold constants in the replacement: none. |
-| L146 | W | **C** | §9 said "Reachability is the missing half" in those words. It is closed: `returnToAirportNow` (`layover.ts:909#returnToAirportNow`) calls `POST /:id/return-now`, `LayoverSafeReturnCard.tsx:96` calls it on a **RETURN TO AIRPORT** press, and the card is mounted (`app/layover/[id].tsx:391#<LayoverSafeReturnCard`). A double press is refused by a ref written synchronously (`:77, 92-93`) — state alone loses two presses in one frame. The abort's own `statusCapability` is reported to the traveller rather than swallowed (`:239-240`, `statusCapabilityNote`), so `flag_off` reads as "your layover stays open so you keep the countdown", not as a failure. |
-| L114 | W | **C** | §9 ended "The endpoint it lives on is still dark from the app." It is not: `askCompass` (`layover.ts:861#askCompass`) has an importer (`LayoverCompassCard.tsx:24, 48`), the card is mounted (`app/layover/[id].tsx:346`), and the single highest-value clarifying question is the thing actually rendered (`LayoverCompassCard.tsx:83-86`). The computation (`valueOfInformation`, `LayoverCompassService.ts:453`) was already built and pinned; a traveller can now be asked. |
+| L146 | W | **C** | §9 said "Reachability is the missing half" in those words. It is closed: `returnToAirportNow` (`layover.ts:957#returnToAirportNow`) calls `POST /:id/return-now`, `LayoverSafeReturnCard.tsx:96` calls it on a **RETURN TO AIRPORT** press, and the card is mounted (`app/layover/[id].tsx:515#<LayoverSafeReturnCard`). A double press is refused by a ref written synchronously (`:77, 92-93`) — state alone loses two presses in one frame. The abort's own `statusCapability` is reported to the traveller rather than swallowed (`:239-240`, `statusCapabilityNote`), so `flag_off` reads as "your layover stays open so you keep the countdown", not as a failure. |
+| L114 | W | **C** | §9 ended "The endpoint it lives on is still dark from the app." It is not: `askCompass` (`layover.ts:909#askCompass`) has an importer (`LayoverCompassCard.tsx:24, 48`), the card is mounted (`app/layover/[id].tsx:346`), and the single highest-value clarifying question is the thing actually rendered (`LayoverCompassCard.tsx:83-86`). The computation (`valueOfInformation`, `LayoverCompassService.ts:453`) was already built and pinned; a traveller can now be asked. |
 
 ### Rows I looked at and deliberately did NOT move
 
@@ -2200,7 +2200,7 @@ sentences derived from the server's own diff
 (`travel-buddy-standalone/src/components/layover/LayoverFlightChangeCard.tsx:82#export function replanLines`), never re-derived on the client, and every
 refusal in the traveller's language (`travel-buddy-standalone/src/components/layover/LayoverFlightChangeCard.tsx:49#const REFUSAL_TEXT`) so a press is
 never left unanswered. It is mounted on the dashboard between the can-I-leave
-card and the plan (`travel-buddy-standalone/app/layover/[id].tsx:502#<LayoverFlightChangeCard`),
+card and the plan (`travel-buddy-standalone/app/layover/[id].tsx:626#<LayoverFlightChangeCard`),
 and `updateLayoverSession`
 (`travel-buddy-standalone/src/services/layover.ts:829#export async function updateLayoverSession`)
 — which until this pass **had no caller anywhere in the app** — now returns the
@@ -2377,11 +2377,11 @@ not make.
    line 1341 to `routes/airport.ts:1966#manual_city` and `departure_time` from
    line 1345 to `routes/airport.ts:1970#departure_time`; `returnRoutePrimary`
    moved from line 284 to
-   `travel-buddy-standalone/app/layover/[id].tsx:413#returnRoutePrimary`; two
+   `travel-buddy-standalone/app/layover/[id].tsx:537#returnRoutePrimary`; two
    `returnToAirportNow` citations moved from line 608 to
-   `travel-buddy-standalone/src/services/layover.ts:909#returnToAirportNow`,
+   `travel-buddy-standalone/src/services/layover.ts:957#returnToAirportNow`,
    and `askCompass` from line 560 to
-   `travel-buddy-standalone/src/services/layover.ts:861#askCompass`. That is
+   `travel-buddy-standalone/src/services/layover.ts:909#askCompass`. That is
    the anchor ratchet paying for itself on its first real test: it named every
    one, and an unanchored citation would have moved silently.
 
@@ -2619,9 +2619,9 @@ safe-return pass, is in the client's own `SafeReturnPosture` type, and was read
 by **nothing**, while `returnRoutePrimary` — the field beside it in the same
 object, set from the same boolean — was read. The dashboard now collapses the
 three exploration surfaces (recommendations, map, people) into one notice
-(`travel-buddy-standalone/app/layover/[id].tsx:427#explorationCollapsed === true`,
+(`travel-buddy-standalone/app/layover/[id].tsx:551#explorationCollapsed === true`,
 rendered at
-`travel-buddy-standalone/app/layover/[id].tsx:537#layover-exploration-collapsed`).
+`travel-buddy-standalone/app/layover/[id].tsx:661#layover-exploration-collapsed`).
 
 **Collapsed, not hidden**, and the distinction is the requirement: §13 asks for
 exploration-first affordances to be suppressed when the traveller is due back,
@@ -2634,7 +2634,7 @@ mounted in every posture — which keeps L114's `C` true.
 already contextual and that half was never the gap; the gap was that nothing
 said WHY, and the OS dialog cannot — the sentence it shows is the app's name and
 the word "notifications". A rationale sheet now precedes it
-(`travel-buddy-standalone/app/layover/[id].tsx:283#notificationPromptWouldAppear`),
+(`travel-buddy-standalone/app/layover/[id].tsx:385#notificationPromptWouldAppear`),
 and only when a dialog would actually appear
 (`travel-buddy-standalone/src/lib/safeNotifications.ts:93#export async function notificationPromptWouldAppear`).
 That probe fails towards NO sheet: an unreadable permission state is treated as
@@ -2866,7 +2866,7 @@ Three things now exist:
 | --- | --- |
 | one plain-text thread writer, with the E2EE refusal that makes it safe to call from a second route | `artifacts/api-server/src/lib/threadMessage.ts:59#export async function postPlainThreadMessage` |
 | the route writing the traveller's own text, before the event that reports on it | `artifacts/api-server/src/routes/airport.ts:1716#const sent = await postPlainThreadMessage(sc, {` |
-| the screen navigating on `posted`, and saying something true when it is false | `travel-buddy-standalone/app/layover/[id].tsx:306#} else if (res.posted && overview.session.tripId) {` |
+| the screen navigating on `posted`, and saying something true when it is false | `travel-buddy-standalone/app/layover/[id].tsx:408#} else if (res.posted && overview.session.tripId) {` |
 
 **Why a helper rather than an inline insert.** One of the rules is a privacy
 rule, not a convenience: an end-to-end encrypted thread REFUSES a plaintext
@@ -3058,7 +3058,7 @@ one-tap return.
 abort is lifted
 (`travel-buddy-standalone/src/components/layover/useSafeReturnAbort.ts:47#useSafeReturnAbort`,
 created once per screen at
-`travel-buddy-standalone/app/layover/[id].tsx:163#useSafeReturnAbort`). There is
+`travel-buddy-standalone/app/layover/[id].tsx:259#useSafeReturnAbort`). There is
 still exactly one `POST /return-now` on the surface, one double-press ref guard,
 and one place the RETURN CONTRACT is rendered — `LayoverSafeReturnCard` — which
 is precisely what §13.4 said a second control must not cost.
@@ -3068,7 +3068,7 @@ is precisely what §13.4 said a second control must not cost.
 The footer read *Remind me / Ask locals / End* in every posture. At RETURN_NOW a
 reminder is a promise about a future that has arrived. The primary slot now
 becomes **Return to airport**
-(`travel-buddy-standalone/app/layover/[id].tsx:637#layover-footer-return-now`),
+(`travel-buddy-standalone/app/layover/[id].tsx:771#layover-footer-return-now`),
 keyed on the server's `returnRoutePrimary` — the same certified boolean that
 hoists the abort card, so the footer and the layout cannot disagree and nothing
 re-derives a return state from a clock. It fires the lifted controller, so the
@@ -3736,7 +3736,7 @@ Appendix C1 forbids, in the row about electing artifacts.
 
 **THE CLIENT SENDS BOTH ANSWERS FOR THE FIRST TIME.** `endLayoverSession(id)`
 issued a bare `DELETE`
-(`travel-buddy-standalone/src/services/layover.ts:984#export async function endLayoverSession`),
+(`travel-buddy-standalone/src/services/layover.ts:1032#export async function endLayoverSession`),
 so **every** close was recorded `cancelled` — a traveller who came back and
 boarded was recorded as having abandoned the layover — even though the route has
 accepted `outcome: "completed"` since §7, `endSession` has taken a `reason`
@@ -3746,7 +3746,7 @@ the two outcomes and an election that is **off until it is pressed**
 (`travel-buddy-standalone/src/components/layover/LayoverEndSheet.tsx:40#const [keepStamp, setKeepStamp]`,
 `travel-buddy-standalone/src/components/layover/LayoverEndSheet.tsx:55#layover-end-stamp-election`),
 mounted at
-`travel-buddy-standalone/app/layover/[id].tsx:701#<LayoverEndSheet`.
+`travel-buddy-standalone/app/layover/[id].tsx:835#<LayoverEndSheet`.
 
 **ONE SHEET ON BOTH PLATFORMS, WHICH BREAKS THIS SCREEN'S OWN RULE AND SAYS SO.**
 `app/layover/[id].tsx` kept `Alert.alert` on native because an OS alert is the
@@ -6446,10 +6446,10 @@ The comparison runs through `canonCity` on both sides. The stored city is
 already canonical (`createCrew` writes it that way); the caller's is not.
 
 **No client change is required, and that is checked rather than assumed.**
-`crewAction` in `travel-buddy-standalone/src/services/layover.ts:1425#message: typeof parsed.message === 'string' ? parsed.message : 'That did not work. Please try again.',`
+`crewAction` in `travel-buddy-standalone/src/services/layover.ts:1602#message: typeof parsed.message === 'string' ? parsed.message : 'That did not work. Please try again.',`
 surfaces the server's own `message` on any non-ok response, so the new refusal
 renders as written. The surface is mounted, not dark:
-`travel-buddy-standalone/app/layover/[id].tsx:605#<LayoverCrewSection`. **No file
+`travel-buddy-standalone/app/layover/[id].tsx:739#<LayoverCrewSection`. **No file
 under `travel-buddy-standalone/` was changed by this pass.**
 
 ### 27.3 The mutations
