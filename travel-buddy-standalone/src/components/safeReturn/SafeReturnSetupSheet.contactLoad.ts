@@ -8,6 +8,8 @@
  *   B) getTrustedContacts throws  → returns empty lists, loadError: true
  *   C) listEmergencyContacts throws  → returns empty lists, loadError: true
  *   D) both throw together → returns empty lists, loadError: true
+ *   E) getTrustedContacts resolves null (unreadable) → loadError: true
+ *   F) listEmergencyContacts reports { error } (unreadable) → loadError: true
  *
  * The function NEVER throws. This is the invariant that guarantees the
  * component's `setContactsLoading(false)` call (which comes right after
@@ -26,18 +28,21 @@
 // own service functions which satisfy these shapes at runtime.
 
 export interface ContactLoadDeps<TC, EC> {
-  getTrustedContacts: () => Promise<TC[]>;
-  /** Returns `{ contacts: EC[] }` — we only read the `contacts` field. */
-  listEmergencyContacts: () => Promise<{ contacts: EC[] }>;
+  /** Resolves `null` when the list COULD NOT BE READ (not "there are none"). */
+  getTrustedContacts: () => Promise<TC[] | null>;
+  /** Returns `{ contacts, error? }`; a set `error` means the read failed. */
+  listEmergencyContacts: () => Promise<{ contacts: EC[]; error?: string }>;
 }
 
 export interface ContactLoadResult<TC, EC> {
   trustedContacts: TC[];
   emergencyContacts: EC[];
   /**
-   * True when at least one service call threw an error.
-   * Both contact lists will be empty. The form still opens — contact loading
-   * failure is non-fatal.
+   * True when at least one contact list COULD NOT BE READ — the call threw,
+   * `getTrustedContacts` resolved `null`, or `listEmergencyContacts` reported
+   * an error. Both contact lists will be empty, and the caller must say the
+   * contacts could not be loaded rather than "no contacts saved yet". The form
+   * still opens — contact loading failure is non-fatal.
    */
   loadError: boolean;
 }
@@ -59,6 +64,12 @@ export async function runContactLoad<TC, EC>(
       deps.getTrustedContacts(),
       deps.listEmergencyContacts(),
     ]);
+    // A `null` trusted list or an `error` on the emergency list is a failed
+    // read, not an empty one. Before this check the loadError contract below
+    // was unreachable: neither service ever threw.
+    if (tc === null || ec.error) {
+      return { trustedContacts: [], emergencyContacts: [], loadError: true };
+    }
     return { trustedContacts: tc, emergencyContacts: ec.contacts, loadError: false };
   } catch {
     // Non-fatal — the user can still set up a Safe Return session without

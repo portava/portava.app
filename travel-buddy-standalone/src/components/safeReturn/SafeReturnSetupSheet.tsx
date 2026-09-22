@@ -92,6 +92,10 @@ export function SafeReturnSetupSheet({ visible, onClose, onStarted, planItemId, 
   const [emergencyContacts, setEmergencyContacts] = useState<EmergencyContact[]>([]);
   const [selectedEmergencyContacts, setSelectedEmergencyContacts] = useState<Set<string>>(new Set());
   const [contactsLoading, setContactsLoading] = useState(false);
+  // True when the contact lists could not be READ. Distinct from "both lists
+  // are empty": on a safety surface the user must not be told they have no one
+  // to alert when we simply could not find out.
+  const [contactsLoadError, setContactsLoadError] = useState(false);
   const [showWhyExpanded, setShowWhyExpanded] = useState(false);
   const [saving, setSaving] = useState(false);
   // Tracks whether the Modal itself should be open. We only open it after the
@@ -150,6 +154,7 @@ export function SafeReturnSetupSheet({ visible, onClose, onStarted, planItemId, 
           if (handle.isLive()) {
             setTrustedContacts(contactResult.trustedContacts);
             setEmergencyContacts(contactResult.emergencyContacts);
+            setContactsLoadError(contactResult.loadError);
             setContactsLoading(false);
           }
         });
@@ -169,6 +174,7 @@ export function SafeReturnSetupSheet({ visible, onClose, onStarted, planItemId, 
             if (handle.isLive()) {
               setTrustedContacts(contactResult.trustedContacts);
               setEmergencyContacts(contactResult.emergencyContacts);
+              setContactsLoadError(contactResult.loadError);
               setContactsLoading(false);
             }
           });
@@ -416,7 +422,12 @@ export function SafeReturnSetupSheet({ visible, onClose, onStarted, planItemId, 
 
                   {emergencyContacts.length === 0 && trustedContacts.length === 0 && (
                     <Text style={styles.emptyMsg}>
-                      No contacts saved yet. Add emergency contacts in Settings, or follow people on the app.
+                      {contactsLoadError
+                        // We could not find out. Saying "no contacts saved yet"
+                        // here would tell a user setting up a safety timer that
+                        // their alert list is empty when it may be full.
+                        ? "Couldn't load your contacts."
+                        : 'No contacts saved yet. Add emergency contacts in Settings, or follow people on the app.'}
                     </Text>
                   )}
                 </>
