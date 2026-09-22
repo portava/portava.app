@@ -544,7 +544,10 @@ export default function GemDetailScreen() {
               <View style={{ flex: 1 }}>
                 {guideProfile.bio && <Text style={styles.guideBio}>{guideProfile.bio}</Text>}
                 <Text style={styles.guideStats}>
-                  {guideProfile.contributionCount} contributions · {guideProfile.cityExpertise.join(', ')}
+                  {typeof guideProfile.contributionCount === 'number'
+                    ? `${guideProfile.contributionCount} contributions · `
+                    : ''}
+                  {guideProfile.cityExpertise.join(', ')}
                 </Text>
               </View>
             </View>

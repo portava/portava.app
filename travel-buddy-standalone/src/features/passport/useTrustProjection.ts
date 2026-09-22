@@ -77,6 +77,14 @@ export interface TrustProjection {
   /** What `confidence` was computed from — trust evidence, or a travel proxy. */
   confidenceBasis?: 'trust_evidence' | 'travel_proxy' | 'unavailable';
   strengths: string[];
+  /**
+   * Ordered recovery advice — present ONLY on the owner's own view, because the
+   * server emits it only for `context === "self"` (its presence would otherwise
+   * disclose to another viewer that this user is in recovery). Absent is the
+   * server's decision, never something the client fills in: no default hints, no
+   * client-side derivation from the score or the categories.
+   */
+  recoveryHints?: string[];
   /** TABLE 12, server-owned. Absent only on a server older than TABLE 12. */
   domains?: ServerDomainTrust[];
 }
@@ -178,9 +186,24 @@ export interface TrustView {
   confidenceLabel: string;
   /** Non-stigmatizing sentence explaining the evidence level (§10). */
   confidenceCopy: string;
+  /** Server-chosen strongest trust areas (at most 2, already privacy-filtered).
+   *  Rendered verbatim; an absent/empty list stays empty — the client never
+   *  substitutes a placeholder strength. */
+  strengths: string[];
   domains: TrustDomainRow[];
+  /** Positive credentials, minus the server's `strength_*` re-encoding of any
+   *  strength this view already renders (see `strengths`) — so a strength is
+   *  shown exactly once, never twice on the same screen. */
   credentials: CredentialProjection[];
   capabilityChips: CapabilityChip[];
+  /**
+   * Server-authored recovery advice, verbatim and in server order. Empty when
+   * the server did not send any — either because this is not the owner's view
+   * (the field is absent) or because the owner has nothing to recover (an empty
+   * array). The screen renders the section only when this is non-empty; it never
+   * substitutes copy of its own for an absent read.
+   */
+  recoveryHints: string[];
 }
 
 /** Sentinel standing for out-of-scope domains — deliberately neutral (§10). */
@@ -313,9 +336,34 @@ export function deriveTrustView(p: TrustProjectionEnvelope): TrustView {
         legacy('buddy', 'Buddy', caps.canBecomeBuddy, specific(caps.canBecomeBuddy)),
       ];
 
+  // Owner-only, server-gated (§9/§10). The client passes the strings through
+  // untouched — it must not invent, reorder, translate or top up hints, because
+  // an absent field means "the server did not send this", not "none exist".
+  const recoveryHints: string[] = Array.isArray(trust?.recoveryHints)
+    ? trust!.recoveryHints.filter((h): h is string => typeof h === 'string' && h.trim().length > 0)
+    : [];
+
   const capabilityChips: CapabilityChip[] = CAPABILITY_LABELS
     .filter((c) => caps[c.key])
     .map((c) => ({ key: c.key, label: c.label }));
+
+  // Strengths are SERVER-chosen (top categories above the server's threshold).
+  // We only drop values that are not renderable strings — we never invent one,
+  // and an absent list stays empty rather than becoming a default.
+  const strengths: string[] = Array.isArray(trust?.strengths)
+    ? trust!.strengths.filter((s): s is string => typeof s === 'string' && s.trim().length > 0)
+    : [];
+
+  // The server ALSO re-encodes the same top strengths as `strength_*`
+  // credentials (PassportProjectionService.buildCredentials). Rendering both
+  // would print the identical label twice on one screen, so a strength we
+  // render here is removed from the credentials list — and only then, so no
+  // credential is ever hidden without being shown somewhere.
+  const shown = new Set(strengths);
+  const rawCredentials = Array.isArray(p.credentials) ? p.credentials : [];
+  const credentials = rawCredentials.filter(
+    (c) => !(typeof c?.key === 'string' && c.key.startsWith('strength_') && shown.has(c.label)),
+  );
 
   return {
     hasTrust,
@@ -325,9 +373,11 @@ export function deriveTrustView(p: TrustProjectionEnvelope): TrustView {
     confidence,
     confidenceLabel: meta.label,
     confidenceCopy: meta.copy,
+    strengths,
     domains,
-    credentials: Array.isArray(p.credentials) ? p.credentials : [],
+    credentials,
     capabilityChips,
+    recoveryHints,
   };
 }
 
