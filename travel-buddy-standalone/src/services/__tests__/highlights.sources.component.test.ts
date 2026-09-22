@@ -200,3 +200,91 @@ describe('§12 provenance — writing it', () => {
     expect(r.data?.[0].sourceMemoryIds).toBeUndefined();
   });
 });
+
+/**
+ * §4 / §5 — the class and lifecycle fields the server already serves.
+ *
+ * `routes/highlights.ts:161#describeLifetimeFields` puts `lifetimeClass`,
+ * `lifetimeProvenance`, `lifecycleState` and `lifecycleProvenance` on the
+ * profile read (`:1103`) and the active feed (`:1353`). `mapHighlight` carried
+ * `pinnedAt` and DROPPED the other four, so the client could not tell a
+ * Highlight with no class from one on a build that cannot store a class —
+ * census H21 / H31's own distinction, lost one layer above the wire.
+ *
+ * The whole point is the THREE answers, so all three are pinned.
+ */
+describe('§4 / §5 class and lifecycle fields', () => {
+  const realFetch = global.fetch;
+  const realBase = process.env.EXPO_PUBLIC_API_BASE_URL;
+
+  beforeEach(() => { process.env.EXPO_PUBLIC_API_BASE_URL = 'https://api.test'; });
+  afterEach(() => {
+    global.fetch = realFetch;
+    process.env.EXPO_PUBLIC_API_BASE_URL = realBase;
+  });
+
+  function row(extra: Record<string, unknown>) {
+    return { id: HID, owner_id: 'me', media_url: 'u', media_type: 'image/jpeg', ...extra };
+  }
+
+  it('carries a stored class and a derived lifecycle state through', async () => {
+    capture({
+      ok: true, status: 200,
+      body: {
+        highlights: [row({
+          lifetimeClass: 'TRIP', lifetimeProvenance: 'stored',
+          lifecycleState: 'PINNED', lifecycleProvenance: 'derived',
+          pinnedAt: '2026-09-10T00:00:00.000Z',
+        })],
+      },
+    });
+
+    const r = await fetchActiveHighlights();
+    const h = r.data?.[0];
+
+    expect(h?.lifetimeClass).toBe('TRIP');
+    expect(h?.lifetimeProvenance).toBe('stored');
+    expect(h?.lifecycleState).toBe('PINNED');
+    // `derived`, not `stored`: nothing in the API server writes lifecycle_state,
+    // and a surface that said "stored" would claim a write that never happened.
+    expect(h?.lifecycleProvenance).toBe('derived');
+  });
+
+  it('keeps "no class assigned" distinct from "this build cannot say"', async () => {
+    capture({
+      ok: true, status: 200,
+      body: {
+        highlights: [row({
+          lifetimeClass: null, lifetimeProvenance: 'unavailable',
+          lifecycleState: null, lifecycleProvenance: 'unavailable',
+        })],
+      },
+    });
+
+    const r = await fetchActiveHighlights();
+    const h = r.data?.[0];
+
+    // The columns WERE projected and the server said it cannot report a class.
+    expect(h?.lifetimeClass).toBeNull();
+    expect(h?.lifetimeProvenance).toBe('unavailable');
+  });
+
+  it('leaves every class field UNDEFINED when the read did not project them', async () => {
+    // `GET /highlights/archived` and `GET /highlights/following-feed` do not
+    // run `describeLifetimeFields` at all — they emit raw rows — so this is the
+    // live shape on two of the four read surfaces, not a hypothetical.
+    capture({ ok: true, status: 200, body: { highlights: [row({ lifetime_class: 'TRIP' })] } });
+
+    const r = await fetchActiveHighlights();
+    const h = r.data?.[0];
+
+    // NOT `null`, and deliberately NOT read off the snake_case column either:
+    // without `lifetimeProvenance` the client cannot tell a stored class from
+    // an invalid one, and reimplementing `describeHighlightLifetime` here would
+    // be a second copy of a vocabulary the server owns.
+    expect(h?.lifetimeClass).toBeUndefined();
+    expect(h?.lifetimeProvenance).toBeUndefined();
+    expect(h?.lifecycleState).toBeUndefined();
+    expect(h?.lifecycleProvenance).toBeUndefined();
+  });
+});

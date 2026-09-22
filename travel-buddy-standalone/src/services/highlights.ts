@@ -79,7 +79,38 @@ export interface Highlight {
    * applied to provenance.
    */
   sourceMemoryIds?: string[];
+  /**
+   * §4 HighlightLifetime, as STORED. Census H21 / H31.
+   *
+   * `undefined` means the read did not project the class columns at all
+   * (migration 2723 absent on that deployment, so `highlightColumns` falls back
+   * to the narrow select); `null` means the columns were projected and no class
+   * has been assigned, which §12 permits — nothing in the spec assigns hour
+   * boundaries to the classes, so the server refuses to default one.
+   *
+   * `lifetimeProvenance` is what makes the two `null`s readable apart, and it
+   * is a FOURTH answer as well: `invalid` is a stored value the server does not
+   * recognise. A client that kept only `lifetimeClass` would render a corrupt
+   * row and a deliberately unclassified row identically.
+   */
+  lifetimeClass?: HighlightLifetimeClass | null;
+  lifetimeProvenance?: 'stored' | 'unavailable' | 'invalid';
+  /**
+   * §5's lifecycle state. Census H21 / H31.
+   *
+   * `lifecycleProvenance` distinguishes a state the row STORES from one the
+   * server DERIVED (`archived_at` ⇒ HIDDEN, `pinned_at` ⇒ PINNED, `expires_at`
+   * ⇒ ACTIVE/EXPIRED) from `out_of_machine` — a stored value that is not on
+   * §5's diagram. Nothing in the API server writes `lifecycle_state` today, so
+   * in practice every non-null value here is `derived`, and a surface that
+   * showed it as stored would be claiming a write that never happened.
+   */
+  lifecycleState?: HighlightLifecycleState | null;
+  lifecycleProvenance?: 'stored' | 'derived' | 'unavailable' | 'out_of_machine';
 }
+
+/** §5's five, and DELETED is deliberately not among them — §21 owns deletion. */
+export type HighlightLifecycleState = 'DRAFT' | 'ACTIVE' | 'EXPIRED' | 'PINNED' | 'HIDDEN';
 
 export interface HighlightViewer {
   userId: string;
@@ -183,6 +214,17 @@ function mapHighlight(r: any): Highlight {
     // NOT `r.sourceMemoryIds ?? []`. See the field's comment: a read that did
     // not carry provenance must not read back as "no provenance".
     sourceMemoryIds: Array.isArray(r.sourceMemoryIds) ? r.sourceMemoryIds : undefined,
+    // §4 / §5. `describeLifetimeFields` (routes/highlights.ts:161) omits ALL of
+    // these together when the class columns were not projected, so `undefined`
+    // here is the deployment answering "I cannot say" and `null` is it
+    // answering "no class / no state". Same three-valued rule as `pinnedAt`
+    // above, and the same trap if it is collapsed: a Highlight on a build
+    // without 2723 would otherwise read as "unclassified" rather than
+    // "unclassifiable".
+    lifetimeClass: r.lifetimeProvenance === undefined ? undefined : (r.lifetimeClass ?? null),
+    lifetimeProvenance: r.lifetimeProvenance,
+    lifecycleState: r.lifecycleProvenance === undefined ? undefined : (r.lifecycleState ?? null),
+    lifecycleProvenance: r.lifecycleProvenance,
   };
 }
 

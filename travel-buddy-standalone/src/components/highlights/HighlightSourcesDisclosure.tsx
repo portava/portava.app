@@ -32,7 +32,7 @@
 import React from 'react';
 import { View, Text, Pressable, StyleSheet, ActivityIndicator } from 'react-native';
 import { ChevronDown, ChevronRight, Layers } from 'lucide-react-native';
-import { color, space, radius, type as t } from '../../theme/tokens';
+import { color, space, radius, type as t } from '../../theme/tokens.ts';
 import {
   useHighlightSources,
   type HighlightSourcesState,
