@@ -953,22 +953,17 @@ describe("authorizeMediaAccess — the matrix", () => {
       assert.equal(await authorizeMediaAccess(sc, OWNER, "post-media", path), true);
     });
 
-    it("A `saved` story IS served past expires_at — and that is the Highlight, not the Story", async () => {
+    it("a `saved` story serves only while its HIGHLIGHT is live", async () => {
       // THE DISTINCTION, RECORDED BECAUSE IT IS EASY TO READ AS THE DEFECT
-      // ABOVE. Branch 3d's `live` test admits `state === "saved"` regardless of
-      // `expires_at`, so this row authorizes an audience member after the 24h
-      // window. That is not the expired Story coming back: saving to a Highlight
+      // ABOVE. A `saved` row is not an expired Story coming back: saving
       // REPUBLISHES the media as a Highlight, the sweeper deliberately skips
       // these rows (`.is("saved_to_highlight_id", null)`) so they never become
-      // `expired` in the first place, and the audience cannot widen — 3d serves
-      // at the STORY's own visibility, and resolveHighlightVisibilityForStory
-      // refuses any Story whose audience a Highlight cannot carry faithfully.
+      // `expired`, and the audience cannot widen, because
+      // resolveHighlightVisibilityForStory refuses any Story whose audience a
+      // Highlight cannot carry faithfully.
       //
-      // The two rows differ by ONE field, `state`, which is the whole point: an
-      // `expired` row is a Story whose window closed, a `saved` row is a
-      // Highlight. mediaAccessDeadline agrees with this branch exactly — it
-      // returns no deadline for a `saved` story — so the clamp cannot contradict
-      // the authorization.
+      // What the Highlight republishes it on are the HIGHLIGHT's terms. So 3d
+      // does not answer a `saved` row at all — it falls through to 3e.
       _clearMediaAccessCache();
       const sc = makeClient({
         stories: [{
@@ -976,19 +971,92 @@ describe("authorizeMediaAccess — the matrix", () => {
           close_friends_only: false, expires_at: past, media_url: pub(path),
           saved_to_highlight_id: "h-1",
         }],
+        highlights: [{
+          owner_id: OWNER, visibility: "public",
+          expires_at: new Date(Date.now() + 3_600_000).toISOString(),
+          media_url: pub(path),
+        }],
       });
       assert.equal(await authorizeMediaAccess(sc, VIEWER, "post-media", path), true);
+    });
+
+    it("a `saved` story stops serving once the Highlight itself has EXPIRED", async () => {
+      // The half of decision 6 this whole block exists for. 3d used to admit
+      // `state === "saved"` regardless of any expiry — `state === "saved"`
+      // appeared twice in its `live` expression precisely to bypass one — so
+      // the audience kept the bytes on the expired STORY's terms, forever, long
+      // after the Highlight's own 24-hour window closed and the Highlight had
+      // stopped being shown anywhere. That is the reference reopening the
+      // expired Story, which is what was ruled out.
+      //
+      // It mattered less while expiry deleted the file. The archive keeps it
+      // for a year now, so the end of audience access has to be a decision
+      // rather than a side effect of deletion.
+      _clearMediaAccessCache();
+      const sc = makeClient({
+        stories: [{
+          owner_id: OWNER, state: "saved", visibility: "public",
+          close_friends_only: false, expires_at: past, media_url: pub(path),
+          saved_to_highlight_id: "h-1",
+        }],
+        highlights: [{
+          owner_id: OWNER, visibility: "public", expires_at: past, media_url: pub(path),
+        }],
+      });
+      assert.equal(await authorizeMediaAccess(sc, VIEWER, "post-media", path), false);
+    });
+
+    it("a `saved` story with NO highlight row denies, rather than publishing on its own authority", async () => {
+      // `saved` is written by the same handler that inserts the Highlight, and
+      // that link update is known to be able to not take — routes/stories.ts
+      // logs `linked: false` for exactly this. A story marked saved with no
+      // Highlight behind it has no publisher, and §4's fail-closed default is
+      // the right answer rather than the story's own `visibility`.
+      _clearMediaAccessCache();
+      const sc = makeClient({
+        stories: [{
+          owner_id: OWNER, state: "saved", visibility: "public",
+          close_friends_only: false, expires_at: past, media_url: pub(path),
+          saved_to_highlight_id: "h-1",
+        }],
+        highlights: [],
+      });
+      assert.equal(await authorizeMediaAccess(sc, VIEWER, "post-media", path), false);
+    });
+
+    it("and the owner still reaches a saved story whose Highlight has expired", async () => {
+      // Tightening the audience boundary must not take the owner's archive with
+      // it. The owner short-circuits before 3d and never consults a Highlight.
+      _clearMediaAccessCache();
+      const sc = makeClient({
+        stories: [{
+          owner_id: OWNER, state: "saved", visibility: "public",
+          close_friends_only: false, expires_at: past, media_url: pub(path),
+          saved_to_highlight_id: "h-1",
+        }],
+        highlights: [{
+          owner_id: OWNER, visibility: "public", expires_at: past, media_url: pub(path),
+        }],
+      });
+      assert.equal(await authorizeMediaAccess(sc, OWNER, "post-media", path), true);
     });
 
     it("a `saved` story that was never public is STILL not public", async () => {
       // The republication is not a promotion to everyone. If it were, saving to
       // a Highlight would be a way to widen a close-friends Story's audience.
+      // The Highlight carries the narrowed audience, so a private Highlight
+      // refuses here even with a live window.
       _clearMediaAccessCache();
       const sc = makeClient({
         stories: [{
           owner_id: OWNER, state: "saved", visibility: "close_friends",
           close_friends_only: true, expires_at: past, media_url: pub(path),
           saved_to_highlight_id: "h-1",
+        }],
+        highlights: [{
+          owner_id: OWNER, visibility: "close_friends",
+          expires_at: new Date(Date.now() + 3_600_000).toISOString(),
+          media_url: pub(path),
         }],
         closeFriends: [],
       });

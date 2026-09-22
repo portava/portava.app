@@ -645,18 +645,40 @@ async function decide(
       // POST /stories now rejects such a row at write time. This covers rows
       // written before that guard existed, and any future writer that skips it.
       if (!owner || owner !== story.owner_id) return false;
-      const live =
-        (story.state === "active" || story.state === "saved") &&
-        (!story.expires_at ||
-          new Date(story.expires_at).getTime() > Date.now() ||
-          story.state === "saved");
-      if (!live) return false;
-      const needsClose =
-        story.close_friends_only === true ||
-        story.visibility === "close_friends";
-      if (needsClose)
-        return isCloseFriend(sc, story.owner_id, viewerId);
-      return story.visibility === "public";
+      // A SAVED story is no longer the publisher of its own bytes. Saving
+      // promotes it into a Highlight (routes/stories.ts save-to-highlight),
+      // which carries the same media_url under its OWN visibility and its own
+      // `expires_at`, and the Highlight is what the audience is looking at.
+      //
+      // This branch used to answer `saved` itself, on the STORY's visibility
+      // and with no expiry test at all — `state === "saved"` appeared twice in
+      // the `live` expression precisely to bypass one. The audience therefore
+      // kept access on the expired STORY's terms, and kept it after the
+      // Highlight expired (24h), was archived, or was deleted, because nothing
+      // here ever looked at the Highlight. That is the reference restoring
+      // audience access to the expired Story, which the owner ruled out.
+      //
+      // It mattered less while expiry deleted the bytes; the archive keeps
+      // them for a year now, so the boundary has to be a decision rather than
+      // a side effect of deletion.
+      //
+      // So: fall THROUGH to 3e, which asks the Highlight. No Highlight row
+      // means no publisher, and §4 denies — the fail-closed answer, and the
+      // right one when the link update that marks a story saved is known to be
+      // able to not take. The owner is unaffected; they never reach this
+      // branch.
+      if (story.state !== "saved") {
+        const live =
+          story.state === "active" &&
+          (!story.expires_at || new Date(story.expires_at).getTime() > Date.now());
+        if (!live) return false;
+        const needsClose =
+          story.close_friends_only === true ||
+          story.visibility === "close_friends";
+        if (needsClose)
+          return isCloseFriend(sc, story.owner_id, viewerId);
+        return story.visibility === "public";
+      }
     }
   } catch { /* fall through */ }
 
@@ -843,8 +865,26 @@ export async function mediaAccessDeadline(
     if (!story) return null; // not story media — no story boundary applies
     if (story.owner_id === viewerId) return null; // owner archive
     // A saved story has been promoted into a Highlight and is governed by the
-    // highlight's own expiry, not the story's 24h window.
-    if (story.state === "saved") return null;
+    // Highlight's own expiry, not the story's 24h window. That sentence used to
+    // sit above `return null`, which governed it by nothing: the token kept the
+    // full TTL and outlived the Highlight. Read the Highlight and clamp to it,
+    // so the statement is enforced rather than asserted. No Highlight row for a
+    // saved story means nothing publishes these bytes to a non-owner, and 3d
+    // now falls through to the same conclusion — the most restrictive answer,
+    // not null.
+    if (story.state === "saved") {
+      const { data: hs, error: hErr } = await sc
+        .from("highlights")
+        .select("owner_id, expires_at")
+        .in("media_url", urlForms)
+        .limit(1);
+      if (hErr) return Date.now();
+      const h = (hs as any[])?.[0];
+      if (!h || h.owner_id !== story.owner_id) return Date.now();
+      if (!h.expires_at) return null;
+      const hAt = new Date(h.expires_at).getTime();
+      return Number.isFinite(hAt) ? hAt : Date.now();
+    }
     if (!story.expires_at) return null;
     const at = new Date(story.expires_at).getTime();
     return Number.isFinite(at) ? at : Date.now();
