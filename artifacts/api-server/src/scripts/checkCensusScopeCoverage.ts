@@ -128,7 +128,16 @@ const CENSUS_SCOPE_FLOORS: Record<string, number> = {
   // minority of each census, and knowing that is the point of measuring it.
   "census-compass.md": 0.96,   // widened 2026-09-11
   "census-discovery.md": 0.96,   // widened 2026-09-11: 22% -> 98%
-  "census-highlights-memories.md": 0.96,   // widened 2026-09-11
+  "census-highlights-memories.md": 0.98,   // widened 2026-09-11; RAISED 0.96 -> 0.98 on 2026-09-22 by §Q, which
+                                           // added ten paths to this census's scope — its own five suites plus the
+                                           // five §P and the body cited and nothing watched (verifyFlowHighlightControls,
+                                           // highlightPublicProjectionEnforcement, highlightRouteHarness, 2975 and 2320)
+                                           // — taking measured coverage from 96% (135/140, exactly ON the floor and
+                                           // one citation from failing) to 99% (142/143). A ratchet, per the rule
+                                           // above. Not 1.00: `0179_stamp_criteria_engine.sql` is cited by BASENAME
+                                           // with no path and several frozen roots hold that name, so there is no
+                                           // single path to watch. That one citation is the whole of the remaining
+                                           // gap and checkCensusFreshness.ts records why it is not resolved.
   "census-input-intelligence.md": 0.98,   // widened 2026-09-11; RAISED 0.95 -> 0.98 on 2026-09-13 when §8
                                           // added rankingSignals.ts, fieldInventory.ts, suggestionBadges.ts and
                                           // its two test files to the scope, taking measured coverage to 100%.

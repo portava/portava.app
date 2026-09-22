@@ -82,7 +82,7 @@ are files, tables, routes, event types and literals, each re-derived on every ru
 | `src/routes/follows.ts` | 12 | message_thread_members |
 | `src/routes/groupChat.ts` | 6 | message_thread_members, message_threads, message_translations, messages |
 | `src/routes/hiddenGems.ts` | 27 | message_thread_members, messages |
-| `src/routes/highlights.ts` | 22 | message_thread_members, message_threads, messages |
+| `src/routes/highlights.ts` | 23 | message_thread_members, message_threads, messages |
 | `src/routes/meetups.ts` | 12 | message_threads, messages |
 | `src/routes/messaging.ts` | 32 | message_requests, message_thread_members, message_threads, message_translations, messages, saved_messages |
 | `src/routes/rentABuddy.ts` | 116 | message_thread_members, message_threads, messages |

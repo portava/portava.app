@@ -466,7 +466,36 @@ import {
  * integrator, on the integrated tree rather than on the lane's base.
  *
  * 184 -> 183. */
-export const MAX_DEAD_TARGETS = 183;
+/* LOWERED 2026-09-22 by the HIGHLIGHTS & MEMORIES lane (census §Q). ONE pointer
+ * left the population, and it is worth reading which, because the first version
+ * of this drop would have been the failure mode the 185 -> 184 note above
+ * describes rather than a repair.
+ *
+ * MEASURED BOTH WAYS, not inferred: `git archive 812720cc0` was extracted and
+ * this script run against that tree with --list, giving 183 and a line-by-line
+ * list; the same run on the lane's tree gives 182, and `diff` of the two lists
+ * is exactly ONE line —
+ *   docs/architecture/census-highlights-memories.md:814
+ *   `routes/highlights.ts:83` -> …/routes/highlights.ts:83 (blank line)
+ *
+ * THE POINTER WAS DEAD BEFORE THIS LANE AND THE LANE NEARLY HID IT. Line 83 of
+ * routes/highlights.ts was BLANK at 1fe72289b and still blank at 812720cc0, so
+ * H91's citation had been pointing at nothing for two head_commits. §Q's edits
+ * to that file pushed a comment line onto 83, which would have removed it from
+ * this count while leaving the row citing a sentence about column projection
+ * for a claim about §11 control enforcement — a pointer that got no truer and
+ * merely stopped being VISIBLE here.
+ *
+ * So it was repointed by READING THE CLAIM instead. The row says
+ * "KEEP_PRIVATE_FOREVER declared and in FEED_SUPPRESSING_CONTROLS"; no such
+ * constant exists any more — §O.6 replaced it with FEED_ENFORCEABLE_CONTROLS,
+ * derived from CONTROL_EFFECTS — so the citation now names that constant and
+ * its application site, ANCHORED, which takes it out of this population for
+ * good because check:doc-citations holds it from here rather than an offset.
+ * The row's verdict is untouched.
+ *
+ * 183 -> 182. */
+export const MAX_DEAD_TARGETS = 182;
 
 /** Pinned to a commit by its own declaration; its lines must not track HEAD. */
 const PINNED_DOCS = new Set(['docs/architecture/mobile-reachability-ledger.md']);
