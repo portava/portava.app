@@ -4554,7 +4554,7 @@ person who deliberately sends a JSON object as chat text still sees it.
 
 T344, T363 and T438 all cite the same four reads and all spell them
 `const { data: x } = await …`. So does the ratchet that measures the class:
-`artifacts/api-server/src/test/telegraphRlsAuthorizationMatrix.test.ts:655#it("LDB-05: the divergence is still real — route handlers drop read errors into context", () => {`
+`artifacts/api-server/src/test/telegraphRlsAuthorizationMatrix.test.ts:662#it("LDB-05: the divergence is still real — route handlers drop read errors into context", () => {`
 counts that exact destructuring shape and asserts the count has not reached zero.
 
 **The inbox's three primary reads are not spelled that way.** They are a

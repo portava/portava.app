@@ -351,6 +351,29 @@ const memberSelects = (c: FakeClient): string[] =>
 const messageGtes = (c: FakeClient) =>
   c._observed.gte.filter((g) => g.table === "messages" && g.col === "created_at");
 
+/** Every `or=` group this client observed on `messages`. */
+const messageOrs = (c: FakeClient) =>
+  c._observed.or.filter((o) => o.table === "messages").map((o) => o.expr);
+
+/**
+ * "The bound is in the QUERY, not in a post-filter that pagination walks past."
+ *
+ * That guarantee is unchanged; its SPELLING changed. Since owner decision Q6
+ * the window is carried as a two-clause `or=` group — the window OR the
+ * CALLER's own rows — so a plain `.gte` no longer appears and asserting on one
+ * would silently stop checking anything. This asserts the WHOLE group, which is
+ * stricter than the `.gte` assertion it replaces: it pins that the only thing
+ * ORed in beside the bound is `sender_id = <this caller>`, so a clause that
+ * admitted anyone else's rows would fail here.
+ */
+function assertWindowInQuery(c: FakeClient, bound: string, viewer: string, where: string): void {
+  const expected = `created_at.gte.${bound},sender_id.eq.${viewer}`;
+  assert.ok(
+    messageOrs(c).includes(expected),
+    `${where}: the window must be IN the query as \`${expected}\` — observed ${JSON.stringify(messageOrs(c))}`,
+  );
+}
+
 /** OFF must be byte-identical to pre-2400 on both counts. */
 function assertPre2400Shape(c: FakeClient, where: string): void {
   for (const sel of memberSelects(c)) {
@@ -359,6 +382,10 @@ function assertPre2400Shape(c: FakeClient, where: string): void {
   assert.deepEqual(
     messageGtes(c), [],
     `${where}: OFF must put no created_at lower bound in any messages query`,
+  );
+  assert.deepEqual(
+    messageOrs(c), [],
+    `${where}: OFF must put no window or() group in any messages query either`,
   );
 }
 
@@ -419,10 +446,7 @@ describe("§14.3 path 1: GET /threads/:id/messages × every membership state", (
       memberSelects(c).some((s) => s.includes("visible_from_at")),
       "ON must READ the bound rather than assume one",
     );
-    assert.ok(
-      messageGtes(c).some((g) => g.val === BOB_BOUND),
-      "the bound belongs in the QUERY, not in a post-filter that pagination walks past",
-    );
+    assertWindowInQuery(c, BOB_BOUND, BOB, "thread read");
   });
 
   it("flag ON: M06 sits EXACTLY at the bound and is inside the window (inclusive)", async () => {
@@ -439,6 +463,7 @@ describe("§14.3 path 1: GET /threads/:id/messages × every membership state", (
       messageGtes(c), [],
       "an unbounded member's read must carry no lower bound at all",
     );
+    assert.deepEqual(messageOrs(c), [], "and no window or() group either");
   });
 
   it("flag ON: the row with no derivable timestamp (DORA) is RECORDED as unbounded", async () => {
@@ -452,13 +477,29 @@ describe("§14.3 path 1: GET /threads/:id/messages × every membership state", (
     assert.equal(idsOf(res).length, 9, "an underivable bound reads as unbounded — this is fail-OPEN");
     assert.equal(visibleFromOf({ visible_from_at: null }, true), null);
     assert.deepEqual(messageGtes(c), []);
+    assert.deepEqual(messageOrs(c), []);
   });
 
-  it("flag ON: the rejoiner (CARL) is bounded at the REJOIN instant, not the first join", async () => {
+  it("flag ON: the rejoiner (CARL) is bounded at the REJOIN instant — plus his OWN earlier message (Q6)", async () => {
     const c = use({ flag: true });
     const res = await get(`/threads/${THREAD}/messages?limit=100`, CARL);
-    assert.deepEqual(idsOf(res), [M09, M08]);
-    assert.ok(messageGtes(c).some((g) => g.val === CARL_REJOIN));
+    // M02 is CARL'S OWN message, sent in his first stint, before the window the
+    // rejoin trigger opened. Owner decision Q6 admits it and admits nothing
+    // else: every id below M02 belongs to ALICE and stays out, and M02 itself
+    // would still be out for BOB, for DORA and for anyone who is not its
+    // sender. The BOUND has not moved — `visible_from_at` is still
+    // CARL_REJOIN, which the next assertion reads straight out of the query.
+    assert.deepEqual(idsOf(res), [M09, M08, M02]);
+    for (const other of [M01, M03, M04, M05, M06, M07]) {
+      assert.ok(!idsOf(res).includes(other), `${other} is ALICE's and predates CARL's window`);
+    }
+    assertWindowInQuery(c, CARL_REJOIN, CARL, "rejoiner thread read");
+  });
+
+  it("flag ON: Q6 is SENDER-scoped — CARL's own message stays invisible to everyone else", async () => {
+    use({ flag: true });
+    const bob = await get(`/threads/${THREAD}/messages?limit=100`, BOB);
+    assert.ok(!idsOf(bob).includes(M02), "M02 predates BOB's window and BOB did not send it");
   });
 
   it("a non-member is refused in BOTH flag states — the bound narrows, it never widens", async () => {
@@ -497,18 +538,33 @@ describe("§14.3 path 2: paging BACK past the boundary with ?before", () => {
     const c = use({ flag: true });
     // The client-supplied cursor is the attack surface: `before` is not
     // validated against the caller's window, so the only thing that can stop it
-    // is the `gte` sitting in the same query.
+    // is the window clause sitting in the same query. BOB sent nothing before
+    // his bound, so Q6 adds nothing here and the page is empty exactly as it
+    // was — the cursor cannot reach ALICE's history through the exception.
     const res = await get(`/threads/${THREAD}/messages?before=${encodeURIComponent(T03)}`, BOB);
     assert.equal(res.status, 200);
     assert.deepEqual(idsOf(res), [], "a pre-window cursor must yield an empty page, not pre-window rows");
-    assert.ok(messageGtes(c).some((g) => g.val === BOB_BOUND));
+    assertWindowInQuery(c, BOB_BOUND, BOB, "pre-window cursor");
   });
 
-  it("flag ON: the rejoiner's pages stop at the rejoin instant, two pages in", async () => {
+  it("flag ON: a pre-window cursor reaches the rejoiner's OWN message and NOTHING around it", async () => {
+    // The sharpest form of Q6's limit. CARL pages back past his own window with
+    // a cursor from T03: what comes back is M02, the message he sent, and not
+    // M01 — which sits BETWEEN the cursor and M02 and belongs to ALICE.
+    use({ flag: true });
+    const res = await get(`/threads/${THREAD}/messages?before=${encodeURIComponent(T03)}`, CARL);
+    assert.equal(res.status, 200);
+    assert.deepEqual(idsOf(res), [M02], "his own message, and not the one beside it");
+  });
+
+  it("flag ON: the rejoiner's pages stop at the rejoin instant, plus his own earlier message", async () => {
     use({ flag: true });
     const { pages, all } = await pageAll(CARL, 2);
-    assert.deepEqual(pages, [[M09, M08], []]);
-    assert.deepEqual(all, [M09, M08]);
+    assert.deepEqual(pages, [[M09, M08], [M02], []]);
+    assert.deepEqual(all, [M09, M08, M02]);
+    for (const leaked of [M01, M03, M04, M05, M06, M07]) {
+      assert.ok(!all.includes(leaked), `${leaked} is ALICE's and must not be paged into CARL's reach`);
+    }
   });
 
   it("flag ON: THE OTHER HALF — the founding member still pages through all nine", async () => {
@@ -568,10 +624,25 @@ describe("§14.3 path 3: §21 search (GET /telegraph/search, /threads/:id/search
     assert.equal(res.status, 200);
     assert.deepEqual(hitIds(res), [M08]);
     assert.ok(!hitIds(res).includes(M04), "the pre-window secret was retrievable through search");
+    // §21 requires access filtering BEFORE retrieval. Search has NO JavaScript
+    // window filter of its own — this clause IS the bound — which is why it is
+    // asserted whole rather than by its old `.gte` spelling.
+    assertWindowInQuery(c, BOB_BOUND, BOB, "§21 global search");
+  });
+
+  it("flag ON: Q6 — the rejoiner finds their OWN earlier message and nobody else's", async () => {
+    // M02 is CARL's, M04 is ALICE's, and both predate CARL's rejoin window.
+    // Q6 makes exactly one of them findable.
+    const c = use({ flag: true });
+    const res = await get(`/telegraph/search?q=${TOKEN}`, CARL);
+    assert.equal(res.status, 200);
+    assert.deepEqual(hitIds(res).sort(), [M02, M08].sort());
+    assert.ok(!hitIds(res).includes(M04), "ALICE's pre-window message is not CARL's to find");
     assert.ok(
-      messageGtes(c).some((g) => g.val === BOB_BOUND),
-      "§21 requires access filtering BEFORE retrieval — the bound must be in the query",
+      !JSON.stringify(res.body).includes("padlock"),
+      "and its snippet must not reach the response either",
     );
+    assertWindowInQuery(c, CARL_REJOIN, CARL, "§21 global search, rejoiner");
   });
 
   it("flag ON: the snippet of a pre-window message never reaches the response body", async () => {
@@ -745,11 +816,20 @@ describe("§14.3 path 5: quoted-reply context (routes/messaging replyToIdMap)", 
     assert.equal(m07.replyToBody, SECRET_BODY, "bounding history must not blank an entitled member's quotes");
   });
 
-  it("flag ON: the rejoiner cannot reach M04's body through M07 either — M07 is outside their window too", async () => {
+  it("flag ON: the rejoiner cannot reach M04's body through M07 — and Q6 does not open that door", async () => {
+    // THE CONSTRAINT THE OWNER DECISION PUT ON ITSELF: "do not let an
+    // accessible own message reveal inaccessible quoted messages". CARL now
+    // reads M02, which is his. M07 is ALICE's, so it stays out, and with it the
+    // quote of M04 that it carries. Nothing CARL can now see is a handle to
+    // anything he could not see before.
     use({ flag: true });
     const res = await get(`/threads/${THREAD}/messages?limit=100`, CARL);
-    assert.deepEqual(idsOf(res), [M09, M08]);
-    assert.ok(!JSON.stringify(res.body).includes("padlock"));
+    assert.deepEqual(idsOf(res), [M09, M08, M02], "his own earlier message, and no one else's");
+    assert.ok(!idsOf(res).includes(M07), "the REPLY is ALICE's and is still outside CARL's window");
+    assert.ok(
+      !JSON.stringify(res.body).includes("padlock"),
+      "and M04's body must not appear anywhere in the payload, by any route",
+    );
   });
 });
 
@@ -782,32 +862,52 @@ describe("§14.3: a member's OWN messages", () => {
     assert.deepEqual(ownMessagesOutsideWindow(db, DORA), []);
   });
 
-  it("FINDING — REJOIN hides the rejoiner's OWN first-stint message, the shape 2966 aborts on", async () => {
-    // ── This is the defect, stated as the assertion that it is true. ────────
+  it("THE DATA SHAPE IS UNCHANGED — rejoin still leaves the rejoiner's own message outside the window", () => {
+    // ── The finding this suite recorded, and it is still true of the DATA. ──
     // Migration 2966 POSTCONDITION 3 raises rather than ship a (member, own
     // message) pair where the message predates the window, and its backfill
     // clamps every derived window to LEAST(..., first own message). The
     // TRIGGER's rejoin branch has no such clamp: left_at NOT NULL -> NULL sets
     // visible_from_at := now(), and the rejoiner's own earlier messages fall
-    // outside it. The production "0 own-messages hidden" measurement is a
-    // property of the backfill, not one the trigger maintains going forward.
+    // outside it.
+    //
+    // OWNER DECISION Q6 DID NOT TOUCH ANY OF THAT. `visible_from_at` is not
+    // widened, the trigger is not changed, no migration is changed — so this
+    // assertion reads exactly as it did before and must keep passing. What Q6
+    // changed is what the READ does when it meets this shape, which is the next
+    // test. Keeping both is the point: the stored bound and the served rows are
+    // two different facts, and this suite now pins each separately.
     const db = store();
     assert.deepEqual(
       ownMessagesOutsideWindow(db, CARL), [M02],
-      "CARL's own first-stint message sits before his rejoin window — 2966 would have refused this row",
+      "CARL's own first-stint message sits before his rejoin window — the trigger's shape, unchanged",
     );
+  });
 
-    // And it is not theoretical: the route enforces it.
+  it("Q6 — the rejoiner READS BACK the message they themselves sent, and only that", async () => {
+    // The approved exception. Note what is asserted alongside it on every path:
+    // the messages CARL did NOT send stay out, so the exception is measured by
+    // its limit as much as by its effect.
     use({ flag: true });
     const res = await get(`/threads/${THREAD}/messages?limit=100`, CARL);
-    assert.ok(
-      !idsOf(res).includes(M02),
-      "recorded: after a rejoin, the member cannot read back the message they themselves sent",
-    );
+    assert.ok(idsOf(res).includes(M02), "a member may read back their own earlier message");
+    assert.ok(!idsOf(res).includes(M04), "and not ALICE's, which predates his window just as M02 does");
+
+    const paged = await pageAll(CARL, 2);
+    assert.ok(paged.all.includes(M02), "through pagination as well as the first page");
+    assert.ok(!paged.all.includes(M04), "and pagination does not walk past the bound for anyone else's");
 
     use({ flag: true });
     const found = await get(`/telegraph/search?q=${TOKEN}`, CARL);
-    assert.deepEqual(hitIds(found), [M08], "recorded: nor can they find it by its text");
+    assert.deepEqual(hitIds(found).sort(), [M02, M08].sort(), "and it is findable by its own text");
+    assert.ok(!hitIds(found).includes(M04), "search admits his own row and no other pre-window row");
+  });
+
+  it("Q6 is not a widening for anyone else — BOB and DORA are unaffected by CARL's exception", async () => {
+    use({ flag: true });
+    const bob = await get(`/threads/${THREAD}/messages?limit=100`, BOB);
+    assert.deepEqual(idsOf(bob), [M09, M08, M07, M06], "BOB's window is what it was");
+    assert.ok(!idsOf(bob).includes(M02), "CARL's message is CARL's to read back, not BOB's");
   });
 
   it("the predicate itself is honest — it finds nothing when the window predates the message", () => {

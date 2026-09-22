@@ -45,10 +45,13 @@
  * ONE APPROVED EXCEPTION — Q6, the own-message rejoin exception. A currently
  * authorized member reads their OWN earlier messages; every other sender's stay
  * bounded. It has TWO halves and they are both in this file, because EIGHTEEN
- * read paths push the bound into the QUERY as `.gte('created_at', bound)` — two
- * of them (§21 search and `GET /threads/:id/messages`) had no JavaScript window
- * check at all — so a predicate-only carve-out would have changed nothing on
- * any of them:
+ * read paths pushed the bound into the QUERY as `.gte('created_at', bound)` —
+ * two of them (§21 search and `GET /threads/:id/messages`) had no JavaScript
+ * window check at all — so a predicate-only carve-out would have changed
+ * nothing on any of them. Seventeen now call `applyHistoryWindow`; the
+ * eighteenth is `routes/telegraphLifecycle.ts`'s seen-crossing scan, whose
+ * floor is the caller's READ MARKER rather than a §14.3 bound and says so in
+ * place. The two halves are:
  *   - `withinWindow(createdAt, visibleFrom, { senderId, viewerId })`, and
  *   - `applyHistoryWindow(query, visibleFrom, viewerId)`, which every read that
  *     used to write `.gte('created_at', bound)` itself now calls instead.
@@ -214,8 +217,8 @@ export function historyWindowOrFilter(
  * Apply the §14.3 window to a PostgREST query, WITH the Q6 exception when it
  * can be expressed.
  *
- * THIS IS THE HALF THAT ACTUALLY DECIDES on eighteen surfaces. Those reads push
- * the bound into the query as `.gte('created_at', bound)`, so PostgREST
+ * THIS IS THE HALF THAT ACTUALLY DECIDES on seventeen surfaces. Those reads
+ * pushed the bound into the query as `.gte('created_at', bound)`, so PostgREST
  * discards the rows before any JavaScript runs — a carve-out written only in
  * `withinWindow` would pass its unit tests and change NOTHING there. Every such
  * site now calls this instead of writing the `.gte` itself, so the two halves
