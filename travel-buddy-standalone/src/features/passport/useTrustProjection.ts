@@ -77,6 +77,14 @@ export interface TrustProjection {
   /** What `confidence` was computed from — trust evidence, or a travel proxy. */
   confidenceBasis?: 'trust_evidence' | 'travel_proxy' | 'unavailable';
   strengths: string[];
+  /**
+   * Ordered recovery advice — present ONLY on the owner's own view, because the
+   * server emits it only for `context === "self"` (its presence would otherwise
+   * disclose to another viewer that this user is in recovery). Absent is the
+   * server's decision, never something the client fills in: no default hints, no
+   * client-side derivation from the score or the categories.
+   */
+  recoveryHints?: string[];
   /** TABLE 12, server-owned. Absent only on a server older than TABLE 12. */
   domains?: ServerDomainTrust[];
 }
@@ -197,6 +205,14 @@ export interface TrustView {
    *  shown exactly once, never twice on the same screen. */
   credentials: CredentialProjection[];
   capabilityChips: CapabilityChip[];
+  /**
+   * Server-authored recovery advice, verbatim and in server order. Empty when
+   * the server did not send any — either because this is not the owner's view
+   * (the field is absent) or because the owner has nothing to recover (an empty
+   * array). The screen renders the section only when this is non-empty; it never
+   * substitutes copy of its own for an absent read.
+   */
+  recoveryHints: string[];
 }
 
 /** Sentinel standing for out-of-scope domains — deliberately neutral (§10). */
@@ -350,6 +366,13 @@ export function deriveTrustView(p: TrustProjectionEnvelope): TrustView {
         legacy('buddy', 'Buddy', caps.canBecomeBuddy, specific(caps.canBecomeBuddy)),
       ];
 
+  // Owner-only, server-gated (§9/§10). The client passes the strings through
+  // untouched — it must not invent, reorder, translate or top up hints, because
+  // an absent field means "the server did not send this", not "none exist".
+  const recoveryHints: string[] = Array.isArray(trust?.recoveryHints)
+    ? trust!.recoveryHints.filter((h): h is string => typeof h === 'string' && h.trim().length > 0)
+    : [];
+
   const capabilityChips: CapabilityChip[] = CAPABILITY_LABELS
     .filter((c) => caps[c.key])
     .map((c) => ({ key: c.key, label: c.label }));
@@ -384,6 +407,7 @@ export function deriveTrustView(p: TrustProjectionEnvelope): TrustView {
     domains,
     credentials,
     capabilityChips,
+    recoveryHints,
   };
 }
 
