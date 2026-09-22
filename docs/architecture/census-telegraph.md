@@ -286,9 +286,30 @@ uniformly, and identically to `census-sensing.md`:
 **Twenty-one** NOT-BUILT verdicts are unguarded absences rather than missing
 machinery; they are marked `∅` in the table (T1, T18, T19, T26, T67, T118,
 T120, T122, T212, T275, T317, T358, T366, T367, T393, T404, T405, T406, T408,
-T416, T446). A reader who credits vacuous satisfaction should move all
-twenty-one to BUILT-AND-CORRECT, which gives CORRECT% = 119/451 = **26.4 %**
-and CONSTRUCTED% = 291/451 = **64.5 %**. This census does not credit them.
+T416, T446). **This census does not credit them**, and that ruling is
+unchanged — an absence nothing guards is not a constructed guarantee.
+
+**ARITHMETIC CORRECTED 2026-09-22; THE DEFINITION IS NOT TOUCHED.** This
+paragraph used to say that crediting the twenty-one "gives CORRECT% =
+119/451 = 26.4 % and CONSTRUCTED% = 291/451 = 64.5 %". Both numbers were
+**stale and internally impossible**: 119 is LOWER than this census's own
+BUILT-AND-CORRECT count, so the alternative reading came out *worse* than the
+reading it was offered as a concession to. For 119 to be right, C would have to
+be 98 — which is what it was before the 257 row recounts this document records.
+The paragraph was never updated with them.
+
+Recomputed from the current rows, which `check:census-integrity` independently
+counts as **231 C / 159 W / 58 N / 3 X of 451** (220 non-correct):
+
+| reading | C | CORRECT% | CONSTRUCTED% |
+| --- | --- | --- | --- |
+| this census (does NOT credit unguarded absences) | 231 | **51.2 %** | **86.5 %** |
+| a reader who credits all 21 | 252 | 55.9 % | 91.1 % |
+
+So the concession is worth **3.7 points**, not the 24.8-point collapse the old
+sentence implied. Stating it correctly makes the ruling *easier* to defend
+rather than harder, which is the argument for fixing arithmetic rather than
+leaving a number that flatters the position by being wrong in its favour.
 
 ### Method caveat, inherited
 
