@@ -91,8 +91,22 @@ export interface DeadlineTruth {
   stalenessNotice: string | null;
 }
 
+/**
+ * The bundle fields this reads, and only those.
+ *
+ * Widened from `LayoverOfflineBundle` so that a CACHED deadline
+ * (`layoverDeadlineCache.cachedDeadlineAsBundle`) goes through THIS rule rather
+ * than a second, gentler one written for the offline path. A whole bundle still
+ * satisfies it; a second staleness rule is how a cache ends up presenting an
+ * old answer as a current one.
+ */
+export type DeadlineBundle = Pick<
+  LayoverOfflineBundle,
+  'certifiedAt' | 'staleAfter' | 'returnDeadline'
+>;
+
 export function describeDeadline(
-  bundle: LayoverOfflineBundle | null | undefined,
+  bundle: DeadlineBundle | null | undefined,
   fallbackHardReturnTime: string,
   nowMs: number,
 ): DeadlineTruth {
