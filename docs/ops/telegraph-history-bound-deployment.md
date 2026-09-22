@@ -239,3 +239,139 @@ The history bound does not exist in production — no column, no trigger, no fla
 row — so newly added members can currently page back through everything, and the
 fix is an unapplied migration plus a flag flip, in that order, behind a
 rehearsal that has not yet been handed over.
+
+---
+
+## RE-MEASURED 2026-09-22 08:59 UTC, read-only, before the flip
+
+Re-probed rather than carried forward, because the numbers below are what the
+flip will act on and they are the only honest basis for a go/no-go.
+
+| fact | production `ajrurzioarfkagpuxfnb` |
+| --- | --- |
+| 2400's `visible_from_at` column | **present** |
+| 2966's visibility-window trigger | **present** |
+| `telegraph_history_bound_enabled` | **false** — not flipped |
+| `message_thread_members` rows | 18 |
+| bounded (`visible_from_at` NOT NULL) | **6** |
+| unbounded (`visible_from_at` NULL) | **12** |
+| rows with `left_at` set | **0** |
+| members whose OWN pre-window messages would be hidden | **0** |
+
+**The blast radius of the flip is six rows.** The other twelve carry NULL, which
+the bound reads as unbounded — existing members keep seeing everything, which is
+the half of this feature that is a data-loss bug if it is got backwards.
+
+**NOBODY HAS EVER LEFT A THREAD IN PRODUCTION: `left_at` is set on zero rows.**
+That matters twice, and both ways are worth stating plainly rather than letting
+the number flatter the work:
+
+1. **The departed-member fix has no live population today.** Three
+   state-changing routes admitted a member who had left; on production, no such
+   member exists. It is a latent hole closed before it was reachable, not a
+   breach that was being exploited. Describing it as the latter would be an
+   overclaim, and the census grades it accordingly — no verdict moved.
+2. **Leave and rejoin therefore CANNOT be verified against production data.**
+   There is none. Every claim about what `visible_from_at` does on rejoin rests
+   on fixtures, and must say so. A green production probe here would be vacuous:
+   it would pass because the population is empty, not because the behaviour is
+   right.
+
+**What this does NOT establish.** That the six bounded rows are bounded at the
+*correct* instant; that is a question about how each `visible_from_at` was
+derived, not about whether one exists. And nothing here exercises a read path —
+retrieval, pagination, search, attachments or quoted messages — which is why the
+boundary proof is fixtures driving routes, not a production count.
+
+---
+
+## GO/NO-GO: REJOIN HIDES THE REJOINER'S OWN HISTORY
+
+**This is a blocker for the flip, and it is separate from the deploy blocker.**
+Found by the boundary lane and verified independently against the migration
+source before being recorded here.
+
+**2966 states the invariant itself.** POSTCONDITION 3
+(`2966_telegraph_history_bound_close.sql:409-419`) aborts the apply if any
+`(member, own message)` pair exists where the message predates the member's
+window, in its own words *"refusing to hide a member's own history"*. The
+backfill honours it: every derived window is clamped by
+`LEAST(tm_created, tm_joined, cm_created, mtm_joined, own_first)` (`:352`), and
+`own_first` is the member's own earliest message in that thread.
+
+**The rejoin branch does not** (`:289-293`, carried unchanged from 2400
+`:160-164`):
+
+    IF OLD.left_at IS NOT NULL AND NEW.left_at IS NULL THEN
+      IF NEW.visible_from_at IS NOT DISTINCT FROM OLD.visible_from_at THEN
+        NEW.visible_from_at := now();
+      END IF;
+    END IF;
+
+No clamp. A member who leaves and rejoins gets a window opening at `now()`, and
+every message **they themselves sent** in their first stint falls outside it.
+The row is kept on leave, so `joined_at` still records the first stint while the
+window records the rejoin; nothing reconciles the two against the member's own
+messages.
+
+**So the measured "0 own-messages hidden" above is a property of the BACKFILL,
+not an invariant the trigger maintains.** The two measurements in this document
+combine into a precise and uncomfortable statement:
+
+  * `left_at` is set on **0** production rows — nobody has ever left a thread,
+    so no rejoin has ever occurred, so the trigger's rejoin branch has never
+    run in production;
+  * therefore `own_messages_hidden = 0` will hold **until the first
+    leave-and-rejoin after the flag is flipped**, and then silently stop
+    holding, violating the migration's own stated postcondition with no apply
+    to re-run it and nothing to notice.
+
+An apply-time gate cannot enforce a runtime invariant. That is the whole
+finding.
+
+### Why this is NOT fixed here, and what the question actually is
+
+The obvious patch — clamp the rejoin window with
+`LEAST(now(), min(own message created_at))` — **widens access beyond the
+member's own messages**. A single timestamp cannot express "your own messages
+and nothing else": clamping to your earliest message also returns every
+*other* sender's message after that instant, which is most of the gap §14.3
+exists to deny. That is a weakening of the privacy boundary, and it is not
+mine to make on my own authority.
+
+**The two stated rules conflict on exactly this case**, and both are in the
+repository:
+
+  * §14.3 / the trigger's own comment: *"the removed interval's gap IS the
+    future sequence it was denied… the new interval is a new membership with
+    its own window."*
+  * 2966 POSTCONDITION 3: a member's own history must never be hidden.
+
+**Recommendation, for the owner to accept or reject.** Fix it on the READ path,
+not in the trigger: admit a message when it is inside the window **or the
+viewer sent it** —
+
+    created_at >= visible_from_at OR sender_id = :viewer
+
+That satisfies both rules exactly, with no widening: the rejoiner gets back
+precisely their own messages and nothing else, and the gap stays denied for
+every other sender. It costs a predicate in each of the five read paths rather
+than one line in a migration, which is the honest price of a boundary a single
+timestamp cannot express.
+
+**Until that is settled the flag stays off.** It already is, for the deploy
+reason above; this is a second, independent reason, and it does not expire when
+the deploy lands.
+
+### Also recorded, not raised as a defect
+
+A membership row with `joined_at` NULL **and** `visible_from_at` NULL reads as
+unbounded on every path. That is fail-OPEN and it is deliberate — NULL is
+unbounded everywhere, which is the same rule that keeps pre-2400 rows safe.
+The exposure is narrow: 2400's INSERT branch is
+`COALESCE(NEW.visible_from_at, NEW.joined_at, now())`, so no row written after
+2400 can reach that shape, and 2966 bounds any row carrying trip or circle
+evidence. What remains is pre-2400 rows with no sync-independent evidence.
+Production measures **0** rows with `joined_at IS NULL` (§1), so that set is
+empty today — but it is worth re-reading immediately before the flip rather
+than trusting this line.
