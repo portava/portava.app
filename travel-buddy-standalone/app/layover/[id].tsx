@@ -73,6 +73,14 @@ import {
   type CachedCertifiedDeadline,
 } from '../../src/components/layover/layoverDeadlineCache';
 import { describeDeadline } from '../../src/components/layover/layoverReturnFacts';
+import { LayoverOfflinePlanCard } from '../../src/components/layover/LayoverOfflinePlanCard';
+import { layoverSensingCadence } from '../../src/lib/layoverSensingCadence';
+import { localReplan } from '../../src/components/layover/layoverLocalReplan';
+import {
+  cacheCertifiedPlan,
+  readCachedPlan,
+  type CachedLayoverPlan,
+} from '../../src/lib/layoverPlanCache';
 import { KeyboardSafeScrollView } from '../../src/components/ui/KeyboardSafeView';
 
 /**
@@ -132,6 +140,17 @@ export default function LayoverDashboardScreen() {
    */
   const [cachedDeadline, setCachedDeadline] = useState<CachedCertifiedDeadline | null>(null);
 
+  /**
+   * census L151 / L233 — WHAT ELSE THE TRAVELLER KEEPS.
+   *
+   * The deadline above is the one number that must survive; it is not the only
+   * thing that should. `layoverPlanCache` stores the plan the server certified,
+   * the airport it is anchored to and the certified envelope's radii, all with
+   * the server's own `staleAfter` verbatim. Read on the SAME failures as the
+   * deadline (never `gone`), and rendered through the same staleness rule.
+   */
+  const [cachedPlan, setCachedPlan] = useState<CachedLayoverPlan | null>(null);
+
   // census L127/L128/L294 — the presence ANSWER, carried whole. `degraded` and
   // `withheld` are the server's; `count` alone cannot tell a measured empty
   // city from a read that fell closed, and this screen used to store only that.
@@ -162,12 +181,30 @@ export default function LayoverDashboardScreen() {
     return () => clearInterval(timer);
   }, []);
 
-  // The countdown ticks locally, but usable-window/plan-fit math must stay
-  // canonical: silently re-pull the overview every 60s while active so the
-  // safety numbers never overstate remaining margin.
+  /**
+   * The countdown ticks locally, but usable-window/plan-fit math must stay
+   * canonical: silently re-pull the overview while active so the safety numbers
+   * never overstate remaining margin.
+   *
+   * census L157 — THE CADENCE IS THE CERTIFIED RUNG'S, not a constant. This ran
+   * every 60 seconds whether the traveller had four hours or four minutes, so
+   * the numbers somebody acts on while walking back to an airport aged exactly
+   * as fast as the ones they read over lunch. `layoverSensingCadence` maps the
+   * SERVER's `returnState` onto the interval and nothing here re-derives a rung
+   * from a clock — a second escalation rule on the client is the defect L115
+   * forbids of the map, in a different place.
+   *
+   * NORMAL is unchanged at 60 s: only the sharp end tightens.
+   */
   const sessionStatus = overview?.session.status;
+  const certifiedReturnState = overview?.safeReturn?.returnState ?? overview?.window.returnState ?? null;
+  const cadence = layoverSensingCadence({
+    sessionStatus,
+    returnState: certifiedReturnState,
+  });
+  const refreshIntervalMs = cadence.intervalMs;
   useEffect(() => {
-    if (!id || sessionStatus !== 'active') return;
+    if (!id || sessionStatus !== 'active' || refreshIntervalMs == null) return;
     const timer = setInterval(async () => {
       // A silent refresh KEEPS the last certified overview when the read fails
       // — it must never blank the screen a traveller is acting on. What it must
@@ -176,9 +213,9 @@ export default function LayoverDashboardScreen() {
       // screen's load down with it (census L156).
       const read = await getLayoverOverview(id).catch(() => null);
       if (read?.ok) setOverview(read.overview);
-    }, 60_000);
+    }, refreshIntervalMs);
     return () => clearInterval(timer);
-  }, [id, sessionStatus]);
+  }, [id, sessionStatus, refreshIntervalMs]);
 
   // §15.1's abort, lifted out of `LayoverSafeReturnCard` so that more than one
   // control can fire it (census L42, L123). Declared here, above every early
@@ -255,6 +292,22 @@ export default function LayoverDashboardScreen() {
         // that said nothing about the deadline is not a reason to take the
         // traveller's last one away.
         void cacheCertifiedDeadline(id, ovRead.overview.offlineBundle);
+        // census L151/L233 — the same floated write, for the plan, the airport
+        // and the certified area. Two caches rather than one because §16 makes
+        // each of those a separate decision about what may be shown from a
+        // cache; see `lib/layoverPlanCache.ts`.
+        void cacheCertifiedPlan(
+          id,
+          ovRead.overview.offlineBundle,
+          ovRead.overview.safeEnvelope ?? null,
+          // census L156 — the certified window and the schedule it was
+          // certified against, which are the offline replan rule's inputs.
+          {
+            usableMinutes: ovRead.overview.window.usableMinutes,
+            departureTime: ovRead.overview.session.departureTime,
+            boardingTime: ovRead.overview.session.boardingTime ?? null,
+          },
+        );
         if (ovRead.overview.share.enabled) loadPresence(id);
         setBuddies(buddyRes?.buddies ?? []);
       } else {
@@ -276,7 +329,10 @@ export default function LayoverDashboardScreen() {
          * `unreachable`, `unavailable` and `refused` all mean the SESSION is
          * fine and the READ failed, which is exactly what §16 is for.
          */
-        if (ovRead.reason !== 'gone') setCachedDeadline(await readCachedDeadline(id));
+        if (ovRead.reason !== 'gone') {
+          setCachedDeadline(await readCachedDeadline(id));
+          setCachedPlan(await readCachedPlan(id));
+        }
       }
       // census L294 (C2) — keep the two apart all the way to the card. An empty
       // `recs` with `recsError` null is a measured "nothing fits"; a non-null
@@ -291,6 +347,7 @@ export default function LayoverDashboardScreen() {
       // census L150 — the same fallback on the belt-and-braces path. The two
       // routes into "unreachable" must not differ in what the traveller keeps.
       setCachedDeadline(await readCachedDeadline(id));
+      setCachedPlan(await readCachedPlan(id));
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -551,6 +608,37 @@ export default function LayoverDashboardScreen() {
      * failures that mean the SESSION is fine and the READ failed.
      */
     const cached = !gone && cachedDeadline ? cachedDeadline : null;
+    // Same exclusion, same argument: a session the server says is GONE has no
+    // plan worth showing either. A cache is not a reason to send somebody
+    // across a city for a layover that is not theirs.
+    const plan = !gone ? cachedPlan : null;
+    /**
+     * census L156 — the offline conservative fallback, ASKED.
+     *
+     * `layoverLocalReplan.localReplan` is the pinned client mirror of the
+     * server's own rule and, until this call, had no caller anywhere: a tested
+     * module nothing reached, which by this census's own counting rule is not a
+     * built flow. It can only be asked here, because it is the rule for
+     * deciding what may be worked out WHEN THE SERVER CANNOT BE REACHED.
+     *
+     * THE TWO SCHEDULE ARGUMENTS ARE THE SAME VALUE, AND THAT IS NOT A BUG. The
+     * rule compares the schedule now against the schedule the bundle was
+     * certified against; offline, the only schedule this device has is the one
+     * it cached, and the sole way to change a schedule is `PATCH /sessions/:id`,
+     * which needs the network. They are passed separately rather than dropped
+     * so that an offline edit path, if one is ever built, fails closed here
+     * instead of silently skipping the check.
+     */
+    const replanDecision = plan?.schedule && cached
+      ? localReplan(cachedDeadlineAsBundle(cached), {
+          nowMs,
+          certifiedUsableMinutes: plan.schedule.usableMinutes,
+          currentDepartureTime: plan.schedule.departureTime,
+          currentBoardingTime: plan.schedule.boardingTime,
+          certifiedDepartureTime: plan.schedule.departureTime,
+          certifiedBoardingTime: plan.schedule.boardingTime,
+        })
+      : null;
     const cachedTruth = cached
       ? describeDeadline(cachedDeadlineAsBundle(cached), cached.hardReturnTime, nowMs)
       : null;
@@ -580,6 +668,10 @@ export default function LayoverDashboardScreen() {
             ) : null}
           </View>
         )}
+        {/* census L151/L233 — where they were going, which airport they have to
+            be back at, and how far the certified envelope reached. Captioned
+            last-certified by the card itself, through the one staleness rule. */}
+        <LayoverOfflinePlanCard plan={plan} replan={replanDecision} nowMs={nowMs} />
         {retryable && (
           <Pressable style={styles.retryBtn} onPress={() => load()} testID="layover-load-retry">
             <Text style={styles.retryBtnText}>Try again</Text>
