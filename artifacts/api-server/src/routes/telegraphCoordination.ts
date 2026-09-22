@@ -171,6 +171,53 @@ type SessionRead =
   | { kind: "not_found" }
   | { kind: "db_error"; message: string };
 
+/** How many session and transition rows one conversation's session read takes. */
+export const SESSION_SCAN_LIMIT = 200;
+
+type ThreadSessionRows =
+  | { ok: true; sessions: any[]; transitions: any[]; truncated: boolean }
+  | { ok: false; message: string };
+
+/**
+ * Every COORDINATION_SESSION and COORDINATION_TRANSITION in one thread, newest
+ * first, bounded to this member's §14.3 window.
+ *
+ * Read by `msg_type` rather than filtered out of a general scan, so a session
+ * survives a conversation that is busier than the general scan's cap. The
+ * error is CHECKED and returned — a PostgREST rejection RESOLVES, and an
+ * unchecked read here would answer "there is no coordination session" for a
+ * database that refused to say, which on this surface reads as "the evening is
+ * over".
+ */
+async function readSessionRowsForThread(
+  client: SupabaseClient,
+  threadId: string,
+  visibleFrom: string | null,
+): Promise<ThreadSessionRows> {
+  let q = client
+    .from("messages")
+    .select(COORD_COLUMNS)
+    .eq("thread_id", threadId)
+    .in("msg_type", ["coordination_session", "coordination_transition"])
+    .is("deleted_at", null)
+    .order("created_at", { ascending: false })
+    .limit(SESSION_SCAN_LIMIT);
+  if (visibleFrom) q = q.gte("created_at", visibleFrom);
+  const { data, error } = await q;
+  if (error) return { ok: false, message: error.message ?? "session read failed" };
+
+  const rows = ((data as any[]) ?? []).filter((r) => withinWindow(r.created_at, visibleFrom));
+  const sessions: any[] = [];
+  const transitions: any[] = [];
+  for (const r of rows) {
+    const env = parseCoordinationEnvelope(r.msg_type, r.body);
+    if (!env) continue;
+    if (env.kind === "COORDINATION_SESSION") sessions.push({ ...r, kind: env.kind, payload: env.payload });
+    else if (env.kind === "COORDINATION_TRANSITION") transitions.push({ ...r, kind: env.kind, payload: env.payload });
+  }
+  return { ok: true, sessions, transitions, truncated: rows.length >= SESSION_SCAN_LIMIT };
+}
+
 /**
  * The session named by a transition, and the state a new transition must be
  * legal from.
@@ -719,9 +766,30 @@ router.get(
     // §8's CoordinationSession. The newest open session wins; a thread that
     // held two evenings' sessions shows the one still running rather than the
     // first one ever opened.
-    const transitionRows = parsedRows.filter((r) => r.kind === "COORDINATION_TRANSITION");
+    /**
+     * The session is read by KIND, not taken from the generic scan above.
+     *
+     * The scan is the newest `COORDINATION_SCAN_LIMIT` messages of any kind. In
+     * a busy crew thread that is perhaps an hour of conversation, and a session
+     * opened before it falls out of the window — so the coordination panel
+     * VANISHES mid-evening, exactly when it is being used, and comes back if
+     * the chat goes quiet. §12 calls a coordination session "temporary active
+     * real-world coordination state"; temporary means until it ends, not until
+     * four hundred messages have gone past.
+     *
+     * A second query bounded to the two session kinds fixes it without storing
+     * anything: `SESSION_SCAN_LIMIT` transitions is far more than one evening
+     * produces, and the bound is reported rather than assumed.
+     */
+    const sessionRead = await readSessionRowsForThread(client, threadId, gate.visibleFrom);
+    if (!sessionRead.ok) {
+      log.error({ threadId, message: sessionRead.message }, "coordination session read failed");
+      sendError(res, "db_error", "Could not read this conversation's coordination state");
+      return;
+    }
+    const transitionRows = sessionRead.transitions;
     const projectedSessions = projectConversationSessions(
-      parsedRows.filter((r) => r.kind === "COORDINATION_SESSION"),
+      sessionRead.sessions,
       transitionRows,
       state,
     );
@@ -767,6 +835,8 @@ router.get(
        * whose retry logic has gone wrong.
        */
       duplicateSessionIds: projectedSessions.duplicateSessionIds,
+      /** The session read's own bound, stated separately from the message scan. */
+      sessionScanTruncated: sessionRead.truncated,
     });
   }),
 );
@@ -1220,6 +1290,155 @@ router.get(
        * must not be readable as "that is everything you owe".
        */
       truncated: rows.length >= COMMITMENTS_SCAN_LIMIT || threadIds.length >= COMMITMENTS_MAX_THREADS,
+    });
+  }),
+);
+
+// ── GET /api/me/coordination-sessions ────────────────────────────
+
+/** How many of the caller's threads one cross-thread session query joins across. */
+export const SESSIONS_MAX_THREADS = 200;
+/** How many session-shaped rows that query will scan. */
+export const SESSIONS_SCAN_LIMIT = 1000;
+/** How far back "what am I coordinating" looks by default. */
+export const SESSIONS_DEFAULT_DAYS = 14;
+
+/**
+ * §12 `coordination_sessions`, listed ACROSS the caller's conversations.
+ *
+ * census-telegraph T150 scored the row N on the evidence "No table, service or
+ * route." Two of those three are stale — `services/telegraph/coordination.ts`
+ * is the service and `routes/telegraphCoordination.ts` is the route — and what
+ * remained true was the shape of the complaint T84 made about commitments: an
+ * object you can project per thread but cannot LIST is not something a surface
+ * can work with. T84 was closed by a query rather than a table, on the reasoning
+ * that "a query is a route, not a table", and this is the same answer for the
+ * same reason.
+ *
+ * WHAT IT STILL IS NOT, AND THE CENSUS ROW SAYS SO. Without a row per session
+ * there is nothing to index, nothing a sweeper can advance, and no way to ask a
+ * question that is not "scan the caller's own threads". The scan is bounded by
+ * threads, by kind and by a time window, and every bound is in the response.
+ *
+ * DEFAULT FOURTEEN DAYS, not ninety like the commitments list. §9's sessions are
+ * "TEMPORARY active real-world coordination state"; a coordination session from
+ * three months ago is history, and putting it in a list called "what am I
+ * coordinating" would be the surface lying about the word.
+ *
+ * AUTHORIZATION. Threads come from the caller's OWN active memberships, so a
+ * session in a conversation they are not in cannot be reached, and each thread's
+ * §14.3 window is applied to its own rows.
+ */
+router.get(
+  "/me/coordination-sessions",
+  asyncHandler(async (req: any, res: any) => {
+    const auth = await requireUser(req, res);
+    if (!auth) return;
+    const { client, user } = auth;
+
+    const includeEnded = String(req.query.includeEnded ?? "") === "true";
+    const daysRaw = Number.parseInt(String(req.query.days ?? ""), 10);
+    const days = Number.isFinite(daysRaw) && daysRaw > 0 && daysRaw <= 365 ? daysRaw : SESSIONS_DEFAULT_DAYS;
+    const since = new Date(Date.now() - days * 86_400_000).toISOString();
+
+    const boundOn = await historyBoundEnabled(client);
+    const { data: memberships, error: memberErr } = await client
+      .from("message_thread_members")
+      .select(membershipSelect("thread_id, user_id, left_at", boundOn))
+      .eq("user_id", user.id)
+      .is("left_at", null)
+      .limit(SESSIONS_MAX_THREADS);
+    if (memberErr) {
+      // "You are coordinating nothing" is indistinguishable from a real empty
+      // answer and is wrong in the direction that makes somebody miss the
+      // evening they are in the middle of.
+      log.error({ userId: user.id, message: memberErr.message }, "session membership read failed");
+      sendError(res, "db_error", "Could not read your conversations");
+      return;
+    }
+
+    const windowByThread = new Map<string, string | null>();
+    for (const m of ((memberships as any[]) ?? [])) {
+      windowByThread.set(String(m.thread_id), visibleFromOf(m as any, boundOn));
+    }
+    const threadIds = [...windowByThread.keys()];
+    if (threadIds.length === 0) {
+      res.status(200).json({
+        sessions: [], includeEnded, windowDays: days,
+        threadsScanned: 0, scanned: 0, truncated: false,
+      });
+      return;
+    }
+
+    const { data, error } = await client
+      .from("messages")
+      .select(COORD_COLUMNS + ", thread_id")
+      .in("thread_id", threadIds)
+      .in("msg_type", ["coordination_session", "coordination_transition"])
+      .is("deleted_at", null)
+      .gte("created_at", since)
+      .order("created_at", { ascending: false })
+      .limit(SESSIONS_SCAN_LIMIT);
+    if (error) {
+      log.error({ userId: user.id, message: error.message }, "session read failed");
+      sendError(res, "db_error", "Could not read your coordination sessions");
+      return;
+    }
+
+    const rows = ((data as any[]) ?? []).filter((r) =>
+      withinWindow(r.created_at, windowByThread.get(String(r.thread_id)) ?? null),
+    );
+    const parsedRows = rows
+      .map((r) => {
+        const env = parseCoordinationEnvelope(r.msg_type, r.body);
+        return env ? { ...r, kind: env.kind, payload: env.payload } : null;
+      })
+      .filter((r): r is any => r !== null);
+
+    const out: any[] = [];
+    const duplicates: string[] = [];
+    for (const threadId of threadIds) {
+      const mine = parsedRows.filter((r) => String(r.thread_id) === threadId);
+      if (mine.length === 0) continue;
+      // Transitions are matched WITHIN their own thread. A session id is only
+      // unique inside a conversation, and a transition from another thread
+      // moving this one would let any of the caller's threads end an evening in
+      // a different one.
+      const projected = projectConversationSessions(
+        mine.filter((r) => r.kind === "COORDINATION_SESSION"),
+        mine.filter((r) => r.kind === "COORDINATION_TRANSITION"),
+        // DERIVED state is deliberately not computed here. It needs the plan
+        // each thread is coordinating around, which is a read per thread, and a
+        // list that did two hundred of those is not a list. `derivedState` is
+        // null in this answer and the response says so rather than implying the
+        // thread view and this one disagree.
+        null,
+      );
+      for (const sn of projected.sessions) {
+        if (!includeEnded && sn.endedAt !== null) continue;
+        out.push({ ...sn, threadId });
+      }
+      duplicates.push(...projected.duplicateSessionIds);
+    }
+
+    // Newest first: the evening you are in is the one you are looking for.
+    out.sort((a, b) => Date.parse(b.startedAt) - Date.parse(a.startedAt));
+
+    res.status(200).json({
+      sessions: out,
+      includeEnded,
+      windowDays: days,
+      threadsScanned: threadIds.length,
+      scanned: rows.length,
+      duplicateSessionIds: duplicates,
+      /**
+       * §9.1's separation, restated for this surface: `declaredState` is what
+       * somebody SAID and is present; `derivedState` is null here because this
+       * route does not read each thread's plan, and a client must not fill it
+       * in from the clock.
+       */
+      derivedStateComputed: false,
+      truncated: rows.length >= SESSIONS_SCAN_LIMIT || threadIds.length >= SESSIONS_MAX_THREADS,
     });
   }),
 );

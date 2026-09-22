@@ -76,6 +76,12 @@ interface State {
   kernelFlag?: boolean;
   /** No meetup at all, so §9's derived state is null. */
   noPlan?: boolean;
+  /** Caps the GENERAL message scan, so the busy-thread case needs no 400-row fixture. */
+  scanCap?: number;
+  /** Injects a failure on the SESSION read specifically. */
+  messagesError?: boolean;
+  /** Injects a failure on the caller's OWN membership list (the cross-thread query). */
+  membershipListError?: boolean;
 }
 
 /**
@@ -138,12 +144,23 @@ function makeClient(state: State = {}) {
       }
       return _limit !== null ? rows.slice(0, _limit) : rows;
     };
-    const injected = () =>
-      table === "message_thread_members"
-      && state.rosterError
-      && shape.join(",") === "eq:thread_id,is:left_at"
-        ? { message: "roster read blew up", code: "XX000" }
-        : null;
+    const injected = () => {
+      if (
+        table === "message_thread_members"
+        && state.rosterError
+        && shape.join(",") === "eq:thread_id,is:left_at"
+      ) return { message: "roster read blew up", code: "XX000" };
+      if (
+        table === "message_thread_members"
+        && state.membershipListError
+        && shape.join(",") === "eq:user_id,is:left_at"
+      ) return { message: "membership list blew up", code: "XX000" };
+      // The SESSION read specifically: `in:msg_type` appears only on it.
+      if (table === "messages" && state.messagesError && shape.includes("in:msg_type")) {
+        return { message: "messages read blew up", code: "XX000" };
+      }
+      return null;
+    };
 
     const target: any = {
       select() { return proxy; },
@@ -160,7 +177,14 @@ function makeClient(state: State = {}) {
       in(col: string, vals: any[]) { shape.push(`in:${col}`); preds.push((r) => vals.map(String).includes(String(r[col]))); return proxy; },
       gte(col: string, val: any) { shape.push(`gte:${col}`); preds.push((r) => Date.parse(r[col]) >= Date.parse(val)); return proxy; },
       order(col: string, opts?: any) { _order = { col, asc: opts?.ascending !== false }; return proxy; },
-      limit(n: number) { _limit = n; return proxy; },
+      limit(n: number) {
+        // Applied only to the GENERAL scan. The session read filters on
+        // msg_type and is exactly the query that must NOT be subject to it.
+        _limit = table === "messages" && state.scanCap !== undefined && !shape.includes("in:msg_type")
+          ? Math.min(n, state.scanCap)
+          : n;
+        return proxy;
+      },
       maybeSingle() {
         const e = injected();
         if (e) return Promise.resolve({ data: null, error: e });
@@ -791,5 +815,94 @@ describe("§14.2 — membership can change after a message was created", () => {
     assert.equal(latestQuickStates(rows as any, null).length, 2);
     assert.equal(latestQuickStates(rows as any, new Set([ALICE])).length, 1);
     assert.equal(latestQuickStates(rows as any, new Set<string>()).length, 0);
+  });
+});
+
+/* ─────────────── §12 coordination_sessions: read, and listed ────────── */
+
+describe("§12 — the session survives a busy conversation, and is listable", () => {
+  it("is found when the general message scan cannot reach it", async () => {
+    // The session and its transition are the OLDEST rows; the cap makes the
+    // general scan see only the two chattiest minutes. Before the session read
+    // was bounded to its own kinds, the panel vanished here — mid-evening,
+    // precisely when it is in use.
+    useState({
+      scanCap: 2,
+      extraMessages: [
+        sessionMsg("s-1", min(-200), "k"),
+        transitionMsg("t-1", "s-1", "ASSEMBLING", min(-190)),
+        quickMsg("q-1", ALICE, "ON_MY_WAY", min(-3)),
+        quickMsg("q-2", BOB, "ON_MY_WAY", min(-2)),
+      ],
+    });
+    const r = await get(`/threads/${THREAD}/coordination`, ALICE);
+    assert.equal(r.status, 200);
+    assert.ok(r.body.coordination.session, "the session fell out of the window and the panel went dark");
+    assert.equal(r.body.coordination.session.sessionId, "s-1");
+    assert.equal(r.body.coordination.session.state, "ASSEMBLING");
+  });
+
+  it("an unreadable session read is a 500, never 'there is no session'", async () => {
+    useState({ messagesError: true, extraMessages: [sessionMsg("s-1", min(-20), "k")] });
+    const r = await get(`/threads/${THREAD}/coordination`, ALICE);
+    assert.equal(r.status, 500);
+  });
+
+  it("lists the caller's open sessions across conversations", async () => {
+    useState({ extraMessages: [sessionMsg("s-1", min(-60), "k-1"), sessionMsg("s-2", min(-30), "k-2")] });
+    const r = await get(`/me/coordination-sessions`, ALICE);
+    assert.equal(r.status, 200);
+    assert.deepEqual(r.body.sessions.map((sn: any) => sn.sessionId), ["s-2", "s-1"]);
+    assert.equal(r.body.sessions[0].threadId, THREAD);
+    assert.equal(r.body.threadsScanned, 1);
+  });
+
+  it("an ENDED session is excluded unless asked for", async () => {
+    useState({
+      extraMessages: [
+        sessionMsg("s-1", min(-60), "k-1"),
+        transitionMsg("t-1", "s-1", "CANCELLED", min(-50)),
+      ],
+    });
+    const closed = await get(`/me/coordination-sessions`, ALICE);
+    assert.deepEqual(closed.body.sessions, []);
+    const all = await get(`/me/coordination-sessions?includeEnded=true`, ALICE);
+    assert.equal(all.body.sessions.length, 1);
+    assert.equal(all.body.sessions[0].endedAt, min(-50));
+  });
+
+  it("§9.1's separation survives the list: derivedState is null and the response SAYS it was not computed", async () => {
+    useState({ extraMessages: [sessionMsg("s-1", min(-60), "k-1")] });
+    const r = await get(`/me/coordination-sessions`, ALICE);
+    assert.equal(r.body.derivedStateComputed, false);
+    assert.equal(r.body.sessions[0].derivedState, null);
+  });
+
+  it("a conversation the caller has LEFT contributes nothing", async () => {
+    useState({
+      members: [
+        { thread_id: THREAD, user_id: ALICE, left_at: min(-5), visible_from_at: null, last_read_at: null },
+        { thread_id: THREAD, user_id: BOB, left_at: null, visible_from_at: null, last_read_at: null },
+      ],
+      extraMessages: [sessionMsg("s-1", min(-60), "k-1")],
+    });
+    const r = await get(`/me/coordination-sessions`, ALICE);
+    assert.equal(r.status, 200);
+    assert.deepEqual(r.body.sessions, []);
+    assert.equal(r.body.threadsScanned, 0);
+  });
+
+  it("an unreadable membership list is a 500, not 'you are coordinating nothing'", async () => {
+    useState({ membershipListError: true, extraMessages: [sessionMsg("s-1", min(-60), "k-1")] });
+    const r = await get(`/me/coordination-sessions`, ALICE);
+    assert.equal(r.status, 500);
+  });
+
+  it("every bound the list was computed under is reported", async () => {
+    useState({ extraMessages: [sessionMsg("s-1", min(-60), "k-1")] });
+    const r = await get(`/me/coordination-sessions`, ALICE);
+    assert.equal(typeof r.body.windowDays, "number");
+    assert.equal(typeof r.body.scanned, "number");
+    assert.equal(r.body.truncated, false);
   });
 });
