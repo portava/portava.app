@@ -3233,7 +3233,7 @@ the certified record before the model sees it; a degraded store is `unavailable`
 `artifacts/api-server/src/services/airport/LayoverOpportunityNotifier.ts:57#export async function notifyLayoverOpportunity` turns a replan the
 replanner judged notify-worthy into a notification row carrying its attention declaration
 (`artifacts/api-server/src/services/airport/LayoverOpportunityNotifier.ts:38#export function layoverOpportunityPayload`), called from the route
-after the decision is recorded (`artifacts/api-server/src/routes/airport.ts:971#const opportunityNotification = await notifyLayoverOpportunity(`).
+after the decision is recorded (`artifacts/api-server/src/routes/airport.ts:976#const opportunityNotification = await notifyLayoverOpportunity(`).
 `artifacts/api-server/src/test/compassLayoverConsumption.test.ts` 8 cases; M1–M4 red. Of CL-04's four clauses, tool access,
 proactive OpportunityEvents and explanation now pass; **clarification** is not built and the
 row's app-reachability defect is Layover's. **CL-04 stays W**, narrowed to those two.

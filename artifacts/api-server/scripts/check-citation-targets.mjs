@@ -495,7 +495,7 @@ import {
  * The row's verdict is untouched.
  *
  * 183 -> 182. */
-export const MAX_DEAD_TARGETS = 182;
+export const MAX_DEAD_TARGETS = 181;
 
 /** Pinned to a commit by its own declaration; its lines must not track HEAD. */
 const PINNED_DOCS = new Set(['docs/architecture/mobile-reachability-ledger.md']);
