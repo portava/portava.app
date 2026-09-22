@@ -291,12 +291,17 @@ const FIXED_SITES: Array<{ file: string; markers: string[]; reason: string }> = 
   {
     file: "routes/posts.ts",
     markers: [
-      "private accounts are NOT being excluded from this page",
+      // Marker MOVED, not deleted (2026-09-06). The global feed no longer warns
+      // and serves an unfiltered page: a failed private-author lookup is now a
+      // retryable 503, so the diagnostic states the fail-CLOSED posture. A
+      // revert to warn-and-continue changes this text and trips this rule.
+      "refusing to serve an unfiltered page",
       "stale-follow privacy cross-check",
     ],
     reason:
       "The global feed's private-author exclusion set: a rejected lookup emptied it and published every private account's " +
-      "posts. The following feed's stale-follow cross-check fails the same way.",
+      "posts. It is now fail-closed (503) rather than warn-and-continue, and the marker pins that posture. The following " +
+      "feed's stale-follow cross-check fails the same way.",
   },
   {
     file: "routes/pulse.ts",
