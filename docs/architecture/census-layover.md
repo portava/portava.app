@@ -6549,13 +6549,21 @@ rows, and not as a new aggregate for §23.3's 223.
 
 | bucket | count | rows |
 | --- | ---: | --- |
-| (b) blocked on a migration no database has | **52** | the snapshot family (L95/L209/L261 and L190/L193/L203/L204/L218/L221/L222/L224/L229/L233/L239/L241/L256/L274/L277/L279/L296), `layover_constraints` / `layover_checkpoints` / `layover_outcomes` / `layover_time_budgets` / `layover_return_plans` (L22–L25/L27/L30/L32/L39/L40/L43/L64/L75/L78/L129/L142/L144/L145/L151–L154/L158/L159/L164/L166/L168/L173), plus L7/L10 |
+| (b) blocked on a migration no database has | **51** *(was written **52**; see §31)* | the snapshot family (L95/L209/L261 and L190/L193/L203/L204/L218/L221/L222/L224/L229/L233/L239/L241/L256/L274/L277/L279/L296), `layover_constraints` / `layover_checkpoints` / `layover_outcomes` / `layover_time_budgets` / `layover_return_plans` (L22–L25/L27/L30/L32/L39/L40/L43/L64/L75/L78/L129/L142/L144/L145/L151–L154/L158/L159/L164/L166/L168/L173), plus L7/L10 |
 | (e) blocked on an absent platform capability or a device | **23** | no routed travel-time provider (L60/L62/L68–L73); no flight feed (L169); no live-signal producer (L276/L282/L283/L284); no metrics exporter (L210/L211/L213/L215–L217); no location sensing (L155/L160/L161); **no scheduler (L196 — moved here from (b) by 27.5)** |
 | (c) blocked on an owner decision | **10** | the ENTRY gate (L34/L48/L49/L230 — PR #463, unmerged); should the `GENERIC` rung WITHHOLD landside guidance (L244/L245/L246/L248/L249); shadow-mode rollout (L242) |
 | (d) blocked on a file another lane owns | **10** | `travel-buddy-standalone/` — the map surface (L67/L116–L119/L121/L122/L124/L125/L126) |
 | (a) closable from code in files this lane owns | **0** | after this pass. L185/L186/L188 were the three, and they are now `C`. |
 
-52 + 23 + 10 + 10 + 0 = **94.** ✓
+51 + 23 + 10 + 10 + 0 = **94.** ✓
+
+**THIS LINE READ `52 + 23 + 10 + 10 + 0 = 94` WHEN IT WAS WRITTEN, AND THAT IS
+95.** The `(b)` cell said 52 while the paragraph under `(e)` said L196 had been
+MOVED from `(b)` to `(e)` — so L196 was counted in both, the sum was one over
+its own total, and a `✓` was written after it. Corrected here to 51, and
+recorded in §31 rather than quietly repaired. It is the exact failure this
+document's correction headers exist for, committed inside the section that
+partitions the rows, by the pass that wrote it.
 
 **HOW THIS WAS DERIVED, AND ITS LIMIT.** The bucket memberships are taken from
 §23.3's own named lists, intersected with the `N` rows as
@@ -6952,3 +6960,57 @@ census-highlights-memories cites them.
 
 **No verdict moves.** `check:census-integrity` reads **C=78 W=124 N=94 X=0**
 across 296 rows. §27.9 remains this document's headline.
+
+## §31 — §27.7's partition did not add up, and the `✓` after it was written anyway
+
+No verdict moves. `check:census-integrity` reads **C=78 W=124 N=94 X=0** across
+296 rows, unchanged.
+
+### 31.1 The error
+
+§27.7 stated:
+
+> `52 + 23 + 10 + 10 + 0 = **94.** ✓`
+
+**52 + 23 + 10 + 10 + 0 is 95.** The `(b)` cell claimed 52 migration-blocked
+rows while the `(e)` row of the same table said, in bold, that **L196 had been
+MOVED from `(b)` to `(e)`**. It was added to `(e)` and never subtracted from
+`(b)`, so one row was counted in two buckets of a partition whose whole claim is
+that every row sits in exactly one. `(b)` is **51**.
+
+The arithmetic is now right and the `✓` is now earned: 51 + 23 + 10 + 10 + 0 =
+94, which is the `N` count `check:census-integrity` reads.
+
+### 31.2 Why this is recorded and not quietly fixed
+
+This document exists because a headline drifted from the rows beneath it. Its
+CORRECTION HEADER opens with exactly that, `check:census-integrity` was written
+after "census-layover was found stating 27 + 133 + 139 against a denominator of
+296", and the tool's own header names this census as one of the three that
+already carried such a header.
+
+**So the pass that added a guard against miscounting published a miscount with a
+tick after it, two sections later.** A sum nobody re-added is a sum that is
+believed, and a `✓` is an assertion that somebody did. Nobody had. Recording it
+is the only thing that makes the next reader check the third table instead of
+trusting it.
+
+### 31.3 What it does and does not touch
+
+- **It does not touch a verdict.** No row's bucket membership changes because of
+  this; L196 was always in `(e)` after §27.5 moved it, and the `(b)` LIST under
+  the table never named it. Only the count beside the list was wrong.
+- **It is the second error found in §27.7 by re-reading rather than by a tool.**
+  §28.4 found four rows misfiled between buckets; this is a fifth defect in the
+  same table, of a different kind. **§27.7 has now been wrong about its
+  membership four times and its arithmetic once**, which is a stronger statement
+  about that table than its own limit paragraph made, and it is the reason
+  §28.4 refuses to restate the totals: a table this unreliable should be
+  re-derived from the rows by a measuring pass, not patched again here.
+- **Nothing in §27.9's headline depends on it.** That table is derived from
+  `check:census-integrity`, not from this partition.
+
+### 31.4 Tally
+
+**No verdict moves.** **C=78 W=124 N=94 X=0** across 296 rows, denominator 296.
+§27.9 remains this document's headline.
