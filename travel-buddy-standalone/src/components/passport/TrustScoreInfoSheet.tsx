@@ -15,6 +15,7 @@ import { ShieldCheck, CheckCircle2, Circle, AlertTriangle, X } from 'lucide-reac
 import type { TrustScoreBreakdown, TrustScoreFactor } from '../../types/models.ts';
 import { PP } from '../../theme/passportTokens.ts';
 import { radius, space } from '../../theme/tokens.ts';
+import { BASIS_NOTE } from '../../features/passport/useTrustProjection.ts';
 
 const TEAL = '#0D9B6F';
 const TEAL_DIM = 'rgba(13,155,111,0.18)';
@@ -97,15 +98,16 @@ function FactorRow({ factor }: { factor: TrustScoreFactor }) {
  * `measured` and `not_applicable` map to `null` by design: an annotation
  * printed on every row is decoration, not a distinction.
  *
- * Kept in step with `BASIS_NOTE` by
- * `src/components/passport/__tests__/TrustScoreInfoSheet.basis.component.test.tsx`,
- * which reads the sentences back out of `deriveTrustView` instead of re-typing
- * them, so drift fails a test rather than shipping a third vocabulary.
+ * IMPORTED from `BASIS_NOTE` rather than re-typed, so a third vocabulary is
+ * impossible rather than merely detectable.
+ * `TrustScoreInfoSheet.basis.component.test.tsx` still reads the sentences back
+ * out of `deriveTrustView`, which keeps the assertion honest if the constant is
+ * ever re-inlined.
  */
 const BASIS_LINES: readonly string[] = [
-  'Based on part of the record so far.',
-  'Not yet measured \u2014 shown at the neutral starting point.',
-];
+  BASIS_NOTE.partial,
+  BASIS_NOTE.substituted,
+].filter((s): s is string => typeof s === 'string' && s.length > 0);
 
 function BasisGuide() {
   return (

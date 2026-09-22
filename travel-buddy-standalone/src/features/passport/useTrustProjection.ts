@@ -279,7 +279,15 @@ const EMPTY_CAPS: PassportPositiveCapabilities = {
  * missing measurement is described as an absence of records, never as a
  * deficiency of the person).
  */
-const BASIS_NOTE: Record<DomainTrustBasis, string | null> = {
+/**
+ * EXPORTED so the one explanatory surface that quotes these sentences —
+ * `components/passport/TrustScoreInfoSheet.tsx` — can import them instead of
+ * re-typing them. Duplicating user-facing vocabulary is how the band table
+ * this replaced came to disagree with the server in the first place; a
+ * shared constant makes a third vocabulary impossible rather than merely
+ * detectable.
+ */
+export const BASIS_NOTE: Record<DomainTrustBasis, string | null> = {
   measured: null,
   partial: 'Based on part of the record so far.',
   substituted: 'Not yet measured — shown at the neutral starting point.',
