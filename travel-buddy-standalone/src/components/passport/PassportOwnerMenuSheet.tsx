@@ -21,7 +21,7 @@ import {
   Briefcase, Bookmark, Users, UserPlus, UserCheck, UserX,
   VolumeX, Settings, Lock, Bell, HelpCircle, LogOut,
   ChevronRight, X, MoreHorizontal, Edit2, Compass, PlusCircle,
-  BarChart2,
+  BarChart2, Archive,
 } from 'lucide-react-native';
 import { closeThenNavigate } from '../../lib/deferredNavigate.ts';
 import { PP, PP_LABEL } from '../../theme/passportTokens.ts';
@@ -128,6 +128,18 @@ const SECTIONS: Section[] = [
         iconColor: '#D97706',
         live: true,
         action: (p) => { close(p); p.onManageHighlights?.(); },
+      },
+      {
+        // §21 Archive's "unless explicitly requested". Archiving retains the
+        // Highlight and takes it out of normal browsing; this is the only way
+        // back to one, and without it Archive would be irreversible from
+        // inside the app — which is Delete, under a kinder name.
+        key: 'archived-highlights',
+        label: 'Archived Highlights',
+        Icon: Archive,
+        iconColor: '#8A7E6E',
+        live: true,
+        action: (p) => { closeThenNavigate(p.onClose, '/highlights/archived'); },
       },
       {
         key: 'preview-public',
@@ -452,6 +464,7 @@ function MenuRow({
         pressed && live && mr.rowPressed,
       ]}
       onPress={live ? onAction : undefined}
+      testID={`owner-menu-${item.key}`}
       accessibilityRole="button"
       accessibilityLabel={label}
       accessibilityState={{ disabled: !live }}

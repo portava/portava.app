@@ -77,6 +77,35 @@ export type PersonVisibilityRung = 'NAMED' | 'PROFILE_LINKED' | 'CREW_ONLY' | 'A
 /** Three-valued. `null` is UNKNOWN, and unknown REFUSES — it is not "no". */
 export type ConsentValue = boolean | null;
 
+/**
+ * WHICH consent dimensions actually bite, as the SERVER derives it.
+ *
+ * `GET /highlights/:id/projection-policy` publishes all five §10 dimensions and
+ * accepts a patch for any of them, but only some are read by a surface a viewer
+ * can observe. `consentEnforcement` (services/highlights/highlightPublicProjection.ts)
+ * is DERIVED there from `SURFACE_CONSENT_DIMENSIONS` — the very table the gate
+ * consults — so the day a third dimension is wired the wire changes and no
+ * client is edited.
+ *
+ * The dimension names are deliberately `string`, not a client union. A union
+ * here would be a second copy of a vocabulary the server owns, and the whole
+ * point of this field is that the client can render a dimension it has never
+ * heard of. The same reasoning applies to `bySurface`'s keys.
+ */
+export interface ConsentEnforcementMap {
+  /** Dimensions some non-owner surface actually reads. Render these. */
+  enforced: string[];
+  /**
+   * Dimensions §10 names, the schema stores, and NOTHING reads. Storing a
+   * preference nothing reads is honest; rendering it as a live control is not.
+   */
+  unenforced: string[];
+  /** Which dimensions each non-owner surface asks about. */
+  bySurface: Record<string, string[]>;
+  /** The server's one-sentence explanation of why `unenforced` is not empty. */
+  note: string;
+}
+
 export interface ProjectionPolicyView {
   highlightId: string;
   locationPrecision: LocationPrecisionRung | null;
@@ -85,6 +114,14 @@ export interface ProjectionPolicyView {
   locationPrecisionLadder: LocationPrecisionRung[];
   personVisibilityLadder: PersonVisibilityRung[];
   consentDimensions: string[];
+  /**
+   * OPTIONAL because a deployment older than `consentEnforcement` does not send
+   * it, and the honest response to its absence is to offer no consent switches
+   * at all. A client that fell back to `consentDimensions` would offer five
+   * switches of which three change nothing observable — which is precisely the
+   * failure this field was added to prevent.
+   */
+  consentEnforcement?: ConsentEnforcementMap;
 }
 
 export type PrivacyErrorKind =
@@ -245,4 +282,49 @@ export function isControlSet(
 export function highlightScopedControls(view: ResurfacingControlsView | null): ControlCatalogueEntry[] {
   if (!view) return [];
   return view.catalogue.filter((c) => c.scope === 'highlight');
+}
+
+/**
+ * The §10 consent dimensions a sheet may OFFER, read off the wire.
+ *
+ * An absent `consentEnforcement` returns an empty list on purpose — see the
+ * field's own comment. `consentDimensions` is NOT a fallback: it is the full
+ * catalogue including the three nothing reads.
+ */
+export function enforcedConsentDimensions(policy: ProjectionPolicyView | null): string[] {
+  const enforced = policy?.consentEnforcement?.enforced;
+  if (!Array.isArray(enforced)) return [];
+  return enforced.filter((d): d is string => typeof d === 'string' && d.length > 0);
+}
+
+/**
+ * Which non-owner surfaces ask about this dimension, derived from the server's
+ * `bySurface` map rather than from a table typed beside it. Returned in the
+ * map's own key order so the server decides the ordering too.
+ */
+export function surfacesGatedBy(policy: ProjectionPolicyView | null, dimension: string): string[] {
+  const bySurface = policy?.consentEnforcement?.bySurface;
+  if (!bySurface || typeof bySurface !== 'object') return [];
+  return Object.keys(bySurface).filter((surface) => {
+    const dims = bySurface[surface];
+    return Array.isArray(dims) && dims.includes(dimension);
+  });
+}
+
+/**
+ * The stored answer for one dimension, three-valued.
+ *
+ * `unset` is NOT `withheld`. The gate that runs on the non-owner surfaces
+ * (`consentWithholds`) refuses only on an explicit stored `false`, so the two
+ * are different facts about what the owner decided and about what a viewer
+ * sees. Anything that is not a boolean — absent, null, a JSON round-tripped
+ * "false" string — is `unset`, never coerced into a decision.
+ */
+export type ConsentChoice = 'granted' | 'withheld' | 'unset';
+
+export function consentChoice(policy: ProjectionPolicyView | null, dimension: string): ConsentChoice {
+  const v = policy?.consent?.[dimension];
+  if (v === true) return 'granted';
+  if (v === false) return 'withheld';
+  return 'unset';
 }

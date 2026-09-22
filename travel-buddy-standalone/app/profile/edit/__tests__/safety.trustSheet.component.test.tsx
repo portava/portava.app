@@ -67,6 +67,8 @@ import {
 } from '@testing-library/react-native';
 import SafetyVerificationScreen from '../safety.tsx';
 import { getMyProfile } from '../../../../src/services/profile.ts';
+// The basis sentences the sheet prints, from the one place that owns them.
+import { BASIS_NOTE } from '../../../../src/features/passport/useTrustProjection.ts';
 
 // ── expo-router ───────────────────────────────────────────────────────────────
 
@@ -283,9 +285,16 @@ describe('SafetyVerificationScreen — Trust Score sheet', () => {
       screen.getByText(/ID verification, passport stamps, account age/),
     ).toBeTruthy();
     expect(screen.getByText('WHAT A STANDING RESTS ON')).toBeTruthy();
-    expect(
-      screen.getByText('Not yet measured — shown at the neutral starting point.'),
-    ).toBeTruthy();
+    // READ from the shipped constant, not re-typed. A literal here was a THIRD
+    // copy of the same sentence — the very thing the band table was removed for
+    // — and it went stale the moment the copy changed: the server stopped
+    // substituting a neutral 50 (owner decision 2026-09-22) and words an
+    // unmeasured domain "Not yet rated", so the old "shown at the neutral
+    // starting point" was printing a mechanism that no longer exists. The
+    // sibling suite (TrustScoreInfoSheet.basis.component.test.tsx) already
+    // reads it back out of the module for exactly this reason.
+    expect(BASIS_NOTE.substituted).toBeTruthy();
+    expect(screen.getByText(String(BASIS_NOTE.substituted))).toBeTruthy();
 
     // The server's word for this profile is what the person reads (it appears
     // both on the Trust row behind the sheet and in the sheet's score pill)...

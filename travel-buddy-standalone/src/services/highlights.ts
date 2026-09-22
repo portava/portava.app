@@ -37,6 +37,30 @@ export interface Highlight {
   filterIntensity: number;
   mediaThumbnailUrl?: string | null;
   mediaDurationSeconds?: number | null;
+  /**
+   * §12 manual_pin. THREE-valued, and the three states are not interchangeable:
+   *
+   *   a timestamp — pinned, and this is when.
+   *   `null`      — the server projected the column and it is empty: not pinned.
+   *   `undefined` — the server did NOT project it. Migration 2723 is absent on
+   *                 that deployment, so `highlightColumns` falls back to the
+   *                 narrow select and no class field is sent at all.
+   *
+   * Collapsing the last two would put a pin affordance on a build that cannot
+   * store a pin, where every tap answers `feature_disabled`. Collapsing the
+   * first two makes UNPIN_HIGHLIGHT unreachable, which is the trap §17 names.
+   */
+  pinnedAt?: string | null;
+  /**
+   * §21 Archive — "retain canonical Memory; remove from normal browsing unless
+   * explicitly requested". Non-null only on `GET /highlights/archived`: every
+   * other read filters `archived_at IS NULL`, so a row from the profile or a
+   * feed always carries `null` here.
+   *
+   * Archive is NOT delete, and §21 requires the two to stay separate "in both
+   * data model and UX". `deletedAt` above is the terminal one.
+   */
+  archivedAt?: string | null;
 }
 
 export interface HighlightViewer {
@@ -133,6 +157,11 @@ function mapHighlight(r: any): Highlight {
     filterIntensity: r.filter_intensity ?? 100,
     mediaThumbnailUrl: r.media_thumbnail_url ?? null,
     mediaDurationSeconds: r.media_duration_seconds ?? null,
+    // NOT `r.pinnedAt ?? null`. That spelling erases the difference between a
+    // server that said "not pinned" and a server that could not say anything
+    // about pinning at all — see the field's comment on `Highlight`.
+    pinnedAt: r.pinnedAt === undefined ? undefined : (r.pinnedAt ?? null),
+    archivedAt: r.archived_at ?? null,
   };
 }
 
@@ -342,6 +371,90 @@ export async function deleteHighlight(highlightId: string): Promise<HighlightRes
   } catch (e) {
     if (isNetworkError(e)) return { ok: false, data: null, errorKind: 'network_unreachable' };
     return { ok: false, data: null, errorKind: 'db_error' };
+  }
+}
+
+/* ============================================================================
+ * §21 ARCHIVE — the reversible removal, which is NOT the soft delete.
+ *
+ * Highlights/Memories Development Architecture Spec v1 §21: "Delete, archive,
+ * do-not-resurface, and 'keep but do not personalize' are different operations
+ * and must remain separate in both data model and UX."
+ *
+ * The three routes have existed and been tested on the server; nothing in this
+ * client called any of them, so the only removal an owner could perform was
+ * DELETE — which is terminal. A product that offers one verb where the spec
+ * requires four separate ones has collapsed them in the UX half of that
+ * sentence whatever its data model does.
+ * ========================================================================== */
+
+/** §21 Archive. Reversible, retains the row, does not consume the delete. */
+export async function archiveHighlight(
+  highlightId: string,
+): Promise<HighlightResult<{ id: string; archivedAt: string }>> {
+  if (!isSupabaseConfigured || !apiBase()) return { ok: false, data: null, errorKind: 'config_error' };
+  const token = await freshToken();
+  if (!token) return { ok: false, data: null, errorKind: 'unauthenticated' };
+  try {
+    const res = await fetch(`${apiBase()}/api/highlights/${highlightId}/archive`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) return mapApiError(res.status, await res.json().catch(() => ({})));
+    return { ok: true, data: await res.json() };
+  } catch (e) {
+    if (isNetworkError(e)) return { ok: false, data: null, errorKind: 'network_unreachable' };
+    return { ok: false, data: null, errorKind: 'db_error' };
+  }
+}
+
+/** §21 Archive is reversible. This is the half that makes it so. */
+export async function unarchiveHighlight(
+  highlightId: string,
+): Promise<HighlightResult<{ id: string; archivedAt: null }>> {
+  if (!isSupabaseConfigured || !apiBase()) return { ok: false, data: null, errorKind: 'config_error' };
+  const token = await freshToken();
+  if (!token) return { ok: false, data: null, errorKind: 'unauthenticated' };
+  try {
+    const res = await fetch(`${apiBase()}/api/highlights/${highlightId}/archive`, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) return mapApiError(res.status, await res.json().catch(() => ({})));
+    return { ok: true, data: await res.json() };
+  } catch (e) {
+    if (isNetworkError(e)) return { ok: false, data: null, errorKind: 'network_unreachable' };
+    return { ok: false, data: null, errorKind: 'db_error' };
+  }
+}
+
+/**
+ * §21's "unless explicitly requested" — the owner's archive, on demand.
+ *
+ * A FAILED READ IS NOT AN EMPTY ARCHIVE. The route refuses with
+ * `degraded_unavailable` rather than serving `{highlights: []}` precisely so
+ * this function can tell an outage from an owner who has archived nothing, and
+ * the unconfigured branch below returns `config_error` for the same reason —
+ * NOT `{ok: true, data: []}` the way the older reads in this file do. "Your
+ * archive is empty" is a claim about somebody's retained record, and a screen
+ * that prints it for a failed request tells them their archive was lost.
+ */
+export async function fetchArchivedHighlights(): Promise<HighlightResult<Highlight[]>> {
+  if (!isSupabaseConfigured || !apiBase()) {
+    return { ok: false, data: null, errorKind: 'config_error', message: 'Backend not configured' };
+  }
+  const token = await freshToken();
+  if (!token) return { ok: false, data: null, errorKind: 'unauthenticated' };
+  try {
+    const res = await fetch(`${apiBase()}/api/highlights/archived`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) return mapApiError<Highlight[]>(res.status, await res.json().catch(() => ({})));
+    const body = await res.json();
+    return { ok: true, data: (body.highlights ?? []).map(mapHighlight) };
+  } catch (e) {
+    if (isNetworkError(e)) return { ok: false, data: null, errorKind: 'network_unreachable' };
+    return { ok: false, data: null, errorKind: 'db_error', message: e instanceof Error ? e.message : 'Unknown' };
   }
 }
 

@@ -49,6 +49,13 @@ export type TrustConfidence = 'low' | 'medium' | 'high';
 export type DomainTrustBasis =
   | 'measured'
   | 'partial'
+  /**
+   * NOTHING in this domain was measured. The server's word for it is
+   * "Not yet rated" — it no longer substitutes a neutral score and words that
+   * (owner decision, 2026-09-22), so this basis means UNSCORED, not "scored at
+   * the default". It is emphatically NOT `unavailable`: that one is a failed
+   * READ of `trust_profiles` and is a fact about a database, not the account.
+   */
   | 'substituted'
   | 'not_applicable'
   | 'unavailable'
@@ -72,8 +79,18 @@ export interface TrustProjection {
   publicLevel: string;
   /** Numeric 0–100 — present ONLY where the server permits it (self view). */
   score: number | null;
-  /** Evidence-aware band: an 82 with high evidence ≠ an 82 with little (§10). */
-  confidence: TrustConfidence;
+  /**
+   * Evidence-aware band: an 82 with high evidence ≠ an 82 with little (§10).
+   *
+   * NULLABLE, because the server's own field is: `passportTrustConfidence`
+   * returns null for an absent or unreadable trust profile and for a missing
+   * evidence weight, and census-passport §3 measured 56 of 58 production
+   * accounts with no trust profile at all — so null is the NORMAL answer, not
+   * an edge case. `deriveTrustView` has read it as nullable since the coercion
+   * to `'low'` was removed; this declaration was the half that did not follow,
+   * and it made the `?? null` below look like dead defensive code.
+   */
+  confidence: TrustConfidence | null;
   /** What `confidence` was computed from — trust evidence, or a travel proxy. */
   confidenceBasis?: 'trust_evidence' | 'travel_proxy' | 'unavailable';
   strengths: string[];
@@ -290,7 +307,19 @@ const EMPTY_CAPS: PassportPositiveCapabilities = {
 export const BASIS_NOTE: Record<DomainTrustBasis, string | null> = {
   measured: null,
   partial: 'Based on part of the record so far.',
-  substituted: 'Not yet measured — shown at the neutral starting point.',
+  /**
+   * UNSCORED, and the sentence must not describe a value being stood in for.
+   *
+   * It used to read "…shown at the neutral starting point", which was true of
+   * the server that substituted a neutral 50 for a missing category and ran it
+   * through `presentationWord`. That substitution is gone (owner decision,
+   * 2026-09-22): `buildDomainTrust` now words a `substituted` domain
+   * "Not yet rated" and no number is produced at all. The old sentence was
+   * therefore printed directly under a word that contradicted it — the same
+   * second-client-vocabulary defect as the band table this file's header
+   * describes, in the same place, one mechanism change later.
+   */
+  substituted: 'Not yet measured — there’s no recorded history in this area yet.',
   not_applicable: null,
   unavailable: 'Trust records are unavailable right now.',
   client_derived: null,
