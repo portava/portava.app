@@ -515,6 +515,39 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     // not watch cannot notice the grep starting to return something.
     "artifacts/api-server/src/lib/liveClaimRead.ts",
     "artifacts/api-server/src/services/airport/",
+    // ── ADDED 2026-09-22 by §27: the §14 crew's persistence half, and the two
+    // migrations three sections now rest verdicts on. Same shape of gap as the
+    // 2026-09-15 entry above, and found the same way — by the coverage floor.
+    //
+    //   services/layover/ — `LayoverCrewStore.ts` is where `createCrew`,
+    //     `joinCrew` and `leaveCrew` live, and §27.4 moves L185/L186/L188 to `C`
+    //     ON those three functions. The solver they feed has been watched for a
+    //     year under `services/airport/`; the storage that finally gave it
+    //     members was in a SIBLING directory nothing watched, so the three rows
+    //     this census now scores `C` rested on a file it could not age. The
+    //     directory also holds their two suites, which are the acceptance
+    //     evidence those verdicts cite.
+    //   2984_layover_crews.sql — §26.2 moves L28 and L29 to `C` on this file
+    //     existing and being applied, and §27.5 rests the "no database-level
+    //     scope underneath the route layer" argument on its zero-policy,
+    //     zero-grant postcondition. A verdict resting on a migration's CONTENT
+    //     has to age when that content moves.
+    //   2971_layover_discovery_mode_flag.sql — §24.6, §25.2 and §29.3 all keep
+    //     L269 at `W` on the specific ground that this file is NOT applied. If
+    //     it changes, the reason three sections give for that verdict changes
+    //     with it.
+    //   2985_layover_events_crew_vocabulary.sql — 2984's deploy dependency, and
+    //     §26.1 records that it was MISSED on the first attempt, producing "a
+    //     feature that looks built and audits nothing" because every crew audit
+    //     row was rejected by the `layover_events.event_type` CHECK and swallowed
+    //     by `emitEvent`'s non-fatal warn. §27.4's `C` on L185 cites the
+    //     `crew_joined` audit as evidence, so that verdict rests on this file's
+    //     vocabulary and must age with it. §26.1 also notes `check:enum-literals`
+    //     cannot see this class, which is the whole reason it needs watching.
+    "artifacts/api-server/src/services/layover/",
+    "artifacts/api-server/src/migrations/2984_layover_crews.sql",
+    "artifacts/api-server/src/migrations/2985_layover_events_crew_vocabulary.sql",
+    "artifacts/api-server/src/migrations/2971_layover_discovery_mode_flag.sql",
     "artifacts/api-server/src/routes/airport.ts",
     "travel-buddy-standalone/src/services/layover.ts",
     "travel-buddy-standalone/src/components/layover/",
