@@ -13,7 +13,7 @@ interface Props {
   recs: LayoverRecommendation[];
   loading: boolean;
   /**
-   * census L92/L223/L294 — the SERVER's sentence when the read produced no
+   * census L294 (C2) — the SERVER's sentence when the read produced no
    * list, and `null` when it produced one (however short).
    *
    * Required, not optional, and that is the point. `GET /:id/recommendations`

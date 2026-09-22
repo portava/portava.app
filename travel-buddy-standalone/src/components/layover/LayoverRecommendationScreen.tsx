@@ -185,7 +185,7 @@ function RecCard({ rec, onAskCompass, onSafeReturn, onAddToPlan, onAddToRoute, o
 export function LayoverRecommendationScreen({ sessionId, onAskCompass, onSafeReturn, onAddToPlan, onAddToRoute, onInviteCrew, onSendTelegraph }: Props) {
   const plainInset = usePlainBottomInset();
   const [recs, setRecs]           = useState<LayoverRecommendation[]>([]);
-  // census L92/L294 — the same distinction the dashboard now keeps: the
+  // census L294 — the same distinction the dashboard now keeps: the
   // server's refusal sentence, or null when it served a list.
   const [recsError, setRecsError] = useState<string | null>(null);
   const [safety, setSafety]       = useState<LayoverSafetyResult | null>(null);

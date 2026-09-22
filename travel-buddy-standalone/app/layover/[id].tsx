@@ -85,7 +85,7 @@ export default function LayoverDashboardScreen() {
   const [recs, setRecs] = useState<LayoverRecommendation[]>([]);
   const [loading, setLoading] = useState(true);
   const [recsLoading, setRecsLoading] = useState(true);
-  // census L92/L294 — the SERVER's refusal sentence, or null when it served a
+  // census L294 (C2) — the SERVER's refusal sentence, or null when it served a
   // list. Never an empty list standing in for a failure.
   const [recsError, setRecsError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
@@ -234,7 +234,7 @@ export default function LayoverDashboardScreen() {
           retryable: ovRead.retryable || ovRead.reason === 'unreachable',
         });
       }
-      // census L92/L294 — keep the two apart all the way to the card. An empty
+      // census L294 (C2) — keep the two apart all the way to the card. An empty
       // `recs` with `recsError` null is a measured "nothing fits"; a non-null
       // `recsError` is the server's refusal and carries its sentence.
       setRecs(recRes.ok ? recRes.recommendations : []);

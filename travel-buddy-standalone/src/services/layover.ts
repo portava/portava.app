@@ -845,7 +845,7 @@ export async function updateLayoverSession(
 }
 
 /**
- * census-layover L92 / L223 / L294 — a list, or a stated failure. Never both.
+ * census-layover L294 (C2) — a list, or a stated failure. Never both.
  *
  * `ok: true` with an empty array is a MEASUREMENT: the window was computed and
  * nothing fits. `ok: false` is the absence of a measurement, and `message` is
