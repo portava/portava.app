@@ -66,9 +66,10 @@ function psqlSupabase(): any {
           : ` WHERE ${eqs.map(([c, v]) => (v === null ? `${c} IS NULL` : `${c} = ${lit(v)}`)).join(" AND ")}`;
 
       const self: any = {
+        // Both the projection of a SELECT and the RETURNING of a write; the
+        // service spells them with the same call, and so does PostgREST.
         select(cols?: string) {
-          if (mode === "select") returning = cols && cols.trim() !== "" ? cols : "*";
-          else returning = cols && cols.trim() !== "" ? cols : "*";
+          returning = cols && cols.trim() !== "" ? cols : "*";
           return self;
         },
         eq(col: string, value: unknown) {
