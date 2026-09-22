@@ -57,6 +57,7 @@ import {
   type MemoryKernelResult,
 } from "../../lib/memoryCommandBus.js";
 import { logger } from "../../lib/logger.js";
+import { countAcceptedCommand } from "./memoryKernelMetrics.js";
 
 // ── Result shape ─────────────────────────────────────────────────────────────
 
@@ -204,6 +205,29 @@ export function auditCommand(a: CommandAudit): void {
   };
   if (a.outcome === "rejected") logger.warn(line, "memory command rejected");
   else logger.info(line, "memory command applied");
+
+  // §24's correction rates are counted HERE because this is the one place every
+  // command outcome passes through, on BOTH paths — the kernel path and the
+  // legacy direct write. That matters for what the figures mean: these counters
+  // are live TODAY, with `memory_kernel_enabled` false, because the audit line
+  // above is written either way. They are not waiting on the flag.
+  //
+  // ONLY `accepted` IS COUNTED. A `duplicate` is an idempotent replay of a
+  // command already counted (§19), so counting it would inflate both the
+  // numerator and the denominator with an operation that changed nothing. A
+  // `rejected` command never happened, and is already counted by reason at
+  // lib/memoryCommandBus.ts#readMemoryCommandRejectedTotal.
+  if (a.outcome === "accepted") {
+    // `hadCandidate` is FALSE for every CREATE_MEMORY in this tree, and that is
+    // a measurement rather than a default: §6's candidate pipeline has no
+    // production caller at all (services/memoryProjections/evidence.ts is
+    // reachable from no route, and its storage — memory_evidence /
+    // memory_episodes, migration 2320 — is written and unapplied). So
+    // `explicit_memory_without_candidate_rate` reads 1.0 today, which is the
+    // true figure: every Memory in this system is explicit. When a candidate
+    // pipeline lands, this argument is where it reports itself.
+    countAcceptedCommand(a.commandType, false);
+  }
 }
 
 // ── Command selection for a PATCH (§17) ──────────────────────────────────────
