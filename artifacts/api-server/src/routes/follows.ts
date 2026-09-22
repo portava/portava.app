@@ -954,21 +954,24 @@ router.get("/users/suggestions", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
-  // 1. Resolve blocks up-front — both directions (fail-safe: on error continue with empty set)
-  let blockedSet = new Set<string>();
+  // 1. Resolve blocks up-front — both directions. FAIL CLOSED: every suggestion
+  // below is filtered on this set, so an unreadable blocks table and a viewer
+  // who has blocked nobody produced the same empty set — and the response
+  // recommended people the viewer had blocked. Serving NOTHING is the correct
+  // answer when the block set is unknown; the route already answers `{users:[]}`
+  // when the followers query fails, so this reuses that shape.
+  const blockedSet = new Set<string>();
+  let blockStateUnknown = false;
   try {
     const { data: blockRows, error: blockErr } = await sc
       .from("blocks")
       .select("blocked_id, blocker_id")
       .or(`blocker_id.eq.${user.id},blocked_id.eq.${user.id}`);
-    // `blockErr` was already bound but its two outcomes were indistinguishable
-    // downstream: an unreadable blocks table leaves the same empty set as a
-    // viewer who has blocked nobody, and every suggestion below is filtered on
-    // that set. The fail-open posture is unchanged; it is now observable.
     if (blockErr) {
+      blockStateUnknown = true;
       req.log.warn(
         { code: (blockErr as any)?.code, err: blockErr, userId: user.id },
-        "follow suggestions: block-state read failed — blocked users are NOT being filtered from this response",
+        "follow suggestions: block-state read failed — returning no suggestions (fail-closed)",
       );
     } else {
       for (const b of (blockRows ?? [])) {
@@ -977,10 +980,15 @@ router.get("/users/suggestions", async (req, res) => {
       }
     }
   } catch (err) {
+    blockStateUnknown = true;
     req.log.warn(
       { err, userId: user.id },
-      "follow suggestions: block-state read rejected — blocked users are NOT being filtered from this response",
+      "follow suggestions: block-state read rejected — returning no suggestions (fail-closed)",
     );
+  }
+  if (blockStateUnknown) {
+    res.status(200).json({ users: [] });
+    return;
   }
 
   // 2. Who follows me? + caller's travel-interest profile (in parallel).
