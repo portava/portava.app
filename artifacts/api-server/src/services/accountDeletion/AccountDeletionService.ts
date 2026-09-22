@@ -686,10 +686,10 @@ export async function executeAccountDeletion(
   // story — active, expired and saved-to-highlight — goes; nothing else records
   // where those bytes live, and the objects survived the account deletion.
   //
-  // sweepExpiredStories (routes/stories.ts) already deletes story bytes on
-  // EXPIRY, but only for stories with saved_to_highlight_id IS NULL, and only
-  // for the ones that expire while the account exists. Neither restriction
-  // applies to an erasure request: the account and all its content are going.
+  // This collection is the ONLY thing that deletes an expired story's bytes:
+  // sweepExpiredStories (routes/stories.ts) used to, and no longer does, since
+  // an expired story stays in the owner's private archive. The query below
+  // therefore carries no state filter — every story's bytes are collected.
   //
   // POST /stories validates appStorageUrlInfo AND ownerFromPath on write, so
   // this is the best-validated of the four client-supplied columns — the guard
