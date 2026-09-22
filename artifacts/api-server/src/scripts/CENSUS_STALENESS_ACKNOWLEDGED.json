@@ -160,6 +160,7 @@
         "artifacts/api-server/src/scripts/checkCensusFreshness.ts",
         "artifacts/api-server/src/services/media/MediaActionResolver.ts",
         "artifacts/api-server/src/services/media/MediaProjectionService.ts",
+        "artifacts/api-server/src/services/telegraph/messageEdits.ts",
         "artifacts/api-server/src/services/telegraph/messageKinds.ts",
         "artifacts/api-server/src/services/telegraph/shareables.ts",
         "artifacts/api-server/src/services/telegraph/voice.ts",

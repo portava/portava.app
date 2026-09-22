@@ -288,6 +288,13 @@ import {
  * 238.
  *
  * LOWERED 2026-09-22, 210 -> 209, at the four-lane Telegraph/Input integration.
+ * LOWERED 2026-09-22, 209 -> 207, by the §6/§7 rich-messaging lane. Adding the
+ * T80 edit-history writer shifted every line of `routes/messaging.ts` after the
+ * import block, so all 172 file:line citations to it — and the 76 bare `:NNN`
+ * continuations that inherit it — were repointed through the diff's exact
+ * insertion map and each anchored one re-verified against the line it names.
+ * Two citations that had been dangling before that pass now land on real code,
+ * because the bare continuations had been stale and the remap put them right.
  * Not a sweep: the history-privacy lane threaded a visibility window through
  * `compass/TelegraphConversationTools.ts`, which moved five citations in
  * census-telegraph onto blank lines and closing braces. They were repointed by
@@ -299,7 +306,7 @@ import {
  * rather than level with it because the anchors also moved one previously
  * unanchored citation out of this check's population. The number below is what
  * the tool measured at that tree, not a target chosen for it. */
-export const MAX_DEAD_TARGETS = 209;
+export const MAX_DEAD_TARGETS = 207;
 
 /** Pinned to a commit by its own declaration; its lines must not track HEAD. */
 const PINNED_DOCS = new Set(['docs/architecture/mobile-reachability-ledger.md']);
