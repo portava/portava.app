@@ -25,7 +25,7 @@ import { strokeFold } from '../canonicalLocations';
 import { countryFromCity, countryNameFromCode } from '../stamps/countryLookup';
 import { toCountryCode } from '../countryCodes';
 import { canonicalizeHashtag } from './socialIdentity';
-import type { InputContext, InputSuggestion, SuggestionAction } from './types';
+import type { EntityType, InputContext, InputSuggestion, SuggestionAction } from './types';
 
 // ── City ⇄ country mismatch (§23 "Suggest canonical correction") ───────────────
 
@@ -298,7 +298,31 @@ export function buildAddressFallbacks(
   context: InputContext,
   policyVersion: string,
   rawText: string,
-  allow: { dropPin?: boolean; searchNearby?: boolean; useRaw?: boolean },
+  allow: {
+    dropPin?: boolean;
+    searchNearby?: boolean;
+    useRaw?: boolean;
+    /**
+     * §37 "a Hidden Gem/location flow may offer … new-entity creation under
+     * policy". The spec's own empty-state mock reads
+     * `[Search instead][Drop a pin][Add a new Place][Ask Compass][Search nearby]`
+     * and this was the one row of it the platform could not produce: four
+     * fallbacks existed and the CREATE one did not, so the mock was
+     * unrenderable from platform output.
+     *
+     * It carries no new §43 action type. `set_structured_value` is the contract
+     * for "the field resolved to a structured intent rather than to an existing
+     * record" — the same shape `checkHashtag` already uses — so the creation
+     * screen receives a typed `create_entity` intent it can act on, and a screen
+     * that does not know the kind ignores it exactly as it ignores any other
+     * structured value. Inventing a ninth action would have changed §43's union.
+     *
+     * It NEVER appears for a canonical picker: the caller gates it on the
+     * context AND on the policy permitting `action` rows, which is the same
+     * gate that keeps `city_picker` from offering "create city" (§37/G239).
+     */
+    createEntity?: { entityType: EntityType; noun: string } | null;
+  },
 ): InputSuggestion[] {
   const rows: InputSuggestion[] = [];
   if (allow.dropPin) {
@@ -323,6 +347,28 @@ export function buildAddressFallbacks(
       action: { type: 'submit_search', query: rawText },
       confidence: 0.45,
       source: 'local',
+      policyVersion,
+    });
+  }
+  const create = allow.createEntity;
+  if (create && rawText.trim().length > 0) {
+    const name = rawText.trim();
+    rows.push({
+      id: `${context}:validation:create-${create.entityType}`,
+      type: 'action',
+      context,
+      label: `Add a new ${create.noun}`,
+      subtitle: name,
+      action: {
+        type: 'set_structured_value',
+        value: { kind: 'create_entity', entityType: create.entityType, name },
+      },
+      structuredValue: { kind: 'create_entity', entityType: create.entityType, name },
+      // Below drop-pin and nearby on purpose: §20/§55 want an EXISTING record
+      // resolved first, and minting a new one is the last thing to try.
+      confidence: 0.4,
+      source: 'local',
+      reason: "We couldn't match that — create it instead",
       policyVersion,
     });
   }

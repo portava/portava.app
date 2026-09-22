@@ -20,6 +20,19 @@ import {
   unregisterField,
 } from '../../contexts/fieldRegistry.ts';
 
+// ── SEEDED 2026-09-21 (G340) ────────────────────────────────────────────────
+// `registerField` derives its policy from the context descriptor, which now
+// comes from the authority rather than from a local table. Without a seeded
+// policy every context resolves conservative (`no_assistance`), which is the
+// correct cold-start answer and makes any assertion about a context's MODE
+// vacuous. Seeding states the premise these tests were always relying on:
+// "the authority has answered, and permits assistance here".
+import { INPUT_CONTEXTS } from '../../types/inputContext.ts';
+import { _seedPolicyForTests } from '../../services/policyStore.ts';
+import { getContextDescriptor } from '../../contexts/inputContexts.ts';
+_seedPolicyForTests(INPUT_CONTEXTS);
+
+
 function freshRegister() {
   _resetCompassRegistration();
   for (const id of Object.keys(COMPASS_FIELD_CONTEXTS)) unregisterField(id);
@@ -45,7 +58,8 @@ test('the compass prompt policy is AI-assisted, opt-in-capable, and accepts ai_s
   const prompt = resolveFieldPolicy(COMPASS_FIELD_IDS.compassPrompt);
   assert.ok(prompt);
   assert.equal(prompt!.context, 'compass_prompt');
-  assert.equal(prompt!.mode, 'ai_assisted');
+  // Authority-derived, not a literal — see geoFields.test.ts for the reasoning.
+  assert.equal(prompt!.mode, getContextDescriptor('compass_prompt').defaultMode);
   assert.equal(prompt!.allowAI, true);
   assert.ok(prompt!.allowedSuggestionTypes.includes('ai_suggestion'));
 });

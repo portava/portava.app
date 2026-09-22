@@ -67,6 +67,10 @@ import {
 } from '../src/features/wall/services/wallAnalytics';
 import { createWallAnalyticsTransport } from '../src/features/wall/services/wallAnalyticsTransport';
 import { installPassportTelemetry } from '../src/features/passport/installPassportTelemetry';
+import { installInputTelemetry } from '../src/platform/input-assistance/services/installInputTelemetry';
+import { installInputPolicySync } from '../src/platform/input-assistance/services/installInputPolicySync';
+import { installInputTelemetryTransport } from '../src/platform/input-assistance/services/telemetryTransport';
+import { registerGeographicFields } from '../src/platform/input-assistance/geographic/geoFields';
 
 /**
  * Session-aware root crash boundary. Sits inside SessionProvider so it can
@@ -130,6 +134,85 @@ function PassportTelemetrySetup() {
       appState: AppState,
     });
     return () => handle.dispose();
+  }, []);
+  return null;
+}
+
+/**
+ * §44 Input Intelligence telemetry — attach the platform's telemetry sink to the
+ * real batched/authenticated transport once at boot.
+ *
+ * Until this mounted, `platform/input-assistance/services/inputTelemetry.ts`
+ * kept its default `() => {}` sink in EVERY build of the app, and the twelve §44
+ * events `SmartInput` and `useInputAssistance` emit were produced and discarded
+ * inside the function call. `docs/architecture/census-input-intelligence.md` §3
+ * fact 5 records that as the deployment reality that decides whether the §44
+ * column means anything at all.
+ *
+ * The privacy argument for attaching this unconditionally — no account id, no
+ * raw text, four enforcement points — is written out in
+ * `installInputTelemetry.ts`'s header, and the gate belongs there if it is ever
+ * revised. Note that migration 2950 is still unapplied everywhere, so today the
+ * ingest refuses the batch with 503 and the batcher drops and COUNTS it.
+ */
+/**
+ * §48 / G340 — attach the policy sync once at boot.
+ *
+ * THIS IS THE LINE THAT MAKES THE CLIENT OBEY THE SERVER. Without it,
+ * `sharedPolicyStore` is never filled and every context resolves to the
+ * conservative policy forever: fields render as plain inputs and no assistance
+ * ever appears. That is a safe failure, not a silent one — but it IS the whole
+ * feature, so this mount is load-bearing in a way the telemetry mount is not.
+ *
+ * It also owns the other direction. On sign-out and on account switch the sync
+ * drops the policy snapshot AND clears `sharedSuggestionCache`, whose `clear()`
+ * previously had no caller anywhere in the app. Before this, two people signing
+ * in on the same device shared one process-global map of suggestion lists keyed
+ * by the text that produced them.
+ *
+ * Mounted ABOVE the field registrations below on purpose: those build policies
+ * from context descriptors, and a descriptor is only non-conservative once this
+ * has run. Ordering is not load-bearing for correctness (a field re-resolves
+ * its policy when the store changes), but it avoids a needless conservative
+ * pass on the very first frame.
+ */
+function InputPolicySyncSetup() {
+  useEffect(() => {
+    const unsubscribe = installInputPolicySync();
+    return () => unsubscribe();
+  }, []);
+  return null;
+}
+
+function InputTelemetrySetup() {
+  useEffect(() => {
+    const handle = installInputTelemetry({
+      createBatcher: () => installInputTelemetryTransport(),
+      appState: AppState,
+    });
+    return () => handle.dispose();
+  }, []);
+  return null;
+}
+
+/**
+ * §5/§52 — register the geographic fields' policies once at boot.
+ *
+ * `registerGeographicFields()` has existed, been idempotent and been
+ * unit-tested since Phase 2, and was called from NO non-test file in the app.
+ * Every geographic surface therefore resolved a DEFAULT policy built from its
+ * context descriptor instead of its registered one — or, where a screen passed
+ * no context at all, nothing. §50's field inventory records `geo.city` as
+ * UNMOUNTED for exactly this reason.
+ *
+ * It is a pure registry operation — no React state, no network, no I/O — so it
+ * runs at module-mount cost and is safe to call before anything renders. The
+ * function's own latch makes a re-mounting root layout a no-op, and a field a
+ * test already registered is left untouched.
+ */
+function GeographicFieldsSetup() {
+  useEffect(() => {
+    registerGeographicFields();
   }, []);
   return null;
 }
@@ -259,6 +342,9 @@ export default function RootLayout() {
                       <PushSetup />
                       <CryptoSetup />
                       <PassportTelemetrySetup />
+                      <InputPolicySyncSetup />
+                      <InputTelemetrySetup />
+                      <GeographicFieldsSetup />
                       <CompassFrontloadSetup />
                       <WallAnalyticsSetup />
                       <StatusBar style="dark" />

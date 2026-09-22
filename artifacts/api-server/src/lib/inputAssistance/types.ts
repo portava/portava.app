@@ -176,6 +176,18 @@ export interface InputFieldPolicy {
 
   allowedSuggestionTypes: AssistanceType[];
   entityTypes?: EntityType[];
+  /**
+   * §14 — does this context offer useful ZERO-CHARACTER suggestions?
+   *
+   * MOVED HERE FROM THE CLIENT 2026-09-21 (G340). It was the last piece of
+   * per-context policy that existed ONLY in the client's local table, so
+   * deleting that table would have deleted it. It is policy, not chrome: it
+   * decides whether an empty field issues a request at all, and the server
+   * already builds a zero-character answer (`gateway.ts#zeroCharGeoDefaults`)
+   * that a client can only ask for if it knows the field has one. Defaults to
+   * FALSE, so a context that says nothing offers no zero-state.
+   */
+  zeroStateAssistance?: boolean;
 
   allowPersonalization: boolean;
   allowLiveContext: boolean;
@@ -336,6 +348,30 @@ export interface SuggestRequest {
 export interface SuggestResponse {
   requestId: string;
   policyVersion: string;
+  /**
+   * §48 (census G341) — the version of this ENVELOPE'S SHAPE, independent of
+   * `policyVersion`. Optional and additive so an older client is unaffected;
+   * absent means "schema 1", which is what every serve before 2026-09-21 was.
+   *
+   * `policyVersion` could never carry this. A policy bump changes what a field
+   * is ALLOWED to do and every shipped client can still parse the answer; a
+   * shape bump changes what the answer IS. A client that refused both would
+   * black out on a registry tweak; one that refused neither would render a
+   * shape it does not understand.
+   */
+  schemaVersion?: number;
+  /**
+   * §48 (census G343) — the declaration half of the capability handshake: what
+   * the serve actually honoured of what the client declared. A handshake in one
+   * direction is a filter; this is what tells a client "no AI rows because this
+   * FIELD is not allowed them", which is a different fact from "no AI rows
+   * came back". Absent when the client declared nothing.
+   */
+  capabilities?: {
+    schemaVersion: number;
+    suggestionTypes: AssistanceType[];
+    withheldForClient: number;
+  };
   context: InputContext;
   fieldId?: string;
   suggestions: InputSuggestion[];
