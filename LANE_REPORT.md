@@ -467,7 +467,23 @@ $ SUPABASE_URL=http://127.0.0.1:9 SUPABASE_SERVICE_ROLE_KEY=dummy node --import 
 
 **11. Full suite** — `npm test` (its script sets the curated env itself):
 
-<!--FULLSUITE-->
+```
+$ npm test
+EXIT=0
+# tests 25248
+# suites 6053
+# pass 25248
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 1950184.207729
+```
+
+`grep -cE "^not ok" fullsuite.log` → **0**. The run took 32 minutes; two earlier
+attempts were killed (SIGKILL at 137, then SIGTERM at 143 on a 50-minute
+`timeout`) while sibling lanes were running their own suites on the same box —
+those are resource kills, not failures, and neither produced a `not ok`.
 
 **12. Required checks** — all from `/home/user/wt-lo-server/artifacts/api-server`:
 
