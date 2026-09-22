@@ -2695,7 +2695,7 @@ stale.
 **A fourth measurement, which is not a verdict and is not repaired.** L255's
 citation into `routes/airport.ts` — line 1427, unanchored — is wrong at this
 commit by **520 lines**: the gate is at
-`routes/airport.ts:3327#rent_buddy_enabled`, read and verified here. That is far
+`routes/airport.ts:3352#if (!await isFlagEnabled(sc, "rent_buddy_enabled")) {`, read and verified here. That is far
 more than §12.4's published `+54`, so it is not this branch's drift; the file
 has grown by other lanes' merges since §10 measured it. **L255's own row is not
 repointed**, for the reason §12.4 gives — a pointer whose correctness at its own
@@ -3687,7 +3687,7 @@ told whether it had happened.
 The seam is deleted there
 (`artifacts/api-server/src/routes/airport.ts:722#NO PASSPORT SEAM HERE`)
 and rebuilt on the close
-(`artifacts/api-server/src/routes/airport.ts:3628#async function writeElectedLayoverStamp`)
+(`artifacts/api-server/src/routes/airport.ts:3649#async function writeElectedLayoverStamp`)
 behind **four terms, each pinned by its own negative case**:
 
 | term | what fails without it |
@@ -3921,7 +3921,7 @@ either reads or is asked, on a path the app mounts.
 
 | id | the sentence that is false at this commit | what is true |
 | --- | --- | --- |
-| L10 | *"`status='completed'` is never written … The system cannot distinguish a safe return from an abandonment."* (the row also names a line in `routes/airport.ts` that was already stale by some 750 lines before this pass; it is quoted without it rather than repointed, for §12.4's reason) | It is written, by a traveller pressing "I made my flight" (`artifacts/api-server/src/routes/airport.ts:3749#const passportStamp = await writeElectedLayoverStamp` sits immediately after the `endSession` that writes it). The verdict does not move — see §17.6. |
+| L10 | *"`status='completed'` is never written … The system cannot distinguish a safe return from an abandonment."* (the row also names a line in `routes/airport.ts` that was already stale by some 750 lines before this pass; it is quoted without it rather than repointed, for §12.4's reason) | It is written, by a traveller pressing "I made my flight" (`artifacts/api-server/src/routes/airport.ts:3770#const passportStamp = await writeElectedLayoverStamp` sits immediately after the `endSession` that writes it). The verdict does not move — see §17.6. |
 | L19 | *"the only gate is the `passport_stamps_enabled` flag"* — and the line it named with it | There are FOUR gates (three written by this pass, the fourth added at integration) and the flag is the last of the three, not the last of the four. The row moves; the sentence is restated in §17.5 rather than left. |
 | L32 | *"Absent, and unreachable in principle: nothing ever marks a session completed."* | The second clause is false. The table is still absent, which is what the row scores, so the verdict does not move. |
 | L294 | *"Seven bare `catch { return … }` blocks remain in `LayoverSessionService.ts` (`:187, 229, 255, 367, 387, 416`)"* — already corrected to **six** by §13.5 | Still six, all still bare, at the same six lines: re-measured at this commit with `grep -n catch`, which returns exactly `187, 229, 255, 367, 387, 416` plus one comment at `289`. Nothing in this pass touched that file. Recorded because §13.5's correction is two sections above a later section that repeats the seven. |
@@ -5702,11 +5702,11 @@ not ok 1 - an unreadable block list is NOT the same answer as a city with nobody
 Four cases RED, one green (the `availableDuringLayover === false` control), then
 16 / 16 green after the fix. The shape of the fix is `cityPresence`'s, deliberately:
 a `degradedReasons` list the handler pushes to
-(`artifacts/api-server/src/routes/airport.ts:3389#const degradedReasons: string[] = [];`),
+(`artifacts/api-server/src/routes/airport.ts:3410#const degradedReasons: string[] = [];`),
 published as
-`artifacts/api-server/src/routes/airport.ts:3499#degraded: degradedReasons.length > 0,`,
+`artifacts/api-server/src/routes/airport.ts:3520#degraded: degradedReasons.length > 0,`,
 and an availability that is `null` rather than `false` when nobody asked
-(`artifacts/api-server/src/routes/airport.ts:3481#availableDuringLayover: availabilityMeasured ? availableSet.has(b.id) : null,`).
+(`artifacts/api-server/src/routes/airport.ts:3502#availableDuringLayover: availabilityMeasured ? availableSet.has(b.id) : null,`).
 
 **THE ROW STILL DOES NOT MOVE, and §21.6's reason is why.** L294's C2 asks for
 degraded confidence at every such site, and it is still proved SITE BY SITE. What
@@ -5785,11 +5785,11 @@ on a store, a provider or a feed that no amount of work in
    > master `rent_buddy_enabled` flag is not consulted (L255)."*
 
    **Two of the three clauses are false at HEAD.** The master flag is consulted
-   at `artifacts/api-server/src/routes/airport.ts:3331#if (!await isFlagEnabled(sc, "rent_buddy_enabled")) {`,
+   at `artifacts/api-server/src/routes/airport.ts:3352#if (!await isFlagEnabled(sc, "rent_buddy_enabled")) {`,
    and the safety gate runs BEFORE the profiles are read at
-   `artifacts/api-server/src/routes/airport.ts:3350#const { safetyGate, trustRequirement } = layoverBuddyDecision(airport, session);`.
+   `artifacts/api-server/src/routes/airport.ts:3371#const { safetyGate, trustRequirement } = layoverBuddyDecision(airport, session);`.
    A compatibility filter also runs
-   (`artifacts/api-server/src/routes/airport.ts:3462#rows = filterLayoverCompatible(rows);`).
+   (`artifacts/api-server/src/routes/airport.ts:3483#rows = filterLayoverCompatible(rows);`).
    The third clause — a *specialist* category filter — is still true, which is
    why the verdict does not move. §19.4 argued all three in prose; the parseable
    row never carried the correction, so the dump has been serving the stale
@@ -5800,7 +5800,7 @@ on a store, a provider or a feed that no amount of work in
    > *requires* them — the layover buddy list is filtered only on
    > `status='active'`, city and blocks."*
 
-   **False at HEAD.** `artifacts/api-server/src/routes/airport.ts:3463#rows = applyBuddyTrustRequirement(rows, trustRequirement);`
+   **False at HEAD.** `artifacts/api-server/src/routes/airport.ts:3484#rows = applyBuddyTrustRequirement(rows, trustRequirement);`
    withholds an unverified or brand-new profile on a `tight` window, asserted by
    `src/services/airport/__tests__/layoverBuddySafetyGate.test.ts`. Only one of
    the row's two arms shipped, so the verdict stays `W`.
@@ -6372,3 +6372,292 @@ And the caveat §22.8 would have carried if the moves had been feature rows:
 these two are TABLE rows. A `C` on them says a table exists with the spec's
 meaning and is applied. It says nothing about whether the §14 crew experience
 works end to end — §26.2 lists the seven rows that deliberately did not move.
+
+## §27 — 2026-09-22: the three crew operations §26.4 left ungraded, and the join that was not scoped to a city
+
+§26.4 named the work this section does, in one sentence: *"The next measuring
+pass owns all of that, including whether L185/L186/L188 and L131 move now that
+the crew tables are real."*
+
+This pass answers it for L185, L186 and L188. **L131 does not move and is not
+graded here** — §26.2's reason is untouched: 2984 ships no chat, deliberately,
+because §14's shared-chat half belongs to Telegraph's threads.
+
+It moves **three rows, all `N → C`**, and it closes one live defect found while
+grading them. Every old verdict below was read from
+`CENSUS_INTEGRITY_DUMP=ALL node --import tsx/esm src/scripts/checkCensusIntegrity.ts`
+(§16.6), never from the prose.
+
+### 27.1 THE FINDING — the crew list was scoped to a city and the crew JOIN was not
+
+A crew is a CITY-level thing, and before this pass the route layer said so in
+three places and enforced it in none of the ones that mattered:
+
+- `openCrewsInCity` filters `.eq("city", canonCity(city))`
+  (`artifacts/api-server/src/services/layover/LayoverCrewStore.ts:227#.eq("city", canonCity(city))`);
+- `POST /crew` refuses to FORM a crew when the city is unknown —
+  *"We do not know which city this layover is in"*;
+- `GET /crew` refuses to LIST crews when the city is unknown, and says why in a
+  comment: *"a crew is a CITY-level thing and we do not know the city"*.
+
+`POST /airport/sessions/:id/crew/:crewId/join` asked for no city at all. It took
+a crew id from the URL and joined it. **A filtered list in front of an
+unfiltered write** — the shape this census has scored `W` repeatedly.
+
+**The first RED is the whole finding in one response body.** Staged against the
+real router, a traveller whose airport city is not known *at all* — the case
+`GET /crew` refuses to serve a single crew to — joined a Taoyuan crew and got
+back:
+
+```
+"memberCount": 2,
+"sharedReturnBy": "2026-09-22T15:42:23.523Z",
+"bindingMemberIds": ["scope-user-b"]
+```
+
+`bindingMemberIds` is the harm, not `memberCount`. §14.1's `shared_return_by` is
+a MINIMUM over every member's `required_return_by`, so **the remote joiner
+became the binding deadline for everyone actually in Taoyuan**. The founder was
+told to be back four hours early by somebody who was not there, against a
+`meeting_point_label` ("Terminal 2 food court") they could not reach.
+
+There is a second consequence and it is not the larger one, which is worth
+saying plainly rather than leading with it. Membership is the FIRST of the three
+gates `crewMemberCards` applies; blocks and `publishableUserIds` /
+`nameVisibilitySet` still held throughout, so **this was not a raw leak of
+names**. It was a WIDENING: those travellers made themselves visible to a crew
+in their own city, and an unscoped join let someone in no position to meet them
+past the first gate.
+
+**Why the route layer is the only possible place to fix it.** 2984 gives both
+crew tables RLS with ZERO policies and ZERO `anon`/`authenticated` grants
+(§26.1, re-probed). There is no database-level scope underneath this module that
+could have caught an out-of-city join. That is what makes the check
+load-bearing rather than belt-and-braces.
+
+### 27.2 The fix, and where each half lives
+
+| where | what |
+| --- | --- |
+| `artifacts/api-server/src/services/layover/LayoverCrewStore.ts:401#if (crew.city !== canonCity(input.city)) {` | `joinCrew` takes the joiner's city and refuses a crew in any other, with a new `city_mismatch` reason. Placed directly after the crew row is read and BEFORE the capacity read and any write, so a mismatched join costs one read and leaves nothing behind. It applies to a re-join exactly as to a first join: a membership that should never have existed is not re-confirmed by tapping again. |
+| `artifacts/api-server/src/routes/airport.ts:3206#const city = crewCityFor(airport, session);` | The join route resolves the joiner's city the SAME way `GET /crew` and `POST /crew` resolve it, and refuses outright when it is unknown — symmetric with both. |
+
+The comparison runs through `canonCity` on both sides. The stored city is
+already canonical (`createCrew` writes it that way); the caller's is not.
+
+**No client change is required, and that is checked rather than assumed.**
+`crewAction` in `travel-buddy-standalone/src/services/layover.ts:1425#message: typeof parsed.message === 'string' ? parsed.message : 'That did not work. Please try again.',`
+surfaces the server's own `message` on any non-ok response, so the new refusal
+renders as written. The surface is mounted, not dark:
+`travel-buddy-standalone/app/layover/[id].tsx:605#<LayoverCrewSection`. **No file
+under `travel-buddy-standalone/` was changed by this pass.**
+
+### 27.3 The mutations
+
+Every mutation was applied by a replacer that REFUSES unless the target text
+occurs exactly once, printed the changed line back from disk before the run was
+believed, and was restored afterwards.
+
+| # | file | mutation | result |
+| --- | --- | --- | --- |
+| 54 | `LayoverCrewStore.ts` | the city check made unreachable (`if (false)`) | **1 red** — the other-city case |
+| 55 | `LayoverCrewStore.ts` | compare raw, without `canonCity` | **1 red** — the CONTROL |
+| 56 | `routes/airport.ts` | drop the route's unknown-city refusal | **1 red** — the unknown-city case |
+
+**54 and 56 red DIFFERENT cases, which is the useful result.** The two halves
+are independently load-bearing: the store check is what catches a joiner in a
+*different* city, the route check is what catches a joiner in *no known* city.
+Neither subsumes the other, and a fix with only one half would have passed a
+suite that tested only the other.
+
+**55 kills the CONTROL, which is what makes the control non-vacuous.** A guard
+that over-refuses — rejecting a legitimate same-city join because "Taoyuan" and
+"taoyuan" compare unequal — is caught by the control rather than by the two
+negative cases, and none of the three would have found it without it.
+
+**56 is the WEAKEST of the three and is recorded as such.** It reddens with a
+`TypeError: Cannot read properties of null (reading 'trim')` and a 500, not with
+a wrongly-permitted join. It proves the route's refusal is REACHED and that
+nothing downstream re-derives the city; it does not prove the refusal's *answer*
+is right. The unknown-city case's 400 assertion is what does that, and only
+while the route keeps refusing rather than coercing.
+
+### 27.4 The three rows
+
+| id | was | now | Evidence |
+| --- | --- | --- | --- |
+| L185 | N | **C** | `LayoverCrewService.join`. Route `POST /airport/sessions/:id/crew/:crewId/join` → `joinCrew` (`artifacts/api-server/src/services/layover/LayoverCrewStore.ts:374#export async function joinCrew`). Storage applied to two databases (§26.1). Requires a live session, is scoped to the joiner's city (27.1, new), enforces `max_members` from a read and REFUSES on an unreadable member list rather than joining past an unenforced limit, is idempotent on a double tap (23505 reported as success), and audits `crew_joined` through the 2985 vocabulary. Client wired and mounted (27.2). |
+| L186 | N | **C** | `LayoverCrewService.create`. Route `POST /airport/sessions/:id/crew` → `createCrew` (`artifacts/api-server/src/services/layover/LayoverCrewStore.ts:286#export async function createCrew`). Payload validated by `crewCreateSchema`; requires a live session AND a known city; expiry is bounded by the founder's own certified record rather than a bare TTL (`crewExpiryFor`), so no crew outlives the layover that made it; the non-transactional two-step is handled, not hoped away — a failed owner-membership insert DISBANDS the crew rather than leaving an ownerless one open and joinable. Audits `crew_created`. |
+| L188 | N | **C** | `LayoverCrewService.leave`. Route `POST /airport/sessions/:id/crew/leave` → `leaveCrew` (`artifacts/api-server/src/services/layover/LayoverCrewStore.ts:448#export async function leaveCrew`). Sets `left_at`; the owner leaving DISBANDS rather than promoting a successor, because `created_session_id` and `expires_at` are the founder's and a re-derivation is a decision about whose deadline binds. A disband that fails after the owner is already out is reported as a FAILURE even though half of it worked. Audits `crew_left` with `disbanded`. |
+
+**ACCEPTANCE EVIDENCE.** `src/services/layover/__tests__/layoverCrewSurface.test.ts`
+(9 cases, pre-existing) and the new
+`src/services/layover/__tests__/layoverCrewCityScope.test.ts` (3 cases, two
+watched RED first for the right reason — `200 !== 400` — and one control).
+Measured together: **16 tests, 16 pass, 0 fail.** Across the whole layover and
+airport surface (66 suites): **1145 tests, 1145 pass, 0 fail.**
+
+### 27.5 WHAT THESE THREE ROWS DO NOT CERTIFY
+
+Stated here because §26.2 had to say the same thing about L28/L29, and the
+temptation is identical.
+
+- **The evidence is route-level against `fakeLayoverDb`, not against the live
+  table.** That double models no unique index, no RLS and no foreign keys. For
+  these two tables the gap is narrower than it sounds — 2984 gives them zero
+  policies and zero client grants, so there is no database-level behaviour
+  underneath the route layer for a live test to observe that this one cannot —
+  but it is a real gap, and `(crew_id, user_id)` uniqueness is the specific
+  thing being taken on the migration's word. **The live-schema checks
+  (`check:write-path-columns`, `check:missing-live-columns`,
+  `check:authorization-contract`) CANNOT RUN in this container — they exit 2 at
+  `assert-nonprod-supabase` — and this pass does NOT claim they passed.**
+- **L131 does not move** (§26.2: no chat, deliberately).
+- **L196 does not move**, and its BLOCKER HAS CHANGED. §23.3 filed it under
+  "blocked on a migration no database has"; the tables now exist, so what is
+  left is the expiration job, and there is no scheduler anywhere in this tree.
+  `layover_crews.expires_at` is a read FILTER, so an unswept crew is invisible
+  rather than stale-but-live. It is now blocked on an absent platform
+  capability, not on a migration.
+- **L124 / L132 do not move** (§26.2: the precision ladder has no grant store,
+  and 2984 asserts the absence of a coordinate column in a postcondition).
+- **Nobody is on this surface.** Production has 5 layover sessions ever, 0
+  active, last event 2026-08-12. The defect closed here was reachable by
+  nobody, because nobody is here. A `C` over a path nothing reaches is still a
+  `C` about the code and still says nothing about use.
+
+### 27.6 Two sentences in this repository's own files were FALSE, and are corrected where they stand
+
+Same precedent as §25 on §24.6 and §26.3 on §23.3: a false sentence is corrected
+where it stands rather than left to be read as current. Neither correction moves
+a verdict.
+
+1. `artifacts/api-server/src/services/layover/LayoverCrewStore.ts` — its header
+   read *"created by migration 2984 (written, NOT applied — see
+   docs/BUILD-BACKLOG.md)"*. False since 2026-09-16 (§26.1). Corrected, with the
+   struck clause quoted rather than deleted.
+2. `artifacts/api-server/src/services/layover/__tests__/layoverCrewSurface.test.ts`
+   — its header read *"are NOT APPLIED to any database … it is not evidence that
+   the storage exists"*. Same fact, same correction, and the surviving half
+   (`fakeLayoverDb` models no index/RLS/FK) is kept because it is still true.
+
+### 27.7 §23.3's partition, re-derived for the `N` population only
+
+§26.3 said the number 82 was not re-derived and did not claim a new one. This
+pass re-derives the partition **over the 94 `N` rows only** — not over the `W`
+rows, and not as a new aggregate for §23.3's 223.
+
+| bucket | count | rows |
+| --- | ---: | --- |
+| (b) blocked on a migration no database has | **52** | the snapshot family (L95/L209/L261 and L190/L193/L203/L204/L218/L221/L222/L224/L229/L233/L239/L241/L256/L274/L277/L279/L296), `layover_constraints` / `layover_checkpoints` / `layover_outcomes` / `layover_time_budgets` / `layover_return_plans` (L22–L25/L27/L30/L32/L39/L40/L43/L64/L75/L78/L129/L142/L144/L145/L151–L154/L158/L159/L164/L166/L168/L173), plus L7/L10 |
+| (e) blocked on an absent platform capability or a device | **23** | no routed travel-time provider (L60/L62/L68–L73); no flight feed (L169); no live-signal producer (L276/L282/L283/L284); no metrics exporter (L210/L211/L213/L215–L217); no location sensing (L155/L160/L161); **no scheduler (L196 — moved here from (b) by 27.5)** |
+| (c) blocked on an owner decision | **10** | the ENTRY gate (L34/L48/L49/L230 — PR #463, unmerged); should the `GENERIC` rung WITHHOLD landside guidance (L244/L245/L246/L248/L249); shadow-mode rollout (L242) |
+| (d) blocked on a file another lane owns | **10** | `travel-buddy-standalone/` — the map surface (L67/L116–L119/L121/L122/L124/L125/L126) |
+| (a) closable from code in files this lane owns | **0** | after this pass. L185/L186/L188 were the three, and they are now `C`. |
+
+52 + 23 + 10 + 10 + 0 = **94.** ✓
+
+**HOW THIS WAS DERIVED, AND ITS LIMIT.** The bucket memberships are taken from
+§23.3's own named lists, intersected with the `N` rows as
+`CENSUS_INTEGRITY_DUMP` reads them today; the crew rows and L196 were
+re-derived by hand in this pass because §26 changed the world underneath them.
+**It is not a fresh measurement of each blocker.** A row filed under (b) whose
+table was quietly applied by some other lane would be misfiled here exactly as
+§23.8 warned, and nothing in this section would catch it — that is precisely
+the error §26.3 found in §23.3, one pass later.
+
+**75 of the 94 (buckets b + e) wait on something no code in this domain can
+supply.**
+
+### 27.8 WHAT WOULD TURN THIS RED
+
+* **A second write path into `layover_crew_members` that does not take a city.**
+  The guard is inside `joinCrew`, so anything routing around that function is
+  unguarded. There is one write site today and the suite covers it; nothing
+  structural stops a second.
+* **A crew whose city changes after creation.** Nothing can do that today —
+  there is no update path for `layover_crews.city` — and if one is added, the
+  check compares against the value at join time and says nothing afterwards.
+* **`canonCity` drifting from `cityPresence`'s inline normalisation.** They
+  agree today by convention, not by a shared call site, and mutation 55 is the
+  only thing that would notice the crew half changing.
+* **The live-schema gap in 27.5.** The `(crew_id, user_id)` uniqueness that
+  makes a double-tapped join idempotent is taken on 2984's word in this
+  container.
+* **`check:doc-citations` is RED for three citations this pass moved and did
+  NOT repoint** — see 27.10.
+
+### 27.9 Tally
+
+`check:census-integrity` reads **C=78 W=124 N=94 X=0** across 296 rows,
+denominator 296. Three rows moved, all `N → C`, all in 27.4.
+
+| Measure | §26 | §27 |
+| --- | ---: | ---: |
+| BUILT-AND-CORRECT | 75 | **78** |
+| BUILT-BUT-WRONG | 124 | **124** |
+| NOT-BUILT | 97 | **94** |
+| CANNOT-VERIFY | 0 | **0** |
+| CONSTRUCTED% | 67.2 % | **68.2 %** (202 / 296) |
+| CORRECT% raw | 25.3 % | **26.4 %** (78 / 296) |
+
+78 + 124 + 94 + 0 = 296. **Restated from the rows, not from arithmetic on the
+previous headline** — the figures above were read off
+`check:census-integrity`, which is the only form another censor can reproduce.
+§26.5's numbers were correct when written and are superseded here under this
+document's LAST-STATEMENT-WINS rule; they are not deleted.
+
+This is the same KIND of move §26 made and the opposite of §22's: three rows
+leave `N` rather than moving within the constructed population, so CONSTRUCTED%
+rises for the second pass running. It rises by 1.0 point, and the three rows are
+service operations with a mounted client — not table rows.
+
+### 27.10 The counted files this pass changed, and the one it deliberately did not
+
+| file | why |
+| --- | --- |
+| `artifacts/api-server/src/routes/airport.ts` | 27.2 — the join route resolves and checks the joiner's city |
+| `artifacts/api-server/src/services/layover/LayoverCrewStore.ts` | 27.2 — `joinCrew` takes a city and the `city_mismatch` reason; 27.6 item 1 |
+| `artifacts/api-server/src/services/layover/__tests__/layoverCrewCityScope.test.ts` | 27.1 — new, 3 cases, two watched RED first |
+| `artifacts/api-server/src/services/layover/__tests__/layoverCrewSurface.test.ts` | 27.6 item 2 — header correction only, no case changed |
+| `artifacts/api-server/package.json` | registers the new suite in `test` |
+| `docs/architecture/census-layover.md` | this section, and ten citations repointed below |
+
+**Ten citations into `routes/airport.ts` moved by this pass's 21 added lines and
+have been repointed IN THIS FILE**, each from the line
+`check:doc-citations` NAMED rather than by arithmetic offset:
+3628→3649, 3749→3770, 3389→3410, 3499→3520, 3481→3502, 3331→3352, 3350→3371,
+3462→3483, 3463→3484, and §16's bare `3327#rent_buddy_enabled`, which the
+checker reported at TWO candidates (3348 and 3352). The claim settles it: it
+says *"the **gate** is at …"*, and the gate is
+`if (!await isFlagEnabled(sc, "rent_buddy_enabled")) {` at **3352** — 3348 is a
+comment mentioning the flag. It has been given the full anchor so it cannot be
+ambiguous again.
+
+**THREE CITATIONS IN `docs/architecture/census-highlights-memories.md` ARE STALE
+BECAUSE OF THIS PASS AND HAVE NOT BEEN TOUCHED.** That file belongs to another
+lane and this one does not write in it, so the repointing is stated here for
+whoever does, mechanically and with no prose or verdict of that census
+inspected:
+
+All three cite `artifacts/api-server/src/routes/airport.ts`. The anchor text of
+each is UNCHANGED and correct; only the line number moved. **The path, line and
+anchor are deliberately NOT written here as a single `path:line#anchor` token**
+— `check:doc-citations` would read this table as three more live citations into
+that file and fail on them, which is how this section failed its own check once
+already.
+
+| its line | anchor, unchanged | line: from | to |
+| --- | --- | ---: | ---: |
+| 2857 | `sourceType: "layover_session", verificationLevel: "checkin",` | 3691 | **3712** |
+| 2973 | `const occurrence = declaredOccurrenceHasHappened(args.session.arrivalTime, Date.now());` | 3665 | **3686** |
+| 2974 | `async function writeElectedLayoverStamp` | 3628 | **3649** |
+
+Until they are repointed, `check:doc-citations` reports 3 anchored and 3
+backticked failures. **That is this pass's doing and it is not hidden.**
+`check:citation-targets` and `check:citation-symbols` are both exactly AT their
+ceilings (183 / 183 and 35 / 35); neither was raised and neither fell, so there
+was no ratchet gain to bank.
+
+**`head_commit` is NOT re-declared.** This pass re-derived three rows, not 296,
+and §1's reading rule applies unchanged to the other 293.
