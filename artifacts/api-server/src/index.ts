@@ -55,6 +55,7 @@ import { startIntelRewardScheduler } from "./lib/intelRewardScheduler.js";
 import { startIntelAttributionScheduler } from "./lib/intelAttributionScheduler.js";
 import { registerScopedTrustApplier } from "./lib/intelScopedTrustApply.js";
 import { startMemoryProjectionScheduler } from "./lib/memoryProjectionScheduler.js";
+import { startMemoryOutboxScheduler } from "./services/memoryProjections/outboxDrainRunner.js";
 // §61 (census-trips TR440): the Trips outbox loop and the trip projection workers, each started as one thing.
 import { startTripOutboxWorker } from "./server/trips/outboxWorker.js";
 import { startTripProjectionWorkers } from "./server/trips/projectionWorkers/index.js";
@@ -172,6 +173,17 @@ app.listen(port, (err) => {
   // facts + the Experience Graph into memory_projections and sweeps expired
   // memory. Flag-gated on memory_projection, fail-closed; a no-op until enabled.
   startMemoryProjectionScheduler();
+  // The Memory outbox consumer (H161/H162). Without this call the consumer
+  // has no production caller at all, so it is deliberately beside the
+  // projection scheduler rather than anywhere else: it drains the outbox that
+  // the kernel writes and hands each event to the same rebuild.
+  //
+  // NOT flag-gated, and that is the safe direction rather than the loose one.
+  // An outbox row can only exist if the kernel wrote it, and memory_kernel_enabled
+  // is what gates the kernel — so with the flag off this drains zero rows. A
+  // second switch's only distinctive state is the bad one: events written, then
+  // stranded unacked because the reader was turned off separately.
+  startMemoryOutboxScheduler();
   // Trips spec §19.4 projection worker: drains trip_outbox (2420) into the
   // Map-owned trip_map_projections (2520), idempotent by event_id +
   // aggregate_version. Flag-gated on trip_map_projection_worker_enabled,
