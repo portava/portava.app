@@ -390,7 +390,19 @@ export async function drainMemoryOutbox(
   }
   if (claim.rows.length === 0) return empty;
 
-  const now = opts.now ?? new Date();
+  // ONE clock read, not two. `Date.now()` and a no-arg `new Date()` in the same
+  // function are two independent reads of a moving clock, which is what
+  // splitClockGuard refuses — and it matters here specifically, because this
+  // function MEASURES projection_lag. A logical instant taken from one read and
+  // a timing baseline taken from another can disagree, and the number that comes
+  // out is then a lag nobody observed.
+  //
+  // The per-event `startedAtMs`/`finishedAtMs` below are NOT part of this: they
+  // are fresh reads on purpose, because an elapsed time is the difference between
+  // two real instants. What must not be split is the single "as of" instant the
+  // rebuild is performed against.
+  const nowMs = opts.now ? opts.now.getTime() : Date.now();
+  const now = opts.now ?? new Date(nowMs);
   const ackable: number[] = [];
   const outcomes: EventOutcome[] = [];
   let failed = 0;

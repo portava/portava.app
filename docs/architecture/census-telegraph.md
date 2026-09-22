@@ -3089,7 +3089,7 @@ stay the only door.
 
 **The ceiling for §11.7.** Every row here is W and none can be more:
 **no database has 2811**, the four tables are on the drift ratchet
-(`scripts/checkProductionDrift.ts:365`, `:373`, `:384`, `:394`) with the reason
+(`scripts/checkProductionDrift.ts:588#message_edits: {`, `scripts/checkProductionDrift.ts:596#message_reactions: {`, `scripts/checkProductionDrift.ts:607#message_attachments: {`, `scripts/checkProductionDrift.ts:617#conversation_action_refs: {`) with the reason
 recorded per table, and the command endpoint is gated on 2810's flag, which is
 seeded FALSE everywhere. The DDL and its re-application were EXECUTED on a
 throwaway PostgreSQL 16 carrying the baseline plus the chain; the rollback is
