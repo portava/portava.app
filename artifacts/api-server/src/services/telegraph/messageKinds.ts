@@ -69,6 +69,22 @@ export const GifPayload = z.object({
   altText: z.string().max(300).nullish(),
 });
 
+/**
+ * The purposes an in-thread location share may declare.
+ *
+ * Every one is an `id` from `lib/locationPurposes.ts`, the canonical registry,
+ * and `telegraphLocationLifecycle.test.ts` asserts that against the registry
+ * itself. A purpose field validated against nothing is how a purpose field
+ * stops meaning anything: it becomes a label the client picks.
+ *
+ * Two and not twelve. The other ten describe server-side verification,
+ * geotagged content, route planning and aggregate state — none of which is a
+ * person telling a conversation where they are — and a share that could claim
+ * one of them would be claiming a retention policy it does not live under.
+ */
+export const TELEGRAPH_SHARE_PURPOSES = ["live_session_sharing", "presence_in_context"] as const;
+export type TelegraphSharePurpose = (typeof TELEGRAPH_SHARE_PURPOSES)[number];
+
 /** §6.2 LOCATION — coarse by default; §4.3's precision ladder lives here. */
 export const LocationPayload = z.object({
   label: z.string().min(1).max(200),
@@ -80,7 +96,39 @@ export const LocationPayload = z.object({
   lat: z.number().min(-90).max(90).nullish(),
   lng: z.number().min(-180).max(180).nullish(),
   caption: z.string().max(500).nullish(),
+  /**
+   * §12 `location_shares` — "Purpose/audience/PRECISION/EXPIRY scoped location
+   * capability". Precision was already here and audience is the conversation;
+   * these two are the other half.
+   *
+   * `expiresAt` IS WHAT MAKES THIS A SHARE RATHER THAN A PIN. A LOCATION
+   * message with no expiry is somebody sending the address of a restaurant —
+   * it has no lifecycle, nothing revokes it, and §13.2's `location.started` /
+   * `location.expired` would be meaningless about it. One WITH an expiry is a
+   * scoped capability: it starts, it is live for a stated window, and it ends
+   * whether or not anybody comes back to end it. Only the second kind emits the
+   * two events, and `services/telegraph/lifecycleSweep.ts` is what ends it.
+   *
+   * `purpose` names an entry in the canonical registry
+   * (`lib/locationPurposes.ts`) rather than a free string, and
+   * `TELEGRAPH_SHARE_PURPOSES` below is checked AGAINST that registry by a
+   * test — so a share cannot claim a purpose the privacy registry does not
+   * publish, which is the way a purpose field usually stops meaning anything.
+   */
+  expiresAt: z.string().min(1).max(64).nullish(),
+  purpose: z.enum(TELEGRAPH_SHARE_PURPOSES).nullish(),
 });
+
+/**
+ * How long a scoped in-thread location share may run.
+ *
+ * A ceiling and not a default. §15.1's whole posture is that a location
+ * capability is bounded; a share a person could set to a year would be an
+ * unbounded one wearing an expiry. Four hours is the same order as the quick
+ * availability statuses (`routes/availability.ts` — 4 to 24 hours) and shorter,
+ * because this one carries a position rather than a mood.
+ */
+export const MAX_LOCATION_SHARE_HOURS = 4;
 
 /** §6.2 ACTION — a §8.1 action carried as a first-class message. */
 export const ActionPayload = z.object({
