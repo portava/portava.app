@@ -387,7 +387,7 @@ a finding that the work was done for something else. See `docs/architecture/attr
 | G10 | Low-confidence interpretation preserves raw user input | C | `semanticParser.ts:600-607` `shouldProjectStructured` gates on `SEMANTIC_MIN_CONFIDENCE = 0.6` (`:133`); below it the parse adds nothing and the raw query row survives. |
 | G11 | Privacy and eligibility filtering occur before projection | C | `gateway.ts:373-402` — the gate runs, then `projectSearchResult`. Fail-closed comment at `:402`. |
 | G12 | Live suggestions carry freshness and are never fabricated when live state is unavailable | C | `liveSuggestions.ts:177-223` `buildFreshnessState` returns `null` for an empty envelope list and every label maps from a real claim value; unknown values return `null` (`:120`, `:138`) rather than a default. |
-| G13 | Offline mode degrades gracefully and must not present stale data as live | **C** | *Moved 2026-09-21 on the criterion this cell set for itself, clause by clause.* IT ASKED FOR THREE THINGS. (1) "one consumer that branches on `offlinePolicy` while the device is offline" — `travel-buddy-standalone/src/platform/input-assistance/hooks/useInputAssistance.ts:398#setSuggestions(mayRetain`, arrived with G340. (2) "a shipped artifact for at least `static_dictionary`" — three of them, plus a compact city index for `cached_local` (`travel-buddy-standalone/src/platform/input-assistance/data/countries.ts:53`, `travel-buddy-standalone/src/platform/input-assistance/data/languages.ts:32`, `travel-buddy-standalone/src/platform/input-assistance/data/interests.ts:21`, `travel-buddy-standalone/src/platform/input-assistance/data/cities.ts:73`; G197/G198). (3) "a test that runs the hook with the network down and gets rows" — `travel-buddy-standalone/src/platform/input-assistance/hooks/__tests__/useInputAssistance.offline.component.test.tsx:142#an OFFLINE country picker returns rows from the shipped dictionary`, with an empty cache and nothing accepted, which is the exact case the previous cell said returned nothing. THE OTHER HALF, "never stale as live", is not merely preserved but extended. The freshness rule is unchanged (`components/freshnessDisplay.ts:55-58#state === 'stale'`). A local row is DISTINGUISHABLE from a server row in the projected result — `source: 'local'` — and carries no `action`, no `entityId`, no `destination`, no `canonicalUri`, no `freshness` and no `confidence`, so it cannot present as a resolution the server never returned (`travel-buddy-standalone/src/platform/input-assistance/services/localDictionary.ts:254#function dictionaryRow`, asserted at `travel-buddy-standalone/src/platform/input-assistance/hooks/__tests__/useInputAssistance.offline.component.test.tsx:152#an offline row is marked LOCAL and resolves nothing`; giving the row an `entityId`, an `open_entity` action and `source: 'canonical'` reddens three component cases and two pure ones). A restored device-local row is refused outright if it carries a `freshness` at all, and the retention window is 30 days (`travel-buddy-standalone/src/platform/input-assistance/services/localRecentsStore.ts:111#function isRestorableRow`). The shipped tier is reachable ONLY from the `unavailable` arm: a transient error keeps what is on screen (`travel-buddy-standalone/src/platform/input-assistance/hooks/__tests__/useInputAssistance.offline.component.test.tsx:315#a TRANSIENT error is not offline`) and an online serve is served alone (`travel-buddy-standalone/src/platform/input-assistance/hooks/__tests__/useInputAssistance.offline.component.test.tsx:277#ONLINE is unchanged`). WHAT IS STILL NOT COVERED BY THIS `C`: `server_required` contexts degrade to NOTHING rather than gracefully, which is the authority's decision and not a defect; and no offline behaviour is instrumented, so the rate at which this helps anyone is unmeasured (G373). |
+| G13 | Offline mode degrades gracefully and must not present stale data as live | **C** | *Moved 2026-09-21 on the criterion this cell set for itself, clause by clause.* IT ASKED FOR THREE THINGS. (1) "one consumer that branches on `offlinePolicy` while the device is offline" — `travel-buddy-standalone/src/platform/input-assistance/hooks/useInputAssistance.ts:396#const mayRetain`, arrived with G340. (2) "a shipped artifact for at least `static_dictionary`" — three of them, plus a compact city index for `cached_local` (`travel-buddy-standalone/src/platform/input-assistance/data/countries.ts:53`, `travel-buddy-standalone/src/platform/input-assistance/data/languages.ts:32`, `travel-buddy-standalone/src/platform/input-assistance/data/interests.ts:21`, `travel-buddy-standalone/src/platform/input-assistance/data/cities.ts:73`; G197/G198). (3) "a test that runs the hook with the network down and gets rows" — `travel-buddy-standalone/src/platform/input-assistance/hooks/__tests__/useInputAssistance.offline.component.test.tsx:142#an OFFLINE country picker returns rows from the shipped dictionary`, with an empty cache and nothing accepted, which is the exact case the previous cell said returned nothing. THE OTHER HALF, "never stale as live", is not merely preserved but extended. The freshness rule is unchanged (`components/freshnessDisplay.ts:55-58#state === 'stale'`). A local row is DISTINGUISHABLE from a server row in the projected result — `source: 'local'` — and carries no `action`, no `entityId`, no `destination`, no `canonicalUri`, no `freshness` and no `confidence`, so it cannot present as a resolution the server never returned (`travel-buddy-standalone/src/platform/input-assistance/services/localDictionary.ts:254#function dictionaryRow`, asserted at `travel-buddy-standalone/src/platform/input-assistance/hooks/__tests__/useInputAssistance.offline.component.test.tsx:152#an offline row is marked LOCAL and resolves nothing`; giving the row an `entityId`, an `open_entity` action and `source: 'canonical'` reddens three component cases and two pure ones). A restored device-local row is refused outright if it carries a `freshness` at all, and the retention window is 30 days (`travel-buddy-standalone/src/platform/input-assistance/services/localRecentsStore.ts:111#function isRestorableRow`). The shipped tier is reachable ONLY from the `unavailable` arm: a transient error keeps what is on screen (`travel-buddy-standalone/src/platform/input-assistance/hooks/__tests__/useInputAssistance.offline.component.test.tsx:315#a TRANSIENT error is not offline`) and an online serve is served alone (`travel-buddy-standalone/src/platform/input-assistance/hooks/__tests__/useInputAssistance.offline.component.test.tsx:277#ONLINE is unchanged`). WHAT IS STILL NOT COVERED BY THIS `C`: no offline behaviour is instrumented, so the rate at which this helps anyone is unmeasured (G373). **AND ONE CLAUSE OF THIS CELL IS WITHDRAWN AS OF 2026-09-22.** It read "`server_required` contexts degrade to NOTHING rather than gracefully, which is the authority's decision and not a defect". The authority's decision is not a defect and it is UNCHANGED — `hooks/useInputAssistance.ts:396#const mayRetain` still drops every retained row for those nine contexts. What was a defect is that the user was shown an unexplained empty panel for it, and, when the screen had supplied §37 fallback actions, was shown THOSE — a search that never happened reported as a search that found nothing, with an offer to create a record. §33 builds the state §27 asks for: `travel-buddy-standalone/src/platform/input-assistance/components/degradedNotice.ts:124#export function degradedNotice` decides one of three degraded sentences and the overlay renders it OUTSIDE the `emptyState` slot (`travel-buddy-standalone/src/platform/input-assistance/components/SuggestionOverlay.tsx:321#ia-degraded-`). It renders NO row on the `server_required` path, asserted with the rows in the same case (`travel-buddy-standalone/src/platform/input-assistance/components/__tests__/degradedField.component.test.tsx:94#says the field is online-only`), and the `rows` sentence states in as many words that what is on screen was not checked just now, which is this row's other half said in the surface rather than only in a `source` field. |
 | G14 | Suggestions should accelerate real-world outcomes, not increase keystrokes or engagement for its own sake | W | Unchanged where it matters: `personalization.ts:223#boostFor` still scales the boost by `selection_count`, and it is still the only signal that moves rank. The COUNTER-signals exist as events (`suggestion_dismissed`, `manual_value_kept`, `raw_search_submitted` — G313/G315/G314), but calling them measurable overstates it: `platform/input-assistance/index.ts:184#setTelemetrySink` has no app-side caller, so every one of them is delivered to `let sink: TelemetrySink = () => {}` and nobody can count them. WHAT WOULD TURN THIS RED: an outcome or task-completion term weighed against the acceptance boost. Who can supply it: whoever owns the screens that COMPLETE the task (Trips / Events / Telegraph), by calling `services/inputTelemetry.ts:284#emitDownstreamTaskCompleted` — after the sink is attached, since until then the call would change nothing observable. |
 | G15 | Every accepted suggestion resolves to a valid canonical destination, structured value, or explicit user-approved action | C | `projection.ts:478-493` `isResolvable`/`dropDeadRows` — a row without an action, entity id or routable destination is dropped at the boundary, on every return path in `gateway.ts` (`:273`, `:314`, `:352`, `:385`, `:414`, `:785`). |
 
@@ -760,7 +760,7 @@ declared and read by nothing (G30). What follows is what actually exists.
 | G207 | Use request sequence IDs | C | `services/raceGuard.ts:33-50` is the single shared monotonic guard; `useInputAssistance.ts:210` + `:235` (`if (!guardRef.current.isCurrent(mySeq)) return`). The server independently stamps `requestId` (`routes/inputAssistance.ts:166`, returned at `:207`). |
 | G208 | Stale-while-revalidate | C | `services/suggestionCache.ts:18-33` (TTL + LRU, coordinate key rounded to ~1 km); `useInputAssistance.ts:141-152` serves a hit with zero network and keeps previous rows visible while fetching. |
 | G209 | Prefetch likely dependent data after a canonical selection | N | Still nothing prefetches, re-verified at this commit: `handleSelect` (`travel-buddy-standalone/src/platform/input-assistance/components/SmartInput.tsx:188-241`) emits telemetry, announces the selection, records selection memory and returns; no call site warms a cache or issues a dependent request. **What blocks it is not the fetch, it is the graph.** §33's clause is *"prefetch likely NEXT-FIELD entities"* and §53's example is *"Bangkok → neighborhoods / airports / saved places"* — both name a DEPENDENT field, and the cross-field dependency graph that would say which field that is exists for exactly one node class (G109: the city binding, and nothing for a venue). Building the prefetch first would mean hard-coding a mapping this spec asks §17 to own, which is inventing a requirement rather than closing one. WHAT WOULD TURN THIS RED: G109's dependency graph extended past the city node, then a `prefetchAfterSelection` that issues the dependent field's zero-character request and writes it into `sharedSuggestionCache` under that field's key — plus a test that the dependent field's first render is a cache hit with zero network. |
-| G210 | Network loss: retain local/cached suggestions and explicit degraded behaviour | C | **Table reconciled 2026-09-21 — this cell was stale, not this verdict.** §9.3 moved this row `W → C` and the §4 table kept the old text. Re-read at this commit: the branch this row was written about now RETAINS. `travel-buddy-standalone/src/platform/input-assistance/hooks/useInputAssistance.ts:398#setSuggestions(mayRetain` sets `unavailable` and keeps the narrowed local list, where it used to `setSuggestions([])` — discarding the last good rows at the one moment the user cannot get new ones. The degraded half was already exact and is untouched (`SuggestionOverlay` shows a quiet note, never an error). With nothing local to retain it is still `[]`, which is the old behaviour and not a regression. Proven at `travel-buddy-standalone/src/platform/input-assistance/hooks/__tests__/useInputAssistance.localTier.component.test.tsx:133#RETAINS`. The count does not move. |
+| G210 | Network loss: retain local/cached suggestions and explicit degraded behaviour | C | **Table reconciled 2026-09-21 — this cell was stale, not this verdict.** §9.3 moved this row `W → C` and the §4 table kept the old text. Re-read at this commit: the branch this row was written about now RETAINS. `travel-buddy-standalone/src/platform/input-assistance/hooks/useInputAssistance.ts:396#const mayRetain` sets `unavailable` and keeps the narrowed local list, where it used to `setSuggestions([])` — discarding the last good rows at the one moment the user cannot get new ones. The degraded half was already exact and is untouched (`SuggestionOverlay` shows a quiet note, never an error). With nothing local to retain it is still `[]`, which is the old behaviour and not a regression. Proven at `travel-buddy-standalone/src/platform/input-assistance/hooks/__tests__/useInputAssistance.localTier.component.test.tsx:133#RETAINS`. The count does not move. |
 | G211 | Virtualize large suggestion groups; cap visible results | C | Both halves now. The cap was always real and layered (`routes/inputAssistance.ts:144`, `gateway.ts:676`, client `finalizeSuggestions`); the mechanism §33 asks for by name was not, and the overlay mounted every row in the group. `travel-buddy-standalone/src/platform/input-assistance/components/SuggestionOverlay.tsx:202#<FlatList` replaces the plain `ScrollView`, over a flattened row stream (`travel-buddy-standalone/src/platform/input-assistance/components/SuggestionOverlay.tsx:98#export function flattenSections`) so a section HEADER is a list row rather than the top of a nested subtree. The type dispatch is not duplicated to get there: `travel-buddy-standalone/src/platform/input-assistance/components/SuggestionList.tsx:43#export function SuggestionRow` and `travel-buddy-standalone/src/platform/input-assistance/components/SuggestionGroup.tsx:32#export function SuggestionSectionHeader` are the same primitives the flat path uses. Proven at `travel-buddy-standalone/src/platform/input-assistance/components/__tests__/overlaySurfaces.component.test.tsx:98#a 40-row group does NOT mount 40 rows` — under jest there is no layout pass, so a VirtualizedList mounts exactly `initialNumToRender` and a ScrollView mounts all 40, which makes the assertion a direct discriminator between the two containers; mutation-proven by swapping the FlatList back for a ScrollView. §9.8 recorded this as "an afternoon that would move a row" and deferred it; it was an afternoon. It also had a cost the old container hid — see the note on `travel-buddy-standalone/src/platform/input-assistance/components/SuggestionOverlay.tsx:227#extraData={activeId}`, and §14.4 for the mutation that did NOT redden there. |
 
 ### §34 Local vs Server Processing
@@ -771,7 +771,7 @@ declared and read by nothing (G30). What follows is what actually exists.
 | G213 | Prefer local: recent selection history | **C** | *Fully closed 2026-09-21. Half-closed on 2026-09-21 by G216, which stated its own remaining blocker — "the store is process memory, so nothing survives an app restart" — and that blocker is gone.* THE CLIENT HALF, RECAPPED: `travel-buddy-standalone/src/platform/input-assistance/services/localZeroState.ts:123#export async function attachLocalRecents` is not the writer — `recordLocalSelection` is, wired from the one explicit-accept path (`travel-buddy-standalone/src/platform/input-assistance/components/SmartInput.tsx:384#recordLocalSelection(policy, s);`) — and the §34 zero-state tier reads the accepted ROWS back, gated by `privacyClass` on BOTH sides (`travel-buddy-standalone/src/platform/input-assistance/services/localZeroState.ts:209#export function mayRetainLocally`). THE DURABLE HALF, NEW: every accept is written to the device and hydrated on the next launch (`travel-buddy-standalone/src/platform/input-assistance/services/localRecentsStore.ts`, `travel-buddy-standalone/src/platform/input-assistance/services/localZeroState.ts:170#function schedulePersist`, mounted at `travel-buddy-standalone/app/_layout.tsx:205#function LocalRecentsSetup`), so the SECOND launch of the app prefers a local answer rather than having none to prefer. Proven at `travel-buddy-standalone/src/platform/input-assistance/services/__tests__/localRecentsPersistence.test.ts:105#it SURVIVES a restart — a cold process reads it back`, with the privacy gates at `:126` (write) and `:140` (a field RECLASSIFIED since the write) and the account-change erase at `:210`. That read gate is the one a disk makes necessary: it is re-evaluated against the LIVE policy on every call, so nothing stored under an older, looser classification is ever served under a newer, stricter one. WHAT THE ☠prod MARKER STILL MEANS, and why it does not hold this row: the SERVER-side memory (`input_selection_history` and the `input_record_selection` RPC) is still absent from production, so the CROSS-DEVICE recollection returns empty for every user. That is §35's row and G226's, and it is an operational gap — an unapplied migration — not this one. This row is §34's "prefer LOCAL", and the client now prefers a local answer that outlives its own process. ☠prod |
 | G214 | Prefer local: cached city prefix matching | C | *Moved to C by §9.3's row-move table; this §4 row kept the old "there is no prefix index" text. Stale-row repair, no count change. Re-verified 2026-09-21, including the WIRING §9.3 did not assert.* `services/suggestionCache.ts:185#longestPrefix(` scans by CONSTRUCTED KEY — never by splitting keys apart, because the fieldId segment can itself contain the `\|` separator — longest strict prefix first, at most `query.length` O(1) lookups, and stops at the most specific cached answer. The empty prefix is included on purpose, so a field's zero-state entry is the list a 1-character query is narrowed out of. The hook reuses it and narrows on-device (`hooks/useInputAssistance.ts:240#const hit = sharedSuggestionCache.longestPrefix(cacheFieldId, trimmed, latKey, lngKey);`), and the narrowing is strictly SUBTRACTIVE — `narrowToQuery` cannot invent, reorder or re-score a row — so the server stays the authority (§42). The §29 gate is the same one the cache itself applies: an uncacheable field neither wrote nor reads. Proven pure in `services/__tests__/raceAndCache.test.ts` (longest-wins, empty-prefix, never-the-exact-key, TTL, coords) and as WIRING in `hooks/__tests__/useInputAssistance.localTier.component.test.tsx` — a keystroke past a cached prefix renders local rows while the request hangs. Both halves are needed: "the logic is right and nothing reaches it" is the failure this pair exists to catch. |
 | G215 | Prefer local: simple normalization | C | `services/queryNormalization.ts:38-52` — NFKD, diacritic strip, stroke-letter fold, whitespace collapse, on-device, used for cache keys and local comparison. |
-| G216 | Prefer local: immediate zero-state | C | *Built 2026-09-21. The defect was worse than the row said, and finding out why is what closed it.* The row said the zero-state was a server round trip. It was not even that: `zeroStateAssistance` is declared on all 29 context descriptors — `true` on every geographic picker, `global_search` and `hashtag` — and `buildDefaultPolicy` DROPS it (it is not a member of `InputFieldPolicy`), so **nothing on either side had ever read it**. `minChars` is 1 or 2 on every one of those contexts, so the hook returned on an empty field without rendering anything AND without asking, which means the gateway's own §14 answer (`gateway.ts:194-218`) was built for a request this client never sent. TWO THINGS NOW EXIST. (1) The gate has a reader: `hooks/useInputAssistance.ts:185#const zeroStateTier =` reads the context descriptor directly — deliberately not the policy, so `InputFieldPolicy` and `buildDefaultPolicy`, whose shapes G265/G269 cite, are untouched — and an empty field with `zeroStateAssistance` is assisted despite `minChars > 0`. (2) A LOCAL source answers it first: `services/localZeroState.ts` replays this session's explicit accepts, verbatim as the server projected them (never a row rebuilt from a label, which would have to invent an `action` and could resolve somewhere the server never said), re-typed `recent`, capped by the field's own `maxSuggestions`, and gated by `privacyClass` on BOTH the record and the read (`localZeroState.ts:209#export function mayRetainLocally`) so a viewer-scoped list is never re-published around §29's gate. The server request still runs — its answer is richer and it owns eligibility — so the local list is what the field shows WHILE that answer is fetched, and what it keeps when the answer never arrives — but SINCE G340 only when the authority licenses an offline surface for that field (`hooks/useInputAssistance.ts:398#setSuggestions(mayRetain`). For the nine contexts marked `server_required` the rows are now dropped instead; §30.4 has the reasoning. That last branch is the row's own sentence: the cold/offline open now shows what the user already chose. Proven in `services/__tests__/localZeroState.test.ts` (8 tests) and `hooks/__tests__/useInputAssistance.zeroState.component.test.tsx` (5), each with its mutation logged; removing the gate alone reddens all five wiring tests. **NOT persistence** — an app restart still has nothing local, which is G199. |
+| G216 | Prefer local: immediate zero-state | C | *Built 2026-09-21. The defect was worse than the row said, and finding out why is what closed it.* The row said the zero-state was a server round trip. It was not even that: `zeroStateAssistance` is declared on all 29 context descriptors — `true` on every geographic picker, `global_search` and `hashtag` — and `buildDefaultPolicy` DROPS it (it is not a member of `InputFieldPolicy`), so **nothing on either side had ever read it**. `minChars` is 1 or 2 on every one of those contexts, so the hook returned on an empty field without rendering anything AND without asking, which means the gateway's own §14 answer (`gateway.ts:194-218`) was built for a request this client never sent. TWO THINGS NOW EXIST. (1) The gate has a reader: `hooks/useInputAssistance.ts:185#const zeroStateTier =` reads the context descriptor directly — deliberately not the policy, so `InputFieldPolicy` and `buildDefaultPolicy`, whose shapes G265/G269 cite, are untouched — and an empty field with `zeroStateAssistance` is assisted despite `minChars > 0`. (2) A LOCAL source answers it first: `services/localZeroState.ts` replays this session's explicit accepts, verbatim as the server projected them (never a row rebuilt from a label, which would have to invent an `action` and could resolve somewhere the server never said), re-typed `recent`, capped by the field's own `maxSuggestions`, and gated by `privacyClass` on BOTH the record and the read (`localZeroState.ts:209#export function mayRetainLocally`) so a viewer-scoped list is never re-published around §29's gate. The server request still runs — its answer is richer and it owns eligibility — so the local list is what the field shows WHILE that answer is fetched, and what it keeps when the answer never arrives — but SINCE G340 only when the authority licenses an offline surface for that field (`hooks/useInputAssistance.ts:396#const mayRetain`). For the nine contexts marked `server_required` the rows are now dropped instead; §30.4 has the reasoning. That last branch is the row's own sentence: the cold/offline open now shows what the user already chose. Proven in `services/__tests__/localZeroState.test.ts` (8 tests) and `hooks/__tests__/useInputAssistance.zeroState.component.test.tsx` (5), each with its mutation logged; removing the gate alone reddens all five wiring tests. **NOT persistence** — an app restart still has nothing local, which is G199. |
 | G217 | Prefer local: request cancellation / state | C | `services/raceGuard.ts`; `useInputAssistance.ts:214`, `:282`. |
 | G218 | Prefer server: canonical entity lookup requiring current DB state | C ᵖ | `gateway.ts:343-404` → `dispatchSearch`. |
 | G219 | Prefer server: privacy/eligibility filtering | C | `gateway.ts:373-378`, `:614-619` — server-side and fail-closed; the client explicitly does no re-filtering (`hooks/useTelegraphRecipients.ts:15-18`). |
@@ -1015,7 +1015,7 @@ coverage from these rows.
 
 | id | Requirement | V | Evidence / divergence |
 | --- | --- | --- | --- |
-| G340 | Version the field-policy registry independently from app releases | **C** | **MOVED `W` → `C`; the transition reads in the evidence rather than in the verdict cell.** The cell said `**W** → **C**`, which is TWO verdict tokens where `check:census-integrity` parses one — so the checker counted this row as NEITHER, and the headline that added it back by hand was arithmetic on top of an unreadable tally. Same defect G343 records for itself. **THE CLIENT NOW READS THE AUTHORITY, AND THE LOCAL TABLE IS GONE.** This row's own `TURNS GREEN WHEN` named three conditions and all three now hold, each with a test that names it. **(1) The client fetches and caches.** `installInputPolicySync.ts:89#installInputPolicySync` attaches at the app root and fills `services/policyStore.ts:85#PolicyStore`, which is keyed on account AND on `policyVersion` AND on age. **(2) The local registry is not demoted — it is DELETED.** `INPUT_CONTEXT_REGISTRY`'s 29 hand-maintained descriptors are replaced by ONE conservative policy (`contexts/policyFallback.ts:158#CONSERVATIVE_POLICY`), and `contexts/inputContexts.ts:194#getContextDescriptor` resolves from the store. That is stronger than the criterion asked for: the second source of truth does not survive as a fallback, only a deliberately useless one does. **(3) A policy change reaches a client built before it** — asserted verbatim by `travel-buddy-standalone/src/platform/input-assistance/services/__tests__/policyAuthority.test.ts#A POLICY CHANGE ON THE SERVER REACHES A CLIENT THAT WAS BUILT BEFORE IT`, which withdraws personalization and reclassifies `caption` `public` → `viewer_scoped` with no release and shows the running client stop caching it. **EVERY WAY THIS CAN FAIL GRANTS LESS, NEVER MORE**, and that is the part worth reading. Cold start, expiry, a snapshot belonging to another account, a version the authority has retired, a context it did not send, an unreachable server, a 200 carrying rubbish — all seven land on the conservative policy, which has `mode: 'no_assistance'`, an unreachable `minChars`, `privacyClass: 'private_message'` (so the field is uncacheable) and `offlinePolicy: 'unavailable'`. A served value this build cannot name is narrowed to the strictest member of its union by `contexts/policyFallback.ts:230#sanitizeServedPolicy`, and an unreadable `mode` collapses the WHOLE policy rather than just that member — keeping a stranger's `minChars` while discarding their `mode` is acting on half an instruction. **§32 IS NOW ENFORCED IN THE CONSUMER PATH**, which the union alignment of §29 explicitly did not buy: `hooks/useInputAssistance.ts:370#mayRetain` drops retained rows when the server is unreachable and the field's `offlinePolicy` is `server_required` or `unavailable`, via `contexts/policyFallback.ts:280#offlineSurfaceAllowed`. Until that line existed the field was still read by nothing, however exactly the two registries agreed. **ACCOUNT ISOLATION IS NEW, AND IT CLOSED A SEPARATE GAP.** `services/policyStore.ts:198#setActiveAccount` drops the snapshot on sign-out or switch, and the same path clears `sharedSuggestionCache` — whose `clear()` had no caller anywhere in the app before this. Two people signing in on one device shared one process-global map of suggestion lists keyed by the text that produced them. WHAT IT IS NOT: the fetch is not retried on a schedule, and a failed fetch never relaxes anything — it leaves the store as it was, which for an empty store means every field stays unassisted. |
+| G340 | Version the field-policy registry independently from app releases | **C** | **MOVED `W` → `C`; the transition reads in the evidence rather than in the verdict cell.** The cell said `**W** → **C**`, which is TWO verdict tokens where `check:census-integrity` parses one — so the checker counted this row as NEITHER, and the headline that added it back by hand was arithmetic on top of an unreadable tally. Same defect G343 records for itself. **THE CLIENT NOW READS THE AUTHORITY, AND THE LOCAL TABLE IS GONE.** This row's own `TURNS GREEN WHEN` named three conditions and all three now hold, each with a test that names it. **(1) The client fetches and caches.** `installInputPolicySync.ts:89#installInputPolicySync` attaches at the app root and fills `services/policyStore.ts:85#PolicyStore`, which is keyed on account AND on `policyVersion` AND on age. **(2) The local registry is not demoted — it is DELETED.** `INPUT_CONTEXT_REGISTRY`'s 29 hand-maintained descriptors are replaced by ONE conservative policy (`contexts/policyFallback.ts:158#CONSERVATIVE_POLICY`), and `contexts/inputContexts.ts:194#getContextDescriptor` resolves from the store. That is stronger than the criterion asked for: the second source of truth does not survive as a fallback, only a deliberately useless one does. **(3) A policy change reaches a client built before it** — asserted verbatim by `travel-buddy-standalone/src/platform/input-assistance/services/__tests__/policyAuthority.test.ts#A POLICY CHANGE ON THE SERVER REACHES A CLIENT THAT WAS BUILT BEFORE IT`, which withdraws personalization and reclassifies `caption` `public` → `viewer_scoped` with no release and shows the running client stop caching it. **EVERY WAY THIS CAN FAIL GRANTS LESS, NEVER MORE**, and that is the part worth reading. Cold start, expiry, a snapshot belonging to another account, a version the authority has retired, a context it did not send, an unreachable server, a 200 carrying rubbish — all seven land on the conservative policy, which has `mode: 'no_assistance'`, an unreachable `minChars`, `privacyClass: 'private_message'` (so the field is uncacheable) and `offlinePolicy: 'unavailable'`. A served value this build cannot name is narrowed to the strictest member of its union by `contexts/policyFallback.ts:230#sanitizeServedPolicy`, and an unreadable `mode` collapses the WHOLE policy rather than just that member — keeping a stranger's `minChars` while discarding their `mode` is acting on half an instruction. **§32 IS NOW ENFORCED IN THE CONSUMER PATH**, which the union alignment of §29 explicitly did not buy: `hooks/useInputAssistance.ts:396#const mayRetain` drops retained rows when the server is unreachable and the field's `offlinePolicy` is `server_required` or `unavailable`, via `contexts/policyFallback.ts:280#offlineSurfaceAllowed`. Until that line existed the field was still read by nothing, however exactly the two registries agreed. **ACCOUNT ISOLATION IS NEW, AND IT CLOSED A SEPARATE GAP.** `services/policyStore.ts:198#setActiveAccount` drops the snapshot on sign-out or switch, and the same path clears `sharedSuggestionCache` — whose `clear()` had no caller anywhere in the app before this. Two people signing in on one device shared one process-global map of suggestion lists keyed by the text that produced them. WHAT IT IS NOT: the fetch is not retried on a schedule, and a failed fetch never relaxes anything — it leaves the store as it was, which for an empty store means every field stays unassisted. |
 | G341 | Version the suggestion response schema | **C** | **MOVED `W` → `C` BY THE §48 PASS; the transition now reads in the evidence rather than in the verdict cell.** The cell said `W → **C**`, which is two verdict tokens where `check:census-integrity` can parse one — so this row, `G33`, `G341` and `G343` between them, was counted by a human and invisible to the tool (it reported "3 counted where this tool cannot read" for this census, against 0 before the wave). Re-read at this commit before the cell was rewritten; no verdict is changed by the rewrite. The envelope now carries a schema version that is not the policy version: `artifacts/api-server/src/lib/inputAssistance/compatibility.ts:56#export const SUGGESTION_SCHEMA_VERSION = 1`, attached at `artifacts/api-server/src/routes/inputAssistance.ts:289#schemaVersion: SUGGESTION_SCHEMA_VERSION` (and on the degraded envelope too, so a client can tell "this serve failed" from "this serve speaks a shape I do not know"). **IT IS READ, WHICH IS THE HALF THAT MAKES IT A VERSION RATHER THAN A LABEL** — this section is full of members that are declared and consumed by nothing (G25, G30, G32), and one more would not have been a fix. `travel-buddy-standalone/src/platform/input-assistance/services/suggestResponse.ts:94#export function isSchemaCompatible` decides, and `services/inputAssistance.ts` turns a refusal into `unavailable: true`, i.e. §38's fallback ladder, so an older build degrades to its local zero-state instead of rendering rows out of an envelope it cannot parse. The rule is MAJOR-only and one-directional: a newer server shape is refused, a matching or older one accepted, and an ABSENT version reads as schema 1 — which is every deployment before this branch, and is what keeps a newer client working against an older serve (§48's own backward-compatibility bullet, cutting the other way). Both edges are asserted in `travel-buddy-standalone/src/platform/input-assistance/services/__tests__/suggestResponse.test.ts` and four mutations turn them red. The discipline this rests on — additive changes do NOT bump the major — is stated at the constant on both sides. |
 | G342 | Preserve backward compatibility for active mobile versions | C ⌀ | Every field added after Phase 1 is optional and additive (`types.ts:281-303`, `:206-244`), so an older client still parses a newer response. Nothing enforces this — no contract test pins the response shape — so it is a property of how the code happened to grow. |
 | G343 | Feature-capability handshake for suggestion types unsupported by older clients | **C** | **MOVED `N` → `C` BY THE §48 PASS; the transition now reads in the evidence rather than in the verdict cell.** The cell said `N → **C**`, which is two verdict tokens where `check:census-integrity` can parse one — so this row, `G33`, `G341` and `G343` between them, was counted by a human and invisible to the tool (it reported "3 counted where this tool cannot read" for this census, against 0 before the wave). Re-read at this commit before the cell was rewritten; no verdict is changed by the rewrite. Both directions exist. REQUEST: `SuggestRequest.client` carries the surface's declaration, built at `travel-buddy-standalone/src/platform/input-assistance/contexts/clientCapabilities.ts:117#export const GLOBAL_SEARCH_CAPABILITIES` and put on the wire by `services/suggestBody.ts`. SERVER: `artifacts/api-server/src/lib/inputAssistance/compatibility.ts:150#export function negotiateSuggestionTypes` and `artifacts/api-server/src/lib/inputAssistance/compatibility.ts:174#export function dropUnresolvableActionRows`, both reached from `artifacts/api-server/src/routes/inputAssistance.ts:226#const clientCaps = parseClientCapabilities(body.client)`. RESPONSE: `capabilities: { schemaVersion, suggestionTypes, withheldForClient }`, because a handshake in one direction is a filter — a client needs to tell "no AI rows came back" from "this FIELD is not allowed them", and only the second is worth changing a UI for. **THE ASSERTION THIS ROW RESTS ON IS THE NEGATIVE ONE.** A capability list is a place where a client tells a server what to do, and the way to get it wrong is to let it WIDEN: `negotiateSuggestionTypes` is an INTERSECTION with the policy as the left operand, and the test named *"a client cannot talk its way into a type the policy forbids"* drives a client declaring `ai_suggestion` at `global_search`, whose §6 policy forbids it, and asserts it gets nothing. §48 is a compatibility mechanism; §6 keeps the authority. **AND IT IS NOT VACUOUS.** The census's own example is the one that now negotiates: the global search bar resolves `open_entity`, `submit_search` and `add_to_trip` and drops `share_entity`, `drop_pin` and `open_compass` on arrival — so it declares the three, derived from `DISPATCHABLE_ACTION_TYPES` itself rather than restated beside it, and the serve stops building the rest for that surface. A client that DOES declare `open_compass` still receives it (asserted), so no producer was quietly deleted in the name of saving work. A request with no `client` block is served byte-for-byte as before (asserted), which is what keeps this additive rather than a flag day. The shared overlay's own declaration is honestly WIDE — `SuggestionList` draws every assistance type — and says so rather than trimming itself to look busy. Twelve assertions in `artifacts/api-server/src/test/inputAssistanceCompatibility.test.ts`, five mutations red. |
@@ -1102,7 +1102,7 @@ separates them from being real.
 | G370 | Downstream task completion | **N** | Unchanged, and refused explicitly in `metrics.ts` with a blocker naming the three screens (`app/trip/new.tsx`, `app/events/create/index.tsx`, `app/telegraph/new.tsx`), asserted in `src/test/inputAssistanceMetrics.test.ts`. A rate over an event nothing emits would be green forever. See G320 for the two things it needs — the screen call sites AND the D4 consent gate the other thirteen events do not need. |
 | G371 | Privacy incident count must remain zero (explicit certification metric) | **?** | Unchanged, deliberately, and the blocker is now structural rather than circumstantial. The construction-side guarantees are strong and tested (G183–G191), and this pass added three more (the wire copies six fields by name, the ingest rebuilds from an allow-list, migration 2950 RAISEs if an account id is ever added). NONE OF THAT IS THE METRIC. Whether zero privacy incidents have occurred in production is a fact about production traffic, and the §44 serve log is deliberately INCAPABLE of answering it: it stores no account id, so "an incident happened to someone" is not a fact it could hold. `metrics.ts` refuses this metric with that reason rather than reporting 0, and `src/test/inputAssistanceMetrics.test.ts` asserts the refusal names the privacy property — so a future reader who "fixes" it by adding a `user_id` would be breaking 2950's own postcondition. WHAT WOULD SETTLE IT: production security/audit logs, read by someone with access to them. Nothing in this tree can, and no assertion that there have been zero incidents may be entered here. |
 | G372 | P95 suggestion latency | W | This row's stated evidence — "No latency instrumentation anywhere; the response carries no server timing" — was already stale when written against this tree, and the chain is now complete end to end. The serve measures ITSELF (`routes/inputAssistance.ts:192-199`), `serverMs` travels on the response envelope, `services/suggestResponse.ts` parses it and OMITS it rather than zeroing it when a deployment does not send one, `useInputAssistance.ts:327#serverMs: res.serverMs` emits it beside the round trip the device saw, and the ingest allow-list admits both as ints. `metrics.ts` reports P50/P95 for each SEPARATELY — the difference between them is the network and neither side can measure that alone — using NEAREST-RANK, so a reported P95 is a latency the system actually produced rather than an interpolation between two it did not. MUTATIONS: switching to interpolation, and coercing an absent `serverMs` to 0, each turn a test RED. ☠prod: migration 2950 unapplied, so no latency has been recorded. See also G354: a runnable harness for measuring this against a deployment now exists and has NOT been run. **W, NOT C — and the reason is this document's own §12.2.** The integration owner declined a `C ☠prod` for G292 on exactly this migration, writing that "a grader who reads `C` as 'works' should read it as `W`." A §57 row asks for a NUMBER, and no number exists or can: 2950 is applied to no database, so `report:input-metrics` exits with the PostgREST error rather than printing anything. What moved is that the metric is now DEFINED, computed and reachable instead of absent — which is the distance from N to W, not from N to C. WHAT WOULD TURN THIS RED: applying migration 2950 and reporting the number. ☠prod. |
-| G373 | Offline completion rate | **N** | Unchanged, and refused explicitly in `metrics.ts` rather than reported as 0. The blocker is sharper than "no offline instrumentation": `useInputAssistance.ts` DOES detect the degraded case — it sets `unavailable` state and retains the local tier — and emits no event for it, so there is no offline denominator to divide anything by. WHAT WOULD TURN THIS RED: a degraded flag on `suggestion_request_completed` (a bool, inside the existing name, so no migration to 2950's event-name CHECK is needed) plus a prop-allow-list entry for it — and then the offline BEHAVIOUR this would measure still has to exist (G197–G201). |
+| G373 | Offline completion rate | **N** | *Two of this cell's three conditions are now met, and the row does NOT move on two of three (§33.3).* **(1) The offline BEHAVIOUR exists** — G197/G198/G199 shipped it 2026-09-21. **(2) THE DEGRADED FLAG EXISTS.** The `unavailable` arm, which was the only arm of the request that emitted nothing at all, now emits `suggestion_request_completed` with `{ count, degraded: true }` (`travel-buddy-standalone/src/platform/input-assistance/hooks/useInputAssistance.ts:455#degraded: true`), proven in six cases at `travel-buddy-standalone/src/platform/input-assistance/hooks/__tests__/useInputAssistance.degradedTelemetry.component.test.tsx` — including that a `server_required` field degrades with `count: 0`, that a TRANSIENT error is NOT a degraded serve, that the props are exactly `count` and `degraded`, that none of 2950's thirteen refused key names appears, and that the typed text appears nowhere in the payload. No new event name and so no migration: `suggestion_request_completed` is already in `iate_event_name_known`, and the reserved 2963–2969 band was checked and is not needed. **(3) THE PROP-ALLOW-LIST ENTRY DOES NOT EXIST, and that is why this stays `N`.** `artifacts/api-server/src/lib/inputAssistance/telemetry.ts:175#suggestion_request_completed` reads `{ count: 'int', serverMs: 'int', clientMs: 'int' }`; the ingest REBUILDS every event from that list, so `degraded` is dropped on the way in and the stored row cannot be told from an online serve. `metrics.ts` is still correct to refuse the metric. The event deliberately carries NO `clientMs` for the same reason — with the flag dropped, a degraded round trip would land in G372's P95 as if it were a successful serve and pull the quantile toward failures that never touched a network. WHAT WOULD TURN THIS RED: `degraded: 'bool'` in that allow-list, plus a reader in `metrics.ts`. Both are outside the lane that built the producer. WHAT IT STILL WOULD NOT BUY: with no persistent telemetry buffer (deliberately not built — §33.4), an offline session that ENDS offline contributes nothing, so the measurable population is the reachable-network degradations plus the outages an app run outlives. |
 
 ---
 
@@ -1746,7 +1746,7 @@ local/cached suggestions"* and explicit degraded behaviour. The degraded state
 was right and the retention was inverted — the last good rows were discarded at
 the one moment the user cannot get new ones. It now serves the narrowed local
 list at
-`travel-buddy-standalone/src/platform/input-assistance/hooks/useInputAssistance.ts:398#setSuggestions(mayRetain`,
+`travel-buddy-standalone/src/platform/input-assistance/hooks/useInputAssistance.ts:396#const mayRetain`,
 and with nothing local to retain it is `[]`, the old behaviour exactly.
 
 **§29 is not weakened by any of this, and that is checked rather than asserted.**
@@ -3429,7 +3429,7 @@ is what moves these five to C**, and it is one action, held by the owner.
 | --- | --- | --- |
 | G320, G370 | N | TWO things, not one. (1) A call per completed task from `app/trip/new.tsx`, `app/events/create/index.tsx`, `app/telegraph/new.tsx`, carrying the fieldId that served the creation — which those screens do not currently retain. (2) A CONSENT GATE: this is the only §44 event that asserts a real-world task happened, the class of claim D4 governs. Shipping (1) without (2) routes an outcome claim past the consent the rest of the product routes outcome claims through. The gate is named in `installInputTelemetry.ts`. |
 | G368 | N | A fifteenth name in `INPUT_TELEMETRY_EVENT_NAMES` with a real call site, AND a follow-on migration widening 2950's `iate_event_name_known` CHECK — which enumerates the fourteen, so an unlisted name fails the whole insert batch at the database. `metrics.ts` refuses this metric explicitly rather than reporting 0. The migration is the blocker: the owner holds migrations. |
-| G373 | N | Sharper than "no offline instrumentation": `useInputAssistance.ts` DOES detect the degraded case and emits no event for it. A `degraded` bool on `suggestion_request_completed` needs no new event name and so no migration — but the offline BEHAVIOUR it would measure still has to exist (G197–G201). |
+| G373 | N | *Restated 2026-09-22.* The offline behaviour now exists (G197–G199) AND the `degraded` bool is now emitted on `suggestion_request_completed` — no new event name, no migration. The row stays `N` on its remaining half: the ingest's prop allow-list (`lib/inputAssistance/telemetry.ts:175`) does not name `degraded`, so the flag is dropped and the stored row is indistinguishable from an online serve. One line, outside the lane that built the producer. |
 | G372 | W | Left where §12.1 put it. The P95 is now computed and reachable, which corrects the row's evidence; the number does not exist. Same argument as 14.3. |
 | G354 | ? | A harness now exists for three of the four dimensions and **every ledger row in `docs/architecture/input-intelligence-performance-protocol.md` reads NOT RUN** — no deployment and no handset were reachable. Render cost is refused outright as a device fact rather than approximated from a component render. An operator with deployment access runs §2–§3; one with handsets runs §4. |
 | G371 | ? | **Must never close on an assertion from this tree.** The construction guarantees got stronger again this pass and none of them is the metric. The serve log is deliberately INCAPABLE of answering it: with no account id stored, "an incident happened to someone" is not a fact it could hold. `metrics.ts` refuses it with that reason and its test asserts the reason names the privacy property, so a future reader who "fixes" it by adding a `user_id` would be breaking migration 2950's own postcondition. Production security/audit logs settle it; nothing else does. |
@@ -4770,14 +4770,26 @@ full logs with counts are at the bottom of
 `services/__tests__/localRecentsPersistence.test.ts`. The ones worth naming
 here are the two that **did not** land.
 
-**A gate that could not fail.** `localDictionaryFor` also called
-`offlineSurfaceAllowed`, which read as a second licence check and was not one:
-`SURFACE_ENTITY_CLASSES` is keyed only by the three licensed surfaces, so the
-lookup already answered `undefined` for `server_required`. Deleting the `if`
-left all 26 pure and all 76 component assertions green. It is deleted, and an
-**assertion** holds the coupling instead — the map's key set is pinned to be
-exactly the surfaces the authority licenses, so adding `server_required` to it
-reddens two tests rather than none.
+**A gate that could not fail — AND THE PARAGRAPH THAT SAID SO IS WITHDRAWN.**
+As written, this section reported that `localDictionaryFor`'s
+`offlineSurfaceAllowed` call "is deleted", because `SURFACE_ENTITY_CLASSES` is
+keyed only by the three licensed surfaces and deleting the `if` left all 26 pure
+and all 76 component assertions green. **The gate was RESTORED in the merge that
+integrated this lane (`e43fc628a`), and it is present at
+`travel-buddy-standalone/src/platform/input-assistance/services/localDictionary.ts:190`
+and `:344` today.** The mutation was right that no test noticed and wrong that
+nothing could: `SURFACE_ENTITY_CLASSES` is an object literal, so a bare `[key]`
+lookup inherits from `Object.prototype` and answers TRUTHY for `constructor`,
+`toString`, `__proto__` and `hasOwnProperty` — for which the guard clause is
+skipped and `classes.has(...)` THROWS. `offlineSurfaceAllowed` is three `===`
+comparisons and refuses all four. Seven cases hold it, including those four
+inherited keys
+(`travel-buddy-standalone/src/platform/input-assistance/services/__tests__/localDictionary.test.ts:426`).
+The key-set assertion is kept as well; it is a second coupling, not a substitute
+for the gate. **The general lesson, left where the next mutation pass will read
+it: a mutation score proves only what its inputs enumerate, and this one
+enumerated only values the type union can name — exactly the set that cannot
+reach the defect.**
 
 **A backstop, correctly.** Dropping the hook's own `mayRetain ?` gate also
 leaves everything green, because `offlineLocalRows` re-applies the same licence.
@@ -4795,7 +4807,11 @@ those two assertions non-vacuous.
 * **`server_required` contexts degrade to nothing, not gracefully.** That is the
   authority's decision and G13 is `C` with it — but a user offline in a place
   picker still sees an empty panel, and calling that "graceful" is the
-  authority's claim, not this section's.
+  authority's claim, not this section's. *(Answered by §33, 2026-09-22: the
+  panel is no longer empty. The rows are still refused — that gate is
+  untouched — and the absence now carries a sentence saying the field is
+  assisted only online. "Degrades to nothing" remains true of the ROWS and is no
+  longer true of the SURFACE.)*
 * **The offline behaviour is still unmeasured.** G373 stands: the hook detects
   the degraded case and emits no event for it, so there is no denominator and
   nobody can say how often any of this helps.
@@ -4843,3 +4859,224 @@ G201 each had a criterion with two clauses and each got one. Recording them as
 `W` says something was built and does not yet do what the row asked; recording
 them as `C` would have bought two numbers at the cost of the census meaning
 anything. §32.3 states which clause is unmet for each.
+
+---
+
+## 33. The empty panel gets a sentence, and the degraded serve gets a producer
+
+Two pieces of work on the same branch, and they are opposite in kind. The first
+BUILDS the state §27 asks for and §32 implies. The second builds half of what
+G373 asks for and stops, because the other half is one line in a file this lane
+does not own — and says so rather than moving the row.
+
+### 33.1 The defect: an enforcement with no surface
+
+§30.4 recorded G340's §32 enforcement and was right about it: on an unreachable
+authority, `hooks/useInputAssistance.ts:396#const mayRetain` drops every
+retained row for the nine contexts the registry marks `server_required` and for
+anything marked `unavailable`. **That gate is untouched by this section.** No
+row it refuses is put back, no cache is re-read, and the `server_required` path
+still renders zero suggestion rows — asserted in the same cases that assert the
+sentence, so a later pass cannot "helpfully" restore the cache without reddening
+them.
+
+What the user got for it was a panel with nothing in it. And when the screen had
+supplied an `emptyState` — §37's context-dependent fallback actions, *"Drop a
+pin"*, *"Add a new Place"* — the degraded case rendered THOSE, because the old
+container had one branch for both:
+
+```
+{emptyState ?? (
+  <Text>{unavailable ? 'Suggestions are unavailable right now.' : 'No matches yet.'}</Text>
+)}
+```
+
+So a field that was never asked, because the authority could not be reached,
+reported that a search had found nothing and offered to create a record instead.
+§37's own heading names TWO states — empty AND no-match — and §27 requires every
+surface to support *"loading states, error states, empty states"*. There were
+two shapes for three facts, and the caller's slot silently won the tie.
+
+### 33.2 Three facts, three sentences
+
+`travel-buddy-standalone/src/platform/input-assistance/components/degradedNotice.ts:124#export function degradedNotice`
+is a pure function from (degraded?, licensed?, row count) to one of three
+sentences, or `null` when the surface is not degraded at all:
+
+| kind | when | what it says |
+| --- | --- | --- |
+| `unassisted` | the authority licenses NO offline surface (`server_required` / `unavailable`) | the field is assisted only online, nothing is suggested, and what you type is kept as typed |
+| `empty` | licensed, and this device has nothing | you are offline and nothing is saved for this field yet |
+| `rows` | licensed, and rows are showing | what is on screen is saved on this device and **has not been checked just now** |
+
+Three properties are load-bearing and each is pinned by a case:
+
+* **It renders no row and can render none.** It returns strings. The rows are
+  decided by the hook's gate long before this runs.
+* **`rowCount > 0` is tested BEFORE the licence**, so the copy can never
+  contradict the screen — a miswired caller gets a sentence about the rows that
+  are visible, not a claim that nothing is suggested.
+* **It promises no retry.** §30.7 states there is no retry schedule in this
+  layer, so *"we'll try again"* would be a false statement about the system.
+  `degradedNotice.test.ts` asserts the online-only copy contains no
+  retry/reconnect/refresh word.
+
+The container renders it OUTSIDE the `emptyState` slot — above the rows when
+there are rows, instead of the no-match state when there are none
+(`travel-buddy-standalone/src/platform/input-assistance/components/SuggestionOverlay.tsx:321#ia-degraded-`).
+`emptyState` still answers a genuine no-match, which is what that slot is for,
+and a case asserts it still does. §46's live region leads with the degraded fact
+and then the count; the old order announced *"2 suggestions"* for a device-local
+list and never mentioned that it was one.
+
+`SmartInput` supplies the licence as
+`offlineSurfaceAllowed(policy?.offlinePolicy)` — the authority's value through
+the same predicate the retention gate uses, re-derived rather than passed down.
+The prop's default is `false`, the same fail-closed answer
+`offlineSurfaceAllowed(null)` gives.
+
+**`display_name` is unchanged and has a case saying so**: a `no_assistance`
+field opens no overlay, so it gets no note either, issues no request, and offers
+no entity suggestion. The new surface must not be the thing that finally gives a
+manual field a panel.
+
+Proven at
+`travel-buddy-standalone/src/platform/input-assistance/components/__tests__/degradedNotice.test.ts`
+(7 pure cases),
+`travel-buddy-standalone/src/platform/input-assistance/components/__tests__/degradedSurface.component.test.tsx`
+(6) and
+`travel-buddy-standalone/src/platform/input-assistance/components/__tests__/degradedField.component.test.tsx`
+(2, through a real `SmartInput` and a real policy).
+
+### 33.3 G373, privacy-checked first, and built only as far as the rules allow
+
+The rules were read before anything was written. Migration 2950 refuses thirteen
+raw-text key names (`iate_props_no_raw_text`), admits exactly fourteen event
+names (`iate_event_name_known`), and carries **no account id by design** — which
+is the whole reason G371's metric is unanswerable from it and must stay that
+way. G306's prohibition half is certified and none of it is weakened here.
+
+What G373's own cell asked for: *"a degraded flag on
+`suggestion_request_completed` (a bool, inside the existing name, so no
+migration to 2950's event-name CHECK is needed) plus a prop-allow-list entry for
+it — and then the offline BEHAVIOUR this would measure still has to exist
+(G197–G201)."*
+
+* **The behaviour now exists.** §32 shipped it (G197, G198, G199 all `C`).
+* **The flag now exists.** The `unavailable` arm — until now the only arm of the
+  request that emitted nothing at all — emits
+  `suggestion_request_completed` with `{ count, degraded: true }`
+  (`travel-buddy-standalone/src/platform/input-assistance/hooks/useInputAssistance.ts:455#degraded: true`).
+* **The allow-list entry does NOT exist, and this lane did not add it.**
+
+**NO MIGRATION IS NEEDED AND NONE WAS WRITTEN.** `suggestion_request_completed`
+is already one of 2950's fourteen names, and `degraded` is none of its thirteen
+refused keys. The reserved band 2963–2969 was checked: 2963, 2964 and 2965 are
+taken and nothing in it is required here.
+
+**WHY THE EVENT CARRIES NO LATENCY, WHICH IS THE ONE DECISION WORTH ARGUING
+WITH.** `lib/inputAssistance/metrics.ts:305` builds G372's P95 from EVERY
+`suggestion_request_completed` carrying `clientMs`/`serverMs`. The ingest does
+not yet name `degraded`, so a degraded row carrying a round trip would arrive
+**indistinguishable from a successful serve** and drag the quantile toward the
+instant local failures ("API not configured", "Not signed in") that never
+touched a network. A latency that cannot be told apart is worse than no latency.
+`count` is inert by comparison — no §57 metric reads it on this event name —
+which is why it is safe to send now and is exactly the numerator the rate will
+need. Adding `clientMs` to this payload reddens a case.
+
+**INFERRING THE DEGRADED CASE FROM WHAT IS ALREADY LOGGED DOES NOT WORK**, which
+is why a flag and not a query. A degraded serve looked exactly like an ABORTED
+one and like an ABANDONED one: a `suggestion_request_started` with no completion
+after it. Those three have nothing to do with each other.
+
+Proven at
+`travel-buddy-standalone/src/platform/input-assistance/hooks/__tests__/useInputAssistance.degradedTelemetry.component.test.tsx`
+(6 cases), which asserts the shape as well as the fact: the event name is one of
+2950's fourteen, the props are exactly `count` and `degraded`, none of the
+thirteen refused keys appears, the typed text appears nowhere in the payload
+under any key, and no account identifier is present.
+
+### 33.4 The buffer that was NOT built, and why
+
+The brief permitted a bounded offline buffer under hard conditions. **None was
+built**, and the reasoning is recorded because "we chose not to" is worth more
+than a silent absence:
+
+* **A bounded buffer already exists.** `services/telemetryBatcher.ts` holds at
+  most 200 events, evicts oldest-first and COUNTS what it drops. Events produced
+  while the device is offline sit in it and go out on the next flush if
+  connectivity returns within the app run.
+* **A batch refused by an unreachable ingest is dropped and counted, never
+  retried.** That is a deliberate property with eleven tests behind it (G306),
+  and making it retry to serve a metric would be weakening it for the
+  convenience of the thing it was protecting against.
+* **A PERSISTENT buffer is new on-device behavioural storage**, and it would
+  have to be account-keyed, expiring, erasable and wired into
+  `services/policySync.ts#applyAccountChange` beside the policy snapshot, the
+  suggestion cache and the device recents. That is real machinery, and the only
+  thing it buys is the events of an app run that ENDED while offline.
+* **It would be premature in the exact sense that matters.** Until the ingest
+  names `degraded`, a persisted degraded event arrives indistinguishable from an
+  online one. Storing behavioural records on a device so that they can be
+  delivered in a form nobody can read is not a measurement; it is retention.
+
+The consequence is stated rather than hidden: **with no persistence, the events
+that reach the serve log are the reachable-network degradations** (a 404/503
+from the suggest route, a malformed 200, an unconfigured API, a signed-out
+client) **and those airplane-mode serves whose app run outlives the outage.** A
+true offline session that ends offline contributes nothing. Any future
+"offline completion rate" must carry that bias in its own caption.
+
+### 33.5 Row moves
+
+**NONE.** Both rows this work touches are already `C`, and the one it was aimed
+at cannot move.
+
+| id | verdict | what changed |
+| --- | --- | --- |
+| G13 | `C`, unchanged | One clause of the cell is WITHDRAWN: `server_required` contexts no longer degrade to an unexplained empty panel. The rows are still refused — that is the authority's decision and it is intact — and the absence now carries a sentence. The "never stale as live" half gains a surface-level statement to go with `source: 'local'`. |
+| G350 | `C`, unchanged | Unaffected; the four arms it counts are the same four. |
+| G373 | **`N`, and it stays `N`** | Its criterion has two halves and this lane can only reach one. The producer exists and is mutation-proven; `TELEMETRY_EVENT_PROPS.suggestion_request_completed` in `artifacts/api-server/src/lib/inputAssistance/telemetry.ts` still does not name `degraded: 'bool'`, so the ingest drops the flag and `metrics.ts` is still right to refuse the metric. **One line, in a file outside this lane's set.** |
+| G306 / G355 / G371 | unchanged | Read as constraints, not as targets. Nothing here adds a key the ingest's allow-list would have to widen for, no account id, and no raw text. G371 in particular is left exactly as it is: the serve log's inability to identify a person is the property, not the bug. |
+
+**The headline does not move: 287 C / 44 W / 38 N / 4 X of 373.**
+
+### 33.6 Mutations
+
+Every one applied to a shipped module, run, watched go red, reverted,
+`cmp`-verified. Full logs at the bottom of the four test files. Twelve landed;
+**three did not, and all three are recorded** —
+
+* **`SmartInput`'s `policy.mode !== 'no_assistance'` gate cannot be reddened
+  alone.** The authority gives `display_name` TWO independent refusals — mode
+  AND `minChars: 99` — and no input this field can be given separates them,
+  because no context in the registry pairs `no_assistance` with a reachable
+  `minChars`. The inputs were checked before the code was judged. The gate is
+  kept and the AUTHORITY'S VALUES are asserted directly instead.
+* **The overlay's fail-closed `offlineSurface` default survived the first run**,
+  because every case passed the prop explicitly. That was a gap in the inputs,
+  not redundancy in the code: one case now omits the prop, and flipping the
+  default to `true` reddens it.
+* **Adding a retry promise to the `empty` copy does not redden anything**, and
+  should not — the no-retry assertion is deliberately narrow to the online-only
+  branch, which is the only one where the user can do nothing at all.
+
+One defect this pass found in its own premise, rather than in the code: the
+seed in the new field test originally omitted `mode` for `display_name`, and
+`_seedPolicyForTests` spreads a PERMISSIVE default under every override — so the
+field was seeded `search` and still rendered nothing, because `minChars: 99`
+refuses first. A behavioural assertion could never have seen it. The seed now
+states the authority's `no_assistance`, and the same omission is worth checking
+wherever else that helper is used with a partial override.
+
+### 33.7 What this section does NOT claim
+
+* **Nothing here ran on a device or against a deployment.** Every assertion is a
+  test; §30.7's limit is unchanged.
+* **No number was measured.** The producer for an offline metric exists; no
+  offline metric has been computed, and G373 is `N` for exactly that reason.
+* **The copy has not been reviewed by anyone but its author.** The three
+  sentences are constrained where the requirement constrains them — no retry
+  promise, no claim of freshness, no "no matches" — and are otherwise a
+  judgement.
