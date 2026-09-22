@@ -175,8 +175,8 @@ let routePrimary = false;
 // which runs the real service against a fetch spy. Here the screen only needs
 // data to render.
 jest.mock('../../../src/services/layover', () => ({
-  getLayoverOverview: jest.fn(async () => (global as any).__overview),
-  getRecommendations: jest.fn(async () => []),
+  getLayoverOverview: jest.fn(async () => ({ ok: true, overview: (global as any).__overview })),
+  getRecommendations: jest.fn(async () => ({ ok: true, recommendations: [] })),
   getLayoverBuddies: jest.fn(async () => ({ city: 'Bangkok', buddies: [] })),
   getLayoverPresence: jest.fn(async () => ({ sharing: false, count: 0, travelers: [] })),
   addStopFromRecommendation: jest.fn(async () => null),

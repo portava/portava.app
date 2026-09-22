@@ -81,8 +81,8 @@ jest.mock('../../../src/components/layover/LayoverCompassCard', () => ({ Layover
 // NOTE: intentional stub — the screen only needs data to render here; the real
 // service is exercised against a fetch spy in the card suites.
 jest.mock('../../../src/services/layover', () => ({
-  getLayoverOverview: jest.fn(async () => (global as any).__overview),
-  getRecommendations: jest.fn(async () => []),
+  getLayoverOverview: jest.fn(async () => ({ ok: true, overview: (global as any).__overview })),
+  getRecommendations: jest.fn(async () => ({ ok: true, recommendations: [] })),
   getLayoverBuddies: jest.fn(async () => ({ city: 'Taipei', buddies: [] })),
   getLayoverPresence: jest.fn(async () => ({ sharing: false, count: 0, travelers: [] })),
   addStopFromRecommendation: jest.fn(async () => null),

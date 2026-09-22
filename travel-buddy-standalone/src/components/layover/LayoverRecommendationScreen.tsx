@@ -185,6 +185,9 @@ function RecCard({ rec, onAskCompass, onSafeReturn, onAddToPlan, onAddToRoute, o
 export function LayoverRecommendationScreen({ sessionId, onAskCompass, onSafeReturn, onAddToPlan, onAddToRoute, onInviteCrew, onSendTelegraph }: Props) {
   const plainInset = usePlainBottomInset();
   const [recs, setRecs]           = useState<LayoverRecommendation[]>([]);
+  // census L294 — the same distinction the dashboard now keeps: the
+  // server's refusal sentence, or null when it served a list.
+  const [recsError, setRecsError] = useState<string | null>(null);
   const [safety, setSafety]       = useState<LayoverSafetyResult | null>(null);
   const [loading, setLoading]     = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -197,7 +200,8 @@ export function LayoverRecommendationScreen({ sessionId, onAskCompass, onSafeRet
         getRecommendations(sessionId),
         getSessionSafety(sessionId),
       ]);
-      setRecs(r);
+      setRecs(r.ok ? r.recommendations : []);
+      setRecsError(r.ok ? null : r.message);
       setSafety(s);
     } finally {
       setLoading(false);
@@ -273,7 +277,11 @@ export function LayoverRecommendationScreen({ sessionId, onAskCompass, onSafeRet
       {recs.length === 0 && (
         <View style={styles.empty}>
           <Building size={32} color="#ccc" />
-          <Text style={styles.emptyText}>No recommendations yet. Tap refresh to generate options.</Text>
+          {/* The server's sentence when it refused, and only the settled
+              "nothing yet" when it actually answered. */}
+          <Text style={styles.emptyText}>
+            {recsError ?? 'No recommendations yet. Tap refresh to generate options.'}
+          </Text>
         </View>
       )}
     </ScrollView>

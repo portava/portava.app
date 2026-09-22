@@ -844,11 +844,59 @@ export async function updateLayoverSession(
   return { session: json.session, replan };
 }
 
-export async function getRecommendations(sessionId: string): Promise<LayoverRecommendation[]> {
-  const res = await authedFetch(airportUrl('sessions', sessionId, 'recommendations'));
-  if (!res.ok) return [];
-  const json = await res.json();
-  return json.recommendations ?? [];
+/**
+ * census-layover L294 (C2) — a list, or a stated failure. Never both.
+ *
+ * `ok: true` with an empty array is a MEASUREMENT: the window was computed and
+ * nothing fits. `ok: false` is the absence of a measurement, and `message` is
+ * the SERVER's own sentence for it.
+ */
+export type LayoverRecsResult =
+  | { ok: true; recommendations: LayoverRecommendation[] }
+  | { ok: false; message: string };
+
+/** What a failure says when the server said nothing at all (offline, unparseable). */
+const RECS_UNREACHABLE = 'Layover ideas could not be loaded. Please try again.';
+
+/**
+ * THE ROUTE REFUSES RATHER THAN SERVING AN EMPTY LIST, AND THIS PRESERVES THAT.
+ *
+ * `GET /:id/recommendations` takes two separate branches to avoid fabricating a
+ * zero (`artifacts/api-server/src/routes/airport.ts:1012`, `:1019`), under a
+ * comment that says why: *"'There is nothing to do on your layover' is a claim
+ * about a city, not a description of a failed query."*
+ *
+ * This function used to answer `if (!res.ok) return []`, which turned that
+ * refusal straight back into the claim the route had declined to make — and
+ * `LayoverRecsSection` printed "No recommendations yet for this layover." over
+ * an outage. It also let an offline `fetch` rejection escape into the caller's
+ * `Promise.all`, taking the whole dashboard load down with it.
+ */
+export async function getRecommendations(sessionId: string): Promise<LayoverRecsResult> {
+  let res: Response;
+  try {
+    res = await authedFetch(airportUrl('sessions', sessionId, 'recommendations'));
+  } catch {
+    return { ok: false, message: RECS_UNREACHABLE };
+  }
+
+  let json: Record<string, unknown> = {};
+  try { json = await res.json(); } catch { /* falls through to the status check */ }
+
+  if (!res.ok) {
+    // The server's sentence when it wrote one; never a sentence made up here to
+    // stand in for it.
+    return {
+      ok: false,
+      message: typeof json.message === 'string' ? json.message : RECS_UNREACHABLE,
+    };
+  }
+  return {
+    ok: true,
+    recommendations: Array.isArray(json.recommendations)
+      ? (json.recommendations as LayoverRecommendation[])
+      : [],
+  };
 }
 
 export async function getSessionSafety(sessionId: string): Promise<LayoverSafetyResult | null> {
@@ -1023,11 +1071,71 @@ export async function listLayoverSessions(
   return json.sessions ?? [];
 }
 
-export async function getLayoverOverview(sessionId: string): Promise<LayoverOverview | null> {
-  const res = await authedFetch(airportUrl('sessions', sessionId, 'overview'));
-  if (!res.ok) return null;
-  const json = await res.json();
-  if (!json.ok) return null;
+/**
+ * census-layover L156 — WHY the overview is missing, because the server says.
+ *
+ * `gone`         404 `not_found` — deleted, or never this traveller's.
+ *                A retry cannot change it, so nothing offers one.
+ * `unavailable`  503 `degraded_unavailable` — a read failed server-side. The
+ *                server marks these `retryable: true`; the session is fine.
+ * `unreachable`  `fetch` rejected. The device could not reach the server at
+ *                all, so there is no server sentence to quote and this is the
+ *                one case whose message is written on the client.
+ * `refused`      any other non-2xx, or a 2xx whose envelope says `ok: false`.
+ */
+export type LayoverOverviewFailure = 'gone' | 'unavailable' | 'unreachable' | 'refused';
+
+export type LayoverOverviewRead =
+  | { ok: true; overview: LayoverOverview }
+  | { ok: false; reason: LayoverOverviewFailure; message: string; retryable: boolean };
+
+/** The only sentence in this module not written by the server — see `unreachable`. */
+const OVERVIEW_UNREACHABLE = "We couldn't reach Portava. Check your connection and try again.";
+
+/**
+ * THE SERVER ALREADY DECIDED WHICH FAILURE THIS IS.
+ *
+ * `ownedSessionOr` (`artifacts/api-server/src/routes/airport.ts:1869`) splits a
+ * missing session from a failed read and gives each its own status, code and
+ * sentence. This function used to answer `null` to both — and to THROW when
+ * `fetch` rejected, which its one caller ran inside an uncaught `Promise.all`,
+ * so an offline device got a permanent spinner rather than any message at all.
+ *
+ * It now resolves in every case and names which one, so the dashboard can stop
+ * guessing "It may have been removed, or you're offline."
+ */
+export async function getLayoverOverview(sessionId: string): Promise<LayoverOverviewRead> {
+  let res: Response;
+  try {
+    res = await authedFetch(airportUrl('sessions', sessionId, 'overview'));
+  } catch {
+    return { ok: false, reason: 'unreachable', message: OVERVIEW_UNREACHABLE, retryable: true };
+  }
+
+  let json: Record<string, any> = {};
+  try { json = await res.json(); } catch { /* falls through to the status check */ }
+
+  if (!res.ok) {
+    // `retryable` is the server's own flag (`isRetryableErrorCode`,
+    // `artifacts/api-server/src/lib/http.ts:130`), not a status-code rule
+    // re-invented here — the list of retryable codes is the server's to keep.
+    const message = typeof json.message === 'string' ? json.message : OVERVIEW_UNREACHABLE;
+    if (res.status === 404 || json.error === 'not_found') {
+      return { ok: false, reason: 'gone', message, retryable: json.retryable === true };
+    }
+    if (json.error === 'degraded_unavailable') {
+      return { ok: false, reason: 'unavailable', message, retryable: json.retryable === true };
+    }
+    return { ok: false, reason: 'refused', message, retryable: json.retryable === true };
+  }
+  if (!json.ok) {
+    return {
+      ok: false,
+      reason: 'refused',
+      message: typeof json.message === 'string' ? json.message : OVERVIEW_UNREACHABLE,
+      retryable: false,
+    };
+  }
   // The cast below is the only thing standing between this type and the wire.
   // A screen that renders a field ONLY when it is present looks perfectly fine
   // against a server that never sends it, so the absence is made loud here
@@ -1045,7 +1153,7 @@ export async function getLayoverOverview(sessionId: string): Promise<LayoverOver
   if (!('safeEnvelope' in json)) {
     console.warn('[layover] overview is missing "safeEnvelope" — server contract mismatch');
   }
-  return json as LayoverOverview;
+  return { ok: true, overview: json as LayoverOverview };
 }
 
 // ── Mini-itinerary plan stops ─────────────────────────────────────────────────
@@ -1131,15 +1239,84 @@ export async function setShareCityStatus(sessionId: string, enabled: boolean): P
   return json.session ?? null;
 }
 
-export async function getLayoverPresence(sessionId: string): Promise<{
+/** The §14 rung the server actually served. Its vocabulary, not ours. */
+export type PresenceLevel = 'L0_AGGREGATE' | 'L2_DISCOVERY';
+
+/**
+ * census-layover L127 / L128 / L294 — the whole presence answer.
+ *
+ * `GET /:id/presence` returns `disclosePresence`'s result
+ * (`artifacts/api-server/src/services/airport/LayoverPrivacyGuard.ts:468`),
+ * and four of its fields never had a name on this side of the wire. They were
+ * on every response body; `res.json()` carried them; the type stopped at
+ * `count` and `travelers`, so no caller could see them and the screen threw
+ * them away. Naming them is the whole change — nothing new is fetched.
+ *
+ * `level` and `withheld` are OPTIONAL because an older server that predates
+ * the privacy guard does not publish them; `degraded` is not, because a
+ * caller that cannot see it will state a count it has no right to state.
+ * `getLayoverPresence` therefore normalises it rather than leaving it absent.
+ */
+export interface LayoverPresenceAnswer {
   sharing: boolean;
   city?: string | null;
   count: number;
   travelers: PresenceTraveler[];
-} | null> {
-  const res = await authedFetch(airportUrl('sessions', sessionId, 'presence'));
+  level?: PresenceLevel;
+  /**
+   * `sharing_paused` | `location_mode_off` | `ghost_mode` — the traveller's own
+   * stored settings — or `preferences_unreadable` | `ghost_mode_unreadable`,
+   * the closed fallbacks that stood in for them. The latter always arrive with
+   * `degraded: true`; see `LayoverPeopleSection` for why that ordering matters.
+   */
+  withheld?: string[];
+  /** TRUE when the count is NOT a measurement. Never widen a claim past this. */
+  degraded: boolean;
+  degradedReasons: string[];
+}
+
+/**
+ * Returns `null` on ANY failure to obtain an answer — a non-2xx, a body that
+ * will not parse, or a `fetch` that rejected because the device is offline.
+ *
+ * The caller must render `null` as "we could not check", NOT as "nobody is
+ * here". The server refuses rather than serving a fabricated zero precisely so
+ * the two stay distinguishable (`cityPresence`: *"a refusal caused by an
+ * UNREADABLE TABLE is now distinguishable from a measured zero"*); collapsing
+ * them here would undo that on the client instead.
+ *
+ * The `try` is not decoration. `authedFetch` rejects when the device has no
+ * network, and this function's one caller floats its promise — so before this,
+ * going offline produced an unhandled rejection and the presence box kept
+ * whatever it was last showing.
+ */
+export async function getLayoverPresence(sessionId: string): Promise<LayoverPresenceAnswer | null> {
+  let res: Response;
+  try {
+    res = await authedFetch(airportUrl('sessions', sessionId, 'presence'));
+  } catch {
+    return null;
+  }
   if (!res.ok) return null;
-  return res.json();
+  let json: Record<string, unknown>;
+  try {
+    json = await res.json();
+  } catch {
+    return null;
+  }
+  return {
+    sharing: json.sharing === true,
+    city: (json.city as string | null | undefined) ?? null,
+    count: typeof json.count === 'number' ? json.count : 0,
+    travelers: Array.isArray(json.travelers) ? (json.travelers as PresenceTraveler[]) : [],
+    level: json.level as PresenceLevel | undefined,
+    withheld: Array.isArray(json.withheld) ? (json.withheld as string[]) : [],
+    // A server that does not publish `degraded` answered without falling back,
+    // which is what `false` means. The normalisation is here so that no screen
+    // has to decide what an absent confidence flag means.
+    degraded: json.degraded === true,
+    degradedReasons: Array.isArray(json.degradedReasons) ? (json.degradedReasons as string[]) : [],
+  };
 }
 
 export async function getLayoverBuddies(sessionId: string): Promise<{

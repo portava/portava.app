@@ -204,8 +204,8 @@ const UNBANDED_REC = {
 // NOTE: intentional stub — the wire behaviour of these calls is covered by the
 // service-level tests; here the screen only needs data to render.
 jest.mock('../../../src/services/layover', () => ({
-  getLayoverOverview: jest.fn(async () => (global as any).__overview),
-  getRecommendations: jest.fn(async () => (global as any).__recs),
+  getLayoverOverview: jest.fn(async () => ({ ok: true, overview: (global as any).__overview })),
+  getRecommendations: jest.fn(async () => ({ ok: true, recommendations: (global as any).__recs })),
   getLayoverBuddies: jest.fn(async () => ({ city: 'Bangkok', buddies: [] })),
   getLayoverPresence: jest.fn(async () => ({ sharing: false, count: 0, travelers: [] })),
   addStopFromRecommendation: jest.fn(async () => null),

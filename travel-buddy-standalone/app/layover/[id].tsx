@@ -41,7 +41,8 @@ import {
   type LayoverBuddy,
   type LayoverOverview,
   type LayoverRecommendation,
-  type PresenceTraveler,
+  type LayoverOverviewFailure,
+  type LayoverPresenceAnswer,
   type StopsResponse,
 } from '../../src/services/layover';
 import {
@@ -66,6 +67,15 @@ import { LayoverFlightChangeCard } from '../../src/components/layover/LayoverFli
 import { fmtClock } from '../../src/components/layover/layoverFormat';
 import { KeyboardSafeScrollView } from '../../src/components/ui/KeyboardSafeView';
 
+/**
+ * The ONE sentence on this screen that is not the server's, and the one case
+ * where there cannot be a server sentence: the device never reached a server.
+ * It matches `getLayoverOverview`'s own copy of it verbatim, so the two routes
+ * into this state — the service reporting `unreachable`, and this screen's own
+ * catch — read identically to a traveller.
+ */
+const UNREACHABLE_COPY = "We couldn't reach Portava. Check your connection and try again.";
+
 export default function LayoverDashboardScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
@@ -75,15 +85,37 @@ export default function LayoverDashboardScreen() {
   const [recs, setRecs] = useState<LayoverRecommendation[]>([]);
   const [loading, setLoading] = useState(true);
   const [recsLoading, setRecsLoading] = useState(true);
+  // census L294 (C2) — the SERVER's refusal sentence, or null when it served a
+  // list. Never an empty list standing in for a failure.
+  const [recsError, setRecsError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
-  const [loadError, setLoadError] = useState(false);
+  /**
+   * census L156 — WHICH failure, not just THAT one happened.
+   *
+   * `loadError: boolean` could only produce one sentence, and the sentence it
+   * produced was a guess between two facts the server had already told this
+   * screen apart: "It may have been removed, or you're offline."
+   */
+  const [loadFailure, setLoadFailure] = useState<{
+    reason: LayoverOverviewFailure;
+    message: string;
+    retryable: boolean;
+  } | null>(null);
   // Bumped once per completed load so cards that own their own fetch
   // (AirportConditionsCard) re-read on the same pull-to-refresh as the
   // rest of the screen, rather than holding a reading the traveller has
   // just asked to refresh.
   const [dataEpoch, setDataEpoch] = useState(0);
 
-  const [presence, setPresence] = useState<{ count: number; travelers: PresenceTraveler[] }>({ count: 0, travelers: [] });
+  // census L127/L128/L294 — the presence ANSWER, carried whole. `degraded` and
+  // `withheld` are the server's; `count` alone cannot tell a measured empty
+  // city from a read that fell closed, and this screen used to store only that.
+  // The initial value is DEGRADED, not empty: before the first read returns,
+  // nothing has been measured, and "0 travellers" would be a claim.
+  const [presence, setPresence] = useState<LayoverPresenceAnswer>({
+    sharing: false, count: 0, travelers: [],
+    degraded: true, degradedReasons: ['not_yet_read'], withheld: [],
+  });
   const [buddies, setBuddies] = useState<LayoverBuddy[]>([]);
   const [shareBusy, setShareBusy] = useState(false);
   const [addingRecId, setAddingRecId] = useState<string | null>(null);
@@ -112,8 +144,13 @@ export default function LayoverDashboardScreen() {
   useEffect(() => {
     if (!id || sessionStatus !== 'active') return;
     const timer = setInterval(async () => {
-      const ov = await getLayoverOverview(id);
-      if (ov) setOverview(ov);
+      // A silent refresh KEEPS the last certified overview when the read fails
+      // — it must never blank the screen a traveller is acting on. What it must
+      // equally never do is let a rejection escape this callback: an interval
+      // handler's rejection is unhandled, and the last one took the whole
+      // screen's load down with it (census L156).
+      const read = await getLayoverOverview(id).catch(() => null);
+      if (read?.ok) setOverview(read.overview);
     }, 60_000);
     return () => clearInterval(timer);
   }, [id, sessionStatus]);
@@ -127,32 +164,91 @@ export default function LayoverDashboardScreen() {
     setTimeout(() => setToast(null), 3200);
   }, []);
 
+  /**
+   * census L127/L128/L294 — FORWARD THE ANSWER, DO NOT FLATTEN IT.
+   *
+   * This used to read `if (res?.sharing) {count, travelers} else {0, []}`, which
+   * mapped three different server answers onto one:
+   *   a `null`      — the read failed (503, or `fetch` rejected offline)
+   *   `degraded`    — the route answered and said its count is not a measurement
+   *   `withheld`    — the gate refused on the traveller's own stored settings
+   * and the card printed "you're the first" for all three. The server publishes
+   * the discriminator on every response; this now carries it across.
+   */
   const loadPresence = useCallback(async (sessionId: string) => {
     const res = await getLayoverPresence(sessionId);
-    if (res?.sharing) setPresence({ count: res.count, travelers: res.travelers });
-    else setPresence({ count: 0, travelers: [] });
+    if (!res) {
+      // A CLIENT-side reason, and named as one: the server said nothing at all,
+      // so attributing one of ITS reason codes here would be a fabrication.
+      setPresence({
+        sharing: false, count: 0, travelers: [],
+        degraded: true, degradedReasons: ['client_request_failed'], withheld: [],
+      });
+      return;
+    }
+    setPresence({
+      ...res,
+      // A refused answer carries no roster: `sharing: false` means the route
+      // served nobody, so any count on it is not about this city right now.
+      count: res.sharing ? res.count : 0,
+      travelers: res.sharing ? res.travelers : [],
+      withheld: res.withheld ?? [],
+    });
   }, []);
 
+  /**
+   * census L156 — EVERY PATH OUT OF HERE CLEARS `loading`.
+   *
+   * There was no `try` around this. `authedFetch` REJECTS when the device has
+   * no network, so `Promise.all` rejected, `setLoading(false)` never ran, and
+   * an offline traveller sat on "Loading your layover…" for as long as they
+   * were willing to — with an unhandled promise rejection behind it. The
+   * census row for L156 describes the COPY on the failure screen; on this tree
+   * the failure screen was not reached at all.
+   *
+   * The service no longer throws on a rejected fetch, so the `catch` here is
+   * the belt to that braces: a future read added to this `Promise.all` cannot
+   * silently reintroduce the hang.
+   */
   const load = useCallback(async (isRefresh = false) => {
     if (!id) return;
     if (!isRefresh) setLoading(true);
-    setLoadError(false);
-    const [ov, recList, buddyRes] = await Promise.all([
-      getLayoverOverview(id),
-      getRecommendations(id).finally(() => setRecsLoading(false)),
-      getLayoverBuddies(id),
-    ]);
-    if (ov) {
-      setOverview(ov);
-      if (ov.share.enabled) loadPresence(id);
-      setBuddies(buddyRes?.buddies ?? []);
-    } else {
-      setLoadError(true);
+    setLoadFailure(null);
+    try {
+      const [ovRead, recRes, buddyRes] = await Promise.all([
+        getLayoverOverview(id),
+        getRecommendations(id).finally(() => setRecsLoading(false)),
+        getLayoverBuddies(id),
+      ]);
+      if (ovRead.ok) {
+        setOverview(ovRead.overview);
+        if (ovRead.overview.share.enabled) loadPresence(id);
+        setBuddies(buddyRes?.buddies ?? []);
+      } else {
+        // The server's own sentence and its own retryability. This screen does
+        // not decide whether a layover is gone or a read failed — it forwards
+        // the answer, which is the whole of L156's client half.
+        setLoadFailure({
+          reason: ovRead.reason,
+          message: ovRead.message,
+          retryable: ovRead.retryable || ovRead.reason === 'unreachable',
+        });
+      }
+      // census L294 (C2) — keep the two apart all the way to the card. An empty
+      // `recs` with `recsError` null is a measured "nothing fits"; a non-null
+      // `recsError` is the server's refusal and carries its sentence.
+      setRecs(recRes.ok ? recRes.recommendations : []);
+      setRecsError(recRes.ok ? null : recRes.message);
+    } catch {
+      setRecsLoading(false);
+      setRecs([]);
+      setRecsError(UNREACHABLE_COPY);
+      setLoadFailure({ reason: 'unreachable', message: UNREACHABLE_COPY, retryable: true });
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+      setDataEpoch((n) => n + 1);
     }
-    setRecs(recList);
-    setLoading(false);
-    setRefreshing(false);
-    setDataEpoch((n) => n + 1);
   }, [id, loadPresence]);
 
   useEffect(() => { load(); }, [load]);
@@ -228,7 +324,13 @@ export default function LayoverDashboardScreen() {
       if (session) {
         setOverview((prev) => prev ? { ...prev, session, share: { ...prev.share, enabled } } : prev);
         if (enabled) loadPresence(id);
-        else setPresence({ count: 0, travelers: [] });
+        // Turning sharing OFF is the one zero this screen may state without a
+        // read: the traveller just chose it. `degraded: false` is therefore
+        // correct here and nowhere else — and the box is unmounted anyway.
+        else setPresence({
+          sharing: false, count: 0, travelers: [],
+          degraded: false, degradedReasons: [], withheld: [],
+        });
       } else {
         showToast('Could not update sharing');
       }
@@ -369,15 +471,37 @@ export default function LayoverDashboardScreen() {
     );
   }
 
-  if (loadError || !overview) {
+  if (loadFailure || !overview) {
+    /**
+     * census L156 — THE SERVER'S ANSWER, NOT A DISJUNCTION OF TWO GUESSES.
+     *
+     * The old copy was "It may have been removed, or you're offline." — one
+     * sentence naming two mutually exclusive facts, at a moment when the server
+     * had already told this screen which one it was. A traveller standing at a
+     * gate reading that cannot tell whether to walk back to a plan that still
+     * exists or to give up on one that does not.
+     *
+     * `gone` is the only branch that offers no retry, because the answer will
+     * not change. Everything else is retryable, so the control is real.
+     */
+    const gone = loadFailure?.reason === 'gone';
+    const retryable = loadFailure ? loadFailure.retryable && !gone : true;
     return (
-      <View style={styles.centerFill}>
+      <View style={styles.centerFill} testID="layover-load-error">
         <Stack.Screen options={{ headerShown: false }} />
-        <Text style={styles.centerTitle}>Couldn't load this layover</Text>
-        <Text style={styles.centerText}>It may have been removed, or you're offline.</Text>
-        <Pressable style={styles.retryBtn} onPress={() => load()}>
-          <Text style={styles.retryBtnText}>Try again</Text>
-        </Pressable>
+        <Text style={styles.centerTitle}>
+          {gone ? 'This layover is no longer here' : "Couldn't load this layover"}
+        </Text>
+        <Text style={styles.centerText}>
+          {gone
+            ? 'It may have been removed, or it belongs to another account.'
+            : (loadFailure?.message ?? UNREACHABLE_COPY)}
+        </Text>
+        {retryable && (
+          <Pressable style={styles.retryBtn} onPress={() => load()} testID="layover-load-retry">
+            <Text style={styles.retryBtnText}>Try again</Text>
+          </Pressable>
+        )}
         <Pressable style={styles.backLink} onPress={() => router.back()}>
           <Text style={styles.backLinkText}>Go back</Text>
         </Pressable>
@@ -557,6 +681,8 @@ export default function LayoverDashboardScreen() {
             <LayoverRecsSection
               recs={recs}
               loading={recsLoading}
+              error={recsError}
+              onRetry={() => { setRecsLoading(true); void load(true); }}
               canPlan={!!canEdit}
               addedRecIds={addedRecIds}
               addingRecId={addingRecId}
@@ -585,12 +711,20 @@ export default function LayoverDashboardScreen() {
               offline={overview.offlineBundle ?? null}
               nowMs={nowMs}
             />
+            {/* The overview's `othersInCity` is a SECOND count, from the
+                overview route's own `disclosePresence` call. It stays as the
+                fallback it always was, and it is passed in UNGUARDED on
+                purpose: `degraded` and `withheld` travel with it, and the card
+                is the one place that decides whether a count may be claimed
+                (`LayoverPeopleSection`, `unmeasured` / `withheldByChoice`). A
+                second copy of that decision here was behaviourally identical
+                and untestable — a surviving mutation, which is the signal that
+                a branch is not load-bearing. One decision, in one place. */}
             <LayoverPeopleSection
               city={city ?? null}
               shareEnabled={overview.share.enabled}
               shareBusy={shareBusy}
-              presenceCount={presence.count || overview.share.othersInCity}
-              travelers={presence.travelers}
+              presence={{ ...presence, count: presence.count || overview.share.othersInCity }}
               buddies={buddies}
               canEdit={!!canEdit}
               onToggleShare={handleToggleShare}

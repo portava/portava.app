@@ -173,8 +173,8 @@ function overview() {
 // the server suite (src/test/layoverCompletionStamp.test.ts, which drives the
 // real router). Here the claim is about what the SCREEN hands it.
 jest.mock('../../../src/services/layover', () => ({
-  getLayoverOverview: jest.fn(async () => (global as any).__overview),
-  getRecommendations: jest.fn(async () => []),
+  getLayoverOverview: jest.fn(async () => ({ ok: true, overview: (global as any).__overview })),
+  getRecommendations: jest.fn(async () => ({ ok: true, recommendations: [] })),
   getLayoverBuddies: jest.fn(async () => ({ city: 'Bangkok', buddies: [] })),
   getLayoverPresence: jest.fn(async () => ({ sharing: false, count: 0, travelers: [] })),
   addStopFromRecommendation: jest.fn(async () => null),
