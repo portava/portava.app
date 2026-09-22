@@ -13,6 +13,7 @@ import {
 } from "../lib/highlightPermissions";
 import {
   readResurfacingSuppressionsForOwners,
+  controlSetter,
   isSuppressed,
   unenforceableControls,
   FEED_ENFORCEABLE_CONTROLS,
@@ -256,9 +257,22 @@ function describeLifetimeFields(row: any, classProjected: boolean): Record<strin
 function applyResurfacingControls<T extends { id: string; owner_id: string }>(
   rows: T[],
   set: ResurfacingSuppressions,
+  viewerSet: ResurfacingSuppressions,
   log: { error: (obj: unknown, msg: string) => void } | undefined,
   where: string,
 ): T[] {
+  // The VIEWER's own set is read with the same three postures and the same
+  // fail-closed rule. It is separate from the owners' set because the two
+  // answer different questions — see `controlSetter` — and merging them is
+  // what let one user's control govern every user's feed (census H89).
+  if (viewerSet.state === "unreadable") {
+    log?.error(
+      { reason: viewerSet.reason, where },
+      "highlights: §11 viewer resurfacing controls unreadable — suppressing every candidate rather than " +
+        "resurfacing someone this viewer asked not to see",
+    );
+    return [];
+  }
   if (set.state === "absent") {
     log?.error(
       { reason: set.reason, where },
@@ -286,8 +300,12 @@ function applyResurfacingControls<T extends { id: string; owner_id: string }>(
 
   return rows.filter((h) => {
     for (const c of FEED_ENFORCEABLE_CONTROLS) {
+      // WHOSE row governs this control. `feedSubjectScope` says which id to
+      // match; `controlSetter` says whose stored rows to match it against, and
+      // until it existed both were taken from the owners' set.
+      const from = controlSetter(c) === "viewer" ? viewerSet : set;
       const subject = feedSubjectScope(c) === "highlight" ? h.id : h.owner_id;
-      if (isSuppressed(set, c, subject)) return false;
+      if (isSuppressed(from, c, subject)) return false;
     }
     return true;
   });
@@ -1261,11 +1279,16 @@ router.get("/highlights/active", async (req, res) => {
 
   // §11 — this feed is PROACTIVE resurfacing, so the owner's resurfacing
   // controls apply to it. Read for the owners on the page, one query.
-  const suppressed = await readResurfacingSuppressionsForOwners(
-    sc,
-    visible.map((h: any) => h.owner_id as string),
+  // TWO reads, because there are two setters. The owners' set carries the
+  // controls they set about their own records; the viewer's set carries the
+  // person-scoped controls THEY set about other people. See `controlSetter`.
+  const [suppressed, viewerSuppressed] = await Promise.all([
+    readResurfacingSuppressionsForOwners(sc, visible.map((h: any) => h.owner_id as string)),
+    readResurfacingSuppressionsForOwners(sc, [user.id]),
+  ]);
+  const surviving = applyResurfacingControls(
+    visible as any[], suppressed, viewerSuppressed, req.log, "GET /highlights/active",
   );
-  const surviving = applyResurfacingControls(visible as any[], suppressed, req.log, "GET /highlights/active");
 
   if (surviving.length === 0) {
     res.status(200).json({ highlights: [] });
@@ -1276,7 +1299,7 @@ router.get("/highlights/active", async (req, res) => {
   // The policy read doubles as the location-precision read below.
   const policies = await readProjectionPolicies(sc, surviving.map((h: any) => h.id as string));
   const consented = filterProjectable(
-    surviving as any[], user.id, "proactive_resurfacing", { controls: suppressed, policies }, req.log, "GET /highlights/active",
+    surviving as any[], user.id, "proactive_resurfacing", { controls: suppressed, viewerControls: viewerSuppressed, policies }, req.log, "GET /highlights/active",
   );
 
   if (consented.length === 0) {
@@ -2600,17 +2623,19 @@ router.get("/highlights/following-feed", async (req, res) => {
   // computed from a page whose length no longer means "full". Suppress, then
   // cut, then derive the cursor — the same reason the visibility filter runs
   // before the slice above.
-  const suppressed = await readResurfacingSuppressionsForOwners(
-    sc,
-    permitted.map((h: any) => h.owner_id as string),
+  const [suppressed, viewerSuppressed] = await Promise.all([
+    readResurfacingSuppressionsForOwners(sc, permitted.map((h: any) => h.owner_id as string)),
+    readResurfacingSuppressionsForOwners(sc, [user.id]),
+  ]);
+  const surviving = applyResurfacingControls(
+    permitted as any[], suppressed, viewerSuppressed, req.log, "GET /highlights/following-feed",
   );
-  const surviving = applyResurfacingControls(permitted as any[], suppressed, req.log, "GET /highlights/following-feed");
 
   // 5c. §10 consent, ALSO before the page is cut, for the same reason. The
   // policy read is over the pre-slice set and is reused for the location clamp.
   const policies = await readProjectionPolicies(sc, surviving.map((h: any) => h.id as string));
   const consented = filterProjectable(
-    surviving as any[], user.id, "proactive_resurfacing", { controls: suppressed, policies }, req.log, "GET /highlights/following-feed",
+    surviving as any[], user.id, "proactive_resurfacing", { controls: suppressed, viewerControls: viewerSuppressed, policies }, req.log, "GET /highlights/following-feed",
   );
 
   const visible = feedLimit != null ? consented.slice(0, feedLimit) : consented;
