@@ -1581,6 +1581,7 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/lib/mapTravelers.ts",
     "artifacts/api-server/src/services/telegraph/",
     "artifacts/api-server/src/routes/nearbyReachable.ts",
+    "artifacts/api-server/src/migrations/2998_nearby_reachable_flag.sql",
     "artifacts/api-server/src/routes/location.ts",
     "artifacts/api-server/src/routes/index.ts",
     "artifacts/api-server/src/test/proximityBuckets.test.ts",

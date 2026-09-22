@@ -8086,9 +8086,11 @@ measures only the rows it names, at `e43fc628a` plus the commits below.
 
 Seven rows move, all `N → W`, and none moves to `C`. The reason is the same for
 all seven and is stated once here rather than seven times: the surface built
-below is **dark**. `nearby_reachable_enabled` has no `feature_flags` row on any
-deployment, `isFlagEnabled` answers false for an absent row, and no client calls
-the route. A capability nobody can reach is built, not correct.
+below is **dark**. `nearby_reachable_enabled` is seeded FALSE by
+`migrations/2998_nearby_reachable_flag.sql`, which is applied to no database, so
+it has no `feature_flags` row on any deployment; `isFlagEnabled` answers false
+for an absent row exactly as it does for a false one, and no client calls the
+route. A capability nobody can reach is built, not correct.
 
 ### 31.1 What was built, and where
 
@@ -8275,8 +8277,13 @@ merely present.
 
 Stated plainly, because a reader must not have to discover it:
 
-1. **The surface is dark.** `nearby_reachable_enabled` exists in no migration
-   and on no database. Every row above is W for this reason before any other.
+1. **The surface is dark.** `nearby_reachable_enabled` is seeded FALSE by
+   `migrations/2998_nearby_reachable_flag.sql`, which is applied to NO database
+   — so the row does not exist on any deployment. The migration exists because
+   `check-flag-polarity.mjs` refuses a flag read by code and created by no
+   migration, and because an explicit FALSE is a decision on the record where an
+   absent row is the absence of one. Every row above is W for this reason before
+   any other.
 2. **The precise-location binding is not durable.** It lives in the API
    process with a 60-minute TTL. After a restart, or on a second instance, every
    precise share degrades to approximate until the owning device publishes
