@@ -49,7 +49,7 @@ const CFG = { archiveRetentionDays: 365, deletedRecoveryDays: 30, engagementRete
 // ── a stories table double that applies the filters the route relies on ──────
 
 interface Store {
-  /** Every stories row this fake holds. `row` is the first, for the single-row cases. */
+  /** Every stories row this fake holds; the single-row cases pass a one-element array. */
   rows: any[];
   readError: any | null;
   /** Set true to make the update match nothing, as a concurrent purge would. */
@@ -171,11 +171,20 @@ function withAuth(sc: any) {
   return sc;
 }
 
-async function post(path: string) {
+/**
+ * A parsed HTTP reply. `body` is `any` because these helpers serve every route
+ * in this suite and the assertions below are what pin each shape — the same
+ * shape healthSchedulers.test.ts:68 uses for the same reason. The typecheck
+ * ratchet this satisfies is about FIXTURES describing rows production never
+ * emits, and those are `Store` below, which is typed.
+ */
+interface Reply { status: number; body: any }
+
+async function post(path: string): Promise<Reply> {
   const res = await fetch(`${base}${path}`, { method: "POST", headers: { "content-type": "application/json" } });
   return { status: res.status, body: await res.json().catch(() => null) };
 }
-async function get(path: string) {
+async function get(path: string): Promise<Reply> {
   const res = await fetch(`${base}${path}`);
   return { status: res.status, body: await res.json().catch(() => null) };
 }
@@ -340,7 +349,7 @@ describe("retentionDatesFor", () => {
 });
 
 describe("GET /stories/retention-policy", () => {
-  beforeEach(() => { caller = OWNER; _setTestClient(withAuth(client({ row: null, readError: null, updateMatchesNothing: false, triggerMissing: false, updates: [] })), true); });
+  beforeEach(() => { caller = OWNER; _setTestClient(withAuth(client({ rows: [], readError: null, updateMatchesNothing: false, triggerMissing: false, updates: [] })), true); });
 
   it("is reachable through the composed router and is not captured by /stories/:id", async () => {
     const res = await get("/api/stories/retention-policy");
