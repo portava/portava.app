@@ -355,9 +355,53 @@ viewer sent it** —
 
 That satisfies both rules exactly, with no widening: the rejoiner gets back
 precisely their own messages and nothing else, and the gap stays denied for
-every other sender. It costs a predicate in each of the five read paths rather
-than one line in a migration, which is the honest price of a boundary a single
-timestamp cannot express.
+every other sender. It costs a predicate on the read path rather than one line
+in a migration, which is the honest price of a boundary a single timestamp
+cannot express.
+
+#### What that costs, measured rather than estimated
+
+An earlier draft of this section priced it at *"a predicate in each of the five
+read paths"*. **That number was wrong, and wrong in a way that matters**, so it
+is corrected here rather than edited away. Counted over
+`artifacts/api-server/src`, excluding tests and the module that defines it:
+
+  * `withinWindow` (`services/groupChatHistoryBound.ts:93#export function withinWindow`)
+    is called from **31 sites in 13 files** — `routes/telegraphCoordination.ts`
+    alone holds 12, and `routes/messaging.ts`, `routes/telegraphLifecycle.ts`,
+    `routes/telegraphMemory.ts`, `routes/telegraphKinds.ts`,
+    `routes/telegraphStream.ts`, `routes/groupChat.ts`, `lib/mediaAccess.ts`,
+    `compass/TelegraphConversationTools.ts`,
+    `services/telegraph/coordinationSessions.ts`,
+    `services/telegraph/savedMessages.ts`,
+    `domain/telegraph/contracts/conversationMembership.ts` and
+    `domain/telegraph/replay/replaySimulator.ts` hold the rest.
+  * **That is the good news**: it is ONE predicate, so the carve-out is one
+    function, and all 31 sites inherit it without being touched. The five-path
+    figure understated the reach by six times and would have made the fix look
+    like a rewrite.
+
+**The bad news is the second layer, which the five-path figure missed entirely.**
+Fourteen of those paths ALSO push the bound into the query as
+`.gte("created_at", <bound>)` before the predicate ever runs —
+`services/telegraphSearch.ts:177`, `services/telegraph/coordinationSessions.ts:115`,
+`compass/TelegraphConversationTools.ts:215` and `:396`,
+`routes/telegraphLifecycle.ts:531`, `routes/telegraphMemory.ts:266`,
+`routes/telegraphKinds.ts:152`, and six in `routes/telegraphCoordination.ts`
+(`:205`, `:257`, `:670`, `:884`, `:993`, `:1092`, `:1497` — seven). **A carve-out
+written only in `withinWindow` would be silently defeated at every one of them**:
+the rejoiner's own rows are discarded by PostgREST before any JavaScript sees
+them, so the fix would pass its unit tests and change nothing a user
+experiences on those surfaces. Each pre-filter has to be relaxed to an `.or(...)`
+carrying the same two clauses, or dropped so the predicate decides alone —
+a choice per site between a wider fetch and a correct one.
+
+So the real price is: one predicate change, plus fourteen query sites that must
+be relaxed in the same commit or the change is a no-op where it is most
+visible (search, coordination, memory, the Compass tools). It is still small
+enough to do in one pass, and it is NOT the single-line migration patch the
+trigger invites. **Nothing here changes the recommendation; it changes what
+accepting it commits to, which is what an owner needs before answering.**
 
 **Until that is settled the flag stays off.** It already is, for the deploy
 reason above; this is a second, independent reason, and it does not expire when
