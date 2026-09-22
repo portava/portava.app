@@ -52,7 +52,7 @@ import {
   describeHighlightLifecycle,
   type HighlightLifetimeClass,
 } from "../services/highlights/highlightLifecycle.js";
-import { pinnedFirst } from "../services/highlights/highlightRanking.js";
+import { pinnedFirst, rankHighlightRows } from "../services/highlights/highlightRanking.js";
 import {
   verifyMemorySources,
   linkHighlightSources,
@@ -1090,6 +1090,10 @@ router.get("/highlights/active", async (req, res) => {
   const { user } = auth;
 
   const limit = Math.min(Number(req.query.limit ?? 50), 100);
+  // ONE clock read for this request. It cuts expired rows out of the query
+  // below AND measures §12 recency, so the page cannot contain a row the query
+  // judged live and the ranker judges expired. See splitClockGuard.
+  const rankedAt = new Date(Date.now());
   const filterUserId = typeof req.query.userId === "string" && UUID.test(req.query.userId) ? req.query.userId : null;
   const filterCity = typeof req.query.city === "string" ? req.query.city : null;
   const filterTripId = typeof req.query.tripId === "string" && UUID.test(req.query.tripId) ? req.query.tripId : null;
@@ -1150,7 +1154,7 @@ router.get("/highlights/active", async (req, res) => {
     .select(activeProjection.columns)
     .is("deleted_at", null)
     .is("archived_at", null) // §21 Archive — see GET /users/:id/highlights
-    .or(NOT_EXPIRED())
+    .or(NOT_EXPIRED(rankedAt))
     .in("visibility", ["public", "travelers_nearby", "circle_only", "trip_only"])
     .order("created_at", { ascending: false })
     .limit(limit * 5); // over-fetch to account for permission filtering
@@ -1217,12 +1221,43 @@ router.get("/highlights/active", async (req, res) => {
   // survivable and exactly why it was dangerous: change the query and the two
   // silently disagree. canViewHighlight re-checks expiry, deletion and (new)
   // archive itself, so the guarantee no longer depends on the SELECT.
-  const visible = unblocked.filter((h: any) =>
+  const permitted = unblocked.filter((h: any) =>
     canViewHighlight(user.id, h as HighlightRecord, {
       viewerFollowsOwner: followingSet.has(h.owner_id as string),
       sharesTrip: sharesTripSet.has(h.owner_id as string),
     }),
-  ).slice(0, limit);
+  );
+
+  /* ------------------------------------------------------------------------
+   * §12 RANKING — and this is the caller census H99 and H101 say the model
+   * does not have.
+   *
+   * H99: "`rankHighlights` — §12's seven factors — has NO caller in
+   * `src/routes/` or `src/services/` outside its own module. Only `pinnedFirst`
+   * is wired." H101: "`DIVERSITY_DIMENSIONS` … Unreachable." H100 adds the
+   * third half: "there is also no automatic ranking on that surface to
+   * outrank — it is `ORDER BY created_at`."
+   *
+   * RANK THEN CUT, and the order of those two words is the design. Ranking
+   * AFTER `.slice(0, limit)` would reorder a page that `created_at DESC` had
+   * already chosen, so §12's top-ranked Highlight could have been discarded
+   * before the ranker ever saw it — a page that LOOKS considered and is not,
+   * which is precisely what highlightRanking.ts's own header warns against.
+   *
+   * WHAT THIS SURFACE CAN AND CANNOT DO is published on the wire below rather
+   * than assumed by the client: one of §12's six factors is measurable here
+   * (recency, from `created_at`) and two of its four diversity dimensions are
+   * keyable (person, venue). `trip` needs a column `public.highlights` does not
+   * have — the same one HIDE_TRIP needs, census H90 — and `activity` has no
+   * taxonomy at all.
+   *
+   * `rankedAt` is derived from ONE clock read, shared with the expiry cut in
+   * the query above. Two independent reads would let this page contain a row
+   * the query judged live and the ranker judges expired — the split
+   * `splitClockGuard` refuses, for this reason rather than for tidiness.
+   * ---------------------------------------------------------------------- */
+  const ranking = rankHighlightRows(permitted as any[], rankedAt);
+  const visible = ranking.ordered.slice(0, limit);
 
   // §11 — this feed is PROACTIVE resurfacing, so the owner's resurfacing
   // controls apply to it. Read for the owners on the page, one query.
@@ -1287,7 +1322,24 @@ router.get("/highlights/active", async (req, res) => {
     ...describeLifetimeFields(h, activeProjection.classProjected),
   }));
 
-  res.status(200).json({ highlights: result });
+  // §12's CEILING, on the wire — the same posture `consentEnforcement` takes
+  // for §10 and `unenforceableControls` for §11: the limit is a fact the server
+  // knows, so the server says it rather than letting a client infer that a page
+  // headed "ranked" was ranked on all six factors and all four dimensions.
+  res.status(200).json({
+    highlights: result,
+    ranking: {
+      factorsMeasured: ranking.factorsMeasured,
+      factorsUnmeasured: ranking.factorsUnmeasured,
+      diversityApplied: ranking.diversityApplied,
+      diversityUnresolvable: ranking.diversityUnresolvable,
+      pinnedCount: ranking.pinnedCount,
+      note:
+        "§12 ordering: pinned first, then recency, then a diversity pass. An unmeasured factor is " +
+        "excluded from the score rather than scored zero, and an unresolvable dimension is not " +
+        "constrained at all — `trip` needs a column public.highlights does not carry.",
+    },
+  });
 });
 
 /* ============================================================================
