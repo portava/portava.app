@@ -57,13 +57,33 @@
  * are already invisible to every reader, so there is no behaviour to roll back
  * to. A flag would only add a way to leave expired personal data in place.
  *
- * WHAT GATES IT INSTEAD is the schema. 2984 is applied to no database in this
- * repository's own capability snapshot, so `crewTablesPresent` probes before
- * every pass and a probe that fails for ANY reason — table missing, database
- * unreachable, permission refused, socket thrown — answers "absent" and the
- * DELETE is never attempted. Where the tables do not exist this scheduler is an
- * inert heartbeat, which is exactly what it should be until an operator applies
- * the migration. When they do, the next pass picks it up with no restart.
+ * WHAT GATES IT INSTEAD is the schema — but READ THE NEXT PARAGRAPH BEFORE
+ * RELYING ON THAT, because the obvious reading of it is wrong about production.
+ * `crewTablesPresent` probes before every pass, and a probe that fails for ANY
+ * reason — table missing, database unreachable, permission refused, socket
+ * thrown — answers "absent" and the DELETE is never attempted. Where the tables
+ * do not exist this scheduler is an inert heartbeat. When they appear, the next
+ * pass picks them up with no restart.
+ *
+ * 2984 IS APPLIED TO PRODUCTION. An earlier version of this header said it was
+ * "applied to no database in this repository's own capability snapshot", and
+ * that was FALSE when it was written: `layover_crews` and `layover_crew_members`
+ * are in the 2026-09-21 capture AND the 2026-09-22 one, and
+ * production-applied-migrations.json carries 2984_layover_crews at version
+ * 20260916115643. The sentence was inherited from 2984's own header, which was
+ * accurate on the day it was written and stopped being so when the migration
+ * was applied. A schema gate cannot be reasoned about from a migration file's
+ * recollection of itself; it has to be read from the capture.
+ *
+ * SO WHAT ACTUALLY HOLDS ON PRODUCTION TODAY IS EMPTINESS, NOT ABSENCE. Both
+ * crew tables exist there and both are EMPTY — measured 2026-09-22: 0 crews, 0
+ * members, so `expires_at <= now()` selects nothing and this sweep deletes
+ * nothing. That is a fact about the data, and unlike a schema gate it stops
+ * being true the moment Layover crews carry traffic. From that moment this
+ * scheduler deletes expired crews on production automatically, on its own
+ * cadence, with no flag. That is the intended behaviour and the paragraph below
+ * argues for it — but it should be entered deliberately rather than discovered,
+ * which is why it is written down here instead of left to a stale sentence.
  *
  * ── THE RESULT IS FOUR-WAY, NOT A BOOLEAN ────────────────────────────────────
  * `{ deleted: 0 }` was four different facts wearing one face: nothing was due,
