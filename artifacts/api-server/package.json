@@ -15,7 +15,6 @@
     "audit:shadow-append-only": "node --env-file-if-exists=.env --import tsx/esm src/scripts/auditShadowAppendOnly.ts",
     "audit:schema": "node --env-file-if-exists=.env --import tsx/esm src/scripts/auditMigrationsVsLive.ts",
     "audit:live-unexplained": "node --env-file-if-exists=.env --import tsx/esm src/scripts/auditLiveVsCanonical.ts",
-    "report:migration-inventory": "node --env-file-if-exists=.env --import tsx/esm src/scripts/reportMigrationInventory.ts",
     "check:frozen-dir": "node --import tsx/esm src/scripts/checkFrozenDir.ts",
     "check:async-handlers": "node --import tsx/esm src/scripts/checkAsyncHandlers.ts",
     "check:migration-prefixes": "node --import tsx/esm src/scripts/checkMigrationPrefixes.ts",
@@ -239,7 +238,8 @@
     "check:telegraph-inventory": "node --import tsx/esm src/scripts/generateTelegraphInventory.ts --check",
     "telegraph:inventory": "node --import tsx/esm src/scripts/generateTelegraphInventory.ts",
     "check:telegraph-package-boundaries": "node --import tsx/esm src/scripts/checkTelegraphPackageBoundaries.ts",
-    "test:future": "CLOCK_OFFSET_DAYS=${CLOCK_OFFSET_DAYS:-400} NODE_OPTIONS=\"--import ./scripts/clock-offset-preload.mjs\" pnpm run test"
+    "test:future": "CLOCK_OFFSET_DAYS=${CLOCK_OFFSET_DAYS:-400} NODE_OPTIONS=\"--import ./scripts/clock-offset-preload.mjs\" pnpm run test",
+    "report:migration-inventory": "node --env-file-if-exists=.env --import tsx/esm src/scripts/reportMigrationInventory.ts"
   },
   "dependencies": {
     "@opentelemetry/api": "^1.9.1",

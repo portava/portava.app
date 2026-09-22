@@ -22,31 +22,8 @@
  * file-vs-file comparison against it. No socket, no environment variable, so
  * it runs in the credential-free preflight lane and cannot be starved.
  *
- * CORRECTED 2026-09-22, because the sentence that stood here was false and was
- * quoted elsewhere as a standing fact. It read: "Production has NO migration
- * ledger (no schema_migration_ledger; Supabase's own schema_migrations stops at
- * 2272)". Both halves are wrong, and the second half is a TRAP rather than a
- * stale observation:
- *
- *   * production DOES have public.schema_migration_ledger — created
- *     2026-09-15, 465 rows on 2026-09-22, of which 20 have a 4-digit serial at
- *     or above 2890;
- *   * supabase_migrations.schema_migrations does not "stop at 2272". Its
- *     MAX(version) IS '2272', because that text column holds bare serials AND
- *     14-digit timestamps, and every timestamp sorts BELOW a four-digit serial.
- *     It holds 103 rows, 96 of them post-cutover timestamps.
- *
- * What remains TRUE, and is why this check still reads a snapshot rather than a
- * ledger: NEITHER table is an inventory. A dashboard apply writes no row in
- * either, the CLI writes only supabase_migrations, this repository's discipline
- * writes only schema_migration_ledger, and 378 of the hand ledger's 465 rows
- * are 'backfill' rows that assert a filename existed and never that it ran. So
- * "is migration N applied" still cannot be asked of production. "Does column X
- * exist" can, and that is the question that matters here.
- *
- * src/scripts/reportMigrationInventory.ts is the instrument for the other
- * question, and it reports ledger evidence and observed state separately rather
- * than answering it.
+ * NEITHER production ledger is an inventory (read THE LEDGER CORRECTION near the
+ * foot of this file), so "is migration N applied" cannot be asked there.
  *
  * ─── TWO KINDS OF ABSENT, KEPT APART ─────────────────────────────────────────
  *
@@ -239,33 +216,8 @@ function checkSnapshotFreshness(snapshotPath: string): string[] {
     problems.push("production-applied-migrations.json lists no migrations; the tripwire would never fire.");
     return problems;
   }
-  // ── THE WATERMARK MAY NOT BE A LEXICOGRAPHIC MAX BY ASSUMPTION ───────────
-  //
-  // This line used to read `versions.reduce((a, b) => (b > a ? b : a))` under
-  // the comment "Versions are zero-padded timestamps, so lexicographic order IS
-  // chronological." That is true of this file TODAY and is not enforced
-  // anywhere, and the same assumption about the same kind of column is what
-  // produced a false zero elsewhere: `supabase_migrations.schema_migrations`
-  // holds bare serials AND 14-digit timestamps in one text column, its
-  // MAX(version) on production is '2272' — a pre-cutover serial older than 96
-  // timestamp rows — and this file is documented as being taken FROM that
-  // table. One hand-added serial entry here and the max silently becomes a
-  // number from before the cutover, the comparison below can never fire, and
-  // the stale-snapshot tripwire goes quiet without failing.
-  //
-  // newestApply() refuses a mixed-format column instead of answering, so that
-  // state becomes a LOUD problem rather than a silent green. Strictly stricter:
-  // it cannot pass anything the old line failed.
-  const newestAnswer = newestApply(versions.map((v) => ({ version: v })));
-  if (!newestAnswer.ok) {
-    problems.push(
-      `production-applied-migrations.json has no newest version: ${newestAnswer.reason} ` +
-        "Until every entry uses one format, the stale-snapshot tripwire cannot fire and this check is " +
-        "grading a snapshot whose freshness is unestablished.",
-    );
-    return problems;
-  }
-  const newest = newestAnswer.value.version;
+  const newest = newestRecordedVersion(versions, problems); // never assumes one format
+  if (newest === null) return problems;
   if (newest > watermark) {
     const late = (applied.migrations ?? [])
       .filter((m: any) => String(m?.version ?? "") > watermark)
@@ -598,6 +550,72 @@ function main(): void {
     `OK — ${unguarded.length} unguarded (all known), ${guarded.length} guarded, ${latent.length} latent; ${Date.now() - started} ms.` +
       (unguarded.length ? ` ${unguarded.length} unguarded entries remain: each is a feature that is ON and dead in production.` : ""),
   );
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// THE LEDGER CORRECTION  (2026-09-22)
+// ═════════════════════════════════════════════════════════════════════════════
+//
+// THIS FILE'S HEADER USED TO SAY SOMETHING FALSE, and it was quoted elsewhere
+// as a standing fact. It read:
+//
+//   "Production has NO migration ledger (no schema_migration_ledger; Supabase's
+//    own schema_migrations stops at 2272)"
+//
+// Both halves are wrong, and the second half is a TRAP rather than a stale
+// reading. Measured read-only on production (ajrurzioarfkagpuxfnb) 2026-09-22:
+//
+//   public.schema_migration_ledger          EXISTS, created 2026-09-15, 465 rows,
+//                                           20 with a 4-digit serial >= 2890
+//   supabase_migrations.schema_migrations   103 rows, 96 of them post-cutover
+//                                           14-digit timestamps
+//   max(version) on that table              '2272'
+//
+// It does not "stop at 2272". Its MAXIMUM IS '2272' because that one text column
+// holds bare serials AND 14-digit timestamps, and text order sorts every
+// timestamp below a four-digit serial. The number was read correctly and meant
+// something else. src/scripts/lib/migrationInventoryCore.ts carries the full
+// reproduction, and src/scripts/reportMigrationInventory.ts is the instrument
+// for the question this script deliberately does not ask.
+//
+// WHAT REMAINS TRUE, and is why this script still grades a frozen snapshot
+// rather than reading a ledger: NEITHER TABLE IS AN INVENTORY. A Supabase
+// dashboard apply writes no row in either; the CLI writes only
+// supabase_migrations; this repository's own discipline writes only
+// schema_migration_ledger; and 378 of the hand ledger's 465 rows are 'backfill'
+// rows that assert a filename existed when 2254 ran and never that it ran. So
+// "is migration N applied" still cannot be asked of production. "Does column X
+// exist" can, and that is the question that matters here.
+
+/**
+ * The newest version recorded in production-applied-migrations.json, or null
+ * with a problem pushed.
+ *
+ * THIS USED TO BE `versions.reduce((a, b) => (b > a ? b : a))` under the comment
+ * "Versions are zero-padded timestamps, so lexicographic order IS chronological."
+ * That is true of that file TODAY — all 126 entries are 14-digit — and is
+ * enforced nowhere, while the file is documented as being taken FROM
+ * supabase_migrations.schema_migrations, which is the column that is NOT
+ * single-format. One hand-added serial entry and the maximum silently becomes a
+ * number from before the cutover, the comparison at the call site can never
+ * fire, and the stale-snapshot tripwire goes quiet without ever failing.
+ *
+ * newestApply() refuses a mixed-format column instead of answering, so that
+ * state becomes a LOUD problem. Strictly stricter: it cannot pass anything the
+ * old line failed.
+ */
+function newestRecordedVersion(
+  versions: readonly string[],
+  problems: string[],
+): string | null {
+  const answer = newestApply(versions.map((v) => ({ version: v })));
+  if (answer.ok) return answer.value.version;
+  problems.push(
+    `production-applied-migrations.json has no newest version: ${answer.reason} ` +
+      "Until every entry uses one format, the stale-snapshot tripwire cannot fire and this check is " +
+      "grading a snapshot whose freshness is unestablished.",
+  );
+  return null;
 }
 
 main();
