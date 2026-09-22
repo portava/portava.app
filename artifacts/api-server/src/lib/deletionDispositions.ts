@@ -206,6 +206,14 @@ export const ERASED_BY_CASCADE: readonly string[] = [
   "memory_projections",
   "memory_events",
   "memory_feedback",
+  // Provenance spine (migration 2320). Same fate and the same mechanism as the
+  // three above: erase_memory_for_user was EXTENDED rather than duplicated, so
+  // one call still purges everything. memory_evidence is deleted FIRST and by
+  // user_id directly — not by traversing episodes and not by leaning on the
+  // episode cascade — so a memory the user forgets cannot survive in evidence
+  // even if the episode delete were to fail.
+  "memory_episodes",
+  "memory_evidence",
 ];
 
 /**
@@ -651,6 +659,10 @@ export const POST_BASELINE_TABLES: readonly string[] = [
   "memory_projections",
   "memory_events",
   "memory_feedback",
+  // Provenance spine, added by migration 2320 (post-baseline). Classified in
+  // ERASED_BY_CASCADE above.
+  "memory_episodes",
+  "memory_evidence",
   "intel_observations",
   "intel_claims",
   "intel_evidence",

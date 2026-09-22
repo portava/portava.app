@@ -130,13 +130,13 @@
 > ### One thing this file previously got wrong
 >
 > **L163's evidence was false.** It said `layover_events` and `layover_sessions`
-> are "at least covered by the erasure cascade (`lib/deletionDispositions.ts:356-357`)".
-> Those lines are inside **`UNCLASSIFIED_BACKLOG`** (`src/lib/deletionDispositions.ts:270`,
-> entries at `:370-371`), whose own header says "the data survives deletion and no
+> are "at least covered by the erasure cascade (`lib/deletionDispositions.ts:364-365`)".
+> Those lines are inside **`UNCLASSIFIED_BACKLOG`** (`src/lib/deletionDispositions.ts:278`,
+> entries at `:378-379`), whose own header says "the data survives deletion and no
 > one has said whether it should" (`:35-38`). `layover_plan_stops` and
-> `layover_recommendations` are in `DENOMINATOR_CORRECTION_BACKLOG` (`:544`,
-> entries `:571-572`) and `airport_profiles` is also in `UNCLASSIFIED_BACKLOG`
-> (`:281`). `AccountDeletionService.ts` names no layover table. **No layover row
+> `layover_recommendations` are in `DENOMINATOR_CORRECTION_BACKLOG` (`:552`,
+> entries `:579-580`) and `airport_profiles` is also in `UNCLASSIFIED_BACKLOG`
+> (`:289`). `AccountDeletionService.ts` names no layover table. **No layover row
 > is erased by account deletion today.** The verdict stays `W`; the reason is
 > worse than written. This is the same miscitation the Highlights census made at
 > H84, from the same file — see `census-highlights-memories.md` §A.
@@ -1402,7 +1402,7 @@ the end of this section.
 | L240 | N | W | A deterministic replay test exists (`test/layoverFeasibilityRecord.test.ts`) but over synthesised inputs. No session is recorded, so there is nothing to replay *from* (2700 unapplied). |
 | L262 | W | **C** | Both halves now exist. The ladder is explicit and a **failed read is now distinguished from a missing row and refuses** rather than silently substituting generic buffers (`routes/airport.ts:135-160` — `error` is bound, logged, and returns `ok:false`). Confidence is reduced on the fallback: a fallback profile is `STATIC_DEFAULT` at fallback level 3, a real row is `AIRPORT_PROFILE` at level 2, and an unverified airport is `LOW` (`LayoverFeasibility.ts:414-421`) — which, at 0 verified production airports, is every session. |
 | L293 | N | W | The three substitutions are all still there — `estimateTravelTime` 15/25 (`LayoverRecommendationService.ts:212-216`), `estimateActivityTime` 30/60/90, and the fictitious `travelTimeMin: 20 / activityTimeMin: 30` probe on `GET /:id/safety` (`routes/airport.ts:791-796`). What changed is that they no longer *pretend*: the probe is a named input of the certified record and covered by its `inputHash`, and its provenance is published (`travelTimeSource`, `routes/airport.ts:807`) and classified `STATIC_DEFAULT` / `LOW` / fallback level 3 (`LayoverFeasibility.ts:399-412`). Substitution disclosed, not removed. |
-| L163 | W | W | **Evidence corrected, verdict unchanged.** `layover_events` and `layover_sessions` are in `UNCLASSIFIED_BACKLOG` (`lib/deletionDispositions.ts:370-371#layover_events`), not the erasure cascade; `layover_plan_stops` and `layover_recommendations` are in `DENOMINATOR_CORRECTION_BACKLOG` (`:571-572`); `airport_profiles` is in `UNCLASSIFIED_BACKLOG` (`:281`). `AccountDeletionService.ts` names no layover table. No layover row is erased by account deletion. |
+| L163 | W | W | **Evidence corrected, verdict unchanged.** `layover_events` and `layover_sessions` are in `UNCLASSIFIED_BACKLOG` (`lib/deletionDispositions.ts:378-379#layover_events`), not the erasure cascade; `layover_plan_stops` and `layover_recommendations` are in `DENOMINATOR_CORRECTION_BACKLOG` (`:579-580`); `airport_profiles` is in `UNCLASSIFIED_BACKLOG` (`:289`). `AccountDeletionService.ts` names no layover table. No layover row is erased by account deletion. |
 
 ### Rows I looked at and deliberately did NOT move
 
