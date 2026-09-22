@@ -1057,6 +1057,18 @@ export function isMissingTranslationConfidenceColumn(err: unknown): boolean {
   if (!err || typeof err !== 'object') return false;
   const code = (err as { code?: unknown }).code;
   if (code === '42703' || code === 'PGRST204') return true;
+  // A code the database DID give us, and that is not one of the two above, is a
+  // DIFFERENT failure — whatever its text happens to say. Postgres spells a
+  // column-level privilege refusal `permission denied for column confidence of
+  // relation message_translations` (42501), and a not-null violation `null
+  // value in column "provider_version" violates not-null constraint` (23502);
+  // both match the two patterns below word for word. Reading either as a
+  // pending migration would latch the process-wide flag on a database where
+  // 2991 IS applied, and every later translation in that process would silently
+  // lose its confidence reading for a reason that was never about the schema.
+  // So the text is consulted ONLY for the codeless shapes — the errors
+  // supabase-js passes through without a SQLSTATE.
+  if (typeof code === 'string' && code.length > 0) return false;
   const message = String((err as { message?: unknown }).message ?? '');
   return /(confidence|provider_version)/.test(message) && /column|schema cache/i.test(message);
 }
