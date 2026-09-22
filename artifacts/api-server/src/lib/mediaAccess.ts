@@ -771,3 +771,63 @@ async function decide(
   // 4. Nothing references it → orphan/unknown → DENY (fail-closed).
   return false;
 }
+
+/**
+ * The instant after which a NON-OWNER's access to this object must stop, as an
+ * epoch millisecond value, or `null` when no time boundary applies.
+ *
+ * This exists because a signed URL outlives the request that minted it.
+ * `authorizeMediaAccess` is a decision about NOW; a signed URL is a bearer
+ * token that keeps working for its whole TTL, so a viewer who asks one second
+ * before a story expires holds a working link long after the story stopped
+ * being theirs to see. Until now the expiry sweep deleted the bytes, and that
+ * deletion — not the authorization layer — is what actually ended the token's
+ * usefulness. Stories are now preserved for the owner's archive, so the
+ * boundary has to be enforced where it is claimed: on the token's lifetime.
+ *
+ * Returns null for the OWNER, deliberately. The archive is owner-only and has
+ * no expiry; clamping the owner's own link would break the thing #461 exists
+ * to build.
+ *
+ * A read failure returns `Date.now()` — the most restrictive answer — rather
+ * than null. This file's posture everywhere else is that an unreadable table
+ * denies, and a null here would silently restore the full TTL, which is the
+ * exact failure this function exists to prevent.
+ */
+export async function mediaAccessDeadline(
+  sc: SupabaseClient,
+  viewerId: string,
+  bucket: string,
+  path: string,
+): Promise<number | null> {
+  if (bucket !== "post-media") return null;
+
+  const owner = ownerFromPath(path);
+  if (owner && owner === viewerId) return null; // owner archive: no boundary
+
+  const publicUrl = publicUrlFor(bucket, path);
+  const urlForms = [publicUrl, `${bucket}/${path}`].filter(
+    (u): u is string => typeof u === "string" && u.length > 0,
+  );
+  if (urlForms.length === 0) return Date.now();
+
+  try {
+    const { data, error } = await sc
+      .from("stories")
+      .select("owner_id, state, expires_at")
+      .in("media_url", urlForms)
+      .limit(1);
+    if (error) return Date.now();
+    const story = (data as any[])?.[0];
+    if (!story) return null; // not story media — no story boundary applies
+    if (story.owner_id === viewerId) return null; // owner archive
+    // A saved story has been promoted into a Highlight and is governed by the
+    // highlight's own expiry, not the story's 24h window.
+    if (story.state === "saved") return null;
+    if (!story.expires_at) return null;
+    const at = new Date(story.expires_at).getTime();
+    return Number.isFinite(at) ? at : Date.now();
+  } catch {
+    return Date.now();
+  }
+}
