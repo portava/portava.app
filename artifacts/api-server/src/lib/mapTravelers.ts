@@ -78,9 +78,19 @@ export interface LocationPrefsRow {
 const FRESH_LIVE_MS = 15 * 60 * 1000;
 const FRESH_MAX_MS = 60 * 60 * 1000;
 /** ~11 km cells — city-precision fallback when no canonical centroid exists. */
-const CITY_GRID_DEG = 0.1;
-/** ~2.2 km cells — the FINEST precision the map ever shows. */
-const AREA_GRID_DEG = 0.02;
+export const CITY_GRID_DEG = 0.1;
+/**
+ * ~2.2 km cells — the FINEST precision the map ever shows.
+ *
+ * EXPORTED because lib/proximityBuckets.ts derives its narrowest bucket edge
+ * from it: a proximity bucket whose edge were finer than the cell a position
+ * was snapped into would let bucket membership resolve that position more
+ * precisely than the coarsened coordinate it was computed from, which is the
+ * leak T25 exists to prevent. Keeping the number in one place means shrinking
+ * the grid cannot silently outrun the bucket ladder — the relation is asserted
+ * in src/test/proximityBuckets.test.ts.
+ */
+export const AREA_GRID_DEG = 0.02;
 const MAX_RESULTS = 100;
 const SCAN_LIMIT = 250;
 const CAND_TTL_MS = 20_000;
