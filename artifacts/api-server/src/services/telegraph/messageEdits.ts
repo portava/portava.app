@@ -114,22 +114,17 @@ export function nextEditVersion(existing: ReadonlyArray<{ version: number }>): n
   return max + 1;
 }
 
-/** The row an edit writes. */
-export function editHistoryRow(input: {
-  messageId: string;
-  editorId: string;
-  version: number;
-  previousBody: string | null;
-  editedAt: string;
-}): Record<string, unknown> {
-  return {
-    message_id: input.messageId,
-    editor_id: input.editorId,
-    version: input.version,
-    previous_body: input.previousBody,
-    edited_at: input.editedAt,
-  };
-}
+/*
+ * `editHistoryRow` USED TO LIVE HERE and is deliberately gone rather than
+ * unexported. It mapped five camelCase inputs onto five snake_case columns for
+ * exactly one call site, and its only effect on the tree was to make that
+ * write's payload unresolvable to `check:write-path-columns` — a whole row of
+ * column names nothing verified against the live schema, on a table whose
+ * migration (2811) no database has run. The columns are now written literally
+ * at the insert in `routes/messaging.ts`. Reinstating a helper here is fine the
+ * day a second writer exists; until then it costs a verification and buys
+ * nothing.
+ */
 
 /** Newest version first — the order a history sheet reads in. */
 export function orderEditsNewestFirst(rows: ReadonlyArray<StoredEdit>): EditVersion[] {

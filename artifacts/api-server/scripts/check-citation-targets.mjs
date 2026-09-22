@@ -416,7 +416,18 @@ import {
  * carried. That lane measured 205 against a tree without this branch's
  * messaging.ts repoints or lane-domain's `domain/telegraph/` ones; this branch
  * measured 189 without its fourteen. Neither number survives the union. */
-export const MAX_DEAD_TARGETS = 188;
+/* LOWERED 2026-09-22 while clearing `check:write-path-columns` on PR 521. Three
+ * writes/reads that lanes had left computed were made statically resolvable
+ * (two `membershipSelect(...)` select lists, and the `message_edits` insert
+ * whose whole payload came from a one-caller helper). That shifted
+ * `routes/messaging.ts` again and moved 88 anchored citations, each repointed
+ * to the line doc-citations names, plus 24 UNANCHORED ones that had been landing
+ * on real-but-wrong code for a long time — `:2378` for an Edited marker that is
+ * at `:2502`, `:1855` for a send insert at `:2804`, `:708` for an origin write
+ * at `:782`. Those 24 were repointed by reading the claim and every one gained
+ * an `#anchor`, which is what takes them out of this check's population for
+ * good. 188 -> 186. */
+export const MAX_DEAD_TARGETS = 186;
 
 /** Pinned to a commit by its own declaration; its lines must not track HEAD. */
 const PINNED_DOCS = new Set(['docs/architecture/mobile-reachability-ledger.md']);

@@ -1342,9 +1342,17 @@ router.get(
     const since = new Date(Date.now() - days * 86_400_000).toISOString();
 
     const boundOn = await historyBoundEnabled(client);
-    const { data: memberships, error: memberErr } = await client
-      .from("message_thread_members")
-      .select(membershipSelect("thread_id, user_id, left_at", boundOn))
+    // Two literal select lists rather than `membershipSelect(...)`:
+    // check:write-path-columns resolves select lists STATICALLY, so a computed
+    // one is a blind spot where none of these columns is verified against the
+    // live schema. `membershipSelect` remains the single definition of what the
+    // bound adds; this site spells the answer out where the checker can read it.
+    const membershipQuery = boundOn
+      ? client
+          .from("message_thread_members")
+          .select("thread_id, user_id, left_at, visible_from_at")
+      : client.from("message_thread_members").select("thread_id, user_id, left_at");
+    const { data: memberships, error: memberErr } = await membershipQuery
       .eq("user_id", user.id)
       .is("left_at", null)
       .limit(SESSIONS_MAX_THREADS);

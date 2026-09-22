@@ -72,7 +72,6 @@ import {
 import { shouldRetranslateOnLanguageChange } from '../lib/retranslateGate';
 import {
   EDIT_HISTORY_UNAVAILABLE,
-  editHistoryRow,
   isEditHistorySchemaAbsent,
   nextEditVersion,
   orderEditsNewestFirst,
@@ -3619,9 +3618,20 @@ router.patch('/threads/:threadId/messages/:messageId', async (req, res) => {
     return;
   } else {
     const version = nextEditVersion(((existingEdits ?? []) as any[]).map((e) => ({ version: Number(e.version) })));
+    // The columns are named HERE rather than built by a helper. A payload the
+    // checker cannot resolve statically is a write it cannot verify against the
+    // live schema at all — a whole row of unverified column names, which is the
+    // worst kind of blind spot for a table this new. There is one call site, so
+    // the helper was buying nothing but that blindness.
     const { error: insertEditErr } = await sc
       .from('message_edits')
-      .insert(editHistoryRow({ messageId, editorId: user.id, version, previousBody, editedAt: now }));
+      .insert({
+        message_id: messageId,
+        editor_id: user.id,
+        version,
+        previous_body: previousBody,
+        edited_at: now,
+      });
 
     if (insertEditErr && isEditHistorySchemaAbsent(insertEditErr)) {
       historyUnavailable = true;
@@ -3743,9 +3753,17 @@ router.get('/threads/:threadId/messages/:messageId/edits', async (req, res) => {
   if (!sc) { sendError(res, 'server_not_configured', 'Service client not ready'); return; }
 
   const boundOn = await historyBoundEnabled(sc);
-  const { data: membership, error: membershipErr } = await sc
-    .from('message_thread_members')
-    .select(membershipSelect('user_id, left_at', boundOn))
+  // Two literal select lists rather than `membershipSelect(...)`, for the reason
+  // the four reads in groupChat.ts/telegraphStream.ts already give:
+  // check:write-path-columns resolves select lists STATICALLY, so a computed one
+  // is a blind spot where none of these columns is verified against the live
+  // schema. `membershipSelect` is still the single definition of what the bound
+  // adds and is still exercised by its own unit tests; this site just spells the
+  // answer out where the checker can read it.
+  const membershipQuery = boundOn
+    ? sc.from('message_thread_members').select('user_id, left_at, visible_from_at')
+    : sc.from('message_thread_members').select('user_id, left_at');
+  const { data: membership, error: membershipErr } = await membershipQuery
     .eq('thread_id', threadId)
     .eq('user_id', user.id)
     .maybeSingle();
