@@ -7898,3 +7898,97 @@ production. It is rehearsed on a throwaway database and nothing more. It is also
 not a precondition for correctness: without it the fanout returns the same rows,
 more slowly. It is a precondition for enabling the drain at any volume, which is
 why it is written before the flag is ever turned on rather than after.
+
+## §43 — the §20 decision ledger had no producer at all, and the surface question BUILD-BACKLOG asked is answered
+
+### §43.1 The measurement
+
+`persistDecision` — the whole §20 write path, with its immutability probe, its
+three-valued outcome and its two child tables
+(`artifacts/api-server/src/services/layover/LayoverDecisionStore.ts:387#persistDecision`)
+— had exactly ONE caller: `GET /airport/sessions/:id/safety`
+(`artifacts/api-server/src/routes/airport.ts:1091#persistDecision`).
+
+**Nothing calls that endpoint.** `getSessionSafety`
+(`travel-buddy-standalone/src/services/layover.ts:956#getSessionSafety`) has one
+importer, `LayoverRecommendationScreen.tsx`, and that component is imported by
+nothing — a grep over `app/` and `src/` returns no hits outside the file itself.
+The live dashboard builds its entire "can I leave?" answer from
+`GET /:id/overview`.
+
+So the ledger, the flag, the unique index and the immutability trigger all
+existed, and **not one row could ever have been written by a running app**. That
+is a stronger and more specific statement than "the screen is orphaned", which
+is how this had been recorded until now.
+
+### §43.2 The ruling, in the words the question was asked in
+
+`docs/BUILD-BACKLOG.md` posed it exactly: *"The fix is to decide which surface
+owns the safety read, not to import the orphan."*
+
+**`GET /:id/overview` owns it.** Three facts decide it, and none of them is a
+preference:
+
+1. It is the call the dashboard makes, so it is the call that TELLS the
+   traveller — and §20's requirement is to record what a traveller was told.
+2. It already certifies the same record through the same function
+   (`artifacts/api-server/src/routes/airport.ts:2220#certifySessionFeasibility`),
+   and serves `advice.verdict` straight off it. There is no second derivation to
+   introduce.
+3. Mounting the orphan instead was already rejected, with a reason that still
+   holds: it re-derives feasibility, and a duplicate time-budget derivation is
+   what got `LayoverReturnPanel.tsx` deleted at `a718beb5`.
+
+The wiring is one call on the line that already computes the record
+(`artifacts/api-server/src/routes/airport.ts:2224#persistDecision`), and the
+response publishes `snapshotId` and the same three-valued `persisted` shape
+`/safety` publishes. `/safety` keeps its own call: it remains a correct endpoint
+and its cases still pass — what changed is that it is no longer the only one.
+
+### §43.3 Why adding a write to the busiest read on the surface is safe, measured
+
+With `layover_decision_persistence_enabled` off — and it is ABSENT from
+production, because 2992 is unapplied — `persistDecision` reads the flag and
+returns `persistence_disabled` without touching another table
+(`artifacts/api-server/src/services/layover/LayoverDecisionStore.ts:393#DECISION_PERSISTENCE_FLAG`).
+That is asserted rather than assumed: a spy client records every table the
+request touches and the case fails if `layover_certified_computations`,
+`layover_time_budgets` or `layover_return_plans` appears. Mutation-tested — a
+single stray `.from("layover_time_budgets")` before the flag check turns it red.
+
+Four cases, all mutation-tested by removing the `/overview` call alone (cases 1,
+2 and 4 go red; case 3, which describes the disabled path, correctly does not):
+
+| case | what it pins |
+|---|---|
+| 1 | flag ON: the row is stored, keyed on the hash THIS response published |
+| 2 | a second producer never overwrites what the first recorded — the row is byte-identical after `/safety` also runs |
+| 3 | flag OFF: nothing written, and no ledger table touched at all |
+| 4 | an unwritable ledger does not take the dashboard down; the failure is disclosed on the wire and the verdict still arrives |
+
+Case 2 was written on a **wrong premise first** and is recorded that way: it
+assumed the two endpoints would collapse onto one row. They do not, and that is
+correct rather than a defect — `nowMs` is a named input, so `inputHash` is
+per-instant by design. What must hold, and what it now asserts, is that the
+second producer cannot rewrite the first's row.
+
+### §43.4 No verdict moves, and why
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| L206 | W | W | *"Every material recomputation creates a deterministic snapshot and decision record."* The record is now created on the call a traveller actually makes rather than on a dark endpoint — which is a real change to the producer half and none at all to the storage half. It stays `W` because nothing is STORED: `layover_decision_persistence_enabled` is absent from production (2992 unapplied) and `layover_certified_computations` does not exist there (2700 unapplied). A record that is computed, published and refused storage is exactly `W`. |
+| L207 | W | W | The record's SHAPE is untouched by this pass. It moves when the missing members are filled, not when a second caller appears. |
+| L209 | N | N | *"Metric `layover_sessions_evaluated` (sessions receiving a certified snapshot)."* Its reason — *"nothing is certified to count"* — was already stale before this pass, since `/overview` has certified on every dashboard load for some time. The row is about a metric being EMITTED, and no counter, aggregate or export exists. `N` is right for the right reason now. |
+
+### §43.5 What is NOT claimed, and what is still owed
+
+The orphan screen is **not deleted in this pass**. The ruling above makes it
+deletable — it is the last importer of `getSessionSafety`, and the surface it
+belonged to is settled — but deleting a 15 KB component is a separate change
+with its own diff to read, and bundling it here would mix a capability fix with
+a removal. It is recorded as owed rather than done.
+
+Nothing here was verified against a deployed surface. The producer exists; the
+storage does not, on any database, and both 2700 and 2992 are unapplied. The
+first row will be written when those land and the flag is turned on through the
+audited path — not before, and this section does not ask for it.

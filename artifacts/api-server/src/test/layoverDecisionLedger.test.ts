@@ -1094,3 +1094,203 @@ describe("§20 — the safety endpoint records what it told the traveller", () =
     );
   });
 });
+
+// ── §20, THE OTHER HALF: the endpoint the traveller's app ACTUALLY calls ──────
+//
+// The block above proves GET /:id/safety records what it told the traveller.
+// Measured 2026-09-22, and this is the defect these cases exist for: NOTHING
+// CALLS THAT ENDPOINT. `getSessionSafety` (travel-buddy-standalone/src/services/
+// layover.ts) has exactly one importer, `LayoverRecommendationScreen.tsx`, and
+// that component is imported by nothing — grep over `app/` and `src/` returns no
+// hits outside the file itself. The live dashboard (`app/layover/[id].tsx`)
+// builds its whole "can I leave?" answer from GET /:id/overview.
+//
+// So `persistDecision` had no producer at all. §20's requirement is to record
+// what a traveller was TOLD, and the call that tells them is /overview. The
+// ledger existed, the flag existed, the immutability trigger existed, and not
+// one row could ever be written by a running app.
+//
+// THE RULING THIS ENCODES, because docs/BUILD-BACKLOG.md asked for it in these
+// words — *"The fix is to decide which surface owns the safety read, not to
+// import the orphan"*: /overview owns it. It is the call the dashboard makes,
+// it already certifies the SAME record through the same
+// `certifySessionFeasibility`, and it serves `advice.verdict` off that record.
+// Mounting the orphan screen instead was explicitly rejected there, because it
+// re-derives feasibility and would reintroduce the duplicate time-budget
+// derivation that got LayoverReturnPanel.tsx deleted at `a718beb5`.
+//
+// WHY THIS IS SAFE TO ADD BEFORE 2992 IS APPLIED: with the flag off,
+// `persistDecision` reads the flag and returns `persistence_disabled` without
+// touching another table. Case 3 asserts exactly that, so "we added a write to
+// the busiest read on the surface" is answered with a measurement rather than a
+// reassurance.
+
+describe("§20 — the OVERVIEW endpoint records it too, because that is the one the app calls", () => {
+  let server: http.Server;
+  let base: string;
+  const TOKEN = "overview-ledger-token";
+  const USER_ID = "overview-ledger-user";
+
+  const get = (path: string): Promise<{ status: number; body: any }> =>
+    new Promise((resolve, reject) => {
+      const url = new URL(path, base);
+      const r = http.request(
+        {
+          hostname: url.hostname, port: Number(url.port), path: url.pathname,
+          method: "GET", headers: { authorization: `Bearer ${TOKEN}` },
+        },
+        (res) => {
+          let raw = "";
+          res.on("data", (c) => (raw += c));
+          res.on("end", () => {
+            let p: any;
+            try { p = JSON.parse(raw); } catch { p = raw; }
+            resolve({ status: res.statusCode ?? 0, body: p });
+          });
+        },
+      );
+      r.on("error", reject);
+      r.end();
+    });
+
+  function stage(
+    flags: Array<{ flag: string; enabled: boolean }>,
+    failures: Record<string, { message: string; code?: string }> = {},
+  ) {
+    const tables: Record<string, any[]> = {
+      feature_flags: [
+        { flag: "airport_mode_enabled", enabled: true },
+        { flag: "layover_safety_engine_enabled", enabled: true },
+        ...flags,
+      ],
+      airport_profiles: [airportRow()],
+      layover_sessions: [sessionRow({ user_id: USER_ID, id: "session-1" })],
+      layover_events: [],
+      layover_plan_stops: [],
+      trip_plan_items: [],
+    };
+    _setTestClient(makeLayoverDb(tables, { users: { [TOKEN]: USER_ID }, failures }), true);
+    return tables;
+  }
+
+  before(() => {
+    const app = express();
+    app.use(express.json());
+    app.use((r: any, _res: any, next: any) => {
+      r.log = { error() {}, info() {}, warn() {}, debug() {} };
+      next();
+    });
+    app.use("/api", airportRouter);
+    return new Promise<void>((resolve) => {
+      server = app.listen(0, "127.0.0.1", () => {
+        base = `http://127.0.0.1:${(server.address() as any).port}`;
+        resolve();
+      });
+    });
+  });
+  after(() => new Promise<void>((resolve) => server.close(() => resolve())));
+
+  it("1. with the flag ON, the overview stores the computation it just served", async () => {
+    const tables = stage([{ flag: DECISION_PERSISTENCE_FLAG, enabled: true }]);
+    const r = await get("/api/airport/sessions/session-1/overview");
+
+    assert.equal(r.status, 200);
+    assert.equal(r.body.persisted.state, "recorded");
+    assert.equal(tables["layover_certified_computations"].length, 1);
+    // NOT a shape check. The stored row must be keyed on the hash THIS response
+    // published, or the ledger and the wire name two different computations —
+    // the same property the /safety block asserts one describe up.
+    assert.equal(
+      tables["layover_certified_computations"][0].snapshot_id,
+      snapshotIdFor("session-1", r.body.certification.inputHash),
+    );
+  });
+
+  it("2. a SECOND producer never overwrites what the first recorded", async () => {
+    // This is the case adding /overview as a writer actually risks, and the
+    // premise this case was FIRST written with was wrong: it asserted the two
+    // endpoints would collapse onto one row. They do not, and the reason is
+    // correct rather than a bug — `nowMs` is a named input, so `inputHash` is
+    // per-instant by design and two requests milliseconds apart certify two
+    // different computations. The existing "one screen must not write more rows
+    // than it made requests" case one describe up already encodes that.
+    //
+    // What MUST hold is that the earlier row is untouched afterwards. An
+    // immutable ledger with two producers is only immutable if the second one
+    // cannot rewrite the first.
+    const tables = stage([{ flag: DECISION_PERSISTENCE_FLAG, enabled: true }]);
+    const o = await get("/api/airport/sessions/session-1/overview");
+    assert.equal(o.body.persisted.state, "recorded");
+
+    const first = JSON.stringify(tables["layover_certified_computations"][0]);
+    const firstId = o.body.snapshotId;
+    assert.equal(firstId, snapshotIdFor("session-1", o.body.certification.inputHash));
+
+    const s = await get("/api/airport/sessions/session-1/safety");
+    assert.equal(s.body.snapshotId, snapshotIdFor("session-1", s.body.certification.inputHash));
+
+    // Whichever way the clock fell, the first row is byte-identical.
+    const after = tables["layover_certified_computations"].find((r: any) => r.snapshot_id === firstId);
+    assert.ok(after, "the row the overview wrote must still be there");
+    assert.equal(JSON.stringify(after), first, "the safety endpoint rewrote a row it did not author");
+
+    if (s.body.snapshotId === firstId) {
+      // Same instant: the second producer must SAY it found it, not re-insert.
+      assert.equal(s.body.persisted.state, "already_recorded");
+      assert.equal(tables["layover_certified_computations"].length, 1);
+    } else {
+      assert.equal(s.body.persisted.state, "recorded");
+      assert.equal(tables["layover_certified_computations"].length, 2);
+    }
+  });
+
+  it("3. with the flag OFF nothing is written and NO other table is touched", async () => {
+    const tables = stage([]);
+    const touched: string[] = [];
+    const base0 = makeLayoverDb(
+      {
+        feature_flags: [
+          { flag: "airport_mode_enabled", enabled: true },
+          { flag: "layover_safety_engine_enabled", enabled: true },
+        ],
+        airport_profiles: [airportRow()],
+        layover_sessions: [sessionRow({ user_id: USER_ID, id: "session-1" })],
+        layover_events: [], layover_plan_stops: [], trip_plan_items: [],
+      },
+      { users: { [TOKEN]: USER_ID } },
+    );
+    _setTestClient(
+      { ...base0, from(t: string) { touched.push(t); return (base0 as any).from(t); } } as any,
+      true,
+    );
+
+    const r = await get("/api/airport/sessions/session-1/overview");
+    assert.equal(r.status, 200);
+    assert.equal(r.body.persisted.state, "not_stored");
+    assert.equal(r.body.persisted.reason, "persistence_disabled");
+    assert.equal((tables["layover_certified_computations"] ?? []).length, 0);
+    // The cost of the closed gate is ONE flag read. Naming the ledger tables
+    // here would mean the disabled path still pays for the feature.
+    for (const t of ["layover_certified_computations", "layover_time_budgets", "layover_return_plans"]) {
+      assert.equal(touched.includes(t), false, `a disabled ledger must not touch ${t}`);
+    }
+  });
+
+  it("4. AN UNWRITABLE LEDGER DOES NOT COST THE TRAVELLER THEIR DASHBOARD", async () => {
+    stage(
+      [{ flag: DECISION_PERSISTENCE_FLAG, enabled: true }],
+      { "layover_certified_computations:insert": { message: "relation does not exist" } },
+    );
+    const r = await get("/api/airport/sessions/session-1/overview");
+
+    // The mis-sequenced deployment: flag on, 2992 not applied. The dashboard is
+    // the whole surface — a 5xx here is the entire feature, not one panel — so
+    // the failure is DISCLOSED on the wire and the answer still arrives.
+    assert.equal(r.status, 200, "an unwritable ledger must not take the dashboard down");
+    assert.equal(r.body.persisted.state, "not_stored");
+    assert.equal(r.body.persisted.reason, "write_failed");
+    assert.ok(r.body.advice && typeof r.body.advice.verdict === "string",
+      "the traveller still gets the verdict the record was written for");
+    assert.ok(r.body.window, "and the window it is measured against");
+  });
+});

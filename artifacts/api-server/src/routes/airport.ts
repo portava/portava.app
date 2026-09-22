@@ -2221,7 +2221,7 @@ router.get("/airport/sessions/:id/overview", async (req, res) => {
   const stops   = await stopsOr503(sc, res, session.id);
   if (!stops) return;
   const planFit = computePlanFit(record, stops);
-  const tz      = airport.timezone ?? "UTC";
+  const tz      = airport.timezone ?? "UTC"; const persisted = await persistDecision(sc, user.id, session.id, record); // §20 — THIS is the call that tells the traveller, so this is where the telling is recorded; see the `persisted` field below
 
   // Same gate as GET /presence, for the same reason: `share_city_status` is the
   // session-time choice and the gate is the current one. The overview published
@@ -2254,7 +2254,7 @@ router.get("/airport/sessions/:id/overview", async (req, res) => {
       engineVersion: record.engineVersion,
     },
     certification: certificationHeader(record),
-    estimates:     record.estimates,
+    estimates:     record.estimates, snapshotId: snapshotIdFor(session.id, record.inputHash), persisted: persisted.ok ? { state: persisted.state, unwritten: persisted.unwritten } : { state: "not_stored" as const, reason: persisted.reason }, // §20 — the SAME three-valued shape GET /:id/safety publishes; "stored", "off" and "could not store" are different facts and a client showing one thing for all three repeats §23.1 a layer up
     // The dashboard's copy of the §2.1/§22 disclosure — see GET /:id/safety.
     airportIntelligence: airportIntelligence(record),
     stops: await bandPlanStops(airport, record, stops),
