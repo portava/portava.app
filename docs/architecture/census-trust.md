@@ -98,7 +98,7 @@ post-repair for files this pass edited.
 | # | Obligation (spec line) | Verdict | Evidence |
 |---|---|---|---|
 | A1 | Retain the 0–100 Trust Score internally and, where appropriate, visibly (Passport §9:96) | C | `trust_profiles.overall_score` is written by `TrustScoreService.recalculateTrustScore:261-352` and read for display only through `getDisplayTrustScore:365-373`; numeric only to self (`PassportProjectionService.buildTrust:1008-1017`; census-passport P43). |
-| A2 | Not a single universal authorization number — domain-specific (§9:96) | C | Nine categories scored and persisted per category (`TrustScoreService.ts:26-30`, `:305-317`); consumers fold them into TABLE 12 domains. Passport's fold substitutes 50 when the row is absent — that is Passport's P45, fixed by #467 (§4). |
+| A2 | Not a single universal authorization number — domain-specific (§9:96) | C | Nine categories scored and persisted per category (`TrustScoreService.ts:26-30`, `:311-323`); consumers fold them into TABLE 12 domains. Passport's fold substitutes 50 when the row is absent — that is Passport's P45, fixed by #467 (§4). |
 | A3 | **Confidence-aware**: the "Trust Confidence" pipeline stage (§9:97); "an 82 with high evidence is not equivalent to an 82 with little evidence" (§10:115) | **NB → C** | Measured: the scorer computes decayed evidence weight for its ramp (`computeCategoryScore:189-215`, `EARN_CONFIDENCE_WEIGHT:160`) and discards it; `trust_profiles` carried no evidence measure, so no consumer *could* be confidence-aware from trust evidence — which is why Passport's confidence band is computed from stamps and trips (P50). Built this pass: `measureEvidence:254-258`, persisted as `evidence_weight`/`evidence_count` (migration 2371; `recalculateTrustScore:299,326-341`), exposed by `getTrustProfile:395-401`. NULL = not measured, 0 = measured empty. Banding into words is left to the presenting surface. |
 | A4 | Explainable (§9:96) | C | Append-only ledger with category/delta/severity/source per event (`TrustEventService.recordTrustEvent:235-304`); category labels and top strengths (`TrustPrivacyGuard.ts:68-78, :94-100`); ordered recovery steps (`TrustRecoveryService.ts:36-86`). Passport's *presentation* defect is P45. |
 | A5 | The pipeline Evidence → Events → Domain Trust → Confidence → Policy/Eligibility → Projection (§9:97) | C | Structurally end-to-end: events (`recordTrustEvent`), scores (`recalculateTrustScore`), ceilings (`TrustCapService.applyEventCaps:159`), restriction state as policy input (`TrustRestrictionService.getRestrictionState:180`), projection (`TrustPrivacyGuard`). census-passport P46 agrees. Liveness of the first hop is A6. |
@@ -107,7 +107,7 @@ post-repair for files this pass edited.
 | A8 | The same rule at the **table**: what a user can read of trust data directly through PostgREST (§10:114; `TrustPrivacyGuard.ts:1-10`) | **W → C** | Measured in both databases: all seven trust tables granted **ALL, including TRUNCATE**, to `anon` and `authenticated` (Supabase default privileges; 0043 enabled RLS and revoked nothing). RLS does not police TRUNCATE. `ts_select_all USING (true)` let `anon` read the gaming thresholds. `te_select_own` let the subject read `delta`, `reviewed_by` (the admin) and `metadata.counterparty_user_id`; `tr_select_own` exposed the admin's free-text `reason`. No client reads these tables (zero references outside `artifacts/api-server`) and every server seam runs on the service role (`lib/http.ts:177`, `lib/requireAdmin.ts:125`, `SUPABASE_SERVICE_ROLE_KEY` required by `lib/envValidation.ts:9-12`), so the grants were reachability nobody used. **Migration 2370** revokes ALL from PUBLIC/anon/authenticated/service_role and grants service_role SELECT/INSERT/UPDATE/DELETE, with a postcondition that RAISEs on any residue; applied to CI (verified: only `service_role:DELETE/INSERT/SELECT/UPDATE` remains; 5 policies retained as the safe direction). Production: not applied — owner decision. |
 | A9 | Non-stigmatizing copy for low-evidence accounts (§10:116) | C | `LEVEL_LABELS` "New Traveler" (`TrustPrivacyGuard.ts:43-50`), `publicTrustLabel:57-59`; `presentationWord` avoids "low/poor/weak" (Passport's, P51). |
 | A10 | Trust changes internally replayable from evidence/events (§10:117) | C | Recalculation reads only applied/confirmed events (`loadEvents:112-125`) and active caps (`loadCaps:128-149`); admin mutations are audited (`TrustAdminService.logAdminAction:23-42`, called at `:87,184,200,214,247,282,311`); `adminOverrideScore` also writes the row directly (`:238-244`) but pins it with a cap that recalculation honours. census-passport P52. |
-| A11 | Capabilities derive from Trust Evidence + Domain Policy: `canJoinPublicTrip … canBecomeBuddy` (§11:119) | C | Trust supplies the two inputs: `public_level` (rank) and live restriction state. Passport's `buildOwnerCapabilities:566-577` consumes exactly those (`LEVEL_RANK:553-560`, `ownerRestrictionsFromState:543-550`, `getRestrictionState` at `:1525`). `canProvideVisaBuddyService` is Passport's NB (census-passport). |
+| A11 | Capabilities derive from Trust Evidence + Domain Policy: `canJoinPublicTrip … canBecomeBuddy` (§11:119) | C | Trust supplies the two inputs: `public_level` (rank) and live restriction state. Passport's `buildOwnerCapabilities:566-577` consumes exactly those (`LEVEL_RANK:553-560`, `ownerRestrictionsFromState:543-550`, `getRestrictionState` at `:1525`). `canProvideVisaBuddyService` is Passport's NB (census-passport). **Re-derived at §23** after the zero-evidence persist was removed: the one population for which this row was false — a never-scored user whose recalculation wrote `public_level: reliable_traveler` from no events at all — reached `LEVEL_RANK` rank 2 and was granted `canHostTrip`, `canUseCrewLocation` and `canContributeLiveIntel`. With no row written, `getSafeTrustSummary` reports `new_traveler` (`artifacts/api-server/src/services/trust/TrustPrivacyGuard.ts:104#const publicLevel: PublicTrustLevel = profile?.public_level ?? "new_traveler";`), which is rank 0 and grants none of the three. The row was `C` before and is `C` now; what changed is that its one counter-example is gone. |
 | A12 | Authorization is server-side: restrictions are enforced at the action seam, not inferred by the client (§11:120, §30:286) — hosting and messaging | C | `routes/trips.ts:216-230` (canHost, with the degraded-read distinction), `routes/messaging.ts:503-516#msgPerms` (the open-thread seam's primary, fail-closed `resolveInteractionPermissions` gate, plus the catch that refuses rather than allowing on a failed check), `lib/calls/callGatewayAdapter.ts:265`, `services/interactionPermissions.ts:325-337` (throws `DegradedPermissionCheckError` rather than mis-labelling a failed check as a restriction). *(The messaging evidence was cited as `routes/messaging.ts` line 483 until 2026-09-13. That line is the tenth line of a comment paragraph about a `left_at` rejoin write — prose describing a 403, not a seam enforcing one. It was ALREADY wrong at this census's own head_commit 3ca68cb06: that file is unchanged above line 762 between 3ca68cb06 and HEAD, so the messaging diff acknowledged on 2026-09-13 did not move it. Repointed by reading the handler, not by offset, and anchored so the next move is loud. Verdict unmoved — the gate it should have named all along is real, primary and fail-closed.)* |
 | A13 | The same for the other two restriction types the service declares — `private_plan_access`, `location_plan_join` (`TrustRestrictionService.ts:1-9`) | **W** | No route calls `canJoinPrivatePlans` / `canJoinLocationPlans` as a gate (grep: the only consumers of `getRestrictionState` are the four in A12 plus Passport). They reach the client only as `buildOwnerCapabilities` chips (`canJoinPublicTrip`, `canUseCrewLocation`), which §30 says the client must not treat as authorization. An admin applying either restriction changes a chip and blocks nothing. **Owner: Trips / Events / geofence join seams.** |
 | A14 | TABLE 22 projections: permitted trust summary (Discovery, Compass), trust eligibility (Trips), completion/reputation (Buddy), restricted purpose-specific context (Safety) (§21:207-221) | C | Trust provides exactly the privacy-safe shapes: badge without number, summary without counts, restriction state as four booleans. All seven consumer variants derive from the one `PassportProjection.buildTrust` (`PassportConsumerProjections.ts:614-620` discovery_card, `:666-672` buddy, `:770-773` trips; telegraph/safety carry no trust at all). census-passport P117. |
@@ -151,7 +151,7 @@ Not counted here. Checked because the brief asked what it marked wrong.
 | C5 | "Serious/severe events are queued for admin review" (`:11`) | **W → C** | Measured: only the status was set. The queue an admin reads is `trust_reviews` (`trust-admin.ts:98-127`); no row was written for a pending event; `confirmEvent:82-85` and `dismissEvent:178-181` closed a review "for this event" that never existed; `getPendingEvents:317-332` had no route. `recordAdjudicatedTrustEvent`'s own comment records the gap (`:409-412`). Built: `queueEventForReview:330-362` writes an open `event_review` row keyed by `source_event_id`, non-fatal and logged; `GET /admin/trust/events/pending` (`trust-admin.ts:138-147`). Pinned by `trustCensusRepairs.test.ts` §1–§2. Production impact today: none (0 pending events); the next one will be visible. |
 | C6 | Never auto-bans (`:11`) | C | `applyRestriction` has exactly one non-test caller, `adminApplyRestriction` (`TrustAdminService.ts:261#const restriction = await applyRestriction(db, {`), reached only from the admin route. |
 | C7 | The counterpart of an event is recorded explicitly in `metadata[counterparty_user_id]`, never inferred from `source_id` (`:32-45`) | C | `recordTrustEvent:249-252`; `TrustGamingDetectionService.readCounterparty:26-34`; `trustMutualRings.test.ts`. |
-| C8 | Nine category scores + weighted overall; exponential decay; cap ceilings; public level; persist to `trust_profiles` (`TrustScoreService.ts:1-10`) | C | `recalculateTrustScore:261-352`; `scoreToLevel:217-224`; `trust.test.ts:350-398`. |
+| C8 | Nine category scores + weighted overall; exponential decay; cap ceilings; public level; persist to `trust_profiles` (`TrustScoreService.ts:1-10`) | C | `recalculateTrustScore:307-488`; `scoreToLevel:217-224`; `trust.test.ts:350-398`. **The persist is CONDITIONAL from §23 on** and the row was re-derived rather than carried: `artifacts/api-server/src/services/trust/TrustScoreService.ts:404#if (events.length === 0) {` skips the write for a user who has no qualifying event, no existing row and no cap row ever. It stays `C` — every score the engine MEASURES is still persisted, and what it now withholds is a nine-category arithmetic 50 that no evidence stands behind. §23.3 argues the opposite reading and says why it loses. **Named, and owed to the owner:** the header sentence this row quotes still reads *"Derives public trust level and persists to trust_profiles"* and documents only ONE non-persist case (the fail-closed read). It now has two. |
 | C9 | Slow to earn, immediate to lose — the ramp applies only to positive movement (`:162-188`) | C | `computeCategoryScore:189-215`; `trustAsymmetryAndMaintenance.test.ts` pins the asymmetry and the worked example (56, not 80). |
 | C10 | `getDisplayTrustScore` is THE display number; no second engine (`:353-364`; `lib/trustScore.ts:1-25`) | C | `lib/trustScore.ts:124-149` delegates; `PassportProjectionService.ts:1295#getDisplayTrustScore` and `routes/rentABuddy.ts:1237` read through it; `passportTrustConsistency.test.ts`. |
 | C11 | `getTrustProfile` "loads the current profile" (`:375`) — and a failed read is not a missing profile | **W** | `:376-410` never destructures `error`; `null` means both. Five readers collapse an unreachable engine into "New Traveler"/`score: null`: `getDisplayTrustScore:365`, `getSafeTrustSummary:91`, `getPublicTrustBadge:136`, `getRecoveryStatus:89`, `computeTrustScore:131`. **PR #467 adds `getTrustProfileResult()` (ok/absent/unavailable) and switches ONE reader — Passport's domain builder.** Not fixed here: a second error-aware read in the same file would duplicate #467's hunk. Recommended as a #467 follow-up (§4). |
@@ -2317,3 +2317,109 @@ the row was already built — and CORRECT rises by one.
   pixels it draws are not.
 - **The server still answers 403 `verification_required` with no route in the payload.** The route
   lives on the client, in the registry. A second client would have to know it independently.
+
+## §23 — Zero evidence stops being persisted as earned trust. NO ROW MOVES, and the blast radius is SMALLER than the change's own comments claim
+
+**2026-09-22, re-measurement lane (PR #449).** `head_commit` is **NOT** re-declared, for §19's,
+§20's and §21's reason unchanged: this grades the rows resting on three counted files, not 108
+requirements. *Numbered §23 rather than §22 on purpose — sibling branch PR #450 appends a §22 to
+this same document, and leaving the gap lets the two land without renumbering either.*
+
+### 23.1 What changed
+
+`recalculateTrustScore` computed a score for a user with no qualifying events — nine neutral
+categories, weights summing to 1.000, so exactly 50.00 — and **persisted** it. 50 is
+`level_reliable` and `scoreToLevel` compares with `>=`, so that row carried
+`public_level: reliable_traveler`. It no longer writes that row
+(`artifacts/api-server/src/services/trust/TrustScoreService.ts:404#if (events.length === 0) {`),
+and the result now says which it was
+(`artifacts/api-server/src/services/trust/TrustScoreService.ts:277#persisted: boolean;`).
+The skip is narrow by construction: it applies only when the user has **no** qualifying event,
+**no** existing `trust_profiles` row, and **no** `trust_caps` row ever — including a lifted one.
+
+### 23.2 What the absent row does to the next hop, measured rather than reasoned about
+
+| hop | with the fabricated row | with no row |
+|---|---|---|
+| `getSafeTrustSummary` | `public_level: reliable_traveler` | `new_traveler` — `artifacts/api-server/src/services/trust/TrustPrivacyGuard.ts:104#const publicLevel: PublicTrustLevel = profile?.public_level ?? "new_traveler";` |
+| `LEVEL_RANK` | **2** | **0** — `artifacts/api-server/src/services/passport/PassportProjectionService.ts:727#new_traveler: 0,` |
+| `canHostTrip` (`rank >= 1`) | granted | withheld — `artifacts/api-server/src/services/passport/PassportProjectionService.ts:745#canHostTrip: !r.hosting && rank >= 1,` |
+| `canUseCrewLocation` (`rank >= 1`) | granted | withheld |
+| `canContributeLiveIntel` (`rank >= 2`) | granted | withheld |
+| the DOMAIN numbers Passport shows | 50, read off the row | 50, substituted for the missing row | 
+
+The last line is the one worth reading twice: **the number a person sees does not change.**
+`buildDomainTrust` substitutes the same neutral 50 for an absent profile that it used to read out
+of the fabricated one, so census-passport's P45/P50/P154 are untouched by this and stay `W` — see
+census-passport §19. What changes is three server-side capability grants.
+
+### 23.3 The rows, and what each was measured on
+
+| row | measured at this head | verdict |
+|---|---|---|
+| `C8` (persist to `trust_profiles`) | the persist is now conditional, so the row was re-derived instead of carried. **The opposite reading, stated so it can be checked:** §1(c) treats a module header sentence as a requirement, `TrustScoreService.ts:8` promises persistence, and the code now has an exception the header does not name — which is the exact shape that makes `C15` a `W`. **It loses on a measurement:** the persist block is non-fatal (`artifacts/api-server/src/services/trust/TrustScoreService.ts:437#// Persist (non-fatal — return computed result even if persist fails)`), and `git show origin/main:` confirms that comment and that behaviour are unchanged by this branch — so a resolved `recalculateTrustScore` has never implied a row exists. The skip adds a second way for something that was already true, not a first. | **C, unmoved.** Header gap named in the row. |
+| `A11` (capabilities derive from Trust Evidence) | this row had exactly one counter-example and it is gone; §23.2 is the measurement. | **C, unmoved, counter-example closed.** |
+| `A1`, `A2` | the score is still retained and still scored per category for every user who has one; `A2`'s cited region moved +6 lines and was repointed. | **unmoved.** |
+| `A3` (evidence behind the score) | `measureEvidence` and the two-column persist are both still present and both still inside the persisted path; for a skipped user nothing is written, including the evidence columns, which is the same "no row" state `A3` already treats as not-measured. | **unmoved.** |
+| `C4`, `C12`, `C19`, `C23`, `C25`, `C26` | cite `trust-integration.test.ts`. That file gains one renamed `it` at `:924` and one appended `describe` at `:1631`; every line these six cite is at or below `:1070` and none of them moved. | **unmoved.** |
+| `C5`, `C17`, `C27` | cite `trustCensusRepairs.test.ts`. The only edit is inside one existing `it` in the evidence-round-trip `describe`; no `describe` is added, removed or re-ordered, so the § numbering these three cite is unchanged. | **unmoved.** |
+
+### 23.4 The change's own comments overstate the blast radius, and the correction is the finding
+
+Both the new source comment and the new suite's header say that persisting the fabricated 50
+would have promoted **"every user in the system at once"** on the first enable of
+`trust_engine_enabled`. **No caller was found that can do that**, and the enumeration is short
+enough to be checked: every path that reaches `recalculateTrustScore` in non-test source is one of
+the maintenance scheduler's three finders, three `TrustAdminService` paths, two admin-override
+paths, and the settings fan-out. `findDirtyUsers`
+(`artifacts/api-server/src/lib/trustMaintenanceScheduler.ts:221#.from("trust_events")`) and
+`findNeverComputedUsers`
+(`artifacts/api-server/src/lib/trustMaintenanceScheduler.ts:322#      .from("trust_events")`) both
+start from `trust_events`; `findStaleUsers`
+(`artifacts/api-server/src/lib/trustMaintenanceScheduler.ts:380#      .from("trust_profiles")`) and
+the settings fan-out
+(`artifacts/api-server/src/routes/trust-admin.ts:646#    sc.from("trust_profiles")`) both start
+from `trust_profiles`. **Nothing iterates `profiles`.** A user with no event and no row is reached
+by none of them.
+
+The population that WAS reachable, and for which the defect was real:
+
+1. **`dismissEvent`** — `artifacts/api-server/src/services/trust/TrustAdminService.ts:247#  await recalculateTrustScore(db, e.user_id).catch(() => {});` runs after the event is dismissed. If that was the user's only event and no profile existed yet, the recalculation saw zero events and wrote the fabricated row.
+2. **Events older than the scoring window.** `findNeverComputedUsers` has no age bound; `loadEvents` has a 365-day one (`artifacts/api-server/src/services/trust/TrustScoreService.ts:144#  const since = new Date(Date.now() - 365 * 24 * 60 * 60 * 1000).toISOString();`). A never-scored user whose only events predate it is selected, then scored against an empty list.
+
+That is a narrow population, not the whole table — and it is still a real promotion from nothing,
+which is why the change stands and `A11`'s counter-example is worth recording as closed. Stating
+the smaller number is the point: a census that repeats a change's own worst-case sentence is
+quoting, not measuring.
+
+### 23.5 What this section does NOT claim, and what it did not repoint
+
+- **The other rows are not re-measured.** Only the rows in §23.3.
+- **Nothing was run against a database.** Production still holds 2 `trust_profiles` rows of 58
+  profiles and 5 `trust_events` (§0), so neither the old defect nor the new refusal has been
+  observed live, in either direction.
+- **Three citations into `TrustScoreService.ts` were ALREADY stale before this branch and are
+  left alone rather than quietly swept in:** `A17`'s `:353-364` (the header sentence it quotes
+  lives at line 494), and `C11`'s `:375` / `:376-410` (`getTrustProfile` is at line 654). All three
+  were wrong at `origin/main` too — `git show origin/main:…` was read at each — so repointing
+  them belongs to the pass that re-grades those rows, not to this one. They are named here so the
+  next reader does not have to rediscover them.
+- **The per-category gap the change's suite pins is not graded by any row here.** A user with one
+  negative event still carries eight fabricated 50s into the weighted overall, because the nine
+  columns are `NOT NULL DEFAULT 50.00`. That needs a migration and an owner decision; it is
+  reported, not closed.
+
+### 23.6 Guards at this tree, with exit codes
+
+All eighteen of `check:compiler-authentic`, `typecheck`, `typecheck:tests`, `check:frozen-dir`,
+`check:async-handlers`, `check:enum-literals`, `check:migration-prefixes`,
+`check:schema-references`, `check:test-runner-flags`, `check:writerless-reads`,
+`check:doc-citations`, `check:citation-symbols`, `check:citation-targets`,
+`check:census-freshness`, `check:census-integrity`, `check:census-row-move-labels`,
+`check:census-scope-coverage` and `check:census-policy-citations` exit **0**.
+`check:citation-targets` went to **211/210** on this branch before the repoints in §23.5's
+siblings — `census-passport.md`'s P46 pointer into `TrustScoreService.ts` (line 276) had become `*/` — and is back
+**at** 210 with the citation repointed by reading the claim.
+
+**Suites at this tree:** `trust-integration.test.ts` + `trustCensusRepairs.test.ts` run together
+under `node:test` — **112 pass / 0 fail, exit 0**. No live-DB check was run and none is claimed.
