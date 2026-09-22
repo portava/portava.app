@@ -41,6 +41,7 @@ import {
   ISSUABLE_COMMANDS,
   LEGACY_PATH_COMMANDS,
   UNIMPLEMENTED_COMMANDS,
+  unimplementedCommandsFrom,
 } from "../domain/telegraph/commands/telegraphCommands.js";
 
 const ALICE = "aaaaaaaa-0000-4000-8000-000000000001";
@@ -289,6 +290,22 @@ describe("POST /telegraph/commands — the door", () => {
     // the next §13.1 command that arrives unbuilt, and the exhaustiveness test
     // above is what keeps a command from falling through to "unknown" instead.
     assert.deepEqual([...UNIMPLEMENTED_COMMANDS], []);
+  });
+
+  it("the 501 rule still holds: a §13.1 command with no home is unimplemented", () => {
+    // Kept from the lane that DERIVED this list. `UNIMPLEMENTED_COMMANDS` is
+    // empty today, so the route's 501 branch is unreachable in fact; the rule
+    // that feeds it is still checked, against a hypothetical nineteenth
+    // command. Without this, emptying the list would have silently taken the
+    // branch's only coverage with it.
+    const derived = unimplementedCommandsFrom(
+      [...TELEGRAPH_COMMANDS, "TELEPORT_USER"],
+      ISSUABLE_COMMANDS,
+      LEGACY_PATH_COMMANDS,
+    );
+    assert.deepEqual(derived, ["TELEPORT_USER"],
+      "a spec-named command with neither an issuable slot nor a legacy home must be reported " +
+      "unimplemented, so the door answers 501 rather than 'you made that up'");
   });
 
   it("answers 400 for a command nobody has heard of", async () => {

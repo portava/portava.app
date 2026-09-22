@@ -361,7 +361,29 @@ import {
  * Two lanes still unmerged (lane-media-voice, lane-domain) carry their own
  * ceilings, 205 and 201, each measured on a base that cannot see this repair.
  * RE-MEASURE at the merge; do not inherit any of the three. */
-export const MAX_DEAD_TARGETS = 193;
+/* LOWERED 2026-09-22, 209 -> 201, by the Telegraph domain/commands/authorization
+ * lane. Also not a sweep. That lane made three edits inside `domain/telegraph/`
+ * — a `dispatchTable` import in `contracts/conversationSearch.ts` and
+ * `commands/telegraphCommands.ts`, and one in `policies/attentionLadder.ts` —
+ * plus a comment in `routes/telegraphCommands.ts`, and the shifts broke
+ * seventeen citations across census-telegraph, census-discovery and
+ * census-compass. Every one was repointed by READING the claim and finding the
+ * line that carries it: `:390` was the confirm-action block's own sentence about
+ * re-verifying trip membership, `:34` was the `create_meetup_draft` intent, `:80`
+ * and `:158` were the safe-metadata allowlist and where it is applied, and
+ * 3586's `:412` and `:398` were the authorize hook and the ownership refusal —
+ * the last two had been imprecise BEFORE the shift and now point at the lines
+ * that actually carry those two claims. All of them gained an `#anchor`, which
+ * is why the net is eight below rather than level: the anchors moved eight
+ * previously unanchored citations out of this check's population and into
+ * doc-citations', where a rot is named rather than merely counted. */
+/* MERGED 2026-09-22, lane-domain. Its 201 and this tree's 193 were measured on
+ * bases neither could see the other from: this tree's repair repointed and
+ * anchored citations into `routes/messaging.ts`, that lane's into
+ * `domain/telegraph/` and `routes/telegraphCommands.ts`. Disjoint repairs, so
+ * the union is below both and neither number may be inherited. The value below
+ * is the measurement AT THE MERGED TREE. */
+export const MAX_DEAD_TARGETS = 189;
 
 /** Pinned to a commit by its own declaration; its lines must not track HEAD. */
 const PINNED_DOCS = new Set(['docs/architecture/mobile-reachability-ledger.md']);

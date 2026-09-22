@@ -1606,6 +1606,20 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     // unapplied to production — so this census must age with the file that would
     // notice if the code stopped behaving that way.
     "artifacts/api-server/src/test/telegraphMessageEditHistory.test.ts",
+    // WIDENED 2026-09-22 at the §34/§35 merge. Five proofs these two sections
+    // rest verdicts and findings on, none of which this census aged with before.
+    // §34 grades the departed-member gates on the first, and names the other two
+    // as the reason two unfiltered membership reads in the same file are CORRECT
+    // rather than defects — a ruling that stops being true the day either of
+    // those suites stops holding the dedupe/rejoin behaviour. §35's two are the
+    // red-first evidence for the dispatch-table fail-open and the command
+    // vocabulary; a verdict resting on "the table fails closed" must age with the
+    // file that would notice if it stopped.
+    "artifacts/api-server/src/test/telegraphMembershipHonesty.test.ts",
+    "artifacts/api-server/src/test/messagingThreadDedupe.test.ts",
+    "artifacts/api-server/src/test/messagingThreadRejoinWrite.test.ts",
+    "artifacts/api-server/src/test/telegraphDispatchTablePrototypeKeys.test.ts",
+    "artifacts/api-server/src/test/telegraphCreateCoordinationSession.test.ts",
     // WIDENED 2026-09-22 by the location/proximity/privacy lane
     // (census-telegraph §31): §4's Nearby surface and §30A.2's
     // ReachablePersonProjection are built here, and §17.8/§30A.7's device-bound
