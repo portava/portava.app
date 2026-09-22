@@ -5613,3 +5613,58 @@ other row is unchanged and the denominator is unchanged.
 | NOT-BUILT | 61 | **61** |
 | CONTRADICTED | 2 | **2** |
 | total | 266 | **266** |
+
+## §S — 2026-09-22 (integration): the kernel rows, and a reason that was false twice over
+
+Two verdicts move, three reasons are corrected and no row reaches `C`. That
+distribution is the finding, not a shortfall: the HM-KERNEL lane built real
+capability, and none of it can run on any database yet.
+
+| id | was | now | why |
+|---|---|---|---|
+| H30 | W | **W** (unmoved — reason corrected) | Its reason — *"Written at 2710:191, unapplied, absent from the snapshot"* — is FALSE ON BOTH COUNTS. `production-applied-migrations.json` carries `2710_memory_command_kernel_tables` AND `2711_memory_kernel_execute`, and ALL FOUR tables 2710 creates are present in the 2026-09-22 production capture: `memory_domain_events`, `memory_event_outbox`, `memory_command_receipts`, `memory_command_audit`. The outbox table is deployed and `memory_kernel_execute` writes it inside the canonical transaction. It is not `C` because `memory_kernel_enabled` reads FALSE on production, so the kernel never runs and no outbox row has ever been written, and because the claim/ack/fail functions that drain it live in 2994, which is applied nowhere. |
+| H161 | NB | **W** | Its reason was *"There are no consumers."* There is one: `artifacts/api-server/src/services/memoryProjections/outboxConsumer.ts`, with a production caller at `artifacts/api-server/src/index.ts:186#startMemoryOutboxScheduler();`. Its idempotency is structural rather than careful — upsert rebuild, ack filtered on `published_at IS NULL`, lease plus `FOR UPDATE SKIP LOCKED` so two workers cannot claim one event — and the SQL half was rehearsed against a real PostgreSQL, where a second ack returned 0. Not `C`: those functions are 2994's and 2994 is unapplied, so the consumer claims nothing anywhere. |
+| H220 | NB | **W** | Its reason was that `projection_lag` is *"Named in one comment"* and that nothing emits a figure. It is emitted now, per event, at `artifacts/api-server/src/services/memoryProjections/outboxConsumer.ts:436#recordProjectionLag(`, measured enqueued-to-rebuild-finished — the slower clock — with `rebuildMs` beside it. Not `C`: the consumer that emits it drains zero rows, so the metric has no values, and there is still no exporter to aggregate across processes. |
+
+### Two reasons corrected, with the verdict unmoved
+
+- **H27** stays `NB`. Its reason — *"Zero occurrences in any `.sql` in the tree"* —
+  is now false: `memory_relations` is created by
+  `artifacts/api-server/src/migrations/2994_memory_relations_and_outbox_consumer.sql`
+  and referenced by `2711_memory_kernel_execute.sql`. But 2994 is applied to no
+  database and the table is ABSENT from the production capture. This row asks for
+  storage that HOLDS edges, not for a file that would create it — the same
+  distinction H24 turns on, and it is applied the same way here.
+
+- **H162** stays `W`. Its reason — *"nothing consumes an event to call it"* — is
+  false now that `outboxConsumer` does, through `EVENT_PROJECTIONS`, which is
+  total over §17's eight `memory.*` events so a ninth is a compile error rather
+  than a silent no-subscriber. The verdict is unmoved for the same reason as
+  H161: it consumes nothing on any live database.
+
+### Why no row here reaches BUILT-AND-CORRECT
+
+This census already scores "built and OFF" as `W` — census-layover L128 is graded
+exactly that way. Awarding `C` to code that cannot execute anywhere would change
+what a `C` means in the middle of a corpus that has used the other convention
+throughout, and would make the percentage answer a different question than the
+one it has been answering. Implementation verification and deployed verification
+are recorded separately, and this section is the former.
+
+### §S headline, restated
+
+| bucket | was | now |
+|---|---|---|
+| BUILT-AND-CORRECT | 69 | **69** |
+| BUILT-BUT-WRONG | 134 | **136** |
+| NOT-BUILT | 61 | **59** |
+| CONTRADICTED | 2 | **2** |
+| total | 266 | **266** |
+
+**TWO rows move here, not three, and the correction is mine.** I first wrote this
+headline as W 137 / N 58 on the belief that H30 moved out of `NB`. It did not:
+H30 was ALREADY `W` by a later statement than the one I quoted. I read its FIRST
+statement and treated it as current, in a document whose whole discipline is
+last-statement-wins. `check:census-integrity` caught it by parsing the rows and
+disagreeing with my sum, which is exactly the drift that check exists to refuse.
+H30's entry below is a REASON CORRECTION, not a verdict move.
