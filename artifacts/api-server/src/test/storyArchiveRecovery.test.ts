@@ -49,7 +49,8 @@ const CFG = { archiveRetentionDays: 365, deletedRecoveryDays: 30, engagementRete
 // ── a stories table double that applies the filters the route relies on ──────
 
 interface Store {
-  row: any | null;
+  /** Every stories row this fake holds. `row` is the first, for the single-row cases. */
+  rows: any[];
   readError: any | null;
   /** Set true to make the update match nothing, as a concurrent purge would. */
   updateMatchesNothing: boolean;
@@ -76,24 +77,48 @@ function client(store: Store): any {
         return b;
       }
       if (table !== "stories") throw new Error(`unexpected table ${table}`);
-      const filters: Array<[string, any]> = [];
+      // The filters are APPLIED, not recorded. A fake that ignores `.in("state",
+      // ...)` would let the archive listing return deleted stories and the test
+      // would still pass — which is the one thing these listings must not do.
+      const filters: Array<(r: any) => boolean> = [];
       let patch: any = null;
       let mode: "select" | "update" = "select";
-      const hit = () =>
-        store.row && filters.every(([c, v]) => store.row[c] === v) ? store.row : null;
+      let orderCol: string | null = null;
+      let orderAsc = true;
+      let limitN = Infinity;
+      const matched = () => {
+        let out = store.rows.filter((r) => filters.every((f) => f(r)));
+        if (orderCol) {
+          const c = orderCol;
+          out = [...out].sort((a, z) => {
+            const av = String(a[c] ?? ""); const zv = String(z[c] ?? "");
+            return orderAsc ? (av < zv ? -1 : av > zv ? 1 : 0) : (av > zv ? -1 : av < zv ? 1 : 0);
+          });
+        }
+        return out.slice(0, limitN);
+      };
       const b: any = {
         select() { return b; },
         update(p: any) { mode = "update"; patch = p; return b; },
-        eq(c: string, v: any) { filters.push([c, v]); return b; },
+        eq(c: string, v: any) { filters.push((r) => r[c] === v); return b; },
+        in(c: string, vals: any[]) { filters.push((r) => vals.includes(r[c])); return b; },
+        not(c: string, op: string, v: any) {
+          if (op === "is" && v === null) filters.push((r) => r[c] !== null && r[c] !== undefined);
+          else throw new Error(`fake: unsupported not(${op})`);
+          return b;
+        },
+        order(c: string, o: any = {}) { orderCol = c; orderAsc = o.ascending !== false; return b; },
+        limit(n: number) { limitN = n; return b; },
         maybeSingle() {
           if (store.readError) return Promise.resolve({ data: null, error: store.readError });
-          return Promise.resolve({ data: hit() ? { ...store.row } : null, error: null });
+          const hit = matched()[0] ?? null;
+          return Promise.resolve({ data: hit ? { ...hit } : null, error: null });
         },
         then(res: any, rej: any) {
           if (store.readError) return Promise.resolve({ data: null, error: store.readError }).then(res, rej);
           if (mode === "update") {
             store.updates.push(patch);
-            const target = store.updateMatchesNothing ? null : hit();
+            const target = store.updateMatchesNothing ? null : (matched()[0] ?? null);
             if (!target) return Promise.resolve({ data: [], error: null }).then(res, rej);
             Object.assign(target, patch);
             // migration 2998's trigger clears deleted_at on the way out of
@@ -102,7 +127,7 @@ function client(store: Store): any {
             if (!store.triggerMissing && target.state !== "deleted") target.deleted_at = null;
             return Promise.resolve({ data: [{ ...target }], error: null }).then(res, rej);
           }
-          return Promise.resolve({ data: hit() ? [{ ...store.row }] : [], error: null }).then(res, rej);
+          return Promise.resolve({ data: matched().map((r) => ({ ...r })), error: null }).then(res, rej);
         },
       };
       return b;
@@ -327,22 +352,188 @@ describe("GET /stories/retention-policy", () => {
   });
 });
 
+describe("GET /stories/archive", () => {
+  let store: Store;
+  beforeEach(() => {
+    store = {
+      rows: [
+        { id: "s-exp", owner_id: OWNER, state: "expired", expires_at: new Date(Date.now() - 3 * DAY).toISOString(), deleted_at: null, saved_to_highlight_id: null },
+        { id: "s-sav", owner_id: OWNER, state: "saved", expires_at: new Date(Date.now() - 9 * DAY).toISOString(), deleted_at: null, saved_to_highlight_id: "h1" },
+        { id: "s-del", owner_id: OWNER, state: "deleted", expires_at: new Date(Date.now() - 5 * DAY).toISOString(), deleted_at: new Date(Date.now() - 1 * DAY).toISOString(), saved_to_highlight_id: null },
+        { id: "s-act", owner_id: OWNER, state: "active", expires_at: new Date(Date.now() + 10 * 3600_000).toISOString(), deleted_at: null, saved_to_highlight_id: null },
+        { id: "s-other", owner_id: STRANGER, state: "expired", expires_at: new Date(Date.now() - 2 * DAY).toISOString(), deleted_at: null, saved_to_highlight_id: null },
+      ],
+      readError: null, updateMatchesNothing: false, triggerMissing: false, updates: [],
+    };
+    caller = OWNER;
+    _setTestClient(withAuth(client(store)), true);
+  });
+
+  it("lists the owner's expired and saved stories and nobody else's", async () => {
+    const res = await get("/api/stories/archive");
+    assert.equal(res.status, 200);
+    const ids = res.body.stories.map((r: any) => r.id).sort();
+    assert.deepEqual(ids, ["s-exp", "s-sav"]);
+  });
+
+  it("does not list a deleted story in the archive", async () => {
+    // Decision 2: an owner-deleted story leaves normal access IMMEDIATELY. If
+    // it still appeared here, "deleted" would be a label rather than a state.
+    const res = await get("/api/stories/archive");
+    assert.ok(!res.body.stories.some((r: any) => r.id === "s-del"), "a deleted story is not archive content");
+  });
+
+  it("does not list a story that is still up", async () => {
+    const res = await get("/api/stories/archive");
+    assert.ok(!res.body.stories.some((r: any) => r.id === "s-act"));
+  });
+
+  it("carries the retention dates, so the screen does not compute its own", async () => {
+    const res = await get("/api/stories/archive");
+    const exp = res.body.stories.find((r: any) => r.id === "s-exp");
+    assert.ok(exp.retention, "every row must carry its dates");
+    assert.equal(exp.retention.purgeAt, new Date(Date.parse(exp.expires_at) + 365 * DAY).toISOString());
+    const saved = res.body.stories.find((r: any) => r.id === "s-sav");
+    assert.equal(saved.retention.purgeAt, null, "a story whose media belongs to a Highlight has no purge date to promise");
+  });
+
+  it("does not report a failed read as an empty archive", async () => {
+    store.readError = { code: "57014", message: "statement timeout" };
+    const res = await get("/api/stories/archive");
+    assert.equal(res.status, 500, "an outage must not render as 'you have no stories'");
+  });
+});
+
+describe("GET /stories/archive/deleted", () => {
+  let store: Store;
+  beforeEach(() => {
+    store = {
+      rows: [
+        { id: "d-fresh", owner_id: OWNER, state: "deleted", expires_at: new Date(Date.now() - 40 * DAY).toISOString(), deleted_at: new Date(Date.now() - 2 * DAY).toISOString(), saved_to_highlight_id: null },
+        { id: "d-lapsed", owner_id: OWNER, state: "deleted", expires_at: new Date(Date.now() - 80 * DAY).toISOString(), deleted_at: new Date(Date.now() - 31 * DAY).toISOString(), saved_to_highlight_id: null },
+        { id: "d-past-cap", owner_id: OWNER, state: "deleted", expires_at: new Date(Date.now() - 400 * DAY).toISOString(), deleted_at: new Date(Date.now() - 1 * DAY).toISOString(), saved_to_highlight_id: null },
+        { id: "d-other", owner_id: STRANGER, state: "deleted", expires_at: new Date(Date.now() - 10 * DAY).toISOString(), deleted_at: new Date(Date.now() - 1 * DAY).toISOString(), saved_to_highlight_id: null },
+        { id: "s-exp", owner_id: OWNER, state: "expired", expires_at: new Date(Date.now() - 3 * DAY).toISOString(), deleted_at: null, saved_to_highlight_id: null },
+      ],
+      readError: null, updateMatchesNothing: false, triggerMissing: false, updates: [],
+    };
+    caller = OWNER;
+    _setTestClient(withAuth(client(store)), true);
+  });
+
+  it("offers only the deletions the recovery route would actually accept", async () => {
+    // `d-lapsed` is past its 30 days; `d-past-cap` was deleted yesterday but its
+    // archive deadline went by 35 days ago, so the capped window has closed
+    // too. The rows survive until the hourly purge reaches them — showing them
+    // would put a Recover button next to a story that answers 410.
+    const res = await get("/api/stories/archive/deleted");
+    assert.equal(res.status, 200);
+    assert.deepEqual(res.body.stories.map((r: any) => r.id), ["d-fresh"]);
+  });
+
+  it("shows nothing of anyone else's", async () => {
+    const res = await get("/api/stories/archive/deleted");
+    assert.ok(!res.body.stories.some((r: any) => r.id === "d-other"));
+  });
+
+  it("carries the date the window actually closes", async () => {
+    const res = await get("/api/stories/archive/deleted");
+    const row = res.body.stories[0];
+    assert.equal(row.retention.recoverableUntil, new Date(Date.parse(row.deleted_at) + 30 * DAY).toISOString());
+    assert.equal(row.retention.recoverable, true);
+  });
+
+  it("does not report a failed read as nothing to recover", async () => {
+    store.readError = { code: "57014", message: "statement timeout" };
+    const res = await get("/api/stories/archive/deleted");
+    assert.equal(res.status, 500);
+  });
+});
+
+describe("POST /stories/:id/repost", () => {
+  let store: Store;
+  const archived = () => ({
+    id: STORY, owner_id: OWNER, state: "expired",
+    expires_at: new Date(Date.now() - 30 * DAY).toISOString(),
+    deleted_at: null, saved_to_highlight_id: null,
+  });
+  beforeEach(() => {
+    store = { rows: [archived()], readError: null, updateMatchesNothing: false, triggerMissing: false, updates: [] };
+    caller = OWNER;
+    _setTestClient(withAuth(client(store)), true);
+  });
+
+  it("puts an archived story back up for a fresh 24 hours", async () => {
+    const res = await post(`/api/stories/${STORY}/repost`);
+    assert.equal(res.status, 200);
+    assert.equal(store.rows[0].state, "active");
+    const remaining = Date.parse(store.rows[0].expires_at) - Date.now();
+    assert.ok(remaining > 23 * 3600_000 && remaining <= 24 * 3600_000, `expected ~24h, got ${remaining}ms`);
+  });
+
+  it("restarts the archive clock, because this is a publication and not a rescue", async () => {
+    const res = await post(`/api/stories/${STORY}/repost`);
+    const purgeAt = Date.parse(res.body.retention.purgeAt);
+    assert.ok(
+      purgeAt > Date.now() + 364 * DAY,
+      "a reposted story's archive runs from its NEW expiry, not the one it had a month ago",
+    );
+  });
+
+  it("refuses to repost a deleted story, so recovery cannot be skipped", async () => {
+    // Reposting a deleted story would re-publish it in one step, bypassing the
+    // recovery flow and its window entirely.
+    store.rows = [{ ...archived(), state: "deleted", deleted_at: new Date().toISOString() }];
+    const res = await post(`/api/stories/${STORY}/repost`);
+    assert.equal(res.status, 400);
+    assert.equal(store.rows[0].state, "deleted", "the row is untouched");
+  });
+
+  it("refuses to repost a moderator-removed story", async () => {
+    store.rows = [{ ...archived(), state: "removed" }];
+    const res = await post(`/api/stories/${STORY}/repost`);
+    assert.equal(res.status, 400);
+    assert.equal(store.rows[0].state, "removed");
+  });
+
+  it("answers a non-owner with not_found, the same as for a story that does not exist", async () => {
+    caller = STRANGER;
+    _setTestClient(withAuth(client(store)), true);
+    const res = await post(`/api/stories/${STORY}/repost`);
+    assert.equal(res.status, 404);
+    assert.equal(store.rows[0].state, "expired", "a stranger's request changed nothing");
+  });
+
+  it("does not answer 200 when the update matched zero rows", async () => {
+    store.updateMatchesNothing = true;
+    const res = await post(`/api/stories/${STORY}/repost`);
+    assert.equal(res.status, 500, "a story that was not reposted must not be reported as reposted");
+  });
+
+  it("does not turn a table outage into a missing story", async () => {
+    store.readError = { code: "57014", message: "statement timeout" };
+    const res = await post(`/api/stories/${STORY}/repost`);
+    assert.notEqual(res.status, 404);
+    assert.equal(res.status, 500);
+  });
+});
+
 describe("POST /stories/:id/recover", () => {
   let store: Store;
   beforeEach(() => {
     caller = OWNER;
-    store = { row: deletedStory(5), readError: null, updateMatchesNothing: false, triggerMissing: false, updates: [] };
+    store = { rows: [deletedStory(5)], readError: null, updateMatchesNothing: false, triggerMissing: false, updates: [] };
     _setTestClient(withAuth(client(store)), true);
   });
 
   it("restores the story to the archive without re-publishing it", async () => {
-    const before = store.row.expires_at;
+    const before = store.rows[0].expires_at;
     const res = await post(`/api/stories/${STORY}/recover`);
 
     assert.equal(res.status, 200);
-    assert.equal(store.row.state, "expired", "recovered to the archive, NOT to active");
-    assert.equal(store.row.expires_at, before, "expires_at is untouched, so the audience is not re-served");
-    assert.equal(store.row.deleted_at, null, "the recovery clock stops");
+    assert.equal(store.rows[0].state, "expired", "recovered to the archive, NOT to active");
+    assert.equal(store.rows[0].expires_at, before, "expires_at is untouched, so the audience is not re-served");
+    assert.equal(store.rows[0].deleted_at, null, "the recovery clock stops");
     assert.equal(res.body.retention.recoverable, false, "it is no longer deleted, so nothing to recover");
   });
 
@@ -352,19 +543,19 @@ describe("POST /stories/:id/recover", () => {
   });
 
   it("refuses after the window with 410 and changes nothing", async () => {
-    store.row = deletedStory(31);
+    store.rows = [deletedStory(31)];
     const res = await post(`/api/stories/${STORY}/recover`);
 
     assert.equal(res.status, 410);
     assert.equal(res.body.error, "recovery_window_closed");
-    assert.equal(store.row.state, "deleted", "the row is untouched");
+    assert.equal(store.rows[0].state, "deleted", "the row is untouched");
     assert.deepEqual(store.updates, [], "and no write was even attempted");
   });
 
   it("answers a non-owner with not_found, the same as for a story that does not exist", async () => {
     caller = STRANGER;
     const present = await post(`/api/stories/${STORY}/recover`);
-    store.row = null;
+    store.rows = [];
     const absent = await post(`/api/stories/${STORY}/recover`);
 
     assert.equal(present.status, absent.status, "a stranger cannot tell the two apart");
@@ -373,7 +564,7 @@ describe("POST /stories/:id/recover", () => {
   });
 
   it("refuses to recover a story that was never deleted", async () => {
-    store.row = { ...deletedStory(5), state: "expired", deleted_at: null };
+    store.rows = [{ ...deletedStory(5), state: "expired", deleted_at: null }];
     const res = await post(`/api/stories/${STORY}/recover`);
     assert.equal(res.status, 400);
     assert.deepEqual(store.updates, []);

@@ -1,19 +1,30 @@
 /**
  * Story archive — recovery, and the dates the archive has to show.
  *
+ *   GET  /stories/archive           — owner-only; the expired stories it holds
+ *   GET  /stories/archive/deleted   — owner-only; deletions still recoverable
  *   GET  /stories/retention-policy  — the windows this deployment enforces
  *   POST /stories/:id/recover       — owner-only; undo a deletion inside its window
+ *   POST /stories/:id/repost        — owner-only; publish an archived story again
  *
  * ── WHY A SEPARATE FILE ──────────────────────────────────────────────────────
- * The archive's *viewing* half — `GET /stories/archive` and
- * `POST /stories/:id/repost` — is being added on the #461 branch, and
- * routes/stories.ts is under active edit on two other branches at once. These
- * two endpoints are genuinely new behaviour that exists nowhere else, so they
- * live where they cannot collide with either. `retentionDatesFor` below is
- * exported for the archive listing to call once the branches meet; it is the
- * one place the dates are computed, so the listing and this route cannot drift.
+ * This is ONE archive, and this is its file. `GET /stories/archive` and
+ * `POST /stories/:id/repost` were written on the #461 branch against a
+ * routes/stories.ts that has since moved a long way — that branch still carries
+ * the old inline block reads, which main has replaced with fail-closed guards.
+ * Porting them into routes/stories.ts would mean re-resolving that file against
+ * two other branches editing it, for no gain: these endpoints share nothing
+ * with the audience-facing story routes except a URL prefix, and they share
+ * `retentionDatesFor` with each other, which is the thing that actually matters.
+ * One implementation of the dates means the listing, the recovery route and the
+ * job cannot tell the owner three different stories about the same row.
  *
- * This is not a second archive. There is no listing here.
+ * What #461's version of routes/stories.ts also carried — save-to-highlight
+ * taking `expiresInHours: null` to mean permanent — is deliberately NOT here.
+ * Main has grown an explicit Highlights archive since that branch was written
+ * (`POST /highlights/:id/archive` and its pair), and the owner's ruling was to
+ * preserve it rather than land a second, expiry-based permanence mechanism
+ * beside it.
  *
  * ── WHY RECOVERY RESTORES TO `expired`, NOT `active` ─────────────────────────
  * The decision is that an owner-deleted Story is recoverable by its OWNER for
@@ -170,6 +181,113 @@ export function retentionDatesFor(
 }
 
 /**
+ * Columns the archive returns. Deliberately the same list `routes/stories.ts`
+ * uses for a story, so an archived story and a live one render through the same
+ * client code rather than through a second, thinner shape that drifts.
+ */
+const ARCHIVE_COLS =
+  "id, owner_id, media_url, media_type, caption, visibility, close_friends_only, trip_id, event_id, place_id, expires_at, saved_to_highlight_id, state, hide_viewer_list, created_at, deleted_at";
+
+function clampLimit(raw: unknown): number {
+  const n = Number(raw ?? 50);
+  if (!Number.isFinite(n) || n <= 0) return 50;
+  return Math.min(Math.floor(n), 100);
+}
+
+/**
+ * GET /stories/archive
+ *
+ * The owner's own expired stories, with the dates that say what happens to each
+ * one and when.
+ *
+ * Owner-only by construction: it filters on `owner_id = the caller` and takes no
+ * target user, so there is no parameter to point at somebody else.
+ *
+ * `state IN ('expired','saved')` — not 'deleted', which is the point of
+ * decision 2: a deleted story leaves normal access immediately. It is still
+ * recoverable, and `/stories/archive/deleted` is where the owner goes to do
+ * that. Listing the two together would make "deleted" a label rather than a
+ * state.
+ *
+ * 'active' is excluded too: a story still inside its 24 hours is up, not
+ * archived, and the feed is where it belongs.
+ */
+router.get("/stories/archive", asyncHandler(async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  const { data: rows, error } = await sc
+    .from("stories")
+    .select(ARCHIVE_COLS)
+    .eq("owner_id", user.id)
+    .in("state", ["expired", "saved"])
+    .order("expires_at", { ascending: false })
+    .limit(clampLimit(req.query.limit));
+
+  if (error) {
+    // A failed read is not an empty archive. Rendering one as the other tells
+    // the owner their stories are gone.
+    req.log.error({ err: error, ownerId: user.id }, "storyArchive: archive listing failed");
+    sendError(res, "db_error", error.message);
+    return;
+  }
+
+  const cfg = resolveStoryRetentionConfig();
+  const nowMs = Date.now();
+  res.status(200).json({
+    stories: (rows ?? []).map((r: any) => ({ ...r, retention: retentionDatesFor(r, cfg, nowMs) })),
+  });
+}));
+
+/**
+ * GET /stories/archive/deleted
+ *
+ * Deletions the owner can still undo, and nothing else.
+ *
+ * A story whose window has closed is filtered out HERE rather than left for the
+ * purge to remove. The row survives until the hourly job reaches it, so listing
+ * every `state='deleted'` row would offer a Recover button that answers 410 —
+ * or worse, one that works and then loses the story within the hour. What the
+ * screen shows and what the recovery route will accept have to be the same set,
+ * and `retentionDatesFor` is what both of them ask.
+ */
+router.get("/stories/archive/deleted", asyncHandler(async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  const { data: rows, error } = await sc
+    .from("stories")
+    .select(ARCHIVE_COLS)
+    .eq("owner_id", user.id)
+    .eq("state", "deleted")
+    .not("deleted_at", "is", null)
+    .order("deleted_at", { ascending: false })
+    .limit(clampLimit(req.query.limit));
+
+  if (error) {
+    req.log.error({ err: error, ownerId: user.id }, "storyArchive: deleted listing failed");
+    sendError(res, "db_error", error.message);
+    return;
+  }
+
+  const cfg = resolveStoryRetentionConfig();
+  const nowMs = Date.now();
+  const stories = (rows ?? [])
+    .map((r: any) => ({ ...r, retention: retentionDatesFor(r, cfg, nowMs) }))
+    .filter((r: any) => r.retention.recoverable);
+
+  res.status(200).json({ stories });
+}));
+
+/**
  * GET /stories/retention-policy
  *
  * The windows this deployment actually enforces, alongside the ones the
@@ -311,6 +429,93 @@ router.post("/stories/:id/recover", asyncHandler(async (req, res) => {
     // within the hour.
     purgeImminent: restored.purgeImminent,
   });
+}));
+
+/**
+ * POST /stories/:id/repost
+ *
+ * Publish an archived story again, for a fresh 24 hours.
+ *
+ * ── WHY THIS EXISTS BESIDE RECOVERY ──────────────────────────────────────────
+ * Recovery and repost are different acts and the difference is the whole
+ * design. Recovery undoes a deletion and returns the story to the archive,
+ * where nobody but the owner can see it. Repost is a new publication the owner
+ * asks for by name. Collapsing them would mean an undo button that re-serves a
+ * weeks-old story to an audience that moved on.
+ *
+ * No term argument: a story's window is 24 hours, which is what a story IS.
+ * Keeping something longer than that is what Highlights are for.
+ *
+ * The SAME row is re-activated rather than a copy inserted, so the media,
+ * caption, place and view history stay attached to the story they belong to —
+ * and so the archive clock, which runs from `expires_at`, restarts from the new
+ * publication rather than the old one. That is correct: this is a publication,
+ * not a rescue.
+ *
+ * 'deleted' and 'removed' are terminal here on purpose. Reposting a deleted
+ * story would let the owner skip the recovery flow and re-publish in one step;
+ * reposting a moderator-removed one would undo a decision that was not theirs.
+ * A deleted story is recovered first, to the archive, and reposted after — two
+ * deliberate acts, which is what they are.
+ */
+router.post("/stories/:id/repost", asyncHandler(async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const { id } = req.params;
+  if (!UUID_RE.test(id)) { sendError(res, "invalid_payload", "Invalid story id"); return; }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  const { data: story, error: readErr } = await sc
+    .from("stories")
+    .select("id, owner_id, state")
+    .eq("id", id)
+    .maybeSingle();
+  if (readErr) {
+    req.log.error({ err: readErr, storyId: id }, "storyArchive: repost pre-read failed");
+    sendError(res, "db_error", readErr.message);
+    return;
+  }
+  if (!story) { sendError(res, "not_found", "Story not found"); return; }
+  // Same answer for a story that exists and one that does not, so this cannot
+  // be used to probe for other people's archives.
+  if ((story as any).owner_id !== user.id) { sendError(res, "not_found", "Story not found"); return; }
+
+  const state = String((story as any).state);
+  if (state !== "expired" && state !== "saved") {
+    sendError(res, "invalid_payload", `A story in state '${state}' cannot be reposted.`);
+    return;
+  }
+
+  const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+  const { data: updated, error } = await sc
+    .from("stories")
+    .update({ state: "active", expires_at: expiresAt })
+    .eq("id", id)
+    .eq("owner_id", user.id)
+    .in("state", ["expired", "saved"])
+    .select(ARCHIVE_COLS);
+
+  if (error) {
+    req.log.error({ err: error, storyId: id }, "storyArchive: repost update failed");
+    sendError(res, "db_error", error.message);
+    return;
+  }
+
+  // An update matching zero rows errors NOTHING. Without this, a story someone
+  // deleted between the read and the write would be reported as reposted.
+  const row = (updated as any[] | null)?.[0];
+  if (!row) {
+    req.log.error({ storyId: id, ownerId: user.id }, "storyArchive: repost matched zero rows — story NOT reposted");
+    sendError(res, "db_error", "The story could not be reposted. Please try again.", { exposeDetail: true });
+    return;
+  }
+
+  const cfg = resolveStoryRetentionConfig();
+  res.status(200).json({ story: row, expiresAt, retention: retentionDatesFor(row, cfg) });
 }));
 
 export default router;
