@@ -50,6 +50,7 @@ import {
   Star,
   BadgeCheck,
   Info,
+  TrendingUp,
 } from 'lucide-react-native';
 import { color, space, radius, type as t, avatar, icon } from '../../theme/tokens.ts';
 import {
@@ -121,6 +122,19 @@ function ScoreHero({ view }: { view: TrustView }) {
         <Text style={s.confidenceLabel}>{view.confidenceLabel}</Text>
       </View>
       <Text style={s.confidenceCopy}>{view.confidenceCopy}</Text>
+
+      {/* Server-chosen strongest areas (§9/§10). Rendered verbatim; when the
+          server sent none, nothing is rendered — no placeholder, no copy. */}
+      {view.strengths.length > 0 ? (
+        <View style={s.strengths} accessibilityLabel={`Strongest areas: ${view.strengths.join(', ')}`}>
+          {view.strengths.map((strength) => (
+            <View key={strength} style={s.strengthChip}>
+              <Star size={icon.s14} color={color.deep} />
+              <Text style={s.strengthText} numberOfLines={1}>{strength}</Text>
+            </View>
+          ))}
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -195,6 +209,26 @@ function CapabilityChips({ view }: { view: TrustView }) {
           <Text style={s.chipText}>{chip.label}</Text>
         </View>
       ))}
+    </View>
+  );
+}
+
+// ── Recovery hints (owner-only) ──────────────────────────────────────────────
+
+/**
+ * Ordered, server-authored steps the OWNER can take to rebuild standing.
+ *
+ * Owner-only by construction: the server sends `trust.recoveryHints` ONLY on the
+ * owner's own view (a non-self viewer's projection has no such key), so a
+ * non-empty list here already means "this is the owner". The screen renders the
+ * strings verbatim, in server order — it never composes, translates or tops up
+ * advice of its own, and shows nothing at all when the server sent nothing.
+ */
+function RecoveryHintRow({ hint }: { hint: string }) {
+  return (
+    <View style={s.hintRow} accessibilityLabel={hint}>
+      <TrendingUp size={icon.s16} color={color.deep} />
+      <Text style={s.hintText}>{hint}</Text>
     </View>
   );
 }
@@ -334,6 +368,20 @@ export default function TrustScreen({
                 <DomainRow key={row.key} row={row} />
               ))}
             </View>
+
+            {/* Ways to strengthen (§10) — owner-only recovery advice the server
+                projected for THIS viewer. Rendered only when the server sent
+                hints; nothing is inferred or defaulted when it did not. */}
+            {view.recoveryHints.length > 0 ? (
+              <>
+                <SectionTitle>Ways to strengthen your standing</SectionTitle>
+                <View style={s.card}>
+                  {view.recoveryHints.map((hint) => (
+                    <RecoveryHintRow key={hint} hint={hint} />
+                  ))}
+                </View>
+              </>
+            ) : null}
 
             {/* Positive credentials (TABLE 13) */}
             {view.credentials.length > 0 ? (
@@ -483,6 +531,30 @@ const s = StyleSheet.create({
     marginTop: space.xs,
     paddingHorizontal: space.sm,
   },
+  strengths: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'center',
+    gap: space.xs,
+    marginTop: space.sm,
+  },
+  strengthChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.xs,
+    paddingHorizontal: space.sm,
+    paddingVertical: 4,
+    borderRadius: radius.pill,
+    backgroundColor: color.paper,
+    borderWidth: 1,
+    borderColor: color.haze,
+  },
+  strengthText: {
+    ...t.small,
+    color: color.deep,
+    fontWeight: '600',
+    fontSize: 12,
+  },
 
   // Section
   sectionTitle: {
@@ -554,6 +626,23 @@ const s = StyleSheet.create({
   standingTextOff: {
     color: color.faint,
     fontWeight: '600',
+  },
+
+  // Recovery hints (owner-only)
+  hintRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: space.sm,
+    paddingVertical: space.md,
+    borderBottomWidth: 1,
+    borderBottomColor: color.haze,
+  },
+  hintText: {
+    ...t.body,
+    flex: 1,
+    color: color.ink,
+    fontSize: 14,
+    lineHeight: 20,
   },
 
   // Credentials

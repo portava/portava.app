@@ -139,6 +139,12 @@ export const GUARDS: readonly GuardEntry[] = [
     reach: { kind: "check-all", script: "check:route-auth-gate" },
   },
   {
+    checker: "src/scripts/checkRouteShadowing.ts",
+    inspects: { countPattern: "(\\d+) registrations across", unit: "route registrations checked for shadowing" },
+    responsibility: "No literal path is registered behind a parameterised one that captures it, which leaves a handler that exists and typechecks but is never called.",
+    reach: { kind: "check-all", script: "check:route-shadowing" },
+  },
+  {
     checker: "src/scripts/checkAsyncHandlers.ts",
     inspects: { countPattern: "(\\d+) route file\\(s\\) clean", unit: "route files checked for unhandled async rejection" },
     responsibility: "An async Express handler cannot reject unhandled, which would answer nothing and leave the request hanging.",
