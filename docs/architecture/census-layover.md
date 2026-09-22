@@ -7119,3 +7119,62 @@ automatically, with no flag, which is what L196 asks for and what
 | NOT-BUILT | 94 | **93** |
 | CONTRADICTED | 0 | **0** |
 | total | 296 | **296** |
+
+## §34 — 2026-09-22 (integration): six N rows whose stated reasons are false, and why the verdicts hold anyway
+
+NO VERDICT MOVES. The denominator is unchanged at 296 and the §33 headline
+stands. What changes is that six rows carried reasons that are no longer true
+of the tree, and a reason nobody can reproduce is worse than no reason: it
+invites the next reader to re-derive the verdict from a fact that has moved.
+
+The DEPS lane built the route model these six rows were graded `N` for lacking.
+It is real and it is tested — `lib/providers/routeCorridorProvider.ts` and
+`lib/providers/returnRouteRisk.ts`, pinned by `test/providerRouteCorridor.test.ts`
+and `test/providerReturnRouteRisk.test.ts`.
+
+It is also NOT WIRED, measured at this commit. Grepping `src/services/airport/`
+and `src/routes/` for `routeCorridorProvider`, `returnRouteRisk`,
+`independentRouteCount` or `assessReturnRisk` returns nothing at all, and the
+one line that would carry it into a traveller's session is untouched:
+
+`services/airport/LayoverTravelTime.ts:83#export const LAYOVER_TRAVEL_TIME_PROVIDER: TravelTimeProvider = noRoutedProvider;`
+
+DEPS left it that way deliberately — that file was the LO-API lane's, and LO-API
+spent its run on the §20 decision record and never came back to it.
+
+| id | reason as written | why that reason is false at this commit | verdict |
+|---|---|---|---|
+| L60 | "Return is modelled as outbound × 2" | Still true of what RUNS, so the verdict is undisturbed — but the reason is now incomplete rather than wrong: `bothDirections` issues two independent queries at two instants, and `corridorsWereEvaluatedIndependently` answers false when both corridors share a departure instant. The × 2 shape is now DETECTABLE, which it was not when the reason was written. | N |
+| L68 | "No route model exists." | False. `lib/providers/routeCorridorProvider.ts` models routes, and `independentRouteCount` reduces routes that share an interior transfer point rather than counting them as independent. | N |
+| L69 | "No route model exists." | Same correction as L68. | N |
+| L70 | "`interruptibility` has no representation." | False. `routeInterruptibility` takes the weakest link along a route and keeps `unknown` as a real third answer rather than collapsing it into "fine". | N |
+| L71 | "`interruptibility` has no representation." | False, and for a second reason: `transferCountOf` counts changes of conveyance, not leg boundaries, which is the distinction the row asked for. | N |
+| L282 | (no reason was ever recorded) | `assessReturnRisk` exists, separates facts from judgement, takes its thresholds by injection, and returns `boolean \| null` where `null` never means "reliable". The row's silence is now filled in, and it still does not change the verdict. | N |
+
+### Why these stay N and do not become W — the corpus's own precedent, not a new rule
+
+L276 is the controlling case and it is graded `N` on exactly this shape.
+`lib/crowdState.ts` already exports `buildCrowdState`, `CrowdStateRefusal`,
+`CROWD_STATE_CLAIM_TYPES` and `envelopeTemporal`, and L276's whole reason is that
+`grep -rn liveClaimRead services/airport/` returns nothing. Capability that
+exists in `lib/` and is never called by the feature surface is NOT BUILT in this
+census's usage, because the requirement is about what a traveller meets, not
+what a module exports.
+
+The same standard is applied here rather than a kinder one. Grading these six W
+because the provider compiles would be the "declared but not enforced" shape
+this corpus keeps catching, and it would put L276 and L68 on opposite verdicts
+for identical evidence.
+
+### The concrete action, so this is a blocker with an owner rather than a shrug
+
+One change wires all six: point `LAYOVER_TRAVEL_TIME_PROVIDER` at the routed
+provider and thread `assessReturnRisk` into `LayoverSafetyEngine`'s risk terms.
+That is `services/airport/**`, which no lane owns any more.
+
+The routed provider ALSO carries an owner PURCHASE decision, and that is not a
+deployment step dressed up as one: Google Routes enablement is unverified on
+that Cloud project, and calls are billed per request with no spend ceiling
+anywhere in this repository. The provider therefore refuses unless BOTH
+`LAYOVER_ROUTED_CORRIDOR_ENABLED` is affirmative AND a key is present. Wiring
+can land without enabling. Enabling is the owner's, and it costs money.
