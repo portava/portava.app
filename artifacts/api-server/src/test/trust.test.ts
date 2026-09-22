@@ -8,6 +8,7 @@
  */
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { measured } from "./helpers/measuredScore.js";
 import {
   recordTrustEvent,
 } from "../services/trust/TrustEventService.js";
@@ -357,7 +358,7 @@ describe("TrustScoreService", () => {
     });
     const db = makeTrustClient(tables);
     const result = await recalculateTrustScore(db, USER_A);
-    assert.ok(result.categories.plan_attendance > 50, "expected > 50 after positive event");
+    assert.ok(measured(result.categories.plan_attendance) > 50, "expected > 50 after positive event");
   });
 
   it("negative confirmed event lowers score", async () => {
@@ -369,7 +370,7 @@ describe("TrustScoreService", () => {
     });
     const db = makeTrustClient(tables);
     const result = await recalculateTrustScore(db, USER_A);
-    assert.ok(result.categories.respect_safety < 50, "expected < 50 after negative event");
+    assert.ok(measured(result.categories.respect_safety) < 50, "expected < 50 after negative event");
   });
 
   it("persists result to trust_profiles", async () => {
@@ -429,7 +430,7 @@ describe("TrustCapService", () => {
     const db = makeTrustClient(tables);
     const result = await recalculateTrustScore(db, USER_A);
     assert.ok(
-      result.categories.plan_attendance <= 60,
+      measured(result.categories.plan_attendance) <= 60,
       `plan_attendance ${result.categories.plan_attendance} should be <= 60`,
     );
     assert.ok(result.capsApplied.includes("plan_attendance"));
@@ -762,7 +763,7 @@ describe("TrustRecoveryService", () => {
     const result = await recalculateTrustScore(db, USER_A);
     // Recent positive should dominate (decay makes old negative contribute little)
     assert.ok(
-      result.categories.plan_attendance > 50,
+      measured(result.categories.plan_attendance) > 50,
       `expected > 50 when recent event outweighs decayed negative; got ${result.categories.plan_attendance}`,
     );
   });
@@ -849,7 +850,7 @@ describe("Integration: fake GPS confirmed caps location confidence", () => {
     // Score should now be capped
     const result = await recalculateTrustScore(db, USER_A);
     assert.ok(
-      result.categories.location_honesty < 50,
+      measured(result.categories.location_honesty) < 50,
       `location_honesty should be < 50 after confirmed severe event; got ${result.categories.location_honesty}`,
     );
   });

@@ -10,6 +10,7 @@
  */
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
+import { measured } from "./helpers/measuredScore.js";
 import http from "node:http";
 import express from "express";
 
@@ -700,6 +701,19 @@ describe("trust-admin routes — cap/override (C22: removal must be observed)", 
     // A second user with the same kind of cap, so a rule that ignored scoping
     // would have something to hit by accident.
     tables.trust_caps.push(capRow({ id: "00000000-0000-0000-0000-0000000000c7", user_id: USER_B, category: "communication" }));
+    // Q1 (2026-09-22): `communication` must be MEASURED for `persistedScore` to
+    // be a number at all — an unscored category now reads back as null, which
+    // is the correct read-back value but would make the `typeof === "number"`
+    // assertion below unsatisfiable. Seeding real events keeps that assertion
+    // exactly as strong as it was (the route still has to report a number it
+    // READ rather than one it computed) instead of weakening it to accept null.
+    for (let i = 0; i < 3; i++) {
+      tables.trust_events.push({
+        id: `ev-comm-${i}`, user_id: USER_A, event_type: "MESSAGE_REPLIED",
+        category: "communication", delta: 5, severity: "minor",
+        status: "applied", source_type: "user_action", metadata: {}, created_at: new Date().toISOString(),
+      });
+    }
     setClients({ tables });
 
     const { status, body } = await httpReq("POST", `/admin/trust/users/${USER_A}/cap/override`, {
@@ -913,7 +927,7 @@ describe("Service: full event → recalc → public level round-trip", () => {
     await db.from("trust_events").insert({ user_id: USER_A, event_type: "HOST_QUALITY_RATING", category: "host_quality", delta: 10, severity: "minor", status: "applied", source_type: "user_action" });
 
     const result = await recalculateTrustScore(db, USER_A);
-    assert.ok(result.overall_score > 0);
+    assert.ok(measured(result.overall_score) > 0);
     assert.ok(["new_traveler","building_trust","reliable_traveler","trusted_traveler","highly_trusted","city_trusted"].includes(result.public_level));
 
     const profile = await getTrustProfile(db, USER_A);
@@ -921,12 +935,33 @@ describe("Service: full event → recalc → public level round-trip", () => {
     assert.equal(profile!.overall_score, result.overall_score);
   });
 
-  it("new user with no events gets neutral baseline (score=50, reliable_traveler)", async () => {
+  /**
+   * THIS TEST USED TO PIN THE DEFECT.
+   *
+   * It read:
+   *
+   *   it("new user with no events gets neutral baseline (score=50, reliable_traveler)")
+   *     assert.equal(result.overall_score, 50);
+   *     assert.equal(result.public_level, "reliable_traveler");
+   *
+   * — that is, it asserted as CORRECT the exact behaviour Q1 (owner decision
+   * 2026-09-22) identifies as the defect: a user with zero trust events scored
+   * a fabricated 50.00 and was published as a `reliable_traveler` on the
+   * strength of nine neutrals nobody measured.
+   *
+   * The expectations are therefore REVERSED rather than relaxed, and the test
+   * is kept (not deleted) because the no-event case still needs a pin — it is
+   * just a pin on the decided behaviour now. Nothing here is weakened: the
+   * assertions are as specific as the ones they replace.
+   */
+  it("new user with no events is NOT SCORED (null) and is NOT promoted", async () => {
     const tables = makeTables();
     const db = makeTrustClient(tables);
     const result = await recalculateTrustScore(db, USER_B);
-    assert.equal(result.overall_score, 50);
-    assert.equal(result.public_level, "reliable_traveler");
+    assert.equal(result.overall_score, null,
+      "no events means no score — a 50 here would be a fabricated measurement");
+    assert.equal(result.public_level, "new_traveler",
+      "and no standing to show — never a promotion earned by nine inventions");
   });
 });
 
@@ -988,7 +1023,7 @@ describe("Service: admin confirm event triggers recalculation", () => {
     assert.ok(caps.length > 0, "at least one cap should be active");
 
     const result = await recalculateTrustScore(db, USER_A);
-    assert.ok(result.categories.location_honesty <= 50, `location_honesty should be ≤50, got ${result.categories.location_honesty}`);
+    assert.ok(measured(result.categories.location_honesty) <= 50, `location_honesty should be ≤50, got ${result.categories.location_honesty}`);
   });
 
   it("dismissing a serious event leaves no caps", async () => {
@@ -1034,11 +1069,11 @@ describe("Service: adminOverrideScore → adminRemoveOverride restores score", (
 
     await adminOverrideScore(db, ADMIN, USER_A, "plan_attendance", 5, "Test");
     const capped = await recalculateTrustScore(db, USER_A);
-    assert.ok(capped.categories.plan_attendance <= 5, `got ${capped.categories.plan_attendance}`);
+    assert.ok(measured(capped.categories.plan_attendance) <= 5, `got ${capped.categories.plan_attendance}`);
 
     await adminRemoveOverride(db, ADMIN, USER_A, "plan_attendance", "Restoring");
     const restored = await recalculateTrustScore(db, USER_A);
-    assert.ok(restored.categories.plan_attendance >= capped.categories.plan_attendance);
+    assert.ok(measured(restored.categories.plan_attendance) >= measured(capped.categories.plan_attendance));
   });
 });
 
@@ -1068,7 +1103,7 @@ describe("D-OVERRIDE: adminOverrideScore caps, and a cap only binds downward", (
       await db.from("trust_events").insert({ user_id: USER_A, event_type: "PLAN_ATTENDED", category: "plan_attendance", delta: 10, severity: "minor", status: "applied", source_type: "user_action" });
     }
     const natural = (await recalculateTrustScore(db, USER_A)).categories.plan_attendance;
-    assert.ok(natural > 20, `fixture must earn a natural score well above the override; got ${natural}`);
+    assert.ok(measured(natural) > 20, `fixture must earn a natural score well above the override; got ${natural}`);
 
     await adminOverrideScore(db, ADMIN, USER_A, "plan_attendance", 20, "Downward");
     const after = (await recalculateTrustScore(db, USER_A)).categories.plan_attendance;
@@ -1081,7 +1116,7 @@ describe("D-OVERRIDE: adminOverrideScore caps, and a cap only binds downward", (
     // One negative event, so the natural score sits below the neutral 50.
     await db.from("trust_events").insert({ user_id: USER_B, event_type: "PLAN_NO_SHOW", category: "plan_attendance", delta: -20, severity: "minor", status: "applied", source_type: "user_action" });
     const natural = (await recalculateTrustScore(db, USER_B)).categories.plan_attendance;
-    assert.ok(natural < 90, `fixture must sit below the override; got ${natural}`);
+    assert.ok(measured(natural) < 90, `fixture must sit below the override; got ${natural}`);
 
     await adminOverrideScore(db, ADMIN, USER_B, "plan_attendance", 90, "Upward");
 
@@ -1247,7 +1282,7 @@ describe("Scoring: positive movement is ramped, negative movement is not", () =>
     const r = await recalculateTrustScore(db, USER_A);
     // 50 + (6*5) * confidence(1/5) = 56 — not the old 50 + 30 = 80.
     assert.ok(
-      r.categories.host_quality > 50 && r.categories.host_quality < 60,
+      measured(r.categories.host_quality) > 50 && measured(r.categories.host_quality) < 60,
       `expected a damped gain in 50..60, got ${r.categories.host_quality}`,
     );
   });
@@ -1259,7 +1294,7 @@ describe("Scoring: positive movement is ramped, negative movement is not", () =>
 
     const r = await recalculateTrustScore(db, USER_A);
     // Five events of equal weight → confidence 1 → the full 50 + 30.
-    assert.equal(Math.round(r.categories.host_quality), 80);
+    assert.equal(Math.round(measured(r.categories.host_quality)), 80);
   });
 
   it("volume alone cannot inflate a score beyond the honest mean", async () => {
@@ -1269,7 +1304,7 @@ describe("Scoring: positive movement is ramped, negative movement is not", () =>
 
     const r = await recalculateTrustScore(db, USER_A);
     // The mean (not the sum) is used, so 200 events land where 5 do.
-    assert.equal(Math.round(r.categories.host_quality), 80);
+    assert.equal(Math.round(measured(r.categories.host_quality)), 80);
   });
 
   it("a single negative event bites at FULL strength on first occurrence", async () => {
@@ -1307,7 +1342,7 @@ describe("Scoring: positive movement is ramped, negative movement is not", () =>
 
     const r = await recalculateTrustScore(db, USER_A);
     assert.ok(
-      r.categories.respect_safety > 50,
+      measured(r.categories.respect_safety) > 50,
       `documents the limitation: the mean stays positive, got ${r.categories.respect_safety}`,
     );
   });
@@ -1339,7 +1374,7 @@ describe("Scoring: positive movement is ramped, negative movement is not", () =>
     const rFresh = await recalculateTrustScore(makeTrustClient(fresh), USER_A);
     const rStale = await recalculateTrustScore(makeTrustClient(stale), USER_A);
     assert.ok(
-      rStale.categories.host_quality < rFresh.categories.host_quality,
+      measured(rStale.categories.host_quality) < measured(rFresh.categories.host_quality),
       `stale evidence must confer less credit (fresh=${rFresh.categories.host_quality}, stale=${rStale.categories.host_quality})`,
     );
   });
@@ -1649,6 +1684,21 @@ describe("D-OVERRIDE precedence, expiry and removal — characterization, not a 
     const tables = makeTables();
     const db = makeTrustClient(tables);
 
+    // Q1 (2026-09-22): respect_safety must be MEASURED for this test to be
+    // about cap precedence at all. Before nullable scores, a category with no
+    // events still produced the fabricated neutral 50, so the ceilings had
+    // something to clamp by accident; now an unmeasured category stays null and
+    // no ceiling binds on it, which would make the assertions below vacuously
+    // true without testing anything. Seeding real positive events restores the
+    // test's actual subject — two ceilings folding with Math.min over a genuine
+    // score — rather than papering over the null.
+    for (let i = 0; i < 6; i++) {
+      await db.from("trust_events").insert({
+        user_id: USER_A, event_type: "SAFE_RETURN_COMPLETED", category: "respect_safety",
+        delta: 10, severity: "minor", status: "applied", source_type: "user_action",
+      });
+    }
+
     // A confirmed serious finding capped respect_safety at 40.
     await createCap(db, {
       userId: USER_A, category: "respect_safety", ceilingScore: 40,
@@ -1662,7 +1712,7 @@ describe("D-OVERRIDE precedence, expiry and removal — characterization, not a 
     // combine as 40 — the admin's 90 is inert. Under PIN semantics this is the
     // single most visible behavioural change: the admin would win.
     const after = (await recalculateTrustScore(db, USER_A)).categories.respect_safety;
-    assert.ok(after <= 40, `the moderation ceiling still binds; got ${after}`);
+    assert.ok(measured(after) <= 40, `the moderation ceiling still binds; got ${after}`);
     assert.notEqual(after, 90, "an override cannot grant relief from another cap today");
   });
 
@@ -1776,7 +1826,7 @@ describe("D-OVERRIDE: the ceiling the owner ruled for must PERSIST", () => {
       });
     }
     const before = await recalculateTrustScore(db, USER_A);
-    assert.ok(before.categories.plan_attendance > 20,
+    assert.ok(measured(before.categories.plan_attendance) > 20,
       `fixture must earn a natural score well above the ceiling; got ${before.categories.plan_attendance}`);
 
     const result = await adminOverrideScore(db, ADMIN, USER_A, "plan_attendance", 20, "Watchlist");

@@ -99,11 +99,23 @@ const CATEGORY_META: Record<string, { label: string; hint: string }> = {
  * A category at/above 65 is "strong" (no hint); below neutral (< 50) surfaces an
  * improvement hint. Never exposes raw event deltas or reporter data (§10).
  */
-function breakdownFromCategories(categories: Record<string, number> | null | undefined): TrustScoreBreakdown {
+function breakdownFromCategories(categories: Record<string, number | null> | null | undefined): TrustScoreBreakdown {
   const factors: TrustScoreFactor[] = [];
   if (!categories) return { factors };
   for (const [key, meta] of Object.entries(CATEGORY_META)) {
-    const raw = Number((categories as Record<string, number>)[key]);
+    const value = (categories as Record<string, number | null>)[key];
+    // Q1, owner decision 2026-09-22: a category may now be `null` = NOT SCORED,
+    // and an unscored category produces NO FACTOR ROW at all — the owner is
+    // shown the categories that were measured, and nothing is asserted about
+    // the rest.
+    //
+    // The null test is separate and comes FIRST because `Number(null)` is 0 and
+    // `Number.isFinite(0)` is true. Without it an unscored category would have
+    // rendered on the owner's own identity card as `points: 0` with the
+    // improvement hint attached — telling someone they scored zero in a
+    // category nobody has ever measured them in, and telling them to fix it.
+    if (value === null || value === undefined) continue;
+    const raw = Number(value);
     if (!Number.isFinite(raw)) continue;
     const points = Math.round(raw);
     factors.push({
@@ -154,11 +166,20 @@ export async function computeTrustScore(
   try {
     score = await getDisplayTrustScore(sc, userId);
   } catch {
-    score = profile ? Math.round(Number(profile.overall_score)) : null;
+    // Q1: NOT SCORED stays null on the fallback path too. `Number(null)` is 0,
+    // so `Math.round(Number(profile.overall_score))` would have put a hard ZERO
+    // on the owner's identity card for a user with no measurement — and only
+    // when `getDisplayTrustScore` threw, i.e. exactly when nobody is looking.
+    // `getDisplayTrustScore` itself already returns null for this case; this
+    // arm now agrees with it instead of quietly disagreeing.
+    const raw = profile?.overall_score;
+    score = raw === null || raw === undefined || !Number.isFinite(Number(raw))
+      ? null
+      : Math.round(Number(raw));
   }
 
   const label = publicTrustLabel(profile?.public_level);
-  const breakdown = breakdownFromCategories(profile?.categories as Record<string, number> | undefined);
+  const breakdown = breakdownFromCategories(profile?.categories as Record<string, number | null> | undefined);
 
   return { score, label, breakdown, ...(degraded ? { degraded: true } : {}) };
 }
