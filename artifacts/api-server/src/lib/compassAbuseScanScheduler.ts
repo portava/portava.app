@@ -28,7 +28,17 @@ async function runGlobalScan(): Promise<void> {
   _scanCallCount++;
   const db = isServiceClientReady ? getServiceClient() : null;
   try {
-    const { flagsWritten } = await runScan(db, null);
+    const { flagsWritten, status, failedDetectors } = await runScan(db, null);
+    if (status === "incomplete") {
+      // "completed" with flagsWritten: 0 was the operator-facing half of the
+      // same fabrication: an hourly line saying the abuse scan had run and
+      // found nothing, emitted by a scan that had read nothing.
+      logger.error(
+        { flagsWritten, failedDetectors },
+        "CompassAbuseScanner: global scan INCOMPLETE — detectors could not read; no clean result implied",
+      );
+      return;
+    }
     logger.info({ flagsWritten }, "CompassAbuseScanner: global scan completed");
   } catch (err) {
     logger.error({ err }, "CompassAbuseScanner: global scan failed");
@@ -43,7 +53,14 @@ async function runGlobalScan(): Promise<void> {
 export function triggerOnDemandScan(userId: string): void {
   const db = isServiceClientReady ? getServiceClient() : null;
   runScan(db, userId).then(
-    ({ flagsWritten }) => {
+    ({ flagsWritten, status, failedDetectors }) => {
+      if (status === "incomplete") {
+        logger.error(
+          { userId, flagsWritten, failedDetectors },
+          "CompassAbuseScanner: on-demand scan INCOMPLETE — detectors could not read; no clean result implied",
+        );
+        return;
+      }
       logger.info({ userId, flagsWritten }, "CompassAbuseScanner: on-demand scan completed");
     },
     (err) => {

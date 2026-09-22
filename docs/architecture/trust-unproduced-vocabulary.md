@@ -15,7 +15,7 @@ two**:
 
 | Claim: "no triggering action" | Measured |
 |---|---|
-| `plan_no_show` | **FALSE.** The trip owner adjudicates a member as `no_show` at `routes/geofence.ts:809-897` (branch `:872`). Nothing emits. |
+| `plan_no_show` | **FALSE.** The trip owner adjudicates a member as `no_show` on the owner-gated `POST /trips/:tripId/geofence/attendance/:userId/override` — handler `routes/geofence.ts:1044`, owner gate `routes/geofence.ts:1077`, the `no_show` branch `routes/geofence.ts:1150#no_show`. Nothing emits. *(Read as lines 809-897, branch line 872, until 2026-09-22. That range never held the override handler at all, and line 872 went dead when `routes/geofence.ts` gained 12 lines at its admin-defaults helper; the old numbers are spelled out rather than cited, and the new one was found by reading for the branch that carries the claim, not by adding the offset.)* |
 | `host_positive_review` / `host_negative_review` | **FALSE.** `routes/reviews.ts:199-258` writes attendance-gated reviews of a trip's host; only the reviewer is credited (`:247`). |
 | `responded_promptly`, `travel_circle_join`, `fake_gps_confirmed`, `mutual_report` | **Partly.** A raw signal is produced for each; nothing adjudicates it into the event's meaning (verdict c below). |
 | `event_host_no_show`, `plan_late_cancel` | **TRUE.** Nothing in the product produces the situation. |
