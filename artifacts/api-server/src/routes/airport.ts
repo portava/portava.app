@@ -3197,13 +3197,34 @@ router.post("/airport/sessions/:id/crew/:crewId/join", async (req, res) => {
     sendError(res, "invalid_payload", "This layover has ended, so you cannot join a crew from it."); return;
   }
 
+  // The joiner's city, resolved the SAME way `GET /crew` and `POST /crew`
+  // resolve it. Until this existed the join asked for no city at all, so the
+  // city-scoped discovery list sat in front of an unscoped action and a crew id
+  // was enough to join a crew on another continent — see `joinCrew`.
+  const airport = await airportOr503(sc, res, session);
+  if (!airport) return;
+  const city = crewCityFor(airport, session);
+  if (!city) {
+    // Symmetric with `GET /crew`, which serves this traveller no crews at all,
+    // and with `POST /crew`, which refuses to form one. A city we cannot name
+    // is a city we cannot check a crew against.
+    sendError(res, "invalid_payload", "We do not know which city this layover is in, so you cannot join a crew from it.");
+    return;
+  }
+
   const nowMs = Date.now();
   const nowIso = new Date(nowMs).toISOString();
 
-  const joined = await joinCrew(sc, { userId: user.id, sessionId: session.id, crewId: req.params.crewId }, nowIso);
+  const joined = await joinCrew(sc, { userId: user.id, sessionId: session.id, crewId: req.params.crewId, city }, nowIso);
   if (!joined.ok) {
     if (joined.reason === "already_in_a_crew") {
       sendError(res, "invalid_payload", "You are already in another crew. Leave it first."); return;
+    }
+    if (joined.reason === "city_mismatch") {
+      // The crew's city is deliberately NOT named: the caller has been told
+      // nothing about this crew by any surface they are entitled to read, and
+      // an error message is not the place to start.
+      sendError(res, "invalid_payload", "That crew is in another city."); return;
     }
     if (joined.reason === "crew_full") {
       sendError(res, "invalid_payload", "That crew is full."); return;
