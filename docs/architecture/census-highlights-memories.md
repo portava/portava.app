@@ -5785,3 +5785,56 @@ Every row here was already `W` or `BBW` under two independent gates —
 These three findings sharpen what is and is not built behind those gates; none
 of them changes what a traveller meets today. **266 = 69 C / 136 W / 59 N / 2 X,
 unchanged.**
+
+---
+
+## §V — the spelled-out verdicts are an anti-parse device, not a parser bug, and one of them over-reaches
+
+A lane reported the spelled-out `standing` column as a tooling gap: `check:census-integrity`
+accepts only short tokens, so cells reading `BUILT-BUT-WRONG` are invisible to it and the
+tool falls back to an older lettered cell. The mechanism is right. The conclusion is not,
+and the difference matters enough to write down before somebody acts on it.
+
+**The spelling is deliberate and this document says so**, immediately above the table in
+question: *"This table RESTATES no verdict — the `standing` column is spelled out rather
+than lettered so that nothing here is read as a row move. Every row below keeps the verdict
+the dump gave it."* Making the parser read those cells would convert a summary that
+explicitly declines to re-grade into a re-grading.
+
+**Measured rather than argued.** `VERDICT_ALIASES` was widened to accept the five spelled-out
+forms and the id-token regex loosened to match them, then the corpus dump was taken before
+and after. 3,518 rows both times; the diff is **four lines**, all in this census:
+
+| id | tool reads today | would read after the "fix" |
+|---|---|---|
+| H134 | N | W |
+| H135 | N | W |
+| H150 | N | W |
+| H151 | N | W |
+
+The probe was then reverted; nothing in this repository has been changed by it.
+
+**Where those four come from, and the part worth keeping.** They are not restatements of
+their own rows. The tool attributes all four to one line — the `standing` table's last row,
+whose id cell reads `H175, H130–H141, H147–H154, H160`. `H130–H141` is a RANGE, and it
+sweeps in `H134` (`MERGE_MEMORY`) and `H135` (`SPLIT_MEMORY`); `H147–H154` sweeps in `H150`
+(`memory.merged`) and `H151` (`memory.split`). Those four are `NB` on their own rows, and
+correctly so: `MERGE_MEMORY` and `SPLIT_MEMORY` are explicitly not declared, and an event
+name no command can emit is a vocabulary entry rather than an event.
+
+So that row asserts `BUILT-BUT-WRONG` over a span containing four rows that are not. It is
+harmless **only** because the spelling keeps it unparsed — the shorthand is convenient in
+prose and wrong as an interval. Anyone who widens the parser without reading this section
+moves four verdicts and raises this census's correct-adjacent count by four, against the
+explicit intent of the table they changed.
+
+**Two rules follow, and neither is "fix the parser".**
+
+1. A summary table that does not intend to re-grade keeps spelling its verdicts out. That is
+   the convention, it works, and it is now documented as load-bearing rather than incidental.
+2. A row-move table that DOES intend to re-grade uses the short token — and names ids
+   individually, or uses a range it has checked end to end. A range is an assertion about
+   every id inside it.
+
+**What this does not change.** No count moves. The headline stands at
+**266 = 69 C / 136 W / 59 N / 2 X**. The dump before and after this section is identical.
