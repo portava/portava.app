@@ -200,7 +200,14 @@ router.post("/me/location-state", async (req, res) => {
   const countryCode = sanitizeText(place.countryCode, 8);
   const formatted = sanitizeText(place.formatted, 256);
 
-  const now = new Date().toISOString();
+  // ONE clock read for this handler. `now` stamps the location row and `nowMs`
+  // opens the precise-share binding's TTL; taking them from two separate reads
+  // let the two straddle a tick, so a binding could be stamped a millisecond
+  // before or after the row it binds — and the binding's expiry is judged
+  // against that stamp. `check:splitClockGuard` exists for exactly this and
+  // caught it here; see pushRetryQueue.ts for the pattern.
+  const nowMs = Date.now();
+  const now = new Date(nowMs).toISOString();
   const patch: Record<string, unknown> = {
     user_id: user.id,
     updated_at: now,
@@ -283,7 +290,7 @@ router.post("/me/location-state", async (req, res) => {
       ? await verifyDeviceForUser(flagSc, user.id, bindingDeviceId)
       : "unreadable";
     if (bindingState === "registered" && bindingDeviceId) {
-      bindPreciseShare(user.id, bindingDeviceId, Date.now());
+      bindPreciseShare(user.id, bindingDeviceId, nowMs);
       preciseDeviceBound = true;
       preciseDeviceReason = "bound_device";
     } else {
