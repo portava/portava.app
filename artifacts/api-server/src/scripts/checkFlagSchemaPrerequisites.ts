@@ -65,7 +65,7 @@ import { createHash } from "node:crypto";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildCanonicalSchema, hasColumn, isModelled, stripSqlComments } from "./lib/canonicalSchema.js";
-import { newestApply } from "./lib/migrationInventoryCore.js";
+import { compareVersions, profileVersionColumn } from "./lib/migrationInventoryCore.js";
 import {
   evaluateFlags,
   evaluateRegistry,
@@ -216,16 +216,16 @@ function checkSnapshotFreshness(snapshotPath: string): string[] {
     problems.push("production-applied-migrations.json lists no migrations; the tripwire would never fire.");
     return problems;
   }
-  const newest = newestRecordedVersion(versions, problems); // never assumes one format
-  if (newest === null) return problems;
-  if (newest > watermark) {
-    const late = (applied.migrations ?? [])
-      .filter((m: any) => String(m?.version ?? "") > watermark)
-      .map((m: any) => `${m.version} ${m.name}`);
+  // entriesAfterWatermark() is at the foot of this file. It never compares two
+  // version strings of different formats, it reports a mixed column as its own
+  // problem, and an entry it cannot place is treated as NEWER rather than
+  // dropped — fail closed, not quiet.
+  const late = entriesAfterWatermark(applied.migrations ?? [], watermark, problems);
+  if (late.length > 0) {
     problems.push(
-      `STALE SNAPSHOT: ${late.length} migration(s) recorded as applied to production AFTER this snapshot was captured ` +
-        `(watermark ${watermark}, newest applied ${newest}): ${late.join(", ")}. ` +
-        `Every answer below is graded against a production that no longer exists. ` +
+      `STALE SNAPSHOT: ${late.length} migration(s) recorded as applied to production AFTER this snapshot ` +
+        `was captured (watermark ${watermark}): ${late.join(", ")}. Every answer below is graded against ` +
+        `a production that no longer exists. ` +
         `Refresh: see artifacts/api-server/scripts/refresh-production-snapshot.md`,
     );
   }
@@ -588,34 +588,90 @@ function main(): void {
 // exist" can, and that is the question that matters here.
 
 /**
- * The newest version recorded in production-applied-migrations.json, or null
- * with a problem pushed.
+ * Every recorded apply that is NEWER than the snapshot's watermark — the
+ * staleness question — answered without ever comparing two version strings of
+ * different formats.
  *
- * THIS USED TO BE `versions.reduce((a, b) => (b > a ? b : a))` under the comment
- * "Versions are zero-padded timestamps, so lexicographic order IS chronological."
- * That is true of that file TODAY — all 126 entries are 14-digit — and is
- * enforced nowhere, while the file is documented as being taken FROM
- * supabase_migrations.schema_migrations, which is the column that is NOT
- * single-format. One hand-added serial entry and the maximum silently becomes a
- * number from before the cutover, the comparison at the call site can never
- * fire, and the stale-snapshot tripwire goes quiet without ever failing.
+ * WHAT THIS REPLACED, AND WHY. The staleness test used to read:
  *
- * newestApply() refuses a mixed-format column instead of answering, so that
- * state becomes a LOUD problem. Strictly stricter: it cannot pass anything the
- * old line failed.
+ *   // Versions are zero-padded timestamps, so lexicographic order IS chronological.
+ *   const newest = versions.reduce((a, b) => (b > a ? b : a));
+ *   if (newest > watermark) { … }
+ *
+ * True of production-applied-migrations.json TODAY — all 126 entries are
+ * 14-digit — and enforced nowhere, while that file is documented as being taken
+ * FROM supabase_migrations.schema_migrations, which is the column that is NOT
+ * single-format. On production that column's maximum is '2272', a pre-cutover
+ * serial that sorts above every 14-digit timestamp. One hand-added serial entry
+ * here and `newest` silently becomes a number from before the cutover, the
+ * comparison can never fire, and the tripwire goes quiet WITHOUT EVER FAILING —
+ * which is the failure mode this check was written against, reproduced inside
+ * the check itself.
+ *
+ * THREE RULES, and each one is strictly stricter than the line above:
+ *
+ *   1. A version of the SAME format as the watermark is compared to it, which
+ *      is safe: both are fixed-width zero-padded digits, so text order is
+ *      chronological WITHIN a format. compareVersions() is what establishes
+ *      that they share a format; it refuses rather than guessing.
+ *   2. A version of a DIFFERENT format, or one of no recognised format, CANNOT
+ *      be placed relative to the watermark. It is counted as LATE anyway and
+ *      named in its own problem. Fail closed: an entry whose position is
+ *      unknown might be after the capture, and the cost of assuming it is not
+ *      is a snapshot silently graded against a production that moved.
+ *   3. profileVersionColumn() reports a mixed column as its own problem, so the
+ *      state that hides defect (1) is visible even on a run where nothing is
+ *      late.
+ *
+ * Nothing here can pass what the old line failed: every version the old
+ * comparison would have called late is either the same format (rule 1, still
+ * late) or a different one (rule 2, late by default).
  */
-function newestRecordedVersion(
-  versions: readonly string[],
+function entriesAfterWatermark(
+  migrations: readonly { version?: unknown; name?: unknown }[],
+  watermark: string,
   problems: string[],
-): string | null {
-  const answer = newestApply(versions.map((v) => ({ version: v })));
-  if (answer.ok) return answer.value.version;
-  problems.push(
-    `production-applied-migrations.json has no newest version: ${answer.reason} ` +
-      "Until every entry uses one format, the stale-snapshot tripwire cannot fire and this check is " +
-      "grading a snapshot whose freshness is unestablished.",
+): string[] {
+  const late: string[] = [];
+  const unplaceable: string[] = [];
+
+  for (const m of migrations) {
+    const version = String(m?.version ?? "");
+    if (version === "") continue;
+    const label = `${version} ${String(m?.name ?? "")}`.trim();
+    const cmp = compareVersions(version, watermark);
+    if (!cmp.ok) {
+      unplaceable.push(label);
+      late.push(label);
+      continue;
+    }
+    if (cmp.value > 0) late.push(label);
+  }
+
+  if (unplaceable.length > 0) {
+    problems.push(
+      `${unplaceable.length} entr(y/ies) in production-applied-migrations.json carry a version that cannot ` +
+        `be ordered against the snapshot watermark ${watermark}: ${unplaceable.join(", ")}. They are counted ` +
+        "as LATE rather than ignored, because an entry whose position is unknown might be after the capture " +
+        "and a tripwire that assumes otherwise is the defect this check exists to catch.",
+    );
+  }
+
+  // The shape of the column itself, reported even when nothing is late, so the
+  // state that would hide a stale snapshot is visible before it hides one.
+  const profile = profileVersionColumn(
+    migrations.map((m) => String(m?.version ?? "")).filter(Boolean),
   );
-  return null;
+  if (profile.mixed) {
+    problems.push(
+      "production-applied-migrations.json mixes version formats (" +
+        profile.formats.map((f) => `${f}=${profile.counts[f]}`).join(", ") +
+        "). A mixed column has no maximum: MAX over it returns a bare serial — on production, '2272' — " +
+        "which is OLDER than almost every row it was asked to dominate. Put every entry in one format.",
+    );
+  }
+
+  return late;
 }
 
 main();
