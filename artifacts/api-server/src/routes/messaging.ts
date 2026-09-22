@@ -1804,11 +1804,18 @@ router.post('/threads/:threadId/e2ee', async (req, res) => {
   if (!sc) { sendError(res, 'server_not_configured', 'Service client not ready'); return; }
 
   // Membership — thread access is gated only by message_thread_members.
+  // `.is('left_at', null)` is load-bearing, not decoration. Leaving a thread KEEPS
+  // the row and stamps left_at (see the leave handler below), so a read that matches
+  // only on (thread_id, user_id) matches a departed member too and hands them a
+  // state change in a thread they walked out of. RLS does not catch this: 2402's
+  // mtm_select admits `auth.uid() = user_id` whatever left_at says, and this path
+  // reads through a client that bypasses RLS anyway.
   const { data: member, error: memberErr } = await sc
     .from('message_thread_members')
     .select('user_id')
     .eq('thread_id', threadId)
     .eq('user_id', user.id)
+    .is('left_at', null)
     .maybeSingle();
 
   // T344/T363, §17.8. supabase-js RESOLVES on a database failure, so a dropped
@@ -3462,11 +3469,14 @@ router.post('/messages/:messageId/translate/retry', async (req, res) => {
     return;
   }
 
+  // Departed members keep their row with left_at stamped, so this gate must
+  // exclude them explicitly — see the POST /threads/:threadId/e2ee gate above.
   const { data: mem, error: memErr } = await client
     .from('message_thread_members')
     .select('user_id')
     .eq('thread_id', m.thread_id)
     .eq('user_id', user.id)
+    .is('left_at', null)
     .maybeSingle();
 
   if (memErr) { refuseUnreadableAccess(req, res, 'message_thread_members', { err: memErr, threadId: m.thread_id, userId: user.id }); return; }
@@ -3535,11 +3545,14 @@ router.patch('/threads/:threadId/messages/:messageId', async (req, res) => {
   if (newBody.length > 4000) { sendError(res, 'invalid_payload', 'body must be 4000 characters or fewer'); return; }
 
   // Verify thread membership.
+  // Departed members keep their row with left_at stamped, so this gate must
+  // exclude them explicitly — see the POST /threads/:threadId/e2ee gate above.
   const { data: mem, error: memErr } = await client
     .from('message_thread_members')
     .select('user_id')
     .eq('thread_id', threadId)
     .eq('user_id', user.id)
+    .is('left_at', null)
     .maybeSingle();
   if (memErr) { refuseUnreadableAccess(req, res, 'message_thread_members', { err: memErr, threadId, userId: user.id }); return; }
   if (!mem) { sendError(res, 'forbidden', 'Not a member of this thread'); return; }

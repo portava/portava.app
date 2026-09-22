@@ -345,7 +345,23 @@ import {
  * something else again, for the same reason as the merge above: the repairs
  * are disjoint and no branch can see the union. The value below is the
  * measurement at the merged tree: 205. */
-export const MAX_DEAD_TARGETS = 205;
+/* LOWERED 2026-09-22 by the departed-member membership fix. Adding
+ * `.is('left_at', null)` to the three state-changing membership gates in
+ * `routes/messaging.ts` inserted thirteen lines and renumbered everything
+ * below them, which broke 41 anchored citations and 14 unanchored ones.
+ * doc-citations names the exact line each anchor moved to, so those 41 were
+ * repointed from the check's own reading rather than by offset. The 14
+ * unanchored ones turned out to be rot that PREDATED this change by hundreds
+ * of lines — `:2076` for the media endpoint when the endpoint is at 3155,
+ * `:2720` for the message-report writer when it is at 4296 — so each was
+ * repointed by reading the claim and given an anchor, which also removes it
+ * from this check's unanchored population. That is where most of 205 -> 193
+ * comes from: 12 citations left the population and the rest now land.
+ *
+ * Two lanes still unmerged (lane-media-voice, lane-domain) carry their own
+ * ceilings, 205 and 201, each measured on a base that cannot see this repair.
+ * RE-MEASURE at the merge; do not inherit any of the three. */
+export const MAX_DEAD_TARGETS = 193;
 
 /** Pinned to a commit by its own declaration; its lines must not track HEAD. */
 const PINNED_DOCS = new Set(['docs/architecture/mobile-reachability-ledger.md']);
