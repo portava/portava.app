@@ -327,13 +327,38 @@ describe("trap 2: a text version column holding two formats", () => {
     }
   });
 
-  it("answers MAX over a single-format column", () => {
+  it("answers MAX over a single-format column — which is why CI never caught this", () => {
+    // portava-ci's version column is SINGLE-FORMAT: 124 timestamps, 0 serials,
+    // max '20260916193211'. Production's is mixed and its max is '2272'. So the
+    // same query is right in CI and wrong in production, and a freshness check
+    // built on it is green where it is rehearsed and silently months behind
+    // where it matters. This case pins that the refusal is targeted at the
+    // mixed column rather than at the question.
     const answer = newestApply([
       { version: "20260914193020", name: "2900", appliedAt: null },
       { version: "20260921121118", name: "2950", appliedAt: null },
     ]);
     assert.equal(answer.ok, true);
     if (answer.ok) assert.equal(answer.value.version, "20260921121118");
+  });
+
+  it("the band filter is broken on a SINGLE-format column too", () => {
+    // Measured on both databases 2026-09-22: `count(*) where version >= '2890'`
+    // is 0 on portava-ci AND on production, though CI's correct band answer is
+    // 44 and production's is 20. Every 14-digit timestamp sorts below a
+    // four-digit cutoff whether or not the column is mixed, so this defect is
+    // independent of the mixing and NEITHER database exposes it. Only a rule
+    // that refuses can.
+    const ciLikeColumn = ["20260914193020", "20260916193211", "20260921121118"];
+    assert.equal(profileVersionColumn(ciLikeColumn).mixed, false);
+    assert.equal(ciLikeColumn.filter((v) => v >= "2890").length, 0);
+    // The serials those rows really carry are all in the band.
+    const rows: VersionedApply[] = [
+      { version: "20260914193020", name: "2900_intel_reward_ledger_reversals" },
+      { version: "20260916193211", name: "2955_media_asset_write_boundary" },
+      { version: "20260921121118", name: "2950_input_assistance_telemetry_events" },
+    ];
+    assert.equal(bandMembers(rows, serialFromCliRow, { from: 2890, to: 2999 }).inBand.length, 3);
   });
 
   it("refuses a watermark over zero rows: an empty read establishes nothing", () => {

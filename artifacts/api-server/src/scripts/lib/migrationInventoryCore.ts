@@ -82,6 +82,28 @@
  * instant, so `substring(filename from '^[0-9]+')::int >= 2890` returned 47
  * where the correct 4-digit band filter returns 20.
  *
+ * ── WHY REHEARSING ON CI WOULD NOT HAVE CAUGHT ANY OF THIS ────────────────
+ *
+ * The same four queries, run read-only against portava-ci (hwokxgbmezheskbzskfr)
+ * and production (ajrurzioarfkagpuxfnb) on 2026-09-22:
+ *
+ *                                              CI          production
+ *   version formats                            124 ts,     96 ts,
+ *                                              0 serial    7 serial
+ *   max(version)                               '20260916-  '2272'
+ *                                               193211'    (PRE-cutover)
+ *   count(*) where version >= '2890'           0           0
+ *   hand ledger, correct 4-digit band >= 2890  44          20
+ *   hand ledger, naive ::int cast >= 2890      71          47
+ *
+ * CI's version column is SINGLE-FORMAT, so MAX(version) is right there and
+ * wrong on production — a freshness check built on it is green in CI and
+ * silently months behind in production, which is the worst possible place for
+ * the difference to live. The band filter, by contrast, answers 0 on BOTH:
+ * every 14-digit timestamp sorts below a four-digit cutoff whether or not the
+ * column is mixed, so that defect is independent of the mixing and neither
+ * database exposes it. Only a rule that refuses can.
+ *
  * THE DEFENCE IN CODE: versionFormat() classifies a single value,
  * profileVersionColumn() classifies a COLUMN, and the two functions that
  * consumers actually want — newestApply() and inBand() — REFUSE rather than
