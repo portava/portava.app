@@ -786,9 +786,19 @@ interface MemoriesTabProps {
    * forms without it, with neutral labels and centroid coordinates.
    */
   trips?: TripRow[];
+  /**
+   * §28.11. TRUE when the Memories READ FAILED, so `memories` being empty is
+   * "we could not find out", not "you have none".
+   *
+   * Without this the tab shows its onboarding empty state — "No memories yet",
+   * "Add first memory" — to somebody whose history simply did not load. That
+   * is a factual claim about their life made from a lookup that never
+   * happened, and it is the exact shape §28.11 exists to forbid.
+   */
+  unreadable?: boolean;
 }
 
-export function MemoriesTab({ memories, loading, onReload, collapsed, trips }: MemoriesTabProps) {
+export function MemoriesTab({ memories, loading, onReload, collapsed, trips, unreadable = false }: MemoriesTabProps) {
   const [localMemories, setLocalMemories] = useState<PassportMemory[]>(memories);
   const [createOpen, setCreateOpen] = useState(false);
   const [expanded, setExpanded] = useState(false);
@@ -871,7 +881,15 @@ export function MemoriesTab({ memories, loading, onReload, collapsed, trips }: M
         </Pressable>
         {expanded && (
           <>
-            {localMemories.length === 0 ? (
+            {localMemories.length === 0 && unreadable ? (
+              // §28.11 — same rule as the expanded branch below.
+              <View style={mt.collapsedEmpty} testID="memories-unreadable-collapsed">
+                <Text style={mt.emptySub}>We could not load your memories. This is a read problem, not an empty passport.</Text>
+                <Pressable style={mt.addBtn} onPress={onReload} testID="memories-unreadable-collapsed-retry">
+                  <Text style={mt.addBtnText}>Try again</Text>
+                </Pressable>
+              </View>
+            ) : localMemories.length === 0 ? (
               <View style={mt.collapsedEmpty}>
                 <Text style={mt.emptySub}>No memories yet. Memories are added when you check in or complete a Safe Return.</Text>
                 <Pressable style={mt.addBtn} onPress={() => setCreateOpen(true)}>
@@ -937,7 +955,20 @@ export function MemoriesTab({ memories, loading, onReload, collapsed, trips }: M
         </Pressable>
       </View>
 
-      {localMemories.length === 0 ? (
+      {localMemories.length === 0 && unreadable ? (
+        // §28.11. The read failed. Say so, and offer the retry — do NOT render
+        // the onboarding empty state, which asserts something we did not read.
+        <View style={mt.empty} testID="memories-unreadable">
+          <Text style={mt.emptyIcon}>⚠️</Text>
+          <Text style={mt.emptyTitle}>We could not load your memories</Text>
+          <Text style={mt.emptySub}>
+            This is a problem reading them, not an empty passport. Nothing has been lost.
+          </Text>
+          <Pressable style={mt.addBtnLarge} onPress={onReload} testID="memories-unreadable-retry">
+            <Text style={mt.addBtnLargeText}>Try again</Text>
+          </Pressable>
+        </View>
+      ) : localMemories.length === 0 ? (
         <View style={mt.empty}>
           <Text style={mt.emptyIcon}>📖</Text>
           <Text style={mt.emptyTitle}>No memories yet</Text>

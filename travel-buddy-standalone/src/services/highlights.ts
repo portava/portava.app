@@ -55,6 +55,14 @@ export type HighlightErrorKind =
   | 'invalid_payload'
   | 'db_error'
   | 'feature_disabled'
+  // §28.11. The SERVER's word for "the read could not be performed", 503 and
+  // retryable. It is deliberately NOT `db_error`: the API server refuses with
+  // this rather than serving an empty feed, because "nobody you follow has an
+  // active Highlight" is a claim about other people and it must be true.
+  // Folding it into `db_error` here gave the client a second vocabulary for a
+  // word the server owns, and lost the only signal that a retry is worth
+  // offering.
+  | 'degraded_unavailable'
   | 'network_unreachable'
   | 'config_error';
 
@@ -81,6 +89,9 @@ function mapApiError<T>(status: number, body: any): HighlightResult<T> {
     // with `feature_disabled`. Flattening it to `db_error` would put "something
     // went wrong, try again" on a choice that will never work on this build.
     'feature_disabled',
+    // ADDED: the feeds and the profile read refuse with this when a scoping
+    // read failed. See the comment on the union member.
+    'degraded_unavailable',
   ];
   const errorKind = known.includes(code) ? code : 'db_error';
   return { ok: false, data: null, errorKind, message: body?.message ?? `API ${status}` };

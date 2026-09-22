@@ -58,6 +58,15 @@ export interface PassportState {
   /** v2 stamps (with definitions/artwork) — the canonical fetched list. */
   stampsNew: PassportStampNew[];
   memories: PassportMemory[];
+  /**
+   * §28.11. TRUE when the Memories read FAILED, so the empty `memories` above
+   * is "we could not find out", not "you have no Memories".
+   *
+   * Without this the two are the same value and the screen has no way to tell
+   * a person that their own history could not be loaded — which is the worst
+   * lie this app can tell, because it is about them.
+   */
+  memoriesUnreadable: boolean;
   suggestions: PassportMemory[];
   loading: boolean;
   error: string | null;
@@ -91,6 +100,7 @@ export function usePassport(): PassportState {
   const [stamps, setStamps] = useState<PassportStamp[]>([]);
   const [stampsNew, setStampsNew] = useState<PassportStampNew[]>([]);
   const [memories, setMemories] = useState<PassportMemory[]>([]);
+  const [memoriesUnreadable, setMemoriesUnreadable] = useState(false);
   const [suggestions, setSuggestions] = useState<PassportMemory[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -287,15 +297,25 @@ export function usePassport(): PassportState {
       stampsTotalRef.current = total;
       setStampsTotal(total);
       setMemories(memRes.ok ? memRes.data : []);
+      setMemoriesUnreadable(!memRes.ok);
       setSuggestions(sugRes.ok ? sugRes.data : []);
       setLoading(false);
       // Persist snapshot for stale-while-revalidate on next open.
-      if (pRes.ok && pRes.data) {
+      //
+      // §28.11: ONLY when every section it stores was actually read. A failed
+      // section read used to be written into this snapshot as an empty array,
+      // and the snapshot is applied on the next open before any network call —
+      // so one failed request erased the owner's own Memories (or postcards, or
+      // stamps) from their own Passport for the snapshot's whole TTL, from a
+      // lookup that never happened. A genuinely empty section is still stored:
+      // the distinction here is read-and-empty versus not-read.
+      const everySectionRead = pcRes.ok && stRes.ok && memRes.ok;
+      if (pRes.ok && pRes.data && everySectionRead) {
         savePassportSnapshot({
           profile: pRes.data as OwnProfile,
-          postcards: pcRes.ok ? (pcRes.data ?? []) : [],
+          postcards: pcRes.data ?? [],
           stamps: firstPage,
-          memories: memRes.ok ? memRes.data : [],
+          memories: memRes.data,
         });
       }
     }).catch(() => {
@@ -308,5 +328,5 @@ export function usePassport(): PassportState {
     return () => { alive = false; };
   }, [tick]);
 
-  return { profile, postcards, stamps, stampsNew, memories, suggestions, loading, error, stampsTotal, loadingMoreStamps, loadMoreStamps, updateStamp, reload, lastLoadedAt };
+  return { profile, postcards, stamps, stampsNew, memories, memoriesUnreadable, suggestions, loading, error, stampsTotal, loadingMoreStamps, loadMoreStamps, updateStamp, reload, lastLoadedAt };
 }

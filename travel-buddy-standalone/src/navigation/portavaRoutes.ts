@@ -1159,6 +1159,15 @@ export const PORTAVA_ROUTES: PortavaRouteDefinition[] = [
     ownerOnly: true,
   },
   {
+    key: 'memory-search',
+    path: 'memory/search',
+    title: 'Search Memories',
+    parent: null,
+    icon: null,
+    requiresAuth: true,
+    ownerOnly: true,
+  },
+  {
     key: 'memory-location',
     path: 'memory/location',
     title: 'Memory Location',
