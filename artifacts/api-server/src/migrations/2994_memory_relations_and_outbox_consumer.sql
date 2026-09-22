@@ -5,6 +5,36 @@
 -- It changes NO existing row and drops NOTHING.
 --
 -- ═══════════════════════════════════════════════════════════════════════════
+-- WHY THIS FILE WAS EDITED IN PLACE RATHER THAN AMENDED BY A LATER MIGRATION
+-- ═══════════════════════════════════════════════════════════════════════════
+-- 2026-09-22, the Highlight command-boundary lane. Migration 2993 gives
+-- public.memory_event_outbox a second subject column, `highlight_id`, and
+-- relaxes `memory_id` to NULL under a CHECK that exactly one of the two is
+-- present. public.memory_outbox_claim below is the consumer's ONLY view of an
+-- outbox row's subject, so it had to learn the new column or every
+-- `highlight.*` event would reach a worker as a row with a NULL subject.
+--
+-- IT COULD NOT BE AMENDED FROM A LATER FILE. Migrations run in prefix order and
+-- the legal band is 2100-2999 (see below). Every free prefix in that band —
+-- 2967, 2968, 2969, 2977-2981, 2986-2988, 2990, 2993 — is BELOW 2994, so there
+-- is no number a follow-up could take that would run after this file. An
+-- amendment is not merely inconvenient here; it is unrepresentable.
+--
+-- EDITING IS SAFE BECAUSE THIS FILE HAS NEVER RUN. Verified on this branch's
+-- head by the live-DB schema-drift auditor: memory_relations is missing,
+-- memory_event_outbox.locked_until is missing, and memory_outbox_claim,
+-- memory_outbox_ack and memory_outbox_fail are all missing — on every
+-- database, and the file is classified "unapplied" for production in
+-- KNOWN_PRODUCTION_GAPS. There is therefore no database holding a version of
+-- these objects that this edit would contradict.
+--
+-- WHAT CHANGED: memory_outbox_claim's RETURNS TABLE and RETURNING list carry
+-- `highlight_id` alongside `memory_id`, a precondition was added requiring
+-- 2993's column, and this note. memory_outbox_ack and memory_outbox_fail were
+-- checked and NOT changed: both key on `id` alone and neither reads a subject
+-- column, so neither has anything to learn.
+--
+-- ═══════════════════════════════════════════════════════════════════════════
 -- WHY THIS FILE IS NUMBERED 2994 AND NOT 3002
 -- ═══════════════════════════════════════════════════════════════════════════
 -- This lane was assigned "migration 3002, do not use any other number". 3002 is
@@ -110,6 +140,14 @@ BEGIN
   END IF;
   IF to_regclass('public.memory_event_outbox') IS NULL THEN
     RAISE EXCEPTION '2994 PRECONDITION FAILED: public.memory_event_outbox does not exist — apply 2710 first';
+  END IF;
+  -- memory_outbox_claim below names o.highlight_id, which 2993 adds. Refuse
+  -- here rather than creating a function that fails the first time a consumer
+  -- calls it.
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                  WHERE table_schema = 'public' AND table_name = 'memory_event_outbox'
+                    AND column_name = 'highlight_id') THEN
+    RAISE EXCEPTION '2994 PRECONDITION FAILED: public.memory_event_outbox.highlight_id does not exist — apply 2993 first';
   END IF;
 END
 $pre$;
@@ -290,6 +328,16 @@ CREATE INDEX IF NOT EXISTS idx_memory_outbox_claimable
 -- attempts IS INCREMENTED AT CLAIM, NOT AT FAILURE. A consumer that crashes
 -- without reporting anything must still burn an attempt, or a row that kills
 -- its worker every time is retried forever and the max is unreachable.
+--
+-- BOTH SUBJECT COLUMNS ARE RETURNED, memory_id AND highlight_id, and that is
+-- not a convenience. Since 2993 an outbox row's subject is EXACTLY ONE of the
+-- two (constraint memory_event_outbox_one_subject), so a claim that returned
+-- only memory_id would hand the consumer a `highlight.*` row whose subject was
+-- NULL with no way to recover it — an event that drains into a worker which
+-- cannot tell what it is about, which looks like a working pipeline and is
+-- not. Returning both makes "which aggregate is this?" answerable from the
+-- claimed row alone. See THE ORDERING NOTE in this file's header for why this
+-- was edited here rather than amended by a later migration.
 CREATE OR REPLACE FUNCTION public.memory_outbox_claim(
   p_limit         integer DEFAULT 100,
   p_lease_seconds integer DEFAULT 300,
@@ -299,6 +347,7 @@ RETURNS TABLE (
   id           bigint,
   event_id     uuid,
   memory_id    uuid,
+  highlight_id uuid,
   type         text,
   created_at   timestamptz,
   attempts     integer,
@@ -321,7 +370,7 @@ AS $fn$
       LIMIT greatest(p_limit, 0)
         FOR UPDATE SKIP LOCKED
    )
-  RETURNING o.id, o.event_id, o.memory_id, o.type, o.created_at, o.attempts, o.locked_until;
+  RETURNING o.id, o.event_id, o.memory_id, o.highlight_id, o.type, o.created_at, o.attempts, o.locked_until;
 $fn$;
 
 COMMENT ON FUNCTION public.memory_outbox_claim(integer, integer, integer) IS

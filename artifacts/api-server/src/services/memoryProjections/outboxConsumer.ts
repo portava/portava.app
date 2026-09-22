@@ -143,11 +143,38 @@ export const EVENT_PROJECTIONS: Readonly<
 export interface ClaimedOutboxRow {
   id: number;
   event_id: string;
-  memory_id: string;
+  /**
+   * The subject. Since migration 2993 an outbox row is about EXACTLY ONE of a
+   * Memory or a Highlight (constraint memory_event_outbox_one_subject), and
+   * public.memory_outbox_claim returns both columns so the claimed row can
+   * always answer which. `memory_id` is therefore NULLABLE here: typing it
+   * `string` would describe a row shape the table no longer produces, and the
+   * consumer would hand a null straight to `.eq("id", ...)` on `memories`.
+   */
+  memory_id: string | null;
+  highlight_id?: string | null;
   type: string;
   created_at: string;
   attempts: number;
   locked_until: string | null;
+}
+
+/**
+ * The §18 projections an event invalidates, or undefined when nothing
+ * subscribes to it.
+ *
+ * Exported and used in TWO places on purpose. `drainMemoryOutbox` asks it
+ * BEFORE reading the event's scope, so a row nobody subscribes to costs no
+ * database read — and, more importantly, so a `highlight.*` row (whose
+ * memory_id is NULL) never reaches `readProjectionScope` at all. Before 2993
+ * that ordering was harmless because every row had a Memory; it is not
+ * harmless now, and the fix is to ask the cheaper, more decisive question
+ * first rather than to null-check the expensive one.
+ */
+export function projectionsForEventType(type: string): readonly ProjectionId[] | undefined {
+  return isMemoryEventType(type)
+    ? (EVENT_PROJECTIONS as Record<string, readonly ProjectionId[]>)[type]
+    : undefined;
 }
 
 export type OutboxClaimResult =
@@ -270,7 +297,8 @@ export interface EventOutcome {
   id: number;
   eventId: string;
   eventType: string;
-  memoryId: string;
+  /** NULL when the event's subject is a Highlight rather than a Memory (2993). */
+  memoryId: string | null;
   rebuilt: number;
   skipped: number;
   failed: number;
@@ -304,18 +332,12 @@ async function rebuildForEvent(
   row: ClaimedOutboxRow,
   scope: ProjectionScope,
   now: Date,
+  // PASSED IN, not looked up again. `drainMemoryOutbox` has already asked
+  // `projectionsForEventType` — it has to, to know whether reading the event's
+  // scope is meaningful at all — and asking twice is how the two callers
+  // eventually disagree about what "subscribed" means.
+  projections: readonly ProjectionId[],
 ): Promise<{ rebuilt: number; skipped: number; failed: number; failureClass: string | null }> {
-  const projections = isMemoryEventType(row.type)
-    ? (EVENT_PROJECTIONS as Record<string, readonly ProjectionId[]>)[row.type]
-    : undefined;
-
-  if (!projections) {
-    // An event type nobody subscribes to. Not retryable — the next attempt
-    // would reach the same conclusion — so it is reported as a named class and
-    // the caller acks it rather than looping.
-    return { rebuilt: 0, skipped: 0, failed: 0, failureClass: "unsubscribed_event_type" };
-  }
-
   let rebuilt = 0;
   let skipped = 0;
   let failed = 0;
@@ -409,36 +431,70 @@ export async function drainMemoryOutbox(
 
   for (const row of claim.rows) {
     const startedAtMs = Date.now();
-    const scopeResult = await readProjectionScope(sc, row.memory_id);
+
+    // SUBSCRIPTION FIRST, SCOPE SECOND.
+    //
+    // Every §18 projection in EVENT_PROJECTIONS is keyed on a MEMORY, and
+    // since migration 2993 an outbox row's subject may instead be a
+    // HIGHLIGHT — in which case `memory_id` is NULL by construction. Reading
+    // the scope first would send that NULL to `.eq("id", ...)` on `memories`,
+    // which PostgREST answers with an invalid-uuid error, not an empty row:
+    // the consumer would class it `memory_unavailable`, fail the row, and
+    // retry it until `attempts` hit the maximum — a permanently stuck row
+    // reported as an outage. Asking "does anything subscribe to this?" first
+    // costs nothing, answers no for every `highlight.*` event, and acks the
+    // row honestly as `unsubscribed_event_type`.
+    //
+    // This is not a special case for Highlights. It is the general rule the
+    // old ordering got away with only because every row used to have a
+    // Memory: there is no reason to read an aggregate for an event no
+    // projection will be rebuilt from.
+    const projections = projectionsForEventType(row.type);
 
     let outcome: EventOutcome;
-    if (!scopeResult.ok && scopeResult.reason === "memory_absent") {
-      // Nothing to project and nothing a retry would fix.
+    if (!projections) {
+      // An event type nobody subscribes to — every `highlight.*` event today,
+      // and any `memory.*` name a future spec adds before a projection does.
+      // Not retryable: the next attempt reaches the same conclusion. Acked
+      // with the class recorded, so the row leaves the queue and the reason it
+      // did is a number someone can see rather than a silence.
       outcome = {
         id: row.id, eventId: row.event_id, eventType: row.type, memoryId: row.memory_id,
-        rebuilt: 0, skipped: 0, failed: 0, failureClass: "memory_absent",
+        rebuilt: 0, skipped: 0, failed: 0, failureClass: "unsubscribed_event_type",
       };
       ackable.push(row.id);
-    } else if (!scopeResult.ok) {
-      outcome = {
-        id: row.id, eventId: row.event_id, eventType: row.type, memoryId: row.memory_id,
-        rebuilt: 0, skipped: 0, failed: 1, failureClass: scopeResult.reason,
-      };
-      failed += 1;
-      await failOutboxRow(sc, row.id, scopeResult.reason);
     } else {
-      const r = await rebuildForEvent(sc, row, scopeResult.scope, now);
-      outcome = {
-        id: row.id, eventId: row.event_id, eventType: row.type, memoryId: row.memory_id,
-        rebuilt: r.rebuilt, skipped: r.skipped, failed: r.failed, failureClass: r.failureClass,
-      };
-      if (r.failed > 0) {
-        failed += 1;
-        await failOutboxRow(sc, row.id, r.failureClass ?? "rebuild_failed");
-      } else {
-        // Includes `unsubscribed_event_type`: a retry reaches the same answer,
-        // so the row is acked with its class recorded in the outcome.
+      // Past this point the event subscribes to at least one projection, so it
+      // is a `memory.*` event and 2993's one-subject CHECK guarantees that its
+      // memory_id is present.
+      const scopeResult = await readProjectionScope(sc, row.memory_id as string);
+
+      if (!scopeResult.ok && scopeResult.reason === "memory_absent") {
+        // Nothing to project and nothing a retry would fix.
+        outcome = {
+          id: row.id, eventId: row.event_id, eventType: row.type, memoryId: row.memory_id,
+          rebuilt: 0, skipped: 0, failed: 0, failureClass: "memory_absent",
+        };
         ackable.push(row.id);
+      } else if (!scopeResult.ok) {
+        outcome = {
+          id: row.id, eventId: row.event_id, eventType: row.type, memoryId: row.memory_id,
+          rebuilt: 0, skipped: 0, failed: 1, failureClass: scopeResult.reason,
+        };
+        failed += 1;
+        await failOutboxRow(sc, row.id, scopeResult.reason);
+      } else {
+        const r = await rebuildForEvent(sc, row, scopeResult.scope, now, projections);
+        outcome = {
+          id: row.id, eventId: row.event_id, eventType: row.type, memoryId: row.memory_id,
+          rebuilt: r.rebuilt, skipped: r.skipped, failed: r.failed, failureClass: r.failureClass,
+        };
+        if (r.failed > 0) {
+          failed += 1;
+          await failOutboxRow(sc, row.id, r.failureClass ?? "rebuild_failed");
+        } else {
+          ackable.push(row.id);
+        }
       }
     }
 

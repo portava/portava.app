@@ -43,7 +43,7 @@ import type { LayoverSession } from "./LayoverSessionService.js";
 import {
   LAYOVER_ENGINE_VERSION,
   assess,
-  adviseLeaving,
+  adviseLeaving, returnRiskAdjustedAdvice, type ReturnCorridorRisk,
   computeWindow,
   computeReturnDeadline,
   travelTimeSourceFor,
@@ -811,5 +811,64 @@ export function airportIntelligence(r: LayoverFeasibilityRecord): AirportIntelli
     ),
     confidence: r.confidence,
     sourceRefs: [...new Set(terms.flatMap((t) => t.sourceRefs))].sort(),
+  };
+}
+
+/**
+ * §8 L60/L68/L69/L70/L71/L282 — the certified record, with the RETURN CORRIDOR
+ * folded into its verdict.
+ *
+ * ── WHY THIS IS A SECOND FUNCTION AND NOT A SECOND ARGUMENT ─────────────────
+ * `certifyFeasibility` is deterministic and side-effect free: "no clock, no
+ * I/O, no randomness". A corridor is an I/O answer, so it can only ever reach
+ * this module as a value somebody else already fetched — exactly as
+ * `liveConditions` does. The corridor therefore arrives as an argument and the
+ * certification below is still pure: the same `inputs` and the same `risk`
+ * always produce the same record.
+ *
+ * ── THE ONE THING THIS DOES NOT YET DO, STATED RATHER THAN HIDDEN ───────────
+ * `risk` is NOT inside `inputHash`, because `feasibilityInputHash` hashes
+ * `FeasibilityInputs` and the corridor is not a member of it. So two records —
+ * one certified with a corridor and one without — hash identically, and
+ * `replayFeasibility(record.inputs)` reproduces the UNADJUSTED verdict. That is
+ * a real gap in the §18 replay contract and it is harmless only because the
+ * corridor provider refuses on every deployment, so `risk` is `null` on every
+ * call that exists. IT MUST BE CLOSED BEFORE A CORRIDOR IS EVER ENABLED: the
+ * fix is to make the corridor risk a named member of `FeasibilityInputs`
+ * alongside `liveConditions`, which is a ~14-line insertion into this file and
+ * moves fourteen line-anchored citations in docs/architecture/census-layover.md
+ * — an edit this lane was not permitted to make.
+ *
+ * `risk === null` returns `certifyFeasibility`'s record with nothing touched,
+ * which is every call on this tree.
+ */
+export function certifyFeasibilityWithReturnCorridor(
+  inputs: FeasibilityInputs,
+  risk: ReturnCorridorRisk | null,
+): LayoverFeasibilityRecord {
+  const base = certifyFeasibility(inputs);
+  if (!risk) return base;
+
+  // The record publishes the advice FLATTENED, so the advice is reassembled
+  // from its own fields rather than recomputed — recomputing it would run
+  // `adviseLeaving` twice and give two answers one edit away from disagreeing.
+  const adjusted = returnRiskAdjustedAdvice(
+    {
+      verdict: base.verdict,
+      reasons: base.reasons,
+      unknowns: base.unknowns,
+      reasonCodes: base.reasonCodes,
+      disclaimer: base.disclaimer,
+      engineVersion: base.engineVersion,
+    },
+    risk,
+  );
+
+  return {
+    ...base,
+    verdict: adjusted.verdict,
+    reasons: adjusted.reasons,
+    unknowns: adjusted.unknowns,
+    reasonCodes: adjusted.reasonCodes,
   };
 }

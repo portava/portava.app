@@ -1304,3 +1304,138 @@ export function adviseLeaving(
   reasonCodes.push("INSUFFICIENT_USABLE_TIME");
   return { verdict: "no", reasons, reasonCodes, ...common };
 }
+
+/**
+ * §8 L68 / L69 / L70 / L71 / L282 — the RETURN CORRIDOR's risk terms, in the one
+ * shape this engine will accept them in.
+ *
+ * DECLARED HERE, PRODUCED ELSEWHERE — the same arrangement as `LiveConditions`
+ * above, and for the same reason. Reconciliation, thresholds and the
+ * three-valued judgement are policy and belong one layer up
+ * (`lib/providers/returnRouteRisk.ts` owns them and argues them at length);
+ * what reaches this file is already a DECIDED answer with its factors named.
+ * Declaring the shape structurally rather than importing
+ * `ReturnRiskAssessment` keeps the arrow pointing one way: `services/airport`
+ * does not depend on `lib/providers`, and a producer satisfies this by being
+ * the right shape rather than by being the right module.
+ *
+ * `returnRouteUnreliable` and `fragileCorridor` are `boolean | null` and the
+ * `null` is load-bearing: it means THE CORRIDOR DOES NOT SUPPORT THE JUDGEMENT,
+ * never "reliable". This code exists to raise a flag, so resolving an unknown
+ * to `false` would withhold the warning on exactly the itineraries nobody could
+ * check — the population most likely to need it.
+ */
+export interface ReturnCorridorRisk {
+  /** L282. `null` = not judgeable. Never "reliable". */
+  returnRouteUnreliable: boolean | null;
+  /** L69. Same three-valued contract. */
+  fragileCorridor: boolean | null;
+  /** Which conditions fired, by name, so a warning is actionable. */
+  contributingFactors: readonly string[];
+  /** The measurements the judgement was read off. No thresholds in here. */
+  facts: {
+    /** L68 — ways back that fail INDEPENDENTLY, not `routes.length`. */
+    independentReturnRoutes: number;
+    /** Every way back offered, before the independence reduction. */
+    offeredReturnRoutes: number;
+    /** L70 — `committed` means that once aboard, a moved deadline cannot be acted on. */
+    bestRouteInterruptibility: string;
+    /** L70 across every offered route. */
+    allRoutesInterruptibility: string;
+    /** L71 — fewest changes of conveyance any way back requires. */
+    minTransferCount: number;
+    /** L71 — the most, so the spread is visible. */
+    maxTransferCount: number;
+    /** L73 — the corridor has stopped being a statement about now. */
+    stale: boolean;
+    /** L62 — signals the corridor could not measure, each naming its blocker. */
+    unmeasured: ReadonlyArray<{ signal: string; blockedBy: string }>;
+  };
+}
+
+/** The `unknowns` line for a way back nobody could check. */
+export const RETURN_CORRIDOR_UNJUDGEABLE_UNKNOWN =
+  "Whether there is a reliable way back to this airport could not be checked — no return route was measured";
+
+/** The `unknowns` line for a way back that was measured but has gone stale. */
+export const RETURN_CORRIDOR_STALE_UNKNOWN =
+  "The route back was measured earlier and is no longer current, so it is not being used to judge your return";
+
+/**
+ * Fold the return corridor's risk terms into an advice, WITHOUT recomputing any
+ * of them.
+ *
+ * ── IT MAY ONLY EVER DOWNGRADE ───────────────────────────────────────────────
+ * §10.1's conservative rule, applied to a verdict instead of a buffer: a
+ * corridor signal may make the advice more cautious and may never make it less.
+ * `yes` becomes `tight` when the way back is judged unreliable; `tight` and
+ * `no` stay where they are, and `stay_airside` is the traveller's own answer
+ * and is not the engine's to revise. There is deliberately no path from `tight`
+ * to `no`: "no" is an arithmetic claim about the window, and a fragile corridor
+ * is not evidence about the window.
+ *
+ * ── AN ABSENT CORRIDOR IS THE IDENTITY ───────────────────────────────────────
+ * `risk === null` returns the advice OBJECT unchanged — not a rebuilt copy, so
+ * a test can prove it by identity. That is every call on this tree: the
+ * corridor provider's two gates refuse on every deployment, so nothing a
+ * traveller sees moves until an owner decides to spend.
+ *
+ * `LAYOVER_ENGINE_VERSION` is NOT bumped. The buffer arithmetic is untouched —
+ * not a term, not a threshold, not a band — so every stored `hardReturnTime`
+ * and `returnState` is still reproducible under these rules, which is what that
+ * constant exists to promise. `adviseLeaving` itself is byte-identical.
+ */
+export function returnRiskAdjustedAdvice(
+  advice: LeaveAdvice,
+  risk: ReturnCorridorRisk | null,
+): LeaveAdvice {
+  if (!risk) return advice;
+
+  const reasons = [...advice.reasons];
+  const unknowns = [...advice.unknowns];
+  const reasonCodes: LayoverReasonCode[] = [...advice.reasonCodes];
+  const f = risk.facts;
+
+  // L282. The ONLY emitter of this code on the tree — it is listed in
+  // LAYOVER_REASON_CODES as "declared, never emitted (no input exists in any
+  // shape)", and the input is this argument.
+  if (risk.returnRouteUnreliable === true && !reasonCodes.includes("RETURN_ROUTE_UNRELIABLE")) {
+    reasonCodes.push("RETURN_ROUTE_UNRELIABLE");
+  }
+  // Not judgeable is NOT reliable. Disclosed, never silently dropped.
+  if (risk.returnRouteUnreliable === null) {
+    unknowns.push(f.stale ? RETURN_CORRIDOR_STALE_UNKNOWN : RETURN_CORRIDOR_UNJUDGEABLE_UNKNOWN);
+  }
+
+  // L68 / L69 — one way back is one failure away from none. Stated as a reason
+  // rather than folded into the verdict's prose, so a traveller reads WHY.
+  if (risk.fragileCorridor === true) {
+    reasons.push(
+      f.independentReturnRoutes <= 0
+        ? "No independent way back was found."
+        : `Only ${f.independentReturnRoutes} independent way back (${f.offeredReturnRoutes} route(s) offered, sharing a transfer point).`,
+    );
+  }
+  // L70 — once aboard, a deadline that moves cannot be acted on.
+  if (f.bestRouteInterruptibility === "committed") {
+    reasons.push("The fastest way back cannot be interrupted once you are aboard.");
+  } else if (f.bestRouteInterruptibility === "unknown") {
+    unknowns.push("Whether the way back can be interrupted part-way is not known");
+  }
+  // L71 — every change of conveyance is a place the plan can break.
+  if (f.minTransferCount >= 2) {
+    reasons.push(`Every way back needs at least ${f.minTransferCount} changes of transport.`);
+  }
+  // L62 — an assessment that hid its own coverage would be worse than none.
+  for (const u of f.unmeasured) {
+    unknowns.push(`Return-route risk could not account for ${u.signal} — ${u.blockedBy}`);
+  }
+
+  const verdict: LeaveAdvice["verdict"] =
+    risk.returnRouteUnreliable === true && advice.verdict === "yes" ? "tight" : advice.verdict;
+  if (verdict !== advice.verdict) {
+    reasons.unshift("The way back is not dependable enough to call this comfortable.");
+  }
+
+  return { ...advice, verdict, reasons, unknowns, reasonCodes };
+}

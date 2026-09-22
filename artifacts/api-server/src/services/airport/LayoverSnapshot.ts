@@ -84,8 +84,8 @@
  * rely on.
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
-
 import { logger as rootLogger } from "../../lib/logger.js";
+import { LAYOVER_RETURN_CORRIDOR_PROVIDER, layoverReturnRisk, type RouteCorridorProvider } from "./LayoverReturnCorridor.js";
 import {
   airportRowToProfile,
   buildFallbackProfile,
@@ -125,7 +125,7 @@ import {
 import { snapshotIdFor } from "./layoverLedger.js";
 import { safeReturnPosture, type SafeReturnPosture } from "./LayoverSafeReturnService.js";
 import { airportPoint, placePoint } from "./LayoverTravelTime.js";
-import type { LayoverReasonCode } from "./LayoverSafetyEngine.js";
+import type { LayoverReasonCode, ReturnCorridorRisk } from "./LayoverSafetyEngine.js";
 import {
   straightLineTravelTimeProvider,
   type GeoPoint,
@@ -495,18 +495,80 @@ function pointOf(c: ActionUniverseCandidate): GeoPoint | null {
  * candidate is at least N minutes away; that refuses a journey and can never
  * certify one, so it is not fed into `candidateFits`. A caller that states no
  * durations gets `UNMEASURED` for every landside candidate, which on this tree
- * — where `LAYOVER_TRAVEL_TIME_PROVIDER` is `noRoutedProvider` — is the honest
- * answer and the same one every other layover surface gives.
+ * — where the routed provider's spend gate is closed — is the honest answer and
+ * the same one every other layover surface gives.
+ *
+ * ── §8 L60 / L68 / L69 / L70 / L71 / L282: THE WAY BACK IS ASKED FOR ────────
+ * A candidate that fits the window can still be one a traveller cannot reliably
+ * get BACK from, and until this call nothing on the tree ever asked. The return
+ * corridor is now asked for per landside candidate — in the return DIRECTION,
+ * at the return INSTANT — and a corridor judged unreliable REFUSES admission
+ * rather than lowering a score, because this list is the one a surface is
+ * allowed to act on and there is no weaker state in its vocabulary that means
+ * "shown, but you may not get home".
+ *
+ * IT CHANGES NOTHING TODAY AND SPENDS NOTHING. The provider refuses on every
+ * deployment — both of its gates are closed and the enablement gate is asked
+ * first, before any request is built — so `risk` is `null` for every candidate
+ * and every admission is exactly what it was. The absence is PRODUCED by
+ * asking rather than asserted by a comment, which is the whole point of the
+ * port. When it is enabled it costs TWO billed requests per landside candidate;
+ * that is an owner's purchase decision and not a deployment step.
  */
 export async function certifiedActionUniverse(
   snapshot: LayoverSnapshot,
   candidates: ActionUniverseCandidate[],
   provider: TravelTimeProvider = straightLineTravelTimeProvider,
+  /**
+   * The route-shape port. Injectable for the same reason `provider` is — a
+   * test proves the admission rule without a network and without touching
+   * `process.env` — and defaulted to the one the layover surface names.
+   */
+  corridorProvider: RouteCorridorProvider = LAYOVER_RETURN_CORRIDOR_PROVIDER,
 ): Promise<CertifiedActionUniverse> {
   const record = snapshot.certifiedRecord;
-  const departAt = new Date(record.inputs.nowMs);
+  // ONE clock value for the whole answer, taken from the certified record
+  // rather than read here: the bands, the corridor's staleness and the deadline
+  // are then all measured against the same instant.
+  const nowMs = record.inputs.nowMs;
+  const departAt = new Date(nowMs);
 
   const landside = candidates.filter((c) => c.insideAirport !== true);
+  /**
+   * L72 — the instant the return is priced at. The END of the certified usable
+   * window: the last moment that window leaves the traveller out there, and so
+   * the latest conditions the ride back has to survive. It is derived from the
+   * CERTIFIED WINDOW and never from the outbound leg — `outbound + dwell` would
+   * make the return corridor a function of the outbound one and restore the
+   * `travelTimeMin * 2` symmetry this whole term exists to remove.
+   */
+  const returnDepartAt = new Date(nowMs + Math.max(0, snapshot.usableMinutes) * 60_000);
+  const returnRisks = new Map<string, ReturnCorridorRisk>();
+  // Sequential on purpose. Every iteration is two BILLED requests once the
+  // spend gate is open, and `Promise.all` over a candidate list would turn one
+  // traveller's page load into a burst against a vendor with no spend ceiling
+  // anywhere in this repository. It costs nothing today: both gates refuse
+  // before a request is built, so each iteration returns without any I/O.
+  // Skipped entirely when landside is closed — those candidates are refused
+  // below whatever the corridor says, so asking would only spend.
+  for (const c of snapshot.landsideOpen ? landside : []) {
+    const point = pointOf(c);
+    if (!point || !snapshot.envelope) continue;
+    const outcome = await layoverReturnRisk(
+      {
+        airport: snapshot.envelope.centre,
+        candidate: point,
+        outboundDepartAt: departAt,
+        returnDepartAt,
+      },
+      nowMs,
+      corridorProvider,
+    );
+    // A refusal is an ABSENCE, never a pass and never a block: `outcome.risk`
+    // is null and the candidate is judged on the window alone, exactly as it
+    // was before this call existed.
+    if (outcome.risk) returnRisks.set(c.id, outcome.risk);
+  }
   const bands = await bandCandidates(
     snapshot.envelope,
     landside.map((c) => ({ key: c.id, point: pointOf(c) })),
@@ -551,7 +613,25 @@ export async function certifiedActionUniverse(
         reason: "nobody has measured how long this takes, so it cannot be certified against your window",
       };
     }
-    // 4. The certified window's own arithmetic, unchanged.
+    // 4. §8 L282 — measured, fits, and the way BACK is not dependable. Placed
+    //    after the unmeasured rung and before the window's arithmetic: it is a
+    //    claim about a corridor that was measured, so it may not pre-empt "no
+    //    one measured this", and it is independent evidence, so a candidate
+    //    that also fails the window keeps the window's own reason below.
+    const risk = returnRisks.get(c.id);
+    if (risk?.returnRouteUnreliable === true) {
+      return {
+        id: c.id,
+        admitted: false,
+        state: "BLOCKED",
+        band: feasibility.band,
+        feasibility,
+        reason:
+          `the way back from here is not dependable enough to recommend ` +
+          `(${risk.contributingFactors.join(", ") || "no factor named"})`,
+      };
+    }
+    // 5. The certified window's own arithmetic, unchanged.
     if (!candidateFits(record, rc)) {
       return {
         id: c.id,

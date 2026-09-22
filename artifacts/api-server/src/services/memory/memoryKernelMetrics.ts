@@ -235,7 +235,13 @@ export interface ProjectionLagSampleInput {
   /** The event this lag is measured for. An id, never content. */
   eventId: string;
   eventType: string;
-  memoryId: string;
+  /**
+   * NULL when the event's subject is a Highlight rather than a Memory —
+   * migration 2993 gives memory_event_outbox a second subject column and
+   * relaxes memory_id under a CHECK that exactly one is present. A sample that
+   * typed this `string` would be describing rows the outbox no longer holds.
+   */
+  memoryId: string | null;
   /** `Date.parse` of the outbox row's created_at. */
   enqueuedAtMs: number;
   /** `Date.now()` when the consumer began this event's rebuilds. */
@@ -253,7 +259,7 @@ export interface ProjectionLagSample {
   readonly metric: typeof PROJECTION_LAG;
   readonly eventId: string;
   readonly eventType: string;
-  readonly memoryId: string;
+  readonly memoryId: string | null;
   /** §24's figure: event recorded -> projection rebuilt. */
   readonly lagMs: number;
   /** The rebuild loop alone. Never greater than `lagMs`. */

@@ -64,6 +64,14 @@ import {
 } from "../services/highlights/highlightSources.js";
 import { canMessage } from "../lib/messagingPermissions";
 import { isFlagEnabled } from "../lib/featureFlags";
+import {
+  readMemoryCommandEnvelope,
+  sendMemoryCommandRejection,
+} from "../lib/memoryCommandBus.js";
+import {
+  dispatchMemoryCommand,
+  type CommandOutcome,
+} from "../services/memory/MemoryDomainService.js";
 import { nameVisibilitySet, presentedName } from "../lib/publicIdentity";
 import { z } from "zod";
 import type { SupabaseClient } from "@supabase/supabase-js";
@@ -1393,6 +1401,65 @@ router.get("/highlights/active", async (req, res) => {
  * `describeHighlightLifecycle` DERIVES PINNED from the column, which is the
  * same answer without the claim.
  * ============================================================================ */
+/* ============================================================================
+ * §17 COMMAND BOUNDARY — the plumbing the three Highlight commands share.
+ *
+ * §17: "All canonical writes should cross an explicit command boundary for
+ * authorization, invariants, idempotency, audit, and downstream event
+ * generation", and "canonical mutation and event-outbox insert occur in one
+ * database transaction".
+ *
+ * WHAT WAS MEASURED, AND WHY THIS IS NOT JUST FOUR STRINGS IN A UNION.
+ * census-highlights-memories.md H142: "§17's requirement is the COMMAND
+ * BOUNDARY, and PIN_HIGHLIGHT is still absent from MEMORY_COMMAND_TYPES — no
+ * idempotency key, no receipt, no audit row, no outbox insert." Adding the
+ * names to the union would have closed the census row and changed nothing a
+ * user or an operator could observe. The four artifacts are what the row asks
+ * for, and they are written by public.highlight_kernel_execute (migration
+ * 2993) inside ONE transaction with the column change — never from here.
+ * supabase-js has no transactions, and a fire-and-forget
+ * `void client.from("memory_event_outbox").insert(...)` issues ZERO HTTP
+ * requests while reading as an emit; src/test/memoryOutbox.test.ts asserts
+ * statically that no such line exists.
+ *
+ * FLAG-OFF BEHAVIOUR IS BYTE-IDENTICAL. `memory_kernel_enabled` is FALSE on
+ * production and `isFlagEnabled` is fail-closed, so every `legacy` closure
+ * below is the direct write that shipped before this lane, moved verbatim —
+ * including its PGRST204 `feature_disabled` answer and its one-answer 404.
+ * What the flag-off path gains is the §24 audit LINE (durable:false); what it
+ * does not gain is a row, and the log says which.
+ * ============================================================================ */
+
+/** §19's Idempotency-Key, or a 400. Absent header => a fresh, non-idempotent key. */
+function highlightIdempotencyKey(req: any, res: any): string | null {
+  const env = readMemoryCommandEnvelope(req);
+  if (!env.ok) { sendError(res, "invalid_payload", env.message); return null; }
+  return env.idempotencyKey;
+}
+
+/**
+ * Render a non-success outcome.
+ *
+ * A `rejection` is command-shaped and carries a §24 reason code;
+ * `sendMemoryCommandRejection` owns that mapping, and it answers 404
+ * "Highlight not found" for BOTH HIGHLIGHT_NOT_FOUND and
+ * HIGHLIGHT_AUTH_NOT_OWNER — the one answer these handlers have always given
+ * to "not yours, not there, or already deleted". An `http` error keeps the
+ * exact code and message the handler used before this lane.
+ */
+function sendHighlightCommandFailure(
+  req: any,
+  res: any,
+  outcome: Extract<CommandOutcome<unknown>, { ok: false }>,
+): void {
+  if ("rejection" in outcome) {
+    sendMemoryCommandRejection(res, outcome.rejection, req.log);
+    return;
+  }
+  const e = outcome.http;
+  sendError(res, e.code as any, e.message, e.exposeDetail ? { exposeDetail: true } : undefined);
+}
+
 router.post("/highlights/:id/pin", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
@@ -1401,31 +1468,49 @@ router.post("/highlights/:id/pin", async (req, res) => {
   const { id } = req.params;
   if (!UUID.test(id)) { sendError(res, "invalid_payload", "Invalid highlight id"); return; }
 
-  const { data: updated, error } = await client
-    .from("highlights")
-    .update({ pinned_at: new Date().toISOString() })
-    .eq("id", id)
-    .eq("owner_id", user.id)
-    .is("deleted_at", null)
-    .select("id, pinned_at");
+  const idempotencyKey = highlightIdempotencyKey(req, res);
+  if (idempotencyKey === null) return;
 
-  if (error) {
-    if (String((error as any)?.code ?? "") === "PGRST204") {
-      req.log.error({ err: error, highlightId: id }, "highlights: pinned_at column is absent — migration 2723 is not applied on this database");
-      sendError(res, "feature_disabled", "Pinning is not available on this deployment yet.");
-      return;
-    }
-    req.log.error({ err: error, highlightId: id }, "highlights: pin failed");
-    sendError(res, "db_error", error.message);
-    return;
-  }
-  // Zero rows: not yours, not there, or already deleted — one answer to this
-  // caller, for the same reason the archive handlers give one.
-  if (!updated || (updated as any[]).length === 0) {
-    sendError(res, "not_found", "Highlight not found");
-    return;
-  }
-  res.status(200).json({ id, pinnedAt: (updated as any[])[0].pinned_at });
+  const outcome = await dispatchMemoryCommand<{ id: string; pinnedAt: string | null }>({
+    sc: client,
+    commandType: "PIN_HIGHLIGHT",
+    memoryId: null,
+    highlightId: id,
+    actorUserId: user.id,
+    idempotencyKey,
+    payload: {},
+    fromKernelResult: (r: any) => ({ id, pinnedAt: r?.pinned_at ?? null }),
+    legacy: async () => {
+      // ONE clock read, bound and derived from. Mixing Date.now() with a
+      // no-arg `new Date()` in one function is a split clock.
+      const nowMs = Date.now();
+      const { data: updated, error } = await client
+        .from("highlights")
+        .update({ pinned_at: new Date(nowMs).toISOString() })
+        .eq("id", id)
+        .eq("owner_id", user.id)
+        .is("deleted_at", null)
+        .select("id, pinned_at");
+
+      if (error) {
+        if (String((error as any)?.code ?? "") === "PGRST204") {
+          req.log.error({ err: error, highlightId: id }, "highlights: pinned_at column is absent — migration 2723 is not applied on this database");
+          return { ok: false, http: { code: "feature_disabled", message: "Pinning is not available on this deployment yet." } };
+        }
+        req.log.error({ err: error, highlightId: id }, "highlights: pin failed");
+        return { ok: false, http: { code: "db_error", message: error.message } };
+      }
+      // Zero rows: not yours, not there, or already deleted — one answer to
+      // this caller, for the same reason the archive handlers give one.
+      if (!updated || (updated as any[]).length === 0) {
+        return { ok: false, http: { code: "not_found", message: "Highlight not found" } };
+      }
+      return { ok: true, body: { id, pinnedAt: (updated as any[])[0].pinned_at } };
+    },
+  });
+
+  if (!outcome.ok) { sendHighlightCommandFailure(req, res, outcome); return; }
+  res.status(200).json(outcome.body);
 });
 
 /** §17 UNPIN_HIGHLIGHT. A pin a user cannot undo is a trap, not curation. */
@@ -1437,28 +1522,47 @@ router.delete("/highlights/:id/pin", async (req, res) => {
   const { id } = req.params;
   if (!UUID.test(id)) { sendError(res, "invalid_payload", "Invalid highlight id"); return; }
 
-  const { data: updated, error } = await client
-    .from("highlights")
-    .update({ pinned_at: null })
-    .eq("id", id)
-    .eq("owner_id", user.id)
-    .is("deleted_at", null)
-    .select("id");
+  const idempotencyKey = highlightIdempotencyKey(req, res);
+  if (idempotencyKey === null) return;
 
-  if (error) {
-    if (String((error as any)?.code ?? "") === "PGRST204") {
-      sendError(res, "feature_disabled", "Pinning is not available on this deployment yet.");
-      return;
-    }
-    req.log.error({ err: error, highlightId: id }, "highlights: unpin failed");
-    sendError(res, "db_error", error.message);
-    return;
-  }
-  if (!updated || (updated as any[]).length === 0) {
-    sendError(res, "not_found", "Highlight not found");
-    return;
-  }
-  res.status(200).json({ id, pinnedAt: null });
+  const outcome = await dispatchMemoryCommand<{ id: string; pinnedAt: null }>({
+    sc: client,
+    commandType: "UNPIN_HIGHLIGHT",
+    memoryId: null,
+    highlightId: id,
+    actorUserId: user.id,
+    idempotencyKey,
+    payload: {},
+    // §17 lists no `highlight.unpinned`, so this emits highlight.pinned and
+    // the event payload carries `command_type` and the resulting `pinned`
+    // state — see COMMAND_EVENT in lib/memoryCommandBus.ts and the
+    // ADD_MEDIA/REMOVE_MEDIA precedent it follows.
+    fromKernelResult: () => ({ id, pinnedAt: null }),
+    legacy: async () => {
+      const { data: updated, error } = await client
+        .from("highlights")
+        .update({ pinned_at: null })
+        .eq("id", id)
+        .eq("owner_id", user.id)
+        .is("deleted_at", null)
+        .select("id");
+
+      if (error) {
+        if (String((error as any)?.code ?? "") === "PGRST204") {
+          return { ok: false, http: { code: "feature_disabled", message: "Pinning is not available on this deployment yet." } };
+        }
+        req.log.error({ err: error, highlightId: id }, "highlights: unpin failed");
+        return { ok: false, http: { code: "db_error", message: error.message } };
+      }
+      if (!updated || (updated as any[]).length === 0) {
+        return { ok: false, http: { code: "not_found", message: "Highlight not found" } };
+      }
+      return { ok: true, body: { id, pinnedAt: null } };
+    },
+  });
+
+  if (!outcome.ok) { sendHighlightCommandFailure(req, res, outcome); return; }
+  res.status(200).json(outcome.body);
 });
 
 /* ============================================================================
@@ -1957,29 +2061,62 @@ router.post("/highlights/:id/archive", async (req, res) => {
   const { id } = req.params;
   if (!UUID.test(id)) { sendError(res, "invalid_payload", "Invalid highlight id"); return; }
 
-  const { data: updated, error } = await client
-    .from("highlights")
-    .update({ archived_at: new Date().toISOString() })
-    .eq("id", id)
-    .eq("owner_id", user.id)
-    .is("deleted_at", null)
-    .select("id, archived_at");
+  const idempotencyKey = highlightIdempotencyKey(req, res);
+  if (idempotencyKey === null) return;
 
-  if (error) {
-    req.log.error({ err: error, highlightId: id }, "highlights: archive failed");
-    sendError(res, "db_error", error.message);
-    return;
-  }
-  if (!updated || (updated as any[]).length === 0) {
-    // Zero rows: not yours, not there, or already deleted. Not distinguishable
-    // without a second read, and each of the three is a 404 to this caller.
-    sendError(res, "not_found", "Highlight not found");
-    return;
-  }
-  res.status(200).json({ id, archivedAt: (updated as any[])[0].archived_at });
+  // §17 HIDE_HIGHLIGHT. `archived_at` is the REVERSIBLE hide and `deleted_at`
+  // is terminal; §21 requires them to stay different operations, so this
+  // command writes only the first and DELETE /highlights/:id is untouched.
+  const outcome = await dispatchMemoryCommand<{ id: string; archivedAt: string | null }>({
+    sc: client,
+    commandType: "HIDE_HIGHLIGHT",
+    memoryId: null,
+    highlightId: id,
+    actorUserId: user.id,
+    idempotencyKey,
+    payload: {},
+    fromKernelResult: (r: any) => ({ id, archivedAt: r?.archived_at ?? null }),
+    legacy: async () => {
+      const nowMs = Date.now();
+      const { data: updated, error } = await client
+        .from("highlights")
+        .update({ archived_at: new Date(nowMs).toISOString() })
+        .eq("id", id)
+        .eq("owner_id", user.id)
+        .is("deleted_at", null)
+        .select("id, archived_at");
+
+      if (error) {
+        req.log.error({ err: error, highlightId: id }, "highlights: archive failed");
+        return { ok: false, http: { code: "db_error", message: error.message } };
+      }
+      if (!updated || (updated as any[]).length === 0) {
+        // Zero rows: not yours, not there, or already deleted. Not
+        // distinguishable without a second read, and each of the three is a
+        // 404 to this caller.
+        return { ok: false, http: { code: "not_found", message: "Highlight not found" } };
+      }
+      return { ok: true, body: { id, archivedAt: (updated as any[])[0].archived_at } };
+    },
+  });
+
+  if (!outcome.ok) { sendHighlightCommandFailure(req, res, outcome); return; }
+  res.status(200).json(outcome.body);
 });
 
-/** §21 Archive is reversible. This is the half that makes it so. */
+/**
+ * §21 Archive is reversible. This is the half that makes it so.
+ *
+ * NOT A COMMAND, AND THAT IS A GAP RATHER THAN A DECISION. §17 names
+ * HIDE_HIGHLIGHT and names no inverse of it, so there is no command type this
+ * handler could issue without inventing one — and an invented name is the
+ * thing MEMORY_COMMAND_TYPES_NOT_DECLARED exists to refuse. The consequence is
+ * real and is recorded rather than hidden: the event stream will show a
+ * `highlight.hidden` with no matching un-hide, so a §18 consumer that replays
+ * it reaches a state the row is no longer in. src/test/highlightCommandBoundary
+ * .test.ts asserts this shape, so the gap is a failing-if-it-changes fact and
+ * not a comment nobody re-reads.
+ */
 router.delete("/highlights/:id/archive", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;

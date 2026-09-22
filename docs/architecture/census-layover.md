@@ -7135,9 +7135,13 @@ and `test/providerReturnRouteRisk.test.ts`.
 It is also NOT WIRED, measured at this commit. Grepping `src/services/airport/`
 and `src/routes/` for `routeCorridorProvider`, `returnRouteRisk`,
 `independentRouteCount` or `assessReturnRisk` returns nothing at all, and the
-one line that would carry it into a traveller's session is untouched:
+one line that would carry it into a traveller's session was untouched. **That
+line has since been wired — see §39, which records it and re-derives these six
+rows.** The citation below is kept live and therefore shows what the line reads
+NOW, not what it read when this section was written; when §34 was written it
+ended `= noRoutedProvider;`:
 
-`services/airport/LayoverTravelTime.ts:83#export const LAYOVER_TRAVEL_TIME_PROVIDER: TravelTimeProvider = noRoutedProvider;`
+`services/airport/LayoverTravelTime.ts:83#export const LAYOVER_TRAVEL_TIME_PROVIDER: TravelTimeProvider = corridorTravelTimeProvider(googleRoutesCorridorProvider);`
 
 DEPS left it that way deliberately — that file was the LO-API lane's, and LO-API
 spent its run on the §20 decision record and never came back to it.
@@ -7427,3 +7431,91 @@ This paragraph is a commitment, not a prediction. If a lane's work turns out to
 be reachable on production rather than flag-gated, the rule gives `C` and it
 will get `C`; if a lane reports work it did not finish, the rule gives `N` and
 it will get `N`.
+
+## §39 — 2026-09-22 (integration): the route model is wired; six rows move N → W
+
+§34 held L60, L68, L69, L70, L71 and L282 at `N` because the route model existed
+in `lib/` and the feature surface never called it. **It calls it now.** The rows
+move to `W`, not to `C`, by the rule fixed in §38 before this result existed.
+
+| id | was | now | what reaches a traveller's request |
+|---|---|---|---|
+| L60 | N | **W** | The return is asked as its own corridor at its own instant, not doubled: `layoverReturnRisk` → `provider.bidirectional()` → `assessBidirectionalReturnRisk`. |
+| L68 | N | **W** | `independentRouteCount` reaches the verdict. Three routes through one shared interchange reduce to 1 and turn `yes` into `tight`; the same three through distinct interchanges stay 3 and stay `yes`. |
+| L69 | N | **W** | Same wiring as L68. |
+| L70 | N | **W** | `routeInterruptibility` reaches the verdict: an identical single-route corridor is `yes` when `interruptible` and `tight` when `committed`. |
+| L71 | N | **W** | `transferCountOf` reaches the verdict: identical window, 0 transfers is `yes`, 2 is `tight` with `RETURN_ROUTE_UNRELIABLE`. |
+| L282 | N | **W** | `assessReturnRisk` is consumed rather than merely exported. |
+
+The seam is one line and it is the line §34 named:
+
+`services/airport/LayoverTravelTime.ts:83#export const LAYOVER_TRAVEL_TIME_PROVIDER: TravelTimeProvider = corridorTravelTimeProvider(googleRoutesCorridorProvider);`
+
+and the per-candidate ask is live on the Discovery path —
+`lib/discoveryLayoverMode.ts:314#const universe = await certifiedActionUniverse(` →
+`services/airport/LayoverSnapshot.ts:557#const outcome = await layoverReturnRisk(` →
+refusal of admission at `services/airport/LayoverSnapshot.ts:622#if (risk?.returnRouteUnreliable === true) {`.
+
+### Why `W` and not `C` — the rule was fixed first, in §38
+
+TWO gates are closed on production and either alone is decisive:
+
+* `LAYOVER_ROUTED_CORRIDOR_ENABLED` is not affirmative, so
+  `googleRoutesCorridorProvider` refuses with `PROVIDER_NOT_ENABLED` **before a
+  request body is built** — verified in that file: the enablement check and the
+  credential check both precede the body.
+* `layover_discovery_mode_enabled` is FALSE on production (2971 seeded it), so
+  the Discovery path carrying the per-candidate ask does not run there at all.
+
+So on production every landside leg is still
+`{ minutes: null, source: "unmeasured", reason: "NO_ROUTED_PROVIDER" }` — field
+for field what `noRoutedProvider` produced, with one added `detail`. Built and
+unreachable is `W`.
+
+### The precondition that MUST be closed before the corridor is ever enabled
+
+**The corridor risk is not a named input of `feasibilityInputHash`.** A
+certified record therefore would not change its hash when the risk that shaped
+it changed, which is exactly the property that makes a certified record worth
+storing. It is harmless only because `risk` is `null` on every call that exists
+today. This is not a nice-to-have: **enabling `LAYOVER_ROUTED_CORRIDOR_ENABLED`
+before this is closed would start certifying records whose inputs the hash does
+not cover.** Recorded here rather than left in a code comment.
+
+### What is NOT claimed
+
+* `certifyFeasibilityWithReturnCorridor` exists and is tested but has **no
+  production caller**, and the reason predates this pass: nothing on the tree
+  ever SETS `FeasibilityInputs.landsideProbe`. It is blocked on a probe
+  producer, not on this wiring.
+* The owner PURCHASE decision is untouched. Google Routes enablement is still
+  unverified on that Cloud project and calls are still billed per request with
+  no spend ceiling in this repository. Nothing here enables it, adds a default
+  for it, or adds a key. Wiring landed; enabling did not.
+
+### A finding about this census's own tooling, not about Layover
+
+The citation ratchet is now pricing structural edits to the layover core out of
+reach, and it was measured rather than asserted: inserting twelve blank lines at
+the top of `LayoverSafetyEngine.ts` takes `check:citation-targets` to 181
+against its ceiling of 179 and breaks roughly sixteen anchored citations in this
+file; the same probe on `LayoverFeasibility.ts` gives 181 plus six, and on
+`LayoverRecommendationService.ts` plus twenty-four.
+
+The practical effect is that every edit in this pass had to be append-only past
+the last cited line, or line-for-line. That is a real constraint on future work
+and it has already deferred two changes: the `feasibilityInputHash` fix above
+(a ~14-line insertion that would move fourteen citations) and the
+`LAYOVER_ENGINE_VERSION` history entry (30+). A guard that makes the code harder
+to fix than to leave wrong is worth noticing before it silently shapes more
+decisions.
+
+### §39 headline
+
+| bucket | was (§36) | now |
+|---|---|---|
+| BUILT-AND-CORRECT | 79 | 79 |
+| BUILT-BUT-WRONG | 125 | **131** |
+| NOT-BUILT | 92 | **86** |
+| CONTRADICTED | 0 | 0 |
+| total | 296 | 296 |

@@ -49,14 +49,24 @@
  * turned the reader off separately.
  *
  * ══════════════════════════════════════════════════════════════════════════════
- * WIRING — THE ONE THING THIS LANE CANNOT DO ITSELF
+ * WIRING — DONE, AND WHAT IT DOES AND DOES NOT COVER
  * ══════════════════════════════════════════════════════════════════════════════
- * `startMemoryOutboxScheduler()` needs one import and one call in src/index.ts,
- * beside `startMemoryProjectionScheduler()` at :166 — a file this lane does not
- * own. UNTIL THAT LINE EXISTS THE CONSUMER HAS NO PRODUCTION CALLER, and by the
- * grading rule in force ("an endpoint or emitter with no required consumer is
- * INCOMPLETE") this half is implemented and not yet in force. It is stated here
- * rather than only in a report so the next reader of this file learns it too.
+ * This paragraph used to say the consumer had no production caller and was
+ * waiting on one line in src/index.ts. That is NO LONGER TRUE and the line is
+ * there: src/index.ts imports `startMemoryOutboxScheduler` and calls it during
+ * boot, beside the other schedulers. The consumer runs in production.
+ *
+ * WHAT IT DRAINS, STATED PRECISELY so this does not become the next stale
+ * claim. `drainMemoryOutbox` claims through `public.memory_outbox_claim`,
+ * which migration 2994 creates and which is UNAPPLIED on every database at the
+ * time of writing — so today every pass answers `claim_unavailable` and the
+ * loop reports that rather than a clean empty run. Once 2994 is applied, the
+ * pass rebuilds the §18 projections each `memory.*` event invalidates.
+ * `highlight.*` events (migration 2993) have no §18 projection keyed on a
+ * Highlight, so they are claimed, acked and counted as
+ * `unsubscribed_event_type`: the rows move and none is stranded, and nothing
+ * is rebuilt from them. A projection worker for the Highlight half does not
+ * exist.
  */
 import { getServiceClient } from "../../lib/supabase.js";
 import { logger } from "../../lib/logger.js";

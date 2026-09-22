@@ -25,9 +25,13 @@
  * WHAT THIS MODULE IS
  * ===================
  * The TypeScript half of the kernel. The database half is
- * public.memory_kernel_execute (migration 2710), which applies ONE command to
- * canonical state and writes the domain event, the outbox row, the idempotency
- * receipt and the command-audit row in the SAME transaction. supabase-js has no
+ * public.memory_kernel_execute (migration 2711) for the Memory commands and
+ * public.highlight_kernel_execute (migration 2993) for the Highlight ones —
+ * one kernel function per AGGREGATE, the shape trip_kernel_execute (2420) and
+ * the Telegraph message kernel (2810) already established. Either one applies
+ * ONE command to canonical state and writes the domain event, the outbox row,
+ * the idempotency receipt and the command-audit row in the SAME transaction,
+ * into the SAME four tables, under the SAME receipt key. supabase-js has no
  * transactions, so a single SQL function is the only way to make "state + event
  * + outbox + receipt + audit" atomic from this process — the same reasoning
  * migration 2420 records for the Trip Kernel, whose shape this follows
@@ -64,17 +68,39 @@
  *
  * WHAT THIS DELIBERATELY DOES NOT DO
  * ==================================
- *   * MERGE_MEMORY and SPLIT_MEMORY (§17) are NOT declared. There is no
- *     `memory_relations` table (§3.4) and no version chain to merge into, so a
- *     declared-but-unbacked command name would be a claim the code cannot keep.
+ *   * MERGE_MEMORY and SPLIT_MEMORY (§17) are NOT declared. `public
+ *     .memory_relations` (§3.4) is written by migration 2994 and is UNAPPLIED
+ *     on every database, and there is no version chain to merge into either,
+ *     so a declared command name would still be a claim the code cannot keep.
  *     They stay NOT-BUILT and are reported as such.
- *   * The five Highlight commands (PIN/UNPIN/PUBLISH/HIDE_HIGHLIGHT,
- *     SET_RESURFACING_POLICY) are NOT declared here: routes/highlights.ts,
- *     routes/stories.ts and lib/highlightPermissions.ts belong to another lane,
- *     and a command whose handler this bus cannot write is not a boundary.
- *   * No outbox consumer and no projection worker (§18). Rows accumulate with
- *     `published_at IS NULL` until one exists. lib/memoryOutbox.ts defines the
- *     payload contract that worker will read and nothing more.
+ *   * PUBLISH_HIGHLIGHT (§17) is NOT declared, and this is a SCHEMA fact, not
+ *     an ownership one. `public.highlights` has no `published_at`, and
+ *     `lifecycle_state`'s value space is fixed by migration 2723 to
+ *     (NULL, DRAFT, ACTIVE, EXPIRED, PINNED, HIDDEN) — there is no PUBLISHED.
+ *     Nothing writes `highlights.lifecycle_state` at all, and services/
+ *     highlights/highlightLifecycle.ts states that DRAFT "has no witness and
+ *     is still never derived", so no Highlight is ever in a pre-published
+ *     state for a command to move out of. See MEMORY_COMMAND_TYPES_NOT_DECLARED.
+ *   * SET_RESURFACING_POLICY (§17) is NOT declared: its subject is not one
+ *     aggregate. See MEMORY_COMMAND_TYPES_NOT_DECLARED for the measurement.
+ *   * No SECOND event stream. PIN/UNPIN/HIDE_HIGHLIGHT write into the SAME
+ *     four tables as the Memory commands, keyed on the `highlight_id` column
+ *     migration 2993 adds beside `memory_id`. §17 lists one outbox and one
+ *     vocabulary of fourteen event names, five of them `highlight.*`; 2710
+ *     already wrote both kinds into one CHECK constraint. Splitting the stream
+ *     would duplicate the drain loop, the lease, the ack path and §24's
+ *     projection-lag metric.
+ *   * An outbox CONSUMER now exists and is wired: services/memoryProjections/
+ *     outboxDrainRunner.ts is imported and started from src/index.ts, and it
+ *     is deliberately not flag-gated, because the PRODUCER is — an outbox row
+ *     can only exist if a kernel function wrote it. It claims rows via
+ *     public.memory_outbox_claim, rebuilds the §18 projections each
+ *     `memory.*` event invalidates, and acks. What is still NOT built is a
+ *     projection worker for the `highlight.*` half: those events drain and are
+ *     acked with the class `unsubscribed_event_type`, because no §18
+ *     projection in projectionRegistry.ts is keyed on a Highlight. So the rows
+ *     move and nothing is stranded; nothing is rebuilt from them either, and
+ *     the code says which of the two it is rather than implying the first.
  *   * No aggregate version / optimistic concurrency (§19 H178). `memories` has
  *     no `current_version` column (§3.1) and adding one is a separate change.
  */
@@ -293,8 +319,57 @@ export const MEMORY_COMMAND_TYPES = [
                         //       plain field edit; a PATCH that touches neither
                         //       lifecycle, place nor audience needs a name to
                         //       cross the boundary at all.
+  // ── §17 Highlight commands. A DIFFERENT AGGREGATE, the same boundary. ──
+  // These three carry a `highlightId`, not a `memoryId`, and execute against
+  // public.highlight_kernel_execute (migration 2993) rather than
+  // public.memory_kernel_execute. They are in THIS list, not a parallel one,
+  // because §17 defines one command boundary and §23 one capability
+  // vocabulary; COMMAND_CAPABILITY and COMMAND_EVENT must stay total over
+  // every command the system can issue, whatever it is issued against.
+  "PIN_HIGHLIGHT",      // §17 — highlights.pinned_at = now()
+  "UNPIN_HIGHLIGHT",    // §17 — highlights.pinned_at = null
+  "HIDE_HIGHLIGHT",     // §17 — highlights.archived_at = now(); §21's
+                        //       REVERSIBLE hide. deleted_at is terminal and is
+                        //       a different operation, not this one.
 ] as const;
 export type MemoryCommandType = (typeof MEMORY_COMMAND_TYPES)[number];
+
+/**
+ * Which aggregate a command names.
+ *
+ * TOTAL over MEMORY_COMMAND_TYPES by construction (`Record`, no index
+ * signature), so a command added without an entry is a COMPILE error rather
+ * than a runtime call to the wrong kernel function. This is the map
+ * `executeMemoryCommand` dispatches on; nothing infers the subject from the
+ * command NAME, because a name is a convention and this is a routing decision.
+ */
+export const COMMAND_SUBJECT: Readonly<Record<MemoryCommandType, "memory" | "highlight">> = {
+  CREATE_MEMORY: "memory",
+  CONFIRM_MEMORY: "memory",
+  ARCHIVE_MEMORY: "memory",
+  DELETE_MEMORY: "memory",
+  ADD_MEDIA: "memory",
+  REMOVE_MEDIA: "memory",
+  ADD_PERSON: "memory",
+  REMOVE_PERSON: "memory",
+  CHANGE_PLACE: "memory",
+  CHANGE_VISIBILITY: "memory",
+  UPDATE_MEMORY: "memory",
+  PIN_HIGHLIGHT: "highlight",
+  UNPIN_HIGHLIGHT: "highlight",
+  HIDE_HIGHLIGHT: "highlight",
+};
+
+export const HIGHLIGHT_COMMAND_TYPES = MEMORY_COMMAND_TYPES
+  .filter((t) => COMMAND_SUBJECT[t] === "highlight");
+
+export function isHighlightCommand(t: MemoryCommandType): boolean {
+  return COMMAND_SUBJECT[t] === "highlight";
+}
+
+/** The SQL function each subject's commands execute against. */
+export const MEMORY_KERNEL_FN = "memory_kernel_execute";
+export const HIGHLIGHT_KERNEL_FN = "highlight_kernel_execute";
 
 /**
  * §17 names this bus does NOT declare, with the reason, so the gap is legible
@@ -304,13 +379,38 @@ export type MemoryCommandType = (typeof MEMORY_COMMAND_TYPES)[number];
  * would otherwise be caught only in production.
  */
 export const MEMORY_COMMAND_TYPES_NOT_DECLARED = {
-  MERGE_MEMORY: "no memory_relations table (§3.4) and no version chain to merge into",
-  SPLIT_MEMORY: "same — nothing to split a Memory's evidence between",
-  PIN_HIGHLIGHT: "routes/highlights.ts is owned by another lane",
-  UNPIN_HIGHLIGHT: "routes/highlights.ts is owned by another lane",
-  PUBLISH_HIGHLIGHT: "routes/stories.ts is owned by another lane",
-  HIDE_HIGHLIGHT: "routes/highlights.ts is owned by another lane",
-  SET_RESURFACING_POLICY: "no resurfacing-policy storage exists (§11 user controls are NOT-BUILT)",
+  MERGE_MEMORY:
+    "memory_relations (§3.4) is migration 2994, unapplied on every database, and there is no version chain to merge into",
+  SPLIT_MEMORY:
+    "same — nothing to split a Memory's evidence between",
+  // MEASURED 2026-09-22 against the 20260915 production schema snapshot and
+  // migration 2723. `public.highlights` has no `published_at` column. It has
+  // `lifecycle_state`, whose CHECK (2723_highlight_class_lifecycle_and_pin.sql)
+  // admits only NULL, DRAFT, ACTIVE, EXPIRED, PINNED and HIDDEN — no PUBLISHED.
+  // Nothing in this server writes highlights.lifecycle_state (the only
+  // TypeScript writer of any `lifecycle_state` is server/telegraph/
+  // commandRoute.ts, on `messages`), and services/highlights/
+  // highlightLifecycle.ts records that DRAFT "has no witness and is still
+  // never derived" — so no Highlight is ever in a pre-published state. The
+  // nearest storable value, ACTIVE, is what describeHighlightLifecycle already
+  // DERIVES for a live row; storing it would replace every reader's derived
+  // answer with a stored one, which is a behaviour change dressed as a
+  // command. Declaring the name and writing nothing, or writing a column
+  // invented to make the row closable, are both worse than saying this.
+  PUBLISH_HIGHLIGHT:
+    "no storable 'published' state: highlights has no published_at, lifecycle_state's CHECK (2723) has no PUBLISHED value, nothing writes lifecycle_state, and DRAFT has no witness — so there is no pre-published state to leave",
+  // MEASURED 2026-09-22. The previous reason here — "no resurfacing-policy
+  // storage exists" — WAS FALSE. `public.highlight_resurfacing_preferences`
+  // is on the 20260915 production snapshot (migration 2720, applied
+  // 2026-09-15) with columns owner_id, control, subject_type, subject_id, and
+  // services/highlights/highlightControlWrites.ts writes it. The real reason
+  // is structural: that table's subject_type is CHECKed to
+  // ('highlight','person','trip','owner'), so three of its four subject kinds
+  // are not an aggregate this kernel has a column for. A command boundary
+  // whose event rows carry exactly one of (memory_id, highlight_id) cannot
+  // name a person-scoped, trip-scoped or owner-scoped policy row at all.
+  SET_RESURFACING_POLICY:
+    "its subject is not one aggregate — highlight_resurfacing_preferences.subject_type is one of (highlight, person, trip, owner) and the event tables carry exactly one of (memory_id, highlight_id)",
 } as const;
 
 /** §17 command -> §17 domain event. Total over MEMORY_COMMAND_TYPES. */
@@ -332,6 +432,18 @@ export const COMMAND_EVENT: Readonly<Record<MemoryCommandType, MemoryEventType>>
   CHANGE_PLACE: "memory.corrected",
   UPDATE_MEMORY: "memory.corrected",
   CHANGE_VISIBILITY: "memory.visibility_changed",
+  // §17 names highlight.pinned and no highlight.unpinned, so BOTH the pin and
+  // the unpin emit highlight.pinned and the payload carries `command_type`
+  // plus the resulting `pinned` state. This is the precedent set four lines
+  // up, where ADD_MEDIA and REMOVE_MEDIA both map to memory.corrected:
+  // inventing an event name §17 does not list would hand a consumer a name
+  // nobody subscribed to.
+  PIN_HIGHLIGHT: "highlight.pinned",
+  UNPIN_HIGHLIGHT: "highlight.pinned",
+  // §21's reversible hide, which is `archived_at`. Not highlight.expired:
+  // expiry is what `expires_at` does on its own, and not a deletion event
+  // either — §21 keeps Archive and Delete separate in the data model.
+  HIDE_HIGHLIGHT: "highlight.hidden",
 };
 
 /** §23's capability vocabulary, per command. Re-checked by the SQL function. */
@@ -350,14 +462,31 @@ export const COMMAND_CAPABILITY: Readonly<Record<MemoryCommandType, "none" | "ow
   // (consent withdrawal, §5 "only after participant consent") may issue it.
   ADD_PERSON: "owner_or_participant",
   REMOVE_PERSON: "owner_or_participant",
+  // §23 for a Highlight is `highlights.owner_id`, and there is no participant
+  // analogue: a Highlight has no tag table and no consent ladder. Re-checked
+  // inside highlight_kernel_execute (2993) under a row lock, exactly as the
+  // Memory commands re-check memories.owner_id.
+  PIN_HIGHLIGHT: "owner",
+  UNPIN_HIGHLIGHT: "owner",
+  HIDE_HIGHLIGHT: "owner",
 };
 
 // ── Command envelope ─────────────────────────────────────────────────────────
 
 export interface MemoryCommand {
   commandId: string;
-  /** null only for CREATE_MEMORY, where the id is assigned by the function. */
+  /**
+   * null only for CREATE_MEMORY, where the id is assigned by the function, and
+   * for the Highlight commands, whose subject is `highlightId`.
+   */
   memoryId: string | null;
+  /**
+   * The Highlight this command names. Required for every command whose
+   * COMMAND_SUBJECT is "highlight" and null for every other. The two are never
+   * both set: migration 2993's CHECK makes a two-subject event row impossible,
+   * and this field is where that shape is kept out in the first place.
+   */
+  highlightId?: string | null;
   actorUserId: string;
   idempotencyKey: string;
   type: MemoryCommandType;
@@ -374,6 +503,13 @@ export type MemoryKernelReason =
   | "MEMORY_TAG_NOT_FOUND"
   | "MEMORY_AUTH_NOT_OWNER"
   | "MEMORY_AUTH_NOT_PARTICIPANT"
+  // §24 reason codes for the Highlight aggregate. SEPARATE from the Memory
+  // ones on purpose: the audit row and the metric must say which aggregate
+  // refused, and a dashboard that saw MEMORY_NOT_FOUND for a missing Highlight
+  // would be counting the wrong thing. The HTTP answer they map to is a
+  // different question — see sendMemoryCommandRejection.
+  | "HIGHLIGHT_NOT_FOUND"
+  | "HIGHLIGHT_AUTH_NOT_OWNER"
   | "MEMORY_AUTH_IDEMPOTENCY_KEY_FOREIGN"
   | "MEMORY_IDEMPOTENCY_KEY_REUSED"
   | "MEMORY_LIFECYCLE_TERMINAL"
@@ -386,7 +522,15 @@ export type MemoryKernelResult =
       ok: true;
       /** true when the idempotency receipt answered instead of a new transition. */
       duplicate: boolean;
-      memoryId: string;
+      /**
+       * The subject. EXACTLY ONE is non-null, mirroring migration 2993's
+       * memory_domain_events_one_subject CHECK. `string` would have been the
+       * smaller type and the wrong one: a Highlight command has no memoryId,
+       * and `String(undefined)` is the string "undefined", which reads like an
+       * id all the way into an audit row.
+       */
+      memoryId: string | null;
+      highlightId: string | null;
       eventId: string;
       eventType: MemoryEventType;
       /** the ORIGINAL result body on a replay — not a freshly computed one. */
@@ -468,21 +612,41 @@ export function readMemoryCommandEnvelope(req: Request): MemoryCommandEnvelope {
  * .test.ts asserts statically that no such line exists in this lane's files.
  */
 export async function executeMemoryCommand(sc: any, cmd: MemoryCommand): Promise<MemoryKernelResult> {
-  const p_command = {
-    command_id: cmd.commandId,
-    memory_id: cmd.memoryId,
-    actor_user_id: cmd.actorUserId,
-    idempotency_key: cmd.idempotencyKey,
-    type: cmd.type,
-    payload: cmd.payload,
-    client_observed_at: cmd.clientObservedAt ?? null,
-    correlation_id: cmd.correlationId ?? null,
-  };
+  // WHICH KERNEL. Decided from COMMAND_SUBJECT, which is total over
+  // MEMORY_COMMAND_TYPES, and never from the shape of the envelope: routing on
+  // "whichever id happens to be set" would send a malformed command to
+  // whichever function the caller's mistake picked, and the two functions have
+  // different ownership checks. The envelope carries the subject key the
+  // chosen function reads and NULL for the other, so a command can never
+  // present two subjects — the TypeScript half of 2993's one-subject CHECK.
+  const highlight = isHighlightCommand(cmd.type);
+  const fn = highlight ? HIGHLIGHT_KERNEL_FN : MEMORY_KERNEL_FN;
+  const p_command = highlight
+    ? {
+        command_id: cmd.commandId,
+        highlight_id: cmd.highlightId ?? null,
+        actor_user_id: cmd.actorUserId,
+        idempotency_key: cmd.idempotencyKey,
+        type: cmd.type,
+        payload: cmd.payload,
+        client_observed_at: cmd.clientObservedAt ?? null,
+        correlation_id: cmd.correlationId ?? null,
+      }
+    : {
+        command_id: cmd.commandId,
+        memory_id: cmd.memoryId,
+        actor_user_id: cmd.actorUserId,
+        idempotency_key: cmd.idempotencyKey,
+        type: cmd.type,
+        payload: cmd.payload,
+        client_observed_at: cmd.clientObservedAt ?? null,
+        correlation_id: cmd.correlationId ?? null,
+      };
 
   let data: any;
   let error: any;
   try {
-    ({ data, error } = await sc.rpc("memory_kernel_execute", { p_command }));
+    ({ data, error } = await sc.rpc(fn, { p_command }));
   } catch (e) {
     // supabase-js RESOLVES on a database error, so this catch is for a thrown
     // transport/config failure only. It is not dead code the way a try/catch
@@ -507,7 +671,12 @@ export async function executeMemoryCommand(sc: any, cmd: MemoryCommand): Promise
     return {
       ok: true,
       duplicate: Boolean(data.duplicate),
-      memoryId: String(data.memory_id),
+      // `== null` rather than a truthiness test, and String() only on a value
+      // that is there. The Memory kernel returns no highlight_id and the
+      // Highlight kernel returns no memory_id; coercing the absent one would
+      // manufacture the literal "undefined".
+      memoryId: data.memory_id == null ? null : String(data.memory_id),
+      highlightId: data.highlight_id == null ? null : String(data.highlight_id),
       eventId: String(data.event_id),
       eventType: (MEMORY_EVENT_TYPES as readonly string[]).includes(eventType)
         ? (eventType as MemoryEventType)
@@ -586,6 +755,20 @@ export function sendMemoryCommandRejection(
       return;
     case "MEMORY_NOT_FOUND":
       res.status(404).json({ error: "not_found", message: "Memory not found", reason: r.reason });
+      return;
+    // THE TWO HIGHLIGHT REFUSALS ANSWER THE SAME 404, AND THAT IS DELIBERATE.
+    // routes/highlights.ts has always given one answer to all three of "not
+    // yours", "not there" and "already deleted" — its own comment says so —
+    // because telling a stranger 403 rather than 404 tells them the Highlight
+    // EXISTS. Splitting them here would make the kernel path leak an existence
+    // fact the direct-write path does not, which is a privacy regression
+    // shipped as a better error message. The distinction is not lost: the
+    // kernel writes HIGHLIGHT_AUTH_NOT_OWNER into memory_command_audit and
+    // into §24's reason-code metric, where it belongs. Inside precise,
+    // outside uniform.
+    case "HIGHLIGHT_NOT_FOUND":
+    case "HIGHLIGHT_AUTH_NOT_OWNER":
+      res.status(404).json({ error: "not_found", message: "Highlight not found", reason: r.reason });
       return;
     case "MEMORY_ITEM_NOT_FOUND":
       res.status(404).json({ error: "not_found", message: "Item not found", reason: r.reason });
