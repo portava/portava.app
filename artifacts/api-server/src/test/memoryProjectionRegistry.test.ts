@@ -551,8 +551,12 @@ describe("section 10: audience shapes the projection, not a post-filter", () => 
     highlight({ id: "h-other", owner_id: FRIEND, created_at: "2026-05-15T12:00:00.000Z" }),
   ];
 
-  function hlFixture(): Tables {
-    return { ...fixture(), highlights: HL_FIXTURE.map((h) => ({ ...h })) };
+  function hlFixture(policies: any[] = []): Tables {
+    return {
+      ...fixture(),
+      highlights: HL_FIXTURE.map((h) => ({ ...h })),
+      highlight_projection_policies: policies.map((p) => ({ owner_id: OWNER, ...p })),
+    };
   }
 
   const hlIds = (rows: readonly ProjectedRow[]) =>
@@ -672,6 +676,84 @@ describe("section 10: audience shapes the projection, not a post-filter", () => 
       if (def.id === "ProfileHighlightProjection") continue;
       assert.ok(!def.source_tables.includes("highlights"), `${def.id} declares highlights`);
     }
+  });
+
+  // ── §10 policy, applied to the Highlight half ─────────────────────────────
+  //
+  // The live profile read of `highlights` already enforces this
+  // (services/highlights/highlightPublicProjection.ts). A §18 derivative that
+  // did not would be a SECOND path to the same rows with the gate missing,
+  // which is the exact shape §28.6 names: "never expose private canonical
+  // records and rely on post-filtering".
+
+  it("§10 SHARE withheld removes a Highlight from a NON-OWNER's profile, and only an explicit false does", async () => {
+    const withheld = hlFixture([{ highlight_id: "h-pub", location_precision: null, consent_share: false }]);
+    const forViewer = await deriveProjection(makeClient(withheld), "ProfileHighlightProjection", { owner_id: OWNER, viewer_id: FRIEND });
+    assert.ok(forViewer.ok);
+    assert.ok(!hlIds(forViewer.value.rows).includes("h-pub"));
+
+    // The OWNER still sees their own: the ladder governs publication.
+    const forOwner = await deriveProjection(makeClient(withheld), "ProfileHighlightProjection", OWNER_SCOPE);
+    assert.ok(forOwner.ok);
+    assert.ok(hlIds(forOwner.value.rows).includes("h-pub"));
+
+    // `unknown` — no policy row — is NOT a refusal. Refusing on it would empty
+    // the surface rather than honour a decision nobody made.
+    const noRow = await deriveProjection(makeClient(hlFixture()), "ProfileHighlightProjection", { owner_id: OWNER, viewer_id: FRIEND });
+    assert.ok(noRow.ok);
+    assert.ok(hlIds(noRow.value.rows).includes("h-pub"));
+  });
+
+  it("§10 the precision ladder clamps a non-owner's view and never the owner's", async () => {
+    const hidden = hlFixture([{ highlight_id: "h-pub", location_precision: "HIDDEN", consent_share: true }]);
+    const viewer = await deriveProjection(makeClient(hidden), "ProfileHighlightProjection", { owner_id: OWNER, viewer_id: FRIEND });
+    assert.ok(viewer.ok);
+    const seen = viewer.value.rows.find((r) => r.highlight_id === "h-pub")!;
+    assert.equal(seen.location_city, null, "HIDDEN discloses nothing");
+    assert.equal(seen.location_country, null);
+
+    const country = hlFixture([{ highlight_id: "h-pub", location_precision: "COUNTRY", consent_share: true }]);
+    const atCountry = await deriveProjection(makeClient(country), "ProfileHighlightProjection", { owner_id: OWNER, viewer_id: FRIEND });
+    assert.ok(atCountry.ok);
+    const coarse = atCountry.value.rows.find((r) => r.highlight_id === "h-pub")!;
+    assert.equal(coarse.location_city, null, "COUNTRY drops the city");
+    assert.equal(coarse.location_country, "Vietnam");
+
+    const owner = await deriveProjection(makeClient(hidden), "ProfileHighlightProjection", OWNER_SCOPE);
+    assert.ok(owner.ok);
+    assert.equal(owner.value.rows.find((r) => r.highlight_id === "h-pub")!.location_city, "Da Nang");
+  });
+
+  it("§10 a stored rung the ladder does not contain clamps to HIDDEN — fail closed", async () => {
+    const bogus = hlFixture([{ highlight_id: "h-pub", location_precision: "SOMEWHAT", consent_share: true }]);
+    const r = await deriveProjection(makeClient(bogus), "ProfileHighlightProjection", { owner_id: OWNER, viewer_id: FRIEND });
+    assert.ok(r.ok);
+    const seen = r.value.rows.find((x) => x.highlight_id === "h-pub")!;
+    assert.equal(seen.location_city, null);
+    assert.equal(seen.location_country, null);
+  });
+
+  it("AN UNREADABLE policy table refuses — an unreadable publication limit is never an absent one", async () => {
+    const r = await deriveProjection(
+      makeClient(hlFixture(), { failTables: new Set(["highlight_projection_policies"]) }),
+      "ProfileHighlightProjection",
+      { owner_id: OWNER, viewer_id: FRIEND },
+    );
+    assert.equal(r.ok, false);
+    assert.equal(r.ok === false && r.table, "highlight_projection_policies");
+  });
+
+  it("a POLICY change moves the source version, so a narrowed publication cannot report FRESH", async () => {
+    const tables = hlFixture([{ highlight_id: "h-pub", location_precision: "CITY", consent_share: true }]);
+    const scope = { owner_id: OWNER, viewer_id: FRIEND };
+    const built = await rebuildProjection(makeClient(tables), "ProfileHighlightProjection", scope, NOW);
+    assert.ok(built.ok);
+    const client = makeClient(tables);
+    (tables.highlight_projection_policies as any[])[0].location_precision = "HIDDEN";
+    const stale = await projectionStaleness(client, "ProfileHighlightProjection", scope);
+    assert.ok(stale.ok);
+    assert.equal(stale.value.state, "STALE", "an owner narrowing their own publication must not read as FRESH");
+    assert.ok(stale.value.changed_memory_ids.includes("policy:h-pub"));
   });
 
   it("a Highlight contributes NOTHING to source_memory_ids — the Memory cleanup graph is unaffected", async () => {

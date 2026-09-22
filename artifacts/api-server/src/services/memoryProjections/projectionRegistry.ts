@@ -38,6 +38,15 @@
  */
 
 import type { SignificanceExplanation } from "./significance.js";
+// §10's ladder and consent reader, imported rather than restated. Both are pure
+// functions; neither drags I/O into this module, and the one-way direction
+// (memoryProjections -> highlights) is checked: services/highlights imports
+// nothing from services/memoryProjections, so this closes no ESM cycle.
+import {
+  clampLocationToPrecision,
+  consentFromRow,
+  isLocationPrecision,
+} from "../highlights/highlightProjectionPolicy.js";
 
 export type ProjectionId =
   | "MemoryTimelineProjection"
@@ -146,6 +155,26 @@ export interface HighlightSourceRow {
   location_country: string | null;
 }
 
+/**
+ * One row of `public.highlight_projection_policies` (migration 2721, applied to
+ * production at 20260915055812), narrowed to the two dimensions an
+ * audience-specific projection can act on.
+ *
+ * WHY ONLY TWO. `consentEnforcement()` in services/highlights/
+ * highlightPublicProjection.ts derives, rather than lists, which §10 consent
+ * dimensions any surface in this repository actually reads: SHARE and
+ * RESURFACE. STORE, PERSONALIZE and CONTRIBUTE_TO_AGGREGATE_INTEL are stored
+ * and read by nothing, and a projection that pretended to enforce one of them
+ * would be inventing a gate the rest of the system does not have. SHARE is the
+ * dimension a profile surface is about; RESURFACE belongs to the feed and is
+ * not this projection's question.
+ */
+export interface HighlightPolicyRow {
+  highlight_id: string;
+  location_precision: string | null;
+  consent_share: boolean | null;
+}
+
 /** What a projection is being built FOR. Every builder must respect it. */
 export interface ProjectionScope {
   owner_id: string;
@@ -174,8 +203,18 @@ export interface ProjectionInput {
    * produce the first is the one that refuses instead. A DIRECT caller that
    * builds from rows it loaded itself (routes/memories.ts does exactly that)
    * simply omits it and gets the Memory half alone, unchanged.
+   *
+   * THE POLICIES TRAVEL WITH THE ROWS, IN ONE OBJECT, AND THAT SHAPE IS THE
+   * POINT. A §10 policy set that could be omitted separately would let a
+   * caller build an audience-specific surface from Highlights whose owner's
+   * consent and precision were never read — and an absent policy set is not
+   * "no policy", it is a read that did not happen. Making them one field means
+   * the compiler refuses that call rather than the reviewer having to catch it.
    */
-  highlights?: readonly HighlightSourceRow[];
+  highlights?: {
+    readonly rows: readonly HighlightSourceRow[];
+    readonly policies: readonly HighlightPolicyRow[];
+  };
 }
 
 export type ProjectedRow = Record<string, unknown>;
@@ -416,7 +455,17 @@ const DEFINITIONS: ProjectionDefinition[] = [
 
       // ── §12's Highlights. See PROFILE_HIGHLIGHT_FIELDS for why this half
       // exists and what it deliberately does not carry. ────────────────────
-      const fromHighlights = (input.highlights ?? [])
+      //
+      // §10's POLICY IS APPLIED HERE, IN THE BUILDER, and it reuses
+      // services/highlights/highlightProjectionPolicy.ts rather than restating
+      // the ladder. A retyped copy of a privacy ladder is the defect this
+      // codebase has already had twice (FEED_ENFORCEABLE_CONTROLS and
+      // consentEnforcement both say so in their own words), and the second
+      // copy is always the one that stops being updated.
+      const policyFor = new Map<string, HighlightPolicyRow>(
+        (input.highlights?.policies ?? []).map((p) => [p.highlight_id, p]),
+      );
+      const fromHighlights = (input.highlights?.rows ?? [])
         .filter((h) => h.owner_id === input.scope.owner_id)
         // §21 keeps the three removals separate, and a profile is BROWSING:
         // `deleted_at` is the terminal soft delete, `archived_at` is the
@@ -431,8 +480,23 @@ const DEFINITIONS: ProjectionDefinition[] = [
         // that guessed a friendship here would be inventing an authorization
         // the table cannot express, so anything not `public` is owner-only.
         .filter((h) => isOwner || h.visibility === "public")
+        // §10 SHARE, EXPLICIT-FALSE-ONLY, and deliberately not `!mayProject`.
+        // highlightPublicProjection.ts made that choice for the live profile
+        // read and gives the reason there: `unknown` (no policy row) is the
+        // state almost every Highlight is in, and refusing on it would empty
+        // the surface rather than honour a decision nobody made. The owner
+        // always sees their own.
+        .filter((h) => isOwner || consentFromRow(policyFor.get(h.id) ?? null, "SHARE") !== "withheld")
         .map((h) => project({
           ...h,
+          // §10's precision ladder, applied BEFORE the whitelist rather than
+          // after: `clampLocationToPrecision` empties the fields on the object
+          // the whitelist then copies, so a rung of HIDDEN cannot survive by
+          // being re-read from `...h`. The owner is not clamped — the ladder
+          // governs PUBLICATION, and a policy row with an unparseable rung
+          // clamps to HIDDEN rather than to the default, which is the same
+          // fail-closed answer resolveLocationDisclosure gives.
+          ...(isOwner ? {} : clampHighlightLocation(h, policyFor.get(h.id) ?? null)),
           memory_id: null,
           highlight_id: h.id,
           source: "highlight",
@@ -657,6 +721,39 @@ const DEFINITIONS: ProjectionDefinition[] = [
 
 export const PROJECTION_DEFINITIONS: readonly ProjectionDefinition[] = Object.freeze(DEFINITIONS);
 
+/**
+ * §10's location ladder for one Highlight, for a NON-OWNER reader.
+ *
+ * Three cases, and the middle one is the one that matters:
+ *   no policy row        — no owner-selected precision. The row's location is
+ *                          left UNCHANGED, which is exactly what
+ *                          `resolveLocationDisclosure` does on this surface:
+ *                          LOCATION_PRECISION_DEFAULT is an unmade owner
+ *                          decision (P.2) and is not made here either.
+ *   a valid rung         — clamped to it.
+ *   a row with a rung the ladder does not contain — clamped to HIDDEN. FAIL
+ *                          CLOSED: a value the CHECK should have refused is
+ *                          evidence something is wrong, and publishing on it
+ *                          would be publishing on a policy nobody can read.
+ *
+ * `location_name` is not in this projection's whitelist and so never reaches a
+ * row; it is passed through the clamp anyway so the ladder is applied whole
+ * rather than in the subset this projection happens to carry today.
+ */
+function clampHighlightLocation(
+  h: HighlightSourceRow,
+  policy: HighlightPolicyRow | null,
+): { location_city: string | null; location_country: string | null } {
+  const stored = policy?.location_precision ?? null;
+  if (stored === null) return { location_city: h.location_city, location_country: h.location_country };
+  const rung = isLocationPrecision(stored) ? stored : "HIDDEN";
+  const clamped = clampLocationToPrecision(
+    { location_name: null, location_city: h.location_city, location_country: h.location_country },
+    rung,
+  );
+  return { location_city: clamped.location_city, location_country: clamped.location_country };
+}
+
 /** ~11 km grid. Coarse enough that the point is a city, not a doorway. */
 function coarsen(v: number | null): number | null {
   return v === null ? null : Math.round(v * 10) / 10;
@@ -697,6 +794,21 @@ export function sourceVersionOf(
    * collide with a Memory id, which is a bare uuid.
    */
   highlights: readonly HighlightSourceRow[] = [],
+  /**
+   * §10 policy rows, folded in BY CONTENT rather than by a timestamp.
+   *
+   * A policy is an input to this projection exactly as a row is: tightening
+   * `location_precision` or withdrawing SHARE changes what the derivative may
+   * carry. Left out of the digest, an owner could narrow their own publication
+   * and the registry would go on reporting the old, wider artifact FRESH —
+   * which is §18's cleanup graph failing at the one moment it exists for.
+   *
+   * By CONTENT and not `updated_at` on purpose: the two fields that decide the
+   * output are the two in the digest, so nothing can change the outcome
+   * without moving it, and nothing that does not change the outcome forces a
+   * rebuild.
+   */
+  policies: readonly HighlightPolicyRow[] = [],
 ): {
   digest: string;
   per_memory: Record<string, string>;
@@ -709,6 +821,9 @@ export function sourceVersionOf(
     // makes such a row a CONSTANT in the digest rather than an absent one —
     // which is honest: nothing about that row can be observed to have changed.
     per[`highlight:${h.id}`] = h.updated_at ?? h.created_at;
+  }
+  for (const p of [...policies].sort((a, b) => a.highlight_id.localeCompare(b.highlight_id))) {
+    per[`policy:${p.highlight_id}`] = `${p.location_precision ?? "-"}/${p.consent_share === null || p.consent_share === undefined ? "-" : String(p.consent_share)}`;
   }
   const text = Object.entries(per).map(([id, v]) => `${id}@${v}`).join("|");
   let h1 = 0x811c9dc5, h2 = 0x9e3779b9;

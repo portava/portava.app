@@ -30,6 +30,7 @@
  */
 
 import type {
+  HighlightPolicyRow,
   HighlightSourceRow,
   MemoryItemRow,
   MemorySourceRow,
@@ -122,6 +123,12 @@ const HIGHLIGHT_COLUMNS =
   "id, owner_id, visibility, created_at, updated_at, expires_at, deleted_at, archived_at, " +
   "pinned_at, lifetime_class, location_city, location_country";
 
+/**
+ * §10's policy, narrowed to the two dimensions a projection acts on. Migration
+ * 2721, applied to production at 20260915055812.
+ */
+const HIGHLIGHT_POLICY_COLUMNS = "highlight_id, location_precision, consent_share";
+
 export interface ProjectionSources {
   memories: MemorySourceRow[];
   items: MemoryItemRow[];
@@ -134,6 +141,12 @@ export interface ProjectionSources {
    * array here means "the read failed" — a failed read is a refusal.
    */
   highlights: HighlightSourceRow[];
+  /**
+   * §10 policy rows for those Highlights. Read in the SAME step as the rows
+   * themselves, never separately — see ProjectionInput's `highlights` field for
+   * why an omittable policy set would be a hole rather than a default.
+   */
+  highlight_policies: HighlightPolicyRow[];
 }
 
 /**
@@ -195,6 +208,7 @@ export async function readProjectionSources(
   }
 
   let highlights: HighlightSourceRow[] = [];
+  let highlightPolicies: HighlightPolicyRow[] = [];
   if (opts.includeHighlights) {
     // Deleted and archived rows ARE read, for the reason the memories read
     // gives one screen up: a projection must be able to tell "this Highlight is
@@ -215,9 +229,37 @@ export async function readProjectionSources(
       };
     }
     highlights = hlRes.data as HighlightSourceRow[];
+
+    if (highlights.length > 0) {
+      // Scoped by owner_id, not by the highlight ids just read. 2721 carries
+      // `owner_id` and one owner's policy set is small; filtering by owner is
+      // one predicate rather than an IN list that grows with the profile, and
+      // it cannot return a policy row for somebody else's Highlight.
+      const polRes = await client
+        .from("highlight_projection_policies")
+        .select(HIGHLIGHT_POLICY_COLUMNS)
+        .eq("owner_id", scope.owner_id);
+      if (polRes.error) {
+        // NOT "no policy". §10's ladder is a publication limit and an
+        // unreadable limit must never be read as an absent one — that is the
+        // one failure mode this whole module is shaped against.
+        return {
+          ok: false, reason: "source_unavailable", table: "highlight_projection_policies",
+          detail: `highlight_projection_policies unreadable: ${polRes.error.message ?? "unknown error"}`,
+          retryable: !isSchemaAbsent(polRes.error),
+        };
+      }
+      if (!Array.isArray(polRes.data)) {
+        return {
+          ok: false, reason: "source_unavailable", table: "highlight_projection_policies",
+          detail: "highlight_projection_policies read returned no row array", retryable: true,
+        };
+      }
+      highlightPolicies = polRes.data as HighlightPolicyRow[];
+    }
   }
 
-  return { ok: true, value: { memories, items, tags, highlights } };
+  return { ok: true, value: { memories, items, tags, highlights, highlight_policies: highlightPolicies } };
 }
 
 export interface DerivedProjection {
@@ -274,7 +316,9 @@ export async function deriveProjection(
     tags: sources.value.tags,
     // Passed only when the definition asked for it, so a builder that does not
     // declare `highlights` cannot come to depend on them by accident.
-    ...(wantsHighlights ? { highlights: sources.value.highlights } : {}),
+    ...(wantsHighlights
+      ? { highlights: { rows: sources.value.highlights, policies: sources.value.highlight_policies } }
+      : {}),
     significance: opts.significance,
   });
 
@@ -286,6 +330,7 @@ export async function deriveProjection(
   const version = sourceVersionOf(
     sources.value.memories,
     wantsHighlights ? sources.value.highlights : [],
+    wantsHighlights ? sources.value.highlight_policies : [],
   );
 
   // Contribution is the narrower relation, and it is what the cleanup graph
@@ -490,6 +535,7 @@ export async function projectionStaleness(
   const current = sourceVersionOf(
     sources.value.memories,
     wantsHighlights ? sources.value.highlights : [],
+    wantsHighlights ? sources.value.highlight_policies : [],
   );
 
   const reg = await readRegistration(client, projectionId, scope);

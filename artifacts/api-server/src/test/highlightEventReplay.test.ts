@@ -19,6 +19,7 @@
  */
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 
 import {
   HIGHLIGHT_COMMAND_EFFECTS,
@@ -90,6 +91,38 @@ describe("§21 Archive is reversible, so the command boundary has an inverse for
       assert.ok(replayable.has(t), `${t} is issued by the bus and has no replay transition`);
     }
     assert.equal(replayable.size, HIGHLIGHT_COMMAND_TYPES.length);
+  });
+});
+
+// ── 1b. the gap between the bus and the kernel, pinned ──────────────────────
+
+describe("the SQL half does not accept UNHIDE_HIGHLIGHT yet, and that is recorded rather than assumed", () => {
+  const SQL = readFileSync(
+    new URL("../migrations/2993_highlight_command_boundary.sql", import.meta.url),
+    "utf8",
+  );
+
+  it("2993 as written admits exactly three Highlight commands", () => {
+    // MEASURED, not assumed. The function's guard is
+    //   IF v_type NOT IN ('PIN_HIGHLIGHT', 'UNPIN_HIGHLIGHT', 'HIDE_HIGHLIGHT')
+    // so a dispatched UNHIDE_HIGHLIGHT is refused by name with
+    // MEMORY_COMMAND_UNKNOWN_TYPE — an audited rejection, never a wrong write.
+    // That is a SAFE gap and it is still a gap. When 2993 gains its
+    // `WHEN 'UNHIDE_HIGHLIGHT'` arm this test goes red and must be updated in
+    // the same change, which is the point: the two halves cannot drift
+    // silently in either direction.
+    assert.match(SQL, /v_type NOT IN \('PIN_HIGHLIGHT', 'UNPIN_HIGHLIGHT', 'HIDE_HIGHLIGHT'\)/);
+    assert.ok(
+      !/WHEN 'UNHIDE_HIGHLIGHT'/.test(SQL),
+      "2993 now applies UNHIDE_HIGHLIGHT — update this block and the lane report's NOT-DONE entry",
+    );
+  });
+
+  it("every OTHER declared Highlight command IS applied by 2993", () => {
+    for (const t of HIGHLIGHT_COMMAND_TYPES) {
+      if (t === "UNHIDE_HIGHLIGHT") continue;
+      assert.ok(SQL.includes(`WHEN '${t}'`), `2993 has no arm for ${t}`);
+    }
   });
 });
 
