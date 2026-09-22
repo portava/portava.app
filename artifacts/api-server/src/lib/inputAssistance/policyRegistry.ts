@@ -97,6 +97,7 @@ interface PolicySeed {
   offlinePolicy?: OfflineInputPolicy;
   privacyClass?: PrivacyClass;
   telemetryPolicy?: InputTelemetryPolicy;
+  zeroStateAssistance?: boolean;
 }
 
 function policy(context: InputContext, seed: PolicySeed): InputFieldPolicy {
@@ -117,6 +118,8 @@ function policy(context: InputContext, seed: PolicySeed): InputFieldPolicy {
     offlinePolicy: seed.offlinePolicy ?? 'server_required',
     privacyClass: seed.privacyClass ?? 'public',
     telemetryPolicy: seed.telemetryPolicy ?? STANDARD_TELEMETRY,
+    // §14 — default FALSE: a context that does not claim a zero-state has none.
+    zeroStateAssistance: seed.zeroStateAssistance ?? false,
   };
 }
 
@@ -125,6 +128,7 @@ function policy(context: InputContext, seed: PolicySeed): InputFieldPolicy {
 const REGISTRY: Record<InputContext, InputFieldPolicy> = {
   // Global cross-entity search (§13). Mixed entities + query completions.
   global_search: policy('global_search', {
+    zeroStateAssistance: true,
     mode: 'search',
     allowedSuggestionTypes: ['entity', 'recent', 'completion', 'action'],
     entityTypes: [
@@ -138,6 +142,7 @@ const REGISTRY: Record<InputContext, InputFieldPolicy> = {
 
   // Geographic canonical pickers (§12) — cities/countries/regions only.
   city_picker: policy('city_picker', {
+    zeroStateAssistance: true,
     mode: 'canonical_picker',
     allowedSuggestionTypes: ['entity', 'recent'],
     entityTypes: ['city', 'country'],
@@ -145,18 +150,21 @@ const REGISTRY: Record<InputContext, InputFieldPolicy> = {
     offlinePolicy: 'cached_local',
   }),
   country_picker: policy('country_picker', {
+    zeroStateAssistance: true,
     mode: 'canonical_picker',
     allowedSuggestionTypes: ['entity', 'recent'],
     entityTypes: ['country'],
     offlinePolicy: 'static_dictionary',
   }),
   neighborhood_picker: policy('neighborhood_picker', {
+    zeroStateAssistance: true,
     mode: 'canonical_picker',
     allowedSuggestionTypes: ['entity', 'recent'],
     entityTypes: ['neighborhood', 'city'],
     offlinePolicy: 'cached_local',
   }),
   place_picker: policy('place_picker', {
+    zeroStateAssistance: true,
     mode: 'canonical_picker',
     // §20/§23: canonical Place first (duplicate detection) + address fallback.
     allowedSuggestionTypes: ['entity', 'recent', 'disambiguation', 'action', 'validation'],
@@ -167,6 +175,7 @@ const REGISTRY: Record<InputContext, InputFieldPolicy> = {
 
   // Trips (§53).
   trip_destination: policy('trip_destination', {
+    zeroStateAssistance: true,
     mode: 'canonical_picker',
     // §23: city-country correction + trip date-conflict validation.
     allowedSuggestionTypes: ['entity', 'recent', 'validation', 'correction'],
@@ -184,6 +193,7 @@ const REGISTRY: Record<InputContext, InputFieldPolicy> = {
     offlinePolicy: 'unavailable',
   }),
   trip_stop_place: policy('trip_stop_place', {
+    zeroStateAssistance: true,
     mode: 'canonical_picker',
     // §20/§55: surface an existing Place/Gem before duplicating it.
     allowedSuggestionTypes: ['entity', 'recent', 'disambiguation'],
@@ -194,6 +204,7 @@ const REGISTRY: Record<InputContext, InputFieldPolicy> = {
 
   // Events.
   event_location: policy('event_location', {
+    zeroStateAssistance: true,
     mode: 'canonical_picker',
     // §20/§23: canonical-Place-first + unresolved-address fallback.
     allowedSuggestionTypes: ['entity', 'recent', 'disambiguation', 'action', 'validation'],
@@ -233,6 +244,7 @@ const REGISTRY: Record<InputContext, InputFieldPolicy> = {
     privacyClass: 'sensitive_location',
   }),
   hidden_gem_location: policy('hidden_gem_location', {
+    zeroStateAssistance: true,
     mode: 'canonical_picker',
     // §20/§23/§37: existing Place/Gem + address fallback + city-country.
     allowedSuggestionTypes: ['entity', 'action', 'disambiguation', 'validation', 'correction'],
@@ -247,6 +259,7 @@ const REGISTRY: Record<InputContext, InputFieldPolicy> = {
     entityTypes: ['buddy', 'activity', 'interest'],
   }),
   buddy_service_area: policy('buddy_service_area', {
+    zeroStateAssistance: true,
     mode: 'canonical_picker',
     allowedSuggestionTypes: ['entity'],
     entityTypes: ['city', 'neighborhood'],
@@ -259,13 +272,29 @@ const REGISTRY: Record<InputContext, InputFieldPolicy> = {
     entityTypes: ['user'],
     privacyClass: 'viewer_scoped',
   }),
+  // MANUAL, by owner decision 2026-09-21. `display_name` is the field on which
+  // a person edits THEIR OWN name; the previous shape served `entity` rows over
+  // `entityTypes: ['user']`, which made typing your own name search OTHER
+  // PEOPLE and offer them back — a people-search mounted on a profile-edit
+  // field. Nothing in §23 asks for it and no client ever surfaced it, so the
+  // capability existed on the wire and nowhere else. The client registry has
+  // always declared this field `no_assistance`; the authority now agrees.
+  //
+  // `no_assistance` rather than merely an empty type list, because the gateway
+  // short-circuits on the MODE and returns before issuing any read. An empty
+  // list would still walk the request path and depend on every downstream arm
+  // checking its own gate — one missed check and the field is assisted again.
   display_name: policy('display_name', {
-    mode: 'search',
-    allowedSuggestionTypes: ['entity'],
-    entityTypes: ['user'],
+    mode: 'no_assistance',
+    allowedSuggestionTypes: [],
+    entityTypes: [],
+    minChars: 99,
+    maxSuggestions: 0,
+    offlinePolicy: 'unavailable',
     privacyClass: 'viewer_scoped',
   }),
   hashtag: policy('hashtag', {
+    zeroStateAssistance: true,
     mode: 'search',
     // §10: `validation` carries the "emoji/symbols cannot be tagged" answer so
     // an unsupported tag body is stated rather than silently producing nothing.
@@ -290,6 +319,7 @@ const REGISTRY: Record<InputContext, InputFieldPolicy> = {
 
   // Telegraph (§54).
   telegraph_recipient: policy('telegraph_recipient', {
+    zeroStateAssistance: true,
     mode: 'search',
     allowedSuggestionTypes: ['entity', 'recent'],
     entityTypes: ['user'],
@@ -307,6 +337,7 @@ const REGISTRY: Record<InputContext, InputFieldPolicy> = {
 
   // Compass (§56) — the AI lane. Static opt-in prompt starters in Phase 1.
   compass_prompt: policy('compass_prompt', {
+    zeroStateAssistance: true,
     mode: 'ai_assisted',
     allowedSuggestionTypes: ['ai_suggestion', 'completion', 'entity'],
     entityTypes: ['place', 'hidden_gem', 'city'],
@@ -318,6 +349,7 @@ const REGISTRY: Record<InputContext, InputFieldPolicy> = {
 
   // Passport.
   passport_homebase: policy('passport_homebase', {
+    zeroStateAssistance: true,
     mode: 'canonical_picker',
     allowedSuggestionTypes: ['entity'],
     entityTypes: ['city', 'country'],
@@ -326,6 +358,7 @@ const REGISTRY: Record<InputContext, InputFieldPolicy> = {
 
   // Controlled dictionaries.
   language: policy('language', {
+    zeroStateAssistance: true,
     mode: 'canonical_picker',
     allowedSuggestionTypes: ['entity'],
     entityTypes: ['language'],
@@ -333,6 +366,7 @@ const REGISTRY: Record<InputContext, InputFieldPolicy> = {
     offlinePolicy: 'static_dictionary',
   }),
   interest: policy('interest', {
+    zeroStateAssistance: true,
     mode: 'canonical_picker',
     allowedSuggestionTypes: ['entity'],
     entityTypes: ['interest'],
