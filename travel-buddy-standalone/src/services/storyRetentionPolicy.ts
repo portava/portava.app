@@ -14,14 +14,50 @@
  * actually enforces.
  *
  * ── WHAT HAPPENS WHEN THE FETCH FAILS ────────────────────────────────────────
- * `null`, and the caller shows NOTHING. Not a fallback to the published
- * numbers, which would quietly re-introduce the hard-coding this module exists
- * to remove, and would state a retention promise on the strength of a request
- * that failed. A composer with no retention line is a small loss; a composer
- * confidently naming the wrong window is a false statement about someone's
- * photos.
+ * An earlier version of this module returned `null` and the composer showed
+ * nothing. That was wrong, and the owner said so on 2026-09-22: "Do not
+ * silently omit retention information when the policy endpoint fails. Show an
+ * explicit unavailable state. If no valid policy can be established, preserve
+ * the draft and offer retry before accepting publication under undisclosed
+ * terms."
+ *
+ * Both failure modes are real and they are not the same failure, so this module
+ * reports which one happened rather than collapsing them into an absence:
+ *
+ *   { status: 'ok', policy }            the windows this deployment enforces
+ *   { status: 'unavailable', reason }   no valid policy could be established
+ *
+ * There is deliberately no fallback to the published numbers. Printing 24/365/30
+ * from a request that failed would re-introduce the hard-coding this module
+ * exists to remove, and would state a retention promise on the strength of a
+ * lookup that never happened. Showing the failure lets the user retry; inventing
+ * an answer does not.
+ *
+ * A failure is NOT cached. A cached failure would turn one bad moment of
+ * connectivity into a composer that refuses to publish for the rest of the
+ * process's life, and the whole point of the unavailable state is that retry
+ * reaches the server again.
  */
-import { freshToken } from './apiToken.ts';
+/**
+ * `apiToken` is loaded lazily, the way pushTokenService.ts:52 and
+ * useActiveLocation.ts:127 already do it, because a static import pulls
+ * supabase.ts -> SecureStoreAdapter -> react-native into every module that
+ * touches this one. Under node:test that chain is the esbuild "Unexpected
+ * typeof" wall the repo keeps a KNOWN_BROKEN list for, and a module whose
+ * failure states cannot be tested is the wrong module to put a publication
+ * gate behind.
+ *
+ * `deps` is the seam the tests use. Nothing in the app passes it.
+ */
+export interface RetentionPolicyDeps {
+  token: () => Promise<string | null>;
+  fetchImpl: typeof fetch;
+}
+
+async function defaultToken(): Promise<string | null> {
+  const { freshToken } = await import('./apiToken.ts');
+  return freshToken();
+}
 
 /**
  * Read from the environment here rather than importing stories.ts's copy.
@@ -39,8 +75,23 @@ export interface StoryRetentionPolicy {
   engagementRetentionDays: number;
 }
 
+/**
+ * Why no policy could be established. The caller renders one sentence for all
+ * of them, but they are kept apart because 'unauthenticated' is the one case
+ * that retrying will not fix on its own, and a future screen may want to say so.
+ */
+export type RetentionUnavailableReason =
+  | 'unauthenticated'
+  | 'network'
+  | 'server_error'
+  | 'malformed';
+
+export type StoryRetentionResult =
+  | { status: 'ok'; policy: StoryRetentionPolicy }
+  | { status: 'unavailable'; reason: RetentionUnavailableReason };
+
 let cached: StoryRetentionPolicy | null = null;
-let inflight: Promise<StoryRetentionPolicy | null> | null = null;
+let inflight: Promise<StoryRetentionResult> | null = null;
 
 /** Test seam, and the way a sign-out drops another account's policy. */
 export function _resetStoryRetentionPolicyCache(): void {
@@ -49,24 +100,38 @@ export function _resetStoryRetentionPolicyCache(): void {
 }
 
 /**
- * The windows this deployment enforces, or null when they could not be read.
+ * The windows this deployment enforces, or an explicit statement that they
+ * could not be established.
  *
- * Cached for the process: the numbers change on a deploy, not on a screen, and
- * re-fetching them per composer open would put a network round trip in front
- * of a button that must feel instant.
+ * Successes are cached for the process: the numbers change on a deploy, not on
+ * a screen, and re-fetching them per composer open would put a network round
+ * trip in front of a button that must feel instant. Failures are not cached —
+ * see the docblock.
  */
-export async function fetchStoryRetentionPolicy(): Promise<StoryRetentionPolicy | null> {
-  if (cached) return cached;
+export async function fetchStoryRetentionPolicy(
+  deps?: RetentionPolicyDeps,
+): Promise<StoryRetentionResult> {
+  if (cached) return { status: 'ok', policy: cached };
   if (inflight) return inflight;
 
-  inflight = (async () => {
+  const getToken = deps?.token ?? defaultToken;
+  const doFetch = deps?.fetchImpl ?? fetch;
+
+  inflight = (async (): Promise<StoryRetentionResult> => {
     try {
-      const token = await freshToken();
-      if (!token) return null;
-      const res = await fetch(`${apiBase()}/api/stories/retention-policy`, {
+      const token = await getToken();
+      if (!token) return { status: 'unavailable', reason: 'unauthenticated' };
+
+      const res = await doFetch(`${apiBase()}/api/stories/retention-policy`, {
         headers: { Authorization: `Bearer ${token}` },
       });
-      if (!res.ok) return null;
+      if (!res.ok) {
+        return {
+          status: 'unavailable',
+          reason: res.status === 401 || res.status === 403 ? 'unauthenticated' : 'server_error',
+        };
+      }
+
       const body = await res.json();
       const e = body?.effective;
       if (
@@ -78,17 +143,18 @@ export async function fetchStoryRetentionPolicy(): Promise<StoryRetentionPolicy 
       ) {
         // A malformed body is not a policy. Returning a partial object here
         // would render "kept for undefined days".
-        return null;
+        return { status: 'unavailable', reason: 'malformed' };
       }
+
       cached = {
         audienceWindowHours: e.audienceWindowHours,
         archiveRetentionDays: e.archiveRetentionDays,
         deletedRecoveryDays: e.deletedRecoveryDays,
         engagementRetentionDays: e.engagementRetentionDays,
       };
-      return cached;
+      return { status: 'ok', policy: cached };
     } catch {
-      return null;
+      return { status: 'unavailable', reason: 'network' };
     } finally {
       inflight = null;
     }
@@ -116,6 +182,17 @@ function hours(n: number): string {
  */
 export function composerRetentionLine(p: StoryRetentionPolicy): string {
   return `Visible to your audience for ${hours(p.audienceWindowHours)}, then kept in your private archive for ${days(p.archiveRetentionDays)}.`;
+}
+
+/**
+ * The line shown in place of the retention copy when no policy could be read.
+ *
+ * It states the two things the user needs: that this is a failure rather than a
+ * story with no retention, and that publishing is held until it is resolved. It
+ * does not name a window, because none was established.
+ */
+export function retentionUnavailableLine(_reason: RetentionUnavailableReason): string {
+  return "We couldn't load how long this story is kept. You can't post until we can tell you.";
 }
 
 /** The line shown when the user deletes a story. */
