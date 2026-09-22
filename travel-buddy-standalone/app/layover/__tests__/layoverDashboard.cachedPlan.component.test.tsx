@@ -31,6 +31,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import LayoverDashboardScreen from '../[id].tsx';
 import { cacheCertifiedPlan, readCachedPlan } from '../../../src/lib/layoverPlanCache.ts';
+import { cacheCertifiedDeadline } from '../../../src/components/layover/layoverDeadlineCache.ts';
 
 // NOTE: intentional stub — requireActual pulls native-module internals that are
 // not safe under jest.
@@ -226,10 +227,28 @@ async function mount(ovRead: unknown) {
  * successful load performs this write; mounting twice inside one test corrupts
  * RNTL's act scope (see `src/jest.setup.ts`), so the rest read what it wrote.
  */
-async function seedFromASuccessfulLoad() {
+async function seedFromASuccessfulLoad(fresh = false) {
   const body = overviewBody();
-  const wrote = await cacheCertifiedPlan('sess-1', body.offlineBundle as never, body.safeEnvelope as never);
+  if (fresh) {
+    // A bundle still inside its TTL: the offline replan rule is ALLOWED to
+    // answer, which is the half a permanently-stale fixture can never reach.
+    body.offlineBundle.certifiedAt = new Date(NOW - 5 * MIN).toISOString();
+    body.offlineBundle.staleAfter = new Date(NOW + 10 * MIN).toISOString();
+  }
+  const wrote = await cacheCertifiedPlan(
+    'sess-1',
+    body.offlineBundle as never,
+    body.safeEnvelope as never,
+    {
+      usableMinutes: body.window.usableMinutes,
+      departureTime: body.session.departureTime,
+      boardingTime: body.session.boardingTime,
+    },
+  );
   expect(wrote).toBe(true);
+  // The replan rule reads the DEADLINE record for the bundle it decides about,
+  // so the screen needs both caches seeded exactly as a real load leaves them.
+  expect(await cacheCertifiedDeadline('sess-1', body.offlineBundle as never)).toBe(true);
 }
 
 beforeEach(async () => {
@@ -277,8 +296,10 @@ describe('§16 L151 / §20 L233 — the plan and the certified area survive the 
 
     // The fixture is 75 minutes past `staleAfter`, so the indicator MUST fire.
     // A build that relaxed the bound to make this look better fails here.
-    expect(screen.getByTestId('layover-cached-plan-staleness')).toBeTruthy();
-    expect(screen.getByText(/Last certified \d+ min ago/i)).toBeTruthy();
+    // Asserted on the PLAN card's own node: the deadline card carries a
+    // staleness line of its own and a bare text query matches both.
+    const note = screen.getByTestId('layover-cached-plan-staleness');
+    expect(String(note.props.children)).toMatch(/Last certified \d+ min ago/i);
 
     // L151's area half, and the one sentence it may never say. `certifiedInward`
     // is false for every envelope this tree emits: inside the disc is NOT a
@@ -297,7 +318,32 @@ describe('§16 L151 / §20 L233 — the plan and the certified area survive the 
     expect(screen.queryByTestId('layover-cached-plan')).toBeNull();
   });
 
-  it('5. with nothing cached, the failure screen is exactly what it was', async () => {
+  it('5. a bundle still inside its TTL yields a CONSERVATIVE offline figure (L156)', async () => {
+    await seedFromASuccessfulLoad(true);
+    await mount(UNREACHABLE);
+    await waitFor(() => expect(screen.getByTestId('layover-cached-plan')).toBeTruthy());
+
+    // The certified window is 240 min and the answer is 5 min old, so the
+    // figure offered offline must be BELOW the certified one — the rule may
+    // only ever get more cautious. A build that offered the certified 4h flat
+    // fails here.
+    expect(screen.getByTestId('layover-cached-plan-replan')).toBeTruthy();
+    expect(screen.queryByTestId('layover-cached-plan-replan-refused')).toBeNull();
+    expect(screen.getByText(/3h 55m/)).toBeTruthy();
+  });
+
+  it('6. a stale bundle REFUSES to replan and says so (L156)', async () => {
+    await seedFromASuccessfulLoad();
+    await mount(UNREACHABLE);
+    await waitFor(() => expect(screen.getByTestId('layover-cached-plan')).toBeTruthy());
+
+    // "otherwise show unavailable/stale", in the server's own vocabulary.
+    expect(screen.getByTestId('layover-cached-plan-replan-refused')).toBeTruthy();
+    expect(screen.queryByTestId('layover-cached-plan-replan')).toBeNull();
+    expect(screen.getByText(/older than it is meant to be relied on/i)).toBeTruthy();
+  });
+
+  it('7. with nothing cached, the failure screen is exactly what it was', async () => {
     await mount(UNREACHABLE);
     await waitFor(() => expect(screen.getByTestId('layover-load-error')).toBeTruthy());
     expect(screen.queryByTestId('layover-cached-plan')).toBeNull();

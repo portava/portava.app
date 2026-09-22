@@ -70,6 +70,12 @@ function bundle(over: Partial<LayoverOfflineBundle> = {}): LayoverOfflineBundle 
   } as LayoverOfflineBundle;
 }
 
+const SCHEDULE = {
+  usableMinutes: 180,
+  departureTime: '2026-09-22T15:00:00.000Z',
+  boardingTime: '2026-09-22T14:30:00.000Z',
+};
+
 const ENVELOPE: LayoverSafeEnvelope = {
   centre: { lat: 41.2753, lng: 28.7519 },
   radiusMetres: 42_000,
@@ -95,7 +101,7 @@ beforeEach(async () => {
 
 test('a written plan reads back with the server bound VERBATIM', async () => {
   const b = bundle();
-  assert.equal(await cacheCertifiedPlan('sess-1', b, ENVELOPE), true);
+  assert.equal(await cacheCertifiedPlan('sess-1', b, ENVELOPE, SCHEDULE), true);
 
   const rec = await readCachedPlan('sess-1');
   assert.ok(rec);
@@ -111,6 +117,19 @@ test('a written plan reads back with the server bound VERBATIM', async () => {
   assert.equal(rec.envelope?.radiusMetres, 42_000);
   assert.equal(rec.envelope?.plannedRadiusMetres, 31_000);
   assert.equal(rec.envelope?.usableMinutes, 180);
+  // L156's inputs: the certified window and the schedule it assumed, which are
+  // the only things `localReplan` can be asked with offline.
+  assert.equal(rec.schedule?.usableMinutes, 180);
+  assert.equal(rec.schedule?.departureTime, SCHEDULE.departureTime);
+  assert.equal(rec.schedule?.boardingTime, SCHEDULE.boardingTime);
+});
+
+test('an absent schedule is stored as absent, so the replan rule cannot be asked', async () => {
+  assert.equal(await cacheCertifiedPlan('sess-1', bundle(), ENVELOPE), true);
+  const rec = await readCachedPlan('sess-1');
+  // `null`, never a fabricated schedule: a rule asked with invented inputs
+  // would answer, and its answer would be about nothing.
+  assert.equal(rec?.schedule, null);
 });
 
 test('a plan with NO stops is a real answer and is stored as one', async () => {
@@ -124,9 +143,9 @@ test('a plan with NO stops is a real answer and is stored as one', async () => {
 });
 
 test('no bundle writes NOTHING and leaves an existing record standing', async () => {
-  await cacheCertifiedPlan('sess-1', bundle(), ENVELOPE);
-  assert.equal(await cacheCertifiedPlan('sess-1', null, ENVELOPE), false);
-  assert.equal(await cacheCertifiedPlan('sess-1', undefined, ENVELOPE), false);
+  await cacheCertifiedPlan('sess-1', bundle(), ENVELOPE, SCHEDULE);
+  assert.equal(await cacheCertifiedPlan('sess-1', null, ENVELOPE, SCHEDULE), false);
+  assert.equal(await cacheCertifiedPlan('sess-1', undefined, ENVELOPE, SCHEDULE), false);
 
   const rec = await readCachedPlan('sess-1');
   // A response that said nothing about the plan is not a reason to take the
@@ -136,7 +155,7 @@ test('no bundle writes NOTHING and leaves an existing record standing', async ()
 });
 
 test('another session’s record is never served', async () => {
-  await cacheCertifiedPlan('sess-1', bundle(), ENVELOPE);
+  await cacheCertifiedPlan('sess-1', bundle(), ENVELOPE, SCHEDULE);
   const raw = await AsyncStorage.getItem(cachedPlanKey('sess-1'));
   assert.ok(raw);
   await AsyncStorage.setItem(cachedPlanKey('sess-2'), raw);

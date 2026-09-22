@@ -24,6 +24,13 @@
  *        shape, so a traveller who lost signal in the city still has the plan
  *        they left with.
  *
+ *   L156 (local conservative fallback only if deterministic inputs suffice).
+ *        The certified WINDOW and the flight times it was certified against are
+ *        cached, because they are exactly the inputs
+ *        `components/layover/layoverLocalReplan.localReplan` needs — and that
+ *        rule can only ever be asked offline, where nothing else can supply
+ *        them. Until this, that module had no caller at all.
+ *
  * ── THE BOUND IS THE SERVER'S AND IS NEVER RENEWED ───────────────────────────
  * `certifiedAt` and `staleAfter` are copied verbatim and are never extended,
  * refreshed or recomputed at write time. A cache that renewed the bound as it
@@ -54,7 +61,7 @@ import type { LayoverOfflineBundle, LayoverSafeEnvelope } from '../services/layo
  * is discarded whole rather than read field-by-field: once it is JSON, a field
  * that moved is indistinguishable from a field that was never there.
  */
-export const CACHED_PLAN_VERSION = 1;
+export const CACHED_PLAN_VERSION = 2;
 
 const KEY_PREFIX = 'layover.plan.v1';
 
@@ -88,6 +95,22 @@ export interface CachedPlanEnvelope {
   maxOneWayMinutes: number;
 }
 
+/**
+ * The schedule the bundle was certified against, and the certified window.
+ *
+ * Stored for ONE caller: `layoverLocalReplan.localReplan`, §16 L156's "local
+ * conservative fallback only if deterministic inputs suffice". Those inputs are
+ * the certified usable minutes and the flight times the certification assumed;
+ * without them the rule cannot be asked offline, which is the only place it is
+ * ever meant to be asked.
+ */
+export interface CachedPlanSchedule {
+  /** The certified §7 window, in minutes. */
+  usableMinutes: number;
+  departureTime: string;
+  boardingTime: string | null;
+}
+
 export interface CachedLayoverPlan {
   sessionId: string;
   /** The server's own bundle-shape version, carried so support can read it. */
@@ -106,6 +129,8 @@ export interface CachedLayoverPlan {
   stops: CachedPlanStop[];
   /** `null` for an airport with no usable coordinate — never a zero disc. */
   envelope: CachedPlanEnvelope | null;
+  /** `null` when the overview did not state one; the replan rule then refuses. */
+  schedule: CachedPlanSchedule | null;
   /** DEVICE instant of the write. For support only — never a freshness input. */
   cachedAt: string;
 }
@@ -157,6 +182,7 @@ export async function cacheCertifiedPlan(
   sessionId: string,
   bundle: LayoverOfflineBundle | null | undefined,
   envelope: LayoverSafeEnvelope | null | undefined,
+  schedule?: CachedPlanSchedule | null,
 ): Promise<boolean> {
   if (!bundle) return false;
   if (!isNonEmptyString(bundle.certifiedAt) || !isNonEmptyString(bundle.staleAfter)) return false;
@@ -187,6 +213,14 @@ export async function cacheCertifiedPlan(
           maxOneWayMinutes: num(envelope.maxOneWayMinutes),
         }
       : null,
+    schedule:
+      schedule && isNonEmptyString(schedule.departureTime)
+        ? {
+            usableMinutes: num(schedule.usableMinutes),
+            departureTime: schedule.departureTime,
+            boardingTime: isNonEmptyString(schedule.boardingTime) ? schedule.boardingTime : null,
+          }
+        : null,
     cachedAt: new Date().toISOString(),
   };
 
@@ -234,6 +268,7 @@ export async function readCachedPlan(sessionId: string): Promise<CachedLayoverPl
   if (!airport || !isNonEmptyString(airport.iataCode)) return null;
 
   const env = (rec.envelope ?? null) as Record<string, unknown> | null;
+  const sched = (rec.schedule ?? null) as Record<string, unknown> | null;
 
   return {
     sessionId,
@@ -257,6 +292,14 @@ export async function readCachedPlan(sessionId: string): Promise<CachedLayoverPl
           maxOneWayMinutes: num(env.maxOneWayMinutes),
         }
       : null,
+    schedule:
+      sched && isNonEmptyString(sched.departureTime)
+        ? {
+            usableMinutes: num(sched.usableMinutes),
+            departureTime: sched.departureTime,
+            boardingTime: isNonEmptyString(sched.boardingTime) ? sched.boardingTime : null,
+          }
+        : null,
     cachedAt: isNonEmptyString(rec.cachedAt) ? rec.cachedAt : rec.certifiedAt,
   };
 }

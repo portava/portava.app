@@ -75,6 +75,7 @@ import {
 import { describeDeadline } from '../../src/components/layover/layoverReturnFacts';
 import { LayoverOfflinePlanCard } from '../../src/components/layover/LayoverOfflinePlanCard';
 import { layoverSensingCadence } from '../../src/lib/layoverSensingCadence';
+import { localReplan } from '../../src/components/layover/layoverLocalReplan';
 import {
   cacheCertifiedPlan,
   readCachedPlan,
@@ -299,6 +300,13 @@ export default function LayoverDashboardScreen() {
           id,
           ovRead.overview.offlineBundle,
           ovRead.overview.safeEnvelope ?? null,
+          // census L156 — the certified window and the schedule it was
+          // certified against, which are the offline replan rule's inputs.
+          {
+            usableMinutes: ovRead.overview.window.usableMinutes,
+            departureTime: ovRead.overview.session.departureTime,
+            boardingTime: ovRead.overview.session.boardingTime ?? null,
+          },
         );
         if (ovRead.overview.share.enabled) loadPresence(id);
         setBuddies(buddyRes?.buddies ?? []);
@@ -604,6 +612,33 @@ export default function LayoverDashboardScreen() {
     // plan worth showing either. A cache is not a reason to send somebody
     // across a city for a layover that is not theirs.
     const plan = !gone ? cachedPlan : null;
+    /**
+     * census L156 — the offline conservative fallback, ASKED.
+     *
+     * `layoverLocalReplan.localReplan` is the pinned client mirror of the
+     * server's own rule and, until this call, had no caller anywhere: a tested
+     * module nothing reached, which by this census's own counting rule is not a
+     * built flow. It can only be asked here, because it is the rule for
+     * deciding what may be worked out WHEN THE SERVER CANNOT BE REACHED.
+     *
+     * THE TWO SCHEDULE ARGUMENTS ARE THE SAME VALUE, AND THAT IS NOT A BUG. The
+     * rule compares the schedule now against the schedule the bundle was
+     * certified against; offline, the only schedule this device has is the one
+     * it cached, and the sole way to change a schedule is `PATCH /sessions/:id`,
+     * which needs the network. They are passed separately rather than dropped
+     * so that an offline edit path, if one is ever built, fails closed here
+     * instead of silently skipping the check.
+     */
+    const replanDecision = plan?.schedule && cached
+      ? localReplan(cachedDeadlineAsBundle(cached), {
+          nowMs,
+          certifiedUsableMinutes: plan.schedule.usableMinutes,
+          currentDepartureTime: plan.schedule.departureTime,
+          currentBoardingTime: plan.schedule.boardingTime,
+          certifiedDepartureTime: plan.schedule.departureTime,
+          certifiedBoardingTime: plan.schedule.boardingTime,
+        })
+      : null;
     const cachedTruth = cached
       ? describeDeadline(cachedDeadlineAsBundle(cached), cached.hardReturnTime, nowMs)
       : null;
@@ -636,7 +671,7 @@ export default function LayoverDashboardScreen() {
         {/* census L151/L233 — where they were going, which airport they have to
             be back at, and how far the certified envelope reached. Captioned
             last-certified by the card itself, through the one staleness rule. */}
-        <LayoverOfflinePlanCard plan={plan} nowMs={nowMs} />
+        <LayoverOfflinePlanCard plan={plan} replan={replanDecision} nowMs={nowMs} />
         {retryable && (
           <Pressable style={styles.retryBtn} onPress={() => load()} testID="layover-load-retry">
             <Text style={styles.retryBtnText}>Try again</Text>
