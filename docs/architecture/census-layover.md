@@ -6875,3 +6875,80 @@ lanes.** This lane did not attempt it and did not apply any migration.
 
 **No verdict moves.** `check:census-integrity` still reads **C=78 W=124 N=94
 X=0** across 296 rows. §27.9 remains this document's current headline.
+
+## §30 — the complete stale-citation handoff, including the FOURTH this pass caused
+
+No verdict moves. This section exists because §27.10 said "three" and the number
+is **four**. The fourth has a different cause and was created after §27.10 was
+written, by the scope widening §27.10 does not mention.
+
+### 30.1 What happened after §27.10
+
+`check:census-scope-coverage` failed this pass — §27's new citations named files
+under `src/services/layover/` that nothing watched, dropping coverage to 93 %
+against a floor of 0.96 the baseline was sitting exactly on. The prescribed fix
+is to add the paths to `CENSUS_SCOPE`, never to lower the floor, and that is
+what was done. Adding them lengthened `checkCensusFreshness.ts`, and
+**census-wall.md cites a line in that file**, which moved.
+
+This is worth stating plainly rather than burying: **fixing one guard broke
+another**, and the second break is in a third census's document. Neither is a
+reason to have skipped the fix; both are reasons the handoff has to be exact.
+
+### 30.2 The four, in one table
+
+Every one is a LINE NUMBER move. **No anchor text changed and no claim in any of
+these documents is wrong** — each still points at the right code, one to
+twenty-one lines above where it now lives. As in §27.10, the path, line and
+anchor are deliberately NOT written as a single `path:line#anchor` token, because
+`check:doc-citations` would read this table as four more live citations and fail
+on them.
+
+| document | its line | file cited | anchor, unchanged | from | to |
+| --- | --- | --- | --- | ---: | ---: |
+| `census-highlights-memories.md` | 2857 | `routes/airport.ts` | `sourceType: "layover_session", verificationLevel: "checkin",` | 3691 | **3712** |
+| `census-highlights-memories.md` | 2973 | `routes/airport.ts` | `const occurrence = declaredOccurrenceHasHappened(args.session.arrivalTime, Date.now());` | 3665 | **3686** |
+| `census-highlights-memories.md` | 2974 | `routes/airport.ts` | `async function writeElectedLayoverStamp` | 3628 | **3649** |
+| `census-wall.md` | 1437 | `src/scripts/checkCensusFreshness.ts` | `ADDED 2026-09-20 by census-wall §13` | 1141 | **1174** |
+
+Each target is the line `check:doc-citations` NAMES in its "the WHOLE anchor is
+at X" answer, read at this commit, and each is a SINGLE unambiguous candidate —
+unlike §16's `rent_buddy_enabled`, which reported two and needed the claim read
+to settle it (§27.10).
+
+### 30.3 Why this lane did not apply them
+
+`census-highlights-memories.md` is owned by a parallel lane working in it now;
+an edit here would collide with theirs. `census-wall.md` is a third census this
+lane has no reading of. **This lane's instruction is to write only in
+`census-layover.md` and `artifacts/api-server/`, and a mechanical repoint in
+someone else's census is still a write in someone else's census.** §23.7 set the
+opposite precedent for the same three highlights-memories citations one pass
+earlier — it repointed them and flagged it — and that precedent is deliberately
+not followed here.
+
+### 30.4 The consequence, stated so nobody discovers it later
+
+Until the four are applied:
+
+- `check:doc-citations` reports **4 anchored and 4 backticked** failures;
+- `npm test` has **exactly one** failing test — `src/test/docCitations.test.ts`
+  case 9, *"the real corpus — every covered citation resolves and every anchor
+  holds"* — whose diff names these four and nothing else.
+
+Both were GREEN at this lane's parent commit, verified rather than assumed:
+`git show 812720cc0:artifacts/api-server/src/routes/airport.ts` has
+`async function writeElectedLayoverStamp` at 3628, the `declaredOccurrenceHasHappened`
+line at 3665 and the `sourceType:` line at 3691 — exactly as
+census-highlights-memories cites them.
+
+**Everything else in this repository passes**: `check:census-integrity`,
+`check:census-freshness`, `check:census-scope-coverage`,
+`check:citation-targets` (183/183, at the ceiling), `check:citation-symbols`
+(35/35, at the ceiling), `typecheck`, and `typecheck:tests` at exactly its
+863/115 baseline.
+
+### 30.5 Tally
+
+**No verdict moves.** `check:census-integrity` reads **C=78 W=124 N=94 X=0**
+across 296 rows. §27.9 remains this document's headline.
