@@ -7519,3 +7519,216 @@ decisions.
 | NOT-BUILT | 92 | **86** |
 | CONTRADICTED | 0 | 0 |
 | total | 296 | 296 |
+
+---
+
+## §40 — 2026-09-22 (integration): the §11 event store had been applied for two weeks and had no code; one row moves N → W
+
+This pass is about the gap between a deployed table and a dead one, and about a
+premise this census has been carrying that migration 2860 had already rejected
+in writing.
+
+### §40.1 The premise L31 is written against is not the one the tree implements
+
+**L31** reads `` `layover_events` (occurred_at, source, source_event_id,
+payload_json, **dedup_key**, processed_at) `` and its last verdict says those
+six are "Absent". That is TRUE of `layover_events` and it is the wrong table to
+be asking.
+
+`2860_layover_airport_truth_and_events.sql` argues the point at length and the
+argument is not a preference: `layover_events` carries `user_id UUID NOT NULL
+REFERENCES profiles(id)` (`0127_layover_system.sql:197`), so every row is a
+thing one identified traveller did. An external event — a gate change, a
+security-queue reading, a cancellation — has no user. Widening that column would
+put a nullable identity on an audit table whose whole value is that the identity
+is never null.
+
+So 2860 created `layover_external_events` instead, carrying all six members L31
+names plus the other four of §11's envelope, a UNIQUE index on `dedup_key`, and
+a partial index for the pending read.
+
+### §40.2 That table is APPLIED TO PRODUCTION, and this census did not know
+
+Checked two ways rather than assumed:
+
+- `src/lib/capability/production-applied-migrations.json` lists 2860.
+- The capture named by `src/lib/capability/snapshots/current.ts` lists all
+  twelve of its columns — `event_id, event_type, occurred_at, received_at,
+  source, source_event_id, subject_refs, payload, dedup_key, confidence,
+  processed_at, created_at`.
+
+Several files in the tree still said otherwise. `LayoverEventReplanner.ts`'s own
+"HONEST HEADER" said `layover_external_events` "is written and NOT applied", and
+its `ReplanOutcome` comment listed 2860 among the unapplied stores. Both were
+true when written and are false now; both are corrected in place, **line-count
+neutrally**, because sixteen anchored citations point into that file. What is
+unapplied there is 2700, not 2860.
+
+`LayoverObservationService.ts` carries the same stale sentence about
+`airport_fact_observations`. It is another lane's file this pass and is left to
+it, named here so it is not lost.
+
+### §40.3 The gap was CODE, and it needed no migration
+
+Nothing in the tree wrote or read `layover_external_events`. A grep over `src/`
+returned three comment mentions and no call site. The envelope, its normaliser
+and its dedup-key rule had been finished and tested in `LayoverEventReplanner.ts`
+since 2026-09-13; nothing had ever handed them a stored row.
+
+That is worth stating plainly because it is the distinction this whole pass
+turns on: **this was missing code, not a deployment blocker.** It was buildable
+immediately, against schema that had been live for a fortnight.
+
+Built, in files that did not previously exist:
+
+| file | what it is |
+|---|---|
+| `services/layover/LayoverExternalEventService.ts:177#ingestExternalEvent` | normalise, store, and treat a 23505 as "already ingested" |
+| `services/layover/LayoverExternalEventService.ts:277#readPendingExternalEvents` | the pending set, refusing rather than reporting empty on a failed read |
+| `services/layover/LayoverExternalEventService.ts:395#claimExternalEvent` | the compare-and-swap that stops two workers replanning one event |
+| `services/layover/layoverExternalEventConsumer.ts:124#drainPendingExternalEvents` | one bounded pass, through a `ReplanPort` |
+| `routes/layoverEvents.ts:111` | `POST /api/layover/events`, producer-secret authenticated |
+| `src/migrations/2981_layover_event_ingest_flag.sql` | seeds `layover_event_ingest_enabled` FALSE |
+
+The dedup key is **never recomputed** by any of it. `normalizeEvent` owns it and
+the rule is the specification's: `source:sourceEventId` when the producer
+supplies one, else a sha256 over the content that decides what the event means.
+`eventId` is excluded, which is the whole point — a producer minting a fresh
+uuid per delivery is the failure §24 names by name.
+
+### §40.4 NO verdict moves — and the near-miss that nearly made one go backwards
+
+**L92 `Normalise and deduplicate the external/internal event` stays `C`, and
+this section was one commit away from moving it BACKWARDS.**
+
+The draft of this pass said "L92 `N` → `W`", quoting the body's original reason
+at `:565` — "No ingest; `layover_events` has no unique key at all". That reason
+IS the body's, and the body is not L92's last statement. **§18 moved L92 `N` →
+`C` at `:1824`**, on `LayoverEventReplanner.ts:203#normalizeEvent` and
+`:319#dedupeEvents`, against mutations watched red first. This document is
+append-only and last-statement-wins, and the draft had read the first statement.
+
+Had it been committed it would have taken a `C` row to `W` on the strength of
+work that made the row MORE true, and the headline would have read
+79 → 78 correct. `CENSUS_INTEGRITY_DUMP=ALL` caught it: the tool's per-row dump
+before and after this section differed on exactly one line, `L92|C` → `L92|W`,
+which is not the move the draft claimed to be making.
+
+The flag rule does not apply to L92 and applying it was the second error.
+`layover_event_ingest_enabled` gates the ROUTE. It does not gate `normalizeEvent`
+or `dedupeEvents`, which are pure functions that run whenever they are called and
+are what §18 graded. A flag-gated caller arriving in front of an already-correct
+pure pipeline does not make that pipeline less correct.
+
+This is the fourth time this census has recorded a verdict written from a row's
+stated reason without re-testing it, and the first time the author was this pass.
+The remedy used here is cheap and is worth adopting: **derive the row's current
+verdict from `CENSUS_INTEGRITY_DUMP=ALL`, not from reading the document**, and
+diff the dump before and after a section to see what the section actually did.
+
+**L31, L194, L263 keep `W`** — and each keeps it for a *different* reason than
+the one written against it, which is worth as much as a move:
+
+- **L31** — the six members are no longer absent. They exist, on
+  `layover_external_events`, applied to production, with a writer and a reader.
+  `W` on the flag rule alone.
+- **L194** (`Create events + checkpoints with dedup indexes`) — "no dedup index
+  or unique constraint of any kind" is now false; `layover_external_events_dedup_uidx`
+  exists and was watched refusing a duplicate. The row stays `W` on its OTHER
+  half: `layover_checkpoints` is created by 2992, which is unapplied everywhere.
+- **L263** (`Duplicate events — unique dedup key / source event id`) — the index
+  is applied and proven; the writer handles the violation and reports the two
+  constraints apart. `W` on the flag rule.
+
+**L198 does not move and no claim is made that it does.** 2860's pending index
+is `ON (occurred_at) WHERE processed_at IS NULL` — the drain order. It is not
+the "impacted-session event fanout" index the row asks for, which would be keyed
+on airport, route or flight. Three of five still have an index.
+
+**L236 does not move, and the reason matters more than the verdict.** A new
+suite, `src/test/db/layoverExternalEventsDedup.db.test.ts`, does run against a
+REAL PostgreSQL and does check column names, index definitions, CHECK
+constraints and RLS. But it runs against `scripts/local-db/up.sh`'s throwaway
+cluster, and `docs/ci/BOOTSTRAP.md` §1 is explicit that a chain replay is **not**
+a drift audit and that this database is never the target of those checks. The
+row asks for tests against **a real CI schema**. A local replay is not that, and
+counting it would be exactly the vacuity BOOTSTRAP.md was written to prevent.
+
+**L238 does not move either, and this is the honest version of a near miss.**
+The row is `Integration tests for event → replan → snapshot → invalidation →
+notification`. Four of those five links now run end to end in one test, with
+nothing stubbed but the sessions and airport the replanner is *asked* to
+consider. The third link does not happen: `handleEvent` returns
+`snapshotPersisted: false` with `snapshotUnavailableReason: "no_snapshot_storage"`,
+because no table on any database stores a certified computation — 2700 is
+unapplied, and `layover_external_events` stores events, not snapshots. The test
+asserts that absence rather than skipping it, so the day storage exists it fails
+and names the claim that changed.
+
+### §40.5 What the real database proved that the double structurally cannot
+
+`fakeLayoverDb` models no unique indexes — its own header says a duplicate
+insert appends a second row instead of resolving 23505, and that it "cannot
+DISCOVER the collision". So the unit suite STAGES the error, and says so in its
+own header rather than letting a staged 23505 pass for a discovered one.
+
+Against a real PostgreSQL carrying the replayed chain, these were watched
+happening:
+
+| probe | result |
+|---|---|
+| same fact, different `event_id` | refused, naming `layover_external_events_dedup_uidx` |
+| same `event_id` twice | refused, naming `layover_external_events_pkey` |
+| two genuinely different facts | both admitted |
+| `occurred_at` after `received_at` | refused by `layover_external_events_not_future` |
+| the consumer's pending query | planner uses `layover_external_events_pending_idx` |
+| RLS | enabled, with zero policies |
+
+The unit suite was mutation-tested rather than assumed to have teeth: dropping
+the compare-and-swap filter, guessing `unattributed` into `same_delivery`,
+returning an empty set instead of refusing a failed read, and coercing an
+unknown confidence band to `MEDIUM` each turn it red.
+
+### §40.6 What is NOT claimed
+
+No feed produces a layover event. There is no flight feed, no airport feed and
+no webhook, and this pass did not build one. The ingest is built, tested and
+gated OFF; opening it needs a producer secret provisioned outside this
+repository and a scheduled consumer, and `2981`'s own header says so and refuses
+to seed the flag TRUE.
+
+The consumer also has **no production caller yet**. `drainPendingExternalEvents`
+takes a `ReplanPort`, and an implementation of that port — the thing that
+assembles the airport, the active sessions and their candidates — belongs in
+`services/airport/`, which is another lane's this pass. Until it exists and a
+scheduler starts it, the drain runs in tests and nowhere else. That is recorded
+here as an open link in the chain rather than counted as one.
+
+**Implementation is complete and verified on an isolated database. Deployment
+verification is pending, and the two are different facts.**
+
+### §40 headline
+
+**NOTHING MOVES.** Seven rows were re-derived against the tree — L31, L92, L194,
+L198, L236, L238, L263 — and every one keeps the verdict it already had. Three of
+them keep it for a materially different reason than the one written against them,
+which §40.4 states row by row.
+
+That is the honest result of a pass that added a route, two services, a migration,
+an end-to-end integration test and a real-database suite. The capability got
+substantially more real and the census does not move, because what each row is
+still short of is not what this pass built: L31 and L263 are short of a flag that
+is ON, L194 of an applied 2992, L198 of a subject-keyed fanout index, L236 of the
+CI schema rather than a local replay, and L238 of snapshot storage.
+
+| bucket | was (§39) | now |
+|---|---|---|
+| BUILT-AND-CORRECT | 79 | 79 |
+| BUILT-BUT-WRONG | 131 | 131 |
+| NOT-BUILT | 86 | 86 |
+| CONTRADICTED | 0 | 0 |
+| total | 296 | 296 |
+
+Verified rather than asserted: `CENSUS_INTEGRITY_DUMP=ALL` over this file before
+and after this section produces an **identical** per-row dump, 296 lines, zero
+differences.
