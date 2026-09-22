@@ -1568,6 +1568,18 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     // quoted — a test a census rests a closure on is a file that census counts.
     "artifacts/api-server/src/test/messagingSwallowedReadHonesty.test.ts",
     "travel-buddy-standalone/app/messages/",
+    // ADDED 2026-09-22 by the §32 reports reconciliation. §32 rules that the
+    // unified `public.reports` already satisfies Telegraph's reporting
+    // requirement and that no second system may be built — and it rests that
+    // ruling partly on the unified path having REAL readers, of which this
+    // end-to-end moderation FK verification is one. Same principle as
+    // `messagingSwallowedReadHonesty.test.ts` above: a proof a census rests a
+    // closure on is a file that census counts. It sits in `src/scripts/`, but
+    // it is not the `check*.ts` machinery the note below excludes — it is
+    // evidence, and if it is deleted or stops exercising `reports`, §32's
+    // ruling should age with it. Citing it without watching it is what pushed
+    // this census below its coverage floor.
+    "artifacts/api-server/src/scripts/verifyModerationFkE2E.ts",
     // STILL NOT WATCHED, deliberately: src/scripts/check*.ts, guardRegistry.ts,
     // generateTelegraphInventory.ts, rlsDispositions.ts, the two workflow YAMLs,
     // and the other censuses this one cross-references. Those are machinery and
