@@ -61,6 +61,24 @@ export interface Highlight {
    * data model and UX". `deletedAt` above is the terminal one.
    */
   archivedAt?: string | null;
+  /**
+   * §12 / §3.6 — the Memories this Highlight projects.
+   *
+   * THREE-VALUED, for the same reason `pinnedAt` is:
+   *
+   *   a non-empty array — this Highlight projects these Memories.
+   *   `[]`              — the server answered and this Highlight is SOURCELESS.
+   *   `undefined`       — the read did not carry provenance at all.
+   *
+   * Only `POST /highlights` projects this field today; the list reads do not,
+   * so a Highlight from a feed or the profile carries `undefined` here and a
+   * caller that wants its sources asks `fetchHighlightSources`. Collapsing
+   * `undefined` into `[]` would print "built from nothing" over every
+   * Highlight in the app on the strength of a field nobody sent — which is
+   * §28.11's failure ("never swallow … into plausible-looking empty history")
+   * applied to provenance.
+   */
+  sourceMemoryIds?: string[];
 }
 
 export interface HighlightViewer {
@@ -162,6 +180,9 @@ function mapHighlight(r: any): Highlight {
     // about pinning at all — see the field's comment on `Highlight`.
     pinnedAt: r.pinnedAt === undefined ? undefined : (r.pinnedAt ?? null),
     archivedAt: r.archived_at ?? null,
+    // NOT `r.sourceMemoryIds ?? []`. See the field's comment: a read that did
+    // not carry provenance must not read back as "no provenance".
+    sourceMemoryIds: Array.isArray(r.sourceMemoryIds) ? r.sourceMemoryIds : undefined,
   };
 }
 
@@ -190,6 +211,21 @@ export interface CreateHighlightInput {
   mediaThumbnailUrl?: string | null;
   mediaDurationSeconds?: number | null;
   lifetimeClass?: HighlightLifetimeClass | null;
+  /**
+   * §12 / §3.6 — the Memories this Highlight projects. Census H93.
+   *
+   * OPTIONAL here because it is optional on the wire
+   * (`routes/highlights.ts:736`), and absent means absent: a Highlight created
+   * without sources is stored with no link rows and reads back
+   * `sourceMemoryIds: []`. It is deliberately NOT defaulted to some nearby
+   * Memory — §12 says a Highlight IS a projection over Memories, and a client
+   * that guessed which ones would be inventing provenance, which is the exact
+   * failure `services/highlights/highlightSources.ts` exists to prevent.
+   *
+   * At most 25 (`MAX_HIGHLIGHT_SOURCES`), and every id must be a live Memory
+   * the caller owns or the whole create is refused with `forbidden`.
+   */
+  sourceMemoryIds?: string[];
 }
 
 export async function createHighlight(input: CreateHighlightInput): Promise<HighlightResult<Highlight>> {
@@ -217,6 +253,14 @@ export async function createHighlight(input: CreateHighlightInput): Promise<High
         // Omitted, not nulled: the server distinguishes "no class was chosen"
         // from a class, and sending null would be a value.
         ...(input.lifetimeClass ? { lifetimeClass: input.lifetimeClass } : {}),
+        // Same rule for §12's sources. An empty array is a CLAIM — "this
+        // Highlight projects nothing" — and the schema treats absent and empty
+        // identically only because absent is what a Stories-style create means.
+        // Sending `[]` on every create would make the two indistinguishable
+        // from the server's side.
+        ...(input.sourceMemoryIds && input.sourceMemoryIds.length > 0
+          ? { sourceMemoryIds: input.sourceMemoryIds }
+          : {}),
       }),
     });
     if (!res.ok) return mapApiError<Highlight>(res.status, await res.json().catch(() => ({})));
@@ -452,6 +496,91 @@ export async function fetchArchivedHighlights(): Promise<HighlightResult<Highlig
     if (!res.ok) return mapApiError<Highlight[]>(res.status, await res.json().catch(() => ({})));
     const body = await res.json();
     return { ok: true, data: (body.highlights ?? []).map(mapHighlight) };
+  } catch (e) {
+    if (isNetworkError(e)) return { ok: false, data: null, errorKind: 'network_unreachable' };
+    return { ok: false, data: null, errorKind: 'db_error', message: e instanceof Error ? e.message : 'Unknown' };
+  }
+}
+
+/* ============================================================================
+ * §12 / §3.6 PROVENANCE — what a Highlight is built from.
+ *
+ * Highlights/Memories Development Architecture Spec v1 §12: a Highlight is a
+ * disposable, audience-specific PROJECTION over Memories. Census H93 records
+ * the gap plainly: "`POST /highlights` accepts a client-supplied `mediaUrl`
+ * with no source, and every Highlight on production is sourceless."
+ *
+ * Migration 2722 (`highlight_sources`) IS applied on production — checked in
+ * `artifacts/api-server/src/lib/capability/production-applied-migrations.json`
+ * — and `GET /highlights/:id/sources` has been served since, with no client of
+ * any kind. This is that client. It does not make H93 correct: a sourceless
+ * create still succeeds, which is the row's stated reason and a product
+ * migration rather than a wiring gap. What it does is stop the answer being
+ * unaskable.
+ *
+ * OWNER-ONLY. The route refuses with `not_found` for a Highlight the caller
+ * does not own, deliberately collapsing "not yours" and "not there" so the
+ * endpoint is not an oracle for whether an arbitrary UUID is a Highlight.
+ * ========================================================================== */
+
+/** 2722's `source_type` CHECK. `EPISODE` is storable and not yet verifiable. */
+export type HighlightSourceType = 'MEMORY' | 'EPISODE';
+
+/** 2722's `provenance` CHECK, which is §4's TruthLevel verbatim. */
+export type HighlightSourceProvenance =
+  | 'USER_ASSERTED'
+  | 'SYSTEM_OBSERVED'
+  | 'MUTUALLY_CONFIRMED'
+  | 'INFERRED'
+  | 'UNKNOWN';
+
+export interface HighlightSource {
+  sourceType: HighlightSourceType;
+  sourceId: string;
+  /**
+   * §4's truth precedence. A link a person asserted is not the same claim as
+   * one an engine proposed, and a surface that renders the two identically has
+   * thrown away the distinction the column exists to keep.
+   */
+  provenance: HighlightSourceProvenance;
+  createdAt: string | null;
+}
+
+/**
+ * `GET /highlights/:id/sources`.
+ *
+ * `feature_disabled` here means migration 2722 is absent on THAT deployment —
+ * not on the one whose committed snapshot this lane read. It is a permanent
+ * answer for that build and must never be offered a retry, which is why it
+ * survives `mapApiError`'s union rather than being flattened to `db_error`.
+ */
+export async function fetchHighlightSources(
+  highlightId: string,
+): Promise<HighlightResult<HighlightSource[]>> {
+  if (!isSupabaseConfigured || !apiBase()) {
+    return { ok: false, data: null, errorKind: 'config_error', message: 'Backend not configured' };
+  }
+  const token = await freshToken();
+  if (!token) return { ok: false, data: null, errorKind: 'unauthenticated' };
+  try {
+    const res = await fetch(`${apiBase()}/api/highlights/${highlightId}/sources`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) return mapApiError<HighlightSource[]>(res.status, await res.json().catch(() => ({})));
+    const body = await res.json();
+    // `?? []` IS correct here and nowhere else in this file: the route answers
+    // 200 only when the link table was read successfully, and refuses with
+    // `degraded_unavailable` when it could not be. An empty list from a 200 is
+    // therefore the server saying "sourceless", not "I could not tell".
+    return {
+      ok: true,
+      data: ((body.sources ?? []) as any[]).map((s): HighlightSource => ({
+        sourceType: s.sourceType,
+        sourceId: s.sourceId,
+        provenance: s.provenance ?? 'UNKNOWN',
+        createdAt: s.createdAt ?? null,
+      })),
+    };
   } catch (e) {
     if (isNetworkError(e)) return { ok: false, data: null, errorKind: 'network_unreachable' };
     return { ok: false, data: null, errorKind: 'db_error', message: e instanceof Error ? e.message : 'Unknown' };
