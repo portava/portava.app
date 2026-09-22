@@ -1528,6 +1528,24 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/test/telegraphConversationCapabilities.test.ts",
     "artifacts/api-server/src/test/telegraphNeedsAction.test.ts",
     "travel-buddy-standalone/src/features/telegraph/",
+    // WIDENED 2026-09-22 by the §16/§18 MEDIA / VOICE / COMPASS lane (§34).
+    // Five files §34 rests its measurements on, each cited there and none
+    // watched before. `check:census-scope-coverage` caught the gap the moment
+    // the section landed, which is the check doing exactly its job: a census
+    // that cites a file it does not watch is a census that can go stale in
+    // silence on its own evidence.
+    //
+    // `lib/translation.ts` is the important one. §34.1's whole finding is that
+    // `DetectLanguageResult.confidence` existed in THAT file and was discarded
+    // by `messageTranslation.ts`, so T240 and T242 now rest on the producer as
+    // much as on the consumer — and the consumer was already watched while the
+    // producer was not. That asymmetry is precisely how §29.3's "a verdict can
+    // rest on a file that a cited file CALLS" goes wrong.
+    "artifacts/api-server/src/lib/translation.ts",
+    "artifacts/api-server/src/migrations/2991_message_translations_confidence.sql",
+    "artifacts/api-server/src/test/translationConfidence.test.ts",
+    "artifacts/api-server/src/test/telegraphContextObjectsHonesty.test.ts",
+    "artifacts/api-server/src/test/voicePipelineAuthority.test.ts",
     // WIDENED A THIRD TIME 2026-09-12: the §1–§11 lane (census-telegraph §10)
     // added the Shared Context Rail, the share contract, the typed kinds, the
     // coordination surface, unsend, memory notes and the lifecycle routes.

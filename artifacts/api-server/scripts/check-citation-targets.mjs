@@ -350,8 +350,16 @@ import {
  * and on no citation: that lane repointed `:73` (the spec-name map) and
  * `gateConversation`, this one repointed the eight accessors and the two
  * literals below them. The overlap is why the number is measured and not
- * summed. */
-export const MAX_DEAD_TARGETS = 206;
+ * summed.
+ *
+ * MEASURED AFTER THE REBASE, AT 205, and the number is the reason this
+ * paragraph exists rather than a note saying "unchanged". This lane measured
+ * 208 against `b7dd1c71f` and the merged tree measures 205 — a figure NEITHER
+ * side could have produced, because the three sets of repairs are disjoint and
+ * each one's anchors move a different citation out of this check's population.
+ * Carrying 208 forward would have been a ceiling three above the truth, which
+ * is a ratchet that has quietly stopped ratcheting. */
+export const MAX_DEAD_TARGETS = 205;
 
 /** Pinned to a commit by its own declaration; its lines must not track HEAD. */
 const PINNED_DOCS = new Set(['docs/architecture/mobile-reachability-ledger.md']);

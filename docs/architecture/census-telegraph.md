@@ -8970,7 +8970,7 @@ record. **Neither is true of the tree.**
 abstraction was written — `DetectLanguageResult` declares
 `confidence: 'high' | 'low'` (`artifacts/api-server/src/lib/translation.ts:19#confidence: 'high' | 'low'`),
 the OpenAI detector asks the model for it by name and parses it
-(`artifacts/api-server/src/lib/translation.ts:110#confidence: parsed.confidence === 'high' ? 'high' : 'low'`) —
+(`artifacts/api-server/src/lib/translation.ts:127#confidence: parsed.confidence === 'high' ? 'high' : 'low'`) —
 and `messageTranslation.ts#detectWithRetry` **discarded it one line after
 receiving it**, with `return result.language`. The value was produced, travelled
 one function call, and was dropped on the floor. Nothing downstream could see
@@ -8992,11 +8992,11 @@ postconditions, because a default would manufacture a reading nobody took —
 which is the exact thing T242 asks not to happen. `provider_version` answers a
 different question from `provider`: the vendor versus the engine that ran, taken
 FROM the call site rather than written beside it
-(`artifacts/api-server/src/lib/translation.ts:100#export const OPENAI_TRANSLATION_MODEL`),
+(`artifacts/api-server/src/lib/translation.ts:104#export const OPENAI_TRANSLATION_MODEL`),
 so the recorded version cannot drift from the model that produced the text.
 
 **The one rule that decides confidence** — `translationConfidenceOf`
-(`artifacts/api-server/src/services/messageTranslation.ts:100#export function translationConfidenceOf`).
+(`artifacts/api-server/src/services/messageTranslation.ts:112#export function translationConfidenceOf`).
 HIGH is reachable through the PROVIDER arm alone. The pipeline resolves a source
 language down a four-arm ladder and only the first arm reads the message; a
 translation out of a source language taken from a profile default — or from a
@@ -9006,7 +9006,7 @@ fallback arms are LOW even when a stale reading is handed in beside them.
 
 **The decision T242 asks for** — `buildDisplayFields` now returns
 `translationConfidence` and `showOriginalAlongside`
-(`artifacts/api-server/src/services/messageTranslation.ts:263#showOriginalAlongside: boolean`),
+(`artifacts/api-server/src/services/messageTranslation.ts:205#showOriginalAlongside: boolean`),
 and the second is `confidence !== 'high'` — so **UNKNOWN COUNTS AS NOT-HIGH**.
 The requirement is "instead of pretending certainty", and a missing reading is
 not evidence of certainty; deciding it the other way would make every row
@@ -9020,13 +9020,13 @@ RECORD that a translation failed — could not tell a written row from a rejecte
 one. The error is now read, a failure is logged by name, and the specific
 undefined-column refusal retries once WITHOUT the two new columns while naming
 migration 2991
-(`artifacts/api-server/src/services/messageTranslation.ts:1014#export const CONFIDENCE_MIGRATION_PENDING_MESSAGE`).
+(`artifacts/api-server/src/services/messageTranslation.ts:1064#export const CONFIDENCE_MIGRATION_PENDING_MESSAGE`).
 The translation is the product feature and the reading is metadata about it;
 losing the row to keep the metadata would be the wrong trade.
 
 **A storage key that must never become a translation** —
 `isStructuredEnvelopeBody`
-(`artifacts/api-server/src/services/messageTranslation.ts:349#export function isStructuredEnvelopeBody`),
+(`artifacts/api-server/src/services/messageTranslation.ts:338#export function isStructuredEnvelopeBody`),
 consulted before the roster read, before detection and before any provider call.
 A §6.2 VOICE message stores a JSON envelope in `messages.body` and that envelope
 carries `payload.url`, a `post-media/<path>` key for a PRIVATE bucket. This
@@ -9050,7 +9050,7 @@ the model to repeat. Every OTHER tool in that module already refuses by name wit
 `[]`, because an empty array is iterable and sums to "nothing" — with
 `recentObjectsUnreadable: true` and a note instructing the model to say it could
 not check
-(`artifacts/api-server/src/compass/TelegraphConversationTools.ts:249#const recentObjectsUnreadable = Boolean(error)`).
+(`artifacts/api-server/src/compass/TelegraphConversationTools.ts:241#const recentObjectsUnreadable = Boolean(error)`).
 It is NOT a whole-tool refusal: the other four fields come from the gate, which
 already refuses outright when membership, roster, privacy or capabilities cannot
 be read, so a true partial answer is available and preferable to no answer.
@@ -9059,7 +9059,7 @@ be read, so a true partial answer is available and preferable to no answer.
 
 | id | Was | Now | Why |
 | --- | --- | --- | --- |
-| T63 | N | **W** | §6.3 **Voice: waveform, seek, playback speed, optional transcript/translation** — the row's stated reason, *"No voice messages at all (T53)"*, is stale: VOICE was built and merged (see §30). Three of the four clauses are real and asserted against the component, not inferred from it — the waveform renders and downsamples by the SAME function the server validates with, seek works by tap AND by a real `accessibilityValue` with increment/decrement actions, and the speed control cycles back to 1x and states itself as a WORD (`travel-buddy-standalone/src/features/telegraph/voice/VoiceMessagePlayer.tsx:1#Telegraph §6.3 — a voice message, with waveform, seek and playback speed`). It plays only through the SIGNED url, never the raw `post-media` reference. **Ceiling: the fourth clause. There is no transcript and no translation of one, because no speech-to-text provider is configured in or reachable from this tree — and, under that, migration 2989 is applied to no database, so no voice note can exist anywhere to be played.** |
+| T63 | N | **W** | §6.3 **Voice: waveform, seek, playback speed, optional transcript/translation** — the row's stated reason, *"No voice messages at all (T53)"*, is stale: VOICE was built and merged (see §30). Three of the four clauses are real and asserted against the component, not inferred from it — the waveform renders and downsamples by the SAME function the server validates with, seek works by tap AND by a real `accessibilityValue` with increment/decrement actions, and the speed control cycles back to 1x and states itself as a WORD (`travel-buddy-standalone/src/features/telegraph/voice/VoiceMessagePlayer.tsx:2#Telegraph §6.3 — a voice message, with waveform, seek and playback speed`). It plays only through the SIGNED url, never the raw `post-media` reference. **Ceiling: the fourth clause. There is no transcript and no translation of one, because no speech-to-text provider is configured in or reachable from this tree — and, under that, migration 2989 is applied to no database, so no voice note can exist anywhere to be played.** |
 | T225 | N | **W** | §16 **Waveform generation for voice as derived metadata** — both clauses of the stated reason are stale. Voice exists, and `ALLOWED_MEDIA_MIME` admitting no audio is no longer the whole story: voice audio goes through a voice-only allowlist on its own route. A waveform IS derived metadata now: it is carried in the envelope, validated and NORMALISED server-side rather than trusted — clamped to [0,1], non-finite peaks dropped, and capped in length so a bar chart cannot be made into a denial of service (`artifacts/api-server/src/services/telegraph/voice.ts:105#export function normaliseWaveform`). **Ceiling, and it is the word in the requirement: GENERATION. The server does not generate it. There is no audio decoder in this tier, so the peaks come from the recorder's `expo-av` metering and the server's role is to refuse or normalise what it is handed. It is derived metadata that is client-derived, and it lives in the envelope rather than in a column.** |
 | T243 | N | **W** | §18.2 **Voice pipeline AUDIO → TRANSCRIPT → optional TRANSLATION, audio authoritative** — the stated reason, *"No voice messages (T53), no transcription"*, is half stale. The AUDIO rung is built end to end: upload, sniff-by-track, send, and a `lib/mediaAccess.ts` branch-3c decision about who may fetch the bytes. "Audio is authoritative" is now enforced on the side that could fail silently — no derivative is manufactured from a voice note behind its back (§34.2's envelope guard) and no derivative gates the original: a note with an EMPTY waveform is legal and fully playable, and an out-of-range waveform is clamped rather than refused. **Ceiling: the second and third rungs do not exist. There is no transcript, because there is no speech-to-text provider in this tree, and a nullable `transcript` field was deliberately not added because nothing would write it; translation is downstream of the transcript and is therefore also absent. And 2989 is applied nowhere, so the built first rung is live nowhere.** |
 | T240 | W | **W** | §18.2 **`MessageTranslation` contract** — **evidence correction, verdict deliberately unchanged.** "Missing `providerVersion` and `confidence`" no longer describes the tree: both are in migration 2991, both are written by the pipeline, and the confidence is a real reading rather than a placeholder (§34.1). **It stays W for one reason and it is the house rule, not modesty: 2991 is applied to NO database — not production (`ajrurzioarfkagpuxfnb`), not portava-ci (`hwokxgbmezheskbzskfr`). On every database that exists today the two columns are absent, the writer detects that by name and stores the row without them, and the contract is eight fields in this tree and six everywhere else. A capability nobody can reach is built, not correct — the same bound §31 applies to seven Nearby rows and §30.3 applies to voice.** |
@@ -9129,22 +9129,32 @@ across 115 files.
 
 ### 34.7 The headline, restated from the rows
 
-Three rows moved `N → W` (`T63`, `T225`, `T243`) and nothing else changed
-bucket, so §31.8's headline (C 231 / W 166 / N 51 / X 3) no longer describes the
-table under it. Restated by **counting the rows with `check:census-integrity`**,
+Three rows moved `N → W` in this section (`T63`, `T225`, `T243`) and nothing
+else changed bucket here, so the last headline in the document no longer
+describes the table under it. Restated by **counting the rows with `check:census-integrity`**,
 not by adding three to the old numbers — a headline arrived at by arithmetic on
 the previous headline carries the previous headline's error forward while
 looking freshly measured:
 
 | bucket | count |
 | --- | --- |
-| BUILT-AND-CORRECT | **231** |
-| BUILT-BUT-WRONG | **169** |
-| NOT-BUILT | **48** |
+| BUILT-AND-CORRECT | **238** |
+| BUILT-BUT-WRONG | **171** |
+| NOT-BUILT | **39** |
 | CANNOT-VERIFY | **3** |
 
-451 rows. CONSTRUCTED (C + W) is 400 of 451 = 88.7 %; CORRECT is 231 of 451 =
-51.2 %.
+451 rows. CONSTRUCTED (C + W) is 409 of 451 = 90.7 %; CORRECT is 238 of 451 =
+52.8 %.
+
+**MEASURED AFTER THE MERGE, AND THE DIFFERENCE IS NOT THIS LANE'S.** This lane
+was written against `b7dd1c71f` and rebased onto `51e65ef74`, which carries
+§33's lifecycle work. Counting this lane's three moves against §31.8's headline
+alone would have produced C 231 / W 169 / N 48 — the number this section
+originally stated, and the number a reader would have quoted. It is wrong about
+the merged tree, because §33 moved rows of its own in the same interval.
+Restated by re-running `check:census-integrity` after the rebase rather than by
+carrying either branch's arithmetic forward, which is the same rule §31.8 states
+and the reason it is worth stating twice.
 
 **CORRECT DID NOT MOVE, AND THE REASON IS THE POINT OF THIS SECTION.** Nothing
 here became correct. Three rows went from "the thing does not exist" to "the
