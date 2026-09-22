@@ -115,6 +115,11 @@ import {
   reconcileAirportFact,
   submitTravellerObservation,
 } from "../services/layover/LayoverObservationService.js";
+import { persistDecision } from "../services/layover/LayoverDecisionStore.js";
+// §20's snapshot identity. Imported from the LEDGER rather than re-derived, so
+// the id this handler publishes and the id the store writes are one function's
+// output and cannot drift into two.
+import { snapshotIdFor } from "../services/airport/layoverLedger.js";
 import type { ReconciliationOutcome } from "../services/airport/LayoverAirportTruth.js";
 // §8's outer envelope edge. Published beside the window because it is the one
 // piece of envelope GEOMETRY this tree can certify, and because it is what
@@ -1069,6 +1074,23 @@ router.get("/airport/sessions/:id/safety", async (req, res) => {
   });
   const a = record.windowOnly;
 
+  // ── §20 — RECORD WHAT THIS TRAVELLER WAS TOLD ──────────────────────────────
+  // This is the one handler that publishes the session's overall certified
+  // answer, so it is where the answer is written down. No second certification
+  // happens here: `persistDecision` takes the record above and stores it.
+  //
+  // It is a SIDE EFFECT AND MUST NOT BE ABLE TO FAIL THE RESPONSE. A traveller
+  // asking whether they can leave the airport must get the answer even when the
+  // ledger is unwritable — the deadline is the safety-critical output and the
+  // record of it is not. So the outcome is awaited (never a floating promise)
+  // and folded into the payload as a STATE, not thrown.
+  //
+  // `persisted` is deliberately three-valued on the wire. "stored", "off" and
+  // "could not store" are different facts, and a client that showed the same
+  // thing for all three would be making the §23.1 mistake one layer up.
+  const persisted = await persistDecision(sc, user.id, session.id, record);
+  const snapshotId = snapshotIdFor(session.id, record.inputHash);
+
   res.json({
     featureEnabled:  true,
     overallRating:   a.rating,
@@ -1100,6 +1122,20 @@ router.get("/airport/sessions/:id/safety", async (req, res) => {
     // Spec §2.1 "versioned, explainable and replayable" — the fields that let
     // a stored answer be traced to the rules and inputs that produced it.
     certification: certificationHeader(record),
+    // Appendix C5 / census L296: *"Never certify a recommendation against a
+    // snapshot other than the one returned with it."* The id travels WITH the
+    // answer, so a client holding this payload can name the computation behind
+    // it, and a later `POST /stops/from-recommendation` can be checked against
+    // the snapshot the traveller was actually looking at rather than whatever
+    // is newest.
+    //
+    // It is published whether or not the row was stored: the identity is a
+    // function of (sessionId, inputHash) and is well-defined either way, and
+    // `persisted` below says whether anything can resolve it.
+    snapshotId,
+    persisted: persisted.ok
+      ? { state: persisted.state, unwritten: persisted.unwritten }
+      : { state: "not_stored" as const, reason: persisted.reason },
     estimates:     record.estimates,
     // §2.1 "degrades VISIBLY" / §22 "do not imply equivalent intelligence
     // globally" — census L9 and L250. `estimates` above has carried the
