@@ -113,7 +113,7 @@ The same commission is expressed as three different constants in three files:
 | **per-level 25/22/15/12/12** | `rent_buddy_fee_rules` seed | the ledger writer, per booking |
 | **22 %** | `DEFAULT_PLATFORM_FEE_PERCENT` (`lib/rentBuddyEarningsLedger.ts:37`) | fallback when the buddy's level has no fee row |
 | **22 %** | `defaultFeePercent` (`routes/rentABuddyMarketplace.ts:2192`) | the buddy dashboard's fee estimate when the ledger is empty |
-| **15 %** | `platformFeePct = 0.15` (`routes/rentABuddy.ts:6250#isNightlife`, applied `:6251`, published to the client `:6290`) | `GET /rent-a-buddy/dashboard/earnings/summary` — **for every buddy, at every level** |
+| **15 %** | `platformFeePct = 0.15`, level-blind — **REMOVED FROM THE TREE; see the correction below** | `GET /rent-a-buddy/dashboard/earnings/summary` — **for every buddy, at every level** |
 
 So a `new` buddy is quoted **15 %** by the earnings-summary screen, has **25 %** written to their
 ledger row, and sees **22 %** on the dashboard if their ledger is empty. Nothing reconciles them
@@ -121,8 +121,30 @@ and nothing fails when they diverge.
 
 **This must be resolved before any money is charged, and the resolution is one-directional:**
 `rent_buddy_fee_rules` is the schedule of record because it is the only one an operator can
-change without a deploy; the two literals are drift. `routes/rentABuddy.ts:6250#isNightlife` in particular is
-not a default — it ignores the buddy's level entirely.
+change without a deploy; the two literals are drift. The earnings-summary literal in particular was
+not a default — it ignored the buddy's level entirely.
+
+**CORRECTION 2026-09-22 — all three literals are gone; the table above is now the historical
+record of a CLOSED defect, kept because the resolution direction it argued is the one that was
+taken.** MEASURED at this head, not inferred: `platformFeePct = 0.15` occurs **0** times in
+`artifacts/api-server/src/routes/rentABuddy.ts`, and `DEFAULT_PLATFORM_FEE_PERCENT` and
+`defaultFeePercent` occur **0** times outside comments and tests. The take rate is resolved in ONE
+place, `artifacts/api-server/src/lib/rentBuddyFeeSchedule.ts:104#export async function resolveFeeSchedule(`,
+which returns a three-state result (`resolved` / `no_such_level` / `read_failed`) and has **no
+numeric fallback arm at all** — precisely because, as that module's header puts it, the deleted
+literals "were not defaults, they were guesses wearing a default's clothes". The earnings summary
+now consumes it at `artifacts/api-server/src/routes/rentABuddy.ts:7528#const feeSchedule = await resolveFeeSchedule(serviceClient, (bp as any).buddy_level);`
+and reads the rate at `artifacts/api-server/src/routes/rentABuddy.ts:7545#const rule = feeSchedule.rule;`,
+REFUSING (`conflict` on a level with no fee row, `db_error` on an unreadable table) rather than
+quoting a number nobody configured. A ratchet names all three dead literals so they cannot come
+back: `artifacts/api-server/src/test/rentBuddyFeeSchedule.test.ts:254`.
+
+The citations this section carried had also drifted onto unrelated code and are removed rather
+than moved: `routes/rentABuddy.ts:6250` is the `isNightlife` line of the traveller-eligibility
+endpoint, line 6251 is blank, and line 6290 is elsewhere in that same endpoint — none of them ever
+held a fee literal. **What this correction does NOT do:** it does not re-score §2's other
+findings, and it does not touch `12_Claude_Code_Implementation.md`'s M1 severity or its M1/M10
+remediation step, which are that document's own to re-measure.
 
 ### 2.4 The traveller-side fee is structurally zero
 

@@ -285,8 +285,38 @@ import {
  * repaired by reading the claim (the gem disclosure at :274, `add_to_trip` at
  * :592, the thread-rollback case at :502) and given anchors, so doc-citations
  * now holds them. The ceiling is the measurement, not a choice between 235 and
- * 238. */
-export const MAX_DEAD_TARGETS = 210;
+ * 238.
+ *
+ * LOWERED 2026-09-22, 210 -> 209, by the p0 moderation-and-safety-reads lane.
+ * The branch arrived at 212 because its own line shifts killed three pointers,
+ * and the repairs went one past putting it back. None was moved by offset:
+ *
+ *   - `routes/geofence.ts:872` in trust-unproduced-vocabulary.md was cited for
+ *     "the trip owner adjudicates a member as no_show". That line was the
+ *     ATTENDANCE-DASHBOARD banner before the shift and a closing brace after it;
+ *     the range it sat in never held the override handler at all. Repaired by
+ *     reading the claim: the owner-gated override route is `:1044`, its owner
+ *     gate `:1077`, and the branch the sentence is about is `:1150#no_show`.
+ *   - `routes/safeReturn.ts:852` in census-trust.md was not a live pointer at
+ *     all -- it is a parenthetical recording what the citation USED to be. It
+ *     is now spelled out in words, which is the fix for a historical number
+ *     (compare census-layover's L5 note above, left dead because repointing it
+ *     would destroy what it exists to say; spelling it out keeps the record AND
+ *     the ratchet).
+ *   - `routes/rentABuddy.ts:6251` in 08_Portava_Revenue_Model.md pointed into a
+ *     claim that no longer has any carrying code. `platformFeePct = 0.15` has
+ *     ZERO occurrences in that file, as do the other two literals of the same
+ *     defect in theirs; one resolver reads `rent_buddy_fee_rules` with no
+ *     numeric fallback arm. A faithful repoint was impossible, so the claim was
+ *     corrected and dated in all three documents that carry it, and the three
+ *     pointers -- which an earlier pass had moved BY OFFSET onto the
+ *     traveller-eligibility endpoint's `isNightlife` line -- were removed.
+ *
+ * The one past came from `09_Payment_Architecture.md:529`, cited across
+ * documents by census-discovery for the quote "Payments are not a discovery
+ * workstream"; the correction above shifted that file, so it now carries the
+ * quote as its anchor. 212 -> 209. */
+export const MAX_DEAD_TARGETS = 209;
 
 /** Pinned to a commit by its own declaration; its lines must not track HEAD. */
 const PINNED_DOCS = new Set(['docs/architecture/mobile-reachability-ledger.md']);
