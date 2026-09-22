@@ -30,9 +30,12 @@ export function normalizeGuideProfile(g: any): GuideProfile | null {
     userId:            g.user_id      ?? g.userId,
     guideLevel:        g.guide_level  ?? g.guideLevel  ?? 1,
     cityExpertise:     g.city_expertise ?? g.cityExpertise ?? [],
-    contributionCount: g.contribution_count ?? g.contributionCount ?? 0,
-    helpfulVotes:      g.helpful_votes ?? g.helpfulVotes ?? 0,
-    accuracyScore:     g.accuracy_score ?? g.accuracyScore ?? 0,
+    // No `?? 0` here. A missing figure is unknown, not zero — and the `?? 0`
+    // that used to sit here made app/gems/guide.tsx's `typeof … === 'number'`
+    // check always true, quietly killing its own em-dash branch.
+    contributionCount: g.contribution_count ?? g.contributionCount ?? null,
+    helpfulVotes:      g.helpful_votes ?? g.helpfulVotes ?? null,
+    accuracyScore:     g.accuracy_score ?? g.accuracyScore ?? null,
     status:            g.status,
     bio:               g.bio ?? null,
     verifiedAt:        g.verified_at ?? g.verifiedAt ?? null,
