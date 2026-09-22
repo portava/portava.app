@@ -2110,17 +2110,19 @@ router.post("/highlights/:id/archive", async (req, res) => {
  * §21 Archive is reversible. This is the half that makes it so.
  *
  * NOT A COMMAND, AND THAT IS A GAP RATHER THAN A DECISION. §17 names
- * HIDE_HIGHLIGHT and names no inverse of it, so there is no command type this
- * handler could issue without inventing one — and an invented name is the
- * thing MEMORY_COMMAND_TYPES_NOT_DECLARED exists to refuse. The consequence is
- * real and is recorded rather than hidden: the event stream will show a
- * `highlight.hidden` with no matching un-hide, so a §18 consumer that replays
- * it reaches a state the row is no longer in. src/test/highlightCommandBoundary
- * .test.ts asserts this shape, so the gap is a failing-if-it-changes fact and
- * not a comment nobody re-reads.
+ * HIDE_HIGHLIGHT and names no inverse of it, so there is no DECLARED command
+ * type this handler can issue today. The consequence is real and is recorded
+ * rather than hidden: the event stream will show a `highlight.hidden` with no
+ * matching un-hide, so a §18 consumer that replays it reaches a state the row
+ * is no longer in. src/test/highlightCommandBoundary.test.ts and
+ * src/test/highlightsApiUnhideBoundary.test.ts both assert this shape, so the
+ * gap is a failing-if-it-changes fact and not a comment nobody re-reads.
  *
- * WHAT THE SPECIFICATION ACTUALLY REQUIRES HERE, stated once because the
- * paragraph above has been read as "and therefore nothing is owed".
+ * WHAT THE SPECIFICATION REQUIRES HERE, stated because the paragraph above
+ * used to end with "and an invented name is the thing
+ * MEMORY_COMMAND_TYPES_NOT_DECLARED exists to refuse" — which reads as "and
+ * therefore nothing is owed", and is contradicted by this module's own
+ * vocabulary.
  *
  *   §17's first sentence — "All canonical writes should cross an explicit
  *   command boundary for authorization, invariants, idempotency, audit, and
