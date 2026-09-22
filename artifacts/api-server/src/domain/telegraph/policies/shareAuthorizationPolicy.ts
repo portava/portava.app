@@ -396,16 +396,37 @@ export const TELEGRAPH_DYNAMIC_SHARE_PRODUCERS: readonly DynamicShareProducer[] 
     sourceDomain: null,
     produces: [
       "coordination", "decision", "vote", "rendezvous", "commitment",
-      "commitment_response", "action_proposal", "acknowledgement",
+      "commitment_response", "action_proposal", "action_response",
+      "acknowledgement", "coordination_session", "coordination_transition",
     ],
     writesMessages: true,
     note:
       "DECLARED BY THE INTEGRATOR. The §9 coordination route. msg_type is the " +
-      "lowercase of one of the seven COORDINATION_KINDS, listed above. " +
+      "lowercase of one of the COORDINATION_KINDS, listed above. §21.9 recorded " +
+      "that this list had gone three values short when ACTION_RESPONSE, " +
+      "COORDINATION_SESSION and COORDINATION_TRANSITION landed, and that the " +
+      "checker does not verify the list is exhaustive; the three are added here. " +
       "OPERATIONAL because a coordination message carries no source object at all " +
       "— it carries a state the sender is asserting about themselves (on my way, " +
       "arrived, running late) or a decision the thread is taking together. There " +
       "is nothing to disclose that the thread does not already own.",
+  },
+  {
+    file: "artifacts/api-server/src/services/telegraph/coordinationSessions.ts",
+    expression: "msg_type: validated.msgType | subtype: validated.subtype",
+    family: "OPERATIONAL",
+    sourceDomain: null,
+    produces: ["coordination_session"],
+    writesMessages: true,
+    note:
+      "DECLARED WHEN THE GUARD CAUGHT IT. §13.1 CREATE_COORDINATION_SESSION, the " +
+      "one writer behind the coordination route and the command bus. It produces " +
+      "exactly one msg_type and no subtype — `validateCoordinationMessage` returns " +
+      "null for COORDINATION_SESSION — so `produces` is a single literal rather " +
+      "than the route entry's whole list. OPERATIONAL for the same reason that " +
+      "entry is: a session carries a title the opener typed and a reference to a " +
+      "plan the thread is already coordinating around, and discloses no source " +
+      "object the conversation does not already hold.",
   },
   {
     file: "artifacts/api-server/src/services/telegraph/coordination.ts",

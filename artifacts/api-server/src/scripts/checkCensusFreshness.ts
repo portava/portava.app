@@ -1580,6 +1580,24 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     // ruling should age with it. Citing it without watching it is what pushed
     // this census below its coverage floor.
     "artifacts/api-server/src/scripts/verifyModerationFkE2E.ts",
+    // ADDED 2026-09-22 for the coordination-lifecycle lane (census-telegraph §33).
+    // The lane's three new suites are the evidence §33 rests T168, T187-T192,
+    // T150 and T266 on — the coordination command's two doors, the four §13.2
+    // events, the expiry sweeps and the Discover Together intersection. Same
+    // principle as the two entries above: a proof a census rests a closure on is
+    // a file that census counts, and citing them without watching them is what
+    // pushed the coverage ratio below its floor.
+    "artifacts/api-server/src/test/telegraphCoordinationLifecycle.test.ts",
+    "artifacts/api-server/src/test/telegraphLifecycleEvents.test.ts",
+    "artifacts/api-server/src/test/telegraphDiscoverTogether.test.ts",
+    // And the suite whose STALE case §33 replaced. T168 used to be closed by a
+    // test asserting `POST /telegraph/commands` answers 501 for a §13.1 command
+    // "nothing implements" — which stopped being true when the coordination
+    // session entity arrived, so the test was pinning a lie. It now asserts the
+    // command is issuable, still refuses a call with no idempotency key, and that
+    // UNIMPLEMENTED_COMMANDS is EMPTY so the §13.1 partition stays exhaustive.
+    // §33 rests T168 on that file; this census must therefore age with it.
+    "artifacts/api-server/src/test/telegraphCommandRoute.test.ts",
     // WIDENED 2026-09-22 by the location/proximity/privacy lane
     // (census-telegraph §31): §4's Nearby surface and §30A.2's
     // ReachablePersonProjection are built here, and §17.8/§30A.7's device-bound

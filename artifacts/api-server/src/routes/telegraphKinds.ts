@@ -37,7 +37,7 @@ import { requireUser, sendError } from "../lib/http.js";
 import { asyncHandler } from "../lib/asyncHandler.js";
 import { logger as rootLogger } from "../lib/logger.js";
 import { guardTelegraphThreadWrite } from "../lib/telegraphThreadWrite.js";
-import { publishToThread } from "../lib/telegraphEvents.js";
+import { emitLocationStarted, publishToThread } from "../lib/telegraphEvents.js";
 import {
   DRAWER_TABS,
   drawerTabFor,
@@ -48,6 +48,7 @@ import {
   SENDABLE_ENVELOPE_KINDS,
   UNSENDABLE_KINDS,
   validateKindMessage,
+  MAX_LOCATION_SHARE_HOURS,
   type DrawerTab,
 } from "../services/telegraph/messageKinds.js";
 import {
@@ -182,13 +183,66 @@ router.post(
       return;
     }
 
+    /**
+     * §12 `location_shares` — an EXPIRY that is a real bound, checked here
+     * because a schema can say "a string" and not "in the future, and not next
+     * year".
+     *
+     * Two refusals and they are different mistakes. An expiry already in the
+     * past is a share that was never live: the sweep's window would never
+     * contain it, so `location.started` would be emitted for a capability that
+     * ends before anybody sees it and `location.expired` would never follow —
+     * a live chip nothing ever takes down. An expiry beyond the ceiling is an
+     * unbounded share wearing a timestamp, which is the thing §15.1 exists to
+     * refuse.
+     */
+    // ONE clock read for this request, derived from below. `splitClockGuard`
+    // refuses a handler that calls both `Date.now()` and a no-arg `new Date()`:
+    // two independent reads mean the expiry this route VALIDATED and the
+    // `created_at` it STORED can straddle a tick, and the share would be
+    // accepted against one instant and recorded against another.
+    const nowMs = Date.now();
+
+    let locationShare: { expiresAt: string; precision: string; purpose: string | null } | null = null;
+    if (validated.envelope.kind === "LOCATION") {
+      const lp = (validated.envelope as any).payload as {
+        expiresAt?: string | null;
+        precision?: string;
+        purpose?: string | null;
+      };
+      if (typeof lp.expiresAt === "string" && lp.expiresAt.length > 0) {
+        const endsMs = Date.parse(lp.expiresAt);
+        if (!Number.isFinite(endsMs)) {
+          sendError(res, "invalid_payload", "expiresAt must be an ISO timestamp");
+          return;
+        }
+        if (endsMs <= nowMs) {
+          sendError(res, "invalid_payload",
+            "expiresAt is already past. A share that has expired before it is posted is never live, " +
+            "so nothing would ever take it down.");
+          return;
+        }
+        if (endsMs > nowMs + MAX_LOCATION_SHARE_HOURS * 3600_000) {
+          sendError(res, "invalid_payload",
+            `A scoped location share may run for at most ${MAX_LOCATION_SHARE_HOURS} hours (§15.1). ` +
+            "A longer one is an unbounded capability with a timestamp on it.");
+          return;
+        }
+        locationShare = {
+          expiresAt: lp.expiresAt,
+          precision: String(lp.precision ?? "area"),
+          purpose: lp.purpose ?? null,
+        };
+      }
+    }
+
     const guard = await guardTelegraphThreadWrite(client, threadId, user.id);
     if (!guard.ok) {
       sendError(res, guard.code, guard.message);
       return;
     }
 
-    const now = new Date().toISOString();
+    const now = new Date(nowMs).toISOString();
     const { data: msg, error: msgErr } = await client
       .from("messages")
       .insert({
@@ -239,6 +293,22 @@ router.post(
         createdAt: m.created_at,
       },
     });
+
+    // §13.2 `location.started`. Only for a share with an expiry: a LOCATION
+    // message with none is a pin — somebody sending an address — and it has no
+    // lifecycle for this event to be about. The payload carries the precision
+    // and the window and NEVER a coordinate; a member entitled to those already
+    // has them in the message, behind that message's own read gate.
+    if (locationShare) {
+      void emitLocationStarted(client, threadId, {
+        shareId: String(m.id),
+        ownerUserId: String(m.sender_id),
+        precision: locationShare.precision,
+        purpose: locationShare.purpose,
+        startedAt: String(m.created_at),
+        expiresAt: locationShare.expiresAt,
+      });
+    }
   }),
 );
 

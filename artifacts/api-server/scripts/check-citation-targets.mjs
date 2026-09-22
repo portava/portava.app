@@ -299,7 +299,6 @@ import {
  * rather than level with it because the anchors also moved one previously
  * unanchored citation out of this check's population. The number below is what
  * the tool measured at that tree, not a target chosen for it. */
-export const MAX_DEAD_TARGETS = 208;
 /* LOWERED AGAIN 2026-09-22, 209 -> 208, while making four membership reads
  * statically resolvable. The gain is one citation, and it is a REAL repair
  * rather than a side effect: census-telegraph cited
@@ -310,6 +309,29 @@ export const MAX_DEAD_TARGETS = 208;
  * to :609, where the redaction actually is, and anchored. The other two moved
  * citations in this change were ordinary shifts and were repointed to the lines
  * their claims describe, also with anchors. */
+/** RE-MEASURED 2026-09-22 by the Telegraph lifecycle lane: 208. That lane's own
+ * edits shifted FOUR citations onto blank lines (`routes/availability.ts` :161
+ * and :706, `server/telegraph/commandRoute.ts` :70, and
+ * `domain/telegraph/commands/telegraphCommands.ts` :97), and repairing them by
+ * READING the claim found two more that were already dead at the same sites —
+ * `commandRoute.ts:271`/:306 and `telegraphCommands.ts:121`. All six were
+ * repointed and given anchors, so doc-citations holds them now and an offset
+ * repair cannot bring them back. */
+/** MERGED 2026-09-22. Two lanes lowered this to 208 independently, for
+ * DIFFERENT repairs — the membership-read rewrite above and the lifecycle
+ * lane's four shifted citations plus the two already-dead ones it found at
+ * the same sites. Neither number describes the merged tree, so the value
+ * below is RE-MEASURED after the merge rather than chosen between them.
+ * Both rationales are kept because both repairs are in this tree.
+ *
+ * The merged measurement is 206, BELOW both lanes' 208, because the two sets of
+ * repairs are disjoint: one repointed citations into
+ * `compass/TelegraphConversationTools.ts` and the four membership reads, the
+ * other into `routes/availability.ts`, `server/telegraph/commandRoute.ts` and
+ * `domain/telegraph/commands/telegraphCommands.ts`. Neither lane could have
+ * measured this number, which is the reason the ceiling is re-measured after a
+ * merge instead of inherited from whichever branch landed last. */
+export const MAX_DEAD_TARGETS = 206;
 
 /** Pinned to a commit by its own declaration; its lines must not track HEAD. */
 const PINNED_DOCS = new Set(['docs/architecture/mobile-reachability-ledger.md']);

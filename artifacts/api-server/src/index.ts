@@ -46,6 +46,7 @@ import { startLocationSnapshotPurgeScheduler } from "./lib/locationSnapshotPurge
 import { startIntelRetentionScheduler } from "./lib/intelRetentionScheduler.js";
 import { startSensingRetentionScheduler } from "./lib/sensingRetentionScheduler.js";
 import { startIntelProjectionScheduler } from "./lib/intelProjectionScheduler.js";
+import { startTelegraphLifecycleScheduler } from "./server/telegraph/lifecycleScheduler.js";
 import { startIntelPromotionScheduler } from "./lib/intelPromotionScheduler.js";
 import { startIntelPatternScheduler } from "./lib/intelPatternScheduler.js";
 import { startIntelCalibrationScheduler } from "./lib/intelCalibrationScheduler.js";
@@ -149,6 +150,16 @@ app.listen(port, (err) => {
   startSensingRetentionScheduler();
   startIntelPromotionScheduler();
   startIntelProjectionScheduler();
+  // Telegraph §13.2's two expiry events. §4.3 says availability "expires
+  // automatically and revokes across Telegraph, Discovery and Compass", and
+  // census T188 records that expiry was evaluated lazily on read and emitted
+  // nothing — so a second device kept a FREE NOW chip until somebody refreshed
+  // it. This ends the signal and tells its owner, and does the same for a
+  // scoped in-thread location share. Not flag-gated: the availability half
+  // DELETEs rows every reader already refuses to render, which is a privacy
+  // improvement rather than a behaviour change, and the location half only
+  // publishes. See server/telegraph/lifecycleScheduler.ts.
+  startTelegraphLifecycleScheduler();
   // Memory + Experience Intelligence projector (spec §22): projects canonical
   // facts + the Experience Graph into memory_projections and sweeps expired
   // memory. Flag-gated on memory_projection, fail-closed; a no-op until enabled.
