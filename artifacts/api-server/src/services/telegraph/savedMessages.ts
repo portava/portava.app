@@ -140,6 +140,12 @@ export interface SavedMessageMembership {
   active: boolean;
   /** The §14.3 bound for this membership, or null for unbounded. */
   visibleFrom: string | null;
+  /**
+   * WHOSE membership this is — the caller, for Q6's own-message exception.
+   * OPTIONAL, and its absence means NO exception: a caller that does not say
+   * who it is gets the plain window, which is the narrower answer.
+   */
+  viewerId?: string | null;
 }
 
 /**
@@ -176,7 +182,13 @@ export function authorizeSavedMessage(
 ): SavedMessageVerdict {
   // Membership FIRST. See "order of refusal".
   if (!membership || !membership.active) return { ok: false, reason: "not_a_member" };
-  if (!withinWindow(source.created_at, membership.visibleFrom)) {
+  // Q6: a save of the caller's OWN earlier message survives a rejoin. Note the
+  // ORDER, which is the one this function's header insists on and which Q6 does
+  // not disturb: membership is judged FIRST and an INACTIVE member is refused
+  // `not_a_member` before the window — and therefore before the exception — is
+  // ever consulted. A departed member reads nothing, including their own.
+  if (!withinWindow(source.created_at, membership.visibleFrom,
+                    { senderId: source.sender_id, viewerId: membership.viewerId })) {
     return { ok: false, reason: "outside_history_window" };
   }
   if (source.deleted_at) return { ok: false, reason: "source_deleted" };

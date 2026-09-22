@@ -161,12 +161,22 @@ export function isActiveMember(member: Pick<ConversationMember, "interval">): bo
  * the moment the flag was off.
  */
 export function memberCanReadMessageAt(
-  member: Pick<ConversationMember, "interval" | "visibleFromAt">,
+  member: Pick<ConversationMember, "interval" | "visibleFromAt" | "userId">,
   createdAt: string | null | undefined,
   boundEnabled: boolean,
+  senderId?: string | null,
 ): boolean {
+  // MEMBERSHIP FIRST, AND Q6 DOES NOT MOVE IT. A departed member is outside
+  // every window regardless of the bound and regardless of who sent the
+  // message: leaving ends the authorization, so this returns false for a
+  // departed member's OWN messages too. The own-message exception is a
+  // relaxation of the §14.3 WINDOW and of nothing else.
   if (!isActiveMember(member)) return false;
-  return withinWindow(createdAt, boundEnabled ? member.visibleFromAt : null);
+  // Q6: a currently authorized member reads their own earlier messages.
+  // `senderId` omitted → no exception, which is the narrower answer and what
+  // every caller that has not been taught to pass it still gets.
+  return withinWindow(createdAt, boundEnabled ? member.visibleFromAt : null,
+                      { senderId, viewerId: member.userId });
 }
 
 // ── Invariants over one member ───────────────────────────────────────────────

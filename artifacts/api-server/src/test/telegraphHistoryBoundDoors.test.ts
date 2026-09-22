@@ -513,6 +513,10 @@ describe("§14.3 door 3: the group-chat thread read (routes/groupChat)", () => {
       c._observed.gte.filter((g) => g.table === "messages"), [],
       "OFF must apply no lower bound",
     );
+    assert.deepEqual(
+      c._observed.or.filter((o) => o.table === "messages"), [],
+      "and no window or() group either — OFF is byte-identical to pre-2400",
+    );
   });
 
   it("flag ON: the newly added member does not receive the pre-membership message BODY", async () => {
@@ -520,9 +524,16 @@ describe("§14.3 door 3: the group-chat thread read (routes/groupChat)", () => {
     const r = await tripChat(BOB);
     assert.equal(r.status, 200);
     assert.deepEqual(bodyIds(r), [NEW_MSG]);
+    // The bound is still IN the query — the page limit takes the NEWEST rows,
+    // so a filter alone would spend the budget on rows the caller may not see.
+    // Its SPELLING changed with owner decision Q6: the window now rides in a
+    // two-clause `or=` group, so asserting on a plain `.gte` would silently
+    // stop checking anything. Asserted WHOLE, which is stricter: the only
+    // thing ORed in beside the bound is `sender_id = <this caller>`.
     assert.ok(
-      c._observed.gte.some((g) => g.table === "messages" && g.col === "created_at"),
-      "the bound belongs in the QUERY too: the page limit takes the NEWEST rows, so filtering alone would shorten the conversation",
+      c._observed.or.some((o) => o.table === "messages"
+        && o.expr === `created_at.gte.${BOUND},sender_id.eq.${BOB}`),
+      `the bound belongs in the QUERY too — observed ${JSON.stringify(c._observed.or)}`,
     );
     const served = JSON.stringify(r.body);
     assert.ok(!served.includes("before Bob"), "the pre-membership message body must not appear anywhere in the payload");

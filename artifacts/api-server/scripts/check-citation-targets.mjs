@@ -453,7 +453,20 @@ import {
  * authorization`, verified by check:doc-citations rather than by an offset. The
  * ceiling falls to the measured number either way, because a ceiling that
  * refuses a drop it did not earn stops being a ceiling. 185 -> 184. */
-export const MAX_DEAD_TARGETS = 184;
+/* LOWERED 2026-09-22 integrating Q6 (the own-message rejoin exception). The
+ * lane repointed 167 citations across four census documents after its change
+ * moved `routes/messaging.ts`, `services/groupChatHistoryBound.ts` and the
+ * telegraph route tree, and the measured count came back 183.
+ *
+ * THE LANE DECLINED TO LOWER IT, AND THAT WAS MY FAULT. Its brief said "do not
+ * lower a floor or raise a ceiling", which it read — reasonably — as "do not
+ * move it at all". The ratchet's own rule is narrower and is stated at the top
+ * of this file: the ceiling may only FALL, and a measured gain that is not
+ * banked is a gain thrown away. So the number is taken here, by the
+ * integrator, on the integrated tree rather than on the lane's base.
+ *
+ * 184 -> 183. */
+export const MAX_DEAD_TARGETS = 183;
 
 /** Pinned to a commit by its own declaration; its lines must not track HEAD. */
 const PINNED_DOCS = new Set(['docs/architecture/mobile-reachability-ledger.md']);

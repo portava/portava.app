@@ -30,6 +30,7 @@ import { asyncHandler } from '../lib/asyncHandler';
 // Telegraph §13.2 message.deleted — census T182 measured the delete as silent.
 import { publishToThread } from '../lib/telegraphEvents';
 import {
+  applyHistoryWindow,
   historyBoundEnabled,
   visibleFromOf,
   withinWindow,
@@ -166,7 +167,12 @@ async function fetchMessagesForThread(
   // spend their whole page budget on rows the filter then removes and be shown
   // a short conversation. Bounding the query spends the budget on rows they may
   // see. `visibleFrom` is null (a no-op) while the flag is off.
-  if (visibleFrom) q = q.gte('created_at', visibleFrom);
+  // Q6 belongs in the QUERY here for the very reason this comment already
+  // gives: `INITIAL_MSG_LIMIT` takes the NEWEST rows. Bounding with a plain
+  // `.gte` would spend the page budget correctly but would also drop the
+  // caller's own earlier messages before JavaScript could admit them, so the
+  // relaxed clause — `created_at >= bound OR sender_id = caller` — goes here.
+  q = applyHistoryWindow(q, visibleFrom, userId);
 
   const { data, error: msgsErr } = await q;
 
@@ -177,7 +183,8 @@ async function fetchMessagesForThread(
   // `withinWindow` compares INSTANTS where PostgREST compares timestamps — this
   // is the one place both spellings of the boundary instant are guaranteed to
   // agree, and it is also what holds if a future edit drops the `gte`.
-  const rows = ((data ?? []) as any[]).filter((m) => withinWindow(m.created_at, visibleFrom));
+  const rows = ((data ?? []) as any[]).filter((m) =>
+    withinWindow(m.created_at, visibleFrom, { senderId: m.sender_id, viewerId: userId }));
 
   const incomingIds = rows
     .filter((m) => m.sender_id !== userId && !m.deleted_at)
