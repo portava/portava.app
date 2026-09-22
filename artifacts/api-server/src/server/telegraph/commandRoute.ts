@@ -68,12 +68,38 @@ const FORBIDDEN_REASONS = new Set<string>([
 
 router.post(
   "/telegraph/commands",
-  asyncHandler(async (req, res) => {
+  asyncHandler(async (req, res, next) => {
+    // ── THIS PATH IS SHARED, AND THIS IS THE LINE THAT DIVIDES IT ────────────
+    //
+    // `routes/telegraphCommands.ts` registers POST /telegraph/commands too —
+    // the natural-language assistant, whose body is `{ text }`. Express
+    // dispatches to the first matching handler and neither used to yield, so
+    // whichever router `routes/index.ts` mounted first answered EVERY request
+    // to this path and the other was dead code. It mounted the assistant
+    // first, so this endpoint — the whole §13.1 command vocabulary — was
+    // unreachable in the running app: a well-formed UNSEND_MESSAGE came back
+    // `400 invalid_payload "Required"`, which is the assistant's schema
+    // refusing a body that has no `text`. It was reachable in its own tests,
+    // which mount this router alone, and that is why nothing caught it.
+    //
+    // The two bodies are disjoint: a typed command carries `type`, the
+    // assistant carries `text`. So this handler claims exactly the bodies it
+    // was written for and yields the rest — BEFORE authenticating, so a body
+    // meant for the assistant reaches it in exactly the state it did before.
+    // `routes/index.ts` now mounts this router first, and
+    // `check:route-shadowing` fails on any other pair of routers that register
+    // one path without a divider like this one.
+    const rawBody = (req.body ?? {}) as Record<string, unknown>;
+    if (!("type" in rawBody)) {
+      next();
+      return;
+    }
+
     const auth = await requireUser(req, res);
     if (!auth) return;
     const { user } = auth;
 
-    const body = (req.body ?? {}) as Record<string, unknown>;
+    const body = rawBody;
 
     // A body that names an actor is refused, not ignored. See the header.
     if ("actorUserId" in body || "actorId" in body || "senderId" in body) {
