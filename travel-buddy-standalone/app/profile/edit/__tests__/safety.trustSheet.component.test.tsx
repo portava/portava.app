@@ -7,7 +7,19 @@
  * 2. Tapping the X (close) button hides the sheet.
  * 3. Tapping the backdrop also hides the sheet.
  * 4. When trustScoreBreakdown is null the sheet still opens and shows the
- *    tier-guide fallback ("80–100" range row) instead of factor rows.
+ *    explanatory fallback instead of factor rows — and that fallback no longer
+ *    asserts a second standing vocabulary.
+ *
+ *    The fallback used to be a `TierGuide` of five score bands ("80–100 Trusted
+ *    Traveler", "60–79 Community Member", …). Those names contradicted the
+ *    server's own words for the same scores (`presentationWord` in
+ *    artifacts/api-server/src/services/passport/PassportProjectionService.ts:
+ *    >=80 Excellent, >=65 Strong, >=50 Established, >=35 Building, else New), so
+ *    a 72 was "Strong" to the server and "Community Member" to the guide that
+ *    existed to explain it. The band table is gone; the fallback now shows the
+ *    basis explanation the app already ships (BASIS_NOTE in
+ *    src/features/passport/useTrustProjection.ts). This case asserts the
+ *    fallback still renders AND that the contradicting names are absent.
  *
  * ## Why these tests exist
  *
@@ -128,7 +140,10 @@ function makeProfile(overrides: Record<string, unknown> = {}) {
     openToMeet: false,
     isPrivate: false,
     trustScore: 72,
-    trustLabel: 'Community Member',
+    // The SERVER owns the standing word, and for a 72 it returns "Strong"
+    // (`presentationWord`, >=65). The fixture used to say "Community Member" —
+    // a name from the client-side band table this screen no longer ships.
+    trustLabel: 'Strong',
     trustScoreBreakdown: {
       factors: [
         {
@@ -240,7 +255,7 @@ describe('SafetyVerificationScreen — Trust Score sheet', () => {
     await waitFor(() => expect(screen.queryByText('Trust Score')).toBeNull());
   });
 
-  it('shows the tier-guide fallback when trustScoreBreakdown is null', async () => {
+  it('shows the explanatory fallback, with no competing band vocabulary, when trustScoreBreakdown is null', async () => {
     mockGetMyProfile.mockResolvedValue({
       ok: true,
       data: makeProfile({ trustScoreBreakdown: null }),
@@ -257,9 +272,38 @@ describe('SafetyVerificationScreen — Trust Score sheet', () => {
       fireEvent.press(screen.getByText('Trust'));
     });
 
-    // Sheet opens and shows the tier-guide rows.
+    // Sheet opens on the fallback branch, not the factor-breakdown branch.
     await waitFor(() => expect(screen.getByText('Trust Score')).toBeTruthy());
-    expect(screen.getByText('80–100')).toBeTruthy();
-    expect(screen.getByText('Trusted Traveler')).toBeTruthy();
+    expect(screen.queryByText('HOW YOUR SCORE IS CALCULATED')).toBeNull();
+
+    // The fallback still EXPLAINS the score — what it is, and what a standing
+    // rests on when it is not a direct measurement.
+    expect(screen.getByText('HOW IT WORKS')).toBeTruthy();
+    expect(
+      screen.getByText(/ID verification, passport stamps, account age/),
+    ).toBeTruthy();
+    expect(screen.getByText('WHAT A STANDING RESTS ON')).toBeTruthy();
+    expect(
+      screen.getByText('Not yet measured — shown at the neutral starting point.'),
+    ).toBeTruthy();
+
+    // The server's word for this profile is what the person reads (it appears
+    // both on the Trust row behind the sheet and in the sheet's score pill)...
+    expect(screen.getAllByText(/Strong/).length).toBeGreaterThan(0);
+
+    // ...and nothing on the sheet offers a competing name. The removed band
+    // table would have printed "Community Member" for this same 72.
+    for (const band of [
+      'Trusted Traveler',
+      'Community Member',
+      'Growing Traveler',
+      'New Explorer',
+      'Getting Started',
+    ]) {
+      expect(screen.queryByText(band)).toBeNull();
+    }
+    for (const range of ['80–100', '60–79', '40–59', '20–39', '0–19']) {
+      expect(screen.queryByText(range)).toBeNull();
+    }
   });
 });
