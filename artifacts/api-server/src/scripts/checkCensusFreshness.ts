@@ -378,6 +378,68 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/test/tripCloseout.test.ts",
   ],
   "census-layover.md": [
+    // ── ADDED 2026-09-22 by the INTEGRATING lane, because check:census-scope-coverage
+    // ── went red and the remedy it prescribes is this one, never the floor.
+    //
+    // MEASURED BOTH SIDES BEFORE TOUCHING ANYTHING. At `4f89330b9` — the six-lane
+    // merge, before §41-§44 were written — this census was ALREADY at 89 % against
+    // its 0.97 floor. So the gap arrived with the lanes' own citations and §41-§44
+    // took it 89 % -> 87 %; it is not a defect this pass introduced, and it is not
+    // one this pass gets to leave either. The census-highlights-memories half of
+    // the same failure IS this pass's and is fixed in that entry.
+    //
+    // Every path below is a subject this census GRADES, not a file it mentions:
+    //   lib/providers/routeCorridorProvider.ts + returnRouteRisk.ts and their two
+    //     suites — the routed corridor §12.1 wired into the certified action
+    //     universe; six rows (L60, L68-L71, L282) moved N -> W on them.
+    //   test/layoverApiLifecycle.test.ts — §41 moves L239 and L221 on it.
+    //   lib/layoverExternalEventScheduler.ts + routes/layoverEvents.ts +
+    //     test/db/layoverExternalEventsDedup.db.test.ts — §40's ingest, drain and
+    //     real-database suite.
+    //   lib/layoverCrewExpiryScheduler.ts — the crew half of the same chain.
+    //   lib/crowdState.ts — L276's whole verdict is about what this module exports
+    //     and whether the airport surface calls it (§43's "capability that exists
+    //     in lib/ and is never called is NOT BUILT in this census's usage").
+    //   migrations 2981, 2982, 2986, 2992 — layover migrations this census cites
+    //     by name; 2986 is §42's fanout indexes.
+    //   travel-buddy-standalone/src/lib/layoverPlanCache.ts and the sensing-cadence
+    //     suite — L151/L233's offline cache and the L164/L168 guard §41.4 rests on.
+    //
+    //   test/schedulerRegistration.test.ts — added on a SECOND look, and the
+    //     distinction from test/docCitations.test.ts is worth stating because the
+    //     first draft of this entry got it wrong and excluded both as "a guard's
+    //     own suite". They are not the same. The census rests a factual claim on
+    //     the scheduler guard's STATE — "before this it was an exported function
+    //     nothing called, which is the state `schedulerRegistration.test.ts`
+    //     exists to refuse, and that test was red until the call was added" — so
+    //     its red/green is the evidence for a row's "IS scheduled" half. The
+    //     citation guard, by contrast, is a corpus-wide tool this census reports
+    //     on. Evidence goes in scope; instrumentation does not.
+    //
+    // STILL DELIBERATELY NOT ADDED, extending the list the floor comment in
+    // checkCensusScopeCoverage.ts already names: test/docCitations.test.ts is a
+    // guard's own suite — machinery this census REPORTS ON rather than grades;
+    // routes/messaging.ts and
+    // 2795_trip_kernel_write_guards.sql belong to Telegraph and Trips; and
+    // lib/capability/snapshots/current.ts is corpus-wide capability machinery that
+    // every census cites when it needs to say what production carries.
+    "artifacts/api-server/src/lib/providers/routeCorridorProvider.ts",
+    "artifacts/api-server/src/lib/providers/returnRouteRisk.ts",
+    "artifacts/api-server/src/test/providerRouteCorridor.test.ts",
+    "artifacts/api-server/src/test/providerReturnRouteRisk.test.ts",
+    "artifacts/api-server/src/test/layoverApiLifecycle.test.ts",
+    "artifacts/api-server/src/lib/layoverCrewExpiryScheduler.ts",
+    "artifacts/api-server/src/lib/layoverExternalEventScheduler.ts",
+    "artifacts/api-server/src/test/schedulerRegistration.test.ts",
+    "artifacts/api-server/src/lib/crowdState.ts",
+    "artifacts/api-server/src/routes/layoverEvents.ts",
+    "artifacts/api-server/src/test/db/layoverExternalEventsDedup.db.test.ts",
+    "artifacts/api-server/src/migrations/2981_layover_event_ingest_flag.sql",
+    "artifacts/api-server/src/migrations/2982_layover_traveller_observation_submissions.sql",
+    "artifacts/api-server/src/migrations/2986_layover_sessions_fanout_indexes.sql",
+    "artifacts/api-server/src/migrations/2992_layover_decision_record_and_operational_tables.sql",
+    "travel-buddy-standalone/src/lib/layoverPlanCache.ts",
+    "travel-buddy-standalone/src/lib/__tests__/layoverSensingCadence.test.ts",
     // ── ADDED 2026-09-15: §24's own two modules, which §24.9 says are covered ──
     // by an acknowledgement and which NOTHING was watching, so they could not be.
     //
@@ -601,6 +663,26 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/migrations/2462_meetup_time_votes_write_boundary.sql",
   ],
   "census-highlights-memories.md": [
+    // ── ADDED 2026-09-22 by the INTEGRATING lane. THIS HALF IS THIS PASS'S OWN
+    // ── DEFECT, measured rather than assumed: at `4f89330b9` this census was at
+    // 99 % against its 0.98 floor, and §W and §X took it to 97 %. The layover
+    // entry's gap predates the same pass; this one does not.
+    //
+    // Both paths are subjects this census grades:
+    //   2994_memory_relations_and_outbox_consumer.sql — `memory_relations`, the
+    //     outbox claim/ack/fail functions and the claimable index, all of which
+    //     §12.2-§12.3 and the H1xx outbox rows turn on.
+    //   test/highlightsApiUnhideBoundary.test.ts — §X repoints it to the
+    //     three-artifact invariant over the vocabulary, the applier and the route,
+    //     and grades H159's boundary on it.
+    //
+    // NOT ADDED, on the precedent the layover entry above extends:
+    // scripts/migrationPrefixRules.ts is a guard module §X.4 cites as EVIDENCE
+    // about the 2100-2999 band — machinery this census reports on, not a subject —
+    // and 0179_stamp_criteria_engine.sql belongs to Passport and is cited in
+    // passing.
+    "artifacts/api-server/src/migrations/2994_memory_relations_and_outbox_consumer.sql",
+    "artifacts/api-server/src/test/highlightsApiUnhideBoundary.test.ts",
     // ── ADDED 2026-09-15: §M and §O's OWN suites, which the ledger could not ──
     // name because this scope did not.
     //
