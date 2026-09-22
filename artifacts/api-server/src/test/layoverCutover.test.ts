@@ -49,6 +49,20 @@ const REAL_MEASUREMENT = join(API_ROOT, "src", "lib", "capability", "layover-cut
 const DELETE_KEY = Symbol.for("layoverCutover.deleteKey") as unknown as unknown;
 const REAL_APPLIED = join(API_ROOT, "src", "lib", "capability", "production-applied-migrations.json");
 
+/**
+ * Today as `YYYY-MM-DD`, from the same clock the checker ages a measurement
+ * against (`Date.now()` in layoverCutoverEvaluate.ts).
+ *
+ * THE AGE RULE IS CORRECT AND IS NOT RELAXED HERE. A real measurement genuinely
+ * does go stale, and when the committed artifact passes 30 days somebody really
+ * should re-run `measure:layover-cutover-sql`. What was wrong was a TEST
+ * asserting the committed artifact is fresh RIGHT NOW — a claim about the date
+ * the suite runs on, not about the checker. Measured: with the process clock
+ * shifted forward 45 days, two cases here failed with
+ * "taken 58 day(s) ago, past the 30-day threshold".
+ */
+const today = (): string => new Date().toISOString().slice(0, 10);
+
 const MIGRATION = "2411_layover_recommendation_rec_key_backfill.sql";
 const ROLLBACK = "2026-09-08-2411-layover-rec-key-backfill-rollback.sql";
 
@@ -249,6 +263,14 @@ describe("condition 2 — NON_VACUITY", () => {
   const measurement = (extra: Record<string, unknown>) => writeJson("meas", "m.json", {
     ...JSON.parse(readFileSync(REAL_MEASUREMENT, "utf8")),
     legacyModerated: 4,
+    // DATED FROM THE CLOCK, NOT PINNED. Every fixture built here is meant to be
+    // a measurement the freshness rules ACCEPT, so that what the case proves is
+    // the thing it names. Inheriting the committed artifact's `measuredAt`
+    // instead makes each one an assertion about today: fine until the artifact
+    // ages past MEASUREMENT_MAX_AGE_DAYS, then red for a reason none of these
+    // cases is about. A case that wants a specific date still passes one in
+    // `extra`, which spreads after this and wins.
+    measuredAt: today(),
     ...extra,
   });
 
@@ -383,21 +405,50 @@ describe("condition 2 — NON_VACUITY", () => {
     assert.match(out, /schemaWatermark 20260101000000 is behind/);
   });
 
-  it("the REAL artifact passes every freshness rule, and still blocks on its own numbers", () => {
-    // The positive control. Without it, a freshness rule that rejected every
-    // measurement would pass all seven cases above while making the artifact
-    // mechanism unusable — and the blocker below would look like freshness when
-    // it is really the measured fact.
-    const { code, out } = run({}, ["--verdict"]);
+  it("the AGE rule ACCEPTS the real artifact when it is current — the mechanism is not hard-wired to NO", () => {
+    // The positive control for freshness. Without it, a rule that rejected
+    // every measurement would pass all seven cases above while making the
+    // artifact mechanism unusable — and the blocker below would look like
+    // freshness when it is really the measured fact.
+    //
+    // This is the REAL artifact, with exactly one field moved: `measuredAt`,
+    // set to today. Its counts, projectRef, flag state, prerequisites and
+    // derivationChecksum are all the committed ones, so the acceptance being
+    // proved is the real artifact's. Only the claim that is inherently about
+    // WHEN is judged against the clock the checker itself reads. Asserting this
+    // on the committed date instead would make the case go red on the day the
+    // artifact turns 31 days old, which is a fact about the calendar and not
+    // about this checker — the separate case above is what proves the age rule
+    // still FIRES.
+    const { code, out } = withMeasurement("fresh", { measuredAt: today() });
     assert.equal(code, 1, out);
     assert.doesNotMatch(out, /STALE MEASUREMENT/);
+    assert.doesNotMatch(out, /carries no/);
+    assert.match(out, /measurement is \d+ day\(s\) old \(threshold 30\)/);
+    // and the ONE thing blocking it is the measured fact, not the paperwork
+    assert.match(out, /VACUOUS FOR ITS PURPOSE: legacyModerated = 0/);
+    assert.match(out, /VERDICT: NOT SAFE TO APPLY\. Blocked by: NON_VACUITY\./);
+  });
+
+  it("the REAL artifact, untouched, satisfies every freshness rule that does not depend on today", () => {
+    // The real-tree control: NO seam override at all. Everything asserted here
+    // is a property of the committed artifact against the committed tree, so it
+    // is true on every calendar day. The age-dependent half is the case above.
+    const { code, out } = run({}, ["--verdict"]);
+    assert.equal(code, 1, out);
     assert.doesNotMatch(out, /carries no/);
     assert.match(out, /derivationChecksum \w+ matches 2411's current rec_key derivation/);
     assert.match(out, /was FALSE when measured, matching the snapshot/);
     assert.match(out, /observed both 2410 prerequisites/);
-    // and the ONE thing blocking it is the measured fact, not the paperwork
+    // The measured fact that blocks it — true whatever day this runs.
     assert.match(out, /VACUOUS FOR ITS PURPOSE: legacyModerated = 0/);
-    assert.match(out, /VERDICT: NOT SAFE TO APPLY\. Blocked by: NON_VACUITY\./);
+    assert.match(out, /VERDICT: NOT SAFE TO APPLY\./);
+    // Deliberately NOT asserted here: `Blocked by: NON_VACUITY.` EXACTLY, i.e.
+    // that NON_VACUITY is the only blocker. That is a claim about the blocker
+    // SET, and the set grows by one the day the committed artifact passes 30
+    // days old. The case above pins it exactly, on an artifact dated from the
+    // clock, which is where a statement about "the one thing blocking it"
+    // can be true every day rather than only until a deadline.
   });
 });
 

@@ -30,6 +30,7 @@ import { logger as rootLogger } from '../lib/logger';
 import {
   resolvePolicy,
   isKnownContext,
+  KNOWN_CONTEXTS,
   POLICY_VERSION,
 } from '../lib/inputAssistance/policyRegistry';
 import { generateSuggestions } from '../lib/inputAssistance/gateway';
@@ -105,6 +106,73 @@ function parseCreationDraft(raw: unknown): CreationDraft | undefined {
   if (lng !== undefined) out.lng = lng;
   return Object.keys(out).length > 0 ? out : undefined;
 }
+
+// ── G340 §48: the AUTHORITATIVE policy registry, served ──────────────────────
+//
+// THE DEFECT THIS CLOSES. `POLICY_VERSION` has travelled on every response
+// since Phase 1, but there was nothing to FETCH — so a shipped client could
+// learn that its policies were stale and had no way to get the current ones.
+// The client therefore re-declared all 29 contexts locally, and the two copies
+// drifted: measured 2026-09-21, 26 of 29 contexts disagreed on
+// `allowedSuggestionTypes` and 2 on `defaultMode`. A mirror with no source is
+// not a cache, it is a second authority.
+//
+// WHY THIS IS A GET WITH NO BODY AND NO VIEWER SCOPE. The registry is the same
+// for every caller: it declares what KINDS of assistance a field may carry, not
+// anything about a person. Nothing here is viewer-scoped, so nothing here needs
+// a viewer to scope it — and making it anonymous is what lets a client fetch
+// its policies BEFORE the user signs in, which is when it most needs them.
+// Authentication is still required, because an unauthenticated caller has no
+// field to apply a policy to and the surface is not a public API.
+//
+// WHAT IS DELIBERATELY NOT SERVED: `telemetryPolicy`. It governs what the
+// SERVER logs, the client cannot alter it, and shipping it would invite a
+// client to believe it may choose. The client's own telemetry gate reads
+// `privacyClass`, which IS served.
+router.get(
+  '/input-assistance/policies',
+  asyncHandler(async (req, res) => {
+    const auth = await requireUser(req, res);
+    if (!auth) return;
+
+    // The HANDLER touches no database — it projects an in-memory registry and
+    // allocates one object per context. (`requireUser` above does read
+    // `profiles.account_status`; that is the §9 account gate every route pays,
+    // not something this one adds.) The limit exists so a client loop cannot
+    // turn a cheap read into a hot one, and is deliberately generous: a correct
+    // client fetches this once per cold start and then on a version change.
+    const rl = checkRateLimit('input_assist_policies', auth.user.id, 30, 60_000);
+    if (!rl.allowed) {
+      res.setHeader('Retry-After', Math.ceil(rl.retryAfterMs / 1000).toString());
+      sendError(res, 'rate_limited', 'Too many policy fetches. Please wait.');
+      return;
+    }
+
+    const contexts: Record<string, unknown> = {};
+    for (const context of KNOWN_CONTEXTS) {
+      const p = resolvePolicy(context);
+      if (!p) continue;
+      contexts[context] = {
+        context,
+        mode: p.mode,
+        allowedSuggestionTypes: p.allowedSuggestionTypes,
+        entityTypes: p.entityTypes,
+        allowPersonalization: p.allowPersonalization,
+        allowLiveContext: p.allowLiveContext,
+        allowMemoryContext: p.allowMemoryContext,
+        allowAI: p.allowAI,
+        minChars: p.minChars,
+        maxSuggestions: p.maxSuggestions,
+        debounceMs: p.debounceMs,
+        offlinePolicy: p.offlinePolicy,
+        privacyClass: p.privacyClass,
+        zeroStateAssistance: p.zeroStateAssistance,
+      };
+    }
+
+    res.status(200).json({ policyVersion: POLICY_VERSION, contexts });
+  }),
+);
 
 router.post(
   '/input-assistance/suggest',

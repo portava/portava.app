@@ -42,6 +42,24 @@ import { registerField, unregisterField } from '../../contexts/fieldRegistry.ts'
 import { sharedSuggestionCache, SuggestionCache } from '../../services/suggestionCache.ts';
 import type { InputSuggestion } from '../../types/inputSuggestion.ts';
 
+// ── SEEDED 2026-09-21 (G340) ────────────────────────────────────────────────
+// `useInputAssistance` derives its policy from the context descriptor, which
+// since G340 comes from `GET /input-assistance/policies` rather than a local
+// table. With nothing fetched every context resolves CONSERVATIVE — mode
+// `no_assistance`, an unreachable `minChars` — so the hook correctly makes no
+// request and renders no rows, and every assertion below about suggestions
+// would be vacuous. Seeding states the premise these tests always relied on.
+import { INPUT_CONTEXTS as _SEED_CONTEXTS } from '../../types/inputContext.ts';
+import { _seedPolicyForTests as _seedPolicy } from '../../services/policyStore.ts';
+// `telegraph_recipient` is seeded VIEWER-SCOPED on purpose: the §29 cases below
+// exist to prove an uncacheable field never reads or writes the process-global
+// cache, and that is only a real assertion if the authority actually classifies
+// it as one. The blanket template is `public`, which is the one class the cache
+// admits — seeding it unchanged would have made those cases pass for the wrong
+// reason.
+_seedPolicy(_SEED_CONTEXTS, { telegraph_recipient: { privacyClass: 'viewer_scoped' } });
+
+
 const mockRequest = requestSuggestions as jest.MockedFunction<typeof requestSuggestions>;
 
 const FIELD = 'test.trip.destination';
@@ -140,4 +158,50 @@ test('§29: an uncacheable (personal) field never READS a local list, even one a
 
   await waitFor(() => expect(screen.getByTestId('unavailable').props.children).toBe('true'));
   expect(screen.getByTestId('labels').props.children).toBe('');
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// §32 / G340 — `server_required` is ENFORCED HERE, not merely declared
+// ═══════════════════════════════════════════════════════════════════════════════
+//
+// §29 aligned the two `OfflineInputPolicy` unions so the authority's value could
+// ARRIVE on the client intact, and said plainly that alignment alone changes
+// nothing a user sees. These two cases are the difference. They run the real
+// hook through the real consumer path with the real cache, and the ONLY thing
+// that differs between them is what the authority says about the field.
+//
+// The case above — "network loss RETAINS the narrowed local rows" — is §33's
+// general rule and stays true for a field with an offline surface. This is the
+// per-field narrowing: for the nine contexts the authority marks
+// `server_required`, retaining rows is assistance it declined to license, shown
+// at the one moment nothing can re-check it.
+
+test('§32: on network loss a `server_required` field shows NOTHING, however warm the cache', async () => {
+  _seedPolicy(_SEED_CONTEXTS, { trip_destination: { offlinePolicy: 'server_required' } });
+  const { rerender } = await primeCacheForBan();
+
+  // A cached prefix EXISTS and would be retained for a field with an offline
+  // surface — the case two above proves exactly that. This one has none.
+  mockRequest.mockResolvedValueOnce({ ok: false, aborted: false, unavailable: true, error: 'endpoint unavailable' });
+  rerender(<Probe fieldId={FIELD} text="bangk" />);
+
+  await waitFor(() => expect(screen.getByTestId('unavailable').props.children).toBe('true'));
+  expect(screen.getByTestId('labels').props.children).toBe('');
+});
+
+test('NOT VACUOUS: the same field and the same cache, with `cached_local`, DO retain', async () => {
+  // Without this the case above would also pass against a hook that simply
+  // stopped retaining anything — the other way to be wrong, and one that would
+  // silently delete §33's stale-while-revalidate behaviour for every field.
+  _seedPolicy(_SEED_CONTEXTS, { trip_destination: { offlinePolicy: 'cached_local' } });
+  const { rerender } = await primeCacheForBan();
+
+  mockRequest.mockResolvedValueOnce({ ok: false, aborted: false, unavailable: true, error: 'endpoint unavailable' });
+  rerender(<Probe fieldId={FIELD} text="bangk" />);
+
+  await waitFor(() => expect(screen.getByTestId('unavailable').props.children).toBe('true'));
+  expect(screen.getByTestId('labels').props.children).toBe('Bangkok');
+
+  // Restore the blanket seed so ordering between files cannot matter.
+  _seedPolicy(_SEED_CONTEXTS, { telegraph_recipient: { privacyClass: 'viewer_scoped' } });
 });

@@ -20,7 +20,8 @@ import type {
   SuggestRequest,
   SuggestResult,
 } from '../types/inputSuggestion.ts';
-import { INPUT_POLICY_VERSION } from '../contexts/inputContexts.ts';
+import { inputPolicyVersion } from '../contexts/inputContexts.ts';
+import { sharedPolicyStore } from './policyStore.ts';
 import { buildSuggestBody } from './suggestBody.ts';
 import { parseSuggestBody, isSchemaCompatible, type RawSuggestBody } from './suggestResponse.ts';
 import { CLIENT_SCHEMA_VERSION } from '../contexts/clientCapabilities.ts';
@@ -103,10 +104,22 @@ export async function requestSuggestions(
       };
     }
 
+    // The authority's own statement of which policy table produced this serve.
+    // Recording it is what lets the store notice, under a live session, that
+    // the table it holds has been retired — §48's promise, which had no
+    // mechanism behind it while there was no endpoint to refetch from.
+    sharedPolicyStore.noteServedVersion(parsed.policyVersion ?? null);
+
     return {
       ok: true,
       requestId: parsed.requestId,
-      policyVersion: parsed.policyVersion ?? INPUT_POLICY_VERSION,
+      // §48 SKEW DETECTION, which this line used to defeat. It read
+      // `?? INPUT_POLICY_VERSION` — a constant baked in at BUILD time — so a
+      // deployment that sent no version was reported as running whatever
+      // version the client was compiled against. The one field designed to
+      // notice skew always agreed with itself. It now falls back to what the
+      // store actually HOLDS (`'unfetched'` when it holds nothing).
+      policyVersion: parsed.policyVersion ?? inputPolicyVersion(),
       suggestions: parsed.suggestions,
       // §44/§57 serve latency (census G372). ABSENT, never 0, when the server
       // did not send it — see suggestResponse.ts.
