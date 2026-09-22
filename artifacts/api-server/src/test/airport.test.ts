@@ -44,6 +44,8 @@ import {
   shouldSuggestSafeReturn,
 } from "../services/airport/LayoverNotificationService.js";
 import { detectIntent } from "../services/telegraphIntent.js";
+import { readFileSync } from "node:fs";
+import { PRODUCTION_SNAPSHOT_FILENAME, PRODUCTION_SNAPSHOT_URL } from "../lib/capability/snapshots/current.js";
 
 // ── Fake client ───────────────────────────────────────────────────────────────
 
@@ -61,9 +63,17 @@ function makeTables(): FakeTables {
     layover_sessions:      [],
     layover_recommendations: [],
     layover_events:        [],
+    // `flag`, not `key`. This fixture carried `key:` for the whole life of the
+    // file: `feature_flags` has no `key` column on production (the capture in
+    // src/lib/capability/snapshots names `description, enabled, flag, metadata,
+    // updated_at`) and `lib/featureFlags.ts` filters on `.eq("flag", flag)`. A
+    // hand-rolled `r[col] === val` fake cannot see that — it is exactly the
+    // structure census-layover L295 calls "structurally incapable" — so the
+    // fiction sat here unchallenged. The suite at the foot of this file is what
+    // stops the next one.
     feature_flags:         [
-      { key: "airport_mode_enabled",          enabled: true },
-      { key: "layover_safety_engine_enabled", enabled: true },
+      { flag: "airport_mode_enabled",          enabled: true },
+      { flag: "layover_safety_engine_enabled", enabled: true },
     ],
   };
 }
@@ -937,5 +947,81 @@ describe("timeOfDayContext precision", () => {
     // Departure 20:00 local would cover the evening; boarding 16:45 must not.
     const tod = timeOfDayContext(airport, s, new Date(s.arrivalTime).getTime());
     assert.equal(tod.coversEvening, false);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// census-layover C3 / L295 — THIS FILE'S OWN FIXTURES, CHECKED
+// ─────────────────────────────────────────────────────────────────────────────
+/**
+ * L295 names this file by name:
+ *
+ *   "What is missing is the fixture half: `test/airport.test.ts` uses a
+ *    hand-rolled fake client whose filters are `r[col] === val` predicates,
+ *    exactly the structure `checkEnumLiterals.ts:20-27` documents as
+ *    'structurally incapable' of catching a bad literal."
+ *
+ * It was right, and it understated the damage: the fake above cannot catch a
+ * bad COLUMN either, and one was sitting in the fixture. `feature_flags` was
+ * seeded with a `key` column that production does not have — the real column is
+ * `flag`, which is what `lib/featureFlags.ts` filters on — so those two rows
+ * could never have matched a real query. Nothing failed, because nothing asked.
+ *
+ * This suite asks. Every column name this file seeds is checked against the
+ * committed production capture, the one `snapshots/current.ts` names. It does
+ * not make the fake client schema-aware — `src/test/layoverApiProductionSchema.
+ * test.ts` does that for the ROUTES, where the queries are — but it does mean a
+ * fixture in this file can no longer pin a column that does not exist.
+ *
+ * It is not a CI database and does not claim to be one. L295 asks for a layover
+ * test that runs against a real schema; this runs against a captured one.
+ */
+type ProductionSnapshot = {
+  projectRef: string;
+  productionMigrationWatermark: string;
+  tables: Record<string, string[]>;
+};
+
+const PRODUCTION: ProductionSnapshot = JSON.parse(readFileSync(PRODUCTION_SNAPSHOT_URL, "utf8"));
+
+/** Every seeded row in this file, with the table it claims to be a row of. */
+function seededFixtures(): Array<{ table: string; row: Record<string, unknown> }> {
+  const tables = makeTables();
+  tables.airport_profiles.push(TPE_AIRPORT);
+  const out: Array<{ table: string; row: Record<string, unknown> }> = [];
+  for (const [table, rows] of Object.entries(tables)) {
+    for (const row of rows as Array<Record<string, unknown>>) out.push({ table, row });
+  }
+  return out;
+}
+
+describe("census L295 — the fixtures in this file name only production columns", () => {
+  it("the capture is production's, and it is the one the repository points at", () => {
+    assert.equal(PRODUCTION.projectRef, "ajrurzioarfkagpuxfnb");
+    assert.match(PRODUCTION.productionMigrationWatermark, /^\d{14}$/);
+    assert.ok(PRODUCTION_SNAPSHOT_FILENAME.endsWith("-production-schema.json"));
+  });
+
+  it("is non-vacuous: it has rows to check, and it can tell a dead column", () => {
+    const fixtures = seededFixtures();
+    assert.ok(fixtures.length > 0, "there must be seeded rows for this to mean anything");
+    // The control. `feature_flags.key` is the column this suite was written for.
+    assert.ok(
+      !PRODUCTION.tables.feature_flags.includes("key"),
+      "production has grown a feature_flags.key column — this control is no longer a control",
+    );
+    assert.ok(PRODUCTION.tables.feature_flags.includes("flag"));
+  });
+
+  it("every seeded column exists on production", () => {
+    const dead: string[] = [];
+    for (const { table, row } of seededFixtures()) {
+      const live = PRODUCTION.tables[table];
+      assert.ok(live, `${table} is not in ${PRODUCTION_SNAPSHOT_FILENAME}`);
+      for (const col of Object.keys(row)) {
+        if (!live.includes(col)) dead.push(`${table}.${col}`);
+      }
+    }
+    assert.deepEqual(dead, [], `fixtures name columns production does not have: ${dead.join(", ")}`);
   });
 });

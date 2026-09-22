@@ -2257,7 +2257,7 @@ router.get("/airport/sessions/:id/overview", async (req, res) => {
     estimates:     record.estimates,
     // The dashboard's copy of the §2.1/§22 disclosure — see GET /:id/safety.
     airportIntelligence: airportIntelligence(record),
-    stops,
+    stops: await bandPlanStops(airport, record, stops),
     planFit,
     share: {
       enabled: session.shareCityStatus,
@@ -2372,7 +2372,7 @@ async function respondWithStops(res: any, sc: any, session: LayoverSession) {
   if (!stops) return;
   res.json({
     ok: true,
-    stops,
+    stops: await bandPlanStops(airport, record, stops),
     planFit: computePlanFit(record, stops),
     certification: certificationHeader(record),
   });
@@ -2595,7 +2595,7 @@ router.delete("/airport/sessions/:id/stops/:stopId", async (req, res) => {
   if (!remainingRead.ok) logger.warn({ sessionId: session.id }, "stop-order compaction skipped — layover_plan_stops unreadable");
   for (let i = 0; i < remaining.length; i++) {
     if (remaining[i].stopOrder !== i) {
-      await sc.from("layover_plan_stops").update({ stop_order: i }).eq("id", remaining[i].id);
+      await sc.from("layover_plan_stops").update({ stop_order: i }).eq("id", remaining[i].id).eq("session_id", session.id);
     }
   }
 
@@ -4167,3 +4167,110 @@ router.post("/admin/airport/reports/:id/resolve", async (req, res) => {
 });
 
 export default router;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PER-PIN FEASIBILITY ON THE TRAVELLER'S OWN PLAN — census L17 / L115 / L270
+// ─────────────────────────────────────────────────────────────────────────────
+/**
+ * THE THREE IMPORTS THIS FUNCTION NEEDS, DECLARED HERE RATHER THAN AT THE TOP.
+ *
+ * An `import` declaration is legal at any top level of a module and is hoisted
+ * wherever it sits, so this is a placement choice and not a trick. The reason is
+ * the one the function's own comment gives below: two census documents carry
+ * ANCHORED citations (`path:line#literal`) into this file as far down as line
+ * 3806, `check:doc-citations` re-reads every one against the line it names, and
+ * this lane may not edit either document. Adding two lines to the import block
+ * would move eighteen of them. Everything this pass added therefore lives past
+ * the last citation, imports included, and every call site is a line-for-line
+ * substitution.
+ */
+import { bandCandidates } from "../services/airport/LayoverEnvelope.js";
+import { placePoint } from "../services/airport/LayoverTravelTime.js";
+import {
+  candidateFeasibilityFrom,
+  AIRSIDE_UNBANDED_REASON,
+  NO_POSITION_UNBANDED_REASON,
+} from "../services/airport/layoverRankingFeasibility.js";
+
+/**
+ * Band every plan stop against the certified envelope this request already cut.
+ *
+ * ── THE GAP THIS CLOSES ──────────────────────────────────────────────────────
+ * census-layover L17 ("Map visualises the certified envelope / recommendations
+ * / routes") and L115 ("Map consumes the active snapshot and envelope
+ * geometry") both end on the same sentence: the map "visualises nothing the
+ * requirement names: no envelope, no route, no PER-PIN FEASIBILITY". Half of
+ * that is stale — `GET /:id/overview` has published `safeEnvelope`, a centre
+ * and a radius, since census L63, and geometry is exactly what that is. The
+ * per-pin half was true. `generateRecommendations` has banded its CANDIDATE
+ * cards against that same disc for several passes
+ * (`services/airport/LayoverRecommendationService.ts`), and the plan the
+ * traveller actually built was the one surface that never asked: a stop came
+ * back with a title, a duration, a coordinate and no statement at all about
+ * whether the certified window reaches it.
+ *
+ * ── NO SECOND DERIVATION ─────────────────────────────────────────────────────
+ * Every number here comes from the record the caller already certified. The
+ * envelope is `safeEnvelopeFor(airport, record)` — the same call, with the same
+ * confidence haircut, that the response publishes as `safeEnvelope`, so a pin
+ * that is blocked lies outside the radius drawn beside it. The band is
+ * `bandCandidates`, the same function the recommendation path uses, at the same
+ * default provider, so a place is judged the same way whether it arrives as a
+ * card or as a stop somebody already planned. `certifySessionFeasibility` is
+ * NOT called: `src/test/layoverFeasibilityRecord.test.ts` pins the
+ * certification sites in this file to a named list of handlers, and adding one
+ * here would be a second derivation of the very thing that list exists to
+ * prevent.
+ *
+ * ── AN ABSENCE IS PUBLISHED AS AN ABSENCE ────────────────────────────────────
+ * Two stops cannot be banded and neither is given a band that looks measured:
+ * an AIRSIDE stop has no landside journey to measure, and a landside stop with
+ * no coordinate could not be placed. Both come back `certified: false` with the
+ * layover domain's own reason string — the same two constants the card path
+ * uses — and a NULL distance. A zero here would be the defect census L47 was
+ * opened for, one surface further along.
+ *
+ * ── WHY THIS FUNCTION IS AT THE FOOT OF THE FILE ─────────────────────────────
+ * Not style. `docs/architecture/census-layover.md` and
+ * `docs/architecture/census-highlights-memories.md` carry ANCHORED citations
+ * (`path:line#literal`) into this file as far down as line 3806, and
+ * `check:doc-citations` re-reads every one of them against the line it names.
+ * An insertion anywhere above that breaks eighteen of them in two documents
+ * this lane may not edit, which is the constraint §39 of census-layover
+ * measured and recorded ("every edit in this pass had to be append-only past
+ * the last cited line, or line-for-line"). So the call sites are line-for-line
+ * substitutions and the new code lives here, past the last citation.
+ */
+async function bandPlanStops(
+  airport: AirportProfile,
+  record: LayoverFeasibilityRecord,
+  stops: any[],
+): Promise<any[]> {
+  if (stops.length === 0) return stops;
+  // The SAME envelope the response publishes, from the SAME certified record.
+  const envelope = safeEnvelopeFor(airport, record);
+  const placeable = stops
+    .map((s) => ({ stop: s, point: s.insideAirport ? null : placePoint({ lat: s.lat, lng: s.lng }) }))
+    .filter((c) => c.point !== null);
+  const bands = await bandCandidates(
+    envelope,
+    placeable.map((c) => ({ key: c.stop.id as string, point: c.point })),
+    new Date(record.inputs.nowMs),
+  );
+  return stops.map((s) => {
+    const verdict = s.insideAirport ? undefined : bands.get(s.id as string);
+    const unbandedReason = s.insideAirport ? AIRSIDE_UNBANDED_REASON : NO_POSITION_UNBANDED_REASON;
+    return {
+      ...s,
+      envelope: {
+        ...candidateFeasibilityFrom(verdict, unbandedReason),
+        // The map's own three, which `CandidateFeasibility` does not carry.
+        // Null when nothing was measured — never a zero, which a surface would
+        // render as "next door".
+        distanceMetres: verdict?.distanceMetres ?? null,
+        roundTripLowerBoundMin: verdict?.roundTripLowerBoundMin ?? null,
+        returnDepartsAt: verdict?.returnDepartsAt ?? null,
+      },
+    };
+  });
+}
