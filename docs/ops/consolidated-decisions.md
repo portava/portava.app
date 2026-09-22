@@ -254,11 +254,28 @@ that instant, which is most of the gap §14.3 exists to deny.
 **What accepting it commits to, measured.**
 `artifacts/api-server/src/services/groupChatHistoryBound.ts:93#export function withinWindow`
 has **31 call sites across 13 files**, but it is one predicate, so all 31
-inherit the carve-out untouched. **14 of those paths also push the bound into
-the query first** as `.gte("created_at", <bound>)`, so a carve-out written only
-in `withinWindow` is discarded by PostgREST before any JavaScript runs — it
-would pass its unit tests and change nothing on search, coordination, memory or
-the Compass tools. Those 14 must be relaxed in the same commit.
+inherit the carve-out untouched. **18 of those paths also push the bound into
+the query first** as a `created_at` `.gte`, so a carve-out written only in
+`withinWindow` is discarded by PostgREST before any JavaScript runs — it would
+pass its unit tests and change nothing on search, coordination, memory or the
+Compass tools. Those 18 must be relaxed in the same commit.
+
+> **Correction, 2026-09-22.** This paragraph said **14**, and the brief the
+> implementation lane received said 14. The real number is **18**. The count
+> came from a grep that required a double-quoted column name
+> (`\.gte("created_at"`); four sites write it single-quoted and were never
+> seen: `routes/messaging.ts:2294` (the `GET /threads/:id/messages`
+> pagination surface), `routes/messaging.ts:2436` (the quoted-reply context
+> read — the leak this decision explicitly forbids), `routes/messaging.ts:1717`
+> (the read-marker threshold) and `routes/groupChat.ts:169` (the trip/circle
+> chat read). Had the lane worked only the list of 14, pagination and quoting
+> would have been untouched and the feature would have looked done while the
+> main read path still hid the rows. The lane re-derived the list rather than
+> trusting the brief and found the gap. Shipped in `ae3ab9740`, which relaxes
+> 17 of the 18 via `applyHistoryWindow` and records in place why the
+> eighteenth (`telegraphLifecycle.ts`'s seen-crossing scan, whose floor is the
+> caller's read marker rather than a §14.3 bound) is deliberately not
+> relaxed.
 
 **Consequence of no answer.** `telegraph_history_bound_enabled` stays off. This
 is the second of two independent holds; the first is the deploy.

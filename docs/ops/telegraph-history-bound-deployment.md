@@ -382,7 +382,7 @@ is corrected here rather than edited away. Counted over
     like a rewrite.
 
 **The bad news is the second layer, which the five-path figure missed entirely.**
-Fourteen of those paths ALSO push the bound into the query as
+Eighteen of those paths ALSO push the bound into the query as
 `.gte("created_at", <bound>)` before the predicate ever runs —
 `services/telegraphSearch.ts:177`, `services/telegraph/coordinationSessions.ts:115`,
 `compass/TelegraphConversationTools.ts:215` and `:396`,
@@ -396,12 +396,49 @@ experiences on those surfaces. Each pre-filter has to be relaxed to an `.or(...)
 carrying the same two clauses, or dropped so the predicate decides alone —
 a choice per site between a wider fetch and a correct one.
 
-So the real price is: one predicate change, plus fourteen query sites that must
+So the real price is: one predicate change, plus eighteen query sites that must
 be relaxed in the same commit or the change is a no-op where it is most
 visible (search, coordination, memory, the Compass tools). It is still small
 enough to do in one pass, and it is NOT the single-line migration patch the
 trigger invites. **Nothing here changes the recommendation; it changes what
 accepting it commits to, which is what an owner needs before answering.**
+
+##### Second correction, 2026-09-22: the count above was FOURTEEN, and four were missing
+
+This section corrected *five* to *thirty-one* once already, and got the second
+layer wrong in turn. The list read **fourteen**; the real number is
+**eighteen**. The cause is mechanical and worth naming, because it is the same
+class of error twice: the count came from a grep that required a
+double-quoted column name (`\.gte("created_at"`). Four sites spell it with
+single quotes, so they were never in the list — and they are the four that
+matter most:
+
+  * `artifacts/api-server/src/routes/messaging.ts:2323#applyHistoryWindow(query, visibleFrom, user.id)`
+    — `GET /threads/:id/messages`, **the pagination surface**, the single most
+    visible read in Telegraph.
+  * `artifacts/api-server/src/routes/messaging.ts:2487#applyHistoryWindow(quotedQuery, visibleFrom, user.id)`
+    — the quoted-reply context read, i.e. **the leak the decision explicitly
+    forbids**.
+  * `artifacts/api-server/src/routes/messaging.ts:1730#applyHistoryWindow(newestQuery, visibleFrom, user.id)`
+    — the read-marker / newest-message threshold.
+  * `artifacts/api-server/src/routes/groupChat.ts:175#applyHistoryWindow(q, visibleFrom, userId)`
+    — the trip and circle chat read.
+
+Those four line numbers are where the relaxation now sits, not where the old
+`.gte` sat. Had the implementation lane worked only the list of fourteen,
+pagination and quoting would have been untouched: the fix would have passed
+its own tests, changed search and coordination, and left the thread view a
+rejoined member actually opens still hiding their own messages. The lane
+re-derived the list from the source instead of trusting the brief, which is
+the only reason this is a correction and not a defect in production.
+
+Shipped in `ae3ab9740`. Seventeen of the eighteen are relaxed through
+`applyHistoryWindow`; the eighteenth, `routes/telegraphLifecycle.ts`'s
+seen-crossing scan, is deliberately **not** relaxed and says so in place — its
+floor is the caller's own read marker rather than a §14.3 bound, so widening
+it would re-report messages the caller has already seen, and the rows the
+carve-out would add are dropped by that scan's `sender_id !== user.id` filter
+regardless.
 
 **Until that is settled the flag stays off.** It already is, for the deploy
 reason above; this is a second, independent reason, and it does not expire when
