@@ -263,6 +263,33 @@ function ErrorView({ message, onRetry }: { message: string; onRetry: () => void 
   );
 }
 
+/**
+ * The projection LOADED but the server could not read this person's trust
+ * records. The rows below are the server's fallback shape, not measurements, so
+ * this says so above them and offers the same retry the error view offers.
+ *
+ * Deliberately a BANNER rather than a replacement for the screen: blanking the
+ * screen on a failed read is the other half of the same defect — the owner's
+ * ruling is that unavailable information is labelled, not hidden and not
+ * dressed up as a result.
+ */
+function DegradedBanner({ onRetry }: { onRetry: () => void }) {
+  return (
+    <View style={s.degradedBanner} accessibilityLabel="Trust records are unavailable right now">
+      <ShieldHalf size={icon.s16} color={color.faint} />
+      <View style={s.degradedText}>
+        <Text style={s.degradedTitle}>Trust records are unavailable right now</Text>
+        <Text style={s.degradedCopy}>
+          Nothing below is a measurement of this traveler. Try again in a moment.
+        </Text>
+      </View>
+      <Pressable style={s.degradedRetry} onPress={onRetry} accessibilityRole="button">
+        <Text style={s.retryText}>Retry</Text>
+      </Pressable>
+    </View>
+  );
+}
+
 /** Shown when the projection loaded but the server did not include trust for
  *  this viewer (e.g. trust not permitted in this context). */
 function UnavailableView() {
@@ -359,6 +386,8 @@ export default function TrustScreen({
           <UnavailableView />
         ) : (
           <>
+            {view.degraded ? <DegradedBanner onRetry={hook.reload} /> : null}
+
             <ScoreHero view={view} />
 
             {/* Domain-specific trust (§9, TABLE 12) */}
@@ -568,6 +597,38 @@ const s = StyleSheet.create({
     marginBottom: space.sm,
     marginHorizontal: space.lg,
   },
+  degradedBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.sm,
+    marginHorizontal: space.lg,
+    marginBottom: space.md,
+    backgroundColor: color.paperRaised,
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    borderColor: color.haze,
+    paddingHorizontal: space.md,
+    paddingVertical: space.sm,
+  },
+  degradedText: {
+    flex: 1,
+  },
+  degradedTitle: {
+    ...t.bodyStrong,
+    color: color.deep,
+  },
+  degradedCopy: {
+    ...t.small,
+    color: color.mute,
+  },
+  degradedRetry: {
+    paddingHorizontal: space.md,
+    paddingVertical: space.xs,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    borderColor: color.haze,
+  },
+
   card: {
     marginHorizontal: space.lg,
     backgroundColor: color.paperRaised,

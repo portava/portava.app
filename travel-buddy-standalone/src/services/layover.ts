@@ -135,7 +135,7 @@ export interface LayoverWindow {
 }
 
 export interface LeaveAdvice {
-  verdict: 'yes' | 'tight' | 'no' | 'stay_airside';
+  verdict: 'yes' | 'tight' | 'no' | 'entry_unverified' | 'stay_airside';
   reasons: string[];
   unknowns: string[];
   /** §9 machine-readable reason codes. Sent on /overview and /safety. */

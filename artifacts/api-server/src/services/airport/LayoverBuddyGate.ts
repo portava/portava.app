@@ -117,6 +117,10 @@ export function layoverBuddyDecision(
   const record = certifySessionFeasibility(airport, session, { nowMs });
   const safetyGate: BuddySafetyGate = {
     passed:
+      // A DENY-LIST, and `entry_unverified` is deliberately not on it: it means
+      // the border could not be checked, not that the traveller is refused, and
+      // the advice they hold says so in words. A verdict added later passes by
+      // default here — check this list when the union grows.
       record.verdict !== "no" &&
       record.verdict !== "stay_airside" &&
       record.envelope.returnState === "NORMAL",
