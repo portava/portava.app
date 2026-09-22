@@ -429,3 +429,152 @@ describe("§21 which Highlights project this Memory", () => {
     assert.equal((r as any).reason, "not_deployed");
   });
 });
+
+/* ============================================================================
+ * `check:write-path-columns` must be able to SEE this module's columns.
+ *
+ * This suite exists because CI caught something no test did. `check:write-path-
+ * columns` resolves every `.from()` table name and every `.select()` list
+ * STATICALLY, through the TypeScript AST, and diffs the columns it finds
+ * against the live Supabase schema. A site it cannot resolve is not checked —
+ * none of its columns is verified against anything — and the check tracks those
+ * blind spots by `file|method|reason` so a NEW one turns it red.
+ *
+ * This module was born with four of them: `.from(HIGHLIGHT_SOURCES_TABLE)` is
+ * an identifier rather than a string literal, so `findTableInChain` answered
+ * `<dynamic>` and gave up before it ever looked at the columns. That matters
+ * HERE more than almost anywhere else in the tree: this is the first and only
+ * TypeScript writer for `public.highlight_sources`, so an unverified column
+ * name would have no second reader to catch it.
+ *
+ * WHY THIS IS A TEST AND NOT A COMMENT. `check:write-path-columns` needs live
+ * Supabase credentials and exits 2 without them, so it cannot run in a
+ * development container at all — which is exactly how these four sites reached
+ * the integration head. The extractor it uses is a PURE function over source
+ * text (`schemaReferenceExtract.ts`: "Pure with respect to the network and the
+ * environment: it reads files and returns data"). So the resolvability half of
+ * that check — the half that was red — CAN be asserted with no credentials, by
+ * calling the same extractor on this one file. The live-schema half still
+ * cannot, and this suite does not claim it.
+ *
+ * THE COLUMN LITERALS ARE PINNED TO THE PROBE'S LIST, and that is the second
+ * case. Making the select lists literal is what lets the check read them, but
+ * it also breaks the coupling the identifier form had for free: the same array
+ * was passed to `probeHighlightObject` AND joined into the select, so the
+ * probed set and the selected set could not drift. `check:write-path-columns`'
+ * own allowlist commentary defends exactly that coupling for
+ * `highlightControlWrites.ts`. Here the coupling is asserted instead of
+ * assumed — which is strictly better, because an assertion fails in this
+ * container and "cannot drift by construction" was never checked at all.
+ * ==========================================================================*/
+describe("§3.6 the highlight_sources write path is statically resolvable", () => {
+  const FILE = "src/services/highlights/highlightSources.ts";
+  const SCAN = "src/services/highlights";
+
+  async function extract() {
+    const { extractSchemaReferences } = await import("../scripts/lib/schemaReferenceExtract.js");
+    const { fileURLToPath } = await import("node:url");
+    const { dirname, resolve } = await import("node:path");
+    const apiRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
+    return extractSchemaReferences(apiRoot, [resolve(apiRoot, SCAN)]);
+  }
+
+  it("has NO site check:write-path-columns would have to skip", async () => {
+    const { skipped } = await extract();
+    const mine = skipped.filter((s) => s.file === FILE);
+    assert.deepEqual(
+      mine.map((s) => `${s.method}|${s.reason}`).sort(),
+      [],
+      `check:write-path-columns cannot resolve ${mine.length} site(s) in ${FILE}: ` +
+        JSON.stringify(mine, null, 2),
+    );
+  });
+
+  it("and the sites it CAN now resolve name only columns the probe checks, and all of them", async () => {
+    const { HIGHLIGHT_SOURCES_TABLE, HIGHLIGHT_SOURCES_COLUMNS } = await import(
+      "../services/highlights/highlightSources.js"
+    );
+    const { sites } = await extract();
+    const mine = sites.filter((s) => s.file === FILE && s.table === HIGHLIGHT_SOURCES_TABLE);
+
+    // Four sites: the upsert, the select that confirms what it wrote, and the
+    // two reads. Pinned as a NUMBER so a fifth query cannot be added to this
+    // module and left out of the column assertions below by omission.
+    assert.equal(mine.length, 4, `expected 4 resolved highlight_sources sites, got ${mine.length}`);
+    assert.equal(mine.some((s) => s.method === "upsert"), true, "the writer must be a resolved site");
+
+    // NOTHING the extractor read may be a column the probe does not check. A
+    // literal that drifted from HIGHLIGHT_SOURCES_COLUMNS would be a column
+    // written or read without `probeHighlightObject` ever confirming it exists
+    // — the precise failure the identifier form used to prevent by accident.
+    const probed = new Set<string>([...HIGHLIGHT_SOURCES_COLUMNS, "created_at"]);
+    for (const s of mine) {
+      for (const col of s.columns) {
+        assert.equal(
+          probed.has(col),
+          true,
+          `${FILE}:${s.line} (${s.method}) names ${col}, which probeHighlightObject does not check`,
+        );
+      }
+      assert.equal(s.unresolved, false, `${FILE}:${s.line} (${s.method}) is only partly resolved`);
+    }
+
+    // …and the converse. A probe list that outgrew the queries would be
+    // checking columns nothing uses, and would stop being evidence for them.
+    const named = new Set<string>(mine.flatMap((s) => s.columns));
+    for (const col of HIGHLIGHT_SOURCES_COLUMNS) {
+      assert.equal(named.has(col), true, `${col} is probed but named by no query in ${FILE}`);
+    }
+  });
+
+  /* ------------------------------------------------------------------------
+   * THE CASE THE FIRST VERSION OF THIS SUITE DID NOT HAVE, and the mutation
+   * that proved it.
+   *
+   * Dropping `provenance` from BOTH row-shaped select lists left the suite
+   * above GREEN. The converse assertion asks only that each probed column is
+   * named by SOME site, and the upsert's PAYLOAD names `provenance` — so the
+   * two READS could stop asking for it and nothing noticed.
+   *
+   * That is not a cosmetic gap. `toStored` coerces an absent `provenance` to
+   * `"UNKNOWN"`, so the mutation does not throw and does not log: it silently
+   * rewrites every USER_ASSERTED link in the tree as UNKNOWN on the way out.
+   * §4's truth precedence is then being applied to a value the read invented,
+   * which is the one thing this module's own header says a provenance claim
+   * must never be.
+   *
+   * The rule, stated so it cannot be satisfied by the payload: a select that
+   * asks for `created_at` is reading a ROW rather than an index, and a row read
+   * must name the COMPLETE probed set. `highlightIdsProjecting` asks for three
+   * index columns and no `created_at`, so it is excluded by the rule rather
+   * than by an exception list.
+   * ---------------------------------------------------------------------- */
+  it("every ROW-shaped read names the complete column set, not a subset toStored would paper over", async () => {
+    const { HIGHLIGHT_SOURCES_TABLE, HIGHLIGHT_SOURCES_COLUMNS } = await import(
+      "../services/highlights/highlightSources.js"
+    );
+    const { sites } = await extract();
+    const rowReads = sites.filter(
+      (s) =>
+        s.file === FILE &&
+        s.table === HIGHLIGHT_SOURCES_TABLE &&
+        s.method === "select" &&
+        s.columns.includes("created_at"),
+    );
+
+    // Two of them: the upsert's returning select and readHighlightSources'.
+    // Pinned as a number so a third row read cannot be added unchecked.
+    assert.equal(rowReads.length, 2, `expected 2 row-shaped reads, got ${rowReads.length}`);
+
+    for (const s of rowReads) {
+      for (const col of HIGHLIGHT_SOURCES_COLUMNS) {
+        assert.equal(
+          s.columns.includes(col),
+          true,
+          `${FILE}:${s.line} reads a highlight_sources ROW but does not name ${col}; ` +
+            `toStored would substitute a default for it without saying so`,
+        );
+      }
+    }
+  });
+});

@@ -67,6 +67,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import {
   CONTROL_EFFECTS,
   RESURFACING_CONTROLS,
+  controlSetter,
   feedSubjectScope,
   isSuppressed,
   readResurfacingSuppressionsForOwners,
@@ -184,7 +185,20 @@ export type ProjectionVerdict =
     };
 
 export interface ProjectionInputs {
+  /**
+   * The controls the Highlights' OWNERS set about their own records —
+   * `highlight`- and `owner`-scoped. Read for the owners on the page.
+   */
   readonly controls: ResurfacingSuppressions;
+  /**
+   * The controls THE VIEWER set about other people — `person`-scoped.
+   * Optional, and its absence is NOT "nothing is suppressed": a caller that
+   * does not supply it simply has no person-scoped controls to apply, which is
+   * the case on every surface where the viewer is the owner. See
+   * `controlSetter` for the defect that made this a second field rather than
+   * one merged set.
+   */
+  readonly viewerControls?: ResurfacingSuppressions;
   readonly policies: ProjectionPolicyRead;
 }
 
@@ -207,12 +221,25 @@ export function publicProjectionVerdict(
   if (controls.state === "unreadable") {
     return { allow: false, kind: "unreadable", reason: `§11 controls unreadable: ${controls.reason}` };
   }
-  if (controls.state === "ready") {
-    for (const c of controlsSuppressing(surface)) {
-      const subject = feedSubjectScope(c) === "highlight" ? h.id : h.owner_id;
-      if (isSuppressed(controls, c, subject)) {
-        return { allow: false, kind: "suppressed", reason: `${c} is set on ${feedSubjectScope(c)} ${subject}` };
-      }
+  if (inputs.viewerControls?.state === "unreadable") {
+    // Same fail-closed reasoning as the owner set: a HIDE_PERSON the viewer set
+    // and we cannot read is a refusal we would be overriding.
+    return {
+      allow: false, kind: "unreadable",
+      reason: `§11 viewer controls unreadable: ${inputs.viewerControls.reason}`,
+    };
+  }
+
+  for (const c of controlsSuppressing(surface)) {
+    // WHOSE row governs this control — see `controlSetter`. A person-scoped
+    // control belongs to the VIEWER; every other one to the owner. Reading the
+    // owner set for a person-scoped control is what let any user suppress any
+    // other user for everybody (census H89).
+    const set = controlSetter(c) === "viewer" ? inputs.viewerControls : controls;
+    if (set === undefined || set.state !== "ready") continue;
+    const subject = feedSubjectScope(c) === "highlight" ? h.id : h.owner_id;
+    if (isSuppressed(set, c, subject)) {
+      return { allow: false, kind: "suppressed", reason: `${c} is set on ${feedSubjectScope(c)} ${subject}` };
     }
   }
 

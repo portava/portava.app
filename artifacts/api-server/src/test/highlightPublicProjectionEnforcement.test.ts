@@ -209,10 +209,72 @@ describe("A. publicProjectionVerdict", () => {
     assert.equal(publicProjectionVerdict(H, VIEWER, "public_projection", { controls, policies: NO_POLICY }).allow, true);
   });
 
+  /**
+   * MOVED FROM `controls` TO `viewerControls` 2026-09-22; both assertions and
+   * the subject key are unchanged.
+   *
+   * The control is still keyed on the OWNER — `feedSubjectScope` is untouched
+   * and the subject is still `OWNER` — but it is now read from the set the
+   * VIEWER's rows produced rather than the owners'. §11 gives a person-scoped
+   * control to the person doing the resurfacing, and census §Q.6 records what
+   * conflating the two cost under H89: a row set by any owner on the page
+   * suppressed that subject for every viewer.
+   *
+   * The case below is the other half, and it is why this one is not simply
+   * re-keyed: the SAME control in the OWNERS' set must now do nothing.
+   */
   it("HIDE_PERSON_FROM_RESURFACING is keyed on the OWNER for the feed, and does not touch public_projection", () => {
+    const viewerControls = suppressions([{ control: "HIDE_PERSON_FROM_RESURFACING", subjectId: OWNER }]);
+    assert.equal(
+      publicProjectionVerdict(H, VIEWER, "proactive_resurfacing", { controls: READY_EMPTY, viewerControls, policies: NO_POLICY }).allow,
+      false,
+    );
+    assert.equal(
+      publicProjectionVerdict(H, VIEWER, "public_projection", { controls: READY_EMPTY, viewerControls, policies: NO_POLICY }).allow,
+      true,
+    );
+  });
+
+  /**
+   * ADDED because a mutation survived: deleting the VIEWER set's fail-closed
+   * branch left every suite green. The owner set has had this guarantee since
+   * §P.2 — "a `KEEP_PRIVATE_FOREVER` we cannot read is a refusal we would be
+   * overriding" — and the viewer set needs it for the same reason on its own
+   * control: a HIDE_PERSON we cannot read is a person this viewer asked not to
+   * see, and serving them is the failure §11 exists to prevent.
+   *
+   * It is asserted HERE, on the exported gate, rather than through a route.
+   * Both sets are read from `highlight_resurfacing_preferences` today, so a
+   * table-level failure makes both unreadable at once and the owner branch
+   * answers first — there is no route fixture that reaches the viewer branch
+   * alone. Saying so is better than a route test that would pass for the wrong
+   * reason.
+   */
+  it("an UNREADABLE viewer set withholds, exactly as an unreadable owner set does", () => {
+    const v = publicProjectionVerdict(H, VIEWER, "proactive_resurfacing", {
+      controls: READY_EMPTY, viewerControls: UNREADABLE, policies: NO_POLICY,
+    });
+    assert.equal(v.allow, false, "a HIDE_PERSON we cannot read was overridden rather than obeyed");
+    assert.equal(v.allow === false && v.kind, "unreadable");
+
+    // The OWNER is still never refused their own record, whatever is unreadable.
+    assert.equal(
+      publicProjectionVerdict(H, OWNER, "proactive_resurfacing", {
+        controls: READY_EMPTY, viewerControls: UNREADABLE, policies: NO_POLICY,
+      }).allow,
+      true,
+    );
+  });
+
+  it("…and the same control in the OWNERS' set does nothing, which is the whole of H89's defect", () => {
+    // Before `controlSetter`, this was the call that returned `false` — and it
+    // is the shape any user could create for any other user, for everybody.
     const controls = suppressions([{ control: "HIDE_PERSON_FROM_RESURFACING", subjectId: OWNER }]);
-    assert.equal(publicProjectionVerdict(H, VIEWER, "proactive_resurfacing", { controls, policies: NO_POLICY }).allow, false);
-    assert.equal(publicProjectionVerdict(H, VIEWER, "public_projection", { controls, policies: NO_POLICY }).allow, true);
+    assert.equal(
+      publicProjectionVerdict(H, VIEWER, "proactive_resurfacing", { controls, policies: NO_POLICY }).allow,
+      true,
+      "a person-scoped control read from the OWNERS' set still suppresses: any user can censor any other",
+    );
   });
 
   it("consent_share=false refuses BOTH surfaces; consent_resurface=false refuses the feed only", () => {
