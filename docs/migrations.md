@@ -34,6 +34,85 @@ The root tree partially overlaps with both the canonical and legacy chains and c
 
 The frozen-dir guard (run in CI via `check:frozen-dir` and at startup of `audit:schema`) ensures no one silently adds new files to the root tree.
 
+## An applied migration file is a historical artifact: do not annotate it
+
+**The rule, learned the expensive way on 2026-09-22.** Once a migration has been
+applied anywhere, its bytes are frozen. `apply-migrations` records the SHA-256 of
+the file's exact bytes in the ledger, and on every later run it re-hashes the file
+on disk and refuses if the two differ:
+
+> the ledger records these files as applied, but their contents on disk no longer
+> match the recorded checksum. The SQL that ran and the SQL in this commit are not
+> the same text, so the live schema cannot be derived from the tree. Re-applying is
+> NOT a safe repair (a migration is not necessarily re-runnable). Reconcile by hand.
+
+**That check does not know what a comment is, and it must not.** The digest is over
+bytes. Adding a comment block to an applied file produces exactly the same failure
+as rewriting its DDL, because a checksum that tolerated "harmless" edits would be
+no checksum at all. The script says so itself: a backfill that used a different
+digest looks identical to real drift, so it fails closed on both.
+
+This was learned by breaking it. `2950_input_assistance_telemetry_events.sql`
+carried a header reading "⚠ NOT APPLIED ANYWHERE YET", written on a detached HEAD
+before the file was applied. It was applied to production on 2026-09-21 at
+12:11:18 UTC and to `portava-ci`, and the banner then read as current state to a
+later reader — it contributed directly to production being reported as unmigrated.
+The correction was written **into the file**, as 32 lines of comment with no SQL
+changed. CI went red on the next run: ledger `42072bcd…`, disk `8e8d24ae…`. The
+file has since been restored to the exact bytes that ran (verified: it re-hashes
+to `42072bcd…`), and the correction lives here instead.
+
+**So when an applied migration's header turns out to be wrong, correct it HERE,
+keyed by filename — never in the file.** The ledger stays meaningful and the
+correction still reaches the reader, because this is the document a reader
+checking "was it applied?" is sent to anyway. Reconciling the other direction —
+editing the recorded checksum to match a new file — is not the default: it mutates
+a record of what actually ran, in every database that holds one, and should happen
+only when the recorded digest is itself known to be wrong.
+
+### Correction: 2950_input_assistance_telemetry_events.sql
+
+The file's header banner is **superseded**. Its "NOT APPLIED ANYWHERE YET" was
+true when written and false from 12:11 UTC on 2026-09-21.
+
+2950 is applied to production (`ajrurzioarfkagpuxfnb`) and to `portava-ci`
+(`hwokxgbmezheskbzskfr`). Verified by object probe rather than by a ledger row
+alone: the table exists and all nine constraints are present in production,
+including `iate_event_name_known`, whose CHECK was read back from `pg_constraint`
+carrying all fourteen event names in the file's `ARRAY`. `public.schema_migration_ledger`
+also carries the row.
+
+The rest of that header stands as written, including its point that before the
+apply, every write this lane's code issued against the table failed at PostgREST
+and was answered as a **retryable refusal** — never as a successful empty result
+(`src/lib/inputAssistance/telemetry.ts`).
+
+### Why that confusion arose, written down so it does not recur
+
+**There are TWO ledgers in this project and their columns are disjoint:**
+
+| Table | Identifies a migration by | Does NOT have |
+|---|---|---|
+| `public.schema_migration_ledger` | `filename` | `version` |
+| `supabase_migrations.schema_migrations` | `version` (serial lives in `name`) | `filename` |
+
+A query written for one and run against the other answers zero and still looks
+authoritative.
+
+**The CLI table's `version` is TEXT holding two formats at once** — bare serials
+(`'2272'`) and 14-digit timestamps (`'20260921101005'`). Text collation orders
+them `'289' < '20260915123045' < '2950'`, so `version >= '2890'` excludes EVERY
+post-cutover row no matter what is applied, and `MAX(version)` returns a
+pre-cutover serial. This is what produced the withdrawn claim that there were
+"zero ledger rows at or above 2890".
+
+**Ledger absence is not evidence of non-application.** Probed on the same day,
+`2890`, `2900` and `2958` were all live in production with no hand-ledger row;
+`2958` had no row in *either* ledger and its column existed. Only an object probe
+settles whether a migration ran — and even then it settles that the *objects* are
+there, not that every statement in the file executed. Migration `2298` is the
+precedent for the inverse: a ledger row whose effects were absent.
+
 ## The migration ledger
 
 `public.schema_migration_ledger` (created by
