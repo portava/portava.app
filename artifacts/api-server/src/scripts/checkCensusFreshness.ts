@@ -1598,6 +1598,21 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     // `_clear*Cache()` hooks to DEFEAT the cache. It was unwatched, and adding
     // its citation pushed census-map to exactly its coverage floor.
     "artifacts/api-server/src/test/geoZoneSeed.test.ts",
+    // ── ADDED 2026-09-21, M42 ───────────────────────────────────────────────
+    // The PLACE-lane repair chain and the live suite that proves it. M42's
+    // verdict now rests on these three: 2963 repoints the lane at the union of
+    // the two tables saves actually land in, 2965 qualifies the `_canon_saves`
+    // DELETE that 2963 left unguarded (which the supautils safeupdate guard
+    // rejects in every PostgREST-role session, so every call raised and the
+    // whole projection rolled back), and the live suite asserts a place
+    // projection THROUGH THE POSTGREST PATH rather than in a database where the
+    // guard is unarmed. Citing them without watching them is exactly the
+    // inversion this scope check exists to catch: the row claiming something IS
+    // right would have been the unguarded half. Coverage 95% -> 97%; the floor
+    // stays at 96%.
+    "artifacts/api-server/src/migrations/2963_memory_projector_place_lane_union.sql",
+    "artifacts/api-server/src/migrations/2965_memory_projector_canon_saves_delete_guard.sql",
+    "artifacts/api-server/src/test/memoryProjectionLifecycleLive.test.ts",
     "artifacts/api-server/src/lib/mapProducers/",
     "artifacts/api-server/src/lib/mapObjects.ts",
     "artifacts/api-server/src/lib/mapProjectionTripContract.ts",
@@ -2055,6 +2070,107 @@ const CENSUS_SCOPE: Record<string, string[]> = {
   // paths resolve) and the most client-weighted: its subject is the typing
   // surface, so the hooks ARE the measurement, not evidence about it.
   "census-input-intelligence.md": [
+    // ── ADDED 2026-09-21 by §28/§29, for the two owner decisions ────────────
+    // The census's OWN evidence. §28 cites both files as what proves the two
+    // decisions: `displayNameManual.test.ts` that `display_name` resolves to
+    // `no_assistance` with no entity types, and `inputPolicyEndpoint.test.ts`
+    // that `GET /input-assistance/policies` PROJECTS the registry rather than
+    // restating it. A census that cites a test as its proof and does not watch
+    // that test is exactly the inversion this check exists to catch: the file
+    // that could silently stop proving the claim would be the unguarded one.
+    // Coverage 98%(rounded, 166/170) -> back above the floor. The 98% floor
+    // was NOT lowered.
+    "artifacts/api-server/src/test/displayNameManual.test.ts",
+    "artifacts/api-server/src/test/inputPolicyEndpoint.test.ts",
+    // ── ADDED 2026-09-21 by the INTEGRATING LANE, for the a11y/§48 lane ─────
+    // Four paths its rows cite as evidence. `app/_layout.tsx` is the
+    // telemetry-sink mount that G263/G306 rest on, and the bare spelling is
+    // what the census writes; both spellings are listed so the coverage check
+    // resolves whichever it reads.
+    "artifacts/api-server/src/test/inputAssistanceCompatibility.test.ts",
+    "artifacts/api-server/src/lib/circleResponseShaper.ts",
+    "artifacts/api-server/src/lib/locationPurposes.ts",
+    "app/_layout.tsx",
+    // ── ADDED 2026-09-21 by the INTEGRATING LANE, for the §44/§57 lane ───────
+    // Cited as evidence by rows that lane moved. `routes/locations.ts` enters
+    // because G232's own account names it as the entry point the alias-append
+    // guard sits behind, and a census must watch the file its evidence names.
+    // The 98% floor was not touched.
+    "artifacts/api-server/src/test/inputAssistanceMetrics.test.ts",
+    "travel-buddy-standalone/src/components/discovery/__tests__/TripWishlistPicker.actionCompleted.component.test.tsx",
+    "artifacts/api-server/src/routes/locations.ts",
+    // ── ADDED 2026-09-21 by the INTEGRATING LANE, for the seven-lane wave ────
+    // Five files that rows this wave MOVED now cite. Leaving them cited but
+    // unwatched is the inversion check:census-scope-coverage exists to catch:
+    // the rows saying something IS right would be the unguarded half. Coverage
+    // 96% -> back above its floor; the 98% floor was NOT lowered.
+    "travel-buddy-standalone/src/platform/input-assistance/services/localZeroState.ts",
+    "travel-buddy-standalone/src/platform/input-assistance/services/__tests__/localZeroState.test.ts",
+    "travel-buddy-standalone/src/platform/input-assistance/hooks/__tests__/useInputAssistance.zeroState.component.test.tsx",
+    "artifacts/api-server/src/test/inputAssistanceSelectionMemoryLiveDbStatus.test.ts",
+    "travel-buddy-standalone/scripts/run-node-tests.mjs",
+    // ── ADDED 2026-09-21 by §14 (the scattered §27–§56 rows) ────────────────
+    // Every path below is cited as EVIDENCE by a row §14 moved or re-read, and
+    // scope-coverage measured the census at exactly its 98% floor before them:
+    // four new citations took it to 95%. A census must watch the file its
+    // evidence names, so they are added rather than the floor lowered — which
+    // the checker's own error text calls "the one response that is never
+    // right". Kept as one dated block so a parallel lane's additions merge
+    // beside it instead of into it.
+    "travel-buddy-standalone/src/platform/input-assistance/components/ZeroStatePanel.tsx",
+    "travel-buddy-standalone/src/platform/input-assistance/components/SuggestionList.tsx",
+    "travel-buddy-standalone/src/platform/input-assistance/components/SuggestionGroup.tsx",
+    "travel-buddy-standalone/src/platform/input-assistance/components/__tests__/overlaySurfaces.component.test.tsx",
+    "travel-buddy-standalone/src/platform/input-assistance/components/__tests__/suggestionKeyboardNav.component.test.tsx",
+    "travel-buddy-standalone/src/platform/input-assistance/components/__tests__/telemetryLinkage.component.test.tsx",
+    "travel-buddy-standalone/src/platform/input-assistance/hooks/__tests__/useInputAssistance.localTier.component.test.tsx",
+    "travel-buddy-standalone/src/platform/input-assistance/search/__tests__/smartActions.test.ts",
+    // §43/G305's dispatcher and its end-to-end proof live in the app tree: the
+    // row is only closed BECAUSE a screen acts on the action, so a change to
+    // that screen is exactly the change that must age this census.
+    "travel-buddy-standalone/app/search.tsx",
+    "travel-buddy-standalone/app/__tests__/search.openCompassDispatch.component.test.tsx",
+    // §40/G277's resolver and the test that refutes the row's fifth clause.
+    "artifacts/api-server/src/lib/countryCodes.ts",
+    "artifacts/api-server/src/test/discoveryCountryRegistry.test.ts",
+    // §37/G240's creation-fallback proof.
+    "artifacts/api-server/src/test/inputAssistanceCreation.test.ts",
+    // §13.1 names this module as the proof that the country registry is
+    // CONSUMED rather than duplicated — the load-bearing half of G277's
+    // clause 1 — so it belongs in scope with the registry itself.
+    "artifacts/api-server/src/lib/stamps/countryLookup.ts",
+    // The two halves of the telemetry transport §12.6 says four rows wait on.
+    // They were the only two files this census cited and did not watch before
+    // this block; they are the telemetry lane's to CHANGE and this census's to
+    // WATCH, which are different things.
+    "travel-buddy-standalone/src/platform/input-assistance/services/telemetryBatcher.ts",
+    "travel-buddy-standalone/src/platform/input-assistance/services/telemetryTransport.ts",
+    // ── ADDED 2026-09-21 with the §44 sink attachment ───────────────────────
+    // The client SDK as a DIRECTORY rather than seven more single files. Every
+    // file under it is this census's own subject — the individually-named
+    // entries below predate this line and are kept so the history of what was
+    // watched when stays readable.
+    "travel-buddy-standalone/src/platform/input-assistance/",
+    // `app/search.tsx` is G319's call site: the global-search screen is the only
+    // place that learns whether the propose-only trip picker was CONFIRMED, so a
+    // change to it is exactly the change that must age this census.
+    "travel-buddy-standalone/app/search.tsx",
+    // …and the picker it learns it from. Its `onSaveFailed` arm is the half that
+    // stops `action_completed` reporting ok:true forever.
+    "travel-buddy-standalone/src/components/discovery/TripWishlistPicker.tsx",
+    // The §44 store's 90-day retention pass lives on the shared intel timer.
+    "artifacts/api-server/src/lib/intelRetentionScheduler.ts",
+    // The table the §44 sink posts into, and G354's harness. Migrations are not
+    // scoped as a directory (see census-media's note on why); this one is named.
+    "artifacts/api-server/src/migrations/2950_input_assistance_telemetry_events.sql",
+    "artifacts/api-server/src/scripts/measureInputAssistanceLatency.ts",
+    "artifacts/api-server/src/scripts/reportInputMetrics.ts",
+    // The Wall's analytics module is cited by §14 as the precedent that decides
+    // WHICH telemetry needs D4 Intelligence-Contribution consent: it gates
+    // `trackRealWorldOutcome` and nothing else. §44's argument for attaching its
+    // sink ungated rests on that line being where it is, so a change to it is a
+    // change to this census's reasoning, not merely to the Wall's.
+    "travel-buddy-standalone/src/features/wall/services/wallAnalytics.ts",
     // ── ADDED 2026-09-14 by the scope-coverage finding ──────────────────────
     // `app/_layout.tsx` is the one line §12.6 says four rows wait on, so a
     // change to it is exactly the change that must age this census.
@@ -2179,6 +2295,60 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     // deliberately NOT here: they are other lanes' files, and watching them would
     // age this census every time those lanes touch their own telemetry.
     "artifacts/api-server/src/migrations/2258_input_selection_history.sql",
+    // WIDENED 2026-09-21 by the §23 username-alternatives pass (G147). Same rule
+    // as the two widenings above: a census must watch what it CITES. G147 now
+    // rests on the LIVE username path rather than on the gateway lane alone, and
+    // every file below is part of that path or is the proof of it — the endpoint
+    // that answers availability, the shared client rules and hook it feeds, the
+    // two shipping screens that render the offers, and the three test files that
+    // would otherwise be deletable without ageing this census.
+    //
+    // `routes/profile.ts` is the one entry here that is not obviously this
+    // census's. It is named anyway, and deliberately: `GET /users/check-username`
+    // IS the §23 surface a user reaches, so a change to it is exactly the change
+    // that must age G147. It is also watched by census-trust, which is correct —
+    // one file can be graded by two censuses.
+    "artifacts/api-server/src/routes/profile.ts",
+    "artifacts/api-server/src/test/profileUsernameCooldownFailOpen.test.ts",
+    "travel-buddy-standalone/src/services/profile.ts",
+    "travel-buddy-standalone/src/hooks/useUsernameAvailability.ts",
+    "travel-buddy-standalone/src/platform/input-assistance/social/usernameValidation.ts",
+    "travel-buddy-standalone/src/platform/input-assistance/social/__tests__/usernameValidation.test.ts",
+    "travel-buddy-standalone/app/profile/edit/identity.tsx",
+    "travel-buddy-standalone/app/profile/edit/__tests__/identity.usernameAlternatives.component.test.tsx",
+    "travel-buddy-standalone/app/(auth)/onboarding.tsx",
+    // Cited by G5 and G14 as the file where `setTelemetrySink` is exported and
+    // never called. That absence is load-bearing for two verdicts, so the file
+    // that would end it must age this census.
+    "travel-buddy-standalone/src/platform/input-assistance/index.ts",
+    // ── ADDED 2026-09-21, third widening of the day ──────────────────────────
+    // The eleven paths check:census-scope-coverage reported as CITED-BUT-
+    // UNWATCHED after §22 and §23 landed, which took measured coverage to 93%
+    // against a 0.98 floor. The floor was NOT touched — it is a ratchet, and
+    // lowering it is the one response the check itself calls never right.
+    //
+    // THE CITY PICKER, three files. G85's whole account now turns on them:
+    // DestinationBar is the surface that declares `city_picker`, its test is
+    // what pins the declaration, and `app/trip/edit.tsx` is cited as the idiom
+    // the declaration follows — if any of the three changes, G85's evidence
+    // has moved and this census should age.
+    "travel-buddy-standalone/src/components/discovery/DestinationBar.tsx",
+    "travel-buddy-standalone/src/components/discovery/__tests__/DestinationBar.cityPicker.test.ts",
+    "travel-buddy-standalone/app/trip/edit.tsx",
+    // §23's own guard.
+    "artifacts/api-server/src/test/inputTelemetryPrivacyGuard.test.ts",
+    // THE SEVEN MAP FILES §22 NAMES. These belong to census-map's subject, not
+    // this one, and they are listed here anyway: §22's re-evaluation of the
+    // five Map flags reasons about what these deployed consumers do, so a
+    // change to any of them can make §22's argument wrong. A census must watch
+    // the files its own evidence names, whoever else also grades them.
+    "artifacts/api-server/src/routes/mapProjection.ts",
+    "artifacts/api-server/src/routes/mapProjectionTemporal.ts",
+    "artifacts/api-server/src/lib/mapDisplayResolver.ts",
+    "artifacts/api-server/src/lib/mapProjection.ts",
+    "artifacts/api-server/src/lib/mapProducers/worldMomentProducer.ts",
+    "artifacts/api-server/src/routes/locateFriends.ts",
+    "artifacts/api-server/src/routes/safeReturn.ts",
   ],
   "census-discovery.md": [
     // ── ADDED 2026-09-15 by §43: the registry B05 now rests on ──────────────

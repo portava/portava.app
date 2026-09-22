@@ -41,7 +41,7 @@
  */
 import type { InputContext, AssistanceType, EntityType, OfflineInputPolicy, PrivacyClass } from '../types/inputContext.ts';
 import type { InputAssistanceMode } from '../types/fieldPolicy.ts';
-import { INPUT_CONTEXT_REGISTRY } from './inputContexts.ts';
+import { getContextDescriptor } from './inputContexts.ts';
 
 /**
  * How far a field has travelled along the §50/§51 migration.
@@ -137,7 +137,7 @@ export const FIELD_INVENTORY: readonly FieldInventoryRecord[] = [
     zeroState: 'Recent conversations / Trip Crew / followed, served by the gateway at zero characters (§14).',
     validation: null,
     knownIssues: [
-      'privacyClass is `personal`; before Phase 9 the shared suggestion cache stored these person lists under the typed query like any public field.',
+      'privacyClass is `viewer_scoped`; before Phase 9 the shared suggestion cache stored these person lists under the typed query like any public field.',
     ],
     migrationStatus: MOUNTED,
   },
@@ -268,11 +268,11 @@ export const FIELD_INVENTORY: readonly FieldInventoryRecord[] = [
     context: 'trip_stop_place',
     screenRoute: null,
     componentFile: 'travel-buddy-standalone/src/platform/input-assistance/geographic/geoFields.ts',
-    currentImplementation: 'Registered only, and registerGeographicFields() is called from no non-test file.',
+    currentImplementation: 'Registered at boot by registerGeographicFields(), but no screen declares this context, so nothing resolves the policy.',
     provider: null,
     zeroState: 'None while unmounted.',
     validation: null,
-    knownIssues: ['Registered and unmounted; the registrar itself is never called outside its own test.'],
+    knownIssues: ['Registered and unmounted: the registrar now runs at boot, but no surface declares this context.'],
     migrationStatus: UNMOUNTED,
   },
   {
@@ -280,11 +280,11 @@ export const FIELD_INVENTORY: readonly FieldInventoryRecord[] = [
     context: 'event_location',
     screenRoute: null,
     componentFile: 'travel-buddy-standalone/src/platform/input-assistance/geographic/geoFields.ts',
-    currentImplementation: 'Registered only, and registerGeographicFields() is called from no non-test file.',
+    currentImplementation: 'Registered at boot by registerGeographicFields(), but no screen declares this context, so nothing resolves the policy.',
     provider: null,
     zeroState: 'None while unmounted.',
     validation: null,
-    knownIssues: ['Registered and unmounted; the registrar itself is never called outside its own test.'],
+    knownIssues: ['Registered and unmounted: the registrar now runs at boot, but no surface declares this context.'],
     migrationStatus: UNMOUNTED,
   },
   {
@@ -292,12 +292,12 @@ export const FIELD_INVENTORY: readonly FieldInventoryRecord[] = [
     context: 'hidden_gem_location',
     screenRoute: null,
     componentFile: 'travel-buddy-standalone/src/platform/input-assistance/geographic/geoFields.ts',
-    currentImplementation: 'Registered only, and registerGeographicFields() is called from no non-test file.',
+    currentImplementation: 'Registered at boot by registerGeographicFields(), but no screen declares this context, so nothing resolves the policy.',
     provider: null,
     zeroState: 'None while unmounted.',
     validation: null,
     knownIssues: [
-      'Registered and unmounted. Its privacyClass is `sensitive`, so it is the one unmounted field whose migration carries a privacy obligation rather than only a UX one.',
+      'Registered and unmounted. Its privacyClass is `sensitive_location`, so it is the one unmounted field whose migration carries a privacy obligation rather than only a UX one.',
     ],
     migrationStatus: UNMOUNTED,
   },
@@ -306,11 +306,11 @@ export const FIELD_INVENTORY: readonly FieldInventoryRecord[] = [
     context: 'passport_homebase',
     screenRoute: null,
     componentFile: 'travel-buddy-standalone/src/platform/input-assistance/geographic/geoFields.ts',
-    currentImplementation: 'Registered only, and registerGeographicFields() is called from no non-test file.',
+    currentImplementation: 'Registered at boot by registerGeographicFields(), but no screen declares this context, so nothing resolves the policy.',
     provider: null,
     zeroState: 'None while unmounted.',
     validation: null,
-    knownIssues: ['Registered and unmounted; the registrar itself is never called outside its own test.'],
+    knownIssues: ['Registered and unmounted: the registrar now runs at boot, but no surface declares this context.'],
     migrationStatus: UNMOUNTED,
   },
   {
@@ -318,11 +318,11 @@ export const FIELD_INVENTORY: readonly FieldInventoryRecord[] = [
     context: 'place_picker',
     screenRoute: null,
     componentFile: 'travel-buddy-standalone/src/platform/input-assistance/geographic/geoFields.ts',
-    currentImplementation: 'Registered only, and registerGeographicFields() is called from no non-test file.',
+    currentImplementation: 'Registered at boot by registerGeographicFields(), but no screen declares this context, so nothing resolves the policy.',
     provider: null,
     zeroState: 'None while unmounted.',
     validation: null,
-    knownIssues: ['Registered and unmounted; the registrar itself is never called outside its own test.'],
+    knownIssues: ['Registered and unmounted: the registrar now runs at boot, but no surface declares this context.'],
     migrationStatus: UNMOUNTED,
   },
   {
@@ -330,31 +330,34 @@ export const FIELD_INVENTORY: readonly FieldInventoryRecord[] = [
     context: 'buddy_service_area',
     screenRoute: null,
     componentFile: 'travel-buddy-standalone/src/platform/input-assistance/geographic/geoFields.ts',
-    currentImplementation: 'Registered only, and registerGeographicFields() is called from no non-test file.',
+    currentImplementation: 'Registered at boot by registerGeographicFields(), but no screen declares this context, so nothing resolves the policy.',
     provider: null,
     zeroState: 'None while unmounted.',
     validation: null,
-    knownIssues: ['Registered and unmounted; the registrar itself is never called outside its own test.'],
+    knownIssues: ['Registered and unmounted: the registrar now runs at boot, but no surface declares this context.'],
     migrationStatus: UNMOUNTED,
   },
   {
     fieldId: 'geo.city',
     context: 'city_picker',
-    screenRoute: null,
-    componentFile: 'travel-buddy-standalone/src/platform/input-assistance/geographic/geoFields.ts',
-    currentImplementation: 'Registered only, and registerGeographicFields() is called from no non-test file.',
+    screenRoute: '/(tabs) — Discovery destination bar',
+    componentFile: 'travel-buddy-standalone/src/components/discovery/DestinationBar.tsx',
+    currentImplementation:
+      'DestinationBar declares assistContext="city_picker" and GEO_FIELD_IDS.cityPicker on its GlobalPlacePicker, and app/_layout.tsx calls registerGeographicFields() once at boot, so the picker resolves the registered policy rather than a descriptor default.',
     provider: null,
-    zeroState: 'None while unmounted.',
+    zeroState: 'Gateway zero-character recents (city_picker allows personalization and zero-state assistance).',
     validation: null,
-    knownIssues: ['Registered and unmounted; the registrar itself is never called outside its own test.'],
-    migrationStatus: UNMOUNTED,
+    knownIssues: [
+      'Wired but not yet observed end to end: no pick made in this surface has been seen landing in input_selection_history and coming back as a recent on a running deployment.',
+    ],
+    migrationStatus: MOUNTED,
   },
   {
     fieldId: 'geo.country',
     context: 'country_picker',
     screenRoute: null,
     componentFile: 'travel-buddy-standalone/src/platform/input-assistance/geographic/geoFields.ts',
-    currentImplementation: 'Registered only, and registerGeographicFields() is called from no non-test file.',
+    currentImplementation: 'Registered at boot by registerGeographicFields(), but no screen declares this context, so nothing resolves the policy.',
     provider: null,
     zeroState: 'None while unmounted.',
     validation: null,
@@ -368,11 +371,11 @@ export const FIELD_INVENTORY: readonly FieldInventoryRecord[] = [
     context: 'neighborhood_picker',
     screenRoute: null,
     componentFile: 'travel-buddy-standalone/src/platform/input-assistance/geographic/geoFields.ts',
-    currentImplementation: 'Registered only, and registerGeographicFields() is called from no non-test file.',
+    currentImplementation: 'Registered at boot by registerGeographicFields(), but no screen declares this context, so nothing resolves the policy.',
     provider: null,
     zeroState: 'None while unmounted.',
     validation: null,
-    knownIssues: ['Registered and unmounted; the registrar itself is never called outside its own test.'],
+    knownIssues: ['Registered and unmounted: the registrar now runs at boot, but no surface declares this context.'],
     migrationStatus: UNMOUNTED,
   },
   {
@@ -380,7 +383,7 @@ export const FIELD_INVENTORY: readonly FieldInventoryRecord[] = [
     context: 'place_picker',
     screenRoute: null,
     componentFile: 'travel-buddy-standalone/src/platform/input-assistance/geographic/geoFields.ts',
-    currentImplementation: 'Registered only, and registerGeographicFields() is called from no non-test file.',
+    currentImplementation: 'Registered at boot by registerGeographicFields(), but no screen declares this context, so nothing resolves the policy.',
     provider: null,
     zeroState: 'None while unmounted.',
     validation: null,
@@ -394,11 +397,11 @@ export const FIELD_INVENTORY: readonly FieldInventoryRecord[] = [
     context: 'address',
     screenRoute: null,
     componentFile: 'travel-buddy-standalone/src/platform/input-assistance/geographic/geoFields.ts',
-    currentImplementation: 'Registered only, and registerGeographicFields() is called from no non-test file.',
+    currentImplementation: 'Registered at boot by registerGeographicFields(), but no screen declares this context, so nothing resolves the policy.',
     provider: null,
     zeroState: 'None while unmounted.',
     validation: null,
-    knownIssues: ['Registered and unmounted; the registrar itself is never called outside its own test.'],
+    knownIssues: ['Registered and unmounted: the registrar now runs at boot, but no surface declares this context.'],
     migrationStatus: UNMOUNTED,
   },
 ] as const;
@@ -415,7 +418,14 @@ const BY_ID = new Map<string, FieldInventoryRecord>(FIELD_INVENTORY.map((r) => [
 export function fieldInventoryRow(fieldId: string): FieldInventoryRow | null {
   const rec = BY_ID.get(fieldId);
   if (!rec) return null;
-  const d = INPUT_CONTEXT_REGISTRY[rec.context];
+  // Reads the RESOLVER, not a local table — the table this used to index was
+  // deleted in G340. The consequence is worth stating: before the policy fetch
+  // lands, an inventory row reports the CONSERVATIVE policy rather than the
+  // context's eventual one. That is accurate. This surface documents what a
+  // field may do, and before the authority has answered, the honest answer is
+  // "nothing" — the previous version reported a local guess with the same
+  // confidence whether or not it matched the server.
+  const d = getContextDescriptor(rec.context);
   return {
     ...rec,
     desiredMode: d.defaultMode,

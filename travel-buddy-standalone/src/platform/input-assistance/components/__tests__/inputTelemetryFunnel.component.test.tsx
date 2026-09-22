@@ -70,6 +70,18 @@ import {
 } from '../../services/inputTelemetry.ts';
 import type { InputSuggestion } from '../../types/inputSuggestion.ts';
 
+// ── SEEDED 2026-09-21 (G340) ────────────────────────────────────────────────
+// `useInputAssistance` derives its policy from the context descriptor, which
+// since G340 comes from `GET /input-assistance/policies` rather than a local
+// table. With nothing fetched every context resolves CONSERVATIVE — mode
+// `no_assistance`, an unreachable `minChars` — so the hook correctly makes no
+// request and renders no rows, and every assertion below about suggestions
+// would be vacuous. Seeding states the premise these tests always relied on.
+import { INPUT_CONTEXTS as _SEED_CONTEXTS } from '../../types/inputContext.ts';
+import { _seedPolicyForTests as _seedPolicy } from '../../services/policyStore.ts';
+_seedPolicy(_SEED_CONTEXTS);
+
+
 const mockRequest = requestSuggestions as jest.MockedFunction<typeof requestSuggestions>;
 const FIELD = 'test.telemetry.search';
 
@@ -194,6 +206,36 @@ test('§45: blurring past a shown list records it as IGNORED and the text as KEP
   expect(JSON.stringify(kept[0]!.props)).not.toContain('words');
 });
 
+// ── 4b. §55 duplicate resolution — §57's duplicate-prevention count (G369) ───
+
+test('§44/G369: a duplicate row taken is recorded as resolving an EXISTING entity', async () => {
+  // This is what lib/inputAssistance/creation.ts#projectDuplicate puts on the
+  // wire: a `disambiguation` row carrying a `resolve_existing` structured value.
+  // Before this bit existed, a §55 duplicate and a §19 ambiguity were the same
+  // event, so "duplicate creation prevented" could only be GUESSED at from the
+  // context the event happened in — which is a different claim.
+  const r = await renderWith([
+    sug({
+      id: 'dup',
+      type: 'disambiguation',
+      label: 'Did you mean Hidden Bar?',
+      entityType: 'hidden_gem',
+      entityId: 'g-1',
+      confidence: 0.72,
+      structuredValue: { kind: 'resolve_existing', entityType: 'hidden_gem', entityId: 'g-1' },
+    }),
+  ]);
+
+  fireEvent.press(r.getByTestId('ia-entity-row-dup'));
+
+  const ev = named('disambiguation_selected');
+  expect(ev).toHaveLength(1);
+  expect(ev[0]!.props).toMatchObject({ resolvedExisting: true, entityType: 'hidden_gem' });
+  // One BOOL and nothing else new: no label, no name, no free text rides along
+  // on the back of the duplicate signal.
+  expect(JSON.stringify(ev[0]!.props)).not.toContain('Hidden Bar');
+});
+
 // ── 4. the per-kind acceptance events (G314, G317, G318) ─────────────────────
 
 test('§44: correction, disambiguation and query rows each record their own kind', async () => {
@@ -210,6 +252,10 @@ test('§44: correction, disambiguation and query rows each record their own kind
   // G318 — a §19 ranked CHOICE was resolved by the user rather than guessed.
   fireEvent.press(r.getByTestId('ia-entity-row-d'));
   expect(named('disambiguation_selected')[0]!.props).toMatchObject({ entityType: 'city' });
+  // …and this one is an AMBIGUITY, not a duplicate: it carries no
+  // `resolve_existing` structured value, so §57's duplicate count must not
+  // claim it (G369).
+  expect(named('disambiguation_selected')[0]!.props).toMatchObject({ resolvedExisting: false });
 
   // G314 — the user submitted their query instead of resolving it.
   fireEvent.press(r.getByTestId('ia-entity-row-q'));
@@ -233,7 +279,7 @@ test('§44: a non-capturing policy drops every raw-text prop the new arms could 
     'f',
     'telegraph_message',
     { length: 5, text: 'secret', query: 'secret', rawText: 'secret', message: 'secret' },
-    { captureRawText: false, events: 'all' },
+    { logRawText: false, events: ['manual_value_kept'] },
   );
   expect(named('manual_value_kept')[0]!.props).toEqual({ length: 5 });
 });
@@ -244,7 +290,7 @@ test("§44: a policy's event allowlist still gates the new names", () => {
     'f',
     'telegraph_message',
     { shownCount: 3 },
-    { captureRawText: false, events: ['input_opened'] },
+    { logRawText: false, events: ['input_opened'] },
   );
   expect(names()).not.toContain('suggestion_dismissed');
 });
