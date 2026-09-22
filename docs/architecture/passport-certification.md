@@ -89,7 +89,7 @@ All file paths are under
    - Single aggregate assembler `services/passport/PassportProjectionService.ts:934` `buildPassportProjection`; all filtering applied before return.
    - Viewer context resolved from the **canonical** `resolveInteractionPermissions` engine (`:409`), not a passport-specific re-implementation.
    - Route resolves `viewerId` **server-side** from the bearer token via `getOptionalViewerId` (`routes/passport.ts:1461`, `:1478`, `:1505`), never a client-supplied identity.
-   - Client renders server flags only: `usePassportPlans.ts:210` `canMakePlan: proj.actions.can_make_plan`; TrustScreen note `TrustScreen.tsx:346`. Grep for client trust-threshold policy (`trust > N`) found **none**.
+   - Client renders server flags only: `usePassportPlans.ts:210` `canMakePlan: proj.actions.can_make_plan`; TrustScreen footer note `TrustScreen.tsx:379#server owns authorization`. Grep for client trust-threshold policy (`trust > N`) found **none**.
 
 2. **Exact location never ordinary Passport data; My World coarse (§5/§23/TABLE 25).**
    - `mapStamp`/`buildUpcomingPlans`/`buildTravelerState` expose only city/country; no lat/lng on any read.

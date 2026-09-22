@@ -439,7 +439,21 @@ import {
  * nest a `#` inside an anchor and no pass could read it — the one case where
  * the standing "anchor it while you are there" instruction does not apply, and
  * it is written down here rather than left as an apparent omission. 186 -> 185. */
-export const MAX_DEAD_TARGETS = 185;
+/* LOWERED 2026-09-22 while merging `main` (#452, #453) into PR 521, and the
+ * cause is recorded because it is NOT a repair anyone made. #453 added lines to
+ * `travel-buddy-standalone/src/features/passport/TrustScreen.tsx`, which moved
+ * the line `passport-certification.md:92` points at: `TrustScreen.tsx:346` used
+ * to land on `</View>` — punctuation, which this check calls landing on nothing
+ * — and now lands on `{view.domains.map((row) => (`. The pointer got no truer;
+ * it stopped being VISIBLE to this check, which is the failure mode a ratchet
+ * measured on a floor has to be honest about. So the pointer was repointed by
+ * reading its claim — "Client renders server flags only … TrustScreen note" is
+ * the §11 footer note, not a domain map — and anchored, which is what takes it
+ * out of this population for good: `TrustScreen.tsx:379#server owns
+ * authorization`, verified by check:doc-citations rather than by an offset. The
+ * ceiling falls to the measured number either way, because a ceiling that
+ * refuses a drop it did not earn stops being a ceiling. 185 -> 184. */
+export const MAX_DEAD_TARGETS = 184;
 
 /** Pinned to a commit by its own declaration; its lines must not track HEAD. */
 const PINNED_DOCS = new Set(['docs/architecture/mobile-reachability-ledger.md']);
