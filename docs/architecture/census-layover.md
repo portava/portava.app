@@ -6228,8 +6228,16 @@ stays `W`, on evidence read at this commit rather than carried forward:
   seeded `enabled = true`.
 * Live on portava-ci at this commit: `layover_discovery_mode_enabled` is present
   and `enabled = false`.
-* **2971 is applied to no production database.** Production
-  (`ajrurzioarfkagpuxfnb`) holds ZERO ledger rows at or above 2890.
+* **2971 is applied to no production database.** Measured 2026-09-22 05:29
+  UTC on `ajrurzioarfkagpuxfnb`: no `schema_migration_ledger` row whose filename
+  begins `2971`, AND — the fact the gate actually turns on — **no `feature_flags`
+  row named `layover_discovery_mode_enabled` at all**.
+  *(Corrected 2026-09-22. This bullet previously read "holds ZERO ledger rows at
+  or above 2890", which is FALSE: the correct four-digit band query answers 20.
+  That zero is the artefact of comparing a TEXT `version` column holding two
+  formats — a 14-digit timestamp sorts below `'2890'` — and it was never evidence
+  about 2971. The row's conclusion is unchanged and now rests on the flag's
+  absence, which is what `discoveryLayoverGate` reads.)*
 
 So on production the gate still reads the flag as ABSENT and
 `discoveryLayoverGate` still returns `OFF`, exactly as §24.6 concluded. The

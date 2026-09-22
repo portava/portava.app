@@ -4651,10 +4651,13 @@ as unmigrated across the whole 2890+ band. That report was wrong twice over:
   `version`; the CLI one has `version` and no `filename` — so a query written
   for one silently misbehaves against the other and still looks authoritative.
 * It compared a TEXT `version` column holding **two formats at once**, bare
-  serials (`'2272'`) and 14-digit timestamps (`'20260921101005'`). Collation
-  orders them `'289' < '20260915123045' < '2950'`, so `>= '2890'` excludes every
-  post-cutover row **no matter what is applied**, and `MAX(version)` returns a
-  PRE-cutover serial.
+  serials (`'2272'`) and 14-digit timestamps (`'20260921101005'`). A 14-digit timestamp sorts
+  **below** the four-digit cutoff — `'20260915123045' < '2890'` is TRUE, the
+  third character deciding it (`'0'` against `'9'`) — so `>= '2890'` excludes
+  every post-cutover row **no matter what is applied**, and `MAX(version)`
+  returns a PRE-cutover serial. *(Ordering corrected 2026-09-22: this cell
+  previously wrote `'289' < '20260915123045' < '2950'`, whose first half is
+  false. The conclusion stands; the mechanism as stated did not.)*
 
 **AND THE DEEPER RULE, which this census should apply to every `☠prod` claim it
 carries: LEDGER ABSENCE IS NOT EVIDENCE OF NON-APPLICATION.** Probed the same

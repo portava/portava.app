@@ -100,10 +100,19 @@ A query written for one and run against the other answers zero and still looks
 authoritative.
 
 **The CLI table's `version` is TEXT holding two formats at once** — bare serials
-(`'2272'`) and 14-digit timestamps (`'20260921101005'`). Text collation orders
-them `'289' < '20260915123045' < '2950'`, so `version >= '2890'` excludes EVERY
-post-cutover row no matter what is applied, and `MAX(version)` returns a
-pre-cutover serial. This is what produced the withdrawn claim that there were
+(`'2272'`) and 14-digit timestamps (`'20260921101005'`). Under `en_US.UTF-8`, a
+14-digit timestamp sorts **below** the four-digit cutoff — `'20260915123045' <
+'2890'` is TRUE — because the THIRD character decides it, `'0'` against `'9'`,
+and the remaining ten digits are never read. So `version >= '2890'` excludes
+EVERY post-cutover row no matter what is applied, and `MAX(version)` returns a
+pre-cutover serial.
+
+*(Corrected 2026-09-22. An earlier form of this paragraph wrote the ordering as
+`'289' < '20260915123045' < '2950'`. The first half is FALSE — `'289' >
+'20260915123045'`, verified in Postgres — and the error mattered because it
+described the trap as timestamps sorting AMONG the serials, when what actually
+happens is that they sort beneath the whole band. The conclusion was right for
+the wrong reason.)* This is what produced the withdrawn claim that there were
 "zero ledger rows at or above 2890".
 
 **Ledger absence is not evidence of non-application.** Probed on the same day,
@@ -1994,8 +2003,15 @@ what was wrong.
 
 ### Still open
 
-- **Production is untouched.** Zero ledger rows at or above 2890 there. 2972 has
-  been applied to **portava-ci only**.
+- **Production is untouched.** 2972 has been applied to **portava-ci only**;
+  `public.schema_migration_ledger` on `ajrurzioarfkagpuxfnb` holds **no row whose
+  filename begins `2972`** (measured 2026-09-22 05:29 UTC).
+  *(Corrected 2026-09-22. This bullet previously justified itself with "Zero
+  ledger rows at or above 2890 there", which is FALSE — the correct band query,
+  `filename ~ '^[0-9]{4}_' AND substring(filename from '^[0-9]{4}')::int >= 2890`,
+  answers **20**. The zero is what the CLI ledger's TEXT comparison returns, for
+  the collation reason above. The conclusion survives; the evidence for it is now
+  the absence of 2972's own row rather than a broken count.)*
 - The `authz`-vs-`public` name-keying notes `audit:schema` prints on every run
   (9 function claims resolving in `authz`; `is_accepted_trip_member` existing in
   both) remain as stated — pre-existing, unrelated to this apply.

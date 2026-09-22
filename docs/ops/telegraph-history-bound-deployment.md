@@ -47,16 +47,32 @@ difference matters enough to state precisely, because it is easy to mistake for
 partial coverage of the bound.
 
 `2401_telegraph_messages_rls_latent_disclosure.sql` has exactly **2** executable
-statements. `2402_telegraph_membership_rls_recursion.sql` has **9**. All 11
-effects are observed present on production with the exact properties those
-files assert as their own postconditions — checked individually, not by object
-existence: policy `qual` text compared as text, `permissive` = RESTRICTIVE where
-required, policy counts 4 / 2 / 1 across `messages` /
+statements. `2402_telegraph_membership_rls_recursion.sql` has **9**. Their
+coverage is **not** the same, and an earlier version of this section said it was.
+
+**2402: all 9 verify.** Checked individually, not by object existence — policy
+`qual` text compared as text, policy counts 4 / 2 / 1 across `messages` /
 `message_thread_members` / `message_threads`, and for
 `authz.is_active_thread_member(uuid)` the SECURITY DEFINER bit, the pinned
 `search_path`, the owner, the comment string, the function body
 character-for-character, EXECUTE for `anon` / `authenticated` / `service_role`
 and USAGE on schema `authz` for the same three.
+
+**2401: 1 of 2 verifies, so it is NOT fully covered.** Its second statement does
+— `messages_hide_blocked_sender` is present, RESTRICTIVE, with a qual requiring a
+non-null `auth.uid()`. Its first does not. 2401's own postcondition
+(`2401_telegraph_messages_rls_latent_disclosure.sql:139`) requires `msg_select`'s
+qual to contain `mtm.thread_id = messages.thread_id`; production's live qual is
+`authz.is_active_thread_member(thread_id)`, which is **2402's** form, because 2402
+recreates that policy. Run against production today, 2401's postcondition would
+RAISE.
+
+*(Corrected 2026-09-22. This section previously read "All 11 effects are observed
+present … with the exact properties those files assert as their own
+postconditions". That was an overstatement: it was true of 2402 and false of
+2401's first statement, and the failure mode it glosses over — a later migration
+overwriting an earlier one's object, so the earlier one can never be evidenced
+again — is precisely the one this document exists to keep visible.)*
 
 **Neither 2401 nor 2402 appears in either ledger.** So the honest statement is
 "every effect observed present, no ledger evidence of execution" — never
@@ -64,8 +80,11 @@ and USAGE on schema `authz` for the same three.
 statement-complete observation still cannot distinguish the file executing from
 its statements being run by hand or reproduced by a later migration. For
 `msg_select` it provably cannot, because 2402 recreates the same policy 2401
-creates; the one piece of 2401-specific evidence is
+creates — and in this case 2402 demonstrably won, which is why 2401 cannot reach
+full coverage at all. The one piece of 2401-specific evidence left is
 `messages_hide_blocked_sender`, which no other migration in the tree creates.
+**Whether 2401 ever ran in its own form is unknowable from a probe**, and that is
+the honest end of the enquiry rather than a gap to be filled by assumption.
 
 What that live policy set does: `authz.is_active_thread_member` filters on
 `left_at IS NULL` and takes **no user parameter** — it reads `auth.uid()`

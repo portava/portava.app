@@ -193,7 +193,7 @@ READ; nothing was applied.
 | **files with NO production ledger row** | **156** |
 | rows with `applied_by='backfill'` | 382 (`0010_trip_plan.sql` … `2254_schema_migration_ledger.sql`) |
 | rows with `applied_by='manual'` | 11 (`2338_memory_location_precision.sql` … `2730_memory_derivative_registry.sql`) |
-| rows at or above `2890` | **19 — the "zero" previously recorded here was WRONG.** It is the literal result of querying `supabase_migrations.schema_migrations` (the Supabase CLI ledger) rather than `public.schema_migration_ledger`, compounded by a TEXT comparison on a column holding both bare serials and 14-digit timestamps, where collation orders `'289' < '20260915123045' < '2950'` so `>= '2890'` excludes every post-cutover row regardless of what is applied. Re-measured 2026-09-21 against the hand-rolled ledger. |
+| rows at or above `2890` | **19 — the "zero" previously recorded here was WRONG.** It is the literal result of querying `supabase_migrations.schema_migrations` (the Supabase CLI ledger) rather than `public.schema_migration_ledger`, compounded by a TEXT comparison on a column holding both bare serials and 14-digit timestamps, where a 14-digit timestamp sorts BELOW the four-digit cutoff (`'20260915123045' < '2890'` is true — the third character decides it, `'0'` against `'9'`) so `>= '2890'` excludes every post-cutover row regardless of what is applied. Ordering corrected 2026-09-22: an earlier form said `'289' < '20260915123045' < '2950'`, whose first half is false. Re-measured 2026-09-21 against the hand-rolled ledger. |
 
 **WHAT THE 393 DOES AND DOES NOT PROVE.** 382 of those rows carry
 `applied_by='backfill'` with the literal string `backfill` as their checksum.
