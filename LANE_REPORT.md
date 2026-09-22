@@ -151,10 +151,10 @@ symlink is untracked.
 |---|---|
 | `npm run typecheck` (`tsc -p tsconfig.json --noEmit && check-import-extensions`) | clean, after every change |
 | `npm run typecheck:tests` | `173 diagnostics across 60 files (baseline 173 across 60)` — OK, nothing above baseline |
-| `npm test` (node:test runner, 813 suites) | `# tests 6616 # pass 6616 # fail 0` |
+| `npm test` (node:test runner, 813 suites) | at final HEAD: `# tests 6617 # pass 6617 # fail 0` (6616 before the L168 guard case) |
 | `npm run check:route-registry` | OK — 199 screens, 9 layouts |
 | `npx jest --forceExit 'layoverDashboard\|layover/__tests__\|CanILeave\|LayoverMap\|layoverPlanCache'` | `Test Suites: 2 failed, 25 passed, 27 total` / `Tests: 171 passed, 171 total` |
-| `npm run test:component` (jest native + `jest -c jest.web.config.js`) | `Test Suites: 617 passed, 617 total` / `Tests: 3902 passed, 3902 total`, then `3 passed` / `8 passed` on the web config, `EXIT=0` |
+| `npm run test:component` (jest native + `jest -c jest.web.config.js`) | at final HEAD: `Test Suites: 617 passed, 617 total` / `Tests: 3903 passed, 3903 total`, then `3 passed` / `8 passed` on the web config, `EXIT=0`. Run twice — once at `c3dd7b7cb` (3902) and once at HEAD. |
 
 The two "failed" suites are `layoverLocalReplan.test.ts` and
 `layoverReturnFacts.test.ts`: node:test files that jest's `testMatch` picks up
