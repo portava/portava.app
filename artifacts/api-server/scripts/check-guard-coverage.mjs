@@ -326,6 +326,24 @@ const READ_ONLY_AUDIT_ENTRY_POINTS = [
       'to choose. Production is where its 114 broken images were found.',
   },
   {
+    file: 'src/scripts/reportMigrationInventory.ts',
+    reason:
+      'FOUR SELECTs, all reads: two to_regclass() existence probes for the two ledger tables; ' +
+      '`select filename, checksum, applied_by, applied_at, notes from public.schema_migration_ledger`; ' +
+      '`select version, name from supabase_migrations.schema_migrations`; and ' +
+      '`select table_name, column_name, is_nullable, column_default, data_type from ' +
+      "information_schema.columns where table_schema = 'public'`. Neither ledger read carries a WHERE " +
+      'clause, deliberately — a band filter cannot be expressed in SQL over either table without ' +
+      "producing a wrong answer (a text `>=` on the CLI table's mixed-format version column excludes " +
+      "every post-cutover row; a numeric cast over the hand ledger's filename scoops up imported files " +
+      'whose names begin with a 14-digit instant), so the rows come back whole and the banding happens ' +
+      'in memory over parsed serials. It reports ledger evidence and observed schema state as separate ' +
+      'dimensions and writes NOTHING: no INSERT/UPDATE/DELETE/DDL, no RPC, no auth-admin call, and in ' +
+      'particular no ledger row — when it finds something that needs writing it prints that fact and ' +
+      'exits 3. Production is the only place its question can be settled: the inventory it replaces ' +
+      'reported that production carried ZERO ledger rows at or above 2890, and production carried 20.',
+  },
+  {
     file: 'src/scripts/checkAuthorizationContract.ts',
     reason:
       'The client-write authorization regression guard (check:authorization-contract). Reads the live ' +
