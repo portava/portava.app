@@ -195,9 +195,17 @@ Two entries need their caveat stated in place rather than as a footnote:
   (`scripts/checkWriterlessReads.ts:283-296`). Whether that is intended could not be established
   from the tree.
 
-An unmerged sixteenth intel table, **`intel_claim_reviews`**, exists in PRs #456/#457 and was
-applied by hand to the `portava-ci` project. It is **not in this tree**: the only trace of it here
-is its rollback section, `db/rollback/2026-09-07-ci-migrations-rollback.sql:185-196`.
+The sixteenth intel table, **`intel_claim_reviews`**, was applied by hand to the `portava-ci`
+project ahead of PRs #456/#457, and it **is now in this tree**: the migration is
+`src/migrations/2311_intel_claim_reviews.sql` — RLS on, `service_role` only, no `anon` or
+`authenticated` policy at all — and its rollback section is
+`db/rollback/2026-09-07-ci-migrations-rollback.sql:185-196`.
+
+It is **no longer writerless**. `services/intel/SafetyReviewService.ts` writes one row per
+authorized safety transition, and `routes/adminSafetyCandidates.ts` carries the decision in from
+`POST /api/admin/intel/safety-review` behind `requireAdmin`. Nothing in server code READS it, and
+that is the intent rather than a gap: it holds a reviewer identity and free-text moderation
+reasons, so it is a decision history for people with access, never a projection source.
 
 ## 3. The schedulers — every one is registered
 

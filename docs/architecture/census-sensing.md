@@ -1805,34 +1805,34 @@ mutations are listed in §5.3.
   `test/adminSafetyCandidatesRoute.test.ts:250#not filed again`;
   `test/adminSafetyCandidatesRoute.test.ts:265#DISMISSED`).
 
-- **the routes** — `routes/adminSafetyCandidates.ts:60#router.post(` is
+- **the routes** — `routes/adminSafetyCandidates.ts:94#router.post(` is
   `POST /api/admin/intel/safety-candidates/scan`: requireAdmin
-  (`routes/adminSafetyCandidates.ts:63#requireAdmin(`), the flag read
-  fail-closed (`routes/adminSafetyCandidates.ts:70#isFlagEnabled`), live
+  (`routes/adminSafetyCandidates.ts:97#requireAdmin(`), the flag read
+  fail-closed (`routes/adminSafetyCandidates.ts:104#isFlagEnabled`), live
   intelligence servable or a refusal before anything is read
-  (`routes/adminSafetyCandidates.ts:81#liveLabelsServable`;
+  (`routes/adminSafetyCandidates.ts:115#liveLabelsServable`;
   `test/adminSafetyCandidatesRoute.test.ts:304#not servable`); the subjects
   the caller names (≤ 50) or, absent, the bounded sweep of every place
   whose current `crowd.level` is served as `packed` — privacy-eligible and
   unexpired, the safety notice read's own two per-row gates, choosing only
-  WHERE to look (`routes/adminSafetyCandidates.ts:88#listSweepSubjects(`;
+  WHERE to look (`routes/adminSafetyCandidates.ts:122#listSweepSubjects(`;
   `lib/safetyCandidateStore.ts:41#listSweepSubjects(`;
   `lib/safetyCandidateStore.ts:50#packed`;
   `test/adminSafetyCandidatesRoute.test.ts:294#sweep`); per subject the
   current envelopes through the gate and the previous readings from the
-  record (`routes/adminSafetyCandidates.ts:101#readLiveClaimEnvelopes`;
-  `routes/adminSafetyCandidates.ts:103#readPreviousReadings`), a history
+  record (`routes/adminSafetyCandidates.ts:135#readLiveClaimEnvelopes`;
+  `routes/adminSafetyCandidates.ts:137#readPreviousReadings`), a history
   that cannot be read a per-subject REFUSAL and never "no candidate"
-  (`routes/adminSafetyCandidates.ts:105#refusal`;
+  (`routes/adminSafetyCandidates.ts:139#refusal`;
   `test/adminSafetyCandidatesRoute.test.ts:317#REFUSAL`), detection
-  (`routes/adminSafetyCandidates.ts:108#detectSafetyCandidates(`), the
-  dedupe against the queue (`routes/adminSafetyCandidates.ts:117#open.reasons`)
+  (`routes/adminSafetyCandidates.ts:142#detectSafetyCandidates(`), the
+  dedupe against the queue (`routes/adminSafetyCandidates.ts:151#open.reasons`)
   and the filing, a refused write named on the answer
-  (`routes/adminSafetyCandidates.ts:123#queue_write_failed`;
+  (`routes/adminSafetyCandidates.ts:157#queue_write_failed`;
   `test/adminSafetyCandidatesRoute.test.ts:332#refuses the write`). One row
   per new candidate and nothing else on the wire
   (`test/adminSafetyCandidatesRoute.test.ts:216#ONE report`).
-  `routes/adminSafetyCandidates.ts:140#router.get(` is
+  `routes/adminSafetyCandidates.ts:174#router.get(` is
   `GET /api/admin/intel/safety-candidates`: the detector's own rows still
   open or reviewing, newest first, parsed — a person's report is not among
   them (`lib/safetyCandidateStore.ts:112#listOpenCandidates(`;
