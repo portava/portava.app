@@ -63,12 +63,39 @@ describe('normalizeGuideProfile', () => {
     assert.equal(g.verifiedAt, RAW_ROW.verified_at);
   });
 
-  test('numeric fields fall back to a number, never undefined', () => {
-    // The screen renders `{guideProfile.contributionCount} contributions`, so an
-    // undefined here is a visible "undefined contributions", not a crash — the
-    // quieter half of the same bug.
+  test('numeric fields are never undefined — unknown is null, not zero', () => {
+    // ORIGINAL INVARIANT (unchanged): the screen renders
+    // `{guideProfile.contributionCount} contributions`, so an `undefined` here
+    // is a visible "undefined contributions". That must never happen.
+    //
+    // CHANGED 2026-09-06: the absent case used to normalise to `0`, which made
+    // a guide whose stats the server did not report read as "Gems 0 · Helpful
+    // votes 0 · Accuracy 0%" — a guide who has contributed nothing and is never
+    // right. It also made app/gems/guide.tsx's own
+    // `typeof accuracyScore === 'number' ? … : '—'` check always true, so its
+    // em-dash branch was dead code. Absent is now `null`, and both surfaces
+    // render the em dash (app/gems/__tests__/guide.unknownStats.component.test.tsx).
+    //
+    // `guideLevel` keeps its 1 default: level is an ordinal with a meaningful
+    // floor, not a count that could be misread as an achievement of zero.
     const g = normalizeGuideProfile({ user_id: 'u-2', status: 'active' })!;
     assert.equal(g.guideLevel, 1);
+    for (const [field, value] of [
+      ['contributionCount', g.contributionCount],
+      ['helpfulVotes', g.helpfulVotes],
+      ['accuracyScore', g.accuracyScore],
+    ] as const) {
+      assert.notEqual(value, undefined, `${field} must never be undefined`);
+      assert.equal(value, null, `${field} must be null when the server did not report it`);
+      assert.notEqual(value, 0, `${field} must not claim a zero the server never sent`);
+    }
+  });
+
+  test('a real zero survives normalisation — "none" stays distinct from "unknown"', () => {
+    const g = normalizeGuideProfile({
+      user_id: 'u-4', status: 'active',
+      contribution_count: 0, helpful_votes: 0, accuracy_score: 0,
+    })!;
     assert.equal(g.contributionCount, 0);
     assert.equal(g.helpfulVotes, 0);
     assert.equal(g.accuracyScore, 0);
