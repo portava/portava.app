@@ -281,14 +281,28 @@ by me after **2,517 top-level suites** with **3** failures —
   above, on the pristine tree.
 * `suggestionSeenCache` — a timing test, on the pristine tree.
 
-**AFTER the change**: **STILL IN FLIGHT** when this report was written, and reported as the partial it is
-rather than as a pass. At that point **1316 top-level suites had reported and 0 had
-failed**, among them the new `census L295 — the fixtures in this file name only
-production columns` suite in `airport.test.ts`. The four NEW files are registered near
-the end of the curated list and had not been reached; they are covered completely by the
-affected-set run below, which is green.
-The run is `npm test` in this worktree; whoever picks the branch up should re-run it on an
-idle box, where `guardReachability` passes 25/25 by its own account.
+**AFTER the change**: **KILLED, NOT COMPLETED — this is not a pass and must not be read
+as one.** The process ended `EXIT=143` (SIGTERM, 128+15) partway through
+`src/test/discoverySort.test.ts`; there is no final `# tests / # pass / # fail` block for
+the main run, only the pretest's `23/23`. What it DID report before it was killed:
+
+```
+top-level suites reported : 1496
+'not ok' lines in the log :    0   (top-level AND indented subtests)
+exit                      :  143  (SIGTERM — killed, no summary emitted)
+```
+
+So: 1,496 suites, zero failures, then terminated. Among them, green, the new
+`census L295 — the fixtures in this file name only production columns` suite in
+`airport.test.ts`. The four NEW files are registered near the end of the curated list and
+were NOT reached; they are covered completely by the affected-set run below.
+
+`guardReachability` and `flagSchemaPrerequisites` — the two that failed on the PRISTINE
+run — both passed here, which is a fact about machine load at the time and not evidence
+about this change either way.
+
+**The integrated tree needs its own full run on a quieter box.** Nothing in this worktree
+establishes a clean full-suite pass.
 
 The regression evidence this pass actually rests on is the **affected set**, which is
 complete and green: 54 suites — every file that imports or reads `routes/airport.ts`,
