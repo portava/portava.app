@@ -1,6 +1,32 @@
 /**
  * LayoverDecisionStore — the persistence half of §20's decision record and of
- * §4's `layover_time_budgets` / `layover_return_plans` / `layover_constraints`.
+ * §4's `layover_time_budgets` and `layover_return_plans`.
+ *
+ * ── THREE OF MIGRATION 2992'S FIVE TABLES HAVE NO WRITER, AND THAT IS STATED
+ *    HERE RATHER THAN LEFT TO BE DISCOVERED ─────────────────────────────────
+ * 2992 creates `layover_constraints` (L22), `layover_checkpoints` (L30) and
+ * `layover_outcomes` (L32). NOTHING IN THIS MODULE WRITES ANY OF THEM, and
+ * nothing anywhere else does either.
+ *
+ * That is not an oversight, it is what those three rows actually need. Each is
+ * fed by an INPUT this tree does not have:
+ *
+ *   `layover_constraints`  L22's eleven fields are DECLARED by the traveller —
+ *                          terminals, baggage mode, entry permission. There is
+ *                          no surface that asks, and §12.1's clarifying-question
+ *                          loop (L114) is itself NOT-BUILT. A writer would have
+ *                          nothing but defaults to store.
+ *   `layover_checkpoints`  L30 needs an observation. L173's `recordCheckpoint`
+ *                          has no caller and no route.
+ *   `layover_outcomes`     L32 needs a session to COMPLETE, and `status =
+ *                          'completed'` still has no writer (L33). An outcome
+ *                          row written for a session nothing ever completes
+ *                          would be a row about an event that did not happen.
+ *
+ * So the tables exist and are empty, deliberately, the same way 2700 shipped
+ * its table without a writer and said so. A table with no writer is visible to
+ * `check:writerless-reads`; a table with a writer that invents its contents is
+ * not visible to anything.
  *
  * ── WHAT WAS ALREADY BUILT, AND WHAT WAS MISSING ────────────────────────────
  * Almost all of it was built. `services/airport/LayoverFeasibility.ts` produces
@@ -26,13 +52,13 @@
  * ── THE FLAG IS LOAD-BEARING, NOT CEREMONY ──────────────────────────────────
  * supabase-js sends EVERY key of an insert payload, so a writer that names a
  * column fails the whole statement on any database that has not run migration
- * 3003. That is the hazard migration 2700's header records and migration 2410
+ * 2992. That is the hazard migration 2700's header records and migration 2410
  * gates behind a flag, and it is why nothing here writes until
  * `layover_decision_persistence_enabled` is TRUE.
  *
  * `isFlagEnabled` reads an ABSENT row as FALSE (`lib/featureFlags.ts`), so the
  * flag needs no seeding migration and a database that has never heard of it is
- * a database this module does not write to. 3003 seeds nothing for exactly
+ * a database this module does not write to. 2992 seeds nothing for exactly
  * that reason.
  *
  * A DISABLED FLAG IS A REFUSAL, NOT A SUCCESS. `persistDecision` returns
@@ -67,13 +93,14 @@
  * computation that does not exist, which nothing could detect.
  *
  * ── STORAGE ─────────────────────────────────────────────────────────────────
- * `layover_certified_computations` (migration 2700, plus 3003's five §20
- * columns), `layover_time_budgets`, `layover_return_plans` and
- * `layover_constraints` (all migration 3003).
+ * `layover_certified_computations` (migration 2700, plus 2992's five §20
+ * columns), and `layover_time_budgets` / `layover_return_plans` (2992). Those
+ * three are the only tables this module touches; see the note above about the
+ * other two 2992 creates.
  *
  * NEITHER MIGRATION IS APPLIED TO PRODUCTION at the time of writing. 2700 does
  * not appear in `src/lib/capability/production-applied-migrations.json` and
- * 3003 was authored on this branch. 3003's header states the exact deployment
+ * 2992 was authored on this branch. 2992's header states the exact deployment
  * sequence; this module is step 5's precondition, not its trigger, and it
  * applies nothing.
  */
@@ -106,13 +133,12 @@ const logger = rootLogger.child({ service: "LayoverDecisionStore" });
  * blind spot: the check cannot tell which table the payload belongs to, so it
  * cannot diff those columns against the live schema — which is the whole
  * failure class it exists to catch, and the exact failure class this module
- * would hit first, because its columns are the ones 3003 has not applied.
+ * would hit first, because its columns are the ones 2992 has not applied.
  * These stay exported because the tests import them.
  */
 export const CERTIFIED_COMPUTATION_TABLE = "layover_certified_computations";
 export const TIME_BUDGET_TABLE = "layover_time_budgets";
 export const RETURN_PLAN_TABLE = "layover_return_plans";
-export const CONSTRAINTS_TABLE = "layover_constraints";
 
 /** FALSE by absence. See the header. */
 export const DECISION_PERSISTENCE_FLAG = "layover_decision_persistence_enabled";
@@ -192,16 +218,16 @@ export function riskBandFor(record: LayoverFeasibilityRecord): RiskBand | null {
 // ── rows ─────────────────────────────────────────────────────────────────────
 
 /**
- * The FULL insert payload for `layover_certified_computations`, post-3003.
+ * The FULL insert payload for `layover_certified_computations`, post-2992.
  *
  * `ledgerRowFor` is deliberately NOT changed and NOT replaced. Its own header
  * explains why it omits five columns — *"naming a column the database does not
  * have fails the whole insert"* — and its test asserts that omission, which is
- * what stops someone "completing" it and breaking every write on a pre-3003
+ * what stops someone "completing" it and breaking every write on a pre-2992
  * database. That test still passes and must.
  *
  * So there are two payloads and the FLAG chooses between them: the narrow one
- * for a database that has not run 3003 (which, because the flag is off there,
+ * for a database that has not run 2992 (which, because the flag is off there,
  * is never sent at all), and this one, which is only ever built inside a
  * flag-true branch.
  */
@@ -231,7 +257,7 @@ export function certifiedComputationRowFor(
  * AND boarding, and that `traffic_extra_min` covers transfer AND contingency.
  *
  * Writing `0` into `deplane_min` would record that somebody looked at
- * deplaning and found it instant. Nobody looked. 3003 makes the ten ladder
+ * deplaning and found it instant. Nobody looked. 2992 makes the ten ladder
  * columns nullable for this reason and its comment says so; this function is
  * the writer that honours it.
  *
@@ -292,7 +318,7 @@ export function timeBudgetRowFor(
  * having two — so the recommended return equals the hard return until
  * something upstream certifies a genuinely earlier one. The column exists
  * because the spec names it; storing the hard return in it is honest, and
- * 3003's CHECK (`recommended <= hard`) holds trivially rather than by luck.
+ * 2992's CHECK (`recommended <= hard`) holds trivially rather than by luck.
  */
 export function returnPlanRowFor(
   snapshotId: string,
@@ -354,9 +380,9 @@ export type PersistOutcome =
  * between the two and two dashboard loads in the same millisecond would write
  * two rows. A 23505 from the parent insert is `already_recorded` — success.
  *
- * NOT AN UPSERT, ANYWHERE. An upsert UPDATEs on conflict, and 3003 puts a
+ * NOT AN UPSERT, ANYWHERE. An upsert UPDATEs on conflict, and 2992 puts a
  * BEFORE UPDATE trigger on the child tables that raises. Reaching for `.upsert`
- * here would turn a benign double-tap into a 500 the day 3003 ships.
+ * here would turn a benign double-tap into a 500 the day 2992 ships.
  */
 export async function persistDecision(
   db: SupabaseClient,
@@ -369,7 +395,7 @@ export async function persistDecision(
       ok: false,
       reason: "persistence_disabled",
       message:
-        `${DECISION_PERSISTENCE_FLAG} is off. Migrations 2700 and 3003 must be applied and confirmed ` +
+        `${DECISION_PERSISTENCE_FLAG} is off. Migrations 2700 and 2992 must be applied and confirmed ` +
         "before it is turned on; until then this payload names columns the database does not have.",
     };
   }

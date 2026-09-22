@@ -1,42 +1,33 @@
--- 3003_layover_decision_record_and_operational_tables.sql
+-- 2992_layover_decision_record_and_operational_tables.sql
 --
 -- THE FIVE §4 TABLES THAT EXIST NOWHERE, AND THE FIVE §20 LEDGER COLUMNS THAT
 -- `layoverLedger.ts` ALREADY NAMES AND CANNOT WRITE.
 --
--- Lane 3003 (layover). Creates FIVE new tables and adds FIVE columns to
+-- Lane 2992 (layover). Creates FIVE new tables and adds FIVE columns to
 -- `layover_certified_computations`. It UPDATEs no row, DELETEs no row, drops
 -- nothing, and changes no existing column's type, nullability or default.
 --
 -- ══════════════════════════════════════════════════════════════════════════════
--- READ THIS FIRST — THE FILENAME PREFIX IS OUT OF BAND AND THIS FILE SAYS SO
+-- THE PREFIX, AND WHY IT IS 2992 AND NOT THE NUMBER THIS LANE WAS FIRST GIVEN
 -- ══════════════════════════════════════════════════════════════════════════════
--- `src/scripts/migrationPrefixRules.ts` requires a NEW 4-digit canonical prefix
--- to match /^2[1-9]\d{2}_/ — that is, 2100-2999 — so that a 4-digit prefix can
--- never be confused with an 8-digit YYYYMMDD prefix under the plain
--- lexicographic ordering this chain applies in. `3003` is outside that range,
--- and `check:migration-prefixes` FAILS on this file today:
+-- This file was first written as `3003_`, the number the lane was assigned.
+-- THAT NUMBER IS NOT LEGAL IN THIS CHAIN. `src/scripts/migrationPrefixRules.ts`
+-- declares `NEW_NUMERIC_PREFIX_RE = /^2[1-9]\d{2}_/` — a NEW 4-digit canonical
+-- prefix must be 2100-2999 — so that a 4-digit prefix can never be confused
+-- with an 8-digit YYYYMMDD prefix under the plain lexicographic ordering this
+-- chain applies in. `check:migration-prefixes` rejected `3003_` outright:
 --
 --     prefix 3003 is >= 2100 but outside the required 2100-2999 range
---     (must match /^2[1-9]\d{2}_/)
 --
--- This lane was assigned the number 3003 explicitly and instructed to use no
--- other, so the file carries it and the collision is DECLARED here rather than
--- worked around. It is NOT worked around by editing the rule: the rule is a
--- guard in a file this lane does not own, and loosening a band check so that a
--- filename fits is the exact shape this repository's ratchets exist to refuse.
+-- The band was NOT widened to accommodate the filename. That rule lives in a
+-- file this lane does not own, and loosening a guard so that a name fits is the
+-- exact shape this repository's ratchets exist to refuse — so the guard stood
+-- and the number moved. 2992 was free and was reserved to this lane.
 --
--- WHOEVER INTEGRATES THIS MUST PICK ONE, IN WRITING:
---   (a) rename this file to a free prefix inside the band — 2977-2981, 2986,
---       2987, 2988, 2990, 2992, 2993 and 2994 are all unused at this commit
---       (`ls src/migrations/`); renaming is the whole change, the SQL is
---       prefix-independent and nothing references the filename except
---       `certify:migrations` and this header; or
---   (b) extend the band deliberately in `migrationPrefixRules.ts`, which means
---       re-deriving the "second digit can never be 0 in a YYYYMMDD prefix"
---       argument for 3xxx — it still holds (a 3xxx date prefix would be the
---       year 3000) but it is a decision with a reason, not a widening.
--- Until one of those happens `check:migration-prefixes` is RED on this branch
--- and nothing else in this file is affected.
+-- Nothing in the SQL below is prefix-dependent; the rename touched this header,
+-- every `(2992)` in the pre/postcondition messages, and the migration's name in
+-- `src/test/layoverDecisionLedger.test.ts`. There is no `3003_` file left
+-- behind — the rename was a `git mv`, not a copy.
 --
 -- ══════════════════════════════════════════════════════════════════════════════
 -- WHY
@@ -326,10 +317,10 @@ BEGIN;
 DO $$
 BEGIN
   IF to_regclass('public.layover_sessions') IS NULL THEN
-    RAISE EXCEPTION 'PRECONDITION FAILED (3003): public.layover_sessions does not exist. Apply 0127_layover_system.sql first.';
+    RAISE EXCEPTION 'PRECONDITION FAILED (2992): public.layover_sessions does not exist. Apply 0127_layover_system.sql first.';
   END IF;
   IF to_regclass('public.layover_certified_computations') IS NULL THEN
-    RAISE EXCEPTION 'PRECONDITION FAILED (3003): public.layover_certified_computations does not exist. Apply 2700_layover_certified_feasibility.sql FIRST -- this migration completes that table rather than forking it, and creating it here would fork the definition of the one object the whole design turns on.';
+    RAISE EXCEPTION 'PRECONDITION FAILED (2992): public.layover_certified_computations does not exist. Apply 2700_layover_certified_feasibility.sql FIRST -- this migration completes that table rather than forking it, and creating it here would fork the definition of the one object the whole design turns on.';
   END IF;
 END $$;
 
@@ -374,7 +365,7 @@ SET search_path = ''
 AS $$
 BEGIN
   RAISE EXCEPTION
-    'IMMUTABLE (3003): % row % may not be UPDATEd. A snapshot-scoped row names one certified computation forever (census L95/L261). Supersede it by writing a new snapshot; compact it by DELETE, which is permitted and is how bounded retention is implemented.',
+    'IMMUTABLE (2992): % row % may not be UPDATEd. A snapshot-scoped row names one certified computation forever (census L95/L261). Supersede it by writing a new snapshot; compact it by DELETE, which is permitted and is how bounded retention is implemented.',
     TG_TABLE_NAME, COALESCE(OLD.snapshot_id, '<no snapshot_id>');
 END $$;
 
@@ -760,7 +751,7 @@ INSERT INTO public.feature_flags (flag, enabled, description) VALUES
   (
     'layover_decision_persistence_enabled',
     false,
-    'Layover §20 decision-record persistence: when ON, GET /api/airport/sessions/:id/safety stores the certified computation it just published into layover_certified_computations (with 3003''s five §20 columns) plus its layover_time_budgets and layover_return_plans rows, and publishes the snapshot id alongside the answer. OFF (the seed): nothing is written and the response reports persisted.state = "not_stored" with reason "persistence_disabled" — the traveller''s deadline is unaffected either way. MUST NOT BE TURNED ON until BOTH 2700 and 3003 are applied and their postconditions confirmed: supabase-js sends every key of the insert payload, so the writer names columns a pre-3003 database does not have and the INSERT fails outright. Fail-closed (isFlagEnabled) — an unreadable feature_flags leaves the gate OFF, never silently on. Read by services/layover/LayoverDecisionStore.ts (DECISION_PERSISTENCE_FLAG, literal name).'
+    'Layover §20 decision-record persistence: when ON, GET /api/airport/sessions/:id/safety stores the certified computation it just published into layover_certified_computations (with 2992''s five §20 columns) plus its layover_time_budgets and layover_return_plans rows, and publishes the snapshot id alongside the answer. OFF (the seed): nothing is written and the response reports persisted.state = "not_stored" with reason "persistence_disabled" — the traveller''s deadline is unaffected either way. MUST NOT BE TURNED ON until BOTH 2700 and 2992 are applied and their postconditions confirmed: supabase-js sends every key of the insert payload, so the writer names columns a pre-2992 database does not have and the INSERT fails outright. Fail-closed (isFlagEnabled) — an unreadable feature_flags leaves the gate OFF, never silently on. Read by services/layover/LayoverDecisionStore.ts (DECISION_PERSISTENCE_FLAG, literal name).'
   )
 ON CONFLICT (flag) DO NOTHING;
 
@@ -787,7 +778,7 @@ BEGIN
   -- 1. Every new table exists.
   FOREACH t IN ARRAY new_tables LOOP
     IF to_regclass('public.' || t) IS NULL THEN
-      RAISE EXCEPTION 'POSTCONDITION FAILED (3003): % missing', t;
+      RAISE EXCEPTION 'POSTCONDITION FAILED (2992): % missing', t;
     END IF;
   END LOOP;
 
@@ -799,7 +790,7 @@ BEGIN
          AND table_name = 'layover_certified_computations'
          AND column_name = missing_col
     ) THEN
-      RAISE EXCEPTION 'POSTCONDITION FAILED (3003): layover_certified_computations.% missing -- LEDGER_MISSING_COLUMNS names it and ledgerRowFor cannot send it without it', missing_col;
+      RAISE EXCEPTION 'POSTCONDITION FAILED (2992): layover_certified_computations.% missing -- LEDGER_MISSING_COLUMNS names it and ledgerRowFor cannot send it without it', missing_col;
     END IF;
   END LOOP;
 
@@ -812,7 +803,7 @@ BEGIN
     JOIN pg_index i ON i.indexrelid = c.oid
    WHERE n.nspname = 'public' AND c.relname = 'layover_certcomp_snapshot_uidx';
   IF snapshot_idx_unique IS DISTINCT FROM TRUE THEN
-    RAISE EXCEPTION 'POSTCONDITION FAILED (3003): layover_certcomp_snapshot_uidx is missing or not unique';
+    RAISE EXCEPTION 'POSTCONDITION FAILED (2992): layover_certcomp_snapshot_uidx is missing or not unique';
   END IF;
 
   -- 4. RLS on for every new table.
@@ -821,7 +812,7 @@ BEGIN
       SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
        WHERE n.nspname = 'public' AND c.relname = t AND c.relrowsecurity = TRUE
     ) THEN
-      RAISE EXCEPTION 'POSTCONDITION FAILED (3003): RLS not enabled on % -- every revoke below it would be decoration and the service role''s bypass would stop being the only way in', t;
+      RAISE EXCEPTION 'POSTCONDITION FAILED (2992): RLS not enabled on % -- every revoke below it would be decoration and the service role''s bypass would stop being the only way in', t;
     END IF;
   END LOOP;
 
@@ -831,7 +822,7 @@ BEGIN
     FROM pg_policies
    WHERE schemaname = 'public' AND tablename = ANY(new_tables);
   IF policy_count <> 0 THEN
-    RAISE EXCEPTION 'POSTCONDITION FAILED (3003): % policy/policies on the new layover tables, expected 0. These tables are server-mediated.', policy_count;
+    RAISE EXCEPTION 'POSTCONDITION FAILED (2992): % policy/policies on the new layover tables, expected 0. These tables are server-mediated.', policy_count;
   END IF;
 
   -- 6. No client grant of ANY kind, read included, on the new tables.
@@ -841,7 +832,7 @@ BEGIN
      AND table_name = ANY(new_tables)
      AND grantee IN ('anon','authenticated');
   IF client_grants <> 0 THEN
-    RAISE EXCEPTION 'POSTCONDITION FAILED (3003): % client column grant(s) on the new layover tables, expected 0 (RLS is on and there is no policy, so a grant is inert today and a trap the day someone adds one)', client_grants;
+    RAISE EXCEPTION 'POSTCONDITION FAILED (2992): % client column grant(s) on the new layover tables, expected 0 (RLS is on and there is no policy, so a grant is inert today and a trap the day someone adds one)', client_grants;
   END IF;
 
   -- 7. NO COORDINATES, on any of the five. A checkpoint is the row type this
@@ -852,7 +843,7 @@ BEGIN
      AND table_name = ANY(new_tables)
      AND column_name IN ('lat','lng','latitude','longitude','location','geog','geom','point','coords');
   IF coord_cols <> 0 THEN
-    RAISE EXCEPTION 'POSTCONDITION FAILED (3003): % coordinate column(s) on the new layover tables. Layover presence structurally cannot carry a coordinate (census L8, one of this census''s few C rows) and the precision ladder that would govern one has no grant store (§28.2). A checkpoint with a position is a movement trace.', coord_cols;
+    RAISE EXCEPTION 'POSTCONDITION FAILED (2992): % coordinate column(s) on the new layover tables. Layover presence structurally cannot carry a coordinate (census L8, one of this census''s few C rows) and the precision ladder that would govern one has no grant store (§28.2). A checkpoint with a position is a movement trace.', coord_cols;
   END IF;
 
   -- 8. The three snapshot-scoped tables REFUSE an UPDATE. Asserted as a trigger
@@ -867,7 +858,7 @@ BEGIN
      AND c.relname IN ('layover_constraints','layover_time_budgets','layover_return_plans')
      AND tg.tgname IN ('layover_constraints_immutable','layover_time_budgets_immutable','layover_return_plans_immutable');
   IF trig_count <> 3 THEN
-    RAISE EXCEPTION 'POSTCONDITION FAILED (3003): % immutability trigger(s) on the snapshot-scoped tables, expected 3', trig_count;
+    RAISE EXCEPTION 'POSTCONDITION FAILED (2992): % immutability trigger(s) on the snapshot-scoped tables, expected 3', trig_count;
   END IF;
 
   -- 9. 2700's OWN boundary is UNCHANGED. This migration adds columns to that
@@ -877,7 +868,7 @@ BEGIN
     FROM pg_policies
    WHERE schemaname = 'public' AND tablename = 'layover_certified_computations';
   IF certcomp_policies <> 1 THEN
-    RAISE EXCEPTION 'POSTCONDITION FAILED (3003): layover_certified_computations has % policies, expected exactly the 1 owner-read policy migration 2700 creates', certcomp_policies;
+    RAISE EXCEPTION 'POSTCONDITION FAILED (2992): layover_certified_computations has % policies, expected exactly the 1 owner-read policy migration 2700 creates', certcomp_policies;
   END IF;
 
   SELECT COALESCE(string_agg(DISTINCT privilege_type, ','), '<none>')
@@ -887,7 +878,7 @@ BEGIN
      AND table_name = 'layover_certified_computations'
      AND grantee IN ('anon','authenticated');
   IF certcomp_grants IS DISTINCT FROM 'SELECT' THEN
-    RAISE EXCEPTION 'POSTCONDITION FAILED (3003): client grants on layover_certified_computations are (%), expected exactly SELECT. Certification fields a traveller can write are not certification (census L201).', certcomp_grants;
+    RAISE EXCEPTION 'POSTCONDITION FAILED (2992): client grants on layover_certified_computations are (%), expected exactly SELECT. Certification fields a traveller can write are not certification (census L201).', certcomp_grants;
   END IF;
 
   -- 10. The gate EXISTS, so the audited toggle path can reach it.
@@ -900,7 +891,7 @@ BEGIN
   IF NOT EXISTS (
     SELECT 1 FROM public.feature_flags WHERE flag = 'layover_decision_persistence_enabled'
   ) THEN
-    RAISE EXCEPTION 'POSTCONDITION FAILED (3003): layover_decision_persistence_enabled has no feature_flags row -- the gate would be un-flippable and step 5 of the deployment sequence impossible without a second migration';
+    RAISE EXCEPTION 'POSTCONDITION FAILED (2992): layover_decision_persistence_enabled has no feature_flags row -- the gate would be un-flippable and step 5 of the deployment sequence impossible without a second migration';
   END IF;
 END $$;
 

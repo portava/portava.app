@@ -463,7 +463,7 @@ describe("§24 L261 — snapshots are immutable with bounded retention", () => {
 // ── WHAT THESE CASES DO NOT PROVE ───────────────────────────────────────────
 // They run against `fakeLayoverDb`, which models no unique index, no RLS, no
 // foreign keys and no trigger. FOUR of this module's guarantees are therefore
-// taken on migration 3003's word here and are NOT observed by these cases:
+// taken on migration 2992's word here and are NOT observed by these cases:
 //
 //   * the unique index on (session_id, input_hash) that makes a double-tapped
 //     dashboard one row — the `already_recorded` case below STAGES a 23505
@@ -530,9 +530,9 @@ describe("§20 persistence — one decision is a parent and its children", () =>
     await persistDecision(makeLayoverDb(tables) as any, "user-1", "session-1", record(6, INTL));
     const row = tables["layover_certified_computations"][0];
     for (const col of LEDGER_MISSING_COLUMNS) {
-      assert.ok(col.column in row, `${col.column} must be in the post-3003 payload`);
+      assert.ok(col.column in row, `${col.column} must be in the post-2992 payload`);
     }
-    // …and `ledgerRowFor` itself is UNCHANGED, which is what keeps a pre-3003
+    // …and `ledgerRowFor` itself is UNCHANGED, which is what keeps a pre-2992
     // database writable if anything ever writes to one.
     const narrow = ledgerRowFor("user-1", "session-1", record(6, INTL));
     for (const col of LEDGER_MISSING_COLUMNS) {
@@ -551,7 +551,7 @@ describe("§20 persistence — one decision is a parent and its children", () =>
     assert.equal(out.ok, true);
     assert.equal(out.ok === true && out.state, "already_recorded");
     // The children are NOT re-written: the identical computation already has
-    // them, and 3003's immutability trigger would refuse an update.
+    // them, and 2992's immutability trigger would refuse an update.
     assert.equal((tables["layover_time_budgets"] ?? []).length, 0);
   });
 
@@ -684,7 +684,7 @@ describe("§4.1 L36 — the risk band is a relabelling and never reads a prefere
   });
 
   it("the return plan never states a recommended return AFTER the hard return", () => {
-    // 3003 enforces this as a CHECK. Asserted here too because the CHECK is not
+    // 2992 enforces this as a CHECK. Asserted here too because the CHECK is not
     // observable against this double, and a payload that violated it would fail
     // the whole insert the day the migration lands.
     for (const hours of [2, 4, 6, 9, 14]) {
@@ -692,7 +692,7 @@ describe("§4.1 L36 — the risk band is a relabelling and never reads a prefere
       const row = returnPlanRowFor("snap:x", "s", r) as Record<string, string>;
       assert.ok(
         Date.parse(row.recommended_return_by) <= Date.parse(row.hard_return_by),
-        `recommended > hard at ${hours}h — 3003's CHECK would reject this row`,
+        `recommended > hard at ${hours}h — 2992's CHECK would reject this row`,
       );
       assert.ok((RISK_BANDS as readonly string[]).includes(row.risk_band));
     }
@@ -828,14 +828,14 @@ describe("§11.1 L190 — diff(previousSnapshotId, nextSnapshotId)", () => {
   });
 });
 
-describe("§20 — migration 3003 and LEDGER_MISSING_COLUMNS cannot drift", () => {
+describe("§20 — migration 2992 and LEDGER_MISSING_COLUMNS cannot drift", () => {
   const sql = () =>
     readFileSync(
-      new URL("../migrations/3003_layover_decision_record_and_operational_tables.sql", import.meta.url),
+      new URL("../migrations/2992_layover_decision_record_and_operational_tables.sql", import.meta.url),
       "utf8",
     );
 
-  it("3003 contains every DDL string the module declares it needs", () => {
+  it("2992 contains every DDL string the module declares it needs", () => {
     const text = sql().replace(/\s+/g, " ");
     for (const col of LEDGER_MISSING_COLUMNS) {
       // The snapshotId entry's `ddl` is two statements joined by "; ";
@@ -843,29 +843,29 @@ describe("§20 — migration 3003 and LEDGER_MISSING_COLUMNS cannot drift", () =
       for (const stmt of col.ddl.split(";").map((s) => s.trim()).filter(Boolean)) {
         assert.ok(
           text.includes(stmt.replace(/\s+/g, " ")),
-          `migration 3003 is missing the DDL LEDGER_MISSING_COLUMNS declares for ${col.field}:\n  ${stmt}`,
+          `migration 2992 is missing the DDL LEDGER_MISSING_COLUMNS declares for ${col.field}:\n  ${stmt}`,
         );
       }
     }
   });
 
-  it("3003 creates the five §4 tables the census records as absent", () => {
+  it("2992 creates the five §4 tables the census records as absent", () => {
     const text = sql();
     for (const t of [
       "layover_constraints", "layover_time_budgets", "layover_return_plans",
       "layover_checkpoints", "layover_outcomes",
     ]) {
-      assert.match(text, new RegExp(`CREATE TABLE IF NOT EXISTS ${t}\\b`), `3003 must create ${t}`);
+      assert.match(text, new RegExp(`CREATE TABLE IF NOT EXISTS ${t}\\b`), `2992 must create ${t}`);
     }
     // It must NOT create a second snapshot table beside 2700's, which is the
     // L1/L2 "two surfaces own one answer" defect in schema form.
     assert.ok(
       !/CREATE TABLE IF NOT EXISTS layover_snapshots\b/.test(text),
-      "3003 must not fork `layover_certified_computations` with a second snapshot table",
+      "2992 must not fork `layover_certified_computations` with a second snapshot table",
     );
   });
 
-  it("3003 seeds the gate OFF and can never flip an operator's TRUE back", () => {
+  it("2992 seeds the gate OFF and can never flip an operator's TRUE back", () => {
     // Comments are stripped first: this file's prose quotes an INSERT, an
     // UPDATE and the flag name, and a check that reads its own documentation is
     // a check that can be satisfied by deleting a sentence.
@@ -882,7 +882,7 @@ describe("§20 — migration 3003 and LEDGER_MISSING_COLUMNS cannot drift", () =
     assert.match(
       body,
       /INSERT INTO\s+public\.feature_flags[\s\S]*'layover_decision_persistence_enabled',\s*false/i,
-      "3003 must seed the gate, and seed it FALSE",
+      "2992 must seed the gate, and seed it FALSE",
     );
     assert.match(
       body,
@@ -896,7 +896,7 @@ describe("§20 — migration 3003 and LEDGER_MISSING_COLUMNS cannot drift", () =
     );
   });
 
-  it("3003 alters and deletes NO existing row", () => {
+  it("2992 alters and deletes NO existing row", () => {
     const body = sql().replace(/^\s*--.*$/gm, "");
     // The data-preservation requirement, as the only thing a file-level check
     // can actually observe. It was also rehearsed behaviourally against a real
@@ -904,11 +904,11 @@ describe("§20 — migration 3003 and LEDGER_MISSING_COLUMNS cannot drift", () =
     // its original 19 columns afterwards.
     assert.ok(
       !/(^|\n)\s*UPDATE\s+/i.test(body),
-      "3003 must not UPDATE any row",
+      "2992 must not UPDATE any row",
     );
     assert.ok(
       !/(^|\n)\s*DELETE\s+FROM/i.test(body),
-      "3003 must not DELETE any row",
+      "2992 must not DELETE any row",
     );
     // The only INSERT is the flag seed. Any other is a backfill, and a backfill
     // here would mint snapshot ids for computations that never happened.
@@ -1052,7 +1052,7 @@ describe("§20 — the safety endpoint records what it told the traveller", () =
     const r = await get("/api/airport/sessions/session-1/safety");
 
     // The specific failure staged here is the one a mis-sequenced deployment
-    // produces: the flag is on and migration 3003 is not applied. 3003's header
+    // produces: the flag is on and migration 2992 is not applied. 2992's header
     // gives the sequence that prevents it; this case says what happens if
     // somebody runs it out of order anyway.
     assert.equal(r.status, 200, "an unwritable ledger must not become a 5xx on the safety answer");
