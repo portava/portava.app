@@ -152,11 +152,37 @@ export async function findSurvivingReferences(
   const referenced = new Map<string, string>();
   if (mediaUrls.length === 0) return referenced;
 
-  for (const { table, column } of REFERENCE_SOURCES) {
-    const { data, error } = await (sc as any)
-      .from(table)
-      .select(column)
-      .in(column, mediaUrls);
+  // Each source is read through a literal `.from("…").select("…")` below rather
+  // than through `.from(table)` over REFERENCE_SOURCES. The loop read better,
+  // but check:write-path-columns could not resolve a dynamic table name, so
+  // these four reads were blind spots to the guard that compares every
+  // write/read site against the live schema — on the one code path whose whole
+  // job is deciding whether media is safe to destroy. The shared body stays in
+  // one place; only the builder is passed in.
+  const sources: ReadonlyArray<{ table: string; column: string; read: () => any }> = [
+    { table: "highlights", column: "media_url",
+      read: () => sc.from("highlights").select("media_url").in("media_url", mediaUrls) },
+    { table: "memory_items", column: "media_url",
+      read: () => sc.from("memory_items").select("media_url").in("media_url", mediaUrls) },
+    { table: "passport_memories", column: "photo_url",
+      read: () => sc.from("passport_memories").select("photo_url").in("photo_url", mediaUrls) },
+  ];
+
+  // The literal list above and REFERENCE_SOURCES must not drift: the const is
+  // what the docs and tests name, and a source dropped from one but not the
+  // other would silently stop protecting a feature's media. Cheap to assert,
+  // and an assertion is the only thing that makes "must not drift" true.
+  if (
+    sources.length !== REFERENCE_SOURCES.length ||
+    sources.some((s, i) => s.table !== REFERENCE_SOURCES[i].table || s.column !== REFERENCE_SOURCES[i].column)
+  ) {
+    throw new Error(
+      "storyRetention: the reference reads and REFERENCE_SOURCES disagree — refusing to decide what is safe to delete",
+    );
+  }
+
+  for (const { table, column, read } of sources) {
+    const { data, error } = await read();
 
     if (error) {
       const code = String((error as any)?.code ?? "");
@@ -243,7 +269,31 @@ export async function enqueueDueStories(
   // the right belt; naming the value here is the braces, and it keeps the two
   // halves of this file honest without a round trip to read the default back.
   const nowIso = new Date(nowMs).toISOString();
-  const toEntry = (row: any, reason: "archive_expired" | "owner_deleted") => {
+
+  // The two result sets are paired with their reason FIRST and mapped to rows
+  // ONCE, rather than each being mapped through a shared `toEntry` helper.
+  // Both spellings produce the same rows; only this one is legible to
+  // check:write-path-columns, whose extractor reads the object literal a
+  // `.map()` callback returns but cannot follow a call to a named builder. A
+  // helper here would make every column this job writes a blind spot in the
+  // check that exists to catch a phantom column before it reaches the
+  // database, and story_purge_queue is a brand-new table whose columns have
+  // never been checked against a live schema at all.
+  const queued: ReadonlyArray<{
+    row: any;
+    reason: "archive_expired" | "owner_deleted";
+  }> = [
+    ...((archiveRows ?? []) as any[]).map((row) => ({
+      row,
+      reason: "archive_expired" as const,
+    })),
+    ...((deletedRows ?? []) as any[]).map((row) => ({
+      row,
+      reason: "owner_deleted" as const,
+    })),
+  ];
+
+  const entries = queued.map(({ row, reason }) => {
     const mediaUrl = String(row.media_url ?? "");
     const ref = appStorageUrlInfo(mediaUrl);
     return {
@@ -262,12 +312,7 @@ export async function enqueueDueStories(
       last_attempt_at: null,
       last_error: null,
     };
-  };
-
-  const entries = [
-    ...((archiveRows ?? []) as any[]).map((r) => toEntry(r, "archive_expired")),
-    ...((deletedRows ?? []) as any[]).map((r) => toEntry(r, "owner_deleted")),
-  ];
+  });
   if (entries.length === 0) return { archive: 0, deleted: 0 };
 
   // ignoreDuplicates: an entry already in the ledger is mid-retry. Re-inserting
@@ -468,8 +513,28 @@ export async function purgeExpiredEngagement(
   if (ids.length === 0) return { stories: 0, rows: 0, failures };
 
   let purged = 0;
-  for (const table of ["story_views", "story_reactions", "story_replies"] as const) {
-    const { error: delErr } = await sc.from(table).delete().in("story_id", ids);
+  // Literal `.from("…")` per table, for the same reason as findSurvivingReferences
+  // above: `.from(table)` over a list is a blind spot to check:write-path-columns,
+  // and this is a DELETE path. The verification body below stays single-sourced;
+  // only the two builders differ per table.
+  const engagementTables: ReadonlyArray<{
+    table: string;
+    del: () => any;
+    count: () => any;
+  }> = [
+    { table: "story_views",
+      del: () => sc.from("story_views").delete().in("story_id", ids),
+      count: () => sc.from("story_views").select("story_id", { count: "exact", head: true }).in("story_id", ids) },
+    { table: "story_reactions",
+      del: () => sc.from("story_reactions").delete().in("story_id", ids),
+      count: () => sc.from("story_reactions").select("story_id", { count: "exact", head: true }).in("story_id", ids) },
+    { table: "story_replies",
+      del: () => sc.from("story_replies").delete().in("story_id", ids),
+      count: () => sc.from("story_replies").select("story_id", { count: "exact", head: true }).in("story_id", ids) },
+  ];
+
+  for (const { table, del, count: readCount } of engagementTables) {
+    const { error: delErr } = await del();
     if (delErr) {
       failures.push(`purge ${table} failed: ${(delErr as any)?.message ?? "unknown"}`);
       continue;
@@ -477,10 +542,7 @@ export async function purgeExpiredEngagement(
     // Read the state back rather than trusting the delete: supabase-js resolves
     // on rejection, and "0 rows deleted" and "the delete was refused" are the
     // same shape from here.
-    const { count, error: cntErr } = await sc
-      .from(table)
-      .select("story_id", { count: "exact", head: true })
-      .in("story_id", ids);
+    const { count, error: cntErr } = await readCount();
     if (cntErr) {
       failures.push(`could not verify ${table} purge: ${(cntErr as any)?.message ?? "unknown"}`);
       continue;
