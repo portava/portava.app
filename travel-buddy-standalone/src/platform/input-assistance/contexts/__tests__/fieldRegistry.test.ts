@@ -8,7 +8,12 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { INPUT_CONTEXTS } from '../../types/inputContext.ts';
-import { INPUT_CONTEXT_REGISTRY, INPUT_POLICY_VERSION } from '../inputContexts.ts';
+import { getContextDescriptor, inputPolicyVersion, conservativeDescriptor } from '../inputContexts.ts';
+import {
+  sharedPolicyStore,
+  _seedPolicyForTests,
+  _PERMISSIVE_TEST_POLICY,
+} from '../../services/policyStore.ts';
 import { buildDefaultPolicy, DEFAULT_DEBOUNCE_MS } from '../inputPolicies.ts';
 import {
   registerField,
@@ -19,17 +24,49 @@ import {
   _resetRegistry,
 } from '../fieldRegistry.ts';
 
-test('every InputContext has exactly one registry descriptor', () => {
+// ── REWRITTEN 2026-09-21 (G340) ─────────────────────────────────────────────
+//
+// This file used to assert against `INPUT_CONTEXT_REGISTRY`, the client's local
+// 29-context table. That table is gone: the server is the authority, and a
+// client-side assertion about what `city_picker`'s mode SHOULD be would be the
+// second source of truth all over again, just expressed as a test.
+//
+// What is asserted now is the client's actual contract, which is narrower and
+// more useful: given the authority says X, the resolver produces X — and given
+// no authority, it produces something that grants nothing.
+
+test('every InputContext resolves, with no authority, to a descriptor that grants nothing', () => {
+  sharedPolicyStore.clear();
+  sharedPolicyStore.setActiveAccount(null);
   for (const ctx of INPUT_CONTEXTS) {
-    const d = INPUT_CONTEXT_REGISTRY[ctx];
-    assert.ok(d, `missing descriptor for ${ctx}`);
+    const d = getContextDescriptor(ctx);
     assert.equal(d.context, ctx, `descriptor.context mismatch for ${ctx}`);
+    assert.equal(d.authoritative, false, `${ctx} must not claim authority before a fetch`);
+    assert.deepEqual(d, conservativeDescriptor(ctx), `${ctx} must be exactly the conservative descriptor`);
   }
-  // No stray keys beyond the union.
-  assert.equal(Object.keys(INPUT_CONTEXT_REGISTRY).length, INPUT_CONTEXTS.length);
+});
+
+test('every InputContext resolves to what the AUTHORITY said, once it has said it', () => {
+  _seedPolicyForTests(INPUT_CONTEXTS, { city_picker: { minChars: 1, mode: 'canonical_picker' } });
+  for (const ctx of INPUT_CONTEXTS) {
+    const d = getContextDescriptor(ctx);
+    assert.equal(d.authoritative, true, `${ctx} should have resolved from the seeded table`);
+    assert.equal(d.context, ctx);
+  }
+  const city = getContextDescriptor('city_picker');
+  assert.equal(city.defaultMode, 'canonical_picker', 'the per-context override must win');
+  assert.equal(city.minChars, 1);
+  const other = getContextDescriptor('trip_title');
+  assert.equal(other.defaultMode, _PERMISSIVE_TEST_POLICY.mode, 'un-overridden contexts take the template');
+  sharedPolicyStore.clear();
 });
 
 test('buildDefaultPolicy derives a coherent default from the context descriptor', () => {
+  // Seeded, because the descriptor it derives from now comes from the
+  // authority. `canonical_picker` is asserted as the SEEDED value, not as a
+  // fact about `trip_destination` — what that context's real mode is, is the
+  // server's to say.
+  _seedPolicyForTests(['trip_destination'], { trip_destination: { mode: 'canonical_picker' } });
   const p = buildDefaultPolicy('trip.destination', 'trip_destination');
   assert.equal(p.fieldId, 'trip.destination');
   assert.equal(p.context, 'trip_destination');
@@ -37,21 +74,32 @@ test('buildDefaultPolicy derives a coherent default from the context descriptor'
   assert.equal(p.debounceMs, DEFAULT_DEBOUNCE_MS);
   assert.ok(p.minChars >= 0);
   assert.ok(Array.isArray(p.allowedSuggestionTypes));
-  // Public field → telemetry may capture text.
-  assert.equal(p.telemetryPolicy.captureRawText, true);
+  // §44/G33 — the shape is the server's, and the server sets `logRawText`
+  // false on every one of its 29 contexts. A `public` class buys the FULL
+  // event vocabulary, not permission to log the user's typed text.
+  assert.equal(p.telemetryPolicy.logRawText, false);
+  assert.ok(p.telemetryPolicy.events.includes('suggestion_rendered'));
 });
 
 test('private_message context never captures raw text in telemetry (§44)', () => {
   const p = buildDefaultPolicy('telegraph.message', 'telegraph_message');
   assert.equal(p.privacyClass, 'private_message');
-  assert.equal(p.telemetryPolicy.captureRawText, false);
+  assert.equal(p.telemetryPolicy.logRawText, false);
+  // And it gets the NARROWED vocabulary, mirroring the server's
+  // METADATA_ONLY_TELEMETRY — not merely the same list with a flag off.
+  assert.deepEqual(p.telemetryPolicy.events, [
+    'suggestion_request_completed',
+    'suggestion_selected',
+    'action_completed',
+  ]);
 });
 
 test('overriding privacyClass re-derives the telemetry policy', () => {
-  // A public context overridden to sensitive must flip captureRawText off.
-  const p = buildDefaultPolicy('gem.location', 'place_picker', { privacyClass: 'sensitive' });
-  assert.equal(p.privacyClass, 'sensitive');
-  assert.equal(p.telemetryPolicy.captureRawText, false);
+  // A public context overridden to sensitive_location must not keep the public
+  // context's derived telemetry policy.
+  const p = buildDefaultPolicy('gem.location', 'place_picker', { privacyClass: 'sensitive_location' });
+  assert.equal(p.privacyClass, 'sensitive_location');
+  assert.equal(p.telemetryPolicy.logRawText, false);
 });
 
 test('overrides are shallow-merged and cannot change fieldId/context', () => {
@@ -100,6 +148,15 @@ test('resolveFieldPolicy returns null for an unknown field with no fallback (fai
   assert.equal(resolveFieldPolicy('unknown.field'), null);
 });
 
-test('policy version constant matches the spec projection example', () => {
-  assert.equal(INPUT_POLICY_VERSION, 'input-2026-08');
+test('the reported policy version is what the client HOLDS, not what it was built against', () => {
+  // The constant this replaced (`INPUT_POLICY_VERSION = 'input-2026-08'`) was
+  // baked in at build time, so the one field designed to detect client/server
+  // skew always reported agreement. Nothing could have made it report a skew.
+  sharedPolicyStore.clear();
+  sharedPolicyStore.setActiveAccount(null);
+  assert.equal(inputPolicyVersion(), 'unfetched', 'with no table held, it must say so');
+
+  _seedPolicyForTests(['city_picker'], {}, sharedPolicyStore, 'input-2026-12');
+  assert.equal(inputPolicyVersion(), 'input-2026-12');
+  sharedPolicyStore.clear();
 });

@@ -144,6 +144,78 @@ TIMEOUT="${LIVE_DB_SLOT_TIMEOUT_SECONDS:-$DEFAULT_TIMEOUT}"
 POLL="${LIVE_DB_SLOT_POLL_SECONDS:-20}"
 ATTEMPT="${GITHUB_RUN_ATTEMPT:-1}"
 
+# ── CLAIM ANNOTATION ─────────────────────────────────────────────────────────
+#
+# A run FORFEITS the slot when its dedicated queue job — the one named below —
+# concludes in failure or cancellation. Such a run demonstrably did not acquire
+# the slot, so it must not block anybody and must not license its own remaining
+# jobs. The reasoning, and the measured incident that required it, are in
+# live-db-slot-decide.sh's header.
+#
+# FAIL-CLOSED IN BOTH DIRECTIONS, which is what keeps this from weakening
+# anything:
+#   • cannot reach the API, cannot parse it, cannot find the job  ⇒ `held`.
+#     An unknown claim keeps the run blocking, exactly as before this existed.
+#   • the queue job is still queued or in progress                ⇒ `held`.
+#     A run that is legitimately waiting or working is never dropped.
+# Only an explicit `failure` / `cancelled` conclusion forfeits.
+SLOT_JOB_NAME="live DB · acquire the shared-database slot"
+
+# Forfeiture is monotonic — a concluded job does not un-conclude — so a verdict
+# of `forfeited` is cached for the life of this process. `held` is NOT cached,
+# because a run that is fine now may time out during our wait, which is the
+# whole case this exists for.
+FORFEITED_CACHE=" "
+
+run_claim() {
+  local run_id="$1"
+  case "$FORFEITED_CACHE" in *" ${run_id} "*) echo "forfeited"; return ;; esac
+
+  local conclusion
+  conclusion="$(gh api --paginate \
+      "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}/jobs?per_page=100" \
+      --jq ".jobs[] | select(.name == \"${SLOT_JOB_NAME}\") | .conclusion // \"\"" \
+    2>/dev/null | head -1)"
+
+  case "$conclusion" in
+    failure|cancelled)
+      FORFEITED_CACHE="${FORFEITED_CACHE}${run_id} "
+      echo "forfeited"
+      ;;
+    *)
+      # success, skipped, null (still running), empty (unreachable/unknown).
+      echo "held"
+      ;;
+  esac
+}
+
+# Reads `<started> <id>` lines, writes `<started> <id> <claim>` lines.
+annotate_claims() {
+  local listing="$1"
+  local my_started
+  my_started="$(printf '%s\n' "$listing" | awk -v me="$GITHUB_RUN_ID" '$2 == me {print $1; exit}')"
+
+  printf '%s\n' "$listing" | while IFS= read -r line; do
+    [ -z "${line//[[:space:]]/}" ] && continue
+    local started id
+    started="$(printf '%s' "$line" | awk '{print $1}')"
+    id="$(printf '%s' "$line" | awk '{print $2}')"
+    if [ -z "$started" ] || [ -z "$id" ]; then
+      # Leave malformed lines exactly as they are: the decider REFUSES a
+      # listing it cannot parse, and that refusal must not be papered over here.
+      printf '%s\n' "$line"
+      continue
+    fi
+    # Only runs at or older than us can block us; and our own run is annotated
+    # so that a `verify` step in a forfeited run fails instead of proceeding.
+    if [ -n "$my_started" ] && [ "$started" \> "$my_started" ]; then
+      printf '%s %s held\n' "$started" "$id"
+    else
+      printf '%s %s %s\n' "$started" "$id" "$(run_claim "$id")"
+    fi
+  done
+}
+
 : "${GH_TOKEN:?GH_TOKEN is required to inspect Actions runs}"
 : "${GITHUB_REPOSITORY:?}"
 : "${GITHUB_RUN_ID:?}"
@@ -193,10 +265,16 @@ while :; do
   fi
 
   # Every in-progress/queued run of this workflow, `<started> <id>` per line.
-  RUNS="$(gh api --paginate \
+  RAW_RUNS="$(gh api --paginate \
             "repos/${GITHUB_REPOSITORY}/actions/workflows/${WF_ID}/runs?per_page=100" \
             --jq '.workflow_runs[] | select(.status == "in_progress" or .status == "queued") | "\(.run_started_at // .created_at) \(.id)"' \
           2>/dev/null || echo "")"
+
+  # Annotate each line with whether that run still has a CLAIM on the slot. See
+  # live-db-slot-decide.sh's header for why a run can be the oldest and still
+  # hold nothing. Runs newer than this one are left unannotated (`held` by
+  # default): they cannot block us, so spending an API call on them is waste.
+  RUNS="$(annotate_claims "$RAW_RUNS")"
 
   DECISION="$(printf '%s\n' "$RUNS" | bash "$DECIDE" 2>&1)"
   RC=$?
@@ -213,7 +291,8 @@ while :; do
     1)
       HOLDER="$(printf '%s\n' "$DECISION" | sed -n 's/^holder=//p')"
       ACTIVE="$(printf '%s\n' "$DECISION" | sed -n 's/^active=//p')"
-      echo "live-db slot [${ROLE}]: waiting ${ELAPSED}s/${TIMEOUT}s — holder=${HOLDER:-?}, ${ACTIVE:-?} active"
+      FORF="$(printf '%s\n' "$DECISION" | sed -n 's/^forfeited=//p')"
+      echo "live-db slot [${ROLE}]: waiting ${ELAPSED}s/${TIMEOUT}s — holder=${HOLDER:-?}, ${ACTIVE:-?} active, ${FORF:-0} forfeited"
       ;;
     3)
       # We are in-progress ourselves, so an unusable list means the API is not
