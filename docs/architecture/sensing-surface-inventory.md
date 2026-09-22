@@ -282,7 +282,7 @@ are not part of this surface.
 ## 5. The HTTP routes
 
 Six intel routers are mounted in `routes/index.ts` — `routes/intel.ts`, `routes/intelCoverage.ts`, `routes/intelApi.ts`, `routes/intelReadModels.ts`,
-`routes/intelOutcomes.ts` and `routes/intelObservability.ts` (`routes/index.ts:334,336,337,338,341,343#router.use`) — carrying
+`routes/intelOutcomes.ts` and `routes/intelObservability.ts` (`routes/index.ts:336,338,339,340,343,345#router.use`) — carrying
 **24 endpoints**. Two further endpoints on other routers reach intel modules or tables directly.
 
 Mounting is not assumed: `test/intelRouterRegistrationGuard.test.ts` mounts the *composed* router
@@ -315,8 +315,8 @@ handler tests stayed green with the mount commented out (`:1-18`).
 | `GET /v1/experiences/:id/typical-patterns` | `routes/intelReadModels.ts:198` | reads `intel_historical_patterns` (`:214`) |
 | `GET /v1/neighborhoods/:id/pulse` | `routes/intelReadModels.ts:274` | |
 | `GET /v1/intel/prompt-eligibility` | `routes/intelReadModels.ts:360` | |
-| `POST /map/observations` | `routes/mapObservations.ts:895` | mounted `routes/index.ts:308#router.use(mapObservationsRouter)`; the only caller of `lib/intelEvidenceCapture.ts` |
-| `GET /map/projection/temporal` | `routes/mapProjectionTemporal.ts:412` | mounted `routes/index.ts:306#router.use(mapProjectionTemporalRouter)`; reads `intel_state_snapshot_versions` (`routes/mapProjectionTemporal.ts:397`) |
+| `POST /map/observations` | `routes/mapObservations.ts:895` | mounted `routes/index.ts:310#router.use(mapObservationsRouter)`; the only caller of `lib/intelEvidenceCapture.ts` |
+| `GET /map/projection/temporal` | `routes/mapProjectionTemporal.ts:412` | mounted `routes/index.ts:308#router.use(mapProjectionTemporalRouter)`; reads `intel_state_snapshot_versions` (`routes/mapProjectionTemporal.ts:397`) |
 
 ## 6. PR #475 — measured, not merged
 

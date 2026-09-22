@@ -464,6 +464,34 @@ export const TELEGRAPH_DYNAMIC_SHARE_PRODUCERS: readonly DynamicShareProducer[] 
       "threads where the caller's membership has no `left_at`.",
   },
   {
+    file: "artifacts/api-server/src/services/telegraph/savedMessages.ts",
+    expression: "subtype: source.subtype ?? null",
+    family: "OPERATIONAL",
+    sourceDomain: null,
+    produces: [],
+    writesMessages: false,
+    note:
+      "DECLARED WHEN THE GUARD CAUGHT IT, on the same reading as the " +
+      "telegraphStream entry above. `projectSavedMessage` builds the RESPONSE " +
+      "shape for a caller's own `saved_messages` list: every field is copied " +
+      "off a `messages` row that already exists, including the sibling " +
+      "`msgType: source.msg_type ?? \"text\"` on the line before, which the " +
+      "scanner does not flag only because the key is camelCase in a DTO. " +
+      "Nothing here inserts or updates a message, so writesMessages is false, " +
+      "and `produces` is empty for the reason the stream entry gives: the " +
+      "value set is whatever `messages.subtype` already holds, not a second " +
+      "vocabulary. OPERATIONAL because the projection carries no NEW " +
+      "disclosure — `authorizeSavedMessage` (`:173`) withholds any save whose " +
+      "message is deleted, whose thread the caller has left, or which falls " +
+      "before the caller's §14.3 `visible_from_at` bound, so a row only " +
+      "reaches this function once the caller is already entitled to it. " +
+      "WHAT IS NOT CLAIMED: at this head the only production caller of this " +
+      "module is `routes/savedMessages.ts:37`, which imports `unsaveMessage` " +
+      "alone; the projection half has no caller yet, and the guard is " +
+      "declared now rather than when a reader arrives so the arrival is a " +
+      "wiring change and not also a registry change.",
+  },
+  {
     file: "artifacts/api-server/src/services/telegraphReportEvidence.ts",
     expression:
       "msg_type: (msg as any).msg_type ?? null | subtype: (msg as any).subtype ?? null | " +
