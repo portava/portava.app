@@ -9,7 +9,8 @@
  *   "unavailable"    — account is deactivated, suspended, or deleted
  *
  * SAFETY: block check is FAIL-CLOSED (throws on DB error, not on missing table).
- * Account-state check is FAIL-OPEN (table missing → skip).
+ * Account-state check is FAIL-CLOSED too: a genuinely ABSENT table is skipped,
+ * any other error yields "unavailable" rather than "still active".
  *
  * ── PRIVACY SETTINGS: WHY AN UNREADABLE TABLE IS NOT "NO RESTRICTIONS" ──────
  * `profile_privacy_settings` holds the opt-OUTS. Every consumer of the row
@@ -116,10 +117,20 @@ export const RESTRICTED_PRIVACY_SETTINGS: Readonly<PrivacySettings> = Object.fre
   precise_location_visible: false,
 });
 
+/**
+ * TRUE only for a genuinely ABSENT TABLE.
+ *
+ * PGRST204 ("column not found") was here and is deliberately gone: column drift
+ * is not a missing table, and every caller below treats "missing table" as the
+ * benign case, so counting a schema mismatch as one turns it into a silent
+ * privacy fail-open. The message probe now requires "relation" as well, so that
+ * `column "x" does not exist` cannot sneak through it either.
+ */
 function isTableMissingErr(e: any): boolean {
   if (!e) return false;
-  return e.code === "42P01" || e.code === "PGRST204" || e.code === "PGRST205" ||
-    String(e.message ?? "").toLowerCase().includes("does not exist");
+  if (e.code === "42P01" || e.code === "PGRST205") return true;
+  const msg = String(e.message ?? "").toLowerCase();
+  return msg.includes("relation") && msg.includes("does not exist");
 }
 
 /**
@@ -187,7 +198,13 @@ export async function resolveProfileVisibility(
     return { visibility: "unavailable", privacySettings: null };
   }
 
-  // Fallback: query user_account_states (fail-open on missing table)
+  // Fallback: query user_account_states. FAIL-CLOSED on any error other than a
+  // genuinely ABSENT table — an RLS denial, a connection failure or a
+  // missing-column PGRST204 tells us NOTHING about the account's state, and the
+  // old `if (!acctErr && acct?.state)` read every one of them as "still active",
+  // so a deactivated, banned or deleted profile stayed fully visible for the
+  // duration of the error. An absent table is different in kind: there is no
+  // state to read, so there is no restriction to honour.
   try {
     const { data: acct, error: acctErr } = await sc
       .from("user_account_states")
@@ -195,10 +212,20 @@ export async function resolveProfileVisibility(
       .eq("user_id", targetId)
       .in("state", ["deleted", "deactivated", "banned", "suspended"])
       .maybeSingle();
-    if (!acctErr && acct?.state) {
+    if (acctErr) {
+      if (!isTableMissingErr(acctErr)) {
+        return { visibility: "unavailable", privacySettings: null };
+      }
+      // table genuinely absent → no restriction to read
+    } else if (acct?.state) {
       return { visibility: "unavailable", privacySettings: null };
     }
-  } catch { /* table missing → no restriction */ }
+  } catch (e: any) {
+    if (!isTableMissingErr(e)) {
+      return { visibility: "unavailable", privacySettings: null };
+    }
+    /* table missing → no restriction */
+  }
 
   // ── 2. Block check (FAIL-CLOSED) ───────────────────────────────────────────
   if (viewerId) {
