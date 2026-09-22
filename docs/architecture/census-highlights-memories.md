@@ -1560,7 +1560,7 @@ so the real figure is **thirty-three**. The twenty-two added since section B mea
 `get_live_conditions`, `get_commitments`, `get_saved_ideas`, `get_opportunities`,
 `simulate_plan`, `create_proposal`, `get_rescue_plan`, `replan_day`, `find_meeting_point`,
 `explain_trip_decision`, and the eight `telegraph_*` accessors declared at
-`artifacts/api-server/src/compass/TelegraphConversationTools.ts:571#telegraph_get_conversation_context`.
+`artifacts/api-server/src/compass/TelegraphConversationTools.ts:609#telegraph_get_conversation_context`.
 
 **The verdicts do not move, and here is the mechanical reason rather than an assurance.**
 H115–H122 (NB ×8), H123–H128 (NB ×6), H129 (BAC) and H237's BBW note all rest on one claim:

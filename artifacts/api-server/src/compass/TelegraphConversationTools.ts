@@ -214,7 +214,37 @@ export async function telegraphGetConversationContext(
   // two ISO spellings Postgres and Node produce.
   if (gate.visibleFrom) recentQ = recentQ.gte("created_at", gate.visibleFrom);
   const { data: recent, error } = await recentQ;
-  if (error) log.warn({ err: error }, "conversation context: recent objects unreadable");
+
+  // AN UNREADABLE OBJECT LIST IS NOT AN EMPTY CONVERSATION.
+  //
+  // This read used to end `((recent as any[]) ?? [])`, and supabase-js RESOLVES
+  // a rejected query with `{ data: null, error }` rather than throwing — so the
+  // `?? []` turned an RLS denial, a timeout or a dropped connection into the
+  // empty array, and Compass was handed "the participants have put nothing into
+  // this conversation" as a fact. The model then says that to the participant.
+  // It is the one failure mode §18.3's boundary sentence cannot tolerate: a
+  // confident statement about a conversation, manufactured by a failure nobody
+  // was told about.
+  //
+  // NULL RATHER THAN A FLAG ALONE. `[]` is iterable and sums to "nothing", so a
+  // caller that forgets the flag still reads the wrong answer; `null` cannot be
+  // mapped over by accident. The flag is there too, because inferring the
+  // reason from a null is the next reader's guess.
+  //
+  // NOT A WHOLE-TOOL REFUSAL, unlike this module's other unreadable reads. The
+  // four other fields below come from the GATE, which already refuses outright
+  // when membership, roster, privacy or capabilities cannot be read — so by the
+  // time execution reaches here those are all known-good. Refusing everything
+  // over one failed non-essential read would trade a false answer for no answer
+  // when a true partial one is available. `telegraph_search_conversation`
+  // already returns `degraded` beside real hits for the same reason.
+  const recentObjectsUnreadable = Boolean(error);
+  if (error) {
+    log.warn(
+      { err: error, conversationId: gate.conversationId },
+      "conversation context: recent objects unreadable — reported as unreadable, not as empty",
+    );
+  }
 
   return {
     authorized: true,
@@ -228,10 +258,18 @@ export async function telegraphGetConversationContext(
     circleContextAvailable: gate.verdict.canUseCircleContext,
     availabilityContextAvailable: gate.verdict.canUseAvailability,
     destination: gate.verdict.tripDestination,
-    recentObjectKinds: ((recent as any[]) ?? [])
-      .filter((r) => withinWindow(r.created_at, gate.visibleFrom))
-      .map((r) => String(r.subtype)),
-    note: "Approximate context only. No coordinates, no live location, no message prose.",
+    recentObjectKinds: recentObjectsUnreadable
+      ? null
+      : ((recent as any[]) ?? [])
+          .filter((r) => withinWindow(r.created_at, gate.visibleFrom))
+          .map((r) => String(r.subtype)),
+    recentObjectsUnreadable,
+    note: recentObjectsUnreadable
+      ? "Approximate context only. No coordinates, no live location, no message prose. " +
+        "The list of shared objects COULD NOT BE READ — it is null, which is not empty. " +
+        "Do not tell the participant that nothing has been shared in this conversation, " +
+        "and do not offer a reason: say you could not check."
+      : "Approximate context only. No coordinates, no live location, no message prose.",
   };
 }
 

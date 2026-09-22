@@ -331,6 +331,26 @@ import {
  * `domain/telegraph/commands/telegraphCommands.ts`. Neither lane could have
  * measured this number, which is the reason the ceiling is re-measured after a
  * merge instead of inherited from whichever branch landed last. */
+/** MERGED AGAIN 2026-09-22, by the §16/§18 MEDIA / VOICE / COMPASS lane, and
+ * the rule the paragraph above set is applied to itself: the number is
+ * RE-MEASURED after this merge rather than carried over from either side.
+ *
+ * This lane's repairs are disjoint from both of the two above. Closing the
+ * silent zero in `telegraphGetConversationContext` and threading a translation
+ * confidence through `services/messageTranslation.ts` shifted eight ANCHORED
+ * citations and six UNANCHORED ones. All fourteen were repointed by reading
+ * the claim — the six §18.3 tool entry points in census-telegraph's §11.4
+ * row-move table, the `requiresConfirmation: true` and `safetyBasis` literals,
+ * the four `messageTranslation` declarations, `executeTelegraphConversationTool`
+ * in census-compass and the definitions array in census-highlights-memories —
+ * and the six unanchored ones GAINED an `#anchor`, which is what moves them out
+ * of this check's population for good.
+ *
+ * It overlaps the membership-read lane on ONE file, `TelegraphConversationTools.ts`,
+ * and on no citation: that lane repointed `:73` (the spec-name map) and
+ * `gateConversation`, this one repointed the eight accessors and the two
+ * literals below them. The overlap is why the number is measured and not
+ * summed. */
 export const MAX_DEAD_TARGETS = 206;
 
 /** Pinned to a commit by its own declaration; its lines must not track HEAD. */
