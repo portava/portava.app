@@ -5601,7 +5601,7 @@ under a mutation before its commit.
   (`coords.observedAt`; `routes/location.ts:48#observedAtOf(v:` refuses the
   far future); that instant becomes `last_known_at`, and a fix observed
   before the one already stored is not written over it
-  (`routes/location.ts:220#staleObservation`): the rest of the request
+  (`routes/location.ts:246#staleObservation`): the rest of the request
   (permission, place, manual city) still applies, and the client is told —
   200, `observation: "stale_ignored"`, `TRIP_PRESENCE_STALE`, both instants
   named. A client that sends no `observedAt` is the legacy shape and gets
