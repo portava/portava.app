@@ -7377,3 +7377,53 @@ S85 was corrected in that document's §7 while L276 here still read "returns
 nothing". The two censuses describe one body of code and only one of them had
 re-tested it. That is an argument for the sweep §36 performed, not against it:
 the same method, run on the other document, had already found the same fact.
+
+## §38 — §37 understated the agreement: two censuses share L128's convention and cite it; one diverges and says so
+
+NO VERDICT MOVES. Denominator unchanged at 296.
+
+§37 said a percentage summed across these documents "mixes two conventions".
+That is true and it is imprecise in a way that matters to a reader deciding how
+much weight to put on the mixing. The split is not two against one by accident;
+it is a shared standard with ONE documented exception.
+
+**census-highlights-memories uses L128's convention and names it:**
+
+> This census already scores "built and OFF" as `W` — census-layover L128 is
+> graded exactly that way. Awarding `C` to code that cannot execute anywhere
+> would change what a `C` means in the middle of a corpus that has used the
+> other convention throughout, and would make the percentage answer a different
+> question than the one it has been answering.
+
+So:
+
+| census | built and behind a FALSE flag | cites |
+|---|---|---|
+| layover | `W` | L128, L33 — its own rows |
+| highlights-memories | `W` | census-layover L128, by name |
+| sensing | `C`, "with the ceiling stated" | its own §1–§5 convention, with the opposite reading invited |
+
+Two of the three agree and one of them agrees by explicit cross-reference to
+this document. census-sensing is the outlier and it flags itself as one. A
+reader should therefore treat the corpus percentage as being on the strict
+convention with a named, bounded exception — not as an average of two equally
+weighted schools.
+
+### Why this is written BEFORE the next grading pass and not after
+
+Two lanes are in flight whose work, if it lands, will be exactly this shape:
+capability wired into the feature surface but unreachable on production because
+its flag is FALSE or its row is absent. Those rows are L60, L68, L69, L70, L71
+and L282 here, and H142, H143, H145 and H51 in census-highlights-memories.
+
+Fixing the convention now means the verdicts are decided by a rule that existed
+before the results did. On the standard above, wired-but-unreachable lands at
+`W`, not `C` — and NOT at `C` merely because a lane reports its tests green.
+Implementation verification and deployed verification stay recorded separately,
+which is the same distinction census-highlights-memories draws in the passage
+quoted above.
+
+This paragraph is a commitment, not a prediction. If a lane's work turns out to
+be reachable on production rather than flag-gated, the rule gives `C` and it
+will get `C`; if a lane reports work it did not finish, the rule gives `N` and
+it will get `N`.
