@@ -173,7 +173,16 @@ export interface TrustView {
   /** Numeric 0–100 — non-null ONLY when the server exposed it. */
   score: number | null;
   hasScore: boolean;
-  confidence: TrustConfidence;
+  /**
+   * The band, or `null` = NOT MEASURED. The server's own
+   * `passportTrustConfidence` returns null for an absent or unreadable trust
+   * profile and for a missing/corrupt evidence weight, so null is the
+   * production-NORMAL answer, not an edge case: census-passport §3 measured 56
+   * of 58 accounts with no trust profile at all. Coercing it to `'low'` printed
+   * "Early days" — a measured-looking band — over four different kinds of
+   * not-measured.
+   */
+  confidence: TrustConfidence | null;
   /** Short confidence heading, e.g. "High confidence". */
   confidenceLabel: string;
   /** Non-stigmatizing sentence explaining the evidence level (§10). */
@@ -213,6 +222,21 @@ const CONFIDENCE_META: Record<TrustConfidence, { label: string; copy: string }> 
     label: 'Early days',
     copy: 'New accounts start here. Trust builds naturally as you travel and contribute.',
   },
+};
+
+/**
+ * The two not-measured cases, kept apart because they are not the same claim:
+ * the server distinguishes them itself via `confidenceBasis`, and the wording
+ * here is lifted from the already-shipped BASIS_NOTE rather than invented, so
+ * the hero and the domain rows say the same thing about the same state.
+ */
+const CONFIDENCE_UNMEASURED = {
+  label: 'Not yet measured',
+  copy: 'Not yet measured — confidence appears once there is recorded history to measure.',
+};
+const CONFIDENCE_UNAVAILABLE = {
+  label: 'Not available',
+  copy: 'Trust records are unavailable right now.',
 };
 
 /** Positive capability flags → chip labels (TABLE 14). Order is intentional. */
@@ -287,8 +311,14 @@ export function deriveTrustView(p: TrustProjectionEnvelope): TrustView {
   const stats = p.stats ?? { countries: 0, cities: 0, stamps: 0, trips: 0 };
 
   const hasTrust = !!trust;
-  const confidence: TrustConfidence = trust?.confidence ?? 'low';
-  const meta = CONFIDENCE_META[confidence];
+  // `?? 'low'` here used to turn the server's explicit "not measured" into a
+  // rendered band. null now survives to the view and picks its own copy.
+  const confidence: TrustConfidence | null = trust?.confidence ?? null;
+  const meta = confidence
+    ? CONFIDENCE_META[confidence]
+    : trust?.confidenceBasis === 'unavailable'
+      ? CONFIDENCE_UNAVAILABLE
+      : CONFIDENCE_UNMEASURED;
   const hasScore = typeof trust?.score === 'number';
   const overall = trust?.label ?? NOT_APPLICABLE;
 
