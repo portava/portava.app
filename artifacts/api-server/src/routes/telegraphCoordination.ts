@@ -68,6 +68,7 @@ import {
   type LayerInputRow,
 } from "../services/telegraph/layers.js";
 import {
+  applyHistoryWindow,
   historyBoundEnabled,
   membershipSelect,
   visibleFromOf,
@@ -88,7 +89,12 @@ const PostSchema = z.object({
 });
 
 type MemberGate =
-  | { ok: true; visibleFrom: string | null; lastReadAt: string | null }
+  // `viewerId` rides with `visibleFrom` for the reason the bound itself rides
+  // in this gate: Q6's exception is (bound, viewer) and a route that took one
+  // without the other would apply half a rule. It is the AUTHENTICATED caller,
+  // echoed back from the gate that just proved their ACTIVE membership — never
+  // anything from the request body or query string.
+  | { ok: true; visibleFrom: string | null; lastReadAt: string | null; viewerId: string }
   | { ok: false; code: "forbidden" | "db_error"; message: string };
 
 async function memberWindow(
@@ -111,6 +117,7 @@ async function memberWindow(
     ok: true,
     visibleFrom: visibleFromOf(data as any, boundOn),
     lastReadAt: ((data as any).last_read_at ?? null) as string | null,
+    viewerId: userId,
   };
 }
 
@@ -127,10 +134,15 @@ async function memberWindow(
 function readAnnouncementRow(
   row: any,
   visibleFrom: string | null,
+  viewerId: string,
 ): AnnouncementInputMessage | null {
   if (!row) return null;
   if (row.deleted_at != null) return null;
-  if (!withinWindow(row.created_at, visibleFrom)) return null;
+  // Q6: the caller's own earlier announcement is theirs to read back. The
+  // tombstone check above and the thread binding in the query both still
+  // refuse first, and an announcement by ANOTHER member from before this
+  // member's window is still a 404 that cannot be told from "no such row".
+  if (!withinWindow(row.created_at, visibleFrom, { senderId: row.sender_id, viewerId })) return null;
   const env = parseKindEnvelope(row.msg_type, row.body);
   if (!env || env.kind !== "ANNOUNCEMENT") return null;
   const payload = env.payload as { title?: unknown; requiresAcknowledgement?: unknown };
@@ -155,10 +167,11 @@ function readAnnouncementRow(
  * `readAnnouncementRow` is: no row, wrong thread, tombstone, wrong kind,
  * unparseable envelope, or outside this member's §14.3 window.
  */
-function readActionProposalRow(row: any, visibleFrom: string | null): { id: string } | null {
+function readActionProposalRow(row: any, visibleFrom: string | null, viewerId: string): { id: string } | null {
   if (!row) return null;
   if (row.deleted_at != null) return null;
-  if (!withinWindow(row.created_at, visibleFrom)) return null;
+  // Q6, same shape as `readAnnouncementRow` and for the same reason.
+  if (!withinWindow(row.created_at, visibleFrom, { senderId: row.sender_id, viewerId })) return null;
   const coord = parseCoordinationEnvelope(row.msg_type, row.body);
   if (coord && coord.kind === "ACTION_PROPOSAL") return { id: String(row.id) };
   const env = parseKindEnvelope(row.msg_type, row.body);
@@ -193,6 +206,7 @@ async function readSessionRowsForThread(
   client: SupabaseClient,
   threadId: string,
   visibleFrom: string | null,
+  viewerId: string,
 ): Promise<ThreadSessionRows> {
   let q = client
     .from("messages")
@@ -202,11 +216,16 @@ async function readSessionRowsForThread(
     .is("deleted_at", null)
     .order("created_at", { ascending: false })
     .limit(SESSION_SCAN_LIMIT);
-  if (visibleFrom) q = q.gte("created_at", visibleFrom);
+  // Q6 in the QUERY because of `SESSION_SCAN_LIMIT`: the scan is capped, so a
+  // plain `.gte` spends the cap on rows the member may see and discards the
+  // member's own earlier session rows before JavaScript runs. `msg_type`,
+  // `thread_id` and `deleted_at IS NULL` stay AND-ed outside the relaxed clause.
+  q = applyHistoryWindow(q, visibleFrom, viewerId);
   const { data, error } = await q;
   if (error) return { ok: false, message: error.message ?? "session read failed" };
 
-  const rows = ((data as any[]) ?? []).filter((r) => withinWindow(r.created_at, visibleFrom));
+  const rows = ((data as any[]) ?? []).filter((r) =>
+    withinWindow(r.created_at, visibleFrom, { senderId: r.sender_id, viewerId }));
   const sessions: any[] = [];
   const transitions: any[] = [];
   for (const r of rows) {
@@ -232,6 +251,7 @@ async function readSessionForTransition(
   threadId: string,
   sessionId: string,
   visibleFrom: string | null,
+  viewerId: string,
 ): Promise<SessionRead> {
   const { data: sessionRow, error: sErr } = await client
     .from("messages")
@@ -241,7 +261,10 @@ async function readSessionForTransition(
     .maybeSingle();
   if (sErr) return { kind: "db_error", message: sErr.message ?? "session read failed" };
   const row = sessionRow as any;
-  if (!row || row.deleted_at != null || !withinWindow(row.created_at, visibleFrom)) {
+  // Q6: a session the caller themselves opened before they were re-added is
+  // theirs to read. A session opened by somebody else stays a 404.
+  if (!row || row.deleted_at != null ||
+      !withinWindow(row.created_at, visibleFrom, { senderId: row.sender_id, viewerId })) {
     return { kind: "not_found" };
   }
   const env = parseCoordinationEnvelope(row.msg_type, row.body);
@@ -254,12 +277,13 @@ async function readSessionForTransition(
     .is("deleted_at", null)
     .order("created_at", { ascending: false })
     .limit(COORDINATION_SCAN_LIMIT);
-  if (visibleFrom) q = q.gte("created_at", visibleFrom);
+  // Q6 in the QUERY: `COORDINATION_SCAN_LIMIT` caps this read too.
+  q = applyHistoryWindow(q, visibleFrom, viewerId);
   const { data, error } = await q;
   if (error) return { kind: "db_error", message: error.message ?? "transition read failed" };
 
   const transitions = ((data as any[]) ?? [])
-    .filter((r) => withinWindow(r.created_at, visibleFrom))
+    .filter((r) => withinWindow(r.created_at, visibleFrom, { senderId: r.sender_id, viewerId }))
     .map((r) => {
       const e = parseCoordinationEnvelope(r.msg_type, r.body);
       return e && e.kind === "COORDINATION_TRANSITION"
@@ -417,7 +441,7 @@ router.post(
         sendError(res, "db_error", "Could not read the announcement");
         return;
       }
-      const announcement = readAnnouncementRow(target, gate.visibleFrom);
+      const announcement = readAnnouncementRow(target, gate.visibleFrom, gate.viewerId);
       if (!announcement) {
         sendError(res, "not_found", "No such announcement in this conversation");
         return;
@@ -452,7 +476,7 @@ router.post(
         sendError(res, gate.code, gate.message);
         return;
       }
-      const session = await readSessionForTransition(client, threadId, payload.sessionId, gate.visibleFrom);
+      const session = await readSessionForTransition(client, threadId, payload.sessionId, gate.visibleFrom, gate.viewerId);
       if (session.kind === "db_error") {
         log.error({ threadId, message: session.message }, "session read failed");
         sendError(res, "db_error", "Could not read that coordination session");
@@ -534,7 +558,7 @@ router.post(
         sendError(res, "db_error", "Could not read the action");
         return;
       }
-      if (!readActionProposalRow(target, gate.visibleFrom)) {
+      if (!readActionProposalRow(target, gate.visibleFrom, gate.viewerId)) {
         sendError(res, "not_found", "No such action proposal in this conversation");
         return;
       }
@@ -667,7 +691,13 @@ router.get(
       .is("deleted_at", null)
       .order("created_at", { ascending: false })
       .limit(COORDINATION_SCAN_LIMIT);
-    if (gate.visibleFrom) q = q.gte("created_at", gate.visibleFrom);
+    // Q6 in the QUERY. Every one of these scans is CAPPED, so the plain
+    // `.gte` discards rows in PostgREST before any filter runs: relaxing only
+    // `withinWindow` would leave this surface exactly as it is today. The
+    // relaxed clause is the window ONLY — `thread_id`, `deleted_at IS NULL`
+    // and the ordering stay AND-ed outside it, and active membership was
+    // already proved by `memberWindow` above.
+    q = applyHistoryWindow(q, gate.visibleFrom, gate.viewerId);
 
     const { data, error } = await q;
     if (error) {
@@ -676,7 +706,8 @@ router.get(
       return;
     }
 
-    const rows = ((data as any[]) ?? []).filter((r) => withinWindow(r.created_at, gate.visibleFrom));
+    const rows = ((data as any[]) ?? []).filter((r) =>
+      withinWindow(r.created_at, gate.visibleFrom, { senderId: r.sender_id, viewerId: gate.viewerId }));
 
     const parsedRows = rows
       .map((r) => {
@@ -781,7 +812,7 @@ router.get(
      * anything: `SESSION_SCAN_LIMIT` transitions is far more than one evening
      * produces, and the bound is reported rather than assumed.
      */
-    const sessionRead = await readSessionRowsForThread(client, threadId, gate.visibleFrom);
+    const sessionRead = await readSessionRowsForThread(client, threadId, gate.visibleFrom, gate.viewerId);
     if (!sessionRead.ok) {
       log.error({ threadId, message: sessionRead.message }, "coordination session read failed");
       sendError(res, "db_error", "Could not read this conversation's coordination state");
@@ -881,7 +912,13 @@ router.get(
       .is("deleted_at", null)
       .order("created_at", { ascending: false })
       .limit(COORDINATION_SCAN_LIMIT);
-    if (gate.visibleFrom) q = q.gte("created_at", gate.visibleFrom);
+    // Q6 in the QUERY. Every one of these scans is CAPPED, so the plain
+    // `.gte` discards rows in PostgREST before any filter runs: relaxing only
+    // `withinWindow` would leave this surface exactly as it is today. The
+    // relaxed clause is the window ONLY — `thread_id`, `deleted_at IS NULL`
+    // and the ordering stay AND-ed outside it, and active membership was
+    // already proved by `memberWindow` above.
+    q = applyHistoryWindow(q, gate.visibleFrom, gate.viewerId);
 
     const { data, error } = await q;
     if (error) {
@@ -890,12 +927,13 @@ router.get(
       return;
     }
 
-    const rows = ((data as any[]) ?? []).filter((r) => withinWindow(r.created_at, gate.visibleFrom));
+    const rows = ((data as any[]) ?? []).filter((r) =>
+      withinWindow(r.created_at, gate.visibleFrom, { senderId: r.sender_id, viewerId: gate.viewerId }));
 
     const announcements: AnnouncementInputMessage[] = [];
     const acknowledgements: Array<{ id: string; sender_id: string; created_at: string; payload: unknown }> = [];
     for (const r of rows) {
-      const ann = readAnnouncementRow(r, gate.visibleFrom);
+      const ann = readAnnouncementRow(r, gate.visibleFrom, gate.viewerId);
       if (ann) {
         announcements.push(ann);
         continue;
@@ -990,7 +1028,13 @@ router.get(
       .is("deleted_at", null)
       .order("created_at", { ascending: false })
       .limit(COORDINATION_SCAN_LIMIT);
-    if (gate.visibleFrom) q = q.gte("created_at", gate.visibleFrom);
+    // Q6 in the QUERY. Every one of these scans is CAPPED, so the plain
+    // `.gte` discards rows in PostgREST before any filter runs: relaxing only
+    // `withinWindow` would leave this surface exactly as it is today. The
+    // relaxed clause is the window ONLY — `thread_id`, `deleted_at IS NULL`
+    // and the ordering stay AND-ed outside it, and active membership was
+    // already proved by `memberWindow` above.
+    q = applyHistoryWindow(q, gate.visibleFrom, gate.viewerId);
 
     const { data, error } = await q;
     if (error) {
@@ -999,7 +1043,8 @@ router.get(
       return;
     }
 
-    const rows = ((data as any[]) ?? []).filter((r) => withinWindow(r.created_at, gate.visibleFrom));
+    const rows = ((data as any[]) ?? []).filter((r) =>
+      withinWindow(r.created_at, gate.visibleFrom, { senderId: r.sender_id, viewerId: gate.viewerId }));
 
     const projection = projectSemanticLayers({
       threadId,
@@ -1089,7 +1134,13 @@ router.get(
       .is("deleted_at", null)
       .order("created_at", { ascending: false })
       .limit(CATCH_UP_SCAN_LIMIT);
-    if (gate.visibleFrom) q = q.gte("created_at", gate.visibleFrom);
+    // Q6 in the QUERY. Every one of these scans is CAPPED, so the plain
+    // `.gte` discards rows in PostgREST before any filter runs: relaxing only
+    // `withinWindow` would leave this surface exactly as it is today. The
+    // relaxed clause is the window ONLY — `thread_id`, `deleted_at IS NULL`
+    // and the ordering stay AND-ed outside it, and active membership was
+    // already proved by `memberWindow` above.
+    q = applyHistoryWindow(q, gate.visibleFrom, gate.viewerId);
 
     const { data, error } = await q;
     if (error) {
@@ -1098,7 +1149,8 @@ router.get(
       return;
     }
 
-    const rows = ((data as any[]) ?? []).filter((r) => withinWindow(r.created_at, gate.visibleFrom));
+    const rows = ((data as any[]) ?? []).filter((r) =>
+      withinWindow(r.created_at, gate.visibleFrom, { senderId: r.sender_id, viewerId: gate.viewerId }));
 
     const projection = projectCatchUp({
       threadId,
@@ -1221,8 +1273,14 @@ router.get(
       return;
     }
 
+    // Q6, per thread. The query's `.gte("created_at", since)` above is the
+    // N-day PRODUCT horizon, not the §14.3 bound — it is the same for every
+    // thread and every viewer, so it is left exactly as it is and stays
+    // AND-ed. The bound itself is only ever applied here, so this filter is
+    // the whole of Q6 on this surface.
     const rows = ((data as any[]) ?? []).filter((r) =>
-      withinWindow(r.created_at, windowByThread.get(String(r.thread_id)) ?? null),
+      withinWindow(r.created_at, windowByThread.get(String(r.thread_id)) ?? null,
+                   { senderId: r.sender_id, viewerId: user.id }),
     );
 
     const parsedRows = rows
@@ -1393,8 +1451,14 @@ router.get(
       return;
     }
 
+    // Q6, per thread. The query's `.gte("created_at", since)` above is the
+    // N-day PRODUCT horizon, not the §14.3 bound — it is the same for every
+    // thread and every viewer, so it is left exactly as it is and stays
+    // AND-ed. The bound itself is only ever applied here, so this filter is
+    // the whole of Q6 on this surface.
     const rows = ((data as any[]) ?? []).filter((r) =>
-      withinWindow(r.created_at, windowByThread.get(String(r.thread_id)) ?? null),
+      withinWindow(r.created_at, windowByThread.get(String(r.thread_id)) ?? null,
+                   { senderId: r.sender_id, viewerId: user.id }),
     );
     const parsedRows = rows
       .map((r) => {
@@ -1494,7 +1558,13 @@ router.get(
       .is("deleted_at", null)
       .order("created_at", { ascending: false })
       .limit(COORDINATION_SCAN_LIMIT);
-    if (gate.visibleFrom) q = q.gte("created_at", gate.visibleFrom);
+    // Q6 in the QUERY. Every one of these scans is CAPPED, so the plain
+    // `.gte` discards rows in PostgREST before any filter runs: relaxing only
+    // `withinWindow` would leave this surface exactly as it is today. The
+    // relaxed clause is the window ONLY — `thread_id`, `deleted_at IS NULL`
+    // and the ordering stay AND-ed outside it, and active membership was
+    // already proved by `memberWindow` above.
+    q = applyHistoryWindow(q, gate.visibleFrom, gate.viewerId);
 
     const { data, error } = await q;
     if (error) {
@@ -1505,7 +1575,8 @@ router.get(
       return;
     }
 
-    const rows = ((data as any[]) ?? []).filter((r) => withinWindow(r.created_at, gate.visibleFrom));
+    const rows = ((data as any[]) ?? []).filter((r) =>
+      withinWindow(r.created_at, gate.visibleFrom, { senderId: r.sender_id, viewerId: gate.viewerId }));
 
     const projection = projectSafetyMode({
       threadId,

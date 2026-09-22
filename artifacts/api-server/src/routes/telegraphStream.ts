@@ -239,10 +239,19 @@ async function readResume(
   // windowed rows sat beyond the limit — the one outcome the header says a
   // client cannot detect.
   const truncated = raw.length > MAX_RESUME_MESSAGES;
+  // Q6 IS A NO-OP HERE, BY CONSTRUCTION, AND THAT IS THE RIGHT ANSWER. The
+  // query above carries `.neq("sender_id", userId)` — a resume never replays
+  // the caller's OWN sends, because their client wrote them optimistically and
+  // already holds them. So the population Q6 would admit has already been
+  // removed before this filter sees it, and there is nothing for the exception
+  // to add. The context is passed anyway so this reads like every other call
+  // and so a future edit that drops the `neq` inherits the rule rather than
+  // silently losing it.
   const rows = raw.filter((r) =>
     withinWindow(
       typeof r.created_at === "string" ? r.created_at : null,
       windowByThread.get(String(r.thread_id)) ?? null,
+      { senderId: typeof r.sender_id === "string" ? r.sender_id : null, viewerId: userId },
     ),
   );
 

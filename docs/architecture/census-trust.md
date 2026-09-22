@@ -2125,7 +2125,7 @@ were re-derived at both commits.** Every one holds:
 | the claim | how it was checked | result |
 |---|---|---|
 | `routes/messaging.ts` lines 498-514 — A12's `msgPerms` seam — are byte-identical | `diff` of that range at `1fe72289b` and `a97bfdac0` | **identical** |
-| `artifacts/api-server/src/routes/messaging.ts:699#const senderRestrictions = await getRestrictionState(sc, user.id);` — §16's `getRestrictionState` caller — is byte-identical | same | **identical** |
+| `artifacts/api-server/src/routes/messaging.ts:700#const senderRestrictions = await getRestrictionState(sc, user.id);` — §16's `getRestrictionState` caller — is byte-identical | same | **identical** |
 | `routes/messaging.ts` is the same length, so ~49 citations keep their lines | `wc -l` at both commits | **4,081 = 4,081**. (The entry prints "4,082"; the PROPERTY it asserts is true, the number is off by one.) |
 | `routes/discovery.ts` gains no `date_of_birth` read and no `loadTravelerIdentity` call | `grep -c` at both commits | **0 and 0 at both** |
 | `routes/profile.ts`'s five cited lines are byte-identical | `sed`+compare at both commits for 117, 445, 504, 595, 600 | **all five identical** |

@@ -160,7 +160,12 @@ export function canRead(state: ReplayState, userId: string, messageId: string): 
   const mem = state.memberships[`${msg.threadId}:${userId}`];
   if (!mem || mem.leftAt !== null) return false;
   const asIso = (tick: number) => new Date(Date.UTC(2026, 0, 1, 0, 0, tick)).toISOString();
-  return withinWindow(asIso(msg.createdAt), mem.visibleFrom === null ? null : asIso(mem.visibleFrom));
+  // Q6 is modelled here because the simulator's whole job is to be the SAME
+  // rule as the shipped read path. `userId` has already been proved an ACTIVE
+  // member four lines above (`mem.leftAt !== null` returns false), so this is
+  // the exception applied on top of a live authorization, never instead of one.
+  return withinWindow(asIso(msg.createdAt), mem.visibleFrom === null ? null : asIso(mem.visibleFrom),
+                      { senderId: msg.senderId, viewerId: userId });
 }
 
 /**

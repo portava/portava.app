@@ -551,7 +551,32 @@ async function decide(
         // A POLICY deny, not a lookup failure, so it does not go through
         // noteLookupFailure (which exists to make an undecidable branch
         // diagnosable). This branch decided.
-        if (!withinWindow((msg as any).created_at, visibleFrom)) return false;
+        //
+        // Q6, AT THE MEDIA DOOR — AND IT IS A NO-OP HERE, WHICH IS WORTH
+        // SAYING RATHER THAN LEAVING A READER TO ASSUME OTHERWISE.
+        //
+        // This branch is only reached when `owner === msg.sender_id`. Q6 only
+        // fires when the VIEWER is that sender. The two together give
+        // `owner === viewerId` — and `decide()` returned true for exactly that
+        // four branches above, at "1. Owner always sees their own bytes"
+        // (`pathOwner === viewerId`). So the exception cannot change a decision
+        // here today. It is wired in regardless, because the alternative is
+        // leaving the one call site in the tree that spells the window rule
+        // differently, and because this is the branch that hands over BYTES
+        // from a PRIVATE bucket: if step 1 ever narrows, this door must already
+        // be carrying the same rule as every text reader.
+        //
+        // WHAT IS LOAD-BEARING HERE IS THE LIMIT, and it is unchanged: ANOTHER
+        // member's protected attachment from before this member's window stays
+        // refused. `senderId` is then not `viewerId`, the predicate returns
+        // false, and the bytes are not served. An accessible own MESSAGE is
+        // never a key to somebody else's OBJECT — each object is decided by ITS
+        // OWN row's sender, one call at a time.
+        //
+        // The membership read above is `.is("left_at", null)`: an INACTIVE
+        // member has no `member` row here and was already refused.
+        if (!withinWindow((msg as any).created_at, visibleFrom,
+                          { senderId: (msg as any).sender_id, viewerId })) return false;
         return true;
       }
     }

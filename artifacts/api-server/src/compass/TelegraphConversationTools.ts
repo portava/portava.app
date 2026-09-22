@@ -58,6 +58,7 @@ import { resolveConversationCapabilities } from "../domain/telegraph/policies/co
 import type { ConversationCapabilities } from "../domain/telegraph/contracts/conversationCapabilities.js";
 import { searchConversations } from "../services/telegraphSearch.js";
 import {
+  applyHistoryWindow,
   historyBoundEnabled,
   membershipSelect,
   visibleFromOf,
@@ -102,6 +103,14 @@ interface Gate {
    * each tool.
    */
   visibleFrom: string | null;
+  /**
+   * The participant Compass is answering FOR. It rides with `visibleFrom` for
+   * the same reason `visibleFrom` rides in the gate at all: Q6's exception is
+   * the pair (bound, viewer), and a tool that took one without the other would
+   * apply half a rule. Always the authenticated caller this gate just proved
+   * ACTIVE membership for — never a conversationId-style value out of `args`.
+   */
+  viewerId: string;
 }
 
 function refuse(reason: string, degraded = false): TelegraphToolRefusal {
@@ -181,6 +190,7 @@ export async function gateConversation(
     capabilities: caps.capabilities,
     memberIds: ((roster as any[]) ?? []).map((r) => String(r.user_id)),
     visibleFrom: visibleFromOf(mine as any, boundOn),
+    viewerId: userId,
   };
 }
 
@@ -200,7 +210,7 @@ export async function telegraphGetConversationContext(
   // participants deliberately put into the conversation — not the prose.
   let recentQ = sc
     .from("messages")
-    .select("id, subtype, created_at")
+    .select("id, sender_id, subtype, created_at")
     .eq("thread_id", gate.conversationId)
     .is("deleted_at", null)
     .not("subtype", "is", null)
@@ -212,7 +222,12 @@ export async function telegraphGetConversationContext(
   // is spent on rows the caller may see, and re-checked in `withinWindow`
   // because `gte` and the filter must agree on the boundary instant across the
   // two ISO spellings Postgres and Node produce.
-  if (gate.visibleFrom) recentQ = recentQ.gte("created_at", gate.visibleFrom);
+  // Q6 in the QUERY: this read is `.limit(10)`, so a plain `.gte` decides the
+  // ten rows in PostgREST and the filter below never sees the caller's own
+  // earlier objects. `sender_id` is selected above for exactly this — the
+  // relaxed clause admits `sender_id = caller` and nothing else, so another
+  // participant's pre-membership objects still never reach the model.
+  recentQ = applyHistoryWindow(recentQ, gate.visibleFrom, gate.viewerId);
   const { data: recent, error } = await recentQ;
 
   // AN UNREADABLE OBJECT LIST IS NOT AN EMPTY CONVERSATION.
@@ -261,7 +276,8 @@ export async function telegraphGetConversationContext(
     recentObjectKinds: recentObjectsUnreadable
       ? null
       : ((recent as any[]) ?? [])
-          .filter((r) => withinWindow(r.created_at, gate.visibleFrom))
+          .filter((r) => withinWindow(r.created_at, gate.visibleFrom,
+                                      { senderId: r.sender_id, viewerId: gate.viewerId }))
           .map((r) => String(r.subtype)),
     recentObjectsUnreadable,
     note: recentObjectsUnreadable
@@ -381,7 +397,7 @@ export async function telegraphGetSharedPlaces(
 
   let placesQ = sc
     .from("messages")
-    .select("id, body, subtype, created_at")
+    .select("id, sender_id, body, subtype, created_at")
     .eq("thread_id", gate.conversationId)
     .is("deleted_at", null)
     .in("subtype", ["discovery_card", "hidden_gem", "meeting_point", "compass_card"])
@@ -393,7 +409,12 @@ export async function telegraphGetSharedPlaces(
   // read. The messageId it returns is also a handle the caller could carry to
   // another endpoint. Same two-layer shape as every other windowed read in this
   // tree: bounded in the query, re-checked per row.
-  if (gate.visibleFrom) placesQ = placesQ.gte("created_at", gate.visibleFrom);
+  // Q6 in the QUERY, and `.limit(25)` is why it has to be here: this tool
+  // returns a card's TITLE and summary — message CONTENT — so the clause must
+  // admit the caller's own earlier cards and no one else's. A card shared by
+  // another participant before this member's window is still withheld, and the
+  // `messageId` handle it would have carried is still never minted.
+  placesQ = applyHistoryWindow(placesQ, gate.visibleFrom, gate.viewerId);
   const { data: rows, error } = await placesQ;
   if (error) {
     log.warn({ err: error, conversationId: gate.conversationId }, "shared places unreadable");
@@ -402,7 +423,8 @@ export async function telegraphGetSharedPlaces(
 
   const { indexableText } = await import("../domain/telegraph/contracts/conversationSearch.js");
   const places = ((rows as any[]) ?? [])
-    .filter((r) => withinWindow(r.created_at, gate.visibleFrom))
+    .filter((r) => withinWindow(r.created_at, gate.visibleFrom,
+                                { senderId: r.sender_id, viewerId: gate.viewerId }))
     .map((r) => {
       const { objectTitle, text } = indexableText(r.body, r.subtype);
       return objectTitle === null ? null : {

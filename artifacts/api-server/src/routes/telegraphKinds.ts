@@ -52,6 +52,7 @@ import {
   type DrawerTab,
 } from "../services/telegraph/messageKinds.js";
 import {
+  applyHistoryWindow,
   historyBoundEnabled,
   membershipSelect,
   visibleFromOf,
@@ -75,7 +76,8 @@ const TypedMessageSchema = z.object({
 });
 
 type MemberGate =
-  | { ok: true; visibleFrom: string | null }
+  // `viewerId` rides with `visibleFrom` — Q6's exception is (bound, viewer).
+  | { ok: true; visibleFrom: string | null; viewerId: string }
   | { ok: false; code: "forbidden" | "db_error"; message: string };
 
 /**
@@ -99,7 +101,7 @@ async function memberWindow(
   if (!data || (data as any).left_at !== null) {
     return { ok: false, code: "forbidden", message: "Not an active member of this thread" };
   }
-  return { ok: true, visibleFrom: visibleFromOf(data as any, boundOn) };
+  return { ok: true, visibleFrom: visibleFromOf(data as any, boundOn), viewerId: userId };
 }
 
 const DRAWER_COLUMNS =
@@ -141,6 +143,7 @@ async function readIndexableRows(
   client: SupabaseClient,
   threadId: string,
   visibleFrom: string | null,
+  viewerId: string,
 ): Promise<{ ok: true; rows: any[] } | { ok: false; message: string }> {
   let q = client
     .from("messages")
@@ -149,11 +152,17 @@ async function readIndexableRows(
     .is("deleted_at", null)
     .order("created_at", { ascending: false })
     .limit(DRAWER_SCAN_LIMIT);
-  if (visibleFrom) q = q.gte("created_at", visibleFrom);
+  // Q6 in the QUERY: `DRAWER_SCAN_LIMIT` caps this read, so a plain `.gte`
+  // discards the caller's own earlier drawer objects in PostgREST before any
+  // filter could admit them. `thread_id` and `deleted_at IS NULL` stay AND-ed
+  // outside the relaxed clause, and `memberWindow` already proved ACTIVE
+  // membership.
+  q = applyHistoryWindow(q, visibleFrom, viewerId);
 
   const { data, error } = await q;
   if (error) return { ok: false, message: error.message ?? "messages read failed" };
-  const rows = ((data as any[]) ?? []).filter((r) => withinWindow(r.created_at, visibleFrom));
+  const rows = ((data as any[]) ?? []).filter((r) =>
+    withinWindow(r.created_at, visibleFrom, { senderId: r.sender_id, viewerId }));
   return { ok: true, rows };
 }
 
@@ -352,7 +361,7 @@ router.get(
       return;
     }
 
-    const read = await readIndexableRows(client, threadId, gate.visibleFrom);
+    const read = await readIndexableRows(client, threadId, gate.visibleFrom, gate.viewerId);
     if (!read.ok) {
       log.error({ threadId, message: read.message }, "drawer read failed");
       sendError(res, "db_error", "Could not read this conversation's content");
@@ -422,7 +431,7 @@ router.get(
       return;
     }
 
-    const read = await readIndexableRows(client, threadId, gate.visibleFrom);
+    const read = await readIndexableRows(client, threadId, gate.visibleFrom, gate.viewerId);
     if (!read.ok) {
       log.error({ threadId, message: read.message }, "search read failed");
       sendError(res, "db_error", "Could not search this conversation");

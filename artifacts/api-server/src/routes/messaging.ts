@@ -81,6 +81,7 @@ import {
   syncCircleChatMembers,
 } from '../services/groupChatSync';
 import {
+  applyHistoryWindow,
   historyBoundEnabled,
   membershipSelect,
   visibleFromOf,
@@ -1433,7 +1434,12 @@ router.get('/me/unread-counts', async (req, res) => {
       for (const m of lastMsgs ?? []) {
         // §14.3: a message outside the caller's window for its thread is not
         // theirs to count as unread. No-op while the flag is OFF.
-        if (!withinWindow((m as any).created_at, visibleFromByThread[(m as any).thread_id] ?? null)) continue;
+        // Q6: the caller's own earlier messages are theirs to see. This loop
+        // then skips them for the COUNT anyway (`sender_id === user.id`, five
+        // lines down) — a person's own message is never unread. The exception
+        // is passed regardless so the badge and the preview agree on one set.
+        if (!withinWindow((m as any).created_at, visibleFromByThread[(m as any).thread_id] ?? null,
+                          { senderId: (m as any).sender_id, viewerId: user.id })) continue;
         if (!lastMsgByThread[(m as any).thread_id]) {
           lastMsgByThread[(m as any).thread_id] = m;
         }
@@ -1709,12 +1715,19 @@ router.post('/threads/:threadId/read', async (req, res) => {
   // The threshold: the newest message this member is entitled to have loaded.
   let newestQuery = sc
     .from('messages')
-    .select('id, created_at')
+    .select('id, sender_id, created_at')
     .eq('thread_id', threadId)
     .is('deleted_at', null)
     .order('created_at', { ascending: false })
     .limit(1);
-  if (visibleFrom) newestQuery = newestQuery.gte('created_at', visibleFrom);
+  // Q6 in the QUERY, not only in a filter: this read has no JavaScript window
+  // check at all — it takes the newest row and trusts the bound. Left as a
+  // plain `.gte`, a rejoined member whose only visible message is one they sent
+  // themselves would be told `nothing_visible_to_mark` for a conversation they
+  // can see. The threshold can only move FORWARD (the caller compares it
+  // against `last_read_at` below), so admitting older own rows cannot rewind a
+  // marker.
+  newestQuery = applyHistoryWindow(newestQuery, visibleFrom, user.id);
   const { data: newestRows, error: newestErr } = await newestQuery;
 
   // An unreadable `messages` must NOT collapse to "there is nothing to mark
@@ -1727,7 +1740,13 @@ router.post('/threads/:threadId/read', async (req, res) => {
     return;
   }
 
-  const threshold = ((newestRows ?? [])[0] as any)?.created_at as string | undefined;
+  // The second layer for the threshold read. A row of the caller's own with a
+  // damaged `created_at` must not become the marker; `withinWindow` refuses it
+  // before the Q6 exception is consulted, and `Number.isNaN` below is the
+  // belt-and-braces the route already had.
+  const newestWindowed = ((newestRows ?? []) as any[]).filter((m) =>
+    withinWindow(m.created_at, visibleFrom, { senderId: m.sender_id, viewerId: user.id }));
+  const threshold = (newestWindowed[0] as any)?.created_at as string | undefined;
   if (!threshold) {
     res.status(200).json({ ok: true, threadId, lastReadAt: previous, advanced: false, reason: 'nothing_visible_to_mark' });
     return;
@@ -2030,8 +2049,12 @@ router.get('/me/threads', async (req, res) => {
   for (const m of memberships ?? []) {
     visibleFromByThread[(m as any).thread_id] = visibleFromOf(m as any, boundOn);
   }
+  // Q6: the caller's OWN earlier messages are theirs to preview. The exception
+  // is sender-scoped, so the preview a rejoined member sees can become their
+  // own old message but can never become ANOTHER sender's pre-window one.
   const windowedMsgs = ((lastMsgRes.data ?? []) as any[]).filter((m) =>
-    withinWindow(m.created_at, visibleFromByThread[m.thread_id] ?? null),
+    withinWindow(m.created_at, visibleFromByThread[m.thread_id] ?? null,
+                 { senderId: m.sender_id, viewerId: user.id }),
   );
 
   // Last message per thread.
@@ -2291,7 +2314,13 @@ router.get('/threads/:threadId/messages', async (req, res) => {
 
   if (before) query = query.lt('created_at', before);
   // The §14.3 window, applied in the query so pagination cannot walk past it.
-  if (visibleFrom) query = query.gte('created_at', visibleFrom);
+  //
+  // Q6 lives HERE, not only in a filter: this query carries `.limit(limit)` and
+  // `?before`, so PostgREST decides the page. A carve-out written only in
+  // `withinWindow` would leave this surface — the pagination surface — exactly
+  // as it is. The relaxed clause is `created_at >= bound OR sender_id = caller`;
+  // `thread_id`, the cursor and the ordering stay AND-ed outside it.
+  query = applyHistoryWindow(query, visibleFrom, user.id);
 
   const { data, error } = await query;
   if (error) {
@@ -2300,7 +2329,21 @@ router.get('/threads/:threadId/messages', async (req, res) => {
     return;
   }
 
-  const rows = (data ?? []) as any[];
+  // THE SECOND LAYER, which this read did not have and now needs.
+  //
+  // Every other windowed read in this tree re-checks the bound in JavaScript
+  // beside the query, for the reason `routes/groupChat.ts` spells out: `gte`
+  // and the filter must agree on the boundary instant across the two ISO
+  // spellings Postgres and Node produce. Q6 adds a second reason, and it is a
+  // FAIL-CLOSED one: `created_at >= bound` is NULL — and therefore not true —
+  // for a row with no timestamp, so the single-clause bound excluded a damaged
+  // row on its own. `sender_id.eq.<caller>` has no such property, so without
+  // this line a row of the caller's own carrying a NULL `created_at` would be
+  // admitted by the OR. `withinWindow` refuses an absent or unparseable
+  // `created_at` BEFORE it consults the exception, which is exactly the rule
+  // that has to survive.
+  const rows = ((data ?? []) as any[]).filter((m) =>
+    withinWindow(m.created_at, visibleFrom, { senderId: m.sender_id, viewerId: user.id }));
 
   // Universal display-name rule: sender names show only when opted in.
   {
@@ -2430,19 +2473,32 @@ router.get('/threads/:threadId/messages', async (req, res) => {
           // regardless of what is in the column.
           let quotedQuery = sc
             .from('messages')
-            .select(`id, body, sender_id, profile:profiles!messages_sender_id_fkey(name, handle, username, full_name)`)
+            .select(`id, body, sender_id, created_at, profile:profiles!messages_sender_id_fkey(name, handle, username, full_name)`)
             .eq('thread_id', threadId)
             .in('id', replyIds);
-          if (visibleFrom) quotedQuery = quotedQuery.gte('created_at', visibleFrom);
+          // Q6, AND THE LIMIT OF Q6. The quoted row is judged on ITS OWN
+          // sender, not on the sender of the message that quotes it: my reply
+          // being visible to me does not make the message it quotes visible.
+          // So a pre-window quote of MY OWN earlier message comes back (it is
+          // mine), and a pre-window quote of ANOTHER member's message does not
+          // — the `or` admits only `sender_id = caller`, and a row failing both
+          // clauses is never returned, so `replyContextMap` has no entry and
+          // the reply renders with `replyToBody: null` exactly as today.
+          quotedQuery = applyHistoryWindow(quotedQuery, visibleFrom, user.id);
           const { data: quotedRows, error: quotedErr } = await quotedQuery;
           if (quotedErr) {
             req.log.warn({ err: quotedErr, threadId },
               'thread read: quoted reply context unreadable — quotes omitted, not invented');
             replyQuotesUnreadable = true;
           }
+          // The second layer for the quote read, for the same fail-closed
+          // reason as the page read above. `created_at` is selected here only
+          // so the predicate can refuse a damaged row; it is never returned.
+          const quotedWindowed = ((quotedRows as any[]) ?? []).filter((qr: any) =>
+            withinWindow(qr.created_at, visibleFrom, { senderId: qr.sender_id, viewerId: user.id }));
           // Universal display-name rule: quoted sender shows @handle unless opted in.
-          const qAllowed = await nameVisibilitySet(sc, ((quotedRows as any[]) ?? []).map((q: any) => q.sender_id));
-          for (const qr of quotedRows as any[] ?? []) {
+          const qAllowed = await nameVisibilitySet(sc, quotedWindowed.map((q: any) => q.sender_id));
+          for (const qr of quotedWindowed) {
             const nameOk = qr.sender_id === user.id || qAllowed.has(qr.sender_id as string);
             const qHandle = resolveHandle(qr.profile);
             replyContextMap[qr.id] = {
@@ -3796,7 +3852,12 @@ router.get('/threads/:threadId/messages/:messageId/edits', async (req, res) => {
   if (msg.deleted_at) { sendError(res, 'not_found', 'Message not found'); return; }
 
   const visibleFrom = visibleFromOf(membership as any, boundOn);
-  if (!withinWindow(msg.created_at, visibleFrom)) {
+  // Q6, on DIRECT RETRIEVAL. The edit history of a message is the bodies that
+  // message used to have; for the caller's own message those are the caller's
+  // own words, and §14.3 was never about withholding a person's own history
+  // from them. Active membership (checked above) and the §7.4 tombstone rule
+  // (checked above) both still refuse first.
+  if (!withinWindow(msg.created_at, visibleFrom, { senderId: msg.sender_id, viewerId: user.id })) {
     sendError(res, 'forbidden', 'That message is outside the part of this conversation you can see');
     return;
   }
@@ -4228,7 +4289,11 @@ router.get('/me/saved-messages', async (req, res) => {
 
   const items = msgs
     .filter((m) => activeThreads.has(m.thread_id as string))
-    .filter((m) => withinWindow(m.created_at, visibleFromByThread[m.thread_id as string] ?? null))
+    // Q6: a save of the caller's OWN earlier message survives the rejoin. The
+    // `activeThreads` filter above is the §14.2 re-authorization and runs
+    // FIRST — a save in a thread the caller has left is still withheld.
+    .filter((m) => withinWindow(m.created_at, visibleFromByThread[m.thread_id as string] ?? null,
+                                { senderId: m.sender_id, viewerId: user.id }))
     .map((m) => ({
       messageId: m.id as string,
       threadId: m.thread_id as string,

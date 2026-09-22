@@ -53,7 +53,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { emitCoordinationStarted } from "../../lib/telegraphEvents.js";
-import { withinWindow } from "../groupChatHistoryBound.js";
+import { applyHistoryWindow, withinWindow } from "../groupChatHistoryBound.js";
 import {
   CoordinationSessionPayload,
   parseCoordinationEnvelope,
@@ -104,6 +104,7 @@ async function readSessionRows(
   client: SupabaseClient,
   threadId: string,
   visibleFrom: string | null,
+  viewerId: string,
 ): Promise<{ ok: true; rows: any[] } | { ok: false; message: string }> {
   let q = client
     .from("messages")
@@ -112,10 +113,17 @@ async function readSessionRows(
     .is("deleted_at", null)
     .order("created_at", { ascending: false })
     .limit(SESSION_IDEMPOTENCY_SCAN_LIMIT);
-  if (visibleFrom) q = q.gte("created_at", visibleFrom);
+  // Q6 in the QUERY: `SESSION_IDEMPOTENCY_SCAN_LIMIT` caps this read, so the
+  // plain `.gte` decides it in PostgREST. This lookup is what makes a retry
+  // idempotent, and the session a rejoined member is retrying is one THEY
+  // opened — the very rows a plain `.gte` throws away. Left unrelaxed, a retry
+  // would mint a duplicate session. It must stay exactly as tight for anyone
+  // else's rows, and `sender_id.eq.<caller>` is the whole of what it adds.
+  q = applyHistoryWindow(q, visibleFrom, viewerId);
   const { data, error } = await q;
   if (error) return { ok: false, message: error.message ?? "session read failed" };
-  return { ok: true, rows: ((data as any[]) ?? []).filter((r) => withinWindow(r.created_at, visibleFrom)) };
+  return { ok: true, rows: ((data as any[]) ?? []).filter((r) =>
+    withinWindow(r.created_at, visibleFrom, { senderId: r.sender_id, viewerId })) };
 }
 
 function toInput(row: any, payload: unknown) {
@@ -174,7 +182,7 @@ export async function createCoordinationSession(
   }
 
   const visibleFrom = input.visibleFrom ?? null;
-  const existing = await readSessionRows(client, input.threadId, visibleFrom);
+  const existing = await readSessionRows(client, input.threadId, visibleFrom, input.actorUserId);
   if (!existing.ok) return { ok: false, code: "db_error", message: existing.message };
 
   const before = partition(existing.rows);
