@@ -9,7 +9,7 @@
  *   - Toggle "hide viewer list"
  *   - Post — uploads media to Supabase Storage, then calls POST /api/stories
  */
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
   View, Text, Pressable, Modal, StyleSheet, TextInput,
   Image, Alert, ActivityIndicator, ScrollView,
@@ -22,6 +22,11 @@ import { color, space, radius, type as t, avatar, icon, aspect, dot} from '../th
 import { KeyboardSafeView } from './ui/KeyboardSafeView.tsx';
 import type { StoryVisibility } from '../services/stories.ts';
 import { createStory, uploadStoryMedia } from '../services/stories.ts';
+import {
+  fetchStoryRetentionPolicy,
+  composerRetentionLine,
+  type StoryRetentionPolicy,
+} from '../services/storyRetentionPolicy.ts';
 
 interface Props {
   visible: boolean;
@@ -50,6 +55,20 @@ export function StoryComposer({ visible, onClose, onPosted, defaultTripId }: Pro
   const postLockRef = useRef(false);
   const [uploadProgress, setUploadProgress] = useState<string | null>(null);
   const [visibilityOpen, setVisibilityOpen] = useState(false);
+
+  // Decision 8: the composer says what happens to this story afterwards. The
+  // numbers come from the server (services/storyRetentionPolicy.ts) so the copy
+  // cannot outlive the configuration it describes. `null` means the policy
+  // could not be read, and then the line is simply absent — naming a retention
+  // window on the strength of a failed request would be a false statement about
+  // the user's photo.
+  const [retention, setRetention] = useState<StoryRetentionPolicy | null>(null);
+  useEffect(() => {
+    if (!visible) return;
+    let live = true;
+    void fetchStoryRetentionPolicy().then((p) => { if (live) setRetention(p); });
+    return () => { live = false; };
+  }, [visible]);
 
   const mediaComposer = useMediaComposer('story');
 
@@ -156,6 +175,10 @@ export function StoryComposer({ visible, onClose, onPosted, defaultTripId }: Pro
             }
           </Pressable>
         </View>
+
+        {retention ? (
+          <Text style={s.retentionNote}>{composerRetentionLine(retention)}</Text>
+        ) : null}
 
         {uploadProgress ? (
           <View style={s.uploadBanner}>
@@ -269,6 +292,12 @@ const s = StyleSheet.create({
   postBtnText: { color: '#fff', fontWeight: '700', fontSize: 14 },
   uploadBanner: { flexDirection: 'row', alignItems: 'center', gap: space.sm, paddingHorizontal: space.lg, paddingVertical: space.sm, backgroundColor: '#EAF2F4' },
   uploadText: { ...t.small, color: color.deep },
+  retentionNote: {
+    ...t.small,
+    color: color.mute,
+    paddingHorizontal: space.lg,
+    paddingTop: space.sm,
+  },
   mediaPicker: { flexDirection: 'row', gap: space.md },
   mediaBtn: { flex: 1, borderWidth: 2, borderColor: color.haze, borderStyle: 'dashed', borderRadius: radius.md, paddingVertical: space.xl, alignItems: 'center', gap: space.sm },
   mediaBtnText: { ...t.small, color: color.mute, fontWeight: '600' },
