@@ -356,7 +356,13 @@ export async function adminOverrideScore(
   category: TrustCategory,
   newScore: number,
   reason: string,
-): Promise<{ ok: boolean; category: TrustCategory; persistedScore: number; ceilingBinding: boolean }> {
+): Promise<{
+  ok: boolean;
+  category: TrustCategory;
+  /** The category value now on the row, or `null` = NOT SCORED (Q1). */
+  persistedScore: number | null;
+  ceilingBinding: boolean;
+}> {
   if (newScore < 0 || newScore > 100) throw new Error("Score must be 0–100");
 
   const cap = await createCap(db, {
@@ -378,18 +384,43 @@ export async function adminOverrideScore(
       (read.state === "unavailable" ? ` (${read.reason})` : ""),
     );
   }
-  const persistedScore = Number((read.profile.categories as Record<string, unknown>)[category]);
+  // Q1, owner decision 2026-09-22: a category may now be NULL = NOT SCORED, and
+  // that is tested BEFORE any numeric coercion. `Number(null)` is 0, which is
+  // finite and is not above any ceiling, so an unscored category would sail
+  // through the guard below and be AUDITED as a ceiling that had taken effect
+  // on a category holding no score at all.
+  //
+  // A cap on an unmeasured category leaves it unmeasured — `recalculateTrustScore`
+  // will not manufacture a score just to clamp it, because a ceiling is low by
+  // construction and inventing one would fabricate a BAD measurement out of no
+  // evidence. So `persistedScore` is null and `ceilingBinding` is FALSE: the cap
+  // row is written and will bind the moment the category is first measured, but
+  // nothing here demonstrates it is in force, and the audit says exactly that.
+  //
+  // THIS DOES NOT THROW, and an earlier draft that did was wrong. The cap row
+  // has already been written by this point, so throwing would report a failure
+  // for an operation that had in fact taken effect — and leave an admin unsure
+  // whether to retry. `ok: true` with a null score and a false `ceilingBinding`
+  // is the honest report: the override is recorded, and it is not yet biting.
+  // The invariant this function guards is unharmed either way: it is that no
+  // persisted value sits ABOVE the ceiling, and there is no value here at all.
+  const rawPersisted = (read.profile.categories as Record<string, unknown>)[category];
+  const notScored = rawPersisted === null || rawPersisted === undefined;
+  const persistedScore = notScored ? null : Number(rawPersisted);
+
   // numeric(5,2) round-trips exactly at two decimals; the epsilon absorbs that,
   // not a disagreement. A persisted value ABOVE the ceiling means the ceiling is
   // not in force, which is the one thing this function exists to guarantee.
-  if (!Number.isFinite(persistedScore) || persistedScore > newScore + 0.005) {
+  if (persistedScore !== null && (!Number.isFinite(persistedScore) || persistedScore > newScore + 0.005)) {
     throw new Error(
       `adminOverrideScore: ceiling ${newScore} did not take effect on ${category} — trust_profiles still reads ${String(persistedScore)}`,
     );
   }
 
   const ceilingBinding =
-    recalculated.capsApplied.includes(category) && Math.abs(persistedScore - newScore) < 0.005;
+    persistedScore !== null &&
+    recalculated.capsApplied.includes(category) &&
+    Math.abs(persistedScore - newScore) < 0.005;
 
   // The audit records what HAPPENED, not what was asked for: an override that
   // withheld nothing is a different fact from one that pulled a score down.
@@ -442,7 +473,12 @@ export async function adminRemoveOverride(
   category: TrustCategory,
   reason: string,
   sourceCapId?: string,
-): Promise<{ ok: boolean; liftedCapIds: string[]; persistedScore: number }> {
+): Promise<{
+  ok: boolean;
+  liftedCapIds: string[];
+  /** The category value after the lift, or `null` = NOT SCORED (Q1). */
+  persistedScore: number | null;
+}> {
   // Find the active admin_override cap for this user+category. A failed read
   // must not be audited as "override removed" — nothing was lifted.
   const { data: caps, error: capsErr } = await db
@@ -500,7 +536,7 @@ async function confirmOverrideRemoved(
   db: SupabaseClient,
   targetUserId: string,
   category: TrustCategory,
-): Promise<number> {
+): Promise<number | null> {
   const { data: stillActive, error: recheckErr } = await db
     .from("trust_caps")
     .select("id")
@@ -526,7 +562,20 @@ async function confirmOverrideRemoved(
       (read.state === "unavailable" ? ` (${read.reason})` : ""),
     );
   }
-  const persistedScore = Number((read.profile.categories as Record<string, unknown>)[category]);
+  // Q1: NULL = NOT SCORED is caught before the coercion, for the same reason as
+  // in adminOverrideScore — `Number(null)` is 0 and 0 is finite, so an unscored
+  // category would be RETURNED AND AUDITED as a persisted score of zero: a
+  // fabricated measurement, and the lowest one available, reported as the
+  // outcome of lifting a ceiling.
+  //
+  // `null` is returned rather than thrown. The lift itself has already been
+  // verified above (no admin_override ceiling is still active); "there is no
+  // score to report" is a description of the category, not a failure of the
+  // removal, and failing the call would tell an admin their successful lift
+  // did not happen.
+  const rawPersisted = (read.profile.categories as Record<string, unknown>)[category];
+  if (rawPersisted === null || rawPersisted === undefined) return null;
+  const persistedScore = Number(rawPersisted);
   if (!Number.isFinite(persistedScore)) {
     throw new Error(
       `adminRemoveOverride: trust_profiles.${category} reads ${String(persistedScore)} after the removal`,

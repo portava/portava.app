@@ -645,7 +645,17 @@ describe("recalculation publishes the evidence behind the scores", () => {
     const t = tables();
     const db = makeClient(t);
     const r = await recalculateTrustScore(db, USER);
-    assert.equal(r.overall_score, 50, "the neutral baseline");
+    // Q1, owner decision 2026-09-22: the score line used to read
+    // `assert.equal(r.overall_score, 50, "the neutral baseline")`. That baseline
+    // was the fabricated neutral the decision removes, so with no events the
+    // score is now NULL = not scored.
+    //
+    // THE SUBJECT OF THIS TEST IS UNCHANGED and is the two lines below it: the
+    // EVIDENCE columns say 0 — "measured, and there was nothing there" — which
+    // is a different answer from the `null` a pre-2371 row gives ("never
+    // measured"). Q1 makes the SCORE carry that same distinction; it does not
+    // disturb the evidence one, and the assertion is kept to prove that.
+    assert.equal(r.overall_score, null, "no events means no score — not a neutral baseline");
     assert.equal(r.evidenceWeight, 0);
     assert.equal(r.evidenceCount, 0);
     const read = await getTrustProfile(db, USER);
