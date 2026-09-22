@@ -31,13 +31,15 @@ function formatElapsed(seconds: number) {
 }
 
 function ContactPickerModal({
-  visible, contacts, onClose, onSelect, loading,
+  visible, contacts, onClose, onSelect, loading, loadError,
 }: {
   visible: boolean;
   contacts: SessionContact[];
   onClose: () => void;
   onSelect: (contact: SessionContact) => void;
   loading: boolean;
+  /** True when the contact list could not be READ — not "there are none". */
+  loadError: boolean;
 }) {
   return (
     <Modal visible={visible} transparent animationType="slide">
@@ -50,6 +52,10 @@ function ContactPickerModal({
           <Text style={modal.sub}>Select a trusted contact to receive your live location.</Text>
           {loading ? (
             <ActivityIndicator color={color.success} style={{ marginVertical: space.lg }} />
+          ) : loadError ? (
+            <Text style={[modal.sub, { color: color.mute, marginTop: space.md }]}>
+              Couldn&apos;t load your contacts.
+            </Text>
           ) : contacts.length === 0 ? (
             <Text style={[modal.sub, { color: color.mute, marginTop: space.md }]}>
               No eligible contacts found. Add trusted contacts with live location access to your Safe Return session.
@@ -157,6 +163,9 @@ export default function RentABuddyActive() {
   const [contactPickerVisible, setContactPickerVisible] = useState(false);
   const [contactPickerLoading, setContactPickerLoading] = useState(false);
   const [sessionContacts, setSessionContacts] = useState<SessionContact[]>([]);
+  // True when the session's contact list could not be read, so the picker says
+  // so instead of asserting "no eligible contacts found".
+  const [sessionContactsError, setSessionContactsError] = useState(false);
   const [addTimeVisible, setAddTimeVisible] = useState(false);
   const [endVisible, setEndVisible] = useState(false);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -208,9 +217,11 @@ export default function RentABuddyActive() {
       setContactPickerVisible(true);
       try {
         const contacts = await getSessionContacts(safeReturnSessionId);
-        setSessionContacts(contacts.filter(c => c.canReceiveLiveLocation));
+        setSessionContactsError(contacts === null);
+        setSessionContacts((contacts ?? []).filter(c => c.canReceiveLiveLocation));
       } catch {
         setSessionContacts([]);
+        setSessionContactsError(true);
       } finally {
         setContactPickerLoading(false);
         setCircleShareLoading(false);
@@ -512,6 +523,7 @@ export default function RentABuddyActive() {
         visible={contactPickerVisible}
         contacts={sessionContacts}
         loading={contactPickerLoading}
+        loadError={sessionContactsError}
         onClose={() => {
           setContactPickerVisible(false);
           setCircleShareLoading(false);
