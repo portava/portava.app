@@ -61,7 +61,11 @@ import {
   drainPendingExternalEvents,
   type ReplanPort,
 } from "../layoverExternalEventConsumer.js";
-import type { LayoverEventEnvelope } from "../../airport/LayoverEventReplanner.js";
+import {
+  handleEvent,
+  type HandleEventResult,
+  type LayoverEventEnvelope,
+} from "../../airport/LayoverEventReplanner.js";
 
 /**
  * A fixed instant. Every `occurredAt` below is derived from it by subtraction,
@@ -402,5 +406,182 @@ describe("the consumer reports honestly", () => {
     assert.equal(calls, 0, "a processed event must never be replanned again");
     assert.equal(report.drained.length, 0);
     assert.equal(report.readFailed, null);
+  });
+});
+
+/**
+ * census-layover L238 — "Integration tests for event → replan → snapshot →
+ * invalidation → notification".
+ *
+ * ── WHY THIS COULD NOT BE WRITTEN BEFORE ─────────────────────────────────────
+ * The row's verdict rested on there being no path from a delivered event to a
+ * replan. Every step existed as a pure exported function in
+ * `LayoverEventReplanner.ts` and the census counted them one by one, but
+ * nothing carried an event from a producer into the pipeline — so the chain the
+ * row names had no first link and the test would have had to fabricate one.
+ *
+ * It has one now, and this drives THE WHOLE OF IT: an untrusted producer
+ * payload goes in at `ingestExternalEvent`, is stored, is read back out of the
+ * store by the pending query, is claimed, is handed to the REAL `handleEvent`
+ * through the consumer's port, and the invalidation and notification decisions
+ * come back out. No step is stubbed except the sessions and airport the
+ * replanner is asked to consider, which are its arguments rather than its
+ * behaviour.
+ *
+ * ── WHAT IT DOES NOT PROVE, AND THE ROW SHOULD NOT BE READ AS SAYING ─────────
+ * "snapshot" is a step in the chain this row names and it does NOT happen.
+ * `handleEvent` returns `snapshotPersisted: false` with
+ * `snapshotUnavailableReason: "no_snapshot_storage"`, because no table on any
+ * database stores a certified computation — 2700 is written and unapplied, and
+ * `layover_external_events` stores events, not snapshots. The assertion below
+ * pins that honestly rather than skipping it, so the day storage exists this
+ * test fails and says which claim changed.
+ */
+describe("L238 — a delivered event reaches a replan decision, end to end", () => {
+  function pendingRow(over: Record<string, unknown> = {}): Record<string, unknown> {
+    return {
+      event_id: "evt-delay",
+      event_type: "flight.departure_delayed",
+      occurred_at: new Date(NOW - 5 * MIN).toISOString(),
+      received_at: new Date(NOW - 4 * MIN).toISOString(),
+      source: "acme-flight-feed",
+      source_event_id: "acme-1",
+      subject_refs: [{ kind: "session", ref: "session-1" }],
+      payload: { delayMinutes: 90 },
+      dedup_key: "acme-flight-feed:acme-1",
+      confidence: "HIGH",
+      processed_at: null,
+      ...over,
+    };
+  }
+
+  it("producer payload → store → claim → handleEvent → invalidation + notify", async () => {
+    const { tables, client } = db();
+
+    // 1. INGEST. An untrusted producer payload, validated and stored.
+    const ingested = await ingestExternalEvent(
+      client,
+      {
+        eventId: "evt-delay",
+        eventType: "flight.departure_delayed",
+        occurredAt: new Date(NOW - 5 * MIN).toISOString(),
+        source: "acme-flight-feed",
+        sourceEventId: "acme-1",
+        subjectRefs: [{ kind: "session", ref: "session-1" }],
+        payload: { delayMinutes: 90, newDepartureTime: new Date(NOW + 300 * MIN).toISOString() },
+        confidence: "HIGH",
+      },
+      NOW,
+    );
+    assert.equal(ingested.ok, true);
+    assert.equal(tables.layover_external_events.length, 1);
+
+    // 2-5. DRAIN: pending read, compare-and-swap claim, then the REAL pipeline.
+    const seen: HandleEventResult[] = [];
+    const port: ReplanPort = {
+      async replan(event) {
+        const result = handleEvent(event, {
+          airport: {
+            id: "airport-tpe", iataCode: "TPE", timezone: "Asia/Taipei", verified: false,
+            domesticBufferMin: 60, internationalBufferMin: 120,
+            immigrationExtraMin: 30, checkedBagsExtraMin: 15, trafficExtraMin: 20,
+          },
+          sessions: [{
+            session: {
+              id: "session-1",
+              arrivalTime: new Date(NOW - 120 * MIN).toISOString(),
+              departureTime: new Date(NOW + 420 * MIN).toISOString(),
+              boardingTime: null,
+              flightType: "international",
+              immigrationRequired: true,
+              checkedBags: false,
+              wantsToLeave: true,
+            },
+            airportRef: "TPE",
+            status: "active",
+          }],
+          candidates: {},
+          nowMs: NOW,
+        });
+        seen.push(result);
+        return { ok: true, impacted: result.impacted, notifications: result.notifications };
+      },
+    };
+
+    const report = await drainPendingExternalEvents(client, port, { limit: 10, nowMs: NOW });
+
+    assert.equal(report.readFailed, null);
+    assert.equal(report.failedAfterClaim.length, 0);
+    assert.deepEqual(report.drained.map((d) => d.eventId), ["evt-delay"]);
+    assert.equal(
+      tables.layover_external_events[0].processed_at,
+      new Date(NOW).toISOString(),
+      "the event must be stamped, so a second drain does not replan it",
+    );
+
+    // THE CHAIN ACTUALLY RAN, and the session was matched by its subjectRef
+    // rather than by the replanner being handed a single session and assuming.
+    assert.equal(seen.length, 1);
+    const result = seen[0]!;
+    assert.equal(result.impacted, 1, "the session named in subjectRefs must be impacted");
+    assert.equal(result.replanned.length, 1);
+
+    const outcome = result.replanned[0]!;
+    // The affected constraint nodes are the event type's, not everything.
+    assert.ok(outcome.affectedNodes.length > 0);
+    // Invalidation is a DECISION object, reached, not a stub.
+    assert.ok(outcome.invalidation, "the pipeline must reach step 6");
+    // Step 8 ran and produced a decision either way; which way depends on the
+    // arithmetic, and pinning it to one answer here would be asserting the
+    // feasibility engine's numbers from the wrong suite.
+    assert.equal(typeof outcome.notify.notify, "boolean");
+
+    // THE HONEST PIN. Step 4 does not happen and the row must not be read as
+    // saying it does.
+    assert.equal(outcome.snapshotPersisted, false);
+    assert.equal(outcome.snapshotUnavailableReason, "no_snapshot_storage");
+  });
+
+  it("a duplicate delivery does not produce a second replan", async () => {
+    // §24 in the form that matters: not "the second insert fails" but "the
+    // traveller is not told twice". The 23505 is staged (fakeLayoverDb models no
+    // unique index — see the file header); what is NOT staged is the pipeline
+    // behaviour, which is what this checks.
+    const { tables, client } = db([pendingRow()], {
+      "layover_external_events:insert": {
+        code: "23505",
+        message: 'duplicate key value violates unique constraint "layover_external_events_dedup_uidx"',
+      },
+    });
+
+    const redelivered = await ingestExternalEvent(
+      client,
+      {
+        eventId: "evt-delay-again",
+        eventType: "flight.departure_delayed",
+        occurredAt: new Date(NOW - 5 * MIN).toISOString(),
+        source: "acme-flight-feed",
+        sourceEventId: "acme-1",
+        subjectRefs: [{ kind: "session", ref: "session-1" }],
+        payload: { delayMinutes: 90 },
+      },
+      NOW,
+    );
+    assert.equal(redelivered.ok, true);
+    assert.equal(redelivered.ok && redelivered.duplicate, true);
+    assert.equal(
+      tables.layover_external_events.length,
+      1,
+      "the redelivery must not add a row",
+    );
+
+    // And the drain sees exactly ONE pending event, so exactly one replan runs.
+    let replans = 0;
+    const counting: ReplanPort = {
+      async replan() { replans += 1; return { ok: true, impacted: 1, notifications: 1 }; },
+    };
+    const report = await drainPendingExternalEvents(client, counting, { limit: 10, nowMs: NOW });
+    assert.equal(replans, 1, "one fact, delivered twice, must replan once");
+    assert.equal(report.drained.length, 1);
   });
 });
