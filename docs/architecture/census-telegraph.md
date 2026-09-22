@@ -9434,7 +9434,7 @@ RECORD that a translation failed — could not tell a written row from a rejecte
 one. The error is now read, a failure is logged by name, and the specific
 undefined-column refusal retries once WITHOUT the two new columns while naming
 migration 2991
-(`artifacts/api-server/src/services/messageTranslation.ts:1064#export const CONFIDENCE_MIGRATION_PENDING_MESSAGE`).
+(`artifacts/api-server/src/services/messageTranslation.ts:1076#export const CONFIDENCE_MIGRATION_PENDING_MESSAGE`).
 The translation is the product feature and the reading is metadata about it;
 losing the row to keep the metadata would be the wrong trade.
 
