@@ -6768,3 +6768,110 @@ member, and §23.3 had no such bucket either.
 **No verdict moves.** `check:census-integrity` still reads **C=78 W=124 N=94
 X=0** across 296 rows, unchanged from §27.9, which remains this document's
 current headline.
+
+## §29 — 2026-09-22 (later still): three questions from the client lane, answered against the tree
+
+No verdict moves. This section answers one request and two findings raised by
+the parallel Layover CLIENT lane, each re-verified here rather than accepted.
+
+### 29.1 THE REQUEST, DECLINED — `localReplan` must NOT be exposed on an endpoint
+
+The client lane asks for `localReplan` (`artifacts/api-server/src/services/airport/LayoverDegradedService.ts:234#export function localReplan`)
+to be exposed on a route, so that L156's *"local conservative fallback"* clause
+can close. **This lane declines, and the reason is not scope — it is that the
+endpoint would make L156 less true, not more.**
+
+L156 reads: *"Replanning — **local** conservative fallback only if deterministic
+inputs suffice; otherwise show unavailable/stale"*.
+
+The function's own header already says what it is for, in a section headed "AND
+THE ONE THING A CLIENT MUST NOT DO WITH THIS":
+
+> *"`localReplan` decides whether a cached bundle may be replanned **OFFLINE**."*
+
+Three consequences, each of which is a reason on its own:
+
+1. **It is unreachable in the only condition it exists for.** A fallback that
+   requires a round trip is not available when the network is gone, which is
+   precisely and only when a traveller needs it. An endpoint would be callable
+   exactly when it is not needed.
+2. **It would create a SECOND feasibility answer reachable while online, and
+   this census already scores that as a defect.** L1 asks for *"one canonical
+   operational truth"* and L2 for *"no other surface owns feasibility"*. L2's
+   own evidence cell scores the client re-deriving a second judgement with
+   *"thresholds that appear nowhere on the server"*. A `POST /replan` returning
+   `conservativeUsableMinutes` — deliberately SMALLER than the certified figure,
+   by the bundle's age — is a second, weaker answer to the one question this
+   domain exists to answer, served from a stale input while a fresh
+   certification is one call away.
+3. **Online, the correct answer already exists and is better.** Any client that
+   can reach a server should call the certifying surfaces and get
+   `certifySessionFeasibility`'s current record. Replanning from an aged bundle
+   when the real thing is reachable is strictly worse information.
+
+**What would actually close L156's fallback clause**, stated so the request is
+not merely refused: the deterministic rule must run ON the client, over the
+bundle it already holds. `localReplan` is pure — it imports no Supabase client
+and takes the bundle plus six scalars — so the honest options are (a) lift it
+into a shared workspace package both sides import, so there is ONE rule and not
+a fork, or (b) have the client implement the same rule and pin it to this one
+with a shared fixture. (a) is a cross-package move touching the client build and
+belongs to whoever owns that build; (b) is client work. **Neither is an
+endpoint, and this lane has built neither.**
+
+**L156 stays `W`**, for the reason §23.3 already files it under: blocked on a
+file another lane owns.
+
+### 29.2 FINDING 1 — checked on this side of the wire, and NOT exhaustively
+
+The client lane reports that it was undoing three server disclosures that the
+server got right, and asks whether any OTHER layover route serves an empty
+collection where it cannot tell "none" from "could not read" — the §23.1 defect.
+
+**Five collection-returning layover routes were read at this commit.** All five
+refuse or disclose:
+
+| route | on a failed read |
+| --- | --- |
+| `GET /airport/sessions/:id/crew` | refuses `degraded_unavailable`; and every partial failure inside `crewMemberCards` returns `degraded: true` with a NAMED reason — `blocks_unreadable`, `sharing_preferences_unreadable`, `member_cards_unreadable` — while publishing NO cards rather than all of them |
+| `GET /airport/sessions/:id/observations` | refuses, with the reason written into the code: *"A FAILED READ IS A REFUSAL, NOT AN EMPTY LIST"* |
+| `GET /airport/sessions` | refuses; *"'You have no layovers' is a claim. An unreadable table cannot make it."* Also discloses an expiry sweep that could not run |
+| `GET /airport/sessions/:id/stops` | `stopsOr503` refuses |
+| `GET /airport/sessions/:id/buddies` | closed by §23.1 |
+
+**NO NEW SWALLOW SITE WAS FOUND — and that is a sample, not a sweep.** Five
+routes of the thirty-one `router.*("/airport…")` handlers in `routes/airport.ts`
+were read. §23.8 already states why a clean sample proves little here: *"the
+guard is four cases in one suite over one handler; it does not generalise"*, and
+§23.1 is the pass that disproved §21.6's site-by-site claim one section after it
+was written. **This section does not re-assert §21.6.** The honest position is
+that the crew surface added by §27 was checked and is clean, four older routes
+were re-read and are clean, and twenty-six were not read.
+
+### 29.3 FINDING 2 — L269's blocker, CONFIRMED from this repository's own production artifact
+
+The client lane reports that L269 cannot be closed by wiring `getLayoverGems`,
+because `layover_discovery_mode_enabled` has no `feature_flags` row in
+production. **Confirmed, three ways, and the census already says so** — §24.6
+("the flag has no seeding migration") and §25.2 ("L269 DOES NOT MOVE"). What is
+added here is a re-measurement at this commit:
+
+1. `2971_layover_discovery_mode_flag.sql` exists in `src/migrations/`.
+2. It does **not** appear in `src/lib/capability/production-applied-migrations.json`,
+   which is this repository's committed record of what production has. `2984`
+   and `2985` DO appear there, which is the control: the file records recent
+   applications, so 2971's absence is a measurement and not a stale artifact.
+3. The gate fails to OFF on an absent row by design —
+   `artifacts/api-server/src/lib/discoveryLayoverMode.ts:247#if (flag === "off" || flag === "absent") return OFF;`
+   with the comment that `absent` is an ANSWER: *"nobody having said anything …
+   the surface serves exactly what it served before"*.
+
+So `discoveryLayoverGate` returns OFF for every traveller in production, and a
+client wired to it would render a card that looks integrated and is not.
+**L269 stays `W`, blocked on applying 2971 — a deployment decision above both
+lanes.** This lane did not attempt it and did not apply any migration.
+
+### 29.4 Tally
+
+**No verdict moves.** `check:census-integrity` still reads **C=78 W=124 N=94
+X=0** across 296 rows. §27.9 remains this document's current headline.
