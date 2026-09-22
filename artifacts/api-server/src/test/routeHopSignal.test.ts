@@ -502,12 +502,54 @@ describe("readAcceptedPlanHops — consent, and the refusals before it", () => {
       READ_OPTS,
     );
     assert.deepEqual(r.signals, []);
-    assert.equal(r.refusal, null, "an empty consented set is not a refusal to read");
+    // THIS ASSERTION CHANGED, and the reason is worth writing down.
+    //
+    // It used to require `refusal === null`, on the reading that the consent
+    // read is a filter rather than a read: an empty consented set is not a
+    // refusal to look. But the set is only empty here BECAUSE THE READ FAILED,
+    // and `refusal`'s own contract — "Populated when nothing was read. Never a
+    // silent empty" — is precisely about that case. Every sibling failure in
+    // this suite (`no_service_client`, plan/leg `read_failed`) is already a
+    // named refusal; this one was the exception, and it made an unreadable
+    // route_flow_contribution_consent table indistinguishable from a population
+    // that has not consented to route-flow contribution at all.
+    //
+    // The SUPPRESSION is unchanged — still no signals, still fail-closed. Only
+    // its visibility to the caller is new.
+    assert.equal(
+      r.refusal,
+      "consent_read_failed",
+      "an unreadable consent table is not an unconsenting population",
+    );
   });
 
   it("no consent at all yields no hops", async () => {
     const r = await readAcceptedPlanHops(fakeClient({ ...dbFixture(), consented: [] }) as any, READ_OPTS);
     assert.deepEqual(r.signals, []);
+  });
+
+  it("a failed consent read and a genuinely unconsenting population are DIFFERENT answers", async () => {
+    // The distinction itself, asserted directly. Both return no signals; a
+    // caller that renders or reports the layer must still be able to tell "no
+    // one has opted in" from "we could not find out", because only the first is
+    // a fact about people. Comparing the two is what makes this a test of the
+    // distinction rather than of one arbitrary label.
+    const unconsenting = await readAcceptedPlanHops(
+      fakeClient({ ...dbFixture(), consented: [] }) as any,
+      READ_OPTS,
+    );
+    const unreadable = await readAcceptedPlanHops(
+      fakeClient({ ...dbFixture(), consentError: true }) as any,
+      READ_OPTS,
+    );
+    assert.deepEqual(unconsenting.signals, []);
+    assert.deepEqual(unreadable.signals, []);
+    assert.equal(unconsenting.refusal, null, "nobody opted in — we looked, and that is the answer");
+    assert.notEqual(
+      unreadable.refusal,
+      unconsenting.refusal,
+      "the two must not serialize to the same fact",
+    );
   });
 
   it("REFUSES BEFORE READING with no zone resolver — no coordinate could be coarsened", async () => {
