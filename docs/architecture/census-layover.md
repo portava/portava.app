@@ -7992,3 +7992,46 @@ Nothing here was verified against a deployed surface. The producer exists; the
 storage does not, on any database, and both 2700 and 2992 are unapplied. The
 first row will be written when those land and the flag is turned on through the
 audited path — not before, and this section does not ask for it.
+
+## §44 — the orphan is deleted, and one thing it reached is deliberately kept
+
+§43.5 recorded the deletion as owed rather than done, on the grounds that
+bundling a removal with a capability fix mixes two diffs. It is done here, on
+its own.
+
+**Deleted:** `travel-buddy-standalone/src/components/layover/LayoverRecommendationScreen.tsx`,
+15,098 bytes, imported by nothing. §43.2 settled the surface question it was
+blocking, and the component's own hazard is what the repository has deleted
+before: it re-derives feasibility client-side, the same shape that got
+`LayoverReturnPanel.tsx` deleted at `a718beb5` under L2/L6. Leaving it in the
+tree made a reader believe there was a second, richer Layover surface. There is
+one surface, and it is the dashboard.
+
+**Kept, deliberately:**
+`travel-buddy-standalone/src/services/layover.ts:956#getSessionSafety`. The
+distinction is not sentiment — it is that the component carried DERIVATION and
+this carries none. It is a six-line typed fetch against
+`GET /airport/sessions/:id/safety`, an endpoint that works, is tested, and now
+shares its ledger write with the overview. Deleting a transport function for a
+live endpoint buys nothing and costs the next wiring a rewrite; deleting a
+duplicate feasibility derivation removes a correctness hazard. The two are
+different objects and are treated differently here rather than swept together.
+
+Its true state is recorded rather than implied: **it has no caller.** §43.1 says
+so, this section says so, and the census's own dark-route rows (`§13.1`, the
+`GET /:id/safety` line at `:1582`) already did. An unused export with its
+absence written down is not the same defect as a screen that looks like a
+feature.
+
+### §44.1 No verdict moves, and the one that might look like it should
+
+No row grades the existence of `LayoverRecommendationScreen.tsx`. The rows that
+named it — the headline defect note and the two dark-route tables — described it
+as *unmounted*, which is what it was; deleting an unmounted component changes no
+traveller's experience and no requirement's status. Every one of those passages
+is left standing, because each was true when written and the file's absence does
+not make a past observation false.
+
+`GET /:id/safety` is still dark from the app. That was true before this pass and
+is true after it, and §43 changed what depends on it rather than fixing it: the
+§20 record is no longer hostage to an endpoint nothing calls.
