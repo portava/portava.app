@@ -79,7 +79,36 @@ export const ISSUABLE_COMMANDS: readonly IssuableCommand[] = [
   "UNSEND_MESSAGE",   // §7.4 / §13.1 — needs messages.unsent_at (2810)
   "ADD_REACTION",     // §12 / §13.1 — needs message_reactions (2811)
   "REMOVE_REACTION",  // see TELEGRAPH_COMMAND_EXTENSIONS
+  /**
+   * §9 / §13.1 — census T168. It has no legacy writer: nothing in this
+   * repository opened a coordination session before the §8 surface landed, so
+   * there is no guard to route around.
+   *
+   * IT IS THE ONE COMMAND HERE THAT NEEDS NO UNAPPLIED SCHEMA, and that is why
+   * `SCHEMA_GATED_COMMANDS` below exists. A session is a `messages` row written
+   * through columns every deployment already has. Gating it behind
+   * `telegraph_message_kernel_enabled` — which is seeded FALSE and whose
+   * migrations no database has run — would put a live capability behind a
+   * switch that exists for a different reason, and the row would be a
+   * capability nobody can reach.
+   */
+  "CREATE_COORDINATION_SESSION",
 ];
+
+/**
+ * The commands on this endpoint that DEPEND on schema 2810/2811 added.
+ *
+ * The kernel flag is the gate for exactly these, and the set is named rather
+ * than assumed: when the gate was "every command here", adding a command that
+ * did not need the schema silently made it unreachable. A command absent from
+ * this set is issued regardless of the flag, and adding one to it is a
+ * decision — the same shape as the allowlist above, and for the same reason.
+ */
+export const SCHEMA_GATED_COMMANDS: ReadonlySet<string> = new Set<string>([
+  "UNSEND_MESSAGE",   // messages.unsent_at, messages.lifecycle_state (2810)
+  "ADD_REACTION",     // public.message_reactions (2811)
+  "REMOVE_REACTION",  // public.message_reactions (2811)
+]);
 
 const ISSUABLE = new Set<string>(ISSUABLE_COMMANDS);
 
@@ -125,10 +154,22 @@ export const LEGACY_PATH_COMMANDS: Readonly<Record<string, string>> = {
  * Named so the endpoint's refusal can distinguish "go there instead" from
  * "this does not exist yet", which are different answers and lead a caller to
  * different actions.
+ *
+ * EMPTY, AND THE EMPTINESS IS THE CLAIM. It held one entry —
+ * `CREATE_COORDINATION_SESSION`, annotated "no coordination session ENTITY
+ * exists (census T85/T168)". That stopped being true when the session entity
+ * landed, and a refusal that tells a caller a thing does not exist when it does
+ * is worse than no refusal: it sends them away from the door that would have
+ * worked. The same correction was already made once in this file, for
+ * `SET_COORDINATION_STATUS`.
+ *
+ * The 501 branch on the route is KEPT rather than deleted along with the last
+ * entry. It is the shape of the answer for the next §13.1 command that arrives
+ * unbuilt, and `telegraphCommandRoute.test.ts` asserts the partition is
+ * exhaustive — every §13.1 command is issuable, legacy-routed or named here —
+ * so an entry cannot quietly go missing either.
  */
-export const UNIMPLEMENTED_COMMANDS: readonly string[] = [
-  "CREATE_COORDINATION_SESSION",  // §9 — no coordination session ENTITY exists (census T85/T168)
-];
+export const UNIMPLEMENTED_COMMANDS: readonly string[] = [];
 
 /** One command, as the wire carries it. */
 export interface TelegraphCommandEnvelope {

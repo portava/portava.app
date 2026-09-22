@@ -32,7 +32,8 @@ import { requireUser, sendError } from "../lib/http.js";
 import { asyncHandler } from "../lib/asyncHandler.js";
 import { logger as rootLogger } from "../lib/logger.js";
 import { guardTelegraphThreadWrite } from "../lib/telegraphThreadWrite.js";
-import { publishToThread } from "../lib/telegraphEvents.js";
+import { emitCoordinationCompleted, publishToThread } from "../lib/telegraphEvents.js";
+import { createCoordinationSession } from "../services/telegraph/coordinationSessions.js";
 import {
   COORDINATION_ACTIONS,
   COORDINATION_KINDS,
@@ -43,6 +44,7 @@ import {
   parseCoordinationEnvelope,
   projectAcknowledgements,
   projectCommitment,
+  projectConversationSessions,
   projectCoordinationSession,
   projectDecision,
   sessionStateNow,
@@ -265,6 +267,85 @@ router.post(
       return;
     }
 
+    /**
+     * The session the transition below belongs to, as it stood BEFORE this
+     * write. Carried out of the gate so the terminal-event emission after the
+     * insert does not read the thread a second time — and so `coordination.
+     * completed` cannot be emitted for a transition the gate refused.
+     */
+    let transitionSession: CoordinationSession | null = null;
+
+    // §13.1 CREATE_COORDINATION_SESSION. One writer, two doors — see
+    // `services/telegraph/coordinationSessions.ts`. It returns early because
+    // the generic insert below has no idempotency and would mint a second
+    // session on every retry.
+    if (validated.kind === "COORDINATION_SESSION") {
+      const gate = await memberWindow(client, threadId, user.id);
+      if (!gate.ok) {
+        sendError(res, gate.code, gate.message);
+        return;
+      }
+      const p = (validated.envelope as any).payload as {
+        title: string;
+        planObjectId?: string | null;
+        note?: string | null;
+        idempotencyKey?: string | null;
+      };
+      const created = await createCoordinationSession(client, {
+        threadId,
+        actorUserId: user.id,
+        title: p.title,
+        planObjectId: p.planObjectId ?? null,
+        note: p.note ?? null,
+        idempotencyKey: String(p.idempotencyKey ?? ""),
+        visibleFrom: gate.visibleFrom,
+      });
+      if (!created.ok) {
+        if (created.code === "db_error") {
+          log.error({ threadId, message: created.message }, "coordination session write failed");
+        }
+        sendError(res, created.code, created.message);
+        return;
+      }
+      if (!created.duplicate) {
+        const at = created.session.startedAt;
+        const { error: bumpErr } = await client
+          .from("message_threads")
+          .update({ last_message_at: at, updated_at: at })
+          .eq("id", threadId);
+        if (bumpErr) {
+          log.warn({ err: bumpErr, threadId }, "thread bump after session open failed (session was written)");
+        }
+      }
+      // 200 on a duplicate, 201 on a creation. A client that retried gets the
+      // session it asked for and can tell from the status that it already had
+      // it, which is what makes the retry safe to make.
+      res.status(created.duplicate ? 200 : 201).json({
+        id: created.messageId,
+        threadId,
+        senderId: created.session.startedBy,
+        createdAt: created.session.startedAt,
+        msgType: "coordination_session",
+        subtype: null,
+        kind: "COORDINATION_SESSION",
+        duplicate: created.duplicate,
+        session: created.session,
+      });
+      if (!created.duplicate) {
+        void publishToThread(client, threadId, {
+          type: "message.created",
+          payload: {
+            messageId: created.messageId,
+            senderId: created.session.startedBy,
+            msgType: "coordination_session",
+            subtype: null,
+            createdAt: created.session.startedAt,
+          },
+        });
+      }
+      return;
+    }
+
     // §19: an ACKNOWLEDGEMENT must name an ANNOUNCEMENT this member can
     // actually see, in THIS thread, that ASKED to be acknowledged. Without
     // this check the kind would be a free-text pointer: a client could
@@ -313,7 +394,12 @@ router.post(
     // client show CANCELLED -> ACTIVE optimistically and be contradicted on the
     // next read.
     if (validated.kind === "COORDINATION_TRANSITION") {
-      const payload = (validated.envelope as any).payload as { sessionId: string; to: string };
+      const payload = (validated.envelope as any).payload as {
+        sessionId: string;
+        to: string;
+        idempotencyKey?: string | null;
+        expectedVersion?: number | null;
+      };
       const gate = await memberWindow(client, threadId, user.id);
       if (!gate.ok) {
         sendError(res, gate.code, gate.message);
@@ -329,6 +415,42 @@ router.post(
         sendError(res, "not_found", "No such coordination session in this conversation");
         return;
       }
+
+      // §17.2 — a RETRY is answered with the state the first attempt produced,
+      // BEFORE the machine is consulted. Order matters: checked after the
+      // legality gate, a retried COMPLETE would be refused as "this session is
+      // COMPLETE, §9 allows nothing" — telling a client its own successful
+      // command had failed, which is the worst of the three possible answers.
+      const retryKey = payload.idempotencyKey ?? null;
+      if (retryKey !== null && session.session.transitions.some((t) => t.idempotencyKey === retryKey)) {
+        res.status(200).json({
+          duplicate: true,
+          threadId,
+          kind: "COORDINATION_TRANSITION",
+          sessionId: payload.sessionId,
+          state: session.session.state,
+          version: session.session.version,
+        });
+        return;
+      }
+
+      // Optimistic concurrency, in the trip kernel's shape. ABSENT means "I did
+      // not look", which stays legal; PRESENT and stale is a 409 naming both
+      // numbers, because the useful answer to "your view is old" is how old.
+      if (payload.expectedVersion != null && payload.expectedVersion !== session.session.version) {
+        res.status(409).json({
+          error: "conflict",
+          reason: "TELEGRAPH_COORDINATION_VERSION_CONFLICT",
+          message:
+            `This session has had ${session.session.version} applied transitions; you expected ` +
+            `${payload.expectedVersion}. Somebody else moved it. Re-read the session and decide again.`,
+          currentVersion: session.session.version,
+          expectedVersion: payload.expectedVersion,
+          state: session.session.state,
+        });
+        return;
+      }
+
       const from = session.state;
       if (!legalNextStates(from).includes(payload.to as any)) {
         sendError(
@@ -339,6 +461,7 @@ router.post(
         );
         return;
       }
+      transitionSession = session.session;
     }
 
     // §8.2: an ACTION_RESPONSE must name an action proposal this member can
@@ -419,6 +542,24 @@ router.post(
         createdAt: m.created_at,
       },
     });
+
+    // §13.2 `coordination.completed`. Emitted from the ARROW that was just
+    // accepted rather than from a re-read: the gate above proved this
+    // transition legal from `transitionSession`'s state, so a terminal `to` is
+    // a terminal session and no second read can disagree with the write that
+    // just happened. Both of §9's terminal states fire it — see the emitter.
+    if (validated.kind === "COORDINATION_TRANSITION" && transitionSession) {
+      const to = (validated.envelope as any).payload.to as CoordinationState;
+      if (to === "COMPLETE" || to === "CANCELLED") {
+        void emitCoordinationCompleted(client, threadId, {
+          sessionId: transitionSession.sessionId,
+          terminalState: to,
+          endedAt: String(m.created_at),
+          declaredBy: String(m.sender_id),
+          reason: ((validated.envelope as any).payload.reason ?? null) as string | null,
+        });
+      }
+    }
   }),
 );
 
@@ -497,8 +638,31 @@ router.get(
       })
       .filter((r): r is any => r !== null);
 
+    /**
+     * §14.2's re-authorization on the READ, applied to the live participant
+     * view. A member who has left the conversation is not on their way to
+     * anything; their declared status must stop counting. The roster is read
+     * here rather than inferred, and `rosterKnown: false` when the read fails —
+     * an unreadable roster must not silently become "everybody is still here",
+     * and must not become "nobody is" either. See `latestQuickStates`.
+     */
+    const { data: roster, error: rosterErr } = await client
+      .from("message_thread_members")
+      .select("user_id")
+      .eq("thread_id", threadId)
+      .is("left_at", null);
+    if (rosterErr) {
+      log.warn(
+        { threadId, message: rosterErr.message },
+        "coordination roster read failed; quick states are NOT re-authorized and the response says so",
+      );
+    }
+    const activeMemberIds = rosterErr
+      ? null
+      : new Set(((roster as any[]) ?? []).map((r) => String(r.user_id)));
+
     const quickRows = parsedRows.filter((r) => r.kind === "COORDINATION");
-    const quickStates = latestQuickStates(quickRows);
+    const quickStates = latestQuickStates(quickRows, activeMemberIds);
 
     const decisionRows = parsedRows.filter((r) => r.kind === "DECISION");
     const voteRows = parsedRows.filter((r) => r.kind === "VOTE");
@@ -556,10 +720,12 @@ router.get(
     // held two evenings' sessions shows the one still running rather than the
     // first one ever opened.
     const transitionRows = parsedRows.filter((r) => r.kind === "COORDINATION_TRANSITION");
-    const sessions = parsedRows
-      .filter((r) => r.kind === "COORDINATION_SESSION")
-      .sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at))
-      .map((r) => projectCoordinationSession(r, transitionRows, state));
+    const projectedSessions = projectConversationSessions(
+      parsedRows.filter((r) => r.kind === "COORDINATION_SESSION"),
+      transitionRows,
+      state,
+    );
+    const sessions = projectedSessions.sessions;
     const session: CoordinationSession | null =
       sessions.find((sn) => sn.endedAt === null) ?? sessions[0] ?? null;
 
@@ -574,6 +740,7 @@ router.get(
       arrivedCount: quickStates.filter((q2) => q2.state === "ARRIVED").length,
       onMyWayCount: quickStates.filter((q2) => q2.state === "ON_MY_WAY").length,
       session,
+      rosterKnown: activeMemberIds !== null,
       decisions,
       commitments,
       rendezvous: rendezvousRows.map((r) => ({
@@ -593,6 +760,13 @@ router.get(
        */
       stateProvenance: "DERIVED_FROM_PLAN_TIMELINE",
       scanned: rows.length,
+      /**
+       * §17.2's retries, made visible rather than silently swallowed. A
+       * non-empty list means two rows carried one idempotency key and the later
+       * one is inert. An operator watching this number is watching for a client
+       * whose retry logic has gone wrong.
+       */
+      duplicateSessionIds: projectedSessions.duplicateSessionIds,
     });
   }),
 );

@@ -42,9 +42,11 @@ import { asyncHandler } from "../../lib/asyncHandler.js";
 import { logger as rootLogger } from "../../lib/logger.js";
 import { publishToThread } from "../../lib/telegraphEvents.js";
 import { messageKernelEnabled } from "../../services/telegraphMessageKernel.js";
+import { createCoordinationSession } from "../../services/telegraph/coordinationSessions.js";
 import {
   ISSUABLE_COMMANDS,
   LEGACY_PATH_COMMANDS,
+  SCHEMA_GATED_COMMANDS,
   UNIMPLEMENTED_COMMANDS,
   isIssuable,
   refusal,
@@ -115,10 +117,15 @@ router.post(
     const sc = getServiceClient();
     if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
-    // ONE gate for every command here, because every one of them needs schema
-    // from 2810/2811. Answering feature_disabled is the difference between a
-    // refusal a client can render and a 42703 it cannot.
-    if (!(await messageKernelEnabled(sc))) {
+    // The gate is PER COMMAND, not per endpoint. `SCHEMA_GATED_COMMANDS` names
+    // the three that need columns and tables 2810/2811 add; answering
+    // feature_disabled for those is the difference between a refusal a client
+    // can render and a 42703 it cannot. CREATE_COORDINATION_SESSION needs none
+    // of that schema — it writes a `messages` row through columns every
+    // deployment already has — and gating it here would put a live capability
+    // behind a switch that exists for a different reason. See the note on
+    // ISSUABLE_COMMANDS.
+    if (SCHEMA_GATED_COMMANDS.has(type) && !(await messageKernelEnabled(sc))) {
       sendError(res, "feature_disabled",
         "Telegraph message commands are not enabled on this deployment.");
       return;
@@ -139,6 +146,71 @@ router.post(
     }
     if (!membership || (membership as any).left_at != null) {
       res.status(403).json({ error: "forbidden", reason: "TELEGRAPH_AUTH_NOT_MEMBER" });
+      return;
+    }
+
+    /**
+     * §13.1 `CREATE_COORDINATION_SESSION`, handled before the switch because
+     * its failure vocabulary is not the switch's.
+     *
+     * The other three commands here answer 403 or 409 and nothing else — every
+     * way they fail is "you may not" or "it already moved". This one can also
+     * fail with "you did not send an idempotency key", which is a 400 and a
+     * client bug, and collapsing that into a 409 would send an author looking
+     * for a conflict that is not there.
+     *
+     * `body.idempotency_key` is accepted beside `params.idempotencyKey` because
+     * the trip command endpoint takes it at the envelope's top level and a
+     * caller who has written one client should not have to discover that the
+     * other spells it differently. Snake at the envelope, camel in the params:
+     * both are read, and the envelope wins when both are present because that
+     * is where a generic retry wrapper would put it.
+     */
+    if (type === "CREATE_COORDINATION_SESSION") {
+      const envelopeKey = typeof body["idempotency_key"] === "string" ? body["idempotency_key"] : "";
+      const paramKey = typeof params["idempotencyKey"] === "string" ? (params["idempotencyKey"] as string) : "";
+      const created = await createCoordinationSession(sc, {
+        threadId: conversationId,
+        actorUserId: user.id,
+        title: String(params["title"] ?? ""),
+        planObjectId: typeof params["planObjectId"] === "string" ? (params["planObjectId"] as string) : null,
+        note: typeof params["note"] === "string" ? (params["note"] as string) : null,
+        idempotencyKey: envelopeKey || paramKey,
+        // §14.3's window is not applied here. This endpoint's membership check
+        // above is the gate, and the idempotency lookup reads the caller's own
+        // conversation; narrowing it by a window the caller has not been handed
+        // would make a retry mint a duplicate for a member whose history is
+        // bounded. The coordination route, which HAS the window, passes it.
+        visibleFrom: null,
+      });
+      if (!created.ok) {
+        if (created.code === "db_error") {
+          log.error({ conversationId, detail: created.message }, "CREATE_COORDINATION_SESSION write failed");
+          // 503 and not 400: the command may have been perfectly valid. The
+          // same distinction `server/trips/commandRoute.ts` draws for
+          // TRIP_KERNEL_UNAVAILABLE, and for the same reason — telling a caller
+          // their input was wrong when the database was unreachable sends them
+          // to fix the wrong thing.
+          res.status(503).json({
+            ok: false,
+            error: "degraded_unavailable",
+            command: type,
+            reason: "TELEGRAPH_DEGRADED_THREAD_UNREADABLE",
+          });
+          return;
+        }
+        sendError(res, "invalid_payload", created.message);
+        return;
+      }
+      res.status(200).json({
+        ...success(type, {
+          sessionId: created.session.sessionId,
+          state: created.session.state,
+          version: created.session.version,
+          startedAt: created.session.startedAt,
+        }),
+        duplicate: created.duplicate,
+      });
       return;
     }
 

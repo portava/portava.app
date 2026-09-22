@@ -656,6 +656,19 @@ export const CoordinationSessionPayload = z.object({
   /** The plan this session is coordinating around, when there is one. */
   planObjectId: z.string().max(200).nullish(),
   note: z.string().max(500).nullish(),
+  /**
+   * §12.1 / §17.2 — "Offline resend must be idempotent."
+   *
+   * NULLISH IN THE SCHEMA AND REQUIRED BY THE COMMAND, and the split is
+   * deliberate rather than sloppy. The schema also has to PARSE sessions
+   * already written to threads by the route that shipped before this field
+   * existed; rejecting those at read time would erase sessions that happened,
+   * which is the mistake `projectCoordinationSession` refuses to make for an
+   * illegal transition and would be worse here. So the parser accepts a session
+   * with no key, and `createCoordinationSession` — the one writer — refuses to
+   * MINT one without it. See `services/telegraph/coordinationSessions.ts`.
+   */
+  idempotencyKey: z.string().min(1).max(200).nullish(),
 });
 
 export const CoordinationTransitionPayload = z.object({
@@ -663,6 +676,18 @@ export const CoordinationTransitionPayload = z.object({
   sessionId: z.string().min(1).max(64),
   to: z.enum(COORDINATION_STATES),
   reason: z.string().max(280).nullish(),
+  /** §17.2 — a retried transition must not move the machine twice. */
+  idempotencyKey: z.string().min(1).max(200).nullish(),
+  /**
+   * Optimistic concurrency, in the trip kernel's shape
+   * (`TRIP_VERSION_CONFLICT`): the number of APPLIED transitions the client
+   * believes this session has. When present and stale the route answers 409
+   * rather than applying the arrow, because two people declaring different
+   * moves from the same screen is a conflict and not a race to be won by
+   * whoever's packet arrived second. Absent means "I did not look", which is
+   * the pre-existing behaviour and stays legal.
+   */
+  expectedVersion: z.number().int().min(0).max(100000).nullish(),
 });
 
 export interface SessionTransition {
@@ -672,8 +697,17 @@ export interface SessionTransition {
   from: CoordinationState;
   to: CoordinationState;
   reason: string | null;
-  /** False when §9's diagram has no arrow from `from` to `to`. */
+  /** The key the declarer supplied, or null for a row written before §17.2's field existed. */
+  idempotencyKey: string | null;
+  /** False when §9's diagram has no arrow from `from` to `to`, or when this is a retry. */
   applied: boolean;
+  /**
+   * Set when this row was refused as a §17.2 RETRY rather than as an illegal
+   * arrow. Two different reasons for `applied: false`, and a client rendering
+   * "that move was not allowed" for a duplicated network packet would be
+   * telling the user off for their own phone's reconnect.
+   */
+  duplicateOfKey: string | null;
 }
 
 export interface CoordinationSession {
@@ -683,6 +717,17 @@ export interface CoordinationSession {
   startedAt: string;
   title: string;
   planObjectId: string | null;
+  /** The key the opener supplied, or null for a session written before §17.2's field existed. */
+  idempotencyKey: string | null;
+  /**
+   * How many transitions have been APPLIED to this session.
+   *
+   * The version a `expectedVersion` is checked against. Counted from applied
+   * arrows and not from rows, because a refused arrow did not move the machine
+   * and a client that had seen it would otherwise be told its view was stale
+   * when it was not.
+   */
+  version: number;
   /** §9.1 DECLARED — the last legal transition somebody posted, or null. */
   declaredState: CoordinationState | null;
   /** §9.1 DERIVED — from the plan's timeline, or null when there is no plan. */
@@ -727,17 +772,31 @@ export function projectCoordinationSession(
   const parsed = CoordinationSessionPayload.safeParse(session.payload);
   const title = parsed.success ? parsed.data.title : "Coordination";
   const planObjectId = parsed.success ? (parsed.data.planObjectId ?? null) : null;
+  const idempotencyKey = parsed.success ? (parsed.data.idempotencyKey ?? null) : null;
 
   let current: CoordinationState = derived ?? "PREPARING";
   let declaredState: CoordinationState | null = null;
   let endedAt: string | null = null;
+  let version = 0;
   const applied: SessionTransition[] = [];
+  /**
+   * §17.2 — a RETRIED transition is the same transition.
+   *
+   * Two rows carrying one idempotency key are one declaration that reached the
+   * database twice. The second is recorded (it happened) and NOT applied: a
+   * retry that advanced the machine a second time would turn one tap on
+   * "we're off" into PREPARING -> ASSEMBLING -> ACTIVE. The key is scoped per
+   * session, so two different sessions may reuse a key without colliding.
+   */
+  const seenKeys = new Set<string>();
 
   for (const m of [...transitions].sort((a, b) => (ms(a.created_at) ?? 0) - (ms(b.created_at) ?? 0))) {
     const t = CoordinationTransitionPayload.safeParse(m.payload);
     if (!t.success) continue;
     if (t.data.sessionId !== session.id) continue;
-    const legal = isLegalTransition(current, t.data.to);
+    const key = t.data.idempotencyKey ?? null;
+    const isRetry = key !== null && seenKeys.has(key);
+    const legal = !isRetry && isLegalTransition(current, t.data.to);
     applied.push({
       messageId: m.id,
       declaredBy: m.sender_id,
@@ -745,11 +804,15 @@ export function projectCoordinationSession(
       from: current,
       to: t.data.to,
       reason: t.data.reason ?? null,
+      idempotencyKey: key,
       applied: legal,
+      duplicateOfKey: isRetry ? key : null,
     });
+    if (key !== null) seenKeys.add(key);
     if (!legal) continue;
     current = t.data.to;
     declaredState = t.data.to;
+    version += 1;
     endedAt = isTerminalCoordinationState(t.data.to) ? m.created_at : null;
   }
 
@@ -759,6 +822,8 @@ export function projectCoordinationSession(
     startedAt: session.created_at,
     title,
     planObjectId,
+    idempotencyKey,
+    version,
     declaredState,
     derivedState: derived,
     state: declaredState ?? derived,
@@ -766,6 +831,57 @@ export function projectCoordinationSession(
     transitions: applied,
     legalNext: legalNextStates(current),
   };
+}
+
+/**
+ * The sessions of one conversation, with §17.2's retries collapsed.
+ *
+ * WHY THE DEDUPE IS ON THE READ AS WELL AS THE WRITE. The writer
+ * (`coordinationSessions.ts#createCoordinationSession`) checks for an existing
+ * session with the caller's idempotency key before inserting, which handles
+ * every sequential retry. It cannot handle two retries that are genuinely
+ * concurrent: both read, neither sees the other, both insert. There is no
+ * unique index to lean on — a session is a `messages` row and that table has no
+ * constraint on an envelope field, and adding one would need a migration no
+ * database has.
+ *
+ * So the read collapses them too, and the pair of rules is what makes the
+ * command idempotent in OBSERVABLE behaviour rather than only in the happy
+ * case: whichever row was written first is the session, its id is the session
+ * id, and the loser is inert. The duplicate is not deleted — it is a message
+ * somebody's client sent, and this module's rule throughout is that the record
+ * of the evening may not disagree with the evening.
+ *
+ * Newest first, so a caller that wants "the current one" takes the head.
+ */
+export function projectConversationSessions(
+  sessions: DecisionInputMessage[],
+  transitions: DecisionInputMessage[],
+  derived: CoordinationState | null,
+): { sessions: CoordinationSession[]; duplicateSessionIds: string[] } {
+  const ordered = [...sessions].sort((a, b) => (ms(a.created_at) ?? 0) - (ms(b.created_at) ?? 0));
+  const firstByKey = new Map<string, string>();
+  const duplicateSessionIds: string[] = [];
+  const kept: DecisionInputMessage[] = [];
+
+  for (const s of ordered) {
+    const parsed = CoordinationSessionPayload.safeParse(s.payload);
+    const key = parsed.success ? (parsed.data.idempotencyKey ?? null) : null;
+    if (key !== null) {
+      const owner = `${s.sender_id}:${key}`;
+      const winner = firstByKey.get(owner);
+      if (winner !== undefined) {
+        duplicateSessionIds.push(s.id);
+        continue;
+      }
+      firstByKey.set(owner, s.id);
+    }
+    kept.push(s);
+  }
+
+  const projected = kept.map((s) => projectCoordinationSession(s, transitions, derived));
+  projected.sort((a, b) => (ms(b.startedAt) ?? 0) - (ms(a.startedAt) ?? 0));
+  return { sessions: projected, duplicateSessionIds };
 }
 
 // ── the message kinds this module writes ─────────────────────────────────────
@@ -925,19 +1041,54 @@ export interface ThreadCoordination {
   onMyWayCount: number;
   /** §8's CoordinationSession for this thread, when one has been opened. */
   session: CoordinationSession | null;
+  /**
+   * FALSE when the active roster could not be read, so `quickStates` and the
+   * arrival counts below were NOT re-authorized against current membership.
+   * See `latestQuickStates`. A surface must not present them as verified.
+   */
+  rosterKnown: boolean;
   decisions: ConversationDecision[];
   commitments: ConversationCommitment[];
   rendezvous: Array<{ messageId: string; setBy: string; at: string; payload: any }>;
 }
 
-/** Latest declared quick state per member, newest first. */
+/**
+ * Latest declared quick state per member, newest first.
+ *
+ * ── MEMBERSHIP CHANGES MID-SESSION, AND THE SPEC'S ANSWER ───────────────────
+ * §14.2, verbatim: "Authorization must be checked both when sending and when
+ * READING because membership, revocation, source-object privacy and blocking
+ * can change after a message was created." §30A.11 says the same thing about
+ * execution: "current source-domain capability is rechecked at execution time
+ * so expired events, revoked invitations, changed bookings, and REMOVED
+ * MEMBERSHIPS fail safely."
+ *
+ * So the spec's answer to "what happens to a coordination session when a
+ * participant leaves" is NOT that the session ends. Nothing in §9 ends a
+ * session on a membership change, and inventing that would let one person
+ * walking out cancel an evening for everybody else. The answer is that the
+ * LIVE view is re-authorized on the read: a person who has left the
+ * conversation is no longer a participant in it, so their declared status stops
+ * being part of "who is on their way" — while their transitions, which are
+ * declarations about the session rather than about themselves, stay in the
+ * record, because they happened.
+ *
+ * `activeMemberIds === null` means the roster could not be read, and then
+ * NOTHING is filtered and the caller must say so. Treating an unreadable roster
+ * as "nobody is active" would empty the arrival counts on a database blip; the
+ * opposite mistake — showing a departed member's ARRIVED for one more read —
+ * is the recoverable one, and the route reports `rosterKnown: false` beside it
+ * so the surface does not present it as verified.
+ */
 export function latestQuickStates(
   rows: Array<{ sender_id: string; created_at: string; payload: any }>,
+  activeMemberIds: ReadonlySet<string> | null = null,
 ): QuickStateRow[] {
   const byUser = new Map<string, QuickStateRow>();
   for (const r of [...rows].sort((a, b) => (ms(a.created_at) ?? 0) - (ms(b.created_at) ?? 0))) {
     const p = QuickStatePayload.safeParse(r.payload);
     if (!p.success) continue;
+    if (activeMemberIds !== null && !activeMemberIds.has(r.sender_id)) continue;
     byUser.set(r.sender_id, {
       userId: r.sender_id,
       state: p.data.state,
