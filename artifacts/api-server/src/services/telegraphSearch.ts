@@ -107,9 +107,14 @@ export async function authorizedConversationScope(
   conversationId?: string | null,
 ): Promise<AuthorizedScope> {
   const boundOn = await historyBoundEnabled(sc);
-  let q = sc
-    .from("message_thread_members")
-    .select(membershipSelect("thread_id", boundOn))
+  // Two LITERAL select lists rather than one computed list. The flag gate is
+  // unchanged: a database without 2400 is still never asked for the column.
+  // What changes is that `check:write-path-columns` can resolve both branches
+  // and verify them against the live schema, so this site no longer needs the
+  // UNRESOLVED_ALLOWLIST entry it used to carry.
+  let q = (boundOn
+    ? sc.from("message_thread_members").select("thread_id, visible_from_at")
+    : sc.from("message_thread_members").select("thread_id"))
     .eq("user_id", viewerId)
     .is("left_at", null);
   if (conversationId) q = q.eq("thread_id", conversationId);

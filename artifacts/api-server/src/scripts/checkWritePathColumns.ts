@@ -279,8 +279,6 @@ const UNRESOLVED_ALLOWLIST = new Map<string, number>([
   ["src/routes/telegraphLifecycle.ts|update|payload not statically resolvable", 2],
   ["src/routes/telegraphMemory.ts|insert|payload not statically resolvable", 1],
   ["src/routes/telegraphMemory.ts|select|select list not statically resolvable", 2],
-  ["src/server/telegraph/readReceiptsRoute.ts|select|select list not statically resolvable", 1],
-  ["src/services/telegraphSearch.ts|select|select list not statically resolvable", 1],
   // ── Creator ledger: the row MAPPERS (07 §2 / 09 §7.2) ────────────────────
   // `services/creators/CreatorAttributionService.ts` hands supabase a NAME at
   // three sites, because both payloads come from mappers in

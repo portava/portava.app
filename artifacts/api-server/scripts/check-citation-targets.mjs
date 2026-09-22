@@ -299,7 +299,17 @@ import {
  * rather than level with it because the anchors also moved one previously
  * unanchored citation out of this check's population. The number below is what
  * the tool measured at that tree, not a target chosen for it. */
-export const MAX_DEAD_TARGETS = 209;
+export const MAX_DEAD_TARGETS = 208;
+/* LOWERED AGAIN 2026-09-22, 209 -> 208, while making four membership reads
+ * statically resolvable. The gain is one citation, and it is a REAL repair
+ * rather than a side effect: census-telegraph cited
+ * `routes/groupChat.ts:371` for the sentence "Deletion redacts in place —
+ * `.update({ deleted_at: now, body: '' })`", and line 371 has never carried that
+ * statement. It was landing on unrelated real code, which is why this check —
+ * which only asks whether a line is EMPTY — had been satisfied by it. Repointed
+ * to :609, where the redaction actually is, and anchored. The other two moved
+ * citations in this change were ordinary shifts and were repointed to the lines
+ * their claims describe, also with anchors. */
 
 /** Pinned to a commit by its own declaration; its lines must not track HEAD. */
 const PINNED_DOCS = new Set(['docs/architecture/mobile-reachability-ledger.md']);

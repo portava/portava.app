@@ -31,7 +31,6 @@ import { asyncHandler } from '../lib/asyncHandler';
 import { publishToThread } from '../lib/telegraphEvents';
 import {
   historyBoundEnabled,
-  membershipSelect,
   visibleFromOf,
   withinWindow,
 } from '../services/groupChatHistoryBound.js';
@@ -103,10 +102,20 @@ async function isActiveThreadMember(
   // FALSE ON ERROR for the flag (lib/featureFlags.isFlagEnabled), refuse on an
   // unreadable membership: unchanged from before, each in its own direction.
   const boundOn = await historyBoundEnabled(sc);
-  const { data, error } = await sc
-    .from('message_thread_members')
-    // Conditional, so this never names a column a database without 2400 lacks.
-    .select(membershipSelect('user_id, left_at', boundOn))
+  // TWO LITERAL SELECT LISTS, NOT ONE COMPUTED ONE. The flag gate is unchanged —
+  // a database without 2400 is still never asked for `visible_from_at` — but the
+  // column list is now a string LITERAL on each branch instead of a call result.
+  // `check:write-path-columns` resolves select lists statically and counted the
+  // computed form as an UNRESOLVABLE SITE, i.e. a blind spot where it could no
+  // longer verify these columns against the live schema. The remedy the check
+  // itself prefers is to make the site resolvable rather than to widen its
+  // allowlist, and that is what this is. `membershipSelect` still exists and is
+  // still the single definition of what the bound adds; it is exercised by its
+  // own unit tests and by the callers whose select lists are already static.
+  const membershipQuery = boundOn
+    ? sc.from('message_thread_members').select('user_id, left_at, visible_from_at')
+    : sc.from('message_thread_members').select('user_id, left_at');
+  const { data, error } = await membershipQuery
     .eq('thread_id', threadId)
     .eq('user_id', userId)
     .maybeSingle();

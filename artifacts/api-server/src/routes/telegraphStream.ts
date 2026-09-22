@@ -60,7 +60,6 @@ import {
 } from "../lib/telegraphEvents";
 import {
   historyBoundEnabled,
-  membershipSelect,
   visibleFromOf,
   withinWindow,
 } from "../services/groupChatHistoryBound.js";
@@ -157,12 +156,18 @@ async function readResume(
   // own window. See the window comment below the message read.
   const boundOn = await historyBoundEnabled(sc);
 
-  const { data: memberRows, error: memberErr } = await sc
-    .from("message_thread_members")
-    // Conditional: while the bound is off this is the byte-identical
-    // `select('thread_id')` it has always been, so a database without 2400 is
-    // never asked for the column.
-    .select(membershipSelect("thread_id", boundOn))
+  // TWO LITERAL SELECT LISTS, NOT ONE COMPUTED ONE. While the bound is off this
+  // is still the byte-identical `select('thread_id')` it has always been, so a
+  // database without 2400 is never asked for the column — the gate is unchanged.
+  // What changed is that each branch now names its columns as a LITERAL, because
+  // `check:write-path-columns` resolves select lists statically and the computed
+  // form was counted as an UNRESOLVABLE SITE: a blind spot where the checker
+  // could not verify these columns against the live schema at all. Making the
+  // site resolvable is the remedy that check prefers over widening its allowlist.
+  const rosterQuery = boundOn
+    ? sc.from("message_thread_members").select("thread_id, visible_from_at")
+    : sc.from("message_thread_members").select("thread_id");
+  const { data: memberRows, error: memberErr } = await rosterQuery
     .eq("user_id", userId)
     .is("left_at", null)
     .limit(MAX_RESUME_THREADS + 1);

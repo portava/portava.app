@@ -848,7 +848,7 @@ Backend paths relative to `artifacts/api-server/src/`; client paths to
 | T281 | Links/files: reputation/scanning; reserved official identities | N | No link scanning, no URL reputation, no reserved-identity list. There is no file kind (T40). |
 | T282 | Travel scam signals: off-platform payment, fake taxi, visa help, ticket resale, fake hotel, urgent money request | W | **One of six, and that one is real and enforced.** `routes/messaging.ts:1875-1895` — a 14-pattern off-app payment detector (`off-app`, `pay outside`, `venmo me`, `cashapp`, `my whatsapp`, …) scoped to buddy-booking threads and attributed only when the sender *is* the buddy (`:1898-1906`), escalating to auto-suspension past `OFF_APP_SUSPENSION_THRESHOLD` (`:1915-1937`). No detector exists for the other five families. |
 | T283 | Evidence: store minimum necessary reported content/context under restricted policy | W | Minimal, arguably too minimal: a report row carries reporter, target type/id and a 200-character `reason_detail` (`routes/messaging.ts:2622-2633`) and **no content snapshot** — so a message deleted after being reported leaves a moderator with a pointer to a redacted row. |
-| T284 | Reported deleted content may remain in restricted moderation storage but not normal retrieval | N | The opposite happens. Deletion redacts in place — `routes/groupChat.ts:371` `.update({ deleted_at: now, body: '' })` — with nothing copied to moderation storage first, so reported content is **destroyed**, not restricted. |
+| T284 | Reported deleted content may remain in restricted moderation storage but not normal retrieval | N | The opposite happens. Deletion redacts in place — `routes/groupChat.ts:609#.update({ deleted_at: now, body: '' })` `.update({ deleted_at: now, body: '' })` — with nothing copied to moderation storage first, so reported content is **destroyed**, not restricted. |
 
 ### §23 Backend Package Boundaries
 
@@ -2550,7 +2550,7 @@ read by exactly one consumer — the caller's own unread count
 (`server/telegraph/readReceiptsRoute.ts:52`) returns every active member's read
 position for a group thread, refuses a direct thread because the capability is
 false there, and CLAMPS another member's position to the caller's own §14.3
-floor rather than omitting it (`server/telegraph/readReceiptsRoute.ts:115`) —
+floor rather than omitting it (`server/telegraph/readReceiptsRoute.ts:121#clamped: lastReadAt !== raw`) —
 omission would itself be the signal.
 
 **§21 — search exists, is object-aware, and filters access BEFORE retrieval.**
@@ -4472,7 +4472,7 @@ confidently.
 
 | row | §13.4 said | what the tree says |
 | --- | --- | --- |
-| T79 | "`routes/messaging.ts` returns media_url/thumbnail/type/duration on a deleted message. Four lines." | **Exactly right, and it was exactly four lines.** Confirmed at the serializer and confirmed to be the ONLY leaking surface: search filters in the query (`artifacts/api-server/src/services/telegraphSearch.ts:164#// §21: deleted objects are excluded in the QUERY`), the drawer filters (`artifacts/api-server/src/routes/telegraphKinds.ts:148#.is("deleted_at", null)`), the inbox preview filters, saved messages filters, and both Memory Note paths refuse a tombstone. |
+| T79 | "`routes/messaging.ts` returns media_url/thumbnail/type/duration on a deleted message. Four lines." | **Exactly right, and it was exactly four lines.** Confirmed at the serializer and confirmed to be the ONLY leaking surface: search filters in the query (`artifacts/api-server/src/services/telegraphSearch.ts:169#// §21: deleted objects are excluded in the QUERY`), the drawer filters (`artifacts/api-server/src/routes/telegraphKinds.ts:148#.is("deleted_at", null)`), the inbox preview filters, saved messages filters, and both Memory Note paths refuse a tombstone. |
 | T344 | "Four dropped-error reads in `routes/messaging.ts`. A contested file, not an absent capability." | BRANCH is right and "contested" is stale — no other lane holds the file now. But the EVIDENCE is incomplete in a way that matters: see §14.3. |
 | T123 | "the dark palette and hook exist; three surfaces still import the static `TG`." | BRANCH is right. "Three surfaces" is not: **eleven** production modules import `TG` from `travel-buddy-standalone/src/theme/telegraphTokens.ts:10#export const TG`, including one this section had to touch for a different reason (`travel-buddy-standalone/src/components/TelegraphSystemNotice.tsx:23#import { TG } from '../theme/telegraphTokens.ts';`). §10's restatement said "the inbox, the conversation shell and the message bubbles", which are three CATEGORIES; §13.4 read them as three files. The work is larger than the row implies and it is structural rather than mechanical — `StyleSheet.create` runs at module scope and cannot consume a hook, so each of the eleven needs its styles moved inside the component. |
 | T430 | "A safe generic fallback that does not print raw JSON is client code over the existing two fallbacks." | Right, and there are **three** mounts of the first fallback, not two: `GroupChatScreen` routes EVERY system message through the pill, including the card subtypes the conversation screen intercepts first. Built — §14.2. |
@@ -5363,7 +5363,7 @@ on the next sync; the trip branch does not. Neither should have been reachable.
 
 **It is a live path, not a legacy twin.** `lib/chatSync.ts` is reached from the
 trip-chat and circle-chat handlers
-(`artifacts/api-server/src/routes/groupChat.ts:306#const threadId = await syncTripChatMembers(tripId, sc);`),
+(`artifacts/api-server/src/routes/groupChat.ts:315#const threadId = await syncTripChatMembers(tripId, sc);`),
 from trip creation and every trip-membership change
 (`artifacts/api-server/src/routes/trips.ts:1378#syncTripChatMembers(tripId, client).catch((e) => req.log?.error({ err: e }, "syncTripChatMembers failed"));`),
 and from circle invite-accepted and circle-member-removed
@@ -5484,7 +5484,7 @@ Separately: §14 fixed the per-viewer translation read in `routes/messaging.ts` 
 an unreadable `message_translations` reports §18's own word, `failed`, instead of
 inventing a monolingual thread. **The same query in the other reader was not
 fixed with it** — `routes/groupChat.ts`, reached by both group-chat endpoints. It
-is now (`artifacts/api-server/src/routes/groupChat.ts:185#if (tErr) {`).
+is now (`artifacts/api-server/src/routes/groupChat.ts:194#if (tErr) {`).
 
 ### 17.5 T349 — the one privacy SLO that nothing was counting
 
@@ -5664,8 +5664,8 @@ test that reads the counter back. Both do.
    | `artifacts/api-server/src/routes/messaging.ts:3546#.select('id, thread_id, sender_id, body, deleted_at')` | the same, on edit |
    | `artifacts/api-server/src/routes/messaging.ts:3656#.select('id, title, destination_city')` | "Trip not found" |
    | `artifacts/api-server/src/routes/messaging.ts:136#.select('id')` | "Message not found in this thread" (save) |
-   | `artifacts/api-server/src/routes/groupChat.ts:476#.select('id, thread_id, sender_id, body, deleted_at')` | "Message not found" (edit) |
-   | `artifacts/api-server/src/routes/groupChat.ts:562#.select('id, thread_id, sender_id, deleted_at')` | the same, on delete |
+   | `artifacts/api-server/src/routes/groupChat.ts:485#.select('id, thread_id, sender_id, body, deleted_at')` | "Message not found" (edit) |
+   | `artifacts/api-server/src/routes/groupChat.ts:571#.select('id, thread_id, sender_id, deleted_at')` | the same, on delete |
 
    **They were not fixed here and the reason is scope, not difficulty**: each is
    four lines, and doing twelve credibly means twelve behavioural cases against
@@ -5679,7 +5679,7 @@ test that reads the counter back. Both do.
    `TaggingService` tags nobody when it cannot read the block set. Two groups are
    not, and are named so they are not lost: the group-chat readers report an
    unreadable `message_threads` as `title: 'Trip Chat'`, `status: 'active'`
-   (`artifacts/api-server/src/routes/groupChat.ts:328#const { data: threadRow, error: threadRowErr } = await sc`),
+   (`artifacts/api-server/src/routes/groupChat.ts:337#const { data: threadRow, error: threadRowErr } = await sc`),
    so a closed or archived thread reads as active; and both sync
    implementations write a DURABLE generic title onto a newly created thread when
    `trips` is unreadable
@@ -5957,9 +5957,9 @@ than left for a later grep. Seven sites in total:
 
 | site | what an outage used to become | now |
 | --- | --- | --- |
-| `artifacts/api-server/src/routes/groupChat.ts:335#req.log.error({ err: threadRowErr, threadId, tripId },` | a CLOSED trip thread reported `status: 'active'`, `title: 'Trip Chat'` | `degraded_unavailable` |
-| `artifacts/api-server/src/routes/groupChat.ts:428#req.log.error({ err: threadRowErr, threadId, circleOwnerId },` | the same, `title: 'Trusted Circle'` | `degraded_unavailable` |
-| `artifacts/api-server/src/routes/groupChat.ts:164#if (msgsErr) return { ok: false, error: msgsErr };` | a thread full of history rendered as an empty chat, in BOTH readers | `degraded_unavailable` |
+| `artifacts/api-server/src/routes/groupChat.ts:344#req.log.error({ err: threadRowErr, threadId, tripId },` | a CLOSED trip thread reported `status: 'active'`, `title: 'Trip Chat'` | `degraded_unavailable` |
+| `artifacts/api-server/src/routes/groupChat.ts:437#req.log.error({ err: threadRowErr, threadId, circleOwnerId },` | the same, `title: 'Trusted Circle'` | `degraded_unavailable` |
+| `artifacts/api-server/src/routes/groupChat.ts:173#if (msgsErr) return { ok: false, error: msgsErr };` | a thread full of history rendered as an empty chat, in BOTH readers | `degraded_unavailable` |
 | `artifacts/api-server/src/lib/chatSync.ts:77#if (tripErr) {` | a new trip thread named `'Trip Chat'` forever | `null` — the value this function already uses for "could not sync" |
 | `artifacts/api-server/src/lib/chatSync.ts:265#if (ownerProfileErr) {` | a new circle thread named `'Trusted Circle'` forever | the same `null` |
 | `artifacts/api-server/src/services/groupChatSync.ts:94#if (tripErr) {` | a new trip thread named `'Trip Chat'` forever | a thrown Error, as every other write failure in that function |
@@ -6039,7 +6039,7 @@ Read against the code, one by one, they are NOT all benign:
 | file / site | classification |
 | --- | --- |
 | `routes/telegraph.ts` — 5 sites (a `feature_flags` gate, hashtag-follow enrichment, hashtag resolution, mention-profile resolution, the follow sets) | **Fail-closed or enrichment.** An unreadable table degrades the prompt or links nobody; `friends_only` users are EXCLUDED rather than admitted. The `blocks` read in the same block already binds and logs. Nothing here makes a claim to a traveller about their own data. |
-| `routes/telegraphStream.ts:449#const { data: membership, error: membershipErr } = await client` | **Fail-closed when §19 measured; CLOSED by §22.3, and the anchor text itself changed** — the read named here WAS the defect and the line now binds the error it used to drop, exactly as §16.6 and §20.4 record for their own sites. §19's classification was right on its own terms: an unreadable membership resolved to `forbidden`, and a refusal is not a plausible empty state. It was still a false statement about the caller's own membership, and §20.7 named it. |
+| `routes/telegraphStream.ts:454#const { data: membership, error: membershipErr } = await client` | **Fail-closed when §19 measured; CLOSED by §22.3, and the anchor text itself changed** — the read named here WAS the defect and the line now binds the error it used to drop, exactly as §16.6 and §20.4 record for their own sites. §19's classification was right on its own terms: an unreadable membership resolved to `forbidden`, and a refusal is not a plausible empty state. It was still a false statement about the caller's own membership, and §20.7 named it. |
 | `artifacts/api-server/src/routes/telegraphChat.ts:80#async function verifyThreadMember` and `artifacts/api-server/src/routes/telegraphChat.ts:301#const { data: tripMembership, error: tripMembershipErr } = await client` | **Fail-closed when §19 measured; CLOSED by §22.3, and BOTH anchor texts changed** — the first is now cited by the function rather than by a line that no longer exists in that form, because `verifyThreadMember` returns three outcomes instead of a boolean. The same shape as the `telegraphStream.ts` row above and closed the same way. |
 | `routes/telegraphChat.ts:200#res.status(200).json({ suggestions: suggestions ?? [] });` | **OPEN when §19 measured; CLOSED by §20.2.** The line still exists and is cited here at its current number; a refusal now stands above it, so the sentence that follows describes the tree at `6d4327d66`, not this one. It was T363's exact shape. An unreadable `telegraph_chat_suggestions` answers `{ suggestions: [] }` — "you have none" from a read that never happened. |
 | `routes/telegraphChat.ts:340#sendError(res, "not_found", "Suggestion not found");`, `artifacts/api-server/src/routes/telegraphChat.ts:446#sendError(res, "not_found", "Suggestion not found");`, `artifacts/api-server/src/routes/telegraphChat.ts:543#sendError(res, "not_found", "Suggestion not found");` | **OPEN when §19 measured; CLOSED by §20.2** — each now sits below a bound-error refusal, and each is cited at its current number. They were §18's class — three MORE sites of the defect §18 declared closed at twelve.** Same table, same `.maybeSingle()`, same confident 404 from a dropped error. |
@@ -6724,7 +6724,7 @@ name, that they are not in their own conversation, and the app will not recover 
   all four reachable handlers.
 - The trip gate beside it binds its own error
   (`routes/telegraphChat.ts:301#const { data: tripMembership, error: tripMembershipErr } = await client`).
-- The typing relay does the same (`routes/telegraphStream.ts:449#const { data: membership, error: membershipErr } = await client`).
+- The typing relay does the same (`routes/telegraphStream.ts:454#const { data: membership, error: membershipErr } = await client`).
 
 **Every case is PAIRED.** A suite asserting only "an outage is not a 200" would pass against a
 route that refuses everybody, so each outage case sits beside a control proving a genuine
@@ -7697,7 +7697,7 @@ not the mechanism; the mechanism is the guard, and the guard IS caught.
 
 | id | was | now | why |
 | --- | --- | --- | --- |
-| T233 | N | **W** | §17.3 reconnect resume. Every frame now carries an `id:` line (`artifacts/api-server/src/routes/telegraphStream.ts:292#const frame = (id: string | null, event: string, data: unknown) => {`), so an EventSource returns its own `Last-Event-ID` and the cursor round-trips through the transport; the messages missed while away are replayed from `messages` (`artifacts/api-server/src/routes/telegraphStream.ts:145#async function readResume(`) and `stream.resumed` states on every connection whether the gap was actually closed (`artifacts/api-server/src/routes/telegraphStream.ts:363#frame(null, "stream.resumed", { type: "stream.resumed", ...outcome, ts: new Date().toISOString() });`). **W and not C: only the CONVERSATION resumes.** |
+| T233 | N | **W** | §17.3 reconnect resume. Every frame now carries an `id:` line (`artifacts/api-server/src/routes/telegraphStream.ts:297#const frame = (id: string | null, event: string, data: unknown) => {`), so an EventSource returns its own `Last-Event-ID` and the cursor round-trips through the transport; the messages missed while away are replayed from `messages` (`artifacts/api-server/src/routes/telegraphStream.ts:144#async function readResume(`) and `stream.resumed` states on every connection whether the gap was actually closed (`artifacts/api-server/src/routes/telegraphStream.ts:368#frame(null, "stream.resumed", { type: "stream.resumed", ...outcome, ts: new Date().toISOString() });`). **W and not C: only the CONVERSATION resumes.** |
 
 The row said *"The SSE stream carries no cursor … Gap recovery is delegated
 entirely to polling"*. It carries one now, and polling is a fallback rather than
@@ -7718,11 +7718,11 @@ no amount of code in this file changes that.
 column on this tree — 2810's exists in no database (T228) — so the cursor is
 expressed in `created_at` coordinates, the same convention migration 2400 used
 for the §14.3 bound and for the same reason. The comparison is `>=`, not `>`
-(`artifacts/api-server/src/routes/telegraphStream.ts:198#.gte("created_at", since)`):
+(`artifacts/api-server/src/routes/telegraphStream.ts:203#.gte("created_at", since)`):
 `created_at` is not unique, an exclusive cursor drops a tied boundary row
 silently and forever, and a duplicate is something the client already absorbs
 because every replayed frame is labelled and carries a messageId
-(`artifacts/api-server/src/routes/telegraphStream.ts:347#replay: true,`).
+(`artifacts/api-server/src/routes/telegraphStream.ts:352#replay: true,`).
 A gap is recoverable by nothing.
 
 **A resume that did not happen says so.** Both reads bind their error. This is
