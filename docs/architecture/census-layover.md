@@ -7065,3 +7065,57 @@ nobody has confirmed is running. The flag stays off.
 **Denominator unchanged: 296 rows. No verdict moves in this section.** It
 corrects a stated reason that had stopped being true, which is the same defect
 class §25 records against §24.6 once already.
+
+## §33 — 2026-09-22 (integration): two rows re-derived, one of them off a false fact
+
+Two verdicts move. Denominator unchanged at 296.
+
+| id | was | now | why |
+|---|---|---|---|
+| L150 | W | **C** | The row's blocker was precise and is closed at exactly that point: *"nothing writes the bundle to storage. `AsyncStorage` does not appear anywhere"*. It does now — `travel-buddy-standalone/src/components/layover/layoverDeadlineCache.ts:119#await AsyncStorage.setItem(cachedDeadlineKey(sessionId), JSON.stringify(record));`, the first AsyncStorage write in the layover client. It is CONNECTED, not merely present: the screen reads it on load and again on a failed refresh (`travel-buddy-standalone/app/layover/[id].tsx:279#if (ovRead.reason !== 'gone') setCachedDeadline(await readCachedDeadline(id));`). §16's claim — a client can SERVE a stale answer offline — now holds. |
+| L196 | N | **W** | Not built is no longer true of half of it, and the row's stated reason is FALSE about the other half. See below. |
+
+### L196, in full, because its reason was wrong rather than stale
+
+The row reads: *"Neither table exists (2700/2740/2860 unapplied), and
+`expireOldSessions` is called inline from two GET handlers rather than
+scheduled."*
+
+**"Neither table exists" is false for the crew tables.** `layover_crews` and
+`layover_crew_members` are both PRESENT in the 2026-09-22 production capture, and
+`production-applied-migrations.json` carries `2984_layover_crews` at version
+20260916115643 — applied 2026-09-16, six days before this row was last restated.
+2984 also ships the restrictive policies the requirement asks for: RLS on, and
+`crew_id UUID NOT NULL REFERENCES layover_crews(id) ON DELETE CASCADE` on the
+member table.
+
+**The expiration job now exists and IS scheduled.**
+`artifacts/api-server/src/lib/layoverCrewExpiryScheduler.ts` sweeps crews whose
+`expires_at` has passed, in bounded batches, with an injected clock, and it is
+started from `artifacts/api-server/src/index.ts:159#startLayoverCrewExpiryScheduler();`
+— beside the other schema-gated retention sweep. Before this it was an exported
+function nothing called, which is the state `schedulerRegistration.test.ts`
+exists to refuse, and that test was red until the call was added.
+
+**Why W and not C.** `layover_presence` is ABSENT from production and 2740 is
+unapplied, so the PRESENCE half of "presence/crew tables" is not built at all.
+A requirement naming two families is not satisfied by one.
+
+**What is NOT claimed.** The sweep deletes nothing on production today, and the
+reason is worth stating precisely because an earlier version of this scheduler's
+own header got it wrong: it is not gated by the tables being absent — they are
+present — it is that both are EMPTY, measured 2026-09-22 (0 crews, 0 members).
+Emptiness is a fact about data, not a gate, and it stops holding the moment
+Layover crews carry traffic. From then the sweep deletes expired crews
+automatically, with no flag, which is what L196 asks for and what
+`lib/sensingRetentionScheduler` already does on the same argument.
+
+### §33 headline, restated
+
+| bucket | was | now |
+|---|---|---|
+| BUILT-AND-CORRECT | 78 | **79** |
+| BUILT-BUT-WRONG | 124 | **124** |
+| NOT-BUILT | 94 | **93** |
+| CONTRADICTED | 0 | **0** |
+| total | 296 | **296** |
