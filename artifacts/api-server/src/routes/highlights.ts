@@ -67,6 +67,8 @@ import { isFlagEnabled } from "../lib/featureFlags";
 import {
   readMemoryCommandEnvelope,
   sendMemoryCommandRejection,
+  isMemoryKernelEnabled,
+  COMMAND_EVENT,
 } from "../lib/memoryCommandBus.js";
 import {
   dispatchMemoryCommand,
@@ -2116,6 +2118,45 @@ router.post("/highlights/:id/archive", async (req, res) => {
  * it reaches a state the row is no longer in. src/test/highlightCommandBoundary
  * .test.ts asserts this shape, so the gap is a failing-if-it-changes fact and
  * not a comment nobody re-reads.
+ *
+ * WHAT THE SPECIFICATION ACTUALLY REQUIRES HERE, stated once because the
+ * paragraph above has been read as "and therefore nothing is owed".
+ *
+ *   §17's first sentence — "All canonical writes should cross an explicit
+ *   command boundary for authorization, invariants, idempotency, audit, and
+ *   downstream event generation" — is UNCONDITIONAL over canonical writes. The
+ *   seventeen names beneath it are a list, not the requirement. Clearing
+ *   `archived_at` is a canonical write, and §5 draws HIDDEN inside the
+ *   reversible cycle (`PINNED ---- HIDDEN` is the diagram's one undirected
+ *   edge), so the reversal is a transition the spec has, not one this product
+ *   invented. The correct end state is therefore an EXT command — the shape
+ *   MEMORY_COMMAND_TYPES already uses for `UPDATE_MEMORY`, declared with the
+ *   reason "§17 names no command for a plain field edit; a PATCH that touches
+ *   neither lifecycle, place nor audience needs a name to cross the boundary at
+ *   all". That precedent is this case exactly.
+ *
+ * WHY IT IS NOT DONE IN THIS FILE. The vocabulary lives in
+ * lib/memoryCommandBus.ts and the arm that would execute it lives in migration
+ * 2993's `highlight_kernel_execute`, which refuses an undeclared type with
+ * MEMORY_COMMAND_UNKNOWN_TYPE. Both halves are one change and neither is this
+ * lane's file. The request is recorded in LANE_REPORT.md under NEEDS FROM
+ * HM-SERVER with the exact signature.
+ *
+ * WHAT IS DONE HERE, and why each half is not decoration:
+ *
+ *  1. §19 ENVELOPE PARITY. Four writes on one aggregate reach one client —
+ *     POST/DELETE :id/pin and POST/DELETE :id/archive. Three validated the
+ *     `Idempotency-Key`; this one accepted any string and applied the write, so
+ *     one malformed key got a 400 from the hide and a 200 from the un-hide.
+ *     That divergence is not the one §17 causes and it was hiding behind it.
+ *     The key is validated and is deliberately NOT honoured: honouring it needs
+ *     the receipt row that only a command writes.
+ *  2. THE DIVERGENCE IS ANNOUNCED WHEN IT IS REAL. With `memory_kernel_enabled`
+ *     FALSE — production today — no Highlight write crosses the boundary, so
+ *     the un-hide is not anomalous and nothing is logged. With the flag ON the
+ *     hide emits `highlight.hidden` and this write emits nothing, so a §18
+ *     consumer replaying the stream holds the Highlight HIDDEN forever. The
+ *     server knows that at the moment it causes it, and now says so.
  */
 router.delete("/highlights/:id/archive", async (req, res) => {
   const auth = await requireUser(req, res);
@@ -2124,6 +2165,12 @@ router.delete("/highlights/:id/archive", async (req, res) => {
 
   const { id } = req.params;
   if (!UUID.test(id)) { sendError(res, "invalid_payload", "Invalid highlight id"); return; }
+
+  // Validated, NOT honoured — see (1) above. `highlightIdempotencyKey` is the
+  // same reader the three sibling writes use, so there is one envelope rule on
+  // this aggregate rather than three-and-an-exception.
+  const idempotencyKey = highlightIdempotencyKey(req, res);
+  if (idempotencyKey === null) return;
 
   const { data: updated, error } = await client
     .from("highlights")
@@ -2142,6 +2189,25 @@ router.delete("/highlights/:id/archive", async (req, res) => {
     sendError(res, "not_found", "Highlight not found");
     return;
   }
+
+  // AFTER the write and only after it succeeded: the signal follows the state
+  // change, not the request, so a 404 or a db_error announces nothing. One
+  // `feature_flags` read, the same one every sibling write already pays for
+  // through `memoryKernelClient`.
+  if (await isMemoryKernelEnabled(client)) {
+    req.log.warn(
+      {
+        highlightId: id,
+        ownerId: user.id,
+        idempotencyKey,
+        command: null,
+        unemittedEvent: COMMAND_EVENT.HIDE_HIGHLIGHT,
+        reason: "SPEC_17_NAMES_NO_INVERSE_OF_HIDE_HIGHLIGHT",
+      },
+      "highlights: un-hide applied OUTSIDE the §17 command boundary — the event stream still shows highlight.hidden with no reversal, so a §18 replay reaches a state this row is no longer in",
+    );
+  }
+
   res.status(200).json({ id, archivedAt: null });
 });
 
