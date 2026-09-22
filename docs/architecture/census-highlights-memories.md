@@ -15,7 +15,7 @@ leading blank line and a trailing newline, so the two agree and either may be re
 > | Field | Value |
 > | --- | --- |
 > | `generated_at` | 2026-09-08 |
-> | `head_commit` | `1fe72289b` — RE-DECLARED 2026-09-15 at the squash merge of PR #482. The previous value was `80a8d655a`, a commit on the pre-merge branch. **The squash made it an orphan**: it still exists in a clone that fetched the branch, but it is on no line of history leading to `main`, and `check:census-freshness` refuses an orphan because the check would pass locally and fail in a fresh clone. Nothing about this census was re-measured and NO verdict moves — `1fe72289b` is the commit its previous declaration's tree became, so zero counted files have changed since it. The prior declaration and its reasoning follow. — RE-DECLARED 2026-09-14 by §K/§L, replacing `338837b44`. §K re-derived eight rows (five `W → C`, three `N → W`) and refused three the lane proposed; §L corrects §K.4's own overstatement of the blast radius and holds H4 and H239 at `W` against the next lane's proposal. The 21 counted files that changed are that work plus the shared files sibling lanes touched. It does **NOT** certify the other 56 `C` rows, and §1's reading rule applies unchanged. The previous declaration read: `338837b44` — RE-DECLARED **2026-09-13 by section H**, which fixed two live disclosures on the two profile reads this census owns, closed a lifecycle write that never re-asserted its own guard, moved H178 from NOT-BUILT to BUILT-BUT-WRONG and repointed every citation its line shift invalidated — so it RE-MEASURED this document rather than only re-pointing it. The value it replaces is `d3b19fa9d`, section D's. **`338837b44` IS ALSO PRE-SQUASH**, so the owner follow-up section B.1 records — re-declare at the squash when this branch lands — is unchanged and still owed; that is now the FIFTH consecutive section to declare a commit that will be unreachable the moment it merges. Section D's own note follows, preserved verbatim. RE-DECLARED **2026-09-13 by section D**, which grouped all 134 BUILT-BUT-WRONG rows by cause, narrowed the Compass graph's §28.10 memory-eligibility gate, built the §28.8 revocation sweep, put §1's truth class on every canonical Memory payload the domain serves, and completed two of §24's three missing log fields — so it RE-MEASURED this document rather than only re-pointing it. The value it replaces is `1ff810e2`, section C's, whose spent acknowledgement moved to `retired` in `artifacts/api-server/src/scripts/CENSUS_STALENESS_ACKNOWLEDGED.json` in the same change. **`d3b19fa9d` IS ALSO PRE-SQUASH**, so section B.1's owner follow-up — re-declare at the squash when this branch lands — is unchanged and still owed; that is now the FOURTH consecutive section to declare a commit that will be unreachable the moment it merges, which is a defect of the workflow rather than of any one pass. Section C's own note follows, preserved verbatim. RE-DECLARED **2026-09-13 by section C**, which built §16's eight Compass Memory accessors, §14's fusion boundary and §23's publish predicate, and therefore RE-MEASURED this document rather than only re-pointing it. The value it replaces is `254e1876`, section B's. `check:census-freshness` reads the FIRST `head_commit` row in a file, so an appended section cannot re-declare it and this row is the only place the change can be made. **`1ff810e2` IS ALSO PRE-SQUASH**, so the owner follow-up section B.1 records — re-declare at the squash when this branch lands — is unchanged and still owed. Section B's own note follows, preserved verbatim. RE-DECLARED **2026-09-13 by section B**, which re-measured every row in this document against that commit; the value it replaced was `42aeac38`, and section A's own account of why `42aeac38` replaced `cdfff5995c92f7adfb3ae7880496bc94002717e9` is preserved verbatim below. **`254e1876` IS PRE-SQUASH and will become unreachable when this branch lands** — the same `CENSUS_HEAD_COMMITS_UNREACHABLE_IN_CI` failure section A records one paragraph down. Whoever merges must re-declare it to the squash commit, and section B.1 names that as an owner follow-up. The original note follows. RE-DECLARED 2026-09-10 from `cdfff5995c92f7adfb3ae7880496bc94002717e9`, the working-tree commit this census was measured at. It was necessary because `cdfff599` is PRE-SQUASH — this repository squash-merges, so it is an ancestor of nothing, is on no remote branch, and `check:census-freshness` could resolve it only on the clone that wrote it (`CENSUS_HEAD_COMMITS_UNREACHABLE_IN_CI`). Reproduced 2026-09-10 in a fresh clone of this branch: `git diff cdfff599..HEAD` aborts with `Invalid revision range`, and the check reported this census as unreadable rather than checking it. `42aeac38` is #476's squash, where this document's content reached `main`. **This is a RE-DECLARATION, not a re-measurement.** FOUR counted files changed between `cdfff599` and `42aeac38`: `artifacts/api-server/src/lib/memoryOutbox.ts`, `.../services/memoryProjections/derivativeRegistry.ts`, `.../derivativeRegistryRead.ts`, and `.../services/memoryRetrieval/searchMemories.ts`. The move is defensible only because each was re-verified mechanically on 2026-09-10 over `cdfff599..42aeac38`: `memoryOutbox.ts` adds 48 lines of which ZERO survive a filter for lines that are neither comment nor blank; `searchMemories.ts` changes one import path and nothing else; the other two are a split whose exported-symbol set is IDENTICAL at both commits (18 exports, same names and signatures, diffed) and whose retained half differs by zero non-comment lines — the moved `readRegisteredPayload` no longer delegates to `readRegistration` but inlines that function's body verbatim, table, columns, filters, error mapping and all, because importing back would have closed an ESM cycle. The full per-file argument is preserved under `retired` in `artifacts/api-server/src/scripts/CENSUS_STALENESS_ACKNOWLEDGED.json`, where it had been written as an acknowledgement. **Changed by the Trips lane, not this one**, because CI could not run this check against this census at all until it was; nothing else in this document is touched, and reverting it costs only the check. |
+> | `head_commit` | `4f89330b9` — RE-DECLARED 2026-09-22 by §W, the same six-lane integration pass. `4f89330b9` is the commit every §W citation was read at, and the four counted files that changed since `1fe72289b` are the HM-SERVER lane's projection and replay work. **This is a RE-MEASUREMENT of the rows §W names and NOT of the rest.** §W reopened the evidence behind H158 and H159 at this tree, moved both `N → W`, and overturned §U.2's determination against `memoryCommandBus.ts`'s own `UPDATE_MEMORY` precedent. It does **NOT** certify the other 264 rows, and §1's reading rule applies unchanged. The acknowledgement written against `1fe72289b` is RETIRED, not deleted, in `artifacts/api-server/src/scripts/CENSUS_STALENESS_ACKNOWLEDGED.json`. **IT IS PRE-SQUASH AND CARRIES THE SAME HAZARD EVERY VALUE IN THIS ROW HAS CARRIED**: it is on `claude/portava-continuation-uqta94`, and after a squash-merge it becomes an ancestor of nothing until whoever merges re-declares the squash sha. The previous declaration read: `1fe72289b` — RE-DECLARED 2026-09-15 at the squash merge of PR #482. The previous value was `80a8d655a`, a commit on the pre-merge branch. **The squash made it an orphan**: it still exists in a clone that fetched the branch, but it is on no line of history leading to `main`, and `check:census-freshness` refuses an orphan because the check would pass locally and fail in a fresh clone. Nothing about this census was re-measured and NO verdict moves — `1fe72289b` is the commit its previous declaration's tree became, so zero counted files have changed since it. The prior declaration and its reasoning follow. — RE-DECLARED 2026-09-14 by §K/§L, replacing `338837b44`. §K re-derived eight rows (five `W → C`, three `N → W`) and refused three the lane proposed; §L corrects §K.4's own overstatement of the blast radius and holds H4 and H239 at `W` against the next lane's proposal. The 21 counted files that changed are that work plus the shared files sibling lanes touched. It does **NOT** certify the other 56 `C` rows, and §1's reading rule applies unchanged. The previous declaration read: `338837b44` — RE-DECLARED **2026-09-13 by section H**, which fixed two live disclosures on the two profile reads this census owns, closed a lifecycle write that never re-asserted its own guard, moved H178 from NOT-BUILT to BUILT-BUT-WRONG and repointed every citation its line shift invalidated — so it RE-MEASURED this document rather than only re-pointing it. The value it replaces is `d3b19fa9d`, section D's. **`338837b44` IS ALSO PRE-SQUASH**, so the owner follow-up section B.1 records — re-declare at the squash when this branch lands — is unchanged and still owed; that is now the FIFTH consecutive section to declare a commit that will be unreachable the moment it merges. Section D's own note follows, preserved verbatim. RE-DECLARED **2026-09-13 by section D**, which grouped all 134 BUILT-BUT-WRONG rows by cause, narrowed the Compass graph's §28.10 memory-eligibility gate, built the §28.8 revocation sweep, put §1's truth class on every canonical Memory payload the domain serves, and completed two of §24's three missing log fields — so it RE-MEASURED this document rather than only re-pointing it. The value it replaces is `1ff810e2`, section C's, whose spent acknowledgement moved to `retired` in `artifacts/api-server/src/scripts/CENSUS_STALENESS_ACKNOWLEDGED.json` in the same change. **`d3b19fa9d` IS ALSO PRE-SQUASH**, so section B.1's owner follow-up — re-declare at the squash when this branch lands — is unchanged and still owed; that is now the FOURTH consecutive section to declare a commit that will be unreachable the moment it merges, which is a defect of the workflow rather than of any one pass. Section C's own note follows, preserved verbatim. RE-DECLARED **2026-09-13 by section C**, which built §16's eight Compass Memory accessors, §14's fusion boundary and §23's publish predicate, and therefore RE-MEASURED this document rather than only re-pointing it. The value it replaces is `254e1876`, section B's. `check:census-freshness` reads the FIRST `head_commit` row in a file, so an appended section cannot re-declare it and this row is the only place the change can be made. **`1ff810e2` IS ALSO PRE-SQUASH**, so the owner follow-up section B.1 records — re-declare at the squash when this branch lands — is unchanged and still owed. Section B's own note follows, preserved verbatim. RE-DECLARED **2026-09-13 by section B**, which re-measured every row in this document against that commit; the value it replaced was `42aeac38`, and section A's own account of why `42aeac38` replaced `cdfff5995c92f7adfb3ae7880496bc94002717e9` is preserved verbatim below. **`254e1876` IS PRE-SQUASH and will become unreachable when this branch lands** — the same `CENSUS_HEAD_COMMITS_UNREACHABLE_IN_CI` failure section A records one paragraph down. Whoever merges must re-declare it to the squash commit, and section B.1 names that as an owner follow-up. The original note follows. RE-DECLARED 2026-09-10 from `cdfff5995c92f7adfb3ae7880496bc94002717e9`, the working-tree commit this census was measured at. It was necessary because `cdfff599` is PRE-SQUASH — this repository squash-merges, so it is an ancestor of nothing, is on no remote branch, and `check:census-freshness` could resolve it only on the clone that wrote it (`CENSUS_HEAD_COMMITS_UNREACHABLE_IN_CI`). Reproduced 2026-09-10 in a fresh clone of this branch: `git diff cdfff599..HEAD` aborts with `Invalid revision range`, and the check reported this census as unreadable rather than checking it. `42aeac38` is #476's squash, where this document's content reached `main`. **This is a RE-DECLARATION, not a re-measurement.** FOUR counted files changed between `cdfff599` and `42aeac38`: `artifacts/api-server/src/lib/memoryOutbox.ts`, `.../services/memoryProjections/derivativeRegistry.ts`, `.../derivativeRegistryRead.ts`, and `.../services/memoryRetrieval/searchMemories.ts`. The move is defensible only because each was re-verified mechanically on 2026-09-10 over `cdfff599..42aeac38`: `memoryOutbox.ts` adds 48 lines of which ZERO survive a filter for lines that are neither comment nor blank; `searchMemories.ts` changes one import path and nothing else; the other two are a split whose exported-symbol set is IDENTICAL at both commits (18 exports, same names and signatures, diffed) and whose retained half differs by zero non-comment lines — the moved `readRegisteredPayload` no longer delegates to `readRegistration` but inlines that function's body verbatim, table, columns, filters, error mapping and all, because importing back would have closed an ESM cycle. The full per-file argument is preserved under `retired` in `artifacts/api-server/src/scripts/CENSUS_STALENESS_ACKNOWLEDGED.json`, where it had been written as an acknowledgement. **Changed by the Trips lane, not this one**, because CI could not run this check against this census at all until it was; nothing else in this document is touched, and reverting it costs only the check. |
 > | `methodology_version` | 2 — **"How I decided what counts" is unchanged and the denominator is still 266.** Buckets unchanged (`BAC` / `BBW` / `NB` / `CV`), including rule 7 for prohibitions. Only verdicts moved, each citing a `file:line` opened at this commit. |
 > | Scanned | `artifacts/api-server/src/lib/memoryCommandBus.ts` (760 lines), `src/lib/memoryOutbox.ts`, `src/lib/highlightPermissions.ts`, `src/services/memory/MemoryDomainService.ts`, `src/services/memoryProjections/` (6 files), `src/services/memoryRetrieval/searchMemories.ts`, `src/services/highlights/` (6 files), `src/routes/memories.ts`, `src/routes/highlights.ts`, migrations `2710`, `2711`, `2720`–`2724`, `2730`, and `src/lib/deletionDispositions.ts` |
 > | Production state | From the repository's own committed artifacts, not a live query: `src/lib/capability/snapshots/20260908-production-schema.json` (watermark `20260908133347`) and `src/lib/capability/production-applied-migrations.json`. |
@@ -5838,3 +5838,105 @@ explicit intent of the table they changed.
 
 **What this does not change.** No count moves. The headline stands at
 **266 = 69 C / 136 W / 59 N / 2 X**. The dump before and after this section is identical.
+
+## §W — 2026-09-22 (integration): two rows move, and §U.2's determination is overturned by the tree that followed it
+
+Three lanes merged. HM-API proposed no verdict moves and HM-CLIENT none; HM-SERVER
+proposed two, H158 and H159. Both are recorded below, re-derived here rather than
+accepted. The larger finding of this pass is not a verdict: it is that §U.2's
+determination — the reason `UNHIDE_HIGHLIGHT` was not invented — has since been
+reversed by the same lane, and the SQL applier has not been told.
+
+### §W.1 The two moves
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| H158 | N | W | The row read *"same, and there is no pin"*, inheriting H155's *"no command maps to it"*. Both clauses are false. `PIN_HIGHLIGHT` and `UNPIN_HIGHLIGHT` both map to `highlight.pinned` (`artifacts/api-server/src/lib/memoryCommandBus.ts:441#PIN_HIGHLIGHT`), `highlights.pinned_at` is DEPLOYED — it is in the 2026-09-22 production schema snapshot — and two routes cross the boundary onto it (`artifacts/api-server/src/routes/highlights.ts:1463#/highlights/:id/pin`, `:1517#router.delete`). The event now also has a §18 subscriber (`artifacts/api-server/src/services/memoryProjections/outboxConsumer.ts:617#highlight.pinned`). W and not C for exactly H147–H154's reason: the event has never been EMITTED, because emission is the kernel's, and 2993 is unapplied. |
+| H159 | N | W | Same measurement on the hide half. `HIDE_HIGHLIGHT` is declared, maps to `highlight.hidden` (`artifacts/api-server/src/lib/memoryCommandBus.ts:446#HIDE_HIGHLIGHT`), and `POST /highlights/:id/archive` dispatches it (`artifacts/api-server/src/routes/highlights.ts:2070#dispatchMemoryCommand`). It has a §18 subscriber (`artifacts/api-server/src/services/memoryProjections/outboxConsumer.ts:622#highlight.hidden`) and a §25 replay fold (`artifacts/api-server/src/services/memoryProjections/highlightEventReplay.ts:280#replayAgreesWithRow`). Never emitted, for the same reason. |
+
+### §W.2 §U.2 is overturned, and this is the correction rather than a rewrite
+
+§U.2 reads, and the sentence is quoted so it is not softened:
+
+> *"Inventing `UNHIDE_HIGHLIGHT` to close the asymmetry would have put a command
+> in the vocabulary that §17 does not define, which is the opposite of what a
+> command boundary is for."*
+
+**That reasoning is wrong, and it was already wrong when it was written.** The
+vocabulary in this repository ALREADY carries a command §17 does not define, on
+a precedent stated in the file itself:
+
+> `UPDATE_MEMORY` — *"EXT — title/caption/times. §17 names no command for a
+> plain field edit; a PATCH that touches neither lifecycle, place nor audience
+> needs a name to cross the boundary at all."*
+> (`artifacts/api-server/src/lib/memoryCommandBus.ts:318#UPDATE_MEMORY`)
+
+An EXT is how this codebase already names a canonical write §17's list omits, and
+§17's own first sentence is unconditional over canonical writes. So the question
+was never "may we add a name" — it was answered before §U.2 was written — it was
+only "is un-hide a canonical write". It is.
+
+The HM-SERVER lane reached the same conclusion and acted on it:
+`UNHIDE_HIGHLIGHT` is now declared as an EXT
+(`artifacts/api-server/src/lib/memoryCommandBus.ts:331#UNHIDE_HIGHLIGHT`), mapped
+to `highlight.hidden`, scoped to the owner, and given a §25 replay effect
+(`artifacts/api-server/src/services/memoryProjections/highlightEventReplay.ts:110#UNHIDE_HIGHLIGHT`).
+
+§U.2 is left standing rather than edited, because this census is append-only and
+a determination that was made and then overturned is more useful than one that
+was quietly corrected. This section is its last statement.
+
+### §W.3 The contradiction the overturn created, stated before anyone trips on it
+
+Declaring the command did not finish the job, and the unfinished half is a
+hazard rather than a gap:
+
+1. **No route dispatches it.** `DELETE /highlights/:id/archive` is still a direct
+   write (`artifacts/api-server/src/routes/highlights.ts:2133#archived_at`) and
+   still logs the divergence under the reason code
+   `artifacts/api-server/src/routes/highlights.ts:2144#SPEC_17_NAMES_NO_INVERSE_OF_HIDE_HIGHLIGHT`.
+   That reason code now names a premise the repository no longer holds.
+2. **The applier would REFUSE the command if the route sent it.** 2993's write
+   path admits exactly three types and rejects anything else by name
+   (`artifacts/api-server/src/migrations/2993_highlight_command_boundary.sql:386#NOT IN`),
+   and its header states the premise it was built on
+   (`:165#UNHIDE`). So wiring the route today would leave un-archive working
+   while `memory_kernel_enabled` is FALSE — which it is on production — and
+   FAILING the moment anyone turns the kernel on. That is strictly worse than
+   the direct write it would replace.
+
+**So the route is deliberately NOT wired in this pass, and that is a sequencing
+decision with a stated order, not a deferral:** 2993 must admit
+`UNHIDE_HIGHLIGHT` before any route dispatches it. 2993 is unapplied everywhere
+— not on `main`, not on the CI project, not on production — so it is still
+editable, which is the ordinary way an unapplied migration is corrected. The one
+complication is that a copy of it is under review on the open migration-bootstrap
+PR, so amending it means re-rehearsing that PR rather than editing a file in
+isolation. The amendment is the next step and it is engineering work, not a
+deployment blocker.
+
+There is also no room above it: the canonical 4-digit band is `2100-2999`, every
+prefix from `2995` to `2999` is taken, and an 8-digit dated prefix sorts BELOW
+the 4-digit band rather than above it. A migration that runs AFTER 2993 cannot
+currently be numbered. That constraint is recorded here because it is the reason
+"just add a follow-up migration" is not available, and because it will bind the
+next person who needs a slot at the end of the chain.
+
+### §W.4 Headline after this section
+
+| bucket | was (§V) | now |
+| --- | --- | --- |
+| BUILT-AND-CORRECT | 69 | 69 |
+| BUILT-BUT-WRONG | 136 | 138 |
+| NOT-BUILT | 59 | 57 |
+| CONTRADICTED | 2 | 2 |
+| total | 266 | 266 |
+
+Two rows move `N → W` and nothing else changes. Verified rather than asserted:
+`CENSUS_INTEGRITY_DUMP=ALL` over this file before and after this section differs
+on exactly two lines, `H158` and `H159`.
+
+**Neither move is a deployment claim.** Both events are still unemitted, because
+the only thing that emits them is a kernel function in an unapplied migration
+behind a flag that is `False` on production. `W` is the whole of what was
+earned here.
