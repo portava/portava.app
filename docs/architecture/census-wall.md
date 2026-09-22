@@ -1434,7 +1434,7 @@ this pass changes that. **Stay `?`.**
 
 §12.5's cross-lane request is honoured: `wallIntentResolutionTruthfulness.test.ts`, the
 input-assistance gateway and the client mock checker are now in this census's scope
-(`artifacts/api-server/src/scripts/checkCensusFreshness.ts:1141#ADDED 2026-09-20 by census-wall §13`), which takes
+(`artifacts/api-server/src/scripts/checkCensusFreshness.ts:1179#ADDED 2026-09-20 by census-wall §13`), which takes
 `check:census-scope-coverage` for this census to 80 / 80 watched.
 
 ### 13.5 Headline — unchanged, restated

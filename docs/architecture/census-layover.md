@@ -6602,3 +6602,26 @@ does not follow imports, and `routes/entryRequirements.ts` already carries an
 thing and records what was verified by hand. Copying the flag's literal name
 into a second file to satisfy the checker would have put the name in two places,
 which is what the shared export exists to prevent.
+
+A second guard spoke up after that one, and it was right too.
+`check:census-scope-coverage` went red at **94%** against this census's 96%
+floor: §27 cites four files and only one of them was in `CENSUS_SCOPE`. Measured
+rather than inferred — `origin/main` reads 132 cited / 127 watched, which is
+96% exactly, so this census was sitting ON its floor and §27 was simply the
+citation that tipped it. Three files this section grades are now watched
+(`lib/entryRequirements.ts`, on which L48's whole W-not-C argument rests;
+`test/layoverEntryGate.test.ts`, which pins L34 and L48; and
+`routes/entryRequirements.ts`, whose contents §27.9's claim about the flag
+declaration depends on), and two that §26 already graded are watched with them
+(`2984_layover_crews.sql`, which moved L28, and its deploy dependency
+`2985_layover_events_crew_vocabulary.sql`). All three newly counted changes are
+named in the staleness ledger with what was measured, including the one that is
+NOT argued harmless: `lib/entryRequirements.ts` changed in this commit and the
+verdicts it moves are moved here, in §27.
+
+`2971_layover_discovery_mode_flag.sql` is **not** added, though adding it would
+have been the easier way to the same percentage. §25 says in terms that the
+decision belongs to the next measuring pass and that the file is left out
+"because nothing in this document grades it yet". §27 grades two rows and names
+four that do not move; it is not that pass, and a gap an earlier section chose
+to leave visible is not one a later section may close to make a number go green.
