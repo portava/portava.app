@@ -73,6 +73,12 @@ import {
   type CachedCertifiedDeadline,
 } from '../../src/components/layover/layoverDeadlineCache';
 import { describeDeadline } from '../../src/components/layover/layoverReturnFacts';
+import { LayoverOfflinePlanCard } from '../../src/components/layover/LayoverOfflinePlanCard';
+import {
+  cacheCertifiedPlan,
+  readCachedPlan,
+  type CachedLayoverPlan,
+} from '../../src/lib/layoverPlanCache';
 import { KeyboardSafeScrollView } from '../../src/components/ui/KeyboardSafeView';
 
 /**
@@ -131,6 +137,17 @@ export default function LayoverDashboardScreen() {
    * placeholder time.
    */
   const [cachedDeadline, setCachedDeadline] = useState<CachedCertifiedDeadline | null>(null);
+
+  /**
+   * census L151 / L233 — WHAT ELSE THE TRAVELLER KEEPS.
+   *
+   * The deadline above is the one number that must survive; it is not the only
+   * thing that should. `layoverPlanCache` stores the plan the server certified,
+   * the airport it is anchored to and the certified envelope's radii, all with
+   * the server's own `staleAfter` verbatim. Read on the SAME failures as the
+   * deadline (never `gone`), and rendered through the same staleness rule.
+   */
+  const [cachedPlan, setCachedPlan] = useState<CachedLayoverPlan | null>(null);
 
   // census L127/L128/L294 — the presence ANSWER, carried whole. `degraded` and
   // `withheld` are the server's; `count` alone cannot tell a measured empty
@@ -255,6 +272,15 @@ export default function LayoverDashboardScreen() {
         // that said nothing about the deadline is not a reason to take the
         // traveller's last one away.
         void cacheCertifiedDeadline(id, ovRead.overview.offlineBundle);
+        // census L151/L233 — the same floated write, for the plan, the airport
+        // and the certified area. Two caches rather than one because §16 makes
+        // each of those a separate decision about what may be shown from a
+        // cache; see `lib/layoverPlanCache.ts`.
+        void cacheCertifiedPlan(
+          id,
+          ovRead.overview.offlineBundle,
+          ovRead.overview.safeEnvelope ?? null,
+        );
         if (ovRead.overview.share.enabled) loadPresence(id);
         setBuddies(buddyRes?.buddies ?? []);
       } else {
@@ -276,7 +302,10 @@ export default function LayoverDashboardScreen() {
          * `unreachable`, `unavailable` and `refused` all mean the SESSION is
          * fine and the READ failed, which is exactly what §16 is for.
          */
-        if (ovRead.reason !== 'gone') setCachedDeadline(await readCachedDeadline(id));
+        if (ovRead.reason !== 'gone') {
+          setCachedDeadline(await readCachedDeadline(id));
+          setCachedPlan(await readCachedPlan(id));
+        }
       }
       // census L294 (C2) — keep the two apart all the way to the card. An empty
       // `recs` with `recsError` null is a measured "nothing fits"; a non-null
@@ -291,6 +320,7 @@ export default function LayoverDashboardScreen() {
       // census L150 — the same fallback on the belt-and-braces path. The two
       // routes into "unreachable" must not differ in what the traveller keeps.
       setCachedDeadline(await readCachedDeadline(id));
+      setCachedPlan(await readCachedPlan(id));
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -551,6 +581,10 @@ export default function LayoverDashboardScreen() {
      * failures that mean the SESSION is fine and the READ failed.
      */
     const cached = !gone && cachedDeadline ? cachedDeadline : null;
+    // Same exclusion, same argument: a session the server says is GONE has no
+    // plan worth showing either. A cache is not a reason to send somebody
+    // across a city for a layover that is not theirs.
+    const plan = !gone ? cachedPlan : null;
     const cachedTruth = cached
       ? describeDeadline(cachedDeadlineAsBundle(cached), cached.hardReturnTime, nowMs)
       : null;
@@ -580,6 +614,10 @@ export default function LayoverDashboardScreen() {
             ) : null}
           </View>
         )}
+        {/* census L151/L233 — where they were going, which airport they have to
+            be back at, and how far the certified envelope reached. Captioned
+            last-certified by the card itself, through the one staleness rule. */}
+        <LayoverOfflinePlanCard plan={plan} nowMs={nowMs} />
         {retryable && (
           <Pressable style={styles.retryBtn} onPress={() => load()} testID="layover-load-retry">
             <Text style={styles.retryBtnText}>Try again</Text>
