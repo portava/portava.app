@@ -27,13 +27,23 @@
  *                          more), or a row that verifies neither.
  *   OBSERVED SCHEMA STATE  the objects the migration declares, the subset a
  *                          probe actually examined, the properties compared,
- *                          and what is absent or the wrong shape.
+ *                          what is absent or the wrong shape, and a COVERAGE
+ *                          GRADE — partial coverage, or full statement coverage
+ *                          when every executable statement in the file has an
+ *                          observable effect and all of them verify. The grade
+ *                          never prints as a green tick: 2402 reaches it on all
+ *                          nine of its statements and still cannot be told apart
+ *                          from someone running those statements by hand.
  *
- * Two of every three findings in this repository's history are a DISAGREEMENT
- * between those sections, which is why they must be able to disagree:
+ * The two sections must be able to DISAGREE, because the disagreements are the
+ * findings. Every one of these is a real state of production on 2026-09-22:
  *   * 2298_dead_check_vocabularies.sql — a ledger row whose effects were absent.
  *   * 2890 / 2900 / 2958 — live in production with no hand-ledger row; 2958 has
  *     no row in EITHER ledger under its repository filename.
+ *   * 2400 / 2401 / 2402 — in NEITHER ledger and three different answers: 2400's
+ *     effects are absent, 2402's nine statements all verify, and 2401 looks like
+ *     2402's case but is not (2402 recreated its msg_select, so 2401's own
+ *     postcondition fails against production today).
  *
  *
  * WHAT IT CANNOT TELL YOU
