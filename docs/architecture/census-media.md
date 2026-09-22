@@ -1420,7 +1420,7 @@ Both halves are wrong. At `3eaf2436f`, `post_hides` had **one writer and three r
 
 | | Where |
 | --- | --- |
-| WRITER | `POST /api/posts/:postId/hide` — `artifacts/api-server/src/routes/posts.ts:2627#router.post("/posts/:postId/hide"`, an idempotent upsert on the same conflict target §9 later duplicated |
+| WRITER | `POST /api/posts/:postId/hide` — `artifacts/api-server/src/routes/posts.ts:2648#router.post("/posts/:postId/hide"`, an idempotent upsert on the same conflict target §9 later duplicated |
 | READER | the following feed — `artifacts/api-server/src/routes/posts.ts:1246#.from("post_hides")` |
 | READER | the global feed — `artifacts/api-server/src/routes/posts.ts:1388#.from("post_hides")` |
 | READER | Pulse — `artifacts/api-server/src/routes/pulse.ts:157#const { data: hiddenRows } = await sc` |
@@ -1491,7 +1491,7 @@ had already put two different moderation deny-lists in two files (§9.3).
 
 So this section extracts `artifacts/api-server/src/lib/postHide.ts:58#{ onConflict: "user_id,post_id", ignoreDuplicates: true },`
 and routes **both** callers through it —
-`artifacts/api-server/src/routes/posts.ts:2645#const hidden = await hidePostForViewer(sc, user.id, postId);`
+`artifacts/api-server/src/routes/posts.ts:2666#const hidden = await hidePostForViewer(sc, user.id, postId);`
 and `artifacts/api-server/src/routes/mediaFeed.ts:1193#const hidden = await hidePostForViewer(sc, user.id, id);`.
 **Two routes reach the hide, by choice; one writer, in one file.** A new case,
 `the media hide "writes through the SAME idempotency contract as POST /posts/:postId/hide"`,
