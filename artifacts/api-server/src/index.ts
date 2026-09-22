@@ -45,7 +45,7 @@ import { startAccountDeletionScheduler } from "./lib/accountDeletionScheduler.js
 import { startLocationSnapshotPurgeScheduler } from "./lib/locationSnapshotPurgeScheduler.js";
 import { startIntelRetentionScheduler } from "./lib/intelRetentionScheduler.js";
 import { startSensingRetentionScheduler } from "./lib/sensingRetentionScheduler.js";
-import { startLayoverCrewExpiryScheduler } from "./lib/layoverCrewExpiryScheduler.js";
+import { startLayoverCrewExpiryScheduler } from "./lib/layoverCrewExpiryScheduler.js"; import { startLayoverExternalEventScheduler } from "./lib/layoverExternalEventScheduler.js";
 import { startIntelProjectionScheduler } from "./lib/intelProjectionScheduler.js";
 import { startTelegraphLifecycleScheduler } from "./server/telegraph/lifecycleScheduler.js";
 import { startIntelPromotionScheduler } from "./lib/intelPromotionScheduler.js";
@@ -324,7 +324,7 @@ app.listen(port, (err) => {
   // reads the recipient list. Safe on every instance: the delete is
   // idempotent and the digest is claimed per (user, category, day)
   // downstream. NOTIFICATION_MAINTENANCE_DISABLED=1 opts an instance out.
-  startNotificationMaintenanceScheduler();
+  startNotificationMaintenanceScheduler(); startLayoverExternalEventScheduler();
 
   // Startup stamp-worker health summary — log pending queue depth and any
   // jobs stuck in `generating` past their lock (a crashed worker never
