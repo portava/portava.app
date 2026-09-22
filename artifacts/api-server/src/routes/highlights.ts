@@ -66,7 +66,7 @@ import { canMessage } from "../lib/messagingPermissions";
 import { isFlagEnabled } from "../lib/featureFlags";
 import {
   readMemoryCommandEnvelope,
-  sendMemoryCommandRejection,
+  sendMemoryCommandRejection, isMemoryKernelEnabled, COMMAND_EVENT,
 } from "../lib/memoryCommandBus.js";
 import {
   dispatchMemoryCommand,
@@ -2107,23 +2107,26 @@ router.post("/highlights/:id/archive", async (req, res) => {
 /**
  * §21 Archive is reversible. This is the half that makes it so.
  *
- * NOT A COMMAND, AND THAT IS A GAP RATHER THAN A DECISION. §17 names
- * HIDE_HIGHLIGHT and names no inverse of it, so there is no command type this
- * handler could issue without inventing one — and an invented name is the
- * thing MEMORY_COMMAND_TYPES_NOT_DECLARED exists to refuse. The consequence is
- * real and is recorded rather than hidden: the event stream will show a
- * `highlight.hidden` with no matching un-hide, so a §18 consumer that replays
- * it reaches a state the row is no longer in. src/test/highlightCommandBoundary
- * .test.ts asserts this shape, so the gap is a failing-if-it-changes fact and
- * not a comment nobody re-reads.
+ * NOT A COMMAND. §17 names HIDE_HIGHLIGHT and no inverse, so this canonical
+ * write crosses no boundary and emits nothing: the stream keeps a
+ * `highlight.hidden` that nothing reverses, and a §18 consumer replaying it
+ * reaches a state this row is no longer in. §17's first sentence is
+ * unconditional over canonical writes and `UPDATE_MEMORY` is the EXT precedent
+ * saying a name is owed — the determination and the exact HM-SERVER request are
+ * in src/test/highlightsApiUnhideBoundary.test.ts and LANE_REPORT.md.
+ *
+ * LINE-NEUTRAL ON PURPOSE: ~30 citations resolve by LINE NUMBER into this file.
  */
 router.delete("/highlights/:id/archive", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const { client, user } = auth;
-
   const { id } = req.params;
   if (!UUID.test(id)) { sendError(res, "invalid_payload", "Invalid highlight id"); return; }
+
+  // §19 envelope parity with the three sibling writes. Validated, NOT honoured: a receipt needs a command and this issues none.
+  const idempotencyKey = highlightIdempotencyKey(req, res);
+  if (idempotencyKey === null) return;
 
   const { data: updated, error } = await client
     .from("highlights")
@@ -2135,13 +2138,10 @@ router.delete("/highlights/:id/archive", async (req, res) => {
 
   if (error) {
     req.log.error({ err: error, highlightId: id }, "highlights: unarchive failed");
-    sendError(res, "db_error", error.message);
-    return;
+    sendError(res, "db_error", error.message); return;
   }
-  if (!updated || (updated as any[]).length === 0) {
-    sendError(res, "not_found", "Highlight not found");
-    return;
-  }
+  if (!updated || (updated as any[]).length === 0) { sendError(res, "not_found", "Highlight not found"); return; }
+  if (await isMemoryKernelEnabled(client)) req.log.warn({ highlightId: id, ownerId: user.id, idempotencyKey, command: null, unemittedEvent: COMMAND_EVENT.HIDE_HIGHLIGHT, reason: "SPEC_17_NAMES_NO_INVERSE_OF_HIDE_HIGHLIGHT" }, "highlights: un-hide applied OUTSIDE the §17 command boundary — a §18 replay reaches a state this row is no longer in");
   res.status(200).json({ id, archivedAt: null });
 });
 
@@ -2179,7 +2179,7 @@ router.get("/highlights/archived", async (req, res) => {
     return;
   }
 
-  res.status(200).json({ highlights: (rows ?? []) as any[] });
+  res.status(200).json({ highlights: (rows ?? []).map((h: any) => ({ ...h, ...describeLifetimeFields(h, archivedProjection.classProjected) })) });
 });
 
 /* ============================================================================
@@ -2834,7 +2834,7 @@ router.get("/highlights/following-feed", async (req, res) => {
       viewCount: viewCountMap[h.id] ?? 0,
       likeCount: likeCountMap[h.id] ?? 0,
       viewedByMe: viewedSet.has(h.id),
-      likedByMe: likedSet.has(h.id),
+      likedByMe: likedSet.has(h.id), ...describeLifetimeFields(h, feedProjection.classProjected),
     });
   }
 
