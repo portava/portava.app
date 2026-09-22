@@ -98,6 +98,18 @@ function termPredicate(term: string): Predicate | null {
       return (r) => String(r[col]) !== String(val);
     case "is":
       return (r) => (val === null ? r[col] == null : r[col] === val);
+    case "in": {
+      // `col.in.("a","b")` — the shape lib/mediaAccess builds to ask whether a
+      // message carries one of an object's URL spellings. Without this arm the
+      // term parsed as null, the whole `or()` matched NOTHING, and that branch
+      // was untestable through this harness: every case came back "denied",
+      // which is the same answer a correct deny gives.
+      const quoted = raw.match(/"((?:[^"\\]|\\.)*)"/g);
+      const vals = quoted
+        ? quoted.map((q) => q.slice(1, -1).replace(/\\"/g, '"'))
+        : raw.replace(/^\(|\)$/g, "").split(",").map((v) => v.trim());
+      return (r) => vals.includes(String(r[col]));
+    }
     default:
       return null;
   }

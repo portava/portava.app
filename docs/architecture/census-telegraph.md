@@ -2660,14 +2660,14 @@ written.
 **§18.3 — the eight accessors exist and are offered to the model.**
 `compass/TelegraphConversationTools.ts` implements all eight
 (`:157`, `:198`, `:235`, `:294`, `:345`, `:388`, `:433`, `:471`) and maps each
-to the spec's own name (`compass/TelegraphConversationTools.ts:67`). They are
+to the spec's own name (`compass/TelegraphConversationTools.ts:73#export const TELEGRAPH_TOOL_SPEC_NAMES`). They are
 registered into the list the model is handed by one spread
 (`compass/CompassTools.ts:248`) and reached through the existing dispatcher by
 one branch (`compass/CompassTools.ts:1264`), so this pass adds one import, one
 spread and one branch to a file it does not own.
 
 Every one of the eight starts at ONE gate
-(`compass/TelegraphConversationTools.ts:110`): active membership read
+(`compass/TelegraphConversationTools.ts:124#export async function gateConversation`): active membership read
 fail-closed, then the existing `resolvePrivacyVerdict` (not reimplemented), then
 the §14 capability set — so a tool cannot offer an action the conversation
 refuses. The gate returns a refusal OBJECT rather than throwing, because
@@ -2684,7 +2684,7 @@ those. Availability goes through `projectPublicWindows`, so the PARTICIPANT's
 own visibility policy decides — the fixture gives one member a `private` window
 and the test proves it never appears. `createPlanDraft` has no write in it at
 all, not a write behind a check, and returns `requiresConfirmation: true` as a
-literal (`compass/TelegraphConversationTools.ts:411`). `findSafePublicMeetup`
+literal (`compass/TelegraphConversationTools.ts:462#requiresConfirmation: true`). `findSafePublicMeetup`
 labels its basis `public_staffed_category_only`
 (`compass/TelegraphConversationTools.ts:462`) and says in the result that it is
 NOT a claim about crime, lighting or opening hours — this repository has no
@@ -2734,10 +2734,10 @@ during exactly the minutes an attacker wants it off.
 | --- | --- | --- | --- |
 | T244 | W | **C** | §18.3 `getConversationContext()` — `compass/TelegraphConversationTools.ts:157`. Conversation-scoped, not message-scoped: type, participant count, the §14 capability set, which context classes are available, and the kinds of shared objects present. Returns no message prose — the test asserts the fixture's plain message text never appears in the result. |
 | T245 | N | **C** | §18.3 `getSharedPlans()` — `compass/TelegraphConversationTools.ts:198`. Meetups attached to the conversation by `chat_thread_id`, cancelled ones excluded, with the place NAME (a `location_name` capped at 300 chars by a CHECK) and never a coordinate. |
-| T246 | N | **C** | §18.3 `getParticipantAvailability()` — `compass/TelegraphConversationTools.ts:235`. Through `projectPublicWindows`, so each participant's own visibility policy decides; the viewer relationship handed to it is the most restrictive the conversation justifies and never widens. A participant not sharing simply does not appear, and the result carries the instruction not to speculate why. This is also the first time Telegraph reads availability at all (compare T28). |
+| T246 | N | **C** | §18.3 `getParticipantAvailability()` — `compass/TelegraphConversationTools.ts:277#export async function telegraphGetParticipantAvailability`. Through `projectPublicWindows`, so each participant's own visibility policy decides; the viewer relationship handed to it is the most restrictive the conversation justifies and never widens. A participant not sharing simply does not appear, and the result carries the instruction not to speculate why. This is also the first time Telegraph reads availability at all (compare T28). |
 | T247 | N | **C** | §18.3 `getSharedPlaces()` — `compass/TelegraphConversationTools.ts:294`. Place cards shared into the conversation, rendered through §21's safe-field allowlist, so a card body's latitude cannot reach the model. |
 | T248 | N | **C** | §18.3 `suggestMeetingPoint()` — `compass/TelegraphConversationTools.ts:345`. Drawn from the conversation's shared destination. No midpoint is computed, and the header says why it never will be on this path: a midpoint between two participants is a location inference about both of them from data neither shared with the conversation. |
-| T249 | W | **C** | §18.3 `createPlanDraft()` — `compass/TelegraphConversationTools.ts:388`, now a Compass tool rather than a route-local intent. It has no write in it, returns `requiresConfirmation: true` (`:411`) and refuses when the conversation's `canCreatePlan` is false. |
+| T249 | W | **C** | §18.3 `createPlanDraft()` — `compass/TelegraphConversationTools.ts:439#export async function telegraphCreatePlanDraft`, now a Compass tool rather than a route-local intent. It has no write in it, returns `requiresConfirmation: true` (`:411`) and refuses when the conversation's `canCreatePlan` is false. |
 | T250 | N | **C** | §18.3 `findSafePublicMeetup()` — `compass/TelegraphConversationTools.ts:433`, with `safetyBasis: "public_staffed_category_only"` (`:462`) and an explicit disclaimer that it is not a claim about crime, lighting or hours. |
 | T251 | N | **C** | §18.3 `searchAuthorizedConversationContent()` — `compass/TelegraphConversationTools.ts:471`, delegating to the SAME `searchConversations` service the user-facing §21 route uses. One scope resolver, one set of exclusions: a second search path for Compass is how the two would come to disagree about what a participant may see. |
 | T279 | W | **C** | §22 adaptive rate limits — both halves. The send step now has a limit (`routes/messaging.ts:2084`), and it is adaptive to all five named inputs (`domain/telegraph/policies/sendRateLimit.ts:112`): relationship, verification, trust, account age and open reports, with an unreadable input falling to the strictest tier. The request step's existing adaptive machinery is untouched. |
@@ -5363,7 +5363,7 @@ on the next sync; the trip branch does not. Neither should have been reachable.
 
 **It is a live path, not a legacy twin.** `lib/chatSync.ts` is reached from the
 trip-chat and circle-chat handlers
-(`artifacts/api-server/src/routes/groupChat.ts:268#const threadId = await syncTripChatMembers(tripId, sc);`),
+(`artifacts/api-server/src/routes/groupChat.ts:306#const threadId = await syncTripChatMembers(tripId, sc);`),
 from trip creation and every trip-membership change
 (`artifacts/api-server/src/routes/trips.ts:1378#syncTripChatMembers(tripId, client).catch((e) => req.log?.error({ err: e }, "syncTripChatMembers failed"));`),
 and from circle invite-accepted and circle-member-removed
@@ -5484,7 +5484,7 @@ Separately: §14 fixed the per-viewer translation read in `routes/messaging.ts` 
 an unreadable `message_translations` reports §18's own word, `failed`, instead of
 inventing a monolingual thread. **The same query in the other reader was not
 fixed with it** — `routes/groupChat.ts`, reached by both group-chat endpoints. It
-is now (`artifacts/api-server/src/routes/groupChat.ts:147#if (tErr) {`).
+is now (`artifacts/api-server/src/routes/groupChat.ts:185#if (tErr) {`).
 
 ### 17.5 T349 — the one privacy SLO that nothing was counting
 
@@ -5664,8 +5664,8 @@ test that reads the counter back. Both do.
    | `artifacts/api-server/src/routes/messaging.ts:3546#.select('id, thread_id, sender_id, body, deleted_at')` | the same, on edit |
    | `artifacts/api-server/src/routes/messaging.ts:3656#.select('id, title, destination_city')` | "Trip not found" |
    | `artifacts/api-server/src/routes/messaging.ts:136#.select('id')` | "Message not found in this thread" (save) |
-   | `artifacts/api-server/src/routes/groupChat.ts:438#.select('id, thread_id, sender_id, body, deleted_at')` | "Message not found" (edit) |
-   | `artifacts/api-server/src/routes/groupChat.ts:524#.select('id, thread_id, sender_id, deleted_at')` | the same, on delete |
+   | `artifacts/api-server/src/routes/groupChat.ts:476#.select('id, thread_id, sender_id, body, deleted_at')` | "Message not found" (edit) |
+   | `artifacts/api-server/src/routes/groupChat.ts:562#.select('id, thread_id, sender_id, deleted_at')` | the same, on delete |
 
    **They were not fixed here and the reason is scope, not difficulty**: each is
    four lines, and doing twelve credibly means twelve behavioural cases against
@@ -5679,7 +5679,7 @@ test that reads the counter back. Both do.
    `TaggingService` tags nobody when it cannot read the block set. Two groups are
    not, and are named so they are not lost: the group-chat readers report an
    unreadable `message_threads` as `title: 'Trip Chat'`, `status: 'active'`
-   (`artifacts/api-server/src/routes/groupChat.ts:290#const { data: threadRow, error: threadRowErr } = await sc`),
+   (`artifacts/api-server/src/routes/groupChat.ts:328#const { data: threadRow, error: threadRowErr } = await sc`),
    so a closed or archived thread reads as active; and both sync
    implementations write a DURABLE generic title onto a newly created thread when
    `trips` is unreadable
@@ -5957,9 +5957,9 @@ than left for a later grep. Seven sites in total:
 
 | site | what an outage used to become | now |
 | --- | --- | --- |
-| `artifacts/api-server/src/routes/groupChat.ts:297#req.log.error({ err: threadRowErr, threadId, tripId },` | a CLOSED trip thread reported `status: 'active'`, `title: 'Trip Chat'` | `degraded_unavailable` |
-| `artifacts/api-server/src/routes/groupChat.ts:390#req.log.error({ err: threadRowErr, threadId, circleOwnerId },` | the same, `title: 'Trusted Circle'` | `degraded_unavailable` |
-| `artifacts/api-server/src/routes/groupChat.ts:131#if (msgsErr) return { ok: false, error: msgsErr };` | a thread full of history rendered as an empty chat, in BOTH readers | `degraded_unavailable` |
+| `artifacts/api-server/src/routes/groupChat.ts:335#req.log.error({ err: threadRowErr, threadId, tripId },` | a CLOSED trip thread reported `status: 'active'`, `title: 'Trip Chat'` | `degraded_unavailable` |
+| `artifacts/api-server/src/routes/groupChat.ts:428#req.log.error({ err: threadRowErr, threadId, circleOwnerId },` | the same, `title: 'Trusted Circle'` | `degraded_unavailable` |
+| `artifacts/api-server/src/routes/groupChat.ts:164#if (msgsErr) return { ok: false, error: msgsErr };` | a thread full of history rendered as an empty chat, in BOTH readers | `degraded_unavailable` |
 | `artifacts/api-server/src/lib/chatSync.ts:77#if (tripErr) {` | a new trip thread named `'Trip Chat'` forever | `null` — the value this function already uses for "could not sync" |
 | `artifacts/api-server/src/lib/chatSync.ts:265#if (ownerProfileErr) {` | a new circle thread named `'Trusted Circle'` forever | the same `null` |
 | `artifacts/api-server/src/services/groupChatSync.ts:94#if (tripErr) {` | a new trip thread named `'Trip Chat'` forever | a thrown Error, as every other write failure in that function |
@@ -6039,7 +6039,7 @@ Read against the code, one by one, they are NOT all benign:
 | file / site | classification |
 | --- | --- |
 | `routes/telegraph.ts` — 5 sites (a `feature_flags` gate, hashtag-follow enrichment, hashtag resolution, mention-profile resolution, the follow sets) | **Fail-closed or enrichment.** An unreadable table degrades the prompt or links nobody; `friends_only` users are EXCLUDED rather than admitted. The `blocks` read in the same block already binds and logs. Nothing here makes a claim to a traveller about their own data. |
-| `routes/telegraphStream.ts:390#const { data: membership, error: membershipErr } = await client` | **Fail-closed when §19 measured; CLOSED by §22.3, and the anchor text itself changed** — the read named here WAS the defect and the line now binds the error it used to drop, exactly as §16.6 and §20.4 record for their own sites. §19's classification was right on its own terms: an unreadable membership resolved to `forbidden`, and a refusal is not a plausible empty state. It was still a false statement about the caller's own membership, and §20.7 named it. |
+| `routes/telegraphStream.ts:449#const { data: membership, error: membershipErr } = await client` | **Fail-closed when §19 measured; CLOSED by §22.3, and the anchor text itself changed** — the read named here WAS the defect and the line now binds the error it used to drop, exactly as §16.6 and §20.4 record for their own sites. §19's classification was right on its own terms: an unreadable membership resolved to `forbidden`, and a refusal is not a plausible empty state. It was still a false statement about the caller's own membership, and §20.7 named it. |
 | `artifacts/api-server/src/routes/telegraphChat.ts:80#async function verifyThreadMember` and `artifacts/api-server/src/routes/telegraphChat.ts:301#const { data: tripMembership, error: tripMembershipErr } = await client` | **Fail-closed when §19 measured; CLOSED by §22.3, and BOTH anchor texts changed** — the first is now cited by the function rather than by a line that no longer exists in that form, because `verifyThreadMember` returns three outcomes instead of a boolean. The same shape as the `telegraphStream.ts` row above and closed the same way. |
 | `routes/telegraphChat.ts:200#res.status(200).json({ suggestions: suggestions ?? [] });` | **OPEN when §19 measured; CLOSED by §20.2.** The line still exists and is cited here at its current number; a refusal now stands above it, so the sentence that follows describes the tree at `6d4327d66`, not this one. It was T363's exact shape. An unreadable `telegraph_chat_suggestions` answers `{ suggestions: [] }` — "you have none" from a read that never happened. |
 | `routes/telegraphChat.ts:340#sendError(res, "not_found", "Suggestion not found");`, `artifacts/api-server/src/routes/telegraphChat.ts:446#sendError(res, "not_found", "Suggestion not found");`, `artifacts/api-server/src/routes/telegraphChat.ts:543#sendError(res, "not_found", "Suggestion not found");` | **OPEN when §19 measured; CLOSED by §20.2** — each now sits below a bound-error refusal, and each is cited at its current number. They were §18's class — three MORE sites of the defect §18 declared closed at twelve.** Same table, same `.maybeSingle()`, same confident 404 from a dropped error. |
@@ -6724,7 +6724,7 @@ name, that they are not in their own conversation, and the app will not recover 
   all four reachable handlers.
 - The trip gate beside it binds its own error
   (`routes/telegraphChat.ts:301#const { data: tripMembership, error: tripMembershipErr } = await client`).
-- The typing relay does the same (`routes/telegraphStream.ts:390#const { data: membership, error: membershipErr } = await client`).
+- The typing relay does the same (`routes/telegraphStream.ts:449#const { data: membership, error: membershipErr } = await client`).
 
 **Every case is PAIRED.** A suite asserting only "an outage is not a 200" would pass against a
 route that refuses everybody, so each outage case sits beside a control proving a genuine
@@ -7697,7 +7697,7 @@ not the mechanism; the mechanism is the guard, and the guard IS caught.
 
 | id | was | now | why |
 | --- | --- | --- | --- |
-| T233 | N | **W** | §17.3 reconnect resume. Every frame now carries an `id:` line (`artifacts/api-server/src/routes/telegraphStream.ts:236#const frame = (id: string | null, event: string, data: unknown) => {`), so an EventSource returns its own `Last-Event-ID` and the cursor round-trips through the transport; the messages missed while away are replayed from `messages` (`artifacts/api-server/src/routes/telegraphStream.ts:139#async function readResume(`) and `stream.resumed` states on every connection whether the gap was actually closed (`artifacts/api-server/src/routes/telegraphStream.ts:304#frame(null, "stream.resumed", { type: "stream.resumed", ...outcome, ts: new Date().toISOString() });`). **W and not C: only the CONVERSATION resumes.** |
+| T233 | N | **W** | §17.3 reconnect resume. Every frame now carries an `id:` line (`artifacts/api-server/src/routes/telegraphStream.ts:292#const frame = (id: string | null, event: string, data: unknown) => {`), so an EventSource returns its own `Last-Event-ID` and the cursor round-trips through the transport; the messages missed while away are replayed from `messages` (`artifacts/api-server/src/routes/telegraphStream.ts:145#async function readResume(`) and `stream.resumed` states on every connection whether the gap was actually closed (`artifacts/api-server/src/routes/telegraphStream.ts:363#frame(null, "stream.resumed", { type: "stream.resumed", ...outcome, ts: new Date().toISOString() });`). **W and not C: only the CONVERSATION resumes.** |
 
 The row said *"The SSE stream carries no cursor … Gap recovery is delegated
 entirely to polling"*. It carries one now, and polling is a fallback rather than
@@ -7718,11 +7718,11 @@ no amount of code in this file changes that.
 column on this tree — 2810's exists in no database (T228) — so the cursor is
 expressed in `created_at` coordinates, the same convention migration 2400 used
 for the §14.3 bound and for the same reason. The comparison is `>=`, not `>`
-(`artifacts/api-server/src/routes/telegraphStream.ts:173#.gte("created_at", since)`):
+(`artifacts/api-server/src/routes/telegraphStream.ts:198#.gte("created_at", since)`):
 `created_at` is not unique, an exclusive cursor drops a tied boundary row
 silently and forever, and a duplicate is something the client already absorbs
 because every replayed frame is labelled and carries a messageId
-(`artifacts/api-server/src/routes/telegraphStream.ts:288#replay: true,`).
+(`artifacts/api-server/src/routes/telegraphStream.ts:347#replay: true,`).
 A gap is recoverable by nothing.
 
 **A resume that did not happen says so.** Both reads bind their error. This is

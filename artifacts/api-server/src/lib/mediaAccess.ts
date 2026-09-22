@@ -23,6 +23,12 @@ import {
   authorizeMediaAttachment,
   authorizeMediaContext,
 } from "./mediaVisibility.js";
+import {
+  historyBoundEnabled,
+  membershipSelect,
+  visibleFromOf,
+  withinWindow,
+} from "../services/groupChatHistoryBound.js";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -479,7 +485,11 @@ async function decide(
   try {
     const { data: msgs, error: msgsErr } = await sc
       .from("messages")
-      .select("thread_id, sender_id")
+      // `created_at` is here for the §14.3 window below. It is a column
+      // `messages` has had since the baseline, so naming it unconditionally
+      // cannot make this query fail on a database that has not run 2400 — only
+      // the MEMBERSHIP select has to stay conditional, and it does.
+      .select("thread_id, sender_id, created_at")
       .or(`media_url.in.${inList},media_thumbnail_url.in.${inList}`)
       .limit(1);
     noteLookupFailure("3c messages", msgsErr, { bucket, path });
@@ -504,9 +514,31 @@ async function decide(
       // denies it. Returning false here would let a forged message row SUPPRESS an
       // object its real owner is entitled to publish elsewhere.
       if (owner && owner === (msg as any).sender_id) {
+        // §14.3 GROUP HISTORY BOUNDS, THE MEDIA DOOR.
+        //
+        // Membership alone was the whole test here, and membership alone is
+        // what migration 2400 exists because of: syncTripChatMembers adds every
+        // newly accepted trip member to the trip thread, so "is in the thread"
+        // was true for a person the thread's older messages are not theirs to
+        // read. Every TEXT reader in this tree now excludes messages created
+        // before the caller's `visible_from_at`; this branch decides whether to
+        // hand over BYTES from a PRIVATE bucket for the same messages. A media
+        // URL reachable without the bound is the same disclosure through
+        // another door, and the door that gives up more.
+        //
+        // The flag polarity is the lane's, not this file's: `historyBoundEnabled`
+        // is FALSE ON ERROR (lib/featureFlags.isFlagEnabled), so an unreadable
+        // `feature_flags` leaves thread media exactly as reachable as it is
+        // today rather than denying every member their own thread's photos.
+        // This file's own deny-on-unreadable posture still governs the two
+        // reads that decide ACCESS — `messages` and `message_thread_members`
+        // — and both keep it.
+        const boundOn = await historyBoundEnabled(sc);
         const { data: member, error: memberErr } = await sc
           .from("message_thread_members")
-          .select("user_id")
+          // Conditional, so a build carrying this code never names a column a
+          // database without 2400 would reject with 42703.
+          .select(membershipSelect("user_id", boundOn))
           .eq("thread_id", msg.thread_id)
           .eq("user_id", viewerId)
           .is("left_at", null)
@@ -514,7 +546,13 @@ async function decide(
         // Returned directly: an unreadable membership table denies a member's own
         // thread media exactly as it denies a non-member's.
         noteLookupFailure("3c thread membership", memberErr, { bucket, path, threadId: msg.thread_id });
-        return Boolean(member);
+        if (!member) return false;
+        const visibleFrom = visibleFromOf(member as any, boundOn);
+        // A POLICY deny, not a lookup failure, so it does not go through
+        // noteLookupFailure (which exists to make an undecidable branch
+        // diagnosable). This branch decided.
+        if (!withinWindow((msg as any).created_at, visibleFrom)) return false;
+        return true;
       }
     }
   } catch { /* fall through */ }

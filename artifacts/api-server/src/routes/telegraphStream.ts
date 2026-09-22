@@ -58,6 +58,12 @@ import {
   publishToThread,
   type TelegraphEvent,
 } from "../lib/telegraphEvents";
+import {
+  historyBoundEnabled,
+  membershipSelect,
+  visibleFromOf,
+  withinWindow,
+} from "../services/groupChatHistoryBound.js";
 
 const router = Router();
 
@@ -140,12 +146,23 @@ async function readResume(
   sc: ReturnType<typeof getServiceClient>,
   userId: string,
   since: string,
-): Promise<{ rows: Array<Record<string, unknown>> } | { failed: ResumeReason }> {
+): Promise<
+  | { rows: Array<Record<string, unknown>>; truncated: boolean }
+  | { failed: ResumeReason }
+> {
   if (!sc) return { failed: "read_failed" };
+
+  // §14.3. The roster read is also where the caller's per-thread history bound
+  // comes from, because the resume spans EVERY live thread and each one has its
+  // own window. See the window comment below the message read.
+  const boundOn = await historyBoundEnabled(sc);
 
   const { data: memberRows, error: memberErr } = await sc
     .from("message_thread_members")
-    .select("thread_id")
+    // Conditional: while the bound is off this is the byte-identical
+    // `select('thread_id')` it has always been, so a database without 2400 is
+    // never asked for the column.
+    .select(membershipSelect("thread_id", boundOn))
     .eq("user_id", userId)
     .is("left_at", null)
     .limit(MAX_RESUME_THREADS + 1);
@@ -158,12 +175,20 @@ async function readResume(
     return { failed: "read_failed" };
   }
 
-  const threadIds = (memberRows ?? [])
-    .map((r: { thread_id?: string }) => r.thread_id)
+  const roster = (memberRows ?? []) as Array<{ thread_id?: string; visible_from_at?: string | null }>;
+  const threadIds = roster
+    .map((r) => r.thread_id)
     .filter((t): t is string => typeof t === "string");
 
-  if (threadIds.length === 0) return { rows: [] };
+  if (threadIds.length === 0) return { rows: [], truncated: false };
   if (threadIds.length > MAX_RESUME_THREADS) return { failed: "too_many_threads" };
+
+  const windowByThread = new Map<string, string | null>();
+  for (const r of roster) {
+    if (typeof r.thread_id === "string") {
+      windowByThread.set(r.thread_id, visibleFromOf(r, boundOn));
+    }
+  }
 
   const { data: msgRows, error: msgErr } = await sc
     .from("messages")
@@ -185,7 +210,38 @@ async function readResume(
     return { failed: "read_failed" };
   }
 
-  return { rows: (msgRows ?? []) as Array<Record<string, unknown>> };
+  const raw = (msgRows ?? []) as Array<Record<string, unknown>>;
+  // A replay is a RETRIEVAL, so §14.3 applies to it exactly as it applies to
+  // GET /threads/:id/messages.
+  //
+  // THE CURSOR IS THE CLIENT'S, AND THE BOUND IS NOT. `since` comes back from
+  // the browser as Last-Event-ID (or `?since=`), and it is only clamped to the
+  // 24h window — a member added to a trip thread ten minutes ago can present a
+  // cursor from yesterday and, without this filter, be replayed the frames of
+  // messages sent before they were added. The frames carry no body, but they
+  // carry the message id, the sender and the timestamp: that is the existence
+  // and the authorship of a pre-membership message, which is the metadata half
+  // of the same disclosure, and the id is a handle for every other read.
+  //
+  // FILTERED PER THREAD, not by one global floor: each membership row has its
+  // own `visible_from_at`, and a caller with ten threads has up to ten windows.
+  // A NULL window (pre-2400 row, or a §14.1 grant) admits everything, so while
+  // the flag is OFF every window is null and this loop is the identity.
+  //
+  // `truncated` is computed on the RAW read, not on the windowed set: the limit
+  // was hit or it was not, and that fact decides whether the client is told to
+  // poll. Deciding it after the filter could report a complete resume while
+  // windowed rows sat beyond the limit — the one outcome the header says a
+  // client cannot detect.
+  const truncated = raw.length > MAX_RESUME_MESSAGES;
+  const rows = raw.filter((r) =>
+    withinWindow(
+      typeof r.created_at === "string" ? r.created_at : null,
+      windowByThread.get(String(r.thread_id)) ?? null,
+    ),
+  );
+
+  return { rows, truncated };
 }
 
 router.get("/telegraph/stream", async (req, res) => {
@@ -269,8 +325,11 @@ router.get("/telegraph/stream", async (req, res) => {
     if ("failed" in result) {
       outcome = { resumed: false, reason: result.failed, since: cursor.iso, replayed: 0, truncated: false };
     } else {
-      const truncated = result.rows.length > MAX_RESUME_MESSAGES;
-      const rows = truncated ? result.rows.slice(0, MAX_RESUME_MESSAGES) : result.rows;
+      // `truncated` is decided by readResume on the RAW read, before the §14.3
+      // window filter, so a bound that removed rows cannot turn a truncated
+      // replay into a reported-complete one.
+      const truncated = result.truncated;
+      const rows = result.rows.slice(0, MAX_RESUME_MESSAGES);
       for (const r of rows) {
         frame(String(r.created_at ?? ""), "message.created", {
           type: "message.created",

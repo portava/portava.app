@@ -285,8 +285,21 @@ import {
  * repaired by reading the claim (the gem disclosure at :274, `add_to_trip` at
  * :592, the thread-rollback case at :502) and given anchors, so doc-citations
  * now holds them. The ceiling is the measurement, not a choice between 235 and
- * 238. */
-export const MAX_DEAD_TARGETS = 210;
+ * 238.
+ *
+ * LOWERED 2026-09-22, 210 -> 209, at the four-lane Telegraph/Input integration.
+ * Not a sweep: the history-privacy lane threaded a visibility window through
+ * `compass/TelegraphConversationTools.ts`, which moved five citations in
+ * census-telegraph onto blank lines and closing braces. They were repointed by
+ * reading the claim and finding the declaration it is about — the spec-name map,
+ * `gateConversation`, `telegraphGetParticipantAvailability`,
+ * `telegraphCreatePlanDraft` and the `requiresConfirmation: true` literal — never
+ * by offset, and all five gained an `#anchor`, so doc-citations holds them from
+ * here and they cannot silently rot back. The net is one BELOW the old ceiling
+ * rather than level with it because the anchors also moved one previously
+ * unanchored citation out of this check's population. The number below is what
+ * the tool measured at that tree, not a target chosen for it. */
+export const MAX_DEAD_TARGETS = 209;
 
 /** Pinned to a commit by its own declaration; its lines must not track HEAD. */
 const PINNED_DOCS = new Set(['docs/architecture/mobile-reachability-ledger.md']);
