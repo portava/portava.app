@@ -8582,7 +8582,7 @@ already refuses to render these rows past `expires_at` —
 `routes/availability.ts:87#  const quickStatus = qs && (qs as any).expires_at > new Date().toISOString()`,
 `routes/availability.ts:152#  if (!data || (data as any).expires_at <= new Date().toISOString()) {`,
 `routes/availability.ts:250#    if ((r as any).expires_at > now) qsMap[(r as any).user_id] = r;`,
-`services/passport/PassportProjectionService.ts:883#      .from("quick_availability_status")` and
+`services/passport/PassportProjectionService.ts:896#      .from("quick_availability_status")` and
 `services/passport/SharedContextService.ts:104#      .from("quick_availability_status")` —
 so it removes data nothing was allowed to show, which is a privacy improvement
 rather than a behaviour change.

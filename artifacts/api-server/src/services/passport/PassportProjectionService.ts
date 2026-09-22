@@ -330,6 +330,19 @@ export interface TrustProjection {
   /** TABLE 12 per-domain trust presentations (never raw scores). */
   domains: DomainTrust[];
   /**
+   * Ordered recovery advice (TrustPrivacyGuard.getSafeTrustSummary →
+   * TrustRecoveryService.suggestedSteps, top 3) — OWNER-ONLY (§9/§10).
+   *
+   * These are second-person instructions to the SUBJECT about their own standing
+   * ("Attend 3 more plans without cancelling"), and their mere PRESENCE
+   * discloses that a trust category sits below neutral — i.e. that this user is
+   * in recovery. That is not a fact another viewer may learn, so the key is
+   * ABSENT for every non-self viewer context. On the owner's own view an EMPTY
+   * array is authoritative ("nothing to recover"), the same way `score: null` is
+   * an authoritative "no number here" rather than a missing read.
+   */
+  recoveryHints?: string[];
+  /**
    * True when `label`, `publicLevel`, `strengths` and `domains` are the
    * NEW-ACCOUNT / neutral-50 defaults because `trust_profiles` could not be
    * READ — not because this traveller has no history. `unreadable` carries the
@@ -1327,8 +1340,18 @@ async function buildTrust(
   // trust_profiles.overall_score) — the exact same source and rounding the
   // identity card and Rent-a-Buddy card read through lib/trustScore, so the
   // three surfaces can never show different numbers.
+  //
+  // Recovery hints ride the SAME `context === "self"` gate, and deliberately not
+  // "reached the safe-summary path": the early return above only peels off the
+  // `public` context, so every RELATIONSHIP context (follower / following /
+  // trip_crew / trip_host / buddy_customer / buddy_provider / event_group) also
+  // reads getSafeTrustSummary here. Those viewers are not the owner, and hints
+  // are advice to the owner whose presence would disclose that they are in
+  // recovery — so the key is omitted entirely for them.
   let score: number | null = null;
+  let recoveryHints: string[] | undefined;
   if (context === "self") {
+    recoveryHints = summary.recoveryHints;
     try {
       score = await getDisplayTrustScore(sc, userId);
     } catch {
@@ -1340,6 +1363,7 @@ async function buildTrust(
     label, publicLevel: summary.publicLevel, score, confidence,
     confidenceBasis, evidenceWeight, evidenceCount,
     strengths: summary.strengths, domains,
+    ...(recoveryHints ? { recoveryHints } : {}),
     ...(degraded || summary.profileUnavailable ? { degraded: true } : {}),
   };
 }

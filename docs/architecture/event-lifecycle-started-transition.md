@@ -106,7 +106,7 @@ from ∈ {open, full, waitlist}  ∧  starts_at IS NOT NULL  ∧  starts_at ≤ 
 | Clause | Where the repo already says it |
 |---|---|
 | `open / full / waitlist` are one phase | `recomputeEventState` (`routes/events.ts` ~`:380-404`) cycles an event among exactly these three by capacity and waitlist offers; nothing else enters or leaves that cycle. |
-| …and that phase is "published, live, not yet begun" | migration `2033_rls_hardening.sql:269` `state IN ('open','full','waitlist','started','completed')`; `EventPassportService.ts:68` and `PassportProjectionService.ts:1368` `LIVE_EVENT_STATES = {open, full, waitlist, started}`; `BROWSE_STATES` `routes/events.ts:221`. In every one of these, `started` is the only "live" member that is *after* the start. |
+| …and that phase is "published, live, not yet begun" | migration `2033_rls_hardening.sql:269` `state IN ('open','full','waitlist','started','completed')`; `EventPassportService.ts:68` and `PassportProjectionService.ts:1698#const LIVE_EVENT_STATES` `LIVE_EVENT_STATES = {open, full, waitlist, started}`; `BROWSE_STATES` `routes/events.ts:221`. In every one of these, `started` is the only "live" member that is *after* the start. |
 | `started` means "during the event" | the complete route's own message: *"it must be active (started) first"* (`:4565`); the attendance and no-show gates: *"during or after the event"* (`:3491`, `:3552`). |
 | `starts_at` is when "during" begins | it is the only start-time column on `events`; the create route already derives `open` vs `draft` from `publishNow`, not from time — there is no other clock. |
 | NULL `starts_at` never starts | nullable column; 1 open production event has NULL. A start with no time is not due. |
