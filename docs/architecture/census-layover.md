@@ -7014,3 +7014,54 @@ trusting it.
 
 **No verdict moves.** **C=78 W=124 N=94 X=0** across 296 rows, denominator 296.
 §27.9 remains this document's headline.
+
+## §32 — 2026-09-22 (integration): §24.6's blocker is GONE, and L269's reason is corrected
+
+**§24.6 is FALSE at this commit.** It reads, in as many words:
+
+> **There is no migration anywhere in this tree that seeds that row** — `grep -rn
+> 'layover_discovery_mode' src/migrations/` returns nothing … The gate therefore
+> reads `absent` on every production request and returns `OFF`.
+
+Both halves of that are now wrong, and the second was the load-bearing one.
+
+`artifacts/api-server/src/migrations/2971_layover_discovery_mode_flag.sql` exists
+and **is applied to production** — ledger `applied_at` 2026-09-22 15:57:06 UTC,
+recorded in `production-applied-migrations.json` at version 20260922155706, and
+the row is present in the 2026-09-22 capture as
+`layover_discovery_mode_enabled = false`. Production's `feature_flags` went from
+200 rows to 201 on that apply, measured, and a per-initial-letter digest
+confirmed no other flag's value moved.
+
+So the gate no longer reads `absent`. It reads a REAL ROW that is FALSE.
+
+**Why that distinction is the whole point.** A flag that is false by absence can
+only be turned on by an `INSERT`, which is a migration, which is what §24.6 said
+this lane would not work around. A flag that is false by a seeded row is turned
+on by `public.toggle_feature_flag_with_audit`, the audited path behind
+`PATCH /api/admin/feature-flags` — one owner decision, with an audit row, no
+migration and no deploy. 2971 exists to make the gate REACHABLE, not to enable
+it, and its own postcondition refuses if it is ever seeded ON.
+
+**L269 STAYS `W`, and the reason is now a different one.** Discovery still serves
+the ungated list, because the flag is off. What has changed is that nothing
+structural stands in the way any more:
+
+| half | state |
+|---|---|
+| server gate | built, on `main`, reads the literal flag name, fail-closed |
+| flag row | seeded FALSE on production by 2971 |
+| client consumer | built and mounted — `LayoverDiscoveryCard` at `travel-buddy-standalone/app/layover/[id].tsx:834#<LayoverDiscoveryCard` |
+| client tests | 10 across two suites, gate-off asserted as its own member rather than an empty list |
+| what remains | an owner decision to enable, after the deployed consumer is verified |
+
+**What still is NOT claimed.** The API carrying the gate has not been redeployed
+from this branch, and this session has no API base URL or credential with which
+to probe the deployed build, so the deployed consumer is UNVERIFIED — a
+deployment gap, accurately classified, not an engineering one. Enabling the flag
+before that check would narrow what a traveller is shown on the strength of code
+nobody has confirmed is running. The flag stays off.
+
+**Denominator unchanged: 296 rows. No verdict moves in this section.** It
+corrects a stated reason that had stopped being true, which is the same defect
+class §25 records against §24.6 once already.
