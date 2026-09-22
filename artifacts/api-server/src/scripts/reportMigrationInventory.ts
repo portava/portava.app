@@ -253,25 +253,57 @@ if (filenames.length === 0) {
   );
 }
 
+// ── SELECTION, WHICH MUST NOT SILENTLY DROP WHAT IT CANNOT PARSE ────────────
+//
+// 27 of the files in src/migrations/ carry a DATE prefix rather than a 4-digit
+// serial (20260720_compass_preference_columns.sql and friends), so
+// serialFromFilename() returns null for them. Selecting only `inBand` would
+// drop all 27 without a word — the same silent-drop that turns a count into a
+// zero, reintroduced at the selection step instead of in the SQL.
+//
+// So: with no band asked for, EVERY file is examined, unattributable ones
+// included. With a band asked for, the unattributable files are excluded (a
+// band is a question about serials, and a file with no serial has no answer)
+// and their number is PRINTED, so the reader knows the report is partial and by
+// how much.
+const bandTally = bandMembers(filenames, serialFromFilename, band);
+const bandAsked = fromArg !== undefined || toArg !== undefined;
 const selected = onlyFile
   ? filenames.filter((f) => f === onlyFile)
-  : bandMembers(filenames, serialFromFilename, band).inBand;
+  : bandAsked
+    ? bandTally.inBand
+    : filenames;
 
 if (selected.length === 0) {
   fail(
     onlyFile
       ? `${onlyFile} is not in ${MIGRATIONS_LABEL}.`
-      : `no migration file in ${MIGRATIONS_LABEL} has a 4-digit serial in [${band.from}, ${band.to}]. ` +
-          "An empty selection is reported as an error, not as a clean report over nothing.",
+      : `no migration file in ${MIGRATIONS_LABEL} has a 4-digit serial in [${band.from}, ${band.to}] ` +
+          `(${bandTally.outOfBand.length} out of band, ${bandTally.unattributable.length} with no ` +
+          "4-digit serial at all). An empty selection is reported as an error, not as a clean report " +
+          "over nothing — an inventory that examined nothing established nothing.",
   );
 }
 
 const observedAt = new Date().toISOString();
 
 console.log(
-  `report:migration-inventory — ${selected.length} migration file(s) from ${MIGRATIONS_LABEL} ` +
-    `against project ${projectRef}, observed ${observedAt}.`,
+  `report:migration-inventory — ${selected.length} of ${filenames.length} migration file(s) from ` +
+    `${MIGRATIONS_LABEL} against project ${projectRef}, observed ${observedAt}.`,
 );
+if (bandAsked) {
+  console.log(
+    `  band [${band.from}, ${band.to}] over 4-digit serials: ${bandTally.inBand.length} in band, ` +
+      `${bandTally.outOfBand.length} out of band, ${bandTally.unattributable.length} EXCLUDED because ` +
+      "their filename carries no 4-digit serial (date-prefixed imports). A band is a question about " +
+      "serials; a file without one has no answer, and its exclusion is printed rather than silent.",
+  );
+} else if (onlyFile === undefined) {
+  console.log(
+    `  no band asked for, so every file is examined — including the ${bandTally.unattributable.length} ` +
+      "whose filename carries no 4-digit serial.",
+  );
+}
 console.log("");
 
 // ── Both ledgers, each read on its own terms ─────────────────────────────────
