@@ -2107,15 +2107,15 @@ router.post("/highlights/:id/archive", async (req, res) => {
 /**
  * §21 Archive is reversible. This is the half that makes it so.
  *
- * NOT A COMMAND. §17 names HIDE_HIGHLIGHT and no inverse, so this canonical
- * write crosses no boundary and emits nothing: the stream keeps a
- * `highlight.hidden` that nothing reverses, and a §18 consumer replaying it
- * reaches a state this row is no longer in. §17's first sentence is
- * unconditional over canonical writes and `UPDATE_MEMORY` is the EXT precedent
- * saying a name is owed — the determination and the exact HM-SERVER request are
- * in src/test/highlightsApiUnhideBoundary.test.ts and LANE_REPORT.md.
- *
- * LINE-NEUTRAL ON PURPOSE: ~30 citations resolve by LINE NUMBER into this file.
+ * STILL NOT A COMMAND — and the reason CHANGED on 2026-09-22. It is no longer
+ * "§17 names no inverse": `UNHIDE_HIGHLIGHT` IS declared now, as an EXT on the
+ * `UPDATE_MEMORY` precedent, mapped to `highlight.hidden` and given a §25 replay
+ * effect. The blocker is one step down: migration 2993's applier admits exactly
+ * PIN/UNPIN/HIDE and rejects anything else BY NAME, so dispatching the command
+ * today would leave un-hide working while the kernel is off — as it is on
+ * production — and FAILING the moment it is turned on. 2993 must admit the type
+ * first. census-highlights-memories.md §W.3 records the order; the invariant is
+ * executable in src/test/highlightsApiUnhideBoundary.test.ts.
  */
 router.delete("/highlights/:id/archive", async (req, res) => {
   const auth = await requireUser(req, res);
@@ -2141,7 +2141,7 @@ router.delete("/highlights/:id/archive", async (req, res) => {
     sendError(res, "db_error", error.message); return;
   }
   if (!updated || (updated as any[]).length === 0) { sendError(res, "not_found", "Highlight not found"); return; }
-  if (await isMemoryKernelEnabled(client)) req.log.warn({ highlightId: id, ownerId: user.id, idempotencyKey, command: null, unemittedEvent: COMMAND_EVENT.HIDE_HIGHLIGHT, reason: "SPEC_17_NAMES_NO_INVERSE_OF_HIDE_HIGHLIGHT" }, "highlights: un-hide applied OUTSIDE the §17 command boundary — a §18 replay reaches a state this row is no longer in");
+  if (await isMemoryKernelEnabled(client)) req.log.warn({ highlightId: id, ownerId: user.id, idempotencyKey, command: null, declaredCommand: "UNHIDE_HIGHLIGHT", unemittedEvent: COMMAND_EVENT.UNHIDE_HIGHLIGHT, reason: "KERNEL_2993_DOES_NOT_ADMIT_UNHIDE_HIGHLIGHT" }, "highlights: un-hide applied OUTSIDE the §17 command boundary — the command IS declared; 2993 rejects it by name, so a §18 replay still reaches a state this row is no longer in");
   res.status(200).json({ id, archivedAt: null });
 });
 

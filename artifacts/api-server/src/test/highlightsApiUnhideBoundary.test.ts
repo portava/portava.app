@@ -59,6 +59,10 @@
  *      node --import tsx/esm --test src/test/highlightsApiUnhideBoundary.test.ts
  */
 import { describe, it } from "node:test";
+import { readFileSync } from "node:fs";
+import { resolve, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
+const HERE_MIGRATIONS = resolve(dirname(fileURLToPath(import.meta.url)), "..", "migrations");
 import assert from "node:assert/strict";
 import http from "node:http";
 import express from "express";
@@ -295,15 +299,74 @@ describe("§19 envelope — the four Highlight writes answer one malformed key t
 
 // ── 2. §U.2's gap, still open, and asserted so this suite cannot close it ────
 
-describe("§17 — the un-hide crosses no boundary, and the vocabulary still has no inverse", () => {
-  it("HIDE_HIGHLIGHT is declared and no inverse of it is", () => {
+describe("§17 — the un-hide crosses no boundary, and the THREE artifacts that decide when it must", () => {
+  // ── REPOINTED 2026-09-22, and the old assertion's own words are why ──────────
+  //
+  // This case used to read "HIDE_HIGHLIGHT is declared and no inverse of it is",
+  // and it swept HIGHLIGHT_COMMAND_TYPES refusing anything matching /^UNHIDE/.
+  // Its failure message said what to do if that day came: *"if it is now
+  // declared, DELETE /highlights/:id/archive must dispatch it and this suite
+  // must be repointed"*. The day came — the HM-SERVER lane declared
+  // UNHIDE_HIGHLIGHT as an EXT on the UPDATE_MEMORY precedent, which
+  // census-highlights-memories.md §W.2 argues was right and §U.2 wrong — and
+  // this case went RED, exactly as designed.
+  //
+  // It is repointed rather than deleted, and NOT to the easy green. Asserting
+  // only "the command is declared" would pass while the route still bypasses
+  // it, which is the vacuity this whole file was written against. So the
+  // assertion is now the INVARIANT over all three artifacts that have to agree:
+  //
+  //   the VOCABULARY   lib/memoryCommandBus.ts       — is UNHIDE_HIGHLIGHT declared?
+  //   the APPLIER      migrations/2993_*.sql         — does the kernel admit it?
+  //   the ROUTE        routes/highlights.ts          — does the un-hide dispatch it?
+  //
+  // Only two combinations are coherent. All three agree, or the route bypasses
+  // the boundary AND says why. Anything else is a contradiction someone shipped.
+  //
+  // WHY THE MIDDLE STATE IS THE DANGEROUS ONE, stated so nobody "tidies" the
+  // route into dispatching: 2993's write path is `IF v_type NOT IN
+  // ('PIN_HIGHLIGHT','UNPIN_HIGHLIGHT','HIDE_HIGHLIGHT') THEN` reject. With
+  // `memory_kernel_enabled` FALSE — production today — a dispatched
+  // UNHIDE_HIGHLIGHT takes the legacy path and works. With the flag ON it is
+  // refused BY NAME, so un-archive breaks for every owner. Wiring the route
+  // before 2993 admits the type trades a boundary gap for an outage.
+
+  it("the vocabulary, the applier and the route are in ONE of the two coherent states", () => {
     assert.ok(HIGHLIGHT_COMMAND_TYPES.includes("HIDE_HIGHLIGHT" as any));
     assert.equal(COMMAND_EVENT.HIDE_HIGHLIGHT, "highlight.hidden");
-    for (const t of HIGHLIGHT_COMMAND_TYPES) {
-      assert.equal(/^UNHIDE|^UNARCHIVE|^SHOW_/.test(t), false,
-        `${t} looks like the inverse §17 does not name — if it is now declared, ` +
-        "DELETE /highlights/:id/archive must dispatch it and this suite must be repointed");
+
+    const declared = HIGHLIGHT_COMMAND_TYPES.some((t) => /^UNHIDE/.test(t));
+    const kernelSql = readFileSync(resolve(HERE_MIGRATIONS, "2993_highlight_command_boundary.sql"), "utf8");
+    const admitted = /v_type NOT IN \(([^)]*)\)/.exec(kernelSql)?.[1]?.includes("UNHIDE") ?? false;
+    const routeSrc = readFileSync(resolve(HERE_MIGRATIONS, "..", "routes", "highlights.ts"), "utf8");
+    const unhideHandler = /router\.delete\("\/highlights\/:id\/archive"[\s\S]*?\n\}\);/.exec(routeSrc)?.[0] ?? "";
+    const dispatches = /commandType:\s*"UNHIDE_HIGHLIGHT"/.test(unhideHandler);
+
+    if (!declared) {
+      // The pre-2026-09-22 state. Nothing to reconcile.
+      assert.equal(admitted, false, "2993 admits a command the vocabulary does not declare");
+      assert.equal(dispatches, false, "the route dispatches a command the vocabulary does not declare");
+      return;
     }
+
+    if (dispatches) {
+      assert.equal(admitted, true,
+        "the un-hide route dispatches UNHIDE_HIGHLIGHT but 2993's applier rejects it by name. " +
+        "With memory_kernel_enabled ON this breaks un-archive for every owner; with it OFF the " +
+        "legacy path hides that. Admit the type in the applier before the route sends it.");
+      return;
+    }
+
+    // The state as of 2026-09-22: declared, not yet admitted, so not yet
+    // dispatched. Legitimate ONLY while the route says so in the request that
+    // causes it — a census paragraph is not an operational signal, which is
+    // this file's own §18 argument applied to its own gap.
+    assert.equal(admitted, false,
+      "2993 admits UNHIDE_HIGHLIGHT and the route still bypasses it — the blocker is gone and " +
+      "the wiring did not follow. Dispatch it from DELETE /highlights/:id/archive.");
+    assert.match(unhideHandler, /KERNEL_2993_DOES_NOT_ADMIT_UNHIDE_HIGHLIGHT/,
+      "the un-hide must name the CURRENT blocker in its runtime warning. " +
+      "SPEC_17_NAMES_NO_INVERSE_OF_HIDE_HIGHLIGHT is no longer true: the command is declared.");
   });
 
   it("a valid key is VALIDATED and NOT honoured — there is no receipt, so the second call applies again", async () => {

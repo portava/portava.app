@@ -5892,10 +5892,12 @@ Declaring the command did not finish the job, and the unfinished half is a
 hazard rather than a gap:
 
 1. **No route dispatches it.** `DELETE /highlights/:id/archive` is still a direct
-   write (`artifacts/api-server/src/routes/highlights.ts:2133#archived_at`) and
-   still logs the divergence under the reason code
-   `artifacts/api-server/src/routes/highlights.ts:2144#SPEC_17_NAMES_NO_INVERSE_OF_HIDE_HIGHLIGHT`.
-   That reason code now names a premise the repository no longer holds.
+   write (`artifacts/api-server/src/routes/highlights.ts:2133#archived_at`). It
+   logged the divergence under a reason code naming a premise the repository no
+   longer holds — §17 naming no inverse — and that was **corrected in this same
+   pass**: the runtime warning now reads
+   `artifacts/api-server/src/routes/highlights.ts:2144#KERNEL_2993_DOES_NOT_ADMIT_UNHIDE_HIGHLIGHT`,
+   which is the true blocker, and names the command as declared rather than absent.
 2. **The applier would REFUSE the command if the route sent it.** 2993's write
    path admits exactly three types and rejects anything else by name
    (`artifacts/api-server/src/migrations/2993_highlight_command_boundary.sql:386#NOT IN`),
@@ -5940,3 +5942,90 @@ on exactly two lines, `H158` and `H159`.
 the only thing that emits them is a kernel function in an unapplied migration
 behind a flag that is `False` on production. `W` is the whole of what was
 earned here.
+
+## §X — the contradiction §W.3 named is now an executable invariant, and one suite was red while it was only prose
+
+§W.3 recorded that `UNHIDE_HIGHLIGHT` is declared, that no route dispatches it,
+and that 2993's applier would reject it by name. Writing that down was not
+enough, and the tree said so: **`src/test/highlightsApiUnhideBoundary.test.ts`
+was already RED on the merged branch**, and had been since the HM-SERVER lane
+landed.
+
+### §X.1 The red, and why it is the good kind
+
+The suite carried a sweep over `HIGHLIGHT_COMMAND_TYPES` refusing any name
+matching `/^UNHIDE/`, with this failure message written into it in advance:
+
+> *"if it is now declared, `DELETE /highlights/:id/archive` must dispatch it and
+> this suite must be repointed"*
+
+That day arrived when the lane declared the command, and the assertion fired
+exactly as designed. A guard that predicts its own obsolescence and then fires
+on it is the cheapest correction mechanism this repository has.
+
+### §X.2 What it was repointed to — NOT the easy green
+
+Asserting "the command is declared" would have passed while the route still
+bypassed the boundary. That is the vacuity the suite was built against, so the
+assertion is now the invariant over the **three artifacts that must agree**:
+
+| artifact | question |
+|---|---|
+| `artifacts/api-server/src/lib/memoryCommandBus.ts:331#UNHIDE_HIGHLIGHT` | is it declared? |
+| `artifacts/api-server/src/migrations/2993_highlight_command_boundary.sql:386#NOT IN` | does the applier admit it? |
+| `artifacts/api-server/src/routes/highlights.ts:2120#/highlights/:id/archive` | does the un-hide dispatch it? |
+
+Exactly two combinations are coherent: all three agree, or the route bypasses the
+boundary **and says why in the request that causes it**. Anything else is a
+contradiction someone shipped. The middle state is currently occupied, and the
+suite permits it only while the route's runtime warning names the CURRENT
+blocker — which it now does
+(`artifacts/api-server/src/routes/highlights.ts:2144#KERNEL_2993_DOES_NOT_ADMIT_UNHIDE_HIGHLIGHT`).
+
+MUTATION-TESTED, three mutations, each red by name and each quoted from the run:
+
+| mutation | what the suite said |
+|---|---|
+| 2993 admits `UNHIDE_HIGHLIGHT`, route unchanged | *"the blocker is gone and the wiring did not follow. Dispatch it from DELETE /highlights/:id/archive."* |
+| route dispatches it, 2993 unchanged | *"2993's applier rejects it by name. With `memory_kernel_enabled` ON this breaks un-archive for every owner; with it OFF the legacy path hides that."* |
+| the stale reason code restored | *"the un-hide must name the CURRENT blocker in its runtime warning."* |
+
+Unmutated: 9/9.
+
+### §X.3 Why the route is STILL not wired, stated as an order rather than a refusal
+
+Wiring it today would trade a boundary gap for an **outage**. `memory_kernel_enabled`
+is `False` on production, so a dispatched `UNHIDE_HIGHLIGHT` takes the legacy path
+and works; the moment anyone turns the kernel on, 2993 refuses it by name and
+un-archive breaks for every owner. The order is: 2993 admits the type, then the
+route dispatches it, then this suite's middle branch stops being reachable.
+
+**2993 was deliberately not edited**, though it is unapplied everywhere and
+therefore still editable in principle. A copy of it is under review on the open
+migration-bootstrap PR, and amending it there is that PR's decision to make, not
+this pass's. The invariant above is what makes the deferral safe: it cannot be
+forgotten, because the first person to change either side without the other gets
+a named failure.
+
+### §X.4 The structural constraint behind all of this, measured
+
+A migration that must run AFTER 2993 cannot currently be numbered. The canonical
+4-digit band is `2100-2999` (`artifacts/api-server/src/scripts/migrationPrefixRules.ts:32#NEW_NUMERIC_PREFIX_RE`),
+every prefix from `2994` to `2999` is taken — verified by listing the directory,
+not assumed — and an 8-digit dated prefix sorts BELOW the 4-digit band rather
+than above it, which the rules module's own header explains at length. 52 slots
+remain free *below* 2994 and none above it.
+
+So "add a follow-up migration" is not available, and that is a fact about the
+repository rather than about this change. Extending the band upward (a `3`
+leading digit sorts above both conventions and keeps the length-blind guarantee
+the module was built for) is the obvious remedy and is **not** done here: it
+changes a guard, and a guard change belongs in a pass that is about the guard.
+
+### §X.5 No verdict moves
+
+H158 and H159 keep the `W` §W.1 gave them. Nothing here emits an event — the
+only thing that can is a kernel function in an unapplied migration behind a flag
+that is `False` on production. What moved is that a contradiction which existed
+only as prose is now a test, and a runtime warning that named a false premise
+now names the true one.
