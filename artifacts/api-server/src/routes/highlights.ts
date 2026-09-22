@@ -2179,7 +2179,7 @@ router.get("/highlights/archived", async (req, res) => {
     return;
   }
 
-  res.status(200).json({ highlights: (rows ?? []) as any[] });
+  res.status(200).json({ highlights: (rows ?? []).map((h: any) => ({ ...h, ...describeLifetimeFields(h, archivedProjection.classProjected) })) });
 });
 
 /* ============================================================================
@@ -2834,7 +2834,7 @@ router.get("/highlights/following-feed", async (req, res) => {
       viewCount: viewCountMap[h.id] ?? 0,
       likeCount: likeCountMap[h.id] ?? 0,
       viewedByMe: viewedSet.has(h.id),
-      likedByMe: likedSet.has(h.id),
+      likedByMe: likedSet.has(h.id), ...describeLifetimeFields(h, feedProjection.classProjected),
     });
   }
 
