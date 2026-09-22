@@ -268,9 +268,11 @@ async function loadCandidates(
     .gte("lng", lng - dLng)
     .lte("lng", lng + dLng)
     .limit(SCAN_LIMIT);
-  // A failed read and an empty viewport are different answers.
-  if (locErr) return null;
-  if (!locsRaw || locsRaw.length === 0) return [];
+  // A failed read and an empty viewport are different answers. A null payload
+  // WITHOUT an error is also a failed read, not an empty viewport: the rows
+  // were never delivered, so this function has no basis for "nobody is here".
+  if (locErr || !locsRaw) return null;
+  if (locsRaw.length === 0) return [];
   const locs = locsRaw as LocStateRow[];
 
   const ids = locs.map((l) => l.user_id);
