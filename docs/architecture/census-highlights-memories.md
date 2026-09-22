@@ -5564,3 +5564,52 @@ Restated from `check:census-integrity`, not counted by hand.
 that had been on this branch for days while this document said it was absent — which is the first
 time in this census that the ratio moved because the document was re-read rather than because code
 was written, and is the reason §Q.1 leads with the staleness instead of the build.
+
+## §R — 2026-09-22 (integration): H89 closes, on the writer AND the converse
+
+One verdict moves in this section. Denominator unchanged at 266.
+
+| id | was | now | why |
+|---|---|---|---|
+| H89 | W | **C** | The defect this row named is closed at the seam it named it. Its reason was: *"the set is read for the OWNERS on the page and the key is `h.owner_id`, so a row `(owner Q, HIDE_PERSON_FROM_RESURFACING, subject O)` hides O's Highlights from every viewer's feed that has Q on the page. §11's control removes ONE PERSON from the SETTER's resurfacing; this removes an owner from everyone's."* Person-scoped controls are now routed to the SETTER's own set: `artifacts/api-server/src/services/highlights/highlightResurfacing.ts:284#export function controlSetter(control: ResurfacingControl)` returns `"viewer"` for `scope === "person"`, and the filter reads `const from = controlSetter(c) === "viewer" ? viewerSet : set;`. The route loads both sets — the owners on the page, and the viewer's own — rather than one. Fail-closed is preserved and sharpened: an unreadable VIEWER set returns `[]` and suppresses every candidate rather than resurfacing someone the viewer asked not to see. |
+
+**Why this is graded on the converse and not only on the fix.** A test that only
+asserts "the setter's own feed empties" passes just as well against the broken
+code, because the broken code emptied everyone's. The row moves because the
+OPPOSITE case is now pinned:
+`artifacts/api-server/src/test/highlightConsentPolicy.test.ts:602#a THIRD party`
+— OTHER is neither the viewer nor the owner of the suppressed Highlight, and
+their control must not touch VIEWER's feed. The suite also records why an earlier
+version of this test could not have caught the defect: the suppression read is
+`.in("owner_id", <the owners on the page>)`, so a third party's row is only
+LOADED when that third party owns something the page contains, and a fixture
+where OTHER owned nothing never reached the bug.
+
+**One end-to-end confirmation, because it is the strongest evidence here.** FLOW
+3 of `verifyFlowHighlightControls.test.ts` had encoded the defect as its
+expectation — it PUT the control as OWNER and asserted VIEWER's feed emptied.
+Corrected to PUT as VIEWER, it was run against the tree WITHOUT this fix and went
+red, with both of OWNER's Highlights still in VIEWER's feed; against the tree
+WITH it, the suite is 21/21. Red then green on the same edit, which is what
+separates a fix from a coincidence.
+
+**What does NOT move, and why it is a different row.** `public.highlights`
+carries no participants column, so §11's control still keys on `owner_id` rather
+than on participants. This row's own text files that as H90's ceiling, on a
+second control, and it is not re-litigated here.
+
+**NOT DEPLOYED.** This is implementation verification. The API has not been
+redeployed from this branch, so no traveller has met the corrected behaviour yet.
+
+### §R headline, restated
+
+The last statement of this census's headline, recounted after H89's move. Every
+other row is unchanged and the denominator is unchanged.
+
+| bucket | was | now |
+|---|---|---|
+| BUILT-AND-CORRECT | 68 | **69** |
+| BUILT-BUT-WRONG | 135 | **134** |
+| NOT-BUILT | 61 | **61** |
+| CONTRADICTED | 2 | **2** |
+| total | 266 | **266** |
