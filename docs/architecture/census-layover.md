@@ -6654,10 +6654,112 @@ already.
 | 2974 | `async function writeElectedLayoverStamp` | 3628 | **3649** |
 
 Until they are repointed, `check:doc-citations` reports 3 anchored and 3
-backticked failures. **That is this pass's doing and it is not hidden.**
+backticked failures **and `npm test` has exactly one failing test** —
+`src/test/docCitations.test.ts` case 9, *"the real corpus — every covered
+citation resolves and every anchor holds"*, whose diff names these three and
+nothing else. It was GREEN before this pass: at the parent commit
+`routes/airport.ts` was 21 lines shorter and 3691 / 3665 / 3628 were correct.
+
+**That is this pass's doing, it is not hidden, and it is the one thing that must
+happen before this branch is green.** It is three line numbers in a file this
+lane is not permitted to write in; every other check and every other test in
+this repository passes.
 `check:citation-targets` and `check:citation-symbols` are both exactly AT their
 ceilings (183 / 183 and 35 / 35); neither was raised and neither fell, so there
 was no ratchet gain to bank.
 
 **`head_commit` is NOT re-declared.** This pass re-derived three rows, not 296,
 and §1's reading rule applies unchanged to the other 293.
+
+## §28 — 2026-09-22 (later): two rows §27.7 misfiled, and three files that still say "no crew storage"
+
+This section moves **no verdict**. It corrects two errors in §27.7 — found by
+this same pass, after §27 was written — and records a class of stale evidence
+the next pass can act on. §27.7 warned in its own limit paragraph that a row
+whose blocker had quietly changed would be misfiled and that nothing in it would
+catch that. Two were, and re-reading the rows rather than the partition is what
+caught them.
+
+### 28.1 L296 is blocked on a FLAG, not on a migration
+
+§27.7 filed L296 under **(b) blocked on a migration no database has**. Its own
+row says otherwise, and the row is right:
+
+> `layover_stable_recommendation_ids_enabled` is still FALSE
+> (`lib/capability/layover-cutover-measurement.json`); the legacy
+> delete-and-reinsert path is what production runs.
+
+The table exists and the code exists. **What is missing is a flag turned on in
+production**, which is a different blocker with a different owner and a very
+different cost. §27.7's bucket table has no flag row at all, which is how this
+went unnoticed: a row with nowhere correct to go was put in the largest bucket.
+
+### 28.2 L203 is blocked on the location grant store, not on the crew tables
+
+§27.7 filed L203 under (b) as well, on the strength of its stated evidence:
+
+> | L203 | Crew membership/location rows require membership and explicit permission | N | No crew tables (L28, L29). |
+
+**That sentence is FALSE at this commit.** L28 and L29 are `C` (§26.2) and the
+crew tables exist in two databases. The verdict does not move, for the reason
+§26.2 gives about L124: the *membership* half is now real and enforced — 2984
+ships both tables with RLS, zero policies and zero client grants, so the route
+layer's membership check is the whole answer — but the *location* half has no
+grant store, and 2984 asserts the absence of a coordinate column in a
+postcondition. **So L203 belongs with L124 and L132 under "no location grant
+store", not with the absent tables.**
+
+Whether L203 is now VACUOUSLY satisfied (`⌀`) — there being no location rows for
+a permission to govern — is a real question and this section deliberately does
+not answer it. Grading it needs the §14 location ladder read end to end, which
+is a measuring pass and not this one.
+
+### 28.3 THE STALE EVIDENCE CLASS — `"no_crew_storage"` is false in three files
+
+Three places still answer a traveller with a reason that stopped being true on
+2026-09-16. None is a verdict and none moves here; they are recorded because
+they are the shortest path to the next `N → C` on this surface, and because a
+literal reason string on the wire is exactly the kind of false statement this
+census exists to find.
+
+| where | what it still says |
+| --- | --- |
+| `artifacts/api-server/src/services/airport/LayoverSafeReturnService.ts:383#crewNotifyUnavailableReason: "no_crew_storage",` | abort returns `crewNotified: []` with this reason, hard-coded — the field is typed `"no_crew_storage" \| null`, so the *type* says no other reason is possible (L144) |
+| `artifacts/api-server/src/services/airport/LayoverDegradedService.ts:171#crewMeetingPoint: unavailable("no_crew_storage"),` | the offline bundle publishes no meeting point, though `layover_crews.meeting_point_label` now exists and is already shown on the online crew screen (L154) |
+| `artifacts/api-server/src/services/airport/LayoverDegradedService.ts:122#crewMeetingPoint: OfflineCapability<never>;` | and types it so a value can never be supplied |
+
+**L154 and L144 are NOT closable by this lane alone, and that is the finding
+rather than an excuse.** The client types both fields so that no value can ever
+arrive:
+
+- `travel-buddy-standalone/src/services/layover.ts:351#crewMeetingPoint: OfflineCapability<never>;`
+- `travel-buddy-standalone/src/services/layover.ts:380#crewNotifyUnavailableReason: 'no_crew_storage' | null;`
+
+A server that starts publishing a meeting point into a field the client types as
+`never` has changed nothing a traveller can see — the REACHABILITY gap this
+census has scored `W` twenty-eight times. The exact client change is one widened
+type in each case; **no file under `travel-buddy-standalone/` was touched by this
+pass.**
+
+**L144 additionally needs a decision that is not a type.** Notifying a crew that
+a member has aborted their layover is a DISCLOSURE — it tells other people that
+this traveller bailed, and to whom and on what terms is a product question, not
+a plumbing one. It is recorded here as an owner decision so it is not mistaken
+for the two-line change L154 is.
+
+### 28.4 What this means for §27.7's counts
+
+The bucket **memberships** above are wrong in §27.7; the **totals** in its table
+are not restated here, because moving two rows between buckets without
+re-reading the other 92 would produce a second table as unreliable as the first.
+§27.7's totals stand as a partition whose two named members are now known to be
+misfiled — which is strictly more honest than a corrected-looking table nobody
+re-derived. The next measuring pass owns the re-derivation, and should add a
+**blocked-on-a-flag** bucket when it does: L296 proves there is at least one
+member, and §23.3 had no such bucket either.
+
+### 28.5 Tally
+
+**No verdict moves.** `check:census-integrity` still reads **C=78 W=124 N=94
+X=0** across 296 rows, unchanged from §27.9, which remains this document's
+current headline.
