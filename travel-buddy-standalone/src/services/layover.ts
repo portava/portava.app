@@ -348,7 +348,28 @@ export interface LayoverOfflineBundle {
   mapGeometry: OfflineCapability<never>;
   route: OfflineCapability<never>;
   flightStatus: OfflineCapability<never>;
-  crewMeetingPoint: OfflineCapability<never>;
+  /**
+   * §16 L154 — the crew meeting point, cached for offline.
+   *
+   * TYPED `<string>`, AND THE OLD `<never>` WAS THE WHOLE DEFECT. In
+   * `OfflineCapability<T>`, `value` is `T | null`; at `T = never` that collapses
+   * to `null`, so this field could not hold a label however the server behaved.
+   * L154 could never have been closed from the server side alone — there was no
+   * shape on this side of the wire for the answer to land in.
+   *
+   * `layover_crews.meeting_point_label` exists and `LayoverCrewSection` already
+   * renders it on the ONLINE crew screen (`crew.meetingPointLabel`). This is the
+   * OFFLINE half: the one thing about a crew worth surviving the network dying
+   * is where to meet them.
+   *
+   * NOT YET SERVED. `buildOfflineBundle`
+   * (artifacts/api-server/src/services/airport/LayoverDegradedService.ts) still
+   * returns `unavailable("no_crew_storage")` unconditionally, and its own type
+   * is still `<never>`. So today every response makes this unavailable and the
+   * card renders the unavailable branch. The client is ready; the server is one
+   * `available(label)` call away. See the report for LO-API.
+   */
+  crewMeetingPoint: OfflineCapability<string>;
   translationPhrases: OfflineCapability<never>;
   stops: Array<{ title: string; durationMin: number; travelMin: number; insideAirport: boolean }>;
 }
@@ -367,6 +388,38 @@ export type AbortEffect =
 
 export type ReturnNowStatusCapability = 'enabled' | 'flag_on_readers_not_widened' | 'flag_off';
 
+/**
+ * §15.1 L144 — WHY the crew was not told, in the server's vocabulary.
+ *
+ * ── WHY THIS IS OPEN AND NOT A CLOSED UNION ──────────────────────────────────
+ * It was `'no_crew_storage' | null`, and `'no_crew_storage'` HAS BEEN FALSE
+ * SINCE 2026-09-16: `layover_crews` / `layover_crew_members` exist,
+ * `LayoverCrewStore` reads and writes them, and `LayoverCrewSection` puts a
+ * crew on screen. A closed union whose only member is a stale sentence cannot
+ * hold the answer, so the transport was sealed shut from this end — the same
+ * shape of defect as `crewMeetingPoint: OfflineCapability<never>` above.
+ *
+ * It is `string` rather than a rewritten union because THE VOCABULARY IS THE
+ * SERVER'S. That follows the precedent already set on this wire for exactly
+ * this kind of field — `LayoverPresenceAnswer.withheld` and `degradedReasons`
+ * are both documented `string[]`. A client union would silently narrow a reason
+ * it had not been taught, and `returnToAirportNow` casts the body whole, so a
+ * narrowed union would be a lie the compiler could not catch.
+ *
+ * KNOWN MEMBERS TODAY, and neither is a policy decision:
+ *   `no_crew_storage`  what the server still sends unconditionally
+ *                      (LayoverSafeReturnService.ts:383), now stale.
+ *
+ * ── WHAT THIS CLIENT DELIBERATELY DOES NOT DECIDE ────────────────────────────
+ * Whether a crew SHOULD be told that one of its members aborted is a
+ * DISCLOSURE ABOUT THAT TRAVELLER, not plumbing, and it is the owner's call —
+ * so nothing here initiates a notification, offers a control that would, or
+ * asks the server to send one. This type and `describeCrewNotification` only
+ * let the ABORTING TRAVELLER read back what the server says already happened
+ * about them, which they are owed either way.
+ */
+export type CrewNotifyUnavailableReason = string;
+
 /** The 200 body of POST /airport/sessions/:id/return-now. */
 export interface ReturnNowSuccess {
   ok: true;
@@ -376,8 +429,9 @@ export interface ReturnNowSuccess {
   posture: SafeReturnPosture;
   cancelledStopIds: string[];
   effects: AbortEffect[];
+  /** User ids the server says it told. Empty is an ANSWER, not a placeholder. */
   crewNotified: string[];
-  crewNotifyUnavailableReason: 'no_crew_storage' | null;
+  crewNotifyUnavailableReason: CrewNotifyUnavailableReason | null;
   statusApplied: boolean;
   statusCapability: ReturnNowStatusCapability;
 }
