@@ -1568,6 +1568,35 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     // quoted — a test a census rests a closure on is a file that census counts.
     "artifacts/api-server/src/test/messagingSwallowedReadHonesty.test.ts",
     "travel-buddy-standalone/app/messages/",
+    // WIDENED 2026-09-22 by the location/proximity/privacy lane
+    // (census-telegraph §31): §4's Nearby surface and §30A.2's
+    // ReachablePersonProjection are built here, and §17.8/§30A.7's device-bound
+    // precise location lands on the two /me/location-state handlers and their
+    // client. Every path below is CITED by §31, so an edit to any of them ages
+    // the seven rows that section moved — which is exactly what should happen
+    // to a verdict that rests on a bucket ladder or a fail-closed gate.
+    "artifacts/api-server/src/lib/proximityBuckets.ts",
+    "artifacts/api-server/src/lib/invisibleMode.ts",
+    "artifacts/api-server/src/lib/preciseLocationDevice.ts",
+    "artifacts/api-server/src/lib/mapTravelers.ts",
+    "artifacts/api-server/src/services/telegraph/",
+    "artifacts/api-server/src/routes/nearbyReachable.ts",
+    "artifacts/api-server/src/routes/location.ts",
+    "artifacts/api-server/src/routes/index.ts",
+    "artifacts/api-server/src/test/proximityBuckets.test.ts",
+    "artifacts/api-server/src/test/invisibleMode.test.ts",
+    "artifacts/api-server/src/test/nearbyRankOrderChannel.test.ts",
+    "artifacts/api-server/src/test/reachablePersonProjection.test.ts",
+    "artifacts/api-server/src/test/reachablePeopleFailClosed.test.ts",
+    "artifacts/api-server/src/test/preciseLocationDeviceBinding.test.ts",
+    "artifacts/api-server/src/test/nearbyReachableRoute.test.ts",
+    "travel-buddy-standalone/src/hooks/useActiveLocation.ts",
+    "travel-buddy-standalone/src/hooks/activeLocation.state.ts",
+    "travel-buddy-standalone/src/hooks/__tests__/activeLocation.deviceBoundPrecision.test.ts",
+    // Cited by §31 as the pattern the client half copies, not as a Telegraph
+    // behaviour — but a census that rests an argument on another lane's module
+    // should notice when that module changes.
+    "travel-buddy-standalone/src/platform/input-assistance/services/policyStore.ts",
     // STILL NOT WATCHED, deliberately: src/scripts/check*.ts, guardRegistry.ts,
     // generateTelegraphInventory.ts, rlsDispositions.ts, the two workflow YAMLs,
     // and the other censuses this one cross-references. Those are machinery and
