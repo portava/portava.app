@@ -421,11 +421,11 @@ export const KNOWN_PRODUCTION_GAPS: Record<string, Gap> = {
   //    across — the ledger row names a FILE, and only the file was owed.
   intel_claim_reviews: {
     classification: "unapplied",
-    note: "Migration 2311 (restored from claude/safety-review-s1b-20260906, sha256 18e8899bf13a…, the checksum its ledger row records). Creates one table; additive and idempotent, alters nothing, seeds no flag, writes no row. NO WRITER in this tree: the writer is services/intel/SafetyReviewService.ts on the source branch and did not come with the file. Applied to portava-ci 2026-09-07, absent from production.",
+    note: "Migration 2311 (restored from claude/safety-review-s1b-20260906, sha256 18e8899bf13a…, the checksum its ledger row records). Creates one table; additive and idempotent, alters nothing, seeds no flag, writes no row. THE WRITER IS NOW IN THIS TREE: services/intel/SafetyReviewService.ts came across with this branch and inserts into the table at :228. It is still unreachable at runtime — no route, scheduler or service imports it, only its own suite does — so the table takes no row in production, but the reason is now 'nothing calls the writer', not 'no writer exists'. Applied to portava-ci 2026-09-07, absent from production.",
   },
   memory_episodes: {
     classification: "unapplied",
-    note: "Migration 2320 (restored from claude/memory-canonical-object-20260906, sha256 1d13adeec896…, the checksum its ledger row records). Inert by construction: RLS on with no policy, service_role-only grants, and its own postcondition asserts memory_projection stays FALSE. NO WRITER in this tree: memory/memoryEpisodeContract.ts stayed on the source branch. Applied to portava-ci 2026-09-07, absent from production.",
+    note: "Migration 2320 (restored from claude/memory-canonical-object-20260906, sha256 1d13adeec896…, the checksum its ledger row records). Inert by construction: RLS on with no policy, service_role-only grants, and its own postcondition asserts memory_projection stays FALSE. NO WRITER in this tree: memory/memoryEpisodeContract.ts and memory/memoryEpisodeLifecycle.ts are pure contract modules, imported by each other and nothing else. Applied to portava-ci 2026-09-07, absent from production.",
   },
   memory_evidence: {
     classification: "unapplied",

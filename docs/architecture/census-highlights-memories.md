@@ -325,7 +325,7 @@ for this spec (there are none).
 | H1 | Canonical Memory facts independent of viewer layout and AI narrative | NB | `memories` rows are read and serialized straight to the client (`artifacts/api-server/src/routes/memories.ts:3035#function mapMemory`, the one serialization point every Memory response spreads); there is no fact layer beneath a projection | |
 | H2 | Automatic Memories private-first; publishing always a separate projection decision | BBW | `routes/stories.ts:585-620` — "save to Highlight" hard-codes `visibility: "public"` regardless of the source Story's audience (close-friends, allow-lists). Publishing is not a decision; it is a side effect | pre |
 | H3 | AI may summarize supported evidence but may not manufacture historical facts | NB | No AI path over Memories exists; no guard exists either | |
-| H4 | Planned/saved/nearby never represented as "experienced" without occurrence evidence or user confirmation | **BAC** | `routes/geofence.ts:809-861` (a stamp requires an actual check-in, then only a *suggested* memory) and `routes/location.ts:400-440` (GPS city stamp → *suggested* memory). Suggestions are inert until explicit acceptance (`services/passport/PassportMemoryService.ts:150`). Matches §6's "GPS proximity: weak alone; typically candidate-level only" | pre |
+| H4 | Planned/saved/nearby never represented as "experienced" without occurrence evidence or user confirmation | **BAC** | `routes/geofence.ts:821-873` (a stamp requires an actual check-in, then only a *suggested* memory) and `routes/location.ts:400-440` (GPS city stamp → *suggested* memory). Suggestions are inert until explicit acceptance (`services/passport/PassportMemoryService.ts:150`). Matches §6's "GPS proximity: weak alone; typically candidate-level only" | pre |
 | H5 | Historical truth and current-world truth are separate | NB | No mechanism encodes the boundary; §14's fusion path does not exist | |
 
 ### §2 Bounded services (11)
@@ -676,7 +676,7 @@ Two requirements, plus four standing caveats that shape but do not change the ve
 
 - **Flag state in production is unknown.** `memory_projection` (`2183`), `memory_recaps`
   (`2214_memory_recaps.sql:57`, seeded `false`) and `passport_memories_enabled` (read at
-  `routes/geofence.ts:845`, `routes/location.ts:427`) all gate live behaviour. Every verdict above
+  `routes/geofence.ts:857`, `routes/location.ts:427`) all gate live behaviour. Every verdict above
   is graded on the code path, which is flag-independent. Whether `memory_events` /
   `memory_projections` currently receive writes in production turns on `memory_projection` and I
   did not query.
@@ -791,7 +791,7 @@ has yet been protected.
 
 | id | Was | Now | Evidence at `cdfff599` | Attr |
 |---|---|---|---|---|
-| H84 | BAC | **BBW** | **A false green, corrected.** Blocking half stands (`routes/memories.ts:267-283`, `routes/highlights.ts:780-789`). Deletion half is false: `highlights`, `highlight_likes`, `highlight_reports`, `highlight_views` are in `UNCLASSIFIED_BACKLOG` (`lib/deletionDispositions.ts:366-369`), `highlight_replies` in `DENOMINATOR_CORRECTION_BACKLOG` (`:569`); `AccountDeletionService.ts:100-104` confirms. `memories` / `memory_likes` / `memory_saves` remain genuinely cascaded (`:152`). | pre |
+| H84 | BAC | **BBW** | **A false green, corrected.** Blocking half stands (`routes/memories.ts:267-283`, `routes/highlights.ts:780-789`). Deletion half is false: `highlights`, `highlight_likes`, `highlight_reports`, `highlight_views` are in `UNCLASSIFIED_BACKLOG` (`lib/deletionDispositions.ts:374-377#highlight_likes`), `highlight_replies` in `DENOMINATOR_CORRECTION_BACKLOG` (`:577`); `AccountDeletionService.ts:100-104` confirms. `memories` / `memory_likes` / `memory_saves` remain genuinely cascaded (`:152`). | pre |
 | H7 | NB | **BBW** | MemoryEvidenceService: `services/memoryProjections/evidence.ts` — normalization (`:246`), dedup (`:332`), precedence merge (`:364`), eligibility (`:435`), versioned (`:34`, `:36`). No route imports it; `memory_evidence` does not exist. | spec |
 | H8 | NB | **BBW** | EpisodeDetectionService: `episodeDetection.ts:244` `detectEpisodes`, deterministic (sorted output, digest ids), `EPISODE_DETECTOR_VERSION` (`:32`). No inputs exist — `memory_evidence` and `memory_episodes` are still absent. | spec |
 | H9 | NB | **BBW** | MemoryEligibilityService: `evidence.ts:435` `evaluateEligibility` with a closed rejection-reason set (`:391`). Test-only. | spec |
@@ -1594,8 +1594,8 @@ row, and the wording each one supports was re-read at the new line before it was
 | H129's `forgetMemory` | `routes/compass.ts:2208` | `routes/compass.ts:2284` | +76 lines above it; the call is unchanged. |
 | H4's GPS city stamp | `routes/location.ts:342-382` | `routes/location.ts:400-440` | +58 lines above it; the block is unchanged. |
 | the `passport_memories_enabled` gate | `routes/location.ts:365` | `routes/location.ts:427` | The mechanical +58 lands on `});`, which is what `:365` had been pointing at too. A sentence about a flag read should not point at a closing paren, so this one goes to the line that names the flag. |
-| H4's check-in stamp | `routes/geofence.ts:634-676` | `routes/geofence.ts:809-861` | **Not the merge's doing — this was wrong before it.** `geofence.ts` is byte-identical between `254e1876` and the merged tree, and `:634-676` names the plan-geofence *reveal* handler, not the check-in stamp. The block H4 actually grades — the flag, `createStamp` at `verificationLevel: checkin`, then `createSuggestedMemory` — is `:809-861`. Found by re-reading a neighbour of a citation the merge did move; H4 stays **BAC** because the code it describes is exactly what is at the corrected lines. |
-| the same gate in geofence | `routes/geofence.ts:658` | `routes/geofence.ts:845` | Same pre-existing error: `:658` is a route banner comment; `:845` is the `.eq("flag", "passport_memories_enabled")` itself. |
+| H4's check-in stamp | `routes/geofence.ts:634-676` | `routes/geofence.ts:821-873` | **Not the merge's doing — this was wrong before it.** `geofence.ts` is byte-identical between `254e1876` and the merged tree, and `:634-676` names the plan-geofence *reveal* handler, not the check-in stamp. The block H4 actually grades — the flag, `createStamp` at `verificationLevel: checkin`, then `createSuggestedMemory` — is `:821-873`. Found by re-reading a neighbour of a citation the merge did move; H4 stays **BAC** because the code it describes is exactly what is at the corrected lines. *(Corrected here to `:809-861` and repointed to `:821-873` on 2026-09-22: the 2026-09-22 geofence admin-defaults change inserted 12 lines at `:199-216`, entirely above this block and entirely outside the check-in handler, which begins at `routes/geofence.ts:680`. The block is byte-identical.)* |
+| the same gate in geofence | `routes/geofence.ts:658` | `routes/geofence.ts:857` | Same pre-existing error: `:658` is a route banner comment; the flag read is the `.eq("flag", "passport_memories_enabled")` line itself — `:845` when this row was written, `:857` since the same +12 shift. |
 
 **What this section would have looked like if it had gone the other way (P24).** If any of the
 twenty-two new tools had named a Memory, H115–H122 would have had to move off NB and H129 off
@@ -2907,7 +2907,7 @@ listed with the occurrence evidence it requires:
 | `POST /api/trips/:tripId/geofence/check-in` | a GPS fix inside the meetup radius, inside the window, by an ACCEPTED member, whose check-in row actually persisted (`artifacts/api-server/src/routes/geofence.ts:761#if (distanceM > radiusM) {`) | enforces |
 | `POST /api/me/passport-stamps/gps` | `artifacts/api-server/src/routes/location.ts:487#if (stampType === "city_visit" && city && trustLevel === "gps_verified") {` — GPS-verified or nothing | enforces |
 | `POST /api/hidden-gems/:id/verify-visit` | `artifacts/api-server/src/routes/hiddenGems.ts:957#const result = await recordGpsCheckin` and then only when the check-in is not flagged suspicious | enforces |
-| `POST /api/me/safe-return/sessions/:id/confirm` | the traveller's own explicit "I am safe" (`artifacts/api-server/src/routes/safeReturn.ts:562#stampType: "safe_return",`), which is §1's *user confirmation* limb | enforces |
+| `POST /api/me/safe-return/sessions/:id/confirm` | the traveller's own explicit "I am safe" (`artifacts/api-server/src/routes/safeReturn.ts:592#stampType: "safe_return",`), which is §1's *user confirmation* limb | enforces |
 | `POST /api/airport/sessions` | **nothing.** The session is created and the stamp follows | **does not enforce** |
 
 Four of five held. The fifth is the one nobody had opened, and it was the only one whose

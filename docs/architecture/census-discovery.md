@@ -2254,7 +2254,7 @@ is how a hold outlives its own scope.
    versioned, append-only, non-cash earnings ledger, with `ledger_version` NOT
    NULL at `:41`, and its flag TRUE in production. What is absent is a
    *Discovery-surface* creator→value link, which is a different sentence. The
-   disposition is `docs/architecture/09_Payment_Architecture.md:529` —
+   disposition is `docs/architecture/09_Payment_Architecture.md:533#Payments are not a discovery workstream` —
    *"Payments are not a discovery workstream."*
 2. **A21** — *"no registration mechanism exists to register into."* **False.**
    `artifacts/api-server/src/services/telegraph/actionRegistry.ts:55` declares

@@ -3521,7 +3521,7 @@ reaching the client as a bare `forbidden` / `not_found`.
   `canManageJoinRequests`), `:3356` (`GET /trips/:tripId` → `canViewTrip`,
   with the locked sentinel now carrying the reason at `:3392`);
   `routes/tripReservations.ts:96#const booking = await canManageBooking(sc, { userId: user.id }, tripId, "read"` (gate) and `routes/tripReservations.ts:677#const del = await canManageBooking(sc, { userId }, (trip as any).id, "delete"` (delete →
-  `canManageBooking`); `routes/safeReturn.ts:306` (session create →
+  `canManageBooking`); `routes/safeReturn.ts:339#canManageSafety` (session create →
   `canManageSafety`); `domain/trips/services/tripCrewLocation.ts:170` (`buildCrewCard` →
   `canSeePresence`).
 - `scripts/checkTripPolicyCallsites.ts` — the ratchet. Measured with its OWN
@@ -3536,7 +3536,7 @@ reaching the client as a bare `forbidden` / `not_found`.
 `POST /me/safe-return/sessions` wrote `trip_id` from the request body with **no
 membership check** — any signed-in user could attach a Safe Return session,
 and its `notify_trip_crew_enabled`, to any trip id. `canManageSafety` refuses
-it `TRIP_AUTH_NOT_CREW` (`routes/safeReturn.ts:306`). Recorded under TR111.
+it `TRIP_AUTH_NOT_CREW` (`routes/safeReturn.ts:339#canManageSafety`). Recorded under TR111.
 
 **Tests.** `tripPolicy.test.ts` is the §6.2 matrix — anonymous, non-member,
 removed, invited, viewer (the schema's nearest to "guest": crew, read-only),
@@ -3565,7 +3565,7 @@ mistaken for "built".
 | TR105 `canEditTrip(actor, trip)` | W | **C** | `:215`; called at `routes/trips.ts:874`. |
 | TR108 `canManageBooking(actor, trip)` | W | **C** | `:273`; the crew gate at `routes/tripReservations.ts:96#const booking = await canManageBooking(sc, { userId: user.id }, tripId, "read"` and the stricter delete rule at `routes/tripReservations.ts:677#const del = await canManageBooking(sc, { userId }, (trip as any).id, "delete"`, which had been a route-local comparison. |
 | TR109 `canSeePresence(actor, subject, trip)` | W | **C** | `domain/trips/policies/tripPresencePolicy.ts:39` — a PREDICATE, not a card: ghost wins, an active (checked, unexpired, fail-closed on unparseable) live-share grant overrides a hidden default, else the default decides. `buildCrewCard` calls it for its fork (`domain/trips/services/tripCrewLocation.ts:170`), so card and predicate cannot disagree; 46 crew-card tests unchanged and green. |
-| TR111 `canManageSafety(actor, trip)` | W | **C** | `:310`; called at `routes/safeReturn.ts:306`. Its first live effect is the gap above: a session can no longer be attached to a trip its owner is not on. |
+| TR111 `canManageSafety(actor, trip)` | W | **C** | `:310`; called at `routes/safeReturn.ts:339#canManageSafety`. Its first live effect is the gap above: a session can no longer be attached to a trip its owner is not on. |
 | TR115 `negative assertions for anonymous, non-member, removed member, guest, host, service-facing` | W | **C** | All six in one matrix (`tripPolicy.test.ts`), per capability. "Guest" has no row in `member_role`; the nearest is `viewer` (crew, read-only) and it is tested as such, stated rather than assumed. Service-facing at `:353`. |
 | TR441 `TRIP_AUTH_*` | W | **C** | Emitted by the kernel (SQL, 2420–2500) AND by every converted route through `sendTripRefusal` — `TRIP_AUTH_NOT_OWNER`, `TRIP_AUTH_NOT_HOST`, `TRIP_AUTH_NOT_CREW` on the wire with the `forbidden` envelope. `TRIP_AUTH_BLOCKED` is internal-only and `sendTripRefusal` throws rather than leak it (`tripReasonCodes.ts:185#INTERNAL_ONLY_REASONS`, `:201#internal-only`). |
 | TR442 `TRIP_VERSION_*` | N | **C** | *"No versioning (TR12)."* Falsified since 2420: `TRIP_VERSION_CONFLICT` is emitted by `trip_kernel_execute`, mapped to 409 with `currentVersion`/`expectedVersion` (`domain/trips/commands/tripKernel.ts` `sendKernelRejection`), and **proven live** — `tripKernelLive.test.ts` "§22 concurrency: a stale expectedTripVersion is refused TRIP_VERSION_CONFLICT". The §39 pattern, one more time. |
@@ -5878,7 +5878,7 @@ and the column §17.4 needed.
   (CHECK: needs a trip); `POST /me/safe-return/sessions` accepts
   `subgroupId` and verifies, under the operational gate, that it names an
   active subgroup of that trip the caller is currently in
-  (`routes/safeReturn.ts:312#parsed.data.subgroupId`); the crew alert goes to
+  (`routes/safeReturn.ts:342#parsed.data.subgroupId`); the crew alert goes to
   that subgroup's current members rather than the whole crew
   (`services/safeReturn/SafeReturnNotificationService.ts:396#trip_subgroup_members`).
   The column is written only when named, so a database without 2794 still
@@ -8135,7 +8135,7 @@ the work.
 | TR108 | `tripReservations.ts` line 497 is the stricter delete rule | a **blank line** | `artifacts/api-server/src/routes/tripReservations.ts:680#sendTripRefusal` |
 | TR109 | `tripCrewLocation.ts` line 170 is where `buildCrewCard` calls the predicate | a comment about a legacy bucket name | `artifacts/api-server/src/domain/trips/services/tripCrewLocation.ts:210#canSeePresence` |
 | TR111 | `tripPolicy.ts` line 310 is `canManageSafety` | the body of `canSeePrivateContributions` | `artifacts/api-server/src/domain/trips/policies/tripPolicy.ts:435#export async function canManageSafety(` |
-| TR111 | `routes/safeReturn.ts` line 306 is the call | a comment about a 503 | `artifacts/api-server/src/routes/safeReturn.ts:309#canManageSafety` |
+| TR111 | `routes/safeReturn.ts` line 306 is the call | a comment about a 503 | `artifacts/api-server/src/routes/safeReturn.ts:339#canManageSafety` — the `await` itself. *(Read as line 309 until 2026-09-22, then briefly as line 331, which is the `// §6.1 canManageSafety` BANNER COMMENT three lines above the call: the anchor `canManageSafety` matched the comment and `check:doc-citations` stayed green on a citation that named the wrong line — the same substring-lottery failure this table exists to record. The call itself moved from line 309 to line 339 when the suggest handler above it grew by 30 lines; the old numbers are spelled out rather than cited, because line 309 is now a closing `});`.)* |
 | TR113 | `trips-expansion.ts` lines 1798-1948 gate documents separately | invite-link slot release — no document code in the range | `artifacts/api-server/src/routes/trips-expansion.ts:2275#router.get` |
 | TR118 | `routes/trips.ts` line 1531 gates private coordinates | a `planEditPermits` filter; `location_is_private` does not occur in that file until much later | `artifacts/api-server/src/routes/trips.ts:1812#location_is_private` |
 | TR120 | `tripCrewLocation.ts` lines 154-156 is the safe-return opt-in | a doc comment about `exactCoords` | `artifacts/api-server/src/domain/trips/services/tripCrewLocation.ts:286#shareSafeReturnStatus` |

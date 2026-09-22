@@ -130,13 +130,13 @@
 > ### One thing this file previously got wrong
 >
 > **L163's evidence was false.** It said `layover_events` and `layover_sessions`
-> are "at least covered by the erasure cascade (`lib/deletionDispositions.ts:356-357`)".
-> Those lines are inside **`UNCLASSIFIED_BACKLOG`** (`src/lib/deletionDispositions.ts:270`,
-> entries at `:370-371`), whose own header says "the data survives deletion and no
+> are "at least covered by the erasure cascade (`lib/deletionDispositions.ts:364-365`)".
+> Those lines are inside **`UNCLASSIFIED_BACKLOG`** (`src/lib/deletionDispositions.ts:278`,
+> entries at `:378-379`), whose own header says "the data survives deletion and no
 > one has said whether it should" (`:35-38`). `layover_plan_stops` and
-> `layover_recommendations` are in `DENOMINATOR_CORRECTION_BACKLOG` (`:544`,
-> entries `:571-572`) and `airport_profiles` is also in `UNCLASSIFIED_BACKLOG`
-> (`:281`). `AccountDeletionService.ts` names no layover table. **No layover row
+> `layover_recommendations` are in `DENOMINATOR_CORRECTION_BACKLOG` (`:552`,
+> entries `:579-580`) and `airport_profiles` is also in `UNCLASSIFIED_BACKLOG`
+> (`:289`). `AccountDeletionService.ts` names no layover table. **No layover row
 > is erased by account deletion today.** The verdict stays `W`; the reason is
 > worse than written. This is the same miscitation the Highlights census made at
 > H84, from the same file — see `census-highlights-memories.md` §A.
