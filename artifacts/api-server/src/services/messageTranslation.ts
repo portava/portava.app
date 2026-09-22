@@ -1068,8 +1068,33 @@ export const CONFIDENCE_MIGRATION_PENDING_MESSAGE =
   "T242's show-both decision has no reading to work from and falls back to " +
   'treating this translation as not-certain.';
 
-/** The two columns migration 2991 adds. Named once, stripped once. */
-const CONFIDENCE_COLUMNS = ['confidence', 'provider_version'] as const;
+/**
+ * The row this table takes, in both shapes it can be written in.
+ *
+ * Spelled as TYPES rather than built by spreading a base object, because
+ * `check:write-path-columns` resolves an upsert payload STATICALLY: a payload
+ * assembled into a `Record<string, unknown>` and then mutated is a blind spot
+ * where NONE of these column names is verified against the live schema. The
+ * cost is that the nine shared fields are written out twice, at the two
+ * `.upsert(` calls below; the annotation is what stops the two drifting, since
+ * a field missing from either literal is a compile error rather than a column
+ * that quietly stops being written.
+ */
+type TranslationRowBase = {
+  message_id: string;
+  recipient_id: string;
+  source_language: string;
+  target_language: string;
+  translated_body: string | null;
+  provider: string | null;
+  status: TranslationStatusValue;
+  error_message: string | null;
+  updated_at: string;
+};
+type TranslationRowWithConfidence = TranslationRowBase & {
+  confidence: TranslationConfidence | null;
+  provider_version: string | null;
+};
 
 /**
  * Whether this process has already learned that 2991 is not applied here.
@@ -1109,7 +1134,24 @@ async function upsertTranslation(
   logger?: Logger,
 ): Promise<void> {
   const now = new Date().toISOString();
-  const base: Record<string, unknown> = {
+
+  // Two literal payloads at two `.upsert(` calls, chosen by the flag — the same
+  // shape the membership reads in routes/messaging.ts use, and for the same
+  // reason: one computed payload would leave every column here unverified.
+  const withConfidence: TranslationRowWithConfidence = {
+    message_id: row.messageId,
+    recipient_id: row.recipientId,
+    source_language: row.sourceLanguage,
+    target_language: row.targetLanguage,
+    translated_body: row.translatedBody,
+    provider: row.provider,
+    status: row.status,
+    error_message: row.errorMessage,
+    updated_at: now,
+    confidence: row.confidence,
+    provider_version: row.providerVersion,
+  };
+  const withoutConfidence: TranslationRowBase = {
     message_id: row.messageId,
     recipient_id: row.recipientId,
     source_language: row.sourceLanguage,
@@ -1120,13 +1162,14 @@ async function upsertTranslation(
     error_message: row.errorMessage,
     updated_at: now,
   };
-  const full: Record<string, unknown> = confidenceColumnsAbsent
-    ? base
-    : { ...base, confidence: row.confidence, provider_version: row.providerVersion };
 
-  const { error } = await sc
-    .from('message_translations')
-    .upsert(full, { onConflict: 'message_id,recipient_id' });
+  const { error } = confidenceColumnsAbsent
+    ? await sc
+        .from('message_translations')
+        .upsert(withoutConfidence, { onConflict: 'message_id,recipient_id' })
+    : await sc
+        .from('message_translations')
+        .upsert(withConfidence, { onConflict: 'message_id,recipient_id' });
   if (!error) return;
 
   if (!confidenceColumnsAbsent && isMissingTranslationConfidenceColumn(error)) {
@@ -1140,10 +1183,9 @@ async function upsertTranslation(
       { messageId: row.messageId, recipientId: row.recipientId, err: (error as { code?: string }).code },
       CONFIDENCE_MIGRATION_PENDING_MESSAGE,
     );
-    for (const c of CONFIDENCE_COLUMNS) delete full[c];
     const retry = await sc
       .from('message_translations')
-      .upsert(full, { onConflict: 'message_id,recipient_id' });
+      .upsert(withoutConfidence, { onConflict: 'message_id,recipient_id' });
     if (!retry.error) return;
     logger?.error(
       { messageId: row.messageId, recipientId: row.recipientId, status: row.status, err: (retry.error as { code?: string }).code },
