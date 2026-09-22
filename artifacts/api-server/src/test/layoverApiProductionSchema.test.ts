@@ -29,12 +29,15 @@
  *
  * ── WHY NOT `helpers/schemaStrictSupabase.ts` ────────────────────────────────
  * That helper exists and is the right shape, and its oracle is
- * `src/test/generated/liveColumns.json`, generated 2026-08-31. FIVE layover
- * migrations have been applied to production since — 2410 (`rec_key`), 2860,
- * 2982, 2983, 2984 — so that file reports `layover_recommendations.rec_key` as
+ * `src/test/generated/liveColumns.json`, generated 2026-08-31. TEN layover
+ * migrations have been applied to production since (2410, 2335, 2510, 2741,
+ * 2860, 2982, 2983, 2984, 2985, 2971) and FIVE of them add a table or a column:
+ * 2410 (`layover_recommendations.rec_key`), 2860 (`airport_fact_observations`,
+ * `layover_external_events`), 2982 (`submission_token`) and 2984
+ * (`layover_crews`, `layover_crew_members`). So that file reports `rec_key` as
  * a dead column although production has had it since 2026-09-08, and it knows
- * nothing of `layover_crews` or `airport_fact_observations` at all. Pointing a
- * conscience at a stale oracle produces confident, specific, FALSE failures.
+ * nothing of the four new tables at all. Pointing a conscience at a stale
+ * oracle produces confident, specific, FALSE failures.
  * The oracle here is the capture the repository's own guards grade against, and
  * the suite asserts its watermark rather than trusting the filename.
  *

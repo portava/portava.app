@@ -4264,8 +4264,9 @@ async function bandPlanStops(
       ...s,
       envelope: {
         ...candidateFeasibilityFrom(verdict, unbandedReason),
-        // The map's own two numbers. Null when nothing was measured — never a
-        // zero, which would read as "next door".
+        // The map's own three, which `CandidateFeasibility` does not carry.
+        // Null when nothing was measured — never a zero, which a surface would
+        // render as "next door".
         distanceMetres: verdict?.distanceMetres ?? null,
         roundTripLowerBoundMin: verdict?.roundTripLowerBoundMin ?? null,
         returnDepartsAt: verdict?.returnDepartsAt ?? null,
