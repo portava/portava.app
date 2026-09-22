@@ -534,8 +534,10 @@ import {
  * two sides of a merge that had diverged. NEITHER number is carried over. This
  * branch stood at 181 and main at 209, and adopting either would assert a count
  * of a tree neither side had measured. The value below is the count of THIS
- * merged tree, measured after the merge. */
-export const MAX_DEAD_TARGETS = 181;
+ * merged tree, measured after the merge: 179, which is BELOW both sides — this
+ * branch had repaired more than main and main had repaired some this branch
+ * had not, so the union is better than either. */
+export const MAX_DEAD_TARGETS = 179;
 
 /** Pinned to a commit by its own declaration; its lines must not track HEAD. */
 const PINNED_DOCS = new Set(['docs/architecture/mobile-reachability-ledger.md']);
