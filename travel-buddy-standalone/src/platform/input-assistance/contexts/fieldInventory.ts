@@ -41,7 +41,7 @@
  */
 import type { InputContext, AssistanceType, EntityType, OfflineInputPolicy, PrivacyClass } from '../types/inputContext.ts';
 import type { InputAssistanceMode } from '../types/fieldPolicy.ts';
-import { INPUT_CONTEXT_REGISTRY } from './inputContexts.ts';
+import { getContextDescriptor } from './inputContexts.ts';
 
 /**
  * How far a field has travelled along the §50/§51 migration.
@@ -418,7 +418,14 @@ const BY_ID = new Map<string, FieldInventoryRecord>(FIELD_INVENTORY.map((r) => [
 export function fieldInventoryRow(fieldId: string): FieldInventoryRow | null {
   const rec = BY_ID.get(fieldId);
   if (!rec) return null;
-  const d = INPUT_CONTEXT_REGISTRY[rec.context];
+  // Reads the RESOLVER, not a local table — the table this used to index was
+  // deleted in G340. The consequence is worth stating: before the policy fetch
+  // lands, an inventory row reports the CONSERVATIVE policy rather than the
+  // context's eventual one. That is accurate. This surface documents what a
+  // field may do, and before the authority has answered, the honest answer is
+  // "nothing" — the previous version reported a local guess with the same
+  // confidence whether or not it matched the server.
+  const d = getContextDescriptor(rec.context);
   return {
     ...rec,
     desiredMode: d.defaultMode,
