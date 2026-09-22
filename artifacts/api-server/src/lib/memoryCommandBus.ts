@@ -380,7 +380,7 @@ export const HIGHLIGHT_KERNEL_FN = "highlight_kernel_execute";
  */
 export const MEMORY_COMMAND_TYPES_NOT_DECLARED = {
   MERGE_MEMORY:
-    "memory_relations (§3.4) is migration 2994, unapplied on every database, and there is no version chain to merge into",
+    "no memory_relations table on any database — §3.4's table is written by migration 2994, which is unapplied everywhere — and no version chain to merge into",
   SPLIT_MEMORY:
     "same — nothing to split a Memory's evidence between",
   // MEASURED 2026-09-22 against the 20260915 production schema snapshot and
