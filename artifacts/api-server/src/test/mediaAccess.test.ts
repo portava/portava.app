@@ -50,6 +50,12 @@ interface FakeState {
   // contextual visibility (lib/mediaVisibility)
   visibilityOverrides?: any[];
   attachments?: any[];
+  /**
+   * Per-table read failure, in the shape PostgREST RESOLVES with rather than
+   * throws. A branch that cannot read its table must decide what that means,
+   * and the only way to test that decision is to make the read fail.
+   */
+  tableErrors?: Record<string, { code?: string; message: string }>;
 }
 
 /**
@@ -202,10 +208,14 @@ function makeClient(state: FakeState = {}) {
       limit() { return b; }, not() { return b; }, order() { return b; },
       maybeSingle() {
         if (unknownColumn) return Promise.resolve(undefinedColumn(table, unknownColumn));
+        const injected = state.tableErrors?.[table];
+        if (injected) return Promise.resolve({ data: null, error: injected });
         return Promise.resolve({ data: rows()[0] ?? null, error: null });
       },
       then(onF: any, onR: any) {
         if (unknownColumn) return Promise.resolve(undefinedColumn(table, unknownColumn)).then(onF, onR);
+        const injected = state.tableErrors?.[table];
+        if (injected) return Promise.resolve({ data: null, error: injected }).then(onF, onR);
         return Promise.resolve({ data: rows(), error: null }).then(onF, onR);
       },
     };
@@ -393,6 +403,97 @@ describe("authorizeMediaAccess — the matrix", () => {
   it("owner always allowed (path-prefix ownership)", async () => {
     const sc = makeClient();
     assert.equal(await authorizeMediaAccess(sc, OWNER, "post-media", `${OWNER}/a.jpg`), true);
+  });
+
+  // ── the owner's own bytes, after the owner deleted the story ─────────────
+  // The owner asked for this to be closed, 2026-09-22: "Owner access must
+  // still respect deletion/recovery state, account deletion, permanent purge,
+  // and other authorization rules. 'No audience-expiry deadline' must not mean
+  // unrestricted access."
+  //
+  // The short-circuit above used to be unconditional, which was right while
+  // expiry deleted the file — there was nothing left to serve. Expired stories
+  // are now kept for the owner's archive, so the bytes survive a deletion that
+  // used to take them, and "deleted" has to keep meaning deleted.
+
+  it("denies the owner their own bytes when they deleted the story holding them", async () => {
+    const path = `${OWNER}/story-del.jpg`;
+    const sc = makeClient({
+      stories: [{ owner_id: OWNER, state: "deleted", media_url: pub(path), expires_at: null }],
+    });
+    assert.equal(
+      await authorizeMediaAccess(sc, OWNER, "post-media", path),
+      false,
+      "the owner deleted this; serving it back to them makes 'deleted' mean 'unlisted'",
+    );
+  });
+
+  it("still serves the owner an EXPIRED story — expiry is an audience boundary, not an owner one", async () => {
+    // This is the archive. If expiry denied the owner too there would be
+    // nothing to build an archive out of.
+    const path = `${OWNER}/story-exp.jpg`;
+    const sc = makeClient({
+      stories: [{
+        owner_id: OWNER, state: "expired", media_url: pub(path),
+        expires_at: new Date(Date.now() - 5 * 86400_000).toISOString(),
+      }],
+    });
+    assert.equal(await authorizeMediaAccess(sc, OWNER, "post-media", path), true);
+  });
+
+  it("serves the owner a story again once it is recovered", async () => {
+    // Recovery writes state='expired'; the media route must follow the row
+    // rather than remember the refusal. Nothing caches post-media decisions,
+    // and this is the test that says so.
+    const path = `${OWNER}/story-rec.jpg`;
+    const deleted = makeClient({
+      stories: [{ owner_id: OWNER, state: "deleted", media_url: pub(path), expires_at: null }],
+    });
+    assert.equal(await authorizeMediaAccess(deleted, OWNER, "post-media", path), false);
+
+    const recovered = makeClient({
+      stories: [{ owner_id: OWNER, state: "expired", media_url: pub(path), expires_at: null }],
+    });
+    assert.equal(
+      await authorizeMediaAccess(recovered, OWNER, "post-media", path),
+      true,
+      "recovery must restore the owner's access, not leave a story they can see listed but not open",
+    );
+  });
+
+  it("denies the owner when the stories table cannot be read", async () => {
+    // A read that failed has not established that the story is live. The
+    // audience side of this same boundary answers an unreadable row with the
+    // most restrictive deadline; the owner side answering "sure, here it is"
+    // would be the two halves of one rule disagreeing. The cost — the owner's
+    // media does not serve while `stories` is down — is real and accepted: a
+    // deletion promise that holds only while the database is healthy is not a
+    // promise.
+    const path = `${OWNER}/story-err.jpg`;
+    const sc = makeClient({
+      stories: [{ owner_id: OWNER, state: "expired", media_url: pub(path), expires_at: null }],
+      tableErrors: { stories: { code: "57014", message: "statement timeout" } },
+    });
+    assert.equal(await authorizeMediaAccess(sc, OWNER, "post-media", path), false);
+  });
+
+  it("does not let someone else's deleted story revoke the object owner's access", async () => {
+    // A row claiming "this is my media" while pointing at another user's key is
+    // exactly what branch 3d refuses in the other direction. It must not work
+    // as a way to blank an object out of its owner's own archive either.
+    const path = `${OWNER}/story-hijack.jpg`;
+    const sc = makeClient({
+      stories: [{ owner_id: VIEWER, state: "deleted", media_url: pub(path), expires_at: null }],
+    });
+    assert.equal(await authorizeMediaAccess(sc, OWNER, "post-media", path), true);
+  });
+
+  it("leaves the owner's non-story media alone", async () => {
+    // Post photos, memory photos: no story row points at them, so the lookup
+    // finds nothing and the short-circuit stands. This is the case that would
+    // regress into a whole-app outage if "no row" were read as "cannot tell".
+    const sc = makeClient({ stories: [] });
+    assert.equal(await authorizeMediaAccess(sc, OWNER, "post-media", `${OWNER}/post.jpg`), true);
   });
 
   it("profile-media: owner always accesses own files", async () => {

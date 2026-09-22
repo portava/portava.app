@@ -211,13 +211,27 @@ export async function enqueueDueStories(
     .limit(limit);
   if (archiveErr) throw archiveErr;
 
-  // 2. Owner-deleted entries past their recovery window.
+  // 2. Owner-deleted entries whose recovery window has closed.
+  //
+  //    The window closes at whichever comes FIRST: `deleted_at + recovery
+  //    days`, or the archive deadline the Story already had. Deleting is a
+  //    request to remove something sooner, so it must never buy the row more
+  //    time than leaving it alone would have — and without the second
+  //    predicate it does. `deleted_at` is set afresh on each delete (the 2998
+  //    trigger only refuses to move it while the row STAYS deleted), so
+  //    delete, recover, delete renews the 30 days, and a caller repeating that
+  //    cycle would hold a Story past its 365-day cap indefinitely. Capping the
+  //    window at the archive deadline closes that without weakening the
+  //    never-reset rule the trigger enforces.
+  //
+  //    `.or()` rather than two queries: one row can satisfy both predicates and
+  //    enqueuing it twice is a duplicate-key round trip for nothing.
   const { data: deletedRows, error: deletedErr } = await sc
     .from("stories")
     .select("id, owner_id, media_url")
     .eq("state", "deleted")
     .not("deleted_at", "is", null)
-    .lt("deleted_at", deletedCutoff)
+    .or(`deleted_at.lt.${deletedCutoff},expires_at.lt.${archiveCutoff}`)
     .order("deleted_at", { ascending: true })
     .limit(limit);
   if (deletedErr) throw deletedErr;

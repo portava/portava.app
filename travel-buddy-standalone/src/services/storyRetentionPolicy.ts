@@ -204,3 +204,16 @@ export function deleteRecoveryLine(p: StoryRetentionPolicy): string {
 export function archiveRetentionLine(p: StoryRetentionPolicy): string {
   return `Only you can see this. It is kept for ${days(p.archiveRetentionDays)} after it expired, then permanently deleted.`;
 }
+
+/**
+ * The line shown after recovering a story whose archive deadline has already
+ * passed (`purgeImminent` on the recovery response).
+ *
+ * Recovery does not restart the archive clock — a story the owner deleted and
+ * undeleted is not a newer story — so what comes back is already due. Saying
+ * "Restored" and nothing else tells the owner something that stops being true
+ * within the hour.
+ */
+export function recoveryImminentPurgeLine(): string {
+  return 'Restored, but this story had already reached the end of its archive, so it will be permanently deleted shortly.';
+}

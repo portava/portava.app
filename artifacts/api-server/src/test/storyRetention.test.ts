@@ -102,6 +102,22 @@ function matches(row: Row, filters: Array<[string, string, any]>): boolean {
       case "lt": return v !== null && v !== undefined && String(v) < String(val);
       case "lte": return v !== null && v !== undefined && String(v) <= String(val);
       case "gt": return v !== null && v !== undefined && String(v) > String(val);
+      // PostgREST's `.or("a.lt.X,b.lt.Y")`. Parsed and applied for real rather
+      // than waved through: this fake exists to run the SELECT the service
+      // actually issues, and an `or` that matched everything would make the
+      // archive-deadline predicate untestable while looking tested.
+      case "or": {
+        const terms = String(val).split(",").map((t) => t.trim()).filter(Boolean);
+        return terms.some((term) => {
+          const firstDot = term.indexOf(".");
+          const secondDot = term.indexOf(".", firstDot + 1);
+          if (firstDot < 0 || secondDot < 0) throw new Error(`fake db: unparseable or() term ${term}`);
+          const c = term.slice(0, firstDot);
+          const o = term.slice(firstDot + 1, secondDot);
+          const raw = term.slice(secondDot + 1);
+          return matches(row, [[c, o, raw]]);
+        });
+      }
       default: throw new Error(`fake db: unsupported operator ${op}`);
     }
   });
@@ -189,6 +205,7 @@ function makeClient(db: FakeDb): any {
         else throw new Error(`fake db: unsupported not(${op})`);
         return builder;
       },
+      or(expr: string) { filters.push(["", "or", expr]); return builder; },
       lt(c: string, v: any) { filters.push([c, "lt", v]); return builder; },
       lte(c: string, v: any) { filters.push([c, "lte", v]); return builder; },
       gt(c: string, v: any) { filters.push([c, "gt", v]); return builder; },
@@ -351,6 +368,34 @@ describe("what the purge selects", () => {
 
     const queued = db.rows("story_purge_queue").map((r) => r.story_id).sort();
     assert.deepEqual(queued, ["lapsed"], "a story still inside its recovery window is recoverable, so it stays");
+  });
+
+  it("queues a deleted story whose archive deadline passed, even though it was deleted yesterday", async () => {
+    // Expired 400 days ago, deleted yesterday. Counting only from `deleted_at`
+    // would hold it another 29 days — so deleting a story would be a way to
+    // keep it LONGER than leaving it alone, and a delete/recover/delete cycle
+    // would hold it forever. The recovery window is capped at the archive
+    // deadline the story already had.
+    seedStory(db, "pastArchiveCap", {
+      state: "deleted",
+      deleted_at: iso(NOW - 1 * DAY),
+      expires_at: iso(NOW - 400 * DAY),
+    });
+    // The control: same fresh deletion, but well inside its archive deadline.
+    // It must stay, or the cap has swallowed the ordinary recovery window.
+    seedStory(db, "insideArchive", {
+      state: "deleted",
+      deleted_at: iso(NOW - 1 * DAY),
+      expires_at: iso(NOW - 40 * DAY),
+    });
+
+    await enqueueDueStories(sc, CFG as any, NOW, 100);
+
+    assert.deepEqual(
+      db.rows("story_purge_queue").map((r) => r.story_id).sort(),
+      ["pastArchiveCap"],
+      "the cap must bind past the archive deadline and nowhere else",
+    );
   });
 
   it("queues by the clock, not by the state flag, so an unswept story still ages out", async () => {

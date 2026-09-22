@@ -194,6 +194,112 @@ describe("retentionDatesFor", () => {
     assert.equal(d.recoverable, false);
   });
 
+  // ── how recovery affects the purge date ──────────────────────────────────
+  // The owner asked for this to be specified and tested, 2026-09-22:
+  // "Specify and test how recovery affects its eventual purge date, including
+  // repeated delete/recover cycles and stories already past their normal
+  // retention deadline."
+
+  it("does not restart the archive clock when a story is recovered", () => {
+    // Deleted 5 days ago, expired 100 days ago. Recovery puts it back in the
+    // archive; its purge date is the one it always had — expiry + 365 — not
+    // 365 days from the recovery.
+    const expiresAt = new Date(now - 100 * DAY).toISOString();
+    const recovered = retentionDatesFor({ state: "expired", expires_at: expiresAt, deleted_at: null }, CFG, now);
+    assert.equal(
+      recovered.purgeAt,
+      new Date(now - 100 * DAY + 365 * DAY).toISOString(),
+      "recovery must not buy the story a fresh 365 days",
+    );
+    assert.equal(recovered.recoverableUntil, null);
+  });
+
+  it("says so when recovering a story would restore it straight into the next purge", () => {
+    // Expired 400 days ago: past the 365-day archive deadline. The owner can
+    // still recover it — the recovery window has not closed — but what comes
+    // back is due immediately, and a bare "restored" would stop being true
+    // within the hour.
+    const d = retentionDatesFor(
+      {
+        state: "deleted",
+        expires_at: new Date(now - 400 * DAY).toISOString(),
+        deleted_at: new Date(now - 1 * DAY).toISOString(),
+      },
+      CFG, now,
+    );
+    assert.equal(d.purgeImminent, true, "a story past its archive deadline must not be restored silently");
+  });
+
+  it("does not claim a purge is imminent for a story well inside its archive", () => {
+    const d = retentionDatesFor(deletedStory(1), CFG, Date.now());
+    assert.equal(d.purgeImminent, false);
+  });
+
+  it("caps the recovery window at the archive deadline rather than extending past it", () => {
+    // Expired 360 days ago, deleted today. 30 days from `deleted_at` would run
+    // to day 390 — 25 days past the archive deadline this story already had.
+    // Deleting is a request to remove something SOONER; it must not be a way to
+    // keep it longer than leaving it alone would have.
+    const d = retentionDatesFor(
+      {
+        state: "deleted",
+        expires_at: new Date(now - 360 * DAY).toISOString(),
+        deleted_at: new Date(now).toISOString(),
+      },
+      CFG, now,
+    );
+    const archiveDeadline = new Date(now - 360 * DAY + 365 * DAY).toISOString();
+    assert.equal(d.recoverableUntil, archiveDeadline, "the window must end at the archive deadline");
+    assert.equal(d.purgeAt, archiveDeadline);
+    assert.ok(
+      Date.parse(d.recoverableUntil!) < now + 30 * DAY,
+      "the window must be SHORTER than the nominal 30 days here, and the archive shows the real date",
+    );
+  });
+
+  it("gives the full recovery window when the archive deadline is far away", () => {
+    // Expired yesterday, deleted today: the cap is 364 days out, so the 30-day
+    // window applies untouched. The cap must not shorten the ordinary case.
+    const d = retentionDatesFor(
+      {
+        state: "deleted",
+        expires_at: new Date(now - 1 * DAY).toISOString(),
+        deleted_at: new Date(now).toISOString(),
+      },
+      CFG, now,
+    );
+    assert.equal(d.recoverableUntil, new Date(now + 30 * DAY).toISOString());
+  });
+
+  it("cannot be held open indefinitely by repeating delete and recover", () => {
+    // Each cycle sets a FRESH deleted_at — the 2998 trigger only refuses to
+    // move it while the row stays deleted, which is the repeat-delete case the
+    // owner's decision names. Without the archive cap, a caller cycling
+    // delete/recover/delete every 29 days would renew the window forever.
+    // With it, the end date can only move toward a fixed point.
+    const expiresAt = new Date(now - 300 * DAY).toISOString();
+    const archiveDeadline = now - 300 * DAY + 365 * DAY;
+
+    let last = Infinity;
+    for (let cycle = 0; cycle < 6; cycle += 1) {
+      // 10 days pass between cycles; each delete stamps deleted_at afresh.
+      const at = now + cycle * 10 * DAY;
+      const d = retentionDatesFor(
+        { state: "deleted", expires_at: expiresAt, deleted_at: new Date(at).toISOString() },
+        CFG, at,
+      );
+      const endsAt = Date.parse(d.recoverableUntil!);
+      assert.ok(
+        endsAt <= archiveDeadline,
+        `cycle ${cycle}: window ends ${new Date(endsAt).toISOString()}, past the archive deadline ${new Date(archiveDeadline).toISOString()}`,
+      );
+      // Once the cap binds, further cycles cannot push it out again.
+      if (last !== Infinity) assert.ok(endsAt <= last + 10 * DAY, `cycle ${cycle}: the window grew`);
+      last = endsAt;
+    }
+    assert.equal(last, archiveDeadline, "the last cycles must all land on the fixed archive deadline");
+  });
+
   it("promises no purge date for a story whose media belongs to a Highlight", () => {
     const d = retentionDatesFor(
       { state: "saved", expires_at: new Date(now - 400 * DAY).toISOString(), saved_to_highlight_id: "h1" },

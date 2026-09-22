@@ -185,6 +185,86 @@ export async function authorizeMediaAccess(
   return allow;
 }
 
+/**
+ * True when this object belongs to a story its OWNER has deleted.
+ *
+ * ── WHY THE OWNER IS CHECKED AT ALL ──────────────────────────────────────────
+ * Until now the owner short-circuit above was unconditional: your own bytes,
+ * always yours, no lookup. That was right while expiry deleted the file,
+ * because there was nothing left to serve. Two changes together make it wrong.
+ * Expired stories are now kept for the owner's archive, so the bytes survive;
+ * and an owner-deleted story is now a row with a 30-day recovery clock rather
+ * than a row on its way out within the hour.
+ *
+ * The owner's decision was "delete this". Answering a direct request for its
+ * photo with the photo makes that decision mean "hide it from the list", which
+ * is not what the word says and not what the retention copy promises. Recovery
+ * is the one route back, and it is a deliberate act the owner takes; it is not
+ * a URL they can still paste.
+ *
+ * This is NOT an audience question — the audience never got past branch 3d for
+ * a deleted story. It is about whether the product keeps its own word to the
+ * person who owns the content.
+ *
+ * ── WHY AN UNREADABLE TABLE DENIES ───────────────────────────────────────────
+ * A read that fails cannot establish that the story is live, and this file's
+ * posture everywhere else is that a branch which cannot decide denies. The
+ * clamp in mediaAccessDeadline() already made the same call for the same
+ * question from the audience's side, returning the present instant rather than
+ * null on a failed read; the owner's side answering "sure, here it is" to the
+ * identical failure would be the two halves of one boundary disagreeing.
+ *
+ * The cost is stated rather than hidden: while `stories` is unreadable, an
+ * owner's own media does not serve. That is a real availability regression on
+ * the hottest media path, and it is accepted because a deletion promise that
+ * holds only while the database is healthy is not a promise. The read is a
+ * single indexed lookup (`stories_media_url_idx`, migrations/2027).
+ *
+ * A story in any other state — active, expired, saved, removed — is the
+ * owner's to see. Expiry is an audience boundary and deliberately not an owner
+ * one; that is what the archive is.
+ */
+async function ownerDeletedThisStory(
+  sc: SupabaseClient,
+  viewerId: string,
+  bucket: string,
+  path: string,
+): Promise<boolean> {
+  if (bucket !== "post-media") return false;
+
+  const publicUrl = publicUrlFor(bucket, path);
+  const urlForms = [publicUrl, `${bucket}/${path}`].filter(
+    (u): u is string => typeof u === "string" && u.length > 0,
+  );
+  // No URL form to match on means the lookup cannot run at all. Denying the
+  // owner every object under a misconfigured SUPABASE_URL would take the whole
+  // app down for a rule about deleted stories, so this returns "not deleted"
+  // and leaves the decision where it was before this function existed.
+  if (urlForms.length === 0) return false;
+
+  try {
+    const { data, error } = await sc
+      .from("stories")
+      .select("owner_id, state")
+      .in("media_url", urlForms)
+      .limit(1);
+    if (error) {
+      noteLookupFailure("owner deleted-story", error, { bucket, path });
+      return true; // cannot establish the state → deny, per the docblock
+    }
+    const story = (data as any[])?.[0];
+    if (!story) return false; // not story media at all
+    // Someone else's story row pointing at this object does not get to revoke
+    // the object owner's access to their own bytes — the same attribution rule
+    // branch 3d applies in the other direction.
+    if (story.owner_id !== viewerId) return false;
+    return story.state === "deleted";
+  } catch (err) {
+    noteLookupFailure("owner deleted-story", err, { bucket, path });
+    return true;
+  }
+}
+
 async function decide(
   sc: SupabaseClient,
   viewerId: string,
@@ -263,9 +343,12 @@ async function decide(
 
   if (bucket !== "post-media") return false;
 
-  // 1. Owner always sees their own bytes.
+  // 1. Owner sees their own bytes — unless they deleted the story that holds
+  //    them, in which case "deleted" has to mean deleted for them too.
   const pathOwner = ownerFromPath(path);
-  if (pathOwner === viewerId) return true;
+  if (pathOwner === viewerId) {
+    return !(await ownerDeletedThisStory(sc, viewerId, bucket, path));
+  }
 
   let owner = pathOwner;
   /**
