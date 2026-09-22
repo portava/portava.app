@@ -7835,3 +7835,66 @@ production surface**: two of the three server rows sit behind a flag whose
 migration has not been applied, and two of the client rows render nothing live
 because of a flag that is off. Those are separate facts from the code being
 built, and they are what holds every one of the fourteen at W.
+
+## §42 — 2026-09-22: L259's second clause has stopped being true, and the airport axis is now indexed
+
+L259 reads *"Replan fanout — index active sessions by airport/route/flight
+subjects; recompute impacted sessions only"*, verdict `W`, on this reason:
+
+> *"Indexes exist but on the wrong axes: `(user_id, status)` and
+> `(departure_time)` (`0127:91-92`). There is no airport, route or flight
+> subject index and no fanout to serve."*
+
+**The second clause is now false.** §40's drain, running on a two-minute period
+(`artifacts/api-server/src/lib/layoverExternalEventScheduler.ts:67#DRAIN_INTERVAL_MS`),
+puts a fanout in front of `layover_sessions` once per pending event, and it
+issues exactly two reads — by `airport_id` and by `manual_iata`, each with
+`status = 'active'`
+(`artifacts/api-server/src/services/airport/LayoverExternalReplanPort.ts:234#layover_sessions`,
+`:250#layover_sessions`). Neither had an index.
+
+### §42.1 What 2986 adds, and what it measured
+
+`artifacts/api-server/src/migrations/2986_layover_sessions_fanout_indexes.sql:166#layover_sessions_airport_active_idx`
+and `:170#layover_sessions_manual_iata_active_idx` are two PARTIAL indexes, each
+predicated on its read's own `WHERE` clause. Partial is the point: a session is
+`active` for hours and terminal forever after, so the active set is a bounded
+slice of a table that only grows.
+
+REHEARSED on a throwaway PostgreSQL carrying the replayed chain — 388 baseline
+tables, 302 chain files applied in order — with 20,000 sessions across 200
+airports, 1,600 of them active. The planner was asked, not assumed:
+
+| read | with 2986 | without it |
+|---|---|---|
+| `airport_id = ANY(…) AND status = 'active'` | bitmap scan on `layover_sessions_airport_active_idx`, **101 buffers**, 0.53 ms | 438 buffers, 1.70 ms, **1,500 rows removed by filter** |
+| `manual_iata = … AND status = 'active'` | bitmap scan on `layover_sessions_manual_iata_active_idx`, **7 buffers**, 0.04 ms | 438 buffers, 1.13 ms, **1,594 rows removed by filter** |
+
+**The "without" column is a LOWER bound on the improvement, and saying so is the
+point.** In that fixture every session belongs to one user, so the planner could
+still reach `layover_sessions_user_status_idx` through its second column. In
+production, where sessions belong to many users, that index's leading column is
+`user_id` and the fanout gives no predicate for it — so the fallback is a full
+sequential scan, which is worse than what was measured here.
+
+The postconditions were MUTATION-TESTED rather than trusted. Four mutations,
+each turning the block red by name: dropping the partial predicate ("is not
+partial — it would span the whole table"), keying the second index on
+`airport_id` instead of `manual_iata` ("is not keyed on manual_iata"), dropping
+one of 0127's three ("expected the 3 indexes from 0127 to still exist, found
+2"), and dropping the `IS NOT NULL` term ("carries rows it can never answer
+for"). Unmutated, the block is silent. Re-running the whole file is a no-op.
+
+### §42.2 L259 does NOT move, and the reason is the requirement's own words
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| L259 | W | W | Unchanged, and for a NARROWER reason than the row currently gives. The "no fanout to serve" half is false — §40's drain is the fanout — and the airport axis is indexed by 2986, rehearsed and mutation-tested above. It stays `W` because the row asks for airport, **route** and **flight** subjects and `layover_sessions` has no route or flight column to index. Inventing one to satisfy a census row would be the wrong order of work, so the gap is recorded rather than papered over. |
+
+### §42.3 What is not claimed
+
+2986 is **unapplied everywhere** — not on `main`, not on the CI project, not on
+production. It is rehearsed on a throwaway database and nothing more. It is also
+not a precondition for correctness: without it the fanout returns the same rows,
+more slowly. It is a precondition for enabling the drain at any volume, which is
+why it is written before the flag is ever turned on rather than after.

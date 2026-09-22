@@ -45,6 +45,10 @@
  *      node --import tsx/esm --test src/test/layoverExternalReplanPort.test.ts
  */
 import { describe, it } from "node:test";
+import { readFileSync } from "node:fs";
+import { resolve, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
+const MIGRATIONS_2986_DIR = resolve(dirname(fileURLToPath(import.meta.url)), "..", "migrations");
 import assert from "node:assert/strict";
 import { makeLayoverDb } from "./helpers/fakeLayoverDb.js";
 import {
@@ -235,5 +239,110 @@ describe("the port itself", () => {
     const a = await run(tables());
     const b = await run(tables());
     assert.deepEqual(a, b);
+  });
+});
+
+// ── Migration 2986 — the indexes THESE reads depend on ───────────────────────
+//
+// census-layover L259 asks for active sessions to be indexed by subject. The
+// port above issues the only two subject reads that exist, and until 2986
+// neither had an index: every pending event was a scan of every session ever
+// created.
+//
+// WHY THIS SUITE IS WRITTEN AGAINST BOTH FILES AT ONCE, rather than asserting
+// the migration's text alone. An index migration that agrees only with itself
+// is the easy half. The failure that actually happens is DRIFT: someone adds a
+// third read, or changes one of these two to filter on a different column, and
+// the migration stays green while the new query scans. So case G3 derives the
+// filtered columns from the PORT'S OWN SOURCE and requires the migration to
+// index exactly that set. A new `.eq("flight_number", …)` on layover_sessions
+// turns it red until an index exists for it.
+//
+// What it deliberately does NOT do: execute anything. There is no database
+// here. The behaviour proof — that the planner CHOOSES these indexes, and what
+// it does without them — was taken on a throwaway PostgreSQL and is recorded,
+// with its numbers, in census-layover.md §42.1.
+
+describe("migration 2986 — the fanout reads' indexes", () => {
+  const sql = readFileSync(
+    resolve(MIGRATIONS_2986_DIR, "2986_layover_sessions_fanout_indexes.sql"),
+    "utf8",
+  );
+  const portSrc = readFileSync(
+    resolve(MIGRATIONS_2986_DIR, "..", "services", "airport", "LayoverExternalReplanPort.ts"),
+    "utf8",
+  );
+
+  // Comment lines first: the header names `CREATE INDEX IF NOT EXISTS` while
+  // explaining idempotency, and a match over the raw file picks that prose up
+  // as a third statement. Measured — it did, and the first version of G1 failed
+  // 3 !== 2 on it.
+  const sqlCode = sql.split("\n").filter((l) => !l.trim().startsWith("--")).join("\n");
+  const createStmts = sqlCode.match(/CREATE INDEX IF NOT EXISTS[\s\S]*?;/g) ?? [];
+
+  it("G1. creates exactly two PARTIAL indexes, one per read", () => {
+    assert.equal(createStmts.length, 2, "two reads, two indexes");
+    for (const stmt of createStmts) {
+      assert.match(stmt, /WHERE status = 'active'/,
+        "a non-partial index would carry every session ever created, not the active slice");
+      assert.match(stmt, /IS NOT NULL/,
+        "most rows populate one identity column and NULL the other; the NULLs can never be answered for");
+    }
+    assert.match(createStmts[0]!, /layover_sessions_airport_active_idx[\s\S]*\(airport_id\)/);
+    assert.match(createStmts[1]!, /layover_sessions_manual_iata_active_idx[\s\S]*\(manual_iata\)/);
+  });
+
+  it("G2. is additive and idempotent — it must not drop, delete or rewrite anything", () => {
+    assert.match(sql, /^BEGIN;/m);
+    assert.match(sql, /^COMMIT;/m);
+    const code = sqlCode;
+    assert.match(code, /IF NOT EXISTS/, "re-running the file must be a no-op");
+    assert.ok(
+      !/(ALTER TABLE[^\n;]*DROP|DROP TABLE|DELETE FROM|UPDATE\s+public\.layover_sessions|UPDATE\s+layover_sessions)/i.test(code),
+      "an index migration must not drop, delete or rewrite anything",
+    );
+  });
+
+  it("G3. indexes EXACTLY the columns the port filters layover_sessions on", () => {
+    // Every `.from("layover_sessions")` chain in the port, up to the statement
+    // that ends it, and the `.eq`/`.in` column names inside it.
+    const chains = portSrc.match(/\.from\("layover_sessions"\)[\s\S]*?;/g) ?? [];
+    assert.ok(chains.length >= 2, "the port must still read layover_sessions");
+
+    const filtered = new Set<string>();
+    for (const chain of chains) {
+      for (const m of chain.matchAll(/\.(?:eq|in)\("([a-z_]+)"/g)) filtered.add(m[1]!);
+    }
+    // `status` is in every predicate and is the partial WHERE, not a key. `id`
+    // is the primary key, already indexed by 0127.
+    filtered.delete("status");
+    filtered.delete("id");
+
+    const indexed = new Set<string>();
+    for (const stmt of createStmts) {
+      const key = /ON public\.layover_sessions \(([a-z_]+)\)/.exec(stmt);
+      assert.ok(key, `could not read the key column of: ${stmt}`);
+      indexed.add(key![1]!);
+    }
+
+    assert.deepEqual(
+      [...filtered].sort(),
+      [...indexed].sort(),
+      "the port filters on a column 2986 does not index (or indexes one nothing filters on) — " +
+        "a subject read with no index scans the whole table once per pending event",
+    );
+  });
+
+  it("G4. REFUSES to apply where 'active' is not a legal status — an index over an impossible predicate indexes nothing", () => {
+    assert.match(sql, /PRECONDITION FAILED[\s\S]*does not admit ''active''/);
+    assert.match(sql, /PRECONDITION FAILED[\s\S]*airport_id, manual_iata and status/);
+  });
+
+  it("G5. postconditions name the three indexes 0127 created, so this file cannot be why one went missing", () => {
+    for (const name of ["layover_sessions_user_status_idx",
+                        "layover_sessions_departure_idx",
+                        "layover_sessions_share_idx"]) {
+      assert.ok(sql.includes(name), `postconditions must assert ${name} survives`);
+    }
   });
 });
