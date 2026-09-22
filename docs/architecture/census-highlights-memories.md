@@ -5668,3 +5668,70 @@ statement and treated it as current, in a document whose whole discipline is
 last-statement-wins. `check:census-integrity` caught it by parsing the rows and
 disagreeing with my sum, which is exactly the drift that check exists to refuse.
 H30's entry below is a REASON CORRECTION, not a verdict move.
+
+## §T — 2026-09-22 (integration): the §17 command boundary is built for three Highlight commands, and NO VERDICT MOVES
+
+This is the section that has to be honest about a disappointing result.
+
+§17's command boundary — the stated ceiling on H142, H143, H144 and H145 — is
+now BUILT for three of the four commands. `PIN_HIGHLIGHT`, `UNPIN_HIGHLIGHT` and
+`HIDE_HIGHLIGHT` are declared in `MEMORY_COMMAND_TYPES`, are total over
+`COMMAND_EVENT` and `COMMAND_CAPABILITY`, and cross the boundary with the four
+artifacts §17 names: an idempotency key, a receipt, an audit row and an outbox
+insert, written in one transaction by the SQL function rather than by four
+client calls.
+
+**And not one verdict moves.** The ceiling these rows named is gone; a DIFFERENT
+gate holds every one of them exactly where it was.
+
+| id | was | now | why it does not move |
+|---|---|---|---|
+| H142 `PIN_HIGHLIGHT` | W | **W** | The boundary exists and is unreachable. `memory_kernel_enabled` is FALSE on production, so `isFlagEnabled` fails closed and every request takes the legacy direct write — moved verbatim, byte-identical, including its PGRST204 answer and its one-answer 404. Built and OFF is `W` (§38, and this census's own rule). |
+| H143 `UNPIN_HIGHLIGHT` | W | **W** | Same command pair, same gate. |
+| H145 `HIDE_HIGHLIGHT` | BBW | **BBW** | Same gate. `archived_at` remains the reversible hide and `deleted_at` the terminal one; that distinction was already live and is unchanged. |
+| H144 `PUBLISH_HIGHLIGHT` | BBW | **BBW** | NOT declared, and the reason is now a measured fact rather than the dead ownership excuse it carried: there is **no storable published state**. `highlights` has no `published_at`, `lifecycle_state`'s CHECK admits no `PUBLISHED` value, nothing in the API server writes `lifecycle_state` at all, and `DRAFT` has no witness — so there is no pre-published state to leave. |
+| H51 Highlight lifecycle machine | BBW | **BBW** | `PINNED` and `HIDDEN` now have both a witness column and a command that moves them. `DRAFT` and `PUBLISHED` remain unstorable. Two of four named states is not a machine. |
+
+### A SECOND gate, and it is the stricter one
+
+`memory_kernel_enabled` is not the only thing holding these rows. The boundary's
+outbox insert for a Highlight command **cannot physically execute on any
+database today**, because `memory_domain_events.highlight_id` does not exist
+yet: 2993 adds it and 2993 is unapplied everywhere. Until it applies, a
+`highlight.*` event has no writable subject column — which is the structural
+defect this pass found and fixed in the file, not in a database.
+
+So these rows sit behind two independent gates, and clearing one does not move
+them. Saying otherwise — grading `C` because the tests are green — is precisely
+what §38 was written in advance to prevent.
+
+### What 2993 does, and why relaxing a NOT NULL was legitimate here
+
+`memory_domain_events.memory_id` was `NOT NULL REFERENCES memories(id)`, and
+`highlights` has no relationship to `memories` at all. The five `highlight.*`
+names sat in 2710's type CHECK and in `MEMORY_EVENT_TYPES` **with no way to
+write a row bearing them** — declared and unreachable, which is the shape this
+corpus keeps catching.
+
+2993 adds `highlight_id`, then adds
+`CHECK (num_nonnulls(memory_id, highlight_id) = 1)`, and only then drops the
+`NOT NULL` — in that order. The order is the argument: at no point is the table
+weaker than it was, because "exactly one subject" is a STRONGER statement than
+"memory_id is present". The migration also refuses to apply unless
+`public.highlights` carries the columns it expects, rather than half-applying
+against a schema it did not anticipate.
+
+### Not claimed
+
+Nothing here was applied to any database. The three commands are implementation-
+verified, not deployment-verified, and those remain recorded separately.
+
+### §T headline — unchanged
+
+| bucket | was (§S) | now |
+|---|---|---|
+| BUILT-AND-CORRECT | 69 | 69 |
+| BUILT-BUT-WRONG | 136 | 136 |
+| NOT-BUILT | 59 | 59 |
+| CONTRADICTED | 2 | 2 |
+| total | 266 | 266 |
