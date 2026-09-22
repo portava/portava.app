@@ -537,7 +537,14 @@ import {
  * merged tree, measured after the merge: 179, which is BELOW both sides — this
  * branch had repaired more than main and main had repaired some this branch
  * had not, so the union is better than either. */
-export const MAX_DEAD_TARGETS = 179;
+/* RATCHETED 2026-09-22 179 -> 178. The citation repair that came with the §17
+ * command-boundary lane retired one more dead target than it created. Lowering
+ * this is TIGHTENING: the guard itself printed "178 < 179 — LOWER THE CEILING
+ * ..., or this gain is not kept", and a ceiling left above the measured count
+ * silently re-admits the rot that was just removed. Measured on a quiet tree,
+ * after both lanes had landed and stopped editing, so the number is not a
+ * reading taken mid-edit. */
+export const MAX_DEAD_TARGETS = 178;
 
 /** Pinned to a commit by its own declaration; its lines must not track HEAD. */
 const PINNED_DOCS = new Set(['docs/architecture/mobile-reachability-ledger.md']);

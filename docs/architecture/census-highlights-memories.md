@@ -5735,3 +5735,53 @@ verified, not deployment-verified, and those remain recorded separately.
 | NOT-BUILT | 59 | 59 |
 | CONTRADICTED | 2 | 2 |
 | total | 266 | 266 |
+
+## §U — two limits §T did not state, and a defect the boundary work uncovered
+
+§T reported that three of the four Highlight commands cross the §17 boundary and
+that no verdict moves. Both hold. Two things it left out belong in the record,
+because each is the kind of gap that reads as "built" from a distance.
+
+### 1. The `highlight.*` half of the outbox rebuilds nothing
+
+No §18 projection in `projectionRegistry.ts` is keyed on a Highlight. So a
+`highlight.pinned` or `highlight.hidden` row drains and is acknowledged as
+`unsubscribed_event_type`. Nothing strands and nothing is lost — the rows move
+and the outbox stays clean — but nothing is rebuilt from them either. The
+producer half of §18 exists for Highlights; the consumer half does not. A
+Highlight projection is a separate lane and is NOT claimed here.
+
+### 2. `HIDE_HIGHLIGHT` has no inverse, and the event stream says so
+
+§17 names `HIDE_HIGHLIGHT` and names no un-hide. `DELETE /highlights/:id/archive`
+is therefore still a direct write and not a command. The consequence is real
+rather than cosmetic: the stream can show a `highlight.hidden` with no matching
+reversal, so a §18 consumer replaying it arrives at a state the row is no longer
+in. Inventing `UNHIDE_HIGHLIGHT` to close the asymmetry would have put a command
+in the vocabulary that §17 does not define, which is the opposite of what a
+command boundary is for. The asymmetry is written into the route and asserted by
+a test instead of left as a silence.
+
+### 3. A live defect the wiring uncovered, fixed rather than carried
+
+`drainMemoryOutbox` read the projection scope BEFORE it looked at the event
+type: `readProjectionScope(sc, row.memory_id)`. Every outbox row used to have a
+Memory, so that was safe by accident. A Highlight row has `memory_id` NULL by
+construction, which makes the read `.eq("id", null)` against `memories` — and
+PostgREST answers an invalid uuid with an ERROR, not an empty result. The
+consumer would have classified it `memory_unavailable`, called
+`memory_outbox_fail`, and retried to the attempt ceiling: **a permanently stuck
+row, reported as a transient outage.**
+
+The fix is not a Highlight special case. The event type is now consulted first —
+it is the cheaper and more decisive question — and an unsubscribed event is
+acknowledged with no database read at all. The old ordering was wrong in
+general and had simply never been asked a question it could not answer.
+
+### Why none of this moves a verdict
+
+Every row here was already `W` or `BBW` under two independent gates —
+`memory_kernel_enabled` FALSE on production, and 2993 unapplied everywhere.
+These three findings sharpen what is and is not built behind those gates; none
+of them changes what a traveller meets today. **266 = 69 C / 136 W / 59 N / 2 X,
+unchanged.**
