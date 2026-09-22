@@ -7326,3 +7326,54 @@ generally stale. These two were tested by the same method and hold:
 | NOT-BUILT | 93 | **92** |
 | CONTRADICTED | 0 | 0 |
 | total | 296 | 296 |
+
+## §37 — the same code is `C` in census-sensing and `W` here, and that is a convention difference rather than an error
+
+NO VERDICT MOVES. Denominator unchanged at 296. This section exists because a
+reader combining these censuses into one percentage needs to know that the
+percentage mixes two conventions.
+
+§36 moved L276 to `W` on the ground that the consume limb is built but
+unreachable — `layover_live_intersection_enabled` has no row on production, so
+`isFlagEnabled` fails closed. That is this census's convention, set by L128 and
+L33: **built and OFF is `W`**.
+
+**census-sensing grades the very same code `C`.** Its S85 — "Layover Temporal
+Freedom Engine intersects feasibility with live Experience value, forecast,
+friction and safe-return" — was moved `W → C` in that document's §7, on the
+identical correction this census only just made:
+
+> The row's finding was `grep -rn liveClaimRead services/airport/` → nothing.
+> It reads it now…
+
+and that census states its rule in as many words, with the disagreement left
+open rather than hidden:
+
+> Under the convention §1–§5 used, code that is built, correct and behind a
+> FALSE flag is C with the ceiling stated, and S68, S70, S72 and S85 are graded
+> that way here. … A reader who applies the strict rule to the capability rows
+> as well should read S68, S70, S72 and S85 as W too; the distinction is stated
+> here rather than hidden so that disagreement is possible.
+
+### What follows, and what does not
+
+* **L276 stays `W`.** A row in this census is graded by this census's
+  convention, and L128 is the controlling in-census precedent. Re-grading it
+  `C` to match a different document would make this census disagree with
+  itself, which is worse than disagreeing with another one.
+* **S85 is not wrong.** It is `C` under a stated rule, in a document that names
+  the ceiling and invites the opposite reading. Nothing here asks for it to
+  move.
+* **The corpus headline mixes the two.** Any single percentage summed across
+  these documents counts flag-gated capability as correct in the sensing rows
+  and as not-correct in the layover rows. That is a property of the corpus, and
+  it is recorded here rather than silently normalised — normalising it would
+  move verdicts in one document to make another document's arithmetic tidier,
+  which is the opposite of measuring.
+
+### The useful half: census-sensing caught this first
+
+S85 was corrected in that document's §7 while L276 here still read "returns
+nothing". The two censuses describe one body of code and only one of them had
+re-tested it. That is an argument for the sweep §36 performed, not against it:
+the same method, run on the other document, had already found the same fact.
