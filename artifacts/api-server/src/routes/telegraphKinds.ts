@@ -196,6 +196,13 @@ router.post(
      * unbounded share wearing a timestamp, which is the thing §15.1 exists to
      * refuse.
      */
+    // ONE clock read for this request, derived from below. `splitClockGuard`
+    // refuses a handler that calls both `Date.now()` and a no-arg `new Date()`:
+    // two independent reads mean the expiry this route VALIDATED and the
+    // `created_at` it STORED can straddle a tick, and the share would be
+    // accepted against one instant and recorded against another.
+    const nowMs = Date.now();
+
     let locationShare: { expiresAt: string; precision: string; purpose: string | null } | null = null;
     if (validated.envelope.kind === "LOCATION") {
       const lp = (validated.envelope as any).payload as {
@@ -205,7 +212,6 @@ router.post(
       };
       if (typeof lp.expiresAt === "string" && lp.expiresAt.length > 0) {
         const endsMs = Date.parse(lp.expiresAt);
-        const nowMs = Date.now();
         if (!Number.isFinite(endsMs)) {
           sendError(res, "invalid_payload", "expiresAt must be an ISO timestamp");
           return;
@@ -236,7 +242,7 @@ router.post(
       return;
     }
 
-    const now = new Date().toISOString();
+    const now = new Date(nowMs).toISOString();
     const { data: msg, error: msgErr } = await client
       .from("messages")
       .insert({

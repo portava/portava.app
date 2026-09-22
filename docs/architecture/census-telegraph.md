@@ -1639,7 +1639,7 @@ asset is not a kind.
 | T60 | W | **C** | **Message kind SAFETY** — SAFETY is now a message KIND, not only a thread affordance: four classes (`check_in`, `heads_up`, `need_help`, `all_clear`), each landing in `subtype`, rendered with the class as a WORD and the §11.1 attention colour reserved for it (`travel-buddy-standalone/src/features/telegraph/__tests__/kinds.component.test.tsx:98`). |
 | T66 | N | **C** | **Content drawer: MEDIA / PLACES / PORTAVA / VOICE / GIFS / LINKS / FILES** — the seven tabs exist with counts, served by `GET /threads/:id/drawer` (`routes/telegraphKinds.ts:262`) and rendered by `travel-buddy-standalone/src/features/telegraph/drawer/ContentDrawerSheet.tsx:52#ContentDrawerSheet`. The dead-coded entry point is now a real control (`travel-buddy-standalone/app/messages/[id].tsx:1958#telegraph-open-content-drawer`). |
 | T67 | N `∅` | **C** | **The drawer is a structured index, not a second storage copy** — no longer an unguarded absence. The drawer exists and stores nothing: it classifies `messages` rows in memory (`services/telegraph/messageKinds.ts:316#drawerTabFor`), every id it returns is a `messages.id` that already existed, and the route writes nothing and declares `indexOnly: true` in its own response. |
-| T68 | N | **C** | **Object-aware search respects current authorization and unsent/deleted state** — `GET /threads/:id/search` (`routes/telegraphKinds.ts:327`) is member-gated, §14.3-bounded and tombstone-excluding, and matches on a typed object's HUMAN fields rather than on raw JSON (`services/telegraph/messageKinds.ts:371#searchableTextOf`). A deleted message is not findable by its exact text (`test/telegraphKinds.test.ts:531`). |
+| T68 | N | **C** | **Object-aware search respects current authorization and unsent/deleted state** — `GET /threads/:id/search` (`routes/telegraphKinds.ts:397#"/threads/:threadId/search",`) is member-gated, §14.3-bounded and tombstone-excluding, and matches on a typed object's HUMAN fields rather than on raw JSON (`services/telegraph/messageKinds.ts:371#searchableTextOf`). A deleted message is not findable by its exact text (`test/telegraphKinds.test.ts:531`). |
 | T47 | W | **W** | **Composer stays visually calm; rich actions live behind a `+` menu** — the menu now names all EIGHT of §6.1's entries instead of two (`travel-buddy-standalone/src/features/telegraph/composer/composerMenu.ts:48#COMPOSER_ENTRIES`), and an entry that cannot complete states its reason INLINE rather than being hidden. Five of eight are operable (Camera, Photos, Video, Location, Memory Note); GIF has no provider, Voice has no audio asset type, and Portava has no in-composer object picker. Two of eight became five of eight — better, not done. |
 | T53 | N | **N** | **Message kind VOICE** — deliberately NOT moved. It is now REFUSED by name with the constraint that blocks it (`services/telegraph/messageKinds.ts:204#UNSENDABLE_KINDS`), which is honest, but a refusal is not a kind. It needs a migration widening `messages.media_type` and an audio MIME in `lib/mediaPipeline.ts:75`. |
 | T63 | N | **N** | **Voice: waveform, seek, playback speed, optional transcript/translation** — unchanged. There are no voice messages to play. |
@@ -8258,7 +8258,7 @@ the first of them.
 | T168 | N | **C** | **§13.1 `CREATE_COORDINATION_SESSION`.** One command, TWO doors, ONE writer: `POST /api/threads/:id/coordination` with kind `COORDINATION_SESSION` and `POST /api/telegraph/commands` with type `CREATE_COORDINATION_SESSION` (`server/telegraph/commandRoute.ts:169#    if (type === "CREATE_COORDINATION_SESSION") {`) both call `createCoordinationSession` (`services/telegraph/coordinationSessions.ts:151#export async function createCoordinationSession`). Two handlers would have drifted on the idempotency rule, which is the one thing here that is easy to get slightly different and impossible to notice. It is the ONE §13.1 command on that bus that needs no unapplied schema, so the kernel gate is now per-command rather than per-endpoint (`domain/telegraph/commands/telegraphCommands.ts:107#export const SCHEMA_GATED_COMMANDS`) — gating it behind `telegraph_message_kernel_enabled`, seeded FALSE on every deployment, would have made a live capability unreachable. `UNIMPLEMENTED_COMMANDS` is now empty and the 501 branch is kept for the next §13.1 command that arrives unbuilt. |
 | T187 | N | **C** | **§13.2 `availability.started`.** In the union and published by `PATCH /api/me/quick-availability` (`routes/availability.ts:200#  emitAvailabilityStarted(user.id, {`) through a dedicated emitter (`lib/telegraphEvents.ts:798#export function emitAvailabilityStarted`) whose signature has no parameter that could carry a thread id or a second recipient. **Owner-only, and that is the design**: who else may see a person's availability is §4's question, answered by the gates those routes already run, and a realtime bus must not route around them. The owner's other devices are the audience that needs it — §4.3's revocation begins when the signal starts, and a device that missed the start expires nothing. The same rule `emitDeliveryReceipt` applies to `message.delivered`, for the same reason. |
 | T188 | N | **C** | **§13.2 `availability.expired`.** Fired by a real mechanism, not implied by a timestamp: `services/telegraph/lifecycleSweep.ts:96#export async function sweepExpiredAvailability` DELETEs the rows whose window closed and emits one event per row the delete RETURNED, which makes it exactly-once across instances and unreplayable across restarts. The row was already invisible to every reader past `expires_at`, so the delete removes data nothing was allowed to show. `expiredAt` is the signal's OWN expiry and `sweptAt` is the clock, so a late sweep is visible as lag rather than reported as a longer disclosure than happened. Lazy-on-read is UNCHANGED and is the other half: the sweep makes the event fire, the read keeps the answer right. |
-| T189 | N | **C** | **§13.2 `location.started`.** §12 asks `location_shares` to be "purpose/audience/precision/expiry scoped"; precision was already on §6.2's LOCATION payload and the audience is the conversation, so this adds the other two and the event that starts the clock (`routes/telegraphKinds.ts:297#      void emitLocationStarted(client, threadId, {`). An `expiresAt` is what makes a share a SHARE rather than a pin — a pin has no lifecycle and emits nothing — and the route refuses one already in the past (it could never be taken down) or beyond `MAX_LOCATION_SHARE_HOURS` (`services/telegraph/messageKinds.ts:141#export const MAX_LOCATION_SHARE_HOURS`), which is §15.1's bound rather than an unbounded capability wearing a timestamp. `purpose` names an id the canonical registry publishes (`services/telegraph/messageKinds.ts:85#export const TELEGRAPH_SHARE_PURPOSES`), asserted against `lib/locationPurposes.ts` by a test, because a purpose field validated against nothing is how a purpose field stops meaning anything. The event carries NO coordinate. |
+| T189 | N | **C** | **§13.2 `location.started`.** §12 asks `location_shares` to be "purpose/audience/precision/expiry scoped"; precision was already on §6.2's LOCATION payload and the audience is the conversation, so this adds the other two and the event that starts the clock (`routes/telegraphKinds.ts:303#      void emitLocationStarted(client, threadId, {`). An `expiresAt` is what makes a share a SHARE rather than a pin — a pin has no lifecycle and emits nothing — and the route refuses one already in the past (it could never be taken down) or beyond `MAX_LOCATION_SHARE_HOURS` (`services/telegraph/messageKinds.ts:141#export const MAX_LOCATION_SHARE_HOURS`), which is §15.1's bound rather than an unbounded capability wearing a timestamp. `purpose` names an id the canonical registry publishes (`services/telegraph/messageKinds.ts:85#export const TELEGRAPH_SHARE_PURPOSES`), asserted against `lib/locationPurposes.ts` by a test, because a purpose field validated against nothing is how a purpose field stops meaning anything. The event carries NO coordinate. |
 | T190 | N | **C** | **§13.2 `location.expired`.** `services/telegraph/lifecycleSweep.ts:197#export async function sweepExpiredLocationShares`, on the same five-minute tick, over the half-open window §31.3 describes. Published to the whole conversation and the owner is NOT excluded — nobody performed this event, a clock did, and the sharer's own screen is the one most likely still showing it live. At-least-once bounded by one interval, stated rather than glossed, with a stable `eventKey` so a consumer can be idempotent (`lib/telegraphEvents.ts:875#export async function emitLocationExpired`). |
 | T191 | N | **C** | **§13.2 `coordination.started`.** Published when a session opens and NOT when a retry resolves to one (`lib/telegraphEvents.ts:888#export async function emitCoordinationStarted`) — a duplicate command is not a second evening. To the conversation, opener included: a session event that excluded the actor would leave the one device certainly showing the panel without the fact that opened it. |
 | T192 | N | **C** | **§13.2 `coordination.completed`.** Emitted from the ARROW the gate just accepted rather than from a re-read, so a REFUSED transition cannot fire it, and on BOTH of §9's terminal states with `terminalState` naming which (`lib/telegraphEvents.ts:912#export async function emitCoordinationCompleted`). See §31.4 for why one event covering two terminal states is the right reading of §13.2 and why collapsing them would not be. |
@@ -8328,22 +8328,20 @@ each has a reason that is not this lane's to remove:
 | T106 | *Active UI: minimal conversation, next step, crew state, optional location scope.* The location-scope half moved: a scoped in-thread share with a purpose, a precision and an expiry is now expressible and observable (T189/T190), which is the first time "optional location scope" has had a referent inside a conversation rather than on a separate screen. Crew state is the declared-status list and is now correctly bounded to CURRENT members (§31.4). "Minimal conversation" is expressible through §21.2's layers. **There is still no next-step surface, and nothing DRAWS any of it** — the same reason T11, T12 and T218 stay W, and this lane holds no client file. |
 | T107 | *Returning UI: heading back, Safe Return, shared transport, return checkpoint.* Unchanged. Heading-back is a declared state and the return checkpoint is a RENDEZVOUS; Safe Return is still its own subsystem rather than a conversation state, and shared transport does not exist. Nothing this lane built touches either half. |
 
-### 31.9 Every mutation, and the two that did NOT land
+### 31.9 Every mutation, and the four measurements that were not what they looked like
 
-Thirty-four mutations were run across three suites. Thirty-two landed; the two
-that did not are the ones worth reading, and one of them found an untested gate.
+Thirty-four mutations were run across three suites. **Thirty-three land. One
+does not, and that one was re-derived rather than written off as redundant.**
+Three of the thirty-three did not land on FIRST measurement, and in each case
+the TEST was wrong rather than the code — which is the whole reason for running
+them, and the ratio is the argument.
 
-**A third mutation did not land on first measurement and the test was wrong, not
-the code.** Deleting the DELETE's own `error` check stayed green because the
-fake injected on the TABLE: the candidate SELECT failed first and the sweep
-returned on that, so the second check was never reached. A case was added that
-fails only the DELETE, and the two error checks are now separately pinned —
-28/1 each. The re-armed-signal case failed the same way for a different reason:
-the fake re-armed the row BEFORE the SELECT read it, so the row never entered
-the candidate list and the test passed for the wrong reason. Moved to after the
-read, it fails 25/3 on the mutation it was written for. **Three of the
-thirty-four mutations exposed a hollow assertion; that ratio is the argument for
-running them.**
+| mutation | first measurement | what it found | after |
+|---|---|---|---|
+| the VIEWER-side crew gate removed (Discover Together) | GREEN | every fixture had the viewer as accepted crew, and the only non-trip case short-circuits earlier — the gate on somebody else's availability was UNTESTED | a case was added: a viewer on the thread roster who has left the trip. 10/1 |
+| the DELETE's own `error` check deleted (availability sweep) | GREEN | the fake injected on the TABLE, so the candidate SELECT failed first and the sweep returned on that — the second check was never reached | a case that fails ONLY the delete. The two checks are now separately pinned, 28/1 each |
+| the DELETE's expiry predicate dropped (availability sweep) | 25/2 | it landed on the two shape tests but NOT on the race it exists for: the fake re-armed the row BEFORE the SELECT read it, so the row never entered the candidate list and the test passed for the wrong reason | the re-arm moved to after the read. 25/3 |
+| the `ctx.tripId &&` term removed (Discover Together) | GREEN | **nothing. It is genuinely behaviour- and read-equivalent** — `isAcceptedTripMember` cannot pass with a null trip id, because `requireTripMember` falls through to a `trips` lookup on a null id and finds nothing. A saved pair of reads on every DM, not a gate | the test says that in place of a claim it cannot support. Still green, and recorded as green |
 
 **Coordination lifecycle** — `telegraphCoordinationLifecycle.test.ts` with
 `telegraphCoordination.test.ts` and `telegraphCommandRoute.test.ts`:
@@ -8392,24 +8390,8 @@ running them.**
 | an unreadable availability table folded into an empty set | pass 9 / fail 1 |
 | a crew-read throw reported as entitled | pass 9 / fail 1 |
 | the time window ignored | pass 9 / fail 1 |
-| **the VIEWER-side crew gate removed** | **pass 10 / fail 0 — GREEN**, then 10/1 after a case was added |
-| **the `ctx.tripId &&` term removed** | **pass 10 / fail 0 — GREEN, and it stayed green** |
-
-The two greens are different findings and collapsing them would lose one.
-
-The viewer-side crew gate was **UNTESTED, not redundant**. Every fixture had the
-viewer as accepted crew, and the only non-trip case short-circuits before
-reaching the gate — so the mutation was never exercised. A case was added, a
-viewer who is on the thread roster and has LEFT the trip, and the same mutation
-then fails 10/1. That is a gate on somebody else's availability, and it had no
-test.
-
-The `ctx.tripId &&` term is **genuinely behaviour- and read-equivalent**, and
-that was re-derived rather than assumed before saying so: `isAcceptedTripMember`
-cannot pass with a null trip id, because `requireTripMember` falls through to a
-`trips` lookup on a null id and finds nothing, so neither the answer nor the
-availability read changes. It is a saved pair of reads on every DM, not a gate.
-The test says that in place of a claim it cannot support.
+| the VIEWER-side crew gate removed | pass 10 / fail 1 (after the case above was added; GREEN before it) |
+| the `ctx.tripId &&` term removed | pass 11 / fail 0 — GREEN, and it stays green; see the table at the top of §31.9 |
 
 ### 31.10 Tests, shown red first
 
@@ -8425,6 +8407,14 @@ assertion can fail rather than this sentence.
 `telegraphSharedContext.test.ts` 40/40, `availability.test.ts`,
 `telegraphKinds.test.ts` and `passportSharedContext.test.ts` 79/79 combined —
 all unchanged by this lane except one deliberate edit, below.
+
+**One invariant the full suite caught and this lane had broken.**
+`splitClockGuard.test.ts` refuses a function that calls both `Date.now()` and a
+no-arg `new Date()`, and the typed-message route did after the location-share
+validation landed: two independent clock reads mean the expiry this route
+VALIDATED and the `created_at` it STORED can straddle a tick, so a share could
+be accepted against one instant and recorded against another. One read is now
+taken at the top of the handler and everything derives from it. 24076/24076.
 
 **One existing test was rewritten and the rewrite is a strengthening.**
 `telegraphCommandRoute.test.ts` asserted that `CREATE_COORDINATION_SESSION`
