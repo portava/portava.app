@@ -90,7 +90,7 @@ are files, tables, routes, event types and literals, each re-derived on every ru
 | `src/routes/telegraphLifecycle.ts` | 3 | message_thread_members, messages |
 | `src/routes/telegraphMemory.ts` | 2 | message_thread_members, messages, saved_messages |
 | `src/routes/telegraphShare.ts` | 2 | message_thread_members, message_threads, messages |
-| `src/routes/telegraphSharedContext.ts` | 3 | message_thread_members, message_threads |
+| `src/routes/telegraphSharedContext.ts` | 4 | message_thread_members, message_threads |
 | `src/routes/telegraphStream.ts` | 2 | message_thread_members, messages |
 | `src/routes/telegraphVoice.ts` | 2 | message_threads, messages |
 
