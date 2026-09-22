@@ -3740,3 +3740,50 @@ CONSTRUCTED% is unchanged from §8 because C+W is unchanged: the five rows moved
 WITHIN the built population on a posture decision, nothing was newly built. And
 **81.1 % is not a claim that Sensing observes anything** — the four blockers listed
 above still stand, three of which are not code.
+
+---
+
+## §12 S103's evidence line, corrected — the verdict does not move
+
+Re-read on 2026-09-22 as a READING, not a regrade. **S103 stays `C`** and so does
+its cross-listed partner `TRV2-03` in census-trust. No headline table is restated
+here, deliberately: `check:census-integrity` reads the LAST such block as the
+document's claim, and §11's numbers are still exactly right.
+
+**What the row gets wrong.** §10's S103 entry says the pipeline sits *"behind
+2803's FALSE flag and requireAdmin"*. The `requireAdmin` half is right. The flag
+half is right about portava-ci and **wrong about production**, probed directly
+rather than read out of a ledger — the rule §4 exists to enforce:
+
+| project | `intel_safety_candidates_enabled` |
+|---|---|
+| portava-ci `hwokxgbmezheskbzskfr` | `false` — 2803 applied |
+| production `ajrurzioarfkagpuxfnb` | **no row at all** — 2803 not applied |
+
+2803's only statement is one `INSERT` into `feature_flags`, so an absent row is
+the whole of its absence; there are no other objects that could disagree.
+
+**Why the verdict does not move on that.** `isFlagEnabled` answers false for an
+absent row and for a `FALSE` row alike, so `POST /api/admin/intel/safety-candidates/scan`
+returns `feature_disabled` in both environments. The behaviour S103 grades is
+identical. What changes is the sentence: *"seeded FALSE"* describes a deliberate
+off-switch that production does not have, and an owner planning the enablement
+would go looking for a flag to flip and find nothing to flip.
+
+**What the re-read confirmed rather than changed.** The two stages S103's earlier
+`BW` said were missing are real and reachable, checked by reading the tree and not
+by trusting the row: `lib/safetyCandidate.ts` exists, `routes/adminSafetyCandidates.ts`
+declares the scan, and the router **is** mounted — `routes/index.ts` imports it and
+`router.use`s it. So this is not the T212 shape (a module with no production
+importer). The handler's gate order is `requireAdmin` → service client → flag →
+payload → `liveLabelsServable`, each failing closed.
+
+**And the limit, said here rather than left to be inferred.** Nothing in the tree
+calls the scan or `listSweepSubjects` except the route itself — no scheduler, no
+cron, no job. The only way anything enters this pipeline is an admin pressing it,
+and in production nothing ever has, because 2803 has not been applied there. S103's
+`C` is a verdict about the code being complete and connected, which it is. It is
+not a claim that a single safety candidate has ever been filed. That distinction is
+the same one this corpus applied to T240/T242 (a field in a migration no database
+has run) and the one Q5's ruling states as a rule: a service with no production
+caller is not completion.

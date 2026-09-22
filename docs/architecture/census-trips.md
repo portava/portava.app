@@ -5047,7 +5047,7 @@ re-derives and cites rather than argues.
   file can say.
 - **§24 the CI gate** — `src/scripts/checkTripDecisionDiff.ts:39#--update`
   is `check:trip-decision-diff`, in `check:all`
-  (`artifacts/api-server/scripts/run-all-checks.sh:241#check:trip-decision-diff`):
+  (`artifacts/api-server/scripts/run-all-checks.sh:264#check:trip-decision-diff`):
   exit 1 with the classified report when a decision moved, exit 2 when it
   cannot run. `golden.json` is the tree's record with the note that explains
   its last change. The test (`src/test/tripDecisionDiff.test.ts:102#mutation`)
@@ -5190,7 +5190,7 @@ a file naming `trip_crew_map_enabled` (ON in production) and reading
 kernel-era tables — so the crew half of the pulse is its own module, as
 §43 did for the opportunity projection
 (`domain/trips/projections/TripPulseCrewPresence.ts:37#readCrewPresenceForPulse`).
-Two guards were unregistered (`src/scripts/guardRegistry.ts:624#checkTripDecisionDiff`),
+Two guards were unregistered (`src/scripts/guardRegistry.ts:630#checkTripDecisionDiff`),
 and this census watched 77 % of the files it cites against an 86 % floor:
 the kernel-era migrations, their rollbacks, the database suites, the trip
 guards and the trip test files are in scope now — 90 % — and every one of
