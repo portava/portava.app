@@ -7178,3 +7178,51 @@ that Cloud project, and calls are billed per request with no spend ceiling
 anywhere in this repository. The provider therefore refuses unless BOTH
 `LAYOVER_ROUTED_CORRIDOR_ENABLED` is affirmative AND a key is present. Wiring
 can land without enabling. Enabling is the owner's, and it costs money.
+
+## §35 — 2026-09-22 (integration): §32's reason for L269 is false; the verdict and the flag are unchanged
+
+NO VERDICT MOVES. Denominator unchanged at 296. L269 stays `W` and
+`layover_discovery_mode_enabled` stays FALSE on production. What is corrected is
+the REASON §32 gave for not verifying the deployed consumer, because it asserts
+something about this repository that is not true.
+
+**§32 says, in as many words:** *"this session has no API base URL or credential
+with which to probe the deployed build"*.
+
+**The API base URL is in the repository.** All three EAS build profiles set it,
+to the same host:
+
+`travel-buddy-standalone/eas.json:10#"EXPO_PUBLIC_API_BASE_URL": "https://portava.replit.app",`
+
+That is the base the shipped client is built against, so it is the deployed API
+by the client's own configuration. §32 did not look, and wrote the absence of a
+search as the absence of a fact — the same defect this census has now recorded
+three times (§25 against §24.6, §32 against §24.6 again, §34 against six N rows).
+
+**The verification is still blocked, for a DIFFERENT and honest reason.** A
+read-only `GET https://portava.replit.app/healthz` from this session is refused
+before it leaves the machine:
+
+```
+curl: (56) CONNECT tunnel failed, response 403
+```
+
+The environment's outbound network policy denies CONNECT to that host — the
+agent proxy's own status endpoint records the denial as
+`connect_rejected: gateway answered 403 to CONNECT (policy denial or upstream
+failure)`. That is a property of where this session runs, not of the repository,
+and it is not something to be worked around: the proxy exists to enforce that
+policy.
+
+**So the classification changes and the conclusion does not.** The blocker is
+not "nobody knows the URL" (false) and not "the code is not written" (also
+false — the server gate is built and on `main`, the flag row is seeded FALSE by
+2971, and `LayoverDiscoveryCard` is mounted at
+`travel-buddy-standalone/app/layover/[id].tsx:834#<LayoverDiscoveryCard`). It is
+that **no probe of the deployed build is reachable from this session**, so
+whether the running API carries the gate is UNKNOWN here.
+
+Enabling the flag on an unknown build would narrow what a traveller is shown on
+the strength of code nobody has confirmed is running. The flag stays off. The
+remaining step is an owner's or a deploy environment's, not this session's, and
+it is a DEPLOYMENT VERIFICATION gap — correctly classified, not relabelled.
