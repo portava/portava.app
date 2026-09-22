@@ -93,6 +93,14 @@ const LEGACY_SIDE = new Set([
   // read of the projection family's log, and it is the case that would catch a
   // PLACE-only body. PROJECTION-side; names memory_domain_events nowhere.
   "test/db/memoryProjectorPlaceLane.db.test.ts",
+  // The contract suite for 2320, classified with the migration it proves.
+  // PROJECTION-side for the same reason 2320 is: it asserts that the widened
+  // erase_memory_for_user still purges the three tables it purged before,
+  // public.memory_events among them, so the account-deletion cascade cannot be
+  // narrowed by the widening. Its fixture evidence row also names memory_events
+  // as a source_table, which is what the spine records provenance ABOUT. It
+  // names memory_domain_events nowhere — the §17 command kernel is untouched.
+  "test/memoryEpisodeContract.test.ts",
   "lib/deletionDispositions.ts",
   "lib/memoryProjectionScheduler.ts",
   "services/accountDeletion/AccountDeletionService.ts",
