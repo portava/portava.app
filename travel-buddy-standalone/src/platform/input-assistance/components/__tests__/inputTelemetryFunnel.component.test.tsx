@@ -70,6 +70,18 @@ import {
 } from '../../services/inputTelemetry.ts';
 import type { InputSuggestion } from '../../types/inputSuggestion.ts';
 
+// ── SEEDED 2026-09-21 (G340) ────────────────────────────────────────────────
+// `useInputAssistance` derives its policy from the context descriptor, which
+// since G340 comes from `GET /input-assistance/policies` rather than a local
+// table. With nothing fetched every context resolves CONSERVATIVE — mode
+// `no_assistance`, an unreachable `minChars` — so the hook correctly makes no
+// request and renders no rows, and every assertion below about suggestions
+// would be vacuous. Seeding states the premise these tests always relied on.
+import { INPUT_CONTEXTS as _SEED_CONTEXTS } from '../../types/inputContext.ts';
+import { _seedPolicyForTests as _seedPolicy } from '../../services/policyStore.ts';
+_seedPolicy(_SEED_CONTEXTS);
+
+
 const mockRequest = requestSuggestions as jest.MockedFunction<typeof requestSuggestions>;
 const FIELD = 'test.telemetry.search';
 
