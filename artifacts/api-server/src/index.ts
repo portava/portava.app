@@ -45,6 +45,7 @@ import { startAccountDeletionScheduler } from "./lib/accountDeletionScheduler.js
 import { startLocationSnapshotPurgeScheduler } from "./lib/locationSnapshotPurgeScheduler.js";
 import { startIntelRetentionScheduler } from "./lib/intelRetentionScheduler.js";
 import { startSensingRetentionScheduler } from "./lib/sensingRetentionScheduler.js";
+import { startLayoverCrewExpiryScheduler } from "./lib/layoverCrewExpiryScheduler.js";
 import { startIntelProjectionScheduler } from "./lib/intelProjectionScheduler.js";
 import { startTelegraphLifecycleScheduler } from "./server/telegraph/lifecycleScheduler.js";
 import { startIntelPromotionScheduler } from "./lib/intelPromotionScheduler.js";
@@ -148,6 +149,13 @@ app.listen(port, (err) => {
   // table and never calls the RPC where 2315 is not applied, which today means
   // production, where this is an inert heartbeat.
   startSensingRetentionScheduler();
+  // Layover crew expiry (L196). Placed here, beside the other schema-gated
+  // retention sweep, because it behaves the same way: it probes for 2984's
+  // tables and issues no DELETE where they are absent, so on a database
+  // without 2984 it is an inert heartbeat rather than a failure. Its 10-minute
+  // startup delay sits just after the sensing sweep's 9 deliberately, so the
+  // two retention passes do not contend on boot.
+  startLayoverCrewExpiryScheduler();
   startIntelPromotionScheduler();
   startIntelProjectionScheduler();
   // Telegraph §13.2's two expiry events. §4.3 says availability "expires

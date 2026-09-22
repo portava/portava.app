@@ -1074,7 +1074,7 @@ the undecided decision. **S21**, **S28**, **S29** and **S32** stay as they
 are: on-device reduction, the nine device features, acoustic capture and the
 signal ingest are decisions #1, #2 and #6, and this lane does not take them.
 **S26** stays W: the anonymous half is closed (72 h structural, the sweep
-registered at `src/index.ts:150#startSensingRetentionScheduler();`) and the
+registered at `src/index.ts:151#startSensingRetentionScheduler();`) and the
 intel raw purge is behind `intel_contribution_retention_enabled`, FALSE in
 production, at 180 days. **S3** and **S106** stay W: `src/presence/domain/`
 is unchanged since Phase 0 — types and a transport interface, no store, no

@@ -2040,7 +2040,7 @@ through the Compass feed, the prompt context lines and `lib/discoveryModifiers.t
 tables are in the committed production schema snapshot. The rebuild is **not** on-demand: it
 runs daily from
 `artifacts/api-server/src/lib/intelligenceGraphScheduler.ts:30#REBUILD_INTERVAL_MS`, started at
-boot by `artifacts/api-server/src/index.ts:129#startIntelligenceGraphScheduler`.
+boot by `artifacts/api-server/src/index.ts:130#startIntelligenceGraphScheduler`.
 
 **Defect 1 — §28.10, eligibility.** The gate was `state = 'published' AND visibility <>
 'only_me'`. `memories.visibility` is a **six**-rung ladder, so `<> 'only_me'` admitted four
