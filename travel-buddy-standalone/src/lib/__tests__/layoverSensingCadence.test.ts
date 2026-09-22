@@ -91,22 +91,8 @@ test('no cadence ever permits continuous location sensing', () => {
   }
 });
 
-/**
- * §17.1 L164 — THE PROHIBITION, GUARDED.
- *
- * The census records L164 as `N ∅`: "unguarded absence". Layover asks for no
- * location permission anywhere, which is what the requirement wants, and
- * nothing stopped the next pass from adding one. This is that guard. It is a
- * source scan rather than a runtime assertion because the failure it prevents
- * is an IMPORT: the moment `expo-location` appears on this surface, a prompt is
- * one call away and it will fire because Layover exists rather than because a
- * traveller turned something on.
- *
- * If live return assistance is ever built, this test is the place the decision
- * gets made explicitly — by changing it, with the rationale-sheet requirement
- * (L165, already built for notifications) applied to location too.
- */
-test('the layover surface imports no location API at all', () => {
+/** The files the two prohibition scans below both cover. */
+function layoverSurfaceFiles(): string[] {
   const root = new URL('../../..', import.meta.url).pathname;
   const roots = [
     join(root, 'src/components/layover'),
@@ -126,7 +112,26 @@ test('the layover surface imports no location API at all', () => {
     }
   };
   for (const r of roots) walk(r);
+  return files;
+}
 
+/**
+ * §17.1 L164 — THE PROHIBITION, GUARDED.
+ *
+ * The census records L164 as `N ∅`: "unguarded absence". Layover asks for no
+ * location permission anywhere, which is what the requirement wants, and
+ * nothing stopped the next pass from adding one. This is that guard. It is a
+ * source scan rather than a runtime assertion because the failure it prevents
+ * is an IMPORT: the moment `expo-location` appears on this surface, a prompt is
+ * one call away and it will fire because Layover exists rather than because a
+ * traveller turned something on.
+ *
+ * If live return assistance is ever built, this test is the place the decision
+ * gets made explicitly — by changing it, with the rationale-sheet requirement
+ * (L165, already built for notifications) applied to location too.
+ */
+test('the layover surface imports no location API at all', () => {
+  const files = layoverSurfaceFiles();
   const offenders: string[] = [];
   for (const f of files) {
     const src = readFileSync(f, 'utf8');
@@ -140,5 +145,28 @@ test('the layover surface imports no location API at all', () => {
   assert.deepEqual(offenders, [], offenders.join('\n'));
   // The scan must actually have looked at something — a walk that found no
   // files would pass vacuously.
+  assert.ok(files.length > 15, `only ${files.length} files scanned`);
+});
+
+/**
+ * §17.1 L168 — "photos/contacts not required for core safety operation",
+ * recorded as `N ∅`: unguarded absence. Same guard, same argument as L164. The
+ * layover surface renders avatars through `CachedImage`, which is display and
+ * not access; what must never appear is a PICKER or a contacts read, because
+ * either one makes a permission prompt part of getting back to a plane.
+ */
+test('the layover surface asks for no photos and no contacts', () => {
+  const files = layoverSurfaceFiles();
+  const offenders: string[] = [];
+  for (const f of files) {
+    const src = readFileSync(f, 'utf8');
+    if (/from ['"]expo-(image-picker|contacts|camera|media-library)['"]/.test(src)) {
+      offenders.push(`${f}: imports a photo/contacts module`);
+    }
+    if (/launchImageLibraryAsync|launchCameraAsync|getContactsAsync/.test(src)) {
+      offenders.push(`${f}: calls a photo/contacts API`);
+    }
+  }
+  assert.deepEqual(offenders, [], offenders.join('\n'));
   assert.ok(files.length > 15, `only ${files.length} files scanned`);
 });

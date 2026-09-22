@@ -63,7 +63,7 @@ performed by this lane**: everything below is implementation verification.
 | L158 | N | N | Same. |
 | L164 | N (`∅`) | N — **now guarded** | The absence was unguarded; it is now pinned by a source scan over the whole layover surface (`src/lib/__tests__/layoverSensingCadence.test.ts:107`). Verdict unchanged; the `∅` marker should go. |
 | L166 | N | N | No precise sharing exists to control. |
-| L168 | N (`∅`) | N | Photos/contacts are untouched by this lane; the unguarded absence stands, and the scan added for L164 covers location APIs only. |
+| L168 | N (`∅`) | N — **now guarded** | Same scan, second case: no `expo-image-picker` / `expo-contacts` / `expo-camera` / `expo-media-library` import and no picker or contacts call anywhere on the surface (`src/lib/__tests__/layoverSensingCadence.test.ts:167`). Verdict unchanged; the `∅` should go. |
 | L187 | W | W | The presence record's fields do not exist server-side. |
 | **Sensing cadence and permission prompts** ||||
 | L157 | W | W | The adaptive half now exists on the only loop this surface has: the overview re-read follows the certified rung (`src/lib/layoverSensingCadence.ts:74`, wired `app/layover/[id].tsx:201`). Still W — no location sensing exists, so the server's `sensingPolicy` governs nothing and is published on no route. |
@@ -154,6 +154,7 @@ symlink is untracked.
 | `npm test` (node:test runner, 813 suites) | `# tests 6616 # pass 6616 # fail 0` |
 | `npm run check:route-registry` | OK — 199 screens, 9 layouts |
 | `npx jest --forceExit 'layoverDashboard\|layover/__tests__\|CanILeave\|LayoverMap\|layoverPlanCache'` | `Test Suites: 2 failed, 25 passed, 27 total` / `Tests: 171 passed, 171 total` |
+| `npm run test:component` (jest native + `jest -c jest.web.config.js`) | `Test Suites: 617 passed, 617 total` / `Tests: 3902 passed, 3902 total`, then `3 passed` / `8 passed` on the web config, `EXIT=0` |
 
 The two "failed" suites are `layoverLocalReplan.test.ts` and
 `layoverReturnFacts.test.ts`: node:test files that jest's `testMatch` picks up
@@ -170,6 +171,12 @@ under `npm test` and the behaviour predates this lane.
 | `layoverDashboard.cachedPlan.component.test.tsx` | `Tests: 3 failed, 2 passed` — the cache-absent and session-gone negatives already passed | `7 passed` |
 | `layoverSensingCadence.test.ts` | `# pass 0 # fail 1` — module did not resolve | `# tests 7 # pass 7` |
 | `layoverDashboard.refreshCadence.component.test.tsx` | `Tests: 1 failed, 1 passed` — RETURN_NOW failed at `Expected: > 1 / Received: 1` while the NORMAL regression case passed | `2 passed` |
+
+The L164/L168 guards were themselves watched RED: dropping a file importing
+`expo-location` into `src/components/layover/` turned case 7 into
+`not ok 7 ... __probe_location.ts: imports expo-location`; the probe was then
+deleted and the suite returned to `# pass 8`. A prohibition guard that cannot
+fail is not a guard.
 
 A bug the RED/GREEN cycle caught: once both caches were seeded, dashboard case 3
 matched `/Last certified \d+ min ago/` twice (deadline card and plan card). The
