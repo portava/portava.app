@@ -83,7 +83,15 @@
  *     state for a command to move out of. See MEMORY_COMMAND_TYPES_NOT_DECLARED.
  *   * SET_RESURFACING_POLICY (§17) is NOT declared: its subject is not one
  *     aggregate. See MEMORY_COMMAND_TYPES_NOT_DECLARED for the measurement.
- *   * No SECOND event stream. PIN/UNPIN/HIDE_HIGHLIGHT write into the SAME
+ *   * UNHIDE_HIGHLIGHT IS declared, as an EXT, and it is the one thing on this
+ *     list that CHANGED rather than being restated. §17 names no inverse of
+ *     HIDE_HIGHLIGHT; §21 requires Archive to be reversible and §17's first
+ *     sentence requires every canonical write to cross this boundary, so the
+ *     inverse is a command whether or not §17 named it. Declaring it as an
+ *     extension is the same move UPDATE_MEMORY is declared under. See the
+ *     entry in MEMORY_COMMAND_TYPES for the measurement of what the direct
+ *     write cost.
+ *   * No SECOND event stream. PIN/UNPIN/HIDE/UNHIDE_HIGHLIGHT write into the SAME
  *     four tables as the Memory commands, keyed on the `highlight_id` column
  *     migration 2993 adds beside `memory_id`. §17 lists one outbox and one
  *     vocabulary of fourteen event names, five of them `highlight.*`; 2710
@@ -95,12 +103,18 @@
  *     is deliberately not flag-gated, because the PRODUCER is — an outbox row
  *     can only exist if a kernel function wrote it. It claims rows via
  *     public.memory_outbox_claim, rebuilds the §18 projections each
- *     `memory.*` event invalidates, and acks. What is still NOT built is a
- *     projection worker for the `highlight.*` half: those events drain and are
- *     acked with the class `unsubscribed_event_type`, because no §18
- *     projection in projectionRegistry.ts is keyed on a Highlight. So the rows
- *     move and nothing is stranded; nothing is rebuilt from them either, and
- *     the code says which of the two it is rather than implying the first.
+ *     `memory.*` event invalidates, and acks. THE `highlight.*` HALF NOW HAS A
+ *     SUBSCRIBER TOO, which is the second thing on this list that changed: the
+ *     paragraph here used to read "What is still NOT built is a projection
+ *     worker for the `highlight.*` half … because no §18 projection in
+ *     projectionRegistry.ts is keyed on a Highlight." §18's
+ *     ProfileHighlightProjection now declares `highlights` among its source
+ *     tables and all five `highlight.*` names subscribe to it
+ *     (services/memoryProjections/outboxConsumer.ts
+ *     HIGHLIGHT_EVENT_PROJECTIONS). What is STILL true is that the claim
+ *     function is 2994's and the `highlight_id` column is 2993's, and neither
+ *     migration is applied anywhere — so on every live database the pass
+ *     claims nothing and none of this runs.
  *   * No aggregate version / optimistic concurrency (§19 H178). `memories` has
  *     no `current_version` column (§3.1) and adding one is a separate change.
  */
@@ -331,6 +345,41 @@ export const MEMORY_COMMAND_TYPES = [
   "HIDE_HIGHLIGHT",     // §17 — highlights.archived_at = now(); §21's
                         //       REVERSIBLE hide. deleted_at is terminal and is
                         //       a different operation, not this one.
+  "UNHIDE_HIGHLIGHT",   // EXT — highlights.archived_at = null.
+                        //
+                        // WHY AN EXT NAME IS RIGHT HERE AND AN INVENTED §17
+                        // NAME WOULD NOT BE. §17 lists HIDE_HIGHLIGHT and
+                        // names no inverse of it, and it lists PIN_HIGHLIGHT
+                        // and UNPIN_HIGHLIGHT as a pair — so the omission is
+                        // an asymmetry in §17, not a statement that Archive is
+                        // one-way. §21 settles it: "Delete, archive,
+                        // do-not-resurface … are different operations", and
+                        // what makes Archive an archive rather than a second
+                        // delete is that it can be undone. The undo is
+                        // therefore a canonical write, and §17's first
+                        // sentence — "ALL canonical writes should cross an
+                        // explicit command boundary" — applies to it whether
+                        // or not §17 gave it a name.
+                        //
+                        // MEASURED BEFORE DECLARING IT. `DELETE /highlights/
+                        // :id/archive` was a bare `.update({ archived_at:
+                        // null })`: no command id, no idempotency key, no
+                        // audit row, no sequence, no event. The event log's
+                        // last word on a hidden-then-unhidden Highlight was
+                        // `highlight.hidden` while the row was visible, so a
+                        // §18 consumer rebuilding from the log withheld a
+                        // Highlight its owner had restored — permanently,
+                        // because nothing later contradicted the hide.
+                        // services/memoryProjections/highlightEventReplay.ts
+                        // makes that divergence executable.
+                        //
+                        // This is the SAME EXT discipline UPDATE_MEMORY is
+                        // declared under, and it is not the thing
+                        // MEMORY_COMMAND_TYPES_NOT_DECLARED refuses: that list
+                        // refuses declaring a §17 NAME the code cannot honour.
+                        // Declaring an extension for a write that already
+                        // happens, and marking it as an extension, is the
+                        // opposite move.
 ] as const;
 export type MemoryCommandType = (typeof MEMORY_COMMAND_TYPES)[number];
 
@@ -358,6 +407,7 @@ export const COMMAND_SUBJECT: Readonly<Record<MemoryCommandType, "memory" | "hig
   PIN_HIGHLIGHT: "highlight",
   UNPIN_HIGHLIGHT: "highlight",
   HIDE_HIGHLIGHT: "highlight",
+  UNHIDE_HIGHLIGHT: "highlight",
 };
 
 export const HIGHLIGHT_COMMAND_TYPES = MEMORY_COMMAND_TYPES
@@ -444,6 +494,15 @@ export const COMMAND_EVENT: Readonly<Record<MemoryCommandType, MemoryEventType>>
   // expiry is what `expires_at` does on its own, and not a deletion event
   // either — §21 keeps Archive and Delete separate in the data model.
   HIDE_HIGHLIGHT: "highlight.hidden",
+  // The inverse emits the SAME §17 name, exactly as UNPIN_HIGHLIGHT emits
+  // `highlight.pinned`. §17 lists no `highlight.unhidden`, and a consumer
+  // cannot subscribe to a name that is not in the vocabulary — a §18 worker
+  // built against §17 would drop such an event as unknown, which is the
+  // silent-loss failure the outbox exists to prevent. The direction travels in
+  // the payload's `command_type`, and services/memoryProjections/
+  // highlightEventReplay.ts folds on that field rather than on the name for
+  // precisely this reason.
+  UNHIDE_HIGHLIGHT: "highlight.hidden",
 };
 
 /** §23's capability vocabulary, per command. Re-checked by the SQL function. */
@@ -469,6 +528,10 @@ export const COMMAND_CAPABILITY: Readonly<Record<MemoryCommandType, "none" | "ow
   PIN_HIGHLIGHT: "owner",
   UNPIN_HIGHLIGHT: "owner",
   HIDE_HIGHLIGHT: "owner",
+  // The same capability as the hide it reverses. An un-archive that a
+  // non-owner could issue would let anyone republish a Highlight its owner
+  // removed from browsing — §21's Archive read backwards.
+  UNHIDE_HIGHLIGHT: "owner",
 };
 
 // ── Command envelope ─────────────────────────────────────────────────────────

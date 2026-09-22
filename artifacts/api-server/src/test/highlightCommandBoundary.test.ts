@@ -221,20 +221,27 @@ const row = (app: App, id: string) => app.tables.highlights.find((h) => h.id ===
 
 // ── 1. The vocabulary, and the one command that is still refused ─────────────
 
-describe("§17 vocabulary — three Highlight commands are declared, PUBLISH_HIGHLIGHT is not", () => {
-  it("the three declared Highlight commands are owner-capability and map to §17 event names", () => {
+describe("§17 vocabulary — four Highlight commands are declared, PUBLISH_HIGHLIGHT is not", () => {
+  it("the declared Highlight commands are owner-capability and map to §17 event names", () => {
+    // WAS THREE, IS NOW FOUR. UNHIDE_HIGHLIGHT is an EXT, declared in this lane:
+    // §17 names HIDE_HIGHLIGHT and no inverse, but §21 requires Archive to be
+    // REVERSIBLE and §17's first sentence requires every canonical write to
+    // cross this boundary, so the un-archive is a command whether or not §17
+    // gave it a name. What it replaces is a direct
+    // `.update({ archived_at: null })` that emitted nothing.
     assert.deepEqual([...HIGHLIGHT_COMMAND_TYPES].sort(),
-      ["HIDE_HIGHLIGHT", "PIN_HIGHLIGHT", "UNPIN_HIGHLIGHT"]);
+      ["HIDE_HIGHLIGHT", "PIN_HIGHLIGHT", "UNHIDE_HIGHLIGHT", "UNPIN_HIGHLIGHT"]);
     for (const t of HIGHLIGHT_COMMAND_TYPES) {
       assert.equal(COMMAND_SUBJECT[t], "highlight");
       assert.equal(COMMAND_CAPABILITY[t], "owner", `${t} must be owner-only (§23)`);
     }
-    // §17 lists no `highlight.unpinned`, so the pin and the unpin share an
-    // event name and the payload distinguishes them — the ADD_MEDIA /
-    // REMOVE_MEDIA precedent.
+    // §17 lists no `highlight.unpinned` and no `highlight.unhidden`, so each
+    // direction shares its §17 event name and the payload's `command_type`
+    // distinguishes them — the ADD_MEDIA / REMOVE_MEDIA precedent.
     assert.equal(COMMAND_EVENT.PIN_HIGHLIGHT, "highlight.pinned");
     assert.equal(COMMAND_EVENT.UNPIN_HIGHLIGHT, "highlight.pinned");
     assert.equal(COMMAND_EVENT.HIDE_HIGHLIGHT, "highlight.hidden");
+    assert.equal(COMMAND_EVENT.UNHIDE_HIGHLIGHT, "highlight.hidden");
   });
 
   it("PUBLISH_HIGHLIGHT stays undeclared, and its reason is a schema fact", () => {
