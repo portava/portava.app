@@ -1,34 +1,27 @@
 /**
- * census-layover L127 / L128 / L294 — THE WIRING HALF.
+ * census-layover L269 — THE WIRING HALF.
  *
- * `LayoverPeopleSection.presenceTruth.component.test.tsx` proves the CARD can
- * tell a refusal from a measured zero. This file proves the SCREEN hands it the
- * fields to do it with, which is where the defect actually lived:
- *
- *   const res = await getLayoverPresence(sessionId);
- *   if (res?.sharing) setPresence({ count: res.count, travelers: res.travelers });
- *   else setPresence({ count: 0, travelers: [] });
- *
- * Three server answers collapsed into `{ count: 0, travelers: [] }` there:
- *   - `null`      — the HTTP read itself failed (503 `degraded_unavailable`,
- *                   or `fetch` rejected because the device is offline)
- *   - `degraded`  — the route answered, and said its count is not a measurement
- *   - `withheld`  — the gate refused on the traveller's own stored settings
- *
- * and the card then printed "No other shared layovers here right now — you're
- * the first." for all three. A traveller in ghost mode, and a traveller during
- * a Supabase outage, were both told the city was empty.
+ * `LayoverDiscoveryCard.component.test.tsx` proves the CARD reaches
+ * `/api/hidden-gems/layover-safe` and renders each of its four answers. This
+ * file proves the SCREEN MOUNTS IT — which is the whole of L269's finding:
+ * `getLayoverGems` and the route behind it have existed for several census
+ * passes with no caller anywhere under `app/layover/`. A correct card that no
+ * screen renders is the same defect one level up, and
+ * `layover_discovery_mode_enabled` would still have nothing to turn on.
  *
  * ── WHAT WOULD TURN THIS RED ─────────────────────────────────────────────────
- * Case 4 is the control: a genuinely measured zero must still produce the
- * claim, so a fix that simply stops the screen from ever asserting anything
- * fails here. Case 5 keeps the real count rendering.
+ * Case 1 fails if the card is not mounted at all. Case 2 fails if it is mounted
+ * with a locally-derived number instead of the server's certified
+ * `window.usableMinutes` — the value is asserted to be that exact figure, and
+ * the fixture's window deliberately does not equal any clock subtraction this
+ * screen could make. Case 3 fails if the card is hoisted out of the exploration
+ * block: at RETURN_NOW the certified posture collapses exploration, and an
+ * invitation to leave the airport must collapse with it rather than outlive it.
  *
- * `LayoverPeopleSection` is deliberately NOT stubbed in this file — the point
- * is the value crossing the prop boundary, and a stub would assert nothing.
- *
- * NO PINNED DATES. Every instant is derived from `Date.now()` at module load,
- * so nothing here expires.
+ * ── NO FIXED DATES ───────────────────────────────────────────────────────────
+ * Every instant derives from `Date.now()` at module load. `usableMinutes` is a
+ * fixture CONSTANT, not a span between two of them, precisely so that case 2
+ * can tell "passed the server's figure" from "recomputed a plausible one".
  */
 import React from 'react';
 import { render, screen, waitFor } from '@testing-library/react-native';
@@ -50,15 +43,31 @@ jest.mock('expo-router', () => ({
 }));
 
 // NOTE: intentional stub — expo-notifications needs a native runtime and this
-// file is about a presence read, not about scheduling.
+// file is about which cards are mounted, not about scheduling.
 jest.mock('../../../src/lib/safeNotifications', () => ({
   scheduleLocalNotificationAt: jest.fn(async () => null),
   cancelScheduledNotification: jest.fn(async () => undefined),
   notificationPromptWouldAppear: jest.fn(async () => false),
 }));
 
-// NOTE: intentional stubs — each pulls maps, plan or compass chains that have
-// nothing to do with the presence answer. LayoverPeopleSection is NOT here.
+/**
+ * The Discovery card is stubbed so this file asserts on the PROPS crossing the
+ * boundary rather than on a second copy of the card's own rendering. Its real
+ * behaviour — including the gate-off case, which renders nothing — is pinned in
+ * `LayoverDiscoveryCard.component.test.tsx` against a fetch spy.
+ */
+jest.mock('../../../src/components/layover/LayoverDiscoveryCard', () => {
+  const { View } = require('react-native');
+  return {
+    LayoverDiscoveryCard: (props: any) => {
+      (global as any).__discoveryProps = props;
+      return <View testID="layover-discovery-stub" />;
+    },
+  };
+});
+
+// NOTE: intentional stubs — each pulls maps, plan, crew or compass chains that
+// have nothing to do with which cards this screen mounts.
 jest.mock('../../../src/components/layover/LayoverHero', () => {
   const { View } = require('react-native');
   return { LayoverHero: () => <View testID="layover-hero-stub" /> };
@@ -78,20 +87,21 @@ jest.mock('../../../src/components/layover/LayoverMapCard', () => ({ LayoverMapC
 // NOTE: intentional stub — see above.
 jest.mock('../../../src/components/layover/LayoverCompassCard', () => ({ LayoverCompassCard: () => null }));
 // NOTE: intentional stub — see above.
+jest.mock('../../../src/components/layover/LayoverPeopleSection', () => ({ LayoverPeopleSection: () => null }));
+// NOTE: intentional stub — see above.
 jest.mock('../../../src/components/layover/LayoverCrewSection', () => ({ LayoverCrewSection: () => null }));
 // NOTE: intentional stub — see above.
 jest.mock('../../../src/components/layover/LayoverFlightChangeCard', () => ({ LayoverFlightChangeCard: () => null }));
 
-// NOTE: intentional stub — the screen only needs data to render here; the
-// service's own parsing is exercised against a fetch spy in the card suites.
+// NOTE: intentional stub, and deliberately exhaustive — the screen imports each
+// of these by name, so a spread of requireActual would drag `lib/supabase` and
+// its native SecureStore adapter into the module graph. The service's own
+// parsing is exercised against a fetch spy in the card suites.
 jest.mock('../../../src/services/layover', () => ({
   getLayoverOverview: jest.fn(async () => ({ ok: true, overview: (global as any).__overview })),
   getRecommendations: jest.fn(async () => ({ ok: true, recommendations: [] })),
   getLayoverBuddies: jest.fn(async () => ({ city: 'Bangkok', buddies: [] })),
-  getLayoverPresence: jest.fn(async () => (global as any).__presence),
-  // census L269 — the screen mounts LayoverDiscoveryCard, which reads through
-  // this module. Kept in step with the exhaustive list above: an omission here
-  // does not fail as a missing card, it throws inside the render.
+  getLayoverPresence: jest.fn(async () => null),
   getLayoverDiscovery: jest.fn(async () => ({ ok: true, gems: [] })),
   addStopFromRecommendation: jest.fn(async () => null),
   endLayoverSession: jest.fn(async () => ({ ok: true, outcome: 'cancelled', passportStamp: null })),
@@ -113,10 +123,15 @@ const HOUR = 3_600_000;
 const NOW = Date.now();
 const HARD_RETURN = new Date(NOW + 4 * HOUR).toISOString();
 
-const FIRST = /you're the first/i;
+/**
+ * 237 is a CONSTANT, not a span. The window below runs 7 hours with a 60-minute
+ * exit delay and a 120-minute buffer, so no subtraction this screen could
+ * perform yields 237 — which is what makes case 2 an assertion about provenance
+ * rather than about arithmetic.
+ */
+const CERTIFIED_USABLE_MINUTES = 237;
 
-/** Sharing is ON, so the screen calls `getLayoverPresence` and renders the box. */
-function overviewBody() {
+function overviewBody(returnState: string) {
   return {
     session: {
       id: 'sess-1', userId: 'u-1', airportId: 'ap-1', tripId: null,
@@ -126,7 +141,7 @@ function overviewBody() {
       immigrationRequired: true, checkedBags: false, loungeAccess: false,
       wantsToLeave: true, comfortLevel: 'moderate', vibeChips: [],
       manualAirportName: null, manualCity: null, manualCountry: null, manualIata: null,
-      canonicalCityId: null, shareCityStatus: true,
+      canonicalCityId: null, shareCityStatus: false,
       returnReminderAt: null,
       status: 'active', createdAt: new Date(NOW - HOUR).toISOString(),
     },
@@ -135,9 +150,10 @@ function overviewBody() {
       countryCode: 'TH', timezone: 'Asia/Bangkok', lat: 13.69, lng: 100.75, verified: true,
     },
     window: {
-      totalMinutes: 420, exitDelayMin: 60, returnBufferMin: 120, usableMinutes: 240,
+      totalMinutes: 420, exitDelayMin: 60, returnBufferMin: 120,
+      usableMinutes: CERTIFIED_USABLE_MINUTES,
       earliestOutTime: new Date(NOW).toISOString(), hardReturnTime: HARD_RETURN,
-      returnState: 'NORMAL', tier: 'long', tierLabel: 'Long layover',
+      returnState, tier: 'long', tierLabel: 'Long layover',
     },
     advice: { verdict: 'yes', reasons: [], unknowns: [], reasonCodes: [], disclaimer: '', engineVersion: 'v' },
     certification: {
@@ -145,12 +161,18 @@ function overviewBody() {
       computedAt: new Date(NOW).toISOString(), verdict: 'yes', confidence: 'LOW', bufferPercentile: 'p90',
     },
     estimates: {}, airportIntelligence: null, stops: [],
-    planFit: { fits: 'fits', neededMin: 0, usableMinutes: 240, overflowMin: 0, unstatedTravelStops: 0, neededMinIsLowerBound: false },
-    // `othersInCity` is the OVERVIEW's copy of the count. It is deliberately 0
-    // here so that nothing in these cases can be satisfied by it instead of by
-    // the presence read — see case 5, which sets it to 0 and still expects 3.
-    share: { enabled: true, othersInCity: 0 },
-    safeReturn: { returnState: 'NORMAL', hardReturnTime: HARD_RETURN, notification: null },
+    planFit: { fits: 'fits', neededMin: 0, usableMinutes: CERTIFIED_USABLE_MINUTES, overflowMin: 0, unstatedTravelStops: 0, neededMinIsLowerBound: false },
+    share: { enabled: false, othersInCity: 0 },
+    // `explorationCollapsed` is the SERVER's, from `safeReturnPosture`. Case 3
+    // sets it rather than inferring it from the state, because that is the field
+    // the screen actually keys on.
+    safeReturn: {
+      returnState,
+      explorationCollapsed: returnState === 'RETURN_NOW',
+      returnRoutePrimary: returnState === 'RETURN_NOW',
+      minutesToHardReturn: 42,
+      abortAvailable: true,
+    },
     safeEnvelope: null, offlineBundle: null,
     returnReminderAt: null,
     localTimes: {
@@ -161,57 +183,32 @@ function overviewBody() {
   };
 }
 
-async function mount(presence: unknown) {
-  (global as any).__overview = overviewBody();
-  (global as any).__presence = presence;
+async function mount(returnState = 'NORMAL') {
+  (global as any).__discoveryProps = undefined;
+  (global as any).__overview = overviewBody(returnState);
   await render(<LayoverDashboardScreen />);
   await waitFor(() => expect(screen.getByTestId('layover-hero-stub')).toBeTruthy());
 }
 
-describe('the presence read reaches the card with its confidence intact', () => {
-  it('1. a null read (503 / offline) is NOT rendered as an empty city', async () => {
-    await mount(null);
-    await waitFor(() => expect(screen.getByTestId('layover-presence-unmeasured')).toBeTruthy());
-    expect(screen.queryByText(FIRST)).toBeNull();
+describe('the layover dashboard is the Discovery consumer L269 asks for', () => {
+  it('1. the Discovery card is MOUNTED — the endpoint finally has a caller under app/layover/', async () => {
+    await mount();
+    await waitFor(() => expect(screen.getByTestId('layover-discovery-stub')).toBeTruthy());
   });
 
-  it('2. a degraded answer is NOT rendered as an empty city', async () => {
-    await mount({
-      sharing: true, city: 'Bangkok', count: 0, travelers: [],
-      level: 'L2_DISCOVERY', degraded: true, degradedReasons: ['presence_unreadable'],
-    });
-    await waitFor(() => expect(screen.getByTestId('layover-presence-unmeasured')).toBeTruthy());
-    expect(screen.queryByText(FIRST)).toBeNull();
+  it('2. it is handed the SERVER\'s certified usable minutes, not a locally derived figure', async () => {
+    await mount();
+    await waitFor(() => expect((global as any).__discoveryProps).toBeTruthy());
+    const props = (global as any).__discoveryProps;
+    expect(props.availableMinutes).toBe(CERTIFIED_USABLE_MINUTES);
+    expect(props.city).toBe('Bangkok');
   });
 
-  it('3. a gate refusal on the traveller\'s own settings is named, not hidden', async () => {
-    // The route's non-opted-in / gate-refused branch: `sharing: false` with the
-    // reasons in `withheld`. The screen used to drop the whole body here.
-    await mount({
-      sharing: false, count: 0, travelers: [],
-      level: 'L0_AGGREGATE', withheld: ['ghost_mode'],
-      degraded: false, degradedReasons: [],
-    });
-    await waitFor(() => expect(screen.getByTestId('layover-presence-withheld')).toBeTruthy());
-    expect(screen.queryByText(FIRST)).toBeNull();
-  });
-
-  it('4. a measured zero still says "you\'re the first"', async () => {
-    await mount({
-      sharing: true, city: 'Bangkok', count: 0, travelers: [],
-      level: 'L2_DISCOVERY', degraded: false, degradedReasons: [],
-    });
-    await waitFor(() => expect(screen.getByText(FIRST)).toBeTruthy());
-    expect(screen.queryByTestId('layover-presence-unmeasured')).toBeNull();
-    expect(screen.queryByTestId('layover-presence-withheld')).toBeNull();
-  });
-
-  it('5. a measured count is still rendered as a count', async () => {
-    await mount({
-      sharing: true, city: 'Bangkok', count: 3, travelers: [],
-      level: 'L0_AGGREGATE', degraded: false, degradedReasons: [],
-    });
-    await waitFor(() =>
-      expect(screen.getByText(/3 travelers are also on a layover here/i)).toBeTruthy());
+  it('3. at RETURN_NOW it collapses with the rest of exploration, as the certified posture says', async () => {
+    await mount('RETURN_NOW');
+    await waitFor(() => expect(screen.getByTestId('layover-exploration-collapsed')).toBeTruthy());
+    // An invitation to leave the airport must not outlive the posture that
+    // collapsed the rest of exploration.
+    expect(screen.queryByTestId('layover-discovery-stub')).toBeNull();
   });
 });

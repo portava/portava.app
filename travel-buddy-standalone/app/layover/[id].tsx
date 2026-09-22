@@ -59,6 +59,7 @@ import { LayoverRecsSection } from '../../src/components/layover/LayoverRecsSect
 import { LayoverMapCard } from '../../src/components/layover/LayoverMapCard';
 import { LayoverPeopleSection } from '../../src/components/layover/LayoverPeopleSection';
 import { LayoverCrewSection } from '../../src/components/layover/LayoverCrewSection';
+import { LayoverDiscoveryCard } from '../../src/components/layover/LayoverDiscoveryCard';
 import { LayoverSafeReturnCard } from '../../src/components/layover/LayoverSafeReturnCard';
 import { LayoverEndSheet } from '../../src/components/layover/LayoverEndSheet';
 import { useSafeReturnAbort } from '../../src/components/layover/useSafeReturnAbort';
@@ -729,6 +730,29 @@ export default function LayoverDashboardScreen() {
               canEdit={!!canEdit}
               onToggleShare={handleToggleShare}
               onOpenBuddy={(b) => router.push(`/(rent-a-buddy)/buddy/${b.id}` as any)}
+            />
+
+            {/* §25.2 L269 — Layover Discovery. `getLayoverGems` and
+                `GET /hidden-gems/layover-safe` had NO caller under `app/layover/`
+                for several census passes, so `layover_discovery_mode_enabled`
+                (migration 2971) had nothing to turn on. This is the consumer.
+
+                `availableMinutes` is the SERVER's certified
+                `window.usableMinutes` — the same figure every other surface
+                shows — and not a span this screen subtracts from a clock. The
+                card states each gem's own `minimum_layover_minutes` and
+                compares it with nothing; the route already filtered on it, and
+                a second feasibility answer about the same layover is the defect
+                `LayoverReturnPanel.tsx` was deleted at `a718beb5` for.
+
+                It sits INSIDE the exploration block, so the certified posture
+                collapses it at RETURN_NOW along with the recommendations, the
+                map and the people. An invitation to leave the airport is the
+                last thing that should outlive that posture. */}
+            <LayoverDiscoveryCard
+              availableMinutes={overview.window.usableMinutes}
+              city={city ?? null}
+              refreshKey={dataEpoch}
             />
 
             {/* §14 L28/L29/L131 — the crew. Placed with the other people, and

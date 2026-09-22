@@ -1673,3 +1673,147 @@ export function joinLayoverCrew(sessionId: string, crewId: string): Promise<Crew
 export function leaveLayoverCrew(sessionId: string): Promise<CrewActionOutcome> {
   return crewAction(airportUrl('sessions', sessionId, 'crew', 'leave'));
 }
+
+// ── §25.2 / census L269 — Layover Discovery ───────────────────────────────────
+
+/**
+ * One gem, narrowed to what the layover surface actually renders.
+ *
+ * NOT `HiddenGem` from `services/hiddenGems.ts`. That type carries thirty-odd
+ * fields — verification level, save counts, submitter, gem state, confidence —
+ * none of which this surface shows, and importing it would make a layover card
+ * a consumer of the whole Hidden Gems contract for four strings. It is a
+ * SEPARATE READ of the same wire, not a second vocabulary: every field below is
+ * named for the column the route serialises.
+ */
+export interface LayoverDiscoveryGem {
+  id: string;
+  name: string;
+  neighborhood: string | null;
+  /**
+   * The gem's OWN floor, as the server published it (`minimum_layover_minutes`).
+   * Null when the row carries none — which is not zero, and is not "fits".
+   */
+  minimumLayoverMinutes: number | null;
+}
+
+/**
+ * census L269 — why there is, or is not, a Discovery answer.
+ *
+ * `gated_off` IS NOT A FAILURE AND IS NOT AN EMPTY LIST. It is the third thing,
+ * and the reason it needs its own member is that `feature_disabled` answers
+ * **404 — the same status as `not_found`** (`lib/http.ts` STATUS). A reader
+ * keyed on the status code cannot tell "this capability is switched off" from
+ * "the read failed", and the two must render differently: off shows NO CARD,
+ * failed shows the server's refusal.
+ *
+ * It carries no message on purpose. `sendError(res, "feature_disabled")` is
+ * called with no sentence, so the envelope's `message` is the literal string
+ * `"feature_disabled"` — a code, not traveller-facing copy. There is nothing
+ * honest to quote, and nothing needs quoting, because the surface renders
+ * nothing.
+ */
+export type LayoverDiscoveryRead =
+  | { ok: true; gems: LayoverDiscoveryGem[] }
+  | { ok: false; reason: 'gated_off' }
+  | {
+      ok: false;
+      reason: 'unavailable' | 'unreachable' | 'refused';
+      message: string;
+      retryable: boolean;
+    };
+
+/** The only sentence here not written by the server — the device reached nobody. */
+const DISCOVERY_UNREACHABLE = "We couldn't reach Portava. Check your connection and try again.";
+
+function toDiscoveryGem(row: Record<string, unknown>): LayoverDiscoveryGem | null {
+  const id = typeof row.id === 'string' ? row.id : null;
+  const name = typeof row.name === 'string' ? row.name.trim() : '';
+  // A row with no id cannot be keyed and a row with no name cannot be read.
+  // Dropping it is right; rendering a blank chip would not be.
+  if (!id || !name) return null;
+  const minimum = row.minimum_layover_minutes ?? row.minimumLayoverMinutes;
+  const neighborhood = row.neighborhood;
+  return {
+    id,
+    name,
+    neighborhood: typeof neighborhood === 'string' && neighborhood.trim() ? neighborhood : null,
+    minimumLayoverMinutes: typeof minimum === 'number' && Number.isFinite(minimum) ? minimum : null,
+  };
+}
+
+/**
+ * §25.2 Layover Discovery — the gems this layover's CERTIFIED window permits.
+ *
+ * ── `availableMinutes` IS NOT DERIVED HERE ───────────────────────────────────
+ * It is the server's own `window.usableMinutes`, handed down from the overview.
+ * Nothing on this path subtracts a deadline from a clock: the route filters on
+ * `minLayoverMinutes` itself, and a second arithmetic on this side would be a
+ * second feasibility answer about the same layover — which is what
+ * `LayoverReturnPanel.tsx` was deleted at `a718beb5` for.
+ *
+ * ── WHAT THE DISCOVERY-MODE FLAG DOES AND DOES NOT CHANGE HERE ───────────────
+ * `layover_discovery_mode_enabled` (migration 2971) narrows what the SERVER
+ * serves — a Discovery serve in an airport session is restricted to the
+ * certified action universe rather than to distance alone. It is not on this
+ * response's envelope and this reader does not look for it: the flag changes
+ * WHICH gems arrive, never the shape, so this consumer is correct in both flag
+ * states by construction and needs no change when the gate moves. The two
+ * flags this reader CAN observe are `hidden_gems_enabled` and
+ * `hidden_gems_layover_enabled`, and both surface as `feature_disabled`.
+ *
+ * Resolves in every case; it never throws, because its one caller renders the
+ * refusal and a rejected promise would render nothing at all.
+ */
+export async function getLayoverDiscovery(
+  availableMinutes: number,
+  city: string | null,
+): Promise<LayoverDiscoveryRead> {
+  const params = new URLSearchParams({ availableMinutes: String(availableMinutes) });
+  if (city) params.set('city', city);
+
+  let res: Response;
+  try {
+    res = await authedFetch(`${apiBase()}/api/hidden-gems/layover-safe?${params.toString()}`);
+  } catch {
+    return { ok: false, reason: 'unreachable', message: DISCOVERY_UNREACHABLE, retryable: true };
+  }
+
+  let json: Record<string, any> = {};
+  try { json = await res.json(); } catch { /* falls through to the status check */ }
+
+  if (!res.ok) {
+    // THE CODE, NOT THE STATUS — see `LayoverDiscoveryRead`.
+    if (json.error === 'feature_disabled') return { ok: false, reason: 'gated_off' };
+    // `retryable` is the server's own flag (`isRetryableErrorCode`), read off
+    // the response rather than re-derived from a status-code rule here.
+    const message = typeof json.message === 'string' ? json.message : DISCOVERY_UNREACHABLE;
+    const retryable = json.retryable === true;
+    if (json.error === 'db_error' || json.error === 'server_not_configured') {
+      return { ok: false, reason: 'unavailable', message, retryable };
+    }
+    return { ok: false, reason: 'refused', message, retryable };
+  }
+
+  // A 200 whose body has no `gems` ARRAY is not an empty list. The route always
+  // sends one on success, so its absence is a contract mismatch, and answering
+  // `[]` to it would be the failed-read-as-empty-result this whole type exists
+  // to prevent.
+  if (!Array.isArray(json.gems)) {
+    return {
+      ok: false,
+      reason: 'refused',
+      message: DISCOVERY_UNREACHABLE,
+      retryable: false,
+    };
+  }
+
+  const gems: LayoverDiscoveryGem[] = [];
+  for (const row of json.gems as unknown[]) {
+    if (row && typeof row === 'object') {
+      const gem = toDiscoveryGem(row as Record<string, unknown>);
+      if (gem) gems.push(gem);
+    }
+  }
+  return { ok: true, gems };
+}
