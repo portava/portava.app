@@ -8098,6 +8098,316 @@ that none could.
 
 ---
 
+## §31 — Nearby becomes a referent: buckets that cannot hold a coordinate, an order that cannot disclose one, and a precise fix that stops following the account
+
+Written by the TELEGRAPH LANE 3 (location, proximity and privacy) worktree.
+**Nothing here is merged and no flag was enabled.** `head_commit` is not
+re-declared for the census as a whole; this section measures only the rows it
+names.
+
+PROVENANCE, stated rather than rounded off: the worktree was checked out at
+`857ad9fb9` and every measurement below was taken there. The branch had since
+advanced to `e43fc628a` (the offline-substrate merge), so this lane's commits
+were REBASED onto it and the census checks, the citation check and the suites
+covering every file touched were re-run on the rebased tree. `857ad9fb9` is an
+ancestor of `e43fc628a`, and nothing between them touches a file this section
+grades — the overlap is two shared ledgers, `CENSUS_STALENESS_ACKNOWLEDGED.json`
+and `checkCensusFreshness.ts`, both of which this lane also edits and both of
+which rebased without conflict.
+
+Seven rows move, all `N → W`, and none moves to `C`. The reason is the same for
+all seven and is stated once here rather than seven times: the surface built
+below is **dark**. `nearby_reachable_enabled` is seeded FALSE by
+`migrations/2998_nearby_reachable_flag.sql`, which is applied to no database, so
+it has no `feature_flags` row on any deployment; `isFlagEnabled` answers false
+for an absent row exactly as it does for a false one, and no client calls the
+route. A capability nobody can reach is built, not correct.
+
+### 31.1 What was built, and where
+
+**The bucket ladder that cannot be handed a coordinate** —
+`lib/proximityBuckets.ts`. `proximityBucketBetween`
+(`lib/proximityBuckets.ts:224#export function proximityBucketBetween`) accepts
+only a `CoarsePoint`, and the single constructor of one is `coarsePointFor`
+(`lib/proximityBuckets.ts:114#export function coarsePointFor`), a wrapper over the map's existing
+grid-snap + per-user jitter coarsener. There is no `fromExact`, no exported
+distance and no exported km → bucket function: the haversine and
+`proximityBucketFromKm` are module-private, so the "compute the true distance,
+then round it" pipeline cannot be assembled out of this module's parts. A point
+that claims to be coarse but carries a fine cell is refused at runtime
+(`lib/proximityBuckets.ts:141#export function assertCoarsePoint`), and the narrowest bucket edge is
+bounded below by twice the finest coarsening cell
+(`lib/proximityBuckets.ts:183#export const MIN_BUCKET_EDGE_KM`) so bucket membership can never resolve
+a position more finely than the coordinate it was computed from.
+
+**The projection** — `services/telegraph/reachablePeople.ts`.
+`projectReachablePerson` (`services/telegraph/reachablePeople.ts:376#export function projectReachablePerson`) builds
+§30A.2's six inputs — relationship, availability, permitted proximity, shared
+context, privacy and safety — into one object whose `proximity.precision` is the
+LITERAL TYPE `"bucket"` (`services/telegraph/reachablePeople.ts:192#readonly precision: "bucket"`), so a precise rung
+is not representable and every construction site would be a compile error rather
+than a review comment. It is **not a fifth relationship resolver**: §30A.1's
+evidence names four already, so `relationshipFrom`
+(`services/telegraph/reachablePeople.ts:129#export function relationshipFrom`) projects `canMessage`'s own
+`relationship_context` and reads no table.
+
+**The ranking, and the order** — `nearbyRank`
+(`services/telegraph/reachablePeople.ts:285#export function nearbyRank`) scores
+§4.3's nine factors. Its input type carries no distance, no ETA and no
+timestamp, so the ranker cannot see anything finer than a bucket.
+`orderReachablePeople` (`services/telegraph/reachablePeople.ts:319#export function orderReachablePeople`) sorts on
+rank and then on `stableTiebreak` (`services/telegraph/reachablePeople.ts:309#export function stableTiebreak`), a
+per-(viewer, person) hash with no geographic content.
+
+**Invisible mode** — `lib/invisibleMode.ts`. Resolved from the three live
+location-consent columns (`lib/invisibleMode.ts:125#export function resolveInvisibleMode`), fail-
+closed: an unreadable `location_preferences` row engages invisibility
+(`lib/invisibleMode.ts:127#prefs_unreadable`). Suppression and permission are two disjoint sets, and
+the second half of §4.4 is a TYPE — `permitsPrivateMapUse`
+(`lib/invisibleMode.ts:167#export function permitsPrivateMapUse`) returns the literal `true`, so
+making invisible mode take the private map away does not fail a test, it fails
+to compile.
+
+**The read layer** — `services/telegraph/reachablePeopleQuery.ts`. Every
+consent-bearing read checks `error` and returns a named refusal
+(`services/telegraph/reachablePeopleQuery.ts:374#stage: "candidate_prefs"` and its eight siblings); an unknown block state
+refuses the whole answer (`services/telegraph/reachablePeopleQuery.ts:267#if (blockedSet === null)`); the emergency stop
+is consulted on the SERVE path (`services/telegraph/reachablePeopleQuery.ts:255#isKillSwitchEngaged`). The candidate set is
+the viewer's circle members and accepted trip crew, capped at
+`services/telegraph/reachablePeopleQuery.ts:80#export const MAX_CANDIDATES` — there is no viewport parameter and no "who is
+near this point" query, which is §4.6's separation expressed as an absence
+rather than a filter.
+
+**The surface** — `routes/nearbyReachable.ts`, mounted at
+`routes/index.ts:393#router.use(nearbyReachableRouter)`. Flag-gated
+(`routes/nearbyReachable.ts:105#nearby_reachable_enabled`), rate-limited, and quantised: `quantiseNow`
+(`routes/nearbyReachable.ts:84#export function quantiseNow`) floors the clock to 60 s so two polls inside
+one quantum are byte-identical. A failed read is a retryable 503
+(`routes/nearbyReachable.ts:128#degraded_unavailable`), never an empty list. The one success log carries
+counts and bucket names (`routes/nearbyReachable.ts:132#req.log.info`).
+
+**Device-bound precise location** — `lib/preciseLocationDevice.ts` plus the two
+`/me/location-state` handlers. A precise coordinate is served only to the device
+that published it (`lib/preciseLocationDevice.ts:154#export function precisionForDevice`,
+`lib/preciseLocationDevice.ts:172#device_mismatch`), proven against the account's own rows in the `devices`
+registry (`lib/preciseLocationDevice.ts:210#export async function verifyDeviceForUser`) — the registry T235
+recorded as *"not consulted by any location path"*. The GET degrades to a
+grid-snapped point and NAMES the degradation
+(`routes/location.ts:134#coordsPrecision: coords ?`); the POST binds the
+publishing device and CLEARS the binding for a publish it cannot attribute
+(`routes/location.ts:286#bindPreciseShare(user.id`, `routes/location.ts:290#clearPreciseShare(user.id)`).
+The client presents its registered device id
+(`travel-buddy-standalone/src/hooks/useActiveLocation.ts:142#async function deviceIdHeaders`),
+never treats a restored approximate point as live
+(`travel-buddy-standalone/src/hooks/activeLocation.state.ts:235#export function clampFreshnessForPrecision`)
+and drops the held location on an account change
+(`travel-buddy-standalone/src/hooks/activeLocation.state.ts:251#export function buildAccountChangeState`, wired at
+`travel-buddy-standalone/src/hooks/useActiveLocation.ts:272#buildAccountChangeState(prev)`) —
+the same shape `platform/input-assistance/services/policyStore.ts:198#setActiveAccount`
+uses for its policy snapshot.
+
+**One honest read added to an existing service** —
+`services/passport/OpenToPlansService.ts:342#export async function listWindowsForOwners`
+returns `null` on a failed read where its single-owner sibling returns `[]`. The
+sibling is left exactly as it is; a multi-person projection cannot use a shape
+that says "none of these twenty people is available" when a table was unreadable.
+
+### 31.2 The three disclosure channels, and where each is closed
+
+| channel | closed by | what a regression would look like |
+| --- | --- | --- |
+| response body | `ReachablePersonProjection` has no positional field and `proximity.precision` is the literal `"bucket"` (`services/telegraph/reachablePeople.ts:192#readonly precision: "bucket"`) | a `distanceKm` appears "just for the UI" — caught by `nearbyRankOrderChannel.test.ts` walking the payload's KEYS (a substring scan cannot: "relationship" contains "lat") |
+| logs | the only success log is `reachableTelemetry`'s counts (`routes/nearbyReachable.ts:132#req.log.info`); nothing in the lane hands a logger a position, because the projection layer never holds one | a debug field carrying ids and coordinates — caught by `nearbyReachableRoute.test.ts`, which captures the payload the handler actually hands `req.log` |
+| ranking ORDER | `nearbyRank` takes a bucket index, `orderReachablePeople` breaks ties on a geography-free hash (`services/telegraph/reachablePeople.ts:309#export function stableTiebreak`) | "nearest first, it reads better" — caught by swapping two people's true positions INSIDE one bucket and asserting the published order does not change |
+
+### 31.3 Row moves
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| T24 | N | **W** | **`nearbyRank` over availability, relationship, intent, shared context, overlap window, travel time, proximity bucket, freshness, safety** — The ranking function over people now exists: `services/telegraph/reachablePeople.ts:285#export function nearbyRank` scores all nine, each as a rank on a small ladder, with availability weighted above proximity so the surface is not a proximity radar wearing an availability label. Its factor type has no distance and no ETA, and the ORDER is rank then a per-viewer hash (`services/telegraph/reachablePeople.ts:319#export function orderReachablePeople`). Still W: the route that serves it is flag-dark, `safety` is supplied as the constant `clear` because no safety signal is wired to it, and the candidate set is capped at 24 graph members — a ranking over a bounded list, not over "people near me". |
+| T25 | N | **W** | **Approximate proximity or controlled distance buckets BY DEFAULT** — The default is not a coarsened precise value; it is a value the code cannot express precisely. `lib/proximityBuckets.ts:224#export function proximityBucketBetween` takes only points produced by `lib/proximityBuckets.ts:114#export function coarsePointFor`, exports no distance and no km → bucket function, and refuses a forged coarse point at runtime (`lib/proximityBuckets.ts:141#export function assertCoarsePoint`). The narrowest edge is pinned to ≥ 2× the finest map cell (`lib/proximityBuckets.ts:183#export const MIN_BUCKET_EDGE_KM`, asserted in `test/proximityBuckets.test.ts`). Still W: the only consumer is the dark route, so no live surface serves a bucket today. |
+| T26 | N `∅` | **W** | **Repeated refreshes must not become a movement-tracking side channel** — No longer an unguarded absence. There is now a refreshable proximity endpoint and it is guarded twice: a per-user rate limit, and — the one that closes the channel — an information quantum, `routes/nearbyReachable.ts:84#export function quantiseNow`, which floors the clock so two polls inside 60 s return byte-identical bytes. Differencing needs the subject to cross a ≥ 5 km bucket edge. Still W: the guard is per-request quantisation, not the per-relationship budget §4.5 describes, and nothing bounds observations across a long session. |
+| T29 | N | **W** | **Invisible mode suppresses Nearby / Bump / public availability while ALLOWING private Map use** — Both halves exist and are separately enforceable. `lib/invisibleMode.ts:125#export function resolveInvisibleMode` derives the state from the three live location-consent columns and fails closed on an unreadable row (`lib/invisibleMode.ts:127#prefs_unreadable`); the projection applies it as TWO live suppressions rather than one early exit (`services/telegraph/reachablePeople.ts:398#const nearbySuppressed`, `services/telegraph/reachablePeople.ts:399#const availabilitySuppressed`), so knocking either out is a red test rather than dead code; and the private half is a type — `lib/invisibleMode.ts:167#export function permitsPrivateMapUse` returns the literal `true`. Deliberately NOT derived from `show_online_status`: that would collapse two of §4.1's four permissions into one, and the test pins it. Still W: there is no user-facing "invisible mode" control — it is a server-side reading of controls that already exist — and the live Discovery map enforces the same columns through its own code rather than through this module. |
+| T235 | N | **W** | **Active precise location is device-specific and must not automatically transfer to a newly authenticated device** — `GET /me/location-state` now serves a precise coordinate only to the device that published it: `lib/preciseLocationDevice.ts:154#export function precisionForDevice` is precise in exactly one case and degrades to a grid-snapped point in six, including `lib/preciseLocationDevice.ts:172#device_mismatch`, which is this row's scenario. The `devices` registry the row recorded as never consulted by a location path is consulted (`lib/preciseLocationDevice.ts:210#export async function verifyDeviceForUser`), and the publishing device is re-bound on every fix, with an unattributable publish CLEARING the binding (`routes/location.ts:290#clearPreciseShare(user.id)`) so the reverse transfer is closed too. Still W, and the reason is structural: the binding is PROCESS-LOCAL with a 60-minute TTL, because no deployed location table has a device column. A restart, or a second instance, coarsens every share until the owning device publishes again — safe, but not durable — and `trip_crew_location_sessions` and the Safe Return live share are still keyed by account alone. |
+| T382 | N | **W** | **§30A.2 Server-built `ReachablePersonProjection` combining relationship, availability, permitted proximity, shared context, privacy and safety** — The projection exists and is built server-side from all six: `services/telegraph/reachablePeople.ts:376#export function projectReachablePerson`, fed by `services/telegraph/reachablePeopleQuery.ts:245#export async function loadReachablePeople`. Relationship comes from the canonical resolver rather than a fifth one (`services/telegraph/reachablePeople.ts:129#export function relationshipFrom` over `canMessage`'s context), availability from the §4/§31 audience predicate plus the live quick-status opt-in, proximity as a bucket only, and consent fails closed on every read. Still W: it is served by a dark route, `safety` is a constant, and the projection is computed per candidate with one `canMessage` round each, which is why the candidate set is capped at 24. |
+| T400 | N | **W** | **Precise location sharing is device-specific and must not SILENTLY transfer to a newly authenticated device** — Same mechanism as T235, and the word *silently* is what this row adds: the degraded answer names itself on the wire — `coordsPrecision` and `coordsPrecisionReason` (`routes/location.ts:134#coordsPrecision: coords ?`) — and the client refuses to present a restored approximate point as live (`travel-buddy-standalone/src/hooks/activeLocation.state.ts:235#export function clampFreshnessForPrecision`). A new phone still gets the city and a coarse point, so the account is not left locationless. Same W ceiling as T235. |
+
+**Rows looked at that did NOT move, and why:**
+
+| id | stays | why it did not move |
+| --- | --- | --- |
+| T22 | W | **AVAILABLE ≠ ONLINE ≠ NEARBY ≠ SHARING LOCATION** — NEARBY now has a referent, which was the row's stated gap, but the row asks for four separate permissions and this lane added no new consent store: the nearby surface READS the three that exist. What it does add is a guard against the collapse — invisible mode is deliberately not derived from `show_online_status`, asserted in `test/invisibleMode.test.ts`. The four-way separation is still a three-way one with a fourth surface reading them. |
+| T23 | W | **`AvailabilitySignal` contract** — `audiencePolicyId`, `proximityVisibility` (HIDDEN/NEARBY/DISTANCE_BUCKET/ETA_IF_MUTUAL) and `geographyScope` are still absent from `availability_windows`. The projection expresses a proximity rung of its own, but it is not a field of the signal and the signal's vocabulary is unchanged. |
+| T27 | W | **Exact ETA / location requires stronger mutual coordination permissions** — No ETA was built; `travelBandForBucket` is a band derived from a bucket, deliberately not a time. The reciprocity this lane does add (a viewer who publishes no position receives no bucket) is symmetry, not the mutual-coordination grant the row asks for. |
+| T28 | W | **Availability expires automatically and revokes across Telegraph, Discovery and Compass** — A second Telegraph reader now exists (`services/telegraph/reachablePeopleQuery.ts:245#export async function loadReachablePeople`) and it re-evaluates expiry on the read, through Passport's own predicate for windows and through `expires_at` for quick status. Cross-surface revocation is still not implemented, and `open_to_plans_windows_enabled` is still seeded OFF, so the windows half is empty on every deployment. |
+| T30 | W | **Blocking is absolute and removes both parties from each other's proximity surfaces** — The proximity half is no longer vacuous: the new surface removes blocked people before they are candidates and refuses the whole answer when block state cannot be established (`services/telegraph/reachablePeopleQuery.ts:267#if (blockedSet === null)`). The row's other divergence — blocking does not close an existing thread — is in `routes/messaging.ts` and untouched by this lane. |
+| T219 | W | **Block cascade across … Nearby, Bump …** — Nearby now has a referent and blocks cascade to it, fail-closed. Bump and Crew suggestions still have none, and the messaging-side read this row's sibling T220 names is owned by another lane. Five of eight becomes six of eight on a dark surface, which is not enough to move a row whose subject is the cascade as a whole. |
+| T383 | W | **Nearby geographical, availability temporal, reachability contextual; clients must not recompute** — Reachability now exists as a server-computed object, which it did not. The row's other half — the client recomputing thread membership from a raw table (T295) — is untouched, and no client consumes the projection yet, so "clients must not recompute" is satisfied by there being no client rather than by one having stopped. |
+| T31 | W | **Privacy zones suppress discovery around home / lodging** — `lib/protectedLocations.ts` is still not consulted by anything in Telegraph. The new surface does not read it, and that is a gap this lane is naming rather than one it closed: a bucket computed from a coarse point near a protected place is still a bucket near a protected place. |
+| T215 | W | **A meetup grant cannot be silently reused for general Nearby discovery** — Now genuinely load-bearing rather than vacuous, and still unmet: Nearby exists, so there is something to reuse INTO, and no share row carries a purpose (T214), so nothing binds a grant to one. The new surface does not read any grant — it reads standing consent — which sidesteps the question rather than answering it. |
+
+### 31.4 The tests, and how each was shown red
+
+Seven new files, 106 assertions. Nothing here was written green-first: every
+gate below was mutated in place and the suite re-run, which is the only way to
+tell a gate from a comment.
+
+| # | mutation | result |
+| --- | --- | --- |
+| P-M1 | `assertCoarsePoint` stops checking the cell size | RED — a forged fine-celled "coarse" point is accepted |
+| P-M2 | `MIN_BUCKET_EDGE_KM` 5 → 2 | RED — the narrowest edge is finer than 2× the map's own cell |
+| P-M3 | the travel-band lookup becomes an object literal | RED — `constructor` and `toString` answer, exactly the inherited-key truthiness that got a real gate deleted in this repo before |
+| I-M1 | an unreadable `location_preferences` no longer engages invisibility | RED ×2 — absent consent stops failing closed |
+| I-M2 | invisible mode suppresses every surface | RED — the private map goes with it; half the row satisfied, a feature broken |
+| I-M3 | `show_online_status` added as an invisible-mode input | RED — T22's collapse |
+| R-M1 | `blockStateKnown` dropped from the refusal | RED — unknown block state publishes |
+| R-M2 | `canMessage`'s `degraded` no longer refuses | RED — a relationship floor published as a fact |
+| R-M3 | invisible mode stops suppressing Nearby | RED ×3 |
+| R-M4 | invisible mode stops suppressing public availability | RED ×3 |
+| R-M5 | the viewer's invisible mode stops withholding their own point | RED |
+| R-M6 | presence consent stops gating the bucket | RED ×5 |
+| R-M7 | the projection grows a `distanceKm` and the list is ordered by it | RED ×2 — the payload-key walk AND the swap test. This is the channel the lane exists for |
+| Q-M1 | the candidate consent read's `error` goes unchecked | RED ×2 — `?? []` becomes "nobody is reachable" |
+| Q-M2 | an unknown block set becomes an empty one | RED |
+| Q-M3 | the candidate availability-window read's `null` collapses to an empty map | **GREEN at first** — see 31.5 |
+| Q-M4 | the emergency stop stops being read on the serve path | RED ×2 |
+| Q-M5 | a degraded relationship verdict is cleared and published | RED |
+| N-M1 | the capability flag stops gating the route | RED |
+| N-M2 | the success log grows a per-person debug field with coordinates | RED |
+| N-M3 | a refusal is served as an empty list | RED |
+| N-M4 | `quantiseNow` returns the raw clock | RED |
+| D-M1 | the GET serves the stored fix precisely to whoever asks | RED — the whole of T235 |
+| D-M2 | an unattributable publish no longer clears the binding | RED — phone A keeps reading phone B's fix |
+| D-M3 | only the first publisher ever binds | RED — the binding stops following the publisher |
+| D-M4 | the device lookup drops its `user_id` filter | RED — another account's device id would do |
+| D-M5 | the binding TTL is removed | RED |
+| C-M1 | the client stops clamping an approximate point's freshness | RED — a 2 km cell rendered as live |
+| C-M2 | the account change keeps the previous account's coords and place | RED ×2 |
+| C-M3 | an unknown `coordsPrecision` value is trusted | RED |
+
+### 31.5 The mutation that did not land, and what it was hiding
+
+Q-M3 knocked out the candidate window read's `null` check and **nothing went
+red**. The conclusion available at that moment — "the check is redundant,
+delete it" — is exactly the reasoning that removed a real gate in this repo
+before, and it was wrong here for a reason that only shows up when you ask
+whether the inputs covered the reachable space.
+
+They did not. `availability_windows` is read TWICE — once for the candidates,
+once for the viewer's own windows — and the test failed the whole TABLE, so the
+sibling check fired and produced the same refusal stage. The gate was doing its
+job; the test could not see which gate had done it.
+
+Two tests now fail ONE read at a time, selected by the ids the query filters on
+(`test/reachablePeopleFailClosed.test.ts`, "a failed CANDIDATE window read
+refuses even though the viewer's own windows read fine", and its converse). With
+those in place Q-M3 goes red. The check stays, and it is now covered rather than
+merely present.
+
+### 31.6 The ceiling
+
+Stated plainly, because a reader must not have to discover it:
+
+1. **The surface is dark.** `nearby_reachable_enabled` is seeded FALSE by
+   `migrations/2998_nearby_reachable_flag.sql`, which is applied to NO database
+   — so the row does not exist on any deployment. The migration exists because
+   `check-flag-polarity.mjs` refuses a flag read by code and created by no
+   migration, and because an explicit FALSE is a decision on the record where an
+   absent row is the absence of one. Every row above is W for this reason before
+   any other.
+2. **The precise-location binding is not durable.** It lives in the API
+   process with a 60-minute TTL. After a restart, or on a second instance, every
+   precise share degrades to approximate until the owning device publishes
+   again. That is the safe direction and it is a real limitation. A durable
+   binding needs one `device_id` column on `user_location_state`, and this lane
+   did not add it: a rule that lives behind an unapplied migration enforces
+   nothing, and the enforcement above runs today. (2998 adds no column — it
+   seeds one feature-flag row, for the reason in item 1.)
+3. **Only `/me/location-state` is device-bound.** `trip_crew_location_sessions`
+   and the Safe Return live share are still keyed by account, so T235 is closed
+   on the self-read path and open on the two sharing paths.
+4. **`safety` is a constant.** The projection's safety term is always `clear`;
+   `nearbyRank` weights it and no producer sets it. The factor is modelled, not
+   sourced.
+5. **The candidate set is 24 graph members.** One `canMessage` round per
+   candidate is the cost of not building a fifth relationship resolver. A batch
+   resolver is the obvious follow-up and was not built here.
+6. **Nothing consults `lib/protectedLocations.ts`.** A bucket computed near a
+   protected place is still a bucket near a protected place (T31).
+7. **No client consumes any of it.** The client changes in this lane are the
+   device-id header, the precision discriminator and account isolation — the
+   Nearby surface itself has no screen.
+
+### 31.7 What this lane deliberately did not do
+
+`routes/messaging.ts` was not touched: it belongs to the history-privacy lane
+and nothing here required a change in it. `OpenToPlansService.listWindows` still
+returns `[]` on a failed read — a silent-zero path this section records rather
+than repairs, because five call sites depend on its return type and an honest
+sibling (`listWindowsForOwners`) was the smaller change. The `location_sessions`
+/ `trip_crew_location_sessions` device columns were not added, for the reason in
+31.6.2. No verdict was moved for a row this lane did not build against.
+
+### 31.9 A live defect this lane found on the way past, and closed
+
+`lib/mapTravelers.ts#effectiveDiscoveryVisibility` is the opt-in gate for the
+Discovery live traveler map — a route that is mounted, authenticated and NOT
+behind a flag (`routes/index.ts:213#router.use(mapTravelersRouter)`). Reading it
+to build the bucket ladder on top of it turned up this:
+
+**The column carries two vocabularies and the gate only knew one.** The module
+speaks `no_location | city_only | neighborhood | venue_tagged`, mirroring
+`services/location/LocationPermissionService.ts:49#off:                  "no_location",`. The LIVE table
+constrains the same column to `everyone | circle | trip_members | nobody`
+(`location_preferences_discovery_visibility_check` in
+`artifacts/api-server/baseline/20260819_baseline_structure.sql`). The gate hid a person only
+when the value was exactly `no_location` — **a value that CHECK does not
+admit** — so on a real database the column could not hide anyone:
+
+* `nobody`, a person who asked to be discoverable by NO ONE, fell through as an
+  unrecognised string and was published at the ~2.2 km area grid;
+* `circle` and `trip_members`, audience restrictions the traveler map has no way
+  to honour because it takes a viewport rather than an audience, were likewise
+  published to every viewer.
+
+Read as a denylist of one value the defect is invisible. The gate is now an
+ALLOWLIST — `lib/mapTravelers.ts:142#const PUBLISHABLE_DISCOVERY_VIS` — so a
+value nobody has taught the module about costs a person a pin on a map instead
+of costing them the setting they chose. `everyone`, the live default and a real
+unrestricted grant, still publishes.
+
+Four assertions in `test/mapTravelers.test.ts` pin it, and both mutations land:
+restoring the denylist reading reddens three, and turning the Set into an
+object literal reddens the inherited-key one.
+
+**NO CENSUS-MAP VERDICT IS MOVED HERE.** This is census-telegraph, the defect is
+on a Map surface, and moving a row in another census on the strength of a fix
+made while passing is exactly the kind of cross-grading that produces a verdict
+nobody measured. The Map lane should read this section and decide; the
+acknowledgement ledger names the two files so it will be asked to.
+
+
+### 31.8 The headline, restated from the rows
+
+Seven rows moved `N → W` and nothing else changed, so the previous headline
+(§28.7's C 231 / W 159 / N 58 / X 3) no longer describes the table under it.
+Restated by COUNTING THE ROWS, not by adding seven to the old numbers — a
+headline arrived at by arithmetic on the previous headline carries the previous
+headline's error forward while looking freshly measured:
+
+| bucket | count |
+| --- | --- |
+| BUILT-AND-CORRECT | **231** |
+| BUILT-BUT-WRONG | **166** |
+| NOT-BUILT | **51** |
+| CANNOT-VERIFY | **3** |
+
+451 rows. CONSTRUCTED (C + W) is 397 of 451 = 88.0 %; CORRECT is 231 of 451 =
+51.2 %. **Neither percentage moved because anything became correct.** Seven
+absences became partial implementations behind a flag that is off on every
+deployment, which is what `W` means and why none of the seven is `C`. §1's
+reading rule applies unchanged: this document is append-only and last-statement-
+wins, and a `W` here is a claim about construction, never about liveness.
 ## §32 — The two "dead" report tables, reconciled: unified storage already satisfies the requirement
 
 **LEAD RECONCILIATION, 2026-09-22.** §1's third headline finding says

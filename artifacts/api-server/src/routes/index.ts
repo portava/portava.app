@@ -383,4 +383,13 @@ router.use(opportunitiesRouter);
 import experienceSessionsRouter from "./experienceSessions.js";
 router.use(experienceSessionsRouter);
 
+// ── Telegraph §4 / §30A.2: Nearby & Available, as a server-built projection ──
+// Its own file behind nearby_reachable_enabled (no feature_flags row exists, so
+// it is OFF everywhere); no existing location, map or availability route is
+// touched. Registered at the tail, and the import with it, so no line above
+// moves — census-trips.md and sensing-surface-inventory.md cite this file by
+// line.
+import nearbyReachableRouter from "./nearbyReachable.js";
+router.use(nearbyReachableRouter);
+
 export default router;
