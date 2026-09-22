@@ -1569,8 +1569,23 @@ export interface DeclaredObject {
   probeable: boolean;
 }
 
-/** `schema.name` or `name`, quoted or not; captures the bare name. */
-const QUALIFIED = '(?:"?[a-z_][a-z0-9_]*"?\\.)?"?([a-z_][a-z0-9_]*)"?';
+/**
+ * `schema.name` or `name`, quoted or not. Captures the SCHEMA (group 1, which
+ * may be undefined) and the bare name (group 2).
+ *
+ * The schema is captured rather than discarded because this repository puts
+ * real objects outside `public` — `authz.is_active_thread_member(uuid)` is
+ * 2402's central object — and normalising everything to `public.` would probe
+ * `public.<name>`, find nothing, and report an ABSENT object that is present
+ * under its own schema. A false "missing" is as damaging here as a false
+ * "applied": both are confident answers about the wrong thing.
+ */
+const QUALIFIED = '(?:"?([a-z_][a-z0-9_]*)"?\\.)?"?([a-z_][a-z0-9_]*)"?';
+
+/** `schema.name`, defaulting an unqualified name to public. */
+function qualify(schema: string | undefined, name: string): string {
+  return `${schema ?? "public"}.${name}`;
+}
 
 /**
  * Objects a migration's SQL names, as a floor.
@@ -1593,7 +1608,7 @@ export function extractDeclaredObjects(sqlWithoutComments: string): DeclaredObje
     `create\\s+(?:unlogged\\s+)?table\\s+(?:if\\s+not\\s+exists\\s+)?${QUALIFIED}`,
     "gi",
   );
-  for (const m of sql.matchAll(tableRe)) add("table", `public.${m[1]}`, true);
+  for (const m of sql.matchAll(tableRe)) add("table", qualify(m[1], m[2]), true);
 
   // ALTER TABLE <t> … ; — one statement may carry several ADD COLUMN clauses,
   // so the table is captured first and its body scanned for the clauses.
@@ -1602,12 +1617,12 @@ export function extractDeclaredObjects(sqlWithoutComments: string): DeclaredObje
     "gi",
   );
   for (const m of sql.matchAll(alterRe)) {
-    const table = m[1];
-    const body = m[2] ?? "";
+    const table = qualify(m[1], m[2]);
+    const body = m[3] ?? "";
     for (const c of body.matchAll(
       /add\s+column\s+(?:if\s+not\s+exists\s+)?"?([a-z_][a-z0-9_]*)"?/gi,
     )) {
-      add("column", `public.${table}.${c[1]}`, true);
+      add("column", `${table}.${c[1]}`, true);
     }
     for (const c of body.matchAll(/add\s+constraint\s+"?([a-z_][a-z0-9_]*)"?/gi)) {
       add("constraint", c[1], false);
@@ -1624,9 +1639,12 @@ export function extractDeclaredObjects(sqlWithoutComments: string): DeclaredObje
     add("index", m[1], false);
   }
   for (const m of sql.matchAll(
-    /create\s+(?:or\s+replace\s+)?function\s+(?:[a-z_][a-z0-9_]*\.)?"?([a-z_][a-z0-9_]*)"?/gi,
+    /create\s+(?:or\s+replace\s+)?function\s+(?:"?([a-z_][a-z0-9_]*)"?\.)?"?([a-z_][a-z0-9_]*)"?/gi,
   )) {
-    add("function", m[1], false);
+    // Schema-qualified: 2402's central object is authz.is_active_thread_member,
+    // and a bare `is_active_thread_member` would collide with any same-named
+    // function in another schema.
+    add("function", qualify(m[1], m[2]), false);
   }
   for (const m of sql.matchAll(/create\s+policy\s+"?([^"\n]+?)"?\s+on\s/gi)) {
     add("policy", m[1].trim(), false);
@@ -1637,9 +1655,9 @@ export function extractDeclaredObjects(sqlWithoutComments: string): DeclaredObje
     add("trigger", m[1], false);
   }
   for (const m of sql.matchAll(
-    /create\s+type\s+(?:[a-z_][a-z0-9_]*\.)?"?([a-z_][a-z0-9_]*)"?/gi,
+    /create\s+type\s+(?:"?([a-z_][a-z0-9_]*)"?\.)?"?([a-z_][a-z0-9_]*)"?/gi,
   )) {
-    add("enum", m[1], false);
+    add("enum", qualify(m[1], m[2]), false);
   }
 
   return [...found.values()].sort((a, b) =>

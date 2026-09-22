@@ -1452,7 +1452,7 @@ describe("extractDeclaredObjects", () => {
     assert.ok(keys.includes("column:public.rank_events.dwell_kind"));
     assert.ok(keys.includes("constraint:rank_events_dwell_pairing_check"));
     assert.ok(keys.includes("index:idx_discovery_trails_city"));
-    assert.ok(keys.includes("function:trail_touch"));
+    assert.ok(keys.includes("function:public.trail_touch"));
     assert.ok(keys.includes("policy:discovery_trails_owner_read"));
     assert.ok(keys.includes("trigger:trail_touch_trg"));
   });
@@ -1491,6 +1491,31 @@ describe("extractDeclaredObjects", () => {
       declared.map((d) => d.key),
       ["public.rank_events.schema_version"],
     );
+  });
+
+  it("keeps the SCHEMA, so an authz object is not probed as a public one", () => {
+    // 2402's central object is authz.is_active_thread_member. Normalising every
+    // name to `public.` would probe public.is_active_thread_member, find
+    // nothing, and report an ABSENT object that is present under its own
+    // schema. A false "missing" is as damaging as a false "applied": both are
+    // confident answers about the wrong thing.
+    // MUTATION: drop the schema capture and hardcode `public.` → this fails.
+    const declared = extractDeclaredObjects(`
+      CREATE OR REPLACE FUNCTION authz.is_active_thread_member(p_thread_id uuid)
+        RETURNS boolean AS $$ SELECT true $$ LANGUAGE sql;
+      CREATE TABLE IF NOT EXISTS authz.audit_log (id uuid);
+      ALTER TABLE authz.audit_log ADD COLUMN IF NOT EXISTS reason text;
+      CREATE TYPE authz.decision AS ENUM ('allow','deny');
+      CREATE TABLE public.plain (id uuid);
+    `);
+    const keys = declared.map((d) => `${d.kind}:${d.key}`);
+    assert.ok(keys.includes("function:authz.is_active_thread_member"));
+    assert.ok(keys.includes("table:authz.audit_log"));
+    assert.ok(keys.includes("column:authz.audit_log.reason"));
+    assert.ok(keys.includes("enum:authz.decision"));
+    assert.ok(keys.includes("table:public.plain"));
+    assert.ok(!keys.some((k) => k.includes("public.is_active_thread_member")));
+    assert.ok(!keys.some((k) => k.includes("public.audit_log")));
   });
 
   it("finds nothing in SQL that declares nothing", () => {
