@@ -122,6 +122,12 @@ run_check "check:guard-coverage" pnpm run check:guard-coverage
 # CI cannot invoke it. Ten currently declare the last of those. That number is
 # printed on every run so the unenforced set is measured rather than implied.
 run_check "check:guard-reachability" pnpm run check:guard-reachability
+# check:route-shadowing — Express matches in registration order, so a literal
+# path registered after a parameterised one that fits it is never reached. The
+# handler exists and typechecks; it is simply never called, and the caller gets
+# whatever the parameterised handler does with a non-id. Silent by construction.
+run_check "check:route-shadowing" pnpm run check:route-shadowing
+
 # check:route-auth-gate — requireUser is the ONLY place the account ban/suspend
 # gate is applied, and banning does not revoke sessions, so a route that verifies
 # its own JWT accepts a banned user's still-valid token. Six mutating routes in
