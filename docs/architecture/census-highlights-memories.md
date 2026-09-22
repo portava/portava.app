@@ -3572,8 +3572,8 @@ and each was re-found by its EXACT ORIGINAL LINE TEXT rather than by offset:
 
 | document | citation | original line text at `6d4327d66` | now |
 |---|---|---|---|
-| `docs/architecture/census-telegraph.md:1897` | routes/memories.ts line 1772, anchor `state` | `    (q as any) = (q as any).eq("state", "published");` | line **1839** |
-| `docs/architecture/census-telegraph.md:1935` | the same line, anchor `state", "published` | the same line | line **1839** |
+| `docs/architecture/census-telegraph.md:1918` | routes/memories.ts line 1772, anchor `state` | `    (q as any) = (q as any).eq("state", "published");` | line **1839** |
+| `docs/architecture/census-telegraph.md:1956` | the same line, anchor `state", "published` | the same line | line **1839** |
 | `docs/architecture/migration-queue.md:53` | routes/highlights.ts line 480 | `    .from("highlights")` — the `POST /highlights` insert, which is what that row's claim is about ("lists its inserted columns explicitly and uses no `SELECT *`") | line **498** |
 
 The alternative was to hand the integration owner a gate that was green before this branch and

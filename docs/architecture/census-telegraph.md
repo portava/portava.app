@@ -7460,8 +7460,8 @@ is the checksum the ledger row itself records.
 | Where | What it says | Status |
 | --- | --- | --- |
 | `docs/architecture/census-telegraph.md:138#not on this branch` | *"in open PR #472 — **not on this branch**"* | The FILE is on this branch as of 2026-09-15. The PR is still open and still unmerged. |
-| `docs/architecture/census-telegraph.md:403#The exception that is not in HEAD` | *"`migrations/2325_…`, the route that calls it, and `test/telegraphUnsendBeforeSeen.test.ts`"* | The migration is here; **the route and the test are not**. The heading remains true of what it grades. |
-| `docs/architecture/census-telegraph.md:1130#Five files:` | lists 2325 among five | Accurate as a description of PR #472, which still carries all five. One of the five is now also in this tree. |
+| `docs/architecture/census-telegraph.md:424#The exception that is not in HEAD` | *"`migrations/2325_…`, the route that calls it, and `test/telegraphUnsendBeforeSeen.test.ts`"* | The migration is here; **the route and the test are not**. The heading remains true of what it grades. |
+| `docs/architecture/census-telegraph.md:1151#Five files:` | lists 2325 among five | Accurate as a description of PR #472, which still carries all five. One of the five is now also in this tree. |
 
 Only the migration file came across, and that is not an accident of effort: a
 ledger row names a FILE, and the file is the whole of what was owed. Bringing the
@@ -8095,3 +8095,69 @@ the lane's own report, not from a re-measurement. `head_commit` is unchanged at
 `artifacts/api-server/src/scripts/CENSUS_STALENESS_ACKNOWLEDGED.json` and is the
 only acknowledgement in that file that argues a verdict DID move rather than
 that none could.
+
+---
+
+## §32 — The two "dead" report tables, reconciled: unified storage already satisfies the requirement
+
+**LEAD RECONCILIATION, 2026-09-22.** §1's third headline finding says
+`message_reports` and `thread_reports` are dead tables with no writer and no
+reader, and that "two of production's seven Telegraph tables are orphans". Every
+fact in that finding is correct. **Its implication is not**, and the difference
+decides whether anybody should build anything.
+
+### 32.1 What was measured
+
+**Code, on `main` at `857ad9fb9`.** Both Telegraph report handlers write to the
+**unified `reports` table** — `routes/messaging.ts:3867` (threads) and `:4116`
+(messages). Neither legacy table has a writer.
+
+**And the unified table is READ, extensively** — which is what separates this
+from §1's second finding about `saved_messages`:
+
+| reader | what it does |
+|---|---|
+| `routes/admin.ts` (10+ sites incl. `:1284`, `:1391`, `:2186`, `:2308`) | the moderation surface — lists, reviews and updates reports |
+| `domain/telegraph/policies/sendRateLimit.ts:191` | **reports feed a send rate limit** — a report has a behavioural consequence, not just a row |
+| `scripts/verifyModerationFkE2E.ts:144,257` | an end-to-end verifier that writes, reads back and cleans up |
+
+**Schema, read from production.** The unified table is **strictly richer** than
+two purpose-built tables would be: `target_type` + `target_id` make it
+polymorphic, `context_type` + `context_id` let a message report carry the thread
+it came from, and `reason_code` / `severity` / `status` / `moderation_notes` /
+`reviewed_by` / `reviewed_at` give it a moderation lifecycle that each legacy
+table would otherwise need duplicated.
+
+### 32.2 The ruling
+
+**THE REQUIREMENT IS SATISFIED BY THE UNIFIED STORAGE.** Nothing is missing, and
+**no new reporting system may be built for Telegraph.** A second path would be
+the duplication this document spends §23 warning against, and it would split the
+moderation queue in two — the admin surface reads one table.
+
+**THE TWO LEGACY TABLES ARE SUPERSEDED, AND THEY STAY.** Measured in production
+on 2026-09-22: `message_reports` **0 rows**, `thread_reports` **0 rows**. So
+nothing is at risk either way — and that is *not* the argument for keeping them.
+The argument is that **"current code does not reference it" is not a reason to
+drop a table.** A drop is irreversible, it buys no capacity at zero rows, and
+this repository's own history is the case for caution: migration 2298 is the
+precedent for a ledger row whose effects were absent, and 2890/2900/2958 for
+objects live with no ledger row. A tree that has twice been wrong about what the
+database contains should not be dropping tables to tidy a census finding.
+They are **retained, unreferenced, and recorded as superseded**.
+
+### 32.3 One thing this reconciliation found and did NOT resolve
+
+**`public.reports` itself holds ZERO rows in production.** Given the readers
+above, that most plausibly means nothing has been reported yet, which is
+unremarkable for an app in this state. But it is **not proof** of that: an
+identical zero would be produced by a write path that fails. The two are not
+distinguishable from this environment, because distinguishing them needs either
+production logs or a report submitted through the deployed app.
+
+**Recorded as unresolved rather than assumed benign.** This is the same
+distinction §32 of `census-input-intelligence.md` draws for migration 2950,
+which is applied and whose table is also empty: *reachable is not answered*. No
+verdict moves on this section — the §22 rows keep their current verdicts, and
+whoever owns them next should settle this with a submitted report rather than an
+inference.
