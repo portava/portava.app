@@ -703,6 +703,122 @@ describe("authorizeMediaAccess — the matrix", () => {
       mkStory({ state: "expired", expires_at: new Date(Date.now() - 1000).toISOString() }), VIEWER, "post-media", path), false);
   });
 
+  // ── The owner archive and the audience window are SEPARATE boundaries ──────
+  //
+  // Asked separately at the owner's request (2026-09-22), because they are two
+  // different questions and one fixture answering both hides which of them a
+  // change actually moved. Expiry ends the AUDIENCE's access. It does not end
+  // the owner's, and since the sweeper stopped deleting the bytes the owner's
+  // access is the only thing keeping an expired story from being unreachable
+  // garbage.
+  describe("an expired story: the owner keeps it, the audience does not", () => {
+    const path = `stories/${OWNER}/archived.jpg`;
+    const past = new Date(Date.now() - 60_000).toISOString();
+    const expiredStory = () => makeClient({
+      stories: [{
+        owner_id: OWNER, state: "expired", visibility: "public",
+        close_friends_only: false, expires_at: past, media_url: pub(path),
+      }],
+    });
+
+    it("OWNER: the archive is readable after expiry", async () => {
+      assert.equal(
+        await authorizeMediaAccess(expiredStory(), OWNER, "post-media", path), true,
+        "the owner's own expired story must still be served — that is what the archive IS",
+      );
+    });
+
+    it("AUDIENCE: the same object, the same moment, is denied", async () => {
+      _clearMediaAccessCache();
+      assert.equal(
+        await authorizeMediaAccess(expiredStory(), VIEWER, "post-media", path), false,
+        "expiry ends the audience's access",
+      );
+    });
+  });
+
+  // ── A Highlight reference must not reopen the Story ────────────────────
+  //
+  // Owner ruling 2026-09-22, point 6: retention must not delete media a saved
+  // Highlight still references, "neither should such a reference restore
+  // audience access to the expired Story". The two halves pull in opposite
+  // directions — keeping the bytes for the Highlight is exactly what could hand
+  // them back to the Story's audience — so the second half is measured here
+  // rather than argued.
+  describe("a saved Highlight does not reopen an expired Story to its audience", () => {
+    const path = `stories/${OWNER}/kept.jpg`;
+    const past = new Date(Date.now() - 60_000).toISOString();
+
+    it("an EXPIRED story whose media a Highlight also references stays denied", async () => {
+      _clearMediaAccessCache();
+      const sc = makeClient({
+        stories: [{
+          owner_id: OWNER, state: "expired", visibility: "public",
+          close_friends_only: false, expires_at: past, media_url: pub(path),
+          saved_to_highlight_id: "h-1",
+        }],
+      });
+      assert.equal(
+        await authorizeMediaAccess(sc, VIEWER, "post-media", path), false,
+        "the Highlight is its own object with its own audience; it does not vouch for the Story",
+      );
+    });
+
+    it("and the owner still reaches it", async () => {
+      _clearMediaAccessCache();
+      const sc = makeClient({
+        stories: [{
+          owner_id: OWNER, state: "expired", visibility: "public",
+          close_friends_only: false, expires_at: past, media_url: pub(path),
+          saved_to_highlight_id: "h-1",
+        }],
+      });
+      assert.equal(await authorizeMediaAccess(sc, OWNER, "post-media", path), true);
+    });
+
+    it("A `saved` story IS served past expires_at — and that is the Highlight, not the Story", async () => {
+      // THE DISTINCTION, RECORDED BECAUSE IT IS EASY TO READ AS THE DEFECT
+      // ABOVE. Branch 3d's `live` test admits `state === "saved"` regardless of
+      // `expires_at`, so this row authorizes an audience member after the 24h
+      // window. That is not the expired Story coming back: saving to a Highlight
+      // REPUBLISHES the media as a Highlight, the sweeper deliberately skips
+      // these rows (`.is("saved_to_highlight_id", null)`) so they never become
+      // `expired` in the first place, and the audience cannot widen — 3d serves
+      // at the STORY's own visibility, and resolveHighlightVisibilityForStory
+      // refuses any Story whose audience a Highlight cannot carry faithfully.
+      //
+      // The two rows differ by ONE field, `state`, which is the whole point: an
+      // `expired` row is a Story whose window closed, a `saved` row is a
+      // Highlight. mediaAccessDeadline agrees with this branch exactly — it
+      // returns no deadline for a `saved` story — so the clamp cannot contradict
+      // the authorization.
+      _clearMediaAccessCache();
+      const sc = makeClient({
+        stories: [{
+          owner_id: OWNER, state: "saved", visibility: "public",
+          close_friends_only: false, expires_at: past, media_url: pub(path),
+          saved_to_highlight_id: "h-1",
+        }],
+      });
+      assert.equal(await authorizeMediaAccess(sc, VIEWER, "post-media", path), true);
+    });
+
+    it("a `saved` story that was never public is STILL not public", async () => {
+      // The republication is not a promotion to everyone. If it were, saving to
+      // a Highlight would be a way to widen a close-friends Story's audience.
+      _clearMediaAccessCache();
+      const sc = makeClient({
+        stories: [{
+          owner_id: OWNER, state: "saved", visibility: "close_friends",
+          close_friends_only: true, expires_at: past, media_url: pub(path),
+          saved_to_highlight_id: "h-1",
+        }],
+        closeFriends: [],
+      });
+      assert.equal(await authorizeMediaAccess(sc, VIEWER, "post-media", path), false);
+    });
+  });
+
   it("orphan/unknown object → DENY by default", async () => {
     const sc = makeClient();
     assert.equal(await authorizeMediaAccess(sc, VIEWER, "post-media", `${OWNER}/nothing-references-this.jpg`), false);
