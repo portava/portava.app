@@ -11,6 +11,7 @@ import { _setTestServiceClient } from "../lib/supabase.js";
 import { authorizeMediaAccess, ownerFromPath, _clearMediaAccessCache } from "../lib/mediaAccess.js";
 import { authorizeMediaAttachment, authorizeMediaContext } from "../lib/mediaVisibility.js";
 import mediaFileRouter from "../routes/mediaFile.js";
+import { PUBLISHED_STORY_RETENTION } from "../services/stories/storyRetentionPolicy.js";
 
 const SB = "http://sb.example.test";
 const OLD_SUPABASE_URL = process.env.SUPABASE_URL;
@@ -416,15 +417,81 @@ describe("authorizeMediaAccess — the matrix", () => {
   // are now kept for the owner's archive, so the bytes survive a deletion that
   // used to take them, and "deleted" has to keep meaning deleted.
 
-  it("denies the owner their own bytes when they deleted the story holding them", async () => {
+  // The windows come from services/stories/storyRetentionPolicy.ts. These
+  // fixtures place `deleted_at` relative to them rather than hard-coding a
+  // number of days, so changing a published window moves these tests with it
+  // instead of quietly making them assert the old policy.
+  const DAY = 86_400_000;
+  const RECOVERY_DAYS = PUBLISHED_STORY_RETENTION.deletedRecoveryDays;
+  const ago = (days: number) => new Date(Date.now() - days * DAY).toISOString();
+
+  it("serves the owner a deleted story INSIDE its recovery window", async () => {
+    // The archive's Deleted tab renders each recoverable story's thumbnail.
+    // Denying here blanks every row and asks the owner to choose what to
+    // restore from a list of grey squares — a disclosed recovery window the
+    // owner cannot see into is not the window that was published.
+    const path = `${OWNER}/story-recoverable.jpg`;
+    const sc = makeClient({
+      stories: [{
+        owner_id: OWNER, state: "deleted", media_url: pub(path),
+        expires_at: ago(2), deleted_at: ago(1),
+      }],
+    });
+    assert.equal(await authorizeMediaAccess(sc, OWNER, "post-media", path), true);
+  });
+
+  it("denies the owner their own bytes once the recovery window has CLOSED", async () => {
+    // The gap this branch exists for: the window is over and the hourly job
+    // has not reached the row yet. Nothing else withholds the object in that
+    // gap, so without this the last promise the copy makes about a deleted
+    // story is kept only by a scheduler's timing.
     const path = `${OWNER}/story-del.jpg`;
     const sc = makeClient({
-      stories: [{ owner_id: OWNER, state: "deleted", media_url: pub(path), expires_at: null }],
+      stories: [{
+        owner_id: OWNER, state: "deleted", media_url: pub(path),
+        expires_at: ago(RECOVERY_DAYS + 5), deleted_at: ago(RECOVERY_DAYS + 1),
+      }],
     });
     assert.equal(
       await authorizeMediaAccess(sc, OWNER, "post-media", path),
       false,
-      "the owner deleted this; serving it back to them makes 'deleted' mean 'unlisted'",
+      "the owner deleted this and the window has closed; serving it makes 'deleted' mean 'unlisted'",
+    );
+  });
+
+  it("denies a deleted story whose deleted_at is missing, rather than guessing a window", async () => {
+    // 2998's trigger sets `deleted_at` on every transition into 'deleted', so
+    // a null here is a row the trigger never touched or a trigger that failed.
+    // Either way the window cannot be established, and a branch that cannot
+    // decide denies.
+    const path = `${OWNER}/story-noclock.jpg`;
+    const sc = makeClient({
+      stories: [{
+        owner_id: OWNER, state: "deleted", media_url: pub(path),
+        expires_at: ago(2), deleted_at: null,
+      }],
+    });
+    assert.equal(await authorizeMediaAccess(sc, OWNER, "post-media", path), false);
+  });
+
+  it("closes the window at the ARCHIVE deadline when that comes first", async () => {
+    // retentionDatesFor caps the recovery window at the archive deadline, so a
+    // story deleted close to that deadline has a shorter window than the
+    // nominal one. The relay has to enforce the date the archive PRINTED, not
+    // the nominal number, or the two halves disagree about the same row.
+    const path = `${OWNER}/story-capped.jpg`;
+    const beyondArchive = PUBLISHED_STORY_RETENTION.archiveRetentionDays + 1;
+    const sc = makeClient({
+      stories: [{
+        owner_id: OWNER, state: "deleted", media_url: pub(path),
+        expires_at: ago(beyondArchive),   // archive deadline already past
+        deleted_at: ago(0),               // deleted just now: nominally 30 days left
+      }],
+    });
+    assert.equal(
+      await authorizeMediaAccess(sc, OWNER, "post-media", path),
+      false,
+      "a fresh deletion cannot buy a window past the archive deadline it already had",
     );
   });
 
@@ -435,7 +502,7 @@ describe("authorizeMediaAccess — the matrix", () => {
     const sc = makeClient({
       stories: [{
         owner_id: OWNER, state: "expired", media_url: pub(path),
-        expires_at: new Date(Date.now() - 5 * 86400_000).toISOString(),
+        expires_at: ago(5),
       }],
     });
     assert.equal(await authorizeMediaAccess(sc, OWNER, "post-media", path), true);
@@ -447,12 +514,18 @@ describe("authorizeMediaAccess — the matrix", () => {
     // and this is the test that says so.
     const path = `${OWNER}/story-rec.jpg`;
     const deleted = makeClient({
-      stories: [{ owner_id: OWNER, state: "deleted", media_url: pub(path), expires_at: null }],
+      stories: [{
+        owner_id: OWNER, state: "deleted", media_url: pub(path),
+        expires_at: ago(RECOVERY_DAYS + 5), deleted_at: ago(RECOVERY_DAYS + 1),
+      }],
     });
     assert.equal(await authorizeMediaAccess(deleted, OWNER, "post-media", path), false);
 
     const recovered = makeClient({
-      stories: [{ owner_id: OWNER, state: "expired", media_url: pub(path), expires_at: null }],
+      stories: [{
+        owner_id: OWNER, state: "expired", media_url: pub(path),
+        expires_at: ago(RECOVERY_DAYS + 5), deleted_at: null,
+      }],
     });
     assert.equal(
       await authorizeMediaAccess(recovered, OWNER, "post-media", path),
@@ -483,7 +556,10 @@ describe("authorizeMediaAccess — the matrix", () => {
     // as a way to blank an object out of its owner's own archive either.
     const path = `${OWNER}/story-hijack.jpg`;
     const sc = makeClient({
-      stories: [{ owner_id: VIEWER, state: "deleted", media_url: pub(path), expires_at: null }],
+      stories: [{
+        owner_id: VIEWER, state: "deleted", media_url: pub(path),
+        expires_at: ago(RECOVERY_DAYS + 5), deleted_at: ago(RECOVERY_DAYS + 1),
+      }],
     });
     assert.equal(await authorizeMediaAccess(sc, OWNER, "post-media", path), true);
   });

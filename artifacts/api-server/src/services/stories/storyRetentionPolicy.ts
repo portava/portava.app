@@ -180,3 +180,107 @@ export function describeDivergence(d: RetentionDivergence): string {
       return `${d.envKey}=${d.effective} is being enforced in place of the published ${d.published}; the published retention policy is now out of date and must be updated`;
   }
 }
+
+
+// ── The dates the archive, the recovery route and the media relay share ─────
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+export interface StoryRetentionDates {
+  /** When the audience stopped being able to see it. */
+  audienceEndedAt: string | null;
+  /** When viewers, reactions and replies are purged. */
+  engagementPurgeAt: string | null;
+  /** When the Story and its media are permanently purged. Null when it has no clock yet. */
+  purgeAt: string | null;
+  /** For a deleted Story: the last moment the owner can recover it. */
+  recoverableUntil: string | null;
+  /** True when the Story is in its owner-only recovery window right now. */
+  recoverable: boolean;
+  /**
+   * True when the Story's archive deadline has already passed, so recovering it
+   * restores it into the next purge pass rather than into a lasting archive.
+   */
+  purgeImminent: boolean;
+}
+
+/**
+ * The dates the archive must show, from the row and the effective windows.
+ *
+ * ONE implementation, exported, because the archive listing and the recovery
+ * route both have to say the same thing. A screen that shows "kept until March"
+ * while the job purges in January is worse than a screen that shows nothing.
+ *
+ * A `saved` Story returns a null `purgeAt` rather than a computed one: its media
+ * belongs to a Highlight and the retention job never queues it, so naming a
+ * purge date would be a promise this system does not keep.
+ */
+export function retentionDatesFor(
+  story: { state?: string | null; expires_at?: string | null; deleted_at?: string | null; saved_to_highlight_id?: string | null },
+  cfg: { archiveRetentionDays: number; deletedRecoveryDays: number; engagementRetentionDays: number },
+  nowMs: number = Date.now(),
+): StoryRetentionDates {
+  const expiresMs = story.expires_at ? Date.parse(story.expires_at) : NaN;
+  const deletedMs = story.deleted_at ? Date.parse(story.deleted_at) : NaN;
+  const hasExpiry = Number.isFinite(expiresMs);
+
+  const audienceEndedAt = hasExpiry && expiresMs <= nowMs ? new Date(expiresMs).toISOString() : null;
+  const engagementPurgeAt = hasExpiry
+    ? new Date(expiresMs + cfg.engagementRetentionDays * DAY_MS).toISOString()
+    : null;
+
+  const isDeleted = story.state === "deleted";
+  const archiveDeadlineMs = hasExpiry ? expiresMs + cfg.archiveRetentionDays * DAY_MS : null;
+
+  /**
+   * The recovery window closes at whichever comes FIRST: the recovery days
+   * counted from `deleted_at`, or the archive deadline the Story already had.
+   *
+   * Deleting is a request to remove something SOONER. A window that ran past
+   * the archive deadline would make deleting a way to keep a Story longer than
+   * leaving it alone, and — because `deleted_at` is set afresh on each delete,
+   * the 2998 trigger only refusing to move it while the row stays deleted — a
+   * delete/recover/delete cycle would renew it indefinitely. The cap closes
+   * that without touching the never-reset rule, which is still the database's
+   * to enforce.
+   *
+   * The consequence is disclosed rather than hidden: a Story deleted close to
+   * its archive deadline has a recovery window SHORTER than the published
+   * number, and this is the value the archive shows, so the screen says the
+   * real date rather than the nominal one.
+   */
+  const recoveryEndsMs = Number.isFinite(deletedMs)
+    ? (archiveDeadlineMs === null
+        ? deletedMs + cfg.deletedRecoveryDays * DAY_MS
+        : Math.min(deletedMs + cfg.deletedRecoveryDays * DAY_MS, archiveDeadlineMs))
+    : null;
+  const recoverableUntil = recoveryEndsMs === null ? null : new Date(recoveryEndsMs).toISOString();
+
+  let purgeAt: string | null = null;
+  if (story.saved_to_highlight_id || story.state === "saved" || story.state === "removed") {
+    purgeAt = null; // not this job's to purge — see the docblock
+  } else if (isDeleted) {
+    purgeAt = recoverableUntil;
+  } else if (archiveDeadlineMs !== null) {
+    purgeAt = new Date(archiveDeadlineMs).toISOString();
+  }
+
+  return {
+    audienceEndedAt,
+    engagementPurgeAt,
+    purgeAt,
+    recoverableUntil: isDeleted ? recoverableUntil : null,
+    recoverable: isDeleted && recoverableUntil !== null && Date.parse(recoverableUntil) > nowMs,
+    /**
+     * True when recovering this Story would put it straight back into the next
+     * purge pass, because its archive deadline has already passed.
+     *
+     * Recovery does NOT restart the archive clock — that clock runs from
+     * `expires_at` and the owner deleting and undeleting a Story does not make
+     * it newer. So a Story recovered after its deadline is due immediately, and
+     * saying so is the difference between a considered policy and a Story that
+     * silently disappears within the hour of being restored.
+     */
+    purgeImminent: archiveDeadlineMs !== null && archiveDeadlineMs <= nowMs,
+  };
+}

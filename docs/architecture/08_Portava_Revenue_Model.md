@@ -187,7 +187,7 @@ decision, not an oversight to patch inside a fee change.**
 
 `rent_buddy_fee_rules` appears in **no file in the canonical migration chain**
 (`artifacts/api-server/src/migrations/`). Its DDL and seed exist only in
-`artifacts/api-server/migrations/`, which `src/scripts/frozenMigrationRoots.ts:73-75` records as
+`artifacts/api-server/migrations/`, which `src/scripts/frozenMigrationRoots.ts:81-82` records as
 the *frozen legacy root*. The table itself is real — it is present in the 2026-08-19 production
 baseline (`artifacts/api-server/baseline/20260819_baseline_structure.sql:9062`) — but that
 baseline is schema-only, so **whether the five seed rows are present in production is not

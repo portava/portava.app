@@ -93,9 +93,13 @@ is replayable:
 | 15 other roots + 13 loose files | frozen drops and handoff packages | rest |
 
 `src/scripts/frozenMigrationRoots.ts` pins **every file in 19 frozen roots by sha256**, so an
-in-place edit is caught, not just a new filename; `reconciliation-staging` and `baseline` are
-*allowlisted by name* rather than hash-pinned because their contents are expected to change
-(`frozenMigrationRoots.ts:55-71`). `check:frozen-dir` additionally sweeps for migration-shaped
+in-place edit is caught, not just a new filename; `reconciliation-staging`, `baseline` and
+`sql/rehearsals` are *allowlisted by name* rather than hash-pinned because their contents are
+expected to change (`frozenMigrationRoots.ts:55-77`). The latter two carry `nonExecutable: true`,
+which is enforcement rather than description: `checkNonExecutableOverlap()` fails the build if a
+file in either ever shares a filename or a content hash with the canonical chain, because a
+schema dump or a BEGIN/ROLLBACK rehearsal replayed as a migration would report success having
+applied nothing. `check:frozen-dir` additionally sweeps for migration-shaped
 files in roots nobody listed (`checkFrozenDir.ts:8,99-112`).
 
 `auditMigrationsVsLive.ts:76-83` scans **only** the canonical dir; `--include-legacy` adds

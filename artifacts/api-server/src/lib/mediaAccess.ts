@@ -23,6 +23,10 @@ import {
   authorizeMediaAttachment,
   authorizeMediaContext,
 } from "./mediaVisibility.js";
+import {
+  resolveStoryRetentionConfig,
+  retentionDatesFor,
+} from "../services/stories/storyRetentionPolicy.js";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -198,9 +202,22 @@ export async function authorizeMediaAccess(
  *
  * The owner's decision was "delete this". Answering a direct request for its
  * photo with the photo makes that decision mean "hide it from the list", which
- * is not what the word says and not what the retention copy promises. Recovery
- * is the one route back, and it is a deliberate act the owner takes; it is not
- * a URL they can still paste.
+ * is not what the word says and not what the retention copy promises.
+ *
+ * ── WHY THE RECOVERY WINDOW IS THE LINE, NOT `state = 'deleted'` ─────────────
+ * An earlier version of this denied on `state === "deleted"` alone. That was
+ * wrong, and the archive screen is the proof: its "Deleted" tab renders each
+ * recoverable story's thumbnail, so denying the bytes blanks every row and the
+ * owner is asked to choose what to restore from a list of grey squares. The
+ * approved policy is a DISCLOSED owner-only recovery window, and a window the
+ * owner cannot see into is not the window that was published.
+ *
+ * So the line is `retentionDatesFor(...).recoverable`: inside the window the
+ * bytes are the owner's, and the moment it closes they are not — which covers
+ * the gap this branch actually exists for, between the window closing and the
+ * hourly job reaching the row. The window itself is computed in ONE place
+ * (services/stories/storyRetentionPolicy.ts) and read here, rather than
+ * re-derived, so the relay cannot disagree with the date the archive printed.
  *
  * This is NOT an audience question — the audience never got past branch 3d for
  * a deleted story. It is about whether the product keeps its own word to the
@@ -245,7 +262,7 @@ async function ownerDeletedThisStory(
   try {
     const { data, error } = await sc
       .from("stories")
-      .select("owner_id, state")
+      .select("owner_id, state, expires_at, deleted_at, saved_to_highlight_id")
       .in("media_url", urlForms)
       .limit(1);
     if (error) {
@@ -258,7 +275,11 @@ async function ownerDeletedThisStory(
     // the object owner's access to their own bytes — the same attribution rule
     // branch 3d applies in the other direction.
     if (story.owner_id !== viewerId) return false;
-    return story.state === "deleted";
+    if (story.state !== "deleted") return false;
+    // Inside the disclosed recovery window the owner keeps their bytes: the
+    // archive's Deleted tab shows them what they are about to restore. Once it
+    // closes they do not, whether or not the hourly job has reached the row.
+    return !retentionDatesFor(story, resolveStoryRetentionConfig()).recoverable;
   } catch (err) {
     noteLookupFailure("owner deleted-story", err, { bucket, path });
     return true;
