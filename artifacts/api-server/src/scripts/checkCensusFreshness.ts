@@ -740,6 +740,67 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     // while changing what this census can claim — the same argument that put
     // test/storyHighlightVisibility.test.ts in this list above.
     "artifacts/api-server/src/test/memoryParticipantLadder.test.ts",
+    // ── WIDENED 2026-09-22 by section Q, on the same argument every test file ──
+    // above was added on: each is the EVIDENCE a row's verdict now cites, so
+    // deleting it would not change the code and would change what this census
+    // can claim.
+    //   highlightLifetimeAndPin.test.ts — §Q's evidence for H94–H97. It drives
+    //     POST /highlights with a §4 class through to the stored column and back
+    //     out of the profile read with its provenance, and pins PERMANENT's
+    //     refusal-by-name on a database without 2975. Three mutations in §Q.2
+    //     turn it red.
+    //   memorySearchRoute.test.ts — §Q's evidence for H110 and H111, whose
+    //     shared blocker was "no route imports the module". It also carries the
+    //     `deterministicMatchCount` case §Q.3 added after a mutation found the
+    //     original green when the field was replaced by the page size.
+    //   highlightSourceLinks.test.ts — §Q's red-first evidence for H32, the
+    //     first TypeScript writer for `highlight_sources`.
+    //   highlightConsentEnforcementMap.test.ts — §Q.5's evidence that the §10
+    //     enforcement map served on `GET /highlights/:id/projection-policy` is
+    //     DERIVED from the gate rather than retyped beside it.
+    //   highlightsSpecHarness.ts — not a suite but the fake all four drive. §Q.1
+    //     changed its generated primary key from `new-<hex>` to a UUID, which is
+    //     the shape every table it stands in for actually has; a harness that
+    //     invents a key shape the database cannot is how a correct handler is
+    //     made to look broken. It is watched for the same reason
+    //     `highlightRouteHarness.ts` is cited in §P.6.
+    "artifacts/api-server/src/test/highlightLifetimeAndPin.test.ts",
+    "artifacts/api-server/src/test/memorySearchRoute.test.ts",
+    "artifacts/api-server/src/test/highlightSourceLinks.test.ts",
+    "artifacts/api-server/src/test/highlightConsentEnforcementMap.test.ts",
+    "artifacts/api-server/src/test/highlightsSpecHarness.ts",
+    // ── AND FIVE THIS SCOPE SHOULD ALREADY HAVE HAD, found by running ────────
+    // check:census-scope-coverage after the five above went in. Each was cited
+    // by §P or by the body and watched by nothing, which is the same hole §O
+    // recorded about its own three suites one widening ago.
+    //   verifyFlowHighlightControls.test.ts — §P.1's whole argument, the
+    //     PUT → GET → feed → DELETE flow that falsified §O.2's "they will stay
+    //     empty". Cited twice.
+    //   highlightPublicProjectionEnforcement.test.ts — §P.2's 39 cases and
+    //     twelve mutations, and §Q.5 drives it too.
+    //   highlightRouteHarness.ts — the table-backed fake both of those suites
+    //     drive. §P.6 names it by name and this scope did not watch it.
+    //   2975_highlights_permanent_lifetime.sql — H98's ENTIRE blocker. The row
+    //     is NOT-BUILT because `highlights.expires_at` is still NOT NULL, and
+    //     this migration is the thing that changes that. §Q.9 names its landing
+    //     as one of four events that turn the section red, so a change to it
+    //     must age the document.
+    //   2320_memory_episode_provenance_spine.sql — PR #470's migration, which
+    //     H18, H19, H23 and H24 each cite as "unmerged PR #470 only". If it
+    //     merges or changes, four rows change.
+    //
+    // NOT ADDED, and said rather than left silent, per the guard's own second
+    // remedy: `0179_stamp_criteria_engine.sql` is cited by BASENAME with no
+    // path, in §N's account of the criteria engine minting a stamp the Passport
+    // then counted. This repository holds several files with that basename in
+    // frozen non-executable roots, so there is no single path to watch, and
+    // adding one would assert a resolution the citation does not make. It is
+    // the one citation this census still does not watch.
+    "artifacts/api-server/src/test/verifyFlowHighlightControls.test.ts",
+    "artifacts/api-server/src/test/highlightPublicProjectionEnforcement.test.ts",
+    "artifacts/api-server/src/test/highlightRouteHarness.ts",
+    "artifacts/api-server/src/migrations/2975_highlights_permanent_lifetime.sql",
+    "artifacts/api-server/src/migrations/2320_memory_episode_provenance_spine.sql",
     // WIDENED 2026-09-13 by section F, which worked §25's H239 from the SURFACE
     // end — "planned activity without occurrence cannot earn a visit
     // Memory/Stamp" — and found that one of the five Passport-stamp seams in the

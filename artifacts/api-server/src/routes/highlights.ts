@@ -41,6 +41,7 @@ import { executeRevocation } from "../services/highlights/highlightRevocation.js
 import {
   readProjectionInputs,
   filterProjectable,
+  consentEnforcement,
 } from "../services/highlights/highlightPublicProjection.js";
 import { probeHighlightObject } from "../services/highlights/highlightSchemaAvailability.js";
 import {
@@ -52,6 +53,14 @@ import {
   type HighlightLifetimeClass,
 } from "../services/highlights/highlightLifecycle.js";
 import { pinnedFirst } from "../services/highlights/highlightRanking.js";
+import {
+  verifyMemorySources,
+  linkHighlightSources,
+  readHighlightSources,
+  sourceStoreReady,
+  MAX_HIGHLIGHT_SOURCES,
+  type SourceLinkFailure,
+} from "../services/highlights/highlightSources.js";
 import { canMessage } from "../lib/messagingPermissions";
 import { isFlagEnabled } from "../lib/featureFlags";
 import { nameVisibilitySet, presentedName } from "../lib/publicIdentity";
@@ -614,6 +623,48 @@ const KNOWN_FILTER_IDS = [
   'noir', 'safari', 'vivid', 'sunset', 'arctic', 'velvet',
 ] as const;
 
+/**
+ * §12 / §3.6 — one place that maps a source-link refusal onto a status.
+ *
+ * The five failures are five different things and each gets its own answer:
+ * "2722 is not on this database" (404 feature_disabled) is not "the database
+ * is unreachable" (503, retryable) is not "that Memory is not yours" (403) is
+ * not "your request is malformed" (400) is not "we wrote nothing and do not
+ * know why" (503). Collapsing any pair would make one of them silently
+ * retryable or silently permanent — the same reason
+ * services/highlights/highlightControlWrites.ts returns a discriminated
+ * refusal rather than a boolean.
+ */
+function sendSourceLinkFailure(
+  res: any,
+  req: any,
+  reason: SourceLinkFailure,
+  detail: string,
+  where: string,
+): void {
+  switch (reason) {
+    case "invalid":
+      sendError(res, "invalid_payload", detail);
+      return;
+    case "source_not_owned":
+      // "Not yours" and "not there" are the same answer here too: the
+      // alternative is an oracle for whether an arbitrary UUID is a Memory.
+      sendError(res, "forbidden", "One or more source memories are not available.");
+      return;
+    case "not_deployed":
+      req.log.error({ detail, where }, "highlights: highlight_sources is not deployed — migration 2722 is not applied on this database");
+      sendError(res, "feature_disabled", "Highlight sources are not available on this deployment yet.");
+      return;
+    case "write_unconfirmed":
+      req.log.error({ detail, where }, "highlights: highlight_sources write affected fewer rows than it sent — refusing rather than reporting a partial provenance");
+      sendError(res, "degraded_unavailable", "We could not record what this highlight is built from. Please try again.");
+      return;
+    default:
+      req.log.error({ detail, where }, "highlights: highlight_sources unavailable");
+      sendError(res, "degraded_unavailable", "We could not record what this highlight is built from. Please try again.");
+  }
+}
+
 const createHighlightSchema = z.object({
   mediaUrl: z.string().min(1, "media_url is required"),
   mediaType: z.string().min(1),
@@ -641,6 +692,22 @@ const createHighlightSchema = z.object({
    * what `highlightLifecycle.ts`'s header refuses to do.
    */
   lifetimeClass: z.enum(HIGHLIGHT_LIFETIME_CLASSES).optional(),
+  /**
+   * §12 / §3.6 — the Memories this Highlight projects.
+   *
+   * OPTIONAL, and absent means absent. §12 says a Highlight IS a projection
+   * over Memories, so a required field would be the truer shape — and making
+   * it required would break every Stories-style create this route already
+   * serves, which is a product migration (census H93) rather than a wiring
+   * gap. What absent must NOT mean is "invent a provenance": a Highlight with
+   * no source is stored with no link rows and reads back `sourceMemoryIds: []`.
+   *
+   * Only MEMORY sources are accepted. `highlight_sources.source_type` admits
+   * 'EPISODE' because 2722's CHECK does, and `memory_episodes` (census H23)
+   * has no CREATE TABLE in this tree, so an EPISODE id could not be verified
+   * against anything — see services/highlights/highlightSources.ts.
+   */
+  sourceMemoryIds: z.array(z.string().uuid()).max(MAX_HIGHLIGHT_SOURCES).optional(),
 });
 
 /* ============================================================================
@@ -675,10 +742,47 @@ router.post("/highlights", async (req, res) => {
   // constrains NULL to mean exactly that. Every other class keeps the expiry the
   // caller chose — §12 gives the classes behaviour, not durations, and bucketing
   // `expiresInHours` into them would be invented policy.
+  /* ──────────────────────────────────────────────────────────────────────────
+   * §12 / §3.6 — verify the provenance BEFORE the Highlight exists.
+   *
+   * supabase-js has no transactions, so the Highlight insert and the
+   * `highlight_sources` insert cannot be one commit. The ordering below is
+   * what makes that survivable: everything that can be decided WITHOUT writing
+   * is decided first — every source id is checked against `memories`, and
+   * `linkHighlightSources` probes the link table — so the only remaining
+   * failure is a transient write error on the link itself, which is
+   * compensated below by soft-deleting the Highlight that would otherwise
+   * stand claiming a provenance it does not have.
+   *
+   * A Highlight with a WRONG source is worse than no Highlight: it is the
+   * claim §21 revocation walks, so a bad link makes a stranger's deletion
+   * reach this row, or this owner's deletion miss it.
+   * ────────────────────────────────────────────────────────────────────────*/
+  const requestedSources = d.sourceMemoryIds ?? [];
+  if (requestedSources.length > 0) {
+    const ready = await sourceStoreReady(client);
+    if (!ready.ok) {
+      sendSourceLinkFailure(res, req, ready.reason, ready.detail, "POST /highlights source store probe");
+      return;
+    }
+    const verified = await verifyMemorySources(client, user.id, requestedSources);
+    if (!verified.ok) {
+      sendSourceLinkFailure(res, req, verified.reason, verified.detail, "POST /highlights");
+      return;
+    }
+  }
+
+  // ONE clock read for this handler. The expiry below and the compensating
+  // soft-delete further down are both derived from it: `splitClockGuard`
+  // refuses a function that calls `Date.now()` and no-arg `new Date()`, and it
+  // is right to — two reads are two different instants, and an expiry computed
+  // from one while the row it belongs to is stamped from the other is a
+  // Highlight whose lifetime does not match its own record.
+  const nowMs = Date.now();
   const permanent = d.lifetimeClass === "PERMANENT";
   const expiresAt = permanent
     ? null
-    : new Date(Date.now() + d.expiresInHours * 60 * 60 * 1000).toISOString();
+    : new Date(nowMs + d.expiresInHours * 60 * 60 * 1000).toISOString();
 
   const { data, error } = await client
     .from("highlights")
@@ -747,8 +851,54 @@ router.post("/highlights", async (req, res) => {
     return;
   }
 
+  /* ──────────────────────────────────────────────────────────────────────────
+   * The link write, and its compensation.
+   *
+   * `linkHighlightSources` is all-or-nothing and reports a partial write as
+   * `write_unconfirmed`, so there is no branch here in which SOME of the
+   * sources are stored and the caller is told all of them were. If it refuses,
+   * the Highlight this request just created is soft-deleted and the request
+   * fails: a Highlight standing with a provenance it does not have is the one
+   * outcome this pass exists to prevent.
+   *
+   * The compensating delete is best-effort and is LOGGED when it fails,
+   * because the alternative — reporting 201 — would leave the caller believing
+   * a link exists. A Highlight that survives a failed compensation is
+   * sourceless, which is the same state every Highlight on production is
+   * already in; it is not a false provenance.
+   * ────────────────────────────────────────────────────────────────────────*/
+  const createdId = String((data as any)?.id ?? "");
+  let storedSourceIds: string[] = [];
+  if (requestedSources.length > 0) {
+    const linked = await linkHighlightSources(client, {
+      highlightId: createdId,
+      sourceIds: requestedSources,
+    });
+    if (!linked.ok) {
+      const undo = await client
+        .from("highlights")
+        .update({ deleted_at: new Date(nowMs).toISOString() })
+        .eq("id", createdId)
+        .eq("owner_id", user.id)
+        .select("id");
+      if (undo.error || !Array.isArray(undo.data) || undo.data.length === 0) {
+        req.log.error(
+          { highlightId: createdId, ownerId: user.id, linkDetail: linked.detail, undoError: undo.error?.message ?? null },
+          "highlights: source link failed AND the compensating delete did not confirm — a sourceless Highlight may be live",
+        );
+      }
+      sendSourceLinkFailure(res, req, linked.reason, linked.detail, "POST /highlights source link");
+      return;
+    }
+    storedSourceIds = linked.value.map((s) => s.sourceId);
+  }
+
   res.status(201).json({
     ...(data as any),
+    // §12: what this Highlight projects. `[]` is a real answer — see
+    // services/highlights/highlightSources.ts on why sourceless is reported
+    // rather than invented.
+    sourceMemoryIds: storedSourceIds,
     viewCount: 0,
     likeCount: 0,
     viewedByMe: false,
@@ -1468,6 +1618,13 @@ router.get("/highlights/:id/projection-policy", async (req, res) => {
     locationPrecisionLadder: LOCATION_PRECISION_LADDER,
     personVisibilityLadder: PERSON_VISIBILITY_LADDER,
     consentDimensions: MEMORY_CONSENT_DIMENSIONS,
+    // WHICH of those five actually bite, derived from the gate that reads them
+    // (services/highlights/highlightPublicProjection.ts) rather than listed
+    // here. Same purpose as `unenforceableOnFeed` on the §11 controls route:
+    // publishing five dimensions without saying that three are read by nothing
+    // leaves a client choosing between three dead switches and a hard-coded
+    // copy of a server vocabulary. Census H75's ceiling, on the wire.
+    consentEnforcement: consentEnforcement(),
   });
 });
 
@@ -1524,6 +1681,57 @@ router.put("/highlights/:id/projection-policy", async (req, res) => {
     personVisibility: saved.value.personVisibility,
     consent: saved.value.consent,
   });
+});
+
+/* ============================================================================
+ * GET /highlights/:id/sources — §12 / §3.6, what this Highlight projects.
+ *
+ * OWNER-ONLY, and that is migration 2722's own decision rather than this
+ * route's, quoted from its RLS block: "knowing WHICH Memory a Highlight
+ * projects is provenance about the owner's private history, and §23 makes
+ * owner-only the default for that. A viewer who may see the Highlight still
+ * sees the Highlight; they do not learn what it was built from."
+ *
+ * Routes hold the SERVICE client, which bypasses RLS, so that policy is not
+ * what enforces this here — the ownership pre-read below is. A non-owner and a
+ * Highlight that does not exist get the SAME answer, because the alternative
+ * turns this into an oracle for whether a given UUID is somebody's Highlight.
+ *
+ * An empty list is a real answer. Every Highlight on production predates the
+ * writer in services/highlights/highlightSources.ts and is genuinely
+ * sourceless; reporting that is §22's "unknowns remain null/unresolved". An
+ * UNREADABLE table is not an empty list and refuses (§28.11).
+ * ============================================================================ */
+router.get("/highlights/:id/sources", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { client, user } = auth;
+
+  const { id } = req.params;
+  if (!UUID.test(id)) { sendError(res, "invalid_payload", "Invalid highlight id"); return; }
+
+  const { data: existing, error: existingErr } = await client
+    .from("highlights")
+    .select("id, owner_id")
+    .eq("id", id)
+    .is("deleted_at", null)
+    .maybeSingle();
+  if (existingErr) {
+    req.log.error({ err: existingErr, highlightId: id }, "highlights: sources pre-read failed");
+    sendError(res, "degraded_unavailable", "We could not load this highlight right now. Please try again.");
+    return;
+  }
+  if (!existing || (existing as any).owner_id !== user.id) {
+    sendError(res, "not_found", "Highlight not found");
+    return;
+  }
+
+  const read = await readHighlightSources(client, id);
+  if (!read.ok) {
+    sendSourceLinkFailure(res, req, read.reason, read.detail, "GET /highlights/:id/sources");
+    return;
+  }
+  res.status(200).json({ highlightId: id, sources: read.value });
 });
 
 /* ============================================================================

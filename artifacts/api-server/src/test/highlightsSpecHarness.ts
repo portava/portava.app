@@ -21,6 +21,7 @@
  * `req.log.error` and a 500-from-crash masquerades as a considered refusal.
  */
 import http from "node:http";
+import { randomUUID } from "node:crypto";
 import express from "express";
 import { _setTestClient } from "../lib/http.js";
 import highlightsRouter from "../routes/highlights.js";
@@ -205,7 +206,15 @@ export function makeFakeClient(tables: Record<string, any[]>, opts: FakeOpts = {
         const raw = obj.__insert ?? obj.__upsert;
         const rows = (Array.isArray(raw) ? raw : [raw]).map((r: any) => ({
           ...r,
-          id: r.id ?? `new-${Math.random().toString(16).slice(2)}`,
+          // A GENERATED ID IS A UUID, because every `id` this harness stands in
+          // for is `UUID PRIMARY KEY DEFAULT gen_random_uuid()`. The previous
+          // shape was `new-<random hex>`, which is not a UUID — so a handler
+          // that takes the id the insert returned and passes it to anything
+          // validating a UUID (services/highlights/highlightSources.ts does)
+          // failed HERE and only here, for a reason production cannot produce.
+          // A fake that invents a key shape the database cannot is the kind
+          // that makes a real handler look broken, or a broken one look fine.
+          id: r.id ?? randomUUID(),
         }));
         // UPSERT MEANS UPSERT. The previous shape appended unconditionally, so
         // an idempotent write — setting the same §11 control twice — produced
