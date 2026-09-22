@@ -114,7 +114,7 @@ All file paths are under
    - `PassportQrSheet.tsx` Bump is two-step: `startBump → 'awaiting'` then `confirmBump` fires `onBumpConfirmed` only after explicit "Confirm exchange"; proximity never reveals a profile.
 
 6. **Blocking propagates (§24).**
-   - Passport blocking is not re-implemented: it flows through the canonical `resolveInteractionPermissions`; a blocked/unavailable viewer collapses to a minimal `restricted` card (`PassportProjectionService.ts:1983#restricted: {`) with all actions false. Covered by `blocks`/`blockExclusion`/`interactionPermissions` tests (123 pass).
+   - Passport blocking is not re-implemented: it flows through the canonical `resolveInteractionPermissions`; a blocked/unavailable viewer collapses to a minimal `restricted` card (`PassportProjectionService.ts:2007#restricted: {`) with all actions false. Covered by `blocks`/`blockExclusion`/`interactionPermissions` tests (123 pass).
 
 7. **Non-goals honored (§34).**
    - No dating/compatibility/match score: `SharedContextService` emits explainable facts + a qualitative `summaryLabel` derived from fact count (`:368`), never a numeric compatibility %. Repo grep for `match_score|compatibility|dating` in passport code found only unrelated interest-category labels.
@@ -160,7 +160,7 @@ Severity is construction-completeness impact, not runtime severity.
   integration change rather than an unverifiable UI insertion here.
 
 - **F2 · MED (latent) — Stamp verification provenance not enforced on read/card
-  (§12/§13).** `mapStamp` (`PassportProjectionService.ts:1368#function mapStamp`) emits
+  (§12/§13).** `mapStamp` (`PassportProjectionService.ts:1392#function mapStamp`) emits
   `verification: "verified"` for **all** unified stamps by source-table rather than
   reading the row's own `verification_level`; the `"reported"`/`"decorative"` enum
   states are currently dead. Client cards (`StampCard.tsx`,
