@@ -8147,7 +8147,18 @@ idempotent start or stop.
 DELETEs the expired `quick_availability_status` rows and emits one
 `availability.expired` per row the delete returned. Of two instances sweeping
 the same row exactly one delete matches it, and because the row is GONE a
-restart cannot replay it. The delete is safe precisely because every reader
+restart cannot replay it.
+
+It is TWO statements and the second is still the conditional write, because
+PostgREST refuses a limited DELETE that carries no `order` — so a one-statement
+version either drops its bound or fails every tick, and the bound is what stops
+the first tick after an outage from being unbounded. A capped SELECT names the
+candidates and the DELETE names BOTH the ids and the expiry predicate. Keeping
+`lte("expires_at", …)` on the delete is the whole point: a signal the owner
+re-armed between the two statements no longer matches, so a clock reading from
+before they pressed it cannot revoke what they just set. Dropping it turns the
+sweep into "delete the rows I saw a moment ago", and the test for that race
+fails 25/3 when it is dropped. The delete is safe precisely because every reader
 already refuses to render these rows past `expires_at` — `routes/availability.ts`
 at `:86`, `:151` and `:618`, `PassportProjectionService#loadQuickStatus`,
 `SharedContextService#loadActiveQuickStatus` — so it removes data nothing was
@@ -8160,7 +8171,7 @@ availability.
 **Location is at-least-once, bounded by ONE INTERVAL, and says so.** A scoped
 in-thread share is a `messages` row with no mutable per-share state this lane
 owns, so there is nothing to flip. The tick emits over a half-open window
-(`services/telegraph/lifecycleSweep.ts:147#export function sharesExpiringIn`) —
+(`services/telegraph/lifecycleSweep.ts:176#export function sharesExpiringIn`) —
 inclusive at `since` would re-emit the boundary share forever, exclusive at
 `now` would drop the one that expires exactly on it — and a cold start resumes
 from `now - interval` rather than the epoch, so a deploy replays at most one
@@ -8248,7 +8259,7 @@ the first of them.
 | T187 | N | **C** | **§13.2 `availability.started`.** In the union and published by `PATCH /api/me/quick-availability` (`routes/availability.ts:200#  emitAvailabilityStarted(user.id, {`) through a dedicated emitter (`lib/telegraphEvents.ts:798#export function emitAvailabilityStarted`) whose signature has no parameter that could carry a thread id or a second recipient. **Owner-only, and that is the design**: who else may see a person's availability is §4's question, answered by the gates those routes already run, and a realtime bus must not route around them. The owner's other devices are the audience that needs it — §4.3's revocation begins when the signal starts, and a device that missed the start expires nothing. The same rule `emitDeliveryReceipt` applies to `message.delivered`, for the same reason. |
 | T188 | N | **C** | **§13.2 `availability.expired`.** Fired by a real mechanism, not implied by a timestamp: `services/telegraph/lifecycleSweep.ts:96#export async function sweepExpiredAvailability` DELETEs the rows whose window closed and emits one event per row the delete RETURNED, which makes it exactly-once across instances and unreplayable across restarts. The row was already invisible to every reader past `expires_at`, so the delete removes data nothing was allowed to show. `expiredAt` is the signal's OWN expiry and `sweptAt` is the clock, so a late sweep is visible as lag rather than reported as a longer disclosure than happened. Lazy-on-read is UNCHANGED and is the other half: the sweep makes the event fire, the read keeps the answer right. |
 | T189 | N | **C** | **§13.2 `location.started`.** §12 asks `location_shares` to be "purpose/audience/precision/expiry scoped"; precision was already on §6.2's LOCATION payload and the audience is the conversation, so this adds the other two and the event that starts the clock (`routes/telegraphKinds.ts:297#      void emitLocationStarted(client, threadId, {`). An `expiresAt` is what makes a share a SHARE rather than a pin — a pin has no lifecycle and emits nothing — and the route refuses one already in the past (it could never be taken down) or beyond `MAX_LOCATION_SHARE_HOURS` (`services/telegraph/messageKinds.ts:141#export const MAX_LOCATION_SHARE_HOURS`), which is §15.1's bound rather than an unbounded capability wearing a timestamp. `purpose` names an id the canonical registry publishes (`services/telegraph/messageKinds.ts:85#export const TELEGRAPH_SHARE_PURPOSES`), asserted against `lib/locationPurposes.ts` by a test, because a purpose field validated against nothing is how a purpose field stops meaning anything. The event carries NO coordinate. |
-| T190 | N | **C** | **§13.2 `location.expired`.** `services/telegraph/lifecycleSweep.ts:168#export async function sweepExpiredLocationShares`, on the same five-minute tick, over the half-open window §31.3 describes. Published to the whole conversation and the owner is NOT excluded — nobody performed this event, a clock did, and the sharer's own screen is the one most likely still showing it live. At-least-once bounded by one interval, stated rather than glossed, with a stable `eventKey` so a consumer can be idempotent (`lib/telegraphEvents.ts:875#export async function emitLocationExpired`). |
+| T190 | N | **C** | **§13.2 `location.expired`.** `services/telegraph/lifecycleSweep.ts:197#export async function sweepExpiredLocationShares`, on the same five-minute tick, over the half-open window §31.3 describes. Published to the whole conversation and the owner is NOT excluded — nobody performed this event, a clock did, and the sharer's own screen is the one most likely still showing it live. At-least-once bounded by one interval, stated rather than glossed, with a stable `eventKey` so a consumer can be idempotent (`lib/telegraphEvents.ts:875#export async function emitLocationExpired`). |
 | T191 | N | **C** | **§13.2 `coordination.started`.** Published when a session opens and NOT when a retry resolves to one (`lib/telegraphEvents.ts:888#export async function emitCoordinationStarted`) — a duplicate command is not a second evening. To the conversation, opener included: a session event that excluded the actor would leave the one device certainly showing the panel without the fact that opened it. |
 | T192 | N | **C** | **§13.2 `coordination.completed`.** Emitted from the ARROW the gate just accepted rather than from a re-read, so a REFUSED transition cannot fire it, and on BOTH of §9's terminal states with `terminalState` naming which (`lib/telegraphEvents.ts:912#export async function emitCoordinationCompleted`). See §31.4 for why one event covering two terminal states is the right reading of §13.2 and why collapsing them would not be. |
 | T150 | N | **W** | **`coordination_sessions`.** The evidence was "No table, service or route"; two thirds of that was stale by §21 and the third is answered the way T84's was — "a query is a route, not a table". `GET /api/me/coordination-sessions` (`routes/telegraphCoordination.ts:1333#  "/me/coordination-sessions",`) lists the caller's open sessions ACROSS every conversation they are still an active member of, each thread's rows bounded by that thread's own §14.3 window, from the SAME projection the thread view uses. Fourteen days rather than commitments' ninety, because §12 calls a session "TEMPORARY active real-world coordination state" and a session from three months ago is history. The per-thread read is no longer bounded by the general message scan either (`routes/telegraphCoordination.ts:192#async function readSessionRowsForThread`) — it was, and in a busy crew thread the coordination panel VANISHED mid-evening and came back when the chat went quiet. **It stays W because there is still no row per session**: nothing can be indexed, nothing a sweeper can advance, and no question can be asked that is not "scan the caller's own threads". §31.7 states why this lane did not write that table. |
@@ -8319,8 +8330,20 @@ each has a reason that is not this lane's to remove:
 
 ### 31.9 Every mutation, and the two that did NOT land
 
-Thirty-two mutations were run across three suites. Thirty landed; the two that
-did not are the ones worth reading, and one of them found an untested gate.
+Thirty-four mutations were run across three suites. Thirty-two landed; the two
+that did not are the ones worth reading, and one of them found an untested gate.
+
+**A third mutation did not land on first measurement and the test was wrong, not
+the code.** Deleting the DELETE's own `error` check stayed green because the
+fake injected on the TABLE: the candidate SELECT failed first and the sweep
+returned on that, so the second check was never reached. A case was added that
+fails only the DELETE, and the two error checks are now separately pinned —
+28/1 each. The re-armed-signal case failed the same way for a different reason:
+the fake re-armed the row BEFORE the SELECT read it, so the row never entered
+the candidate list and the test passed for the wrong reason. Moved to after the
+read, it fails 25/3 on the mutation it was written for. **Three of the
+thirty-four mutations exposed a hollow assertion; that ratio is the argument for
+running them.**
 
 **Coordination lifecycle** — `telegraphCoordinationLifecycle.test.ts` with
 `telegraphCoordination.test.ts` and `telegraphCommandRoute.test.ts`:
@@ -8342,20 +8365,22 @@ did not are the ones worth reading, and one of them found an untested gate.
 
 | mutation | result |
 | --- | --- |
-| the availability sweep's `error` left unchecked | pass 25 / fail 1 |
-| the availability DELETE left unqualified | pass 24 / fail 2 |
-| `expiredAt` stamped with the sweep's clock | pass 25 / fail 1 |
-| `availability.started` published beyond the owner | pass 25 / fail 1 |
-| a pin with no expiry emitting `location.started` | pass 25 / fail 1 |
-| the expiry window made inclusive at `since` | pass 25 / fail 1 |
-| the watermark advanced after a FAILED tick | pass 25 / fail 1 |
-| a cold start resuming from the epoch | pass 25 / fail 1 |
-| `lastSuccessAt` moved on a failed tick | pass 25 / fail 1 |
-| an expiry already in the past accepted | pass 25 / fail 1 |
-| the four-hour share ceiling removed | pass 25 / fail 1 |
-| `purpose` as a free string instead of a registry id | pass 25 / fail 1 |
-| `location.expired` excluding the owner | pass 24 / fail 2 |
-| the sweep's subtype narrowing hardcoded instead of derived from the ladder | pass 25 / fail 1 |
+| the DELETE's own `error` left unchecked | pass 28 / fail 1 |
+| the candidate SELECT's `error` left unchecked | pass 28 / fail 1 |
+| the availability DELETE left unqualified | pass 24 / fail 4 |
+| the DELETE's expiry predicate dropped, keeping only the ids | pass 25 / fail 3 |
+| `expiredAt` stamped with the sweep's clock | pass 28 / fail 1 |
+| `availability.started` published beyond the owner | pass 28 / fail 1 |
+| a pin with no expiry emitting `location.started` | pass 28 / fail 1 |
+| the expiry window made inclusive at `since` | pass 28 / fail 1 |
+| the watermark advanced after a FAILED tick | pass 28 / fail 1 |
+| a cold start resuming from the epoch | pass 28 / fail 1 |
+| `lastSuccessAt` moved on a failed tick | pass 28 / fail 1 |
+| an expiry already in the past accepted | pass 28 / fail 1 |
+| the four-hour share ceiling removed | pass 28 / fail 1 |
+| `purpose` as a free string instead of a registry id | pass 28 / fail 1 |
+| `location.expired` excluding the owner | pass 27 / fail 2 |
+| the sweep's subtype narrowing hardcoded instead of derived from the ladder | pass 28 / fail 1 |
 
 **Discover Together** — `telegraphDiscoverTogether.test.ts`:
 
@@ -8389,7 +8414,7 @@ The test says that in place of a claim it cannot support.
 ### 31.10 Tests, shown red first
 
 `src/test/telegraphCoordinationLifecycle.test.ts` (37),
-`src/test/telegraphLifecycleEvents.test.ts` (26) and
+`src/test/telegraphLifecycleEvents.test.ts` (29) and
 `src/test/telegraphDiscoverTogether.test.ts` (11) are new and registered in the
 `test` script. The first was run at HEAD before any implementation existed and
 **did not load at all** — the module it exercises was not there — which is red

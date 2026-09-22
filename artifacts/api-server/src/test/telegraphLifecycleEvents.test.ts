@@ -83,6 +83,20 @@ interface State {
   messages?: any[];
   errorTable?: string;
   members?: any[];
+  /**
+   * Re-arms a signal between the sweep's SELECT and its DELETE — the race the
+   * two-statement shape exists to survive. The owner set a new status in the
+   * window between the two, and the expiry predicate on the DELETE is the only
+   * thing that stops the sweep ending a signal that is live again.
+   */
+  rearmAfterSelect?: string;
+  /**
+   * Fails only the DELETE, leaving the candidate SELECT healthy. Without this
+   * the two error checks are indistinguishable: injecting on the table breaks
+   * the SELECT first, the sweep returns on its failure, and a mutation that
+   * deleted the DELETE's own check stayed green.
+   */
+  deleteErrorOnly?: boolean;
 }
 
 /** Records every filter applied, so a test can assert the delete was QUALIFIED. */
@@ -118,8 +132,12 @@ function makeClient(state: State = {}) {
       const rows = (db[table] ?? []).filter((r) => preds.every((f) => f(r)));
       return _limit !== null ? rows.slice(0, _limit) : rows;
     };
-    const err = () =>
-      state.errorTable === table ? { message: `injected failure on ${table}`, code: "XX000" } : null;
+    const err = () => {
+      if (state.deleteErrorOnly && op === "delete" && table === "quick_availability_status") {
+        return { message: "injected failure on the delete", code: "XX000" };
+      }
+      return state.errorTable === table ? { message: `injected failure on ${table}`, code: "XX000" } : null;
+    };
     const record = () => { calls.push({ table, op, shape: [...shape] }); };
 
     const target: any = {
@@ -180,6 +198,16 @@ function makeClient(state: State = {}) {
           return Promise.resolve({ data: null, error: null }).then(resolve, reject);
         }
         const rows = pending ? [pending] : rowsNow();
+        // The re-arm happens AFTER this SELECT has read its rows and BEFORE the
+        // DELETE runs — which is the race, and which is why the hook is here
+        // rather than at the top of `then`. Placed there it fired before
+        // `rowsNow()` and the row simply never entered the candidate list, so
+        // the test passed for the wrong reason and a mutation dropping the
+        // DELETE's expiry predicate stayed green.
+        if (op === "select" && table === "quick_availability_status" && state.rearmAfterSelect) {
+          const hit = (db[table] ?? []).find((r) => r.user_id === state.rearmAfterSelect);
+          if (hit) hit.expires_at = min(240);
+        }
         return Promise.resolve({ data: rows, error: null, count: rows.length }).then(resolve, reject);
       },
     };
@@ -361,6 +389,57 @@ describe("§13.2 availability.expired — §4.3's revocation, performed", () => 
     await settle();
     assert.equal(again.expired, 0);
     assert.equal(countDistinct("availability.expired"), 0);
+  });
+
+  it("the DELETE names the candidate ids as well, so one pass is bounded", async () => {
+    const c = makeClient({
+      quick: [
+        { user_id: ALICE, status: "free_now", expires_at: min(-5) },
+        { user_id: BOB, status: "busy", expires_at: min(-5) },
+      ],
+    });
+    await sweepExpiredAvailability(c, new Date(NOW));
+    const del = c._calls.find((x: Call) => x.table === "quick_availability_status" && x.op === "delete");
+    assert.ok(del!.shape.includes("in:user_id"),
+      "PostgREST refuses a limited DELETE with no order, so the bound is the candidate id list");
+    assert.ok(del!.shape.includes("lte:expires_at"));
+  });
+
+  it("a signal RE-ARMED between the two statements survives the sweep", async () => {
+    // The whole reason the expiry predicate stays on the DELETE. Without it the
+    // sweep would say "delete the rows I saw a moment ago", and a person who
+    // set FREE NOW in that window would have it revoked by a clock reading from
+    // before they pressed it.
+    const c = makeClient({
+      rearmAfterSelect: BOB,
+      quick: [
+        { user_id: ALICE, status: "free_now", expires_at: min(-5) },
+        { user_id: BOB, status: "free_now", expires_at: min(-5) },
+      ],
+    });
+    const out = await sweepExpiredAvailability(c, new Date(NOW));
+    await settle();
+    assert.equal(out.expired, 1);
+    assert.deepEqual(recipientsOf("availability.expired"), [ALICE]);
+    assert.deepEqual(
+      c._db.quick_availability_status.map((r: any) => r.user_id),
+      [BOB],
+      "a signal that is live again must not be ended by a read from before it was set",
+    );
+  });
+
+  it("a DELETE that FAILS is reported, even when the candidate read succeeded", async () => {
+    const c = makeClient({
+      deleteErrorOnly: true,
+      quick: [{ user_id: ALICE, status: "free_now", expires_at: min(-5) }],
+    });
+    const out = await sweepExpiredAvailability(c, new Date(NOW));
+    await settle();
+    assert.equal(out.expired, 0);
+    assert.equal(out.failures.length, 1, "a delete that did not happen is not an expiry that did");
+    assert.equal(countDistinct("availability.expired"), 0,
+      "and nothing may be announced as expired on the strength of a read alone");
+    assert.deepEqual(c._db.quick_availability_status.map((r: any) => r.user_id), [ALICE]);
   });
 
   it("an UNREADABLE table is a FAILURE, never 'nothing to expire'", async () => {

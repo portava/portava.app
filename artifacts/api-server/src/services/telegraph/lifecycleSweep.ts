@@ -98,14 +98,43 @@ export async function sweepExpiredAvailability(
   now: Date,
 ): Promise<SweepResult> {
   const nowIso = now.toISOString();
+
+  // TWO STATEMENTS, AND THE SECOND IS STILL THE CONDITIONAL WRITE.
+  //
+  // The obvious single `DELETE ... WHERE expires_at <= now LIMIT n` is not
+  // available: PostgREST refuses a limited DELETE that carries no `order`, so a
+  // one-statement version either drops the bound or fails every tick. A bound
+  // matters on the first tick after a long outage, when the backlog is whatever
+  // accumulated while nothing was sweeping.
+  //
+  // So: a bounded SELECT names the candidates, and the DELETE names BOTH the
+  // ids and the expiry predicate. Keeping `lte("expires_at", ...)` on the
+  // delete is what preserves exactly-once — a row another instance re-armed
+  // between the two statements no longer matches, and of two instances deleting
+  // the same row exactly one gets it back from `.select()`. Dropping that
+  // predicate would turn this into "delete the rows I saw a moment ago", which
+  // is a different and wrong statement.
+  const { data: candidates, error: readErr } = await sc
+    .from("quick_availability_status")
+    .select("user_id")
+    .lte("expires_at", nowIso)
+    .limit(AVAILABILITY_SWEEP_LIMIT);
+  if (readErr) {
+    return { expired: 0, failures: [`quick_availability_status: ${readErr.message ?? "read failed"}`] };
+  }
+  const ids = ((candidates as Array<{ user_id?: string }> | null) ?? [])
+    .map((r) => r.user_id)
+    .filter((u): u is string => typeof u === "string" && u.length > 0);
+  if (ids.length === 0) return { expired: 0, failures: [] };
+
   const { data, error } = await sc
     .from("quick_availability_status")
-    // Qualified. See the header: an unqualified DELETE is refused by this
+    // Qualified twice. See the header: an unqualified DELETE is refused by this
     // database's safeupdate guard, and would be wrong even where it is allowed.
     .delete()
+    .in("user_id", ids)
     .lte("expires_at", nowIso)
-    .select("user_id, status, expires_at")
-    .limit(AVAILABILITY_SWEEP_LIMIT);
+    .select("user_id, status, expires_at");
 
   if (error) {
     // NOT `expired: 0`. An unreadable table and an empty one are different
