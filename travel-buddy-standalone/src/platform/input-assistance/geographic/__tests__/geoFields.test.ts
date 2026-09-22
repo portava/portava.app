@@ -14,6 +14,19 @@ import {
 } from '../geoFields.ts';
 import { resolveFieldPolicy, isFieldRegistered, unregisterField } from '../../contexts/fieldRegistry.ts';
 
+// ── SEEDED 2026-09-21 (G340) ────────────────────────────────────────────────
+// `registerField` derives its policy from the context descriptor, which now
+// comes from the authority rather than from a local table. Without a seeded
+// policy every context resolves conservative (`no_assistance`), which is the
+// correct cold-start answer and makes any assertion about a context's MODE
+// vacuous. Seeding states the premise these tests were always relying on:
+// "the authority has answered, and permits assistance here".
+import { INPUT_CONTEXTS } from '../../types/inputContext.ts';
+import { _seedPolicyForTests } from '../../services/policyStore.ts';
+import { getContextDescriptor } from '../../contexts/inputContexts.ts';
+_seedPolicyForTests(INPUT_CONTEXTS);
+
+
 test('registerGeographicFields registers every geographic field with its context', () => {
   _resetGeographicRegistration();
   // Clean slate for the fields we assert on.
@@ -24,7 +37,11 @@ test('registerGeographicFields registers every geographic field with its context
   const tripPolicy = resolveFieldPolicy(GEO_FIELD_IDS.tripDestination);
   assert.ok(tripPolicy, 'trip.destination should be registered');
   assert.equal(tripPolicy!.context, 'trip_destination');
-  assert.equal(tripPolicy!.mode, 'canonical_picker');
+  // The MODE is the authority's to state, not this test's. Asserting a
+  // literal here would put a 30th copy of the policy in a test file — the
+  // thing G340 deleted. What this file is actually for is the fieldId → context
+  // MAPPING, which is genuinely the client's, and that is still asserted above.
+  assert.equal(tripPolicy!.mode, getContextDescriptor('trip_destination').defaultMode);
 
   // Every declared geographic field resolves to a policy in its declared context.
   for (const [fieldId, context] of Object.entries(GEO_FIELD_CONTEXTS)) {

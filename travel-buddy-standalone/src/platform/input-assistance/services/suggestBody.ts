@@ -44,5 +44,13 @@ export function buildSuggestBody(req: SuggestRequest): Record<string, unknown> {
     body.draft = req.draft;
   }
 
+  // §48 capability handshake (census G343). Omitted unless the caller declared
+  // something, so a caller that does not participate produces the same body it
+  // always did — which is what keeps the handshake additive rather than a
+  // flag day for every surface at once.
+  if (req.client && (req.client.suggestionTypes?.length || req.client.actionTypes?.length)) {
+    body.client = req.client;
+  }
+
   return body;
 }
