@@ -30,6 +30,7 @@
  */
 
 import type {
+  HighlightSourceRow,
   MemoryItemRow,
   MemorySourceRow,
   MemoryTagRow,
@@ -109,10 +110,30 @@ const MEMORY_COLUMNS =
   "created_at, updated_at, location_city, location_country, location_lat, location_lng, " +
   "canonical_location_id, allowed_user_ids, hidden_user_ids";
 
+/**
+ * §12's Highlights, read for the §18 projection whose subject is one.
+ *
+ * NARROW ON PURPOSE. Every column `public.highlights` carries that this
+ * projection must never publish — `caption`, `media_url`, `location_name`, the
+ * filter columns — is absent from this list, so it cannot reach a builder at
+ * all. The field whitelist is the second line of that defence, not the first.
+ */
+const HIGHLIGHT_COLUMNS =
+  "id, owner_id, visibility, created_at, updated_at, expires_at, deleted_at, archived_at, " +
+  "pinned_at, lifetime_class, location_city, location_country";
+
 export interface ProjectionSources {
   memories: MemorySourceRow[];
   items: MemoryItemRow[];
   tags: MemoryTagRow[];
+  /**
+   * EMPTY WHEN NOT ASKED FOR, and the caller always knows which it is: this
+   * array is populated only when `readProjectionSources` was told to read the
+   * table, which happens only for a projection that declares `highlights`
+   * among its source tables. There is therefore no state in which an empty
+   * array here means "the read failed" — a failed read is a refusal.
+   */
+  highlights: HighlightSourceRow[];
 }
 
 /**
@@ -124,6 +145,13 @@ export interface ProjectionSources {
 export async function readProjectionSources(
   client: ClientLike,
   scope: ProjectionScope,
+  /**
+   * Read `public.highlights` as well. Passed by `deriveProjection` from the
+   * definition's own `source_tables`, so the read follows the declaration
+   * rather than a second, drifting list — and so every projection that does
+   * NOT declare it issues exactly the queries it always did.
+   */
+  opts: { includeHighlights?: boolean } = {},
 ): Promise<ProjectionResult<ProjectionSources>> {
   const memRes = await client.from("memories").select(MEMORY_COLUMNS).eq("owner_id", scope.owner_id);
   if (memRes.error) {
@@ -166,7 +194,30 @@ export async function readProjectionSources(
     tags = (tagRes.data ?? []) as MemoryTagRow[];
   }
 
-  return { ok: true, value: { memories, items, tags } };
+  let highlights: HighlightSourceRow[] = [];
+  if (opts.includeHighlights) {
+    // Deleted and archived rows ARE read, for the reason the memories read
+    // gives one screen up: a projection must be able to tell "this Highlight is
+    // gone" from "this Highlight was never read", and only the second is a
+    // refusal. The builder filters them; the read does not hide them.
+    const hlRes = await client.from("highlights").select(HIGHLIGHT_COLUMNS).eq("owner_id", scope.owner_id);
+    if (hlRes.error) {
+      return {
+        ok: false, reason: "source_unavailable", table: "highlights",
+        detail: `highlights unreadable: ${hlRes.error.message ?? "unknown error"}`,
+        retryable: !isSchemaAbsent(hlRes.error),
+      };
+    }
+    if (!Array.isArray(hlRes.data)) {
+      return {
+        ok: false, reason: "source_unavailable", table: "highlights",
+        detail: "highlights read returned no row array", retryable: true,
+      };
+    }
+    highlights = hlRes.data as HighlightSourceRow[];
+  }
+
+  return { ok: true, value: { memories, items, tags, highlights } };
 }
 
 export interface DerivedProjection {
@@ -209,7 +260,11 @@ export async function deriveProjection(
     return { ok: false, reason: "projection_not_configured", detail: def.unavailable_reason, retryable: false };
   }
 
-  const sources = await readProjectionSources(client, scope);
+  // THE DECLARATION DECIDES WHAT IS READ. `source_tables` is one of §18's own
+  // registration fields, so deriving the read from it keeps the declaration
+  // honest rather than letting a second, drifting list decide.
+  const wantsHighlights = def.source_tables.includes("highlights");
+  const sources = await readProjectionSources(client, scope, { includeHighlights: wantsHighlights });
   if (!sources.ok) return sources;
 
   const rows = def.build({
@@ -217,13 +272,21 @@ export async function deriveProjection(
     memories: sources.value.memories,
     items: sources.value.items,
     tags: sources.value.tags,
+    // Passed only when the definition asked for it, so a builder that does not
+    // declare `highlights` cannot come to depend on them by accident.
+    ...(wantsHighlights ? { highlights: sources.value.highlights } : {}),
     significance: opts.significance,
   });
 
   // The source version covers the rows the builder could see, not only the rows
   // it emitted: a Memory that was filtered OUT is still an input, and if it
-  // changes so that it now qualifies, the projection is stale.
-  const version = sourceVersionOf(sources.value.memories);
+  // changes so that it now qualifies, the projection is stale. The same holds
+  // for a Highlight, which is why the digest covers both halves for a
+  // projection that declares both.
+  const version = sourceVersionOf(
+    sources.value.memories,
+    wantsHighlights ? sources.value.highlights : [],
+  );
 
   // Contribution is the narrower relation, and it is what the cleanup graph
   // walks. A projection with no memory_id in its whitelist contributes nothing
@@ -392,7 +455,12 @@ export interface StalenessVerdict {
   state: StalenessState;
   registered_version: string | null;
   current_version: string;
-  /** Memory ids whose version moved, plus those added or removed. */
+  /**
+   * Source ids whose version moved, plus those added or removed. For a
+   * projection that also reads `highlights` the Highlight entries appear as
+   * `highlight:<id>` — see sourceVersionOf — so a caller can still tell which
+   * aggregate moved without the two id spaces colliding.
+   */
   changed_memory_ids: string[];
   generated_at: string | null;
 }
@@ -411,9 +479,18 @@ export async function projectionStaleness(
   projectionId: ProjectionId,
   scope: ProjectionScope,
 ): Promise<ProjectionResult<StalenessVerdict>> {
-  const sources = await readProjectionSources(client, scope);
+  // The SAME source set the rebuild would read. Comparing a memories-only
+  // digest against a registration written from memories AND highlights would
+  // report every such registration STALE forever, which is a stampede dressed
+  // as a correct answer.
+  const def = getProjectionDefinition(projectionId);
+  const wantsHighlights = def !== null && def.source_tables.includes("highlights");
+  const sources = await readProjectionSources(client, scope, { includeHighlights: wantsHighlights });
   if (!sources.ok) return sources;
-  const current = sourceVersionOf(sources.value.memories);
+  const current = sourceVersionOf(
+    sources.value.memories,
+    wantsHighlights ? sources.value.highlights : [],
+  );
 
   const reg = await readRegistration(client, projectionId, scope);
   if (!reg.ok) {

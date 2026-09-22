@@ -62,11 +62,25 @@
  * time of writing — so today every pass answers `claim_unavailable` and the
  * loop reports that rather than a clean empty run. Once 2994 is applied, the
  * pass rebuilds the §18 projections each `memory.*` event invalidates.
- * `highlight.*` events (migration 2993) have no §18 projection keyed on a
- * Highlight, so they are claimed, acked and counted as
- * `unsubscribed_event_type`: the rows move and none is stranded, and nothing
- * is rebuilt from them. A projection worker for the Highlight half does not
- * exist.
+ *
+ * THE HIGHLIGHT HALF NOW HAS A WORKER, and this paragraph's predecessor —
+ * "`highlight.*` events have no §18 projection keyed on a Highlight, so they
+ * are claimed, acked and counted as `unsubscribed_event_type` … a projection
+ * worker for the Highlight half does not exist" — is superseded. §18's
+ * ProfileHighlightProjection reads `public.highlights` as a second source
+ * (projectionRegistry.ts) and HIGHLIGHT_EVENT_PROJECTIONS subscribes all five
+ * `highlight.*` names to it, so a Highlight event now rebuilds the profile
+ * artifact rather than draining into a counter.
+ *
+ * WHAT IS STILL NOT TRUE ON ANY LIVE DATABASE, stated so this does not become
+ * the next stale claim in its turn. The `highlight_id` column an outbox row
+ * needs to NAME its Highlight is migration 2993's, and 2993 is unapplied
+ * everywhere; the claim function is 2994's and so is that. So today the pass
+ * still answers `claim_unavailable` before any of this runs, and a
+ * `highlight.*` row claimed from a database without 2993 carries no subject
+ * and is acked as `highlight_absent` rather than being handed a null to look
+ * up. The worker exists and is correct; the storage it needs is written and
+ * not applied.
  */
 import { getServiceClient } from "../../lib/supabase.js";
 import { logger } from "../../lib/logger.js";

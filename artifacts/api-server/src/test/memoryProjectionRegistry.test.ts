@@ -46,7 +46,9 @@ import {
   listProjectionIds,
   scopeKeyOf,
   sourceVersionOf,
+  type HighlightSourceRow,
   type MemorySourceRow,
+  type ProjectedRow,
   type ProjectionId,
 } from "../services/memoryProjections/projectionRegistry.js";
 import { scoreSignificance } from "../services/memoryProjections/significance.js";
@@ -514,6 +516,171 @@ describe("section 10: audience shapes the projection, not a post-filter", () => 
     const forOwner = await deriveProjection(makeClient(fixture()), "ProfileHighlightProjection", OWNER_SCOPE);
     assert.ok(forOwner.ok);
     assert.ok(forOwner.value.rows.length > blockedIds.length, "the owner sees at least as much as any viewer");
+  });
+
+  // ── §18's ProfileHighlightProjection, the HIGHLIGHT half ──────────────────
+  //
+  // §12: "Highlights are disposable, audience-specific projections over one or
+  // more Memories or Episodes", and §18's row for that audience is this one.
+  // Before this lane the builder read only `memories`, so every §17
+  // `highlight.*` event drained with no subscriber.
+
+  function highlight(over: Partial<HighlightSourceRow> & { id: string }): HighlightSourceRow {
+    return {
+      owner_id: OWNER,
+      visibility: "public",
+      created_at: "2026-05-10T12:00:00.000Z",
+      updated_at: "2026-05-10T12:00:00.000Z",
+      expires_at: null,
+      deleted_at: null,
+      archived_at: null,
+      pinned_at: null,
+      lifetime_class: null,
+      location_city: "Da Nang",
+      location_country: "Vietnam",
+      ...over,
+    };
+  }
+
+  const HL_FIXTURE: HighlightSourceRow[] = [
+    highlight({ id: "h-pub", created_at: "2026-05-10T12:00:00.000Z" }),
+    highlight({ id: "h-priv", visibility: "friends_only", created_at: "2026-05-11T12:00:00.000Z" }),
+    highlight({ id: "h-arch", archived_at: "2026-05-12T00:00:00.000Z", created_at: "2026-05-12T12:00:00.000Z" }),
+    highlight({ id: "h-del", deleted_at: "2026-05-13T00:00:00.000Z", created_at: "2026-05-13T12:00:00.000Z" }),
+    highlight({ id: "h-pin", pinned_at: "2026-05-14T00:00:00.000Z", created_at: "2026-01-01T12:00:00.000Z", lifetime_class: "PERMANENT" }),
+    highlight({ id: "h-other", owner_id: FRIEND, created_at: "2026-05-15T12:00:00.000Z" }),
+  ];
+
+  function hlFixture(): Tables {
+    return { ...fixture(), highlights: HL_FIXTURE.map((h) => ({ ...h })) };
+  }
+
+  const hlIds = (rows: readonly ProjectedRow[]) =>
+    rows.filter((r) => r.source === "highlight").map((r) => r.highlight_id).sort();
+
+  it("a profile projection built from `memories` alone is UNCHANGED in substance by the Highlight half", async () => {
+    // routes/memories.ts calls `definition.build` DIRECTLY with no `highlights`
+    // key. Its rows must still be Memory rows and nothing else, or this lane
+    // changed another lane's live response by accident.
+    const def = getProjectionDefinition("ProfileHighlightProjection")!;
+    const rows = def.build({
+      scope: OWNER_SCOPE,
+      memories: fixture().memories as MemorySourceRow[],
+      tags: [], items: [],
+    });
+    assert.ok(rows.length > 0);
+    assert.ok(rows.every((r) => r.source === "memory" && r.highlight_id === null));
+    assert.ok(rows.every((r) => r.pinned === false && r.lifetime_class === null && r.expires_at === null));
+  });
+
+  it("THE HIGHLIGHT HALF IS PROJECTED, and the whitelist is what it carries", async () => {
+    const r = await deriveProjection(makeClient(hlFixture()), "ProfileHighlightProjection", OWNER_SCOPE);
+    assert.ok(r.ok);
+    const whitelist = [...getProjectionDefinition("ProfileHighlightProjection")!.field_whitelist].sort();
+    for (const row of r.value.rows) assert.deepEqual(Object.keys(row).sort(), whitelist);
+    // The owner's own profile: public and non-public, never archived, never
+    // deleted, never another owner's.
+    assert.deepEqual(hlIds(r.value.rows), ["h-pin", "h-priv", "h-pub"]);
+  });
+
+  it("a Highlight carries NO text to the profile — the caption is never read at all", async () => {
+    const tables = hlFixture();
+    (tables.highlights as any[])[0].caption = "SECRET-HIGHLIGHT-CAPTION";
+    const r = await deriveProjection(makeClient(tables), "ProfileHighlightProjection", OWNER_SCOPE);
+    assert.ok(r.ok);
+    assert.ok(!JSON.stringify(r.value.rows).includes("SECRET-HIGHLIGHT-CAPTION"));
+    assert.ok(r.value.rows.filter((x) => x.source === "highlight").every((x) => x.title === null));
+  });
+
+  it("§23: a non-owner viewer sees only the PUBLIC Highlights — `highlights` has no allow-list to honour", async () => {
+    const r = await deriveProjection(makeClient(hlFixture()), "ProfileHighlightProjection", { owner_id: OWNER, viewer_id: FRIEND });
+    assert.ok(r.ok);
+    assert.deepEqual(hlIds(r.value.rows), ["h-pin", "h-pub"]);
+  });
+
+  it("§21: archived and deleted Highlights are absent from a profile, INCLUDING the owner's own", async () => {
+    const owner = await deriveProjection(makeClient(hlFixture()), "ProfileHighlightProjection", OWNER_SCOPE);
+    assert.ok(owner.ok);
+    const got = hlIds(owner.value.rows);
+    assert.ok(!got.includes("h-arch"), "§21 archive: removed from normal browsing");
+    assert.ok(!got.includes("h-del"), "§21 delete is terminal");
+  });
+
+  it("§12: a pinned Highlight outranks a NEWER Memory, not merely a newer Highlight", async () => {
+    const r = await deriveProjection(makeClient(hlFixture()), "ProfileHighlightProjection", OWNER_SCOPE);
+    assert.ok(r.ok);
+    assert.equal(r.value.rows[0].highlight_id, "h-pin", "pinned/manual order always outranks automatic ordering");
+    assert.equal(r.value.rows[0].pinned, true);
+    assert.equal(r.value.rows[0].lifetime_class, "PERMANENT");
+  });
+
+  it("expiry is CARRIED, not applied — the builder reads no clock", async () => {
+    const tables = hlFixture();
+    (tables.highlights as any[])[0].expires_at = "2020-01-01T00:00:00.000Z";
+    const r = await deriveProjection(makeClient(tables), "ProfileHighlightProjection", OWNER_SCOPE);
+    assert.ok(r.ok);
+    const pub = r.value.rows.find((x) => x.highlight_id === "h-pub");
+    assert.equal(pub?.expires_at, "2020-01-01T00:00:00.000Z");
+  });
+
+  it("a Highlight change moves the SOURCE VERSION, so the projection can be told it is stale", async () => {
+    const tables = hlFixture();
+    const before = await rebuildProjection(makeClient(tables), "ProfileHighlightProjection", OWNER_SCOPE, NOW);
+    assert.ok(before.ok);
+    const client = makeClient(tables);
+    (tables.highlights as any[]).find((h) => h.id === "h-pub")!.updated_at = "2026-07-01T00:00:00.000Z";
+    const stale = await projectionStaleness(client, "ProfileHighlightProjection", OWNER_SCOPE);
+    assert.ok(stale.ok);
+    assert.equal(stale.value.state, "STALE");
+    assert.ok(stale.value.changed_memory_ids.includes("highlight:h-pub"));
+  });
+
+  it("with NO highlight rows the digest is byte-identical to the memories-only one", async () => {
+    // A registration written before this lane carries a `v1` digest. A
+    // comparison that changed shape would report every such registration STALE
+    // on the first pass after deploy.
+    const memories = fixture().memories as MemorySourceRow[];
+    assert.equal(sourceVersionOf(memories).digest, sourceVersionOf(memories, []).digest);
+    assert.match(sourceVersionOf(memories).digest, /^v1:/);
+    assert.match(sourceVersionOf(memories, HL_FIXTURE).digest, /^v2:/);
+  });
+
+  it("an UNREADABLE highlights table refuses — it is never an empty profile", async () => {
+    const r = await deriveProjection(
+      makeClient(hlFixture(), { failTables: new Set(["highlights"]) }),
+      "ProfileHighlightProjection",
+      OWNER_SCOPE,
+    );
+    assert.equal(r.ok, false);
+    assert.equal(r.ok === false && r.reason, "source_unavailable");
+    assert.equal(r.ok === false && r.table, "highlights");
+    assert.equal(r.ok === false && r.retryable, true);
+  });
+
+  it("an ABSENT highlights table refuses and says a retry will not help", async () => {
+    const r = await deriveProjection(
+      makeClient(hlFixture(), { missingTables: new Set(["highlights"]) }),
+      "ProfileHighlightProjection",
+      OWNER_SCOPE,
+    );
+    assert.equal(r.ok, false);
+    assert.equal(r.ok === false && r.retryable, false);
+  });
+
+  it("only ProfileHighlightProjection reads `highlights` — no other builder can see them", async () => {
+    for (const def of PROJECTION_DEFINITIONS) {
+      if (def.id === "ProfileHighlightProjection") continue;
+      assert.ok(!def.source_tables.includes("highlights"), `${def.id} declares highlights`);
+    }
+  });
+
+  it("a Highlight contributes NOTHING to source_memory_ids — the Memory cleanup graph is unaffected", async () => {
+    // `revokeDerivativesForMemory` walks source_memory_ids. A highlight row has
+    // memory_id null, so it can never make a profile derivative look like it
+    // carried a Memory it did not.
+    const r = await deriveProjection(makeClient(hlFixture()), "ProfileHighlightProjection", OWNER_SCOPE);
+    assert.ok(r.ok);
+    assert.ok(r.value.source_memory_ids.every((id) => !id.startsWith("h-")));
   });
 
   it("the map trail gives an exact coordinate to the owner and a coarse one to anyone else", async () => {
