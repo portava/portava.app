@@ -1,8 +1,10 @@
 /**
  * Safety candidates — Sensing §16: world-intelligence evidence / anomaly →
  * SAFETY CANDIDATE → the EXISTING safety review → the canonical assertion.
- * These are the first two stages, feeding the third; the last two are the
- * specialists' and are not touched.
+ * The first two stages detect and file; the third — the authorized decision —
+ * is now here too, because it is the same operators acting on the same
+ * subjects behind the same guard. The fourth, what the Map then serves, is the
+ * producers' and is not touched.
  *
  * POST /api/admin/intel/safety-candidates/scan
  *   Body { subjectIds? } — the places to look at (≤ 50), or, absent, the
@@ -19,10 +21,35 @@
  * GET /api/admin/intel/safety-candidates
  *   The detector's own rows still open or reviewing, newest first, parsed.
  *
- * Gated by `intel_safety_candidates_enabled` (migration 2803, seeded
- * FALSE), read fail-closed, and by requireAdmin: an operator-triggered
- * stage, because wiring a scheduler is a line in src/index.ts this lane
- * does not edit (census-sensing §5.4). Nothing person-shaped is on the wire.
+ * Both of the above are gated by `intel_safety_candidates_enabled` (migration
+ * 2803, seeded FALSE), read fail-closed, and by requireAdmin: an operator-
+ * triggered stage, because wiring a scheduler is a line in src/index.ts this
+ * lane does not edit (census-sensing §5.4). Nothing person-shaped is on the
+ * wire.
+ *
+ * POST /api/admin/intel/safety-review
+ *   Body { claimId, action, reason? } — the authorized decision itself,
+ *   delegated to services/intel/SafetyReviewService.reviewSafetyClaim, which
+ *   re-checks the capability, refuses any transition safety does not permit,
+ *   asks safetyPolicy before publishing, compare-and-sets the claim, and
+ *   records the decision in `intel_claim_reviews` (migration 2311).
+ *
+ *   THE REVIEWER IS THE AUTHENTICATED PRINCIPAL. `reviewerId` is taken from
+ *   requireAdmin's resolved context and is not readable from the body — a
+ *   caller that could name the reviewer could forge the whole audit trail,
+ *   which is the one thing this table exists to prevent.
+ *
+ *   NOT BEHIND 2803's FLAG, deliberately. That flag's own migration scopes it
+ *   to the candidate stage's two routes, and its description enumerates them;
+ *   gating a different stage on it would make the flag's stated meaning false
+ *   and would tie the ability to RETRACT a live hazard to whether detection is
+ *   switched on. The gate here is the capability, enforced twice: by
+ *   requireAdmin at the door with SAFETY_REVIEWER_ROLES, and again inside the
+ *   service, which is the authority on who may review.
+ *
+ *   NOT IntelCaptureService.approveClaim, which stays untouched: it consults no
+ *   safety policy and its provenance is the literal 'admin' rather than an
+ *   identity. See SafetyReviewService's header.
  */
 import { Router } from "express";
 import { z } from "zod";
@@ -35,6 +62,13 @@ import { liveLabelsServable, readLiveClaimEnvelopes } from "../lib/liveClaimRead
 import { readPreviousReadings } from "../lib/wallMomentRead.js";
 import { SAFETY_CANDIDATE_CLAIM_TYPES, detectSafetyCandidates, type SafetyCandidateReason } from "../lib/safetyCandidate.js";
 import { fileCandidateReport, listOpenCandidates, listSweepSubjects, openCandidateReasons } from "../lib/safetyCandidateStore.js";
+import {
+  PERMITTED_TRANSITIONS,
+  SAFETY_REVIEWER_ROLES,
+  reviewSafetyClaim,
+  type SafetyReviewAction,
+  type SafetyReviewRefusal,
+} from "../services/intel/SafetyReviewService.js";
 
 const router = Router();
 
@@ -159,6 +193,92 @@ router.get(
       return;
     }
     res.status(200).json({ ok: true, candidates: listed.candidates, generatedAt: new Date().toISOString() });
+  }),
+);
+
+// ── The review itself ─────────────────────────────────────────────────────────
+
+/**
+ * The actions the route accepts, DERIVED from the service's transition table
+ * rather than restated. Restating them is how a route and a domain drift: the
+ * table is the authority on what safety permits, so an action it does not name
+ * cannot be spelled here by accident, and one it gains does not need a second
+ * edit to become reachable.
+ */
+export const SAFETY_REVIEW_ACTIONS = Object.keys(PERMITTED_TRANSITIONS) as SafetyReviewAction[];
+
+/** Free-text moderation reason. Bounded, and never projected — see 2311. */
+export const REVIEW_REASON_MAX = 2000;
+
+const reviewSchema = z.object({
+  claimId: z.string().uuid(),
+  action: z.enum(SAFETY_REVIEW_ACTIONS as [SafetyReviewAction, ...SafetyReviewAction[]]),
+  reason: z.string().trim().min(1).max(REVIEW_REASON_MAX).optional(),
+});
+
+/**
+ * One API code per refusal, so the wire never collapses two different answers.
+ *
+ * The service's whole failure contract is that "not authorized", "no such
+ * claim", "the policy refused it" and "the database could not be read" are
+ * different facts. Mapping several of them onto one status would rebuild
+ * exactly the ambiguity it was written to remove — an operator could not tell a
+ * hazard that may not be published from a hazard nobody could look up.
+ */
+const REFUSAL_STATUS: Record<SafetyReviewRefusal, "forbidden" | "not_found" | "invalid_payload" | "invalid_state_transition" | "review_not_eligible" | "conflict" | "db_error"> = {
+  not_authorized:           "forbidden",
+  claim_not_found:          "not_found",
+  not_a_safety_claim:       "invalid_payload",
+  transition_not_permitted: "invalid_state_transition",
+  policy_refused:           "review_not_eligible",
+  conflict:                 "conflict",
+  db_error:                 "db_error",
+};
+
+router.post(
+  "/admin/intel/safety-review",
+  asyncHandler(async (req, res) => {
+    // The door. SAFETY_REVIEWER_ROLES is the service's own capability list, so
+    // the gate here cannot drift wider or narrower than the one below it.
+    const admin = await requireAdmin(req, res, { roles: SAFETY_REVIEWER_ROLES });
+    if (!admin) return;
+    const sc = getServiceClient();
+    if (!sc) {
+      sendError(res, "server_not_configured", "Service client unavailable");
+      return;
+    }
+    const parsed = reviewSchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid payload");
+      return;
+    }
+
+    const out = await reviewSafetyClaim(sc, {
+      claimId: parsed.data.claimId,
+      // Resolved identity, never the body's. See the header.
+      reviewerId: admin.userId,
+      reviewerRole: admin.role,
+      action: parsed.data.action,
+      reason: parsed.data.reason ?? null,
+    });
+
+    if (!out.ok) {
+      const code = REFUSAL_STATUS[out.reason];
+      sendError(res, code, out.detail ?? out.reason);
+      return;
+    }
+
+    // `reviewId: null` means the transition happened and the audit write did
+    // not. It is reported rather than smoothed over, so an operator can see the
+    // trail is incomplete instead of assuming it is not.
+    res.status(200).json({
+      ok: true,
+      claimId: out.claimId,
+      priorStatus: out.priorStatus,
+      newStatus: out.newStatus,
+      reviewId: out.reviewId,
+      generatedAt: new Date().toISOString(),
+    });
   }),
 );
 
