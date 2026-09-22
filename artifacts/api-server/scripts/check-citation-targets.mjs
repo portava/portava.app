@@ -383,7 +383,40 @@ import {
  * `domain/telegraph/` and `routes/telegraphCommands.ts`. Disjoint repairs, so
  * the union is below both and neither number may be inherited. The value below
  * is the measurement AT THE MERGED TREE. */
-export const MAX_DEAD_TARGETS = 189;
+/** MERGED AGAIN 2026-09-22, by the §16/§18 MEDIA / VOICE / COMPASS lane, and
+ * the rule the paragraph above set is applied to itself: the number is
+ * RE-MEASURED after this merge rather than carried over from either side.
+ *
+ * This lane's repairs are disjoint from both of the two above. Closing the
+ * silent zero in `telegraphGetConversationContext` and threading a translation
+ * confidence through `services/messageTranslation.ts` shifted eight ANCHORED
+ * citations and six UNANCHORED ones. All fourteen were repointed by reading
+ * the claim — the six §18.3 tool entry points in census-telegraph's §11.4
+ * row-move table, the `requiresConfirmation: true` and `safetyBasis` literals,
+ * the four `messageTranslation` declarations, `executeTelegraphConversationTool`
+ * in census-compass and the definitions array in census-highlights-memories —
+ * and the six unanchored ones GAINED an `#anchor`, which is what moves them out
+ * of this check's population for good.
+ *
+ * It overlaps the membership-read lane on ONE file, `TelegraphConversationTools.ts`,
+ * and on no citation: that lane repointed `:73` (the spec-name map) and
+ * `gateConversation`, this one repointed the eight accessors and the two
+ * literals below them. The overlap is why the number is measured and not
+ * summed.
+ *
+ * MEASURED AFTER THE REBASE, AT 205, and the number is the reason this
+ * paragraph exists rather than a note saying "unchanged". This lane measured
+ * 208 against `b7dd1c71f` and the merged tree measures 205 — a figure NEITHER
+ * side could have produced, because the three sets of repairs are disjoint and
+ * each one's anchors move a different citation out of this check's population.
+ * Carrying 208 forward would have been a ceiling three above the truth, which
+ * is a ratchet that has quietly stopped ratcheting. */
+/* MERGED 2026-09-22, lane-media-voice — the fourth disjoint repair set, and the
+ * rule every paragraph above states is applied once more: measured here, never
+ * carried. That lane measured 205 against a tree without this branch's
+ * messaging.ts repoints or lane-domain's `domain/telegraph/` ones; this branch
+ * measured 189 without its fourteen. Neither number survives the union. */
+export const MAX_DEAD_TARGETS = 188;
 
 /** Pinned to a commit by its own declaration; its lines must not track HEAD. */
 const PINNED_DOCS = new Set(['docs/architecture/mobile-reachability-ledger.md']);

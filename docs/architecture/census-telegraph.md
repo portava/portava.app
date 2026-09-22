@@ -2684,9 +2684,9 @@ those. Availability goes through `projectPublicWindows`, so the PARTICIPANT's
 own visibility policy decides — the fixture gives one member a `private` window
 and the test proves it never appears. `createPlanDraft` has no write in it at
 all, not a write behind a check, and returns `requiresConfirmation: true` as a
-literal (`compass/TelegraphConversationTools.ts:462#requiresConfirmation: true`). `findSafePublicMeetup`
+literal (`compass/TelegraphConversationTools.ts:500#requiresConfirmation: true`). `findSafePublicMeetup`
 labels its basis `public_staffed_category_only`
-(`compass/TelegraphConversationTools.ts:462`) and says in the result that it is
+(`compass/TelegraphConversationTools.ts:551#safetyBasis: "public_staffed_category_only"`) and says in the result that it is
 NOT a claim about crime, lighting or opening hours — this repository has no
 source for any of those, and a confident answer there is the most dangerous one
 available.
@@ -2732,14 +2732,14 @@ during exactly the minutes an attacker wants it off.
 
 | id | was | now | why |
 | --- | --- | --- | --- |
-| T244 | W | **C** | §18.3 `getConversationContext()` — `compass/TelegraphConversationTools.ts:157`. Conversation-scoped, not message-scoped: type, participant count, the §14 capability set, which context classes are available, and the kinds of shared objects present. Returns no message prose — the test asserts the fixture's plain message text never appears in the result. |
-| T245 | N | **C** | §18.3 `getSharedPlans()` — `compass/TelegraphConversationTools.ts:198`. Meetups attached to the conversation by `chat_thread_id`, cancelled ones excluded, with the place NAME (a `location_name` capped at 300 chars by a CHECK) and never a coordinate. |
-| T246 | N | **C** | §18.3 `getParticipantAvailability()` — `compass/TelegraphConversationTools.ts:277#export async function telegraphGetParticipantAvailability`. Through `projectPublicWindows`, so each participant's own visibility policy decides; the viewer relationship handed to it is the most restrictive the conversation justifies and never widens. A participant not sharing simply does not appear, and the result carries the instruction not to speculate why. This is also the first time Telegraph reads availability at all (compare T28). |
-| T247 | N | **C** | §18.3 `getSharedPlaces()` — `compass/TelegraphConversationTools.ts:294`. Place cards shared into the conversation, rendered through §21's safe-field allowlist, so a card body's latitude cannot reach the model. |
-| T248 | N | **C** | §18.3 `suggestMeetingPoint()` — `compass/TelegraphConversationTools.ts:345`. Drawn from the conversation's shared destination. No midpoint is computed, and the header says why it never will be on this path: a midpoint between two participants is a location inference about both of them from data neither shared with the conversation. |
-| T249 | W | **C** | §18.3 `createPlanDraft()` — `compass/TelegraphConversationTools.ts:439#export async function telegraphCreatePlanDraft`, now a Compass tool rather than a route-local intent. It has no write in it, returns `requiresConfirmation: true` (`:411`) and refuses when the conversation's `canCreatePlan` is false. |
-| T250 | N | **C** | §18.3 `findSafePublicMeetup()` — `compass/TelegraphConversationTools.ts:433`, with `safetyBasis: "public_staffed_category_only"` (`:462`) and an explicit disclaimer that it is not a claim about crime, lighting or hours. |
-| T251 | N | **C** | §18.3 `searchAuthorizedConversationContent()` — `compass/TelegraphConversationTools.ts:471`, delegating to the SAME `searchConversations` service the user-facing §21 route uses. One scope resolver, one set of exclusions: a second search path for Compass is how the two would come to disagree about what a participant may see. |
+| T244 | W | **C** | §18.3 `getConversationContext()` — `compass/TelegraphConversationTools.ts:189#export async function telegraphGetConversationContext`. Conversation-scoped, not message-scoped: type, participant count, the §14 capability set, which context classes are available, and the kinds of shared objects present. Returns no message prose — the test asserts the fixture's plain message text never appears in the result. |
+| T245 | N | **C** | §18.3 `getSharedPlans()` — `compass/TelegraphConversationTools.ts:278#export async function telegraphGetSharedPlans`. Meetups attached to the conversation by `chat_thread_id`, cancelled ones excluded, with the place NAME (a `location_name` capped at 300 chars by a CHECK) and never a coordinate. |
+| T246 | N | **C** | §18.3 `getParticipantAvailability()` — `compass/TelegraphConversationTools.ts:315#export async function telegraphGetParticipantAvailability`. Through `projectPublicWindows`, so each participant's own visibility policy decides; the viewer relationship handed to it is the most restrictive the conversation justifies and never widens. A participant not sharing simply does not appear, and the result carries the instruction not to speculate why. This is also the first time Telegraph reads availability at all (compare T28). |
+| T247 | N | **C** | §18.3 `getSharedPlaces()` — `compass/TelegraphConversationTools.ts:374#export async function telegraphGetSharedPlaces`. Place cards shared into the conversation, rendered through §21's safe-field allowlist, so a card body's latitude cannot reach the model. |
+| T248 | N | **C** | §18.3 `suggestMeetingPoint()` — `compass/TelegraphConversationTools.ts:434#export async function telegraphSuggestMeetingPoint`. Drawn from the conversation's shared destination. No midpoint is computed, and the header says why it never will be on this path: a midpoint between two participants is a location inference about both of them from data neither shared with the conversation. |
+| T249 | W | **C** | §18.3 `createPlanDraft()` — `compass/TelegraphConversationTools.ts:477#export async function telegraphCreatePlanDraft`, now a Compass tool rather than a route-local intent. It has no write in it, returns `requiresConfirmation: true` (`compass/TelegraphConversationTools.ts:500#requiresConfirmation: true`) and refuses when the conversation's `canCreatePlan` is false. |
+| T250 | N | **C** | §18.3 `findSafePublicMeetup()` — `compass/TelegraphConversationTools.ts:522#export async function telegraphFindSafePublicMeetup`, with `safetyBasis: "public_staffed_category_only"` (`compass/TelegraphConversationTools.ts:551#safetyBasis: "public_staffed_category_only"`) and an explicit disclaimer that it is not a claim about crime, lighting or hours. |
+| T251 | N | **C** | §18.3 `searchAuthorizedConversationContent()` — `compass/TelegraphConversationTools.ts:560#export async function telegraphSearchConversation`, delegating to the SAME `searchConversations` service the user-facing §21 route uses. One scope resolver, one set of exclusions: a second search path for Compass is how the two would come to disagree about what a participant may see. |
 | T279 | W | **C** | §22 adaptive rate limits — both halves. The send step now has a limit (`routes/messaging.ts:2091`), and it is adaptive to all five named inputs (`domain/telegraph/policies/sendRateLimit.ts:112`): relationship, verification, trust, account age and open reports, with an unreadable input falling to the strictest tier. The request step's existing adaptive machinery is untouched. |
 | T281 | N | **W** | §22 links/files — the reserved-identity list and structural link scanning now exist (`domain/telegraph/policies/travelScamSignals.ts:197`, `:275`), including lookalike detection against the official hosts. W and not C for two stated reasons: there is no REPUTATION feed (nothing in this repository can say a host is known-bad, and inventing a verdict of "safe" is the one output here that could get somebody hurt), and there is no file kind to scan at all (T40). |
 | T282 | W | **W** | §22 travel scam signals — all six families are detected (`domain/telegraph/policies/travelScamSignals.ts:48`, `:167`) and attached to the recipient's read (`routes/messaging.ts:2027`), against a ten-line false-positive corpus. Holds W for one reason: **no client surface renders `safetySignals` yet**, so a traveller does not see the warning. The server half is complete and the traveller-facing half is not. |
@@ -5004,7 +5004,7 @@ Named so the next lane does not re-derive them.
      `senderLanguage` defaults to `'en'` on a dropped error at four call sites,
      and the value flows into `translateMessageForThread`, which writes
      `messages.language_detection_source = 'sender_preference'`
-     (`artifacts/api-server/src/services/messageTranslation.ts:300#detectionSource = 'sender_preference';`
+     (`artifacts/api-server/src/services/messageTranslation.ts:457#detectionSource = 'sender_preference';`
      — THE ONE CITATION IN THIS DOCUMENT WHOSE ANCHOR TEXT HAD TO CHANGE, and
      §16 says why: the line this paragraph originally named,
      `detectionSource = senderPreferredLanguage ? 'sender_preference' : 'default';`,
@@ -5169,14 +5169,14 @@ trailing comment on 0009 still lists the original three values; it is a comment,
 not a constraint, and applied migrations are checksummed against the live ledger
 (`check:migration-ledger`), so it was deliberately left alone. The
 `LanguageDetectionSource` type is the vocabulary of record
-(`artifacts/api-server/src/services/messageTranslation.ts:63#export type LanguageDetectionSource =`).
+(`artifacts/api-server/src/services/messageTranslation.ts:68#export type LanguageDetectionSource =`).
 
 ### 16.3 What changed, and what deliberately did not
 
 The five sites now BIND the error and hand the pipeline two things instead of
 one: the language the sender stated (`string | null`) and whether the read
 succeeded. One shared interpreter decides what the read established
-(`artifacts/api-server/src/services/messageTranslation.ts:107#export function senderLanguageFrom(`),
+(`artifacts/api-server/src/services/messageTranslation.ts:158#export function senderLanguageFrom(`),
 because five copies of a coalesce is how one defect came to exist in five
 places. All three fallback arms are now reachable, and `'default'` is reachable
 for the first time.
@@ -5256,7 +5256,7 @@ open and is named here rather than discovered later: step 3 of
 `translateMessageForThread` reads the RECIPIENTS' profiles with the same dropped
 error, so an unreadable `profiles` silently gives every recipient
 `preferredLanguage: 'en'`
-(`artifacts/api-server/src/services/messageTranslation.ts:338#const { data: profiles, error: profilesErr } = await sc`
+(`artifacts/api-server/src/services/messageTranslation.ts:500#const { data: profiles, error: profilesErr } = await sc`
 — the FOURTH repointed anchor, same reason; CLOSED by §17.3, which also shows
 the sentence below is too kind to the defect).
 That is a degraded translation rather than a false stored claim — it writes
@@ -5454,7 +5454,7 @@ a thread the sender is alone in. There is no honest row to write instead
 (without the roster there are no recipient ids to key one by), so what the
 failure is owed is a loud, and the pipeline's own "never throws" contract makes
 that a log at error level
-(`artifacts/api-server/src/services/messageTranslation.ts:266#if (membersErr) {`).
+(`artifacts/api-server/src/services/messageTranslation.ts:417#if (membersErr) {`).
 
 ### 17.4 The quoted reply context, and the group chat's translation read
 
@@ -9320,8 +9320,249 @@ above with the evidence. What remains of this lane in the count is T150's
 actual contribution is not in the headline at all**: a prototype-key fail-open
 closed in three dispatch tables, and a command vocabulary that can no longer rot
 silently because it is derived. Neither moves a row, and §35.3 says why.
+
+*(This is the count AS OF §35. §36 below lands three further `N → W` moves and
+restates it again; that later table is the document's current headline.)*
 Two absences became partial implementations — one of them (T150) had been
 partially implemented for some time and nobody had come back to the row — and
 the defect class closed in §35.1 moved no row at all, because closing a
 fail-open in a path that was already graded C is not construction. §1's reading
 rule applies unchanged: this document is append-only and last-statement-wins.
+---
+
+## §36 — §16 Media Pipeline and §18 Translation/Voice/Compass, re-measured: the confidence that was thrown away one line after it arrived
+
+> Section number: this lane wrote itself as `§34` on a base that carried
+> neither §34 nor §35 above. Renumbered at the merge; only its own
+> back-references were rewritten.
+
+Written by the MEDIA / VOICE / COMPASS lane. **Nothing here is merged and no
+flag was enabled.** `head_commit` is **not** re-declared for the census as a
+whole; this section measures only the rows it names.
+
+PROVENANCE, stated rather than rounded off: the worktree was checked out at
+`b7dd1c71f`, which is where `claude/portava-continuation-uqta94` stood at the
+time and is byte-identical to `origin`'s copy of it. Every measurement below
+was taken there. No rebase was needed. The lane began in the shared main
+checkout, discovered two other lanes writing into the same working tree, moved
+to an isolated worktree and restored the shared tree to their work alone; the
+restore is noted because a lane's own hygiene is part of what a later reader has
+to trust about its numbers.
+
+### 36.1 The finding, stated first because it changes what T240 and T242 mean
+
+`T240` records `confidence` as MISSING from the `MessageTranslation` contract,
+and `T242` records that the show-original mechanism is driven by a taste setting
+because *"there is no confidence value to threshold on"*. Both are true of the
+record. **Neither is true of the tree.**
+
+`lib/translation.ts` has carried a confidence signal since the provider
+abstraction was written — `DetectLanguageResult` declares
+`confidence: 'high' | 'low'` (`artifacts/api-server/src/lib/translation.ts:19#confidence: 'high' | 'low'`),
+the OpenAI detector asks the model for it by name and parses it
+(`artifacts/api-server/src/lib/translation.ts:127#confidence: parsed.confidence === 'high' ? 'high' : 'low'`) —
+and `messageTranslation.ts#detectWithRetry` **discarded it one line after
+receiving it**, with `return result.language`. The value was produced, travelled
+one function call, and was dropped on the floor. Nothing downstream could see
+it, so nothing downstream could threshold on it, so the census measured its
+absence correctly and for the wrong reason.
+
+This is worth naming as a class, not as an anecdote: a missing field and a
+**discarded** field are indistinguishable from the schema, and the second is
+much cheaper to close. A census that reads the table learns "absent"; only
+reading the producer learns "thrown away".
+
+### 36.2 What was built
+
+**The two fields T240 names** —
+`artifacts/api-server/src/migrations/2991_message_translations_confidence.sql`
+adds `confidence` (CHECK `('high','low')`, nullable, **no default**) and
+`provider_version`. The defaultlessness is asserted in the migration's own
+postconditions, because a default would manufacture a reading nobody took —
+which is the exact thing T242 asks not to happen. `provider_version` answers a
+different question from `provider`: the vendor versus the engine that ran, taken
+FROM the call site rather than written beside it
+(`artifacts/api-server/src/lib/translation.ts:104#export const OPENAI_TRANSLATION_MODEL`),
+so the recorded version cannot drift from the model that produced the text.
+
+**The one rule that decides confidence** — `translationConfidenceOf`
+(`artifacts/api-server/src/services/messageTranslation.ts:112#export function translationConfidenceOf`).
+HIGH is reachable through the PROVIDER arm alone. The pipeline resolves a source
+language down a four-arm ladder and only the first arm reads the message; a
+translation out of a source language taken from a profile default — or from a
+profile read that FAILED — is a guess, and `es → en` run over text that is
+actually Portuguese produces fluent, confident, wrong English. The three
+fallback arms are LOW even when a stale reading is handed in beside them.
+
+**The decision T242 asks for** — `buildDisplayFields` now returns
+`translationConfidence` and `showOriginalAlongside`
+(`artifacts/api-server/src/services/messageTranslation.ts:205#showOriginalAlongside: boolean`),
+and the second is `confidence !== 'high'` — so **UNKNOWN COUNTS AS NOT-HIGH**.
+The requirement is "instead of pretending certainty", and a missing reading is
+not evidence of certainty; deciding it the other way would make every row
+written before 2991 assert a confidence nobody measured.
+
+**A write that used to fail silently** — `upsertTranslation` was
+`await sc.from('message_translations').upsert(...)` and nothing else. supabase-js
+RESOLVES on a database error, so the awaited promise settled happily on a
+refusal and every caller — including the `catch` arms whose whole job is to
+RECORD that a translation failed — could not tell a written row from a rejected
+one. The error is now read, a failure is logged by name, and the specific
+undefined-column refusal retries once WITHOUT the two new columns while naming
+migration 2991
+(`artifacts/api-server/src/services/messageTranslation.ts:1064#export const CONFIDENCE_MIGRATION_PENDING_MESSAGE`).
+The translation is the product feature and the reading is metadata about it;
+losing the row to keep the metadata would be the wrong trade.
+
+**A storage key that must never become a translation** —
+`isStructuredEnvelopeBody`
+(`artifacts/api-server/src/services/messageTranslation.ts:338#export function isStructuredEnvelopeBody`),
+consulted before the roster read, before detection and before any provider call.
+A §6.2 VOICE message stores a JSON envelope in `messages.body` and that envelope
+carries `payload.url`, a `post-media/<path>` key for a PRIVATE bucket. This
+service takes a bare `body: string` and knows nothing about kinds, so a single
+import from a typed-send path would have posted a private storage key to a
+third-party provider AND stored it in `message_translations.translated_body` — a
+column `lib/mediaAccess.ts`'s branch-3c media gate does not cover and which every
+thread reader receives. No route wires that today, which makes the hazard latent
+rather than live; latent one import away from a privacy incident is worth a
+guard rather than a comment. It is invariant-based (a string `kind` plus the
+envelope version) rather than kind-based, so a kind written later is covered the
+day it is written instead of being translated by default.
+
+**A silent zero in a §18.3 accessor** — `telegraphGetConversationContext` read
+the conversation's recent structured objects and ended `((recent as any[]) ?? [])`.
+A rejected PostgREST query RESOLVES with `{ data: null, error }`, so an RLS
+denial, a timeout or a dropped connection became the empty array, and Compass was
+handed "the participants have put nothing into this conversation" as a fact for
+the model to repeat. Every OTHER tool in that module already refuses by name with
+`degraded: true`; this one read was the exception. It now returns `null` — not
+`[]`, because an empty array is iterable and sums to "nothing" — with
+`recentObjectsUnreadable: true` and a note instructing the model to say it could
+not check
+(`artifacts/api-server/src/compass/TelegraphConversationTools.ts:241#const recentObjectsUnreadable = Boolean(error)`).
+It is NOT a whole-tool refusal: the other four fields come from the gate, which
+already refuses outright when membership, roster, privacy or capabilities cannot
+be read, so a true partial answer is available and preferable to no answer.
+
+### 36.3 Row moves
+
+| id | Was | Now | Why |
+| --- | --- | --- | --- |
+| T63 | N | **W** | §6.3 **Voice: waveform, seek, playback speed, optional transcript/translation** — the row's stated reason, *"No voice messages at all (T53)"*, is stale: VOICE was built and merged (see §30). Three of the four clauses are real and asserted against the component, not inferred from it — the waveform renders and downsamples by the SAME function the server validates with, seek works by tap AND by a real `accessibilityValue` with increment/decrement actions, and the speed control cycles back to 1x and states itself as a WORD (`travel-buddy-standalone/src/features/telegraph/voice/VoiceMessagePlayer.tsx:2#Telegraph §6.3 — a voice message, with waveform, seek and playback speed`). It plays only through the SIGNED url, never the raw `post-media` reference. **Ceiling: the fourth clause. There is no transcript and no translation of one, because no speech-to-text provider is configured in or reachable from this tree — and, under that, migration 2989 is applied to no database, so no voice note can exist anywhere to be played.** |
+| T225 | N | **W** | §16 **Waveform generation for voice as derived metadata** — both clauses of the stated reason are stale. Voice exists, and `ALLOWED_MEDIA_MIME` admitting no audio is no longer the whole story: voice audio goes through a voice-only allowlist on its own route. A waveform IS derived metadata now: it is carried in the envelope, validated and NORMALISED server-side rather than trusted — clamped to [0,1], non-finite peaks dropped, and capped in length so a bar chart cannot be made into a denial of service (`artifacts/api-server/src/services/telegraph/voice.ts:105#export function normaliseWaveform`). **Ceiling, and it is the word in the requirement: GENERATION. The server does not generate it. There is no audio decoder in this tier, so the peaks come from the recorder's `expo-av` metering and the server's role is to refuse or normalise what it is handed. It is derived metadata that is client-derived, and it lives in the envelope rather than in a column.** |
+| T243 | N | **W** | §18.2 **Voice pipeline AUDIO → TRANSCRIPT → optional TRANSLATION, audio authoritative** — the stated reason, *"No voice messages (T53), no transcription"*, is half stale. The AUDIO rung is built end to end: upload, sniff-by-track, send, and a `lib/mediaAccess.ts` branch-3c decision about who may fetch the bytes. "Audio is authoritative" is now enforced on the side that could fail silently — no derivative is manufactured from a voice note behind its back (§36.2's envelope guard) and no derivative gates the original: a note with an EMPTY waveform is legal and fully playable, and an out-of-range waveform is clamped rather than refused. **Ceiling: the second and third rungs do not exist. There is no transcript, because there is no speech-to-text provider in this tree, and a nullable `transcript` field was deliberately not added because nothing would write it; translation is downstream of the transcript and is therefore also absent. And 2989 is applied nowhere, so the built first rung is live nowhere.** |
+| T240 | W | **W** | §18.2 **`MessageTranslation` contract** — **evidence correction, verdict deliberately unchanged.** "Missing `providerVersion` and `confidence`" no longer describes the tree: both are in migration 2991, both are written by the pipeline, and the confidence is a real reading rather than a placeholder (§36.1). **It stays W for one reason and it is the house rule, not modesty: 2991 is applied to NO database — not production (`ajrurzioarfkagpuxfnb`), not portava-ci (`hwokxgbmezheskbzskfr`). On every database that exists today the two columns are absent, the writer detects that by name and stores the row without them, and the contract is eight fields in this tree and six everywhere else. A capability nobody can reach is built, not correct — the same bound §31 applies to seven Nearby rows and §30.3 applies to voice.** |
+| T242 | W | **W** | §18.2 **Low-confidence operational translation shows original plus translation** — **evidence correction, verdict deliberately unchanged.** "There is no confidence value to threshold on" is now false: there is one, it is computed by a single named rule, and the show-both decision is taken FROM it and from nothing else — `buildDisplayFields` has three arguments and none of them is a profile, which is asserted rather than commented. **Ceiling, and it is a hand-off rather than a gap in this work: no reader forwards it. `routes/messaging.ts:2461` and `routes/groupChat.ts:223` each select four named fields out of the translation row and seven named fields out of the display object, so `confidence` never reaches `buildDisplayFields` and `showOriginalAlongside` never reaches the client. `routes/messaging.ts` belongs to another lane and was not touched. Until those two call sites forward two fields each, the decision is computed and discarded — which is, precisely, the defect §36.1 found in the layer below.** |
+| T244 | C | **C** | §18.3 **`getConversationContext()`** — **verdict unchanged; a defect inside it fixed.** §11.4 moved this row to C and the accessor is genuinely there, conversation-scoped and prose-free. But its one direct read of `messages` swallowed a refusal into an empty list, so the tool could report a conversation as containing nothing when it had merely failed to look — a confident false statement about a conversation, which is the one thing §18.3's boundary sentence cannot tolerate. Closed in §36.2 and pinned by `test/telegraphContextObjectsHonesty.test.ts`. The row was already C and stays C; recorded here so the fix is not invisible to a reader tracing why that file changed. |
+| T135 | ? | **?** | §11.3 **Voice/video controls: screen-reader labels and predictable hit targets** — **evidence correction, verdict unchanged.** "Voice does not exist (T53)" is stale. The voice half now has explicit, statically readable accessibility: every control carries an `accessibilityRole` and an `accessibilityLabel`, the transport buttons carry `hitSlop`, the waveform announces itself `adjustable` and now actually IS — it carries an `accessibilityValue` and increment/decrement actions performing the same seek the tap does — and the 48 individual bars are hidden from the reader rather than left as unlabelled stops. **It stays `?` because the row is not only about voice: the VIDEO transport controls still belong to the shared player, and screen-reader behaviour is a runtime accessibility-tree property that needs a device. A statically declared label is evidence that one was declared, not that a reader announces it.** |
+
+### 36.4 The §16 rows this lane did NOT move, and who should
+
+Stated because a section that reports only its wins is not a measurement.
+
+* **`T221`** (`MediaAsset != Message != Memory`) — unmoved. Message media still
+  writes `media_url` / `media_type` / `media_thumbnail_url` onto the `messages`
+  row. Closing it needs a `message_attachments` writer, which is 2811's, and the
+  write site is `routes/messaging.ts`, which is another lane's file. Owner: the
+  messaging/kernel lane.
+* **`T222`**, **`T224`** — unmoved, and both are NEITHER-capped for the same
+  reason the census already gives: a streamable rendition and adaptive
+  renditions do not exist for ANY surface, message or otherwise. This is an
+  infrastructure decision (no transcoder in this tier), not a code gap.
+* **`T223`** (resumable / chunked upload) — unmoved. The voice upload route is
+  this lane's and could have been given a resume token on its own; doing that
+  for one of three upload doors would make the product's answer to poor
+  connectivity depend on which kind of thing you are sending, which is worse
+  than a uniform absence. It belongs with `hooks/useMessageMediaPicker.ts` and
+  `lib/mediaPipeline.ts` in one pass. Owner: a media-transport lane.
+* **`T227`** — already `C` since §20; no action.
+* **`T53`** — NOT this lane's row (§6.2), and named anyway because three rows
+  above are ceiling-bound on it: the blocker is that 2989 is applied to no
+  database, which is an APPLY, not a build.
+
+### 36.5 Two things measured that surprised the lane, recorded rather than smoothed
+
+1. **`validateVoicePayload` treats the two non-finite peaks differently.**
+   `normaliseWaveform` drops NaN and Infinity alike — "no reading" is not a
+   quiet frame — but on the wire zod's `z.number()` REJECTS NaN outright and
+   ACCEPTS ±Infinity, which the normaliser then drops. So a waveform carrying
+   NaN refuses the whole voice note and one carrying Infinity loses a single
+   bar. Both outcomes are safe and the stricter one is the refusal, so nothing
+   was changed; it is asserted in `test/voicePipelineAuthority.test.ts` so the
+   asymmetry is on the record instead of being rediscovered.
+2. **A guard that would not fall to its first mutation was a fact about the
+   TEST, not about the guard.** `buildDisplayFields` opens
+   `if (msg.deleted || msg.body === null)`, and every test drove it with both
+   halves true at once, which makes the disjunction unfalsifiable: replacing the
+   arm's `null`s with `msg.body` changes nothing and the `deleted` half looks
+   redundant. Both current callers pre-null the body, so the input space had to
+   be WIDENED — a deleted message whose body is still present — before the
+   mutation could land. Recorded because this corpus has had a real gate deleted
+   on exactly the reasoning the narrow test would have licensed.
+
+### 36.6 Guards at this tree
+
+`check:census-integrity` **0**, `check:census-freshness` **0**,
+`check:census-scope-coverage` **0**, `check:census-row-move-labels` **0**,
+`check:doc-citations` **0**, `check:citation-targets` **0** (its ceiling
+LOWERED 209 → 208 with the argument in the file),
+`check:test-registration` **0**, `check:telegraph-inventory` **0**,
+`check:migration-prefixes` **0**, `check:silent-supabase-writes` **0**,
+`typecheck` **0**, `typecheck:tests` **0** at an unchanged 863 diagnostics
+across 115 files.
+
+`check:write-path-columns`, `check:missing-live-columns`,
+`check:authorization-contract`, `check:media-objects` and
+`check:rank-events-surfaces` exit **2** without live credentials —
+**UNVERIFIED, not green**, and nothing above rests on them.
+
+### 36.7 The headline, restated from the rows
+
+Three rows moved `N → W` in this section (`T63`, `T225`, `T243`) and nothing
+else changed bucket here, so the last headline in the document no longer
+describes the table under it. Restated by **counting the rows with `check:census-integrity`**,
+not by adding three to the old numbers — a headline arrived at by arithmetic on
+the previous headline carries the previous headline's error forward while
+looking freshly measured:
+
+| bucket | count |
+| --- | --- |
+| BUILT-AND-CORRECT | **238** |
+| BUILT-BUT-WRONG | **171** |
+| NOT-BUILT | **39** |
+| CANNOT-VERIFY | **3** |
+
+451 rows. CONSTRUCTED (C + W) is 409 of 451 = 90.7 %; CORRECT is 238 of 451 =
+52.8 %.
+
+**MEASURED AFTER THE MERGE, AND THE DIFFERENCE IS NOT THIS LANE'S.** This lane
+was written against `b7dd1c71f` and rebased onto `51e65ef74`, which carries
+§33's lifecycle work. Counting this lane's three moves against §31.8's headline
+alone would have produced C 231 / W 169 / N 48 — the number this section
+originally stated, and the number a reader would have quoted. It is wrong about
+the merged tree, because §33 moved rows of its own in the same interval.
+Restated by re-running `check:census-integrity` after the rebase rather than by
+carrying either branch's arithmetic forward, which is the same rule §31.8 states
+and the reason it is worth stating twice.
+
+**CORRECT DID NOT MOVE, AND THE REASON IS THE POINT OF THIS SECTION.** Nothing
+here became correct. Three rows went from "the thing does not exist" to "the
+thing exists and cannot be reached": T63 and T243 are bound by migration 2989
+being applied to no database, T225 by the server not generating what the
+requirement says it generates. Two further rows (T240, T242) had their stated
+reason falsified and **deliberately did not move**, because the field now exists
+in a migration nobody has run and the decision now exists with nobody reading
+it. §1's reading rule applies unchanged: this document is append-only and
+last-statement-wins, and a `W` here is a claim about construction, never about
+liveness.
+
+**RE-VERIFIED AT THE FULL MERGE, 2026-09-22.** The paragraph above was written
+after a rebase onto `51e65ef74`, which carried §33 but not §34 or §35. Those
+two landed before this section did, so the figure was re-run rather than
+assumed: `check:census-integrity` counts `C 238 / W 171 / N 39 / X 3` at the
+merged tree, which is the table above unchanged. It holds because the three
+sections moved disjoint rows — §34 moved none at all, §35's late statements
+were corrected back to what §33 had measured, and this lane's three are its
+own. **This is the document's current headline**; §35.7's is the count as of
+§35 and is left in place because this document is append-only.
