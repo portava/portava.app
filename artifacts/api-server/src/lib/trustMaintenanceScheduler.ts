@@ -50,7 +50,7 @@ import { getServiceClient } from "./supabase.js";
 import { logger as rootLogger } from "./logger.js";
 import { recalculateTrustScore } from "../services/trust/TrustScoreService.js";
 import { expireOldCaps } from "../services/trust/TrustCapService.js";
-import { expireOldRestrictions } from "../services/trust/TrustRestrictionService.js";
+import { expireOldRestrictions, RESTRICTION_EXPIRY_BATCH } from "../services/trust/TrustRestrictionService.js";
 import { runGamingDetectionScan, type GamingScanInputs } from "../services/trust/TrustGamingDetectionService.js";
 import { isTrustEnabled } from "../services/trust/TrustEventService.js";
 import { purgeExpiredVerificationRecords } from "../services/identityVerification/retention.js";
@@ -401,6 +401,20 @@ export interface TrustMaintenanceResult {
   skipReason?: string;
   capsExpired: number;
   restrictionsExpired: number;
+  /**
+   * The restriction sweep could not tell what is still due — a read or a write
+   * errored, or the call threw. DISTINCT from `restrictionsExpired: 0`, which
+   * is a sweep that worked and found nothing. Collapsing those two into the
+   * number 0 is the defect this field exists to end.
+   */
+  restrictionSweepFailed: boolean;
+  /**
+   * The sweep hit its per-pass batch cap, so restrictions may still be due.
+   * A partial sweep must never read as full coverage; the remainder is picked
+   * up by the next pass (RESTRICTION_EXPIRY_BATCH orders by `expires_at`, so
+   * the longest-overdue rows go first and nothing starves).
+   */
+  restrictionSweepTruncated: boolean;
   probationCleared: number;
   usersRecalculated: number;
   recalcFailures: number;
@@ -583,7 +597,8 @@ async function repairMissingEventReviews(
  */
 export async function runTrustMaintenance(client?: any): Promise<TrustMaintenanceResult> {
   const empty: TrustMaintenanceResult = {
-    ok: true, capsExpired: 0, restrictionsExpired: 0, probationCleared: 0,
+    ok: true, capsExpired: 0, restrictionsExpired: 0,
+    restrictionSweepFailed: false, restrictionSweepTruncated: false, probationCleared: 0,
     usersRecalculated: 0, recalcFailures: 0, gamingFlagged: 0,
     eventsSeen: null, gamingInputs: null, gamingVacuous: false, truncated: false,
     verificationRecordsPurged: null,
@@ -648,10 +663,32 @@ export async function runTrustMaintenance(client?: any): Promise<TrustMaintenanc
   //     already ignores them past `expires_at` (getRestrictionState filters on
   //     it); this keeps the row — and the admin views that list it — honest.
   //     TrustRestrictionService.expireOldRestrictions had no caller before.
+  //
+  //     The sweep reports an OUTCOME, not a count: bounded per pass, and a
+  //     failure is not reducible to "expired 0" — that number is also what a
+  //     healthy idle sweep returns.
   let restrictionsExpired = 0;
+  let restrictionSweepFailed = false;
+  let restrictionSweepTruncated = false;
   try {
-    restrictionsExpired = await expireOldRestrictions(db);
+    const sweep = await expireOldRestrictions(db);
+    restrictionsExpired = sweep.expired;
+    restrictionSweepFailed = sweep.failed;
+    restrictionSweepTruncated = sweep.truncated;
+    if (sweep.truncated) {
+      logger.warn(
+        { expired: sweep.expired, cap: RESTRICTION_EXPIRY_BATCH },
+        "restriction expiry truncated — more were due than the per-pass cap; the remainder rolls to the next pass",
+      );
+    }
+    if (sweep.failed) {
+      logger.warn(
+        {},
+        "restriction expiry FAILED — lapsed restrictions may still be listed as active, and this pass cannot say how many",
+      );
+    }
   } catch (err) {
+    restrictionSweepFailed = true;
     logger.warn({ err }, "expireOldRestrictions threw (non-fatal)");
   }
 
@@ -735,6 +772,8 @@ export async function runTrustMaintenance(client?: any): Promise<TrustMaintenanc
     ok: true,
     capsExpired,
     restrictionsExpired,
+    restrictionSweepFailed,
+    restrictionSweepTruncated,
     probationCleared,
     usersRecalculated,
     recalcFailures,
@@ -777,6 +816,8 @@ export async function tickOnce(): Promise<void> {
         {
           capsExpired: r.capsExpired,
           restrictionsExpired: r.restrictionsExpired,
+          restrictionSweepFailed: r.restrictionSweepFailed,
+          restrictionSweepTruncated: r.restrictionSweepTruncated,
           probationCleared: r.probationCleared,
           usersRecalculated: r.usersRecalculated,
           recalcFailures: r.recalcFailures,
@@ -823,6 +864,11 @@ export async function tickOnce(): Promise<void> {
       // A partial failure is still a failure: users whose score this pass was
       // supposed to refresh still carry a stale one.
       if (r.recalcFailures > 0) failures.push(`recalc_failures:${r.recalcFailures}`);
+      // A sweep that could not run leaves lapsed sanctions showing as active in
+      // every admin view, and — unlike a truncated sweep, which the next pass
+      // finishes — nothing retries it any faster than six hours from now. It is
+      // a failure of the pass, not a detail of it.
+      if (r.restrictionSweepFailed) failures.push("restriction_sweep_failed");
       // null = the pending_review scan itself could not be performed.
       if (r.reviewsStuck === null) failures.push("review_scan_unreadable");
       else if (r.reviewsStuck > 0) failures.push(`reviews_stuck:${r.reviewsStuck}`);

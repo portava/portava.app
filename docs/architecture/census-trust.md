@@ -155,7 +155,7 @@ Not counted here. Checked because the brief asked what it marked wrong.
 | C9 | Slow to earn, immediate to lose — the ramp applies only to positive movement (`:162-188`) | C | `computeCategoryScore:189-215`; `trustAsymmetryAndMaintenance.test.ts` pins the asymmetry and the worked example (56, not 80). |
 | C10 | `getDisplayTrustScore` is THE display number; no second engine (`:353-364`; `lib/trustScore.ts:1-25`) | C | `lib/trustScore.ts:124-149` delegates; `PassportProjectionService.ts:1295#getDisplayTrustScore` and `routes/rentABuddy.ts:1237` read through it; `passportTrustConsistency.test.ts`. |
 | C11 | `getTrustProfile` "loads the current profile" (`:375`) — and a failed read is not a missing profile | **W** | `:376-410` never destructures `error`; `null` means both. Five readers collapse an unreachable engine into "New Traveler"/`score: null`: `getDisplayTrustScore:365`, `getSafeTrustSummary:91`, `getPublicTrustBadge:136`, `getRecoveryStatus:89`, `computeTrustScore:131`. **PR #467 adds `getTrustProfileResult()` (ok/absent/unavailable) and switches ONE reader — Passport's domain builder.** Not fixed here: a second error-aware read in the same file would duplicate #467's hunk. Recommended as a #467 follow-up (§4). |
-| C12 | Caps: create, enforce as ceilings, expire on schedule (`TrustCapService.ts:1-6`) | C | `TrustCapService.ts:35#createCap`, the ceiling applied at `TrustScoreService.ts:318#caps`, `TrustCapService.ts:149#expireOldCaps` driven by the scheduler (`lib/trustMaintenanceScheduler.ts:642#capsExpired = await expireOldCaps(db);`); `trust.test.ts:400-475`. |
+| C12 | Caps: create, enforce as ceilings, expire on schedule (`TrustCapService.ts:1-6`) | C | `TrustCapService.ts:35#createCap`, the ceiling applied at `TrustScoreService.ts:318#caps`, `TrustCapService.ts:149#expireOldCaps` driven by the scheduler (`lib/trustMaintenanceScheduler.ts:657#capsExpired = await expireOldCaps(db);`); `trust.test.ts:400-475`. |
 | C13 | `applyEventCaps` keys on the event vocabulary the emitters actually write (`:166-180`) | **W → C** | `coordinate_jump` named a type nobody emits; `recordLocationTrustEvent:375-396` writes `gps_coordinate_jump`. Corrected (`:186`). Residual, **owner decision**: `plan_no_show` and `fake_gps_confirmed` have ceilings and no emitter; `content_removed` and `message_report_confirmed` were wired by the emitter pass. **Correction (2026-09-07, second pass):** this row cited `event_host_no_show (serious, −15, routes/events.ts:3473)` as an emitter. Nothing emits it — `:3473` is the attendance route (`event_attendance_confirmed`), and the no-show emitter at `:3575` writes `event_no_show` (−5 moderate). Which serious findings deserve a ceiling is policy, listed in §5; the per-type evidence is in [trust-unproduced-vocabulary.md](trust-unproduced-vocabulary.md). |
 | C14 | Every cap a moderation finding created is lifted when the finding is reversed (`:93-108`) | C | `liftCapsBySourceEvents:110-128`; wired through `revokeModerationTrustConsequences:112-155` from `routes/admin.ts:1835#void revokeModerationTrustConsequences(sc, adminUserId, userId, reason ?? "Account restore`. |
 | C15 | `getRestrictionState()` is the enforcement seam — "never query trust_restrictions directly in route code" (`TrustRestrictionService.ts:175-179`) | **W** | `routes/admin.ts:1319-1322` selects `trust_restrictions` directly for the admin user view (read-only, includes `reason`). Low impact; **owner: admin route.** |
@@ -497,7 +497,7 @@ still true at `3ca68cb06`, because a restatement that is not re-executed is just
 | A8 | `W → C` | C | `artifacts/api-server/src/migrations/2370_trust_tables_privileges.sql:1#-- 2370_trust_tables_privileges.sql` is in the tree and still carries the REVOKE-then-grant-service_role shape with the RAISE-on-residue postcondition. **The row's caveat is unchanged and matters more than the verdict: applied to CI, NOT to production** — this pass made no production read and no production change, so A8's `C` is a statement about the migration, not about the live grants. |
 | C5 | `W → C` | C | `artifacts/api-server/src/services/trust/TrustEventService.ts:374#async function queueEventForReview` still writes the open `event_review` row, called on the pending-review path, and the admin queue that reads it is still routed at `artifacts/api-server/src/routes/trust-admin.ts:155#router.get("/admin/trust/events/pending", async (req, res) => {`. |
 | C13 | `W → C` | C | The cap table still keys on the type the emitter actually writes: `artifacts/api-server/src/services/trust/TrustCapService.ts:316#gps_coordinate_jump:       [{ category: "location_honesty", ceiling: 55, reasonCode: "coordinate_jump",      expiresInDays: 7  }],`. The residual owner decision on unproduced ceilings is unchanged and stays in §5's list. |
-| C17 | `W → C` | C | `artifacts/api-server/src/services/trust/TrustRestrictionService.ts:333#export async function expireOldRestrictions(db: SupabaseClient): Promise<number> {` still binds its own error, and it still has the caller it lacked: `lib/trustMaintenanceScheduler.ts:653#restrictionsExpired = await expireOldRestrictions(db);`. |
+| C17 | `W → C` | C | `artifacts/api-server/src/services/trust/TrustRestrictionService.ts:378#export async function expireOldRestrictions(` still binds its own error, and it still has the caller it lacked: `lib/trustMaintenanceScheduler.ts:674#const sweep = await expireOldRestrictions(db);`. |
 | C27 | `W → C` | C | `artifacts/api-server/src/routes/trust-admin.ts:86#const SETTING_BOUNDS: Record<string, SettingBound> = {` still bounds each key structurally and `artifacts/api-server/src/routes/trust-admin.ts:103#export function trustSettingRejection(key: string, value: unknown): string` still rejects a value outside it before the write. |
 
 Executed alongside them, because two rows in this census rest on guards rather than on lines:
@@ -922,7 +922,7 @@ production read, no migration applied, no flag flipped.*
 | id | Was | Now | Evidence at `f9d0b9a07` |
 |---|---|---|---|
 | TV-7a | W | **C** | Both criteria now hold, in the order the plan states. `services/identityVerification/providerErasure.ts:58-107#export async function requestProviderDeletionForUser(` reads the user's `provider_verification_ref`s and asks the configured provider to redact each; `services/accountDeletion/AccountDeletionService.ts:1002-1022#const provErasureOk = await step(steps, "request_provider_verification_deletion", async ()` runs it as the named step `request_provider_verification_deletion` **before** `delete_identity_verifications`. The ordering is the requirement, not a nicety — after the delete, `provider_verification_ref` is gone and the vendor's copy of the document is unredactable by anyone, permanently — so it is asserted as an ordering (`test/verificationProviderErasure.test.ts`, the `idxRead < idxDelete` assertion) rather than as two independent calls. A provider that cannot be reached does **not** block the erasure: the step records a failure with the refs in its message, which may be the only surviving record of what still needs redacting, and a warning carries them out. An unreadable `identity_verifications` is a different failure in kind and throws, because supabase-js resolves on a read error and an unbound one makes a table that could not be read look exactly like a user who never verified. **RED 6 tests / 5 pass / 1 fail → GREEN 6/6**; M5 (step removed) **5/1**, M6 (step moved after the delete) **5/1**. |
-| TV-7b | NB | **C** | `services/identityVerification/retention.ts:52-74#export async function purgeExpiredVerificationRecords(` deletes `failed` / `expired` rows whose `updated_at` predates a 90-day cutoff, counting what it removed via a chained `.select("id")` rather than assuming; `lib/trustMaintenanceScheduler.ts:620-625#const r = await purgeExpiredVerificationRecords(db);` runs it every pass. Two choices carry the row and each has a dangerous opposite. **The status filter is positive** — exactly the two statuses the plan names. Not `canceled`, which the plan does not mention and which this does not decide for it; and not `verified`, which is not stale data but the standing evidence `lib/travelerVerification.ts` and `routes/rentABuddyRollout.ts` gate in-person introductions on. A negative filter would also sweep in any status added later, so the test asserts the SET (M8 adds `verified` and two tests go red). **It runs above the `trust_engine_enabled` gate** — that flag governs scoring, and below the gate a data-protection promise would be switchable by a scoring feature flag; turning the trust engine off must stop scores moving, not quietly start retaining failed government-ID checks forever (M7 moves it below and the flag-off test goes red). Reuses the existing 6-hourly scheduler rather than adding a second one. Non-fatal but never silent: the purge throws on a database error so the WARN exists, and `verificationRecordsPurged` is `number | null` because "did not run" is not zero. **RED 7 / 5 / 2 → GREEN 7/7.** |
+| TV-7b | NB | **C** | `services/identityVerification/retention.ts:52-74#export async function purgeExpiredVerificationRecords(` deletes `failed` / `expired` rows whose `updated_at` predates a 90-day cutoff, counting what it removed via a chained `.select("id")` rather than assuming; `lib/trustMaintenanceScheduler.ts:635-640#const r = await purgeExpiredVerificationRecords(db);` runs it every pass. Two choices carry the row and each has a dangerous opposite. **The status filter is positive** — exactly the two statuses the plan names. Not `canceled`, which the plan does not mention and which this does not decide for it; and not `verified`, which is not stale data but the standing evidence `lib/travelerVerification.ts` and `routes/rentABuddyRollout.ts` gate in-person introductions on. A negative filter would also sweep in any status added later, so the test asserts the SET (M8 adds `verified` and two tests go red). **It runs above the `trust_engine_enabled` gate** — that flag governs scoring, and below the gate a data-protection promise would be switchable by a scoring feature flag; turning the trust engine off must stop scores moving, not quietly start retaining failed government-ID checks forever (M7 moves it below and the flag-off test goes red). Reuses the existing 6-hourly scheduler rather than adding a second one. Non-fatal but never silent: the purge throws on a database error so the WARN exists, and `verificationRecordsPurged` is `number | null` because "did not run" is not zero. **RED 7 / 5 / 2 → GREEN 7/7.** |
 
 ### 13.2 Rows that did NOT move, and why
 
@@ -2317,3 +2317,62 @@ the row was already built — and CORRECT rises by one.
   pixels it draws are not.
 - **The server still answers 403 `verification_required` with no route in the payload.** The route
   lives on the client, in the registry. A second client would have to know it independently.
+
+
+---
+
+## §22 — 2026-09-22 · The restriction sweep is bounded, and its outcome is told apart at the caller. **NO ROW MOVES.**
+
+**Read this first: no verdict in this document moves, and `head_commit` is NOT re-declared.** The
+owner approved the work (decision Q2: *"port the {expired, truncated, failed} result and bounded
+processing onto current main while preserving its scheduler wiring"*). The decision authorizes the
+CODE. It does not authorize moving a verdict, and acceptance evidence for a row move does not exist
+yet. C17 stays `C`, TRV2-09 stays `C`, and every other row is untouched by this section.
+
+### §22.1 What was still owed after C17 went `C`
+
+C17 was settled on two claims and both were true: `expireOldRestrictions` binds its own `error`, and
+the maintenance pass calls it. Two things the row never graded were still wrong:
+
+| | The defect | What it cost |
+|---|---|---|
+| 1 | The signature was `Promise<number>`, and every error path returned `0`. | A FAILED sweep and an IDLE one were the same observation at the call site. A permissions failure, a schema drift or a timeout read exactly like "nothing was due". |
+| 2 | The update was UNBOUNDED — one statement against a table that only grows. | A latent outage. `trust_restrictions` has held 0 rows for the life of production, so this has never fired; that is a fact about the table's size, not about the statement. |
+
+### §22.2 What changed
+
+- `artifacts/api-server/src/services/trust/TrustRestrictionService.ts:378#export async function expireOldRestrictions(`
+  returns `{ expired, truncated, failed }`. It reads a BOUNDED due set
+  (`artifacts/api-server/src/services/trust/TrustRestrictionService.ts:328#export const RESTRICTION_EXPIRY_BATCH = 500;`)
+  ordered by `expires_at` ascending, then lifts exactly those ids. `error` is bound on BOTH halves.
+- The write still re-asserts `lifted_at IS NULL`
+  (`artifacts/api-server/src/services/trust/TrustRestrictionService.ts:420#// moving the recorded moment a sanction ended. Do not remove this.`),
+  which is what stops a concurrent pass overwriting an earlier `lifted_at` with a later instant.
+  **That check was not weakened.** TRV2-09's claim is stronger than before, not weaker.
+- `artifacts/api-server/src/lib/trustMaintenanceScheduler.ts:674#const sweep = await expireOldRestrictions(db);`
+  — main's call site, unmoved. It now carries `restrictionSweepFailed` and
+  `restrictionSweepTruncated` out on `TrustMaintenanceResult`, and a failed sweep joins
+  `lastFailures` so `consecutiveFailures` stops resetting through it.
+- `artifacts/api-server/src/lib/stateMachines/registry.ts` — the `active → expired` writer evidence
+  is repointed to the same predicate on the same derivation column after the instant was hoisted
+  into `nowIso`. `checkStateMachineWriters` passes: 0 MISSING_WRITER, unchanged.
+
+### §22.3 The evidence, and what it does NOT establish
+
+`artifacts/api-server/src/test/trustCensusRepairs.test.ts` §4 and §4b, 18 → 25 assertions, all green.
+Five hand-reverts were run and each produced red, which is the only reason to believe the assertions
+bite: collapsing `failed` back to `false` → 2 red; removing the batch bound → 3 red; replacing the
+`expires_at` ordering → 1 red; dropping the `lifted_at IS NULL` re-assert on the write → 1 red;
+having the caller stop surfacing the outcome → 3 red. Restored: 25/25.
+
+**Starvation is proven, at the caller and at the service.** One pass over `RESTRICTION_EXPIRY_BATCH + 1`
+due rows reports `truncated`; passes repeat until it does not, and every eligible row ends lifted with
+none dropped. Separately, at a batch of 3 over 7 due rows, a NEWLY-lapsed restriction inserted
+mid-drain does not overtake the older ones, and the backlog still drains completely.
+
+**What this does NOT claim.** No live database was touched: the suite runs against the file's fake
+client, which resolves `{ data, error }` the way postgrest-js does. The `>= limit` truncation test is
+therefore a statement about the client contract, not about PostgREST's behaviour at 500 rows under
+load. No row is re-graded here and no headline number moves. C17's two citations were repointed to
+the lines `check:doc-citations` itself named — by searching for the anchor, not by adding an offset —
+and the verdict column of that row is byte-identical.

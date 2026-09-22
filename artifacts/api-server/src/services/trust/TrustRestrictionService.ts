@@ -317,6 +317,36 @@ export async function listRestrictionsForAudit(
 }
 
 /**
+ * Max restrictions lifted in ONE sweep.
+ *
+ * Bounded for the same reason the user-recalculation loop is bounded: an
+ * unbounded statement against a table that only grows is a latent outage, and a
+ * partial sweep that SAYS it is partial is worth more than a whole one that
+ * times out and lifts nothing. The remainder is not dropped — it rolls to the
+ * next pass, and the pass runs every six hours.
+ */
+export const RESTRICTION_EXPIRY_BATCH = 500;
+
+/**
+ * What one sweep did. Three outcomes the caller must be able to tell apart,
+ * because the old `Promise<number>` collapsed two of them into the number 0.
+ */
+export interface ExpireRestrictionsResult {
+  /** How many restrictions this pass actually lifted. */
+  expired: number;
+  /**
+   * The batch cap was reached, so there may be more still due. Never read a
+   * truncated sweep as full coverage.
+   */
+  truncated: boolean;
+  /**
+   * A read or a write errored, so this pass CANNOT SAY what is still due.
+   * Distinct from `expired: 0`, which means the sweep worked and found nothing.
+   */
+  failed: boolean;
+}
+
+/**
  * Expire restrictions whose expires_at has passed.
  *
  * Called from lib/trustMaintenanceScheduler on every pass. This function
@@ -328,23 +358,75 @@ export async function listRestrictionsForAudit(
  * The row now agrees with the enforcement.
  *
  * Reads `error`: postgrest-js resolves `{ data, error }` rather than rejecting,
- * so the previous `const { data }` turned any failed update into a silent 0.
+ * so the previous `const { data }` turned any failed update into a silent 0 —
+ * a BROKEN sweep and an IDLE one were the same observation, forever. Both
+ * halves below bind `error`, and the result separates "nothing was due" from
+ * "could not tell".
+ *
+ * Shape: select the due set (bounded, oldest term first) and then lift exactly
+ * those ids. Two statements rather than one because the cap has to be applied
+ * to a SELECT — PostgREST has no LIMIT on an UPDATE — and because the count of
+ * what was lifted then comes from the write's own `.select("id")` rather than
+ * from an assumption.
+ *
+ * NO STARVATION. The due-set read filters `lifted_at IS NULL`, so every row
+ * this pass lifts leaves the due set; and it is ordered by `expires_at`
+ * ascending, so the longest-overdue rows are taken first and nothing can be
+ * overtaken indefinitely by newer arrivals. Repeated passes therefore drain the
+ * backlog: whatever a bounded pass leaves behind is the head of the next one.
  */
-export async function expireOldRestrictions(db: SupabaseClient): Promise<number> {
+export async function expireOldRestrictions(
+  db: SupabaseClient,
+  limit: number = RESTRICTION_EXPIRY_BATCH,
+): Promise<ExpireRestrictionsResult> {
+  const nowIso = new Date().toISOString();
+
+  let due: any[];
   try {
     const { data, error } = await db
       .from("trust_restrictions")
-      .update({ lifted_at: new Date().toISOString() })
-      .lt("expires_at", new Date().toISOString())
+      .select("id")
+      .is("lifted_at", null)
+      .lt("expires_at", nowIso)
+      .order("expires_at", { ascending: true })
+      .limit(limit);
+    if (error) {
+      trustRestrictionLogger.warn({ err: error }, "expireOldRestrictions: due-set read failed");
+      return { expired: 0, truncated: false, failed: true };
+    }
+    due = (data as any[]) ?? [];
+  } catch (err) {
+    trustRestrictionLogger.warn({ err }, "expireOldRestrictions: due-set read threw");
+    return { expired: 0, truncated: false, failed: true };
+  }
+
+  if (due.length === 0) return { expired: 0, truncated: false, failed: false };
+
+  const ids = due.map((r) => String(r?.id ?? "")).filter(Boolean);
+  // `>= limit` rather than `> limit`: a full batch is indistinguishable from a
+  // full batch plus more, so a sweep that fills its cap reports truncation even
+  // when it happened to drain the table exactly. Over-reporting "there may be
+  // more" is the safe direction — the next pass confirms it with expired: 0.
+  const truncated = ids.length >= limit;
+
+  try {
+    const { data, error } = await db
+      .from("trust_restrictions")
+      .update({ lifted_at: nowIso })
+      .in("id", ids)
+      // Re-assert the predicate the read used. A concurrent pass may have
+      // lifted some of these between the read and this write, and lifting
+      // twice would overwrite the FIRST lifted_at with a later instant —
+      // moving the recorded moment a sanction ended. Do not remove this.
       .is("lifted_at", null)
       .select("id");
     if (error) {
-      trustRestrictionLogger.warn({ err: error }, "expireOldRestrictions failed (non-fatal)");
-      return 0;
+      trustRestrictionLogger.warn({ err: error, due: ids.length }, "expireOldRestrictions: lift failed");
+      return { expired: 0, truncated: false, failed: true };
     }
-    return (data as any[])?.length ?? 0;
+    return { expired: ((data as any[]) ?? []).length, truncated, failed: false };
   } catch (err) {
-    trustRestrictionLogger.warn({ err }, "expireOldRestrictions threw (non-fatal)");
-    return 0;
+    trustRestrictionLogger.warn({ err, due: ids.length }, "expireOldRestrictions: lift threw");
+    return { expired: 0, truncated: false, failed: true };
   }
 }
