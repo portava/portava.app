@@ -368,7 +368,11 @@ before(async () => {
   });
   app.use("/api", savedMessagesRouter);
   server = createServer(app);
-  await new Promise<void>((r) => server.listen(0, r));
+  // Explicit loopback host, per src/test/loopbackBindGuard.test.ts: a host-less
+  // listen(0, ...) takes the IPv6 wildcard and the kernel may hand back a port a
+  // foreign process already holds on 127.0.0.1. The callback IS the "listening"
+  // event, so server.address() below is read after the deferred bind resolves.
+  await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
   base = `http://127.0.0.1:${(server.address() as any).port}/api`;
 });
 
