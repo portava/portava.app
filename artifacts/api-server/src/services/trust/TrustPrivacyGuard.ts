@@ -39,6 +39,14 @@ export interface SafeTrustSummary {
   /** Which way the degraded read failed — see RestrictionState.degradedReason. */
   restrictionsDegradedReason?: "fail_open" | "fail_closed";
   /**
+   * True when `onProbation: false` above is a failed read rather than a clean
+   * record. Same shape and same reason as `restrictionsDegraded`: a summary that
+   * flattens a sanction into a boolean must not report "could not tell" and "all
+   * clear" as the same value. Set only when true, so the common case is absent
+   * from the payload exactly as `restrictionsDegraded` is.
+   */
+  probationUnknown?: boolean;
+  /**
    * True when `publicLevel` and `strengths` are the NEW-ACCOUNT default because
    * `trust_profiles` could not be read — not because this traveller is new.
    *
@@ -130,6 +138,7 @@ export async function getSafeTrustSummary(
     ...(restrictions.degraded
       ? { restrictionsDegraded: true, restrictionsDegradedReason: restrictions.degradedReason }
       : {}),
+    ...(recovery.probationUnknown ? { probationUnknown: true } : {}),
     ...(profileRead.state === "unavailable" ? { profileUnavailable: true } : {}),
   };
 }
