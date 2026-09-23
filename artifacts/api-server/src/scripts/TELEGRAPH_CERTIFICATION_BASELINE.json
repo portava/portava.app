@@ -4,14 +4,14 @@
   "//recorded": "2026-09-12, against the first execution of the matrix, the property suite and the fixture suite.",
   "//what_is_unenforced_today": {
     "rlsMatrix": "RLS-03 flag_gated (the §14.3 history bound is built and seeded OFF), RLS-08 vacuous (no share projection exists to authorize), RLS-09 divergent (the gate is immediate, the fire-and-forget propagation is not), RLS-10 divergent (call eligibility re-derives, every rendered booking action does not)",
-    "propertyInvariants": "P-06 and P-07 vacuous — there is no unsend operation in this tree to quantify over",
-    "adversarialFixtures": "F-01 divergent (no per-sender limit across recipients), F-03 divergent (no idempotency — a resent clientId duplicates), F-07 divergent (membership is not re-checked at the insert), F-09 divergent (the rendered booking card re-checks nothing), F-11 vacuous (no unsend), F-12 divergent (share cards render frozen payloads)",
+    "propertyInvariants": "none — P-06 and P-07 were the last two, and both became enforced on 2026-09-23 when unsend landed and they were written as real quantified properties",
+    "adversarialFixtures": "F-01 divergent (no per-sender limit across recipients), F-03 divergent (no idempotency — a resent clientId duplicates), F-07 divergent (membership is not re-checked at the insert), F-09 divergent (the rendered booking card re-checks nothing), F-12 divergent (share cards render frozen payloads)",
     "liveDbContracts": "LDB-05 divergent — route handlers in the messaging tree still drop read errors into plausible-but-wrong context"
   },
   "unenforced": {
     "rlsMatrix": 4,
-    "propertyInvariants": 2,
-    "adversarialFixtures": 6,
+    "propertyInvariants": 0,
+    "adversarialFixtures": 5,
     "liveDbContracts": 1
   }
 }

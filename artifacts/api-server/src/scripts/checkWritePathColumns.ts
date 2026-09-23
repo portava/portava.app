@@ -276,7 +276,6 @@ const UNRESOLVED_ALLOWLIST = new Map<string, number>([
   ["src/routes/telegraphCoordination.ts|select|select list not statically resolvable", 2],
   ["src/routes/telegraphKinds.ts|select|select list not statically resolvable", 1],
   ["src/routes/telegraphLifecycle.ts|select|select list not statically resolvable", 1],
-  ["src/routes/telegraphLifecycle.ts|update|payload not statically resolvable", 2],
   ["src/routes/telegraphMemory.ts|insert|payload not statically resolvable", 1],
   ["src/routes/telegraphMemory.ts|select|select list not statically resolvable", 2],
   ["src/server/telegraph/readReceiptsRoute.ts|select|select list not statically resolvable", 1],

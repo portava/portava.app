@@ -23,13 +23,39 @@
  *
  * 2096-2099 are reserved as an unusable buffer directly below the new range,
  * so there is no ambiguous edge immediately adjacent to 2100 either.
+ *
+ * ── 3000-3999, ADDED 2026-09-23 BECAUSE 2100-2999 RAN OUT ───────────────────
+ * The 2100-2999 range is full: main holds prefixes up to 2997, and 2998 and
+ * 2999 are both claimed by unmerged branches, so there is no number a new
+ * migration can take without planting a collision that goes red the moment the
+ * other branch lands.
+ *
+ * The dated convention is not the way out. Apply order is plain lexicographic,
+ * and "20260923_…" sorts BELOW "2810_…" — the second character decides, '0'
+ * against '8' — so a dated file authored today would be applied before the
+ * migrations it depends on. The escape hatch the error message used to offer
+ * was therefore only ever available to a migration that depends on nothing.
+ *
+ * So the range grows upward, and the invariant survives unchanged: a prefix in
+ * 3000-3999 cannot be mistaken for an 8-digit date prefix under a naive string
+ * comparison because of its FIRST digit rather than its second — no YYYYMMDD in
+ * this millennium begins with "3". It also sorts strictly after every 2xxx
+ * prefix, which is what a forward migration needs, and it still satisfies the
+ * `filename >= "2100"` test that `auditLiveVsCanonical` uses to mean
+ * "post-cutover".
+ *
+ * What is NOT permitted is a second digit of 0 in the 2000s: 2000-2095 would be
+ * genuinely ambiguous, and that is what the reserved buffer and the `2[1-9]`
+ * arm keep out. 4000 and above are left unallocated deliberately; when 3999 is
+ * reached, whoever needs 4000 should extend this the same way and write down
+ * why, rather than reaching for a date.
  */
 
 export const RESERVED_BUFFER_MIN = 2096;
 export const RESERVED_BUFFER_MAX = 2099;
 
-/** New canonical 4-digit numeric prefixes must match this: 2100-2999. */
-export const NEW_NUMERIC_PREFIX_RE = /^2[1-9]\d{2}_/;
+/** New canonical 4-digit numeric prefixes must match this: 2100-2999 or 3000-3999. */
+export const NEW_NUMERIC_PREFIX_RE = /^(?:2[1-9]\d{2}|3\d{3})_/;
 
 export interface PrefixBandViolation {
   file: string;
@@ -68,7 +94,11 @@ export function validatePrefixBand(filename: string): PrefixBandViolation | null
   if (n >= 2100 && !NEW_NUMERIC_PREFIX_RE.test(filename)) {
     return {
       file: filename,
-      reason: `prefix ${digits} is >= 2100 but outside the required 2100-2999 range (must match /^2[1-9]\\d{2}_/)`,
+      reason:
+        `prefix ${digits} is >= 2100 but outside the allocated ranges 2100-2999 and ` +
+        "3000-3999 (must match /^(?:2[1-9]\\d{2}|3\\d{3})_/). 4000 and above are not " +
+        "allocated yet — extend NEW_NUMERIC_PREFIX_RE and say why, rather than " +
+        "reaching for a dated prefix, which sorts BELOW every 2xxx file",
     };
   }
   return null;
