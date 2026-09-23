@@ -27,9 +27,34 @@
  *      doubled, and the property measures the outcome rather than either gate.
  *   4. lib/blockGuard.ts — `if (error) return true` changed to `return false`.
  *      P-04 failed on the unreadable-blocks state.
- * Each was reverted immediately. P-06 and P-07 are absence assertions and were
- * shown red by adding a stub `router.post('/messages/:id/unsend')` to the
- * messaging router, which is exactly the event they exist to catch.
+ * Each was reverted immediately.
+ *
+ * P-06 AND P-07 ARE NO LONGER ABSENCE ASSERTIONS, and the reason is worth
+ * keeping. They used to assert that no unsend surface existed in
+ * `src/routes/messaging.ts`, and to have been shown red by adding a stub
+ * `router.post('/messages/:id/unsend')` there. Unsend then landed — in
+ * telegraphLifecycle and the §13.1 command route — and this suite stayed GREEN,
+ * because the tripwire watched one file and the operation came through another.
+ * The stub mutation had proved the tripwire worked, not that it was pointed at
+ * anything. Both properties are now quantified over the decision, and the five
+ * mutations below are what shows they are pointed at it (baseline 22/22):
+ *   5. telegraphUnsendFunctionFake — the seen boundary made strict,
+ *      `last_read_at > created_at` instead of `>=`, so a recipient who read at
+ *      exactly the send instant no longer counts
+ *        -> 21/22, P-07 named the state
+ *   6. services/telegraph/unsend.ts — §7.4 inverted, `planUnsend` refusing only
+ *      when EVERY recipient has seen it
+ *        -> 21/22, P-07
+ *   7. services/telegraph/unsend.ts — `eligibleRecipients` no longer excluding
+ *      departed members, so a leaver's stale read shuts the window forever
+ *        -> 21/22, P-06
+ *   8. the model writing on the REFUSED branch — the right answer, the wrong
+ *      row
+ *        -> 21/22, P-07 ("REFUSED BUT WROTE")
+ *   9. the model refusing EVERYTHING as `seen`
+ *        -> 20/22, P-06 and the partition assertion. That assertion exists for
+ *           this mutation alone: a build that refuses every unsend satisfies
+ *           P-07 completely, and P-07 on its own would have stayed green.
  *
  * Run: node --import tsx/esm --test src/test/telegraphPropertyInvariants.test.ts
  */
@@ -42,6 +67,12 @@ import { resolve } from "node:path";
 import { _setTestClient } from "../lib/http.js";
 import messagingRouter from "../routes/messaging.js";
 import { canMessage } from "../lib/messagingPermissions.js";
+import { planUnsend } from "../services/telegraph/unsend.js";
+import {
+  makeUnsendFunctionFake,
+  type UnsendFakeMember,
+  type UnsendFakeRow,
+} from "./telegraphUnsendFunctionFake.js";
 import { buildCrewCard, type RawMemberLocation, type CrewVisibility } from "../domain/trips/services/tripCrewLocation.js";
 import { isVisibleTo, type ViewerRelationship, type VisibilityPolicy } from "../services/passport/OpenToPlansService.js";
 import { verdictRank, disclosedPrecision, newlyAccessible } from "../domain/telegraph/policies/disclosureLattices.js";
@@ -579,30 +610,229 @@ describe("P-05 — thread / availability / location expiry → temporary scopes 
   });
 });
 
-// ── P-06 / P-07: the unsend properties, absent ───────────────────────────────
+// ── P-06 / P-07: the unsend properties, no longer absent ─────────────────────
 
-describe("P-06 / P-07 — the unsend properties have nothing to quantify over", () => {
-  const src = () => readFileSync(resolve(process.cwd(), "src/routes/messaging.ts"), "utf8");
+/**
+ * These two were `vacuous`, and their test asserted the absence STRUCTURALLY so
+ * that the day an unsend landed it would go red and the properties would have
+ * to be written for real.
+ *
+ * IT DID NOT GO RED. The assertion read `src/routes/messaging.ts` and only that
+ * file, and unsend landed in `routes/telegraphLifecycle.ts` and
+ * `server/telegraph/commandRoute.ts`. A tripwire scoped to one file is a
+ * tripwire across one doorway, and the operation came through another. The
+ * failure messages ("an unsend route exists — P-06 must now be written as a
+ * real property") were right about what to do and wrong about when.
+ *
+ * So they are written for real now, and quantified over the decision that
+ * actually landed rather than over any route's text: the model of
+ * `public.telegraph_unsend_message_before_seen`, which
+ * telegraphUnsendFunctionFake.test.ts pins against migration 3000's SQL, AND
+ * `planUnsend`, the TypeScript statement of the same rule. Both must hold on
+ * every state. A property that held for only one of them would be a property
+ * about a copy.
+ */
+describe("P-06 / P-07 — unsend-before-seen, quantified", () => {
+  const T = "eeeeeeee-0000-4000-8000-00000000000e";
+  const SENDER = "aaaaaaaa-0000-4000-8000-000000000001";
+  const OTHER = "ffffffff-0000-4000-8000-00000000000f";
+  const MSG = "11110000-0000-4000-8000-00000000000a";
+  const SENT = "2026-05-02T12:00:00.000Z";
 
-  it("P-06: the messaging router exposes no unsend operation", () => {
-    const s = src();
-    assert.equal(/router\.(post|delete|patch)\([^)]*unsend/i.test(s), false,
-      "an unsend route exists — P-06 must now be written as a real property");
-    assert.equal(/unsent_at/.test(s), false,
-      "the unsent column is referenced — P-06 must now be written as a real property");
+  /** A recipient's read position, relative to the message. */
+  const READS = {
+    never: null,
+    before: "2026-05-02T11:59:59.999Z",
+    exactly: SENT, // `last_read_at >= created_at` — the boundary, and it counts as SEEN
+    after: "2026-05-02T12:00:00.001Z",
+  } as const;
+  type ReadKey = keyof typeof READS;
+
+  /** The message's own lifecycle. */
+  const LIVES = {
+    live: { deleted_at: null, unsent_at: null },
+    deleted: { deleted_at: "2026-05-03T00:00:00.000Z", unsent_at: null },
+    unsent: { deleted_at: "2026-05-03T00:00:00.000Z", unsent_at: "2026-05-03T00:00:00.000Z" },
+  } as const;
+  type LifeKey = keyof typeof LIVES;
+
+  interface Point {
+    life: LifeKey;
+    actorIsSender: boolean;
+    actorLeft: boolean;
+    /** One entry per recipient: their read position and whether they have left. */
+    recipients: { read: ReadKey; left: boolean }[];
+  }
+
+  /**
+   * The enumerated space.
+   *
+   * Recipient rosters up to two, because §7.4's sentence is about ONE recipient
+   * among several and two is the smallest roster that can hold a disagreement —
+   * one who has seen it and one who has not.
+   *
+   * 17 rosters: the empty one, then each of the four read positions crossed
+   * with left/present (8), then each of those paired with a recipient who has
+   * never read (8). Every roster is crossed with the three message lifecycles,
+   * with the actor being the sender or not, and with the actor still in the
+   * thread or not: 3 x 2 x 2 x 17 = 204 states.
+   */
+  function space(): Point[] {
+    const readKeys = Object.keys(READS) as ReadKey[];
+    const rosters: { read: ReadKey; left: boolean }[][] = [[]];
+    for (const read of readKeys) {
+      for (const left of [false, true]) rosters.push([{ read, left }]);
+    }
+    // Two recipients: every pair where at least one has SEEN it, plus a pair
+    // where neither has. The interesting half is the mixed pairs.
+    for (const a of readKeys) {
+      for (const left of [false, true]) rosters.push([{ read: a, left }, { read: "never", left: false }]);
+    }
+    const out: Point[] = [];
+    for (const life of Object.keys(LIVES) as LifeKey[]) {
+      for (const actorIsSender of [true, false]) {
+        for (const actorLeft of [false, true]) {
+          for (const recipients of rosters) out.push({ life, actorIsSender, actorLeft, recipients });
+        }
+      }
+    }
+    return out;
+  }
+
+  const describePoint = (p: Point) =>
+    `life=${p.life} actorIsSender=${p.actorIsSender} actorLeft=${p.actorLeft} ` +
+    `recipients=[${p.recipients.map((r) => `${r.read}${r.left ? "/left" : ""}`).join(", ")}]`;
+
+  function build(p: Point) {
+    const senderId = p.actorIsSender ? SENDER : OTHER;
+    const message: UnsendFakeRow = {
+      id: MSG, thread_id: T, sender_id: senderId, created_at: SENT, body: "x",
+      ...LIVES[p.life],
+    };
+    const members: UnsendFakeMember[] = [
+      { thread_id: T, user_id: SENDER, last_read_at: null, left_at: p.actorLeft ? "2026-05-03T00:00:00.000Z" : null },
+      ...p.recipients.map((r, n) => ({
+        thread_id: T,
+        user_id: `22220000-0000-4000-8000-00000000000${n}`,
+        last_read_at: READS[r.read],
+        left_at: r.left ? "2026-05-03T00:00:00.000Z" : null,
+      })),
+    ];
+    if (!p.actorIsSender) {
+      members.push({ thread_id: T, user_id: OTHER, last_read_at: null, left_at: null });
+    }
+    return { message, members };
+  }
+
+  /** Ask both copies of the rule, and require them to agree before using either. */
+  async function decide(p: Point) {
+    const { message, members } = build(p);
+    const before: UnsendFakeRow = { ...message };
+    const db = { messages: [message], message_thread_members: members };
+    let wrote = false;
+    const rpc = makeUnsendFunctionFake(() => db, {
+      unsentAt: "2026-05-09T00:00:00.000Z",
+      onWrite: () => { wrote = true; },
+    });
+    const { data } = await rpc("telegraph_unsend_message_before_seen", {
+      p_message_id: MSG, p_actor_id: SENDER, p_thread_id: T,
+    });
+    const row = data as { outcome: string; seenBy?: number; recipientCount?: number };
+
+    const plan = planUnsend({
+      message: { ...before, unsent_at: before.unsent_at ?? null },
+      members: members.map((m) => ({
+        user_id: m.user_id, last_read_at: m.last_read_at ?? null, left_at: m.left_at ?? null,
+      })),
+      actorId: SENDER,
+      actorIsActiveMember: !p.actorLeft,
+    });
+
+    return { outcome: row.outcome, seenBy: row.seenBy ?? 0, recipientCount: row.recipientCount ?? 0, plan, wrote };
+  }
+
+  /** An eligible recipient is an active member who is not the sender. */
+  const seenCount = (p: Point) =>
+    p.recipients.filter((r) => !r.left && (r.read === "exactly" || r.read === "after")).length;
+
+  const canEvenTry = (p: Point) => p.actorIsSender && !p.actorLeft && p.life === "live";
+
+  it("the space is the size it claims to be, and covers the cases that matter", () => {
+    const all = space();
+    assert.equal(all.length, 204, "the enumeration changed — re-read the comment above it");
+    assert.ok(all.some((p) => canEvenTry(p) && seenCount(p) === 0 && p.recipients.length > 0),
+      "no unseen-with-recipients state: P-06 would be vacuous again");
+    assert.ok(all.some((p) => canEvenTry(p) && seenCount(p) === 1 && p.recipients.length === 2),
+      "no state where ONE of two recipients has seen it: P-07's actual sentence");
+    assert.ok(all.some((p) => canEvenTry(p) && p.recipients.some((r) => r.left && r.read === "after")),
+      "no departed-reader state: the window would close forever and nothing would notice");
   });
 
-  it("P-07: no seen-vs-unsend decision exists anywhere in the messaging tree", () => {
-    const s = src();
-    assert.equal(/telegraph_unsend_message_before_seen/.test(s), false,
-      "the §7.4 race function is being called — P-07 must now be written as a real property");
+  it("P-06: no eligible recipient has seen it → the unsend SUCCEEDS", async () => {
+    for (const p of space()) {
+      if (!canEvenTry(p) || seenCount(p) > 0) continue;
+      const d = await decide(p);
+      assert.equal(d.outcome, "unsent", `P-06 violated at ${describePoint(p)}`);
+      assert.equal(d.plan.eligible, true, `planUnsend disagrees at ${describePoint(p)}`);
+      assert.equal(d.wrote, true, `succeeded without writing at ${describePoint(p)}`);
+      assert.equal(d.seenBy, 0, `succeeded while reporting seenBy > 0 at ${describePoint(p)}`);
+    }
   });
 
-  it("and the receipt substrate an unsend would have to consult is last_read_at, which DOES exist", () => {
-    // Stated so the absence is understood precisely: the seen signal is present
-    // and is used for unread counts; what is missing is the operation that would
-    // have to race it. That is why PR #472 reuses last_read_at rather than
-    // introducing a competing sequence.
-    assert.ok(/last_read_at/.test(src()));
+  it("P-07: ANY eligible recipient has seen it → EVERY unsend is refused, and nothing is written", async () => {
+    for (const p of space()) {
+      if (!canEvenTry(p) || seenCount(p) === 0) continue;
+      const d = await decide(p);
+      assert.equal(d.outcome, "seen", `P-07 violated at ${describePoint(p)}`);
+      assert.equal(d.plan.eligible, false, `planUnsend allowed a seen unsend at ${describePoint(p)}`);
+      assert.equal(
+        d.plan.eligible === false ? d.plan.refusal : null,
+        "seen_by_recipient",
+        `planUnsend disagrees at ${describePoint(p)}`,
+      );
+      assert.equal(d.wrote, false, `REFUSED BUT WROTE at ${describePoint(p)}`);
+      assert.equal(d.seenBy, seenCount(p), `wrong seenBy at ${describePoint(p)}`);
+    }
+  });
+
+  it("P-07 is not satisfied by refusing everything: the two partition the live space", async () => {
+    // A build that refused every unsend would satisfy P-07 and violate P-06, and
+    // a build that allowed every unsend would do the reverse. Stated here as one
+    // assertion so the pair cannot be read as a single one-sided rule.
+    let succeeded = 0;
+    let refusedAsSeen = 0;
+    for (const p of space()) {
+      if (!canEvenTry(p)) continue;
+      const d = await decide(p);
+      if (d.outcome === "unsent") succeeded += 1;
+      else if (d.outcome === "seen") refusedAsSeen += 1;
+      else assert.fail(`a live message from its active sender answered ${d.outcome} at ${describePoint(p)}`);
+    }
+    assert.ok(succeeded > 0, "nothing succeeded — P-06 is vacuously true");
+    assert.ok(refusedAsSeen > 0, "nothing was refused — P-07 is vacuously true");
+  });
+
+  it("outside the window the two properties quantify over, the refusal is never 'seen'", async () => {
+    // P-06 and P-07 both presuppose a live message from its active sender. The
+    // states outside that are not "undefined": they must refuse for their OWN
+    // reason, never by reporting somebody's read state — which would make this
+    // endpoint a way to probe whether another person has read a message.
+    for (const p of space()) {
+      if (canEvenTry(p)) continue;
+      const d = await decide(p);
+      assert.notEqual(d.outcome, "unsent", `unsent outside the window at ${describePoint(p)}`);
+      if (!p.actorIsSender) {
+        assert.equal(d.outcome, "not_sender", `a non-sender learned something else at ${describePoint(p)}`);
+        assert.equal(d.seenBy, 0, `a non-sender was told a read count at ${describePoint(p)}`);
+      }
+      assert.equal(d.wrote, false, `wrote outside the window at ${describePoint(p)}`);
+    }
+  });
+
+  it("the substrate is last_read_at, still, and it is the messaging router's own signal", () => {
+    // Kept from the absence version, because the fact it records is still the
+    // reason there is no competing sequence to reconcile.
+    const s = readFileSync(resolve(process.cwd(), "src/routes/messaging.ts"), "utf8");
+    assert.ok(/last_read_at/.test(s));
   });
 });

@@ -204,15 +204,27 @@ export const TELEGRAPH_ADVERSARIAL_FIXTURES: readonly AdversarialFixture[] = [
     censusRow: "T338",
     requirement: "Unsend races recipient seen update",
     scenario: "A recipient's read receipt lands between the unsend check and the write",
-    status: "vacuous",
-    enforcedBy: ["src/routes/messaging.ts"],
+    status: "enforced",
+    enforcedBy: [
+      "src/migrations/3000_telegraph_unsend_authoritative.sql",
+      "src/services/telegraph/unsend.ts",
+      "src/routes/telegraphLifecycle.ts",
+      "src/server/telegraph/commandRoute.ts",
+    ],
     note:
-      "No unsend exists, so there is no race to run. The fixture asserts the " +
-      "absence structurally alongside P-06/P-07. Worth recording precisely: PR " +
-      "#472 implements exactly this race in the DATABASE, taking FOR UPDATE locks " +
-      "on every eligible recipient's receipt row before reading last_read_at, " +
-      "because supabase-js issues each statement in its own implicit transaction. " +
-      "It is unmerged and applied to portava-ci only.",
+      "Was `vacuous` until 2026-09-23. The race is resolved in the DATABASE, " +
+      "which is where it has to be: supabase-js issues each statement in its own " +
+      "implicit transaction, so a route that read, decided and wrote had a window " +
+      "between the read and the write no matter how it was written, and both " +
+      "unsend routes did exactly that. telegraph_unsend_message_before_seen takes " +
+      "FOR UPDATE locks on the message row and on every eligible recipient's " +
+      "receipt row BEFORE reading last_read_at, and the fixture asserts that " +
+      "ORDER against the migration text rather than counting lock clauses — two " +
+      "locks placed after the seen-check satisfy a count and close nothing. It " +
+      "also asserts that neither route updates public.messages directly, because " +
+      "a direct update is the old shape and the old window coming back. The locks " +
+      "themselves are executed by the `api-server · kernel SQL executed on a " +
+      "throwaway database` job; no in-process fixture can serialise transactions.",
   },
   {
     id: "F-12",
