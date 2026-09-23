@@ -195,9 +195,17 @@ Two entries need their caveat stated in place rather than as a footnote:
   (`scripts/checkWriterlessReads.ts:283-296`). Whether that is intended could not be established
   from the tree.
 
-An unmerged sixteenth intel table, **`intel_claim_reviews`**, exists in PRs #456/#457 and was
-applied by hand to the `portava-ci` project. It is **not in this tree**: the only trace of it here
-is its rollback section, `db/rollback/2026-09-07-ci-migrations-rollback.sql:185-196`.
+The sixteenth intel table, **`intel_claim_reviews`**, was applied by hand to the `portava-ci`
+project ahead of PRs #456/#457, and it **is now in this tree**: the migration is
+`src/migrations/2311_intel_claim_reviews.sql` — RLS on, `service_role` only, no `anon` or
+`authenticated` policy at all — and its rollback section is
+`db/rollback/2026-09-07-ci-migrations-rollback.sql:185-196`.
+
+It is **no longer writerless**. `services/intel/SafetyReviewService.ts` writes one row per
+authorized safety transition, and `routes/adminSafetyCandidates.ts` carries the decision in from
+`POST /api/admin/intel/safety-review` behind `requireAdmin`. Nothing in server code READS it, and
+that is the intent rather than a gap: it holds a reviewer identity and free-text moderation
+reasons, so it is a decision history for people with access, never a projection source.
 
 ## 3. The schedulers — every one is registered
 
@@ -282,7 +290,7 @@ are not part of this surface.
 ## 5. The HTTP routes
 
 Six intel routers are mounted in `routes/index.ts` — `routes/intel.ts`, `routes/intelCoverage.ts`, `routes/intelApi.ts`, `routes/intelReadModels.ts`,
-`routes/intelOutcomes.ts` and `routes/intelObservability.ts` (`routes/index.ts:338,340,341,342,345,347#router.use`) — carrying
+`routes/intelOutcomes.ts` and `routes/intelObservability.ts` (`routes/index.ts:340,342,343,344,347,349#router.use`) — carrying
 **24 endpoints**. Two further endpoints on other routers reach intel modules or tables directly.
 
 Mounting is not assumed: `test/intelRouterRegistrationGuard.test.ts` mounts the *composed* router
@@ -315,8 +323,8 @@ handler tests stayed green with the mount commented out (`:1-18`).
 | `GET /v1/experiences/:id/typical-patterns` | `routes/intelReadModels.ts:198` | reads `intel_historical_patterns` (`:214`) |
 | `GET /v1/neighborhoods/:id/pulse` | `routes/intelReadModels.ts:274` | |
 | `GET /v1/intel/prompt-eligibility` | `routes/intelReadModels.ts:360` | |
-| `POST /map/observations` | `routes/mapObservations.ts:895` | mounted `routes/index.ts:319#router.use(mapObservationsRouter)`; the only caller of `lib/intelEvidenceCapture.ts` |
-| `GET /map/projection/temporal` | `routes/mapProjectionTemporal.ts:412` | mounted `routes/index.ts:317#router.use(mapProjectionTemporalRouter)`; reads `intel_state_snapshot_versions` (`routes/mapProjectionTemporal.ts:397`) |
+| `POST /map/observations` | `routes/mapObservations.ts:895` | mounted `routes/index.ts:321#router.use(mapObservationsRouter)`; the only caller of `lib/intelEvidenceCapture.ts` |
+| `GET /map/projection/temporal` | `routes/mapProjectionTemporal.ts:412` | mounted `routes/index.ts:319#router.use(mapProjectionTemporalRouter)`; reads `intel_state_snapshot_versions` (`routes/mapProjectionTemporal.ts:397`) |
 
 ## 6. PR #475 — measured, not merged
 

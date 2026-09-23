@@ -22,9 +22,8 @@
  * file-vs-file comparison against it. No socket, no environment variable, so
  * it runs in the credential-free preflight lane and cannot be starved.
  *
- * Production has NO migration ledger (no schema_migration_ledger; Supabase's
- * own schema_migrations stops at 2272), so "is migration N applied" cannot
- * be asked. "Does column X exist" can, and that is the question that matters.
+ * NEITHER production ledger is an inventory (read THE LEDGER CORRECTION near the
+ * foot of this file), so "is migration N applied" cannot be asked there.
  *
  * ─── TWO KINDS OF ABSENT, KEPT APART ─────────────────────────────────────────
  *
@@ -66,6 +65,7 @@ import { createHash } from "node:crypto";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildCanonicalSchema, hasColumn, isModelled, stripSqlComments } from "./lib/canonicalSchema.js";
+import { compareVersions, profileVersionColumn } from "./lib/migrationInventoryCore.js";
 import {
   evaluateFlags,
   evaluateRegistry,
@@ -216,16 +216,16 @@ function checkSnapshotFreshness(snapshotPath: string): string[] {
     problems.push("production-applied-migrations.json lists no migrations; the tripwire would never fire.");
     return problems;
   }
-  // Versions are zero-padded timestamps, so lexicographic order IS chronological.
-  const newest = versions.reduce((a, b) => (b > a ? b : a));
-  if (newest > watermark) {
-    const late = (applied.migrations ?? [])
-      .filter((m: any) => String(m?.version ?? "") > watermark)
-      .map((m: any) => `${m.version} ${m.name}`);
+  // entriesAfterWatermark() is at the foot of this file. It never compares two
+  // version strings of different formats, it reports a mixed column as its own
+  // problem, and an entry it cannot place is treated as NEWER rather than
+  // dropped — fail closed, not quiet.
+  const late = entriesAfterWatermark(applied.migrations ?? [], watermark, problems);
+  if (late.length > 0) {
     problems.push(
-      `STALE SNAPSHOT: ${late.length} migration(s) recorded as applied to production AFTER this snapshot was captured ` +
-        `(watermark ${watermark}, newest applied ${newest}): ${late.join(", ")}. ` +
-        `Every answer below is graded against a production that no longer exists. ` +
+      `STALE SNAPSHOT: ${late.length} migration(s) recorded as applied to production AFTER this snapshot ` +
+        `was captured (watermark ${watermark}): ${late.join(", ")}. Every answer below is graded against ` +
+        `a production that no longer exists. ` +
         `Refresh: see artifacts/api-server/scripts/refresh-production-snapshot.md`,
     );
   }
@@ -575,6 +575,128 @@ function main(): void {
     `OK — ${unguarded.length} unguarded (all known), ${guarded.length} guarded, ${latent.length} latent; ${Date.now() - started} ms.` +
       (unguarded.length ? ` ${unguarded.length} unguarded entries remain: each is a feature that is ON and dead in production.` : ""),
   );
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// THE LEDGER CORRECTION  (2026-09-22)
+// ═════════════════════════════════════════════════════════════════════════════
+//
+// THIS FILE'S HEADER USED TO SAY SOMETHING FALSE, and it was quoted elsewhere
+// as a standing fact. It read:
+//
+//   "Production has NO migration ledger (no schema_migration_ledger; Supabase's
+//    own schema_migrations stops at 2272)"
+//
+// Both halves are wrong, and the second half is a TRAP rather than a stale
+// reading. Measured read-only on production (ajrurzioarfkagpuxfnb) 2026-09-22:
+//
+//   public.schema_migration_ledger          EXISTS, created 2026-09-15, 465 rows,
+//                                           20 with a 4-digit serial >= 2890
+//   supabase_migrations.schema_migrations   103 rows, 96 of them post-cutover
+//                                           14-digit timestamps
+//   max(version) on that table              '2272'
+//
+// It does not "stop at 2272". Its MAXIMUM IS '2272' because that one text column
+// holds bare serials AND 14-digit timestamps, and text order sorts every
+// timestamp below a four-digit serial. The number was read correctly and meant
+// something else. src/scripts/lib/migrationInventoryCore.ts carries the full
+// reproduction, and src/scripts/reportMigrationInventory.ts is the instrument
+// for the question this script deliberately does not ask.
+//
+// WHAT REMAINS TRUE, and is why this script still grades a frozen snapshot
+// rather than reading a ledger: NEITHER TABLE IS AN INVENTORY. A Supabase
+// dashboard apply writes no row in either; the CLI writes only
+// supabase_migrations; this repository's own discipline writes only
+// schema_migration_ledger; and 378 of the hand ledger's 465 rows are 'backfill'
+// rows that assert a filename existed when 2254 ran and never that it ran. So
+// "is migration N applied" still cannot be asked of production. "Does column X
+// exist" can, and that is the question that matters here.
+
+/**
+ * Every recorded apply that is NEWER than the snapshot's watermark — the
+ * staleness question — answered without ever comparing two version strings of
+ * different formats.
+ *
+ * WHAT THIS REPLACED, AND WHY. The staleness test used to read:
+ *
+ *   // Versions are zero-padded timestamps, so lexicographic order IS chronological.
+ *   const newest = versions.reduce((a, b) => (b > a ? b : a));
+ *   if (newest > watermark) { … }
+ *
+ * True of production-applied-migrations.json TODAY — all 126 entries are
+ * 14-digit — and enforced nowhere, while that file is documented as being taken
+ * FROM supabase_migrations.schema_migrations, which is the column that is NOT
+ * single-format. On production that column's maximum is '2272', a pre-cutover
+ * serial that sorts above every 14-digit timestamp. One hand-added serial entry
+ * here and `newest` silently becomes a number from before the cutover, the
+ * comparison can never fire, and the tripwire goes quiet WITHOUT EVER FAILING —
+ * which is the failure mode this check was written against, reproduced inside
+ * the check itself.
+ *
+ * THREE RULES, and each one is strictly stricter than the line above:
+ *
+ *   1. A version of the SAME format as the watermark is compared to it, which
+ *      is safe: both are fixed-width zero-padded digits, so text order is
+ *      chronological WITHIN a format. compareVersions() is what establishes
+ *      that they share a format; it refuses rather than guessing.
+ *   2. A version of a DIFFERENT format, or one of no recognised format, CANNOT
+ *      be placed relative to the watermark. It is counted as LATE anyway and
+ *      named in its own problem. Fail closed: an entry whose position is
+ *      unknown might be after the capture, and the cost of assuming it is not
+ *      is a snapshot silently graded against a production that moved.
+ *   3. profileVersionColumn() reports a mixed column as its own problem, so the
+ *      state that hides defect (1) is visible even on a run where nothing is
+ *      late.
+ *
+ * Nothing here can pass what the old line failed: every version the old
+ * comparison would have called late is either the same format (rule 1, still
+ * late) or a different one (rule 2, late by default).
+ */
+function entriesAfterWatermark(
+  migrations: readonly { version?: unknown; name?: unknown }[],
+  watermark: string,
+  problems: string[],
+): string[] {
+  const late: string[] = [];
+  const unplaceable: string[] = [];
+
+  for (const m of migrations) {
+    const version = String(m?.version ?? "");
+    if (version === "") continue;
+    const label = `${version} ${String(m?.name ?? "")}`.trim();
+    const cmp = compareVersions(version, watermark);
+    if (!cmp.ok) {
+      unplaceable.push(label);
+      late.push(label);
+      continue;
+    }
+    if (cmp.value > 0) late.push(label);
+  }
+
+  if (unplaceable.length > 0) {
+    problems.push(
+      `${unplaceable.length} entr(y/ies) in production-applied-migrations.json carry a version that cannot ` +
+        `be ordered against the snapshot watermark ${watermark}: ${unplaceable.join(", ")}. They are counted ` +
+        "as LATE rather than ignored, because an entry whose position is unknown might be after the capture " +
+        "and a tripwire that assumes otherwise is the defect this check exists to catch.",
+    );
+  }
+
+  // The shape of the column itself, reported even when nothing is late, so the
+  // state that would hide a stale snapshot is visible before it hides one.
+  const profile = profileVersionColumn(
+    migrations.map((m) => String(m?.version ?? "")).filter(Boolean),
+  );
+  if (profile.mixed) {
+    problems.push(
+      "production-applied-migrations.json mixes version formats (" +
+        profile.formats.map((f) => `${f}=${profile.counts[f]}`).join(", ") +
+        "). A mixed column has no maximum: MAX over it returns a bare serial — on production, '2272' — " +
+        "which is OLDER than almost every row it was asked to dominate. Put every entry in one format.",
+    );
+  }
+
+  return late;
 }
 
 main();

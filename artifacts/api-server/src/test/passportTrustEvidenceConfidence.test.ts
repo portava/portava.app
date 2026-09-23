@@ -294,18 +294,18 @@ describe("P50 §4 — a fabricated band no longer overrides a measured public le
 
 // ── §5 — the D-WORD boundary is still un-taken ───────────────────────────────
 
-describe("P50 §5 — the D-WORD decision, now taken", () => {
-  it("the substituted neutral 50 reads 'Not yet rated', and still says so", async () => {
-    // THIS ASSERTION WAS THE TRIPWIRE AND IT HAS FIRED AS DESIGNED. It used to
-    // require "Established" here, and its comment said choosing a different word
-    // for a domain whose categories were never measured is the owner's standing
-    // D-WORD decision, pinned "so that taking it is a deliberate diff rather
-    // than a side effect of this pass". The owner took it on 2026-09-22: a
-    // substituted basis is shown as "Not yet rated". This is that deliberate
-    // diff — the word moved, and nothing else did.
+describe("P50 §5 — D-WORD was DECIDED 2026-09-22; this moved on purpose", () => {
+  it("the substituted neutral 50 no longer reads 'Established', and still says why", async () => {
+    // This block previously asserted the opposite and said so: the choice of a
+    // different WORD for a never-measured domain "is the owner's standing
+    // D-WORD decision, and this assertion exists so that taking it is a
+    // deliberate diff rather than a side effect". The owner took it (Q3). This
+    // is that deliberate diff. The two neighbouring facts the decision
+    // preserves — the basis, and applicable staying true — are still pinned.
     const p = (await buildPassportProjection(db(null), OWNER, OWNER, { resolveViewerContext: resolver(SELF) }))!;
     const overall = (p.trust!.domains as any[]).find((d) => d.key === "overall")!;
     assert.equal(overall.presentation, "Not yet rated");
+    assert.notEqual(overall.presentation, "Established");
     // Unmoved, and asserted here because the decision was word-only: the domain
     // still APPLIES to this person and still reports what its word rests on.
     assert.equal(overall.basis, "substituted");

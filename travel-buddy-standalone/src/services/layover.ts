@@ -348,7 +348,28 @@ export interface LayoverOfflineBundle {
   mapGeometry: OfflineCapability<never>;
   route: OfflineCapability<never>;
   flightStatus: OfflineCapability<never>;
-  crewMeetingPoint: OfflineCapability<never>;
+  /**
+   * §16 L154 — the crew meeting point, cached for offline.
+   *
+   * TYPED `<string>`, AND THE OLD `<never>` WAS THE WHOLE DEFECT. In
+   * `OfflineCapability<T>`, `value` is `T | null`; at `T = never` that collapses
+   * to `null`, so this field could not hold a label however the server behaved.
+   * L154 could never have been closed from the server side alone — there was no
+   * shape on this side of the wire for the answer to land in.
+   *
+   * `layover_crews.meeting_point_label` exists and `LayoverCrewSection` already
+   * renders it on the ONLINE crew screen (`crew.meetingPointLabel`). This is the
+   * OFFLINE half: the one thing about a crew worth surviving the network dying
+   * is where to meet them.
+   *
+   * NOT YET SERVED. `buildOfflineBundle`
+   * (artifacts/api-server/src/services/airport/LayoverDegradedService.ts) still
+   * returns `unavailable("no_crew_storage")` unconditionally, and its own type
+   * is still `<never>`. So today every response makes this unavailable and the
+   * card renders the unavailable branch. The client is ready; the server is one
+   * `available(label)` call away. See the report for LO-API.
+   */
+  crewMeetingPoint: OfflineCapability<string>;
   translationPhrases: OfflineCapability<never>;
   stops: Array<{ title: string; durationMin: number; travelMin: number; insideAirport: boolean }>;
 }
@@ -367,6 +388,38 @@ export type AbortEffect =
 
 export type ReturnNowStatusCapability = 'enabled' | 'flag_on_readers_not_widened' | 'flag_off';
 
+/**
+ * §15.1 L144 — WHY the crew was not told, in the server's vocabulary.
+ *
+ * ── WHY THIS IS OPEN AND NOT A CLOSED UNION ──────────────────────────────────
+ * It was `'no_crew_storage' | null`, and `'no_crew_storage'` HAS BEEN FALSE
+ * SINCE 2026-09-16: `layover_crews` / `layover_crew_members` exist,
+ * `LayoverCrewStore` reads and writes them, and `LayoverCrewSection` puts a
+ * crew on screen. A closed union whose only member is a stale sentence cannot
+ * hold the answer, so the transport was sealed shut from this end — the same
+ * shape of defect as `crewMeetingPoint: OfflineCapability<never>` above.
+ *
+ * It is `string` rather than a rewritten union because THE VOCABULARY IS THE
+ * SERVER'S. That follows the precedent already set on this wire for exactly
+ * this kind of field — `LayoverPresenceAnswer.withheld` and `degradedReasons`
+ * are both documented `string[]`. A client union would silently narrow a reason
+ * it had not been taught, and `returnToAirportNow` casts the body whole, so a
+ * narrowed union would be a lie the compiler could not catch.
+ *
+ * KNOWN MEMBERS TODAY, and neither is a policy decision:
+ *   `no_crew_storage`  what the server still sends unconditionally
+ *                      (LayoverSafeReturnService.ts:383), now stale.
+ *
+ * ── WHAT THIS CLIENT DELIBERATELY DOES NOT DECIDE ────────────────────────────
+ * Whether a crew SHOULD be told that one of its members aborted is a
+ * DISCLOSURE ABOUT THAT TRAVELLER, not plumbing, and it is the owner's call —
+ * so nothing here initiates a notification, offers a control that would, or
+ * asks the server to send one. This type and `describeCrewNotification` only
+ * let the ABORTING TRAVELLER read back what the server says already happened
+ * about them, which they are owed either way.
+ */
+export type CrewNotifyUnavailableReason = string;
+
 /** The 200 body of POST /airport/sessions/:id/return-now. */
 export interface ReturnNowSuccess {
   ok: true;
@@ -376,8 +429,9 @@ export interface ReturnNowSuccess {
   posture: SafeReturnPosture;
   cancelledStopIds: string[];
   effects: AbortEffect[];
+  /** User ids the server says it told. Empty is an ANSWER, not a placeholder. */
   crewNotified: string[];
-  crewNotifyUnavailableReason: 'no_crew_storage' | null;
+  crewNotifyUnavailableReason: CrewNotifyUnavailableReason | null;
   statusApplied: boolean;
   statusCapability: ReturnNowStatusCapability;
 }
@@ -844,11 +898,59 @@ export async function updateLayoverSession(
   return { session: json.session, replan };
 }
 
-export async function getRecommendations(sessionId: string): Promise<LayoverRecommendation[]> {
-  const res = await authedFetch(airportUrl('sessions', sessionId, 'recommendations'));
-  if (!res.ok) return [];
-  const json = await res.json();
-  return json.recommendations ?? [];
+/**
+ * census-layover L294 (C2) — a list, or a stated failure. Never both.
+ *
+ * `ok: true` with an empty array is a MEASUREMENT: the window was computed and
+ * nothing fits. `ok: false` is the absence of a measurement, and `message` is
+ * the SERVER's own sentence for it.
+ */
+export type LayoverRecsResult =
+  | { ok: true; recommendations: LayoverRecommendation[] }
+  | { ok: false; message: string };
+
+/** What a failure says when the server said nothing at all (offline, unparseable). */
+const RECS_UNREACHABLE = 'Layover ideas could not be loaded. Please try again.';
+
+/**
+ * THE ROUTE REFUSES RATHER THAN SERVING AN EMPTY LIST, AND THIS PRESERVES THAT.
+ *
+ * `GET /:id/recommendations` takes two separate branches to avoid fabricating a
+ * zero (`artifacts/api-server/src/routes/airport.ts:1012`, `:1019`), under a
+ * comment that says why: *"'There is nothing to do on your layover' is a claim
+ * about a city, not a description of a failed query."*
+ *
+ * This function used to answer `if (!res.ok) return []`, which turned that
+ * refusal straight back into the claim the route had declined to make — and
+ * `LayoverRecsSection` printed "No recommendations yet for this layover." over
+ * an outage. It also let an offline `fetch` rejection escape into the caller's
+ * `Promise.all`, taking the whole dashboard load down with it.
+ */
+export async function getRecommendations(sessionId: string): Promise<LayoverRecsResult> {
+  let res: Response;
+  try {
+    res = await authedFetch(airportUrl('sessions', sessionId, 'recommendations'));
+  } catch {
+    return { ok: false, message: RECS_UNREACHABLE };
+  }
+
+  let json: Record<string, unknown> = {};
+  try { json = await res.json(); } catch { /* falls through to the status check */ }
+
+  if (!res.ok) {
+    // The server's sentence when it wrote one; never a sentence made up here to
+    // stand in for it.
+    return {
+      ok: false,
+      message: typeof json.message === 'string' ? json.message : RECS_UNREACHABLE,
+    };
+  }
+  return {
+    ok: true,
+    recommendations: Array.isArray(json.recommendations)
+      ? (json.recommendations as LayoverRecommendation[])
+      : [],
+  };
 }
 
 export async function getSessionSafety(sessionId: string): Promise<LayoverSafetyResult | null> {
@@ -1023,11 +1125,71 @@ export async function listLayoverSessions(
   return json.sessions ?? [];
 }
 
-export async function getLayoverOverview(sessionId: string): Promise<LayoverOverview | null> {
-  const res = await authedFetch(airportUrl('sessions', sessionId, 'overview'));
-  if (!res.ok) return null;
-  const json = await res.json();
-  if (!json.ok) return null;
+/**
+ * census-layover L156 — WHY the overview is missing, because the server says.
+ *
+ * `gone`         404 `not_found` — deleted, or never this traveller's.
+ *                A retry cannot change it, so nothing offers one.
+ * `unavailable`  503 `degraded_unavailable` — a read failed server-side. The
+ *                server marks these `retryable: true`; the session is fine.
+ * `unreachable`  `fetch` rejected. The device could not reach the server at
+ *                all, so there is no server sentence to quote and this is the
+ *                one case whose message is written on the client.
+ * `refused`      any other non-2xx, or a 2xx whose envelope says `ok: false`.
+ */
+export type LayoverOverviewFailure = 'gone' | 'unavailable' | 'unreachable' | 'refused';
+
+export type LayoverOverviewRead =
+  | { ok: true; overview: LayoverOverview }
+  | { ok: false; reason: LayoverOverviewFailure; message: string; retryable: boolean };
+
+/** The only sentence in this module not written by the server — see `unreachable`. */
+const OVERVIEW_UNREACHABLE = "We couldn't reach Portava. Check your connection and try again.";
+
+/**
+ * THE SERVER ALREADY DECIDED WHICH FAILURE THIS IS.
+ *
+ * `ownedSessionOr` (`artifacts/api-server/src/routes/airport.ts:1869`) splits a
+ * missing session from a failed read and gives each its own status, code and
+ * sentence. This function used to answer `null` to both — and to THROW when
+ * `fetch` rejected, which its one caller ran inside an uncaught `Promise.all`,
+ * so an offline device got a permanent spinner rather than any message at all.
+ *
+ * It now resolves in every case and names which one, so the dashboard can stop
+ * guessing "It may have been removed, or you're offline."
+ */
+export async function getLayoverOverview(sessionId: string): Promise<LayoverOverviewRead> {
+  let res: Response;
+  try {
+    res = await authedFetch(airportUrl('sessions', sessionId, 'overview'));
+  } catch {
+    return { ok: false, reason: 'unreachable', message: OVERVIEW_UNREACHABLE, retryable: true };
+  }
+
+  let json: Record<string, any> = {};
+  try { json = await res.json(); } catch { /* falls through to the status check */ }
+
+  if (!res.ok) {
+    // `retryable` is the server's own flag (`isRetryableErrorCode`,
+    // `artifacts/api-server/src/lib/http.ts:130`), not a status-code rule
+    // re-invented here — the list of retryable codes is the server's to keep.
+    const message = typeof json.message === 'string' ? json.message : OVERVIEW_UNREACHABLE;
+    if (res.status === 404 || json.error === 'not_found') {
+      return { ok: false, reason: 'gone', message, retryable: json.retryable === true };
+    }
+    if (json.error === 'degraded_unavailable') {
+      return { ok: false, reason: 'unavailable', message, retryable: json.retryable === true };
+    }
+    return { ok: false, reason: 'refused', message, retryable: json.retryable === true };
+  }
+  if (!json.ok) {
+    return {
+      ok: false,
+      reason: 'refused',
+      message: typeof json.message === 'string' ? json.message : OVERVIEW_UNREACHABLE,
+      retryable: false,
+    };
+  }
   // The cast below is the only thing standing between this type and the wire.
   // A screen that renders a field ONLY when it is present looks perfectly fine
   // against a server that never sends it, so the absence is made loud here
@@ -1045,7 +1207,7 @@ export async function getLayoverOverview(sessionId: string): Promise<LayoverOver
   if (!('safeEnvelope' in json)) {
     console.warn('[layover] overview is missing "safeEnvelope" — server contract mismatch');
   }
-  return json as LayoverOverview;
+  return { ok: true, overview: json as LayoverOverview };
 }
 
 // ── Mini-itinerary plan stops ─────────────────────────────────────────────────
@@ -1131,15 +1293,84 @@ export async function setShareCityStatus(sessionId: string, enabled: boolean): P
   return json.session ?? null;
 }
 
-export async function getLayoverPresence(sessionId: string): Promise<{
+/** The §14 rung the server actually served. Its vocabulary, not ours. */
+export type PresenceLevel = 'L0_AGGREGATE' | 'L2_DISCOVERY';
+
+/**
+ * census-layover L127 / L128 / L294 — the whole presence answer.
+ *
+ * `GET /:id/presence` returns `disclosePresence`'s result
+ * (`artifacts/api-server/src/services/airport/LayoverPrivacyGuard.ts:468`),
+ * and four of its fields never had a name on this side of the wire. They were
+ * on every response body; `res.json()` carried them; the type stopped at
+ * `count` and `travelers`, so no caller could see them and the screen threw
+ * them away. Naming them is the whole change — nothing new is fetched.
+ *
+ * `level` and `withheld` are OPTIONAL because an older server that predates
+ * the privacy guard does not publish them; `degraded` is not, because a
+ * caller that cannot see it will state a count it has no right to state.
+ * `getLayoverPresence` therefore normalises it rather than leaving it absent.
+ */
+export interface LayoverPresenceAnswer {
   sharing: boolean;
   city?: string | null;
   count: number;
   travelers: PresenceTraveler[];
-} | null> {
-  const res = await authedFetch(airportUrl('sessions', sessionId, 'presence'));
+  level?: PresenceLevel;
+  /**
+   * `sharing_paused` | `location_mode_off` | `ghost_mode` — the traveller's own
+   * stored settings — or `preferences_unreadable` | `ghost_mode_unreadable`,
+   * the closed fallbacks that stood in for them. The latter always arrive with
+   * `degraded: true`; see `LayoverPeopleSection` for why that ordering matters.
+   */
+  withheld?: string[];
+  /** TRUE when the count is NOT a measurement. Never widen a claim past this. */
+  degraded: boolean;
+  degradedReasons: string[];
+}
+
+/**
+ * Returns `null` on ANY failure to obtain an answer — a non-2xx, a body that
+ * will not parse, or a `fetch` that rejected because the device is offline.
+ *
+ * The caller must render `null` as "we could not check", NOT as "nobody is
+ * here". The server refuses rather than serving a fabricated zero precisely so
+ * the two stay distinguishable (`cityPresence`: *"a refusal caused by an
+ * UNREADABLE TABLE is now distinguishable from a measured zero"*); collapsing
+ * them here would undo that on the client instead.
+ *
+ * The `try` is not decoration. `authedFetch` rejects when the device has no
+ * network, and this function's one caller floats its promise — so before this,
+ * going offline produced an unhandled rejection and the presence box kept
+ * whatever it was last showing.
+ */
+export async function getLayoverPresence(sessionId: string): Promise<LayoverPresenceAnswer | null> {
+  let res: Response;
+  try {
+    res = await authedFetch(airportUrl('sessions', sessionId, 'presence'));
+  } catch {
+    return null;
+  }
   if (!res.ok) return null;
-  return res.json();
+  let json: Record<string, unknown>;
+  try {
+    json = await res.json();
+  } catch {
+    return null;
+  }
+  return {
+    sharing: json.sharing === true,
+    city: (json.city as string | null | undefined) ?? null,
+    count: typeof json.count === 'number' ? json.count : 0,
+    travelers: Array.isArray(json.travelers) ? (json.travelers as PresenceTraveler[]) : [],
+    level: json.level as PresenceLevel | undefined,
+    withheld: Array.isArray(json.withheld) ? (json.withheld as string[]) : [],
+    // A server that does not publish `degraded` answered without falling back,
+    // which is what `false` means. The normalisation is here so that no screen
+    // has to decide what an absent confidence flag means.
+    degraded: json.degraded === true,
+    degradedReasons: Array.isArray(json.degradedReasons) ? (json.degradedReasons as string[]) : [],
+  };
 }
 
 export async function getLayoverBuddies(sessionId: string): Promise<{
@@ -1441,4 +1672,148 @@ export function joinLayoverCrew(sessionId: string, crewId: string): Promise<Crew
 
 export function leaveLayoverCrew(sessionId: string): Promise<CrewActionOutcome> {
   return crewAction(airportUrl('sessions', sessionId, 'crew', 'leave'));
+}
+
+// ── §25.2 / census L269 — Layover Discovery ───────────────────────────────────
+
+/**
+ * One gem, narrowed to what the layover surface actually renders.
+ *
+ * NOT `HiddenGem` from `services/hiddenGems.ts`. That type carries thirty-odd
+ * fields — verification level, save counts, submitter, gem state, confidence —
+ * none of which this surface shows, and importing it would make a layover card
+ * a consumer of the whole Hidden Gems contract for four strings. It is a
+ * SEPARATE READ of the same wire, not a second vocabulary: every field below is
+ * named for the column the route serialises.
+ */
+export interface LayoverDiscoveryGem {
+  id: string;
+  name: string;
+  neighborhood: string | null;
+  /**
+   * The gem's OWN floor, as the server published it (`minimum_layover_minutes`).
+   * Null when the row carries none — which is not zero, and is not "fits".
+   */
+  minimumLayoverMinutes: number | null;
+}
+
+/**
+ * census L269 — why there is, or is not, a Discovery answer.
+ *
+ * `gated_off` IS NOT A FAILURE AND IS NOT AN EMPTY LIST. It is the third thing,
+ * and the reason it needs its own member is that `feature_disabled` answers
+ * **404 — the same status as `not_found`** (`lib/http.ts` STATUS). A reader
+ * keyed on the status code cannot tell "this capability is switched off" from
+ * "the read failed", and the two must render differently: off shows NO CARD,
+ * failed shows the server's refusal.
+ *
+ * It carries no message on purpose. `sendError(res, "feature_disabled")` is
+ * called with no sentence, so the envelope's `message` is the literal string
+ * `"feature_disabled"` — a code, not traveller-facing copy. There is nothing
+ * honest to quote, and nothing needs quoting, because the surface renders
+ * nothing.
+ */
+export type LayoverDiscoveryRead =
+  | { ok: true; gems: LayoverDiscoveryGem[] }
+  | { ok: false; reason: 'gated_off' }
+  | {
+      ok: false;
+      reason: 'unavailable' | 'unreachable' | 'refused';
+      message: string;
+      retryable: boolean;
+    };
+
+/** The only sentence here not written by the server — the device reached nobody. */
+const DISCOVERY_UNREACHABLE = "We couldn't reach Portava. Check your connection and try again.";
+
+function toDiscoveryGem(row: Record<string, unknown>): LayoverDiscoveryGem | null {
+  const id = typeof row.id === 'string' ? row.id : null;
+  const name = typeof row.name === 'string' ? row.name.trim() : '';
+  // A row with no id cannot be keyed and a row with no name cannot be read.
+  // Dropping it is right; rendering a blank chip would not be.
+  if (!id || !name) return null;
+  const minimum = row.minimum_layover_minutes ?? row.minimumLayoverMinutes;
+  const neighborhood = row.neighborhood;
+  return {
+    id,
+    name,
+    neighborhood: typeof neighborhood === 'string' && neighborhood.trim() ? neighborhood : null,
+    minimumLayoverMinutes: typeof minimum === 'number' && Number.isFinite(minimum) ? minimum : null,
+  };
+}
+
+/**
+ * §25.2 Layover Discovery — the gems this layover's CERTIFIED window permits.
+ *
+ * ── `availableMinutes` IS NOT DERIVED HERE ───────────────────────────────────
+ * It is the server's own `window.usableMinutes`, handed down from the overview.
+ * Nothing on this path subtracts a deadline from a clock: the route filters on
+ * `minLayoverMinutes` itself, and a second arithmetic on this side would be a
+ * second feasibility answer about the same layover — which is what
+ * `LayoverReturnPanel.tsx` was deleted at `a718beb5` for.
+ *
+ * ── WHAT THE DISCOVERY-MODE FLAG DOES AND DOES NOT CHANGE HERE ───────────────
+ * `layover_discovery_mode_enabled` (migration 2971) narrows what the SERVER
+ * serves — a Discovery serve in an airport session is restricted to the
+ * certified action universe rather than to distance alone. It is not on this
+ * response's envelope and this reader does not look for it: the flag changes
+ * WHICH gems arrive, never the shape, so this consumer is correct in both flag
+ * states by construction and needs no change when the gate moves. The two
+ * flags this reader CAN observe are `hidden_gems_enabled` and
+ * `hidden_gems_layover_enabled`, and both surface as `feature_disabled`.
+ *
+ * Resolves in every case; it never throws, because its one caller renders the
+ * refusal and a rejected promise would render nothing at all.
+ */
+export async function getLayoverDiscovery(
+  availableMinutes: number,
+  city: string | null,
+): Promise<LayoverDiscoveryRead> {
+  const params = new URLSearchParams({ availableMinutes: String(availableMinutes) });
+  if (city) params.set('city', city);
+
+  let res: Response;
+  try {
+    res = await authedFetch(`${apiBase()}/api/hidden-gems/layover-safe?${params.toString()}`);
+  } catch {
+    return { ok: false, reason: 'unreachable', message: DISCOVERY_UNREACHABLE, retryable: true };
+  }
+
+  let json: Record<string, any> = {};
+  try { json = await res.json(); } catch { /* falls through to the status check */ }
+
+  if (!res.ok) {
+    // THE CODE, NOT THE STATUS — see `LayoverDiscoveryRead`.
+    if (json.error === 'feature_disabled') return { ok: false, reason: 'gated_off' };
+    // `retryable` is the server's own flag (`isRetryableErrorCode`), read off
+    // the response rather than re-derived from a status-code rule here.
+    const message = typeof json.message === 'string' ? json.message : DISCOVERY_UNREACHABLE;
+    const retryable = json.retryable === true;
+    if (json.error === 'db_error' || json.error === 'server_not_configured') {
+      return { ok: false, reason: 'unavailable', message, retryable };
+    }
+    return { ok: false, reason: 'refused', message, retryable };
+  }
+
+  // A 200 whose body has no `gems` ARRAY is not an empty list. The route always
+  // sends one on success, so its absence is a contract mismatch, and answering
+  // `[]` to it would be the failed-read-as-empty-result this whole type exists
+  // to prevent.
+  if (!Array.isArray(json.gems)) {
+    return {
+      ok: false,
+      reason: 'refused',
+      message: DISCOVERY_UNREACHABLE,
+      retryable: false,
+    };
+  }
+
+  const gems: LayoverDiscoveryGem[] = [];
+  for (const row of json.gems as unknown[]) {
+    if (row && typeof row === 'object') {
+      const gem = toDiscoveryGem(row as Record<string, unknown>);
+      if (gem) gems.push(gem);
+    }
+  }
+  return { ok: true, gems };
 }

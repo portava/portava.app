@@ -195,7 +195,7 @@ callers, so this is a lane of its own.
 
 ### R4. The same `flagSc &&` fail-open still exists in `routes/messaging.ts`
 
-Three sites — `routes/messaging.ts:2612` (`disable_messaging` on the ordinary
+Three sites — `routes/messaging.ts:2619` (`disable_messaging` on the ordinary
 send path), `:3149` and `:3153` (`disable_messaging` and `disable_media_uploads`
 on the media send path) — carry the identical pattern fixed in defect 2. The
 ordinary send path is the *highest-traffic* door in Telegraph, and it is the one

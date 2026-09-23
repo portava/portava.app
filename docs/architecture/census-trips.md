@@ -706,7 +706,7 @@ Nothing in this section exists. The evidence is one grep, run over
 | TR73 | `occurredAt` distinct from `recordedAt` | **C** | **Moved N→C.** `2420_trip_kernel_foundation.sql:112#occurred_at` is the client-observed instant and `:113#recorded_at` is when the database wrote it. Two columns, distinct, exactly as §4.3 asks. |
 | TR74 | Outbox pattern for asynchronous consumers | **C** | **Moved N→C.** `2420_trip_kernel_foundation.sql:156#trip_outbox`, written in the same transaction as the event (`2590:818#trip_outbox`) and indexed on the unpublished set. |
 | TR75 | Workers publish/retry idempotently | **W** | Two trip workers exist and both are real: `server/trips/projectionWorkers/tripReminderScheduler.ts` (with `is_sent` + `reminder_delivered_at` + `reminder_retry_count`, migrations `0138`–`0140`) and `server/trips/projectionWorkers/tripCrewLiveShareScheduler.ts`. They are timer-driven pollers over their own tables, not outbox consumers, and the reminder one is idempotent by a `is_sent` flag rather than by event id. |
-| TR76 | Consumers persist processed event IDs or use deterministic projection version checks | **C** | **Moved N→C.** A projection worker exists and is registered: `lib/mapTripProjectionWorker.ts:82#runTripMapProjectionPass` drains unpublished outbox rows in `aggregate_version` order per trip and stamps `published_at`; `:126#startTripMapProjectionScheduler` is called at `index.ts:162#startTripOutboxWorker`. |
+| TR76 | Consumers persist processed event IDs or use deterministic projection version checks | **C** | **Moved N→C.** A projection worker exists and is registered: `lib/mapTripProjectionWorker.ts:82#runTripMapProjectionPass` drains unpublished outbox rows in `aggregate_version` order per trip and stamps `published_at`; `:126#startTripMapProjectionScheduler` is called at `index.ts:193#startTripOutboxWorker`. |
 
 ### §5 Database Schema
 
@@ -3356,7 +3356,7 @@ stopped being true, and the next reader trusts the reason.
    The verdict stays W — `trip_activity_log` is still what the *route* layer
    writes — but "nearest table" is no longer true.
 3. **TR334** (N) says `grep -rli "offlineBundle|offline.*queue|queuedOperation"`
-   over the client returns *nothing*. It returns `travel-buddy-standalone/src/services/layover.ts:382#statusCapability: ReturnNowStatusCapability;`
+   over the client returns *nothing*. It returns `travel-buddy-standalone/src/services/layover.ts:436#statusCapability: ReturnNowStatusCapability;`
    and four more — the **Layover** offline bundle. The verdict holds (there is
    no *trip* bundle, signed or otherwise); the grep as written does not.
 4. **TR213 `explainTripDecision`** (N) holds, and so does its reason — there is
@@ -3648,7 +3648,7 @@ carried a freshness (TR368). No metric measured read-model lag (TR394).
   `serveMapProjection`, `server/trips/readRoutes/tripMapProjection.ts:81#serveMapProjection`,
   so the two paths cannot serve two projections), `/crew` (`:261#crew`),
   `/context` (`:303#context`), `/safety` (`:327#safety`);
-  registered at `routes/index.ts:178#tripProjectionsRouter`. Every
+  registered at `routes/index.ts:179#tripProjectionsRouter`. Every
   response spreads the envelope; every failed read that a projection IS is
   refused with `TRIP_PROJECTION_UNAVAILABLE` on the wire
   (`:108#TRIP_PROJECTION_UNAVAILABLE`), and a flag-off crew
@@ -5047,7 +5047,7 @@ re-derives and cites rather than argues.
   file can say.
 - **§24 the CI gate** — `src/scripts/checkTripDecisionDiff.ts:39#--update`
   is `check:trip-decision-diff`, in `check:all`
-  (`artifacts/api-server/scripts/run-all-checks.sh:247#check:trip-decision-diff`):
+  (`artifacts/api-server/scripts/run-all-checks.sh:264#check:trip-decision-diff`):
   exit 1 with the classified report when a decision moved, exit 2 when it
   cannot run. `golden.json` is the tree's record with the note that explains
   its last change. The test (`src/test/tripDecisionDiff.test.ts:102#mutation`)
@@ -5117,7 +5117,7 @@ re-derives and cites rather than argues.
   `trip_map_projection_applied` and retried by `attempts`
   (`src/migrations/2520_trip_map_projection_worker.sql:53#trip_map_projection_applied`),
   is scheduled at boot (`lib/mapTripProjectionWorker.ts:126#startTripMapProjectionScheduler`,
-  `src/index.ts:162#startTripOutboxWorker()`), and §41's pipeline
+  `src/index.ts:193#startTripOutboxWorker()`), and §41's pipeline
   test drains it twice on a real database and the second drain applies
   nothing (`src/test/db/tripKernelPipeline.db.test.ts:127#§19.4`).
 
@@ -5388,7 +5388,7 @@ mutations are named with the rows.
   its own so one failure does not stop the other, DISABLED / NO_CLIENT /
   ERROR told apart; 2792 seeds the flag FALSE with both functions as its
   precondition (`migrations/2792_trip_retention_sweep_flag.sql:36#trip_retention_sweep_enabled`);
-  `index.ts` starts it (`src/index.ts:116#startTripProjectionWorkers();`).
+  `index.ts` starts it (`src/index.ts:119#startTripProjectionWorkers();`).
   `test/tripRetentionScheduler.test.ts:53#BOTH` pins the flag gate, both rpc
   names, the string-count coercion and the partial failure. Mutation: the
   flag check removed (2 red).
@@ -5598,10 +5598,10 @@ under a mutation before its commit.
   been offline and replayed its last fix on reconnect moved the traveller
   back in time — last-write-wins across stale devices, the thing the row
   names. A client may now say WHEN it observed the fix
-  (`coords.observedAt`; `routes/location.ts:39#observedAtOf(v:` refuses the
+  (`coords.observedAt`; `routes/location.ts:48#observedAtOf(v:` refuses the
   far future); that instant becomes `last_known_at`, and a fix observed
   before the one already stored is not written over it
-  (`routes/location.ts:167#staleObservation`): the rest of the request
+  (`routes/location.ts:246#staleObservation`): the rest of the request
   (permission, place, manual city) still applies, and the client is told —
   200, `observation: "stale_ignored"`, `TRIP_PRESENCE_STALE`, both instants
   named. A client that sends no `observedAt` is the legacy shape and gets
@@ -6556,7 +6556,7 @@ code changes in this section.
   writer are one worker
   (`lib/mapTripProjectionWorker.ts:126#startTripOutboxWorker as startTripMapProjectionScheduler`),
   started beside the reminder, live-share and retention schedulers
-  (`src/index.ts:162#startTripOutboxWorker();`); the reservation
+  (`src/index.ts:193#startTripOutboxWorker();`); the reservation
   extractor is the one integration adapter
   (`routes/tripReservations.ts:157#extractReservations(text)`). What §24
   names exists piece by piece; the `server/trips/` layout, with an outbox
@@ -6794,7 +6794,7 @@ share a suffix — was found by the compiler and fixed by hand
   (`server/trips/projectionWorkers/index.ts:29#export const TRIP_PROJECTION_WORKERS`,
   `server/trips/projectionWorkers/index.ts:35#export function startTripProjectionWorkers(`);
   `src/index.ts` starts the two things
-  (`src/index.ts:162#startTripOutboxWorker();`, `src/index.ts:116#startTripProjectionWorkers();`)
+  (`src/index.ts:193#startTripOutboxWorker();`, `src/index.ts:119#startTripProjectionWorkers();`)
   where it used to start four. `integrationAdapters/` holds the reservation
   extractor (`server/trips/integrationAdapters/reservationExtract.ts:86#export async function extractReservations(`),
   consumed by the reservations route

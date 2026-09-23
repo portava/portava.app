@@ -26,12 +26,20 @@
  *      deadline — the count and the faces are different questions;
  *   9. an unreadable `blocks` table publishes NO cards rather than all of them.
  *
- * WHAT THIS DOES NOT PROVE. `layover_crews` / `layover_crew_members` (migration
- * 2984) are NOT APPLIED to any database, so every case runs against
- * `fakeLayoverDb`. That double models no unique index (case 4 stages the
- * 23505), no RLS, and no foreign keys. This is evidence that the STORE and the
- * ROUTES behave; it is not evidence that the storage exists. See
- * docs/BUILD-BACKLOG.md.
+ * WHAT THIS DOES NOT PROVE — AND THE HALF OF IT THAT IS NO LONGER TRUE.
+ * This paragraph used to end "it is not evidence that the storage exists".
+ * The storage now exists: census-layover §26.1 records migration 2984 applied
+ * to production and to CI on 2026-09-16, both tables re-probed afterwards. That
+ * clause is struck rather than deleted, because it is the reason L28/L29 moved
+ * `N → C` and the reason L185/L186/L188 could be graded at all (§26.4).
+ *
+ * What still stands: every case here runs against `fakeLayoverDb`, a double
+ * that models no unique index (case 4 stages the 23505 itself), no RLS and no
+ * foreign keys. So this is evidence that the STORE and the ROUTES behave, not
+ * evidence about the live schema. For these two tables that gap is narrower
+ * than it sounds — 2984 gives them zero policies and zero client grants, so
+ * there is no database-level behaviour underneath the route layer for a live
+ * test to observe that this one cannot.
  *
  * Run: SUPABASE_URL=http://127.0.0.1:9 SUPABASE_SERVICE_ROLE_KEY=dummy \
  *      node --import tsx/esm --test src/services/layover/__tests__/layoverCrewSurface.test.ts

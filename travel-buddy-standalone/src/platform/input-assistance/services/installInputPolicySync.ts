@@ -54,6 +54,7 @@
 import { onAuthChange, getSessionUserId } from '../../../services/auth.ts';
 import { sharedPolicyStore } from './policyStore.ts';
 import { sharedSuggestionCache } from './suggestionCache.ts';
+import { clearLocalRecents } from './localZeroState.ts';
 import { fetchInputPolicies } from './policyClient.ts';
 import {
   applyAccountChange,
@@ -93,8 +94,15 @@ export function installInputPolicySync(deps: PolicySyncDeps = {}): () => void {
   const current = deps.currentUserId ?? getSessionUserId;
   const doFetch = deps.fetchPolicies ?? fetchInputPolicies;
 
+  const recents = deps.recents ?? { clear: clearLocalRecents };
+
   const onAccount = (userId: string | null): void => {
-    applyAccountChange(userId, store, cache);
+    // §29 — the same event that drops the policy snapshot and the process-wide
+    // suggestion cache also erases the DEVICE-local recents (census G199).
+    // They are the same kind of data written by the same explicit accepts; the
+    // only difference is that one of them survives the process, which makes it
+    // the more important of the two to erase when the viewer changes.
+    applyAccountChange(userId, store, cache, recents);
     if (userId != null) void refreshPolicies(userId, store, doFetch);
   };
 

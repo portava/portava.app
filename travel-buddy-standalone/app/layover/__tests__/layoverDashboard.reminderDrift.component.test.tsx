@@ -81,10 +81,14 @@ jest.mock('../../../src/components/layover/LayoverCompassCard', () => ({ Layover
 // NOTE: intentional stub — the screen only needs data to render here; the real
 // service is exercised against a fetch spy in the card suites.
 jest.mock('../../../src/services/layover', () => ({
-  getLayoverOverview: jest.fn(async () => (global as any).__overview),
-  getRecommendations: jest.fn(async () => []),
+  getLayoverOverview: jest.fn(async () => ({ ok: true, overview: (global as any).__overview })),
+  getRecommendations: jest.fn(async () => ({ ok: true, recommendations: [] })),
   getLayoverBuddies: jest.fn(async () => ({ city: 'Taipei', buddies: [] })),
   getLayoverPresence: jest.fn(async () => ({ sharing: false, count: 0, travelers: [] })),
+  // census L269 — the screen mounts LayoverDiscoveryCard, which reads through
+  // this module. Kept in step with the exhaustive list above: an omission here
+  // does not fail as a missing card, it throws inside the render.
+  getLayoverDiscovery: jest.fn(async () => ({ ok: true, gems: [] })),
   addStopFromRecommendation: jest.fn(async () => null),
   endLayoverSession: jest.fn(async () => ({ ok: true, outcome: 'cancelled', passportStamp: { requested: false, written: false, reason: 'not_elected' } })),
   sendLayoverTelegraph: jest.fn(async () => null),

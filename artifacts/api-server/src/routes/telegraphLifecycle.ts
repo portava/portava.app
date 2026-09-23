@@ -67,6 +67,7 @@ import {
   type UnsendRefusal,
 } from "../services/telegraph/unsend.js";
 import {
+  applyHistoryWindow,
   historyBoundEnabled,
   membershipSelect,
   visibleFromOf,
@@ -85,7 +86,9 @@ const MESSAGE_COLUMNS = "id, thread_id, sender_id, created_at, deleted_at, edite
 const MEMBER_COLUMNS = "user_id, last_read_at, left_at";
 
 type Gate =
-  | { ok: true; visibleFrom: string | null }
+  // `viewerId` rides with `visibleFrom`: Q6's exception is (bound, viewer), and
+  // it is the AUTHENTICATED caller this gate just proved ACTIVE membership for.
+  | { ok: true; visibleFrom: string | null; viewerId: string }
   | { ok: false; code: string; message: string };
 
 /** Active membership plus this member's §14.3 window, error observed. */
@@ -101,7 +104,7 @@ async function memberGate(client: any, threadId: string, userId: string): Promis
   if (!data || (data as any).left_at !== null) {
     return { ok: false, code: "forbidden", message: "Not an active member of this thread" };
   }
-  return { ok: true, visibleFrom: visibleFromOf(data as any, boundOn) };
+  return { ok: true, visibleFrom: visibleFromOf(data as any, boundOn), viewerId: userId };
 }
 
 /**
@@ -182,7 +185,13 @@ router.get(
 
     const messages = ((rows as any[]) ?? []) as LifecycleMessage[];
     const receipts = messages
-      .filter((m) => withinWindow(m.created_at, gate.visibleFrom))
+      // Q6 is a NO-OP on this surface and is passed anyway so the predicate is
+      // called the same way everywhere: the very next filter keeps only
+      // `m.sender_id === user.id`, so every row that survives is already the
+      // caller's own. §7.3's receipts are the SENDER's view of their own
+      // message, which is the same population Q6 admits.
+      .filter((m) => withinWindow(m.created_at, gate.visibleFrom,
+                                  { senderId: m.sender_id, viewerId: gate.viewerId }))
       // §7.3's receipts are the SENDER's view of their own message. A recipient
       // asking who else has read a message they did not send is a different
       // question with a different policy, and this route does not answer it.
@@ -423,7 +432,11 @@ router.post(
       return;
     }
     const t = target as any;
-    if (!t || t.deleted_at != null || !withinWindow(t.created_at, gate.visibleFrom)) {
+    // Q6: a member may name their OWN earlier message as the threshold they
+    // have read up to. A message somebody else sent before this member's
+    // window is still "no such message in this conversation".
+    if (!t || t.deleted_at != null ||
+        !withinWindow(t.created_at, gate.visibleFrom, { senderId: t.sender_id, viewerId: gate.viewerId })) {
       sendError(res, "not_found", "No such message in this conversation");
       return;
     }
@@ -473,6 +486,13 @@ router.post(
       .is("deleted_at", null)
       .order("created_at", { ascending: false })
       .limit(SEEN_SCAN_LIMIT);
+    // NOT RELAXED, DELIBERATELY. `floor` is `previous ?? gate.visibleFrom` —
+    // the caller's own READ MARKER when they have one, which is not a §14.3
+    // bound and must not be widened by Q6 (it decides what newly CROSSED, and
+    // relaxing it would re-report messages already seen). When it falls back to
+    // the bound, the rows Q6 would add are the caller's OWN, and the filter
+    // below drops `r.sender_id !== user.id` anyway — a person does not "see"
+    // their own message. So the relaxed clause would admit nothing here.
     if (floor) q = q.gte("created_at", floor);
     const { data: rows, error: rowsErr } = await q;
     if (rowsErr) {
@@ -484,7 +504,10 @@ router.post(
     const crossed = ((rows as any[]) ?? [])
       .filter((r) => r.deleted_at == null)
       .filter((r) => r.sender_id !== user.id)
-      .filter((r) => withinWindow(r.created_at, gate.visibleFrom))
+      // Q6 passed for uniformity; it cannot fire, because the line above has
+      // already removed every row the caller sent.
+      .filter((r) => withinWindow(r.created_at, gate.visibleFrom,
+                                  { senderId: r.sender_id, viewerId: gate.viewerId }))
       .filter((r) => {
         const at = Date.parse(r.created_at);
         if (Number.isNaN(at)) return false;

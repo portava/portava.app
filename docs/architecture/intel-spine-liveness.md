@@ -198,7 +198,7 @@ Each row answers: is there a writer, and can a registered route/scheduler actual
 
 | Table | Writer (file:line) | Reachable from | Gate | Reachable? |
 |---|---|---|---|---|
-| `intel_observations` | `services/intel/IntelCaptureService.ts:427` (`insert`) | `POST /v1/intel/observations` — `routes/intel.ts:189`, router mounted `routes/index.ts:293`; **client caller** `travel-buddy-standalone/src/services/intelCapture.ts:100`, reached from `app/intel/quick-signal.tsx:254` (`PromptBlock`), which is navigated to from `src/components/place/living/LivingDestinationPage.tsx:314,426` and deep-link `src/navigation/portavaRoutes.ts:2005`. Second caller: `POST /api/map/observations` (`routes/mapObservations.ts:111`, mounted `routes/index.ts:267`). | `intel_capture_quick_signal` (`IntelCaptureService.ts:324`) **then** D4 consent row (`:331`) | **YES — full UI-to-table path** |
+| `intel_observations` | `services/intel/IntelCaptureService.ts:427` (`insert`) | `POST /v1/intel/observations` — `routes/intel.ts:189`, router mounted `routes/index.ts:293`; **client caller** `travel-buddy-standalone/src/services/intelCapture.ts:100`, reached from `app/intel/quick-signal.tsx:254` (`PromptBlock`), which is navigated to from `src/components/place/living/LivingDestinationPage.tsx:314,426` and deep-link `src/navigation/portavaRoutes.ts:2038#path: 'intel/quick-signal',`. Second caller: `POST /api/map/observations` (`routes/mapObservations.ts:111`, mounted `routes/index.ts:267`). | `intel_capture_quick_signal` (`IntelCaptureService.ts:324`) **then** D4 consent row (`:331`) | **YES — full UI-to-table path** |
 | `intel_contribution_consent` | `lib/intelConsent.ts:117` (`upsert`) | `PUT /v1/intel/consent` — `routes/intel.ts:176`; **client** `travel-buddy-standalone/src/services/intelConsent.ts:14`, called from `app/settings/intel-prompts.tsx:49` and `src/components/intel/IntelConsentGate.tsx:15`; entered from `app/settings/index.tsx:278` and `app/profile/edit/index.tsx:96` | **NONE — no feature flag.** Auth only. | **YES — ungated. The one intel table any logged-in user can write today.** |
 | `intel_claims` | (a) `IntelCaptureService.ts:526` (`insert`, propose); (b) `IntelCaptureService.ts:551` (`update` → active, approve); (c) RPC `system_promote_admissible_intel_claims` `2174_intel_system_claim_promotion.sql:85` | (a)/(b): `POST …/claims/propose` and `…/claims/approve`, `routes/intel.ts:299-300`; client `app/intel/moment.tsx:26`. (c): `lib/intelPromotionScheduler.ts:55` (`db.rpc`), started `index.ts:136` | (a)/(b) `intel_capture_quick_signal`; (c) `intel_claim_projection_crowd` | **YES** (two independent paths) |
 | `intel_confirmations` | `IntelCaptureService.ts:587` (`insert`) | `POST /v1/intel/claims/:id/confirm`, `routes/intel.ts:309`; client `app/intel/moment.tsx:26` | `captureSystemEnabled` (either capture flag, `IntelCaptureService.ts:101-106`) + consent | **YES** |
@@ -233,7 +233,7 @@ the finding that most changes the shape of the question, so each is cited indivi
 
 | Scheduler | `start…()` defined | Registered at | Flag it reads |
 |---|---|---|---|
-| `intelRetentionScheduler` | `lib/intelRetentionScheduler.ts:591#export function startIntelRetentionScheduler` | **`src/index.ts:140#startIntelRetentionScheduler()`** | `intel_retention_sweep_enabled`, `intel_contribution_retention_enabled` (`:358`) |
+| `intelRetentionScheduler` | `lib/intelRetentionScheduler.ts:591#export function startIntelRetentionScheduler` | **`src/index.ts:143#startIntelRetentionScheduler()`** | `intel_retention_sweep_enabled`, `intel_contribution_retention_enabled` (`:358`) |
 | `intelPromotionScheduler` | `lib/intelPromotionScheduler.ts:80` | **`src/index.ts:136`** | `intel_claim_projection_crowd` (`:83`) |
 | `intelProjectionScheduler` | `lib/intelProjectionScheduler.ts:216` | **`src/index.ts:137`** | `intel_claim_projection_crowd` (`:219`) |
 | `intelCoverageScheduler` | `lib/intelCoverageScheduler.ts:262` | **`src/index.ts:145`** | `intel_coverage` (`:29`) |
@@ -262,7 +262,7 @@ without a read or a write. The eighth — reward — gets `true`, performs a rea
 `src/lib/intelRewardScheduler.ts:143`. That is the entire observed behaviour of the spine.
 
 **Routers, for completeness.** All six intel routers are mounted:
-`intelRouter` `routes/index.ts:345#router.use(intelRouter)`, `intelCoverageRouter` `:347#router.use(intelCoverageRouter)`, `intelApiRouter` `:348#router.use(intelApiRouter)`,
+`intelRouter` `routes/index.ts:347#router.use(intelRouter)`, `intelCoverageRouter` `:349#router.use(intelCoverageRouter)`, `intelApiRouter` `:350#router.use(intelApiRouter)`,
 `intelReadModelsRouter` `:338#router.use(intelReadModelsRouter)`, `intelOutcomesRouter` `:341#router.use(intelOutcomesRouter)`, `intelObservabilityRouter` `:343#router.use(intelObservabilityRouter)`.
 `src/test/intelRouterRegistrationGuard.test.ts` exists to keep them mounted. The three internal
 ones (`intelCoverage`, `intelObservability`, and the missions routes) are `requireAdmin`-gated

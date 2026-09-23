@@ -75,7 +75,7 @@ const BASELINE_DIR = join(API_SERVER_ROOT, "baseline");
  * stale silently on the next refresh, which is how two cases in
  * productionDriftExtraction.test.ts came to assert the opposite of the truth.
  */
-export const PRODUCTION_SNAPSHOT = "20260921_production_tables.txt";
+export const PRODUCTION_SNAPSHOT = "20260922_production_tables.txt";
 
 /**
  * `unmerged-pr` HAS NO MEMBERS AS OF 2026-09-15, AND IS KEPT — ruling, with the
@@ -195,6 +195,52 @@ export const KNOWN_PRODUCTION_GAPS: Record<string, Gap> = {
   // This ratchet fails in BOTH directions, so leaving six entries claiming a
   // table is absent when it is present would fail the check — correctly. An
   // entry nobody prunes stops being read.
+
+  // ── ADDED 2026-09-22: six tables from the wave integrated this session ────
+  //
+  // All six are "unapplied" in the strict sense the classification requires:
+  // declared in the tree, present on NO database, and each MUST reach zero by
+  // being applied rather than by being tolerated. They arrived together because
+  // two lanes landed two migrations in one integration, and the drift check
+  // caught them on the first run after the merge — which is the check working,
+  // not the check being noisy.
+
+  layover_constraints: {
+    classification: "unapplied",
+    note:
+      "§20's decision record (2992). Applied to NO database — not production, " +
+      "not portava-ci. 2992 CANNOT be applied on its own: its own precondition " +
+      "refuses by name unless 2700_layover_certified_feasibility has run first, " +
+      "because it COMPLETES public.layover_certified_computations rather than " +
+      "forking it, and 2700 is itself absent from " +
+      "production-applied-migrations.json. So the production chain is 2700 then " +
+      "2992, and neither step has been taken. Until then persistDecision takes " +
+      "its refusal branch and GET /airport/sessions/:id/safety answers " +
+      "persisted: { state: 'not_stored' }, which is why census-layover L1 is not " +
+      "graded closed on the merged code. Strike this off in the same change that " +
+      "applies the chain and refreshes both production snapshots.",
+  },
+  layover_time_budgets:  { classification: "unapplied", note: "2992, same chain and same 2700 prerequisite as layover_constraints. See that entry for the full reason; it is not repeated here so that one statement stays the one to maintain." },
+  layover_return_plans:  { classification: "unapplied", note: "2992, same chain and same 2700 prerequisite as layover_constraints." },
+  layover_checkpoints:   { classification: "unapplied", note: "2992, same chain and same 2700 prerequisite as layover_constraints." },
+  layover_outcomes:      { classification: "unapplied", note: "2992, same chain and same 2700 prerequisite as layover_constraints." },
+
+  memory_relations: {
+    classification: "unapplied",
+    note:
+      "§3.4's Memory-to-Memory graph edges (2994). Applied to NO database. " +
+      "2994 was rehearsed against a throwaway PostgreSQL — the full chain " +
+      "replayed, applied twice for idempotency, and ten behavioural probes run " +
+      "and rolled back — and deliberately not applied anywhere real. Its " +
+      "prerequisites ARE met, unlike 2992's: 2710 and 2711 are both recorded in " +
+      "production-applied-migrations.json and all four tables 2710 creates are " +
+      "present in production. What is not met is a reason to apply it yet: " +
+      "memory_kernel_enabled reads FALSE on production, so the kernel never " +
+      "runs, no outbox row has ever been written, and the table would arrive " +
+      "with no writer. census-highlights-memories H27 is held at NOT-BUILT on " +
+      "exactly this ground. Strike this off in the same change that applies 2994 " +
+      "and refreshes the two production snapshots.",
+  },
 
   // ── Trips §23, the one Trips table that is genuinely NOT in production ─────
   trip_commitment_recurrences: {

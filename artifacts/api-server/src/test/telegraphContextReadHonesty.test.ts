@@ -338,7 +338,10 @@ describe("GET /threads/:id/messages — an unreadable quote is not an absent quo
     const quoteOp = opIndexOfSelect(
       probe,
       "messages",
-      "id, body, sender_id, profile:profiles!messages_sender_id_fkey(name, handle, username, full_name)",
+      // `created_at` joined this list when the quote read gained its §14.3
+      // second layer: the predicate needs the timestamp to refuse a damaged
+      // row fail-closed. It is used to DECIDE and is never returned.
+      "id, body, sender_id, created_at, profile:profiles!messages_sender_id_fkey(name, handle, username, full_name)",
     );
 
     use(seed(), { errors: { messages: { ...TRANSLATIONS_DOWN, message: "quote read failed", afterOps: quoteOp } } });

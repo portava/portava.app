@@ -461,7 +461,7 @@ Legend: **BC** BUILT-AND-CORRECT · **BW** BUILT-BUT-WRONG · **NB** NOT-BUILT �
 |---|---|---|---|
 | S55 | Context Kernel assembling canonical entities + world/experience state + user/trip/social + safety/policy, with the nine §18.1 contexts | **BW** | `src/compass/CompassContextEngine.ts:1-19` is an 11-state context machine (safety/booking/arrival/trip/night/private/creator/budget/planning/exploring/normal). It is Compass-local, is not consumed by Map, Wall or Discovery, and has no World, Experience or Attention context. |
 | S56 | Opportunity Engine downstream of the kernel, feeding feature-specific projections | **NB** | No such stage; each surface builds candidates directly. |
-| S57 | Feature clients and React components must not independently calculate crowd, vibe, safety, opportunity, experience value or world-change state | **BC** | The client mirrors the server vocabulary as **data** and computes none of it: `travel-buddy-standalone/src/types/mapObjects.ts` re-declares the kind/priority/source-class tables; per the input-intelligence certification, `components/freshnessDisplay.ts` *"never synthesizes a label the server did not send (mutation-proofed)"*. The only client-side derivation found is `hooks/useActiveLocation.ts:112` `computeFreshness`, which is the viewer's own location, not world state. |
+| S57 | Feature clients and React components must not independently calculate crowd, vibe, safety, opportunity, experience value or world-change state | **BC** | The client mirrors the server vocabulary as **data** and computes none of it: `travel-buddy-standalone/src/types/mapObjects.ts` re-declares the kind/priority/source-class tables; per the input-intelligence certification, `components/freshnessDisplay.ts` *"never synthesizes a label the server did not send (mutation-proofed)"*. The only client-side derivation found is `hooks/useActiveLocation.ts:113#function computeFreshness`, which is the viewer's own location, not world state. |
 
 ### §7 Required tweaks: Map
 
@@ -1074,7 +1074,7 @@ the undecided decision. **S21**, **S28**, **S29** and **S32** stay as they
 are: on-device reduction, the nine device features, acoustic capture and the
 signal ingest are decisions #1, #2 and #6, and this lane does not take them.
 **S26** stays W: the anonymous half is closed (72 h structural, the sweep
-registered at `src/index.ts:150#startSensingRetentionScheduler();`) and the
+registered at `src/index.ts:153#startSensingRetentionScheduler();`) and the
 intel raw purge is behind `intel_contribution_retention_enabled`, FALSE in
 production, at 180 days. **S3** and **S106** stay W: `src/presence/domain/`
 is unchanged since Phase 0 — types and a transport interface, no store, no
@@ -1186,7 +1186,7 @@ before its commit; the mutations are listed in §2.3.
   reads the candidate and the current experience through
   `readLiveClaimEnvelopes`, and answers the decision with its reasons,
   grounding, interception and switching-cost report; it writes nothing and
-  computes no truth of its own. Registered at the tail of `routes/index.ts:368#compassDecisionRouter`, so no line the other censuses cite in that file moved.
+  computes no truth of its own. Registered at the tail of `routes/index.ts:370#compassDecisionRouter`, so no line the other censuses cite in that file moved.
   2800 seeds the flag FALSE and refuses to commit a TRUE row
   (`migrations/2800_compass_decision_flag.sql:34#INSERT`;
   `migrations/2800_compass_decision_flag.sql:47#reads`); the rollback refuses
@@ -1396,7 +1396,7 @@ in §3.3.
   treated as the budget spent. It answers newest change first with a report
   per subject that tells "no moments" from "could not look" and "no versions
   to compare". It writes nothing and sends nothing. Registered at the tail
-  of `routes/index.ts:373#wallMomentsRouter`. 2801 seeds the flag FALSE and
+  of `routes/index.ts:375#wallMomentsRouter`. 2801 seeds the flag FALSE and
   refuses to commit a TRUE row (`migrations/2801_wall_moments_flag.sql:41#INSERT`;
   `migrations/2801_wall_moments_flag.sql:54#reads`); the rollback refuses
   over a TRUE row (`db/rollback/2026-09-12-2801-wall-moments-flag-rollback.sql:23#DELETE`)
@@ -1604,7 +1604,7 @@ listed in §4.3.
   `test/telegraphLiveReferencesRoute.test.ts:386#null`). The wire carries
   the current claims only through that gate; nothing person-shaped is on it
   (`test/telegraphLiveReferencesRoute.test.ts:282#forbidden`). Registered at
-  the tail of `routes/index.ts:378#telegraphLiveReferencesRouter`.
+  the tail of `routes/index.ts:380#telegraphLiveReferencesRouter`.
 
 - **2802 and its rollback** — `migrations/2802_telegraph_live_references_flag.sql:47#INSERT`
   seeds `telegraph_live_references_enabled` FALSE, one row, `ON CONFLICT DO
@@ -1805,34 +1805,34 @@ mutations are listed in §5.3.
   `test/adminSafetyCandidatesRoute.test.ts:250#not filed again`;
   `test/adminSafetyCandidatesRoute.test.ts:265#DISMISSED`).
 
-- **the routes** — `routes/adminSafetyCandidates.ts:60#router.post(` is
+- **the routes** — `routes/adminSafetyCandidates.ts:94#router.post(` is
   `POST /api/admin/intel/safety-candidates/scan`: requireAdmin
-  (`routes/adminSafetyCandidates.ts:63#requireAdmin(`), the flag read
-  fail-closed (`routes/adminSafetyCandidates.ts:70#isFlagEnabled`), live
+  (`routes/adminSafetyCandidates.ts:97#requireAdmin(`), the flag read
+  fail-closed (`routes/adminSafetyCandidates.ts:104#isFlagEnabled`), live
   intelligence servable or a refusal before anything is read
-  (`routes/adminSafetyCandidates.ts:81#liveLabelsServable`;
+  (`routes/adminSafetyCandidates.ts:115#liveLabelsServable`;
   `test/adminSafetyCandidatesRoute.test.ts:304#not servable`); the subjects
   the caller names (≤ 50) or, absent, the bounded sweep of every place
   whose current `crowd.level` is served as `packed` — privacy-eligible and
   unexpired, the safety notice read's own two per-row gates, choosing only
-  WHERE to look (`routes/adminSafetyCandidates.ts:88#listSweepSubjects(`;
+  WHERE to look (`routes/adminSafetyCandidates.ts:122#listSweepSubjects(`;
   `lib/safetyCandidateStore.ts:41#listSweepSubjects(`;
   `lib/safetyCandidateStore.ts:50#packed`;
   `test/adminSafetyCandidatesRoute.test.ts:294#sweep`); per subject the
   current envelopes through the gate and the previous readings from the
-  record (`routes/adminSafetyCandidates.ts:101#readLiveClaimEnvelopes`;
-  `routes/adminSafetyCandidates.ts:103#readPreviousReadings`), a history
+  record (`routes/adminSafetyCandidates.ts:135#readLiveClaimEnvelopes`;
+  `routes/adminSafetyCandidates.ts:137#readPreviousReadings`), a history
   that cannot be read a per-subject REFUSAL and never "no candidate"
-  (`routes/adminSafetyCandidates.ts:105#refusal`;
+  (`routes/adminSafetyCandidates.ts:139#refusal`;
   `test/adminSafetyCandidatesRoute.test.ts:317#REFUSAL`), detection
-  (`routes/adminSafetyCandidates.ts:108#detectSafetyCandidates(`), the
-  dedupe against the queue (`routes/adminSafetyCandidates.ts:117#open.reasons`)
+  (`routes/adminSafetyCandidates.ts:142#detectSafetyCandidates(`), the
+  dedupe against the queue (`routes/adminSafetyCandidates.ts:151#open.reasons`)
   and the filing, a refused write named on the answer
-  (`routes/adminSafetyCandidates.ts:123#queue_write_failed`;
+  (`routes/adminSafetyCandidates.ts:157#queue_write_failed`;
   `test/adminSafetyCandidatesRoute.test.ts:332#refuses the write`). One row
   per new candidate and nothing else on the wire
   (`test/adminSafetyCandidatesRoute.test.ts:216#ONE report`).
-  `routes/adminSafetyCandidates.ts:140#router.get(` is
+  `routes/adminSafetyCandidates.ts:174#router.get(` is
   `GET /api/admin/intel/safety-candidates`: the detector's own rows still
   open or reviewing, newest first, parsed — a person's report is not among
   them (`lib/safetyCandidateStore.ts:112#listOpenCandidates(`;
@@ -1840,7 +1840,7 @@ mutations are listed in §5.3.
   `test/adminSafetyCandidatesRoute.test.ts:341#not a person`). A non-admin
   is refused before the flag is read
   (`test/adminSafetyCandidatesRoute.test.ts:205#non-admin`). Registered at
-  the tail of `routes/index.ts:383#adminSafetyCandidatesRouter`;
+  the tail of `routes/index.ts:385#adminSafetyCandidatesRouter`;
   `routes/admin.ts` and `routes/moderation.ts` are untouched.
 
 - **2803 and its rollback** — `migrations/2803_intel_safety_candidates_flag.sql:70#INSERT`
@@ -2647,7 +2647,7 @@ observation to a place 8 km away would attribute it to somewhere the contributor
 never was"* — the module knows the hazard and bounds it. But a 3 km bound on a
 mis-attribution is a smaller mis-attribution, not an absent one, and §14's
 sentence has no radius in it. The path is reachable: the router is mounted
-(`src/routes/index.ts:319#mapObservationsRouter`) behind
+(`src/routes/index.ts:321#mapObservationsRouter`) behind
 `map_contributions_enabled` (`routes/mapObservations.ts:741`).
 
 Why this lane does not fix it: the only two fixes are to refuse §22's zone
@@ -2709,7 +2709,7 @@ not the only resolver in the tree, and the row is about the tree.
 - **THE ROUTE-MOUNTING CHECK, applied to §2–§5's C rows rather than assumed.**
   A surface graded BUILT that no router mounts is not built, and this census
   has four new routes from the earlier batches. All four are mounted:
-  `src/routes/index.ts:368#compassDecisionRouter` (S78, S79, S80, S86),
+  `src/routes/index.ts:370#compassDecisionRouter` (S78, S79, S80, S86),
   `:339#wallMomentsRouter` (S73, S74, S76, S102),
   `:344#telegraphLiveReferencesRouter` (S87, S88, S89) and
   `:349#adminSafetyCandidatesRouter` (S103). Nothing moves; the check is
@@ -2724,7 +2724,7 @@ not the only resolver in the tree, and the row is about the tree.
 | S70 Server-built DiscoveryCandidate with why-now, why-for-user, confidence, freshness and truth class | W | **C** | The one field the row is named for has a producer: `whyNow` carries grounded reasons in the claims' own vocabulary (`lib/discoveryCandidate.ts:312#whyNowOf`) and is null — never `[]` — when no grade was computed or no reading was found (`:283#whyNowOf`); route-tested with the candidate projection on, both arms. The other four fields were already carried. B7-R5 red. |
 | S72 Intent modes — Right Now, Tonight, Explore, Quiet, Social, High Energy, Nearby, Trip — on the same shared intelligence | W | **C** | The spec's eight, verbatim and in order (`lib/discoveryLiveRank.ts:103#DISCOVERY_INTENT_MODES`), each a weight vector over the SAME axes of the SAME engine (`:154#INTENT_MODE_PROFILES`) — the suite asserts no mode has an axis of its own — and the crowd preference they declare is Compass's `experienceValue`, so "the same shared intelligence" is literal. Reachable as `GET /discovery?intentMode=…`; an unknown string is not honoured as a mode (B7-R4 red). |
 | S85 Layover Temporal Freedom Engine intersects feasibility with live Experience value, forecast, friction and safe-return | W | **C** | The row's finding was `grep -rn liveClaimRead services/airport/` → nothing. It reads it now, and intersects rather than competing: a live queue becomes minutes the EXISTING `LayoverSafetyEngine` rates against the certified deadline (`services/airport/LayoverRecommendationService.ts:496`, `lib/layoverLiveIntersection.ts:195`), a live `unsafe_density` or refused walk-in removes the card, a decaying window demotes and never drops, and a card with no reading is untouched. Driven through the real `generateRecommendations` (90 → 180 minutes under a 90-minute queue). B7-L1 to B7-L4 red. |
-| S97 Temporary activity must not be forced onto the nearest place ID when ownership is unknown; never assign to the nearest place merely to satisfy a foreign key | C | **W** | **The C rested on a grep that is now false.** `resolveZoneAnchorSubject` (`routes/mapObservations.ts:656#resolveZoneAnchorSubject`) resolves a §22 zone contribution by finding the **nearest** active place in the zone (`:648#NEAREST`) and storing the observation against it (`:802`); its own header gives the motive as the FK — *"`intel_observations.subject_id` FKs `public.places`, and a zone is not a place"*. Mounted (`src/routes/index.ts:319#mapObservationsRouter`) behind `map_contributions_enabled` (`routes/mapObservations.ts:741`). The 3 km ceiling and the recorded `zone_id` bound the mis-attribution; they do not make it absent, and §14's sentence carries no radius. Not fixable in this lane: the alternatives are deleting a §22 Map feature or removing `subject_id NOT NULL REFERENCES places(id)` (`src/migrations/2130_intel_storage.sql:142`), both owner decisions. |
+| S97 Temporary activity must not be forced onto the nearest place ID when ownership is unknown; never assign to the nearest place merely to satisfy a foreign key | C | **W** | **The C rested on a grep that is now false.** `resolveZoneAnchorSubject` (`routes/mapObservations.ts:656#resolveZoneAnchorSubject`) resolves a §22 zone contribution by finding the **nearest** active place in the zone (`:648#NEAREST`) and storing the observation against it (`:802`); its own header gives the motive as the FK — *"`intel_observations.subject_id` FKs `public.places`, and a zone is not a place"*. Mounted (`src/routes/index.ts:321#mapObservationsRouter`) behind `map_contributions_enabled` (`routes/mapObservations.ts:741`). The 3 km ceiling and the recorded `zone_id` bound the mis-attribution; they do not make it absent, and §14's sentence carries no radius. Not fixable in this lane: the alternatives are deleting a §22 Map feature or removing `subject_id NOT NULL REFERENCES places(id)` (`src/migrations/2130_intel_storage.sql:142`), both owner decisions. |
 
 **Held, with the reason.** **S3** and **S106** stay W, unchanged from §1: the
 single presence architecture would have to be a store and a fusion layer that
@@ -3829,3 +3829,56 @@ whether #457's own behaviour is correct — that is the PR's mutation evidence, 
 census's business. `head_commit` is unchanged, so CONSTRUCTED% and CORRECT% are
 unchanged, and this document is still a measurement of `1fe72289b` plus the sections
 that name their own commits.
+---
+
+## §13 S103's evidence line, corrected — the verdict does not move
+
+*(Numbered §13 at merge time: this section and main's §12 were written
+independently and both claimed §12. Main's keeps the number it merged with;
+this one moves. Both are kept in full — neither is a restatement of the
+other, and they AGREE that S103 holds at `C`. This section is placed last so
+its correction to S103's evidence line is the document's final word on that
+row.)*
+
+Re-read on 2026-09-22 as a READING, not a regrade. **S103 stays `C`** and so does
+its cross-listed partner `TRV2-03` in census-trust. No headline table is restated
+here, deliberately: `check:census-integrity` reads the LAST such block as the
+document's claim, and §11's numbers are still exactly right.
+
+**What the row gets wrong.** §10's S103 entry says the pipeline sits *"behind
+2803's FALSE flag and requireAdmin"*. The `requireAdmin` half is right. The flag
+half is right about portava-ci and **wrong about production**, probed directly
+rather than read out of a ledger — the rule §4 exists to enforce:
+
+| project | `intel_safety_candidates_enabled` |
+|---|---|
+| portava-ci `hwokxgbmezheskbzskfr` | `false` — 2803 applied |
+| production `ajrurzioarfkagpuxfnb` | **no row at all** — 2803 not applied |
+
+2803's only statement is one `INSERT` into `feature_flags`, so an absent row is
+the whole of its absence; there are no other objects that could disagree.
+
+**Why the verdict does not move on that.** `isFlagEnabled` answers false for an
+absent row and for a `FALSE` row alike, so `POST /api/admin/intel/safety-candidates/scan`
+returns `feature_disabled` in both environments. The behaviour S103 grades is
+identical. What changes is the sentence: *"seeded FALSE"* describes a deliberate
+off-switch that production does not have, and an owner planning the enablement
+would go looking for a flag to flip and find nothing to flip.
+
+**What the re-read confirmed rather than changed.** The two stages S103's earlier
+`BW` said were missing are real and reachable, checked by reading the tree and not
+by trusting the row: `lib/safetyCandidate.ts` exists, `routes/adminSafetyCandidates.ts`
+declares the scan, and the router **is** mounted — `routes/index.ts` imports it and
+`router.use`s it. So this is not the T212 shape (a module with no production
+importer). The handler's gate order is `requireAdmin` → service client → flag →
+payload → `liveLabelsServable`, each failing closed.
+
+**And the limit, said here rather than left to be inferred.** Nothing in the tree
+calls the scan or `listSweepSubjects` except the route itself — no scheduler, no
+cron, no job. The only way anything enters this pipeline is an admin pressing it,
+and in production nothing ever has, because 2803 has not been applied there. S103's
+`C` is a verdict about the code being complete and connected, which it is. It is
+not a claim that a single safety candidate has ever been filed. That distinction is
+the same one this corpus applied to T240/T242 (a field in a migration no database
+has run) and the one Q5's ruling states as a rule: a service with no production
+caller is not completion.

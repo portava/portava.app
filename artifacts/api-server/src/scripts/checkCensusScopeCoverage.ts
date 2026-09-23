@@ -139,11 +139,20 @@ const CENSUS_SCOPE_FLOORS: Record<string, number> = {
   // minority of each census, and knowing that is the point of measuring it.
   "census-compass.md": 0.96,   // widened 2026-09-11
   "census-discovery.md": 0.96,   // widened 2026-09-11: 22% -> 98%
-  "census-highlights-memories.md": 0.96,   // widened 2026-09-11
+  "census-highlights-memories.md": 0.98,   // widened 2026-09-11; RAISED 0.96 -> 0.98 on 2026-09-22 by §Q, which
+                                           // added ten paths to this census's scope — its own five suites plus the
+                                           // five §P and the body cited and nothing watched (verifyFlowHighlightControls,
+                                           // highlightPublicProjectionEnforcement, highlightRouteHarness, 2975 and 2320)
+                                           // — taking measured coverage from 96% (135/140, exactly ON the floor and
+                                           // one citation from failing) to 99% (142/143). A ratchet, per the rule
+                                           // above. Not 1.00: `0179_stamp_criteria_engine.sql` is cited by BASENAME
+                                           // with no path and several frozen roots hold that name, so there is no
+                                           // single path to watch. That one citation is the whole of the remaining
+                                           // gap and checkCensusFreshness.ts records why it is not resolved.
   "census-input-intelligence.md": 0.98,   // widened 2026-09-11; RAISED 0.95 -> 0.98 on 2026-09-13 when §8
                                           // added rankingSignals.ts, fieldInventory.ts, suggestionBadges.ts and
                                           // its two test files to the scope, taking measured coverage to 100%.
-  "census-layover.md": 0.96,   // widened 2026-09-11; RAISED 0.90 -> 0.96 on 2026-09-13 when §11's own migration, rollback and three test files were added to its scope, taking it to 100%. A ratchet, per the rule above.
+  "census-layover.md": 0.97,   // widened 2026-09-11; RAISED 0.90 -> 0.96 on 2026-09-13 when §11's own migration, rollback and three test files were added to its scope, taking it to 100%. A ratchet, per the rule above. RAISED 0.96 -> 0.97 on 2026-09-22 by §27: measured 133/136 = 97.8 %. This check CAUGHT that pass — §27's new citations took it to 93 %, below the 0.96 floor, and the fix was the one the failure message prescribes: `services/layover/` (where `joinCrew`/`createCrew`/`leaveCrew` live, which §27.4 moves L185/L186/L188 to `C` ON) plus migrations 2984, 2985 and 2971, all added to CENSUS_SCOPE rather than the floor being lowered. The three files still unwatched are named and are deliberately not added: `routes/messaging.ts` and `2795_trip_kernel_write_guards.sql` belong to Telegraph and Trips and are cited in passing, and `src/test/docCitations.test.ts` is a guard's own suite that §27.10 names as the thing that fails — machinery this census reports on, not a subject it grades.
   "census-map.md": 0.96,   // widened 2026-09-11
   // SET 2026-09-15, the first floor this census has had: it had no scope entry
   // at all until the measurability pass, and an unscoped census is not floored

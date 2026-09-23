@@ -38,8 +38,6 @@ import { freshToken } from '../../services/apiToken.ts';
 // ─────────────────────────────────────────────────────────────────────────────
 
 export type TrustConfidence = 'low' | 'medium' | 'high';
-/** The view's band, plus the state for "the server did not band this". */
-export type TrustConfidenceState = TrustConfidence | 'unknown';
 
 /**
  * What a domain's word RESTS ON — server-owned (`domainTrustBasis` in
@@ -51,6 +49,13 @@ export type TrustConfidenceState = TrustConfidence | 'unknown';
 export type DomainTrustBasis =
   | 'measured'
   | 'partial'
+  /**
+   * NOTHING in this domain was measured. The server's word for it is
+   * "Not yet rated" — it no longer substitutes a neutral score and words that
+   * (owner decision, 2026-09-22), so this basis means UNSCORED, not "scored at
+   * the default". It is emphatically NOT `unavailable`: that one is a failed
+   * READ of `trust_profiles` and is a fact about a database, not the account.
+   */
   | 'substituted'
   | 'not_applicable'
   | 'unavailable'
@@ -76,9 +81,14 @@ export interface TrustProjection {
   score: number | null;
   /**
    * Evidence-aware band: an 82 with high evidence ≠ an 82 with little (§10).
-   * NULL means NOT MEASURED — the server sends null rather than a band when it
-   * has nothing to band, and defaulting that to 'low' would print "Early days"
-   * over a person the server declined to describe.
+   *
+   * NULLABLE, because the server's own field is: `passportTrustConfidence`
+   * returns null for an absent or unreadable trust profile and for a missing
+   * evidence weight, and census-passport §3 measured 56 of 58 production
+   * accounts with no trust profile at all — so null is the NORMAL answer, not
+   * an edge case. `deriveTrustView` has read it as nullable since the coercion
+   * to `'low'` was removed; this declaration was the half that did not follow,
+   * and it made the `?? null` below look like dead defensive code.
    */
   confidence: TrustConfidence | null;
   /** What `confidence` was computed from — trust evidence, or a travel proxy. */
@@ -193,7 +203,25 @@ export interface TrustView {
   /** Numeric 0–100 — non-null ONLY when the server exposed it. */
   score: number | null;
   hasScore: boolean;
-  confidence: TrustConfidenceState;
+  /**
+   * The band, or `null` = NOT MEASURED. The server's own
+   * `passportTrustConfidence` returns null for an absent or unreadable trust
+   * profile and for a missing/corrupt evidence weight, so null is the
+   * production-NORMAL answer, not an edge case: census-passport §3 measured 56
+   * of 58 accounts with no trust profile at all. Coercing it to `'low'` printed
+   * "Early days" — a measured-looking band — over four different kinds of
+   * not-measured.
+   *
+   * MERGE DECISION, 2026-09-23. The other lane modelled the same absence as a
+   * `'unknown'` MEMBER of the band union. Both carry "no band", but a pseudo-band
+   * sitting beside the real ones is what invited `CONFIDENCE_META[confidence]`
+   * to produce a row for it — and that row's copy ("we could not read this
+   * traveller's records") is false for the 56-of-58 accounts that simply have
+   * no profile. `null` cannot be indexed into the band table by accident, so
+   * the two not-measured cases stay apart. `degraded` below carries the other
+   * lane's distinct and additive fact: that the READ itself failed.
+   */
+  confidence: TrustConfidence | null;
   /**
    * TRUE when the server could not read this person's trust records. Everything
    * on this view is then the server's fallback shape. The screen must say so
@@ -239,14 +267,13 @@ const STANDING_UNKNOWN = 'Not available';
  * Confidence copy is intentionally non-stigmatizing for new users (§10): the
  * low band frames a fresh account as a natural starting point, not a deficit.
  */
-const CONFIDENCE_META: Record<TrustConfidenceState, { label: string; copy: string }> = {
-  // NOT a band. The server sends no confidence when it has nothing to band, and
-  // this row says so instead of borrowing 'low'. "Early days" over an unread
-  // profile is a sentence about a person that nothing behind it supports.
-  unknown: {
-    label: 'Confidence unavailable',
-    copy: 'We could not read this traveler\u2019s trust records just now. Nothing here is a measurement.',
-  },
+// ONLY the three real bands. A fourth "did not band this" member used to sit
+// here, and `CONFIDENCE_META[confidence]` then produced a row for it reading
+// "we could not read this traveler's trust records" — false for the 56-of-58
+// production accounts (census-passport §3) that simply have no trust profile.
+// A band table that cannot be indexed by a non-band cannot make that claim; the
+// two not-measured cases are worded by the pair of constants below instead.
+const CONFIDENCE_META: Record<TrustConfidence, { label: string; copy: string }> = {
   high: {
     label: 'High confidence',
     copy: 'Backed by a substantial travel and contribution history.',
@@ -259,6 +286,21 @@ const CONFIDENCE_META: Record<TrustConfidenceState, { label: string; copy: strin
     label: 'Early days',
     copy: 'New accounts start here. Trust builds naturally as you travel and contribute.',
   },
+};
+
+/**
+ * The two not-measured cases, kept apart because they are not the same claim:
+ * the server distinguishes them itself via `confidenceBasis`, and the wording
+ * here is lifted from the already-shipped BASIS_NOTE rather than invented, so
+ * the hero and the domain rows say the same thing about the same state.
+ */
+const CONFIDENCE_UNMEASURED = {
+  label: 'Not yet measured',
+  copy: 'Not yet measured — confidence appears once there is recorded history to measure.',
+};
+const CONFIDENCE_UNAVAILABLE = {
+  label: 'Not available',
+  copy: 'Trust records are unavailable right now.',
 };
 
 /** Positive capability flags → chip labels (TABLE 14). Order is intentional. */
@@ -285,14 +327,30 @@ const EMPTY_CAPS: PassportPositiveCapabilities = {
  * missing measurement is described as an absence of records, never as a
  * deficiency of the person).
  */
-const BASIS_NOTE: Record<DomainTrustBasis, string | null> = {
+/**
+ * EXPORTED so the one explanatory surface that quotes these sentences —
+ * `components/passport/TrustScoreInfoSheet.tsx` — can import them instead of
+ * re-typing them. Duplicating user-facing vocabulary is how the band table
+ * this replaced came to disagree with the server in the first place; a
+ * shared constant makes a third vocabulary impossible rather than merely
+ * detectable.
+ */
+export const BASIS_NOTE: Record<DomainTrustBasis, string | null> = {
   measured: null,
   partial: 'Based on part of the record so far.',
-  // The server no longer shows a rating word here, so this note no longer ends
-  // "shown at the neutral starting point": there is no starting point on
-  // display for it to explain, and saying there is would put the substituted 50
-  // back on the screen in words after the word itself stopped carrying it.
-  substituted: 'Not yet measured — no ratings have been recorded for this area.',
+  /**
+   * UNSCORED, and the sentence must not describe a value being stood in for.
+   *
+   * It used to read "…shown at the neutral starting point", which was true of
+   * the server that substituted a neutral 50 for a missing category and ran it
+   * through `presentationWord`. That substitution is gone (owner decision,
+   * 2026-09-22): `buildDomainTrust` now words a `substituted` domain
+   * "Not yet rated" and no number is produced at all. The old sentence was
+   * therefore printed directly under a word that contradicted it — the same
+   * second-client-vocabulary defect as the band table this file's header
+   * describes, in the same place, one mechanism change later.
+   */
+  substituted: 'Not yet measured — there’s no recorded history in this area yet.',
   not_applicable: null,
   unavailable: 'Trust records are unavailable right now.',
   client_derived: null,
@@ -340,17 +398,24 @@ export function deriveTrustView(p: TrustProjectionEnvelope): TrustView {
   // and zeroed stats are not the same fact as unknown stats anyway.
 
   const hasTrust = !!trust;
-  // `?? 'low'` used to stand here. A server that sends NO band is saying it has
-  // nothing to band, and 'low' is a band — the fallback turned an absence into
-  // the "Early days" sentence. Absent is now its own state.
-  const confidence: TrustConfidenceState = trust?.confidence ?? 'unknown';
-  const meta = CONFIDENCE_META[confidence];
   // A failed READ is the server's own word for it, not something the client
   // infers from an empty-looking payload.
   const degraded = trust?.degraded === true
     || trust?.confidenceBasis === 'unavailable'
     || (Array.isArray(trust?.domains) && trust!.domains!.length > 0
         && trust!.domains!.every((d) => d.basis === 'unavailable'));
+  // `?? 'low'` here used to turn the server's explicit "not measured" into a
+  // rendered band. null now survives to the view and picks its own copy, and
+  // WHICH copy is keyed off `degraded` rather than off `confidenceBasis` alone
+  // so that a server which reports the failure by its own `degraded` flag gets
+  // the unavailable wording too — "nobody measured you" and "we could not read
+  // the records" are different claims (TrustUnscored.component.test.tsx).
+  const confidence: TrustConfidence | null = trust?.confidence ?? null;
+  const meta = confidence
+    ? CONFIDENCE_META[confidence]
+    : degraded
+      ? CONFIDENCE_UNAVAILABLE
+      : CONFIDENCE_UNMEASURED;
   const hasScore = typeof trust?.score === 'number';
 
   // `specific()` used to turn a capability flag into the words "In good

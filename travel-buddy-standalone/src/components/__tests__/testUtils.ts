@@ -106,6 +106,8 @@ export interface PassportMockOverrides {
    * re-render loop inside passport.tsx.
    */
   lastLoadedAt?: MutableRefObject<number>;
+  /** §28.11 — the Memories read FAILED. Defaults to false (it was read). */
+  memoriesUnreadable?: boolean;
 }
 
 // eslint-disable-next-line @typescript-eslint/no-empty-function
@@ -117,6 +119,10 @@ export function makePassportMock(overrides: PassportMockOverrides = {}): Passpor
     postcards:    overrides.postcards    ?? [],
     stamps:       overrides.stamps       ?? [],
     memories:     overrides.memories     ?? [],
+    // §28.11. `false` is the honest default for a fixture: these memories WERE
+    // read. A test that wants the failed-read state must ask for it, because
+    // the two are different facts and must not share a default.
+    memoriesUnreadable: overrides.memoriesUnreadable ?? false,
     suggestions:  overrides.suggestions  ?? [],
     loading:      overrides.loading      ?? false,
     error:        overrides.error        ?? null,

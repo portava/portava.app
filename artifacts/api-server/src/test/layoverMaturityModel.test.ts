@@ -13,14 +13,17 @@
  * six rungs, different signals give different rungs, and the feature table
  * refuses at L0 what it permits at L1.
  *
- * It does NOT prove the product gates anything, because nothing calls this
- * module — `LayoverRecommendationService.ts` is where the gate would go and
- * this work does not own it. The last case in this file asserts that
- * divergence directly rather than leaving it as a claim: the engine's answer at
- * a generic airport is compared to the maturity policy's, and they disagree.
- * That is the L243 defect, expressed as a failing product expectation that is
- * PASSING as a recorded divergence — so the day someone wires the gate, the
- * case goes red and has to be updated deliberately.
+ * It does NOT prove the product gates anything, and the reason CHANGED on
+ * 2026-09-22. This paragraph used to say "nothing calls this module —
+ * `LayoverRecommendationService.ts` is where the gate would go and this work
+ * does not own it". The call exists now (`layoverMaturityGate.ts`, applied in
+ * `generateRecommendations`), and the divergence survives it for a different
+ * reason: the gate is behind `layover_maturity_gate_enabled`, seeded FALSE by
+ * 2977 and on in no database, so the ENGINE still says "yes, you can leave" at
+ * a generic airport while the POLICY still says no landside card. The last case
+ * asserts that disagreement directly. It goes red the day the flag is turned
+ * on, which is the owner decision, and `src/test/layoverMaturityGate.test.ts`
+ * is where the wiring itself is proved.
  *
  * ── POSITIVE CONTROLS ────────────────────────────────────────────────────────
  * A maturity ladder is trivially fakeable: return L0 always and every "L0
@@ -239,9 +242,11 @@ describe("§22 L243 — the gate is NOT wired, recorded as a live divergence", (
     assert.equal(featureAllowedAt("landside_recommendations", level), false);
 
     // …and the engine says yes anyway. THE TWO DISAGREE, and that disagreement
-    // is census L243. The day `LayoverRecommendationService` consults the gate,
-    // this assertion goes red and must be rewritten as agreement — which is the
-    // point of pinning it rather than describing it.
+    // is census L243. `LayoverRecommendationService` DOES consult the gate as of
+    // 2026-09-22 — the sentence that stood here said this case would go red on
+    // that day, and it did not, because the gate is seeded FALSE and therefore
+    // allows. What actually turns this red is `layover_maturity_gate_enabled`
+    // being switched on, and at that point it must be rewritten as agreement.
     // Captured BEFORE the assertion below, on purpose. `assert.equal` narrows
     // `generic.verdict` to the literal "yes", after which `verdict !== "no"` is
     // a comparison the COMPILER has already decided (TS2367) rather than one

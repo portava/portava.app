@@ -39,6 +39,7 @@
  */
 import { describe, it, before, after, beforeEach } from "node:test";
 import assert from "node:assert/strict";
+import { measured } from "./helpers/measuredScore.js";
 import http from "node:http";
 import express from "express";
 
@@ -292,7 +293,7 @@ describe("event_host_cancelled — DELETE /events/:id and POST /events/:id/cance
     const a = await recalculateTrustScore(f.client, HOST);
     const b = await recalculateTrustScore(f.client, HOST);
     assert.equal(a.overall_score, b.overall_score);
-    assert.ok(a.categories.host_quality < 50, "host_quality moved below neutral once");
+    assert.ok(measured(a.categories.host_quality) < 50, "host_quality moved below neutral once");
     assert.equal(f.tables.trust_profiles.length, 1);
   });
 
@@ -432,7 +433,7 @@ describe("event_positive_review / event_negative_review — POST /events/:id/rev
     assert.equal(pass.eventsSeen, 1);
     assert.equal(pass.usersRecalculated, 1);
     const p = await getTrustProfile(f.client, HOST);
-    assert.ok(p && p.categories.host_quality > 50);
+    assert.ok(p && measured(p.categories.host_quality) > 50);
     assert.equal(p!.evidenceCount, 1);
     const pass2 = await runTrustMaintenance(f.client);
     assert.equal(pass2.usersRecalculated, 0, "a second pass finds nobody dirty");
@@ -485,7 +486,7 @@ describe("content_removed — POST /admin/reports/:id/hide-content and DELETE /a
 
     const p = await getTrustProfile(f.client, AUTHOR);
     assert.ok(p, "confirmEvent recalculated → a profile exists");
-    assert.ok(p!.categories.content_quality < 50);
+    assert.ok(measured(p!.categories.content_quality) < 50);
   });
 
   it("processed twice — hide-content double-clicked — ONE event, ONE cap, one profile, same score", async () => {
@@ -575,7 +576,7 @@ describe("message_report_confirmed — POST /admin/reports/:id/resolve with uphe
     assert.equal(e.metadata.action, "warned sender");
     const cap = f.tables.trust_caps.find((c) => c.user_id === SENDER);
     assert.ok(cap); assert.equal(cap!.category, "communication"); assert.equal(cap!.ceiling_score, 45);
-    assert.ok((await getTrustProfile(f.client, SENDER))!.categories.communication <= 45);
+    assert.ok(measured((await getTrustProfile(f.client, SENDER))!.categories.communication) <= 45);
   });
 
   it("processed twice — the second resolve is refused by the report's status guard — ONE event", async () => {

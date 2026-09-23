@@ -69,6 +69,7 @@ import { createWallAnalyticsTransport } from '../src/features/wall/services/wall
 import { installPassportTelemetry } from '../src/features/passport/installPassportTelemetry';
 import { installInputTelemetry } from '../src/platform/input-assistance/services/installInputTelemetry';
 import { installInputPolicySync } from '../src/platform/input-assistance/services/installInputPolicySync';
+import { installLocalRecents } from '../src/platform/input-assistance/services/installLocalRecents';
 import { installInputTelemetryTransport } from '../src/platform/input-assistance/services/telemetryTransport';
 import { registerGeographicFields } from '../src/platform/input-assistance/geographic/geoFields';
 
@@ -181,6 +182,28 @@ function InputPolicySyncSetup() {
     const unsubscribe = installInputPolicySync();
     return () => unsubscribe();
   }, []);
+  return null;
+}
+
+/**
+ * §32 G199 — attach the DEVICE-LOCAL recents store once at boot.
+ *
+ * `localZeroState` replays this session's explicit accepts so a cold or offline
+ * open of a picker shows what the user already chose. Until this mount, that
+ * memory died with the process: an app RESTART had nothing local, which is the
+ * half census G199 was still open on.
+ *
+ * Mounted BELOW `InputPolicySyncSetup` on purpose. That one owns the account
+ * lifecycle and, on a sign-out or account switch, erases this store — so it
+ * must be listening before a stale device blob could be read back under the
+ * wrong viewer. Hydration is fail-soft: an unreadable or expired device blob
+ * restores nothing, and the app behaves exactly as it did before this line.
+ *
+ * The teardown UNBINDS without erasing: a root remount must not cost a user
+ * their recents. Erasing is the account change's job, and only its job.
+ */
+function LocalRecentsSetup() {
+  useEffect(() => installLocalRecents(), []);
   return null;
 }
 
@@ -343,6 +366,7 @@ export default function RootLayout() {
                       <CryptoSetup />
                       <PassportTelemetrySetup />
                       <InputPolicySyncSetup />
+                      <LocalRecentsSetup />
                       <InputTelemetrySetup />
                       <GeographicFieldsSetup />
                       <CompassFrontloadSetup />
