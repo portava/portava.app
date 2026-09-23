@@ -121,7 +121,7 @@ NOT-BUILT · **?** = CANNOT-VERIFY. Backend paths are relative to
 
 | id | Requirement | V | Evidence |
 | --- | --- | --- | --- |
-| W2 | Familiar low-friction feed for Posts, video, Postcards, Shared Moments, people, network activity | C | `routes/wall.ts:1016#opportunitiesLoaded` runs the Post spine plus postcard/video/shared-moment/opportunity loaders in one `Promise.all`; `components/WallObjectRenderer.tsx:90#WallObjectRenderer` dispatches all seven types. |
+| W2 | Familiar low-friction feed for Posts, video, Postcards, Shared Moments, people, network activity | C | `routes/wall.ts:1066#opportunitiesLoaded` runs the Post spine plus postcard/video/shared-moment/opportunity loaders in one `Promise.all`; `components/WallObjectRenderer.tsx:90#WallObjectRenderer` dispatches all seven types. |
 | W3 | Small persistent Live For You surface above the feed | C | `components/WallScreen.tsx:106#LiveForYouStrip` places `LiveForYouStrip` inside the list header, above the feed; `services/wall/LiveForYouService.ts:75#MAX_LIVE_FOR_YOU` `MAX_LIVE_FOR_YOU = 4`. |
 | W4 | Ranked random discovery without forcing chronological consumption | C | `services/wall/WallRankingService.ts:305#rankForYou` orders by composite score with a session-seeded tiebreak (`:289#seededKey`), never by time alone. |
 | W5 | Strict chronological Following mode | C | `services/wall/FollowingFeedService.ts:105#buildFollowing` `buildFollowing`; `:74#compareDesc` `compareDesc` sorts `publishedAt` DESC + `canonicalObjectId` DESC, no relevance term. |
@@ -146,7 +146,7 @@ NOT-BUILT · **?** = CANNOT-VERIFY. Backend paths are relative to
 | W14 | Hidden Gem kind, protection + disclosure policy satisfied | C | `LiveForYouService.ts:82` `PROTECTED_GEM_SENSITIVITY` excludes `protected` / `reveal_after_acceptance` from the strip. |
 | W15 | Social presence kind, viewer authorized for the disclosed granularity | C | `LiveForYouService.ts:79-81` `SOCIAL_PRESENCE_MIN = 2` k-anonymity floor; candidates built from followed people's public posts only. |
 | W16 | Buddy availability kind: availability active, service eligible, no precise private coordinate | C | `LiveForYouService.buildBuddyLiveCandidates` behind `isRentBuddyMasterEnabled` (`:57`), `BUDDY_AVAILABILITY_MS = 30 min` horizon (`:85`), city-area subject only. |
-| W17 | Trip signal kind, trip-scoped authorization | C | `routes/wall.ts:878#buildTripSignalLiveCandidates(sc, viewerId, viewer.viewerTripIds, placeRefs)` — the viewer's own accepted trips only, because `viewerTripIds` is filled at `routes/wall.ts:272#if (status == null`. *(Cited as line 704 until §9 — the call had moved 174 lines and the pointer landed on a blank line. Verdict unchanged; citation repaired and anchored.)* |
+| W17 | Trip signal kind, trip-scoped authorization | C | `routes/wall.ts:920#buildTripSignalLiveCandidates(sc, viewerId, viewer.viewerTripIds, placeRefs)` — the viewer's own accepted trips only, because `viewerTripIds` is filled at `routes/wall.ts:291#if (status == null`. *(Cited as line 704 until §9 — the call had moved 174 lines and the pointer landed on a blank line. Verdict unchanged; citation repaired and anchored.)* |
 | W18 | No generic city-wide firehose | C | `LiveForYouService.ts:71-77` `MAX_SUBJECT_PROBES = 16`, `MAX_PRODUCER_PLACES = 12`; candidates derive from the feed's own places (`routes/wall.ts:935-943`), never a city enumeration. |
 | W19 | No stale live labels | C | `lib/liveClaimRead.ts:23-25` drops expired snapshots; `LiveForYouService.ts:110` a `validUntil` in the past is treated as stale and dropped; client `hooks/useLiveForYou.ts` degrades on TTL. |
 | W20 | No exact private location leakage | C | `lib/wallProjection.ts:352-357` `LiveForYouItem` carries decision-exposure fields only — no coordinates, contributor ids or exact cohort counts. |
@@ -160,13 +160,13 @@ NOT-BUILT · **?** = CANNOT-VERIFY. Backend paths are relative to
 | --- | --- | --- | --- |
 | W24 | For You: ranked, non-chronological, optimizing social relevance and quality | C | `WallRankingService.ts:63` `FOR_YOU_SURFACE = "explore"`; `:301-320` ranks the full set then slices. |
 | W25 | Following: strict reverse chronology, no relevance reordering, only safety/visibility filters | C | `FollowingFeedService.ts:74-85`; the gate ran upstream (`WallProjectionService.projectObjects:325`), and `routes/wall.ts:868-869` explicitly refuses to apply the intent steer in Following. |
-| W26 | For You is the default exploratory experience | C | `routes/wall.ts:718` `mode: z.enum([...]).optional().default("for_you")`; client `components/WallScreen.tsx:62` `useState<WallMode>('for_you')`. |
+| W26 | For You is the default exploratory experience | C | `routes/wall.ts:934#mode: z.enum(["for_you", "following"]).optional().default("for_you"),`; client `components/WallScreen.tsx:62` `useState<WallMode>('for_you')`. *(The old pointer, line 718, was turned into a bare `}` by this lane's edits. Repaired by reading the claim and anchored; the default itself is byte-identical.)* |
 
 ### §6 Feed Object Model
 
 | id | Requirement | V | Evidence |
 | --- | --- | --- | --- |
-| W27 | The seven-member discriminated union, each member emittable and renderable | C | `lib/wallProjection.ts:511#WallProjection` the union; **all seven have a server producer** — `services/wall/WallProjectionService.ts:363#video`, `:373#social_update`, `:377#discovery`, `:388#social_post` (the `projectOne` switch), `WallCandidateLoaders.ts:335#loadPostcardCandidates`, `:630#loadSharedMomentCandidates`, `:915#loadContextualOpportunityCandidates` (wired at `routes/wall.ts:1030#loadContextualOpportunityCandidates`). Client: `WallObjectRenderer.tsx:90#WallObjectRenderer`, seven cases plus `default: return null`. |
+| W27 | The seven-member discriminated union, each member emittable and renderable | C | `lib/wallProjection.ts:511#WallProjection` the union; **all seven have a server producer** — `services/wall/WallProjectionService.ts:363#video`, `:373#social_update`, `:377#discovery`, `:388#social_post` (the `projectOne` switch), `WallCandidateLoaders.ts:367#loadPostcardCandidates`, `:663#loadSharedMomentCandidates`, `:951#loadContextualOpportunityCandidates` (wired at `routes/wall.ts:1080#loadContextualOpportunityCandidates`). Client: `WallObjectRenderer.tsx:90#WallObjectRenderer`, seven cases plus `default: return null`. |
 | W28 | `WallProjection` base carries the declared fields | C | `lib/wallProjection.ts:232-252` — projectionId, objectType, canonicalObjectId, actor, publishedAt, experienceAt, visibility, media, text, place, contextThread, actions, ranking. |
 
 ### §7 Social-First Composition Rules
@@ -271,7 +271,7 @@ NOT-BUILT · **?** = CANNOT-VERIFY. Backend paths are relative to
 
 | id | Requirement | V | Evidence |
 | --- | --- | --- | --- |
-| W72 | Lightweight top row of short-lived media from followed people; not the main Media system; must not compete with Live For You | C | `routes/wall.ts:1195-1221` `GET /wall/quick-media` → `loadQuickMediaItems` (24 h window, bounded by `MAX_QUICK_MEDIA_ITEMS`), fail-soft to an empty row; client `hooks/useQuickMedia.ts`, `components/QuickMediaRow.tsx` renders nothing when empty and opens the canonical media viewer (`WallScreen.tsx:102-104`). |
+| W72 | Lightweight top row of short-lived media from followed people; not the main Media system; must not compete with Live For You | C | `routes/wall.ts:1480#"/wall/quick-media",` → `routes/wall.ts:1498#row = await loadQuickMediaRow(sc, user.id, { limit });` (24 h window, bounded by `MAX_QUICK_MEDIA_ITEMS`), fail-soft to an empty row; client `hooks/useQuickMedia.ts`, `components/QuickMediaRow.tsx` renders nothing when empty and opens the canonical media viewer (`WallScreen.tsx:102-104`). *(§15: the route now calls `loadQuickMediaRow` rather than `loadQuickMediaItems`, which survives as a thin items-only wrapper at `services/wall/WallCandidateLoaders.ts:1220#export async function loadQuickMediaItems(`. The window, the cap, the fail-soft empty row and every gate are byte-identical; what is new is that the row can say WHY it is empty, so an outage stops reading as "nobody you follow posted".)* |
 
 ### §19 Rent a Buddy Integration
 
@@ -290,7 +290,7 @@ NOT-BUILT · **?** = CANNOT-VERIFY. Backend paths are relative to
 | --- | --- | --- | --- |
 | W79 | Gems can appear through social content, Postcards, discovery or Context Threads | C | Discovery reason path `routes/wall.ts:494-509`; thread path `ContextThreadService.readHiddenGemCandidate:558`; strip path `LiveForYouService.buildGemLiveCandidates`. |
 | W80 | Do not optimize Gem exposure for virality | C | Gem exposure is gated on disclosure policy and freshness, never on engagement counts; no gem term appears in `WallRankSignals`. |
-| W81 | Respect approximate/coarse location and intentional-open rules | C | `routes/wall.ts:504` admits only `public`/`approximate`; `LiveForYouService.ts:82` excludes `protected`/`reveal_after_acceptance`. |
+| W81 | Respect approximate/coarse location and intentional-open rules | C | `routes/wall.ts:717#if (pid && (sens === "public" || sens === "approximate"))` admits only `public`/`approximate`; `LiveForYouService.ts:82` excludes `protected`/`reveal_after_acceptance`. *(The old pointer, line 504, was turned into a bare `/**` by this lane's edits. The admission test is byte-identical — only the `hidden_gems` read above it gained `rowsOrThrow`, and an error there reaches the same catch and admits nothing.)* |
 | W82 | Current Gem state only when evidence is fresh and qualified | C | `LiveForYouService.ts:86` `GEM_FRESH_MS` (3 d) plus the resolved-fact `validUntil` drop. |
 | W83 | A social post may be associated with a Gem without revealing protected access info | C | The discovery reason names the gem relationship but the projection's `PublicPlaceRef` omits coordinates entirely for Wall place refs (`routes/wall.ts:475-483`, comment at `:480-482`). |
 
@@ -299,7 +299,7 @@ NOT-BUILT · **?** = CANNOT-VERIFY. Backend paths are relative to
 | id | Requirement | V | Evidence |
 | --- | --- | --- | --- |
 | W84 | No permanent giant Compass panel; an action or interpretation only | C | Compass exists solely as one optional action (`WallProjectionService.ts:238-245`) and one Context Thread kind (`ContextThreadService.ts:854`). No Wall component renders a Compass panel. |
-| W85 | Ask Compass from a place-linked post | C | `services/wall/WallProjectionService.ts:275#if (viewer.compassHandoffEnabled) {` — added only when `c.place` exists and `compassHandoffEnabled` (flag read `routes/wall.ts:940#isFlagEnabled(sc, "wall_compass_handoff_enabled")`). |
+| W85 | Ask Compass from a place-linked post | C | `services/wall/WallProjectionService.ts:275#if (viewer.compassHandoffEnabled) {` — added only when `c.place` exists and `compassHandoffEnabled` (flag read `routes/wall.ts:982#isFlagEnabled(sc, "wall_compass_handoff_enabled")`). |
 | W86 | Interpret a cluster of social signals only when evidence and privacy rules allow | C | `services/wall/ContextThreadService.ts:980#buildCompassClusterCandidate` turns Compass's per-object prompt into an interpretation over a SET, and enforces the spec's two conditions literally. EVIDENCE: a member must pass `shouldAttachContextThread` ON ITS OWN (`:110#shouldAttachContextThread`), with `visualOverload`/`duplicatesLiveStrip` neutralised because those are presentation constraints, not evidence ones; two or more, from DISTINCT kinds, so one system talking twice is not a cluster. PRIVACY: a member carrying `sensitiveDisclosure`, or one the viewer is not authorized for, is excluded BEFORE it is counted, and the label names only the KIND of each signal, never its content — the interpretation discloses strictly less than the threads it is built from. It never asserts: truth class is `inferred` and confidence is the WEAKEST member's. Wired at `:1094#buildCompassClusterCandidate`; 19 tests in `wallCompassCluster.test.ts`. **Moved W→C in the §6 recensus.** |
 | W87 | Never present inference as verified fact | C | `services/wallCompass.ts:12,44` phrases a QUESTION and hands off ids only. |
 | W88 | Compass references canonical objects in its responses/actions | C | `services/wallCompass.ts:44-73` — ids-only handoff into the canonical Compass surface; a missing route degrades rather than crashing (`:63-73`). |
@@ -326,7 +326,7 @@ NOT-BUILT · **?** = CANNOT-VERIFY. Backend paths are relative to
 
 | id | Requirement | V | Evidence |
 | --- | --- | --- | --- |
-| W97 | canonical → projection → eligibility/privacy/moderation → rank or sort → diversity/dedup → API → UI | C | `routes/wall.ts`: loaders (`routes/wall.ts:1016#const [postcardsLoaded, mediaLoaded, momentsLoaded, opportunitiesLoaded] = await Promise.all([`) → `projectObjects` (`routes/wall.ts:1076#projections = await projectObjects(sc, steered, projectViewer);`) → mode order (`routes/wall.ts:1088#const built = buildFollowing(projections, {` / `routes/wall.ts:1100#const built = await rankForYou(sc, projections, rankViewer, {`) → `applyFeedDiversity` (`routes/wall.ts:1118#const diversified = applyFeedDiversity(items, DEFAULT_FEED_DIVERSITY_POLICY);`) → context threads (`routes/wall.ts:1163#items = await attachContextThreads(sc, items, projectViewer, {`) → `WallResponse` (`routes/wall.ts:1173#const body: WallResponse = {`). *(The whole chain was stale by §9 and one pointer landed on `}),`. Re-read end to end at this tree; the order is unchanged and every step is now anchored.)* |
+| W97 | canonical → projection → eligibility/privacy/moderation → rank or sort → diversity/dedup → API → UI | C | `routes/wall.ts`: loaders (`routes/wall.ts:1066#const [postcardsLoaded, mediaLoaded, momentsLoaded, opportunitiesLoaded] = await Promise.all([`) → `projectObjects` (`routes/wall.ts:1138#projections = await projectObjects(sc, steered, projectViewer);`) → mode order (`routes/wall.ts:1151#const built = buildFollowing(projections, {` / `routes/wall.ts:1169#const built = await rankForYou(sc, projections, rankViewer, {`) → `applyFeedDiversity` (`routes/wall.ts:1187#const diversified = applyFeedDiversity(items, DEFAULT_FEED_DIVERSITY_POLICY);`) → context threads (`routes/wall.ts:1234#items = await attachContextThreads(sc, items, projectViewer, {`) → `WallResponse` (`routes/wall.ts:1244#const body: WallResponse = {`). *(The whole chain was stale by §9 and one pointer landed on `}),`. Re-read end to end at this tree; the order is unchanged and every step is now anchored.)* |
 
 ### §25 Service Boundaries
 
@@ -343,18 +343,18 @@ NOT-BUILT · **?** = CANNOT-VERIFY. Backend paths are relative to
 
 | id | Requirement | V | Evidence |
 | --- | --- | --- | --- |
-| W104 | `GET /wall?mode=&cursor=&session_intent=` | C | `routes/wall.ts:741`, schema `:717-722`. |
-| W105 | `GET /wall/live?limit=4` | C | `routes/wall.ts:993`, limit clamped to `MAX_LIVE_FOR_YOU` at `:1006-1009`. |
-| W106 | `POST /wall/session-intent { text }` | C | `routes/wall.ts:1046`, schema `:724`. |
-| W107 | `DELETE /wall/session-intent` | C | `routes/wall.ts:1085`. |
-| W108 | `POST /wall/impression` | C | `routes/wall.ts:1103`, schema `:726-730`. |
-| W109 | `POST /wall/action` | C | `routes/wall.ts:1154`, schema `:732-737`. |
+| W104 | `GET /wall?mode=&cursor=&session_intent=` | C | `routes/wall.ts:958#"/wall",`, schema `routes/wall.ts:933#const wallQuerySchema = z.object({`. |
+| W105 | `GET /wall/live?limit=4` | C | `routes/wall.ts:1262#"/wall/live",`, limit clamped to `MAX_LIVE_FOR_YOU` at `routes/wall.ts:1276#? Math.max(1, Math.min(Math.trunc(limitRaw), MAX_LIVE_FOR_YOU))`. *(The route's BODY changed in this lane — it now reports `degraded: ["live"]` when the strip's build failed — but the request shape and the clamp are byte-identical, and that is what this row grades.)* |
+| W106 | `POST /wall/session-intent { text }` | C | `routes/wall.ts:1331#"/wall/session-intent",`, schema `routes/wall.ts:940#const sessionIntentSchema = z.object({ text: z.string().min(1).max(120) });`. |
+| W107 | `DELETE /wall/session-intent` | C | `routes/wall.ts:1369#router.delete(` — the only `router.delete` in the file. *(The old pointer, line 1085, was turned into a bare `]);` by this lane's edits.)* |
+| W108 | `POST /wall/impression` | C | `routes/wall.ts:1388#"/wall/impression",`, schema `routes/wall.ts:942#const impressionSchema = z.object({`. |
+| W109 | `POST /wall/action` | C | `routes/wall.ts:1439#"/wall/action",`, schema `routes/wall.ts:948#const actionSchema = z.object({`. |
 
 ### §27 Response Contract
 
 | id | Requirement | V | Evidence |
 | --- | --- | --- | --- |
-| W110 | `WallResponse` = mode, sessionIntent, liveForYou, items, nextCursor, caughtUp, generatedAt | C | `lib/wallProjection.ts:423-433`; assembled at `routes/wall.ts:978-987`. |
+| W110 | `WallResponse` = mode, sessionIntent, liveForYou, items, nextCursor, caughtUp, generatedAt | C | **Re-measured at this head (§15), because this lane edits the contract itself.** All seven declared members are present, in the declared order, with unchanged types: `lib/wallProjection.ts:697#export interface WallResponse {` through `lib/wallProjection.ts:720#generatedAt: string;`, assembled at `routes/wall.ts:1244#const body: WallResponse = {`. **Counted: 7 required members before, 7 required + 1 optional after** — none removed, renamed or retyped. The one addition is `lib/wallProjection.ts:719#degraded?: WallLane[];`, emitted only when a lane's canonical read FAILED (`routes/wall.ts:1252#degraded: degradedLanes.length > 0 ? degradedLanes : undefined,`), so a client that ignores it receives the seven-member envelope unchanged. **C stands, and the ground is stated so it can be disputed:** this row grades whether the declared contract is built, not whether the envelope is sealed against optional additions. WHAT WOULD MOVE IT: any of the seven going missing or changing type, or `degraded` becoming required. One member's MEANING is narrowed, not changed — `caughtUp` can no longer be true while a lane in `degraded` could have carried followed content (`routes/wall.ts:1166#if (degradedLanes.length > 0) caughtUp = false;`). That is strictly more honest than what §27 previously got, and §15 records the defect it closes. |
 
 ### §28 Cursor and Pagination Rules
 
@@ -364,7 +364,7 @@ NOT-BUILT · **?** = CANNOT-VERIFY. Backend paths are relative to
 | W112 | For You cursor carries rank session/version so page 2 does not reshuffle page 1 | C | `WallRankingService.ForYouCursor:104-110` carries session + version + snapshotAt; `:288-292` scores AT the snapshot instant, not "now" — the header at `:39-47` explains why both jobs are required. |
 | W113 | Never duplicate canonicalObjectId in one active feed session | C | `WallRankingService.ts:294-300` and `FollowingFeedService.ts:111-118` both dedupe; `WallProjectionService.dedupeCandidates` collapses multi-loader collisions upstream. |
 | W114 | Feed refresh may start a new rank session | C | `WallRankingService.ts:275-278` — an absent or version-mismatched cursor calls `newRankSession()`. |
-| W115 | Live For You refreshes independently from feed pagination | C | Separate endpoint `GET /wall/live` (`routes/wall.ts:993`) and a separate client hook (`hooks/useLiveForYou.ts`) with its own TTL. |
+| W115 | Live For You refreshes independently from feed pagination | C | Separate endpoint `GET /wall/live` (`routes/wall.ts:1262#"/wall/live",`) and a separate client hook (`hooks/useLiveForYou.ts`) with its own TTL. |
 
 ### §29 Client Architecture
 
@@ -422,7 +422,7 @@ NOT-BUILT · **?** = CANNOT-VERIFY. Backend paths are relative to
 | W145 | Cached Wall first paint: immediate skeleton/content where available | C | `services/wallPrefetch.ts` first-page cache seeds the initial paint; `components/WallFeed.tsx` renders a loading state rather than a blank screen. |
 | W146 | First server page < 500 ms backend | **?** | **The 500 ms target is still not measured against Postgres. What was previously unmeasured and now is not: whether the page's STRUCTURE can meet it at all.** The pre-existing bound was right about its own limits — `test/wallPerformance.test.ts:365#result.p50 <= FIRST_PAGE_P50_CEILING_MS` and `artifacts/api-server/src/test/wallPerformance.test.ts:370#result.p95 <= FIRST_PAGE_P95_CEILING_MS` run against a zero-latency in-memory fake (`artifacts/api-server/src/test/wallPerformance.test.ts:234#function corpusClient()`), so they bound OUR CPU work and the read count, and cannot fail because the page got slow against a database. That bound has NOT been relabelled. What is new is a latency MODEL that can: every fake query is given a known artificial delay and the first page is timed at two non-zero delays, so the constant per-timer overhead cancels and the difference is the number of database round trips the page WAITS FOR IN SINGLE FILE (`artifacts/api-server/src/test/wallPerformance.test.ts:526#const depth = (atHigh - atLow) / (SLOPE_HIGH_MS - SLOPE_LOW_MS);`). **Measured: 92–93 serialized round trips, reproducibly — across three full 89-file suite runs and three runs of the file alone**, ratcheted at `artifacts/api-server/src/test/wallPerformance.test.ts:489#const ROUND_TRIP_DEPTH_RATCHET = 110;`, with the same run also stated in milliseconds at a 4 ms modelled round trip (`artifacts/api-server/src/test/wallPerformance.test.ts:563#modelledMs <= FIRST_PAGE_TARGET_MS` — ~380 ms against the spec's 500). The millisecond figure is DERIVED from the slope and the CPU baseline, not read off a stopwatch: an absolute timing at 4 ms/round-trip was measured to read 600 ms inside the full suite purely because a busy runner stretched each 4 ms timer to ~6.8 ms, which is a property of the runner and not of the Wall. The slope is taken at 8 ms and 16 ms so that overhead cancels. **That number is the finding.** At depth ~92 the first page clears 500 ms only if the average round trip lands inside ~5.4 ms: achievable in-region, not achievable across a region boundary or through a saturated pooler. The 343-read ratchet says the page does a lot of work; this says how much of it is serialized, which is the half that becomes milliseconds. **WHAT WOULD TURN THIS RED (or green):** the SAME harness pointed at a real Postgres — `_setTestClient` replaced by a supabase-js client against a local `supabase start` stack or the staging project, seeded with the same 150-post corpus, Wall flags on, p50/p95 of `GET /wall?mode=for_you` read off the wire. That needs a database in CI, which this tree does not have; it needs no new Wall code. Anyone who runs it should move this row and keep the depth ratchet, which is what stops the answer rotting between runs. |
 | W147 | Mode switch reuses a cached mode if fresh, else progressive load | C | Per-mode cache key (`wallPrefetch.ts:58-60`) plus `useWallFeed`'s generation-guarded refetch on mode change. |
-| W148 | Live strip refreshes independently and never blocks feed render | C | Separate hook and endpoint; `routes/wall.ts:635-651` `buildLiveStrip` defers the entire candidate assembly behind a thunk so an OFF flag costs nothing, and any failure degrades to `[]`. |
+| W148 | Live strip refreshes independently and never blocks feed render | C | Separate hook and endpoint; `routes/wall.ts:848#async function buildLiveStrip(` still defers the entire candidate assembly behind a thunk, so an OFF flag costs nothing (`routes/wall.ts:856#if (!liveEnabled) return { items: [], failed: false };` — the thunk is never called) and any failure degrades to an empty strip (`routes/wall.ts:864#logger.warn({ err }, "wall: live strip build failed — degrading to empty");`). *(§15: the helper's return type became `{ items, failed }`. Measured: the ITEMS half is unchanged in both branches — empty on an OFF flag, empty on a throw — so the strip still cannot block or break the feed render. A flag that is off is deliberately NOT reported as a failure.)* |
 | W149 | 60 fps scroll on supported devices | **?** | **Frame time needs a device and nothing here claims otherwise. One real gap in the surrounding evidence is closed.** `components/WallFeed.tsx:151` declares four windowing numbers, and until now only ONE of them was observable from a test: `initialNumToRender` decides the first mount, which `components/__tests__/WallFeed.renderCost.component.test.tsx` bounds. The other three — `maxToRenderPerBatch`, `updateCellsBatchingPeriod`, `windowSize` — only act while SCROLLING, and RN's `VirtualizedList` never scrolls under jest because no layout events arrive. **Measured: widening `windowSize` from 7 to 21 — which triples the cells retained around the viewport on a device — changed no test in this repository.** It now fails `travel-buddy-standalone/src/features/wall/components/__tests__/WallFeed.renderCost.component.test.tsx:191#the declared scroll-windowing budget has not been silently widened`. That is a budget pin, not a frame-rate measurement. **WHAT WOULD TURN THIS RED:** a frame-time capture on a named device — a Perfetto/`systrace` trace or Flipper's frame graph on a mid-tier Android (the supported floor, e.g. a Pixel 6a) scrolling a 60-item For You feed with video, reporting the share of frames over 16.7 ms. That needs hardware or an instrumented emulator and a person to drive it; it needs no Wall code. |
 | W150 | Video lazy load, only near viewport | C | `components/objects/VideoWallItem.tsx:53-58` lazy-mounts the player only once the item enters the viewport. |
 | W151 | Images: responsive variants + CDN/cache | C | `routes/posts.ts` builds a `feedUrl` feed-sized derivative; client renders through `CachedImage` → `expo-image` disk/memory cache, warmed by `prefetchWallMedia`. |
@@ -431,11 +431,11 @@ NOT-BUILT · **?** = CANNOT-VERIFY. Backend paths are relative to
 
 | id | Requirement | V | Evidence |
 | --- | --- | --- | --- |
-| W152 | Live Intelligence unavailable → hide/degrade strip, social feed normal | C | `routes/wall.ts:642-650` catches and returns `[]`. Test: `test/wallRouteDegradation.test.ts`. |
+| W152 | Live Intelligence unavailable → hide/degrade strip, social feed normal | C | `routes/wall.ts:864#logger.warn({ err }, "wall: live strip build failed — degrading to empty");` catches and returns an empty strip; the feed is assembled independently of it. Tests: `test/wallRouteDegradation.test.ts`, `test/wallFailureVsEmpty.test.ts`. *(§15: the failure is now also NAMED — `routes/wall.ts:1218#if (liveStrip.failed) degradedLanes.push("live");`. The strip still degrades to nothing and the social feed is still normal, which is the whole of what this row asserts; nothing here claimed the four outcomes were indistinguishable, so naming one contradicts nothing.)* |
 | W153 | Ranking unavailable → fallback eligible recent/relevance-safe ordering | C | `WallRankingService.ts:322-327` — on a ranker throw every item scores 0 and the stable tiebreak preserves input order. |
-| W154 | Place resolver unavailable → render the social object without place intelligence | C | `routes/wall.ts:486-488` — a failed `places` read logs and leaves `placeRef` null; the object still projects. |
+| W154 | Place resolver unavailable → render the social object without place intelligence | C | `routes/wall.ts:698#logger.warn({ err }, "wall: place batch read failed");` — a failed `places` read logs and falls through with `placeById` empty, so `placeRef` stays null and the object still projects. *(§15, and this row is the one the change most nearly touched: the read is now routed through `routes/wall.ts:152#function rowsOrThrow(`, so a PostgREST `{ error }` envelope RAISES instead of silently resolving to `[]`. Measured: the raise lands in the catch above, which returns nothing and rethrows nothing — the resulting state, an empty `placeById` and a projecting object, is identical to the state the swallowed error produced. What changed is that the failure is now logged rather than invisible.)* |
 | W155 | Compass unavailable → remove the action, do not block the post | C | The action is added only behind its flag (`services/wall/WallProjectionService.ts:275#if (viewer.compassHandoffEnabled) {`); the client tolerates a missing route (`services/wallCompass.ts:63-73`). |
-| W156 | RAB unavailable → remove Buddy context only | C | `routes/wall.ts:855-860` — the opportunity loader is skipped or caught to an empty load; `ContextThreadService.readBuddyCandidate` is fail-closed on both flags. |
+| W156 | RAB unavailable → remove Buddy context only | C | `routes/wall.ts:1079#mode === "for_you" && rabEnabled` — the opportunity loader is skipped outright when RAB is off, and caught to an empty load when it throws (`routes/wall.ts:1082#return failedLoad();`); `ContextThreadService.readBuddyCandidate` is fail-closed on both flags. *(§15: `failedLoad()` is `emptyLoad()` plus a `failed: true` marker — `routes/wall.ts:1065#const failedLoad = (): LoadedWallCandidates => ({ ...emptyLoad(), failed: true });` — so the CANDIDATE set the feed receives is byte-identical to the old empty load. Only Buddy context is removed, and only Buddy context was ever removed.)* |
 | W157 | Media processing pending → placeholder without breaking the feed | C | `DisplayMedia.processing` (`lib/wallProjection.ts:111`); `VideoWallItem.tsx:69` falls back to the poster when `media?.processing`. |
 | W158 | Network offline → cached social feed, no fake live states | C | `useWallFeed.ts:168-186` serves the cached page labelled stale; nothing fabricates a live item (the strip is server-only and simply absent). |
 
@@ -469,8 +469,8 @@ NOT-BUILT · **?** = CANNOT-VERIFY. Backend paths are relative to
 
 | id | Requirement | V | Evidence |
 | --- | --- | --- | --- |
-| W175 | Server-side eligibility is authoritative; never rely on client hiding | C | The gate runs in `WallProjectionService.projectObjects` before anything is serialized; every route short-circuits on `wall_enabled` before any canonical read (`routes/wall.ts:748,1000,1053,1092,1110,1161,1202`), and `lib/featureFlags.isFlagEnabled` returns false on error. |
-| W176 | Rate-limit impression/action mutation endpoints | C | `routes/wall.ts:115#export const WALL_RATE_LIMITS = {`, applied at `routes/wall.ts:1263#const { id, limit: rlLimit, windowMs } = WALL_RATE_LIMITS.sessionIntent;`, `routes/wall.ts:1317#const { id, limit: rlLimit, windowMs } = WALL_RATE_LIMITS.impression;`, `routes/wall.ts:1366#const { id, limit: rlLimit, windowMs } = WALL_RATE_LIMITS.action;` and `routes/wall.ts:1486#const { id, limit: rlLimit, windowMs } = WALL_RATE_LIMITS.revalidate;`. Test: `test/wallRateLimits.test.ts`. *(Four sites, not three — the revalidate endpoint acquired one after this row was written. All four pointers were stale by §9; verdict unchanged and strengthened.)* |
+| W175 | Server-side eligibility is authoritative; never rely on client hiding | C | The gate runs in `WallProjectionService.projectObjects` before anything is serialized; every route short-circuits on `wall_enabled` before any canonical read — **counted at this head: 8 route registrations in `routes/wall.ts`, 8 `wall_enabled` guards, each the seventh line of its own handler** (`routes/wall.ts:964#if (!(await isFlagEnabled(sc, "wall_enabled"))) {` and the same shape at `:1268`, `:1337`, `:1376`, `:1394`, `:1445`, `:1486`, `:1571`) — and `lib/featureFlags.isFlagEnabled` returns false on error. *(The row previously listed SEVEN line numbers, all of them stale; the eighth guard predates this lane. Re-counted in §15, which changes this file: 8 = 8 before and after.)* |
+| W176 | Rate-limit impression/action mutation endpoints | C | `routes/wall.ts:117#export const WALL_RATE_LIMITS = {`, applied at `routes/wall.ts:1352#const { id, limit: rlLimit, windowMs } = WALL_RATE_LIMITS.sessionIntent;`, `routes/wall.ts:1406#const { id, limit: rlLimit, windowMs } = WALL_RATE_LIMITS.impression;`, `routes/wall.ts:1455#const { id, limit: rlLimit, windowMs } = WALL_RATE_LIMITS.action;` and `routes/wall.ts:1581#const { id, limit: rlLimit, windowMs } = WALL_RATE_LIMITS.revalidate;`. Test: `test/wallRateLimits.test.ts`. *(Four sites, not three — the revalidate endpoint acquired one after this row was written. All four pointers were stale by §9; verdict unchanged and strengthened.)* |
 | W177 | Prevent ranking manipulation through keyword stuffing or repeated self-engagement | C | No free-text term feeds the ranker (`WallRankSignals`, `WallRankingService.ts:69-88`, is tags/category/counts only), so keyword stuffing has no lever; and Wall telemetry rows are written with `outcome: "analytics"` precisely so they "never collide with the impression-finding query" (`routes/wall.ts:138-166`), so flooding your own object through `POST /wall/impression` cannot move ranking. Rate limits bound the flood regardless. |
 | W178 | Paid/promoted content, if introduced later, is explicitly labeled and separated from factual live confidence | C | The premise of the old N verdict was wrong, not just its score. `sponsored` and `imported_owned` are two of the eight members of `lib/intelContracts.ts:44#SOURCE_CLASSES`, are accepted by the live read path, and already reach the Wall's producers — so the rule was not holding vacuously, it was holding HALFWAY. **Separated, yes**: `lib/wallProjection.ts:202#deriveWallTruthClass` maps both to `inferred`, which is in `NON_OBSERVATION_TRUTH_CLASSES`, so no coverage can promote a paid claim to an observation. **Labelled, no**: nothing said the word. Now: `lib/wallProjection.ts:257#PROMOTIONAL_SOURCE_CLASSES` and `:289#promotionLabelFor` (the canonical `SOURCE_CLASS_LABELS` strings, agreement pinned by test), derived from the SAME `sourceClass` expression as the truth class at `services/wall/LiveForYouService.ts:313#promotionLabelFor` and `ContextThreadService.ts:356#promotionLabelFor`, so label and downgrade cannot disagree. Rendered by `components/LiveForYouStrip.tsx:128#cardPromotion` and `components/ContextThreadView.tsx:125#wall-context-promotion-`, in each case BEFORE the state word and inside the accessibility label. The set is deliberately narrower than `NON_INDEPENDENT_SOURCE_CLASSES`: an `official_signed` transit alert is self-asserted but is not paid, and calling it Sponsored would be false. **Moved N→C in the §6 recensus.** |
 | W179 | Moderation takedowns propagate to cached Wall projections | C | Server-side propagation was always real (`WallProjectionService.ts:202#passesEligibility` drops `removed`/`takedown`/`moderated` on every request). The client cache now propagates too: `services/wallPrefetch.ts:211#revalidateFirstPageCache` re-asks the SERVER which cached ids the viewer may still be shown (`services/wallApi.ts:328#revalidateCachedObjects`) and drops the rest from both the screen and the persisted page. Nothing client-side re-derives eligibility — there is no client moderation predicate to drift. Wired on the one path that could paint a taken-down object, the offline first open, at `hooks/useWallFeed.ts:191#revalidateFirstPageCache`; an unreachable server returns null and the cache is left intact, because offline is not a takedown. **Moved W→C in the §6 recensus.** |
@@ -513,13 +513,13 @@ NOT-BUILT · **?** = CANNOT-VERIFY. Backend paths are relative to
 | W201 | Postcards and videos feel native and distinct | C | Distinct renderers, distinct server producers; `components/__tests__/WallScreen.objectTypes.component.test.tsx`. |
 | W202 | Contextual intelligence appears only when useful | C | The §9 gate defaults false and at most one thread attaches per object. |
 | W203 | A social object can lead to Map/Trip/Compass/Gem/Buddy without forcing the transition | C | Handoffs were always additive and never auto-navigating; the W verdict was consequential on W7, and W7 has closed — `join`, `message` and a persisting `save` all have producers, so the destination SET the spec names is now complete. **Moved W→C in the §6 recensus, on W7's evidence.** |
-| W204 | If all intelligence services fail, a safe functional social feed remains | C | Every subsystem call in `routes/wall.ts` is individually wrapped; `test/wallRouteDegradation.test.ts`. |
+| W204 | If all intelligence services fail, a safe functional social feed remains | C | **Re-measured at this head (§15), because this lane changed what "wrapped" means.** Every subsystem call in `routes/wall.ts` is still individually wrapped, and the wrapping is now REACHABLE: supabase-js resolves a rejected query with `{ data: null, error }` rather than throwing, so a read written `const { data } = await q` never entered the `catch` written for it. `routes/wall.ts:152#function rowsOrThrow(` and `services/wall/WallCandidateLoaders.ts:150#function rowsOrThrow(` convert that envelope into a throw. **Counted: 15 `rowsOrThrow` call sites (5 in `routes/wall.ts`, 10 in `services/wall/WallCandidateLoaders.ts`); all 15 sit inside a `try`; all 15 governing `catch` blocks log and then either return a degraded value or fall through to an empty accumulator — ZERO rethrow, so no new path can 500.** The route's own `/wall/live` thunk is the one deliberate new throw (`routes/wall.ts:1303#throw new Error("wall/live: the strip's place source could not be read");`) and it is raised inside `buildLiveStrip`'s `try`, which is why that route still answers 200. Tests: `test/wallRouteDegradation.test.ts`, `test/wallFailureVsEmpty.test.ts`. |
 
 ### §41 End-to-End Wall Loop
 
 | id | Requirement | V | Evidence |
 | --- | --- | --- | --- |
-| W205 | open → live → feed → object → engage → context → handoff → real-world action → create → graph/memory → future relevance | C | The return leg is closed, and closed through a DEPLOYED store. `POST /wall/action { action: "hide" }` had always written `rank_events` (surface='wall', event_type=ranking_item_hidden) and nothing had ever read it, so a "not interested" lived in React state and came back on the next launch. `routes/wall.ts:414#loadViewerSuppressions` reads it back and removes the object for that viewer. Deliberately NOT closed through `wall_telemetry_events` (migration 2308), which is not applied in production — a loop closed through an undeployed table is closed on paper. It is a VISIBILITY filter, not a ranking term, which is why it holds identically in Following where relevance reordering is forbidden. **Moved W→C in the §6 recensus.** |
+| W205 | open → live → feed → object → engage → context → handoff → real-world action → create → graph/memory → future relevance | C | The return leg is closed, and closed through a DEPLOYED store. `POST /wall/action { action: "hide" }` had always written `rank_events` (surface='wall', event_type=ranking_item_hidden) and nothing had ever read it, so a "not interested" lived in React state and came back on the next launch. `routes/wall.ts:433#loadViewerSuppressions` reads it back and removes the object for that viewer. Deliberately NOT closed through `wall_telemetry_events` (migration 2308), which is not applied in production — a loop closed through an undeployed table is closed on paper. It is a VISIBILITY filter, not a ranking term, which is why it holds identically in Following where relevance reordering is forbidden. **Moved W→C in the §6 recensus.** |
 
 ---
 
@@ -623,7 +623,7 @@ code and working product.
 
 Censused state is `main`. One open PR touches the Wall:
 
-- **#459 — "Make a failed Wall read distinguishable from an empty Wall feed."** It adds `rowsOrThrow` so PostgREST errors reach the `catch` blocks that already exist, records `followGraphFailed` / `spineFailed` as facts, stops inferring `followingReachedEnd` from an unreadable fetch, and adds an optional `WallResponse.degraded?: WallLane[]`. This does **not** move any verdict in this census — §34's fail-soft behaviour is already correct and §27's `caughtUp` is already guarded by `reachedEnd` (`FollowingFeedService.ts:133`) — but it closes a real honesty gap on the *cause* of an empty feed. Nothing in this census depends on it; nothing in it contradicts a verdict here.
+- **#459 — "Make a failed Wall read distinguishable from an empty Wall feed." — NO LONGER OPEN: it is IN the tree this document is now read against.** It adds `rowsOrThrow` so PostgREST errors reach the `catch` blocks that already exist, records `spineFailed` (beside `main`'s own `followGraphKnown`) as a fact, stops inferring `followingReachedEnd` from an unreadable fetch, and adds an optional `WallResponse.degraded?: WallLane[]`. **§15 re-measured it rather than inheriting this paragraph, and confirms the conclusion while CORRECTING one of its two reasons.** The §34 half was right. The §27 half was WRONG as written: `caughtUp` was not "already guarded by `reachedEnd`" for this case, because `FollowingFeedService.ts:133#const reachedEnd = opts.reachedEnd ?? true;` reads an ABSENT `reachedEnd` as *the caller fetched the whole set* — and the old failure path returned exactly that absence, so an unreadable spine produced `caughtUp: true`. The guard covered a short fetch; it never covered a fetch that did not happen. No verdict moves either way, but the reason it does not move is not the one this paragraph gave, and a forecast that is right for the wrong reason is the kind that gets inherited. **Read §15, not this bullet, for what was measured.**
 
 ---
 
@@ -1585,3 +1585,118 @@ is empty and marked unfilled. **All four stay `?`.**
 
 200 + 1 + 0 + 4 = 205. The four that remain are the four this repository cannot answer by itself,
 and each now names the person, the device or the study that would answer it.
+
+---
+
+## §15 — The failure-vs-empty re-measurement, 2026-09-22: three counted files, eleven rows re-read, no verdict moved, and one forecast corrected
+
+This census was reported STALE by `check:census-freshness` against three counted files,
+all of them changed by this lane and none of them changed on `main` since the declared
+`head_commit` (`git diff 1fe72289b origin/main` over all three is **empty**, so every
+line below is this branch's doing and nobody else's):
+
+| file | diff since `1fe72289b` | lines of this document that name it |
+| --- | --- | --- |
+| `artifacts/api-server/src/routes/wall.ts` | +134 / −39 | 67 |
+| `artifacts/api-server/src/services/wall/WallCandidateLoaders.ts` | +135 / −67 | 10 |
+| `artifacts/api-server/src/lib/wallProjection.ts` | +51 / −1 | 14 |
+
+(Counted with `git diff --numstat` and a line scan of this file, after the edits §15.2
+made. The third column counts LINES that name the file — verdict rows, re-census tables
+and prose — not distinct requirements.)
+
+### 15.1 What the lane actually changed, stated so the rest can be measured against it
+
+supabase-js **resolves** a rejected query with `{ data: null, error }` — it does not
+throw. Every Wall read written `const { data } = await q` therefore discarded the error,
+never entered the `catch` written to handle it, logged nothing, and yielded `[]`. On this
+surface that `[]` was not merely a quiet feed: `loadCandidates` derived
+`followingReachedEnd` from `rows.length < CANDIDATE_FETCH`, so a permission error, a
+dropped column or an RLS change satisfied `0 < 150` and the response asserted
+`caughtUp: true` — an outage wearing the "you're all caught up" badge. The lane routes
+those envelopes through `routes/wall.ts:152#function rowsOrThrow(` and
+`services/wall/WallCandidateLoaders.ts:150#function rowsOrThrow(`, records which lanes
+failed, and reports them as an optional `lib/wallProjection.ts:719#degraded?: WallLane[];`.
+
+### 15.2 The measurements, one per row that could have moved
+
+Each number below was taken at this head and, where a comparison is the point, at
+`origin/main` as well. None is an argument from the topic of the change.
+
+1. **W204 — "if all intelligence services fail, a safe functional social feed remains."**
+   The hazard is the exact inverse of the lane's intent: making reads throw could make a
+   degrading path into a 500. **Counted: 15 `rowsOrThrow` call sites** — 5 in
+   `routes/wall.ts` (lines 616, 634, 669, 682, 707), 10 in `WallCandidateLoaders.ts`
+   (172, 199, 240, 397, 433, 450, 676, 710, 1295, 1313). **All 15 sit inside a `try`.**
+   All 15 governing `catch` blocks were opened and read: each logs and then either
+   returns a degraded value or falls through to an empty accumulator; **zero rethrow.**
+   The one deliberate new throw, `routes/wall.ts:1303#throw new Error("wall/live: the strip's place source could not be read");`,
+   is raised inside `buildLiveStrip`'s own `try`. **C stands, and is now true for a
+   reason it previously was not: the wrapping is reachable.**
+2. **W110 — the §27 response contract.** Members counted, not eyeballed: **7 required
+   before, 7 required + 1 optional after.** None removed, renamed or retyped. Row
+   updated with the count and with what would move it.
+3. **W146 — the first-page performance row, which turns on numbers and was the row most
+   likely to move.** The harness was run three times on each tree, same machine, same
+   corpus. **Supabase calls: 345 at `origin/main`, 345 at this head — identical.
+   Per-item slope: `limit=5 → 234`, `limit=40 → 491`, 7.3/item on BOTH.** Serialized
+   round-trip depth, which is a differenced slope and therefore noisy: `origin/main`
+   {89, 92, 93}, this head {91, 92, 91} — overlapping bands, no movement attributable
+   to the lane, both far inside the ratchet of 110. `rowsOrThrow` adds no query and no
+   `await`. **W146 stays `?` for the reason §14 gave: production p50/p95 is unmeasured.**
+4. **W152 / W154 / W156 — §34 failure modes.** The behaviour each row grades is the
+   RESULTING STATE after a failure, and each was re-derived: empty strip, null
+   `placeRef` with the object still projecting, empty opportunity load. All three states
+   are identical to the ones the swallowed errors produced. What is new is that the
+   failure is logged and named. Rows updated with current anchors and with the
+   measurement; **no letter moves.**
+5. **W148 — "never blocks feed render."** `buildLiveStrip` now returns `{ items, failed }`.
+   The ITEMS half is unchanged in both branches (empty on an OFF flag, empty on a throw),
+   and the OFF flag still returns before the thunk is called, so the strip still cannot
+   block or break the render.
+6. **W72 — §18 Quick Media.** The route now calls `loadQuickMediaRow`;
+   `loadQuickMediaItems` survives as a thin items-only wrapper. Window, cap, gates and
+   the fail-soft empty row are byte-identical.
+7. **W175 — every route short-circuits on `wall_enabled`.** Re-counted rather than
+   trusted: **8 route registrations and 8 `wall_enabled` guards at this head, and 8 and 8
+   at `origin/main`.** The row had listed seven line numbers, all stale; the eighth guard
+   predates this lane.
+8. **W21 — "no paid placement masquerading as live intelligence."** This row is a grep,
+   and a 320-line diff is exactly what flips a grep. Re-run over `services/wall/` +
+   `routes/wall.ts` for `promoted|sponsored|is_paid|boost`: **five hits at this head and
+   the same five at `origin/main`.** Two are `explorationBoost` in
+   `WallRankingService.ts` (a file this lane does not touch — `git diff` over it is
+   empty), one is the W178 sponsored-label comment in `LiveForYouService.ts` (likewise
+   untouched), and two are in `routes/wall.ts`: a comment and a log string, both about
+   a *destination* boost for upcoming trips, both present verbatim on `origin/main` at
+   lines 334 and 336 and merely shifted to 353 and 355 here. **The lane introduces none
+   of the four words. No paid lever is added; C stands.**
+9. **W26, W81, W104–W109 — pointers, not verdicts.** Eight citations into `routes/wall.ts`
+   were stale, three of them badly enough that this lane's edits dropped them onto a bare
+   `}`, `/**` or `]);` — the state `check:citation-targets` counts as dead. Each was
+   repaired by reading the claim, and anchored.
+
+### 15.3 What this pass did NOT do, stated rather than implied
+
+- **It did not re-execute the other 194 `C` rows.** They rest on §6, §7, §9–§14 and on
+  `check:doc-citations`, which proves a cited line exists and never that the sentence
+  about it is still true.
+- **It did not re-declare `head_commit`.** It cannot honestly: the commit carrying this
+  work is not on `main`, and this census has twice had to move that row for exactly that
+  reason (see the Headline). The three files are instead named in
+  `artifacts/api-server/src/scripts/CENSUS_STALENESS_ACKNOWLEDGED.json` with the
+  per-file argument above. **Whoever squashes this branch should re-declare the row at
+  the squash commit and retire that entry**, as 2026-09-10 and 2026-09-15 did.
+- **It did not repair every stale pointer in this document.** Many rows carry line
+  RANGES that were already wrong at `1fe72289b` and that no checker can see. The ones
+  repaired here are the ones this lane broke plus the §26 block it made unreadable.
+- **It did not touch `caughtUp`'s own verdict, because §27 has only one row (W110) and
+  no row grades the caught-up signal's honesty on its own.** That is a gap in the
+  denominator, not a finding about the code, and it is recorded here rather than
+  silently fixed by inventing a requirement.
+
+### 15.4 Headline after §15
+
+**Unchanged: 205 requirements · 200 BUILT-AND-CORRECT · 1 BUILT-BUT-WRONG · 0 NOT-BUILT ·
+4 CANNOT-VERIFY.** 200 + 1 + 0 + 4 = 205. No letter moved in this pass; eleven rows'
+evidence was rewritten against this head and every rewritten citation is anchored.
