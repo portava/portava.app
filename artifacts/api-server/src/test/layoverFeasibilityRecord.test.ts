@@ -71,6 +71,7 @@ import {
   assess,
   computeReturnDeadline,
   LAYOVER_ENGINE_VERSION,
+  type LeaveAdvice,
 } from "../services/airport/LayoverSafetyEngine.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -209,6 +210,10 @@ describe("inputHash is an identity for the computation, not a decoration", () =>
     const reordered = deepReverse(base);
     // Rebuild with the sub-objects' keys in a different insertion order.
     const shuffled = {
+      // ADDED with the entry gate: a NAMED input that the shuffle skipped would
+      // make this assertion pass for the wrong reason — a missing key, not a
+      // reordered one.
+      entry: base.entry,
       liveConditions: base.liveConditions,
       landsideProbe: base.landsideProbe,
       bufferPercentile: base.bufferPercentile,
@@ -537,13 +542,28 @@ before(() => {
 after(() => new Promise<void>((resolve) => server.close(() => resolve())));
 
 describe("the certified header is published on every feasibility endpoint", () => {
+  /**
+   * Every verdict the engine can publish, as a RECORD keyed by the union rather
+   * than an array of strings. The array this replaced listed four of them, and
+   * when `entry_unverified` was added to the union nothing here stopped
+   * compiling — the endpoints just started failing at runtime with a verdict
+   * this test called impossible. A record keyed by `LeaveAdvice["verdict"]`
+   * cannot miss a member: leaving one out is a type error.
+   */
+  const PUBLISHABLE_VERDICTS: Record<LeaveAdvice["verdict"], true> = {
+    yes: true,
+    tight: true,
+    no: true,
+    entry_unverified: true,
+    stay_airside: true,
+  };
   const expectCertified = (c: any, where: string) => {
     assert.ok(c, `${where}: no certification block`);
     assert.equal(c.engineVersion, LAYOVER_ENGINE_VERSION, where);
     assert.equal(c.feasibilityVersion, LAYOVER_FEASIBILITY_VERSION, where);
     assert.match(c.inputHash, /^sha256:[0-9a-f]{64}$/, where);
     assert.equal(typeof c.computedAt, "string", where);
-    assert.ok(["yes", "tight", "no", "stay_airside"].includes(c.verdict), `${where}: verdict ${c.verdict}`);
+    assert.ok(c.verdict in PUBLISHABLE_VERDICTS, `${where}: verdict ${c.verdict}`);
     assert.equal(c.confidence, "LOW", `${where}: unverified airport, static buffers`);
     assert.equal(c.bufferPercentile, SAFETY_CRITICAL_PERCENTILE, where);
   };

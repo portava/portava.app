@@ -70,8 +70,13 @@ jest.mock('../useTrustProjection', () => {
 const SERVER_DOMAINS = [
   { key: 'overall', domain: 'Overall', presentation: 'Strong', applicable: true, basis: 'measured' as const },
   { key: 'traveler', domain: 'Traveler', presentation: 'Building', applicable: true, basis: 'partial' as const },
-  { key: 'trip_guest', domain: 'Trip Guest', presentation: 'Established', applicable: true, basis: 'substituted' as const },
-  { key: 'trip_host', domain: 'Trip Host', presentation: 'New', applicable: true, basis: 'substituted' as const },
+  // A substituted domain is what the SERVER now sends for one: the word is
+  // "Not yet rated", not a rating. The fixture carried 'Established' and 'New'
+  // here, which is what the server used to send and no longer does (owner
+  // decision, 2026-09-22) — a fixture that keeps sending the old shape is how a
+  // client keeps passing against a server that changed.
+  { key: 'trip_guest', domain: 'Trip Guest', presentation: 'Not yet rated', applicable: true, basis: 'substituted' as const },
+  { key: 'trip_host', domain: 'Trip Host', presentation: 'Not yet rated', applicable: true, basis: 'substituted' as const },
   { key: 'contributor', domain: 'Contributor', presentation: 'Excellent', applicable: true, basis: 'measured' as const },
   { key: 'buddy', domain: 'Buddy', presentation: 'Not applicable', applicable: false, basis: 'not_applicable' as const },
 ];
@@ -122,8 +127,11 @@ describe('P45 — the domain word shown is the server-computed one', () => {
 
     expect(byKey.overall.standing).toBe('Strong');
     expect(byKey.traveler.standing).toBe('Building');
-    expect(byKey.trip_guest.standing).toBe('Established');
-    expect(byKey.trip_host.standing).toBe('New');
+    // Both are substituted in the fixture, so the server's word for them is not
+    // a rating. The point of this test is unchanged: whatever the server said,
+    // the client shows THAT.
+    expect(byKey.trip_guest.standing).toBe('Not yet rated');
+    expect(byKey.trip_host.standing).toBe('Not yet rated');
     expect(byKey.contributor.standing).toBe('Excellent');
   });
 
@@ -150,7 +158,7 @@ describe('P45 — the domain word shown is the server-computed one', () => {
     const view = deriveTrustView(p);
     const byKey = Object.fromEntries(view.domains.map((d) => [d.key, d]));
     expect(byKey.trip_host.applicable).toBe(true);
-    expect(byKey.trip_host.standing).toBe('New');
+    expect(byKey.trip_host.standing).toBe('Not yet rated');
     expect(byKey.contributor.applicable).toBe(true);
     expect(byKey.contributor.standing).toBe('Excellent');
   });
@@ -198,9 +206,23 @@ describe('P45 — the substituted word is distinguishable from the measured one'
     await render(<TrustScreen projectionOverride={makeProjection()} />);
     // Trip Guest and Trip Host are substituted in the fixture.
     expect(screen.queryAllByText(/not yet measured/i).length).toBeGreaterThan(0);
-    // And the server's own words are on screen.
+    // And the server's own words are on screen — including the one it sends for
+    // a domain it declined to rate, which the client renders verbatim rather
+    // than re-deciding.
+    expect(screen.queryAllByText('Not yet rated').length).toBeGreaterThan(0);
     expect(screen.queryAllByText('Building').length).toBeGreaterThan(0);
     expect(screen.queryAllByText('Excellent').length).toBeGreaterThan(0);
+  });
+
+  test('a rating word NEVER appears on a substituted row', async () => {
+    // The defect this whole decision closes, checked at the pixel: every
+    // account read "Established" in six domains. The two substituted rows in
+    // the fixture must carry none of the five rating words.
+    const view = deriveTrustView(makeProjection());
+    const RATINGS = ['Excellent', 'Strong', 'Established', 'Building', 'New'];
+    for (const row of view.domains.filter((d) => d.basis === 'substituted')) {
+      expect(RATINGS).not.toContain(row.standing);
+    }
   });
 
   test('a fully measured profile shows NO substitution disclosure', async () => {
@@ -220,7 +242,7 @@ describe('P45 — the substituted word is distinguishable from the measured one'
 // 3. Fallback — an older server that sends no domains must not blank the screen
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe('P45 — capability-derived fallback survives for a server without domains', () => {
+describe('P45 — no server domains is an honest unknown, not a client guess', () => {
   test('six rows still appear when trust.domains is absent', () => {
     const p = makeProjection();
     delete (p.trust as any).domains;
@@ -229,10 +251,28 @@ describe('P45 — capability-derived fallback survives for a server without doma
     expect(view.domains.map((d) => d.key)).toEqual([
       'overall', 'traveler', 'trip_guest', 'trip_host', 'contributor', 'buddy',
     ]);
-    // Legacy path keeps its legacy word.
-    expect(view.domains.find((d) => d.key === 'trip_guest')!.standing).toBe('In good standing');
+    // THE LAYOUT SURVIVES AND THE CLAIM DOES NOT. This used to assert "In good
+    // standing", derived from a capability flag — permission to do a thing,
+    // printed as a statement about the person's record. The owner ruled on
+    // 2026-09-22 that standing is never derived from capabilities, so the row
+    // says what the client actually knows, which is nothing.
+    expect(view.domains.find((d) => d.key === 'trip_guest')!.standing).toBe('Not available');
     // …and reports that it was derived on the client, not measured by the server.
     expect(view.domains.find((d) => d.key === 'trip_guest')!.basis).toBe('client_derived');
+  });
+
+  test('NO row on the fallback path carries a standing word', () => {
+    // The fixture grants every capability, so a client that still derived
+    // anything would print a standing on every row. All six must be unknown.
+    const p = makeProjection();
+    delete (p.trust as any).domains;
+    const view = deriveTrustView(p);
+    for (const row of view.domains) {
+      expect(row.standing).toBe('Not available');
+      expect(row.basisNote).toBe('This traveler\u2019s standing could not be loaded.');
+      // The domain still applies; what is missing is the measurement.
+      expect(row.applicable).toBe(true);
+    }
   });
 
   test('an empty domains array is treated as absent, not as "no domains apply"', () => {
@@ -248,5 +288,55 @@ describe('P45 — capability-derived fallback survives for a server without doma
     const view = deriveTrustView(p);
     expect(view.domains).toHaveLength(6);
     expect(view.domains.every((d) => d.standing.length > 0)).toBe(true);
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// 4. A FAILED READ — owner ruling 2026-09-22: labelled, retryable, not hidden
+// ────────────────────────────────────────────────────────────────────────────
+
+/** The projection a server sends when it could NOT read `trust_profiles`. */
+function degradedProjection(): TrustProjectionEnvelope {
+  const p = makeProjection();
+  p.trust!.degraded = true;
+  p.trust!.confidence = null;
+  p.trust!.confidenceBasis = 'unavailable';
+  p.trust!.domains = SERVER_DOMAINS.map((d) => ({
+    ...d,
+    applicable: true,
+    presentation: 'Temporarily unavailable',
+    basis: 'unavailable' as const,
+  }));
+  return p;
+}
+
+describe('a failed read is labelled and retryable, never dressed up or hidden', () => {
+  test('the view reports degraded, and confidence is unknown rather than low', () => {
+    const view = deriveTrustView(degradedProjection());
+    expect(view.degraded).toBe(true);
+    // `?? 'low'` here used to print "Early days" over a person the server had
+    // declined to describe. Absent is its own state now.
+    expect(view.confidence).toBe('unknown');
+    expect(view.confidenceLabel).toBe('Confidence unavailable');
+  });
+
+  test('the SCREEN says so and offers a retry', async () => {
+    await render(<TrustScreen projectionOverride={degradedProjection()} />);
+    expect(screen.getByText('Trust records are unavailable right now')).toBeTruthy();
+    expect(screen.getByText('Retry')).toBeTruthy();
+    // Not hidden: the domain layout is still there to be labelled.
+    expect(screen.getByText('Trust by area')).toBeTruthy();
+    expect(screen.getAllByText('Temporarily unavailable').length).toBe(6);
+    // And it is NOT the other unavailable state.
+    expect(screen.queryByText('Not yet rated')).toBeNull();
+    expect(screen.queryByText('Early days')).toBeNull();
+  });
+
+  test('an ordinary measured projection shows NO banner', async () => {
+    // The positive control. The cheapest way to pass the test above is to show
+    // the banner always, which would tell every user their records are missing.
+    await render(<TrustScreen projectionOverride={makeProjection()} />);
+    expect(screen.queryByText('Trust records are unavailable right now')).toBeNull();
+    expect(deriveTrustView(makeProjection()).degraded).toBe(false);
   });
 });
