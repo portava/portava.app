@@ -259,7 +259,7 @@ NOT-BUILT · **?** = CANNOT-VERIFY. Backend paths are relative to
 | P43 | Retain the 0–100 score internally and, where appropriate, visibly | C | `buildTrust:1008-1017` — `score` is populated only when `context === "self"`, via the canonical `getDisplayTrustScore`, so the identity card, Trust screen and Rent-a-Buddy card cannot disagree. |
 | P44 | Do not make it a single universal authorization number | C | `buildOwnerCapabilities:566-581` and `buildViewerActions:583-610` return booleans derived from level + restrictions; no surface receives the raw number as an authorization input. |
 | P45 | Trust must be domain-specific, confidence-aware and **explainable** | **W** | Domain-specific: yes (`buildDomainTrust:1068-1090`, six domains). Explainable: PARTLY, and the part that was measurably false is now closed. The substitution itself is unchanged and still `applicable: true` — a missing category and a missing profile both read the neutral 50 (`:1075`, `:1153`) and `presentationWord(50)` returns "Established" (`:1047`), so an empty `trust_profiles` still describes every user as an "Established" member across all six domains. What the response no longer does is present that constant as indistinguishable from a measurement: `confidenceBasis` (`trustConfidenceBasis:1107`, wired at `:1152` and returned on BOTH branches, `:1162` and `:1189`) reports `trust_evidence` / `travel_proxy` / `unavailable`, so a consumer can tell the substituted card from a measured one. Stays **W** because the domain WORDS are still the constant's words; changing them is the recalibration P50 records as an owner decision. `passportTrustConfidenceBasis.test.ts` — 8 tests, 4 mutations of the shipped predicate and its wiring each caught. |
-| P46 | The evidence → events → domain trust → confidence → policy → projection pipeline | C | `services/trust/TrustEventService.ts:105,217,275` writes `trust_events` (gated on `trust_engine_enabled`, `:85`); `artifacts/api-server/src/services/trust/TrustScoreService.ts:307#export async function recalculateTrustScore(` recomputes `trust_profiles` — and, since §19, declines to WRITE one for a user who has never been scored, has no qualifying evidence and has never been capped. That is a refusal on the pipeline's write hop, not a break in it: §19.2 measures what the absent row does to the next hop. `TrustPrivacyGuard` projects. The pipeline is built end to end; the flag is a deployment fact (§3 below). |
+| P46 | The evidence → events → domain trust → confidence → policy → projection pipeline | C | `services/trust/TrustEventService.ts:105,217,275` writes `trust_events` (gated on `trust_engine_enabled`, `:85`); `artifacts/api-server/src/services/trust/TrustScoreService.ts:387#export async function recalculateTrustScore(` recomputes `trust_profiles` — and, since §19, declines to WRITE one for a user who has never been scored, has no qualifying evidence and has never been capped. That is a refusal on the pipeline's write hop, not a break in it: §19.2 measures what the absent row does to the next hop. `TrustPrivacyGuard` projects. The pipeline is built end to end; the flag is a deployment fact (§3 below). |
 | P47 | The six domains: Overall, Traveler, Trip Guest, Trip Host, Contributor, Buddy | C | `buildDomainTrust:955-968` — all six, with Buddy correctly `applicable: false` when the user offers no buddy service (`:966-968`). |
 
 ### §10 Trust & Credentials Design
@@ -268,9 +268,9 @@ NOT-BUILT · **?** = CANNOT-VERIFY. Backend paths are relative to
 | --- | --- | --- | --- |
 | P48 | The credentials screen (score/label, credential rows, View Details) | C | `PassportProjectionService.buildCredentials:1024`; `src/features/passport/TrustScreen.tsx` renders domain rows, confidence band, capability chips. |
 | P49 | Do not expose private report counts, moderation evidence or safety history | C | `services/trust/TrustPrivacyGuard.getSafeTrustSummary` returns `publicLevel` + human strengths/restrictions + an `onProbation` boolean with no detail; `isEventLlmSafe` drops `reporter_id`/`reviewed_by`. The public path uses `getPublicTrustBadge` (`buildTrust:996`), which carries no counts. |
-| P50 | Trust confidence matters — an 82 with high evidence is not equivalent to an 82 with little evidence | **W** | The band itself is still travel-derived: `confidence` is computed from `stats.stamps + stats.trips * 2 + (verified ? 3 : 0)` (`buildTrust:1127-1128`) — travel volume, not trust evidence — and it is deliberately **unchanged**, because recalibrating the word a person is labelled with is a product judgement, not a defect fix (`passportProjection.test.ts:307-309` pins "Neutral 50 everywhere reads 'Established' — non-stigmatizing (§10)"). What IS closed is the spec's own hypothetical: migration 2371's `evidence_weight` / `evidence_count`, written by `measureEvidence` (`artifacts/api-server/src/services/trust/TrustScoreService.ts:485#evidenceWeight: evidence.weight,`) and shaped on every read (`artifacts/api-server/src/services/trust/TrustScoreService.ts:679#evidenceWeight: num(d.evidence_weight),`), had NO consumer outside their own writer and its tests before this; they now reach the projection (`artifacts/api-server/src/services/passport/PassportProjectionService.ts:1313#profileRead.profile.evidenceWeight`) beside `confidenceBasis` (`artifacts/api-server/src/services/passport/PassportProjectionService.ts:1315#trustConfidenceBasis(profileRead.state,`). Two users showing the same 82 are now distinguishable — one reports `trust_evidence` with its weight and count, the other `travel_proxy` with nulls — which is exactly "same number, different evidence, different meaning". Stays **W** until the band itself is recalibrated against those columns; that is an owner call on labelling, and the basis field makes it a deliberate diff rather than a side effect. |
+| P50 | Trust confidence matters — an 82 with high evidence is not equivalent to an 82 with little evidence | **W** | The band itself is still travel-derived: `confidence` is computed from `stats.stamps + stats.trips * 2 + (verified ? 3 : 0)` (`buildTrust:1127-1128`) — travel volume, not trust evidence — and it is deliberately **unchanged**, because recalibrating the word a person is labelled with is a product judgement, not a defect fix (`passportProjection.test.ts:307-309` pins "Neutral 50 everywhere reads 'Established' — non-stigmatizing (§10)"). What IS closed is the spec's own hypothetical: migration 2371's `evidence_weight` / `evidence_count`, written by `measureEvidence` (`artifacts/api-server/src/services/trust/TrustScoreService.ts:565#evidenceWeight: evidence.weight,`) and shaped on every read (`artifacts/api-server/src/services/trust/TrustScoreService.ts:759#evidenceWeight: num(d.evidence_weight),`), had NO consumer outside their own writer and its tests before this; they now reach the projection (`artifacts/api-server/src/services/passport/PassportProjectionService.ts:1313#profileRead.profile.evidenceWeight`) beside `confidenceBasis` (`artifacts/api-server/src/services/passport/PassportProjectionService.ts:1315#trustConfidenceBasis(profileRead.state,`). Two users showing the same 82 are now distinguishable — one reports `trust_evidence` with its weight and count, the other `travel_proxy` with nulls — which is exactly "same number, different evidence, different meaning". Stays **W** until the band itself is recalibrated against those columns; that is an owner call on labelling, and the basis field makes it a deliberate diff rather than a side effect. |
 | P51 | Non-stigmatizing copy for low-evidence accounts | C | `buildTrust:998-1000` and `:1004-1006` — `"New Traveler · Verified"` / `"New Traveler"` when confidence is low; `presentationWord:930-936` deliberately avoids "low/poor/weak". |
-| P52 | Trust changes must be internally replayable from evidence/events | C | `trust_events` is an append-only ledger with writers at `TrustEventService.ts:105,217,275`, `TrustAdminService.ts:53-174` and `artifacts/api-server/src/services/appeals/resolveAppeal.ts:271#.from("trust_events")`; `TrustScoreService` recomputes `trust_profiles` from it. |
+| P52 | Trust changes must be internally replayable from evidence/events | C | `trust_events` is an append-only ledger with writers at `TrustEventService.ts:105,217,275`, `TrustAdminService.ts:53-206` and `artifacts/api-server/src/services/appeals/resolveAppeal.ts:271#.from("trust_events")`; `TrustScoreService` recomputes `trust_profiles` from it. |
 
 ### §11 Trust Capabilities
 
@@ -1905,6 +1905,61 @@ the diff reads as a decision rather than a repair.
 
 ---
 
+## §20 — Trust's failure-visibility pass, graded from this side. NO PASSPORT ROW MOVES, and two of the new fields never reach this census's surfaces
+
+**2026-09-22, re-measurement lane (PR #458).** `head_commit` is **NOT** re-declared, for §18.4's
+reason: three counted files changed and this grades the rows resting on them, not 169
+requirements. The files are `services/trust/TrustScoreService.ts`,
+`services/trust/TrustAdminService.ts` and `services/trust/TrustPrivacyGuard.ts` — all three put
+in scope by §18.3. The Trust-side write-up is `census-trust.md` §24.
+
+### 20.1 What changed on this census's three files
+
+- **`TrustPrivacyGuard`** — `SafeTrustSummary` gains one optional boolean, `probationUnknown`,
+  set only when the probation read FAILED, in exactly the shape `restrictionsDegraded` and
+  `profileUnavailable` already use.
+- **`TrustAdminService`** — `revokeModerationTrustConsequences` returns `incomplete` beside its
+  two counts, so a wholly failed reversal is no longer the same value as nothing to reverse.
+- **`TrustScoreService`** — the three input loaders' existing throws become a typed
+  `TrustInputUnavailableError extends Error`; the throws themselves already existed.
+
+### 20.2 P49 and P164 — the two privacy rows, re-derived rather than waved through
+
+Both grade `getSafeTrustSummary` for what it does NOT expose: report counts, reporter ids, raw
+scores, moderation evidence, safety history. A new field on that payload is exactly the kind of
+change that should be re-read against them, so it was.
+
+`probationUnknown` is a boolean about the health of a database read. It carries no reporter id,
+no delta, no internal score and no event. It qualifies `onProbation`, which was **already** in
+this payload — so a flag saying that read failed reveals strictly less about the subject than the
+field it qualifies. And it reaches nothing: `getSafeTrustSummary` has exactly one non-test
+consumer, `artifacts/api-server/src/services/passport/PassportProjectionService.ts:1360#  const summary = await getSafeTrustSummary(sc, userId);`,
+and that call forwards only `publicLevel`, `strengths` and `profileUnavailable`. **P49 and P164
+stay C.**
+
+### 20.3 The rest, and what each was measured on
+
+| row | measured at this head | verdict |
+|---|---|---|
+| `P8` | `buildTrust` + `TrustPrivacyGuard` + `TrustScreen` still compose the surface; nothing is added or removed from the composition. | **C, unmoved.** |
+| `P46` | the pipeline is unchanged; its `TrustScoreService.ts` pointer moved with the file and was repointed to `recalculateTrustScore` with an anchor. | **C, unmoved.** |
+| `P50` | its two `TrustScoreService.ts` pointers — the written evidence weight and the read-side shaping — moved with the file and were repointed to the IDENTICAL source lines, verified against `git show origin/main:` line by line. The band is still travel-derived and untouched. | **W, unmoved.** |
+| `P52` | `trust_events` is still append-only from Passport's side; the `TrustAdminService.ts` range end moved with the file. | **C, unmoved.** |
+| `P45`, `P154` | `buildDomainTrust` and `presentationWord` are byte-identical; nothing in this change goes near the substitution these two grade. | **W, unmoved.** |
+| `P44`, `P53`, `P54`, `P57`, `P60` | `buildOwnerCapabilities` is byte-identical and no capability's predicate changes. | **C, unmoved.** |
+
+### 20.4 What this section does NOT claim
+
+- **Only the rows in §20.2 and §20.3 are re-derived**; the other rows are not re-measured, and the
+  headline stands at 169 · 158 / 9 / 1 / 1 because none moved.
+- **Nothing was measured against a database**, and `census-trust.md` §3 records that
+  `TrustAdminService` has never been invoked in production at all — so the reversal path this
+  change hardens has never run outside a fixture.
+- **`incomplete` reaches no response body.** Its only non-test caller discards the result; the
+  signal lands in logs and in `trust_admin_actions` metadata. `census-trust.md` §24.2 counts the
+  consumers; it is repeated here only because "failure is now visible" would otherwise read as a
+  claim about a surface this census grades, and it is not.
+
 ## §21 — The Trust engine stops persisting a fabricated 50. NO PASSPORT ROW MOVES, and the number a person sees does not change
 
 *(Written as §19 on this branch. `## 19. D-WORD` reached main first and keeps that number; §20 is PR #458's, also unmerged, so this is §21 rather than §20 — a gap is harmless where a duplicate is not.)*
@@ -1921,7 +1976,7 @@ inherited from there.
 `recalculateTrustScore` used to PERSIST a `trust_profiles` row scoring exactly 50.00 for a user
 with no qualifying events — 50 is `level_reliable` and the comparison is `>=`, so the row carried
 `public_level: reliable_traveler`. It now declines to write that row
-(`artifacts/api-server/src/services/trust/TrustScoreService.ts:404#if (events.length === 0) {`),
+(`artifacts/api-server/src/services/trust/TrustScoreService.ts:484#if (events.length === 0) {`),
 for a user who additionally has no existing row and has never been capped.
 
 ### 21.2 Why P45, P50 and P154 do not move — the substitution is on the OTHER side of the seam
@@ -1970,9 +2025,9 @@ an anchor:
 
 | row | was | now |
 |---|---|---|
-| `P46` | `TrustScoreService.ts` line 276 — had become `*/`, a dead target, and pushed `check:citation-targets` to **211 against a ceiling of 210** | `artifacts/api-server/src/services/trust/TrustScoreService.ts:307#export async function recalculateTrustScore(` |
-| `P50` | `TrustScoreService.ts` line 388 (the returned `evidenceWeight`) | `artifacts/api-server/src/services/trust/TrustScoreService.ts:485#evidenceWeight: evidence.weight,` |
-| `P50` | `TrustScoreService.ts` line 580 (the read-side shaping) | `artifacts/api-server/src/services/trust/TrustScoreService.ts:679#evidenceWeight: num(d.evidence_weight),` |
+| `P46` | `TrustScoreService.ts` line 276 — had become `*/`, a dead target, and pushed `check:citation-targets` to **211 against a ceiling of 210** | `artifacts/api-server/src/services/trust/TrustScoreService.ts:387#export async function recalculateTrustScore(` |
+| `P50` | `TrustScoreService.ts` line 388 (the returned `evidenceWeight`) | `artifacts/api-server/src/services/trust/TrustScoreService.ts:565#evidenceWeight: evidence.weight,` |
+| `P50` | `TrustScoreService.ts` line 580 (the read-side shaping) | `artifacts/api-server/src/services/trust/TrustScoreService.ts:759#evidenceWeight: num(d.evidence_weight),` |
 
 `check:citation-targets` is back **at** 210/210.
 
