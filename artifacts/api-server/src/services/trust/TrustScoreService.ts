@@ -350,6 +350,12 @@ export interface TrustScoreResult {
   categories: Record<TrustCategory, number>;
   capsApplied: string[];
   /**
+   * False when the user had NO qualifying trust events, in which case nothing was
+   * persisted and the numbers above are arithmetic only — never a measurement.
+   * See the persist block for why an unscored user must have no row at all.
+   */
+  persisted: boolean;
+  /**
    * How much evidence stands behind the scores (Passport §9 "Trust Confidence",
    * §10 "an 82 with high evidence is not equivalent to an 82 with little").
    *
@@ -418,6 +424,110 @@ export async function recalculateTrustScore(
   const public_level = scoreToLevel(overall, settings);
   const evidence = measureEvidence(events, halfLife);
 
+  // ── NO EVIDENCE IS NOT NEUTRAL EARNED TRUST ────────────────────────────────
+  //
+  // computeCategoryScore returns 50 for a category with no events, the loop above
+  // walks the fixed nine ALL_CATEGORIES rather than the categories actually
+  // present, and the nine weights sum to exactly 1.000 — so a user with zero
+  // events scores exactly 50.00. `level_reliable` is 50 and scoreToLevel compares
+  // with >=, so that user is promoted to `reliable_traveler`, rung 3 of 6.
+  //
+  // That is not a cosmetic badge. PassportProjectionService maps public_level
+  // through LEVEL_RANK into capability grants, so persisting this row hands
+  // canHostTrip, canUseCrewLocation and canContributeLiveIntel to a user who has
+  // done nothing. On the first enable of `trust_engine_enabled` — against a
+  // trust_events table that is empty because the ingest lane was off — that would
+  // be every user in the system at once.
+  //
+  // The canonical way to say "no earned trust" already exists and is honoured
+  // everywhere else: ABSENCE OF A ROW. getDisplayTrustScore returns null for a
+  // user with no profile (documented at its own definition), lib/trustScore
+  // types the score as `number | null` explicitly "rather than a fabricated
+  // number", TrustPrivacyGuard falls back to the `new_traveler` label, and the
+  // client already branches on that via hasScore. Writing a fabricated row is
+  // what DESTROYS that representation.
+  //
+  // So: compute, but do not persist. The result is returned with
+  // persisted:false so a caller can tell arithmetic from measurement.
+  //
+  // KNOWN LIMIT, deliberately not papered over: a user who HAS a row and whose
+  // events have since been removed keeps their last evidence-derived row. It is
+  // stale, but it is not fabricated, and clearing it would need a decision about
+  // whether an erased-evidence user should read null or a floor. Recorded as a
+  // contract gap rather than guessed at. The related per-category gap is the
+  // same shape: trust_profiles' nine category columns and overall_score are all
+  // `numeric(5,2) NOT NULL DEFAULT 50.00`, so there is no way to persist "this
+  // one category is unscored" — a user with evidence in one category still
+  // carries eight fabricated 50s into the weighted overall.
+  // SCOPE: only a user who has NEVER been scored. A user who already HAS a row
+  // and whose events have since decayed out is refreshed as before — that case
+  // is deliberately pinned by trustAsymmetryAndMaintenance.test.ts ("refreshes a
+  // stale profile even with no new events"), and it is a different problem: a
+  // stale 60 really is wrong, and leaving it would be its own defect. Narrowing
+  // here fixes the dangerous case — every user at once on first enable — without
+  // silently reversing a decision someone already made and tested.
+  //
+  // A TRUST_CAPS ROW IS ALSO EVIDENCE, and is excluded from the skip. A cap is
+  // deliberate recorded state about this specific user — a moderation ceiling
+  // or an admin's ruling — not the untouched population this block exists to
+  // protect, and a ceiling can only ever pull a score DOWN (trust_caps has no
+  // floor column), so keeping a capped user's row promotes nobody. It matters
+  // because `main` made the admin cap lane read its result back off
+  // trust_profiles and throw when the read is not `ok`
+  // (TrustAdminService.adminOverrideScore and confirmOverrideRemoved), so that
+  // an override can never be reported or audited as applied without being
+  // observed. Skipping the persist for a capped user would turn every such
+  // override — and every lift of one — into a hard failure: a different defect,
+  // not this one's fix. LIFTED caps count too: the lift path recalculates after
+  // the ceiling is gone, and the user is still one an admin has deliberately
+  // touched.
+  if (events.length === 0) {
+    const { data: existing, error: existingError } = await db
+      .from("trust_profiles")
+      .select("user_id")
+      .eq("user_id", userId)
+      .maybeSingle();
+    if (existingError) {
+      // Same rule as the trust_caps read below, and the same rule main's
+      // loaders now follow: supabase-js RESOLVES on a DB error, so an unread
+      // `error` here makes an unreachable table look like "this user has never
+      // been scored". That answer decides to write nothing AND reports
+      // `persisted: false` to callers that discard the result, so the outage
+      // would be invisible — every recalculation silently a no-op. A throw is
+      // the signal the call sites already act on: every production caller
+      // discards the return value, and the maintenance scheduler counts a throw
+      // as `recalcFailures`. A `degraded` field would be read by none of them.
+      throw new Error(
+        `recalculateTrustScore: trust_profiles existence read failed for ${userId} — ${(existingError as any).message ?? (existingError as any).code ?? "db_error"}`,
+      );
+    }
+    const { data: capRows, error: capRowsError } = await db
+      .from("trust_caps")
+      .select("id")
+      .eq("user_id", userId)
+      .limit(1);
+    if (capRowsError) {
+      // Same rule as loadCaps: "no caps" on a failed read is a guess, and here
+      // it would decide to write nothing at all. Refuse instead.
+      throw new Error(
+        `recalculateTrustScore: trust_caps history read failed for ${userId} — ${(capRowsError as any).message ?? (capRowsError as any).code ?? "db_error"}`,
+      );
+    }
+    const everCapped = ((capRows as any[]) ?? []).length > 0;
+    if (!existing && !everCapped) {
+      return {
+        userId,
+        overall_score: overall,
+        public_level,
+        categories: categories as Record<TrustCategory, number>,
+        capsApplied,
+        persisted: false,
+        evidenceWeight: evidence.weight,
+        evidenceCount: evidence.count,
+      };
+    }
+  }
+
   // Persist (non-fatal — return computed result even if persist fails)
   {
     const { error: upsertError } = await db.from("trust_profiles").upsert({
@@ -465,6 +575,7 @@ export async function recalculateTrustScore(
     public_level,
     categories: categories as Record<TrustCategory, number>,
     capsApplied,
+    persisted: true,
     evidenceWeight: evidence.weight,
     evidenceCount: evidence.count,
   };
@@ -655,6 +766,8 @@ function shapeProfile(userId: string, data: unknown): TrustScoreResult {
       overall_score: d.overall_score,
       public_level:  d.public_level,
       capsApplied:   [],
+      // A row exists, so by definition this IS persisted state.
+      persisted:     true,
       // NULL (pre-2371 row, or a database without the columns) stays null:
       // "not measured" is a different answer from "measured, nothing there".
       evidenceWeight: num(d.evidence_weight),

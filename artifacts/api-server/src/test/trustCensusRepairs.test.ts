@@ -435,7 +435,29 @@ describe("recalculation publishes the evidence behind the scores", () => {
     assert.equal(r.overall_score, 50, "the neutral baseline");
     assert.equal(r.evidenceWeight, 0);
     assert.equal(r.evidenceCount, 0);
-    const read = await getTrustProfile(db, USER);
+
+    // The read-back used to be taken on this same NEVER-SCORED user, which
+    // assumed a row had been written for them. It is not written any more: see
+    // "NO EVIDENCE IS NOT NEUTRAL EARNED TRUST" in TrustScoreService — the 50
+    // above is arithmetic, never a measurement, and persisting it promoted a
+    // user with nothing behind them to `reliable_traveler`. Asserted here so
+    // the two facts stay adjacent rather than one quietly undoing the other.
+    assert.equal(r.persisted, false, "a never-scored user is computed, not persisted");
+    assert.equal(await getTrustProfile(db, USER), null);
+
+    // The 0-vs-null ROUND TRIP THROUGH THE ROW is what this test is for, and it
+    // is unchanged — taken on a user who HAS a row and whose evidence has since
+    // decayed away. That is the same "measured, and there is nothing there"
+    // state on the wire, and it is still refreshed and still reads 0, not null.
+    const t2 = tables({
+      trust_profiles: [{ user_id: USER, overall_score: 61, public_level: "reliable_traveler",
+        plan_attendance: 50, host_quality: 72, communication: 50, respect_safety: 50, location_honesty: 50,
+        content_quality: 50, community_value: 50, guide_accuracy: 50, passport_authenticity: 50 }],
+    });
+    const db2 = makeClient(t2);
+    const r2 = await recalculateTrustScore(db2, USER);
+    assert.equal(r2.persisted, true, "an existing row is still refreshed");
+    const read = await getTrustProfile(db2, USER);
     assert.equal(read!.evidenceWeight, 0);
     assert.equal(read!.evidenceCount, 0);
   });
