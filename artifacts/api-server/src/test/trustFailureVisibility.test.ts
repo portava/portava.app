@@ -245,16 +245,65 @@ describe("Trust scoring: an unreadable input must not become a persisted score",
     const db = makeClient(tables);
     // Deliberately asserts only the arithmetic, not whether it is persisted —
     // "no evidence" persistence is a separate question decided elsewhere.
+    //
+    // Q1 (owner decision 2026-09-22) changed the VALUE this control expects and
+    // left the DISTINCTION it exists to draw exactly where it was. What makes
+    // this the control is that it RETURNS rather than refusing: three tests
+    // above, an unreadable trust_events rejects with TrustInputUnavailableError
+    // and writes nothing. That contrast is the whole point and is untouched.
+    //
+    // The value is now `null` rather than 50, and this file's own docblock is
+    // why: it opens by naming `"this user has no history" -> score 50,
+    // PERSISTED` as the defect. 50 was a constant standing where a measurement
+    // belongs, and it is exactly a value a real measurement can hold, so it
+    // could not be told apart from one. After Q1 an absent history and an
+    // unreadable one are two distinct outcomes and NEITHER of them is 50.
     const r = await recalculateTrustScore(db, USER_A);
-    assert.equal(r.overall_score, 50, "an absent history is still a legitimate computation, unlike an unreadable one");
+    assert.equal(
+      r.overall_score, null,
+      "an absent history is still a legitimate computation, unlike an unreadable one — but what it computes is the absence of a measurement, not the constant 50",
+    );
   });
 
   it("CONTROL: an absent trust_settings ROW is still 'use the defaults'", async () => {
-    const tables = baseTables();
-    tables.trust_settings.length = 0; // no row — not an error
-    const db = makeClient(tables);
-    const r = await recalculateTrustScore(db, USER_A);
-    assert.equal(r.public_level, "reliable_traveler");
+    // Proved by COMPARISON rather than against a pinned level, and the change
+    // is a strengthening forced by Q1 rather than an accommodation of it.
+    //
+    // This assertion used to pin `reliable_traveler`, which an entirely
+    // unmeasured profile reached only by way of the fabricated 50 this file
+    // exists to condemn. With 50 gone the pinned answer would become
+    // `new_traveler` — which is also what a profile with NO measurement gets,
+    // so the assertion would pass without the settings row having been consulted
+    // at all, and would stop discriminating the thing it is named for.
+    //
+    // So the same MEASURED history is scored twice, once against an explicit
+    // defaults row and once against none, and the two are required to agree.
+    // That tests "an absent row means use the defaults" in the row's own terms,
+    // and it would fail if an absent row were ever read as different rules.
+    const seedMeasured = (t: Record<string, any[]>) => {
+      t.trust_events.push({
+        id: "ev-control", user_id: USER_A, category: "respect_safety",
+        delta: 6, severity: "minor", status: "confirmed",
+        created_at: new Date().toISOString(),
+      });
+    };
+
+    const withRow = baseTables();
+    seedMeasured(withRow);
+    const expected = await recalculateTrustScore(makeClient(withRow), USER_A);
+
+    const withoutRow = baseTables();
+    withoutRow.trust_settings.length = 0; // no row — not an error
+    seedMeasured(withoutRow);
+    const actual = await recalculateTrustScore(makeClient(withoutRow), USER_A);
+
+    // Guards the comparison against being vacuously true: if the fixture
+    // measured nothing, both sides would be `null` and agree for the wrong
+    // reason.
+    assert.notEqual(expected.overall_score, null, "the fixture must actually measure something, or this comparison proves nothing");
+
+    assert.equal(actual.overall_score, expected.overall_score, "an absent settings row must score identically to an explicit defaults row");
+    assert.equal(actual.public_level, expected.public_level, "...and must reach the same level, since the level comes from the same thresholds");
   });
 });
 

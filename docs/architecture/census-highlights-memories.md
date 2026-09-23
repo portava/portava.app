@@ -6184,3 +6184,41 @@ instead of breaking.
 > the tree they were measured against, and §Y is where this document says what
 > changed. A citation silently repointed across a behaviour change is
 > indistinguishable from one that was never checked.
+
+### §Y.7 The un-hide is not an orphan endpoint — the client flow was already there
+
+Recorded because it changes how `H159`'s `W` should be READ, not because it
+moves it. §Y.4 wired the route to `UNHIDE_HIGHLIGHT` and §Y.6 said the migration
+is applied nowhere; between those two sentences it would be easy to read the
+un-hide as a server-side capability with nobody calling it. It is not. The chain
+was measured end to end, by following it rather than by grepping for a name:
+
+| layer | evidence |
+| --- | --- |
+| screen | `travel-buddy-standalone/app/highlights/archived.tsx:105#unarchiveHighlight(id);` — the owner's archive screen, `restore` handler |
+| client service | `travel-buddy-standalone/src/services/highlights.ts:498#unarchiveHighlight(`, which issues `:506#method:` `DELETE` against `/api/highlights/:id/archive` |
+| route | the dispatch §Y.4 built, `artifacts/api-server/src/routes/highlights.ts:2144#commandType: "UNHIDE_HIGHLIGHT"` |
+| applier | 3001, rehearsed and applied nowhere (§Y.3, §Y.6) |
+
+It is also tested at the client, and the tests pin the fail-closed half rather
+than only the happy path: `travel-buddy-standalone/app/highlights/__tests__/archived.screen.component.test.tsx:102#restores`
+drives the restore through the real service shape, and `:115#keeps` holds a
+**refused** restore in the list — the screen removes a row because the server
+accepted the write, not because it was tapped
+(`travel-buddy-standalone/app/highlights/archived.tsx:113#setHighlights((prev)`). The
+service-level pairing is pinned separately at
+`travel-buddy-standalone/src/services/__tests__/highlights.archive.component.test.ts:107#archives`.
+
+**So what `W` means on `H159` is narrower than "not built".** Every layer a user
+touches exists and is exercised; what is missing is deployment — 3001 applied and
+`memory_kernel_enabled` flipped — at which point the un-hide crosses the §17
+boundary instead of taking its `legacy` arm. The verdict does not move, because
+this census grades the boundary crossing and that still happens nowhere. But an
+`N`-shaped reading of this row would be wrong, and §W.1 and §Y were both silent
+on the client until now.
+
+**Deliberately not claimed.** No client code is changed by §Y. The four paths
+above are ADDED to this census's `CENSUS_SCOPE` in the same commit, because a
+section that rests its argument on a screen must age when that screen changes;
+that is the same rule §Y applied to `migrationPrefixRules.ts`. Nothing here was
+run against a device or a deployed API.

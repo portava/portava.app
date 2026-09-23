@@ -750,6 +750,22 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     // is what §Y moves H159's boundary on.
     "artifacts/api-server/src/scripts/migrationPrefixRules.ts",
     "artifacts/api-server/src/migrations/3001_highlight_kernel_admits_unhide.sql",
+    // ── ADDED 2026-09-23 by §Y.7: the un-hide's CLIENT half. ────────────────
+    // §Y.4 wired the route and §Y.6 said the migration is applied nowhere;
+    // between those two it would be easy to read the un-hide as a server
+    // capability with no caller. §Y.7 follows the chain and finds the screen,
+    // the client service, and four tests that were there all along — which is
+    // what makes H159's `W` mean "not deployed" rather than "not built".
+    //
+    // A section that rests its argument on a screen must age when that screen
+    // changes, so all four are watched. These are SUBJECTS: the archive screen
+    // and its service are the surface H159's requirement is about, and the two
+    // suites are the evidence §Y.7 cites — the same category as
+    // highlightsApiUnhideBoundary.test.ts above, not machinery.
+    "travel-buddy-standalone/app/highlights/archived.tsx",
+    "travel-buddy-standalone/src/services/highlights.ts",
+    "travel-buddy-standalone/app/highlights/__tests__/archived.screen.component.test.tsx",
+    "travel-buddy-standalone/src/services/__tests__/highlights.archive.component.test.ts",
     // ── ADDED 2026-09-15: §M and §O's OWN suites, which the ledger could not ──
     // name because this scope did not.
     //

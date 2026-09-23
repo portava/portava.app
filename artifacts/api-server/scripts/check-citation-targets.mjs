@@ -559,7 +559,14 @@ import {
  * gain is not kept", and that is what this does. Both repairs travel in the
  * same commit as the merge, so nothing here depends on a tree `main` has not
  * got: once this branch lands, `main`'s own count is this count. */
-export const MAX_DEAD_TARGETS = 177;
+/* RATCHETED 2026-09-23 177 -> 176, in the same pass. PR #527 extended the
+ * migration prefix band in the GUARD and left two documents asserting the old
+ * rule; repairing `docs/architecture/10_Database_Architecture.md` repointed its
+ * citation of `migrationPrefixRules.ts` off a line the edit had emptied and
+ * onto the declaration it names, which retired one more dead target. Same rule
+ * as above: the guard printed "176 < 177 — LOWER THE CEILING", and a ceiling
+ * left above the measured count re-admits the rot just removed. */
+export const MAX_DEAD_TARGETS = 176;
 
 /** Pinned to a commit by its own declaration; its lines must not track HEAD. */
 const PINNED_DOCS = new Set(['docs/architecture/mobile-reachability-ledger.md']);

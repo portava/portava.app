@@ -3040,3 +3040,86 @@ to apply — not because reversal is anticipated.
            (SELECT count(*) FROM information_schema.columns
              WHERE table_schema='public' AND table_name='story_purge_queue');
     -- portava-ci: story_purge_queue, 14   |   production: NULL, 0
+
+## `3001_highlight_kernel_admits_unhide.sql` — REHEARSED on a throwaway database, applied NOWHERE
+
+Recorded here because a migration that exists and has been executed somewhere
+should be findable from this document, and because census-highlights-memories
+§Y's staleness entry points at this file for the rehearsal. It is **not** an
+application record: there is nothing to record on either database.
+
+**What it is.** A `CREATE OR REPLACE` of `public.highlight_kernel_execute(jsonb)`
+that makes the §17 applier admit `UNHIDE_HIGHLIGHT`. The body is 2993's, derived
+mechanically from that file rather than retyped, with exactly two edits: the
+accepted-type list gains the command name, and a new branch clears
+`archived_at`, emits `highlight.hidden`, and recomputes `to_state` as `EXPIRED`
+when the Highlight's own expiry has passed and `ACTIVE` otherwise.
+
+**Why a new file rather than an edit to 2993.** 2993 travels on PR #523 with
+2992 and 2994 as a byte-identical rehearsed set; editing it would invalidate
+that rehearsal and mean re-rehearsing a pull request instead of adding a file.
+3001 leaves it untouched.
+
+**Why the number is 3001.** 2100-2999 was full — `main` held prefixes to 2997
+and both 2998 and 2999 were claimed by unmerged branches. PR #527 extended
+`NEW_NUMERIC_PREFIX_RE` to admit 3000-3999 hours earlier, for unrelated reasons;
+3000 is #527's own, and 3001 is the first slot above 2993 that has ever been
+legal. The band rule is in
+`artifacts/api-server/src/scripts/migrationPrefixRules.ts:58#NEW_NUMERIC_PREFIX_RE`
+and is written up in `docs/architecture/10_Database_Architecture.md`.
+
+### The rehearsal
+
+Replayed against a real PostgreSQL 16 carrying the baseline plus the canonical
+chain, using `artifacts/api-server/scripts/local-db/up.sh` on an isolated
+database — executed, not read:
+
+| probe | result |
+| --- | --- |
+| `UNHIDE_HIGHLIGHT` on a hidden Highlight | `ok=true`, `archived_at` **cleared** |
+| the event it wrote | ONE row, `type='highlight.hidden'`, `command_type='UNHIDE_HIGHLIGHT'` |
+| outbox | one row |
+| `to_state` on an unexpired Highlight | `ACTIVE` |
+| `to_state` on an **expired** Highlight | `EXPIRED` — expiry survives un-hiding |
+| the same idempotency key twice | second answers `duplicate=true` |
+| `PUBLISH_HIGHLIGHT` (negative control) | still `MEMORY_COMMAND_UNKNOWN_TYPE` |
+
+The rehearsal refused the file twice before accepting it, both times for a
+defect in the file rather than in the database, and both are worth carrying
+forward:
+
+1. The postconditions created a probe Highlight. `highlights.media_url` is
+   `NOT NULL` and `owner_id` references `profiles`, which references
+   `auth.users` — a "simple" fixture is a three-table chain. They were rewritten
+   in 2993's own idiom, which probes REJECTION paths and the catalog and creates
+   no rows at all.
+2. A postcondition asserting that `highlight.unhidden` appears nowhere in the
+   installed function **failed on its own explanatory comment**, because
+   `pg_get_functiondef` returns comments. It now matches the assignment
+   (`v_event_type := '…'`) rather than the bare name.
+
+### Rollback
+
+    -- 3001 REPLACES a function; it creates and drops nothing else. The rollback
+    -- is to re-run 2993, which restores the previous definition verbatim.
+    \i artifacts/api-server/src/migrations/2993_highlight_command_boundary.sql
+    DELETE FROM public.schema_migration_ledger
+     WHERE filename = '3001_highlight_kernel_admits_unhide.sql';
+
+Nothing here destroys user data: `CREATE OR REPLACE` on a function touches no
+row, and the only `UPDATE` in the new branch is the one that clears
+`archived_at` for the Highlight a caller named.
+
+### Re-establish this independently
+
+    SELECT filename FROM public.schema_migration_ledger
+     WHERE filename IN ('2993_highlight_command_boundary.sql',
+                        '3001_highlight_kernel_admits_unhide.sql');
+    -- portava-ci: 0 rows   |   production: 0 rows
+
+**Neither 2993 nor 3001 is applied to any shared database.** 3001 must never be
+applied before 2993, which creates the function it replaces; the file's own
+precondition raises if `to_regprocedure('public.highlight_kernel_execute(jsonb)')`
+is NULL, so the order is enforced rather than documented. Applying either follows
+the same path as 2992/2993/2994 and is the same external step; nothing here
+shortens it.
