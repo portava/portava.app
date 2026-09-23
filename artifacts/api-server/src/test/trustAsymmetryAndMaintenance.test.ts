@@ -44,7 +44,9 @@ process.env["TRUST_MAINTENANCE_MAX_USERS"] = "2";
 
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { recalculateTrustScore } from "../services/trust/TrustScoreService.js";
+import { expireOldRestrictions } from "../services/trust/TrustRestrictionService.js";
 import { checkEventEligibility } from "../routes/events.js";
 
 const {
@@ -458,5 +460,136 @@ describe("checkEventEligibility — the trust gate on RSVP", () => {
     const tables = eventTables({ trust_profiles: [{ user_id: "host", overall_score: 1 }] });
     const r = await checkEventEligibility(makeClient(tables), EVENT, "host");
     assert.equal(r.ok, true);
+  });
+});
+
+// ─── expireOldRestrictions: reachability, boundedness, and failure visibility ──
+//
+// THE DEFECT. Repo-wide, `expireOldRestrictions` appeared exactly once — its own
+// definition. No route, no scheduler, no startup job, no pg_cron, no trigger, not
+// even a test. Its docstring said "call from cleanup job"; the cleanup job that
+// was later built picked up the two SIBLING time-based lifts (expireOldCaps,
+// clearExpiredProbation) and missed this one. So a user restricted for a week
+// stayed restricted forever.
+//
+// THE SECOND DEFECT, same family. The old body destructured `const { data }` and
+// discarded `error`, returning `data?.length ?? 0`. supabase-js RETURNS errors
+// rather than throwing, so a permissions failure, schema drift or timeout all
+// produced 0 — indistinguishable from a clean sweep with nothing to do.
+
+describe("expireOldRestrictions — the sweep that had no caller", () => {
+  const past   = new Date(Date.now() - 86_400_000).toISOString();
+  const future = new Date(Date.now() + 86_400_000).toISOString();
+
+  const restrictionsTable = (rows: any[]) => {
+    const t = baseTables();
+    t["trust_restrictions"] = rows;
+    return t;
+  };
+
+  it("lifts a restriction whose term has passed", async () => {
+    const tables = restrictionsTable([
+      { id: "r1", user_id: USER_A, expires_at: past, lifted_at: null },
+    ]);
+    const r = await expireOldRestrictions(makeClient(tables));
+    assert.equal(r.failed, false);
+    assert.equal(r.expired, 1);
+    assert.ok(tables["trust_restrictions"][0].lifted_at, "lifted_at must be stamped");
+  });
+
+  it("leaves a restriction whose term has NOT passed", async () => {
+    const tables = restrictionsTable([
+      { id: "r1", user_id: USER_A, expires_at: future, lifted_at: null },
+    ]);
+    const r = await expireOldRestrictions(makeClient(tables));
+    assert.equal(r.expired, 0);
+    assert.equal(r.failed, false, "nothing due is a CLEAN sweep, not a failure");
+    assert.equal(tables["trust_restrictions"][0].lifted_at, null);
+  });
+
+  it("does not re-lift an already-lifted restriction", async () => {
+    const original = "2026-01-01T00:00:00.000Z";
+    const tables = restrictionsTable([
+      { id: "r1", user_id: USER_A, expires_at: past, lifted_at: original },
+    ]);
+    const r = await expireOldRestrictions(makeClient(tables));
+    assert.equal(r.expired, 0);
+    assert.equal(
+      tables["trust_restrictions"][0].lifted_at, original,
+      "re-lifting would overwrite the original instant with a later one",
+    );
+  });
+
+  it("is idempotent — a second pass lifts nothing more", async () => {
+    const tables = restrictionsTable([
+      { id: "r1", user_id: USER_A, expires_at: past, lifted_at: null },
+    ]);
+    const db = makeClient(tables);
+    const first  = await expireOldRestrictions(db);
+    const second = await expireOldRestrictions(db);
+    assert.equal(first.expired, 1);
+    assert.equal(second.expired, 0);
+    assert.equal(second.failed, false);
+  });
+
+  it("reports truncation rather than reading as full coverage", async () => {
+    const rows = Array.from({ length: 5 }, (_, i) => ({
+      id: `r${i}`, user_id: USER_A, expires_at: past, lifted_at: null,
+    }));
+    const r = await expireOldRestrictions(makeClient(restrictionsTable(rows)), 5);
+    assert.equal(r.truncated, true, "hitting the cap must be visible; the remainder rolls over");
+  });
+
+  it("a FAILED sweep is distinguishable from a clean one", async () => {
+    // The whole point of the rewrite. Both produce zero lifted restrictions;
+    // only one of them means "the sweep worked and there was nothing to do".
+    const failing: any = {
+      from: () => ({
+        select: () => ({
+          is: () => ({
+            lt: () => ({
+              order: () => ({
+                limit: async () => ({ data: null, error: { message: "permission denied" } }),
+              }),
+            }),
+          }),
+        }),
+      }),
+    };
+    const r = await expireOldRestrictions(failing);
+    assert.equal(r.expired, 0);
+    assert.equal(
+      r.failed, true,
+      "the OLD code returned 0 here, identical to a clean sweep — a broken " +
+      "restriction lift and an idle one were the same observation, forever",
+    );
+  });
+});
+
+describe("expireOldRestrictions — reachability guard", () => {
+  const past = new Date(Date.now() - 86_400_000).toISOString();
+
+  it("is invoked by the trust maintenance scheduler", () => {
+    // Source-level, because no fixture proves a caller EXISTS. This function
+    // spent its whole life orphaned while looking perfectly healthy; this guard
+    // is what stops that recurring.
+    const src = readFileSync(
+      new URL("../lib/trustMaintenanceScheduler.ts", import.meta.url), "utf8",
+    ).replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+    assert.match(
+      src, /expireOldRestrictions\s*\(/,
+      "trustMaintenanceScheduler must CALL expireOldRestrictions. Without a caller " +
+      "an expired restriction stays active permanently, and nothing anywhere reports it.",
+    );
+  });
+
+  it("the scheduler surfaces the sweep outcome, including failure", async () => {
+    const tables = baseTables();
+    tables["trust_restrictions"] = [
+      { id: "r1", user_id: USER_A, expires_at: past, lifted_at: null },
+    ];
+    const r = await runTrustMaintenance(makeClient(tables));
+    assert.equal(r.restrictionsExpired, 1, "the pass must report what it lifted");
+    assert.equal(r.restrictionSweepFailed, false);
   });
 });
