@@ -148,6 +148,13 @@ const KERNEL_SIDE = new Set([
   // account-deletion cascade's table, which is the exact confusion this whole
   // module exists to make impossible.
   "migrations/2993_highlight_command_boundary.sql",
+  // 3001 CREATE OR REPLACEs 2993's `highlight_kernel_execute` to admit
+  // UNHIDE_HIGHLIGHT, so it carries 2993's body and therefore 2993's table
+  // choices. Counted the same way 2993 was: it names `memory_domain_events`
+  // and never `memory_events`, which is the distinction this guard exists to
+  // keep — the §17 command kernel writes the former, the projection family
+  // writes the latter, and 2710 nearly conflated them.
+  "migrations/3001_highlight_kernel_admits_unhide.sql",
   "test/highlightCommandBoundary.test.ts",
   // REMOVED 2026-09-15, and the removal is the point rather than tidying.
   // "test/productionDriftExtraction.test.ts" was listed here because it asserted

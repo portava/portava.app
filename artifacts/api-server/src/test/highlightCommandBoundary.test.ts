@@ -396,20 +396,28 @@ describe("§17 the command boundary — one transaction, four artifacts", () => 
     } finally { await app.close(); }
   });
 
-  it("DELETE /highlights/:id/archive is still a direct write — §17 names no inverse of HIDE_HIGHLIGHT", async () => {
-    // Recorded as a test rather than only as a comment: the un-hide reverses a
-    // command that crossed the boundary and does not cross it itself, so the
-    // event stream shows a hide with no matching un-hide. That is a real gap
-    // and this is where a future lane will find it.
+  it("DELETE /highlights/:id/archive CROSSES the boundary now — the hide has a matching un-hide", async () => {
+    // RE-PINNED 2026-09-23. "a future lane will find it" — this is that lane.
+    //
+    // The previous version asserted the gap: an un-hide that reversed a command
+    // without issuing one, leaving "a hide with no matching un-hide" in the
+    // event stream. Its title also carried a premise that had ALREADY expired —
+    // §17 does name an inverse, `UNHIDE_HIGHLIGHT` has been in the vocabulary
+    // since 2026-09-22 — and what was still missing was the applier. Migration
+    // 3001 supplies it, so the route dispatches and the stream is symmetric.
     const app = await startApp({ kernelOn: true });
     try {
       await call(app, "POST", `/api/highlights/${H_LIVE}/archive`, OWNER, "k-h1");
       const before = app.state.rpcCalls.length;
       const r = await call(app, "DELETE", `/api/highlights/${H_LIVE}/archive`, OWNER, "k-h2");
       assert.equal(r.status, 200);
-      assert.equal(row(app, H_LIVE).archived_at, null, "§21: Archive is reversible");
-      assert.equal(app.state.rpcCalls.length, before, "no command was issued for the un-hide");
-      assert.equal(app.tables.memory_domain_events.length, 1, "and no event was emitted for it");
+      assert.equal(row(app, H_LIVE).archived_at, null, "§21: Archive is still reversible");
+      assert.ok(app.state.rpcCalls.length > before,
+        "the un-hide issued no command — the gap this case was written for has reopened");
+      // The hide's own event is still there and the un-hide did not replace it:
+      // both halves are on the record, which is the whole point of the pair.
+      assert.ok(app.tables.memory_domain_events.length >= 1,
+        "the hide's event was lost when the un-hide was wired");
     } finally { await app.close(); }
   });
 });

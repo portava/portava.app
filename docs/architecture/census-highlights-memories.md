@@ -766,7 +766,7 @@ body gave them.
 | `memoryRetrieval/**` | **Yes, test-only** | `searchMemories.ts:169`, namespace table at `:49`. Same reachability finding. |
 | `highlights/**` — ranking, lifecycle, projection policy, resurfacing, revocation | **Three of five are wired** | Wired: `highlightResurfacing` (`routes/highlights.ts:18`), `highlightProjectionPolicy` (`:23`), `highlightRevocation` (`:24`, executed `routes/highlights.ts:1919#router.delete("/highlights/:id"`). **Not wired:** `highlightRanking.ts` and `highlightLifecycle.ts` — test-only. |
 | `highlightPermissions.ts` reconciled to one rule | **Yes, and it is live** | `lib/highlightPermissions.ts:1-55` records the fork it closed: `canEngageHighlight` had **zero callers** while five routes re-derived the rule inline and disagreed with it on self-like and self-reply. The routes' behaviour was kept — widening is a product decision — and every route now calls `canViewHighlight` / `canEngageHighlight` (`routes/highlights.ts:6-13`). No migration is involved, so this one **is** in production. |
-| `highlights.archived_at` wired as a reversible archive | **Yes, and it is live** | `artifacts/api-server/src/routes/highlights.ts:100#archived_at` (projected), `:2056#/highlights/:id/archive` archive, `:2120#/highlights/:id/archive` unarchive, `:2157#/highlights/archived` `GET /highlights/archived`, and `.is("archived_at", null)` on the three list reads (`:982#archived_at`, `:1182#archived_at`, and the following-feed at `:2680#archived_at`). **`archived_at` exists on `public.highlights` in production** (schema snapshot), so this is the one Highlights change in this range that a deployed database can actually hold. |
+| `highlights.archived_at` wired as a reversible archive | **Yes, and it is live** | `artifacts/api-server/src/routes/highlights.ts:100#archived_at` (projected), `:2056#/highlights/:id/archive` archive, `:2120#/highlights/:id/archive` unarchive, `:2185#/highlights/archived` `GET /highlights/archived`, and `.is("archived_at", null)` on the three list reads (`:982#archived_at`, `:1182#archived_at`, and the following-feed at `:2708#archived_at`). **`archived_at` exists on `public.highlights` in production** (schema snapshot), so this is the one Highlights change in this range that a deployed database can actually hold. |
 | 2710, 2711, 2720–2724, 2730 written and NOT applied | **Yes** | None appears among the 35 entries in `lib/capability/production-applied-migrations.json`; none of their tables (`memory_domain_events`, `memory_event_outbox`, `highlight_resurfacing_preferences`, `highlight_projection_policies`, `highlight_sources`, `highlight_revocation_log`, `memory_derivative_registry`) appears in the production schema snapshot. `routes/highlights.ts:85-87` and `highlightProjectionPolicy.ts:228` say so in their own words. |
 
 ### A.2 The scoring rule applied here, stated once
@@ -4522,7 +4522,7 @@ error**: the six `blocks` reads in `routes/highlights.ts` and `routes/memories.t
 **content** reads, and they are listed so the next pass does not have to find them again:
 `routes/memories.ts:744#userCols` and `:754#savedItems` (`isSaved` reads as false), `routes/memories.ts:2732#media_url` (a trip
 Memory's cover photograph reads as absent), `routes/memories.ts:3146#coverRows` (the feed's cover, owner and
-like reads), `routes/highlights.ts:1060#viewedRows`, `:1078#avatar_url`, `:2795#profileRows` (view/like counts and the author profile).
+like reads), `routes/highlights.ts:1060#viewedRows`, `:1078#avatar_url`, `:1325#profileRows` (view/like counts and the author profile).
 None of them is a privacy leak and all of them can report a thing that exists as absent.
 
 ### M.7 Files changed outside this lane, and one request handed over
@@ -5147,7 +5147,7 @@ had zero production callers (§O.2's own finding on H75), and no surface read th
 asks the question: `artifacts/api-server/src/services/highlights/highlightPublicProjection.ts:211#export function publicProjectionVerdict`, with `artifacts/api-server/src/services/highlights/highlightPublicProjection.ts:162#export function controlsSuppressing` DERIVED from `CONTROL_EFFECTS` the way
 `FEED_ENFORCEABLE_CONTROLS` is, and `artifacts/api-server/src/services/highlights/highlightPublicProjection.ts:91#export const SURFACE_CONSENT_DIMENSIONS` naming which consent dimension each surface must not have
 been refused — RESURFACE and SHARE on a feed, SHARE alone on a surface the viewer navigated to.
-Wired at `artifacts/api-server/src/routes/highlights.ts:626#const projectable = filterProjectable([record], viewerId, "public_projection", inputs, log, "resolveViewAccess");` (the five engagement routes), `artifacts/api-server/src/routes/highlights.ts:1049#? filterProjectable(permitted as any[], user.id, "public_projection", inputs, req.log, "GET /users/:userId/highlights")` (the profile listing), `artifacts/api-server/src/routes/highlights.ts:1310#surviving as any[], user.id, "proactive_resurfacing", { controls: suppressed, viewerControls: viewerSuppressed, policies }, req.log, "GET /highlights/active",` and `artifacts/api-server/src/routes/highlights.ts:2775#surviving as any[], user.id, "proactive_resurfacing", { controls: suppressed, viewerControls: viewerSuppressed, policies }, req.log, "GET /highlights/following-feed",` *(Both calls repointed 2026-09-22, and the anchor text CHANGED rather than merely moved: the H89 fix threads `viewerControls: viewerSuppressed` through the same argument object, so a person-scoped control is evaluated against the VIEWER whose feed is being built and not only against the owner of the row. The old anchors matched nothing, which is the guard working.)*
+Wired at `artifacts/api-server/src/routes/highlights.ts:626#const projectable = filterProjectable([record], viewerId, "public_projection", inputs, log, "resolveViewAccess");` (the five engagement routes), `artifacts/api-server/src/routes/highlights.ts:1049#? filterProjectable(permitted as any[], user.id, "public_projection", inputs, req.log, "GET /users/:userId/highlights")` (the profile listing), `artifacts/api-server/src/routes/highlights.ts:1310#surviving as any[], user.id, "proactive_resurfacing", { controls: suppressed, viewerControls: viewerSuppressed, policies }, req.log, "GET /highlights/active",` and `artifacts/api-server/src/routes/highlights.ts:2803#surviving as any[], user.id, "proactive_resurfacing", { controls: suppressed, viewerControls: viewerSuppressed, policies }, req.log, "GET /highlights/following-feed",` *(Both calls repointed 2026-09-22, and the anchor text CHANGED rather than merely moved: the H89 fix threads `viewerControls: viewerSuppressed` through the same argument object, so a person-scoped control is evaluated against the VIEWER whose feed is being built and not only against the owner of the row. The old anchors matched nothing, which is the guard working.)*
 (the feeds, consent added beside the controls they already applied, before the page is cut), and
 `artifacts/api-server/src/services/telegraph/shareables.ts:638#const verdict = publicProjectionVerdict({ id, owner_id: r.owner_id as string }, viewerId, "public_projection", inputs);` (Telegraph). The owner is never refused their own record. 36 → 39 cases in
 `highlightPublicProjectionEnforcement.test.ts`: 25 pass / 11 fail before the gate, 39 / 0 after,
@@ -5892,11 +5892,11 @@ Declaring the command did not finish the job, and the unfinished half is a
 hazard rather than a gap:
 
 1. **No route dispatches it.** `DELETE /highlights/:id/archive` is still a direct
-   write (`artifacts/api-server/src/routes/highlights.ts:2133#archived_at`). It
+   write (`artifacts/api-server/src/routes/highlights.ts:2154#archived_at: null`). It
    logged the divergence under a reason code naming a premise the repository no
    longer holds — §17 naming no inverse — and that was **corrected in this same
    pass**: the runtime warning now reads
-   `artifacts/api-server/src/routes/highlights.ts:2144#KERNEL_2993_DOES_NOT_ADMIT_UNHIDE_HIGHLIGHT`,
+   `artifacts/api-server/src/routes/highlights.ts:2144#commandType: "UNHIDE_HIGHLIGHT"`,
    which is the true blocker, and names the command as declared rather than absent.
 2. **The applier would REFUSE the command if the route sent it.** 2993's write
    path admits exactly three types and rejects anything else by name
@@ -5980,7 +5980,7 @@ boundary **and says why in the request that causes it**. Anything else is a
 contradiction someone shipped. The middle state is currently occupied, and the
 suite permits it only while the route's runtime warning names the CURRENT
 blocker — which it now does
-(`artifacts/api-server/src/routes/highlights.ts:2144#KERNEL_2993_DOES_NOT_ADMIT_UNHIDE_HIGHLIGHT`).
+(`artifacts/api-server/src/routes/highlights.ts:2144#commandType: "UNHIDE_HIGHLIGHT"`).
 
 MUTATION-TESTED, three mutations, each red by name and each quoted from the run:
 
@@ -6029,3 +6029,158 @@ only thing that can is a kernel function in an unapplied migration behind a flag
 that is `False` on production. What moved is that a contradiction which existed
 only as prose is now a test, and a runtime warning that named a false premise
 now names the true one.
+
+---
+
+## §Y — 2026-09-23: the structural constraint §X.4 measured was lifted by another lane, and the work it was holding is built
+
+**No verdict moves here.** H158 and H159 keep the `W` §W.1 gave them, for the
+reason §W.5 already stated and which is unchanged: nothing is enabled.
+`memory_kernel_enabled` is still **False** on production, and admitting a
+command name into an applier is not turning a kernel on.
+
+### §Y.1 What §X.4 said, and why it stopped being true
+
+§X.4 measured a constraint and stated its consequence:
+
+> "A migration that must run AFTER 2993 cannot currently be numbered. The
+> canonical 4-digit band is `2100-2999` … 52 slots remain free *below* 2994 and
+> none above it. So 'add a follow-up migration' is not available, and that is a
+> fact about the repository rather than about this change. Extending the band
+> upward … is the obvious remedy and is **not** done here: it changes a guard,
+> and a guard change belongs in a pass that is about the guard."
+
+A pass that was about the guard did it. PR #527 — whose subject is the §7.4
+read-vs-unsend race, not this — extended `NEW_NUMERIC_PREFIX_RE` to
+`/^(?:2[1-9]\d{2}|3\d{3})_/`
+(`artifacts/api-server/src/scripts/migrationPrefixRules.ts:58#NEW_NUMERIC_PREFIX_RE`),
+with the reason in its own header: *"3000-3999, ADDED 2026-09-23 BECAUSE
+2100-2999 RAN OUT"*. #527 took 3000. **3001 was free**, and it is the first slot
+above 2993 that has ever existed.
+
+This is worth recording as more than a fact about numbering. §X.4 deliberately
+declined to change the guard itself, on the ground that the change belonged to
+a different pass — and the different pass arrived four hours later, for
+unrelated reasons, and unblocked this. The constraint was real when measured and
+the refusal to route around it was right; what changed is the repository, not the
+argument.
+
+### §Y.2 The amendment §W.3 called for, built
+
+§W.3 named the next step in terms:
+
+> "2993 must admit `UNHIDE_HIGHLIGHT` before any route dispatches it … The
+> amendment is the next step and it is engineering work, not a deployment
+> blocker."
+
+`migrations/3001_highlight_kernel_admits_unhide.sql` is that amendment. It
+`CREATE OR REPLACE`s `highlight_kernel_execute` with 2993's body **derived
+mechanically from 2993 rather than retyped**, differing in exactly two places:
+the vocabulary gate gains `'UNHIDE_HIGHLIGHT'`, and a `WHEN 'UNHIDE_HIGHLIGHT'`
+branch is added beside HIDE's. Everything else — the receipt, the owner re-check
+under lock, the four-artifact quartet in one transaction, the §23 payload
+filter, the §24 reason codes, the service_role-only grant — is 2993's text
+unchanged.
+
+**A follow-up, not an edit to 2993, and the reason is outside this file.** 2993
+is unapplied everywhere, so editing it in place would be legal. A byte-identical
+copy of it is under review on the migration-bootstrap PR, whose whole claim is
+that its three files are byte-identical and were rehearsed as such. Editing 2993
+would invalidate that rehearsal. 3001 leaves it untouched.
+
+**No event name was invented.** `highlight.unhidden` does not exist: 2710's type
+CHECK admits five highlight names without it, §17 does not name it, and three
+suites already assert its absence. UNHIDE emits `highlight.hidden` carrying
+`command_type: 'UNHIDE_HIGHLIGHT'` — the precedent PIN/UNPIN set, and the same
+mapping `memoryCommandBus.ts` already declared, so the bus and the applier agree
+by construction rather than by coincidence.
+
+### §Y.3 Rehearsed on a throwaway database, and what the rehearsal caught
+
+Replayed against a real PostgreSQL 16 carrying the baseline plus the canonical
+chain — not read, executed:
+
+| probe | result |
+| --- | --- |
+| `UNHIDE_HIGHLIGHT` on a hidden Highlight | `ok=true`, `archived_at` **cleared** |
+| the event it wrote | ONE row, `type='highlight.hidden'`, `command_type='UNHIDE_HIGHLIGHT'` |
+| outbox | one row |
+| `to_state` on an unexpired Highlight | `ACTIVE` |
+| `to_state` on an **expired** Highlight | `EXPIRED` — expiry survives un-hiding |
+| the same idempotency key twice | second answers `duplicate=true` |
+| `PUBLISH_HIGHLIGHT` (negative control) | still `MEMORY_COMMAND_UNKNOWN_TYPE` |
+
+The rehearsal earned its place twice by refusing the file. First, the
+postconditions created a probe Highlight, and `highlights.media_url` is NOT NULL
+while `owner_id` references `profiles` which references `auth.users` — a
+"simple" fixture is a three-table chain. They were rewritten in 2993's own
+idiom, which probes REJECTION paths and the catalog and creates no rows.
+Second, a postcondition asserting that `highlight.unhidden` appears nowhere in
+the installed function **failed on its own explanatory comment**, because
+`pg_get_functiondef` returns comments; it now matches the assignment
+(`v_event_type := '…'`) rather than the bare name.
+
+### §Y.4 The route is wired, and three tripwires fired as designed
+
+`DELETE /highlights/:id/archive` now dispatches through `dispatchMemoryCommand`
+in the same shape as its hide half, `legacy` arm included — which is what keeps
+it correct while the flag is False. The runtime warning that named
+`KERNEL_2993_DOES_NOT_ADMIT_UNHIDE_HIGHLIGHT` is **removed with the gap that
+justified it**.
+
+Three tests had been written to pin the old state and went red the moment the
+route changed. All three were re-pinned to the new truth rather than deleted,
+and each had asked for exactly that in its own words:
+
+- `highlightsApiUnhideBoundary` — *"a valid key is VALIDATED and NOT honoured"*
+  said *"if that is now deliberate, this suite is the request that was answered
+  and it must be repointed, not deleted"*. It is now honoured: a command means a
+  receipt.
+- the same suite's §18 case asserted the boundary warning. It now asserts the
+  warning's **absence**, plus that a command was issued — because "no warning
+  and no command" is the one combination that would be silently wrong.
+- `highlightCommandBoundary` — *"still a direct write … a future lane will find
+  it"*. This is that lane. Its title also carried a premise that had already
+  expired on 2026-09-22: §17 **does** name an inverse; what was missing was the
+  applier.
+
+The three-artifact invariant itself had a defect this work exposed, and fixing
+it is the most durable thing in this section: it read the vocabulary gate out of
+**2993 by name**. That was right while 2993 was the only definer and silently
+wrong the moment a follow-up amended it — it would have reported "still not
+admitted" forever and demanded the route stay unwired. It now takes every
+migration that defines `highlight_kernel_execute`, in applier order, and reads
+the **last** one. That is what a database actually ends up with.
+
+### §Y.5 A fake that modelled the wrong thing
+
+`memoryCommandKernelFake` dispatched highlight commands with
+`default: row.archived_at = nowIso` — so **any** command that was not PIN or
+UNPIN was modelled as a hide, `UNHIDE_HIGHLIGHT` included. Tests over it would
+have reported an un-hide that hid the row. It now has an explicit
+`UNHIDE_HIGHLIGHT` case matching the rehearsed function, and its default
+**throws** instead of guessing, because a fake whose default is a state change
+makes every unmodelled command silently plausible.
+
+### §Y.6 What is NOT claimed
+
+The migration is applied to **no database**. It is written, rehearsed on a
+throwaway PostgreSQL, and travels with the code that needs it. Applying it
+follows the same path as 2992/2993/2994 and is the same external step; nothing
+here shortens it. `memory_kernel_enabled` remains False on production, so the
+route continues to take its `legacy` arm there, exactly as it did yesterday —
+the difference is that the day the flag flips, the un-hide crosses the boundary
+instead of breaking.
+
+> **CITATION MAINTENANCE for §Y, stated rather than done silently.** Three
+> citations above pointed at code §Y.4 changed, and two of them named a string
+> that no longer exists anywhere: `KERNEL_2993_DOES_NOT_ADMIT_UNHIDE_HIGHLIGHT`,
+> the reason code on the runtime warning. The warning was removed **because its
+> premise stopped being true** — 3001 admits the command — so there is no line
+> to repoint to and no honest way to keep the old anchor. Both now cite
+> `routes/highlights.ts:2144#commandType: "UNHIDE_HIGHLIGHT"`, the dispatch that
+> replaced it, and the third cites the direct write at its new home inside the
+> `legacy` arm. The prose around them is left as written: §W.3 and §X described
+> the tree they were measured against, and §Y is where this document says what
+> changed. A citation silently repointed across a behaviour change is
+> indistinguishable from one that was never checked.

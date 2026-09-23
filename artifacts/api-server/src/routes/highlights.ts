@@ -2124,25 +2124,53 @@ router.delete("/highlights/:id/archive", async (req, res) => {
   const { id } = req.params;
   if (!UUID.test(id)) { sendError(res, "invalid_payload", "Invalid highlight id"); return; }
 
-  // §19 envelope parity with the three sibling writes. Validated, NOT honoured: a receipt needs a command and this issues none.
+  // §19 envelope parity with the three sibling writes — and now honoured, not merely validated: this issues a command, so there is a receipt to honour.
   const idempotencyKey = highlightIdempotencyKey(req, res);
   if (idempotencyKey === null) return;
 
-  const { data: updated, error } = await client
-    .from("highlights")
-    .update({ archived_at: null })
-    .eq("id", id)
-    .eq("owner_id", user.id)
-    .is("deleted_at", null)
-    .select("id");
+  // §17 UNHIDE_HIGHLIGHT — WIRED 2026-09-23, and the wait is the point. The
+  // command has been declared in the vocabulary since 2026-09-22, but 2993's
+  // applier refused it BY NAME, so dispatching it would have broken un-archive
+  // for every owner the moment `memory_kernel_enabled` went true. 3001 admits
+  // it (rehearsed on a throwaway database: archived_at cleared, one
+  // `highlight.hidden` event carrying `command_type: UNHIDE_HIGHLIGHT`, an
+  // outbox row, and a replay of the same key answering duplicate). The
+  // sequencing rule census-highlights-memories §W.3 set — "2993 must admit
+  // UNHIDE_HIGHLIGHT before any route dispatches it" — is satisfied, so this is
+  // the dispatch it was waiting for. The shape is HIDE's exactly, including the
+  // `legacy` arm, which is what keeps this correct while the flag is FALSE.
+  const outcome = await dispatchMemoryCommand<{ id: string; archivedAt: string | null }>({
+    sc: client,
+    commandType: "UNHIDE_HIGHLIGHT",
+    memoryId: null,
+    highlightId: id,
+    actorUserId: user.id,
+    idempotencyKey,
+    payload: {},
+    fromKernelResult: () => ({ id, archivedAt: null }),
+    legacy: async () => {
+      const { data: updated, error } = await client
+        .from("highlights")
+        .update({ archived_at: null })
+        .eq("id", id)
+        .eq("owner_id", user.id)
+        .is("deleted_at", null)
+        .select("id");
 
-  if (error) {
-    req.log.error({ err: error, highlightId: id }, "highlights: unarchive failed");
-    sendError(res, "db_error", error.message); return;
-  }
-  if (!updated || (updated as any[]).length === 0) { sendError(res, "not_found", "Highlight not found"); return; }
-  if (await isMemoryKernelEnabled(client)) req.log.warn({ highlightId: id, ownerId: user.id, idempotencyKey, command: null, declaredCommand: "UNHIDE_HIGHLIGHT", unemittedEvent: COMMAND_EVENT.UNHIDE_HIGHLIGHT, reason: "KERNEL_2993_DOES_NOT_ADMIT_UNHIDE_HIGHLIGHT" }, "highlights: un-hide applied OUTSIDE the §17 command boundary — the command IS declared; 2993 rejects it by name, so a §18 replay still reaches a state this row is no longer in");
-  res.status(200).json({ id, archivedAt: null });
+      if (error) {
+        req.log.error({ err: error, highlightId: id }, "highlights: unarchive failed");
+        return { ok: false, http: { code: "db_error", message: error.message } };
+      }
+      if (!updated || (updated as any[]).length === 0) {
+        // Same three-into-one 404 the hide half gives, for the same reason.
+        return { ok: false, http: { code: "not_found", message: "Highlight not found" } };
+      }
+      return { ok: true, body: { id, archivedAt: null } };
+    },
+  });
+
+  if (!outcome.ok) { sendHighlightCommandFailure(req, res, outcome); return; }
+  res.status(200).json(outcome.body);
 });
 
 /* ============================================================================

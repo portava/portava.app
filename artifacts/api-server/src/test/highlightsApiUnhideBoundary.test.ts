@@ -59,7 +59,7 @@
  *      node --import tsx/esm --test src/test/highlightsApiUnhideBoundary.test.ts
  */
 import { describe, it } from "node:test";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync} from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 const HERE_MIGRATIONS = resolve(dirname(fileURLToPath(import.meta.url)), "..", "migrations");
@@ -336,7 +336,21 @@ describe("§17 — the un-hide crosses no boundary, and the THREE artifacts that
     assert.equal(COMMAND_EVENT.HIDE_HIGHLIGHT, "highlight.hidden");
 
     const declared = HIGHLIGHT_COMMAND_TYPES.some((t) => /^UNHIDE/.test(t));
-    const kernelSql = readFileSync(resolve(HERE_MIGRATIONS, "2993_highlight_command_boundary.sql"), "utf8");
+    // THE APPLIER IS THE CHAIN, NOT ONE FILE. This read used to open 2993 by
+    // name, which was right while 2993 was the only migration that defined
+    // `highlight_kernel_execute` — and silently wrong the moment a follow-up
+    // amended it. 3001 is that follow-up, and a test that cannot see it would
+    // have reported "still not admitted" and demanded the route stay unwired
+    // forever. So: take every migration that (re)defines the function, in the
+    // order the applier runs them, and read the LAST one's vocabulary gate.
+    // That is what a database actually ends up with.
+    const definers = readdirSync(HERE_MIGRATIONS)
+      .filter((f) => f.endsWith(".sql"))
+      .sort()
+      .filter((f) => /CREATE OR REPLACE FUNCTION public\.highlight_kernel_execute/
+        .test(readFileSync(resolve(HERE_MIGRATIONS, f), "utf8")));
+    assert.ok(definers.length > 0, "no migration defines highlight_kernel_execute");
+    const kernelSql = readFileSync(resolve(HERE_MIGRATIONS, definers[definers.length - 1]), "utf8");
     const admitted = /v_type NOT IN \(([^)]*)\)/.exec(kernelSql)?.[1]?.includes("UNHIDE") ?? false;
     const routeSrc = readFileSync(resolve(HERE_MIGRATIONS, "..", "routes", "highlights.ts"), "utf8");
     const unhideHandler = /router\.delete\("\/highlights\/:id\/archive"[\s\S]*?\n\}\);/.exec(routeSrc)?.[0] ?? "";
@@ -369,25 +383,32 @@ describe("§17 — the un-hide crosses no boundary, and the THREE artifacts that
       "SPEC_17_NAMES_NO_INVERSE_OF_HIDE_HIGHLIGHT is no longer true: the command is declared.");
   });
 
-  it("a valid key is VALIDATED and NOT honoured — there is no receipt, so the second call applies again", async () => {
-    // "Validated" must never be read as "idempotent". With no command there is
-    // no receipt row to consult, so the same key twice is two writes — stated
-    // here rather than left for a client to discover.
+  it("a valid key is now HONOURED — the un-hide issues a command, so there is a receipt", async () => {
+    // RE-PINNED 2026-09-23, AND THIS IS THE REQUEST THAT WAS ANSWERED. The
+    // previous version of this case asserted the opposite — "VALIDATED and NOT
+    // honoured … no command was issued for the un-hide" — and said in its own
+    // words what to do if that ever became deliberate: "this suite is the
+    // request that was answered and it must be repointed, not deleted."
+    //
+    // It became deliberate. Migration 3001 admits UNHIDE_HIGHLIGHT into the
+    // applier's vocabulary, which was the one thing §W.3 said had to happen
+    // before any route could dispatch it, so DELETE /highlights/:id/archive now
+    // goes through `dispatchMemoryCommand` exactly as its hide half does. A
+    // command means a receipt, and a receipt means the same key twice is ONE
+    // write.
     const app = await startApp({ kernelOn: true });
     try {
       const first = await call(app, "DELETE", `/api/highlights/${H_ARCHIVED}/archive`, OWNER, "k-same");
       assert.equal(first.status, 200);
+      assert.ok(app.state.rpcCalls.length > 0,
+        "the un-hide issued no command with the kernel ON — the route is not dispatching");
+      const after = app.state.rpcCalls.length;
+
       row(app, H_ARCHIVED).archived_at = ARCHIVED_AT; // re-hide behind the route's back
       const second = await call(app, "DELETE", `/api/highlights/${H_ARCHIVED}/archive`, OWNER, "k-same");
       assert.equal(second.status, 200);
-      assert.equal(row(app, H_ARCHIVED).archived_at, null,
-        "no receipt stopped the replay — §19 idempotency is NOT in force on this write");
-
-      // And none of §17's four artifacts was produced, by either call.
-      assert.deepEqual(app.state.rpcCalls, [], "no command was issued for the un-hide");
-      assert.deepEqual(kernelTablesTouched(app), [],
-        "the un-hide reached the §17 command kernel — if that is now deliberate, this suite is the " +
-        "request that was answered and it must be repointed, not deleted");
+      assert.ok(app.state.rpcCalls.length > after,
+        "the replay did not even reach the kernel — the receipt must be consulted BY it, not instead of it");
     } finally { await app.close(); }
   });
 });
@@ -426,20 +447,26 @@ describe("§23 — one answer for not-yours, not-there and deleted, on BOTH halv
 // ── 4. The divergence, made observable exactly when it exists ────────────────
 
 describe("§18 — an un-hide that leaves highlight.hidden unanswered says so at runtime", () => {
-  it("with the kernel ON the successful un-hide warns, naming the event it did not emit", async () => {
+  it("with the kernel ON there is NOTHING LEFT TO WARN ABOUT — the event is emitted, not skipped", async () => {
+    // RE-PINNED 2026-09-23. This case existed because the un-hide wrote
+    // directly while the kernel was on, leaving `highlight.hidden` unanswered
+    // for a §18 consumer; the warning was the honest substitute for a command
+    // nobody could issue. 3001 made the command issuable and the route now
+    // issues it, so the warning was removed with the gap that justified it.
+    //
+    // Asserting its ABSENCE, not deleting the case: a warning that outlived its
+    // cause would be noise on every un-hide, and a reader of the old assertion
+    // is entitled to find out here what happened to it.
     const app = await startApp({ kernelOn: true });
     try {
       const r = await call(app, "DELETE", `/api/highlights/${H_ARCHIVED}/archive`, OWNER, "k-warn");
       assert.equal(r.status, 200);
-      assert.equal(row(app, H_ARCHIVED).archived_at, null, "the write still happens — this is a signal, not a refusal");
 
       const w = app.warns.find((x) => x.obj?.unemittedEvent !== undefined);
-      assert.ok(w, `no boundary warning was logged; warns=${JSON.stringify(app.warns)}`);
-      assert.equal(w!.obj.unemittedEvent, "highlight.hidden",
-        "the warning must name the event a §18 consumer will never see reversed");
-      assert.equal(w!.obj.highlightId, H_ARCHIVED);
-      assert.equal(w!.obj.idempotencyKey, "k-warn",
-        "the key is carried so an operator can correlate the un-hide with the hide that preceded it");
+      assert.equal(w, undefined,
+        `the un-hide still warns about an unemitted event after 3001 admitted the command; warns=${JSON.stringify(app.warns)}`);
+      assert.ok(app.state.rpcCalls.length > 0,
+        "no warning AND no command — that is the one combination that would be silently wrong");
     } finally { await app.close(); }
   });
 

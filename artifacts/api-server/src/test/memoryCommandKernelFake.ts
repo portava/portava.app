@@ -396,7 +396,24 @@ function highlightRpc(state: KernelState, args: any) {
     switch (type) {
       case "PIN_HIGHLIGHT":   row.pinned_at = nowIso;   result = { id: row.id, pinned_at: nowIso }; break;
       case "UNPIN_HIGHLIGHT": row.pinned_at = null;     result = { id: row.id, pinned_at: null }; break;
-      default:                row.archived_at = nowIso; result = { id: row.id, archived_at: nowIso }; break;
+      case "HIDE_HIGHLIGHT":  row.archived_at = nowIso; result = { id: row.id, archived_at: nowIso }; break;
+      // ADDED 2026-09-23 with migration 3001, which admits this command into
+      // the applier. Rehearsed against a real PostgreSQL carrying the replayed
+      // chain before being written here: the function clears `archived_at`,
+      // emits `highlight.hidden` carrying `command_type: UNHIDE_HIGHLIGHT`, and
+      // derives EXPIRED rather than ACTIVE when the highlight's clock has run
+      // out. `derived()` above reproduces that last part already.
+      case "UNHIDE_HIGHLIGHT": row.archived_at = null;  result = { id: row.id, archived_at: null }; break;
+      // WAS `default: row.archived_at = nowIso`, which is how UNHIDE_HIGHLIGHT
+      // came to be modelled as a HIDE: anything not PIN or UNPIN hid the row.
+      // A fake whose default is a state change makes every unmodelled command
+      // silently plausible, so the default now refuses. The applier refuses
+      // unknown names too (2993's vocabulary gate), which is what this models.
+      default:
+        throw new Error(
+          `memoryCommandKernelFake: no highlight branch for ${type}. The real applier ` +
+          `refuses unknown command names rather than guessing; add a case here when a ` +
+          `migration admits one.`);
     }
     const toState = derived(row);
     const eventType = COMMAND_EVENT[type];
