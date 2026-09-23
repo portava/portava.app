@@ -9,10 +9,10 @@
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { logger as rootLogger } from "../../lib/logger.js";
-import { getActiveCaps } from "./TrustCapService.js";
+import { getActiveCapsResult } from "./TrustCapService.js";
+import { getTrustProfileResult } from "./TrustScoreService.js";
 
 const logger = rootLogger.child({ service: "TrustRecoveryService" });
-import { getTrustProfileResult } from "./TrustScoreService.js";
 
 export interface RecoveryStep {
   category: string;
@@ -30,6 +30,24 @@ export interface RecoveryStatus {
   lowestCategory: string | null;
   lowestScore: number | null;
   suggestedSteps: RecoveryStep[];
+  /**
+   * True when the probation read FAILED, so `onProbation: false` /
+   * `probationEndsAt: null` above are a guess, not an answer.
+   *
+   * The probation query destructured only `.data` and dropped `error`, and
+   * supabase-js RETURNS errors rather than throwing — so an unreadable
+   * trust_profiles produced `data: null`, `Boolean(undefined)` produced `false`,
+   * and "this user is not on probation" was the literal output of a failed
+   * query. That is fail-OPEN on a sanction, reported with the same confidence as
+   * a real clean record, and it flows straight through
+   * TrustPrivacyGuard.getSafeTrustSummary into the Passport.
+   */
+  probationUnknown: boolean;
+  /**
+   * True when the active-cap read failed, so `activeCapsCount: 0` means
+   * "could not tell" rather than "no ceilings apply".
+   */
+  activeCapsUnknown: boolean;
   /**
    * 0–100 % toward 50 (neutral), or NULL when there is no profile to measure.
    *
@@ -114,30 +132,36 @@ export async function getRecoveryStatus(
   db: SupabaseClient,
   userId: string,
 ): Promise<RecoveryStatus> {
-  const [profileRead, caps, probation] = await Promise.all([
+  const [profileRead, capsRead, probation] = await Promise.all([
     getTrustProfileResult(db, userId),
-    getActiveCaps(db, userId),
+    getActiveCapsResult(db, userId),
     db.from("trust_profiles").select("on_probation, probation_ends_at").eq("user_id", userId).maybeSingle(),
   ]);
 
-  // The probation read's error was unbound, so an unreadable trust_profiles
-  // produced onProbation:false -- "this user is not on probation", asserted
-  // about a table nobody could read. It is the SAME table getTrustProfileResult
-  // just reported on, so when that read failed this one has too.
-  const probationUnreadable = Boolean((probation as any).error);
-  if (probationUnreadable) {
+  // The cap read reports its own failure rather than an empty list: a ceiling
+  // nobody could read is not "no ceilings apply". `activeCapsCount: 0` below is
+  // therefore only a count when `activeCapsUnknown` is false.
+  const caps = capsRead.state === "ok" ? capsRead.caps : [];
+  const activeCapsUnknown = capsRead.state !== "ok";
+
+  // `error` is READ, not discarded: without this the line below turns any failed
+  // read into the confident claim "not on probation". It is the SAME table
+  // getTrustProfileResult just reported on, so when that read failed this one
+  // has too — which is why the two are surfaced together below.
+  const probationUnknown = Boolean((probation as any)?.error);
+  if (probationUnknown) {
     logger.warn(
       { err: (probation as any).error, userId },
-      "trust_profiles probation read failed — reporting onProbation as unknown-shaped false alongside profileUnavailable, not as a fact",
+      "trust_profiles probation read failed — onProbation is unknown, not false; reported as probationUnknown alongside profileUnavailable",
     );
   }
-  const onProbation = Boolean((probation.data as any)?.on_probation);
-  const probationEndsAt = (probation.data as any)?.probation_ends_at ?? null;
-  const unavailable = profileRead.state === "unavailable" || probationUnreadable;
+  const onProbation = probationUnknown ? false : Boolean((probation.data as any)?.on_probation);
+  const probationEndsAt = probationUnknown ? null : ((probation.data as any)?.probation_ends_at ?? null);
+  const unavailable = profileRead.state === "unavailable" || probationUnknown;
 
   if (profileRead.state !== "ok") {
     return {
-      userId, onProbation, probationEndsAt,
+      userId, onProbation, probationEndsAt, probationUnknown, activeCapsUnknown,
       activeCapsCount: caps.length,
       lowestCategory: null, lowestScore: null,
       suggestedSteps: [],
@@ -162,7 +186,7 @@ export async function getRecoveryStatus(
   const suggestedSteps = await buildRecoverySteps(db, userId);
 
   return {
-    userId, onProbation, probationEndsAt,
+    userId, onProbation, probationEndsAt, probationUnknown, activeCapsUnknown,
     activeCapsCount: caps.length,
     lowestCategory: lowestCat || null,
     lowestScore: lowestCat ? lowestScore : null,

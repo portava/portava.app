@@ -928,6 +928,12 @@ const CENSUS_SCOPE: Record<string, string[]> = {
   // not by services/trust. Listing only the service would have made this census
   // look fresh while the reads it grades moved underneath it.
   "census-trust.md": [
+    // ── ADDED 2026-09-22 by the RE-MEASUREMENT LANE, with §24 ──────────────
+    // §24.5 cites this suite as the executed evidence for the failure-visibility
+    // rows, and this census's scope floor is 100 %, so a file it cites and does
+    // not watch is a hole by its own rule: the suite could be deleted and the
+    // section would still read as though it had been run.
+    "artifacts/api-server/src/test/trustFailureVisibility.test.ts",
     // ── ADDED 2026-09-16 by the PRODUCT lane, with §20 ─────────────────────
     // TV-2a's Rent-a-Buddy half now RESTS on these. The row was W because
     // no screen under `app/(rent-a-buddy)/` routed to `/profile/verification`;
