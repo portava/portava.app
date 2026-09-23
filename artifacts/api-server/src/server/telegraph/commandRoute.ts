@@ -42,6 +42,7 @@ import { asyncHandler } from "../../lib/asyncHandler.js";
 import { logger as rootLogger } from "../../lib/logger.js";
 import { publishToThread } from "../../lib/telegraphEvents.js";
 import { messageKernelEnabled } from "../../services/telegraphMessageKernel.js";
+import { unsendBeforeSeen } from "../../services/telegraph/unsend.js";
 import {
   ISSUABLE_COMMANDS,
   LEGACY_PATH_COMMANDS,
@@ -214,6 +215,21 @@ router.post(
  *
  * AN UNREADABLE ROSTER REFUSES. The same rule as everywhere else in this lane:
  * "we could not check whether anyone saw it" is not "nobody saw it".
+ *
+ * ── THE DECISION IS NOT MADE HERE ANY MORE ──────────────────────────────────
+ * This handler used to read the message, read the roster, decide, and write —
+ * four round trips, each its own implicit transaction. Between the roster read
+ * and the write, `POST /threads/:id/read` could land, and the unsend of a
+ * message that HAD been seen went through: §28's "unsend-after-seen violations:
+ * 0" could not be met by code shaped like that, however carefully it was
+ * written.
+ *
+ * `telegraph_unsend_message_before_seen` takes FOR UPDATE locks on the
+ * recipient receipt rows before reading them, so a concurrent mark-as-read
+ * blocks until the unsend commits or vice versa. It is now the only writer, and
+ * this handler is an adapter: it maps outcomes to this endpoint's published
+ * reason codes and does nothing else. Same mapping, same codes, same HTTP
+ * statuses as before.
  */
 async function unsendMessage(
   sc: any,
@@ -224,60 +240,48 @@ async function unsendMessage(
   const messageId = String(params["messageId"] ?? "");
   if (!UUID_RE.test(messageId)) return refusal("UNSEND_MESSAGE", "TELEGRAPH_LIFECYCLE_NOT_EDITABLE");
 
-  const { data: msg, error: msgErr } = await sc
-    .from("messages")
-    .select("id, thread_id, sender_id, created_at, deleted_at, unsent_at")
-    .eq("id", messageId)
-    .eq("thread_id", conversationId)
-    .maybeSingle();
-  if (msgErr) return refusal("UNSEND_MESSAGE", "TELEGRAPH_DEGRADED_THREAD_UNREADABLE");
-  // A message in another conversation answers exactly as a message that does
-  // not exist: not-sender. Distinguishing them would make this endpoint a
-  // message-existence oracle.
-  if (!msg) return refusal("UNSEND_MESSAGE", "TELEGRAPH_AUTH_NOT_SENDER");
-  if ((msg as any).sender_id !== userId) return refusal("UNSEND_MESSAGE", "TELEGRAPH_AUTH_NOT_SENDER");
-  if ((msg as any).deleted_at != null) return refusal("UNSEND_MESSAGE", "TELEGRAPH_LIFECYCLE_ALREADY_DELETED");
-  if ((msg as any).unsent_at != null) return refusal("UNSEND_MESSAGE", "TELEGRAPH_LIFECYCLE_ALREADY_UNSENT");
+  const verdict = await unsendBeforeSeen(sc, { messageId, actorId: userId, threadId: conversationId });
 
-  const createdAt = String((msg as any).created_at);
+  // null is "we could not establish an answer", which is neither permission nor
+  // refusal. It must not read as either.
+  if (verdict === null) return refusal("UNSEND_MESSAGE", "TELEGRAPH_DEGRADED_THREAD_UNREADABLE");
 
-  const { data: others, error: othersErr } = await sc
-    .from("message_thread_members")
-    .select("user_id, last_read_at")
-    .eq("thread_id", conversationId)
-    .is("left_at", null)
-    .neq("user_id", userId);
-  if (othersErr) return refusal("UNSEND_MESSAGE", "TELEGRAPH_DEGRADED_MEMBERSHIP_UNREADABLE");
+  switch (verdict.outcome) {
+    case "not_found":
+      // A message in another conversation answers exactly as a message that
+      // does not exist: not-sender. Distinguishing them would make this
+      // endpoint a message-existence oracle.
+      return refusal("UNSEND_MESSAGE", "TELEGRAPH_AUTH_NOT_SENDER");
+    case "not_sender":
+      return refusal("UNSEND_MESSAGE", "TELEGRAPH_AUTH_NOT_SENDER");
+    case "not_member":
+      // The outer gate established membership before dispatching, so reaching
+      // this means the caller left the thread in between.
+      return refusal("UNSEND_MESSAGE", "TELEGRAPH_AUTH_LEFT_THREAD");
+    case "already_deleted":
+      return refusal("UNSEND_MESSAGE", "TELEGRAPH_LIFECYCLE_ALREADY_DELETED");
+    case "already_unsent":
+      return refusal("UNSEND_MESSAGE", "TELEGRAPH_LIFECYCLE_ALREADY_UNSENT");
+    case "seen":
+      return refusal("UNSEND_MESSAGE", "TELEGRAPH_LIFECYCLE_SEEN_BY_RECIPIENT");
+    case "unsent":
+      break;
+  }
 
-  const createdMs = Date.parse(createdAt);
-  const seenByAnyone = ((others as any[]) ?? []).some((m) => {
-    const lr = m.last_read_at;
-    if (!lr) return false;
-    const lrMs = Date.parse(String(lr));
-    return Number.isFinite(lrMs) && Number.isFinite(createdMs) && lrMs >= createdMs;
-  });
-  if (seenByAnyone) return refusal("UNSEND_MESSAGE", "TELEGRAPH_LIFECYCLE_SEEN_BY_RECIPIENT");
-
-  const now = new Date().toISOString();
   // The row is RETAINED and redacted, not removed: §17.2 requires the tombstone
   // so the sequence stays continuous. `body: ''` rather than NULL because
-  // messages.body is NOT NULL — the same constraint the delete path documents.
-  const { error: updErr } = await sc
-    .from("messages")
-    .update({ unsent_at: now, lifecycle_state: "unsent", body: "" })
-    .eq("id", messageId)
-    .is("unsent_at", null);
-  if (updErr) return refusal("UNSEND_MESSAGE", "TELEGRAPH_DEGRADED_THREAD_UNREADABLE");
+  // messages.body is NOT NULL — the function documents that constraint too.
+  const unsentAt = verdict.unsentAt ?? new Date().toISOString();
 
   // §13.2 `message.unsent`, after the write. The outbox trigger has already
   // written the durable event inside the same transaction as the UPDATE; this
   // is the realtime nudge, and it carries no body because there is none.
   void publishToThread(sc, conversationId, {
     type: "message.unsent",
-    payload: { messageId, unsentAt: now, senderId: userId },
+    payload: { messageId, unsentAt, senderId: userId },
   }, { excludeUserId: userId });
 
-  return success("UNSEND_MESSAGE", { messageId, unsentAt: now });
+  return success("UNSEND_MESSAGE", { messageId, unsentAt });
 }
 
 /* ───────────────────────────── reactions ──────────────────────────────────── */
