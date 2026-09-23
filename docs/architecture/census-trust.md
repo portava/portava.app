@@ -2342,8 +2342,8 @@ The skip is narrow by construction: it applies only when the user has **no** qua
 | hop | with the fabricated row | with no row |
 |---|---|---|
 | `getSafeTrustSummary` | `public_level: reliable_traveler` | `new_traveler` — `artifacts/api-server/src/services/trust/TrustPrivacyGuard.ts:104#const publicLevel: PublicTrustLevel = profile?.public_level ?? "new_traveler";` |
-| `LEVEL_RANK` | **2** | **0** — `artifacts/api-server/src/services/passport/PassportProjectionService.ts:740#new_traveler: 0,` |
-| `canHostTrip` (`rank >= 1`) | granted | withheld — `artifacts/api-server/src/services/passport/PassportProjectionService.ts:758#canHostTrip: !r.hosting && rank >= 1,` |
+| `LEVEL_RANK` | **2** | **0** — `artifacts/api-server/src/services/passport/PassportProjectionService.ts:746#new_traveler: 0,` |
+| `canHostTrip` (`rank >= 1`) | granted | withheld — `artifacts/api-server/src/services/passport/PassportProjectionService.ts:764#canHostTrip: !r.hosting && rank >= 1,` |
 | `canUseCrewLocation` (`rank >= 1`) | granted | withheld |
 | `canContributeLiveIntel` (`rank >= 2`) | granted | withheld |
 | the DOMAIN numbers Passport shows | 50, read off the row | 50, substituted for the missing row | 
