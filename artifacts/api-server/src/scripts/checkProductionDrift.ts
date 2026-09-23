@@ -706,22 +706,33 @@ export const KNOWN_PRODUCTION_GAPS: Record<string, Gap> = {
       "Migration 2998_story_retention.sql, which this tree declares. Not " +
       "'unmerged-pr': that classification is for a table whose migration is on " +
       "some OTHER branch, and this check correctly refuses it for a file it can " +
-      "see — the excuse would stop being true the moment the branch merged and " +
-      "nothing would notice. So it counts against the must-reach-zero total, " +
-      "which is the honest state: the table is absent from production AND from " +
-      "portava-ci, because live-db.yml applies only from main and 2998 is not " +
-      "on main yet. It is the durable retry record for the hourly retention " +
-      "job — a row outlives a partial purge so the storage object path is not " +
-      "lost when the database row goes first — so it must exist BEFORE that job " +
-      "is enabled, not after; the job must not be switched on while this entry " +
-      "stands. Rehearsed against production's real structure " +
+      "see. APPLIED to portava-ci on 2026-09-23 at 00:20:26 UTC by the main " +
+      "push run (ledger row applied_by='ci' with a real sha256), and still " +
+      "ABSENT FROM PRODUCTION, which is why this entry stays and still counts " +
+      "against the must-reach-zero total. Production applies do not happen in " +
+      "CI: the applier refuses the production ref outright. It is the durable " +
+      "retry record for the hourly retention job — a row outlives a partial " +
+      "purge so the storage object path is not lost when the database row goes " +
+      "first. " +
+      "WHAT HOLDS THE JOB OFF PRODUCTION, corrected: an earlier version of this " +
+      "note said the job must not be enabled while this entry stands, and other " +
+      "comments read that as enforcement. It is not. " +
+      "startStoryRetentionScheduler() is called unconditionally at boot " +
+      "(index.ts:201), so on a deployment without 2998 the job DOES run. What " +
+      "makes that safe is a property of the pass, verified by reading it rather " +
+      "than assumed: enqueueDueStories filters .not('deleted_at','is',null), " +
+      "PostgREST errors on the absent column, and `throw deletedErr` aborts the " +
+      "pass BEFORE purgeExpiredEngagement can delete anything. The tick records " +
+      "the failure and purges nothing. That is an ordering dependency, not a " +
+      "guard: reorder those two calls and the engagement purge runs with no " +
+      "ledger behind it. " +
+      "Rehearsed against production's real structure " +
       "(baseline/20260819_baseline_structure.sql replayed to head on a " +
       "throwaway PostgreSQL 16, sql/rehearsals/2998_*.sql, including a negative " +
       "control that disables the deleted_at trigger and confirms the clock then " +
       "stops being set, and one that drops the archive disjunct and confirms a " +
-      "capped row is missed). Rehearsed is not applied: nothing has run against " +
-      "production or portava-ci. Strike this off in the same change that " +
-      "applies 2998 and refreshes the two production snapshots.",
+      "capped row is missed). Strike this off in the same change that applies " +
+      "2998 to PRODUCTION and refreshes the two production snapshots.",
   },
 };
 

@@ -265,33 +265,6 @@ const ALLOWLIST = new Set<string>([
   // docs/migrations.md — NOT when the migration merges.
   "layover_recommendations.travel_time_source",  // 2745 — where the row's travel figure came from
 
-  // ── Pending live apply: 2998_story_retention.sql ───────────────────────────
-  // The owner-archive retention unit. Declared by a migration on this branch
-  // and absent from portava-ci, because live-db.yml applies migrations only
-  // from main (live-db.yml:775) and hand-applying an unmerged branch's
-  // migrations to the shared CI database is the recorded root cause the 2970
-  // entry above sets out in full.
-  //
-  // WHAT IS AND IS NOT BROKEN WHILE THESE ARE ALLOWLISTED, stated rather than
-  // implied. Nothing reaches either column on a deployment today, and that is
-  // enforced rather than hoped for: story_purge_queue carries a
-  // KNOWN_PRODUCTION_GAPS entry in src/scripts/checkProductionDrift.ts whose
-  // note says the retention job must not be enabled while the entry stands, so
-  // the scheduler's work is held off until the apply is certified. The archive
-  // route reads `deleted_at` through a select list, and supabase-js returns an
-  // error for a column the database lacks rather than silently omitting it —
-  // which the route treats as a failure to establish the state, so the Deleted
-  // tab would report unavailable rather than show a wrong window. Neither
-  // column is ever written by application code: the 2998 trigger owns
-  // `deleted_at`, and `last_success_at` is written by the scheduler's health
-  // bookkeeping, which the same gap entry holds.
-  //
-  // Remove BOTH once 2998's apply is certified in docs/migrations.md — NOT when
-  // the migration merges. `stories.deleted_at` is also carried by the ALLOWLIST
-  // in src/scripts/checkWritePathColumns.ts, which reads the live schema from
-  // the other direction; the two come out together.
-  "stories.deleted_at",          // 2998 — when the owner deleted it; the recovery window runs from here
-  "job_health.last_success_at",  // 2998 — last SUCCESSFUL run, so "healthy" cannot be claimed before one
 ]);
 
 
