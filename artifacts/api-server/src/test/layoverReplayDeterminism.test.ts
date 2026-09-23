@@ -100,7 +100,10 @@ describe("§21 L240 — a recorded decision replays to itself", () => {
     // answer would make this control pass for the wrong reason — which is
     // exactly what the first draft of this case did (it forged "yes" onto a
     // record whose verdict already was "yes", and reported a green match).
-    assert.equal(e.decision.result.verdict, "yes");
+    // Was "yes". A stored decision made without an entry fact now replays as
+    // `entry_unverified`; the control only needs the forged value to DIFFER
+    // from the real one, and "no" still does.
+    assert.equal(e.decision.result.verdict, "entry_unverified");
     const forged = {
       ...e,
       decision: { ...e.decision, result: { ...e.decision.result, verdict: "no" as const } },

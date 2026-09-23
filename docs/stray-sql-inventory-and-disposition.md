@@ -64,7 +64,7 @@ at the wrong object. **Deleting the strays fixes that citation by construction.*
 ### 2.2 Deleting them is not a no-op — one guard must change with them
 
 All eleven root `.sql` files are hash-pinned in `FROZEN_LOOSE_FILES`
-(`artifacts/api-server/src/scripts/frozenMigrationRoots.ts:379-392`), enforced by
+(`artifacts/api-server/src/scripts/frozenMigrationRoots.ts:388-400`), enforced by
 `checkFrozenDir.ts`. Removing the files without removing their entries turns that
 check red.
 

@@ -96,7 +96,7 @@ than 98%. Three of them matter more than the rest:
    silent — 2 of 58 accounts have ever been scored.
    The defect itself is unchanged: `buildDomainTrust` substitutes the neutral 50
    for the overall score and for every missing category
-   (`PassportProjectionService.ts:1004,1011`), and `presentationWord(50)` returns
+   (`PassportProjectionService.ts:1010,1011`), and `presentationWord(50)` returns
    "Established" (`:933`), so **56 of those 58 accounts are described as an
    Established member of the community across all six trust domains on the
    strength of a hard-coded number** — and that is not waiting on a flag flip.
@@ -174,7 +174,7 @@ NOT-BUILT · **?** = CANNOT-VERIFY. Backend paths are relative to
 
 | id | Requirement | V | Evidence |
 | --- | --- | --- | --- |
-| P1 | One projection combining identity, travel history, state, availability, intent, trust, credentials, reputation, social context, experience history, plans, privacy, viewer relationship and action eligibility | C | `services/passport/PassportProjectionService.ts:1527` `buildPassportProjection` assembles exactly that set in twelve numbered steps and returns one `PassportProjection` (`:1646-1665`). |
+| P1 | One projection combining identity, travel history, state, availability, intent, trust, credentials, reputation, social context, experience history, plans, privacy, viewer relationship and action eligibility | C | `services/passport/PassportProjectionService.ts:1598` `buildPassportProjection` assembles exactly that set in twelve numbered steps and returns one `PassportProjection` (`:1646-1665`). |
 
 ### §2 Ten Primary Passport Surfaces
 
@@ -200,7 +200,7 @@ NOT-BUILT · **?** = CANNOT-VERIFY. Backend paths are relative to
 | P14 | Name, @handle, verification mark, home country and optional home base immediately visible | C | `PassportProjectionService.buildIdentity:683-696` returns all five, each behind its own gate (`:679-681`); rendered by `PassportIdentityCard`. |
 | P15 | Current travel state and Availability/Open to Plans near the top, not buried | C | `src/components/passport/TravelerStateChip.tsx` and `AvailabilityChip.tsx` render in the identity band; server side `buildTravelerState:717` and `buildAvailability:862`. |
 | P16 | Trust summary as a concise score/label with drill-down | C | `buildTrust:975` returns label + publicLevel + confidence + domains, numeric score only for self (`:1010-1017`); drill-down via `TrustScoreInfoSheet` and `/passport/trust`. |
-| P17 | Travel stats: countries, cities, stamps, Trips | C | `PassportProjectionService.ts:1601-1606` `TravelStats`; `PassportStatsRow` in `PassportIdentityCard`. |
+| P17 | Travel stats: countries, cities, stamps, Trips | C | `PassportProjectionService.ts:1672-1606` `TravelStats`; `PassportStatsRow` in `PassportIdentityCard`. |
 | P18 | Viewer actions Follow / Make a Plan / Message / More; owner actions Edit Passport / Set Availability / My World / Share Passport | C | Viewer: `PassportHomePreviews.tsx:239-249` renders "Make a Plan" gated on `capabilities.actions.can_make_plan`; Follow/Message on the public passport. Owner: `PassportQuickLinks.tsx:57-100` (My World, Trust, Travel Identity, Journeys, Yearbook, Plans, Availability) plus a Share entry delegated to the parent. |
 | P19 | High-priority previews: Shared Context, recent stamps, Featured Journey, next Trip, memories | C | `PassportHomePreviews.tsx` — `passport-shared-context-entry` (`:258`), `passport-preview-stamps` (`:280`), `passport-preview-featured-journey` (`:111`), `passport-preview-next-trip` (`:136`), `passport-preview-memories` (`:308`). All five. **This closes the certification's §3 "previews not surfaced" gap.** |
 
@@ -282,7 +282,7 @@ NOT-BUILT · **?** = CANNOT-VERIFY. Backend paths are relative to
 | P56 | canUseCrewLocation | C | `:576`. |
 | P57 | canContributeLiveIntel | C | `:577`. |
 | P58 | canBecomeBuddy | C | `:578`. |
-| P59 | **canProvideVisaBuddyService** | **N** | A repo-wide search across the server and client trees for `canProvideVisaBuddyService`, `VisaBuddy` and `visa_buddy` returns **nothing**. The capability named by §11 does not exist in any form. **Classified OWNER 2026-09-08 — `VISA_BUDDY_CAPABILITY` on the blocker ledger.** The other six §11 capabilities are derived at `services/passport/PassportProjectionService.ts:753#buildOwnerCapabilities` and each gates something that exists; a seventh would gate nothing and be read by nothing. **The "only current posture" sentence this row carried was measured FALSE on 2026-09-14 (§14.2), and the truth strengthens the N.** The tree ships TWO visa positions, neither a Layover aside: a curated entry-intelligence subsystem whose honesty contract is official sources plus a standing disclaimer (`artifacts/api-server/src/lib/entryRequirements.ts:4#HONESTY CONTRACT`, `artifacts/api-server/src/lib/entryRequirements.ts:20#export const DISCLAIMER`), and a live abuse policy that classifies a PEER offering visa assistance as a travel-scam family (`artifacts/api-server/src/domain/telegraph/policies/travelScamSignals.ts:111#family: "VISA_HELP"`). The Layover lines are real but are at `artifacts/api-server/src/services/airport/LayoverSafetyEngine.ts:1198#Verify visa rules`, `artifacts/api-server/src/services/airport/LayoverSafetyEngine.ts:1246#Visa or transit-permit requirements`, `artifacts/api-server/src/services/airport/LayoverSafetyEngine.ts:1256#Entry is never confirmed`, not at the `:585/:619/:628` this row cited. Choosing a trust threshold for "may provide visa assistance" would invent immigration-advice policy in a formula. Stays **N**: it is a real gap against the spec, and it is not one engineering may close. |
+| P59 | **canProvideVisaBuddyService** | **N** | A repo-wide search across the server and client trees for `canProvideVisaBuddyService`, `VisaBuddy` and `visa_buddy` returns **nothing**. The capability named by §11 does not exist in any form. **Classified OWNER 2026-09-08 — `VISA_BUDDY_CAPABILITY` on the blocker ledger.** The other six §11 capabilities are derived at `services/passport/PassportProjectionService.ts:759#buildOwnerCapabilities` and each gates something that exists; a seventh would gate nothing and be read by nothing. **The "only current posture" sentence this row carried was measured FALSE on 2026-09-14 (§14.2), and the truth strengthens the N.** The tree ships TWO visa positions, neither a Layover aside: a curated entry-intelligence subsystem whose honesty contract is official sources plus a standing disclaimer (`artifacts/api-server/src/lib/entryRequirements.ts:4#HONESTY CONTRACT`, `artifacts/api-server/src/lib/entryRequirements.ts:20#export const DISCLAIMER`), and a live abuse policy that classifies a PEER offering visa assistance as a travel-scam family (`artifacts/api-server/src/domain/telegraph/policies/travelScamSignals.ts:111#family: "VISA_HELP"`). The Layover lines are real but are at `artifacts/api-server/src/services/airport/LayoverSafetyEngine.ts:1211#Verify visa rules` and `artifacts/api-server/src/services/airport/LayoverSafetyEngine.ts:1298#Visa or transit-permit requirements`, not at the `:585/:619/:628` this row cited. **THIRD CITATION CORRECTED 2026-09-22, VERDICT UNMOVED.** This sentence also cited line 1256 of that file, anchored on the words *Entry is never confirmed* — a comment reading *"Entry is never confirmed on this tree"* sitting above an unconditional `ENTRY_NOT_CONFIRMED`. **That line is deleted.** census-layover §27 built the entry gate, so the code is now emitted where its condition applies (`artifacts/api-server/src/services/airport/LayoverSafetyEngine.ts:1326#entryConfirmed`) and the Layover surface holds a curated entry answer rather than a standing disclaimer. The citation is REPLACED rather than repointed: the only surviving occurrence of that phrase is a comment *about* the deletion, and pointing this claim at it would be a green anchor on a line the claim is not about. **None of it reaches `canProvideVisaBuddyService`**, which is what this row grades — reading a corridor table for the traveller themselves is not offering to help a stranger with their visa, and the capability still does not exist in any form. Choosing a trust threshold for "may provide visa assistance" would invent immigration-advice policy in a formula. Stays **N**: it is a real gap against the spec, and it is not one engineering may close. |
 | P60 | Authorization is server-side; the client must not infer authorization from a displayed score | C | Capabilities and per-viewer actions are booleans computed in `buildOwnerCapabilities`/`buildViewerActions`; the client renders the flags (`src/features/passport/usePassportPlans.ts:210` `canMakePlan: proj.actions.can_make_plan`). A grep for client-side trust-threshold policy (`trust > N`) in the passport tree returns nothing. |
 
 ### §12 Stamps and Provenance
@@ -311,15 +311,15 @@ NOT-BUILT · **?** = CANNOT-VERIFY. Backend paths are relative to
 | --- | --- | --- | --- |
 | P71 | Journeys are chronological projections of canonical Trip/travel records | C | `services/passport/PassportJourneyService.ts` reads canonical trips; route `GET /passport/:userId/journeys` (`routes/passport.ts:1554`). |
 | P72 | Group by year, country/city and Trip | C | `PassportJourneyService.ts:308` grouping; consumed by `src/features/passport/JourneysScreen.tsx`. |
-| P73 | Show permitted dates, places, memories, stamps, Shared Moments and people context | C | `PassportProjectionService.ts:1642-1651` `JourneyPermissions` threads `canSeeTrips`, `canSeeRestricted`, the per-memory `callerCtx` and `viewerId` for block-filtering the people context; date coarsening at `PassportJourneyService.ts:195`. |
-| P74 | Allow one Featured Journey | C | `PassportJourneyService.ts:281` `buildFeaturedJourney`; surfaced at `PassportProjectionService.ts:1653`. |
+| P73 | Show permitted dates, places, memories, stamps, Shared Moments and people context | C | `PassportProjectionService.ts:1713-1651` `JourneyPermissions` threads `canSeeTrips`, `canSeeRestricted`, the per-memory `callerCtx` and `viewerId` for block-filtering the people context; date coarsening at `PassportJourneyService.ts:195`. |
+| P74 | Allow one Featured Journey | C | `PassportJourneyService.ts:281` `buildFeaturedJourney`; surfaced at `PassportProjectionService.ts:1724`. |
 | P75 | Featured Journey may include route, timeline, places, memories, stamps, people, events and recommendations | **W** | Route, timeline, places, memories, stamps and people are projected; **events and recommendations are not** — `PassportJourneyService` has no event join and no recommendation producer. Six of eight elements. |
 
 ### §15 Memories and Shared Memories
 
 | id | Requirement | V | Evidence |
 | --- | --- | --- | --- |
-| P76 | Memories are travel-contextual, not a generic media grid | C | `PassportProjectionService.ts:1663-1672` projects city, country, category, tripId, earnedAt alongside the photo — never a bare media list. |
+| P76 | Memories are travel-contextual, not a generic media grid | C | `PassportProjectionService.ts:1734-1672` projects city, country, category, tripId, earnedAt alongside the photo — never a bare media list. |
 | P77 | Views: Trips, Places, People, Timeline and Map | **W** | `src/components/MemoriesTab.tsx:915-917` offers exactly two: **All** (grid) and **Timeline** (`groupMemoriesByTimeline`, `:26,780`). Trips, Places, People and Map views do not exist. **One of five, not two — corrected 2026-09-14 (§14.2)**: only Timeline is one of §15's five; "All" is the ungrouped grid those five are views *of*. (The public-viewer emptiness the certification logged as F3 **is** fixed — `src/components/passport/PassportHomePreviews.tsx:332` `PassportViewerMemoriesList` and `:376` the plans list replace the hardcoded `memories={[]}` / `trips={[]}`.) |
 | P78 | Retain permitted place, city, Trip, date, people, event and stamp context | C | The memory projection carries city/country/category/tripId/earnedAt; per-item gating via `filterMemories(raw, callerCtx)` (`:1594`) under the collection tier (`:1592`). |
 | P79 | Shared history surfaces "You were here together" / "Our Da Nang Trip" when both viewers have rights | C | `SharedContextService.ts:220-234` reads accepted `shared_moment_memberships` for **both** parties and intersects, emitting `shared_moments` and `shared_trips` facts only on that intersection. |
@@ -408,8 +408,8 @@ NOT-BUILT · **?** = CANNOT-VERIFY. Backend paths are relative to
 
 | id | Requirement | V | Evidence |
 | --- | --- | --- | --- |
-| P120 | A Passport block propagates across Discovery, Telegraph, Trips, Presence, Map, Shared Moments, Bump, Buddy and Compass | C | The canonical block set is applied in every one of those trees: `routes/discoverySearch.ts`, `routes/telegraph.ts`, `routes/mapTravelers.ts`, `routes/mapProjection.ts`, `routes/sharedMoments.ts`, `routes/rentABuddy.ts`, `routes/compass.ts`, `routes/follows.ts` (all use `fetchBlockedSet` / `blocks`). Bump/QR resolves through the server passport projection, which collapses a blocked viewer to a minimal restricted card (`PassportProjectionService.ts:1563-1583`). |
-| P121 | Blocking is not implemented independently per surface | C | Two shared mechanisms and no third: `resolveInteractionPermissions` (`services/interactionPermissions.ts:222`) for relationship-level authorization, and `lib/blocks.fetchBlockedSet` for row filtering. Passport does not re-implement either — `PassportProjectionService.ts:531` calls the canonical resolver. |
+| P120 | A Passport block propagates across Discovery, Telegraph, Trips, Presence, Map, Shared Moments, Bump, Buddy and Compass | C | The canonical block set is applied in every one of those trees: `routes/discoverySearch.ts`, `routes/telegraph.ts`, `routes/mapTravelers.ts`, `routes/mapProjection.ts`, `routes/sharedMoments.ts`, `routes/rentABuddy.ts`, `routes/compass.ts`, `routes/follows.ts` (all use `fetchBlockedSet` / `blocks`). Bump/QR resolves through the server passport projection, which collapses a blocked viewer to a minimal restricted card (`PassportProjectionService.ts:1634-1583`). |
+| P121 | Blocking is not implemented independently per surface | C | Two shared mechanisms and no third: `resolveInteractionPermissions` (`services/interactionPermissions.ts:222`) for relationship-level authorization, and `lib/blocks.fetchBlockedSet` for row filtering. Passport does not re-implement either — `PassportProjectionService.ts:537` calls the canonical resolver. |
 
 ### §25 QR Passport and Bump
 
@@ -449,7 +449,7 @@ NOT-BUILT · **?** = CANNOT-VERIFY. Backend paths are relative to
 
 | id | Requirement | V | Evidence |
 | --- | --- | --- | --- |
-| P136 | The `PassportProjection` interface with every declared field | C | Returned at `PassportProjectionService.ts:1714-1733` — userId, identity, travelerState, availability, intent, trust, credentials, stats, stamps, featuredJourney, upcomingPlans, memories, travelIdentity, sharedContext, capabilities, viewerContext. All sixteen. |
+| P136 | The `PassportProjection` interface with every declared field | C | Returned at `PassportProjectionService.ts:1785-1733` — userId, identity, travelerState, availability, intent, trust, credentials, stats, stamps, featuredJourney, upcomingPlans, memories, travelIdentity, sharedContext, capabilities, viewerContext. All sixteen. |
 
 ### §30 Actions Must Be Server-Projected
 
@@ -463,7 +463,7 @@ NOT-BUILT · **?** = CANNOT-VERIFY. Backend paths are relative to
 | id | Requirement | V | Evidence |
 | --- | --- | --- | --- |
 | P139 | The load order: identity → viewer relationship → privacy → state → availability → trust → shared context → stamps/history → plans/memories | C | `buildPassportProjection` follows it in twelve numbered steps (`:1466` profile/identity, `:1478-1493` viewer + privacy, `:1541-1552` state/availability/intent, `:1554` trust, `:1567` stamps, `:1584` journey/plans, `:1590` memories, `:1621` shared context, `:1632` capabilities). Shared context is assembled after stamps rather than before, which is immaterial because the aggregate returns as one document. |
-| P140 | Cache relatively static identity, stamp metadata, stats, travel identity and permitted journeys | C | `artifacts/api-server/src/services/passport/PassportProjectionService.ts:2263#export const PASSPORT_STATIC_MAX_AGE = 3600;`, mapped per section at `:2268-2278`. |
+| P140 | Cache relatively static identity, stamp metadata, stats, travel identity and permitted journeys | C | `artifacts/api-server/src/services/passport/PassportProjectionService.ts:2334#export const PASSPORT_STATIC_MAX_AGE = 3600;`, mapped per section at `:2268-2278`. |
 | P141 | Short TTLs for availability, current state, Open to Plans, Shared Context, trust and capabilities | C | `:1684` `PASSPORT_DYNAMIC_MAX_AGE = 30`, applied to travelerState, availability, intent, trust, sharedContext and capabilities (`:1697-1703`). |
 | P142 | Explicitly expire availability, temporary intent, Open to Plans, event Passport, temporary sharing and location projections | C | `OpenToPlansService.effectiveExpiry:130` / `isExpired:140` re-evaluate on every read; `loadQuickStatus:698-711` drops an expired quick status before it can be projected; `routes/availability.ts` returns non-expired only; event Passport shares carry their own revoke path (`routes/passport.ts:1904`). |
 | P143 | Never render stale Availability as current | C | Server drops expired windows before projection; the client blanks the volatile half past its short TTL rather than showing it (`src/hooks/usePassportProjection.ts:17-19`, `travel-buddy-standalone/src/services/passportProjection.ts:599#DENIED_VIEWER_ACTIONS`). The route sets `Cache-Control: <scope>, max-age=<shortest present section TTL>` plus a weak ETag with 304 support (`routes/passport.ts:1502-1511`). |
@@ -757,9 +757,9 @@ decision rather than a Passport one.
 
 **Two more are one owner decision about a WORD.** P45 and P50 both turn on whether the neutral 50 a
 missing `trust_profiles` row produces may keep being labelled "Established"
-(`artifacts/api-server/src/services/passport/PassportProjectionService.ts:1152#return Number.isFinite(v) ? v : 50;`)
+(`artifacts/api-server/src/services/passport/PassportProjectionService.ts:1202#return Number.isFinite(v) ? v : 50;`)
 and whether the confidence band may keep being derived from travel volume
-(`artifacts/api-server/src/services/passport/PassportProjectionService.ts:2387#export function passportTrustConfidence`)
+(`artifacts/api-server/src/services/passport/PassportProjectionService.ts:2458#export function passportTrustConfidence`)
 now that `evidence_weight` / `evidence_count` reach the projection. P154 is P45 again under a phase
 number. **Three rows, one decision, 1.8 more points.**
 
@@ -797,7 +797,7 @@ the four facts that were the same and, in one case, wrong.
 | # | Decision | Why it is the owner's | Worth |
 |---|---|---|---|
 | ~~D-DESIGN~~ **RULED 2026-09-14** | §27's palette (dark navy surfaces, purple identity accent, blue/teal availability, portrait over a hero) versus the shipped "passport paper" direction (white/cream, black ink, red seal, gold premium, document card with a spine). ~~Either the spec is amended or five rows stay wrong forever.~~ **The owner amended the spec: `docs/architecture/brand-palette-decision.md` — SPEC IS STALE, palette retained, purple/navy requirements superseded.** | ~~Changing it repaints every Passport surface~~ — and the ruling forbids repainting anything: *"build upon existing components and shared tokens; do not rebuild working screens."* `census-wall.md` W166 was the same call and is also closed. | **CLOSED for P129 and P132 — 1.2 points, not 3.0.** P128 half-closed (theme half open, §15.3); P13 and P133 were never in this decision's scope (§15.2) |
-| D-WORD | Whether a substituted neutral 50 may keep the word "Established", and whether the confidence band may stay travel-derived now that `evidence_weight`/`evidence_count` reach the projection. | It changes the label a real person is shown, on evidence that does not exist for 56 of 58 accounts. census-trust A6 is why the evidence does not exist. | P45, P50, P154 — **1.8 points** |
+| D-WORD **— FIRST HALF RULED 2026-09-22** | ~~Whether a substituted neutral 50 may keep the word "Established"~~ — **ruled: it may not.** A domain with no measured category now reads "Not yet rated", and an unreadable profile reads "Temporarily unavailable". Still open: whether the confidence band may stay travel-derived now that `evidence_weight`/`evidence_count` reach the projection. | It changes the label a real person is shown, on evidence that does not exist for 56 of 58 accounts. census-trust A6 is why the evidence does not exist. | The word half is taken; the band half still gates P50 and P154. See §19. |
 | D-STAMP | Whether the stamp vocabulary gains `place` and `contributor` (P61). It needs a migration widening the CHECK that 2309 set. | Vocabulary is a product decision and a schema change; this pass was forbidden migrations. | P61 — 0.6 points |
 
 ### 12.5 The `head_commit` refusal STANDS, and here is the number that decides it
@@ -882,9 +882,9 @@ presentation word whether its categories had been measured or silently replaced 
 so **a traveller with a full `trust_profiles` row and a traveller with none produced six
 byte-identical domain rows** — the §10 equivalence, one level down from where the last pass closed
 it. Each domain now reports what its word rests on:
-`artifacts/api-server/src/services/passport/PassportProjectionService.ts:280#domainTrustBasis`
+`artifacts/api-server/src/services/passport/PassportProjectionService.ts:286#domainTrustBasis`
 (`measured` / `partial` / `substituted` / `unavailable` / `not_applicable`), wired at
-`artifacts/api-server/src/services/passport/PassportProjectionService.ts:1256#buildDomainTrust` and
+`artifacts/api-server/src/services/passport/PassportProjectionService.ts:1327#buildDomainTrust` and
 carried to the ONE consumer that receives the words at all
 (`artifacts/api-server/src/services/passport/PassportConsumerProjections.ts:789#d.basis`). `partial`
 exists because a mean of three real scores and one default is neither a measurement nor a default,
@@ -929,7 +929,7 @@ three make a row say something truer than it did.
 
 | row | what this pass measured | consequence |
 |---|---|---|
-| P45 / P50 | §3 says *"56 of those 58 accounts are described as an Established member of the community across all six trust domains"*. That is true **of the projection**. It is not true of any shipped screen: `deriveTrustView` in `travel-buddy-standalone/src/features/passport/useTrustProjection.ts:300#export function deriveTrustView` builds its own six rows from server-owned CAPABILITY flags and renders "In good standing" / "Not applicable" — it never reads `trust.domains[].presentation` at all. A repo-wide grep finds the server's domain words reaching exactly ONE consumer, the `trips` variant's `trustDomains`, and **no client file consumes that either**. So the harm sentence overstates: today the substituted domain word is an API fact with no rendered surface. It does not weaken D-WORD — a projected field with no consumer is a defect waiting for its first one, and the Trips surface is the consumer it is waiting for — but the census should not claim a screen shows something no screen shows. | P45/P50 verdicts unchanged; §3's harm sentence narrowed |
+| P45 / P50 | §3 says *"56 of those 58 accounts are described as an Established member of the community across all six trust domains"*. That is true **of the projection**. It is not true of any shipped screen: `deriveTrustView` in `travel-buddy-standalone/src/features/passport/useTrustProjection.ts:334#export function deriveTrustView` builds its own six rows from server-owned CAPABILITY flags and renders "In good standing" / "Not applicable" — it never reads `trust.domains[].presentation` at all. A repo-wide grep finds the server's domain words reaching exactly ONE consumer, the `trips` variant's `trustDomains`, and **no client file consumes that either**. So the harm sentence overstates: today the substituted domain word is an API fact with no rendered surface. It does not weaken D-WORD — a projected field with no consumer is a defect waiting for its first one, and the Trips surface is the consumer it is waiting for — but the census should not claim a screen shows something no screen shows. | P45/P50 verdicts unchanged; §3's harm sentence narrowed |
 | P61 | §12.1 groups P61 as **(c) capped by a flag seeded FALSE or an unapplied migration**, and §12.4's D-STAMP says it *"needs a migration widening the CHECK that 2309 set"*. Re-executed, that is only half the cap. A migration alone would add two labels with **no producer** — the precise defect class this repo already tracks in `docs/architecture/trust-unproduced-vocabulary.md`, and it would make the surface measurably worse, not better. What earns a Place stamp and what earns a Contributor stamp are unwritten product decisions; `PassportStampService`'s own union (`artifacts/api-server/src/services/passport/PassportStampService.ts:18#StampType`) would need both, and nothing would ever write either. | P61 is **(c) AND (d)**, not (c); a migration does NOT close it |
 | P159 | The row says the deeper Experience Graph *"is still absent as a Passport surface"*. The graph itself is NOT absent: `compass_graph_nodes` / `compass_graph_edges` exist (`artifacts/api-server/src/migrations/20260730_compass_intelligence_graph.sql:10#compass_graph_nodes`), the `experience` node kind was admitted by `artifacts/api-server/src/migrations/2290_intelligence_graph_node_kinds.sql:2#Compass`, and the engine writes person —experienced→ experience —at_place / at_event / during_trip / in_city. A counting grep finds **30** files referencing those tables and **0** of them under `src/services/passport/` or the passport routes. The row's cause is therefore narrower and more actionable than "absent": **the Experience Graph is built and has no Passport reader.** | P159 verdict unchanged; its cause restated |
 
@@ -1074,7 +1074,7 @@ what it cites.
 | row | the sentence that is false | what was measured, 2026-09-14 |
 |---|---|---|
 | **P42** | *"Neither Compass nor Discovery reads the discovery-card variant"*, and §12.6's *"Compass's traveler recommendation list does not"* consume explicit intent. | **Both Compass people-ranking surfaces now consume it.** The compatibility tool at `artifacts/api-server/src/compass/CompassTools.ts:1938#readVisibleExplicitIntent(sc, targetId` (already known), AND the traveler suggestion list at `artifacts/api-server/src/routes/compass.ts:3912#const viewerIntentRead = await readVisibleExplicitIntent`, which reads each candidate at the visibility the viewer is entitled to and applies the shared bounded weight through `artifacts/api-server/src/routes/compass.ts:4405#export function applyExplicitIntentWeighting`. The demand side is **two of two in Compass**, not one of four. The row's own citation is also stale twice over: the function is at `artifacts/api-server/src/services/passport/PassportConsumerProjections.ts:519#readVisibleExplicitIntent`, not `:445` (`:445` is now `explicitIntentBoost`), and `buildConsumerProjection`'s three named call sites became seven in §12. |
-| **P59** | *"the tree's only current posture on visas is the OPPOSITE one — the three places the word appears are Layover disclaimers (`LayoverSafetyEngine.ts:585`, `:619`, `:628`)"*. | **Wrong on the count, the lines and the posture — and the truth makes the N stronger.** Those three Layover lines are now `artifacts/api-server/src/services/airport/LayoverSafetyEngine.ts:1198#Verify visa rules`, `:1246` and `:1256`. More to the point the word appears in two systems the row did not see. (1) A whole curated entry-intelligence subsystem: `artifacts/api-server/src/lib/entryRequirements.ts:4#HONESTY CONTRACT` — admin-curated corridor rows only, every row carrying an `official_source_url`, unknown corridors explicit, and `artifacts/api-server/src/lib/entryRequirements.ts:20#export const DISCLAIMER` shipped with every assessment. (2) A live abuse policy that classifies the *peer-to-peer* version of this capability as fraud: `artifacts/api-server/src/domain/telegraph/policies/travelScamSignals.ts:111#family: "VISA_HELP"`, whose patterns include the embassy-insider and fast-track-your-visa offers. So the tree does not merely lack a Visa Buddy; **it ships a policy that reads one as a scam signal and an architecture that answers visa questions from official sources with a disclaimer.** |
+| **P59** | *"the tree's only current posture on visas is the OPPOSITE one — the three places the word appears are Layover disclaimers (LayoverSafetyEngine.ts, then-lines 585, 619 and 628)"*. | **Wrong on the count, the lines and the posture — and the truth makes the N stronger.** *(Those three numbers are QUOTED, not cited: they are the wrong lines this correction is about, and they are written in prose so no checker reads a corrected error as a live pointer. One of them was mechanically repointed to 586 on 2026-09-22 and restored the same day — a verbatim quote must not be repointed.)* Two of those three Layover lines are now `artifacts/api-server/src/services/airport/LayoverSafetyEngine.ts:1211#Verify visa rules` and `artifacts/api-server/src/services/airport/LayoverSafetyEngine.ts:1298#Visa or transit-permit requirements`; **the third no longer exists** — census-layover §27 deleted the "Entry is never confirmed on this tree" comment when it built the entry gate, and the emission it sat above is now conditional (`artifacts/api-server/src/services/airport/LayoverSafetyEngine.ts:1326#entryConfirmed`). More to the point the word appears in two systems the row did not see. (1) A whole curated entry-intelligence subsystem: `artifacts/api-server/src/lib/entryRequirements.ts:4#HONESTY CONTRACT` — admin-curated corridor rows only, every row carrying an `official_source_url`, unknown corridors explicit, and `artifacts/api-server/src/lib/entryRequirements.ts:20#export const DISCLAIMER` shipped with every assessment. (2) A live abuse policy that classifies the *peer-to-peer* version of this capability as fraud: `artifacts/api-server/src/domain/telegraph/policies/travelScamSignals.ts:111#family: "VISA_HELP"`, whose patterns include the embassy-insider and fast-track-your-visa offers. So the tree does not merely lack a Visa Buddy; **it ships a policy that reads one as a scam signal and an architecture that answers visa questions from official sources with a disclaimer.** |
 | **P61** | *"there is **no Contributor stamp type at all** (contributions surface as a credential via `PassportReputationService`, never as a stamp)"*. Hence *"nine of eleven"*. | **There is one, it is seeded, and it has a live producer.** `artifacts/api-server/src/migrations/0198_place_contributor_stamps.sql:9#INSERT INTO stamp_definitions` seeds three definitions carrying `stamp_type = 'place_contributor'`, awarded at 10 / 50 / 100 posts by `artifacts/api-server/src/lib/places/placeCollectionsWorker.ts:172#definitionSlug: "place_contributor"`, and the label reaches the Passport's own collection verbatim through `artifacts/api-server/src/services/passport/UnifiedStampService.ts:219#stampType: r.stamp_definitions?.stamp_type ?? null`, with TABLE 16 provenance `contribution_earned` (`artifacts/api-server/src/services/passport/UnifiedStampService.ts:102#case "posts"`). **Ten of eleven, not nine.** |
 | **P77** | *"two of five"* Memories views. | **One of five.** §15 names Trips, Places, People, Timeline and Map. `travel-buddy-standalone/src/components/MemoriesTab.tsx:769#const MEMORY_VIEW_TABS` (**superseded 2026-09-14 — see §17.6; the two-tab catalogue this cited is gone, the verdict is not**) offers exactly two tabs, and only **Timeline** is one of the five — "All" is the ungrouped grid, which is the surface the five views are views *of*, not a sixth view. The row is one worse than it says. |
 
@@ -1087,9 +1087,9 @@ are not.
 |---|---|---|
 | P13 | Confirmed unmoved, with two citations repaired. The composition is still a cream document card with a vertical spine (`travel-buddy-standalone/src/components/passport/PassportIdentityCard.tsx:357#<View style={s.spine}>`) and a LEFT-COLUMN avatar (`travel-buddy-standalone/src/components/passport/PassportIdentityCard.tsx:671#leftCol:`), not a portrait overlapping a hero. The avatar is circular and gold-ringed — but **not at the `:653` this row cites**, which is a 34 px absolute-positioned overlay chip; the real evidence is `travel-buddy-standalone/src/components/passport/PassportIdentityCard.tsx:679#goldRing:` and `:685#avatarPressable` (`borderRadius: AVATAR_SIZE / 2`). D-DESIGN. **Still unmoved 2026-09-14, and now for a stated reason rather than a pending decision: the palette ruling does not reach a composition (§15.2).** | W |
 | P42 | **Evidence false — see §14.2.** Compass is two of two; Discovery is zero of one and is the whole of what remains. Discovery's people path is not a ranker at all (`artifacts/api-server/src/routes/discoverySearch.ts:584#.order("name", { ascending: true })` — an alphabetical name-match search that weights no interest term either way), so the clause binds on Discovery's CONTENT ranker, and that ranker is on an explicit owner hold: `docs/discovery/ROADMAP.md:222#RANKER WORK GOES ON EXPLICIT HOLD`, which `census-discovery.md` A18 grades `N — owner hold`. The blocker is an owner ruling, not a contended file. | W |
-| P45 | Confirmed unchanged at `artifacts/api-server/src/services/passport/PassportProjectionService.ts:1152#return Number.isFinite(v) ? v : 50;` and `artifacts/api-server/src/services/passport/PassportProjectionService.ts:1125#if (score >= 50) return "Established";`. §13.2's `basis` is live and reaches the trips variant (`artifacts/api-server/src/services/passport/PassportConsumerProjections.ts:789#basis: d.basis`). Re-measured: **`trust.domains` still has no client consumer at all** — a repo-wide grep over `travel-buddy-standalone/src` for `trustDomains` and `domains[` returns **0**, and `useTrustProjection.ts` still builds its own six rows from capability flags. D-WORD, plus a client surface. | W |
-| P50 | Confirmed unchanged and deliberately so: `artifacts/api-server/src/services/passport/PassportProjectionService.ts:2387#export function passportTrustConfidence`. `evidenceWeight` / `evidenceCount` / `confidenceBasis` reach the projection beside it and make the two 82s distinguishable; the BAND is still travel-derived, and because `confidence === "low"` is what selects the non-stigmatizing "New Traveler" copy (`artifacts/api-server/src/services/passport/PassportProjectionService.ts:1279#"New Traveler · Verified"`), recalibrating the band changes the word a person is shown. D-WORD. | W |
-| P59 | **Evidence false — see §14.2, and the correction strengthens the N.** Re-confirmed absent: `canProvideVisaBuddyService`, `VisaBuddy` and `visa_buddy` return **0** across the server and client trees, and `artifacts/api-server/src/services/passport/PassportProjectionService.ts:753#export function buildOwnerCapabilities` returns exactly six keys. Now pinned by `artifacts/api-server/src/test/passportProjection.test.ts:584#§11 capabilities — six built` so a seventh cannot arrive by accident. | N |
+| P45 | Confirmed unchanged at `artifacts/api-server/src/services/passport/PassportProjectionService.ts:1202#return Number.isFinite(v) ? v : 50;` and `artifacts/api-server/src/services/passport/PassportProjectionService.ts:1132#if (score >= 50) return "Established";`. §13.2's `basis` is live and reaches the trips variant (`artifacts/api-server/src/services/passport/PassportConsumerProjections.ts:789#basis: d.basis`). Re-measured: **`trust.domains` still has no client consumer at all** — a repo-wide grep over `travel-buddy-standalone/src` for `trustDomains` and `domains[` returns **0**, and `useTrustProjection.ts` still builds its own six rows from capability flags. D-WORD, plus a client surface. | W |
+| P50 | Confirmed unchanged and deliberately so: `artifacts/api-server/src/services/passport/PassportProjectionService.ts:2458#export function passportTrustConfidence`. `evidenceWeight` / `evidenceCount` / `confidenceBasis` reach the projection beside it and make the two 82s distinguishable; the BAND is still travel-derived, and because `confidence === "low"` is what selects the non-stigmatizing "New Traveler" copy (`artifacts/api-server/src/services/passport/PassportProjectionService.ts:1350#"New Traveler · Verified"`), recalibrating the band changes the word a person is shown. D-WORD. | W |
+| P59 | **Evidence false — see §14.2, and the correction strengthens the N.** Re-confirmed absent: `canProvideVisaBuddyService`, `VisaBuddy` and `visa_buddy` return **0** across the server and client trees, and `artifacts/api-server/src/services/passport/PassportProjectionService.ts:759#export function buildOwnerCapabilities` returns exactly six keys. Now pinned by `artifacts/api-server/src/test/passportProjection.test.ts:587#§11 capabilities — six built` so a seventh cannot arrive by accident. | N |
 | P61 | **Evidence false on Contributor — see §14.2. Ten of eleven, not nine.** PLACE is the only type with no representation, and re-executing it shows the gap is narrower than "no label": the column is already written (`artifacts/api-server/src/services/passport/PassportStampService.ts:146#place_id: placeId ?? null`), and **no caller anywhere passes `placeId`** — all five `createStamp` call sites (`routes/location.ts`, `routes/hiddenGems.ts`, `routes/geofence.ts`, `routes/safeReturn.ts`, `routes/airport.ts`) omit it. So Place needs a CHECK label (migration, owner) AND a rule for what earns one (product, D-STAMP); it does not need schema work. Pinned by `artifacts/api-server/src/test/passportStampTypeVocabulary.test.ts:202#Contributor exists, Place does not`. | W |
 | P66 | Unchanged and still undecidable statically. The perforated half re-confirmed at all four cited files. New evidence the earlier passes did not have, and it is NOT enough to close the row: three RENDERED premium stamps are committed at the repo root (`premium-test-epic.png`, `premium-test-common.png`, `premium-hero-raw.png`) and the epic one shows a gold metallic ring, a scalloped edge, a unique per-city motif and an "OPEN EDITION · EPIC" rarity band. They arrived as a side effect of an unrelated Discovery PR (`a745ba11b`), no code in the tree references them, and a repo-root PNG of unknown provenance is not a rendered screen of the shipped app. | ? |
 | P77 | **Evidence false — one of five, not two (§14.2).** Re-executed: `travel-buddy-standalone/src/components/MemoriesTab.tsx:769#const MEMORY_VIEW_TABS` (**superseded 2026-09-14 — see §17.6; the two-tab catalogue this cited is gone, the verdict is not**) still offers exactly two tabs. §13.5's sequencing reason holds and is now sharper: People is blocked on memory-participant visibility, which is live in this tree as another lane's in-flight work (`artifacts/api-server/src/services/memory/**`), and Trips / Places / Map are client surfaces in `travel-buddy-standalone/**`. No part of this row lies in this census's own paths. | W |
@@ -1154,7 +1154,7 @@ the integration owner, and the allowlist route would register a test that never 
 |---|---|---|
 | `artifacts/api-server/src/test/unifiedStamps.test.ts:253#§12 Contributor stamps reach the Passport` | 4 cases: a `place_contributor` award keeps its catalog label through the unified read, carries `contribution_earned`, does not collapse two tiers into one, and readV2 **still asks the database for `stamp_type`**. | Hard-coding `stampType: null` in `readV2` → cases 1 and 3 RED. **Dropping `stamp_type` from the `stamp_definitions(...)` SELECT did NOT turn the behavioural cases red** — this file's fake ignores the select string — which is why the fourth case reads the shipped source; that mutation turns THAT one RED. Recorded because it is exactly the shape of a test that cannot fail. |
 | `artifacts/api-server/src/test/passportStampTypeVocabulary.test.ts:202#Contributor exists, Place does not` | 3 cases: migration 0198 seeds three `place_contributor` definitions, a shipped worker awards them on thresholds, and `createStamp` still writes `place_id` — so P61's residue is a label plus a caller, not schema work. The third also trips if a `place` label ever appears, so the D-STAMP migration must come past an assertion that says to re-read this row. | Retyping 0198's gold tier → case 1 RED; renaming the worker's `definitionSlug` → case 2 RED; deleting `place_id: placeId ?? null` from the insert → case 3 RED. |
-| `artifacts/api-server/src/test/passportProjection.test.ts:584#§11 capabilities — six built` | 3 cases: `buildOwnerCapabilities` returns exactly the six §11 capabilities that gate something, `VISA_HELP` is still a live travel-scam family, and `entryRequirements`' curated-source disclaimer is intact — the two artefacts that make P59 a policy question. | Adding a seventh capability key → case 1 RED naming it; renaming the `VISA_HELP` family → case 2 RED; weakening the DISCLAIMER sentence → case 3 RED. |
+| `artifacts/api-server/src/test/passportProjection.test.ts:587#§11 capabilities — six built` | 3 cases: `buildOwnerCapabilities` returns exactly the six §11 capabilities that gate something, `VISA_HELP` is still a live travel-scam family, and `entryRequirements`' curated-source disclaimer is intact — the two artefacts that make P59 a policy question. | Adding a seventh capability key → case 1 RED naming it; renaming the `VISA_HELP` family → case 2 RED; weakening the DISCLAIMER sentence → case 3 RED. |
 
 Run: 1 616 passport/stamp assertions, 1 612 pass. The four failures are the pre-existing guard-refused
 `*SelfVerification` suites §3 already names (`assert-nonprod-supabase.sh` refuses without a sanctioned
@@ -1403,7 +1403,7 @@ a description.*
 
 | id | was | now | why |
 |---|---|---|---|
-| P45 | W | **C** | **Built.** The row's three clauses are domain-specific, confidence-aware and EXPLAINABLE. The first two were already server-side. The third was not, and the reason was worse than §13.2/§14 recorded: `trust.domains` — six domains, each carrying the word the server computed from the canonical categories, an `applicable` flag and a `basis` (`artifacts/api-server/src/services/passport/PassportProjectionService.ts:280#export function domainTrustBasis`) — **had zero client consumers**, and `deriveTrustView` rebuilt six rows from capability flags and printed the constant `In good standing` on every in-scope domain. So a domain the server MEASURED as "Building" or "New" was shown to a person as "In good standing": the client was not duplicating the server, it was **overriding a measured verdict with a flattering constant**, against this census's own §20 canonical-architecture rule and against the hook's own header. The server's rows are now adopted verbatim (`travel-buddy-standalone/src/features/passport/useTrustProjection.ts:276#function domainsFromServer`), and the basis is rendered BESIDE the word rather than only carried on the object — `travel-buddy-standalone/src/features/passport/TrustScreen.tsx:149#const note = row.basisNote;` prints *"Not yet measured — shown at the neutral starting point."* on a substituted standing and **nothing** on a measured one, which is what makes the two distinguishable to a reader instead of only to a consumer. The capability-derived rows survive as a fallback for a server older than TABLE 12, marked `client_derived` (`travel-buddy-standalone/src/features/passport/useTrustProjection.ts:317#basis: 'client_derived'`), and an EMPTY `domains` array is treated as absent (`travel-buddy-standalone/src/features/passport/useTrustProjection.ts:324#const serverDomains`) so a serialization fault cannot read as *"this person has no trust in any area"*. Pinned by `travel-buddy-standalone/src/features/passport/__tests__/TrustDomainsFromServer.component.test.tsx:130#"In good standing" is never printed over a measured verdict` — 12 cases in three blocks, watched RED at 9 of 12 before the build, GREEN at 12 of 12 after, and RED at 9 of 12 again when the fix was reverted with the test kept. |
+| P45 | W | **C** | **Built.** The row's three clauses are domain-specific, confidence-aware and EXPLAINABLE. The first two were already server-side. The third was not, and the reason was worse than §13.2/§14 recorded: `trust.domains` — six domains, each carrying the word the server computed from the canonical categories, an `applicable` flag and a `basis` (`artifacts/api-server/src/services/passport/PassportProjectionService.ts:286#export function domainTrustBasis`) — **had zero client consumers**, and `deriveTrustView` rebuilt six rows from capability flags and printed the constant `In good standing` on every in-scope domain. So a domain the server MEASURED as "Building" or "New" was shown to a person as "In good standing": the client was not duplicating the server, it was **overriding a measured verdict with a flattering constant**, against this census's own §20 canonical-architecture rule and against the hook's own header. The server's rows are now adopted verbatim (`travel-buddy-standalone/src/features/passport/useTrustProjection.ts:310#function domainsFromServer`), and the basis is rendered BESIDE the word rather than only carried on the object — `travel-buddy-standalone/src/features/passport/TrustScreen.tsx:149#const note = row.basisNote;` prints a note on a substituted standing and **nothing** on a measured one (the note's wording was *"Not yet measured — shown at the neutral starting point."* when this row was written; §19's ruling removed the "neutral starting point" half, because after it there is no starting point on display to explain), which is what makes the two distinguishable to a reader instead of only to a consumer. **EVIDENCE CORRECTED 2026-09-22, VERDICT UNMOVED.** This row said *"The capability-derived rows survive as a fallback for a server older than TABLE 12, marked `client_derived`"*. They do not survive: the owner ruled that standing is never derived from capability flags, so the fallback now emits six rows that say their standing could not be loaded, still marked `client_derived` (`travel-buddy-standalone/src/features/passport/useTrustProjection.ts:370#basis: 'client_derived'`). The row's own finding is what killed them — it is this row that identified printing a capability flag as a standing, and the fallback was the last place still doing it. P45 stays **C** and reads MORE cleanly for the change, and an EMPTY `domains` array is treated as absent (`travel-buddy-standalone/src/features/passport/useTrustProjection.ts:378#const serverDomains`) so a serialization fault cannot read as *"this person has no trust in any area"*. Pinned by `travel-buddy-standalone/src/features/passport/__tests__/TrustDomainsFromServer.component.test.tsx:138#"In good standing" is never printed over a measured verdict` — 12 cases in three blocks, watched RED at 9 of 12 before the build, GREEN at 12 of 12 after, and RED at 9 of 12 again when the fix was reverted with the test kept. |
 
 **What P45 moving does NOT carry with it**, stated so this is not read as bigger than it
 is: the neutral-50 default is unchanged, `presentationWord` is unchanged, and the band
@@ -1444,7 +1444,7 @@ reader itself remains unbuilt and small.
 |---|---|---|---|---|
 | P13 | Unchanged: `travel-buddy-standalone/src/components/passport/PassportIdentityCard.tsx:357#<View style={s.spine}>` and `travel-buddy-standalone/src/components/passport/PassportIdentityCard.tsx:671#leftCol:`. | A layout ruling. `docs/architecture/brand-palette-decision.md` is live and declines this in terms — *"the mockup approves the palette only — not a new layout."* Building the §3 composition against a ratified paper identity would be a guess, not a fix. | **Owner / design** | W |
 | P42 | Unchanged: Discovery's people path is an alphabetical name match, and its content ranker is on the hold at `docs/discovery/ROADMAP.md:222#RANKER WORK GOES ON EXPLICIT HOLD`. | Lifting that hold. Nothing in this census's paths is involved; Compass is already two of two. | **Owner** (the Discovery hold) | W |
-| P50 | Unchanged: `artifacts/api-server/src/services/passport/PassportProjectionService.ts:2387#export function passportTrustConfidence`. §16.1 did not touch it and deliberately so. | Recalibrating the band against migration 2371's `evidence_weight` / `evidence_count`. `confidence === "low"` is what selects the non-stigmatizing copy (`artifacts/api-server/src/services/passport/PassportProjectionService.ts:1279#"New Traveler · Verified"`), so this changes the word a person is shown. `D-WORD`. | **Owner / product** | W |
+| P50 | Unchanged: `artifacts/api-server/src/services/passport/PassportProjectionService.ts:2458#export function passportTrustConfidence`. §16.1 did not touch it and deliberately so. | Recalibrating the band against migration 2371's `evidence_weight` / `evidence_count`. `confidence === "low"` is what selects the non-stigmatizing copy (`artifacts/api-server/src/services/passport/PassportProjectionService.ts:1350#"New Traveler · Verified"`), so this changes the word a person is shown. `D-WORD`. | **Owner / product** | W |
 | P59 | Re-executed with counting greps: `canProvideVisaBuddyService`, `VisaBuddy` and `visa_buddy` return **0** across both trees outside the guard test itself, and `buildOwnerCapabilities` still returns six keys. | A product decision that a seventh capability should exist and gate something. Today it would gate nothing and be read by nothing. `VISA_BUDDY_CAPABILITY` on the blocker ledger. | **Owner / product** | N |
 | P61 | Re-executed: `2309_passport_stamp_type_vocabulary.sql` still contains **no** `'place'` label; `place_contributor` is seeded 8× by `0198_place_contributor_stamps.sql`. Ten of eleven. | A **migration** adding the `place` CHECK label, plus a product rule for what earns one. **This lane was instructed not to write a migration and did not.** | **Owner** (label) + **product** (rule); then a migration lane | W |
 | P66 | Re-executed: the perforated half holds (`travel-buddy-standalone/src/components/PassportStamps.tsx:104#borderStyle: 'dashed',`), and the three repo-root PNGs are still referenced by **nothing but this census**. | A designer's sign-off against a rendered screen of the shipped stamp surfaces, recorded here with a date. Noted for whoever runs it: the tree DOES ship rarity affordances the earlier passes did not credit — `travel-buddy-standalone/src/components/StampDetailArtwork.tsx:158#rarityBadge` plus sawtooth/wave frames and a legendary glow ring — so the question put to the designer is "is this premium enough", not "is there any premium treatment". | **Owner / design** | ? |
@@ -1474,7 +1474,7 @@ moved**, and none of the seven is on a row this pass regraded:
 | P83 | `PlansScreen.tsx` line 146 | `travel-buddy-standalone/src/features/passport/PlansScreen.tsx:169#Connect for {overlap.city}` |
 | P143 | `passportProjection.ts` line 556 | `travel-buddy-standalone/src/services/passportProjection.ts:599#DENIED_VIEWER_ACTIONS` |
 | P165 | `PassportProjectionService.ts` line 226 | `artifacts/api-server/src/services/passport/PassportProjectionService.ts:231#"Not a Trust leaderboard"` |
-| P50 | line 1199 | `artifacts/api-server/src/services/passport/PassportProjectionService.ts:1279#"New Traveler · Verified"` |
+| P50 | line 1199 | `artifacts/api-server/src/services/passport/PassportProjectionService.ts:1350#"New Traveler · Verified"` |
 
 **One finding fell out of a repair and is recorded rather than acted on.** P52's verdict
 is `C` on *"`trust_events` is an append-only ledger with writers at …"*. The
@@ -1800,6 +1800,110 @@ Read from `check:census-integrity` at HEAD `fd7ce4b80`, never hand-counted:
 | CANNOT-VERIFY | **1** |
 
 158 + 9 + 1 + 1 = 169.
+
+---
+
+## 19. D-WORD, first half — RULED 2026-09-22 (correction, not a re-measurement)
+
+**This section corrects rows that recorded a decision as untaken. It moves no
+verdict letter, and this census's head_commit refusal is unaffected.**
+
+### 19.1 What was recorded, and why it is now wrong
+
+Three rows and one register entry above say the presentation word is
+deliberately unchanged and that changing it would be taking D-WORD under cover
+of a defect fix:
+
+- §12.4's D-WORD register entry (amended in place above).
+- §16.2 P50: *"Confirmed unchanged and deliberately so …
+  `passportProjection.test.ts:307-309` pins "Neutral 50 everywhere reads
+  'Established' — non-stigmatizing (§10)""*.
+- §17 P45: *"Confirmed unchanged at … `if (score >= 50) return "Established";"*.
+- §18's closing table: *"A no is a one-file change in `PassportProjectionService`
+  that this census's own tests are written to catch, because they currently
+  assert the opposite."*
+
+Each was **right when written**. The owner has since ruled, so each now records
+an open question that is closed, and a reader acting on them would leave a
+fabricated word on the screen believing the census still forbade touching it.
+
+### 19.2 The ruling
+
+Word-only. A domain's word is now derived from its `basis` rather than produced
+independently of it (`artifacts/api-server/src/services/passport/PassportProjectionService.ts#function wordForBasis`):
+
+| basis | word before | word now |
+|---|---|---|
+| `measured` | the rating the score earned | unchanged |
+| `partial` | the rating the score earned | unchanged — real observations are not discarded |
+| `substituted` | "Established" (the neutral 50's rating) | **"Not yet rated"** |
+| `unavailable` | "Established" (the same rating, for a failed READ) | **"Temporarily unavailable"** |
+| `not_applicable` | "Not applicable" | unchanged |
+
+`applicable`, `basis` and the numeric score are untouched on every branch.
+`applicable` keeps its one meaning; §13.2's caution against repurposing it as an
+evidence flag stands in full.
+
+### 19.2b The SECOND ruling of 2026-09-22 — the client surface
+
+Ruled at the same time, and recorded here because it falsified two factual
+claims in P45's own row (both corrected in place at §17, verdict unmoved):
+
+1. **A failed read is labelled and retryable, not hidden and not dressed up.**
+   The screen showed six rows from the server's fallback shape with nothing to
+   say they were not measurements. It now carries a banner above them saying the
+   trust records could not be read, with a retry, and keeps the rows so the
+   information is labelled rather than removed
+   (`travel-buddy-standalone/src/features/passport/TrustScreen.tsx#function DegradedBanner`).
+2. **Standing is never derived from capability flags.** `deriveTrustView`'s
+   fallback, for a server that sends no `trust.domains`, printed
+   `In good standing` on every domain whose capability flag was true and
+   `Not applicable` on every domain whose flag was false — six rows that read as
+   measurements on a screen where nothing had been measured. That derivation is
+   gone; the six rows survive, each saying its standing could not be loaded.
+   P45's row identified this defect on the main path and it was the last place
+   still doing it.
+
+Also ruled: an ABSENT confidence band is no longer defaulted to `low`. The
+server sends null when it has nothing to band, and `?? 'low'` printed
+*"Early days"* over a person the server had declined to describe. It is now its
+own state with its own copy. This does NOT touch the band itself, which is
+D-WORD's untaken second half.
+
+### 19.3 What it does NOT close
+
+- **P50's band half is untouched.** `confidence` is still travel-derived, and
+  the ruling said nothing about it. P50 and P154 stay **W** on D-WORD's second
+  half.
+- **P45's client half is separate and was already closed elsewhere.** §16.2
+  recorded that no client consumed `trust.domains`; `useTrustProjection.ts`
+  now adopts the server's rows verbatim, so the new word reaches a real screen
+  rather than being an API fact with no surface — which is why the copy under
+  a substituted row no longer says the standing is "shown at the neutral
+  starting point".
+- **No verdict letter moves here.** The four rows above are corrected as
+  RECORDS of a decision's status, which is what this section is for. Whether
+  the ruling moves P45 from **W** is a re-measurement, and a re-measurement is
+  not what a correction section may do.
+
+### 19.4 The tests that were written to catch this diff, and did
+
+Three assertions existed precisely so this change could not be silent, and all
+three had to be changed on purpose:
+
+- `passportDomainTrustBasis.test.ts` — *"the presentation WORD of a substituted
+  domain is still 'Established'"*, whose comment read *"If a later pass takes
+  that decision, this assertion is the thing it must change on purpose."*
+- `passportTrustEvidenceConfidence.test.ts` — *"the substituted neutral 50 still
+  reads 'Established', and still says so"*.
+- `passportTrustConfidenceBasis.test.ts` — *"the whole card is the substitution
+  and nothing in it says so"*.
+
+They did their job. Each is rewritten at its site with the old text quoted, so
+the diff reads as a decision rather than a repair.
+
+
+---
 
 ## §20 — Trust's failure-visibility pass, graded from this side. NO PASSPORT ROW MOVES, and two of the new fields never reach this census's surfaces
 

@@ -551,12 +551,18 @@ export function enforceCompassEnvelope(
   // ── census L101: VISA / ENTRY STATUS ───────────────────────────────────────
   //
   // "Visa/entry is not a field at all on main, so a model assertion about it is
-  // unconstrained by anything." Nothing on this tree reads entry permission —
-  // `adviseLeaving` emits `ENTRY_NOT_CONFIRMED` on every session and carries
-  // "Visa or transit-permit requirements for your nationality" as a standing
-  // UNKNOWN. So any answer that ASSERTS the permission is contradicting the
-  // server's own certified unknown, and this is the one question whose wrong
-  // answer ends with a traveller refused at a border.
+  // unconstrained by anything." When this guard was written nothing on this
+  // tree read entry permission at all; `resolveLayoverEntry` now does, and
+  // `adviseLeaving` emits `ENTRY_NOT_CONFIRMED` where its condition applies
+  // rather than on every session.
+  //
+  // THIS GUARD DID NOT RELAX WITH IT, on purpose. Entry permission is not part
+  // of what this envelope certifies, and the corridor table it would come from
+  // ships a standing disclaimer of its own (`lib/entryRequirements.ts`
+  // HONESTY CONTRACT). A model sentence asserting the permission is therefore
+  // still unconstrained by anything the envelope holds, whatever the corridor
+  // says — and this is the one question whose wrong answer ends with a
+  // traveller refused at a border.
   //
   // NEGATION-AWARE, and that is the whole difficulty. "You won't need a visa"
   // is an assertion; "we can't confirm whether you need a visa" is the truth
@@ -570,7 +576,7 @@ export function enforceCompassEnvelope(
     violations.push({
       kind: "entry_status_asserted",
       stated: sentence.trim().slice(0, 140),
-      certified: "ENTRY_NOT_CONFIRMED — no entry permission state exists on this tree",
+      certified: "ENTRY_NOT_CONFIRMED — entry permission is not certified by this envelope",
     });
   }
 
@@ -697,6 +703,10 @@ function riskBand(record: LayoverFeasibilityRecord): SafetyRating {
   switch (record.verdict) {
     case "yes":   return "safe";
     case "tight": return "possible_but_risky";
+    // `entry_unverified` is the risky band, not the refused one. The clock said
+    // there is time; what is missing is a confirmation nobody has curated. The
+    // refused band is for verdicts that actually refuse.
+    case "entry_unverified": return "possible_but_risky";
     default:      return "not_recommended";
   }
 }

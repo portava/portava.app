@@ -2040,7 +2040,7 @@ through the Compass feed, the prompt context lines and `lib/discoveryModifiers.t
 tables are in the committed production schema snapshot. The rebuild is **not** on-demand: it
 runs daily from
 `artifacts/api-server/src/lib/intelligenceGraphScheduler.ts:30#REBUILD_INTERVAL_MS`, started at
-boot by `artifacts/api-server/src/index.ts:128#startIntelligenceGraphScheduler`.
+boot by `artifacts/api-server/src/index.ts:129#startIntelligenceGraphScheduler`.
 
 **Defect 1 — §28.10, eligibility.** The gate was `state = 'published' AND visibility <>
 'only_me'`. `memories.visibility` is a **six**-rung ladder, so `<> 'only_me'` admitted four
@@ -2845,7 +2845,7 @@ project `ajrurzioarfkagpuxfnb` was not touched, queried or altered.
 
 `POST /api/airport/sessions` creates a layover session. Thirty lines before the end of the
 handler it refuses a session whose flight has already gone —
-`artifacts/api-server/src/routes/airport.ts:640#if (departureMs <= Date.now()) {`, *"This layover
+`artifacts/api-server/src/routes/airport.ts:644#if (departureMs <= Date.now()) {`, *"This layover
 has already departed — set a departure time in the future"*. **A layover session is, by the
 route's own validation, a FUTURE event.**
 
@@ -2854,7 +2854,7 @@ At the end of the same handler it minted a Passport stamp for the layover's city
 consequence 3 said this evidence would go stale for exactly this reason. The sibling Layover lane
 deleted the creation-time seam outright; the only `passport_stamps` write left on this route is
 reached from `DELETE /airport/sessions/:id`, behind four terms, at
-`artifacts/api-server/src/routes/airport.ts:3691#sourceType: "layover_session", verificationLevel: "checkin",`.
+`artifacts/api-server/src/routes/airport.ts:3729#sourceType: "layover_session", verificationLevel: "checkin",`.
 The paragraph stays in the PAST TENSE because the defect it describes was real at `6d4fd1a06` and
 is not real now; what follows is the reading of the tree as it was, and §G says what the merge did
 with it. Nothing required the ARRIVAL to have happened. A traveller describing next Tuesday's connection
@@ -2970,8 +2970,8 @@ section left it on, and it is still this predicate.** §F gated the CREATION-tim
 `POST /airport/sessions`; that call site no longer exists, because the merge kept the Layover
 lane's structure, so this section names no line number for it — a citation to a deleted line is
 the one kind this document must not carry. The predicate now decides at
-`artifacts/api-server/src/routes/airport.ts:3665#const occurrence = declaredOccurrenceHasHappened(args.session.arrivalTime, Date.now());`,
-the fourth term of `artifacts/api-server/src/routes/airport.ts:3628#async function writeElectedLayoverStamp`,
+`artifacts/api-server/src/routes/airport.ts:3703#const occurrence = declaredOccurrenceHasHappened(args.session.arrivalTime, Date.now());`,
+the fourth term of `artifacts/api-server/src/routes/airport.ts:3666#async function writeElectedLayoverStamp`,
 and a refusal is still LOGGED with its reason and policy version rather than being silent — and
 is now also REPORTED to the caller, as `reason: "not_occurred"`, which the creation-time seam
 could not do because it was fire-and-forget.
@@ -5222,7 +5222,7 @@ Named so the gate is not read as complete:
 |---|---|---|
 | `artifacts/api-server/src/routes/engagement.ts:99#case "highlight_like": {` | an access verdict for a `highlight_like` target: `owner === viewer \|\| visibility === "public"` | its own visibility rule is already cruder than `canViewHighlight` (no circle, no trip, no block); it wants the whole gate, not a bolt-on |
 | `artifacts/api-server/src/routes/collections.ts:525#} else if (type === "highlight") {` | `caption` and `media_url` of any Highlight id saved into a collection, no visibility check at all | a collection preview of a Highlight that has since gone private or `KEEP_PRIVATE_FOREVER` still carries its caption; the media bytes are separately gated by `mediaAccess` |
-| `artifacts/api-server/src/lib/mediaAccess.ts:559#3e. Highlight media` | the media bytes: public + unexpired | §10's own invariant, *"Media visibility is independent from Memory visibility"*; whether `KEEP_PRIVATE_FOREVER` should reach the bytes is a product decision this lane does not take |
+| `artifacts/api-server/src/lib/mediaAccess.ts:685#3e. Highlight media` | the media bytes: public + unexpired | §10's own invariant, *"Media visibility is independent from Memory visibility"*; whether `KEEP_PRIVATE_FOREVER` should reach the bytes is a product decision this lane does not take |
 | recap | — | `GET /compass/me/recaps` and `GET /trips/:tripId/memories/recap` project Memories, not Highlights; there is no Highlight recap surface for `DO_NOT_INCLUDE_IN_RECAPS` to act on, so by rule 7 the control has nothing to violate today |
 | personalization | — | unchanged from H210: named, stored, consulted by no personalization path |
 

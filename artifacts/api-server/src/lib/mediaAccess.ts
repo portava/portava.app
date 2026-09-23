@@ -23,6 +23,10 @@ import {
   authorizeMediaAttachment,
   authorizeMediaContext,
 } from "./mediaVisibility.js";
+import {
+  resolveStoryRetentionConfig,
+  retentionDatesFor,
+} from "../services/stories/storyRetentionPolicy.js";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -185,6 +189,103 @@ export async function authorizeMediaAccess(
   return allow;
 }
 
+/**
+ * True when this object belongs to a story its OWNER has deleted.
+ *
+ * ── WHY THE OWNER IS CHECKED AT ALL ──────────────────────────────────────────
+ * Until now the owner short-circuit above was unconditional: your own bytes,
+ * always yours, no lookup. That was right while expiry deleted the file,
+ * because there was nothing left to serve. Two changes together make it wrong.
+ * Expired stories are now kept for the owner's archive, so the bytes survive;
+ * and an owner-deleted story is now a row with a 30-day recovery clock rather
+ * than a row on its way out within the hour.
+ *
+ * The owner's decision was "delete this". Answering a direct request for its
+ * photo with the photo makes that decision mean "hide it from the list", which
+ * is not what the word says and not what the retention copy promises.
+ *
+ * ── WHY THE RECOVERY WINDOW IS THE LINE, NOT `state = 'deleted'` ─────────────
+ * An earlier version of this denied on `state === "deleted"` alone. That was
+ * wrong, and the archive screen is the proof: its "Deleted" tab renders each
+ * recoverable story's thumbnail, so denying the bytes blanks every row and the
+ * owner is asked to choose what to restore from a list of grey squares. The
+ * approved policy is a DISCLOSED owner-only recovery window, and a window the
+ * owner cannot see into is not the window that was published.
+ *
+ * So the line is `retentionDatesFor(...).recoverable`: inside the window the
+ * bytes are the owner's, and the moment it closes they are not — which covers
+ * the gap this branch actually exists for, between the window closing and the
+ * hourly job reaching the row. The window itself is computed in ONE place
+ * (services/stories/storyRetentionPolicy.ts) and read here, rather than
+ * re-derived, so the relay cannot disagree with the date the archive printed.
+ *
+ * This is NOT an audience question — the audience never got past branch 3d for
+ * a deleted story. It is about whether the product keeps its own word to the
+ * person who owns the content.
+ *
+ * ── WHY AN UNREADABLE TABLE DENIES ───────────────────────────────────────────
+ * A read that fails cannot establish that the story is live, and this file's
+ * posture everywhere else is that a branch which cannot decide denies. The
+ * clamp in mediaAccessDeadline() already made the same call for the same
+ * question from the audience's side, returning the present instant rather than
+ * null on a failed read; the owner's side answering "sure, here it is" to the
+ * identical failure would be the two halves of one boundary disagreeing.
+ *
+ * The cost is stated rather than hidden: while `stories` is unreadable, an
+ * owner's own media does not serve. That is a real availability regression on
+ * the hottest media path, and it is accepted because a deletion promise that
+ * holds only while the database is healthy is not a promise. The read is a
+ * single indexed lookup (`stories_media_url_idx`, migrations/2027).
+ *
+ * A story in any other state — active, expired, saved, removed — is the
+ * owner's to see. Expiry is an audience boundary and deliberately not an owner
+ * one; that is what the archive is.
+ */
+async function ownerDeletedThisStory(
+  sc: SupabaseClient,
+  viewerId: string,
+  bucket: string,
+  path: string,
+): Promise<boolean> {
+  if (bucket !== "post-media") return false;
+
+  const publicUrl = publicUrlFor(bucket, path);
+  const urlForms = [publicUrl, `${bucket}/${path}`].filter(
+    (u): u is string => typeof u === "string" && u.length > 0,
+  );
+  // No URL form to match on means the lookup cannot run at all. Denying the
+  // owner every object under a misconfigured SUPABASE_URL would take the whole
+  // app down for a rule about deleted stories, so this returns "not deleted"
+  // and leaves the decision where it was before this function existed.
+  if (urlForms.length === 0) return false;
+
+  try {
+    const { data, error } = await sc
+      .from("stories")
+      .select("owner_id, state, expires_at, deleted_at, saved_to_highlight_id")
+      .in("media_url", urlForms)
+      .limit(1);
+    if (error) {
+      noteLookupFailure("owner deleted-story", error, { bucket, path });
+      return true; // cannot establish the state → deny, per the docblock
+    }
+    const story = (data as any[])?.[0];
+    if (!story) return false; // not story media at all
+    // Someone else's story row pointing at this object does not get to revoke
+    // the object owner's access to their own bytes — the same attribution rule
+    // branch 3d applies in the other direction.
+    if (story.owner_id !== viewerId) return false;
+    if (story.state !== "deleted") return false;
+    // Inside the disclosed recovery window the owner keeps their bytes: the
+    // archive's Deleted tab shows them what they are about to restore. Once it
+    // closes they do not, whether or not the hourly job has reached the row.
+    return !retentionDatesFor(story, resolveStoryRetentionConfig()).recoverable;
+  } catch (err) {
+    noteLookupFailure("owner deleted-story", err, { bucket, path });
+    return true;
+  }
+}
+
 async function decide(
   sc: SupabaseClient,
   viewerId: string,
@@ -263,9 +364,12 @@ async function decide(
 
   if (bucket !== "post-media") return false;
 
-  // 1. Owner always sees their own bytes.
+  // 1. Owner sees their own bytes — unless they deleted the story that holds
+  //    them, in which case "deleted" has to mean deleted for them too.
   const pathOwner = ownerFromPath(path);
-  if (pathOwner === viewerId) return true;
+  if (pathOwner === viewerId) {
+    return !(await ownerDeletedThisStory(sc, viewerId, bucket, path));
+  }
 
   let owner = pathOwner;
   /**
@@ -541,18 +645,40 @@ async function decide(
       // POST /stories now rejects such a row at write time. This covers rows
       // written before that guard existed, and any future writer that skips it.
       if (!owner || owner !== story.owner_id) return false;
-      const live =
-        (story.state === "active" || story.state === "saved") &&
-        (!story.expires_at ||
-          new Date(story.expires_at).getTime() > Date.now() ||
-          story.state === "saved");
-      if (!live) return false;
-      const needsClose =
-        story.close_friends_only === true ||
-        story.visibility === "close_friends";
-      if (needsClose)
-        return isCloseFriend(sc, story.owner_id, viewerId);
-      return story.visibility === "public";
+      // A SAVED story is no longer the publisher of its own bytes. Saving
+      // promotes it into a Highlight (routes/stories.ts save-to-highlight),
+      // which carries the same media_url under its OWN visibility and its own
+      // `expires_at`, and the Highlight is what the audience is looking at.
+      //
+      // This branch used to answer `saved` itself, on the STORY's visibility
+      // and with no expiry test at all — `state === "saved"` appeared twice in
+      // the `live` expression precisely to bypass one. The audience therefore
+      // kept access on the expired STORY's terms, and kept it after the
+      // Highlight expired (24h), was archived, or was deleted, because nothing
+      // here ever looked at the Highlight. That is the reference restoring
+      // audience access to the expired Story, which the owner ruled out.
+      //
+      // It mattered less while expiry deleted the bytes; the archive keeps
+      // them for a year now, so the boundary has to be a decision rather than
+      // a side effect of deletion.
+      //
+      // So: fall THROUGH to 3e, which asks the Highlight. No Highlight row
+      // means no publisher, and §4 denies — the fail-closed answer, and the
+      // right one when the link update that marks a story saved is known to be
+      // able to not take. The owner is unaffected; they never reach this
+      // branch.
+      if (story.state !== "saved") {
+        const live =
+          story.state === "active" &&
+          (!story.expires_at || new Date(story.expires_at).getTime() > Date.now());
+        if (!live) return false;
+        const needsClose =
+          story.close_friends_only === true ||
+          story.visibility === "close_friends";
+        if (needsClose)
+          return isCloseFriend(sc, story.owner_id, viewerId);
+        return story.visibility === "public";
+      }
     }
   } catch { /* fall through */ }
 
@@ -687,4 +813,82 @@ async function decide(
 
   // 4. Nothing references it → orphan/unknown → DENY (fail-closed).
   return false;
+}
+
+/**
+ * The instant after which a NON-OWNER's access to this object must stop, as an
+ * epoch millisecond value, or `null` when no time boundary applies.
+ *
+ * This exists because a signed URL outlives the request that minted it.
+ * `authorizeMediaAccess` is a decision about NOW; a signed URL is a bearer
+ * token that keeps working for its whole TTL, so a viewer who asks one second
+ * before a story expires holds a working link long after the story stopped
+ * being theirs to see. Until now the expiry sweep deleted the bytes, and that
+ * deletion — not the authorization layer — is what actually ended the token's
+ * usefulness. Stories are now preserved for the owner's archive, so the
+ * boundary has to be enforced where it is claimed: on the token's lifetime.
+ *
+ * Returns null for the OWNER, deliberately. The archive is owner-only and has
+ * no expiry; clamping the owner's own link would break the thing #461 exists
+ * to build.
+ *
+ * A read failure returns `Date.now()` — the most restrictive answer — rather
+ * than null. This file's posture everywhere else is that an unreadable table
+ * denies, and a null here would silently restore the full TTL, which is the
+ * exact failure this function exists to prevent.
+ */
+export async function mediaAccessDeadline(
+  sc: SupabaseClient,
+  viewerId: string,
+  bucket: string,
+  path: string,
+): Promise<number | null> {
+  if (bucket !== "post-media") return null;
+
+  const owner = ownerFromPath(path);
+  if (owner && owner === viewerId) return null; // owner archive: no boundary
+
+  const publicUrl = publicUrlFor(bucket, path);
+  const urlForms = [publicUrl, `${bucket}/${path}`].filter(
+    (u): u is string => typeof u === "string" && u.length > 0,
+  );
+  if (urlForms.length === 0) return Date.now();
+
+  try {
+    const { data, error } = await sc
+      .from("stories")
+      .select("owner_id, state, expires_at")
+      .in("media_url", urlForms)
+      .limit(1);
+    if (error) return Date.now();
+    const story = (data as any[])?.[0];
+    if (!story) return null; // not story media — no story boundary applies
+    if (story.owner_id === viewerId) return null; // owner archive
+    // A saved story has been promoted into a Highlight and is governed by the
+    // Highlight's own expiry, not the story's 24h window. That sentence used to
+    // sit above `return null`, which governed it by nothing: the token kept the
+    // full TTL and outlived the Highlight. Read the Highlight and clamp to it,
+    // so the statement is enforced rather than asserted. No Highlight row for a
+    // saved story means nothing publishes these bytes to a non-owner, and 3d
+    // now falls through to the same conclusion — the most restrictive answer,
+    // not null.
+    if (story.state === "saved") {
+      const { data: hs, error: hErr } = await sc
+        .from("highlights")
+        .select("owner_id, expires_at")
+        .in("media_url", urlForms)
+        .limit(1);
+      if (hErr) return Date.now();
+      const h = (hs as any[])?.[0];
+      if (!h || h.owner_id !== story.owner_id) return Date.now();
+      if (!h.expires_at) return null;
+      const hAt = new Date(h.expires_at).getTime();
+      return Number.isFinite(hAt) ? hAt : Date.now();
+    }
+    if (!story.expires_at) return null;
+    const at = new Date(story.expires_at).getTime();
+    return Number.isFinite(at) ? at : Date.now();
+  } catch {
+    return Date.now();
+  }
 }

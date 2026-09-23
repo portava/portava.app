@@ -42,6 +42,7 @@ import { startMediaDedupWorker } from "./lib/media/mediaDedupWorker.js";
 import { startPlaceCollectionsWorker } from "./lib/places/placeCollectionsWorker.js";
 import { startCompassSearchDecayFlushScheduler } from "./lib/compassSearchDecayFlushScheduler.js";
 import { startAccountDeletionScheduler } from "./lib/accountDeletionScheduler.js";
+import { startStoryRetentionScheduler } from "./lib/storyRetentionScheduler.js";
 import { startLocationSnapshotPurgeScheduler } from "./lib/locationSnapshotPurgeScheduler.js";
 import { startIntelRetentionScheduler } from "./lib/intelRetentionScheduler.js";
 import { startSensingRetentionScheduler } from "./lib/sensingRetentionScheduler.js";
@@ -192,6 +193,12 @@ app.listen(port, (err) => {
   // the `account_deletion_worker_enabled` feature flag and fails closed —
   // starting it here is safe even before the flag is turned on.
   startAccountDeletionScheduler();
+  // Purges the Story archive on the owner-decided windows (365d expired, 30d
+  // owner-deleted, 30d engagement). Hourly. Safe to start before migration 2998
+  // is applied: the pass reports the missing ledger as a failure and purges
+  // nothing, rather than proceeding without a durable record of what it is
+  // about to destroy.
+  startStoryRetentionScheduler();
   startInviteSlotReconciler();
   startInviteSlotSweeper();
   // Reload coordinate-learned city timezones so a restart doesn't reset
