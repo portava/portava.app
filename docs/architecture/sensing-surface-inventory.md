@@ -315,8 +315,8 @@ handler tests stayed green with the mount commented out (`:1-18`).
 | `GET /v1/experiences/:id/typical-patterns` | `routes/intelReadModels.ts:198` | reads `intel_historical_patterns` (`:214`) |
 | `GET /v1/neighborhoods/:id/pulse` | `routes/intelReadModels.ts:274` | |
 | `GET /v1/intel/prompt-eligibility` | `routes/intelReadModels.ts:360` | |
-| `POST /map/observations` | `routes/mapObservations.ts:895` | mounted `routes/index.ts:312#router.use(mapObservationsRouter)`; the only caller of `lib/intelEvidenceCapture.ts` |
-| `GET /map/projection/temporal` | `routes/mapProjectionTemporal.ts:412` | mounted `routes/index.ts:310#router.use(mapProjectionTemporalRouter)`; reads `intel_state_snapshot_versions` (`routes/mapProjectionTemporal.ts:397`) |
+| `POST /map/observations` | `routes/mapObservations.ts:895` | mounted `routes/index.ts:319#router.use(mapObservationsRouter)`; the only caller of `lib/intelEvidenceCapture.ts` |
+| `GET /map/projection/temporal` | `routes/mapProjectionTemporal.ts:412` | mounted `routes/index.ts:317#router.use(mapProjectionTemporalRouter)`; reads `intel_state_snapshot_versions` (`routes/mapProjectionTemporal.ts:397`) |
 
 ## 6. PR #475 — measured, not merged
 
