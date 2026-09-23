@@ -174,23 +174,6 @@ const ALLOWLIST = new Set<string>([
   // other direction — both entries come out together when 2810's apply is
   // certified, and leaving one behind is the mistake to watch for.
   "messages.lifecycle_state",
-  //
-  // Story retention (2998 — the owner archive): stories.deleted_at is the
-  // moment the owner deleted a Story, and the recovery window is measured from
-  // it. It is read by routes/storyArchive (the Deleted tab, the recovery
-  // route's precondition read, and the post-recovery verification that the
-  // 2998 trigger actually cleared it) and by services/stories/storyRetention's
-  // due-entry scan. Nothing WRITES it: the trigger 2998 installs owns the
-  // value, which is what makes "repeated delete requests must not reset the
-  // clock" a database rule rather than a handler convention.
-  //
-  // Absent from portava-ci until this branch reaches main — live-db.yml applies
-  // migrations only from main (live-db.yml:775), so a PR that adds a migration
-  // cannot have it applied. It is also carried by checkMissingLiveColumns'
-  // ALLOWLIST, which reads the live schema from the other direction; both
-  // entries come out together once 2998's apply is certified in
-  // docs/migrations.md, and leaving one behind is the mistake to watch for.
-  "stories.deleted_at",
 ]);
 
 // Tables that are not real live relations and should be skipped entirely
@@ -245,28 +228,6 @@ const SKIP_TABLES = new Set<string>([
   // Remove each once its apply is certified in docs/migrations.md.
   "message_reactions",
   "telegraph_report_evidence",
-  //
-  // story_purge_queue — created by 2998_story_retention.sql. It is the durable
-  // retry ledger the retention decision requires: an entry survives until BOTH
-  // the storage object and the row are confirmed gone, so a partial failure is
-  // retried rather than losing the object path with the only record of it.
-  // Written and read only by services/stories/storyRetention.
-  //
-  // Absent from portava-ci until this branch reaches main, for the reason the
-  // Telegraph entries above state in full — applying an unmerged branch's
-  // migrations to the shared CI database would leave it ahead of main with no
-  // commit accounting for it.
-  //
-  // WHAT IS AND IS NOT BROKEN WHILE THIS IS SKIPPED, stated rather than implied:
-  // every write to this table is inside the retention job, and that job is held
-  // off by its own KNOWN_PRODUCTION_GAPS entry in checkProductionDrift.ts until
-  // the apply is certified — so no deployment reaches these sites today. What
-  // this skip costs is that the fourteen columns the upsert writes are not
-  // checked against a live schema; what covers them meanwhile is
-  // check:schema-references, which diffs the same extracted sites against the
-  // CANONICAL schema (baseline + migrations) and therefore does check them on
-  // every PR. Remove this entry once 2998's apply is certified.
-  "story_purge_queue",
 ]);
 
 // ── Unresolvable-site allowlist ───────────────────────────────────────────────
