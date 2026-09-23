@@ -31,9 +31,12 @@
  *
  * ── WHAT IT DELIBERATELY DOES NOT DO ────────────────────────────────────────
  * No band WORD changed, and no band word was invented. `presentationWord`'s
- * five words and the "New Traveler" copy are untouched; the owner's standing
- * `D-WORD` decision (may a substituted neutral 50 keep the word "Established")
- * is not taken here, and §5 below asserts it is still un-taken.
+ * five words and the "New Traveler" copy are untouched by THIS pass. The
+ * owner's standing `D-WORD` decision (may a substituted neutral 50 keep the
+ * word "Established") was not taken here — it was taken separately on
+ * 2026-09-22, and §5 below now asserts the decision rather than its absence.
+ * None of the five rating words was removed or renamed; a substituted domain
+ * simply stops being given one.
  *
  * ── MUTATIONS (census P24: every green claim names the change that reddens it)
  *   M1  restore `stats.stamps + stats.trips * 2 + (verified ? 3 : 0)` as the
@@ -291,15 +294,20 @@ describe("P50 §4 — a fabricated band no longer overrides a measured public le
 
 // ── §5 — the D-WORD boundary is still un-taken ───────────────────────────────
 
-describe("P50 §5 — what was NOT changed: D-WORD remains the owner's", () => {
-  it("the substituted neutral 50 still reads 'Established', and still says so", async () => {
-    // Removing the fabricated CONFIDENCE band is an engineering fix. Choosing a
-    // different WORD for a domain whose categories were never measured is the
-    // owner's standing D-WORD decision, and this assertion exists so that
-    // taking it is a deliberate diff rather than a side effect of this pass.
+describe("P50 §5 — the D-WORD decision, now taken", () => {
+  it("the substituted neutral 50 reads 'Not yet rated', and still says so", async () => {
+    // THIS ASSERTION WAS THE TRIPWIRE AND IT HAS FIRED AS DESIGNED. It used to
+    // require "Established" here, and its comment said choosing a different word
+    // for a domain whose categories were never measured is the owner's standing
+    // D-WORD decision, pinned "so that taking it is a deliberate diff rather
+    // than a side effect of this pass". The owner took it on 2026-09-22: a
+    // substituted basis is shown as "Not yet rated". This is that deliberate
+    // diff — the word moved, and nothing else did.
     const p = (await buildPassportProjection(db(null), OWNER, OWNER, { resolveViewerContext: resolver(SELF) }))!;
     const overall = (p.trust!.domains as any[]).find((d) => d.key === "overall")!;
-    assert.equal(overall.presentation, "Established");
+    assert.equal(overall.presentation, "Not yet rated");
+    // Unmoved, and asserted here because the decision was word-only: the domain
+    // still APPLIES to this person and still reports what its word rests on.
     assert.equal(overall.basis, "substituted");
     assert.equal(overall.applicable, true);
   });

@@ -21,7 +21,7 @@ import {
   Briefcase, Bookmark, Users, UserPlus, UserCheck, UserX,
   VolumeX, Settings, Lock, Bell, HelpCircle, LogOut,
   ChevronRight, X, MoreHorizontal, Edit2, Compass, PlusCircle,
-  BarChart2,
+  BarChart2, Archive,
 } from 'lucide-react-native';
 import { closeThenNavigate } from '../../lib/deferredNavigate.ts';
 import { PP, PP_LABEL } from '../../theme/passportTokens.ts';
@@ -242,6 +242,14 @@ const SECTIONS: Section[] = [
         iconColor: '#7B5CE5',
         live: false,
         action: (_p) => {},
+      },
+      {
+        key: 'story-archive',
+        label: 'Story Archive',
+        Icon: Archive,
+        iconColor: '#7B5CE5',
+        live: true,
+        action: (p) => { closeThenNavigate(p.onClose, '/story-archive'); },
       },
       {
         key: 'my-memories',

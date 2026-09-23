@@ -11,6 +11,7 @@ import express from "express";
 import sharp from "sharp";
 import { _setTestClient } from "../lib/http.js";
 import { _setTestServiceClient } from "../lib/supabase.js";
+import { mediaAccessDeadline } from "../lib/mediaAccess.js";
 import postsRouter from "../routes/posts.js";
 import eventsRouter from "../routes/events.js";
 import postcardsRouter from "../routes/postcards.js";
@@ -610,8 +611,14 @@ describe("POST /api/postcards/:id/media/:mediaId/complete — null-dim guard rej
   });
 });
 
-describe("sweepExpiredStories — expired files are actually deleted", () => {
-  it("removes the storage objects of expired (non-highlighted) stories", async () => {
+describe("sweepExpiredStories — expiry preserves the bytes for the owner's archive", () => {
+  it("expires the rows and deletes NO storage object", async () => {
+    // This assertion is the inverse of the one it replaces, and the inversion is
+    // the decision: expiry ends the AUDIENCE's access, not the owner's, so an
+    // expired story stays readable to its owner. The guarantee the old deletion
+    // was really providing — that a signed URL handed out before expiry stops
+    // working after it — is not dropped; it moved to the token's lifetime, and
+    // is proved by "a story link cannot outlive the story" below.
     const removed: Array<{ bucket: string; paths: string[] }> = [];
     const fake: any = {
       from() {
@@ -621,7 +628,7 @@ describe("sweepExpiredStories — expired files are actually deleted", () => {
             return Promise.resolve({
               data: [
                 { id: "s1", media_url: `${SB}/storage/v1/object/public/post-media/stories/u1/a.jpg` },
-                { id: "s2", media_url: "https://elsewhere.example.com/x.jpg" }, // foreign → skipped
+                { id: "s2", media_url: "https://elsewhere.example.com/x.jpg" },
               ],
               error: null,
             });
@@ -632,8 +639,127 @@ describe("sweepExpiredStories — expired files are actually deleted", () => {
       storage: { from: (bucket: string) => ({ remove: async (paths: string[]) => { removed.push({ bucket, paths }); return { data: paths, error: null }; } }) },
     };
     const n = await sweepExpiredStories(fake);
-    assert.equal(n, 2);
-    assert.equal(removed.length, 1);
-    assert.deepEqual(removed[0], { bucket: "post-media", paths: ["stories/u1/a.jpg"] });
+    assert.equal(n, 2, "both rows are still swept to state=expired");
+    assert.equal(
+      removed.length,
+      0,
+      "expiry must delete no storage object — the owner's archive depends on the bytes surviving",
+    );
+  });
+});
+
+describe("a story signed URL cannot outlive the story", () => {
+  // The boundary #461 turns on. authorizeMediaAccess is a decision about NOW,
+  // but a signed URL keeps working for its whole TTL, so the TTL is the only
+  // thing that can enforce an expiry once the bytes are no longer deleted.
+  const BUCKET = "post-media";
+  const PATH = "stories/u1/a.jpg";
+
+  function storyClient(story: any) {
+    return {
+      from() {
+        const b: any = {
+          select() { return b; },
+          in() { return b; },
+          limit() { return Promise.resolve({ data: story ? [story] : [], error: null }); },
+        };
+        return b;
+      },
+    } as any;
+  }
+
+  it("clamps an audience member's link to the story's remaining life", async () => {
+    const expiresAt = new Date(Date.now() + 5 * 60_000).toISOString(); // 5 minutes
+    const deadline = await mediaAccessDeadline(
+      storyClient({ owner_id: "u1", state: "active", expires_at: expiresAt }),
+      "viewer-2",
+      BUCKET,
+      PATH,
+    );
+    assert.notEqual(deadline, null, "an audience member's access to a story has a deadline");
+    const remaining = Math.floor(((deadline as number) - Date.now()) / 1000);
+    assert.ok(
+      remaining > 0 && remaining <= 5 * 60,
+      `a link issued now must die with the story, not an hour later — got ${remaining}s`,
+    );
+  });
+
+  it("leaves the OWNER's own link unclamped, so the archive works", async () => {
+    const expiresAt = new Date(Date.now() + 5 * 60_000).toISOString();
+    const deadline = await mediaAccessDeadline(
+      storyClient({ owner_id: "u1", state: "active", expires_at: expiresAt }),
+      "u1",
+      BUCKET,
+      PATH,
+    );
+    assert.equal(deadline, null, "the owner's archive has no expiry");
+  });
+
+  // A `saved` story's bytes are published by the HIGHLIGHT it was promoted
+  // into, so the Highlight's window is the one the token must die with. This
+  // used to return null — no clamp at all — under a comment saying the
+  // Highlight governed it, which made the sentence true of nothing.
+  function savedClient(highlight: any) {
+    return {
+      from(table: string) {
+        const b: any = {
+          select() { return b; },
+          in() { return b; },
+          limit() {
+            if (table === "highlights") {
+              return Promise.resolve({ data: highlight ? [highlight] : [], error: null });
+            }
+            return Promise.resolve({
+              data: [{ owner_id: "u1", state: "saved", expires_at: new Date(Date.now() - 60_000).toISOString() }],
+              error: null,
+            });
+          },
+        };
+        return b;
+      },
+    } as any;
+  }
+
+  it("clamps a saved story's link to the HIGHLIGHT's remaining life, not the story's", async () => {
+    const deadline = await mediaAccessDeadline(
+      savedClient({ owner_id: "u1", expires_at: new Date(Date.now() + 5 * 60_000).toISOString() }),
+      "viewer-2",
+      BUCKET,
+      PATH,
+    );
+    assert.notEqual(deadline, null);
+    const remaining = Math.floor(((deadline as number) - Date.now()) / 1000);
+    assert.ok(
+      remaining > 0 && remaining <= 5 * 60,
+      `the token must die with the Highlight that publishes these bytes — got ${remaining}s`,
+    );
+  });
+
+  it("gives a saved story with no Highlight the shortest possible token", async () => {
+    // Nothing publishes these bytes to a non-owner. authorizeMediaAccess
+    // reaches the same conclusion by falling through to §4; the clamp must not
+    // disagree by handing out a full hour.
+    const deadline = await mediaAccessDeadline(savedClient(null), "viewer-2", BUCKET, PATH);
+    assert.notEqual(deadline, null);
+    assert.ok((deadline as number) <= Date.now());
+  });
+
+  it("refuses to extend the token when the stories table cannot be read", async () => {
+    const failing = {
+      from() {
+        const b: any = {
+          select() { return b; },
+          in() { return b; },
+          limit() { return Promise.resolve({ data: null, error: { message: "boom" } }); },
+        };
+        return b;
+      },
+    } as any;
+    const deadline = await mediaAccessDeadline(failing, "viewer-2", BUCKET, PATH);
+    assert.notEqual(deadline, null, "a failed read must not restore the full one-hour TTL");
+    assert.ok(
+      (deadline as number) <= Date.now(),
+      "an unreadable stories table yields the shortest possible token, matching this layer's fail-closed posture",
+    );
   });
 });

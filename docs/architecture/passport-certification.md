@@ -86,7 +86,7 @@ All file paths are under
 `artifacts/api-server/src/` (backend) or `travel-buddy-standalone/src/` (client).
 
 1. **One viewer-context projection, server-side privacy filtering (§4/§30; client never re-derives auth).**
-   - Single aggregate assembler `services/passport/PassportProjectionService.ts:934` `buildPassportProjection`; all filtering applied before return.
+   - Single aggregate assembler `services/passport/PassportProjectionService.ts:940` `buildPassportProjection`; all filtering applied before return.
    - Viewer context resolved from the **canonical** `resolveInteractionPermissions` engine (`:409`), not a passport-specific re-implementation.
    - Route resolves `viewerId` **server-side** from the bearer token via `getOptionalViewerId` (`routes/passport.ts:1461`, `:1478`, `:1505`), never a client-supplied identity.
    - Client renders server flags only: `usePassportPlans.ts:210` `canMakePlan: proj.actions.can_make_plan`; TrustScreen note `TrustScreen.tsx:346`. Grep for client trust-threshold policy (`trust > N`) found **none**.
@@ -98,7 +98,7 @@ All file paths are under
    - **DEFECT FIXED (D1):** traveler-state `label` embedded the city even when the viewer lacked location context — see §5.
 
 3. **Trust domain-specific + confidence-aware; capability projection not a universal auth number; no private report counts/moderation/safety history (§9–§11).**
-   - `buildTrust` (`PassportProjectionService.ts:707`): evidence-derived `confidence` (`:670`), per-category `strengths`, numeric `score` returned **only** on `context==="self"` (`:687`).
+   - `buildTrust` (`PassportProjectionService.ts:713`): evidence-derived `confidence` (`:670`), per-category `strengths`, numeric `score` returned **only** on `context==="self"` (`:687`).
    - `trust/TrustPrivacyGuard.getSafeTrustSummary` returns `publicLevel` + human `strengths`/`restrictions` + `onProbation` boolean with "no detail exposed" — **no report counts, reporter ids, or raw scores**; `isEventLlmSafe` drops `reporter_id`/`reviewed_by`.
    - Owner capabilities (`buildOwnerCapabilities`) and per-viewer actions (`buildViewerActions`) are booleans; the client does not infer authorization from any score.
 
@@ -114,7 +114,7 @@ All file paths are under
    - `PassportQrSheet.tsx` Bump is two-step: `startBump → 'awaiting'` then `confirmBump` fires `onBumpConfirmed` only after explicit "Confirm exchange"; proximity never reveals a profile.
 
 6. **Blocking propagates (§24).**
-   - Passport blocking is not re-implemented: it flows through the canonical `resolveInteractionPermissions`; a blocked/unavailable viewer collapses to a minimal `restricted` card (`PassportProjectionService.ts:2024#restricted: {`) with all actions false. Covered by `blocks`/`blockExclusion`/`interactionPermissions` tests (123 pass).
+   - Passport blocking is not re-implemented: it flows through the canonical `resolveInteractionPermissions`; a blocked/unavailable viewer collapses to a minimal `restricted` card (`PassportProjectionService.ts:2095#restricted: {`) with all actions false. Covered by `blocks`/`blockExclusion`/`interactionPermissions` tests (123 pass).
 
 7. **Non-goals honored (§34).**
    - No dating/compatibility/match score: `SharedContextService` emits explainable facts + a qualitative `summaryLabel` derived from fact count (`:368`), never a numeric compatibility %. Repo grep for `match_score|compatibility|dating` in passport code found only unrelated interest-category labels.
@@ -160,7 +160,7 @@ Severity is construction-completeness impact, not runtime severity.
   integration change rather than an unverifiable UI insertion here.
 
 - **F2 · MED (latent) — Stamp verification provenance not enforced on read/card
-  (§12/§13).** `mapStamp` (`PassportProjectionService.ts:1392#function mapStamp`) emits
+  (§12/§13).** `mapStamp` (`PassportProjectionService.ts:1463#function mapStamp`) emits
   `verification: "verified"` for **all** unified stamps by source-table rather than
   reading the row's own `verification_level`; the `"reported"`/`"decorative"` enum
   states are currently dead. Client cards (`StampCard.tsx`,

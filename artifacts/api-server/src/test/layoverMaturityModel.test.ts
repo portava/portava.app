@@ -229,7 +229,7 @@ describe("§22 L243 — the gate is NOT wired, recorded as a live divergence", (
     checkedBags: false, wantsToLeave: true,
   });
 
-  it("a GENERIC-fallback airport still gets a landside 'yes' from the engine", () => {
+  it("a GENERIC-fallback airport still gets a landside verdict from the engine", () => {
     // The fallback profile: no row, so L0 by this module's own classifier.
     const generic = certifySessionFeasibility(airport({ id: null, verified: false }), session(), {
       nowMs: NOW,
@@ -248,7 +248,13 @@ describe("§22 L243 — the gate is NOT wired, recorded as a live divergence", (
     // this test makes — and the disagreement it is pinning would stop being
     // observable in the type. Reading it first keeps the comparison real.
     const engineAllowsLandside: boolean = generic.verdict !== "no";
-    assert.equal(generic.verdict, "yes");
+    // Was `"yes"` until the entry gate landed. A call that supplies no entry
+    // fact is a call that has not asked whether this traveller may enter, and
+    // the engine now says so — `entry_unverified` — instead of saying yes. The
+    // DIVERGENCE this test pins is untouched by that: the maturity gate forbids
+    // landside recommendations at L0 and the engine still permits them, which
+    // is L243. Only the word changed, not the disagreement.
+    assert.equal(generic.verdict, "entry_unverified");
     assert.notEqual(
       featureAllowedAt("landside_recommendations", level),
       engineAllowsLandside,

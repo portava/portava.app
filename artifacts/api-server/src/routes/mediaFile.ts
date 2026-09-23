@@ -21,7 +21,7 @@ import { requireUser, sendError } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
 import { checkRateLimit } from "../lib/rateLimit.js";
 import { appStorageUrlInfo } from "../lib/mediaUrl.js";
-import { authorizeMediaAccess } from "../lib/mediaAccess.js";
+import { authorizeMediaAccess, mediaAccessDeadline } from "../lib/mediaAccess.js";
 
 const router = Router();
 
@@ -118,6 +118,7 @@ async function signUrl(
   bucket: string,
   path: string,
   transform?: { width?: number; quality?: number },
+  ttlSeconds: number = SIGNED_TTL_SECONDS,
 ): Promise<string | null> {
   const options = transform
     ? {
@@ -130,9 +131,36 @@ async function signUrl(
     : undefined;
   const { data, error } = await sc.storage
     .from(bucket)
-    .createSignedUrl(path, SIGNED_TTL_SECONDS, options);
+    .createSignedUrl(path, ttlSeconds, options);
   if (error || !data?.signedUrl) return null;
   return data.signedUrl as string;
+}
+
+/**
+ * How long a signed URL for this object may live, in seconds.
+ *
+ * A signed URL is a bearer token: it keeps working for its whole TTL no matter
+ * what happens to the row that authorized it. Where access has a deadline — a
+ * story's `expires_at` — the token must not outlive it, or "expired" means only
+ * "no longer listed" for anyone holding a link. Previously the expiry sweep
+ * deleted the bytes and that is what really ended the token; stories are now
+ * kept for the owner's archive, so the boundary is enforced here instead.
+ *
+ * Never returns less than 1: Supabase rejects a non-positive TTL, and a caller
+ * that has already passed `authorizeMediaAccess` is entitled to the object at
+ * this instant. A deadline in the past means the authorization layer should
+ * have refused, so the shortest possible token is the honest answer.
+ */
+async function ttlSecondsFor(
+  sc: any,
+  viewerId: string,
+  bucket: string,
+  path: string,
+): Promise<number> {
+  const deadline = await mediaAccessDeadline(sc, viewerId, bucket, path);
+  if (deadline === null) return SIGNED_TTL_SECONDS;
+  const remaining = Math.floor((deadline - Date.now()) / 1000);
+  return Math.max(1, Math.min(SIGNED_TTL_SECONDS, remaining));
 }
 
 // ── GET /api/media/file/:bucket/*path ─────────────────────────────────────────
@@ -211,7 +239,8 @@ router.get(
       }
     }
 
-    const signedUrl = await signUrl(sc, bucket, path, transform);
+    const ttl = await ttlSecondsFor(sc, user.id, bucket, path);
+    const signedUrl = await signUrl(sc, bucket, path, transform, ttl);
     if (!signedUrl) { sendError(res, "not_found", "Media unavailable"); return; }
 
     // no-store: the signed URL has a finite lifetime (SIGNED_TTL_SECONDS).
@@ -299,6 +328,7 @@ router.post(
     }
 
     const signed: Record<string, string | null> = {};
+    let issuedTtlSeconds = SIGNED_TTL_SECONDS;
     for (const raw of urls) {
       const url = typeof raw === "string" ? raw : "";
       const ref = appStorageUrlInfo(url);
@@ -309,10 +339,16 @@ router.post(
         signed[url] = GENERIC_COVER_URL;
         continue;
       }
-      signed[url] = (await signUrl(sc, ref.bucket, ref.path, transform)) ?? null;
+      const ttl = await ttlSecondsFor(sc, user.id, ref.bucket, ref.path);
+      // The response carries ONE ttl for the whole batch, so it must report the
+      // shortest token actually issued. Reporting the constant would tell a
+      // client a story link is good for an hour when it dies at expiry, and the
+      // client would cache it exactly that long.
+      if (ttl < issuedTtlSeconds) issuedTtlSeconds = ttl;
+      signed[url] = (await signUrl(sc, ref.bucket, ref.path, transform, ttl)) ?? null;
     }
 
-    res.json({ signed, ttlSeconds: SIGNED_TTL_SECONDS });
+    res.json({ signed, ttlSeconds: issuedTtlSeconds });
   }),
 );
 
