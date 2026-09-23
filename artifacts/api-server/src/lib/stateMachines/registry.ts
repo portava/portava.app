@@ -1003,7 +1003,10 @@ export const STATE_MACHINES: readonly StateMachineEntry[] = [
         classification: "REACHABLE",
         writer: {
           file: "services/trust/TrustRestrictionService.ts",
-          evidence: ["export async function expireOldRestrictions(", '.lt("expires_at", new Date().toISOString())'],
+          // The sweep now hoists the instant into `nowIso` so the due-set read
+          // and the lift assert the same moment; the predicate it cites is
+          // unchanged.
+          evidence: ["export async function expireOldRestrictions(", '.lt("expires_at", nowIso)'],
         },
         scheduler: { starts: "startTrustMaintenanceScheduler", from: "index.ts" },
       },

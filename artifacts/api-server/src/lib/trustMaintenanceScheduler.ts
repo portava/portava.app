@@ -49,8 +49,8 @@
 import { getServiceClient } from "./supabase.js";
 import { logger as rootLogger } from "./logger.js";
 import { recalculateTrustScore } from "../services/trust/TrustScoreService.js";
-import { expireOldCaps } from "../services/trust/TrustCapService.js";
 import { expireOldRestrictions } from "../services/trust/TrustRestrictionService.js";
+import { expireOldCaps } from "../services/trust/TrustCapService.js";
 import { runGamingDetectionScan, type GamingScanInputs } from "../services/trust/TrustGamingDetectionService.js";
 import { isTrustEnabled } from "../services/trust/TrustEventService.js";
 import { purgeExpiredVerificationRecords } from "../services/identityVerification/retention.js";
@@ -401,6 +401,8 @@ export interface TrustMaintenanceResult {
   skipReason?: string;
   capsExpired: number;
   restrictionsExpired: number;
+  /** True when the restriction sweep could not tell — DISTINCT from 0 expired. */
+  restrictionSweepFailed: boolean;
   probationCleared: number;
   usersRecalculated: number;
   recalcFailures: number;
@@ -583,7 +585,7 @@ async function repairMissingEventReviews(
  */
 export async function runTrustMaintenance(client?: any): Promise<TrustMaintenanceResult> {
   const empty: TrustMaintenanceResult = {
-    ok: true, capsExpired: 0, restrictionsExpired: 0, probationCleared: 0,
+    ok: true, capsExpired: 0, restrictionsExpired: 0, restrictionSweepFailed: false, probationCleared: 0,
     usersRecalculated: 0, recalcFailures: 0, gamingFlagged: 0,
     eventsSeen: null, gamingInputs: null, gamingVacuous: false, truncated: false,
     verificationRecordsPurged: null,
@@ -644,14 +646,33 @@ export async function runTrustMaintenance(client?: any): Promise<TrustMaintenanc
     logger.warn({ err }, "expireOldCaps threw (non-fatal)");
   }
 
-  // 1b. Mark time-limited restrictions that have run out as lifted. Enforcement
-  //     already ignores them past `expires_at` (getRestrictionState filters on
-  //     it); this keeps the row — and the admin views that list it — honest.
-  //     TrustRestrictionService.expireOldRestrictions had no caller before.
+  // 1b. Lift restrictions whose term has run. This sits beside expireOldCaps and
+  //     clearExpiredProbation because it is the third member of exactly the same
+  //     family — a time-based lift — and it was the one the cleanup job missed.
+  //     Until this call existed, expireOldRestrictions had NO caller anywhere in
+  //     the repo. Enforcement already ignores a lapsed restriction — every
+  //     read-side consumer filters on `expires_at` — so what was wrong is the
+  //     ROW: it stayed `lifted_at IS NULL`, and the admin views that list it
+  //     showed a lapsed sanction as active indefinitely. The sweep's outcome is
+  //     reported rather than reduced to a count, because a failed sweep and an
+  //     idle one are the same number.
   let restrictionsExpired = 0;
+  let restrictionSweepFailed = false;
   try {
-    restrictionsExpired = await expireOldRestrictions(db);
+    const sweep = await expireOldRestrictions(db);
+    restrictionsExpired = sweep.expired;
+    restrictionSweepFailed = sweep.failed;
+    if (sweep.truncated) {
+      logger.warn(
+        { expired: sweep.expired },
+        "restriction expiry truncated — more due than the per-pass cap; remainder rolls to the next pass",
+      );
+    }
+    if (sweep.failed) {
+      logger.warn({}, "restriction expiry FAILED — restrictions may still be active past their term");
+    }
   } catch (err) {
+    restrictionSweepFailed = true;
     logger.warn({ err }, "expireOldRestrictions threw (non-fatal)");
   }
 
@@ -735,6 +756,7 @@ export async function runTrustMaintenance(client?: any): Promise<TrustMaintenanc
     ok: true,
     capsExpired,
     restrictionsExpired,
+    restrictionSweepFailed,
     probationCleared,
     usersRecalculated,
     recalcFailures,

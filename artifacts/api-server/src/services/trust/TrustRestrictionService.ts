@@ -316,35 +316,100 @@ export async function listRestrictionsForAudit(
   return { state: "ok", rows: ((data as RestrictionAuditRow[]) ?? []) };
 }
 
+/** Max restrictions lifted in one sweep. Bounded for the same reason the user
+ *  recalculation loop is: an unbounded statement on a table that can grow is a
+ *  latent outage, and a partial sweep that says so is better than a whole one
+ *  that times out. The remainder rolls to the next pass. */
+export const RESTRICTION_EXPIRY_BATCH = 500;
+
+export interface ExpireRestrictionsResult {
+  /** How many restrictions this pass actually lifted. */
+  expired: number;
+  /** True when the batch cap was hit and more remain — never read as full coverage. */
+  truncated: boolean;
+  /** True when a read or write errored. DISTINCT from expired:0. */
+  failed: boolean;
+}
+
 /**
- * Expire restrictions whose expires_at has passed.
+ * Lift restrictions whose `expires_at` has passed.
  *
- * Called from lib/trustMaintenanceScheduler on every pass. This function
- * existed with the comment "call from cleanup job" and no caller: every
- * read-side consumer (getRestrictionState, interactionPermissions) already
- * filters on `expires_at`, so an expired restriction was never ENFORCED past
- * its date — but its row stayed `lifted_at IS NULL`, so the admin user view
- * (routes/admin.ts, routes/trust-admin.ts) listed it as active indefinitely.
- * The row now agrees with the enforcement.
+ * TWO DEFECTS THIS REPLACES, both of the same family.
  *
- * Reads `error`: postgrest-js resolves `{ data, error }` rather than rejecting,
- * so the previous `const { data }` turned any failed update into a silent 0.
+ * 1. IT HAD NO CALLER. Repo-wide, the identifier appeared exactly once — its own
+ *    definition. Not the maintenance scheduler, not a route, not a startup job,
+ *    no pg_cron, no trigger, not even a test. Its own docstring said "call from
+ *    cleanup job"; the cleanup job that was later built picked up the two
+ *    SIBLING time-based lifts (expireOldCaps, clearExpiredProbation) and missed
+ *    this one.
+ *
+ *    HOW FAR THAT REACHED, stated precisely rather than at its worst: every
+ *    read-side consumer (getRestrictionState, interactionPermissions) already
+ *    filters on `expires_at`, so an expired restriction was never ENFORCED past
+ *    its date. What stayed wrong is the ROW — `lifted_at IS NULL` forever — so
+ *    the admin user views (routes/admin.ts, routes/trust-admin.ts) listed a
+ *    lapsed sanction as active indefinitely. The row now agrees with the
+ *    enforcement. It is called from lib/trustMaintenanceScheduler every pass.
+ *
+ * 2. IT SWALLOWED ITS OWN FAILURE. The old body destructured `const { data }`
+ *    and discarded `error`, then returned `data?.length ?? 0`. supabase-js
+ *    RETURNS errors rather than throwing, so a permissions failure, a schema
+ *    drift or a timeout all produced the number 0 — identical to a clean sweep
+ *    with nothing to do. A broken sweep and an idle one were the same
+ *    observation, forever.
+ *
+ * Now: select-then-update in bounded batches, `error` read on BOTH halves, and a
+ * result that separates "nothing to do" from "could not tell".
  */
-export async function expireOldRestrictions(db: SupabaseClient): Promise<number> {
+export async function expireOldRestrictions(
+  db: SupabaseClient,
+  limit: number = RESTRICTION_EXPIRY_BATCH,
+): Promise<ExpireRestrictionsResult> {
+  const nowIso = new Date().toISOString();
+
+  let due: any[];
   try {
     const { data, error } = await db
       .from("trust_restrictions")
-      .update({ lifted_at: new Date().toISOString() })
-      .lt("expires_at", new Date().toISOString())
+      .select("id")
+      .is("lifted_at", null)
+      .lt("expires_at", nowIso)
+      .order("expires_at", { ascending: true })
+      .limit(limit);
+    if (error) {
+      trustRestrictionLogger.warn({ err: error }, "expireOldRestrictions: due-set read failed");
+      return { expired: 0, truncated: false, failed: true };
+    }
+    due = (data as any[]) ?? [];
+  } catch (err) {
+    trustRestrictionLogger.warn({ err }, "expireOldRestrictions: due-set read threw");
+    return { expired: 0, truncated: false, failed: true };
+  }
+
+  if (due.length === 0) return { expired: 0, truncated: false, failed: false };
+
+  const ids = due.map((r) => String(r?.id ?? "")).filter(Boolean);
+  try {
+    const { data, error } = await db
+      .from("trust_restrictions")
+      .update({ lifted_at: nowIso })
+      .in("id", ids)
+      // Re-assert the predicate: another pass may have lifted these between the
+      // read and the write, and lifting twice would overwrite the first
+      // lifted_at with a later instant.
       .is("lifted_at", null)
       .select("id");
     if (error) {
-      trustRestrictionLogger.warn({ err: error }, "expireOldRestrictions failed (non-fatal)");
-      return 0;
+      trustRestrictionLogger.warn({ err: error, due: ids.length }, "expireOldRestrictions: lift failed");
+      return { expired: 0, truncated: false, failed: true };
     }
-    return (data as any[])?.length ?? 0;
+    return {
+      expired: ((data as any[]) ?? []).length,
+      truncated: ids.length >= limit,
+      failed: false,
+    };
   } catch (err) {
-    trustRestrictionLogger.warn({ err }, "expireOldRestrictions threw (non-fatal)");
-    return 0;
+    trustRestrictionLogger.warn({ err, due: ids.length }, "expireOldRestrictions: lift threw");
+    return { expired: 0, truncated: false, failed: true };
   }
 }
