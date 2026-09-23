@@ -397,7 +397,7 @@ Legend: **BC** BUILT-AND-CORRECT · **BW** BUILT-BUT-WRONG · **NB** NOT-BUILT �
 | S10 | Inference ≠ observation | **BC** | `crowdFlowProducer.ts:57-70`: `event_context` is rejected at intake (`cause_is_not_observation`); a `CauseHypothesis` has *"no `actorId`, no `groupKey` and no count field"*; cause confidence capped at the observation's own band. Mirrored in types at `presence/domain/types.ts:5-12` (`PresenceObservation` vs `PresenceEstimate`). |
 | S11 | Prediction ≠ current truth | **BC** | `mapProjection.ts:697-701` — freshness is gated on source class, not timestamp: a `portava_prediction` two minutes old is capped at `recent`, never `live`. `mapObjects.ts:113` `FORECAST_KINDS`. `worldPulseProducer.ts:54-59` refuses `prediction` as pulse input. |
 | S12 | No coverage ≠ quiet | **BC** | `mapProjection.ts:682` — `if (!claims || claims.length === 0) return obj;`. An unobserved place carries no activity level at all, rather than `very_quiet`. |
-| S13 | One device ≠ a crowd | **BC** | `src/lib/privacyGate.ts:80-128` with `PRIVACY_THRESHOLD_V1` (`intelContracts.ts:732-739`): ≥15 distinct actors, ≥5 independent groups, ≤20 % single-group share, 10-minute publication delay. A missing group count is a refusal, not an exemption (`privacyGate.ts:101-106`). |
+| S13 | One device ≠ a crowd | **BC** | `src/lib/privacyGate.ts:80-128` with `PRIVACY_THRESHOLD_V1` (`intelContracts.ts:732-739`): ≥15 distinct actors, ≥5 independent groups, ≤20 % single-group share, 10-minute publication delay. A missing group count is a refusal, not an exemption (`privacyGate.ts:101-106`). *(CORRECTED 2026-09-22 by the S2 safety-publication lane — verdict UNCHANGED, evidence extended rather than repointed; the measurement is §12.)* The gate module and its four numbers are untouched and its default is still this threshold (`artifacts/api-server/src/lib/privacyGate.ts:82#PRIVACY_THRESHOLD_V1,`). What moved is the CALLER. `projectClaim` no longer asks the gate with one threshold: for a `crowd.level` claim whose value is `unsafe_density` it routes through the safety policy first (`artifacts/api-server/src/lib/intelProjection.ts:387#isSafetyAssertion(input.claimType,`), and an assertion carrying a recorded `admin_review` decision is gated on `SAFETY_REVIEWED_THRESHOLD` — 1 actor, 1 group, share 1, no publication delay (`artifacts/api-server/src/lib/safetyPolicy.ts:156#SAFETY_REVIEWED_THRESHOLD`) — with the cohort numbers floored to 1 for that ask alone (`artifacts/api-server/src/lib/intelProjection.ts:422#reviewerBackstop`). So the sentence above, *"a missing group count is a refusal, not an exemption"*, is still TRUE of the gate and is now FALSE of the reviewed safety lane, which supplies the missing 1. THE VERDICT HOLDS because one device still cannot make a crowd: the lane is reachable by exactly one value of one claim type (`artifacts/api-server/src/lib/intelContracts.ts:257#SPECIALIST_ONLY_CROWD_LEVELS` is a one-element array), only from status `active` (`artifacts/api-server/src/lib/safetyPolicy.ts:197#SAFETY_SERVABLE_CLAIM_STATUSES`), only against a canonical place, and only on an authority read from the `intel_claim_reviews` audit trail and from nothing else (`artifacts/api-server/src/lib/intelProjectionAggregator.ts:625#safetyAuthority`) — a table whose only writer re-checks the reviewer capability. A contributor cannot set it, and the no-reviewer lane is `SAFETY_COMMUNITY_THRESHOLD`, which is STRICTER than `PRIVACY_THRESHOLD_V1` on independent groups, never weaker on any dimension (`artifacts/api-server/src/lib/safetyPolicy.ts:173#SAFETY_COMMUNITY_THRESHOLD`). The reviewer is the principal, not a device, and the snapshot still records the honest observation count. |
 | S14 | Promotional claim ≠ observed reality | **BC** | `intelContracts.ts:44-56` separates `sponsored` / `official_signed` / `imported_owned` from firsthand classes; `:74` `NON_OBSERVATION_SOURCE_CLASSES`; `2130:157` `commercial_disclosure` CHECK (`none…paid`). |
 | S15 | World anomaly ≠ safety incident | **BC** | `mapProducers/safetyNoticeProducer.ts:22-32` refuses the allowed fallback of projecting `protected_zones` as safety notices, and reads only the specialist-reviewed `unsafe_density` claim. There is no anomaly→notice path. |
 | S16 | User dislike ≠ bad venue | **BC** | The only writer of `intel_claims`/`intel_state_snapshots` is `intelProjection.ts:3-8`, whose inputs are observations, not personal feedback. Compass feedback lands in `compass_*` tables via `CompassFeedbackEngine`; no path reaches a claim. |
@@ -1074,7 +1074,7 @@ the undecided decision. **S21**, **S28**, **S29** and **S32** stay as they
 are: on-device reduction, the nine device features, acoustic capture and the
 signal ingest are decisions #1, #2 and #6, and this lane does not take them.
 **S26** stays W: the anonymous half is closed (72 h structural, the sweep
-registered at `src/index.ts:149#startSensingRetentionScheduler();`) and the
+registered at `src/index.ts:150#startSensingRetentionScheduler();`) and the
 intel raw purge is behind `intel_contribution_retention_enabled`, FALSE in
 production, at 180 days. **S3** and **S106** stay W: `src/presence/domain/`
 is unchanged since Phase 0 — types and a transport interface, no store, no
@@ -1186,7 +1186,7 @@ before its commit; the mutations are listed in §2.3.
   reads the candidate and the current experience through
   `readLiveClaimEnvelopes`, and answers the decision with its reasons,
   grounding, interception and switching-cost report; it writes nothing and
-  computes no truth of its own. Registered at the tail of `routes/index.ts:356#compassDecisionRouter`, so no line the other censuses cite in that file moved.
+  computes no truth of its own. Registered at the tail of `routes/index.ts:360#compassDecisionRouter`, so no line the other censuses cite in that file moved.
   2800 seeds the flag FALSE and refuses to commit a TRUE row
   (`migrations/2800_compass_decision_flag.sql:34#INSERT`;
   `migrations/2800_compass_decision_flag.sql:47#reads`); the rollback refuses
@@ -1396,7 +1396,7 @@ in §3.3.
   treated as the budget spent. It answers newest change first with a report
   per subject that tells "no moments" from "could not look" and "no versions
   to compare". It writes nothing and sends nothing. Registered at the tail
-  of `routes/index.ts:361#wallMomentsRouter`. 2801 seeds the flag FALSE and
+  of `routes/index.ts:365#wallMomentsRouter`. 2801 seeds the flag FALSE and
   refuses to commit a TRUE row (`migrations/2801_wall_moments_flag.sql:41#INSERT`;
   `migrations/2801_wall_moments_flag.sql:54#reads`); the rollback refuses
   over a TRUE row (`db/rollback/2026-09-12-2801-wall-moments-flag-rollback.sql:23#DELETE`)
@@ -1604,7 +1604,7 @@ listed in §4.3.
   `test/telegraphLiveReferencesRoute.test.ts:386#null`). The wire carries
   the current claims only through that gate; nothing person-shaped is on it
   (`test/telegraphLiveReferencesRoute.test.ts:282#forbidden`). Registered at
-  the tail of `routes/index.ts:366#telegraphLiveReferencesRouter`.
+  the tail of `routes/index.ts:370#telegraphLiveReferencesRouter`.
 
 - **2802 and its rollback** — `migrations/2802_telegraph_live_references_flag.sql:47#INSERT`
   seeds `telegraph_live_references_enabled` FALSE, one row, `ON CONFLICT DO
@@ -1840,7 +1840,7 @@ mutations are listed in §5.3.
   `test/adminSafetyCandidatesRoute.test.ts:341#not a person`). A non-admin
   is refused before the flag is read
   (`test/adminSafetyCandidatesRoute.test.ts:205#non-admin`). Registered at
-  the tail of `routes/index.ts:371#adminSafetyCandidatesRouter`;
+  the tail of `routes/index.ts:375#adminSafetyCandidatesRouter`;
   `routes/admin.ts` and `routes/moderation.ts` are untouched.
 
 - **2803 and its rollback** — `migrations/2803_intel_safety_candidates_flag.sql:70#INSERT`
@@ -2647,7 +2647,7 @@ observation to a place 8 km away would attribute it to somewhere the contributor
 never was"* — the module knows the hazard and bounds it. But a 3 km bound on a
 mis-attribution is a smaller mis-attribution, not an absent one, and §14's
 sentence has no radius in it. The path is reachable: the router is mounted
-(`src/routes/index.ts:308#mapObservationsRouter`) behind
+(`src/routes/index.ts:312#mapObservationsRouter`) behind
 `map_contributions_enabled` (`routes/mapObservations.ts:741`).
 
 Why this lane does not fix it: the only two fixes are to refuse §22's zone
@@ -2709,7 +2709,7 @@ not the only resolver in the tree, and the row is about the tree.
 - **THE ROUTE-MOUNTING CHECK, applied to §2–§5's C rows rather than assumed.**
   A surface graded BUILT that no router mounts is not built, and this census
   has four new routes from the earlier batches. All four are mounted:
-  `src/routes/index.ts:356#compassDecisionRouter` (S78, S79, S80, S86),
+  `src/routes/index.ts:360#compassDecisionRouter` (S78, S79, S80, S86),
   `:339#wallMomentsRouter` (S73, S74, S76, S102),
   `:344#telegraphLiveReferencesRouter` (S87, S88, S89) and
   `:349#adminSafetyCandidatesRouter` (S103). Nothing moves; the check is
@@ -2724,7 +2724,7 @@ not the only resolver in the tree, and the row is about the tree.
 | S70 Server-built DiscoveryCandidate with why-now, why-for-user, confidence, freshness and truth class | W | **C** | The one field the row is named for has a producer: `whyNow` carries grounded reasons in the claims' own vocabulary (`lib/discoveryCandidate.ts:312#whyNowOf`) and is null — never `[]` — when no grade was computed or no reading was found (`:283#whyNowOf`); route-tested with the candidate projection on, both arms. The other four fields were already carried. B7-R5 red. |
 | S72 Intent modes — Right Now, Tonight, Explore, Quiet, Social, High Energy, Nearby, Trip — on the same shared intelligence | W | **C** | The spec's eight, verbatim and in order (`lib/discoveryLiveRank.ts:103#DISCOVERY_INTENT_MODES`), each a weight vector over the SAME axes of the SAME engine (`:154#INTENT_MODE_PROFILES`) — the suite asserts no mode has an axis of its own — and the crowd preference they declare is Compass's `experienceValue`, so "the same shared intelligence" is literal. Reachable as `GET /discovery?intentMode=…`; an unknown string is not honoured as a mode (B7-R4 red). |
 | S85 Layover Temporal Freedom Engine intersects feasibility with live Experience value, forecast, friction and safe-return | W | **C** | The row's finding was `grep -rn liveClaimRead services/airport/` → nothing. It reads it now, and intersects rather than competing: a live queue becomes minutes the EXISTING `LayoverSafetyEngine` rates against the certified deadline (`services/airport/LayoverRecommendationService.ts:496`, `lib/layoverLiveIntersection.ts:195`), a live `unsafe_density` or refused walk-in removes the card, a decaying window demotes and never drops, and a card with no reading is untouched. Driven through the real `generateRecommendations` (90 → 180 minutes under a 90-minute queue). B7-L1 to B7-L4 red. |
-| S97 Temporary activity must not be forced onto the nearest place ID when ownership is unknown; never assign to the nearest place merely to satisfy a foreign key | C | **W** | **The C rested on a grep that is now false.** `resolveZoneAnchorSubject` (`routes/mapObservations.ts:656#resolveZoneAnchorSubject`) resolves a §22 zone contribution by finding the **nearest** active place in the zone (`:648#NEAREST`) and storing the observation against it (`:802`); its own header gives the motive as the FK — *"`intel_observations.subject_id` FKs `public.places`, and a zone is not a place"*. Mounted (`src/routes/index.ts:308#mapObservationsRouter`) behind `map_contributions_enabled` (`routes/mapObservations.ts:741`). The 3 km ceiling and the recorded `zone_id` bound the mis-attribution; they do not make it absent, and §14's sentence carries no radius. Not fixable in this lane: the alternatives are deleting a §22 Map feature or removing `subject_id NOT NULL REFERENCES places(id)` (`src/migrations/2130_intel_storage.sql:142`), both owner decisions. |
+| S97 Temporary activity must not be forced onto the nearest place ID when ownership is unknown; never assign to the nearest place merely to satisfy a foreign key | C | **W** | **The C rested on a grep that is now false.** `resolveZoneAnchorSubject` (`routes/mapObservations.ts:656#resolveZoneAnchorSubject`) resolves a §22 zone contribution by finding the **nearest** active place in the zone (`:648#NEAREST`) and storing the observation against it (`:802`); its own header gives the motive as the FK — *"`intel_observations.subject_id` FKs `public.places`, and a zone is not a place"*. Mounted (`src/routes/index.ts:312#mapObservationsRouter`) behind `map_contributions_enabled` (`routes/mapObservations.ts:741`). The 3 km ceiling and the recorded `zone_id` bound the mis-attribution; they do not make it absent, and §14's sentence carries no radius. Not fixable in this lane: the alternatives are deleting a §22 Map feature or removing `subject_id NOT NULL REFERENCES places(id)` (`src/migrations/2130_intel_storage.sql:142`), both owner decisions. |
 
 **Held, with the reason.** **S3** and **S106** stay W, unchanged from §1: the
 single presence architecture would have to be a store and a fusion layer that
@@ -3740,3 +3740,92 @@ CONSTRUCTED% is unchanged from §8 because C+W is unchanged: the five rows moved
 WITHIN the built population on a posture decision, nothing was newly built. And
 **81.1 % is not a claim that Sensing observes anything** — the four blockers listed
 above still stand, three of which are not code.
+
+
+## §12 — 2026-09-22: the projection writer learned a second threshold, and which rows that moves
+
+**Measured at the head of `claude/safety-map-s2-20260906` (PR #457, S2), after its
+base branch `claude/safety-review-s1b-20260906` (#456) was merged forward.**
+`head_commit` is unchanged and **no verdict moves in either direction**; one row's
+EVIDENCE is corrected, which this corpus already distinguishes from a verdict
+moving (§8's S49 correction is the precedent, and its lesson — *a verdict that is
+right for a reason that stopped being true* — is exactly the defect this section
+was written to avoid).
+
+### §12.1 What changed, stated as a fact about the tree
+
+`check:census-freshness` reports this census stale on ONE counted file:
+`artifacts/api-server/src/lib/intelProjection.ts`. The whole of #457 against its own
+base is four files — that one, the new `lib/intelProjectionAggregator.ts` read half,
+the new suite `src/test/safetyPublicationPath.test.ts`, and one `package.json` test
+registration. Only the first is in this census's scope.
+
+Before: `projectClaim` asked `evaluatePrivacy` about every claim with one threshold,
+by taking the function's default. After: it selects. For anything that is not a
+safety assertion it passes `PRIVACY_THRESHOLD_V1` explicitly
+(`artifacts/api-server/src/lib/intelProjection.ts:431#safetyThreshold`), which is the
+same value the gate defaults to
+(`artifacts/api-server/src/lib/privacyGate.ts:82#PRIVACY_THRESHOLD_V1,`) — so **every
+ordinary claim is byte-for-byte unchanged**, and that was checked by reading the
+default rather than assumed from the diff being small. For a safety assertion it
+routes through `evaluateSafetyPublication` first, which either refuses the snapshot
+entirely (`artifacts/api-server/src/lib/intelProjection.ts:402#skippedReason:`) or
+returns the threshold to gate on.
+
+### §12.2 The reviewed lane, measured rather than described
+
+Reachability of the 1-actor/1-group threshold was established by opening every
+condition, not by reading the PR:
+
+| condition | where | measured |
+| --- | --- | --- |
+| claim type is a safety type | `artifacts/api-server/src/lib/safetyPolicy.ts:61#SAFETY_CLAIM_TYPES` | one element, `crowd.level` |
+| value is the safety assertion | `artifacts/api-server/src/lib/intelContracts.ts:257#SPECIALIST_ONLY_CROWD_LEVELS` | one element, `unsafe_density` |
+| status is servable | `artifacts/api-server/src/lib/safetyPolicy.ts:197#SAFETY_SERVABLE_CLAIM_STATUSES` | `active` alone — a `conflicting` hazard is now refused at the WRITER, where it previously got a snapshot |
+| anchored to a canonical place | `artifacts/api-server/src/lib/safetyPolicy.ts:245#evaluateSafetyPublication` | refuses `no_canonical_place` |
+| authority is a review | `artifacts/api-server/src/lib/intelProjectionAggregator.ts:625#safetyAuthority` | `admin_review` only, and only from the latest `intel_claim_reviews` row whose `new_status` matches the claim's current status |
+| the other three authorities | `artifacts/api-server/src/lib/safetyPolicy.ts:121#available:` | `authenticated_official` refused (lane unavailable), `ai_classification` refused by name, `community_corroboration` gated on `SAFETY_COMMUNITY_THRESHOLD`, which is STRICTER than `PRIVACY_THRESHOLD_V1` on independent groups and weaker on none |
+
+So the sub-15 threshold is reachable by one value of one claim type, in one status,
+on an authority that only an authorized reviewer's recorded decision can supply. A
+contributor surface cannot reach it: `intel_claim_reviews` has exactly one writer and
+that writer re-checks the reviewer capability before it writes.
+
+### §12.3 Row corrections
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| S13 One device ≠ a crowd | BC | **BC** | Verdict unchanged, evidence EXTENDED in the row itself. The gate module, its four numbers and its default are untouched, so §8's *"Holds, value for value, at the cited lines"* is still literally true. But the row's second sentence — *"a missing group count is a refusal, not an exemption"* — is now false of the reviewed safety lane, which floors the missing count to 1 before asking (`artifacts/api-server/src/lib/intelProjection.ts:422#reviewerBackstop`). The verdict holds on the measurement in §12.2: the lane is an authorized principal's judgement about a public venue, not an aggregate of devices, and no device can enter it. |
+
+### §12.4 The rows re-executed and NOT moved, with what each was measured against
+
+| row | what its verdict turns on | measured at this head |
+| --- | --- | --- |
+| S8 Crowded ≠ unsafe | the specialist-only carve-out and no contributor path to `unsafe_density` | **Holds.** `intelContracts.ts`, `quickSignal.ts` and `mapProjection.ts` are not in the diff, and the new lane reads the carve-out rather than widening it — `SAFETY_CLAIM_VALUES` is sourced from `SPECIALIST_ONLY_CROWD_LEVELS`, so the two cannot drift. |
+| S15 World anomaly ≠ safety incident | `safetyNoticeProducer` refusing the `protected_zones` fallback; no anomaly→notice path | **Holds.** `lib/mapProducers/safetyNoticeProducer.ts` is deliberately NOT in this PR's diff, and nothing added here detects an anomaly: the authority is read from an audit trail, never inferred from a value or a trajectory. |
+| S16 User dislike ≠ bad venue | no path from personal feedback reaches a claim | **Holds.** The two new `ProjectionInput` fields are a lifecycle status and a review-derived authority. No feedback table is read by either half, and `intelProjection.ts` still writes only `intel_state_snapshots`. |
+| S67 Map is a projection consumer, never an owner | `intelProjection.ts` is the sole writer of `intel_state_snapshots` | **Holds, re-measured.** The new read half performs no write of any kind — the only database call it adds is a `SELECT` on `intel_claim_reviews` (`artifacts/api-server/src/lib/intelProjectionAggregator.ts:604#intel_claim_reviews`) — and no map producer changed. |
+| S23 Cohort thresholds and minimum independence | the gate's arithmetic and the merge that can only REDUCE the group count | **Holds.** `privacyGate.ts` and `intelIndependence.ts` are not in the diff and the merge semantics are untouched. The reviewed lane's floor is applied in the CALLER, to the question asked, and is a declared threshold rather than a relaxed one. |
+| S103 Evidence/anomaly → candidate → review → assertion | the candidate stage and the filing path | **Holds at C.** `lib/safetyCandidate.ts`, `lib/safetyCandidateStore.ts`, `routes/adminSafetyCandidates.ts` and 2803 are none of them in the diff. This PR repairs the LAST stage, which the row already recorded as existing; it adds no candidate stage and removes none. |
+| S117 No surface may fabricate world state | the four cited surfaces manufacturing no label | **Holds.** None of the four files is in the diff. The floor changes what the GATE is asked and not what the snapshot RECORDS: `distinct_actors` stays the honest observation count. |
+| S125 Mutation-prove the five invariants | the five named proofs | **Holds.** None of the five proof files is in the diff. |
+
+### §12.5 What this section could not settle, and says rather than hides
+
+**S118's published-side sentence is now narrower than it reads.** The row says *"the
+published side is right — aggregates are k-gated and carry no contributor id"*, and it
+is held W on the STORED side. Both halves survive: no contributor id is added
+anywhere, and the stored defect is untouched. But at this head a published snapshot on
+the reviewed safety lane can rest on fewer than fifteen contributing actors — the
+authority is the reviewer, not the cohort — so *"k-gated"* now means *gated on a
+declared threshold* rather than *gated on fifteen*. **The verdict does not move**: it
+is W, it is held W for the store, and the row's own RED WHEN ("when S19 does") is
+untouched. It is recorded here because the sentence would otherwise be quoted as
+though nothing under it had changed.
+
+**What this section did not do.** It re-measured nine rows and nothing else. It built
+nothing, it did not re-derive the 127-row denominator, and it certifies no claim about
+whether #457's own behaviour is correct — that is the PR's mutation evidence, not this
+census's business. `head_commit` is unchanged, so CONSTRUCTED% and CORRECT% are
+unchanged, and this document is still a measurement of `1fe72289b` plus the sections
+that name their own commits.

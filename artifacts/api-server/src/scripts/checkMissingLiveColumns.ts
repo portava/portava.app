@@ -264,6 +264,7 @@ const ALLOWLIST = new Set<string>([
   // Remove this entry once the merge-to-main apply is certified in
   // docs/migrations.md — NOT when the migration merges.
   "layover_recommendations.travel_time_source",  // 2745 — where the row's travel figure came from
+
 ]);
 
 

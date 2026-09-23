@@ -9,7 +9,7 @@
  *   - Toggle "hide viewer list"
  *   - Post — uploads media to Supabase Storage, then calls POST /api/stories
  */
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
   View, Text, Pressable, Modal, StyleSheet, TextInput,
   Image, Alert, ActivityIndicator, ScrollView,
@@ -22,6 +22,12 @@ import { color, space, radius, type as t, avatar, icon, aspect, dot} from '../th
 import { KeyboardSafeView } from './ui/KeyboardSafeView.tsx';
 import type { StoryVisibility } from '../services/stories.ts';
 import { createStory, uploadStoryMedia } from '../services/stories.ts';
+import {
+  fetchStoryRetentionPolicy,
+  composerRetentionLine,
+  retentionUnavailableLine,
+  type StoryRetentionResult,
+} from '../services/storyRetentionPolicy.ts';
 
 interface Props {
   visible: boolean;
@@ -51,6 +57,42 @@ export function StoryComposer({ visible, onClose, onPosted, defaultTripId }: Pro
   const [uploadProgress, setUploadProgress] = useState<string | null>(null);
   const [visibilityOpen, setVisibilityOpen] = useState(false);
 
+  // Decision 8: the composer says what happens to this story afterwards. The
+  // numbers come from the server (services/storyRetentionPolicy.ts) so the copy
+  // cannot outlive the configuration it describes.
+  //
+  // When the policy cannot be read, the composer says so and holds Share. The
+  // owner's instruction, 2026-09-22: "Do not silently omit retention
+  // information when the policy endpoint fails. Show an explicit unavailable
+  // state. If no valid policy can be established, preserve the draft and offer
+  // retry before accepting publication under undisclosed terms."
+  //
+  // Holding Share is the part that has teeth. An unavailable line above a
+  // working Share button is still publication under undisclosed terms; it just
+  // says so first. The draft — media, caption, visibility, viewer-list
+  // toggle — is never touched by any of this, so retry costs the user nothing
+  // and a failure costs them nothing either.
+  const [retention, setRetention] = useState<StoryRetentionResult | null>(null);
+  const [retentionLoading, setRetentionLoading] = useState(false);
+
+  const loadRetention = React.useCallback(() => {
+    let live = true;
+    setRetentionLoading(true);
+    void fetchStoryRetentionPolicy().then((r) => {
+      if (!live) return;
+      setRetention(r);
+      setRetentionLoading(false);
+    });
+    return () => { live = false; };
+  }, []);
+
+  useEffect(() => {
+    if (!visible) return;
+    return loadRetention();
+  }, [visible, loadRetention]);
+
+  const retentionKnown = retention?.status === 'ok';
+
   const mediaComposer = useMediaComposer('story');
 
   function handleMediaResult(asset: import('expo-image-picker').ImagePickerAsset) {
@@ -64,6 +106,17 @@ export function StoryComposer({ visible, onClose, onPosted, defaultTripId }: Pro
 
   async function handlePost() {
     if (!mediaUri) { Alert.alert('Pick media first'); return; }
+    // Publication is held until this deployment's retention windows are known.
+    // The draft is left exactly as it is — nothing below this line runs, and
+    // handleReset is not called — so the user retries rather than re-picks.
+    if (!retentionKnown) {
+      Alert.alert(
+        "We can't post this yet",
+        "We couldn't load how long your story is kept after it expires, and we won't post it without telling you first. Your draft is saved. Try again in a moment.",
+        [{ text: 'OK' }, { text: 'Retry', onPress: () => { loadRetention(); } }],
+      );
+      return;
+    }
     if (postLockRef.current) return;
     postLockRef.current = true;
     setPosting(true);
@@ -147,8 +200,9 @@ export function StoryComposer({ visible, onClose, onPosted, defaultTripId }: Pro
           <Text style={s.title}>New Story</Text>
           <Pressable
             onPress={handlePost}
-            disabled={!mediaUri || posting}
-            style={[s.postBtn, (!mediaUri || posting) && s.postBtnDisabled]}
+            disabled={!mediaUri || posting || !retentionKnown}
+            accessibilityState={{ disabled: !mediaUri || posting || !retentionKnown }}
+            style={[s.postBtn, (!mediaUri || posting || !retentionKnown) && s.postBtnDisabled]}
           >
             {posting
               ? <ActivityIndicator size="small" color="#fff" />
@@ -156,6 +210,34 @@ export function StoryComposer({ visible, onClose, onPosted, defaultTripId }: Pro
             }
           </Pressable>
         </View>
+
+        {/* Three states, and none of them is silence. The loading state is
+            named rather than blank because a blank row followed by a sentence
+            appearing is how a user misses the sentence. */}
+        {retention?.status === 'ok' ? (
+          <Text style={s.retentionNote}>{composerRetentionLine(retention.policy)}</Text>
+        ) : retention?.status === 'unavailable' ? (
+          <View style={s.retentionUnavailable}>
+            <Text style={s.retentionUnavailableText}>
+              {retentionUnavailableLine(retention.reason)}
+            </Text>
+            <Pressable
+              onPress={loadRetention}
+              disabled={retentionLoading}
+              accessibilityRole="button"
+              accessibilityLabel="Retry loading retention policy"
+              hitSlop={8}
+              style={s.retentionRetry}
+            >
+              {retentionLoading
+                ? <ActivityIndicator size="small" color={color.signal} />
+                : <Text style={s.retentionRetryText}>Retry</Text>
+              }
+            </Pressable>
+          </View>
+        ) : (
+          <Text style={s.retentionNote}>Checking how long this story is kept…</Text>
+        )}
 
         {uploadProgress ? (
           <View style={s.uploadBanner}>
@@ -269,6 +351,25 @@ const s = StyleSheet.create({
   postBtnText: { color: '#fff', fontWeight: '700', fontSize: 14 },
   uploadBanner: { flexDirection: 'row', alignItems: 'center', gap: space.sm, paddingHorizontal: space.lg, paddingVertical: space.sm, backgroundColor: '#EAF2F4' },
   uploadText: { ...t.small, color: color.deep },
+  retentionNote: {
+    ...t.small,
+    color: color.mute,
+    paddingHorizontal: space.lg,
+    paddingTop: space.sm,
+  },
+  retentionUnavailable: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.sm,
+    marginHorizontal: space.lg,
+    marginTop: space.sm,
+    padding: space.md,
+    borderRadius: radius.md,
+    backgroundColor: '#FFF0EE',
+  },
+  retentionUnavailableText: { flex: 1, ...t.small, color: color.signal, fontSize: 12 },
+  retentionRetry: { paddingHorizontal: space.md, paddingVertical: space.xs, minWidth: 56, alignItems: 'center' },
+  retentionRetryText: { ...t.small, color: color.signal, fontWeight: '700' },
   mediaPicker: { flexDirection: 'row', gap: space.md },
   mediaBtn: { flex: 1, borderWidth: 2, borderColor: color.haze, borderStyle: 'dashed', borderRadius: radius.md, paddingVertical: space.xl, alignItems: 'center', gap: space.sm },
   mediaBtnText: { ...t.small, color: color.mute, fontWeight: '600' },

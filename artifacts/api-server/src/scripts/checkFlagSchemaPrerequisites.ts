@@ -409,18 +409,42 @@ function declaredFunctions(): Set<string> {
   return out;
 }
 
+/**
+ * WHY THIS SETS `process.exitCode` AND RETURNS RATHER THAN CALLING `process.exit`.
+ *
+ * Node's stdout and stderr are ASYNCHRONOUS when they are pipes, which is what
+ * they are whenever this script is run by another process rather than by a
+ * human — `spawnSync` in src/test/flagSchemaPrerequisites.test.ts, and every CI
+ * step that captures output. `process.exit()` does not wait for a queued write,
+ * so the last thing written before it can simply never arrive. What is written
+ * last here is the FAIL block: the list of problems, which is the entire point
+ * of the run.
+ *
+ * That is not a theory. Six runs of this script under CPU load, spawned with
+ * pipes exactly as the test spawns it: four returned 27,662 bytes and the FAIL
+ * block; two returned 20,695 and 21,546 bytes with the block missing — and all
+ * six exited 1. A reader who trusts the exit code sees a failure with no
+ * reason attached; a reader who greps the output sees a clean run. The test
+ * that greps for a specific failure line went red on CI for exactly this, while
+ * passing in isolation, which is what "flaky" turned out to mean.
+ *
+ * Setting `exitCode` lets main() return, the event loop drain, and Node exit on
+ * its own once the writes have landed. The exit code is identical.
+ */
 function main(): void {
   const started = Date.now();
   if (!existsSync(SNAPSHOT)) {
     console.error(`check:flag-schema-prerequisites: snapshot missing at ${SNAPSHOT}.`);
-    process.exit(2);
+    process.exitCode = 2;
+    return;
   }
   const freshness = checkSnapshotFreshness(SNAPSHOT);
   if (freshness.length) {
     console.error(`\ncheck:flag-schema-prerequisites: the snapshot cannot be trusted:`);
     for (const f of freshness) console.error(`  • ${f}`);
     console.error("");
-    process.exit(1);
+    process.exitCode = 1;
+    return;
   }
   const snap = loadProductionSnapshot(SNAPSHOT);
   const canon = buildCanonicalSchema(BASELINE, MIGRATION_DIRS);
@@ -544,7 +568,8 @@ function main(): void {
   if (failures.length) {
     console.log(`FAIL — ${failures.length} problem(s):`);
     for (const f of failures) console.log(`  • ${f}`);
-    process.exit(REPORT ? 0 : 1);
+    process.exitCode = REPORT ? 0 : 1;
+    return;
   }
   console.log(
     `OK — ${unguarded.length} unguarded (all known), ${guarded.length} guarded, ${latent.length} latent; ${Date.now() - started} ms.` +

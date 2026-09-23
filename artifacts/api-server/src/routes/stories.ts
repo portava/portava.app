@@ -982,23 +982,29 @@ export async function sweepExpiredStories(sc: any): Promise<number> {
   if (error) throw error;
   const rows: any[] = data ?? [];
 
-  // Audit privacy fix: "ephemeral" 24h stories previously expired in STATE only
-  // — the file stayed publicly fetchable at its URL forever. Delete the storage
-  // objects for the stories just expired. Safe: the saved_to_highlight_id IS
-  // NULL filter above guarantees no highlight references this media. Best-effort
-  // (a storage failure never breaks the sweep; rows are already expired).
-  const paths: string[] = [];
-  for (const r of rows) {
-    const ref = appStorageUrlInfo(String(r.media_url ?? ""));
-    if (ref && ref.bucket === "post-media") paths.push(ref.path);
-  }
-  if (paths.length > 0) {
-    try {
-      await sc.storage.from("post-media").remove(paths);
-    } catch {
-      /* best-effort */
-    }
-  }
+  // Expiry no longer deletes the bytes. An expired story stays in the owner's
+  // private archive; expiry ends the AUDIENCE's access, not the owner's.
+  //
+  // The deletion that used to live here was doing two jobs. The stated one was
+  // privacy-by-absence, and that job is now done properly: `post-media` is a
+  // private bucket, and lib/mediaAccess.ts's story branch serves an expired
+  // story to nobody but its owner.
+  //
+  // The UNSTATED job was the load-bearing one. A signed URL is a bearer token
+  // that keeps working for its whole TTL, so an audience member who fetched a
+  // link shortly before expiry held a working link well past it — and deleting
+  // the object is what actually broke that link. Removing the deletion without
+  // replacing that guarantee would have let issued access outlive the boundary
+  // it claims to enforce. It is replaced, at the token: routes/mediaFile.ts
+  // clamps a story link's lifetime to the story's own `expires_at`, via
+  // mediaAccessDeadline() in lib/mediaAccess.ts.
+  //
+  // What still deletes story bytes: an explicit delete, and account deletion —
+  // which collects story media by owner_id with NO state filter, so expired and
+  // archived stories are covered there and never became unreachable garbage.
+  //
+  // This is NOT a retention promise. Nothing here undertakes to keep a story
+  // for any period; a retention policy is a separate decision.
   return rows.length;
 }
 
