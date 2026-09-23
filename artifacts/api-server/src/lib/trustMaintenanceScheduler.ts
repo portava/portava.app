@@ -659,14 +659,19 @@ export async function runTrustMaintenance(client?: any): Promise<TrustMaintenanc
     logger.warn({ err }, "expireOldCaps threw (non-fatal)");
   }
 
-  // 1b. Mark time-limited restrictions that have run out as lifted. Enforcement
-  //     already ignores them past `expires_at` (getRestrictionState filters on
-  //     it); this keeps the row — and the admin views that list it — honest.
-  //     TrustRestrictionService.expireOldRestrictions had no caller before.
+  // 1b. Lift restrictions whose term has run. This sits beside expireOldCaps and
+  //     clearExpiredProbation because it is the third member of exactly the same
+  //     family — a time-based lift — and it was the one the cleanup job missed.
+  //     Until this call existed, expireOldRestrictions had NO caller anywhere in
+  //     the repo. Enforcement already ignores a lapsed restriction — every
+  //     read-side consumer filters on `expires_at` — so what was wrong is the
+  //     ROW: it stayed `lifted_at IS NULL`, and the admin views that list it
+  //     showed a lapsed sanction as active indefinitely.
   //
   //     The sweep reports an OUTCOME, not a count: bounded per pass, and a
   //     failure is not reducible to "expired 0" — that number is also what a
-  //     healthy idle sweep returns.
+  //     healthy idle sweep returns. Truncation is reported too, so a partial
+  //     pass is never read as full coverage.
   let restrictionsExpired = 0;
   let restrictionSweepFailed = false;
   let restrictionSweepTruncated = false;

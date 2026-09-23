@@ -349,19 +349,32 @@ export interface ExpireRestrictionsResult {
 /**
  * Expire restrictions whose expires_at has passed.
  *
- * Called from lib/trustMaintenanceScheduler on every pass. This function
- * existed with the comment "call from cleanup job" and no caller: every
- * read-side consumer (getRestrictionState, interactionPermissions) already
- * filters on `expires_at`, so an expired restriction was never ENFORCED past
- * its date — but its row stayed `lifted_at IS NULL`, so the admin user view
- * (routes/admin.ts, routes/trust-admin.ts) listed it as active indefinitely.
- * The row now agrees with the enforcement.
+ * TWO DEFECTS THIS REPLACES, both of the same family.
  *
- * Reads `error`: postgrest-js resolves `{ data, error }` rather than rejecting,
- * so the previous `const { data }` turned any failed update into a silent 0 —
- * a BROKEN sweep and an IDLE one were the same observation, forever. Both
- * halves below bind `error`, and the result separates "nothing was due" from
- * "could not tell".
+ * 1. IT HAD NO CALLER. Repo-wide, the identifier appeared exactly once — its own
+ *    definition. Not the maintenance scheduler, not a route, not a startup job,
+ *    no pg_cron, no trigger, not even a test. Its own docstring said "call from
+ *    cleanup job"; the cleanup job that was later built picked up the two
+ *    SIBLING time-based lifts (expireOldCaps, clearExpiredProbation) and missed
+ *    this one.
+ *
+ *    HOW FAR THAT REACHED, stated precisely rather than at its worst: every
+ *    read-side consumer (getRestrictionState, interactionPermissions) already
+ *    filters on `expires_at`, so an expired restriction was never ENFORCED past
+ *    its date. What stayed wrong is the ROW — `lifted_at IS NULL` forever — so
+ *    the admin user views (routes/admin.ts, routes/trust-admin.ts) listed a
+ *    lapsed sanction as active indefinitely. The row now agrees with the
+ *    enforcement. It is called from lib/trustMaintenanceScheduler every pass.
+ *
+ * 2. IT SWALLOWED ITS OWN FAILURE. The old body destructured `const { data }`
+ *    and discarded `error`, then returned `data?.length ?? 0`. supabase-js
+ *    RETURNS errors rather than throwing, so a permissions failure, a schema
+ *    drift or a timeout all produced the number 0 — identical to a clean sweep
+ *    with nothing to do. A broken sweep and an idle one were the same
+ *    observation, forever.
+ *
+ * Now: select-then-update in bounded batches, `error` read on BOTH halves, and a
+ * result that separates "nothing to do" from "could not tell".
  *
  * Shape: select the due set (bounded, oldest term first) and then lift exactly
  * those ids. Two statements rather than one because the cap has to be applied
