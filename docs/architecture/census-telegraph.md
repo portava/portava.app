@@ -2114,10 +2114,10 @@ built in the previous section and mounted nowhere; it is mounted now.
 
 | id | was | now | why |
 | --- | --- | --- | --- |
-| T75 | N | **C** | **A sender may unsend only while no eligible recipient has seen the message** — `planUnsend` refuses with `seen_by_recipient` (`services/telegraph/unsend.ts:174#export function planUnsend`) over the translated assertion (`services/telegraph/unsend.ts:123#export function seenByRecipients`), enforced by `POST /threads/:id/messages/:id/unsend` (`routes/telegraphLifecycle.ts:194#messages/:messageId/unsend`), and offered on the client only while unseen (`travel-buddy-standalone/src/features/telegraph/lifecycle/lifecycleApi.ts:201#export function canOfferUnsend`). |
-| T76 | N | **C** | **In a group, one recipient seeing the message closes the window for everyone** — the refusal is `seen.length > 0`, not "all recipients", and a departed member's stale read is excluded (`services/telegraph/unsend.ts:108#export function eligibleRecipients`). The inverted form is the mutation that took the test red. |
-| T77 | N | **W** | **The server resolves read-vs-unsend races transactionally** — it does not. The race is detected and COMPENSATED: the receipts are re-read after the write and the message is restored body-and-all when a read landed inside the window (`routes/telegraphLifecycle.ts:339#detectReadRace`, `services/telegraph/unsend.ts:227#export function detectReadRace`). The outcome is correct; the window is real, and a recipient fetching inside it saw a tombstone. A lock needs a SECURITY DEFINER function, i.e. a migration no database has — **this row cannot exceed W on this tree**. |
-| T73 | N | **W** | **Direct: Sent/Delivered/Seen. Groups: "Seen by N"** — two of three for direct and the group shape in full. `receiptFor` derives the status and count (`services/telegraph/unsend.ts:139#export function receiptFor`), `GET /threads/:id/receipts` serves it (`routes/telegraphLifecycle.ts:111#/threads/:threadId/receipts`), and the client renders "Sent" / "Seen" / "Seen by N" (`travel-buddy-standalone/src/features/telegraph/lifecycle/lifecycleApi.ts:124#export function receiptLabel`). **DELIVERED is still absent** — nothing on this deployment produces a delivery signal, so every receipt returns `delivered: null` with the reason attached (`services/telegraph/unsend.ts:95#export const DELIVERED_UNAVAILABLE`) rather than a measured false. |
+| T75 | N | **C** | **A sender may unsend only while no eligible recipient has seen the message** — `planUnsend` refuses with `seen_by_recipient` (`services/telegraph/unsend.ts:211#export function planUnsend`) over the translated assertion (`services/telegraph/unsend.ts:144#export function seenByRecipients`), enforced by `POST /threads/:id/messages/:id/unsend` (`routes/telegraphLifecycle.ts:212#messages/:messageId/unsend`), and offered on the client only while unseen (`travel-buddy-standalone/src/features/telegraph/lifecycle/lifecycleApi.ts:209#export function canOfferUnsend`). |
+| T76 | N | **C** | **In a group, one recipient seeing the message closes the window for everyone** — the refusal is `seen.length > 0`, not "all recipients", and a departed member's stale read is excluded (`services/telegraph/unsend.ts:129#export function eligibleRecipients`). The inverted form is the mutation that took the test red. |
+| T77 | N | **W** | **The server resolves read-vs-unsend races transactionally** — it does not. The race is detected and COMPENSATED: the receipts are re-read after the write and the message is restored body-and-all when a read landed inside the window (the two halves were a `detectReadRace` helper in `services/telegraph/unsend.ts` and its call site in `routes/telegraphLifecycle.ts`; **both were DELETED by §31**, which replaced the compensation with a lock, so these citations no longer resolve and are restated as prose rather than repointed at code that means something else). The outcome is correct; the window is real, and a recipient fetching inside it saw a tombstone. A lock needs a SECURITY DEFINER function, i.e. a migration no database has — **this row cannot exceed W on this tree**. |
+| T73 | N | **W** | **Direct: Sent/Delivered/Seen. Groups: "Seen by N"** — two of three for direct and the group shape in full. `receiptFor` derives the status and count (`services/telegraph/unsend.ts:160#export function receiptFor`), `GET /threads/:id/receipts` serves it (`routes/telegraphLifecycle.ts:129#/threads/:threadId/receipts`), and the client renders "Sent" / "Seen" / "Seen by N" (`travel-buddy-standalone/src/features/telegraph/lifecycle/lifecycleApi.ts:132#export function receiptLabel`). **DELIVERED is still absent** — nothing on this deployment produces a delivery signal, so every receipt returns `delivered: null` with the reason attached (`services/telegraph/unsend.ts:116#export const DELIVERED_UNAVAILABLE`) rather than a measured false. |
 
 ### 10.23 The §7 tests, and how each was shown red
 
@@ -2314,7 +2314,7 @@ never reports an absence.
 
 | id | was | now | why |
 | --- | --- | --- | --- |
-| T73 | W | **W** | **Direct: Sent/Delivered/Seen. Groups: "Seen by N"** — unchanged verdict, corrected evidence. §10.22 cited a label function; the derivation is now MOUNTED on both chat surfaces (`travel-buddy-standalone/src/features/telegraph/lifecycle/lifecycleApi.ts:159#export function deriveReceiptState`, used at `travel-buddy-standalone/app/messages/[id].tsx:1624#deriveReceiptState` and `travel-buddy-standalone/src/components/GroupChatScreen.tsx:579#deriveReceiptState`), with "Seen by N" derived for groups (`travel-buddy-standalone/src/features/telegraph/lifecycle/lifecycleApi.ts:184#export function deriveSeenBy`). Still W, and now for a cleaner reason: two of three, because **DELIVERED cannot be reported and is no longer claimed**. |
+| T73 | W | **W** | **Direct: Sent/Delivered/Seen. Groups: "Seen by N"** — unchanged verdict, corrected evidence. §10.22 cited a label function; the derivation is now MOUNTED on both chat surfaces (`travel-buddy-standalone/src/features/telegraph/lifecycle/lifecycleApi.ts:167#export function deriveReceiptState`, used at `travel-buddy-standalone/app/messages/[id].tsx:1624#deriveReceiptState` and `travel-buddy-standalone/src/components/GroupChatScreen.tsx:579#deriveReceiptState`), with "Seen by N" derived for groups (`travel-buddy-standalone/src/features/telegraph/lifecycle/lifecycleApi.ts:192#export function deriveSeenBy`). Still W, and now for a cleaner reason: two of three, because **DELIVERED cannot be reported and is no longer claimed**. |
 
 **T69 is re-derived and stays W, but its evidence changes.** The census said
 "Two of six states … no DELIVERED concept anywhere". That was true of the
@@ -2392,7 +2392,7 @@ exported functions is what found `fetchReceipts`.
 
 | id | was | now | why |
 | --- | --- | --- | --- |
-| T75 | C | **C** | **A sender may unsend only while no eligible recipient has seen the message** — verdict unchanged, and now the client half of §10.22's evidence is true. `canOfferUnsend` (`travel-buddy-standalone/src/features/telegraph/lifecycle/lifecycleApi.ts:201#export function canOfferUnsend`) gates the long-press Unsend row (`travel-buddy-standalone/app/messages/[id].tsx:270#canOfferUnsend(receipt)`); until this section it gated nothing, and the sheet offered Unsend on every own message. The row was C on the server's enforcement, which was and is real — but the sentence about the client was wrong and is corrected here rather than left standing. |
+| T75 | C | **C** | **A sender may unsend only while no eligible recipient has seen the message** — verdict unchanged, and now the client half of §10.22's evidence is true. `canOfferUnsend` (`travel-buddy-standalone/src/features/telegraph/lifecycle/lifecycleApi.ts:209#export function canOfferUnsend`) gates the long-press Unsend row (`travel-buddy-standalone/app/messages/[id].tsx:270#canOfferUnsend(receipt)`); until this section it gated nothing, and the sheet offered Unsend on every own message. The row was C on the server's enforcement, which was and is real — but the sentence about the client was wrong and is corrected here rather than left standing. |
 
 No verdict changes. Both entries in §10.29–§10.33 are corrections to this
 worktree's own work.
@@ -3005,9 +3005,9 @@ implements, so a 501 can say that rather than pretending they are typos. A test
 asserts every one of the eighteen is in exactly one of the three categories,
 so a command in none of them is a failing test rather than a silence.
 
-`UNSEND_MESSAGE` (`server/telegraph/commandRoute.ts:192`) enforces §7.4's rule
+`UNSEND_MESSAGE` (`server/telegraph/commandRoute.ts:234#async function unsendMessage(`) enforces §7.4's rule
 rather than merely offering the verb: once any eligible recipient has read past
-the message it is REFUSED (`:233`). The seen state is read from
+the message it is REFUSED (`server/telegraph/commandRoute.ts:266#TELEGRAPH_LIFECYCLE_SEEN_BY_RECIPIENT`). The seen state is read from
 `message_thread_members.last_read_at`, which is thread-level, so the check is
 CONSERVATIVE — a member who read later is treated as having seen it even if they
 never looked at that message. That refuses some unsends that would have been
@@ -3028,8 +3028,8 @@ believe they had acted as someone else.
 | T144 | N | **W** | §12 `message_attachments` (`:137`), pointing at `public.media_assets` with ON DELETE RESTRICT (§16.1's "MessageAttachment → MediaAsset"), with a `kind` that admits audio and file and an `ordinal` that makes the plural case representable. W: no database has it, and `messages.media_url` is still the live path. |
 | T147 | N | **W** | §12 `conversation_action_refs` (`:167`), with `payload_version` and `revoked_at`. W: no database has it and nothing writes it. |
 | T158 | N | **W** | §12.1 "structured payload types use versioned schemas and explicit reference tables". Both halves now have a representation: `payload_version` on the reference table (`:167`) and `event_version` on the outbox (§11.6). W: no database has either, and every card payload on the live path is still an unversioned JSON string in `body`. |
-| T161 | N | **W** | §13.1 `UNSEND_MESSAGE`. A real command with §7.4's rule enforced (`server/telegraph/commandRoute.ts:192`, refusal at `:233`), publishing `message.unsent` and retaining the row as a tombstone. W: it needs `messages.unsent_at` (2810), no database has it, and the endpoint answers `feature_disabled` everywhere today. |
-| T163 | N | **W** | §13.1 `ADD_REACTION` (`server/telegraph/commandRoute.ts:271`), with `REMOVE_REACTION` alongside it (`:306`) because a reaction a person cannot take back is a message they cannot unsend. W: needs `message_reactions` (2811), which no database has. |
+| T161 | N | **W** | §13.1 `UNSEND_MESSAGE`. A real command with §7.4's rule enforced (`server/telegraph/commandRoute.ts:234#async function unsendMessage(`, refusal at `server/telegraph/commandRoute.ts:266#TELEGRAPH_LIFECYCLE_SEEN_BY_RECIPIENT`), publishing `message.unsent` and retaining the row as a tombstone. W: it needs `messages.unsent_at` (2810), no database has it, and the endpoint answers `feature_disabled` everywhere today. |
+| T163 | N | **W** | §13.1 `ADD_REACTION` (`server/telegraph/commandRoute.ts:301#async function addReaction(`), with `REMOVE_REACTION` alongside it (`server/telegraph/commandRoute.ts:336#async function removeReaction(`) because a reaction a person cannot take back is a message they cannot unsend. W: needs `message_reactions` (2811), which no database has. |
 | T181 | N | **W** | §13.2 `message.unsent`. In the union (`lib/telegraphEvents.ts:53`) and published by the unsend command, deliberately distinct from `message.deleted` — an unsend asserts the message never reached a mind, and a client that collapsed the two would render a retraction as a tombstone. W: nothing can issue the command on any database today. |
 | T166 | W | **W** | §13.1 `CREATE_DECISION`. Unchanged in substance and re-derived: it is still only the meetup shape, and the command endpoint now says so out loud — `LEGACY_PATH_COMMANDS` (`domain/telegraph/commands/telegraphCommands.ts:97`) points a caller at `/telegraph-chat/create-meetup` rather than leaving them to discover that a general decision command does not exist. |
 
@@ -4603,7 +4603,7 @@ Stated here rather than edited above, because sections are append-only.
 | id | was | now | why |
 | --- | --- | --- | --- |
 | T79 | W | **C** | §7.2 "remove from normal retrieval, search and projections". Retrieval was the open half and it is closed: a deleted message's `media_url`, `media_thumbnail_url`, `media_type` and `media_duration_seconds` are all null, present-and-null so an older client sees a field rather than an absence, and the whole serialized response is scanned for the asset path so a leak through any other key fails too. The other two surfaces were already closed and were re-verified rather than assumed: search excludes tombstones in the QUERY, and every projection — inbox preview, content drawer, saved messages, both Memory Note paths — filters `deleted_at IS NULL`. |
-| T388 | W | **C** | §7.2's removal, stated per surface. All four the row names hold: search (query-level filter), Compass retrieval (Compass reads no message content; a report invalidates its cache), inbox projections (`deleted_at IS NULL` in the inbox query) and content drawers (same filter). "Unsent" is the same tombstone as "deleted" on the shipped path — `artifacts/api-server/src/services/telegraph/unsend.ts:240#export function unsentPatch(nowIso: string): Record<string, unknown> {` writes `deleted_at`, so every removal surface covers both by construction. The one thing that survived deletion was media, which is T79 and is now closed. |
+| T388 | W | **C** | §7.2's removal, stated per surface. All four the row names hold: search (query-level filter), Compass retrieval (Compass reads no message content; a report invalidates its cache), inbox projections (`deleted_at IS NULL` in the inbox query) and content drawers (same filter). "Unsent" is the same tombstone as "deleted" on the shipped path — the unsend write set `deleted_at` alongside `unsent_at` — `unsentPatch` in `services/telegraph/unsend.ts` did so then, and §31's function does so now in SQL, for the same reason (81 non-test files read `public.messages` and 4 mention `unsent_at`, so suppression in this codebase is `deleted_at` and only `deleted_at`), so every removal surface covers both by construction. The one thing that survived deletion was media, which is T79 and is now closed. |
 | T430 | W | **C** | §30A.13's three properties, each asserted. Nothing crashes; nothing disappears (an EMPTY body on an unrecognised type draws the notice rather than an empty pill); and nothing prints the payload. Both fallbacks are covered and the pill is fixed at the component, so all three of its mounts are. Real prose is passed through unchanged, which is the regression this fix had to avoid and which has its own test. |
 | T438 | W | **C** | §30A.16. The first half — live-DB contracts verifying columns, enum literals and RLS role behaviour — was already built and test-covered (LDB-01…LDB-06) and the census says so. The emphasized half is "schema/permission failures must never be swallowed into plausible empty **inboxes**", the one clause in the addendum that names an inbox, and both inbox endpoints now answer honestly: `GET /me/threads` refuses when `message_threads`, `messages`, `message_thread_members` or the member-profile batch is unreadable, and omits trip and booking context rather than reporting it absent; `GET /me/unread-counts` already refused on every read that feeds the unread number, and its two remaining silent reads (meetups, circle membership) now log rather than vanish. Each refusal was shown red by deleting it. |
 
@@ -6386,7 +6386,7 @@ still true, one was true with a stale reason, and one had been true and is no lo
 | T11 | "there is still no LAYER: unresolved actions are interleaved with conversation" | **True.** `grep` for `semanticLayer`, `layerOf` and the literal `"TALK"` over `artifacts/api-server/src` and `travel-buddy-standalone/src` returned nothing. Every §6.2 and §8 message was read back through the same page as ordinary conversation. |
 | T84 | "a projection over one thread's messages is not a queryable store" | **True.** No route took a user id and returned commitments; `projectCommitment` had exactly one caller, the per-thread view. |
 | T85 | "a session object would need a table and would then be capped at W by the migration anyway" | **True that no entity existed. The REASON is wrong** — see §21.3. |
-| T179 | "no consumer can answer 'was *this* message seen'" | **Half stale.** `GET /threads/:id/receipts` (`routes/telegraphLifecycle.ts:111#/threads/:threadId/receipts`) is exactly such a consumer and has been since T73 was restated — it derives per-message seen from the one receipt row per member. What was genuinely absent was the §13.2 EVENT. |
+| T179 | "no consumer can answer 'was *this* message seen'" | **Half stale.** `GET /threads/:id/receipts` (`routes/telegraphLifecycle.ts:129#/threads/:threadId/receipts`) is exactly such a consumer and has been since T73 was restated — it derives per-message seen from the one receipt row per member. What was genuinely absent was the §13.2 EVENT. |
 
 ### 21.2 §2.3's layers exist on the server, and the conversation screen still ignores them
 
@@ -6446,9 +6446,9 @@ person saying "we are stuck in traffic" outranks a clock that thinks the table i
 |---|---|---|---|
 | T84 | W | **C** | **`ConversationCommitment` — who agreed to what, by when, completed.** The four questions were already answered per thread; what the row asked for was "something a surface can list". `GET /api/me/commitments` (`routes/telegraphCoordination.ts:919#"/me/commitments"`) answers ACROSS every conversation the caller is still an active member of, from the caller's own memberships, each thread's rows bounded by that thread's own §14.3 window, built from the SAME `projectCommitment` the thread view uses (`services/telegraph/coordination.ts:374#projectCommitment`). Not a new store: a query is a route, not a table, and every bound the answer was computed under is reported so a truncated list cannot read as "that is everything you owe". |
 | T85 | W | **C** | **`CoordinationSession`.** The four things the row said were missing now exist: an id (the opening message's own), who started it (`startedBy`), when it ended (`endedAt`, set only on COMPLETE or CANCELLED), and a recordable DISRUPTED (`services/telegraph/coordination.ts:722#export function projectCoordinationSession`). Reachable at `POST /api/threads/:id/coordination` and returned as `coordination.session`. The row's "would need a table" is answered in §21.3. |
-| T179 | W | **C** | **§13.2 `message.seen`.** In the union and deliberately alongside `read.updated` rather than replacing it (`lib/telegraphEvents.ts:84#message.seen`), published with the MESSAGE IDS that crossed the reader's marker by `POST /api/threads/:id/seen` (`routes/telegraphLifecycle.ts:443#"/threads/:threadId/seen"`). A consumer can now answer "was this one seen" from the event itself. |
+| T179 | W | **C** | **§13.2 `message.seen`.** In the union and deliberately alongside `read.updated` rather than replacing it (`lib/telegraphEvents.ts:84#message.seen`), published with the MESSAGE IDS that crossed the reader's marker by `POST /api/threads/:id/seen` (`routes/telegraphLifecycle.ts:388#"/threads/:threadId/seen"`). A consumer can now answer "was this one seen" from the event itself. |
 | T217 | W | **C** | **§15.2 safety mode NORMAL → SAFETY_ATTENTION → SAFETY_EVENT.** The row's gap was "neither [ladder] is a conversation-level mode", and §13.4 classified it NEITHER — "A conversation-level safety mode does not exist in either tree". It does now, and it needed no table: both carriers were already in the thread and already written by shipped routes — §6.2's SAFETY kind (`check_in \| heads_up \| need_help \| all_clear`) and §9.1's `NEED_HELP` quick state. `projectSafetyMode` (`services/telegraph/safetyMode.ts:239#export function projectSafetyMode`) folds them; `GET /api/threads/:id/safety-mode` (`routes/telegraphCoordination.ts:1071#"/threads/:threadId/safety-mode"`) serves it, membership-gated and §14.3-bounded, and answers 500 rather than NORMAL on an unreadable thread. Three rules are asserted because a careless projection gets each of them wrong: a SAFETY_EVENT is cleared only by an explicit ALL CLEAR and never by time; a routine CHECK-IN does not clear a help request; and the mode is the HIGHEST unresolved signal, not the latest. |
-| T410 | W | **C** | **§30A.10 every executable action registers authorize / preview / execute / optional compensate; Telegraph orchestrates, source domains retain truth.** The row's gap was "No registry, no compensate". `TELEGRAPH_ACTION_REGISTRY` (`services/telegraph/actionRegistry.ts:213#export const TELEGRAPH_ACTION_REGISTRY`) registers all four hooks for every `ProposedAction.kind` the route can produce, and the registry is EXHAUSTIVE by test rather than by intention — `src/test/telegraphCommandRoute.test.ts:500#the registry is EXHAUSTIVE` reads the route's own source, extracts every `kind: "…"` literal, and fails on one that is not registered. `confirm-action` REFUSES an unregistered kind (`routes/telegraphCommands.ts:419#const registration = registrationFor(action.kind);`) rather than confirming it with three hooks silently skipped. Compensate is reachable, not decorative: §30A.11's capability recheck runs AFTER the write (`routes/telegraphCommands.ts:468#const recheck = await registration.authorize(ctx);`) and a membership lost in that window UNDOES the orchestration record (`services/telegraph/actionRegistry.ts:180#const undoConfirmation`), answering 409. "Source domains retain truth" is enforced by the same test: every registration names a `canonicalOwner` and it may not be `telegraph`. |
+| T410 | W | **C** | **§30A.10 every executable action registers authorize / preview / execute / optional compensate; Telegraph orchestrates, source domains retain truth.** The row's gap was "No registry, no compensate". `TELEGRAPH_ACTION_REGISTRY` (`services/telegraph/actionRegistry.ts:213#export const TELEGRAPH_ACTION_REGISTRY`) registers all four hooks for every `ProposedAction.kind` the route can produce, and the registry is EXHAUSTIVE by test rather than by intention — `src/test/telegraphCommandRoute.test.ts:597#the registry is EXHAUSTIVE` reads the route's own source, extracts every `kind: "…"` literal, and fails on one that is not registered. `confirm-action` REFUSES an unregistered kind (`routes/telegraphCommands.ts:419#const registration = registrationFor(action.kind);`) rather than confirming it with three hooks silently skipped. Compensate is reachable, not decorative: §30A.11's capability recheck runs AFTER the write (`routes/telegraphCommands.ts:468#const recheck = await registration.authorize(ctx);`) and a membership lost in that window UNDOES the orchestration record (`services/telegraph/actionRegistry.ts:180#const undoConfirmation`), answering 409. "Source domains retain truth" is enforced by the same test: every registration names a `canonicalOwner` and it may not be `telegraph`. |
 | T268 | W | **C** | **§20 Memories — safe share derivatives · Memory Notes · explicit Save to Memory · post-experience recap.** MIS-GRADED, and the correction at §13.1 ("Safe-share derivatives are the remaining half and they are loaders") is itself stale: the loader exists and is registered. `loadMemory` (`services/telegraph/shareables.ts:483#const loadMemory`) is a derivative — title and city only, no items, no media, no graph — that re-checks `state`, `visibility`, `allowed_user_ids`, `hidden_user_ids` and blocks, and degrades rather than approximating. Memory Notes are T117/T118 C, Save to Memory is T119 C (`services/telegraph/memoryNotes.ts:144#export function memoryDraftRow`), recap is T121 C (`services/telegraph/memoryNotes.ts:242#export function buildRecap`). Four of four. |
 
 **What would turn these red.** T217: a `check_in` clearing an EVENT, an uncleared help request ageing out of the mode, a later lesser signal de-escalating the thread, or the §9.1 carrier being dropped — all four were run as mutations, §21.6, and the third of them found a test that could not fail. T410: an action kind produced by the route with no registration (the test reads the route, so this is checked, not trusted); the post-write recheck removed, which leaves the 409 path dead; or a `compensate` that reports `undone: true` without deleting the row — all three were run as mutations, §21.6. T84: a commitment in a thread the caller has left appearing in the
@@ -6466,7 +6466,7 @@ a `friends_only` Memory resolving for a non-friend — measured, see §21.6.
 | T12 | **W** | **Semantic layer NOW.** The row's reason — "it is a PANEL, not a LAYER: the message stream underneath is unchanged" — is answered on the server by the same partition T11 gets: a §9.1 quick state, a rendezvous, a SAFETY message, a LOCATION message and a NOW-class action proposal are all lifted OUT of `talk` and into `now` (`services/telegraph/layers.ts:160#export function layerOfMessage`). "Minimal conversation" is now EXPRESSIBLE — the stream the client is handed is genuinely shorter while the thread is coordinating. It stays W for the same reason T11 does: nothing draws it yet, and this lane holds no client file. |
 | T262 | **W** | **§20 Trips.** Was two of five, corrected to three by §13.1 (TRIP is shareable). **Today/next context is now four of five**: `GET /api/threads/:id/trip-context` (`routes/telegraphSharedContext.ts:414#"/threads/:threadId/trip-context"`) reads `trip_plan_items` — Trips' own canonical table, written by nothing here — and answers today's items and the next one after them, membership-gated TWICE. The second gate is the point: it re-verifies ACCEPTED trip membership rather than trusting the thread roster, because T319 records that the two writes are not one transaction and a removed member is on the roster until a sync runs. It returns no coordinates at all — they are not selected, which is stronger than stripped (`routes/telegraphSharedContext.ts:347#const TRIP_CONTEXT_COLUMNS`) — and it states its own day frame as UTC rather than implying a destination-local one it cannot compute (census T423). Fifth item, the Trip Kernel commands, is wiring into `server/trips/commandRoute.ts`, which this lane does not own. |
 | T40 | **W** | **Evidence correction, verdict unchanged.** "Photo and video only … No voice, GIF or file" is stale on the GIF clause: §6.2's GIF kind is sendable, validated and indexed — `GifPayload` (`services/telegraph/messageKinds.ts:61#export const GifPayload`), in `SENDABLE_ENVELOPE_KINDS` (`services/telegraph/messageKinds.ts:139#export const SENDABLE_ENVELOPE_KINDS`), with its own drawer tab and its own renderer (T64). So §5's Media family is three of five carriable, not two. It stays W and this lane did not touch it: voice and file both need the MIME and storage widening §13.4 names, and §13.4's other note stands — there is no GIF PROVIDER, so a kind that can be carried still cannot be obtained. A correction to the count is not a change to the verdict. |
-| T70 | **W** | §7.2's threshold is now checkable on one path: `POST /threads/:id/seen` takes a MESSAGE, not a clock reading, refuses one that is absent, deleted, in another thread or outside the caller's §14.3 window, and stamps the MESSAGE's own `created_at` so "seen" cannot run ahead of what was sent (`routes/telegraphLifecycle.ts:485#const threshold = String(t.created_at)`). The marker never moves backwards. It stays W because the legacy path in `routes/messaging.ts` still stamps `now()` on any authenticated call and this lane does not own that file — while both paths exist, seen is still whatever the client asserts on the one that is wired into the app. |
+| T70 | **W** | §7.2's threshold is now checkable on one path: `POST /threads/:id/seen` takes a MESSAGE, not a clock reading, refuses one that is absent, deleted, in another thread or outside the caller's §14.3 window, and stamps the MESSAGE's own `created_at` so "seen" cannot run ahead of what was sent (`routes/telegraphLifecycle.ts:430#const threshold = String(t.created_at)`). The marker never moves backwards. It stays W because the legacy path in `routes/messaging.ts` still stamps `now()` on any authenticated call and this lane does not own that file — while both paths exist, seen is still whatever the client asserts on the one that is wired into the app. |
 
 ### 21.5b Rows opened, re-derived, and deliberately not touched
 
@@ -6849,7 +6849,7 @@ code before anything was built. **All three were stale.**
 
 | id | What the tree said on re-derivation |
 |---|---|
-| T2 | "`message_reactions` does not exist and unsend does not exist on this branch" is wrong twice. `message_reactions` is created by `migrations/2811_telegraph_message_side_tables.sql:115#CREATE TABLE IF NOT EXISTS public.message_reactions` with RLS and an idempotent primary key, and it has a live consumer (`server/telegraph/commandRoute.ts:299`). Unsend is `services/telegraph/unsend.ts` and `routes/telegraphLifecycle.ts:194#messages/:messageId/unsend`. The row is still W and this lane cannot move it: §13.3 caps both halves on migrations 2810/2811, which are on no database and behind a flag seeded FALSE, and the VOICE clause inside the same row is NEITHER — no audio MIME exists anywhere and no migration widens `messages.media_type`. |
+| T2 | "`message_reactions` does not exist and unsend does not exist on this branch" is wrong twice. `message_reactions` is created by `migrations/2811_telegraph_message_side_tables.sql:115#CREATE TABLE IF NOT EXISTS public.message_reactions` with RLS and an idempotent primary key, and it has a live consumer (`server/telegraph/commandRoute.ts:329#.from("message_reactions")`). Unsend is `services/telegraph/unsend.ts` and `routes/telegraphLifecycle.ts:212#messages/:messageId/unsend`. The row is still W and this lane cannot move it: §13.3 caps both halves on migrations 2810/2811, which are on no database and behind a flag seeded FALSE, and the VOICE clause inside the same row is NEITHER — no audio MIME exists anywhere and no migration widens `messages.media_type`. |
 | T4 | Unchanged from §21.5b, and re-checked: §13.5 reclassified it BRANCH → NEITHER on an **owner decision** about whether private-by-default content may surface in a shared rail, and no ruling has landed (`docs/architecture/` holds two decision documents, on the brand palette and on Sensing's auth posture; neither touches this). The rail admits candidates only from `CANONICAL_MUTUALITY_SOURCES`, a closed list of five tables that `admitCandidate` refuses to widen at runtime and TypeScript refuses to widen at compile time; adding `memory_tags` as a sixth IS the decision the owner was asked to take. Left alone a second time. |
 | T11 | "ACTION and ANNOUNCEMENT are interleaved rather than layered" is stale on the server: §21.2 built the partition and `routes/telegraphCoordination.ts:724#"/threads/:threadId/layers"` serves it, with `partitionViolations` asserted on every response. It stays W for the half §21.5 named — nothing DRAWS it, and the conversation screen is a client file this lane does not hold. |
 
@@ -8074,3 +8074,90 @@ the lane's own report, not from a re-measurement. `head_commit` is unchanged at
 `artifacts/api-server/src/scripts/CENSUS_STALENESS_ACKNOWLEDGED.json` and is the
 only acknowledgement in that file that argues a verdict DID move rather than
 that none could.
+
+## §31 — THE UNSEND RACE IS LOCKED ON THIS BRANCH, AND NO ROW BELOW HAS BEEN RE-GRADED FOR IT
+
+**This section moves no verdict.** It follows §30's form for the same reason:
+several statements above are now false about this tree, and a census whose last
+word is a false statement is worse than one that is merely old. Promoting a row
+requires reading it against the code in a verification phase; doing it here,
+from the builder's own account, is the shortcut this corpus exists to prevent.
+
+### 31.1 What changed
+
+§7.4's third sentence — *"The server resolves read-vs-unsend races
+transactionally"* — was the one requirement in this document that a route could
+not satisfy no matter how it was written. supabase-js issues each statement in
+its own implicit transaction, so a handler that read the receipts, decided, and
+wrote had a window between the read and the write, and both unsend handlers did
+exactly that. §10.22 recorded the consequence and its own ceiling: *"A lock
+needs a SECURITY DEFINER function, i.e. a migration no database has — **this row
+cannot exceed W on this tree**."* That sentence was true when it was written and
+is no longer true of this tree.
+
+| Piece | Where |
+| --- | --- |
+| The locking function | `artifacts/api-server/src/migrations/3000_telegraph_unsend_authoritative.sql` |
+| Its adapter, and the deletion of the compensation | `artifacts/api-server/src/services/telegraph/unsend.ts` |
+| `POST /threads/:id/messages/:id/unsend`, rewired | `artifacts/api-server/src/routes/telegraphLifecycle.ts` |
+| §13.1 `UNSEND_MESSAGE`, rewired | `artifacts/api-server/src/server/telegraph/commandRoute.ts` |
+| One model of the function, pinned against its SQL | `artifacts/api-server/src/test/telegraphUnsendFunctionFake.ts` |
+
+The function locks the message row, then every eligible recipient's receipt row,
+and only then reads `last_read_at`. The order is the guarantee, and it is
+asserted against the migration's own text rather than by counting `FOR UPDATE`
+clauses — two locks placed after the seen-check satisfy a count and close
+nothing. The compensation scheme that stood in for a lock (write, re-read,
+restore the message if a read had landed) is deleted rather than left where a
+future handler could reach for it, and with it the `unverifiable` refusal that
+only existed because a re-read could fail.
+
+### 31.2 The statements above that are now false, named
+
+* **§10.22's T77 row** — *"it does not. The race is detected and COMPENSATED"*,
+  and its ceiling sentence quoted above. Both described a tree with no such
+  migration. The row's two citations pointed at `detectReadRace`, which no
+  longer exists; they are restated as prose in place rather than repointed at
+  code that means something else.
+* **§12's T338 line** — *"Unmoved — there is no unsend, so there is no race to
+  run. The absence is asserted structurally"*. The structural assertion is gone
+  and the race is run.
+* **T326 and T327's `vacuous` status** in
+  `artifacts/api-server/src/domain/telegraph/invariants/propertyInvariants.ts`.
+  Both are now `enforced` and quantified over 204 enumerated states.
+* **T75's and T76's evidence**, which cites `planUnsend`. That function is no
+  longer the decision — it is a second opinion, checked against the model of the
+  authoritative function on every fixture. Its VERDICTS are unaffected; what
+  changed is which artifact enforces them.
+* Any row whose evidence turns on "no unsend in this tree resolves the race".
+
+**The rows themselves are unchanged and are NOT to be read as measurements of
+this branch.** Every verdict in this document remains a LOWER BOUND at
+`head_commit 1fe72289b`.
+
+### 31.3 One thing that is NOT true, so the recensus does not over-correct
+
+**`3000` is applied to NO database** — not production
+(`ajrurzioarfkagpuxfnb`), not portava-ci (`hwokxgbmezheskbzskfr`) — and neither
+is `2810`, which creates the `messages.unsent_at` and `messages.lifecycle_state`
+columns `3000` depends on. `3000` asserts both columns in its own preconditions
+and RAISES rather than installing a half-function against a schema that cannot
+hold its writes, so the dependency fails closed rather than silently. The
+consequence is the one §30 recorded for voice: **the lock is built in this tree
+and is live nowhere**, and T161's W — *"it needs `messages.unsent_at` (2810), no
+database has it"* — is unchanged by this work, because that row turns on a
+deployment fact and this changed code.
+
+The locks are also not executed by any test in this repository's default suite.
+A single-threaded fake has nothing to serialise, and the model that stands in
+for the function says so in its own header. They are executed by the
+`api-server · kernel SQL executed on a throwaway database` CI job, which applies
+the migration chain for real.
+
+### 31.4 Provenance of this section
+
+Written by the lane that made the change, from its own diff, not from a
+re-measurement of the corpus. `head_commit` is unchanged at `1fe72289b`; the
+acknowledgement covering these files is in
+`artifacts/api-server/src/scripts/CENSUS_STALENESS_ACKNOWLEDGED.json` and, like
+§30's, argues that a verdict DID move rather than that none could.

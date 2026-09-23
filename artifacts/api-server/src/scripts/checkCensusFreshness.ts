@@ -1391,6 +1391,13 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     // telegraph acknowledgement for the restore itself, which moved no verdict
     // because no reader came with the file.
     "artifacts/api-server/src/migrations/2325_telegraph_unsend_before_seen.sql",
+    // ADDED 2026-09-23 with §31, on the same rule. 3000 REPLACES 2325's function
+    // with a locking one and is what §7.4's "transactionally" now rests on, and
+    // telegraphUnsendFunctionFake.ts is the single model of that function that
+    // three route suites decide against — a change to either is a change to what
+    // the unsend rows grade, so both age this census.
+    "artifacts/api-server/src/migrations/3000_telegraph_unsend_authoritative.sql",
+    "artifacts/api-server/src/test/telegraphUnsendFunctionFake.ts",
     "artifacts/api-server/src/lib/calls/",
     "artifacts/api-server/src/lib/telegraphBroadcast.ts",
     "artifacts/api-server/src/lib/telegraphEvents.ts",

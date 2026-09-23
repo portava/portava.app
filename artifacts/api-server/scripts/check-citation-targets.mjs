@@ -316,7 +316,7 @@ import {
  * documents by census-discovery for the quote "Payments are not a discovery
  * workstream"; the correction above shifted that file, so it now carries the
  * quote as its anchor. 212 -> 209. */
-export const MAX_DEAD_TARGETS = 209;
+export const MAX_DEAD_TARGETS = 204;
 
 /** Pinned to a commit by its own declaration; its lines must not track HEAD. */
 const PINNED_DOCS = new Set(['docs/architecture/mobile-reachability-ledger.md']);

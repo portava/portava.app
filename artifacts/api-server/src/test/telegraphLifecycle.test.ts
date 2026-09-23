@@ -23,44 +23,109 @@
  *   - a non-sender is refused before seen-ness is computed, so the endpoint
  *     cannot probe another person's read state.
  *
- * And the race: a read that lands during the write is COMPENSATED — the message
- * is put back, body intact — which is weaker than §7.4's "transactionally" and
- * is tested as the weaker thing it is.
+ * And the race: §7.4's "transactionally" is now MET, and this file changed
+ * shape because of it. The route no longer reads, decides and writes; it calls
+ * `public.telegraph_unsend_message_before_seen` (migration 3000), which takes
+ * row locks on the message and on every eligible recipient's receipt row before
+ * it reads `last_read_at`. The COMPENSATION scheme the earlier version of this
+ * suite tested — write, re-read, put the message back if a read had landed — is
+ * gone, and so are its tests. What replaced them asserts the stronger property
+ * directly: there is no window to be unsure about, so there is no `raceDetected`
+ * to report and no `unverifiable` refusal for when a re-read failed.
  *
- * SHOWN RED before commit (32 pass green), each mutation reverted:
- *   • `planUnsend` refusing only when `seen.length === recipientCount` — i.e.
- *     "have they ALL seen it?", §7.4's sentence inverted
- *       -> pass 29 / fail 2 ("ONE of four recipients seeing it refuses the
- *          unsend for all of them", "REFUSES once a recipient has seen it, and
- *          writes nothing")
- *   • `eligibleRecipients` no longer excluding departed members
- *       -> pass 30 / fail 1 ("a DEPARTED member's stale read does not keep the
- *          window shut")
- *   • the `before.ok` fail-closed branch replaced with an empty member list
- *       -> pass 31 / fail 1 ("an unreadable receipt state FAILS CLOSED")
- *   • `detectReadRace` returning [] always (compensation never fires)
- *       -> pass 28 / fail 4 (both race-detector unit tests and both
- *          compensation route tests)
- *   • the post-write read failing OPEN — `if (after.ok) { …race check… }`, so
- *     an unreadable after-state is treated as "no race"
- *       -> pass 32 / fail 2 ("FAILS CLOSED when the post-write read cannot rule
- *          a race out", "reports raceDetected as null — PRESENT and null")
+ * ── MUTATIONS, RE-MEASURED 2026-09-23 AGAINST THE LOCKING BUILD ─────────────
+ * The record below replaces the pre-locking one, which described mutations to
+ * `detectReadRace`, the post-write read and the compensation route tests. Those
+ * three no longer exist, so their numbers could not be re-measured and are left
+ * in git history rather than restated here as if they still meant something.
  *
- * That last mutation caught a weak assertion in its own new test on the first
- * measurement: `assert.notEqual(body.raceDetected, false)` passed under the
- * fail-open version, because the field is simply ABSENT there and
- * `undefined !== false`. It was pass 33 / fail 1 until the test was changed to
- * require the field to be present AND null. Both numbers are recorded because
- * the difference between them is the whole value of running the mutation.
+ * Baseline: this suite 46/46, telegraphCommandRoute 36/36,
+ * telegraphUnsendFunctionFake 18/18. Each mutation applied alone and reverted.
  *
- * THE THIRD MUTATION IS THE ONE WORTH READING. It first stayed GREEN: the
- * fail-closed test injected a failure on the whole `message_thread_members`
- * table, so the MEMBERSHIP GATE refused the request before the receipt read was
- * reached, and the branch under test never ran. The test asserted a status code
- * that a different guard produced. `failMemberReadsAfterGate` exists because of
- * that — it fails the receipt read and only the receipt read — and a second
- * test now covers the gate's own failure separately. A green run proves nothing
- * until it has been seen to go red, and this one had to be made able to.
+ *   M1  `unsendBeforeSeen` ignoring the rpc `error` (`if (error)` -> `void error;`)
+ *         -> this suite 45/46, command route 35/36
+ *   M2  the closed outcome list opened — `isUnsendOutcome(row.outcome)` relaxed
+ *       to `typeof row.outcome === "string"`
+ *         -> this suite 45/46, command route 35/36
+ *   M3  a null verdict read as success — `if (verdict === null)` in
+ *       routes/telegraphLifecycle.ts replaced with `if (false as boolean)`
+ *         -> this suite 42/46, command route 36/36 (not that route's code)
+ *   M4  MODELLED_OUTCOME_ORDER's two `already_*` entries swapped
+ *         -> fake-model suite 17/18
+ *   M5  the same two swapped in migration 3000's SQL instead
+ *         -> fake-model suite 17/18
+ *   M6  `planUnsend` refusing a departed sender BEFORE noticing the message was
+ *       already gone — the order it actually shipped with
+ *         -> fake-model suite 17/18
+ *   M7  §7.4's sentence inverted — `planUnsend` refusing only when
+ *       `seen.length === recipientCount`, i.e. "have they ALL seen it?"
+ *         -> this suite 45/46, fake-model suite 17/18, command route 36/36
+ *   M8  `eligibleRecipients` no longer excluding departed members, so a stale
+ *       `last_read_at` keeps the window shut forever
+ *         -> this suite 45/46, fake-model suite 17/18, command route 36/36
+ *   M9  the receipt-row lock MOVED below the seen-check in migration 3000 —
+ *       still two FOR UPDATE clauses, guarantee gone
+ *         -> fake-model suite 17/18; the clause-COUNT test stayed green under
+ *            it, which is why an order assertion was added beside it
+ *   M10 the §13.1 command route treating `already_unsent` as success
+ *         -> command route 33/36
+ *   M11 the model re-stamping `unsent_at` on the already-unsent path while
+ *       still answering `already_unsent`
+ *         -> command route 34/36
+ *
+ * The command route survives M7 and M8 because it decides through the function,
+ * not through `planUnsend`. That is not a gap: it is the point of the split, and
+ * the cross-check is what stops the unexercised copy from rotting unseen.
+ *
+ * M11 IS THE SECOND ONE THAT WAS GREEN FOR THE WRONG REASON. The retry test
+ * asserts that a retry does not move `unsent_at`, and it passed under M11 —
+ * because the fake's `unsentAt` was a pinned constant, so the re-stamp wrote
+ * the same string. The option now takes a function, both tests hand it a
+ * sequence, and M11 kills. A constant fixture can make a real assertion
+ * unfalsifiable without anything about the assertion looking wrong.
+ *
+ * M1, M2 AND M3 ALL SURVIVED THEIR FIRST MEASUREMENT, and the reasons are worth
+ * more than the numbers.
+ *
+ * M1 survived because an ordinary rpc failure answers `data: null`, which the
+ * shape check rejects on its own: a build that never looked at `error` refused
+ * anyway, and every test passed for the wrong reason. It only became killable
+ * once the fake grew `errorWithSuccessPayload` — an error arriving WITH a
+ * plausible success row, the one shape that separates "reads error" from
+ * "happens to reject null". PR #472's own M4 recorded the identical trap.
+ *
+ * M2 and M3 survived HERE while the command-route suite killed M2, because the
+ * assertions in this file were `assert.ok(r.status >= 400)`. A build that lets
+ * an unknown outcome through falls into the refusal branch and answers
+ * `409 already_gone`; a build that reads a null verdict as success crashes into
+ * a 500. Both are >= 400, and both are lies about what happened. Four
+ * assertions were changed to name the answer — `assert.equal(r.body.error,
+ * "db_error")` — and both mutations then killed. The numbers above are the
+ * post-strengthening ones.
+ *
+ * M4 and M5 are one swap from opposite sides, and both are recorded because
+ * either alone proves less: killing M4 shows the pin test reads the model,
+ * killing M5 shows it reads the migration rather than comparing the model with
+ * itself.
+ *
+ * M6 IS NOT A MUTATION I INVENTED — it is the code that was here. `planUnsend`
+ * is documented as "the same rule in TypeScript", and nothing checked that
+ * claim, so it had drifted: it refused a departed sender before noticing the
+ * message was already gone, and the function answers in the other order. The
+ * cross-check in telegraphUnsendFunctionFake.test.ts found it, `planUnsend` was
+ * aligned to the function, and both routes' outcome-to-refusal mapping now goes
+ * through one exported `refusalForOutcome` so there is no second copy to drift.
+ *
+ * A green run proves nothing until it has been seen to go red. Four of these
+ * eleven were green the first time (M1, M2, M3, M11), and not one of the four
+ * was green because the code was right.
+ *
+ * The earlier fail-closed mutation on `before.ok` is still worth reading for
+ * why `failMemberReadsAfterGate` exists: injecting a failure on the whole
+ * `message_thread_members` table made the MEMBERSHIP GATE refuse first, so the
+ * branch under test never ran and the test asserted a status code a different
+ * guard produced. That helper fails the receipt read and only the receipt read,
+ * and a second test covers the gate's own failure separately.
  *
  * Run: node --import tsx/esm --test src/test/telegraphLifecycle.test.ts
  */
@@ -70,8 +135,8 @@ import { createServer } from "node:http";
 import express from "express";
 import { _setTestClient } from "../lib/http.js";
 import telegraphLifecycleRouter from "../routes/telegraphLifecycle.js";
+import { makeUnsendFunctionFake } from "./telegraphUnsendFunctionFake.js";
 import {
-  detectReadRace,
   eligibleRecipients,
   planUnsend,
   receiptFor,
@@ -229,21 +294,6 @@ describe("§7.4 — one recipient closes the window for everyone", () => {
   });
 });
 
-describe("§7.4 — the race detector compares sets, not counts", () => {
-  it("finds a reader who was not there before", () => {
-    assert.deepEqual(detectReadRace([BOB], [BOB, CAROL]), [CAROL]);
-  });
-
-  it("is not fooled by one leaving as another reads", () => {
-    // Same count either side; a count comparison would call this quiet.
-    assert.deepEqual(detectReadRace([BOB], [CAROL]), [CAROL]);
-  });
-
-  it("reports nothing when nothing changed", () => {
-    assert.deepEqual(detectReadRace([BOB], [BOB]), []);
-  });
-});
-
 // ── the routes ───────────────────────────────────────────────────────────────
 
 interface State {
@@ -258,17 +308,22 @@ interface State {
    * this flag came to exist.
    */
   failMemberReadsAfterGate?: boolean;
-  /**
-   * Fail ONLY the third member read — the one taken after the write, whose job
-   * is to detect a read that landed during it. An earlier handler skipped the
-   * race check when this read failed, which made the one branch that exists to
-   * catch a §7.4 violation the one branch that assumed there was none.
-   */
-  failMemberReadAfterWrite?: boolean;
   bobReadAt?: string | null;
-  /** Stamp this member's read DURING the unsend write, to force the race. */
-  raceRead?: { userId: string; at: string };
-  restoreFails?: boolean;
+  /**
+   * `telegraph_unsend_message_before_seen` itself fails.
+   *
+   * The receipt reads the route used to do for itself live inside that function
+   * now, so this is how "we could not check whether anyone saw it" arrives. The
+   * post-write read, and the `raceRead` / `restoreFails` injections that drove
+   * the compensation scheme, are gone with the scheme.
+   */
+  unsendFunctionFails?: boolean;
+  /** The function answers with an outcome this build has never heard of. */
+  unsendFunctionUnknownOutcome?: boolean;
+  /** An error arrives WITH a success-looking payload. */
+  unsendFunctionErrorWithPayload?: boolean;
+  /** Pin the timestamp the function writes, so a test can assert on the row. */
+  unsendAt?: string;
   /** Rows appended to `messages`, so a new case cannot perturb an old one. */
   extraMessages?: any[];
 }
@@ -297,6 +352,7 @@ const copy = (rows: any[]) => rows.map((r) => ({ ...r }));
 function makeClient(state: State) {
   const db = fixture(state);
   let memberReads = 0;
+  const messageUpdates: any[] = [];
 
   function from(table: string) {
     const filters: Array<(r: any) => boolean> = [];
@@ -311,13 +367,6 @@ function makeClient(state: State) {
         memberReads >= 1
       ) {
         return { message: "injected failure on the receipt read", code: "XX000" };
-      }
-      if (
-        state.failMemberReadAfterWrite &&
-        table === "message_thread_members" &&
-        memberReads >= 2
-      ) {
-        return { message: "injected failure on the post-write receipt read", code: "XX000" };
       }
       return null;
     };
@@ -340,25 +389,16 @@ function makeClient(state: State) {
       const e = err();
       if (e) return { data: null, error: e, count: null };
       if (pendingUpdate) {
-        if (state.restoreFails && pendingUpdate.deleted_at === null) {
-          return { data: null, error: { message: "restore blocked", code: "XX000" }, count: null };
-        }
+        // Recorded so a test can assert the unsend route writes NOTHING here:
+        // every column it used to set is set inside the locking function now.
+        if (table === "messages") messageUpdates.push(pendingUpdate);
         return { data: applyUpdate(), error: null, count: null };
       }
-      // The route reads message_thread_members three times: the membership
-      // gate, the receipts BEFORE the write, and the receipts AFTER it. The
-      // race is stamped so it is invisible to the second and visible to the
-      // third — which is precisely the window compensation exists for.
+      // The route reads message_thread_members twice: the membership gate and
+      // the receipts. It used to read a third time, after its own write, to
+      // detect a read that had landed during it; the lock removed both.
       if (table === "message_thread_members") {
         memberReads += 1;
-      }
-      if (table === "message_thread_members" && state.raceRead) {
-        if (memberReads === 3) {
-          const row = (db.message_thread_members ?? []).find(
-            (m) => m.thread_id === THREAD && m.user_id === state.raceRead!.userId,
-          );
-          if (row) row.last_read_at = state.raceRead.at;
-        }
       }
       return { data: copy(rowsNow()), error: null, count: null };
     };
@@ -397,8 +437,17 @@ function makeClient(state: State) {
 
   return {
     _db: db,
+    _messageUpdates: messageUpdates,
     from,
-    rpc: async () => ({ data: null, error: { message: "rpc not modelled" } }),
+    rpc: makeUnsendFunctionFake(
+      () => ({ messages: db.messages as any[], message_thread_members: db.message_thread_members as any[] }),
+      {
+        rpcError: state.unsendFunctionFails,
+        unknownOutcome: state.unsendFunctionUnknownOutcome,
+        errorWithSuccessPayload: state.unsendFunctionErrorWithPayload,
+        unsentAt: state.unsendAt,
+      },
+    ),
     auth: { getUser: async (token: string) => ({ data: { user: { id: token } }, error: null }) },
   };
 }
@@ -492,12 +541,15 @@ describe("POST /threads/:id/messages/:id/unsend", () => {
   });
 
   it("an unreadable receipt state FAILS CLOSED, never as 'nobody saw it'", async () => {
-    // The gate's own read succeeds; the RECEIPT read is what fails. Failing the
-    // whole table instead would be refused at the gate and would never reach
-    // the branch this test exists for.
-    const c = useState({ failMemberReadsAfterGate: true });
+    // The guarantee is unchanged; where the receipt read lives is not. It used
+    // to be this route's second read of message_thread_members, and
+    // `failMemberReadsAfterGate` existed to fail that read and only that read.
+    // It is inside telegraph_unsend_message_before_seen now, so the whole call
+    // failing is how "we could not check" arrives — and the route must still
+    // refuse rather than write.
+    const c = useState({ unsendFunctionFails: true });
     const r = await call("POST", `/api/threads/${THREAD}/messages/${M_UNSEEN}/unsend`, ALICE);
-    assert.ok(r.status >= 400, "must not succeed on an unreadable receipt state");
+    assert.equal(r.body.error, "db_error", "must not succeed, and must not read as a refusal");
     assert.equal(c._db.messages.find((m: any) => m.id === M_UNSEEN).deleted_at, null);
     assert.equal(c._db.messages.find((m: any) => m.id === M_UNSEEN).body, "meet at the pier");
   });
@@ -509,65 +561,132 @@ describe("POST /threads/:id/messages/:id/unsend", () => {
     assert.equal(c._db.messages.find((m: any) => m.id === M_UNSEEN).deleted_at, null);
   });
 
-  it("says out loud that there is no UNSENT lifecycle state to set", async () => {
+  it("still says lifecycleState is unavailable, for a reason that has CHANGED", async () => {
+    // The old reason was "public.messages has no lifecycle column". Migration
+    // 2810 added one and 3000 writes 'unsent' to it, so that sentence became
+    // false and had to be replaced rather than kept. The FIELD stays null,
+    // because the distinction still does not reach a reader: 81 non-test files
+    // read `messages` and four mention `unsent_at`, so a person sees the
+    // deleted-message slot either way. Publishing a state here would be a claim
+    // about readers that have not changed.
     useState({});
     const r = await call("POST", `/api/threads/${THREAD}/messages/${M_UNSEEN}/unsend`, ALICE);
     assert.equal(r.body.lifecycleState, null);
-    assert.match(r.body.lifecycleStateUnavailableReason, /no lifecycle column/i);
+    assert.doesNotMatch(r.body.lifecycleStateUnavailableReason, /no lifecycle column/i,
+      "that reason is no longer true, and a stale reason is worse than none");
+    assert.match(r.body.lifecycleStateUnavailableReason, /no reader in this codebase distinguishes it/i);
   });
 });
 
-describe("§7.4 — the read-vs-unsend race is compensated, not locked", () => {
-  it("puts the message back, body intact, when a read lands during the write", async () => {
-    const c = useState({ raceRead: { userId: BOB, at: mins(-1) } });
+describe("§7.4 — the read-vs-unsend race is LOCKED, not compensated", () => {
+  /*
+   * This block used to be headed "compensated, not locked" and tested the
+   * scheme that stood in for a lock: write, re-read the receipts, and put the
+   * message back if a read had landed. Every one of those tests measured a
+   * WINDOW — an interval in which a recipient could fetch a tombstone that was
+   * about to be restored.
+   *
+   * The window is gone, so the tests that measured it cannot be kept. What they
+   * protected is kept, and is stronger here. The guarantee was always: a
+   * message somebody has seen must not stay unsent, and the sender must be told
+   * the truth rather than handed a success. Under
+   * `telegraph_unsend_message_before_seen` the refusal happens BEFORE the write
+   * instead of being undone after it, so there is nothing to put back and no
+   * interval to be wrong about.
+   */
+
+  it("a seen message is refused BEFORE anything is written", async () => {
+    const c = useState({ bobReadAt: mins(-1) });
     const r = await call("POST", `/api/threads/${THREAD}/messages/${M_UNSEEN}/unsend`, ALICE);
     assert.equal(r.status, 409);
     assert.equal(r.body.error, "seen_by_recipient");
-    assert.equal(r.body.raceDetected, true);
-    assert.equal(r.body.compensated, true);
     const row = c._db.messages.find((m: any) => m.id === M_UNSEEN);
-    assert.equal(row.deleted_at, null, "the message is back");
-    assert.equal(row.body, "meet at the pier", "the body is back verbatim");
+    assert.equal(row.deleted_at, null, "never written, so never needed putting back");
+    assert.equal(row.body, "meet at the pier");
   });
 
-  it("FAILS CLOSED when the post-write read cannot rule a race out", async () => {
-    // We cannot tell whether someone read it during the write. Putting the
-    // message back is always safe — it is the state the conversation was in a
-    // moment ago — so that is what happens, and the sender is told plainly.
-    const c = useState({ failMemberReadAfterWrite: true });
+  it("raceDetected and compensated are FALSE on that refusal, and are facts now", async () => {
+    // They used to be measurements that could come back null when the
+    // post-write read failed. There is no post-write read.
+    useState({ bobReadAt: mins(-1) });
     const r = await call("POST", `/api/threads/${THREAD}/messages/${M_UNSEEN}/unsend`, ALICE);
-    assert.equal(r.status, 409);
-    assert.equal(r.body.error, "unverifiable");
-    assert.equal(r.body.raceDetected, null, "not false — we did not measure a negative");
-    assert.equal(r.body.compensated, true);
-    const row = c._db.messages.find((m: any) => m.id === M_UNSEEN);
-    assert.equal(row.deleted_at, null, "the message is back");
-    assert.equal(row.body, "meet at the pier", "the body is back verbatim");
+    assert.equal(r.body.raceDetected, false);
+    assert.equal(r.body.compensated, false);
   });
 
-  it("reports raceDetected as null — PRESENT and null, never false or absent", async () => {
-    useState({ failMemberReadAfterWrite: true });
-    const r = await call("POST", `/api/threads/${THREAD}/messages/${M_UNSEEN}/unsend`, ALICE);
-    // `notEqual(…, false)` was not enough here and is worth recording as a
-    // lesson: under the fail-OPEN mutation the field is simply absent, and
-    // `undefined !== false` passes. The contract is that the field is there and
-    // says "we did not look" — `false` would assert a negative nobody measured,
-    // the same distinction §7.3 draws for DELIVERED.
-    assert.ok(
-      Object.prototype.hasOwnProperty.call(r.body, "raceDetected"),
-      "the response must SAY that it could not look",
-    );
-    assert.equal(r.body.raceDetected, null);
-    assert.notEqual(r.body.raceDetected, false);
-  });
-
-  it("tells the sender the truth when the compensation itself fails", async () => {
-    useState({ raceRead: { userId: BOB, at: mins(-1) }, restoreFails: true });
+  it("raceDetected is present and FALSE on success, not null", async () => {
+    useState({});
     const r = await call("POST", `/api/threads/${THREAD}/messages/${M_UNSEEN}/unsend`, ALICE);
     assert.equal(r.status, 200);
-    assert.equal(r.body.raceDetected, true);
+    assert.ok(Object.prototype.hasOwnProperty.call(r.body, "raceDetected"));
+    assert.equal(r.body.raceDetected, false,
+      "false, not null: the lock is what turns this negative into a measurement");
     assert.equal(r.body.compensated, false);
-    assert.match(r.body.message, /could not put it back/i);
+  });
+
+  it("there is no `unverifiable` answer any more, because there is nothing to verify", async () => {
+    const c = useState({ unsendFunctionFails: true });
+    const r = await call("POST", `/api/threads/${THREAD}/messages/${M_UNSEEN}/unsend`, ALICE);
+    assert.notEqual(r.body.error, "unverifiable");
+    assert.equal(r.body.error, "db_error", "a failed call must not read as a success OR as a refusal");
+    const row = c._db.messages.find((m: any) => m.id === M_UNSEEN);
+    assert.equal(row.deleted_at, null, "nothing was written, so nothing needs undoing");
+    assert.equal(row.body, "meet at the pier");
+  });
+
+  it("an ERROR is read even when the payload looks like a success", async () => {
+    // The injection that separates "reads `error`" from "rejects a null body".
+    // An ordinary failure answers data:null and is refused by the shape check
+    // alone, so it cannot tell the two apart.
+    const c = useState({ unsendFunctionErrorWithPayload: true });
+    const r = await call("POST", `/api/threads/${THREAD}/messages/${M_UNSEEN}/unsend`, ALICE);
+    assert.equal(r.body.error, "db_error",
+      "a FAILURE, named as one — not a refusal (which would say already_gone) and not a crash");
+    assert.equal(c._db.messages.find((m: any) => m.id === M_UNSEEN).deleted_at, null);
+  });
+
+  it("an outcome this build has never heard of is a FAILURE, not permission", async () => {
+    const c = useState({ unsendFunctionUnknownOutcome: true });
+    const r = await call("POST", `/api/threads/${THREAD}/messages/${M_UNSEEN}/unsend`, ALICE);
+    // `status >= 400` is not enough and was measured to be not enough: a build
+    // that let an unknown outcome through would fall into the refusal branch
+    // and answer 409 already_gone, which is also >= 400 and is a lie about what
+    // happened. The distinction is the whole point of a closed outcome list.
+    assert.equal(r.body.error, "db_error");
+    assert.equal(c._db.messages.find((m: any) => m.id === M_UNSEEN).deleted_at, null);
+  });
+
+  it("the route itself writes nothing to `messages`", async () => {
+    // The strongest statement this suite can make about the change: a handler
+    // that goes back to deciding in Node has to write, and this fails.
+    const c = useState({ unsendAt: mins(0) });
+    const r = await call("POST", `/api/threads/${THREAD}/messages/${M_UNSEEN}/unsend`, ALICE);
+    assert.equal(r.status, 200);
+    assert.deepEqual(c._messageUpdates, [],
+      "every write must come from telegraph_unsend_message_before_seen");
+  });
+
+  it("the row the function leaves records an UNSEND, not a delete", async () => {
+    // The old `unsentPatch` set deleted_at and body and forgot unsent_at
+    // entirely, so an unsend was stored as a delete and §13.2's outbox
+    // published message.deleted.
+    const c = useState({ unsendAt: mins(0) });
+    await call("POST", `/api/threads/${THREAD}/messages/${M_UNSEEN}/unsend`, ALICE);
+    const row = c._db.messages.find((m: any) => m.id === M_UNSEEN);
+    assert.equal(row.unsent_at, mins(0), "unsent_at is what makes it an unsend");
+    assert.equal(row.lifecycle_state, "unsent");
+    assert.equal(row.deleted_at, mins(0), "and deleted_at is what every reader suppresses on");
+    assert.equal(row.body, "");
+  });
+
+  it("a repeat unsend is refused as already_gone, on the wire exactly as before", async () => {
+    useState({});
+    const first = await call("POST", `/api/threads/${THREAD}/messages/${M_UNSEEN}/unsend`, ALICE);
+    assert.equal(first.status, 200);
+    const second = await call("POST", `/api/threads/${THREAD}/messages/${M_UNSEEN}/unsend`, ALICE);
+    assert.equal(second.status, 409);
+    assert.equal(second.body.error, "already_gone",
+      "the function tells already_unsent from already_deleted; this endpoint published one word and still does");
   });
 });
 
@@ -588,6 +707,19 @@ describe("GET /threads/:id/receipts", () => {
     const r = await call("GET", `/api/threads/${THREAD}/receipts?messageIds=${M_NOT_MINE}`, ALICE);
     assert.equal(r.status, 200);
     assert.deepEqual(r.body.receipts, []);
+  });
+
+  it("an unreadable receipt state FAILS CLOSED here too, never as 'nobody saw it'", async () => {
+    // The gate's own read succeeds and the RECEIPT read is what fails, which is
+    // what `failMemberReadsAfterGate` is for. It used to cover the unsend
+    // route's receipt read as well; that read moved into the locking function,
+    // so this endpoint is where the injection still has a subject — and the
+    // rule is the same one. A receipt built on a failed read would assert a
+    // negative nobody measured.
+    useState({ failMemberReadsAfterGate: true });
+    const r = await call("GET", `/api/threads/${THREAD}/receipts?messageIds=${M_UNSEEN}`, ALICE);
+    assert.ok(r.status >= 400, "must not answer with receipts it could not read");
+    assert.equal(r.body.receipts, undefined);
   });
 
   it("states §7.3's storage shape rather than only obeying it", async () => {
