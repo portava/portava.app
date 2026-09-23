@@ -544,6 +544,11 @@ import {
  * silently re-admits the rot that was just removed. Measured on a quiet tree,
  * after both lanes had landed and stopped editing, so the number is not a
  * reading taken mid-edit. */
+/* MERGED 2026-09-23 with PR #527. `main` carried 204 and this branch 178.
+ * 178 is kept because a ceiling may only FALL: adopting 204 would re-admit
+ * 26 dead targets this branch had already repaired, which is the same move
+ * as raising it. Re-measured against the merged tree immediately after the
+ * merge rather than assumed — see the commit message for the figure. */
 export const MAX_DEAD_TARGETS = 178;
 
 /** Pinned to a commit by its own declaration; its lines must not track HEAD. */

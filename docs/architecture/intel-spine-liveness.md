@@ -262,7 +262,7 @@ without a read or a write. The eighth — reward — gets `true`, performs a rea
 `src/lib/intelRewardScheduler.ts:143`. That is the entire observed behaviour of the spine.
 
 **Routers, for completeness.** All six intel routers are mounted:
-`intelRouter` `routes/index.ts:340#router.use(intelRouter)`, `intelCoverageRouter` `:342#router.use(intelCoverageRouter)`, `intelApiRouter` `:343#router.use(intelApiRouter)`,
+`intelRouter` `routes/index.ts:347#router.use(intelRouter)`, `intelCoverageRouter` `:349#router.use(intelCoverageRouter)`, `intelApiRouter` `:350#router.use(intelApiRouter)`,
 `intelReadModelsRouter` `:338#router.use(intelReadModelsRouter)`, `intelOutcomesRouter` `:341#router.use(intelOutcomesRouter)`, `intelObservabilityRouter` `:343#router.use(intelObservabilityRouter)`.
 `src/test/intelRouterRegistrationGuard.test.ts` exists to keep them mounted. The three internal
 ones (`intelCoverage`, `intelObservability`, and the missions routes) are `requireAdmin`-gated

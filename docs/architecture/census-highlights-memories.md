@@ -6010,7 +6010,7 @@ a named failure.
 ### §X.4 The structural constraint behind all of this, measured
 
 A migration that must run AFTER 2993 cannot currently be numbered. The canonical
-4-digit band is `2100-2999` (`artifacts/api-server/src/scripts/migrationPrefixRules.ts:32#NEW_NUMERIC_PREFIX_RE`),
+4-digit band is `2100-2999` (`artifacts/api-server/src/scripts/migrationPrefixRules.ts:58#NEW_NUMERIC_PREFIX_RE`),
 every prefix from `2994` to `2999` is taken — verified by listing the directory,
 not assumed — and an 8-digit dated prefix sorts BELOW the 4-digit band rather
 than above it, which the rules module's own header explains at length. 52 slots

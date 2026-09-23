@@ -22,13 +22,33 @@
  * "fixed", because deleting a seen message is a capability travellers have
  * today and §7.4 does not ask for it to be removed.
  *
- * ── THE RACE ────────────────────────────────────────────────────────────────
- * §7.4 wants the read-vs-unsend race resolved transactionally. It is not,
- * because a lock needs a SECURITY DEFINER function and therefore a migration no
- * database has. What happens instead is compensation: the receipts are read
- * again after the write, and if a read landed inside the window the message is
- * PUT BACK — body and all — and the caller is told it could not be unsent. The
- * outcome is right; the window is real. See `services/telegraph/unsend.ts`.
+ * ── THE RACE, CLOSED ────────────────────────────────────────────────────────
+ * This header used to say §7.4's read-vs-unsend race "is not" resolved
+ * transactionally, "because a lock needs a SECURITY DEFINER function and
+ * therefore a migration no database has", and described the compensation scheme
+ * that stood in for one: read the receipts again after the write, and if a read
+ * landed inside the window, PUT THE MESSAGE BACK.
+ *
+ * The migration exists — 2325 wrote the locking function and 3000 made it write
+ * the whole row — and nothing called it. This route now does, through
+ * `unsendBeforeSeen`, and the compensation is gone with the window it covered.
+ * Three things follow, and all three are visible to a client:
+ *
+ *   * The route no longer writes `messages` at all. The function decides and
+ *     writes inside one locked statement pair.
+ *   * `raceDetected` is now always `false` on a success rather than a
+ *     measurement that could have been `null`, because a lock has nothing to be
+ *     unsure about, and `compensated` is always `false` because nothing is ever
+ *     put back.
+ *   * The `unverifiable` refusal cannot happen and is gone. It existed only for
+ *     "the re-read failed, so we could not tell" — there is no re-read.
+ *
+ * What did NOT change is every other field, status code and error string on
+ * this endpoint. The old handler's row is also the new one's: `unsent_at`,
+ * `deleted_at` and an empty body — except that the old one forgot `unsent_at`
+ * entirely (`unsentPatch` wrote only `deleted_at` and `body`), so an "unsend"
+ * was stored as a delete and the §13.2 outbox published `message.deleted`. The
+ * function sets all four columns, so it now publishes `message.unsent`.
  */
 import { Router } from "express";
 import { z } from "zod";
@@ -37,16 +57,14 @@ import { asyncHandler } from "../lib/asyncHandler.js";
 import { logger as rootLogger } from "../lib/logger.js";
 import { publishToThread } from "../lib/telegraphEvents.js";
 import {
-  detectReadRace,
-  planUnsend,
   receiptFor,
-  restorePatch,
-  seenByRecipients,
+  unsendBeforeSeen,
+  refusalForOutcome,
   unsendRefusalMessage,
-  unsentPatch,
   DELIVERED_UNAVAILABLE,
   type LifecycleMessage,
   type ReceiptMember,
+  type UnsendRefusal,
 } from "../services/telegraph/unsend.js";
 import {
   applyHistoryWindow,
@@ -221,172 +239,99 @@ router.post(
       return;
     }
 
-    const { data: msg, error: msgErr } = await client
-      .from("messages")
-      .select(MESSAGE_COLUMNS)
-      .eq("id", messageId)
-      .eq("thread_id", threadId)
-      .maybeSingle();
-    if (msgErr) {
-      sendError(res, "db_error", "Could not read that message");
-      return;
-    }
-    if (!msg) {
-      sendError(res, "not_found", "That message is not available");
-      return;
-    }
-    const message = msg as LifecycleMessage;
-
-    const before = await readMembers(client, threadId);
-    if (!before.ok) {
-      // Fail closed. An unreadable receipt state must never read as "unseen".
-      sendError(res, "db_error", "Could not read this conversation's receipts");
-      return;
-    }
-
-    // Snapshot the seen set NOW, before anything is written. Computing it
-    // later, next to the "after" read, would make the comparison depend on the
-    // client not aliasing its rows.
-    const seenBefore = seenByRecipients(message, before.members);
-
-    const plan = planUnsend({
-      message,
-      members: before.members,
+    // ── ONE CALL, AND THE ADAPTER THAT KEEPS THE PUBLISHED SHAPE ────────────
+    //
+    // Everything the old handler did between here and the response — read the
+    // message, read the receipts, decide, write, re-read, compensate — is one
+    // call now. The mapping below is the whole of what is left, and it exists
+    // so that a client written against this endpoint before the change sees the
+    // same field names, the same error strings and the same status codes.
+    const verdict = await unsendBeforeSeen(client, {
+      messageId,
       actorId: user.id,
-      actorIsActiveMember: true,
+      threadId,
     });
-    if (!plan.eligible) {
-      res.status(plan.refusal === "not_sender" || plan.refusal === "not_a_member" ? 403 : 409).json({
-        error: plan.refusal,
-        message: unsendRefusalMessage(plan.refusal, plan.seenBy),
-        seenBy: plan.seenBy,
-        recipientCount: plan.recipientCount,
-      });
-      return;
-    }
 
-    const originalBody = typeof message.body === "string" ? message.body : "";
-    const nowIso = new Date().toISOString();
-
-    // The write is guarded on `deleted_at IS NULL` in the statement itself, so
-    // two concurrent unsends of the same message cannot both succeed.
-    const { data: updated, error: updErr } = await client
-      .from("messages")
-      .update(unsentPatch(nowIso))
-      .eq("id", messageId)
-      .eq("sender_id", user.id)
-      .is("deleted_at", null)
-      .select("id");
-    if (updErr) {
-      log.error({ err: updErr, messageId }, "unsend write failed");
+    if (verdict === null) {
+      // The call failed, or answered with something this build cannot read.
+      // Neither is permission and neither is refusal, and the old handler's
+      // rule for that case was the same: fail closed, say nothing changed.
+      log.error({ messageId, threadId }, "unsend function gave no readable verdict");
       sendError(res, "db_error", "Could not unsend that message");
       return;
     }
-    if (!updated || (updated as any[]).length === 0) {
-      // Someone else's write got there first.
-      res.status(409).json({
-        error: "already_gone",
-        message: unsendRefusalMessage("already_gone", 0),
-        seenBy: 0,
-        recipientCount: plan.recipientCount,
+
+    // A message that is not in this thread answers exactly as it did before:
+    // this endpoint's own 404, not one of the unsend refusals.
+    if (verdict.outcome === "not_found") {
+      sendError(res, "not_found", "That message is not available");
+      return;
+    }
+
+    if (verdict.outcome !== "unsent") {
+      // `already_deleted` and `already_unsent` are one answer on the wire. The
+      // function distinguishes them because the §13.1 command endpoint
+      // publishes two reason codes; this endpoint published one, and keeps
+      // publishing one.
+      const refusal: UnsendRefusal = refusalForOutcome(verdict.outcome);
+
+      res.status(refusal === "not_sender" || refusal === "not_a_member" ? 403 : 409).json({
+        error: refusal,
+        message: unsendRefusalMessage(refusal, verdict.seenBy),
+        seenBy: verdict.seenBy,
+        recipientCount: verdict.recipientCount,
+        // Stated on the refusals that used to carry them, and now always
+        // false rather than sometimes null: the lock means there was no
+        // window to detect a race in, and nothing was written to put back.
+        ...(refusal === "seen_by_recipient" ? { raceDetected: false, compensated: false } : {}),
       });
       return;
     }
 
-    // ── Compensation, not a lock ─────────────────────────────────────────────
+    const unsentAt = verdict.unsentAt ?? new Date().toISOString();
+
+    // §13.2 `message.unsent`, as the realtime nudge. It carries no body because
+    // there is none.
     //
-    // Putting the message back is always safe: it returns the conversation to
-    // the state it was in a moment ago. So both reasons to compensate are
-    // handled the same way — a race we DETECTED, and a race we COULD NOT RULE
-    // OUT because the re-read failed.
-    //
-    // The second one is the point. An earlier version of this handler skipped
-    // the race check entirely when the after-read failed, which made the one
-    // branch whose whole job is to catch a §7.4 violation the one branch that
-    // assumed there had not been one. Every other receipt read in this file
-    // fails closed; this one now does too.
-    const restore = async (): Promise<boolean> => {
-      const { error } = await client
-        .from("messages")
-        .update(restorePatch(originalBody))
-        .eq("id", messageId);
-      if (error) log.error({ err: error, messageId }, "unsend compensation failed");
-      return !error;
-    };
-
-    const after = await readMembers(client, threadId);
-
-    if (!after.ok) {
-      // We cannot tell whether a read landed. Put it back and say so.
-      if (await restore()) {
-        res.status(409).json({
-          error: "unverifiable",
-          message:
-            "We could not confirm nobody had seen this message, so it was not unsent. " +
-            "Nothing changed — you can try again.",
-          seenBy: 0,
-          recipientCount: plan.recipientCount,
-          raceDetected: null,
-          compensated: true,
-        });
-        return;
-      }
-      // Could not re-read AND could not put it back. The sender is told the
-      // truth rather than being handed a success.
-      res.status(200).json({
-        id: messageId,
-        unsent: true,
-        raceDetected: null,
-        compensated: false,
-        message:
-          "This message was unsent, but we could not confirm nobody had already seen it.",
-        seenBy: 0,
-      });
-      return;
-    }
-
-    const raced = detectReadRace(seenBefore, seenByRecipients(message, after.members));
-    if (raced.length > 0) {
-      if (!(await restore())) {
-        // The message stays unsent and the sender is told the truth: we could
-        // not put it back. Silence here would be the worst option of the three.
-        res.status(200).json({
-          id: messageId,
-          unsent: true,
-          raceDetected: true,
-          compensated: false,
-          message:
-            "Someone read this message as you unsent it, and we could not put it back. It is gone.",
-          seenBy: raced.length,
-        });
-        return;
-      }
-      res.status(409).json({
-        error: "seen_by_recipient",
-        message: unsendRefusalMessage("seen_by_recipient", raced.length),
-        seenBy: raced.length,
-        recipientCount: plan.recipientCount,
-        raceDetected: true,
-        compensated: true,
-      });
-      return;
-    }
+    // 2810's outbox trigger fires on the same UPDATE and would write the
+    // DURABLE event in the same transaction — but only where 2810 has been
+    // applied AND `telegraph_message_kernel_enabled` is true, since the trigger
+    // reads that flag and RETURNs NULL when it is not. 2810 is applied to no
+    // database, so on every deployment that exists there is no trigger to fire
+    // and this publish is the ONLY notification. That is why it is here and not
+    // deleted as a duplicate, and why the client keeps a polling fallback.
+    void publishToThread(client, threadId, {
+      type: "message.unsent",
+      payload: { messageId, unsentAt, senderId: user.id },
+    }, { excludeUserId: user.id });
 
     res.status(200).json({
       id: messageId,
       unsent: true,
-      unsentAt: nowIso,
+      unsentAt,
       seenBy: 0,
-      recipientCount: plan.recipientCount,
+      recipientCount: verdict.recipientCount,
+      // Both were measurements the compensation scheme had to make, and either
+      // could come back null when the re-read failed. Under the lock they are
+      // facts: no read landed inside the window, and nothing was put back.
+      raceDetected: false,
+      compensated: false,
       /**
        * Said out loud because §7.4 asks for something this deployment cannot
        * give: there is no UNSENT lifecycle state to set, so the row is a
        * tombstone and the existing readers still render a redacted slot.
+       *
+       * Migration 2810 added `messages.lifecycle_state` and 3000 makes the
+       * unsend write 'unsent' to it, so the STORAGE distinction exists now.
+       * This field stays null because the distinction still does not reach a
+       * reader: 81 non-test files read `messages` and four mention `unsent_at`,
+       * so what a person sees is the deleted-message slot either way. Turning
+       * this into a claim would be a claim about readers that have not changed.
        */
       lifecycleState: null,
       lifecycleStateUnavailableReason:
-        "public.messages has no lifecycle column; an unsent message is a tombstone, " +
-        "indistinguishable in storage from a deleted one.",
+        "public.messages now records lifecycle_state = 'unsent', but no reader in this " +
+        "codebase distinguishes it from a delete, so what a person sees is unchanged.",
     });
   }),
 );

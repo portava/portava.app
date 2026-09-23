@@ -196,11 +196,18 @@ router.use(telegraphMemoryRouter);
 router.use(savedMessagesRouter);
 router.use(telegraphLifecycleRouter);
 router.use(telegraphFeedbackRouter);
+// The kernel command router and telegraphCommandsRouter BOTH register
+// POST /telegraph/commands, for two different bodies. The kernel one goes
+// first and yields (`next()`) on any body without a `type`, so the
+// natural-language assistant below still receives its own traffic. Mounted the
+// other way round — as it was — the assistant answered every request to that
+// path and the whole §13.1 command vocabulary was unreachable. See the divider
+// at the top of `server/telegraph/commandRoute.ts`.
+router.use(telegraphKernelCommandRouter);
 router.use(telegraphCommandsRouter);
 router.use(telegraphCapabilityRouter);
 router.use(telegraphSearchRouter);
 router.use(telegraphReadReceiptsRouter);
-router.use(telegraphKernelCommandRouter);
 router.use(messagingRouter);
 router.use(requestsRouter);
 router.use(planRouter);
