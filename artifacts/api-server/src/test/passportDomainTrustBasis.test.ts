@@ -324,6 +324,9 @@ describe("D-WORD — DECIDED 2026-09-22, and this assertion moved on purpose", (
       assert.ok(
         ["Excellent", "Strong", "Established", "Building", "New"].includes(row.presentation),
         `${row.key} is partly measured and must keep a rating word, got ${row.presentation}`,
+      );
+    }
+  });
 
   it("`applicable` still means ONLY 'this domain does not apply', never 'unmeasured'", async () => {
     const p = (await buildPassportProjection(db(null), OWNER, OWNER, { resolveViewerContext: resolver(SELF) }))!;
