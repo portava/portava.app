@@ -936,7 +936,7 @@ describe("Service: full event → recalc → public level round-trip", () => {
   });
 
   /**
-   * THIS TEST USED TO PIN THE DEFECT.
+   * THIS TEST USED TO PIN THE DEFECT, and TWO lanes fixed it independently.
    *
    * It read:
    *
@@ -949,19 +949,43 @@ describe("Service: full event → recalc → public level round-trip", () => {
    * a fabricated 50.00 and was published as a `reliable_traveler` on the
    * strength of nine neutrals nobody measured.
    *
-   * The expectations are therefore REVERSED rather than relaxed, and the test
-   * is kept (not deleted) because the no-event case still needs a pin — it is
-   * just a pin on the decided behaviour now. Nothing here is weakened: the
-   * assertions are as specific as the ones they replace.
+   * Q1 (this branch) fixed the VALUE: an unmeasured profile scores `null`, so
+   * there is no 50 to publish. PR #449 (main) fixed the WRITE: a zero-evidence
+   * user is not PERSISTED at all, because row absence is the canonical "no
+   * earned trust" representation that getDisplayTrustScore, lib/trustScore and
+   * TrustPrivacyGuard already honour — and because PassportProjectionService
+   * maps public_level through LEVEL_RANK into capability grants, persisting a
+   * fabricated `reliable_traveler` handed canHostTrip, canUseCrewLocation and
+   * canContributeLiveIntel to every user on the first flag enable.
+   *
+   * On the merged tree BOTH hold, so this test asserts both. #449's version of
+   * these lines expected `50` / `reliable_traveler` from the arithmetic, which
+   * was true on ITS base and is not true here: Q1 removed the 50 upstream of
+   * the persistence decision. Taking #449's numbers would have re-pinned the
+   * fabrication this row exists to forbid, so the VALUE assertions are ours and
+   * the PERSISTENCE assertions are theirs. Neither lane's guarantee is dropped,
+   * and the test is stronger than either was alone.
    */
-  it("new user with no events is NOT SCORED (null) and is NOT promoted", async () => {
+  it("new user with no events is NOT SCORED (null), NOT promoted, and NOT persisted", async () => {
     const tables = makeTables();
     const db = makeTrustClient(tables);
     const result = await recalculateTrustScore(db, USER_B);
+
+    // Q1 — the value.
     assert.equal(result.overall_score, null,
       "no events means no score — a 50 here would be a fabricated measurement");
     assert.equal(result.public_level, "new_traveler",
       "and no standing to show — never a promotion earned by nine inventions");
+
+    // #449 — the write. A correct value that is still written as state would
+    // leave a row claiming the user was measured.
+    assert.equal(result.persisted, false, "a zero-evidence user must not be persisted");
+    assert.equal(
+      tables.trust_profiles.length, 0,
+      "no trust_profiles row may exist for a user with no qualifying events — row " +
+      "absence IS the canonical 'no earned trust' representation that " +
+      "getDisplayTrustScore, lib/trustScore and TrustPrivacyGuard all already honour",
+    );
   });
 });
 
@@ -1643,6 +1667,181 @@ describe("Moderation → trust: reversing the sanction reverses the consequence"
 
     const prof = tables.trust_profiles.find((p) => p.user_id === USER_A);
     if (prof) assert.notEqual(prof.on_probation, true, "a reversed finding must not leave probation running");
+  });
+});
+
+// ─── ZERO-EVIDENCE REGRESSION SUITE ──────────────────────────────────────────
+//
+// THE DEFECT. computeCategoryScore returns 50 for a category with no events
+// (TrustScoreService.ts:195). Its single caller loops over the fixed nine
+// ALL_CATEGORIES rather than the categories actually present, and the nine
+// weights sum to exactly 1.000 — so a user with zero events scores exactly
+// 50.00. `level_reliable` is 50 and scoreToLevel compares with >=, so 50
+// promotes to `reliable_traveler`, rung 3 of 6. The old code then PERSISTED it.
+//
+// WHY THAT MATTERS MORE THAN A BADGE. PassportProjectionService maps
+// public_level through LEVEL_RANK into capability grants
+// (canHostTrip / canUseCrewLocation / canContributeLiveIntel). The ingest lane
+// is gated behind `trust_engine_enabled`, so trust_events is empty; enabling
+// that flag would therefore have scored every user at 50, promoted every user
+// to reliable_traveler, and granted those three capabilities to everyone at
+// once.
+//
+// THE FIX USES AN EXISTING REPRESENTATION, not a new one: absence of a
+// trust_profiles row already means "no earned trust" everywhere else —
+// getDisplayTrustScore returns null for it, lib/trustScore types the score as
+// `number | null` explicitly "rather than a fabricated number", and
+// TrustPrivacyGuard falls back to the `new_traveler` label.
+
+describe("Trust: zero evidence is not earned trust", () => {
+  const ev = (category: string, delta: number, userId = USER_A) => ({
+    id: `e-${category}-${delta}`,
+    user_id: userId,
+    category,
+    delta,
+    severity: "normal",
+    created_at: new Date().toISOString(),
+    status: "confirmed",
+  });
+
+  it("zero events earn no category trust — nothing is persisted", async () => {
+    const tables = makeTables();
+    const r = await recalculateTrustScore(makeTrustClient(tables), USER_B);
+    assert.equal(r.persisted, false);
+    assert.equal(tables.trust_profiles.length, 0);
+  });
+
+  it("zero events cannot promote a trust level — the read path reports no profile", async () => {
+    const tables = makeTables();
+    const db = makeTrustClient(tables);
+    await recalculateTrustScore(db, USER_B);
+
+    const profile = await getTrustProfile(db, USER_B);
+    assert.equal(
+      profile, null,
+      "getTrustProfile must report null. That null is what makes " +
+      "TrustPrivacyGuard fall back to `new_traveler` (LEVEL_RANK 0) instead of " +
+      "`reliable_traveler` (rank 2), and rank 0 grants no capabilities.",
+    );
+  });
+
+  it("one legitimate event DOES produce a score and IS persisted", async () => {
+    const tables = makeTables();
+    tables.trust_events.push(ev("host_quality", 6));
+    const r = await recalculateTrustScore(makeTrustClient(tables), USER_A);
+
+    assert.equal(r.persisted, true, "real evidence must be scored and stored");
+    assert.equal(tables.trust_profiles.length, 1);
+    // Q1 made the category nullable, so "is it scored at all" is now a separate
+    // question from "what is the score" — and asserting it is the stronger read:
+    // a null here would mean the evidence produced no measurement.
+    const hq = r.categories.host_quality;
+    assert.notEqual(hq, null, "evidence must produce a measurement, not an absence");
+    assert.ok(hq! > 50, "the evidenced category moves above neutral");
+  });
+
+  it("a category WITH evidence is still scored correctly after the change", async () => {
+    const tables = makeTables();
+    tables.trust_events.push(ev("respect_safety", -20));
+    const r = await recalculateTrustScore(makeTrustClient(tables), USER_A);
+
+    assert.equal(r.persisted, true);
+    const rs = r.categories.respect_safety;
+    assert.notEqual(rs, null, "evidence must produce a measurement, not an absence");
+    assert.ok(
+      rs! < 50,
+      "negative evidence must still lower the evidenced category",
+    );
+  });
+
+  it("an unevidenced category is NOT SCORED, and does not drag the overall up", async () => {
+    // WAS: `it("KNOWN LIMIT, pinned so it is not mistaken for correct: unevidenced
+    // categories still carry 50")`, asserting host_quality === 50 and
+    // overall > respect_safety.
+    //
+    // THE LIMIT IT PINNED IS CLOSED ON THIS BRANCH, and #449's own comment named
+    // the two things that would close it: *"Closing this needs a migration and an
+    // owner decision"*. The migration is 2999 (it drops NOT NULL and DEFAULT 50
+    // from the nine category columns and overall_score) and the owner decision is
+    // Q1, both of which are on this branch and neither of which existed on #449's
+    // base. So the assertions are REVERSED rather than relaxed — and reversed is
+    // the right word: the old ones would now fail, because an unevidenced category
+    // really is `null` here, verified by running it.
+    //
+    // The defect it described was precise and is worth keeping in view: a user
+    // with a single negative event used to be pulled UP toward 50 by eight
+    // fabricated neutrals, inflating a bad actor. Renormalising over the
+    // categories actually present is what removes that, and this test is now the
+    // pin on the removal.
+    const tables = makeTables();
+    tables.trust_events.push(ev("respect_safety", -20));
+    const r = await recalculateTrustScore(makeTrustClient(tables), USER_A);
+
+    assert.equal(
+      r.categories.host_quality, null,
+      "an unevidenced category is unscored, not a fabricated 50",
+    );
+
+    const measured = r.categories.respect_safety;
+    assert.notEqual(measured, null, "the evidenced category must be scored, or this test proves nothing");
+    assert.equal(
+      r.overall_score, measured,
+      "with exactly one category measured, renormalisation makes the overall THAT " +
+      "measurement — no eight invented neutrals dragging a bad actor upward",
+    );
+  });
+
+  it("a user who ALREADY has a profile is still refreshed when evidence decays away", async () => {
+    // Deliberately preserved behaviour. A stale score really is wrong, and
+    // trustAsymmetryAndMaintenance.test.ts pins the refresh. The fix is scoped
+    // to users who were NEVER scored, which is the population that would have
+    // been promoted en masse on first enable.
+    const tables = makeTables();
+    tables.trust_profiles.push({ user_id: USER_A, overall_score: 60, public_level: "trusted_traveler" });
+    const r = await recalculateTrustScore(makeTrustClient(tables), USER_A);
+
+    assert.equal(r.persisted, true, "an existing row is still refreshed, not abandoned");
+    assert.equal(tables.trust_profiles.length, 1);
+  });
+
+  it("BOUNDARY: level_reliable=50 is inclusive — which is why the OLD fabricated 50 promoted, and why removing it matters", async () => {
+    // #449 wrote this to explain WHY a fabricated 50 was dangerous rather than
+    // merely untidy: `scoreToLevel` compares `>=` against `level_reliable = 50`,
+    // so the neutral default landed exactly ON the promotion boundary and granted
+    // capabilities. That explanation is correct and is the reason to keep this
+    // test.
+    //
+    // What it can no longer do is DEMONSTRATE the fabrication on a zero-evidence
+    // user, because Q1 removed it upstream: there is no 50 to sit on the boundary.
+    // So the boundary is asserted where it still lives — in scoreToLevel itself —
+    // and the zero-evidence path asserts the fabrication's ABSENCE. #449's own
+    // persistence assertion is kept unchanged.
+    const tables = makeTables();
+    const db = makeTrustClient(tables);
+    const r = await recalculateTrustScore(db, USER_B);
+
+    // The fabrication that used to land on the boundary is gone.
+    assert.equal(r.overall_score, null, "no evidence produces no score to sit on the boundary");
+    assert.equal(r.public_level, "new_traveler");
+
+    // The boundary itself is unchanged, and is asserted through the REAL path
+    // rather than by exporting a private `scoreToLevel` for a test: one MEASURED
+    // category at exactly neutral renormalises to an overall of exactly 50, and
+    // 50 still promotes. That is the `>=` this test exists to pin — now shown on
+    // a user who was actually measured, which is the only kind that should reach
+    // a level at all.
+    const atBoundary = makeTables();
+    atBoundary.trust_events.push(ev("host_quality", 0));
+    const b = await recalculateTrustScore(makeTrustClient(atBoundary), USER_A);
+    assert.equal(b.overall_score, 50, "one measured category at neutral is an overall of 50");
+    assert.equal(
+      b.public_level, "reliable_traveler",
+      "and 50 promotes — `>=` against level_reliable=50, which is why a " +
+      "fabricated 50 granted capabilities rather than merely looking untidy",
+    );
+
+    // #449's point, unchanged: that computation reaches no persisted state.
+    assert.equal(tables.trust_profiles.length, 0);
   });
 });
 

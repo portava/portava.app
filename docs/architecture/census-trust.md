@@ -98,7 +98,7 @@ post-repair for files this pass edited.
 | # | Obligation (spec line) | Verdict | Evidence |
 |---|---|---|---|
 | A1 | Retain the 0–100 Trust Score internally and, where appropriate, visibly (Passport §9:96) | C | `trust_profiles.overall_score` is written by `TrustScoreService.recalculateTrustScore:261-352` and read for display only through `getDisplayTrustScore:365-373`; numeric only to self (`PassportProjectionService.buildTrust:1008-1017`; census-passport P43). |
-| A2 | Not a single universal authorization number — domain-specific (§9:96) | C | Nine categories scored and persisted per category (`TrustScoreService.ts:75-79`, `:385-397`); consumers fold them into TABLE 12 domains. Passport's fold substitutes 50 when the row is absent — that is Passport's P45, fixed by #467 (§4). |
+| A2 | Not a single universal authorization number — domain-specific (§9:96) | C | Nine categories scored and persisted per category (`TrustScoreService.ts:26-30`, `:311-323`); consumers fold them into TABLE 12 domains. Passport's fold substitutes 50 when the row is absent — that is Passport's P45, fixed by #467 (§4). |
 | A3 | **Confidence-aware**: the "Trust Confidence" pipeline stage (§9:97); "an 82 with high evidence is not equivalent to an 82 with little evidence" (§10:115) | **NB → C** | Measured: the scorer computes decayed evidence weight for its ramp (`computeCategoryScore:189-215`, `EARN_CONFIDENCE_WEIGHT:160`) and discards it; `trust_profiles` carried no evidence measure, so no consumer *could* be confidence-aware from trust evidence — which is why Passport's confidence band is computed from stamps and trips (P50). Built this pass: `measureEvidence:254-258`, persisted as `evidence_weight`/`evidence_count` (migration 2371; `recalculateTrustScore:299,326-341`), exposed by `getTrustProfile:395-401`. NULL = not measured, 0 = measured empty. Banding into words is left to the presenting surface. |
 | A4 | Explainable (§9:96) | C | Append-only ledger with category/delta/severity/source per event (`TrustEventService.recordTrustEvent:235-304`); category labels and top strengths (`TrustPrivacyGuard.ts:76-86, :102-108`); ordered recovery steps (`TrustRecoveryService.ts:54-104`). Passport's *presentation* defect is P45. |
 | A5 | The pipeline Evidence → Events → Domain Trust → Confidence → Policy/Eligibility → Projection (§9:97) | C | Structurally end-to-end: events (`recordTrustEvent`), scores (`recalculateTrustScore`), ceilings (`TrustCapService.applyEventCaps:159`), restriction state as policy input (`TrustRestrictionService.getRestrictionState:180`), projection (`TrustPrivacyGuard`). census-passport P46 agrees. Liveness of the first hop is A6. |
@@ -107,8 +107,8 @@ post-repair for files this pass edited.
 | A8 | The same rule at the **table**: what a user can read of trust data directly through PostgREST (§10:114; `TrustPrivacyGuard.ts:1-10`) | **W → C** | Measured in both databases: all seven trust tables granted **ALL, including TRUNCATE**, to `anon` and `authenticated` (Supabase default privileges; 0043 enabled RLS and revoked nothing). RLS does not police TRUNCATE. `ts_select_all USING (true)` let `anon` read the gaming thresholds. `te_select_own` let the subject read `delta`, `reviewed_by` (the admin) and `metadata.counterparty_user_id`; `tr_select_own` exposed the admin's free-text `reason`. No client reads these tables (zero references outside `artifacts/api-server`) and every server seam runs on the service role (`lib/http.ts:177`, `lib/requireAdmin.ts:125`, `SUPABASE_SERVICE_ROLE_KEY` required by `lib/envValidation.ts:9-12`), so the grants were reachability nobody used. **Migration 2370** revokes ALL from PUBLIC/anon/authenticated/service_role and grants service_role SELECT/INSERT/UPDATE/DELETE, with a postcondition that RAISEs on any residue; applied to CI (verified: only `service_role:DELETE/INSERT/SELECT/UPDATE` remains; 5 policies retained as the safe direction). Production: not applied — owner decision. |
 | A9 | Non-stigmatizing copy for low-evidence accounts (§10:116) | C | `LEVEL_LABELS` "New Traveler" (`TrustPrivacyGuard.ts:51-58`), `publicTrustLabel:65-67`; `presentationWord` avoids "low/poor/weak" (Passport's, P51). |
 | A10 | Trust changes internally replayable from evidence/events (§10:117) | C | Recalculation reads only applied/confirmed events (`loadEvents:112-125`) and active caps (`loadCaps:128-149`); admin mutations are audited (`TrustAdminService.logAdminAction:23-42`, called at `:87,184,200,214,247,282,311`); `adminOverrideScore` also writes the row directly (`:238-244`) but pins it with a cap that recalculation honours. census-passport P52. |
-| A11 | Capabilities derive from Trust Evidence + Domain Policy: `canJoinPublicTrip … canBecomeBuddy` (§11:119) | C | Trust supplies the two inputs: `public_level` (rank) and live restriction state. Passport's `buildOwnerCapabilities:566-577` consumes exactly those (`LEVEL_RANK:553-560`, `ownerRestrictionsFromState:543-550`, `getRestrictionState` at `:1525`). `canProvideVisaBuddyService` is Passport's NB (census-passport). |
-| A12 | Authorization is server-side: restrictions are enforced at the action seam, not inferred by the client (§11:120, §30:286) — hosting and messaging | C | `routes/trips.ts:216-230` (canHost, with the degraded-read distinction), `routes/messaging.ts:510-523#msgPerms` (the open-thread seam's primary, fail-closed `resolveInteractionPermissions` gate, plus the catch that refuses rather than allowing on a failed check), `lib/calls/callGatewayAdapter.ts:265`, `services/interactionPermissions.ts:325-337` (throws `DegradedPermissionCheckError` rather than mis-labelling a failed check as a restriction). *(The messaging evidence was cited as `routes/messaging.ts` line 483 until 2026-09-13. That line is the tenth line of a comment paragraph about a `left_at` rejoin write — prose describing a 403, not a seam enforcing one. It was ALREADY wrong at this census's own head_commit 3ca68cb06: that file is unchanged above line 762 between 3ca68cb06 and HEAD, so the messaging diff acknowledged on 2026-09-13 did not move it. Repointed by reading the handler, not by offset, and anchored so the next move is loud. Verdict unmoved — the gate it should have named all along is real, primary and fail-closed.)* |
+| A11 | Capabilities derive from Trust Evidence + Domain Policy: `canJoinPublicTrip … canBecomeBuddy` (§11:119) | C | Trust supplies the two inputs: `public_level` (rank) and live restriction state. Passport's `buildOwnerCapabilities:566-577` consumes exactly those (`LEVEL_RANK:553-560`, `ownerRestrictionsFromState:543-550`, `getRestrictionState` at `:1525`). `canProvideVisaBuddyService` is Passport's NB (census-passport). **Re-derived at §23** after the zero-evidence persist was removed: the one population for which this row was false — a never-scored user whose recalculation wrote `public_level: reliable_traveler` from no events at all — reached `LEVEL_RANK` rank 2 and was granted `canHostTrip`, `canUseCrewLocation` and `canContributeLiveIntel`. With no row written, `getSafeTrustSummary` reports `new_traveler` (`artifacts/api-server/src/services/trust/TrustPrivacyGuard.ts:112#const publicLevel: PublicTrustLevel = profile?.public_level ?? "new_traveler";`), which is rank 0 and grants none of the three. The row was `C` before and is `C` now; what changed is that its one counter-example is gone. |
+| A12 | Authorization is server-side: restrictions are enforced at the action seam, not inferred by the client (§11:120, §30:286) — hosting and messaging | C | `routes/trips.ts:216-230` (canHost, with the degraded-read distinction), `routes/messaging.ts:510-512#msgPerms` (the open-thread seam's primary, fail-closed `resolveInteractionPermissions` gate, plus the catch that refuses rather than allowing on a failed check), `lib/calls/callGatewayAdapter.ts:265`, `services/interactionPermissions.ts:325-337` (throws `DegradedPermissionCheckError` rather than mis-labelling a failed check as a restriction). *(The messaging evidence was cited as `routes/messaging.ts` line 483 until 2026-09-13. That line is the tenth line of a comment paragraph about a `left_at` rejoin write — prose describing a 403, not a seam enforcing one. It was ALREADY wrong at this census's own head_commit 3ca68cb06: that file is unchanged above line 762 between 3ca68cb06 and HEAD, so the messaging diff acknowledged on 2026-09-13 did not move it. Repointed by reading the handler, not by offset, and anchored so the next move is loud. Verdict unmoved — the gate it should have named all along is real, primary and fail-closed.)* |
 | A13 | The same for the other two restriction types the service declares — `private_plan_access`, `location_plan_join` (`TrustRestrictionService.ts:1-9`) | **W** | No route calls `canJoinPrivatePlans` / `canJoinLocationPlans` as a gate (grep: the only consumers of `getRestrictionState` are the four in A12 plus Passport). They reach the client only as `buildOwnerCapabilities` chips (`canJoinPublicTrip`, `canUseCrewLocation`), which §30 says the client must not treat as authorization. An admin applying either restriction changes a chip and blocks nothing. **Owner: Trips / Events / geofence join seams.** |
 | A14 | TABLE 22 projections: permitted trust summary (Discovery, Compass), trust eligibility (Trips), completion/reputation (Buddy), restricted purpose-specific context (Safety) (§21:207-221) | C | Trust provides exactly the privacy-safe shapes: badge without number, summary without counts, restriction state as four booleans. All seven consumer variants derive from the one `PassportProjection.buildTrust` (`PassportConsumerProjections.ts:614-620` discovery_card, `:666-672` buddy, `:770-773` trips; telegraph/safety carry no trust at all). census-passport P117. |
 | A15 | No numeric score to non-owners; the client must not infer authorization from a displayed score (§30:286) | C | `PublicTrustBadge` has no score field (`TrustPrivacyGuard.ts:132-138`); the number is self-only (`buildTrust:1013-1017`); `DiscoveryCardTrust` omits it by design (`PassportConsumerProjections.ts:192-197, :612`). census-passport P60. |
@@ -151,22 +151,22 @@ Not counted here. Checked because the brief asked what it marked wrong.
 | C5 | "Serious/severe events are queued for admin review" (`:11`) | **W → C** | Measured: only the status was set. The queue an admin reads is `trust_reviews` (`trust-admin.ts:98-127`); no row was written for a pending event; `confirmEvent:82-85` and `dismissEvent:178-181` closed a review "for this event" that never existed; `getPendingEvents:317-332` had no route. `recordAdjudicatedTrustEvent`'s own comment records the gap (`:409-412`). Built: `queueEventForReview:330-362` writes an open `event_review` row keyed by `source_event_id`, non-fatal and logged; `GET /admin/trust/events/pending` (`trust-admin.ts:138-147`). Pinned by `trustCensusRepairs.test.ts` §1–§2. Production impact today: none (0 pending events); the next one will be visible. |
 | C6 | Never auto-bans (`:11`) | C | `applyRestriction` has exactly one non-test caller, `adminApplyRestriction` (`TrustAdminService.ts:311#const restriction = await applyRestriction(db, {`), reached only from the admin route. |
 | C7 | The counterpart of an event is recorded explicitly in `metadata[counterparty_user_id]`, never inferred from `source_id` (`:32-45`) | C | `recordTrustEvent:249-252`; `TrustGamingDetectionService.readCounterparty:26-34`; `trustMutualRings.test.ts`. |
-| C8 | Nine category scores + weighted overall; exponential decay; cap ceilings; public level; persist to `trust_profiles` (`TrustScoreService.ts:1-10`) | C | `recalculateTrustScore:261-352`; `scoreToLevel:217-224`; `trust.test.ts:350-398`. |
+| C8 | Nine category scores + weighted overall; exponential decay; cap ceilings; public level; persist to `trust_profiles` (`TrustScoreService.ts:1-10`) | C | `recalculateTrustScore:307-488`; `scoreToLevel:217-224`; `trust.test.ts:350-398`. **The persist is CONDITIONAL from §23 on** and the row was re-derived rather than carried: `artifacts/api-server/src/services/trust/TrustScoreService.ts:621#if (events.length === 0) {` skips the write for a user who has no qualifying event, no existing row and no cap row ever. It stays `C` — every score the engine MEASURES is still persisted, and what it now withholds is a nine-category arithmetic 50 that no evidence stands behind. §23.3 argues the opposite reading and says why it loses. **Named, and owed to the owner:** the header sentence this row quotes still reads *"Derives public trust level and persists to trust_profiles"* and documents only ONE non-persist case (the fail-closed read). It now has two. |
 | C9 | Slow to earn, immediate to lose — the ramp applies only to positive movement (`:162-188`) | C | `computeCategoryScore:189-215`; `trustAsymmetryAndMaintenance.test.ts` pins the asymmetry and the worked example (56, not 80). |
 | C10 | `getDisplayTrustScore` is THE display number; no second engine (`:353-364`; `lib/trustScore.ts:1-25`) | C | `lib/trustScore.ts:124-149` delegates; `PassportProjectionService.ts:1428#getDisplayTrustScore` and `routes/rentABuddy.ts:1237` read through it; `passportTrustConsistency.test.ts`. |
 | C11 | `getTrustProfile` "loads the current profile" (`:375`) — and a failed read is not a missing profile | **W** | `:376-410` never destructures `error`; `null` means both. Five readers collapse an unreachable engine into "New Traveler"/`score: null`: `getDisplayTrustScore:365`, `getSafeTrustSummary:91`, `getPublicTrustBadge:136`, `getRecoveryStatus:89`, `computeTrustScore:131`. **PR #467 adds `getTrustProfileResult()` (ok/absent/unavailable) and switches ONE reader — Passport's domain builder.** Not fixed here: a second error-aware read in the same file would duplicate #467's hunk. Recommended as a #467 follow-up (§4). |
-| C12 | Caps: create, enforce as ceilings, expire on schedule (`TrustCapService.ts:1-6`) | C | `TrustCapService.ts:35#createCap`, the ceiling applied at `TrustScoreService.ts:534#caps`, `TrustCapService.ts:149#expireOldCaps` driven by the scheduler (`lib/trustMaintenanceScheduler.ts:657#capsExpired = await expireOldCaps(db);`); `trust.test.ts:400-475`. |
+| C12 | Caps: create, enforce as ceilings, expire on schedule (`TrustCapService.ts:1-6`) | C | `TrustCapService.ts:35#createCap`, the ceiling applied at `TrustScoreService.ts:540#caps[cat]`, `TrustCapService.ts:149#expireOldCaps` driven by the scheduler (`lib/trustMaintenanceScheduler.ts:657#capsExpired = await expireOldCaps(db);`); `trust.test.ts:400-475`. |
 | C13 | `applyEventCaps` keys on the event vocabulary the emitters actually write (`:166-180`) | **W → C** | `coordinate_jump` named a type nobody emits; `recordLocationTrustEvent:375-396` writes `gps_coordinate_jump`. Corrected (`:186`). Residual, **owner decision**: `plan_no_show` and `fake_gps_confirmed` have ceilings and no emitter; `content_removed` and `message_report_confirmed` were wired by the emitter pass. **Correction (2026-09-07, second pass):** this row cited `event_host_no_show (serious, −15, routes/events.ts:3473)` as an emitter. Nothing emits it — `:3473` is the attendance route (`event_attendance_confirmed`), and the no-show emitter at `:3575` writes `event_no_show` (−5 moderate). Which serious findings deserve a ceiling is policy, listed in §5; the per-type evidence is in [trust-unproduced-vocabulary.md](trust-unproduced-vocabulary.md). |
 | C14 | Every cap a moderation finding created is lifted when the finding is reversed (`:93-108`) | C | `artifacts/api-server/src/services/trust/TrustCapService.ts:201#export async function liftCapsBySourceEvents(`; wired through `artifacts/api-server/src/services/trust/TrustAdminService.ts:166#export async function revokeModerationTrustConsequences(` from `routes/admin.ts:1835#void revokeModerationTrustConsequences(sc, adminUserId, userId, reason ?? "Account restore`. **Re-derived at §24, where the row's weakest point is now visible instead of silent.** The lift is deliberately non-fatal, so a failed one still leaves the ceiling standing — what changed is that it can no longer be mistaken for "there was nothing to lift": `artifacts/api-server/src/services/trust/TrustCapService.ts:198#failed: boolean;` and `artifacts/api-server/src/services/trust/TrustAdminService.ts:163#incomplete: boolean;`, with an ERROR log and an `incomplete` field on the `trust_admin_actions` metadata. Stays `C` — the wiring this row grades is intact and strengthened — with the measured limit named: the sole non-test caller DISCARDS the result (`void … .catch(() => {})`), so the restore endpoint still answers success whatever happened. §24.3. |
 | C15 | `getRestrictionState()` is the enforcement seam — "never query trust_restrictions directly in route code" (`TrustRestrictionService.ts:175-179`) | **W** | `routes/admin.ts:1319-1322` selects `trust_restrictions` directly for the admin user view (read-only, includes `reason`). Low impact; **owner: admin route.** |
 | C16 | Degraded reads are labelled: fail-open (table missing) vs fail-closed (query error), and callers must never show a restriction message for a failed check (`:50-80`) | C | `getRestrictionState:180-250`; consumers honour it (`routes/trips.ts:218-227`, `interactionPermissions.ts:326-337`); `trust.test.ts:906-1043`. |
 | C17 | `expireOldRestrictions` — "call from cleanup job" (`:264`) | **W → C** | Had no caller. Enforcement already ignored expired rows, so nothing was over-enforced, but the row stayed `lifted_at IS NULL` and every admin view listed a lapsed restriction as active. Now step 1b of the pass (`trustMaintenanceScheduler.ts:308-318`) and the function reads its `error` (`:264-287`). `trustCensusRepairs.test.ts` §4. |
 | C18 | Recovery status: probation, lowest category, ordered steps, `overallProgress` "0–100 % toward 50" (`TrustRecoveryService.ts:1-8`, `TrustRecoveryService.ts:52#0–100 % toward 50 (neutral), or NULL when there is no profile to measure.`) | **W** | Steps and probation are correct (`trust.test.ts:726-770`). But a user with **no profile** is returned `overallProgress: 50` — a constant where a measurement belongs, the same shape as P45 in miniature. Unconsumed today (`getSafeTrustSummary` reads only `onProbation` and `suggestedSteps`), and PR #455 is about to surface recovery to the owner. Left as W: the honest value is `null`, which changes the field's type, and #455 is the PR editing the consumer. **SUPERSEDED at §24 (this row moved to `C`): the no-profile branch returns `null` (`artifacts/api-server/src/services/trust/TrustRecoveryService.ts:179#overallProgress:`), asserted at `artifacts/api-server/src/test/trustNullableScores.test.ts:392#assert.equal(status.overallProgress,`. The `:125` pointer this sentence carried is REMOVED rather than repointed — it was mis-inherited from `trust.test.ts` (the nearest preceding citation on the row) where the service was meant, so it never pointed at the constant it was cited for. §25.** |
-| C19 | Probation ends when `probation_ends_at` passes (`trustMaintenanceScheduler.ts:26-27`) | C | `artifacts/api-server/src/lib/trustMaintenanceScheduler.ts:184#clearExpiredProbation(db:` sets `on_probation: false` (`:188#on_probation:`) on every row whose term is past (`:190#.lt(`), and the maintenance pass calls it at `:701#clearExpiredProbation(db);`. Proven by `artifacts/api-server/src/test/trust-integration.test.ts:1442#probation_ends_at:` → `:1447#assert.equal(r.probationCleared,`. **Repointed §25** — the old pointers (`clearExpiredProbation` lines 138-155, and `trust-integration.test.ts` line 842) had both drifted onto unrelated lines. |
+| C19 | Probation ends when `probation_ends_at` passes (`trustMaintenanceScheduler.ts:26-27`) | C | `artifacts/api-server/src/lib/trustMaintenanceScheduler.ts:184#clearExpiredProbation(db:` sets `on_probation: false` (`:188#on_probation:`) on every row whose term is past (`:190#.lt(`), and the maintenance pass calls it at `:701#clearExpiredProbation(db);`. Proven by `artifacts/api-server/src/test/trust-integration.test.ts:1466#probation_ends_at:` → `:1471#assert.equal(r.probationCleared,`. **Repointed §25** — the old pointers (`clearExpiredProbation` lines 138-155, and `trust-integration.test.ts` line 842) had both drifted onto unrelated lines. |
 | C20 | Reporter identity never exposed; raw deltas/internal scores not returned; restrictions human-readable; pending_review invisible to the subject — at the API (`TrustPrivacyGuard.ts:1-10`) | C | `getSafeTrustSummary:89-129`, `RESTRICTION_MESSAGES:69-74`, `isEventLlmSafe:159-165`; `trust.test.ts:660-725`. The table-level contradiction was A8. |
 | C21 | Every admin write creates a `trust_admin_actions` row (`TrustAdminService.ts:1-6`) | C | `logAdminAction` at `:87,184,200,214,247,282,311`; route-level inserts at `trust-admin.ts:328-335` and `:431-440`; `trustAdminAuditInsertSchemaDrift.test.ts` pins the columns. |
 | C22 | `adminOverrideScore` overrides a category score (`:218`) | **W** | It creates a *ceiling* (`:230-235`) and writes the row once (`:239-243`), then `recalculateTrustScore:246` recomputes from events — so an override ABOVE the event-derived score does not hold; only downward overrides stick. `trust_caps` has no floor. Unwired to any route, so no live effect. Whether "override" means pin or cap is an **owner decision** (§5). |
-| C23 | Gaming detection never auto-penalises; it only opens `gaming_suspected` reviews (`TrustGamingDetectionService.ts:5`) | C | `createGamingReview:68-94` is the only write; dedup on an open review; `trust-integration.test.ts:1160#it("rapid jump pattern creates gaming_suspected review"` and `trust-integration.test.ts:1172#it("dedup: second scan does not create a second open review"` *(cited at line 786 until 2026-09-22. That line was ALREADY WRONG before this lane touched the file — at head_commit it was a `PLAN_NO_SHOW` event seed inside an unrelated test, not evidence for either clause of this row; it stayed green only because the line was non-blank. Q1's edits shifted it onto a blank line, which is what surfaced it. Repointed to the two tests the sentence actually names — the review is OPENED rather than a penalty applied, and a second scan does not open a second review — by reading the claim, not by offset. The verdict is unmoved.)*. |
+| C23 | Gaming detection never auto-penalises; it only opens `gaming_suspected` reviews (`TrustGamingDetectionService.ts:5`) | C | `createGamingReview:68-94` is the only write; dedup on an open review; `trust-integration.test.ts:1184#it("rapid jump pattern creates gaming_suspected review"` and `trust-integration.test.ts:1196#it("dedup: second scan does not create a second open review"` *(cited at line 786 until 2026-09-22. That line was ALREADY WRONG before this lane touched the file — at head_commit it was a `PLAN_NO_SHOW` event seed inside an unrelated test, not evidence for either clause of this row; it stayed green only because the line was non-blank. Q1's edits shifted it onto a blank line, which is what surfaced it. Repointed to the two tests the sentence actually names — the review is OPENED rather than a penalty applied, and a second scan does not open a second review — by reading the claim, not by offset. The verdict is unmoved.)*. |
 | C24 | Three detectors, gated by `trust_gaming_detection_enabled`, thresholds from `trust_settings` (`:7-10`) | C | `runGamingDetectionScan:299-316`; `isGamingDetectionEnabled:55-66` fail-closed; check-in vocabulary matches the writer (`CHECKIN_CLUSTER_EVENT_TYPES:114`, `routes/geofence.ts:786#checked_in_successfully`). `trust.test.ts:771-826`, `trustAttendanceVocabulary.test.ts`, `trustMutualRings.test.ts`. **Liveness (§3):** flag ON in production; runs every pass; every input is empty. |
 | C25 | The maintenance scheduler is registered and fires: decay refresh, cap expiry, probation, gaming scan; fail-closed on the flag (`trustMaintenanceScheduler.ts:1-44`) | C | Registered unconditionally at `index.ts:264`; `startTrustMaintenanceScheduler:414-432` (startup delay 120 s, then every 6 h). **Fires in production**: both `trust_profiles` rows were created 2026-08-27 with `trust_admin_actions` = 0 (only the scheduler creates a row for a user with events and no profile, `findDirtyUsers:168-233`), and both were refreshed 2026-09-04 06:56 — one `STALE_DAYS` after — the `findStaleUsers:240-259` path observed working. Tested at `trustAsymmetryAndMaintenance.test.ts:280-400`, `trust-integration.test.ts:974-1070`. |
 | C26 | Every `/admin/trust/*` route is admin-guarded (`routes/trust-admin.ts:2`) | C | `requireAdmin` first in every handler (`:99,139,152,200,221,248,281,309,342,364,385,402`); `trust-integration.test.ts:285-308`; `check:route-auth-gate` exit 0. |
@@ -493,7 +493,7 @@ still true at `3ca68cb06`, because a restatement that is not re-executed is just
 
 | id | was | now | re-executed at this commit |
 |---|---|---|---|
-| A3 | `NB → C` | C | `artifacts/api-server/src/services/trust/TrustScoreService.ts:500#export function measureEvidence` still computes the decayed evidence weight and count, and `artifacts/api-server/src/services/trust/TrustScoreService.ts:588#.update({ evidence_weight: evidence.weight, evidence_count: evidence.count })` still persists both. The migration that holds the columns is present at `artifacts/api-server/src/migrations/2371_trust_profiles_evidence.sql:1#-- 2371_trust_profiles_evidence.sql`. NULL still means not measured, 0 still means measured empty. |
+| A3 | `NB → C` | C | `artifacts/api-server/src/services/trust/TrustScoreService.ts:506#export function measureEvidence` still computes the decayed evidence weight and count, and `artifacts/api-server/src/services/trust/TrustScoreService.ts:698#.update({ evidence_weight: evidence.weight, evidence_count: evidence.count })` still persists both. The migration that holds the columns is present at `artifacts/api-server/src/migrations/2371_trust_profiles_evidence.sql:1#-- 2371_trust_profiles_evidence.sql`. NULL still means not measured, 0 still means measured empty. |
 | A8 | `W → C` | C | `artifacts/api-server/src/migrations/2370_trust_tables_privileges.sql:1#-- 2370_trust_tables_privileges.sql` is in the tree and still carries the REVOKE-then-grant-service_role shape with the RAISE-on-residue postcondition. **The row's caveat is unchanged and matters more than the verdict: applied to CI, NOT to production** — this pass made no production read and no production change, so A8's `C` is a statement about the migration, not about the live grants. |
 | C5 | `W → C` | C | `artifacts/api-server/src/services/trust/TrustEventService.ts:374#async function queueEventForReview` still writes the open `event_review` row, called on the pending-review path, and the admin queue that reads it is still routed at `artifacts/api-server/src/routes/trust-admin.ts:155#router.get("/admin/trust/events/pending", async (req, res) => {`. |
 | C13 | `W → C` | C | The cap table still keys on the type the emitter actually writes: `artifacts/api-server/src/services/trust/TrustCapService.ts:352#gps_coordinate_jump:       [{ category: "location_honesty", ceiling: 55, reasonCode: "coordinate_jump",      expiresInDays: 7  }],`. The residual owner decision on unproduced ceilings is unchanged and stays in §5's list. |
@@ -578,7 +578,7 @@ transient one — in which the admin's number is the stored value. The admin get
 `{ ok: true }`, an audit row saying `score_override`, and no change.
 
 The ceiling itself is
-`artifacts/api-server/src/services/trust/TrustScoreService.ts:534#if (caps[cat] !== undefined && capped > caps[cat]) {`
+`artifacts/api-server/src/services/trust/TrustScoreService.ts:540#if (caps[cat] !== undefined && capped > caps[cat]) {`
 — a strict one-directional clamp — and `trust_caps` carries only
 `ceiling_score`, with no floor column anywhere.
 
@@ -1416,15 +1416,15 @@ number persisted before and after this change is the same number.
 
 ### 15.4 The test, and the mutations that turn it red
 
-`src/test/trust-integration.test.ts:1793#describe("D-OVERRIDE: the ceiling the owner ruled for must PERSIST"` —
+`src/test/trust-integration.test.ts:1943#describe("D-OVERRIDE: the ceiling the owner ruled for must PERSIST"` —
 three cases, appended to an already-registered suite. **GREEN 67/67 → 70/70**, and all three were
 **RED before the fix** (the third with `Missing expected rejection`, i.e. the false success itself).
 
 | # | case | what it asserts |
 |---|---|---|
-| 1 | `src/test/trust-integration.test.ts:1819#it("a downward ceiling reaches trust_profiles, and the call REPORTS that it bound"` | the ceiling is on the row, `overall_score` fell with it, and `ceilingBinding` is true |
-| 2 | `src/test/trust-integration.test.ts:1847#it("an UPWARD override reports that it bound NOTHING — CAP semantics, said out loud"` | `persistedScore` is the natural score and `ceilingBinding` is **false**, in the result AND in the audit metadata |
-| 3 | `src/test/trust-integration.test.ts:1869#it("a failed recalculation leaves NO raw admin number on the row, and is never audited as applied"` | **the defect.** With `trust_events` unreadable: rejects, no raw number on the row, the row stays internally consistent, zero `score_override` audit rows, and the cap row stands |
+| 1 | `src/test/trust-integration.test.ts:1969#it("a downward ceiling reaches trust_profiles, and the call REPORTS that it bound"` | the ceiling is on the row, `overall_score` fell with it, and `ceilingBinding` is true |
+| 2 | `src/test/trust-integration.test.ts:1997#it("an UPWARD override reports that it bound NOTHING — CAP semantics, said out loud"` | `persistedScore` is the natural score and `ceilingBinding` is **false**, in the result AND in the audit metadata |
+| 3 | `src/test/trust-integration.test.ts:2019#it("a failed recalculation leaves NO raw admin number on the row, and is never audited as applied"` | **the defect.** With `trust_events` unreadable: rejects, no raw number on the row, the row stays internally consistent, zero `score_override` audit rows, and the cap row stands |
 
 Four mutations, each run and each **RED**:
 
@@ -1433,7 +1433,7 @@ Four mutations, each run and each **RED**:
 | P1 | restore the raw `trust_profiles` upsert before the recalculation | case 3 |
 | P2 | swallow the recalculation failure again (`.catch(() => {})`) | case 3 |
 | P3 | report `ceilingBinding` unconditionally `true` | case 2 |
-| P4 | invert the ceiling comparison in `recalculateTrustScore` (`services/trust/TrustScoreService.ts:534#if (caps[cat] !== undefined && capped > caps[cat]) {` → `<`) — reverted immediately; the file is unchanged | cases 1 and 2 |
+| P4 | invert the ceiling comparison in `recalculateTrustScore` (`services/trust/TrustScoreService.ts:540#if (caps[cat] !== undefined && capped > caps[cat]) {` → `<`) — reverted immediately; the file is unchanged | cases 1 and 2 |
 
 P4 exists because P1–P3 leave case 1 green whatever they do to the implementation, and a case that
 cannot fail is worse than no case (§LANE-RULES 4). It also demonstrates that case 1 measures the
@@ -2410,78 +2410,145 @@ this section adds resolves, or it would have gone over.
 `check:write-path-columns` and `check:migration-ledger` still refuse without
 `KNOWN_PROD_PROJECT_REF`, which is environmental and carries no finding either way.
 
----
+## §23 — Zero evidence stops being persisted as earned trust. NO ROW MOVES, and the blast radius is SMALLER than the change's own comments claim
 
----
+**2026-09-22, re-measurement lane (PR #449).** `head_commit` is **NOT** re-declared, for §19's,
+§20's and §21's reason unchanged: this grades the rows resting on three counted files, not 108
+requirements. *Numbered §23 rather than §22 on purpose — sibling branch PR #450 appends a §22 to
+this same document, and leaving the gap lets the two land without renumbering either.*
 
-## §23 — 2026-09-22 · The restriction sweep is bounded, and its outcome is told apart at the caller. **NO ROW MOVES.**
+### 23.1 What changed
 
-**Read this first: no verdict in this document moves, and `head_commit` is NOT re-declared.** The
-owner approved the work (decision Q2: *"port the {expired, truncated, failed} result and bounded
-processing onto current main while preserving its scheduler wiring"*). The decision authorizes the
-CODE. It does not authorize moving a verdict, and acceptance evidence for a row move does not exist
-yet. C17 stays `C`, TRV2-09 stays `C`, and every other row is untouched by this section.
+`recalculateTrustScore` computed a score for a user with no qualifying events — nine neutral
+categories, weights summing to 1.000, so exactly 50.00 — and **persisted** it. 50 is
+`level_reliable` and `scoreToLevel` compares with `>=`, so that row carried
+`public_level: reliable_traveler`. It no longer writes that row
+(`artifacts/api-server/src/services/trust/TrustScoreService.ts:621#if (events.length === 0) {`),
+and the result now says which it was
+(`artifacts/api-server/src/services/trust/TrustScoreService.ts:483#persisted: boolean;`).
+The skip is narrow by construction: it applies only when the user has **no** qualifying event,
+**no** existing `trust_profiles` row, and **no** `trust_caps` row ever — including a lifted one.
 
-### §23.1 What was still owed after C17 went `C`
+### 23.2 What the absent row does to the next hop, measured rather than reasoned about
 
-C17 was settled on two claims and both were true: `expireOldRestrictions` binds its own `error`, and
-the maintenance pass calls it. Two things the row never graded were still wrong:
-
-| | The defect | What it cost |
+| hop | with the fabricated row | with no row |
 |---|---|---|
-| 1 | The signature was `Promise<number>`, and every error path returned `0`. | A FAILED sweep and an IDLE one were the same observation at the call site. A permissions failure, a schema drift or a timeout read exactly like "nothing was due". |
-| 2 | The update was UNBOUNDED — one statement against a table that only grows. | A latent outage. `trust_restrictions` has held 0 rows for the life of production, so this has never fired; that is a fact about the table's size, not about the statement. |
+| `getSafeTrustSummary` | `public_level: reliable_traveler` | `new_traveler` — `artifacts/api-server/src/services/trust/TrustPrivacyGuard.ts:112#const publicLevel: PublicTrustLevel = profile?.public_level ?? "new_traveler";` |
+| `LEVEL_RANK` | **2** | **0** — `artifacts/api-server/src/services/passport/PassportProjectionService.ts:746#new_traveler: 0,` |
+| `canHostTrip` (`rank >= 1`) | granted | withheld — `artifacts/api-server/src/services/passport/PassportProjectionService.ts:764#canHostTrip: !r.hosting && rank >= 1,` |
+| `canUseCrewLocation` (`rank >= 1`) | granted | withheld |
+| `canContributeLiveIntel` (`rank >= 2`) | granted | withheld |
+| the DOMAIN numbers Passport shows | 50, read off the row | 50, substituted for the missing row | 
 
-### §23.2 What changed
+The last line is the one worth reading twice: **the number a person sees does not change.**
+`buildDomainTrust` substitutes the same neutral 50 for an absent profile that it used to read out
+of the fabricated one, so census-passport's P45/P50/P154 are untouched by this and stay `W` — see
+census-passport §19. What changes is three server-side capability grants.
 
-- `artifacts/api-server/src/services/trust/TrustRestrictionService.ts:391#export async function expireOldRestrictions(`
-  returns `{ expired, truncated, failed }`. It reads a BOUNDED due set
-  (`artifacts/api-server/src/services/trust/TrustRestrictionService.ts:328#export const RESTRICTION_EXPIRY_BATCH = 500;`)
-  ordered by `expires_at` ascending, then lifts exactly those ids. `error` is bound on BOTH halves.
-- The write still re-asserts `lifted_at IS NULL`
-  (`artifacts/api-server/src/services/trust/TrustRestrictionService.ts:433#// moving the recorded moment a sanction ended. Do not remove this.`),
-  which is what stops a concurrent pass overwriting an earlier `lifted_at` with a later instant.
-  **That check was not weakened.** TRV2-09's claim is stronger than before, not weaker.
-- `artifacts/api-server/src/lib/trustMaintenanceScheduler.ts:679#const sweep = await expireOldRestrictions(db);`
-  — main's call site, unmoved. It now carries `restrictionSweepFailed` and
-  `restrictionSweepTruncated` out on `TrustMaintenanceResult`, and a failed sweep joins
-  `lastFailures` so `consecutiveFailures` stops resetting through it.
-- `artifacts/api-server/src/lib/stateMachines/registry.ts` — the `active → expired` writer evidence
-  is repointed to the same predicate on the same derivation column after the instant was hoisted
-  into `nowIso`. `checkStateMachineWriters` passes: 0 MISSING_WRITER, unchanged.
+### 23.3 The rows, and what each was measured on
 
-### §23.3 The evidence, and what it does NOT establish
+| row | measured at this head | verdict |
+|---|---|---|
+| `C8` (persist to `trust_profiles`) | the persist is now conditional, so the row was re-derived instead of carried. **The opposite reading, stated so it can be checked:** §1(c) treats a module header sentence as a requirement, `TrustScoreService.ts:8` promises persistence, and the code now has an exception the header does not name — which is the exact shape that makes `C15` a `W`. **It loses on a measurement:** the persist block is non-fatal (`artifacts/api-server/src/services/trust/TrustScoreService.ts:668#// Persist (non-fatal — return computed result even if persist fails)`), and `git show origin/main:` confirms that comment and that behaviour are unchanged by this branch — so a resolved `recalculateTrustScore` has never implied a row exists. The skip adds a second way for something that was already true, not a first. | **C, unmoved.** Header gap named in the row. |
+| `A11` (capabilities derive from Trust Evidence) | this row had exactly one counter-example and it is gone; §23.2 is the measurement. | **C, unmoved, counter-example closed.** |
+| `A1`, `A2` | the score is still retained and still scored per category for every user who has one; `A2`'s cited region moved +6 lines and was repointed. | **unmoved.** |
+| `A3` (evidence behind the score) | `measureEvidence` and the two-column persist are both still present and both still inside the persisted path; for a skipped user nothing is written, including the evidence columns, which is the same "no row" state `A3` already treats as not-measured. | **unmoved.** |
+| `C4`, `C12`, `C19`, `C23`, `C25`, `C26` | cite `trust-integration.test.ts`. That file gains one renamed `it` at `:924` and one appended `describe` at `:1631`; every line these six cite is at or below `:1070` and none of them moved. | **unmoved.** |
+| `C5`, `C17`, `C27` | cite `trustCensusRepairs.test.ts`. The only edit is inside one existing `it` in the evidence-round-trip `describe`; no `describe` is added, removed or re-ordered, so the § numbering these three cite is unchanged. | **unmoved.** |
 
-`artifacts/api-server/src/test/trustCensusRepairs.test.ts` §4 and §4b, 18 → 25 assertions, all green.
-Five hand-reverts were run and each produced red, which is the only reason to believe the assertions
-bite: collapsing `failed` back to `false` → 2 red; removing the batch bound → 3 red; replacing the
-`expires_at` ordering → 1 red; dropping the `lifted_at IS NULL` re-assert on the write → 1 red;
-having the caller stop surfacing the outcome → 3 red. Restored: 25/25.
+### 23.4 The change's own comments overstate the blast radius, and the correction is the finding
 
-**Starvation is proven, at the caller and at the service.** One pass over `RESTRICTION_EXPIRY_BATCH + 1`
-due rows reports `truncated`; passes repeat until it does not, and every eligible row ends lifted with
-none dropped. Separately, at a batch of 3 over 7 due rows, a NEWLY-lapsed restriction inserted
-mid-drain does not overtake the older ones, and the backlog still drains completely.
+Both the new source comment and the new suite's header say that persisting the fabricated 50
+would have promoted **"every user in the system at once"** on the first enable of
+`trust_engine_enabled`. **No caller was found that can do that**, and the enumeration is short
+enough to be checked: every path that reaches `recalculateTrustScore` in non-test source is one of
+the maintenance scheduler's three finders, three `TrustAdminService` paths, two admin-override
+paths, and the settings fan-out. `findDirtyUsers`
+(`artifacts/api-server/src/lib/trustMaintenanceScheduler.ts:221#.from("trust_events")`) and
+`findNeverComputedUsers`
+(`artifacts/api-server/src/lib/trustMaintenanceScheduler.ts:322#      .from("trust_events")`) both
+start from `trust_events`; `findStaleUsers`
+(`artifacts/api-server/src/lib/trustMaintenanceScheduler.ts:380#      .from("trust_profiles")`) and
+the settings fan-out
+(`artifacts/api-server/src/routes/trust-admin.ts:651#    sc.from("trust_profiles")`) both start
+from `trust_profiles`. **Nothing iterates `profiles`.** A user with no event and no row is reached
+by none of them.
 
-**What this does NOT claim.** No live database was touched: the suite runs against the file's fake
-client, which resolves `{ data, error }` the way postgrest-js does. The `>= limit` truncation test is
-therefore a statement about the client contract, not about PostgREST's behaviour at 500 rows under
-load. No row is re-graded here and no headline number moves. C17's two citations were repointed to
-the lines `check:doc-citations` itself named — by searching for the anchor, not by adding an offset —
-and the verdict column of that row is byte-identical.
+The population that WAS reachable, and for which the defect was real:
 
-> **NUMBERING, noted at integration 2026-09-23.** This document now runs
-> **NUMBERING, and it is a collision rather than a gap.** Two lanes independently
-> wrote a `§22` about the SAME change — the restriction-expiry sweep — and both
-> are kept rather than one being discarded: PR #450's is immediately below as
-> `§22`, and this section, written on this branch, is renumbered `§23`. Main's
-> keeps `§22` because it is the one already on `main` and the one `§24` names by
-> number; `§23` was free on both sides, so no existing citation moves. The two
-> do not duplicate each other — #450's RE-MEASURES the rows and falsifies
-> TRV2-09's old evidence, this one argues the boundedness and the outcome
-> reporting — and reading them together is the point. This is the same rule the
-> census-sensing `§12` collision was resolved under: keep both, renumber one,
-> say so.
+1. **`dismissEvent`** — `artifacts/api-server/src/services/trust/TrustAdminService.ts:297#  await recalculateTrustScore(db, e.user_id).catch(() => {});` runs after the event is dismissed. If that was the user's only event and no profile existed yet, the recalculation saw zero events and wrote the fabricated row.
+2. **Events older than the scoring window.** `findNeverComputedUsers` has no age bound; `loadEvents` has a 365-day one (`artifacts/api-server/src/services/trust/TrustScoreService.ts:198#  const since = new Date(Date.now() - 365 * 24 * 60 * 60 * 1000).toISOString();`). A never-scored user whose only events predate it is selected, then scored against an empty list.
+
+That is a narrow population, not the whole table — and it is still a real promotion from nothing,
+which is why the change stands and `A11`'s counter-example is worth recording as closed. Stating
+the smaller number is the point: a census that repeats a change's own worst-case sentence is
+quoting, not measuring.
+
+### 23.5 What this section does NOT claim, and what it did not repoint
+
+- **The other rows are not re-measured.** Only the rows in §23.3.
+- **Nothing was run against a database.** Production still holds 2 `trust_profiles` rows of 58
+  profiles and 5 `trust_events` (§0), so neither the old defect nor the new refusal has been
+  observed live, in either direction.
+- **Three citations into `TrustScoreService.ts` were ALREADY stale before this branch and are
+  left alone rather than quietly swept in:** `A17`'s `:353-364` (the header sentence it quotes
+  lives at line 494), and `C11`'s `:375` / `:376-410` (`getTrustProfile` is at line 654). All three
+  were wrong at `origin/main` too — `git show origin/main:…` was read at each — so repointing
+  them belongs to the pass that re-grades those rows, not to this one. They are named here so the
+  next reader does not have to rediscover them.
+- **The per-category gap the change's suite pins is not graded by any row here.** A user with one
+  negative event still carries eight fabricated 50s into the weighted overall, because the nine
+  columns are `NOT NULL DEFAULT 50.00`. That needs a migration and an owner decision; it is
+  reported, not closed.
+
+### 23.6 Guards at this tree, with exit codes
+
+All eighteen of `check:compiler-authentic`, `typecheck`, `typecheck:tests`, `check:frozen-dir`,
+`check:async-handlers`, `check:enum-literals`, `check:migration-prefixes`,
+`check:schema-references`, `check:test-runner-flags`, `check:writerless-reads`,
+`check:doc-citations`, `check:citation-symbols`, `check:citation-targets`,
+`check:census-freshness`, `check:census-integrity`, `check:census-row-move-labels`,
+`check:census-scope-coverage` and `check:census-policy-citations` exit **0**.
+`check:citation-targets` went to **211/210** on this branch before the repoints in §23.5's
+siblings — `census-passport.md`'s P46 pointer into `TrustScoreService.ts` (line 276) had become `*/` — and is back
+**at** 210 with the citation repointed by reading the claim.
+
+**Suites at this tree:** `trust-integration.test.ts` + `trustCensusRepairs.test.ts` run together
+under `node:test` — **112 pass / 0 fail, exit 0**. No live-DB check was run and none is claimed.
+
+### 23.7 A defect that exists only where §23 and §24 meet, found on integration
+
+**2026-09-23, on the merge of this branch into the `main` that already carried §24's
+change.** Neither branch was wrong on its own; the pair was.
+
+§23's skip asks `trust_profiles` whether this user has ever been scored
+(`artifacts/api-server/src/services/trust/TrustScoreService.ts:622#const { data: existing, error: existingError } = await db`).
+That read dropped its `error`, which is the exact defect §24 exists to remove: supabase-js
+RESOLVES on a database error, so an unreadable `trust_profiles` answered *"this user has never
+been scored"* — indistinguishable from a genuinely new user. The consequence is not a fabricated
+score (the branch's whole point is that nothing is written on that path) but an INVISIBLE one:
+the function returns `persisted: false` to callers that discard the return value, so a
+`trust_profiles` outage would turn every recalculation into a silent no-op with nothing counted
+anywhere.
+
+`check:unchecked-supabase-reads` is what caught it, on the integrated tree and not on either
+branch —
+**1 in-scope read ignores its `.error`**, `securityCheckSuite.test.ts` and
+`uncheckedSupabaseReads.test.ts` both red. It now binds `error` and throws, matching the
+`trust_caps` history read eleven lines below it, which had already been given that treatment on
+this branch for the same reason. Both throws in that block are plain `Error`s rather than §24's
+`TrustInputUnavailableError`; converting them together is a coherent follow-up and is NOT done
+here, because it would re-decide a convention this branch set.
+
+Measured, not asserted: four cases added to `trustFailureVisibility.test.ts` — the rejection, and
+two CONTROLs proving a genuinely never-scored user is still skipped and a capped user is still
+persisted. Reverting the fix turns the first one red (1 of 20), which is what makes the other
+three mean anything. The one claim NOT pinned by a test is recorded in the file: the scheduler
+cannot be driven to this refusal by a table-level failure injection, because its stale-user
+enumeration uses the same `.select("user_id")` the existence read does.
+
+**No row moves.** `C11` already grades `getTrustProfile`'s unread `error` as **W** and this is a
+different read on a different path; nothing here makes that verdict better or worse.
 
 ## §24 — Failure visibility, finished. NO ROW MOVES; three of the new signals reach NOTHING, and that is measured rather than assumed
 
@@ -2604,7 +2671,7 @@ lines that carry it were found:
 - `artifacts/api-server/src/lib/trustMaintenanceScheduler.ts:184#clearExpiredProbation(db:` is the sweep, which
   sets `on_probation: false` (`:188#on_probation:`) on every row whose term is past
   (`:190#.lt(`), and `:701#clearExpiredProbation(db);` is the maintenance pass calling it.
-- `artifacts/api-server/src/test/trust-integration.test.ts:1436` is `it("ends probation whose term has run")`,
+- `artifacts/api-server/src/test/trust-integration.test.ts:1460#ends` is `it("ends probation whose term has run")`,
   which seeds `probation_ends_at` a day in the past (`:1442#probation_ends_at:`) and asserts
   the sweep cleared exactly one (`:1447#assert.equal(r.probationCleared,`).
 
@@ -2653,3 +2720,78 @@ anchor, which is repointed to `artifacts/api-server/src/scripts/checkCensusFresh
 in the same commit.
 
 No verdict in this census changed.
+
+---
+
+---
+
+---
+
+## §26 — 2026-09-22 · The restriction sweep is bounded, and its outcome is told apart at the caller. **NO ROW MOVES.**
+
+**Read this first: no verdict in this document moves, and `head_commit` is NOT re-declared.** The
+owner approved the work (decision Q2: *"port the {expired, truncated, failed} result and bounded
+processing onto current main while preserving its scheduler wiring"*). The decision authorizes the
+CODE. It does not authorize moving a verdict, and acceptance evidence for a row move does not exist
+yet. C17 stays `C`, TRV2-09 stays `C`, and every other row is untouched by this section.
+
+### §26.1 What was still owed after C17 went `C`
+
+C17 was settled on two claims and both were true: `expireOldRestrictions` binds its own `error`, and
+the maintenance pass calls it. Two things the row never graded were still wrong:
+
+| | The defect | What it cost |
+|---|---|---|
+| 1 | The signature was `Promise<number>`, and every error path returned `0`. | A FAILED sweep and an IDLE one were the same observation at the call site. A permissions failure, a schema drift or a timeout read exactly like "nothing was due". |
+| 2 | The update was UNBOUNDED — one statement against a table that only grows. | A latent outage. `trust_restrictions` has held 0 rows for the life of production, so this has never fired; that is a fact about the table's size, not about the statement. |
+
+### §26.2 What changed
+
+- `artifacts/api-server/src/services/trust/TrustRestrictionService.ts:391#export async function expireOldRestrictions(`
+  returns `{ expired, truncated, failed }`. It reads a BOUNDED due set
+  (`artifacts/api-server/src/services/trust/TrustRestrictionService.ts:328#export const RESTRICTION_EXPIRY_BATCH = 500;`)
+  ordered by `expires_at` ascending, then lifts exactly those ids. `error` is bound on BOTH halves.
+- The write still re-asserts `lifted_at IS NULL`
+  (`artifacts/api-server/src/services/trust/TrustRestrictionService.ts:433#// moving the recorded moment a sanction ended. Do not remove this.`),
+  which is what stops a concurrent pass overwriting an earlier `lifted_at` with a later instant.
+  **That check was not weakened.** TRV2-09's claim is stronger than before, not weaker.
+- `artifacts/api-server/src/lib/trustMaintenanceScheduler.ts:679#const sweep = await expireOldRestrictions(db);`
+  — main's call site, unmoved. It now carries `restrictionSweepFailed` and
+  `restrictionSweepTruncated` out on `TrustMaintenanceResult`, and a failed sweep joins
+  `lastFailures` so `consecutiveFailures` stops resetting through it.
+- `artifacts/api-server/src/lib/stateMachines/registry.ts` — the `active → expired` writer evidence
+  is repointed to the same predicate on the same derivation column after the instant was hoisted
+  into `nowIso`. `checkStateMachineWriters` passes: 0 MISSING_WRITER, unchanged.
+
+### §26.3 The evidence, and what it does NOT establish
+
+`artifacts/api-server/src/test/trustCensusRepairs.test.ts` §4 and §4b, 18 → 25 assertions, all green.
+Five hand-reverts were run and each produced red, which is the only reason to believe the assertions
+bite: collapsing `failed` back to `false` → 2 red; removing the batch bound → 3 red; replacing the
+`expires_at` ordering → 1 red; dropping the `lifted_at IS NULL` re-assert on the write → 1 red;
+having the caller stop surfacing the outcome → 3 red. Restored: 25/25.
+
+**Starvation is proven, at the caller and at the service.** One pass over `RESTRICTION_EXPIRY_BATCH + 1`
+due rows reports `truncated`; passes repeat until it does not, and every eligible row ends lifted with
+none dropped. Separately, at a batch of 3 over 7 due rows, a NEWLY-lapsed restriction inserted
+mid-drain does not overtake the older ones, and the backlog still drains completely.
+
+**What this does NOT claim.** No live database was touched: the suite runs against the file's fake
+client, which resolves `{ data, error }` the way postgrest-js does. The `>= limit` truncation test is
+therefore a statement about the client contract, not about PostgREST's behaviour at 500 rows under
+load. No row is re-graded here and no headline number moves. C17's two citations were repointed to
+the lines `check:doc-citations` itself named — by searching for the anchor, not by adding an offset —
+and the verdict column of that row is byte-identical.
+
+> **NUMBERING — this section has moved twice, and the reason is worth the line.**
+> Written as `§22`, renumbered `§23` when PR #450's `§22` merged, and renumbered
+> again to `§26` when PR #449's `§23` merged. PR #450's own `§22` said what was
+> coming: *"sibling branches PR #449 and PR #458 append a §23 and a §24"*. Those
+> three numbers are `main`'s and are cited by number from `main`, so they are the
+> fixed point and this section is the one that moves; `§26` is the first free
+> number after this branch's `§25`. Nothing is discarded at any step — four
+> sections now describe the same restriction sweep from four angles (#450's
+> re-measurement, #449's zero-evidence persist, #458's failure visibility, and
+> this one's boundedness), and that is the census working rather than a mess:
+> **keep both, renumber one, say so**, the rule the census-sensing `§12`
+> collision was settled under.

@@ -109,6 +109,17 @@ const NOT_GRADED: readonly string[] = [
   // say what measured it.
   "artifacts/api-server/scripts/check-citation-symbols.mjs",
   "artifacts/api-server/scripts/check-citation-targets.mjs",
+  // A guard's own TEST file, added 2026-09-23 for the reason the two comments
+  // above give, one level further out. `check:unchecked-supabase-reads` is not
+  // invoked by `check:all`; it runs inside `scripts/run-security-checks.sh`,
+  // which these two suites are what actually executes in CI. So a census that
+  // wants to say "this guard is what caught it, and here is where it went red"
+  // has to name them — census-trust.md §23.7 does, for a defect that existed
+  // only on the merge of two branches and that neither branch's tree could see.
+  // They are not product code and no census grades them; naming the thing that
+  // measured you should not cost coverage.
+  "artifacts/api-server/src/test/securityCheckSuite.test.ts",
+  "artifacts/api-server/src/test/uncheckedSupabaseReads.test.ts",
   ".github/workflows/ci.yml",
   ".github/workflows/live-db.yml",
 ];

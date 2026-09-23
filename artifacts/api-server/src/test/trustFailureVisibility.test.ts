@@ -307,6 +307,69 @@ describe("Trust scoring: an unreadable input must not become a persisted score",
   });
 });
 
+describe("Zero-evidence skip: 'never scored' must not be what a failed read looks like", () => {
+  // The skip this covers arrived with PR #449 and the failure-visibility rule
+  // with PR #458; the defect only exists where the two meet, so it is measured
+  // here rather than in either branch's own file. `recalculateTrustScore` asks
+  // trust_profiles whether this user has ever been scored, and answers "no" for
+  // an unreadable table exactly as it does for a genuinely new user — then
+  // returns `persisted: false` to callers that discard the result.
+
+  function neverScoredTables() {
+    const tables = baseTables();      // no trust_profiles row, no events, no caps
+    return tables;
+  }
+
+  it("an unreadable trust_profiles is not a user who has never been scored", async () => {
+    const tables = neverScoredTables();
+    tables.trust_profiles.push(earnedProfile());   // this user HAS a real 92
+    const db = makeClient(tables, [
+      { table: "trust_profiles", op: "select", selectContains: "user_id" },
+    ]);
+
+    await assert.rejects(
+      () => recalculateTrustScore(db, USER_A),
+      (err: any) => /trust_profiles existence read failed/.test(String(err?.message)),
+      "a failed existence read must abort, not answer 'never scored'",
+    );
+
+    const row = tables.trust_profiles.find((p) => p.user_id === USER_A);
+    assert.equal(row.overall_score, 92, "the earned score must survive a failed existence read");
+  });
+
+  // NOT ASSERTED HERE, and the reason is worth recording: this refusal cannot be
+  // driven through runTrustMaintenance with a table-level failure injection. The
+  // skip only runs when a user has NO qualifying events, so the dirty-user path
+  // cannot reach it, and the stale-user path enumerates trust_profiles with the
+  // SAME `.select("user_id")` the existence read uses — so any injection that
+  // breaks the read breaks the enumeration first and the pass recalculates
+  // nobody. The scheduler's counting of a throw as `recalcFailures` is pinned by
+  // the caps test below, which shares the mechanism.
+
+  it("CONTROL — a genuinely never-scored user with no evidence is still skipped, and that is not a failure", async () => {
+    const tables = neverScoredTables();   // truly empty: the read SUCCEEDS and finds nothing
+    const db = makeClient(tables);
+
+    const r = await recalculateTrustScore(db, USER_A);
+
+    assert.equal(r.persisted, false, "no evidence and no prior row: nothing is written");
+    assert.equal(tables.trust_profiles.length, 0, "and nothing was written");
+  });
+
+  it("CONTROL — a user with a cap is still persisted, so the fix does not widen the skip", async () => {
+    const tables = neverScoredTables();
+    tables.trust_caps.push({
+      id: "cap-1", user_id: USER_A, category: "respect_safety",
+      ceiling_score: 40, reason_code: "behavior_confirmed", expires_at: null, lifted_at: null,
+    });
+    const db = makeClient(tables);
+
+    const r = await recalculateTrustScore(db, USER_A);
+
+    assert.equal(r.persisted, true, "a cap is deliberate recorded state, so the row is written");
+  });
+});
+
 describe("Trust maintenance: a refusal to score is COUNTED, not silently written", () => {
   it("a caps read failure lands as recalcFailures and leaves every profile untouched", async () => {
     const tables = baseTables();

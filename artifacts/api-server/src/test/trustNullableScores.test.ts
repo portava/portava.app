@@ -189,13 +189,36 @@ describe("Q1 — entirely unmeasured: no events means NO SCORE, not a neutral 50
   });
 
   it("persists nulls rather than 50s, so the row cannot lie later", async () => {
+    // FIXTURE CHANGED AT THE MERGE OF PR #449, and the change is the point.
+    //
+    // This used to seed NOTHING and assert that the written row held nulls.
+    // #449 made that population unreachable: a user with no events, no existing
+    // profile and no cap history is no longer PERSISTED at all — row absence is
+    // now the canonical "no earned trust" representation. So the old fixture
+    // asserted the contents of a row that correctly no longer exists.
+    //
+    // The guarantee this test exists for is unchanged and still needs a pin:
+    // WHEN a row is written, an unmeasured column is `null` and never a
+    // fabricated 50. So the fixture now produces a row the honest way — one
+    // measured category — and the other eight are checked for nulls. That is a
+    // stronger test than the original: it proves nulls and 50s can coexist in
+    // one row, which is the case a `NOT NULL DEFAULT 50` column could not
+    // represent and is exactly what 2999 changed.
     const tables = baseTables();
+    tables["trust_events"].push({
+      id: "ev-measured", user_id: USER, category: "host_quality",
+      delta: 6, severity: "minor", status: "confirmed",
+      created_at: new Date().toISOString(),
+    });
     await recalculateTrustScore(makeClient(tables), USER);
+
     const row = tables["trust_profiles"].find((r) => r.user_id === USER);
-    assert.ok(row, "a profile row is written");
-    assert.equal(row.overall_score, null, "the persisted overall score is null");
+    assert.ok(row, "a measured user IS persisted — #449 only withholds the row for zero evidence");
+    assert.notEqual(row.host_quality, null, "the measured category carries its measurement");
+    assert.notEqual(row.overall_score, null, "and the overall is a real number");
     for (const cat of ALL_CATEGORIES) {
-      assert.equal(row[cat], null, `the persisted ${cat} is null`);
+      if (cat === "host_quality") continue;
+      assert.equal(row[cat], null, `the unmeasured ${cat} is persisted as null, never as 50`);
     }
   });
 });
