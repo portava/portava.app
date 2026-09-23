@@ -493,7 +493,7 @@ still true at `3ca68cb06`, because a restatement that is not re-executed is just
 
 | id | was | now | re-executed at this commit |
 |---|---|---|---|
-| A3 | `NB → C` | C | `artifacts/api-server/src/services/trust/TrustScoreService.ts:380#export function measureEvidence` still computes the decayed evidence weight and count, and `artifacts/api-server/src/services/trust/TrustScoreService.ts:547#.update({ evidence_weight: evidence.weight, evidence_count: evidence.count })` still persists both. The migration that holds the columns is present at `artifacts/api-server/src/migrations/2371_trust_profiles_evidence.sql:1#-- 2371_trust_profiles_evidence.sql`. NULL still means not measured, 0 still means measured empty. |
+| A3 | `NB → C` | C | `artifacts/api-server/src/services/trust/TrustScoreService.ts:380#export function measureEvidence` still computes the decayed evidence weight and count, and `artifacts/api-server/src/services/trust/TrustScoreService.ts:561#.update({ evidence_weight: evidence.weight, evidence_count: evidence.count })` still persists both. The migration that holds the columns is present at `artifacts/api-server/src/migrations/2371_trust_profiles_evidence.sql:1#-- 2371_trust_profiles_evidence.sql`. NULL still means not measured, 0 still means measured empty. |
 | A8 | `W → C` | C | `artifacts/api-server/src/migrations/2370_trust_tables_privileges.sql:1#-- 2370_trust_tables_privileges.sql` is in the tree and still carries the REVOKE-then-grant-service_role shape with the RAISE-on-residue postcondition. **The row's caveat is unchanged and matters more than the verdict: applied to CI, NOT to production** — this pass made no production read and no production change, so A8's `C` is a statement about the migration, not about the live grants. |
 | C5 | `W → C` | C | `artifacts/api-server/src/services/trust/TrustEventService.ts:374#async function queueEventForReview` still writes the open `event_review` row, called on the pending-review path, and the admin queue that reads it is still routed at `artifacts/api-server/src/routes/trust-admin.ts:155#router.get("/admin/trust/events/pending", async (req, res) => {`. |
 | C13 | `W → C` | C | The cap table still keys on the type the emitter actually writes: `artifacts/api-server/src/services/trust/TrustCapService.ts:352#gps_coordinate_jump:       [{ category: "location_honesty", ceiling: 55, reasonCode: "coordinate_jump",      expiresInDays: 7  }],`. The residual owner decision on unproduced ceilings is unchanged and stays in §5's list. |
@@ -2442,7 +2442,7 @@ census-passport §19. What changes is three server-side capability grants.
 
 | row | measured at this head | verdict |
 |---|---|---|
-| `C8` (persist to `trust_profiles`) | the persist is now conditional, so the row was re-derived instead of carried. **The opposite reading, stated so it can be checked:** §1(c) treats a module header sentence as a requirement, `TrustScoreService.ts:8` promises persistence, and the code now has an exception the header does not name — which is the exact shape that makes `C15` a `W`. **It loses on a measurement:** the persist block is non-fatal (`artifacts/api-server/src/services/trust/TrustScoreService.ts:517#// Persist (non-fatal — return computed result even if persist fails)`), and `git show origin/main:` confirms that comment and that behaviour are unchanged by this branch — so a resolved `recalculateTrustScore` has never implied a row exists. The skip adds a second way for something that was already true, not a first. | **C, unmoved.** Header gap named in the row. |
+| `C8` (persist to `trust_profiles`) | the persist is now conditional, so the row was re-derived instead of carried. **The opposite reading, stated so it can be checked:** §1(c) treats a module header sentence as a requirement, `TrustScoreService.ts:8` promises persistence, and the code now has an exception the header does not name — which is the exact shape that makes `C15` a `W`. **It loses on a measurement:** the persist block is non-fatal (`artifacts/api-server/src/services/trust/TrustScoreService.ts:531#// Persist (non-fatal — return computed result even if persist fails)`), and `git show origin/main:` confirms that comment and that behaviour are unchanged by this branch — so a resolved `recalculateTrustScore` has never implied a row exists. The skip adds a second way for something that was already true, not a first. | **C, unmoved.** Header gap named in the row. |
 | `A11` (capabilities derive from Trust Evidence) | this row had exactly one counter-example and it is gone; §23.2 is the measurement. | **C, unmoved, counter-example closed.** |
 | `A1`, `A2` | the score is still retained and still scored per category for every user who has one; `A2`'s cited region moved +6 lines and was repointed. | **unmoved.** |
 | `A3` (evidence behind the score) | `measureEvidence` and the two-column persist are both still present and both still inside the persisted path; for a skipped user nothing is written, including the evidence columns, which is the same "no row" state `A3` already treats as not-measured. | **unmoved.** |
@@ -2508,6 +2508,40 @@ siblings — `census-passport.md`'s P46 pointer into `TrustScoreService.ts` (lin
 
 **Suites at this tree:** `trust-integration.test.ts` + `trustCensusRepairs.test.ts` run together
 under `node:test` — **112 pass / 0 fail, exit 0**. No live-DB check was run and none is claimed.
+
+### 23.7 A defect that exists only where §23 and §24 meet, found on integration
+
+**2026-09-23, on the merge of this branch into the `main` that already carried §24's
+change.** Neither branch was wrong on its own; the pair was.
+
+§23's skip asks `trust_profiles` whether this user has ever been scored
+(`artifacts/api-server/src/services/trust/TrustScoreService.ts:485#const { data: existing, error: existingError } = await db`).
+That read dropped its `error`, which is the exact defect §24 exists to remove: supabase-js
+RESOLVES on a database error, so an unreadable `trust_profiles` answered *"this user has never
+been scored"* — indistinguishable from a genuinely new user. The consequence is not a fabricated
+score (the branch's whole point is that nothing is written on that path) but an INVISIBLE one:
+the function returns `persisted: false` to callers that discard the return value, so a
+`trust_profiles` outage would turn every recalculation into a silent no-op with nothing counted
+anywhere.
+
+`check:unchecked-supabase-reads` is what caught it, on the integrated tree and not on either
+branch —
+**1 in-scope read ignores its `.error`**, `securityCheckSuite.test.ts` and
+`uncheckedSupabaseReads.test.ts` both red. It now binds `error` and throws, matching the
+`trust_caps` history read eleven lines below it, which had already been given that treatment on
+this branch for the same reason. Both throws in that block are plain `Error`s rather than §24's
+`TrustInputUnavailableError`; converting them together is a coherent follow-up and is NOT done
+here, because it would re-decide a convention this branch set.
+
+Measured, not asserted: four cases added to `trustFailureVisibility.test.ts` — the rejection, and
+two CONTROLs proving a genuinely never-scored user is still skipped and a capped user is still
+persisted. Reverting the fix turns the first one red (1 of 20), which is what makes the other
+three mean anything. The one claim NOT pinned by a test is recorded in the file: the scheduler
+cannot be driven to this refusal by a table-level failure injection, because its stale-user
+enumeration uses the same `.select("user_id")` the existence read does.
+
+**No row moves.** `C11` already grades `getTrustProfile`'s unread `error` as **W** and this is a
+different read on a different path; nothing here makes that verdict better or worse.
 
 ## §24 — Failure visibility, finished. NO ROW MOVES; three of the new signals reach NOTHING, and that is measured rather than assumed
 

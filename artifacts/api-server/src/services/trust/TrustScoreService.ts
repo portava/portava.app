@@ -482,11 +482,25 @@ export async function recalculateTrustScore(
   // the ceiling is gone, and the user is still one an admin has deliberately
   // touched.
   if (events.length === 0) {
-    const { data: existing } = await db
+    const { data: existing, error: existingError } = await db
       .from("trust_profiles")
       .select("user_id")
       .eq("user_id", userId)
       .maybeSingle();
+    if (existingError) {
+      // Same rule as the trust_caps read below, and the same rule main's
+      // loaders now follow: supabase-js RESOLVES on a DB error, so an unread
+      // `error` here makes an unreachable table look like "this user has never
+      // been scored". That answer decides to write nothing AND reports
+      // `persisted: false` to callers that discard the result, so the outage
+      // would be invisible — every recalculation silently a no-op. A throw is
+      // the signal the call sites already act on: every production caller
+      // discards the return value, and the maintenance scheduler counts a throw
+      // as `recalcFailures`. A `degraded` field would be read by none of them.
+      throw new Error(
+        `recalculateTrustScore: trust_profiles existence read failed for ${userId} — ${(existingError as any).message ?? (existingError as any).code ?? "db_error"}`,
+      );
+    }
     const { data: capRows, error: capRowsError } = await db
       .from("trust_caps")
       .select("id")
