@@ -163,9 +163,11 @@ GRANT EXECUTE ON FUNCTION public.telegraph_unsend_message_before_seen(uuid, uuid
 -- ── Postconditions ────────────────────────────────────────────────────────────
 DO $$
 DECLARE
-  v_prosecdef boolean;
-  v_config    text[];
-  v_src       text;
+  v_prosecdef          boolean;
+  v_config             text[];
+  v_src                text;
+  v_pos_seen           integer;
+  v_locks_before_seen  integer;
 BEGIN
   SELECT p.prosecdef, p.proconfig, p.prosrc INTO v_prosecdef, v_config, v_src
     FROM pg_proc p
@@ -193,8 +195,45 @@ BEGIN
   END IF;
 
   -- The lock ordering 2325 and 3000 share must survive the round trip.
-  IF v_src NOT LIKE '%FOR UPDATE%' THEN
-    RAISE EXCEPTION 'POSTCONDITION FAILED: the FOR UPDATE locks are missing — the §7.4 race would be open.';
+  --
+  -- A bare `v_src LIKE '%FOR UPDATE%'` is NOT good enough here, and this is worth
+  -- spelling out because it reads like it is. The body takes TWO row locks: one
+  -- on the message and one on the recipients' receipt rows. Drop the receipt lock
+  -- -- the one that actually closes the §7.4 race -- and the words `FOR UPDATE`
+  -- are still in the body, because the message lock uses them too. A presence
+  -- check stays green over exactly the mutation it exists to catch. (Measured by
+  -- the Case B thread against the live function, not reasoned: with the receipt
+  -- lock removed, the text assertion passed and only an executed pg_locks probe
+  -- went red.)
+  --
+  -- So count them, and count them only in the part of the body that runs BEFORE
+  -- the seen-check. That pins both facts at once: two locks exist, and both are
+  -- taken before the read they protect. Locks taken after the check would satisfy
+  -- any runtime probe and close nothing.
+  --
+  -- Checked against the text this file actually restores, not just reasoned:
+  -- untouched -> 2 locks before the seen-check, receipt lock named, PASSES;
+  -- receipt lock removed -> 1, FAILS; message lock removed -> 1, FAILS. The bare
+  -- presence check returned true on all three. The same three runs against the
+  -- live 3000 body on portava-ci gave the same numbers (2 / 1 / 1).
+  v_pos_seen := strpos(v_src, 'INTO v_seen_count');
+  IF v_pos_seen = 0 THEN
+    RAISE EXCEPTION 'POSTCONDITION FAILED: the seen-check is missing from the restored body.';
+  END IF;
+
+  v_locks_before_seen :=
+    array_length(string_to_array(left(v_src, v_pos_seen), 'FOR UPDATE'), 1) - 1;
+
+  IF v_locks_before_seen < 2 THEN
+    RAISE EXCEPTION
+      'POSTCONDITION FAILED: expected 2 FOR UPDATE locks before the seen-check, found %. The §7.4 race would be open.',
+      v_locks_before_seen;
+  END IF;
+
+  -- Name the second lock's target as well, so a body that locked the message
+  -- row twice could not satisfy the count above.
+  IF left(v_src, v_pos_seen) NOT LIKE '%message_thread_members%FOR UPDATE%' THEN
+    RAISE EXCEPTION 'POSTCONDITION FAILED: no FOR UPDATE on message_thread_members before the seen-check.';
   END IF;
 
   IF has_function_privilege('authenticated',
