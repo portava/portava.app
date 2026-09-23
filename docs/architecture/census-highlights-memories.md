@@ -2040,7 +2040,7 @@ through the Compass feed, the prompt context lines and `lib/discoveryModifiers.t
 tables are in the committed production schema snapshot. The rebuild is **not** on-demand: it
 runs daily from
 `artifacts/api-server/src/lib/intelligenceGraphScheduler.ts:30#REBUILD_INTERVAL_MS`, started at
-boot by `artifacts/api-server/src/index.ts:128#startIntelligenceGraphScheduler`.
+boot by `artifacts/api-server/src/index.ts:129#startIntelligenceGraphScheduler`.
 
 **Defect 1 — §28.10, eligibility.** The gate was `state = 'published' AND visibility <>
 'only_me'`. `memories.visibility` is a **six**-rung ladder, so `<> 'only_me'` admitted four
@@ -5222,7 +5222,7 @@ Named so the gate is not read as complete:
 |---|---|---|
 | `artifacts/api-server/src/routes/engagement.ts:99#case "highlight_like": {` | an access verdict for a `highlight_like` target: `owner === viewer \|\| visibility === "public"` | its own visibility rule is already cruder than `canViewHighlight` (no circle, no trip, no block); it wants the whole gate, not a bolt-on |
 | `artifacts/api-server/src/routes/collections.ts:525#} else if (type === "highlight") {` | `caption` and `media_url` of any Highlight id saved into a collection, no visibility check at all | a collection preview of a Highlight that has since gone private or `KEEP_PRIVATE_FOREVER` still carries its caption; the media bytes are separately gated by `mediaAccess` |
-| `artifacts/api-server/src/lib/mediaAccess.ts:559#3e. Highlight media` | the media bytes: public + unexpired | §10's own invariant, *"Media visibility is independent from Memory visibility"*; whether `KEEP_PRIVATE_FOREVER` should reach the bytes is a product decision this lane does not take |
+| `artifacts/api-server/src/lib/mediaAccess.ts:685#3e. Highlight media` | the media bytes: public + unexpired | §10's own invariant, *"Media visibility is independent from Memory visibility"*; whether `KEEP_PRIVATE_FOREVER` should reach the bytes is a product decision this lane does not take |
 | recap | — | `GET /compass/me/recaps` and `GET /trips/:tripId/memories/recap` project Memories, not Highlights; there is no Highlight recap surface for `DO_NOT_INCLUDE_IN_RECAPS` to act on, so by rule 7 the control has nothing to violate today |
 | personalization | — | unchanged from H210: named, stored, consulted by no personalization path |
 

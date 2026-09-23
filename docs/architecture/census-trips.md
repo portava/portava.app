@@ -706,7 +706,7 @@ Nothing in this section exists. The evidence is one grep, run over
 | TR73 | `occurredAt` distinct from `recordedAt` | **C** | **Moved N→C.** `2420_trip_kernel_foundation.sql:112#occurred_at` is the client-observed instant and `:113#recorded_at` is when the database wrote it. Two columns, distinct, exactly as §4.3 asks. |
 | TR74 | Outbox pattern for asynchronous consumers | **C** | **Moved N→C.** `2420_trip_kernel_foundation.sql:156#trip_outbox`, written in the same transaction as the event (`2590:818#trip_outbox`) and indexed on the unpublished set. |
 | TR75 | Workers publish/retry idempotently | **W** | Two trip workers exist and both are real: `server/trips/projectionWorkers/tripReminderScheduler.ts` (with `is_sent` + `reminder_delivered_at` + `reminder_retry_count`, migrations `0138`–`0140`) and `server/trips/projectionWorkers/tripCrewLiveShareScheduler.ts`. They are timer-driven pollers over their own tables, not outbox consumers, and the reminder one is idempotent by a `is_sent` flag rather than by event id. |
-| TR76 | Consumers persist processed event IDs or use deterministic projection version checks | **C** | **Moved N→C.** A projection worker exists and is registered: `lib/mapTripProjectionWorker.ts:82#runTripMapProjectionPass` drains unpublished outbox rows in `aggregate_version` order per trip and stamps `published_at`; `:126#startTripMapProjectionScheduler` is called at `index.ts:161#startTripOutboxWorker`. |
+| TR76 | Consumers persist processed event IDs or use deterministic projection version checks | **C** | **Moved N→C.** A projection worker exists and is registered: `lib/mapTripProjectionWorker.ts:82#runTripMapProjectionPass` drains unpublished outbox rows in `aggregate_version` order per trip and stamps `published_at`; `:126#startTripMapProjectionScheduler` is called at `index.ts:162#startTripOutboxWorker`. |
 
 ### §5 Database Schema
 
@@ -3648,7 +3648,7 @@ carried a freshness (TR368). No metric measured read-model lag (TR394).
   `serveMapProjection`, `server/trips/readRoutes/tripMapProjection.ts:81#serveMapProjection`,
   so the two paths cannot serve two projections), `/crew` (`:261#crew`),
   `/context` (`:303#context`), `/safety` (`:327#safety`);
-  registered at `routes/index.ts:177#tripProjectionsRouter`. Every
+  registered at `routes/index.ts:178#tripProjectionsRouter`. Every
   response spreads the envelope; every failed read that a projection IS is
   refused with `TRIP_PROJECTION_UNAVAILABLE` on the wire
   (`:108#TRIP_PROJECTION_UNAVAILABLE`), and a flag-off crew
@@ -5117,7 +5117,7 @@ re-derives and cites rather than argues.
   `trip_map_projection_applied` and retried by `attempts`
   (`src/migrations/2520_trip_map_projection_worker.sql:53#trip_map_projection_applied`),
   is scheduled at boot (`lib/mapTripProjectionWorker.ts:126#startTripMapProjectionScheduler`,
-  `src/index.ts:161#startTripOutboxWorker()`), and §41's pipeline
+  `src/index.ts:162#startTripOutboxWorker()`), and §41's pipeline
   test drains it twice on a real database and the second drain applies
   nothing (`src/test/db/tripKernelPipeline.db.test.ts:127#§19.4`).
 
@@ -5181,7 +5181,7 @@ counting exactly one direct dispatch in the router itself
 (`src/scripts/checkTripPushPolicy.ts:75#routerCalls`). **`check:write-path-columns`**
 named 2782 and 2785's tables and 2783's `trip_goals.scope` / `weight` as
 absent from the CI schema — true until merge, ledgered where 2780/2781/2784
-already were (`src/scripts/checkWritePathColumns.ts:212#trip_transport_segments`) —
+already were (`src/scripts/checkWritePathColumns.ts:229#trip_transport_segments`) —
 and one read it could not see: the pulse's seven context reads took a table
 *name*, and now take a built query
 (`domain/trips/projections/TripPulseProjection.ts:154#PromiseLike`). Making them
@@ -5388,7 +5388,7 @@ mutations are named with the rows.
   its own so one failure does not stop the other, DISABLED / NO_CLIENT /
   ERROR told apart; 2792 seeds the flag FALSE with both functions as its
   precondition (`migrations/2792_trip_retention_sweep_flag.sql:36#trip_retention_sweep_enabled`);
-  `index.ts` starts it (`src/index.ts:115#startTripProjectionWorkers();`).
+  `index.ts` starts it (`src/index.ts:116#startTripProjectionWorkers();`).
   `test/tripRetentionScheduler.test.ts:53#BOTH` pins the flag gate, both rpc
   names, the string-count coercion and the partial failure. Mutation: the
   flag check removed (2 red).
@@ -6556,7 +6556,7 @@ code changes in this section.
   writer are one worker
   (`lib/mapTripProjectionWorker.ts:126#startTripOutboxWorker as startTripMapProjectionScheduler`),
   started beside the reminder, live-share and retention schedulers
-  (`src/index.ts:161#startTripOutboxWorker();`); the reservation
+  (`src/index.ts:162#startTripOutboxWorker();`); the reservation
   extractor is the one integration adapter
   (`routes/tripReservations.ts:157#extractReservations(text)`). What §24
   names exists piece by piece; the `server/trips/` layout, with an outbox
@@ -6794,7 +6794,7 @@ share a suffix — was found by the compiler and fixed by hand
   (`server/trips/projectionWorkers/index.ts:29#export const TRIP_PROJECTION_WORKERS`,
   `server/trips/projectionWorkers/index.ts:35#export function startTripProjectionWorkers(`);
   `src/index.ts` starts the two things
-  (`src/index.ts:161#startTripOutboxWorker();`, `src/index.ts:115#startTripProjectionWorkers();`)
+  (`src/index.ts:162#startTripOutboxWorker();`, `src/index.ts:116#startTripProjectionWorkers();`)
   where it used to start four. `integrationAdapters/` holds the reservation
   extractor (`server/trips/integrationAdapters/reservationExtract.ts:86#export async function extractReservations(`),
   consumed by the reservations route

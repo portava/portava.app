@@ -27,6 +27,7 @@ import assert from "node:assert/strict";
 import { KNOWN } from "../scripts/checkFlagSchemaPrerequisites.js";
 import { spawnSync } from "node:child_process";
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { stripComments } from "../scripts/lib/stripComments.js";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -286,6 +287,44 @@ describe("the script", () => {
     const r = run({ FLAG_SCHEMA_SNAPSHOT: p });
     assert.equal(r.status, 1, r.stdout);
     assert.match(r.stdout, /NEW INSTANCE OF THE CLASS: wall_enabled is ON in production/);
+  });
+
+  it("does not call process.exit, because that drops the FAIL block it just wrote", () => {
+    // THE CASE ABOVE WAS "FLAKY" AND WAS NOT. It went red on CI while passing in
+    // isolation, and the reason is in this script's exit path rather than in
+    // anything it measures.
+    //
+    // Node's stdout is ASYNCHRONOUS when it is a pipe, which it is whenever the
+    // script is spawned rather than run by a human — `run()` above spawns it
+    // with pipes, and so does every CI step that captures output.
+    // `process.exit()` does not wait for a queued write. The FAIL block is the
+    // LAST thing the script writes, so it is the thing that goes missing, and
+    // the exit code stays 1 either way: a failure arrives with no reason
+    // attached, and whether it does depends on machine load.
+    //
+    // Measured before the fix, six spawns under CPU load: four carried 27,662
+    // bytes and the FAIL block, two carried 20,695 and 21,546 with the block
+    // gone, all six exited 1. After it: six of six complete.
+    //
+    // This case pins the fix rather than the symptom, because the symptom is
+    // load-dependent and a test that reproduces it only sometimes is a test
+    // that fails sometimes. `process.exitCode` plus a return is the spelling
+    // that lets the writes land; `process.exit` is the one that does not.
+    // stripComments, not the raw text: the docblock this fix added SAYS
+    // "process.exit()", and a guard that reads its own explanation as the thing
+    // it forbids is the exact bug src/scripts/lib/stripComments.ts exists to
+    // stop. Its conservative direction is the right one here too — it can only
+    // remove text, so this can report a false clean, never a false call.
+    const src = stripComments(readFileSync(SCRIPT, "utf8"));
+    const calls = [...src.matchAll(/process\.exit\s*\(/g)];
+    assert.equal(
+      calls.length,
+      0,
+      `checkFlagSchemaPrerequisites.ts calls process.exit ${calls.length} time(s); ` +
+        "set process.exitCode and return instead, so stdout is flushed before Node exits",
+    );
+    // And the exit code still has to be real, not merely un-truncated.
+    assert.equal(run({ FLAG_SCHEMA_SNAPSHOT: join(fixture, "does-not-exist.json") }).status, 2);
   });
 
   it("exits 1 when a KNOWN entry goes stale (the migration lands in production)", () => {

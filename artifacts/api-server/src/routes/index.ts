@@ -96,6 +96,7 @@ import restrictRouter from "./restrict";
 import eventsRouter from "./events";
 import memoriesRouter from "./memories";
 import storiesRouter from "./stories";
+import storyArchiveRouter from "./storyArchive";
 import closeFriendsRouter from "./closeFriends";
 import reviewsRouter from "./reviews";
 import appealsRouter from "./appeals";
@@ -252,6 +253,9 @@ router.use(reportsRouter);
 router.use(restrictRouter);
 router.use(eventsRouter);
 router.use(memoriesRouter);
+// Registered BEFORE storiesRouter: /stories/retention-policy would otherwise be
+// captured by /stories/:id and answered as an invalid story id.
+router.use(storyArchiveRouter);
 router.use(storiesRouter);
 router.use(closeFriendsRouter);
 router.use(reviewsRouter);
