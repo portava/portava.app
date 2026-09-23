@@ -1865,7 +1865,7 @@ Implementation's own report was deliberately withheld from that role.
 
 Both halves are now true, and neither is taken on the builder's word:
 
-- The route is `artifacts/api-server/src/routes/trust-admin.ts:391#router.post(` — behind
+- The route is `artifacts/api-server/src/routes/trust-admin.ts:396#router.post("/admin/trust/users/:userId/score/override"` — behind
   `requireAdmin`, mounted at `artifacts/api-server/src/routes/index.ts:223#trustAdminRouter`,
   **awaiting** `adminOverrideScore` and returning the read-back `persistedScore` and
   `ceilingBinding` rather than a bare `ok`.
@@ -1882,7 +1882,7 @@ hold; the spelling difference is recorded rather than smoothed over.
 
 | id | was | now | evidence |
 |---|---|---|---|
-| C22 | W | **C** | **The row's own settlement condition, met and independently re-derived.** §15 wrote it in: *"a `POST /admin/trust/users/:userId/score-override` on `routes/trust-admin.ts` behind `requireAdmin`, plus a route test asserting the ceiling on the row."* The route is `artifacts/api-server/src/routes/trust-admin.ts:391#router.post(`, behind `requireAdmin`, mounted at `artifacts/api-server/src/routes/index.ts:223#trustAdminRouter`; it **awaits** `adminOverrideScore` and returns the read-back `persistedScore` and `ceilingBinding` instead of a bare `ok`, so a ceiling that did not persist cannot be reported as one that did. An independent Verification role — given the checklist and the code but **not** the builder's report — re-ran all four of §15.4's named mutations and **all four go red**; P4, inverting the ceiling comparison at `artifacts/api-server/src/services/trust/TrustScoreService.ts:186#Math.min`, reddens 16 cases across six describe blocks, so CAP semantics are pinned by behaviour rather than by a comment. The built path spells `/score/override` where the row wrote `/score-override`; the capability and its test are what the criterion names, and the spelling difference is recorded rather than smoothed over. **Turns red if** any of §14.4's four characterization assertions starts failing, if the route loses `requireAdmin`, if `adminOverrideScore` stops being awaited, or if `ceilingBinding` is reported unconditionally. |
+| C22 | W | **C** | **The row's own settlement condition, met and independently re-derived.** §15 wrote it in: *"a `POST /admin/trust/users/:userId/score-override` on `routes/trust-admin.ts` behind `requireAdmin`, plus a route test asserting the ceiling on the row."* The route is `artifacts/api-server/src/routes/trust-admin.ts:396#router.post("/admin/trust/users/:userId/score/override"`, behind `requireAdmin`, mounted at `artifacts/api-server/src/routes/index.ts:223#trustAdminRouter`; it **awaits** `adminOverrideScore` and returns the read-back `persistedScore` and `ceilingBinding` instead of a bare `ok`, so a ceiling that did not persist cannot be reported as one that did. An independent Verification role — given the checklist and the code but **not** the builder's report — re-ran all four of §15.4's named mutations and **all four go red**; P4, inverting the ceiling comparison at `artifacts/api-server/src/services/trust/TrustScoreService.ts:266#Math.min(cur, row.ceiling_score)`, reddens 16 cases across six describe blocks, so CAP semantics are pinned by behaviour rather than by a comment. The built path spells `/score/override` where the row wrote `/score-override`; the capability and its test are what the criterion names, and the spelling difference is recorded rather than smoothed over. **Turns red if** any of §14.4's four characterization assertions starts failing, if the route loses `requireAdmin`, if `adminOverrideScore` stops being awaited, or if `ceilingBinding` is reported unconditionally. |
 
 > **Trust, at this tree: 108 requirements · 85 BUILT-AND-CORRECT · 15 BUILT-BUT-WRONG ·
 > 6 NOT-BUILT · 2 CANNOT-VERIFY → CONSTRUCTED 100 / 108 = 92.6 % · CORRECT 85 / 108 = 78.7 %.**
@@ -2349,7 +2349,7 @@ Consumers were counted, not assumed. `grep -rn` over `artifacts/api-server/src` 
 |---|---|---|
 | `capsUnavailable` | 1 — the admin dossier that sets it | **yes**, `GET /admin/trust/users/:userId` |
 | `incomplete` | **0.** The sole caller is `routes/admin.ts:1835#void revokeModerationTrustConsequences(sc, adminUserId, userId, reason ?? "Account restore`, which DISCARDS the result | no — an ERROR log and the `trust_admin_actions` metadata only |
-| `probationUnknown` | `getRecoveryStatus` has exactly ONE consumer, `getSafeTrustSummary`, which has exactly ONE consumer, `artifacts/api-server/src/services/passport/PassportProjectionService.ts:1289#  const summary = await getSafeTrustSummary(sc, userId);` — and that call forwards only `publicLevel`, `strengths` and `profileUnavailable` | **no** |
+| `probationUnknown` | `getRecoveryStatus` has exactly ONE consumer, `getSafeTrustSummary`, which has exactly ONE consumer, `artifacts/api-server/src/services/passport/PassportProjectionService.ts:1360#  const summary = await getSafeTrustSummary(sc, userId);` — and that call forwards only `publicLevel`, `strengths` and `profileUnavailable` | **no** |
 | `activeCapsUnknown` | same chain, same answer | **no** |
 
 So two of the four new fields are **built and wired to nothing today**, in the sense §6 already
