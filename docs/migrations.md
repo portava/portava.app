@@ -2928,3 +2928,115 @@ be invalidated — but the same apply against a populated database leaves every
 historical row NULL, which is the one true statement available about a reading
 nobody took. A default would have asserted, of every one of those rows, that
 somebody measured it.
+
+> **Both sections below were appended independently on 2026-09-23** — this one
+> by the branch that applied 2991, the next by PR #526 for 2998. They document
+> DIFFERENT migrations to the same database and neither supersedes the other,
+> so the merge keeps both rather than choosing. Read together they also close a
+> loop: #526's section records that `certify:migrations` failed at STAGE 1 on
+> ledger parity, naming `2966` and `2991` as rows whose files are not on `main`.
+> Those two files are THIS branch's, and that stage-1 failure clears when it
+> merges — which is the same fact this section's own paragraph states from the
+> other end.
+
+## `2998_story_retention.sql` — applied to `portava-ci` 2026-09-23, NOT to production
+
+The owner-archive retention unit: `stories.deleted_at` with the trigger that
+freezes it, the `story_purge_queue` ledger, `job_health.last_success_at`, and
+three indexes. Merged to `main` as `6f7d51977` (PR #524) and applied by the
+push run that followed.
+
+| | `portava-ci` | production |
+|---|---|---|
+| `2998_story_retention.sql` | **applied** 2026-09-23 00:20:26 UTC | **not applied** |
+
+Ledger row: `applied_by='ci'`, a real 64-character sha256, written inside the
+same transaction as the migration.
+
+### Read this before reading "applied" as "certified"
+
+`certify:migrations` **did not certify this apply.** It failed at **STAGE 1
+(ledger parity)** and, by its own rule, ran none of the stages after it — so
+its stage 4, which re-runs each migration's own postconditions after the
+commit, never executed for 2998.
+
+The stage-1 failure is **not about 2998**. It names two ledger rows whose files
+are not in `src/migrations/` on `main`:
+
+    • 2966_telegraph_history_bound_close.sql   (applied_by=manual)
+    • 2991_message_translations_confidence.sql (applied_by=manual)
+
+    582 file(s) on disk, 584 ledger row(s) on hwokxgbmezheskbzskfr
+
+Both were hand-applied from another branch (PR #521) and clear when it lands.
+They have been failing this gate on `main` since before 2998 existed.
+
+### What was established instead, and how
+
+Two independent readings, because "the apply step exited 0" is a claim about a
+request rather than about a database:
+
+1. **`audit:schema` passed on `main`**, in the same job, immediately after the
+   apply — *"Audited 578 migration files, 6554 claimed objects. ✔ Live schema
+   contains every object claimed by the migrations."* This is the check that was
+   RED on every #524 PR run, naming 2998's eight missing objects. It is the
+   independent auditor, not the applier reporting on itself.
+
+2. **2998's own postcondition block was re-run against `portava-ci`** — the
+   thing certify stage 4 would have done — and all nine held: the column, the
+   trigger's existence, its coverage of *both* INSERT and UPDATE, the freeze
+   function reading `OLD.deleted_at`, the table, `job_health.last_success_at`,
+   all 14 queue columns, the absence of any foreign key on the queue, and no
+   `state='deleted'` row without a clock.
+
+   A block that raises nothing is indistinguishable from a block that ran
+   nothing, so a **negative control** was run through the same path: a variant
+   demanding 99 `deleted_at` columns failed loudly with
+   `P0001 ... (found 1 columns, demanded 99)`. The silent pass above is
+   therefore a pass.
+
+### Production
+
+Not applied, and **not** applied as a side effect of anything here: the
+repository's applier refuses the production ref by construction, and
+`live-db.yml` gates the apply on `github.ref == 'refs/heads/main'` against the
+sanctioned CI project only.
+
+Production state, read 2026-09-23 00:14:40 UTC — `story_purge_queue` absent,
+`stories.deleted_at` absent, `job_health.last_success_at` absent; `stories`,
+`story_views`, `story_reactions` and `story_replies` all **0 rows**.
+
+Deploying `main` ahead of this apply is safe, and the reason is narrower than
+"the job reports a failure" — it is an **order**. `enqueueDueStories` runs
+first and its second query names `deleted_at`; PostgREST answers 42703 and the
+throw aborts the pass before `purgeExpiredEngagement` is reached, so no viewer,
+reaction or reply row is deleted on a database with no purge ledger behind it.
+That ordering is now pinned by a test (`storyRetention.test.ts`, "aborts before
+deleting any engagement row when deleted_at is not in the database"), which was
+mutation-tested by swapping the two calls.
+
+### Rollback
+
+    DROP TRIGGER IF EXISTS stories_freeze_deleted_at_trg ON public.stories;
+    DROP FUNCTION IF EXISTS public.stories_freeze_deleted_at();
+    DROP INDEX IF EXISTS public.stories_deleted_at_idx;
+    DROP TABLE IF EXISTS public.story_purge_queue;
+    ALTER TABLE public.stories    DROP COLUMN IF EXISTS deleted_at;
+    ALTER TABLE public.job_health DROP COLUMN IF EXISTS last_success_at;
+    DELETE FROM public.schema_migration_ledger WHERE filename = '2998_story_retention.sql';
+
+Nothing here destroys user data on either database as they stand. It is written
+down because a migration whose reversal has not been written down is not ready
+to apply — not because reversal is anticipated.
+
+### Re-establish any of this independently
+
+    SELECT filename, applied_by, applied_at, length(checksum)
+      FROM public.schema_migration_ledger
+     WHERE filename = '2998_story_retention.sql';
+    -- portava-ci: applied_by='ci', 2026-09-23 00:20:26.913608+00, 64
+
+    SELECT to_regclass('public.story_purge_queue'),
+           (SELECT count(*) FROM information_schema.columns
+             WHERE table_schema='public' AND table_name='story_purge_queue');
+    -- portava-ci: story_purge_queue, 14   |   production: NULL, 0

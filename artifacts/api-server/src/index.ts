@@ -225,10 +225,16 @@ app.listen(port, (err) => {
   // starting it here is safe even before the flag is turned on.
   startAccountDeletionScheduler();
   // Purges the Story archive on the owner-decided windows (365d expired, 30d
-  // owner-deleted, 30d engagement). Hourly. Safe to start before migration 2998
-  // is applied: the pass reports the missing ledger as a failure and purges
-  // nothing, rather than proceeding without a durable record of what it is
-  // about to destroy.
+  // owner-deleted, 30d engagement). Hourly.
+  //
+  // Safe to start before migration 2998 is applied, and the reason is narrower
+  // than "it reports a failure" — it is an ORDER, so say which:
+  // enqueueDueStories runs first and filters .not("deleted_at","is",null);
+  // PostgREST errors on a column the database lacks; `throw deletedErr` aborts
+  // the pass before purgeExpiredEngagement is reached, so nothing is deleted
+  // and the tick records the failure. Reordering those two calls would let the
+  // engagement purge delete viewers, reactions and replies on a database with
+  // no purge ledger behind it. Keep enqueue first.
   startStoryRetentionScheduler();
   startInviteSlotReconciler();
   startInviteSlotSweeper();

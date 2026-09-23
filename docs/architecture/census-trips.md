@@ -5181,7 +5181,7 @@ counting exactly one direct dispatch in the router itself
 (`src/scripts/checkTripPushPolicy.ts:75#routerCalls`). **`check:write-path-columns`**
 named 2782 and 2785's tables and 2783's `trip_goals.scope` / `weight` as
 absent from the CI schema — true until merge, ledgered where 2780/2781/2784
-already were (`src/scripts/checkWritePathColumns.ts:229#trip_transport_segments`) —
+already were (`src/scripts/checkWritePathColumns.ts:212#trip_transport_segments`) —
 and one read it could not see: the pulse's seven context reads took a table
 *name*, and now take a built query
 (`domain/trips/projections/TripPulseProjection.ts:154#PromiseLike`). Making them

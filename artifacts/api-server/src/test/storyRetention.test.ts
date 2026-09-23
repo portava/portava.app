@@ -74,6 +74,19 @@ class FakeDb {
   tables: Record<string, Row[]> = {};
   /** table -> error returned instead of rows, for the fail-closed cases. */
   readErrors: Record<string, any> = {};
+  /**
+   * table -> columns the database does NOT have. A query that NAMES one fails
+   * with 42703; every other query on the same table still works.
+   *
+   * That distinction is the whole point. `readErrors` breaks a table outright,
+   * which is indistinguishable from an outage and makes every caller fail
+   * together. A migration that has not been applied is narrower and more
+   * dangerous: most reads succeed, and only the ones mentioning the new column
+   * fail. That is the shape production has today with 2998 unapplied, and it is
+   * the only shape in which the order of the calls inside runStoryRetention can
+   * be observed.
+   */
+  missingColumns: Record<string, string[]> = {};
   /** bucket -> the object paths that exist. */
   storage: Record<string, Set<string>> = {};
   /** When true, remove() resolves cleanly but leaves the object in place. */
@@ -149,9 +162,33 @@ function makeClient(db: FakeDb): any {
       return out;
     };
 
+    /** Every column this query names, including the ones inside an `or` term. */
+    const namedColumns = (): string[] => {
+      const out: string[] = [];
+      for (const [col, op, val] of filters) {
+        if (op !== "or") { out.push(col); continue; }
+        for (const term of String(val).split(",").map((t) => t.trim()).filter(Boolean)) {
+          const firstDot = term.indexOf(".");
+          if (firstDot > 0) out.push(term.slice(0, firstDot));
+        }
+      }
+      if (orderCol) out.push(orderCol);
+      return out;
+    };
+
     const run = (): any => {
       const err = db.readErrors[table];
       if (err) return { data: null, error: err, count: null };
+
+      const absent = db.missingColumns[table] ?? [];
+      const named = namedColumns().find((c) => absent.includes(c));
+      if (named) {
+        return {
+          data: null,
+          count: null,
+          error: { code: "42703", message: `column ${table}.${named} does not exist` },
+        };
+      }
 
       if (mode === "select") {
         const rows = selected();
@@ -691,6 +728,46 @@ describe("one full pass", () => {
     assert.ok(!db.objects("post-media").has(storyPath("purgeMe")), "unreferenced bytes go");
     assert.ok(db.objects("post-media").has(storyPath("keepBytes")), "referenced bytes stay");
     assert.ok(db.objects("post-media").has(storyPath("tooYoung")), "in-window bytes stay");
+  });
+
+  // The ORDER of the two calls inside runStoryRetention is load-bearing, and
+  // nothing but the order enforces it. This is the state production is in right
+  // now: 2998 is not applied there, so `stories.deleted_at` does not exist.
+  //
+  // enqueueDueStories runs first and its second query names that column, so
+  // PostgREST answers 42703 and the pass throws before purgeExpiredEngagement
+  // is reached. Nothing is deleted. That is exactly why index.ts is allowed to
+  // start this scheduler on a deployment whose database has not had 2998.
+  //
+  // The surviving rows are the assertion, not the rejection. The engagement
+  // purge selects stories on `expires_at` alone, which still WORKS on such a
+  // database — so if it ran first it would delete viewers, reactions and
+  // replies with no purge ledger behind them, and runStoryRetention would still
+  // reject afterwards. Asserting only the rejection would pass either way.
+  // Mutation-tested by swapping the two calls: this case then fails on all
+  // three counts, and with `readErrors.stories` instead of `missingColumns` it
+  // did NOT — which is how the weaker first version of this test was caught.
+  it("aborts before deleting any engagement row when deleted_at is not in the database", async () => {
+    const db = freshDb();
+    const sc = makeClient(db);
+    seedStory(db, "old");
+    db.rows("story_views").push({ story_id: "old", viewer_id: "v" });
+    db.rows("story_reactions").push({ story_id: "old", user_id: "v" });
+    db.rows("story_replies").push({ story_id: "old", user_id: "v", message: "hi" });
+
+    db.missingColumns.stories = ["deleted_at"];
+
+    // supabase-js hands back a plain object, not an Error, so match on its
+    // fields rather than a message regex — and on the CODE, so this case cannot
+    // pass on some unrelated rejection.
+    await assert.rejects(
+      () => runStoryRetention(sc, { now: NOW }),
+      (err: any) => err?.code === "42703" && String(err?.message).includes("deleted_at"),
+    );
+
+    assert.equal(db.rows("story_views").length, 1, "viewers survive a database without 2998");
+    assert.equal(db.rows("story_reactions").length, 1, "reactions survive a database without 2998");
+    assert.equal(db.rows("story_replies").length, 1, "replies survive a database without 2998");
   });
 });
 
