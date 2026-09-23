@@ -12,11 +12,18 @@
 --
 -- This is the trap, and it is the reason this file leads with a warning rather
 -- than a DROP. 3000 split `already_gone` into `already_unsent` and
--- `already_deleted`. The deployed code validates the RPC's answer against a
--- CLOSED outcome list that contains the two new values and NOT `already_gone`;
--- an unrecognised outcome is read as no verdict at all, so
--- `unsendBeforeSeen` returns null and the route answers
+-- `already_deleted`. The deployed code validates the RPC's answer against
+-- UNSEND_OUTCOMES (services/telegraph/unsend.ts), a CLOSED list holding the two
+-- new values and NOT `already_gone`; an outcome outside it is read as no verdict
+-- at all, so `unsendBeforeSeen` returns null and the route answers
 -- `db_error / "Could not unsend that message"`.
+--
+-- What makes this easy to miss: `already_gone` DOES still exist in that file --
+-- as the WIRE REFUSAL that `refusalForOutcome` maps `already_unsent` and
+-- `already_deleted` onto (unsend.ts:254). So the string is present in the
+-- codebase and still published to clients, while the FUNCTION returning it is
+-- unrecognised. Seeing `already_gone` in the route is not evidence that the
+-- 2325 body is compatible; it is the opposite layer.
 --
 -- Restoring the 2325 body therefore does not return unsend to "the old
 -- behaviour". It breaks unsend for every already-deleted or already-unsent
