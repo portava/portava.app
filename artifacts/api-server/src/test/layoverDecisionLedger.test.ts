@@ -663,9 +663,75 @@ describe("§4.1 L36 — the risk band is a relabelling and never reads a prefere
   });
 
   it("a nine-hour international layover the engine says YES to is LOW", () => {
-    const r = record(9, INTL);
-    assert.equal(r.verdict, "yes");
+    // REPAIRED AT INTEGRATION, 2026-09-23, and the premise is what moved.
+    // This test pins `yes → LOW`. It used to reach `yes` by NOT supplying an
+    // entry fact, which the entry gate (census-layover §45) has since made the
+    // cautious answer on purpose: "an absent entry fact is unresolved, never
+    // permitted — a caller that forgets gets the cautious answer", so a bare
+    // nine-hour layover now certifies `entry_unverified`. §45.9 repaired the
+    // seven tests that asserted the pre-gate answer; this is an eighth, written
+    // in a concurrent lane, and the merge is the first time the two met.
+    //
+    // The fix supplies a CONFIRMED corridor rather than re-pinning the
+    // assertion to the gate's answer — `yes → LOW` is still the mapping this
+    // test was written to hold, and it is still reachable. The case above
+    // covers the gate's own verdict, so neither answer is now unpinned.
+    const r = certifySessionFeasibility(airport(), session(9, INTL), {
+      nowMs: NOW,
+      liveConditions: null,
+      entry: {
+        state: "permitted",
+        status: "visa_free",
+        corridor: { passportCountry: "NZ", destinationCountry: "TW" },
+      },
+    });
+    assert.equal(r.verdict, "yes", "a confirmed corridor must still reach the clock's yes");
     assert.equal(riskBandFor(r), "LOW");
+  });
+
+  it("`entry_unverified` lands in the SAME band as `tight`, on all three surfaces", () => {
+    // ADDED AT INTEGRATION, 2026-09-23. `entry_unverified` entered the verdict
+    // union with the entry gate (census-layover §45) in a different lane from
+    // the one that wrote `riskBandFor`, so until the merge no code and no test
+    // had ever seen the pair. `tsc` caught it as a non-exhaustive switch; this
+    // pins the ANSWER, which the compiler cannot.
+    //
+    // `riskBandFor` reads exactly two things — `envelope.temporalConflict` and
+    // `verdict` — so substituting the verdict on a real record exercises the
+    // shipped function on the shipped shape, with no reimplementation.
+    const tight = record(4, INTL);
+    const asTight = { ...tight, verdict: "tight" as const };
+    const asUnverified = { ...tight, verdict: "entry_unverified" as const };
+    assert.equal(asTight.envelope.temporalConflict, null, "precondition: a window exists, so the band comes from the verdict");
+
+    assert.equal(
+      riskBandFor(asUnverified),
+      riskBandFor(asTight),
+      "the two surfaces that already rule on this verdict put it in `tight`'s tier; a third answer makes them disagree",
+    );
+    // Named, so a change that moved BOTH together would still be caught.
+    assert.equal(riskBandFor(asUnverified), "MODERATE");
+    // The two answers it must NOT be, each for its own stated reason.
+    assert.notEqual(riskBandFor(asUnverified), "UNSAFE", "UNSAFE means BLOCKED (L50); an unconfirmed border is not a refusal");
+    assert.notEqual(riskBandFor(asUnverified), null, "null is reserved for `stay_airside`, a PREFERENCE; this is an assessment");
+  });
+
+  it("and the other two surfaces still say `possible_but_risky` — the claim they make in words", () => {
+    // `LayoverFeasibility`'s VERDICT_CEILING and `LayoverCompassService.riskBand`
+    // are both function-local, so this reads the source the way this file
+    // already reads `routes/airport.ts` for the one-derivation pin. It is not a
+    // style check: both files claim IN A COMMENT that they agree "by
+    // construction rather than by coincidence", and nothing was checking it.
+    const src = (rel: string) =>
+      readFileSync(new URL(rel, import.meta.url), "utf8");
+    const feasibility = src("../services/airport/LayoverFeasibility.ts");
+    const compass = src("../services/airport/LayoverCompassService.ts");
+    assert.match(feasibility, /entry_unverified:\s*"possible_but_risky"/);
+    assert.match(compass, /case\s+"entry_unverified":\s*return\s+"possible_but_risky"/);
+    // The tier `tight` holds, so "same band as tight" is a fact about the
+    // files and not just about this test's expectations.
+    assert.match(feasibility, /tight:\s*"possible_but_risky"/);
+    assert.match(compass, /case\s+"tight":\s*return\s+"possible_but_risky"/);
   });
 
   it("a layover the engine refuses is UNSAFE, so L50's invariant is statable", () => {

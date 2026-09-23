@@ -142,6 +142,10 @@ import { resolveSessionAirport } from "../services/airport/LayoverSnapshot.js";
 // each assembling their own combination of the three is how the census's
 // headline defect 2 happened (a buffer from one anchor published beside a
 // deadline from another). See services/airport/LayoverFeasibility.ts.
+// §6.1 entry permission. `adviseLeaving` cannot observe a border, so the route
+// layer resolves the corridor and hands it in as a fact, exactly as it would a
+// live condition. Resolved ONCE per request, beside the one certification.
+import { resolveLayoverEntry, layoverAirportCountry, type EntryEligibility } from "../services/airport/layoverEntryGate.js";
 import {
   certifySessionFeasibility,
   certificationHeader,
@@ -1071,6 +1075,7 @@ router.get("/airport/sessions/:id/safety", async (req, res) => {
   // `advice.verdict` below cannot contradict each other.
   const record = certifySessionFeasibility(airport, session, {
     nowMs: Date.now(),
+    entry: await sessionEntry(sc, airport, session),
   });
   const a = record.windowOnly;
 
@@ -1367,7 +1372,7 @@ router.post("/airport/sessions/:id/return-now", async (req, res) => {
   if (!airport) return;
 
   const nowMs = Date.now();
-  const record = certifySessionFeasibility(airport, session, { nowMs });
+  const record = certifySessionFeasibility(airport, session, { nowMs, entry: await sessionEntry(sc, airport, session) });
 
   const flagOn = await isFlagEnabled(sc, "layover_safe_return_status_enabled");
   const statusEnabled = flagOn && LAYOVER_RETURNING_READERS_WIDENED;
@@ -1530,7 +1535,7 @@ router.post("/airport/sessions/:id/disruption", async (req, res) => {
 
   // (2) Recompute, do not append.
   let recompute: ReturnType<typeof recomputeForDisruption> | null = null;
-  let record = certifySessionFeasibility(airport, session, { nowMs });
+  let record = certifySessionFeasibility(airport, session, { nowMs, entry: await sessionEntry(sc, airport, session) });
 
   if (newDepartureIso !== null) {
     recompute = recomputeForDisruption(airport, session, {
@@ -1645,7 +1650,7 @@ router.post("/airport/sessions/:id/return-deadline", async (req, res) => {
   const airport = await airportOr503(sc, res, session);
   if (!airport) return;
 
-  const record     = certifySessionFeasibility(airport, session, { nowMs: Date.now() });
+  const record     = certifySessionFeasibility(airport, session, { nowMs: Date.now(), entry: await sessionEntry(sc, airport, session) });
   const hardReturn = record.deadline.hardReturnTime;
   const remindAt   = new Date(hardReturn.getTime() - parsed.data.minutesBefore * 60000);
 
@@ -2217,7 +2222,7 @@ router.get("/airport/sessions/:id/overview", async (req, res) => {
   // is measured against come from different moments (src/test/splitClockGuard).
   const nowMs   = Date.now();
   const now     = new Date(nowMs);
-  const record  = certifySessionFeasibility(airport, session, { nowMs });
+  const record  = certifySessionFeasibility(airport, session, { nowMs, entry: await sessionEntry(sc, airport, session) });
   const stops   = await stopsOr503(sc, res, session.id);
   if (!stops) return;
   const planFit = computePlanFit(record, stops);
@@ -2367,7 +2372,7 @@ async function requireOwnedSession(req: any, res: any): Promise<{ sc: any; user:
 async function respondWithStops(res: any, sc: any, session: LayoverSession) {
   const airport = await airportOr503(sc, res, session);
   if (!airport) return;
-  const record  = certifySessionFeasibility(airport, session, { nowMs: Date.now() });
+  const record  = certifySessionFeasibility(airport, session, { nowMs: Date.now(), entry: await sessionEntry(sc, airport, session) });
   const stops   = await stopsOr503(sc, res, session.id);
   if (!stops) return;
   res.json({
@@ -2909,6 +2914,22 @@ router.post("/airport/sessions/:id/observations", async (req, res) => {
 // exist, and `meeting_point_label` is a label ("Terminal 2 food court"), not a
 // position. Neither table has a coordinate column and 2984 asserts it.
 
+/**
+ * The entry corridor for the traveller whose session this is.
+ *
+ * ONE call per request, next to the one `certifySessionFeasibility`, so the
+ * entry fact a response publishes is the entry fact its verdict was computed
+ * from. Two reads would be how two numbers in one response stop agreeing —
+ * the same reason `liveConditions` is read once.
+ */
+async function sessionEntry(
+  sc: any,
+  airport: AirportProfile,
+  session: LayoverSession,
+): Promise<EntryEligibility> {
+  return resolveLayoverEntry(sc, session.userId, layoverAirportCountry(airport));
+}
+
 const crewCreateSchema = z.object({
   title: z.string().min(1).max(120),
   meetingPointLabel: z.string().min(1).max(200).optional().nullable(),
@@ -2931,6 +2952,23 @@ const crewCreateSchema = z.object({
  * more than one session in one request — once per member — so it is given ONE
  * site that the ratchet can name, instead of scattering call sites that would
  * each have to be argued for separately.
+ */
+/**
+ * NO ENTRY FACT HERE, deliberately.
+ *
+ * Every other certification site in this file resolves the corridor for the
+ * traveller making the request. This one certifies OTHER PEOPLE's sessions, and
+ * resolving their corridors would mean reading a crewmate's `traveler_passports`
+ * through the service client and publishing a verdict derived from their
+ * nationality to everyone else in the crew. §14's crew surface discloses a face
+ * only through the same three gates `cityPresence` uses; a passport position is
+ * not something it may disclose at all.
+ *
+ * Nothing is lost by leaving it out. `certifyCrewPlan` reads no verdict — it
+ * takes `requiredReturnBy`, `usableMinutes` and `returnState`, all of them
+ * clock facts that the entry gate does not touch — and `crewPayload` publishes
+ * exactly those three per member. So the crew answer is identical either way,
+ * and the read is one this feature has no use for.
  */
 function certifyCrewMemberRecord(
   airport: AirportProfile,

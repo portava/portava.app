@@ -36,28 +36,70 @@ export interface TravelerAssessment {
   unknownReason?: UnknownReason;
 }
 
-/** Fetch one curated corridor row, or null. Fail-soft on db errors. */
+/**
+ * What a corridor read actually found. THREE states, not two.
+ *
+ *   found       a curated row exists and is returned.
+ *   absent      the read SUCCEEDED and there is no row for this corridor. This
+ *               is the honesty contract working: nobody has curated it.
+ *   unreadable  the read FAILED. We know nothing about this corridor, which is
+ *               a different fact from knowing nobody curated it, and a caller
+ *               that needs to tell a traveller why must be able to.
+ *
+ * `lookupRequirement` collapses `absent` and `unreadable` into null and is kept
+ * for the callers that genuinely only need the row. Nothing about their
+ * behaviour changes — it delegates to this function.
+ */
+export type CorridorRead =
+  | { state: "found"; row: Record<string, unknown> }
+  | { state: "absent"; row: null }
+  | { state: "unreadable"; row: null; message: string };
+
+const CORRIDOR_COLUMNS =
+  "id, passport_country, destination_country, status, allowed_stay_days, " +
+  "passport_validity_rule, fee_text, processing_time_text, official_source_url, " +
+  "notes, confidence, last_verified_at";
+
+/**
+ * Fetch one curated corridor row and SAY WHICH of the three outcomes happened.
+ *
+ * supabase-js RESOLVES on a database error — `{ data: null, error }` — so an
+ * unreadable table and an uncurated corridor arrive here in almost the same
+ * shape. `error` is the only thing that separates them, and it is read.
+ */
+export async function readCorridor(
+  sc: any,
+  passportCountry: string,
+  destinationCountry: string,
+): Promise<CorridorRead> {
+  try {
+    const { data, error } = await sc
+      .from("entry_requirements")
+      .select(CORRIDOR_COLUMNS)
+      .eq("passport_country", passportCountry)
+      .eq("destination_country", destinationCountry)
+      .maybeSingle();
+    if (error) return { state: "unreadable", row: null, message: String((error as any)?.message ?? error) };
+    if (!data) return { state: "absent", row: null };
+    return { state: "found", row: data as Record<string, unknown> };
+  } catch (err) {
+    // A thrown error is the same fact as a returned one: we could not read.
+    return { state: "unreadable", row: null, message: String((err as any)?.message ?? err) };
+  }
+}
+
+/**
+ * Fetch one curated corridor row, or null. Fail-soft on db errors.
+ *
+ * Kept for callers that only need the row. It cannot tell "no such corridor"
+ * from "could not read" — use `readCorridor` when that difference matters.
+ */
 export async function lookupRequirement(
   sc: any,
   passportCountry: string,
   destinationCountry: string,
 ): Promise<Record<string, unknown> | null> {
-  try {
-    const { data, error } = await sc
-      .from("entry_requirements")
-      .select(
-        "id, passport_country, destination_country, status, allowed_stay_days, " +
-          "passport_validity_rule, fee_text, processing_time_text, official_source_url, " +
-          "notes, confidence, last_verified_at",
-      )
-      .eq("passport_country", passportCountry)
-      .eq("destination_country", destinationCountry)
-      .maybeSingle();
-    if (error || !data) return null;
-    return data as Record<string, unknown>;
-  } catch {
-    return null;
-  }
+  return (await readCorridor(sc, passportCountry, destinationCountry)).row;
 }
 
 /**

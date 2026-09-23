@@ -31,9 +31,12 @@
  *
  * ── WHAT IT DELIBERATELY DOES NOT DO ────────────────────────────────────────
  * No band WORD changed, and no band word was invented. `presentationWord`'s
- * five words and the "New Traveler" copy are untouched; the owner's standing
- * `D-WORD` decision (may a substituted neutral 50 keep the word "Established")
- * is not taken here, and §5 below asserts it is still un-taken.
+ * five words and the "New Traveler" copy are untouched by THIS pass. The
+ * owner's standing `D-WORD` decision (may a substituted neutral 50 keep the
+ * word "Established") was not taken here — it was taken separately on
+ * 2026-09-22, and §5 below now asserts the decision rather than its absence.
+ * None of the five rating words was removed or renamed; a substituted domain
+ * simply stops being given one.
  *
  * ── MUTATIONS (census P24: every green claim names the change that reddens it)
  *   M1  restore `stats.stamps + stats.trips * 2 + (verified ? 3 : 0)` as the
@@ -303,6 +306,8 @@ describe("P50 §5 — D-WORD was DECIDED 2026-09-22; this moved on purpose", () 
     const overall = (p.trust!.domains as any[]).find((d) => d.key === "overall")!;
     assert.equal(overall.presentation, "Not yet rated");
     assert.notEqual(overall.presentation, "Established");
+    // Unmoved, and asserted here because the decision was word-only: the domain
+    // still APPLIES to this person and still reports what its word rests on.
     assert.equal(overall.basis, "substituted");
     assert.equal(overall.applicable, true);
   });

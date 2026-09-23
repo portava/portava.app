@@ -744,6 +744,31 @@ export const KNOWN_PRODUCTION_GAPS: Record<string, Gap> = {
   // host (portava.replit.app) is unreachable from this environment — the egress
   // gateway answers 403 to CONNECT — so the end-to-end round trip through a
   // running app has NOT been observed, and the row stays `W`.
+
+  // ── Story retention (2998): declared here, applied nowhere yet ────────────
+  story_purge_queue: {
+    classification: "unapplied",
+    note:
+      "Migration 2998_story_retention.sql, which this tree declares. Not " +
+      "'unmerged-pr': that classification is for a table whose migration is on " +
+      "some OTHER branch, and this check correctly refuses it for a file it can " +
+      "see — the excuse would stop being true the moment the branch merged and " +
+      "nothing would notice. So it counts against the must-reach-zero total, " +
+      "which is the honest state: the table is absent from production AND from " +
+      "portava-ci, because live-db.yml applies only from main and 2998 is not " +
+      "on main yet. It is the durable retry record for the hourly retention " +
+      "job — a row outlives a partial purge so the storage object path is not " +
+      "lost when the database row goes first — so it must exist BEFORE that job " +
+      "is enabled, not after; the job must not be switched on while this entry " +
+      "stands. Rehearsed against production's real structure " +
+      "(baseline/20260819_baseline_structure.sql replayed to head on a " +
+      "throwaway PostgreSQL 16, sql/rehearsals/2998_*.sql, including a negative " +
+      "control that disables the deleted_at trigger and confirms the clock then " +
+      "stops being set, and one that drops the archive disjunct and confirms a " +
+      "capped row is missed). Rehearsed is not applied: nothing has run against " +
+      "production or portava-ci. Strike this off in the same change that " +
+      "applies 2998 and refreshes the two production snapshots.",
+  },
 };
 
 /**

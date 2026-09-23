@@ -93,6 +93,11 @@ export interface TrustProjection {
   confidence: TrustConfidence | null;
   /** What `confidence` was computed from — trust evidence, or a travel proxy. */
   confidenceBasis?: 'trust_evidence' | 'travel_proxy' | 'unavailable';
+  /**
+   * The server READ of `trust_profiles` failed. Everything else on this object
+   * is the server's fallback shape, not a measurement of this person.
+   */
+  degraded?: boolean;
   strengths: string[];
   /**
    * Ordered recovery advice — present ONLY on the owner's own view, because the
@@ -206,8 +211,23 @@ export interface TrustView {
    * of 58 accounts with no trust profile at all. Coercing it to `'low'` printed
    * "Early days" — a measured-looking band — over four different kinds of
    * not-measured.
+   *
+   * MERGE DECISION, 2026-09-23. The other lane modelled the same absence as a
+   * `'unknown'` MEMBER of the band union. Both carry "no band", but a pseudo-band
+   * sitting beside the real ones is what invited `CONFIDENCE_META[confidence]`
+   * to produce a row for it — and that row's copy ("we could not read this
+   * traveller's records") is false for the 56-of-58 accounts that simply have
+   * no profile. `null` cannot be indexed into the band table by accident, so
+   * the two not-measured cases stay apart. `degraded` below carries the other
+   * lane's distinct and additive fact: that the READ itself failed.
    */
   confidence: TrustConfidence | null;
+  /**
+   * TRUE when the server could not read this person's trust records. Everything
+   * on this view is then the server's fallback shape. The screen must say so
+   * and offer a retry; rendering it as an ordinary result is the defect.
+   */
+  degraded: boolean;
   /** Short confidence heading, e.g. "High confidence". */
   confidenceLabel: string;
   /** Non-stigmatizing sentence explaining the evidence level (§10). */
@@ -235,13 +255,24 @@ export interface TrustView {
 /** Sentinel standing for out-of-scope domains — deliberately neutral (§10). */
 export const NOT_APPLICABLE = 'Not applicable';
 
-/** Standing shown for an in-scope domain the server vouches for. */
-const IN_GOOD_STANDING = 'In good standing';
+/**
+ * Standing shown when the server sent no word for this domain at all. It is not
+ * a rating, and it is deliberately about the LOAD rather than the person: the
+ * client cannot tell an old server from a dropped field, and neither is a fact
+ * about the traveler.
+ */
+const STANDING_UNKNOWN = 'Not available';
 
 /**
  * Confidence copy is intentionally non-stigmatizing for new users (§10): the
  * low band frames a fresh account as a natural starting point, not a deficit.
  */
+// ONLY the three real bands. A fourth "did not band this" member used to sit
+// here, and `CONFIDENCE_META[confidence]` then produced a row for it reading
+// "we could not read this traveler's trust records" — false for the 56-of-58
+// production accounts (census-passport §3) that simply have no trust profile.
+// A band table that cannot be indexed by a non-band cannot make that claim; the
+// two not-measured cases are worded by the pair of constants below instead.
 const CONFIDENCE_META: Record<TrustConfidence, { label: string; copy: string }> = {
   high: {
     label: 'High confidence',
@@ -361,27 +392,48 @@ function domainsFromServer(rows: ServerDomainTrust[]): TrustDomainRow[] {
 export function deriveTrustView(p: TrustProjectionEnvelope): TrustView {
   const trust = p.trust ?? null;
   const caps = p.capabilities?.owner ?? EMPTY_CAPS;
-  const stats = p.stats ?? { countries: 0, cities: 0, stamps: 0, trips: 0 };
+  // `p.stats` is no longer read here. It fed `hasTravelEvidence`, which decided
+  // whether the Traveler domain was "in good standing" — travel volume standing
+  // in for a trust measurement. That decision is gone with the rows it served,
+  // and zeroed stats are not the same fact as unknown stats anyway.
 
   const hasTrust = !!trust;
+  // A failed READ is the server's own word for it, not something the client
+  // infers from an empty-looking payload.
+  const degraded = trust?.degraded === true
+    || trust?.confidenceBasis === 'unavailable'
+    || (Array.isArray(trust?.domains) && trust!.domains!.length > 0
+        && trust!.domains!.every((d) => d.basis === 'unavailable'));
   // `?? 'low'` here used to turn the server's explicit "not measured" into a
-  // rendered band. null now survives to the view and picks its own copy.
+  // rendered band. null now survives to the view and picks its own copy, and
+  // WHICH copy is keyed off `degraded` rather than off `confidenceBasis` alone
+  // so that a server which reports the failure by its own `degraded` flag gets
+  // the unavailable wording too — "nobody measured you" and "we could not read
+  // the records" are different claims (TrustUnscored.component.test.tsx).
   const confidence: TrustConfidence | null = trust?.confidence ?? null;
   const meta = confidence
     ? CONFIDENCE_META[confidence]
-    : trust?.confidenceBasis === 'unavailable'
+    : degraded
       ? CONFIDENCE_UNAVAILABLE
       : CONFIDENCE_UNMEASURED;
   const hasScore = typeof trust?.score === 'number';
-  const overall = trust?.label ?? NOT_APPLICABLE;
 
-  // Traveler scope: any real travel evidence, or the base "join trips" grant.
-  const hasTravelEvidence = stats.stamps > 0 || stats.countries > 0 || caps.canJoinPublicTrip;
+  // `specific()` used to turn a capability flag into the words "In good
+  // standing". A capability is permission to DO something; standing is a
+  // statement about a person's record, and the two are not the same fact.
+  // Deriving one from the other is how six rows came to read as measurements on
+  // a screen where nothing had been measured, so the derivation is gone.
 
-  const specific = (applicable: boolean): string => (applicable ? IN_GOOD_STANDING : NOT_APPLICABLE);
-
-  const legacy = (key: string, domain: string, applicable: boolean, standing: string): TrustDomainRow => ({
-    key, domain, applicable, standing, basis: 'client_derived', basisNote: null,
+  const unknown = (key: string, domain: string): TrustDomainRow => ({
+    key,
+    domain,
+    // The domain still APPLIES; what is missing is the standing. Marking these
+    // inapplicable would say the domain does not apply to this person, which is
+    // a different claim and also one we cannot support here.
+    applicable: true,
+    standing: STANDING_UNKNOWN,
+    basis: 'client_derived',
+    basisNote: 'This traveler\u2019s standing could not be loaded.',
   });
 
   // An EMPTY array is treated the same as an absent one. The server never emits
@@ -392,15 +444,20 @@ export function deriveTrustView(p: TrustProjectionEnvelope): TrustView {
     ? trust!.domains!
     : null;
 
+  // No server domains means one of two things — a server older than TABLE 12, or
+  // a field that did not survive transport — and the client can tell neither
+  // from the other. Both are "we do not know", so the LAYOUT is kept (six named
+  // areas, so the screen does not silently collapse) and every row says its
+  // standing could not be loaded. It is not blank, and it is not invented.
   const domains: TrustDomainRow[] = serverDomains
     ? domainsFromServer(serverDomains)
     : [
-        legacy('overall', 'Overall', hasTrust, hasTrust ? overall : NOT_APPLICABLE),
-        legacy('traveler', 'Traveler', hasTrust && hasTravelEvidence, specific(hasTrust && hasTravelEvidence)),
-        legacy('trip_guest', 'Trip Guest', caps.canJoinPublicTrip, specific(caps.canJoinPublicTrip)),
-        legacy('trip_host', 'Trip Host', caps.canHostTrip, specific(caps.canHostTrip)),
-        legacy('contributor', 'Contributor', caps.canContributeLiveIntel, specific(caps.canContributeLiveIntel)),
-        legacy('buddy', 'Buddy', caps.canBecomeBuddy, specific(caps.canBecomeBuddy)),
+        unknown('overall', 'Overall'),
+        unknown('traveler', 'Traveler'),
+        unknown('trip_guest', 'Trip Guest'),
+        unknown('trip_host', 'Trip Host'),
+        unknown('contributor', 'Contributor'),
+        unknown('buddy', 'Buddy'),
       ];
 
   // Owner-only, server-gated (§9/§10). The client passes the strings through
@@ -434,6 +491,7 @@ export function deriveTrustView(p: TrustProjectionEnvelope): TrustView {
 
   return {
     hasTrust,
+    degraded,
     label: trust?.label ?? 'Trust summary unavailable',
     score: hasScore ? (trust!.score as number) : null,
     hasScore,

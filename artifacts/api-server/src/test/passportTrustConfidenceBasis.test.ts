@@ -151,10 +151,14 @@ describe("P45/P50 — the basis reaches the response on every trust path", () =>
   it("an ABSENT profile — the neutral-50 substitution — reports 'travel_proxy', not silence", async () => {
     const p = (await buildPassportProjection(db(null), OWNER, OWNER, { resolveViewerContext: resolver(SELF) }))!;
     assert.equal(p.trust?.confidenceBasis, "travel_proxy");
-    // Every applicable domain reads the word presentationWord(50) produces, so
-    // the whole card is the substitution and nothing in it says so. That is
-    // exactly the P45 finding, and `confidenceBasis` is now the one field that
-    // distinguishes this card from a measured one that happens to score 50.
+    // This assertion used to require every applicable domain to read
+    // "Established" — the word presentationWord(50) produces — and its comment
+    // said "the whole card is the substitution and nothing in it says so. That
+    // is exactly the P45 finding". The card now says so IN THE WORDS
+    // themselves (owner decision, 2026-09-22), so the finding it described is
+    // closed and the assertion moves with it. What it is really here to pin is
+    // unchanged: all five applicable domains agree, and the card is coherent
+    // rather than a mix of a measured word and a substituted basis.
     const applicable = p.trust!.domains.filter((d) => d.applicable);
     assert.equal(applicable.length, 5);
     // Q3 (owner decision 2026-09-22): a substituted domain is no longer worded

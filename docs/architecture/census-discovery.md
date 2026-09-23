@@ -5834,7 +5834,7 @@ carry an `XX` row to a real code when one appears. **THE BLAST RADIUS IS NINE MO
 THIS SENTENCE IS A CORRECTION OF ITS OWN FIRST DRAFT.** The count was written
 off a `grep` read through `head -20`, which cut the list mid-output — the same
 shape of error as reading a census and stopping at §11. Enumerated in full:
-`lib/entryRequirements.ts:87`, `routes/entryRequirements.ts` (five sites — :128,
+`lib/entryRequirements.ts:129`, `routes/entryRequirements.ts` (five sites — :128,
 :330, :331, :347, :348), `routes/countryEssentials.ts` (:101, :130),
 `lib/stamps/countryLookup.ts:185`, `lib/stamps/StampCatalogService.ts:33`,
 `lib/stampHelper.ts:43`, `lib/inputAssistance/validationSuite.ts:72`, and two

@@ -1,4 +1,4 @@
--- 2998_nearby_reachable_flag.sql
+-- 2990_nearby_reachable_flag.sql
 --
 -- POST-CUTOVER CANONICAL FORWARD MIGRATION (2100-2999 band), telegraph lane.
 --

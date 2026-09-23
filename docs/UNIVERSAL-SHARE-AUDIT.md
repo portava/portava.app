@@ -374,7 +374,7 @@ There is **no function named `serveSharePage`** anywhere in the tree. The name s
 | `GET/POST /api/shared-moments…` (14 routes) | `routes/sharedMoments.ts` | Yes |
 | `POST /api/trips/:tripId/crew/live-share/{start,stop}`, `GET .../live-shares` | `routes/tripCrewLocation.ts:313,361,380` | Yes — location, not content |
 | `POST /api/me/safe-return/sessions/:id/live-share/{start,stop}`, `GET /api/safe-return/live-share/:shareId` | `routes/safeReturn.ts:542,616,644` | Yes — safety |
-| `PATCH /api/airport/sessions/:id/share` | `routes/airport.ts:1325` | Yes |
+| `PATCH /api/airport/sessions/:id/share` | `routes/airport.ts:1330` | Yes |
 
 ### `POST /api/posts/:postId/share` in detail
 

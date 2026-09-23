@@ -1240,6 +1240,21 @@ const UNRESOLVABLE = [
       'convention. The check resolves consts only within a single file and does not follow imports, so this ' +
       'is declared rather than silently resolved. Verified by hand at c89f09a77.',
   },
+  {
+    file: 'services/airport/layoverEntryGate.ts',
+    expr: 'ENTRY_FLAG',
+    covers: ['passport_entry_intelligence_enabled'],
+    reason:
+      'The SAME imported const as the routes/entryRequirements.ts entry above, and unresolvable for the same ' +
+      'reason: consts are resolved within one file and imports are not followed. Copying the literal into ' +
+      'this file to satisfy the check would put the flag name in two places and is exactly what the shared ' +
+      'export exists to prevent. The read is fail-CLOSED and the module says so at the call site: a ' +
+      'feature_flags table that cannot be read makes isFlagEnabled return false, which lands on ' +
+      'unresolved/entry_intelligence_disabled, and an unresolved corridor never produces a landside yes. ' +
+      'Verified by hand at ecc2a0a5b -- grep -n ENTRY_FLAG src/services/airport/layoverEntryGate.ts returns ' +
+      'exactly two lines, the import and the single isFlagEnabled call, plus one mention in the file header ' +
+      'comment.',
+  },
 ];
 
 // ─────────────────────────────────────────────────────────────────────────────

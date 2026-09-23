@@ -256,6 +256,14 @@ const SECTIONS: Section[] = [
         action: (_p) => {},
       },
       {
+        key: 'story-archive',
+        label: 'Story Archive',
+        Icon: Archive,
+        iconColor: '#7B5CE5',
+        live: true,
+        action: (p) => { closeThenNavigate(p.onClose, '/story-archive'); },
+      },
+      {
         key: 'my-memories',
         label: 'My Memories',
         Icon: BookOpen,

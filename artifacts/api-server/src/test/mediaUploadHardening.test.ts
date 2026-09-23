@@ -695,6 +695,55 @@ describe("a story signed URL cannot outlive the story", () => {
     assert.equal(deadline, null, "the owner's archive has no expiry");
   });
 
+  // A `saved` story's bytes are published by the HIGHLIGHT it was promoted
+  // into, so the Highlight's window is the one the token must die with. This
+  // used to return null — no clamp at all — under a comment saying the
+  // Highlight governed it, which made the sentence true of nothing.
+  function savedClient(highlight: any) {
+    return {
+      from(table: string) {
+        const b: any = {
+          select() { return b; },
+          in() { return b; },
+          limit() {
+            if (table === "highlights") {
+              return Promise.resolve({ data: highlight ? [highlight] : [], error: null });
+            }
+            return Promise.resolve({
+              data: [{ owner_id: "u1", state: "saved", expires_at: new Date(Date.now() - 60_000).toISOString() }],
+              error: null,
+            });
+          },
+        };
+        return b;
+      },
+    } as any;
+  }
+
+  it("clamps a saved story's link to the HIGHLIGHT's remaining life, not the story's", async () => {
+    const deadline = await mediaAccessDeadline(
+      savedClient({ owner_id: "u1", expires_at: new Date(Date.now() + 5 * 60_000).toISOString() }),
+      "viewer-2",
+      BUCKET,
+      PATH,
+    );
+    assert.notEqual(deadline, null);
+    const remaining = Math.floor(((deadline as number) - Date.now()) / 1000);
+    assert.ok(
+      remaining > 0 && remaining <= 5 * 60,
+      `the token must die with the Highlight that publishes these bytes — got ${remaining}s`,
+    );
+  });
+
+  it("gives a saved story with no Highlight the shortest possible token", async () => {
+    // Nothing publishes these bytes to a non-owner. authorizeMediaAccess
+    // reaches the same conclusion by falling through to §4; the clamp must not
+    // disagree by handing out a full hour.
+    const deadline = await mediaAccessDeadline(savedClient(null), "viewer-2", BUCKET, PATH);
+    assert.notEqual(deadline, null);
+    assert.ok((deadline as number) <= Date.now());
+  });
+
   it("refuses to extend the token when the stories table cannot be read", async () => {
     const failing = {
       from() {

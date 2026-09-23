@@ -356,7 +356,34 @@ export async function certifiedLayoverSnapshot(
   const envelope = safeEnvelope(record.envelope.usableMinutes, centre, record.confidence);
 
   // Read off the engine's verdict and Safe Return's own exploration rule.
-  const forbidden = record.verdict === "no" || record.verdict === "stay_airside";
+  // EXHAUSTIVE ON PURPOSE. This used to be `verdict === "no" || === "stay_airside"`,
+  // which reads any verdict it does not recognise as NOT forbidden — so adding
+  // `entry_unverified` to the union without touching this line would have
+  // opened landside on the one verdict that says we cannot confirm the border.
+  //
+  // `entry_unverified` is NOT forbidden here, and that is a judgement rather
+  // than an oversight: it means "we could not check", not "you may not go". A
+  // traveller whose corridor nobody has curated — which is every corridor until
+  // one is curated, since `entry_requirements` has no INSERT in any migration —
+  // would otherwise have Safe Return's landside exploration collapsed on them
+  // by a data gap, which is a refusal we have no fact for. The advice they see
+  // says plainly that entry is unconfirmed; the map does not also close.
+  const forbidden: boolean = (() => {
+    switch (record.verdict) {
+      case "no":
+      case "stay_airside":
+        return true;
+      case "yes":
+      case "tight":
+      case "entry_unverified":
+        return false;
+      default: {
+        // A verdict added later and not considered here is forbidden, not open.
+        const _exhaustive: never = record.verdict;
+        return true;
+      }
+    }
+  })();
   const landsideOpen = !forbidden && !posture.explorationCollapsed;
   const landsideClosedReason = forbidden
     ? `the certified verdict for this layover is "${record.verdict}"`

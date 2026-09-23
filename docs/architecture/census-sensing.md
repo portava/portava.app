@@ -1074,7 +1074,7 @@ the undecided decision. **S21**, **S28**, **S29** and **S32** stay as they
 are: on-device reduction, the nine device features, acoustic capture and the
 signal ingest are decisions #1, #2 and #6, and this lane does not take them.
 **S26** stays W: the anonymous half is closed (72 h structural, the sweep
-registered at `src/index.ts:152#startSensingRetentionScheduler();`) and the
+registered at `src/index.ts:153#startSensingRetentionScheduler();`) and the
 intel raw purge is behind `intel_contribution_retention_enabled`, FALSE in
 production, at 180 days. **S3** and **S106** stay W: `src/presence/domain/`
 is unchanged since Phase 0 — types and a transport interface, no store, no
@@ -1186,7 +1186,7 @@ before its commit; the mutations are listed in §2.3.
   reads the candidate and the current experience through
   `readLiveClaimEnvelopes`, and answers the decision with its reasons,
   grounding, interception and switching-cost report; it writes nothing and
-  computes no truth of its own. Registered at the tail of `routes/index.ts:358#compassDecisionRouter`, so no line the other censuses cite in that file moved.
+  computes no truth of its own. Registered at the tail of `routes/index.ts:362#compassDecisionRouter`, so no line the other censuses cite in that file moved.
   2800 seeds the flag FALSE and refuses to commit a TRUE row
   (`migrations/2800_compass_decision_flag.sql:34#INSERT`;
   `migrations/2800_compass_decision_flag.sql:47#reads`); the rollback refuses
@@ -1396,7 +1396,7 @@ in §3.3.
   treated as the budget spent. It answers newest change first with a report
   per subject that tells "no moments" from "could not look" and "no versions
   to compare". It writes nothing and sends nothing. Registered at the tail
-  of `routes/index.ts:363#wallMomentsRouter`. 2801 seeds the flag FALSE and
+  of `routes/index.ts:367#wallMomentsRouter`. 2801 seeds the flag FALSE and
   refuses to commit a TRUE row (`migrations/2801_wall_moments_flag.sql:41#INSERT`;
   `migrations/2801_wall_moments_flag.sql:54#reads`); the rollback refuses
   over a TRUE row (`db/rollback/2026-09-12-2801-wall-moments-flag-rollback.sql:23#DELETE`)
@@ -1604,7 +1604,7 @@ listed in §4.3.
   `test/telegraphLiveReferencesRoute.test.ts:386#null`). The wire carries
   the current claims only through that gate; nothing person-shaped is on it
   (`test/telegraphLiveReferencesRoute.test.ts:282#forbidden`). Registered at
-  the tail of `routes/index.ts:368#telegraphLiveReferencesRouter`.
+  the tail of `routes/index.ts:372#telegraphLiveReferencesRouter`.
 
 - **2802 and its rollback** — `migrations/2802_telegraph_live_references_flag.sql:47#INSERT`
   seeds `telegraph_live_references_enabled` FALSE, one row, `ON CONFLICT DO
@@ -1840,7 +1840,7 @@ mutations are listed in §5.3.
   `test/adminSafetyCandidatesRoute.test.ts:341#not a person`). A non-admin
   is refused before the flag is read
   (`test/adminSafetyCandidatesRoute.test.ts:205#non-admin`). Registered at
-  the tail of `routes/index.ts:373#adminSafetyCandidatesRouter`;
+  the tail of `routes/index.ts:377#adminSafetyCandidatesRouter`;
   `routes/admin.ts` and `routes/moderation.ts` are untouched.
 
 - **2803 and its rollback** — `migrations/2803_intel_safety_candidates_flag.sql:70#INSERT`
@@ -2647,7 +2647,7 @@ observation to a place 8 km away would attribute it to somewhere the contributor
 never was"* — the module knows the hazard and bounds it. But a 3 km bound on a
 mis-attribution is a smaller mis-attribution, not an absent one, and §14's
 sentence has no radius in it. The path is reachable: the router is mounted
-(`src/routes/index.ts:310#mapObservationsRouter`) behind
+(`src/routes/index.ts:314#mapObservationsRouter`) behind
 `map_contributions_enabled` (`routes/mapObservations.ts:741`).
 
 Why this lane does not fix it: the only two fixes are to refuse §22's zone
@@ -2709,7 +2709,7 @@ not the only resolver in the tree, and the row is about the tree.
 - **THE ROUTE-MOUNTING CHECK, applied to §2–§5's C rows rather than assumed.**
   A surface graded BUILT that no router mounts is not built, and this census
   has four new routes from the earlier batches. All four are mounted:
-  `src/routes/index.ts:358#compassDecisionRouter` (S78, S79, S80, S86),
+  `src/routes/index.ts:362#compassDecisionRouter` (S78, S79, S80, S86),
   `:339#wallMomentsRouter` (S73, S74, S76, S102),
   `:344#telegraphLiveReferencesRouter` (S87, S88, S89) and
   `:349#adminSafetyCandidatesRouter` (S103). Nothing moves; the check is
@@ -2724,7 +2724,7 @@ not the only resolver in the tree, and the row is about the tree.
 | S70 Server-built DiscoveryCandidate with why-now, why-for-user, confidence, freshness and truth class | W | **C** | The one field the row is named for has a producer: `whyNow` carries grounded reasons in the claims' own vocabulary (`lib/discoveryCandidate.ts:312#whyNowOf`) and is null — never `[]` — when no grade was computed or no reading was found (`:283#whyNowOf`); route-tested with the candidate projection on, both arms. The other four fields were already carried. B7-R5 red. |
 | S72 Intent modes — Right Now, Tonight, Explore, Quiet, Social, High Energy, Nearby, Trip — on the same shared intelligence | W | **C** | The spec's eight, verbatim and in order (`lib/discoveryLiveRank.ts:103#DISCOVERY_INTENT_MODES`), each a weight vector over the SAME axes of the SAME engine (`:154#INTENT_MODE_PROFILES`) — the suite asserts no mode has an axis of its own — and the crowd preference they declare is Compass's `experienceValue`, so "the same shared intelligence" is literal. Reachable as `GET /discovery?intentMode=…`; an unknown string is not honoured as a mode (B7-R4 red). |
 | S85 Layover Temporal Freedom Engine intersects feasibility with live Experience value, forecast, friction and safe-return | W | **C** | The row's finding was `grep -rn liveClaimRead services/airport/` → nothing. It reads it now, and intersects rather than competing: a live queue becomes minutes the EXISTING `LayoverSafetyEngine` rates against the certified deadline (`services/airport/LayoverRecommendationService.ts:496`, `lib/layoverLiveIntersection.ts:195`), a live `unsafe_density` or refused walk-in removes the card, a decaying window demotes and never drops, and a card with no reading is untouched. Driven through the real `generateRecommendations` (90 → 180 minutes under a 90-minute queue). B7-L1 to B7-L4 red. |
-| S97 Temporary activity must not be forced onto the nearest place ID when ownership is unknown; never assign to the nearest place merely to satisfy a foreign key | C | **W** | **The C rested on a grep that is now false.** `resolveZoneAnchorSubject` (`routes/mapObservations.ts:656#resolveZoneAnchorSubject`) resolves a §22 zone contribution by finding the **nearest** active place in the zone (`:648#NEAREST`) and storing the observation against it (`:802`); its own header gives the motive as the FK — *"`intel_observations.subject_id` FKs `public.places`, and a zone is not a place"*. Mounted (`src/routes/index.ts:310#mapObservationsRouter`) behind `map_contributions_enabled` (`routes/mapObservations.ts:741`). The 3 km ceiling and the recorded `zone_id` bound the mis-attribution; they do not make it absent, and §14's sentence carries no radius. Not fixable in this lane: the alternatives are deleting a §22 Map feature or removing `subject_id NOT NULL REFERENCES places(id)` (`src/migrations/2130_intel_storage.sql:142`), both owner decisions. |
+| S97 Temporary activity must not be forced onto the nearest place ID when ownership is unknown; never assign to the nearest place merely to satisfy a foreign key | C | **W** | **The C rested on a grep that is now false.** `resolveZoneAnchorSubject` (`routes/mapObservations.ts:656#resolveZoneAnchorSubject`) resolves a §22 zone contribution by finding the **nearest** active place in the zone (`:648#NEAREST`) and storing the observation against it (`:802`); its own header gives the motive as the FK — *"`intel_observations.subject_id` FKs `public.places`, and a zone is not a place"*. Mounted (`src/routes/index.ts:314#mapObservationsRouter`) behind `map_contributions_enabled` (`routes/mapObservations.ts:741`). The 3 km ceiling and the recorded `zone_id` bound the mis-attribution; they do not make it absent, and §14's sentence carries no radius. Not fixable in this lane: the alternatives are deleting a §22 Map feature or removing `subject_id NOT NULL REFERENCES places(id)` (`src/migrations/2130_intel_storage.sql:142`), both owner decisions. |
 
 **Held, with the reason.** **S3** and **S106** stay W, unchanged from §1: the
 single presence architecture would have to be a store and a fusion layer that

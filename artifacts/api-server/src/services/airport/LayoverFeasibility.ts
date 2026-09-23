@@ -37,6 +37,7 @@
  * (census L50) and this module deliberately leaves it open: it publishes the
  * verdict and the per-candidate rating, and no caller's filtering changed.
  */
+import type { EntryEligibility } from "./layoverEntryGate.js";
 import { createHash } from "node:crypto";
 import type { AirportProfile } from "./AirportProfileService.js";
 import type { LayoverSession } from "./LayoverSessionService.js";
@@ -55,6 +56,7 @@ import {
   type LeaveAdvice,
   type LiveConditions,
   type SafetyAssessment,
+  type SafetyRating,
   type TravelTimeSource,
 } from "./LayoverSafetyEngine.js";
 // L47's classifier, reused for the same reason census L293 reuses it in the
@@ -329,6 +331,17 @@ export interface FeasibilityInputs {
    * caller on this tree outside tests.
    */
   liveConditions: LiveConditions | null;
+  /**
+   * §6.1 entry permission. A NAMED INPUT for the same reason `liveConditions`
+   * is one: this module reads no clock and does no I/O, and the corridor comes
+   * from the database. The caller resolves it (`resolveLayoverEntry`) and hands
+   * it in, so it lands in `inputHash` and `replayFeasibility` reproduces the
+   * record that was actually certified rather than re-asking a table that may
+   * since have been curated.
+   *
+   * `null` is UNRESOLVED, never permitted — see `adviseLeaving`.
+   */
+  entry: EntryEligibility | null;
 }
 
 /** Project the domain objects onto the named input set. */
@@ -340,6 +353,7 @@ export function feasibilityInputs(
     landsideProbe?: LandsideProbe | null;
     bufferPercentile?: EstimatePercentile;
     liveConditions?: LiveConditions | null;
+    entry?: EntryEligibility | null;
   },
 ): FeasibilityInputs {
   const live = opts.liveConditions ?? null;
@@ -383,6 +397,20 @@ export function feasibilityInputs(
           expiresAt: live.expiresAt,
         }
       : null,
+    // Projected field by field like everything above, so an extra key on the
+    // caller's object cannot change the hash.
+    entry: opts.entry
+      ? opts.entry.state === "unresolved"
+        ? { state: "unresolved", reason: opts.entry.reason }
+        : {
+            state: opts.entry.state,
+            status: opts.entry.status,
+            corridor: {
+              passportCountry: opts.entry.corridor.passportCountry,
+              destinationCountry: opts.entry.corridor.destinationCountry,
+            },
+          }
+      : null,
   };
 }
 
@@ -422,10 +450,16 @@ export interface LayoverFeasibilityRecord {
    * Weakest confidence among the estimates behind the verdict. Spec §6.1 also
    * asks that a safety-critical unknown force INSUFFICIENT *and forbid landside
    * recommendations*. This record publishes the confidence; it does NOT forbid,
-   * because the forbid half turns on entry permission state (§6.1 L48) which
-   * nothing on this tree reads, and inventing a prohibition from a confidence
-   * we already know is LOW for every production session would block every
-   * traveller on a fact we have not measured. Reported, not decided.
+   * and the reason has CHANGED shape since this comment was written.
+   *
+   * Entry permission state (§6.1 L48) is now read — `resolveLayoverEntry`, fed
+   * in as `inputs.entry` — so the forbid half no longer turns on a fact nothing
+   * observes. What it turns on instead is a table with no INSERT in any
+   * migration: every corridor is uncurated until somebody curates one, so
+   * forbidding on an unconfirmed corridor would collapse landside for every
+   * traveller on the app over a data gap. The verdict says `entry_unverified`
+   * and the advice says why; the prohibition is still not invented here.
+   * Reported, not decided.
    */
   confidence: EstimateConfidence;
   /** §7 freedom window / §8 envelope, as the engine computes it. */
@@ -600,12 +634,62 @@ export function certifyFeasibility(inputs: FeasibilityInputs): LayoverFeasibilit
     ? { ...assess(airport, session, candidate, nowMs, deadline), probe: probe! }
     : null;
   // Same deadline object, not a second derivation. See `windowOnly`.
-  const windowOnly = assessWindowOnly(airport, session, envelope, nowMs, deadline);
+  const windowOnlyByClock = assessWindowOnly(airport, session, envelope, nowMs, deadline);
 
   const advice = adviseLeaving(airport, session, envelope, {
     travelTimeSource: probe?.travelTimeSource,
     liveConditions: live,
+    entry: inputs.entry,
   });
+
+  // ── ONE RESPONSE CANNOT SAY TWO THINGS ──────────────────────────────────
+  //
+  // `assessWindowOnly` rates the WINDOW and is right to: it reads a clock and
+  // nothing else, and its name says so. Before the entry gate that was enough,
+  // because the rating and the verdict were two readings of the SAME two
+  // inputs — `usableMinutes` and `wantsToLeave` — and could not disagree;
+  // `src/test/layoverUnmeasuredJourney.test.ts` pins that pairing.
+  //
+  // The gate breaks the coincidence. A traveller with ten spare hours and an
+  // unconfirmed border gets `verdict: "entry_unverified"`, and `GET
+  // /:id/safety` would serve `overallRating: "safe"` beside it — an
+  // affirmative and a disclaimer about the same act, which is the L48 finding
+  // put back one level down.
+  //
+  // So the published rating is CAPPED by the verdict here, at the one place
+  // that holds both, rather than by teaching the clock about borders. It is a
+  // minimum over the two, never a maximum: the cap can only take an
+  // affirmation away. For every verdict that existed before the gate the cap
+  // is the rating the clock already produced, so this is a no-op on them —
+  // which is why the pairing test above still reads the raw engine.
+  const VERDICT_CEILING: Record<LeaveAdvice["verdict"], SafetyRating> = {
+    yes: "safe",
+    tight: "possible_but_risky",
+    // The clock said there is time and the border could not be checked. The
+    // same band `LayoverCompassService.riskBand` gives it, so the two surfaces
+    // agree by construction rather than by coincidence.
+    entry_unverified: "possible_but_risky",
+    no: "not_recommended",
+    stay_airside: "airport_only",
+  };
+  // Worst-first, so `indexOf` is a severity rank. `airport_only` is not on the
+  // scale: it is not a judgement about whether leaving is safe, it is the
+  // traveller having said they are not leaving, and it is preserved whole.
+  const RATING_RANK: SafetyRating[] = ["not_recommended", "possible_but_risky", "safe"];
+  const ceiling = VERDICT_CEILING[advice.verdict];
+  const capped =
+    RATING_RANK.indexOf(ceiling) >= 0 &&
+    RATING_RANK.indexOf(windowOnlyByClock.rating) > RATING_RANK.indexOf(ceiling);
+  const windowOnly: SafetyAssessment = capped
+    ? {
+        ...windowOnlyByClock,
+        rating: ceiling,
+        // A demoted rating with no reason is a refusal nobody can explain
+        // (App C2). The advice's last reason is the sentence that explains the
+        // verdict doing the capping.
+        warningReason: advice.reasons[advice.reasons.length - 1] ?? windowOnlyByClock.warningReason,
+      }
+    : windowOnlyByClock;
 
   const buffers = bufferEstimates(inputs, deadline.breakdown);
   const estimates: FeasibilityEstimates = {
@@ -667,6 +751,8 @@ export function certifySessionFeasibility(
     landsideProbe?: LandsideProbe | null;
     bufferPercentile?: EstimatePercentile;
     liveConditions?: LiveConditions | null;
+    /** Omitted = unresolved. Resolve it with `resolveLayoverEntry` and pass it. */
+    entry?: EntryEligibility | null;
   },
 ): LayoverFeasibilityRecord {
   return certifyFeasibility(feasibilityInputs(airport, session, opts));

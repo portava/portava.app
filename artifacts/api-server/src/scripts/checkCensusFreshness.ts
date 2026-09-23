@@ -486,6 +486,44 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/routes/discovery.ts",
     "artifacts/api-server/src/compass/TelegraphConversationTools.ts",
     "artifacts/api-server/src/routes/rentABuddyRollout.ts",
+    // ── ADDED 2026-09-22 by the ENTRY GATE lane (§45, RENUMBERED FROM §27 AT INTEGRATION 2026-09-23) ────────────────────────
+    // This census measured 132 cited / 127 watched — exactly its 96% floor —
+    // before §45 was written. §45 cites four more files and only one of them was
+    // in scope, which took it to 94% and turned check:census-scope-coverage red.
+    // That is the guard working: a census cannot grade a file it does not watch.
+    //   lib/entryRequirements.ts — L48's verdict rests on it entirely. §45.1
+    //     grades `readCorridor`'s three-state read, and §45.3's whole argument
+    //     for W-not-C is that this file's table has no INSERT in any migration.
+    //     If a migration ever seeds a corridor, or `readCorridor` collapses its
+    //     three states back to two, L48 moves — and nothing here was watching.
+    //   test/layoverEntryGate.test.ts — the suite that pins L34 and L48,
+    //     including the monotonicity property §45.4 counts toward L235. A row
+    //     held in place by a test ages when that test does.
+    //   routes/entryRequirements.ts — §45.9 rests a claim on this file's
+    //     CONTENTS: that it makes the identical `isFlagEnabled(sc, ENTRY_FLAG)`
+    //     call, which is why the gate's own UNRESOLVABLE entry is a copy of an
+    //     existing judgement rather than a new one. Same shape as
+    //     routes/discovery.ts above: a claim held in place by what is in
+    //     another lane's file. Watching is not ownership, it is noticing.
+    "artifacts/api-server/src/lib/entryRequirements.ts",
+    "artifacts/api-server/src/test/layoverEntryGate.test.ts",
+    "artifacts/api-server/src/routes/entryRequirements.ts",
+    // ── ADDED 2026-09-22, and PRE-EXISTING rather than caused by §27 ──────────
+    // Both were already cited-but-unwatched at `origin/main`, which is part of
+    // why this census sat exactly ON its floor rather than above it. §26 grades
+    // them: it moved L28 from `N` to `C` on `layover_crews` existing and being
+    // applied, and names 2985 as the deploy dependency without which 2984's own
+    // apply fails. A row moved BY a migration has to age when that migration
+    // does, and neither was being watched.
+    "artifacts/api-server/src/migrations/2984_layover_crews.sql",
+    "artifacts/api-server/src/migrations/2985_layover_events_crew_vocabulary.sql",
+    // NOT ADDED: 2971_layover_discovery_mode_flag.sql, deliberately, and this is
+    // a decision inherited rather than taken. §25 says in terms that whether it
+    // belongs in CENSUS_SCOPE is "the next measuring pass"'s to decide, and that
+    // it is "deliberately NOT added there ... because nothing in this document
+    // grades it yet". §27 is not that measuring pass — it grades two rows and
+    // names four that do not move — so overturning §25's decision is not its to
+    // make, and adding the file would silence a gap §25 chose to leave visible.
     // NOT ADDED, and said rather than left silent, per the guard's own second
     // remedy. `routes/messaging.ts` is cited once, for a `message.created`
     // payload divergence §20 found and explicitly declined: "The media path is
@@ -1827,7 +1865,7 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/lib/mapTravelers.ts",
     "artifacts/api-server/src/services/telegraph/",
     "artifacts/api-server/src/routes/nearbyReachable.ts",
-    "artifacts/api-server/src/migrations/2998_nearby_reachable_flag.sql",
+    "artifacts/api-server/src/migrations/2990_nearby_reachable_flag.sql",
     "artifacts/api-server/src/routes/location.ts",
     "artifacts/api-server/src/routes/index.ts",
     "artifacts/api-server/src/test/proximityBuckets.test.ts",

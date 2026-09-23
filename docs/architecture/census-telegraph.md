@@ -1325,7 +1325,7 @@ depends on DDL no database has would stay W however good the code was.
   (`routes/telegraphSharedContext.ts:223#/threads/:threadId/conversation-header`)
   is §2.2's other two thirds. Both are mounted:
   `routes/index.ts:26#telegraphSharedContextRouter` imports and
-  `routes/index.ts:189#telegraphSharedContextRouter` uses.
+  `routes/index.ts:190#telegraphSharedContextRouter` uses.
   A failed membership read is a 500 and a failed RESOLVER read sets
   `incomplete: true` rather than returning an empty rail — "we could not tell"
   and "you share nothing with this person" are different statements and the
@@ -1375,7 +1375,7 @@ depends on DDL no database has would stay W however good the code was.
 
 | id | was | now | why |
 | --- | --- | --- | --- |
-| T13 | N | **C** | **Rail at the top of each conversation showing mutually relevant objects** — The component exists and is mounted on BOTH conversation surfaces — `travel-buddy-standalone/app/messages/[id].tsx:2089#SharedContextRail` and `travel-buddy-standalone/src/components/GroupChatScreen.tsx:815#SharedContextRail` — between the header and the message list, fed by a mounted route (`routes/index.ts:189#telegraphSharedContextRouter`). What would turn this red (P24): a third conversation surface appearing without it; nothing pins that. |
+| T13 | N | **C** | **Rail at the top of each conversation showing mutually relevant objects** — The component exists and is mounted on BOTH conversation surfaces — `travel-buddy-standalone/app/messages/[id].tsx:2089#SharedContextRail` and `travel-buddy-standalone/src/components/GroupChatScreen.tsx:815#SharedContextRail` — between the header and the message list, fed by a mounted route (`routes/index.ts:190#telegraphSharedContextRouter`). What would turn this red (P24): a third conversation surface appearing without it; nothing pins that. |
 | T14 | N | **C** | **Eligibility: created by me, joined/saved/attended by them** — `relationshipFor` reads the source object's own owner column and returns `CREATED_BY_ME_JOINED_BY_THEM` when the viewer created it and a conversation counterpart joined (`services/telegraph/sharedContext.ts:344#resolveSharedTrips`, `:405#resolveSharedMeetups`, `:467#resolveSharedEvents`). Asserted against a trip Alice owns and Bob joined, `test/telegraphSharedContext.test.ts:498`. |
 | T15 | N | **C** | **Eligibility: created by them, joined/saved/attended by me** — Same resolver, the other branch — asserted against a meetup Bob created and Alice accepted, `test/telegraphSharedContext.test.ts:498`. |
 | T16 | N | **C** | **Eligibility: both members of the same Trip, Plan, Crew, Event or booking** — Four resolvers, four canonical membership tables: `trip_members` (the crew table — a trip's crew IS `trip_members`; `circle_memberships` is a personal address book, not a shared crew, and is deliberately not read), `meetup_invites` (Plan), `event_attendees` (Event), `rent_buddy_bookings` (booking). `services/telegraph/sharedContext.ts:521#resolveSharedBookings` is the booking one. |
@@ -1512,7 +1512,7 @@ and it was being violated on every thread that had ever carried a card.
   not a way to launder a reference to something you were never authorized to
   see. `POST /threads/:threadId/share-projections`
   (`routes/telegraphShare.ts:190#/threads/:threadId/share-projections`) is the
-  batch resolve. Both mounted at `routes/index.ts:190#telegraphShareRouter`.
+  batch resolve. Both mounted at `routes/index.ts:191#telegraphShareRouter`.
 - **The client half, including the cards that were already wrong.**
   `travel-buddy-standalone/src/features/telegraph/sharing/useShareRevocation.ts:50#useShareRevocation`
   is a THREE-state hook — available / unavailable / unknown — and the third
@@ -1658,7 +1658,7 @@ asset is not a kind.
   block guard, E2EE refusal — and the §5 share route and the §6.2 typed-kind
   route both call it. A second write endpoint that skipped one of them would be
   a weaker door into the same table.
-- **The routes are mounted** at `routes/index.ts:191#telegraphKindsRouter`.
+- **The routes are mounted** at `routes/index.ts:192#telegraphKindsRouter`.
 - **The client.** `TypedMessageRenderer`
   (`travel-buddy-standalone/src/features/telegraph/kinds/TypedMessageRenderer.tsx:65#TypedMessageRenderer`)
   renders all seven, dispatched from the conversation at
@@ -1818,7 +1818,7 @@ easy to get wrong become testable without a database.
   (`routes/telegraphCoordination.ts:212`) returns the derived state, the legal
   next states, the latest declared status per member, the arrival counts and
   the three projections, and inherits §14.3's history bound. Mounted at
-  `routes/index.ts:193#telegraphCoordinationRouter`.
+  `routes/index.ts:194#telegraphCoordinationRouter`.
 - **The client panel** is §2.2's "OPTIONAL COORDINATION PANEL", between the
   rail and the stream
   (`travel-buddy-standalone/app/messages/[id].tsx:2094#CoordinationPanel`,
@@ -6634,7 +6634,7 @@ here.
   - Five of the six endpoints this lane added have no client: `GET /threads/:id/layers`,
     `GET /me/commitments`, `POST /threads/:id/seen`, `GET /threads/:id/safety-mode` and
     `GET /threads/:id/trip-context`. They are REACHABLE — mounted through
-    `routes/index.ts:189#telegraphSharedContextRouter`, `:193#telegraphCoordinationRouter` and
+    `routes/index.ts:190#telegraphSharedContextRouter`, `:194#telegraphCoordinationRouter` and
     `:192` — and unmounted in the app's UI. That is precisely the state T11, T12, T218 and T262
     stay W for, and it is why those four rows did not move.
   - The sixth, `confirm-action`, was already on the live path and its behaviour changed: an
@@ -6800,7 +6800,7 @@ the class is closed — applies, and so does the narrower objection:
 
 | id | Verdict | What closed, and what did not |
 |---|---|---|
-| T267 | **W** | **Evidence correction plus a half.** "Meeting tools (T248) and catch-up do not exist" is wrong on the first clause: T245–T251 are all C. The catch-up's SERVER half now exists and is reachable (`routes/index.ts:193#telegraphCoordinationRouter`). It stays W because the row is the **Compass** integration row and nothing in Compass reaches it: §18.3's tool set is closed at eight named accessors, `TELEGRAPH_TOOL_SPEC_NAMES` asserts that closure, and a ninth tool would break the one claim that file makes about itself. The right wiring is to carry the catch-up inside `getConversationContext()` — one import, no new tool name — and `compass/TelegraphConversationTools.ts` is not this lane's file. **Cross-lane request, §22.8.** |
+| T267 | **W** | **Evidence correction plus a half.** "Meeting tools (T248) and catch-up do not exist" is wrong on the first clause: T245–T251 are all C. The catch-up's SERVER half now exists and is reachable (`routes/index.ts:194#telegraphCoordinationRouter`). It stays W because the row is the **Compass** integration row and nothing in Compass reaches it: §18.3's tool set is closed at eight named accessors, `TELEGRAPH_TOOL_SPEC_NAMES` asserts that closure, and a ninth tool would break the one claim that file makes about itself. The right wiring is to carry the catch-up inside `getConversationContext()` — one import, no new tool name — and `compass/TelegraphConversationTools.ts` is not this lane's file. **Cross-lane request, §22.8.** |
 | T308 | **W** | **Evidence correction.** "One of four: translation … No transcript, no thread tools (T245–T251), no catch-up" is now one of four understated by two: thread tools exist and the catch-up's server half exists. It stays W and is NEITHER-capped on the voice transcript, which needs the audio MIME and storage widening no migration provides (§13.4, T40). |
 | T344 · T363 | **C, unchanged, and strengthened** | §22.3 does not move them and could not: both are C already, and §20.6's rule is that a refusal is not a plausible empty state, so the three sites never counted against them. What §22.3 removes is the defect §20.7 named separately. |
 
@@ -6910,7 +6910,7 @@ violation, not a missing feature).
 
   - Nothing here is merged, deployed or flag-enabled, and nothing above depends on a migration.
   - `GET /threads/:id/catch-up` has **no client**. It is REACHABLE — mounted at
-    `routes/index.ts:193#telegraphCoordinationRouter` — and unmounted in the app's UI, which is
+    `routes/index.ts:194#telegraphCoordinationRouter` — and unmounted in the app's UI, which is
     precisely why T267 does not move.
   - `POST /threads/:id/typing` and the four `telegraph/suggestions` handlers changed behaviour on
     a path clients already call: an outage on the membership read now answers 503
@@ -8142,7 +8142,7 @@ which rebased without conflict.
 Seven rows move, all `N → W`, and none moves to `C`. The reason is the same for
 all seven and is stated once here rather than seven times: the surface built
 below is **dark**. `nearby_reachable_enabled` is seeded FALSE by
-`migrations/2998_nearby_reachable_flag.sql`, which is applied to no database, so
+`migrations/2990_nearby_reachable_flag.sql`, which is applied to no database, so
 it has no `feature_flags` row on any deployment; `isFlagEnabled` answers false
 for an absent row exactly as it does for a false one, and no client calls the
 route. A capability nobody can reach is built, not correct.
@@ -8203,7 +8203,7 @@ near this point" query, which is §4.6's separation expressed as an absence
 rather than a filter.
 
 **The surface** — `routes/nearbyReachable.ts`, mounted at
-`routes/index.ts:395#router.use(nearbyReachableRouter)`. Flag-gated
+`routes/index.ts:399#router.use(nearbyReachableRouter)`. Flag-gated
 (`routes/nearbyReachable.ts:105#nearby_reachable_enabled`), rate-limited, and quantised: `quantiseNow`
 (`routes/nearbyReachable.ts:84#export function quantiseNow`) floors the clock to 60 s so two polls inside
 one quantum are byte-identical. A failed read is a retryable 503
@@ -8333,7 +8333,7 @@ merely present.
 Stated plainly, because a reader must not have to discover it:
 
 1. **The surface is dark.** `nearby_reachable_enabled` is seeded FALSE by
-   `migrations/2998_nearby_reachable_flag.sql`, which is applied to NO database
+   `migrations/2990_nearby_reachable_flag.sql`, which is applied to NO database
    — so the row does not exist on any deployment. The migration exists because
    `check-flag-polarity.mjs` refuses a flag read by code and created by no
    migration, and because an explicit FALSE is a decision on the record where an
@@ -8376,7 +8376,7 @@ sibling (`listWindowsForOwners`) was the smaller change. The `location_sessions`
 
 `lib/mapTravelers.ts#effectiveDiscoveryVisibility` is the opt-in gate for the
 Discovery live traveler map — a route that is mounted, authenticated and NOT
-behind a flag (`routes/index.ts:215#router.use(mapTravelersRouter)`). Reading it
+behind a flag (`routes/index.ts:216#router.use(mapTravelersRouter)`). Reading it
 to build the bucket ladder on top of it turned up this:
 
 **The column carries two vocabularies and the gate only knew one.** The module
@@ -8582,7 +8582,7 @@ already refuses to render these rows past `expires_at` —
 `routes/availability.ts:87#  const quickStatus = qs && (qs as any).expires_at > new Date().toISOString()`,
 `routes/availability.ts:152#  if (!data || (data as any).expires_at <= new Date().toISOString()) {`,
 `routes/availability.ts:250#    if ((r as any).expires_at > now) qsMap[(r as any).user_id] = r;`,
-`services/passport/PassportProjectionService.ts:896#      .from("quick_availability_status")` and
+`services/passport/PassportProjectionService.ts:902#      .from("quick_availability_status")` and
 `services/passport/SharedContextService.ts:104#      .from("quick_availability_status")` —
 so it removes data nothing was allowed to show, which is a privacy improvement
 rather than a behaviour change.
@@ -9175,7 +9175,7 @@ worked."* It was written when `SET_COORDINATION_STATUS` was moved out of
   and the command that opens one is `kind: "COORDINATION_SESSION"` on
   `POST /api/threads/:threadId/coordination`
   (`routes/telegraphCoordination.ts:311#router.post(`), mounted at
-  `routes/index.ts:193#router.use(telegraphCoordinationRouter);`, **with no
+  `routes/index.ts:194#router.use(telegraphCoordinationRouter);`, **with no
   feature flag and no migration behind it**. So the command endpoint answered
   **501 "nothing in this repository implements it"** about a capability that
   ships on every deployment of this branch.

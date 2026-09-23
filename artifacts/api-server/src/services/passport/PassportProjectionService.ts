@@ -236,7 +236,13 @@ export interface DomainTrust {
   key: string;
   /** Display label, e.g. "Trip Host". */
   domain: string;
-  /** Presentation word, e.g. "Excellent" | "Strong" | "Established" | "Building" | "New" | "Not applicable". */
+  /**
+   * Presentation word. Either a rating the domain earned — "Excellent" |
+   * "Strong" | "Established" | "Building" | "New" — or, when no rating is owed,
+   * "Not yet rated" (nothing measured), "Temporarily unavailable" (the profile
+   * could not be read) or "Not applicable" (the domain does not apply).
+   * `basis` says which, and is what the word is derived from.
+   */
   presentation: string;
   /**
    * False when the domain does not apply to this user (e.g. Buddy for a
@@ -1116,8 +1122,9 @@ function buildIntent(
 
 /**
  * Non-stigmatizing presentation word for a 0–100 domain score (§10, TABLE 12).
- * Deliberately avoids "low/poor/weak" — a neutral 50 reads "Established", not a
- * penalty, so new travelers are not stigmatized.
+ * Deliberately avoids "low/poor/weak", so a low but MEASURED score is described
+ * without stigma. It is only ever called on a score with a basis — see
+ * `wordForBasis`, which is what decides whether a word is owed at all.
  */
 function presentationWord(score: number): string {
   if (score >= 80) return "Excellent";
@@ -1125,6 +1132,46 @@ function presentationWord(score: number): string {
   if (score >= 50) return "Established";
   if (score >= 35) return "Building";
   return "New";
+}
+
+/**
+ * THE WORD A DOMAIN HAS EARNED, which is not always a rating word.
+ *
+ * `presentationWord` answers "what does this score read as". That is the wrong
+ * question when there is no score. The neutral 50 is a placeholder the trust
+ * engine substitutes so arithmetic downstream has a number — it is not an
+ * observation about a person, and running it through the rating vocabulary
+ * turned it into one: every account on a seeded-off trust engine read
+ * "Established" in all six domains, which is a claim nothing supports.
+ *
+ * So the basis chooses the word:
+ *
+ *   substituted     NO category was measured. "Not yet rated" — an absence of
+ *                   records, stated as an absence (§10, non-stigmatizing), not
+ *                   a rating and not an alarming zero.
+ *   unavailable     `trust_profiles` could not be READ. "Temporarily
+ *                   unavailable" — a different fact from never having been
+ *                   rated, and it must not borrow the same words, because one
+ *                   of them says something about the person and the other says
+ *                   something about the database.
+ *   not_applicable  "Not applicable", unchanged.
+ *   measured        the word the score earned.
+ *   partial         also the word the score earned. A mean of real scores and
+ *                   substituted ones IS partly a measurement; `basis` says so
+ *                   and the client's note says so in words. Withholding the
+ *                   word here would discard real observations.
+ *
+ * This is presentation only. `applicable`, `basis` and the numeric score are
+ * untouched on every branch — a domain that is not yet rated still APPLIES to
+ * this person, and `applicable: false` keeps its one meaning ("this domain does
+ * not apply", Buddy for a non-buddy). Collapsing the two would change the flag
+ * clients key their layout off.
+ */
+function wordForBasis(basis: DomainTrustBasis, score: number): string {
+  if (basis === "not_applicable") return "Not applicable";
+  if (basis === "unavailable") return "Temporarily unavailable";
+  if (basis === "substituted") return "Not yet rated";
+  return presentationWord(score);
 }
 
 function mean(...xs: number[]): number {
@@ -1135,10 +1182,13 @@ function mean(...xs: number[]): number {
 
 /**
  * TABLE 12 — project the nine canonical category scores into per-domain trust
- * PRESENTATIONS (no raw numbers reach the viewer). Categories default to the
- * neutral 50 when there is no trust profile, matching the trust engine's own
- * neutral default, so a brand-new account reads "Established" everywhere rather
- * than an alarming zero.
+ * PRESENTATIONS (no raw numbers reach the viewer). Categories still default to
+ * the neutral 50 when there is no trust profile, matching the trust engine's
+ * own neutral default, but that number no longer reaches the viewer as a word:
+ * a domain with no measured category reads "Not yet rated". The old behaviour
+ * — "a brand-new account reads 'Established' everywhere rather than an alarming
+ * zero" — avoided the alarming zero by making a claim instead. "Not yet rated"
+ * avoids both. See `wordForBasis`.
  */
 /*
  * EXPORTED so its tests exercise the SHIPPED projection rather than a copy of
@@ -1168,7 +1218,7 @@ export function buildDomainTrust(
    *
    * An unscored category therefore takes exactly the path an ABSENT one always
    * took: `isMeasured` is false, `c()` yields the neutral substitute, the basis
-   * comes out `substituted` or `partial`, and Q3's `wordFor` presents
+   * comes out `substituted` or `partial`, and Q3's `wordForBasis` presents
    * "Not yet rated" rather than a rating word. That is deliberate reuse — the
    * null case flows into the vocabulary that already exists for it rather than
    * introducing a second one.
@@ -1187,56 +1237,39 @@ export function buildDomainTrust(
   const basisOf = (...keys: string[]): DomainTrustBasis =>
     domainTrustBasis(state, keys.filter(isMeasured).length, keys.length);
 
-  /**
-   * Q3, owner decision 2026-09-22: **a SUBSTITUTED standing must not print a
-   * rating word.** When no category the domain averages was present, the score
-   * being worded is the neutral 50 that `mean()`/`c()` substituted, and
-   * `presentationWord(50)` is "Established" — so a person nobody measured was
-   * told they were an established member of the community, in six domains at
-   * once. census-passport §3 measured that as 56 of 58 production accounts.
-   *
-   * WHAT DELIBERATELY DOES NOT CHANGE, because the decision preserves it:
-   *   - `applicable` stays TRUE. "We have not measured you" is not "this domain
-   *     does not apply to you"; collapsing them would destroy the distinction
-   *     `not_applicable` exists to carry.
-   *   - `basis` and its note are untouched. The note explains; this fixes the
-   *     WORD, which is what a reader takes at a glance.
-   *   - `measured` and `partial` keep their real word. A partial mean is not a
-   *     measurement of everything, but it IS evidence, and blanking it would be
-   *     the opposite failure — refusing to say what was actually observed.
-   *
-   * "Not yet rated" is not new vocabulary: it is the phrasing the client
-   * already uses for a domain with no standing to show, so no client change is
-   * needed to render it.
-   */
-  const NOT_YET_RATED = "Not yet rated";
-  const wordFor = (score: number, basis: DomainTrustBasis): string =>
-    basis === "substituted" ? NOT_YET_RATED : presentationWord(score);
-
-  /** One row, worded through `wordFor` so the basis and the word cannot diverge. */
-  const row = (key: string, domain: string, score: number, basis: DomainTrustBasis): DomainTrust =>
-    ({ key, domain, presentation: wordFor(score, basis), applicable: true, basis });
+  // The basis is computed FIRST and the word is chosen from it. Asking
+  // `presentationWord` for a word and then labelling it with a basis is how a
+  // substituted 50 came to read "Established" beside a basis that said it was
+  // not measured: the two answers were produced independently and could
+  // disagree. Here one cannot contradict the other, because one is derived from
+  // the other.
+  const row = (
+    key: string,
+    domain: string,
+    score: number,
+    basis: DomainTrustBasis,
+  ): DomainTrust => ({ key, domain, presentation: wordForBasis(basis, score), applicable: true, basis });
 
   const domains: DomainTrust[] = [
     row("overall", "Overall", overallScore, domainTrustBasis(state, overallMeasured ? 1 : 0, 1)),
     row("traveler", "Traveler",
-        mean(c("respect_safety"), c("communication"), c("location_honesty"), c("passport_authenticity")),
-        basisOf("respect_safety", "communication", "location_honesty", "passport_authenticity")),
+      mean(c("respect_safety"), c("communication"), c("location_honesty"), c("passport_authenticity")),
+      basisOf("respect_safety", "communication", "location_honesty", "passport_authenticity")),
     row("trip_guest", "Trip Guest",
-        mean(c("plan_attendance"), c("respect_safety"), c("communication")),
-        basisOf("plan_attendance", "respect_safety", "communication")),
+      mean(c("plan_attendance"), c("respect_safety"), c("communication")),
+      basisOf("plan_attendance", "respect_safety", "communication")),
     row("trip_host", "Trip Host", c("host_quality"), basisOf("host_quality")),
     row("contributor", "Contributor",
-        mean(c("content_quality"), c("community_value"), c("guide_accuracy")),
-        basisOf("content_quality", "community_value", "guide_accuracy")),
+      mean(c("content_quality"), c("community_value"), c("guide_accuracy")),
+      basisOf("content_quality", "community_value", "guide_accuracy")),
     // Buddy is a contextual projection (§20): "Not applicable" unless the user
     // actually offers a buddy service. A domain that does not apply has no
     // inputs, so `basisOf()` reports not_applicable rather than a vacuous
     // "measured".
     isBuddy
       ? row("buddy", "Buddy",
-            mean(c("host_quality"), c("respect_safety"), c("communication")),
-            basisOf("host_quality", "respect_safety", "communication"))
+          mean(c("host_quality"), c("respect_safety"), c("communication")),
+          basisOf("host_quality", "respect_safety", "communication"))
       : { key: "buddy", domain: "Buddy", presentation: "Not applicable", applicable: false, basis: basisOf() },
   ];
   return domains;
@@ -1319,7 +1352,7 @@ async function buildTrust(
   // is true — so the finite check alone would call an unscored profile
   // "measured" and hand `buildDomainTrust` a hard 0, publishing the Overall
   // domain as a measured "New". With the null caught here, `overallMeasured` is
-  // false, the basis is `substituted`, and Q3's `wordFor` prints
+  // false, the basis is `substituted`, and Q3's `wordForBasis` prints
   // "Not yet rated" — the same vocabulary the category domains use.
   const overallRaw = profile?.overall_score;
   const overallMeasured =

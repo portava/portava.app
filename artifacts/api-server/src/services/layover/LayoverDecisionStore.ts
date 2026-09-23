@@ -205,6 +205,28 @@ export function riskBandFor(record: LayoverFeasibilityRecord): RiskBand | null {
       return "LOW";
     case "tight":
       return "MODERATE";
+    // ADDED AT INTEGRATION, 2026-09-23. `entry_unverified` reached this union
+    // from the entry gate (census-layover §45) while this function was being
+    // written in another lane, so neither lane ever saw the pair. The compiler
+    // caught it on the merge: the switch stopped being exhaustive.
+    //
+    // MODERATE, which is the band `tight` gets, because that is the tier the
+    // two surfaces that already rule on this verdict put it in, and they say so
+    // in as many words — `LayoverFeasibility.ts`'s VERDICT_CEILING maps it to
+    // `possible_but_risky` "the same band `LayoverCompassService.riskBand`
+    // gives it, so the two surfaces agree by construction rather than by
+    // coincidence", and `LayoverCompassService.riskBand` maps it likewise as
+    // "the risky band, not the refused one". This is the third surface; it
+    // agrees by construction too.
+    //
+    // NOT `UNSAFE`: that band's consequence is BLOCKED (L50's invariant below),
+    // and `LayoverSnapshot`'s exhaustive `forbidden` test rules deliberately
+    // that `entry_unverified` is NOT forbidden — "we could not check" is not
+    // "you may not go", and every corridor is unconfirmed until one is curated.
+    // NOT `null`: that slot is for `stay_airside`, which is a PREFERENCE and
+    // therefore not assessed at all. An unconfirmed border IS an assessment.
+    case "entry_unverified":
+      return "MODERATE";
     case "no":
       return "UNSAFE";
     case "stay_airside":

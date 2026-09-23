@@ -2867,6 +2867,18 @@ so in the same log, one step earlier:
         1. 2991_message_translations_confidence.sql   [shape=unwrapped]
         2. 2998_nearby_reachable_flag.sql             [shape=unwrapped]
 
+> **The file quoted above has since been renumbered to
+> `2990_nearby_reachable_flag.sql`** (2026-09-23, at the integration of PR 525 /
+> PR 524, which brought a `2998_story_retention.sql` onto `main` and made 2998 a
+> collision). The transcript is left EXACTLY as the dry run printed it, because
+> it is a record of what a tool said on a date, not a description of the tree —
+> rewriting a log to match a later rename is how a record stops being evidence.
+> The renumbered file's content is byte-identical apart from its own header
+> line, it is applied to no database, so no ledger row and no checksum moves,
+> and the order shown above is the only thing the rename changes: 2990 now sorts
+> BEFORE 2991. That is harmless here and was checked rather than assumed — the
+> file inserts one `public.feature_flags` row and reads nothing 2991 creates.
+
 Only 2991 was reported missing: 2998's claimed objects already exist on CI, so
 it is pending in the LEDGER sense and satisfied in the OBJECT sense — the exact
 distinction the inventory work exists to keep apart, and the reason "pending"
