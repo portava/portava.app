@@ -549,7 +549,17 @@ import {
  * 26 dead targets this branch had already repaired, which is the same move
  * as raising it. Re-measured against the merged tree immediately after the
  * merge rather than assumed — see the commit message for the figure. */
-export const MAX_DEAD_TARGETS = 178;
+/* RATCHETED 2026-09-23 178 -> 177, at the integration of PR #458. That merge
+ * moved the count to 179: it repaired one target in census-passport and
+ * created two in census-trust, on the `C18` and `C19` rows. census-trust §25
+ * repaired both by reading the claims — `C19`'s sweep and its test had simply
+ * drifted, and `C18`'s bare pointer had never resolved to the file it was
+ * cited for — which left the merged tree at 177, one below the ceiling it
+ * inherited. The guard printed "177 < 178 — LOWER THE CEILING ..., or this
+ * gain is not kept", and that is what this does. Both repairs travel in the
+ * same commit as the merge, so nothing here depends on a tree `main` has not
+ * got: once this branch lands, `main`'s own count is this count. */
+export const MAX_DEAD_TARGETS = 177;
 
 /** Pinned to a commit by its own declaration; its lines must not track HEAD. */
 const PINNED_DOCS = new Set(['docs/architecture/mobile-reachability-ledger.md']);

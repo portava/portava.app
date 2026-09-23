@@ -32,7 +32,7 @@ to change it without a deploy.
 
 ## 1. Nine category weights — *overridable*
 
-`services/trust/TrustScoreService.ts:76#DEFAULT_SETTINGS`
+`services/trust/TrustScoreService.ts:125#DEFAULT_SETTINGS`
 
 | Category | Weight |
 |---|---|
@@ -54,7 +54,7 @@ intended.
 
 ## 2. Six level thresholds — *overridable*
 
-`TrustScoreService.ts:36#PUBLIC_TRUST_LEVELS`, thresholds at `:87#level_building_trust`, banded at `TrustScoreService.ts:280#level_city_trusted`
+`TrustScoreService.ts:85#PUBLIC_TRUST_LEVELS`, thresholds at `:136#level_building_trust`, banded at `:360#level_city_trusted`
 
 | Level | Score at or above |
 |---|---|
@@ -65,7 +65,7 @@ intended.
 | `highly_trusted` | 78 |
 | `city_trusted` | 90 |
 
-A new user starts at **50** (`TrustScoreService.ts:276#50 + movement`), which is already
+A new user starts at **50** (`TrustScoreService.ts:356#movement`), which is already
 `reliable_traveler`. So the first label a user ever wears is the third of six,
 and the bottom two bands are only reachable by *losing* trust. If that is
 intended, it is worth saying so, because it means `new_traveler` does not mean
@@ -80,14 +80,14 @@ new.
 > promoted to `reliable_traveler` on no evidence. The centring on 50 that the
 > citation names still applies to a category that HAS events; what is gone is
 > the substituted 50 for one that has none
-> (`TrustScoreService.ts:257#if (relevant.length === 0) return null;`).
+> (`TrustScoreService.ts:337#if (relevant.length === 0) return null;`).
 > **The six thresholds in the table above are NOT re-proposed and NOT ratified
 > by this note** — they are unchanged values, and §2 still awaits the same
 > ruling it always did. The only thing that changed is which users reach them.
 
 ## 3. Decay half-life: 90 days — *overridable*
 
-`TrustScoreService.ts:86#decay_half_life_days`, applied at `:139#Math.pow(2`
+`TrustScoreService.ts:135#decay_half_life_days`, applied at `:193#Math.pow(2`
 
 Every event's weight is multiplied by `2^(-ageDays/90)`. A year-old event counts
 for about 6 % of a fresh one. The half-life is the whole of the "people change"
@@ -95,7 +95,7 @@ policy — there is no other mechanism by which old conduct stops mattering.
 
 ## 4. **HARD-CODED** scoring window: 365 days
 
-`TrustScoreService.ts:144#since`
+`TrustScoreService.ts:198#since`
 
 Events older than a year are not loaded at all. This is a literal in
 `loadEvents`, **not a setting** — an admin cannot change it, and it interacts
@@ -106,13 +106,7 @@ that can surprise you later.
 
 ## 5. **HARD-CODED** earn/lose asymmetry
 
-`TrustScoreService.ts:200#EARN_CONFIDENCE_WEIGHT` and
-`TrustScoreService.ts:272#const confidence = Math.min(1, totalWeight / EARN_CONFIDENCE_WEIGHT);`
-*(the application site was cited at line 250 until 2026-09-22; Q1's nullable-scores
-docblock on `computeCategoryScore` moved it. Repointed by SEARCHING for the
-multiplication the sentence below describes, not by adding the diff's offset,
-and anchored on a string that occurs exactly once in the file. The claim is
-unchanged: the ramp is applied to the positive branch only.)*
+`TrustScoreService.ts:280#EARN_CONFIDENCE_WEIGHT` and `:250`
 
 Positive movement is multiplied by `min(1, totalWeight / 5)` — a confidence
 ramp, so a single good event moves the score very little and it takes roughly
@@ -178,7 +172,7 @@ and the code comments say the distinction has been confused before.
 
 ## 8. Seven per-finding ceilings, and their expiries — *hard-coded*
 
-`services/trust/TrustCapService.ts:311#capMap`
+`services/trust/TrustCapService.ts:347#capMap`
 
 | Finding | Category capped | Ceiling | Expires after |
 |---|---|---|---|
@@ -226,7 +220,7 @@ events rather than double-counting them.
 
 ## 11. Recovery and probation — *hard-coded*
 
-`services/trust/TrustRecoveryService.ts:68#deficit`
+`services/trust/TrustRecoveryService.ts:86#deficit`
 
 Recovery is measured as progress toward **50** (neutral), not toward the user's
 previous score. Categories are prioritised by how far below neutral they sit,

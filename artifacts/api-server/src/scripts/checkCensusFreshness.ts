@@ -715,12 +715,41 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     //     and grades H159's boundary on it.
     //
     // NOT ADDED, on the precedent the layover entry above extends:
-    // scripts/migrationPrefixRules.ts is a guard module §X.4 cites as EVIDENCE
-    // about the 2100-2999 band — machinery this census reports on, not a subject —
-    // and 0179_stamp_criteria_engine.sql belongs to Passport and is cited in
-    // passing.
+    // 0179_stamp_criteria_engine.sql belongs to Passport and is cited in passing.
+    // (Its citation is also bare, so it resolves onto the STRAY ROOT COPY rather
+    // than onto src/migrations/ — docs/stray-sql-inventory-and-disposition.md
+    // item 2 owns that repair, together with deleting the strays.)
     "artifacts/api-server/src/migrations/2994_memory_relations_and_outbox_consumer.sql",
     "artifacts/api-server/src/test/highlightsApiUnhideBoundary.test.ts",
+    // ── ADDED 2026-09-23 by §Y. THE RULING DIRECTLY ABOVE IS REVERSED, on the ──
+    // ── facts that changed, not on the pressure of a red check. ──────────────
+    //
+    // The 2026-09-22 comment ruled scripts/migrationPrefixRules.ts out as
+    // "machinery this census reports on, not a subject", and at the time that was
+    // right: §X.4 named the 2100-2999 band only to explain why the amendment it
+    // wanted could not be written — the census cited the rule the way it cites a
+    // guard that measured it.
+    //
+    // §Y is a different relationship. PR #527 extended the band to 3000-3999, and
+    // the amendment §X.4 had recorded as unbuildable became buildable in the same
+    // hour; 3001 below EXISTS because of the line that module now carries. So the
+    // module is no longer evidence about why this census could not act — it is a
+    // precondition of a migration this census grades, and if the band moves again
+    // §Y's argument for 3001's filename goes stale and must be re-read. That is
+    // exactly what CENSUS_SCOPE is for.
+    //
+    // It is deliberately NOT put in checkCensusScopeCoverage.ts's NOT_GRADED
+    // list, which would have been the cheaper way to go green: that list is
+    // GLOBAL, so one entry stops all thirteen censuses watching a file, and this
+    // module is imported by the APPLIER (scripts/src/apply-migrations.ts) as well
+    // as by two guards — it is shared rule code, not a checker. NOT_GRADED's own
+    // comment names that as the thing that would make it wrong.
+    //
+    // 3001_highlight_kernel_admits_unhide.sql is a subject outright: it is the
+    // CREATE OR REPLACE that makes the §17 applier admit UNHIDE_HIGHLIGHT, which
+    // is what §Y moves H159's boundary on.
+    "artifacts/api-server/src/scripts/migrationPrefixRules.ts",
+    "artifacts/api-server/src/migrations/3001_highlight_kernel_admits_unhide.sql",
     // ── ADDED 2026-09-15: §M and §O's OWN suites, which the ledger could not ──
     // name because this scope did not.
     //
@@ -1104,6 +1133,12 @@ const CENSUS_SCOPE: Record<string, string[]> = {
   // not by services/trust. Listing only the service would have made this census
   // look fresh while the reads it grades moved underneath it.
   "census-trust.md": [
+    // ── ADDED 2026-09-22 by the RE-MEASUREMENT LANE, with §24 ──────────────
+    // §24.5 cites this suite as the executed evidence for the failure-visibility
+    // rows, and this census's scope floor is 100 %, so a file it cites and does
+    // not watch is a hole by its own rule: the suite could be deleted and the
+    // section would still read as though it had been run.
+    "artifacts/api-server/src/test/trustFailureVisibility.test.ts",
     // ── ADDED 2026-09-16 by the PRODUCT lane, with §20 ─────────────────────
     // TV-2a's Rent-a-Buddy half now RESTS on these. The row was W because
     // no screen under `app/(rent-a-buddy)/` routed to `/profile/verification`;
