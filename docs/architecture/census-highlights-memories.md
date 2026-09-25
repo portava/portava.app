@@ -210,7 +210,7 @@ another censor can reproduce the denominator:
   SQL function bodies reached by `.rpc(...)`. `memory_events` and `memory_projections` have **no**
   TypeScript writer at all — they are written only inside `project_user_memory` /
   `record_intent_memory` (SQL), reached via `db.rpc("project_all_memory")` at
-  `artifacts/api-server/src/lib/memoryProjectionScheduler.ts:51`. A grep-only census would call
+  `artifacts/api-server/src/lib/memoryProjectionScheduler.ts:124`. A grep-only census would call
   them unreferenced. They are not.
 - **"A table exists" is not "the requirement is met."** A table nothing writes satisfies nothing.
   This is applied literally below: `memory_episodes` and `memory_evidence` (PR #470) are inert **by
@@ -831,7 +831,7 @@ read; the body does the same, and the counts below follow its own enumeration.
 
 | Section | Requirement(s) | Was | Now | Evidence |
 | --- | --- | --- | --- | --- |
-| §6 (4) | H54 normalization · H55 eligibility gate · H56 rejection-reason registry · H57 evidence-source strength | NB ×4 | **BBW ×4** | `evidence.ts:246` (normalize, with a closed rejection set at `:192`), `:435` (eligibility, reasons at `:391`), `:114` `EVIDENCE_SOURCE_STRENGTH` per source type. Test-only; no `memory_evidence` table. |
+| §6 (4) | H54 normalization · H55 eligibility gate · H56 rejection-reason registry · H57 evidence-source strength | NB ×4 | **BBW ×4** | `evidence.ts:246` (normalize, with a closed rejection set at `:192`), `:435` (eligibility, reasons at `:391`), `:123` `EVIDENCE_SOURCE_STRENGTH` per source type. Test-only; no `memory_evidence` table. |
 | §7 (5) | H58 deterministic grouping · H59 boundary features · H60 midnight must not split · H61 versioned reason codes · H62 dedup relations | NB ×5 | **BBW ×5** | `episodeDetection.ts:244` (no clock, no I/O, sorted output, digest ids), `:46` `BOUNDARY_FEATURES`, the midnight rule implemented rather than commented, `:71` `EPISODE_REASON_CODES` under `:32` `EPISODE_DETECTOR_VERSION`, `:375` `relateEpisodes`. No detector inputs exist. |
 | §13 (3) | H104 compression hierarchy · H105 Life Chapters as projections · H106 edge types | NB ×3 | **BBW ×3** | `memoryGraph.ts:41` `COMPRESSION_LEVELS`, `:246` `buildCompressionHierarchy`, `:227` `buildLifeChapters` (ids, counts and a derived label only — no caption or media is copied upward, which is the §28.8 rule), `:58` `MEMORY_RELATION_TYPES`. Test-only. |
 | §15 (5) | H110 signature · H111 deterministic before semantic · H112 ranking dimensions · H113 namespace isolation · H114 revocation of derivatives | NB ×5 | **BBW ×5** | `searchMemories.ts:169`, `:49` `NAMESPACE_PROJECTIONS` (checked on the way IN), `:65` `RANKING_WEIGHTS`, `:141` a lexical scorer used only after the deterministic pass, `derivativeRegistry.ts:450` `revokeDerivativesForMemory`. Test-only, and the registry table is 2730, unapplied. |

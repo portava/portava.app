@@ -1457,8 +1457,8 @@ so the owner can apply them without recomputing:
 | 953 | `lib/discoveryCandidate.ts:130#` | `lib/discoveryCandidate.ts:141#` |
 | 2514, 2667 | `routes/discovery.ts:1737#` | `routes/discovery.ts:1794#` |
 | 2667 | `routes/discovery.ts:2097#` | `routes/discovery.ts:2194#` |
-| 2522, 2669 | `lib/discoveryCandidate.ts:225#` | `lib/discoveryCandidate.ts:270#` |
-| 2669 | `lib/discoveryCandidate.ts:240#` | `lib/discoveryCandidate.ts:299#` |
+| 2522, 2669 | `lib/discoveryCandidate.ts:266#` | `lib/discoveryCandidate.ts:270#` |
+| 2669 | `lib/discoveryCandidate.ts:240#` | `lib/discoveryCandidate.ts:417#` |
 
 **`check:doc-citations` was already red at this tree before this pass**, on 102 anchors in censuses
 this lane never opened (`census-media.md`, `census-passport.md` and others), broken by sibling lanes

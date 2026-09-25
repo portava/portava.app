@@ -165,10 +165,10 @@ No `sensing_*` table is created anywhere in this tree.
 
 | Table | Created by | Writer in server code | Reader |
 |---|---|---|---|
-| ✅ `intel_observations` | `migrations/2130_intel_storage.sql` | `services/intel/IntelCaptureService.ts:427`; SQL: deleted by `purge_intel_contributions_older_than` (`2173:82`) and `erase_intel_for_actor` (`2278:217`) | **18** server readers (e.g. `routes/intel.ts:247`, `lib/intelProjectionAggregator.ts:152`, `lib/trailServe.ts:292`) |
+| ✅ `intel_observations` | `migrations/2130_intel_storage.sql` | `services/intel/IntelCaptureService.ts:565`; SQL: deleted by `purge_intel_contributions_older_than` (`2173:82`) and `erase_intel_for_actor` (`2278:217`) | **18** server readers (e.g. `routes/intel.ts:247`, `lib/intelProjectionAggregator.ts:153`, `lib/trailServe.ts:292`) |
 | ✅ `intel_claims` | `migrations/2130_intel_storage.sql` | `services/intel/IntelCaptureService.ts:526,550,644`; SQL `INSERT` in `2174:85` | 9 server readers (e.g. `lib/intelProjectionScheduler.ts:61,123`) |
 | ✅ `intel_evidence` | `migrations/2130_intel_storage.sql` | `lib/intelEvidenceCapture.ts:262`, `lib/media/mediaEvidenceLink.ts:157`; SQL deletes (`2173:71`, `2278:209`) | 4 (e.g. `lib/intelProjectionAggregator.ts:196`) |
-| ✅ `intel_confirmations` | `migrations/2130_intel_storage.sql` | `services/intel/IntelCaptureService.ts:587`; SQL deletes (`2173:75`, `2278:213`) | 3 |
+| ✅ `intel_confirmations` | `migrations/2130_intel_storage.sql` | `services/intel/IntelCaptureService.ts:741`; SQL deletes (`2173:75`, `2278:213`) | 3 |
 | ✅ `intel_state_snapshots` | `migrations/2130_intel_storage.sql` | `lib/intelProjection.ts:408`, `lib/intelProjectionScheduler.ts:167`; SQL delete in `2133:56` | 12 (e.g. `routes/intelApi.ts:41`, `lib/liveClaimRead.ts:321`) |
 | ✅ `intel_mission_candidates` | `migrations/2167_intel_mission_candidates.sql` | 8 sites — `services/intel/CoverageService.ts:77,92,125,157,183`, `services/intel/PresenceVerifier.ts:434`, `services/media/MediaViewRequestService.ts:182`, `services/accountDeletion/AccountDeletionService.ts:1178` | 3 (`routes/intelCoverage.ts:103`, `services/intel/PresenceVerifier.ts:414`, `lib/intelCoverageScheduler.ts:205`) |
 | ✅ `intel_reward_ledger` | `migrations/2170_intel_reward_ledger.sql` | `services/intel/RewardService.ts:72`, `services/accountDeletion/AccountDeletionService.ts:1149` | 2 (`routes/intelObservability.ts:98`, `services/intel/RewardService.ts:78`) |
@@ -323,7 +323,7 @@ handler tests stayed green with the mount commented out (`:1-18`).
 | `GET /v1/experiences/:id/typical-patterns` | `routes/intelReadModels.ts:198` | reads `intel_historical_patterns` (`:214`) |
 | `GET /v1/neighborhoods/:id/pulse` | `routes/intelReadModels.ts:274` | |
 | `GET /v1/intel/prompt-eligibility` | `routes/intelReadModels.ts:360` | |
-| `POST /map/observations` | `routes/mapObservations.ts:895` | mounted `routes/index.ts:321#router.use(mapObservationsRouter)`; the only caller of `lib/intelEvidenceCapture.ts` |
+| `POST /map/observations` | `routes/mapObservations.ts:901` | mounted `routes/index.ts:321#router.use(mapObservationsRouter)`; the only caller of `lib/intelEvidenceCapture.ts` |
 | `GET /map/projection/temporal` | `routes/mapProjectionTemporal.ts:412` | mounted `routes/index.ts:319#router.use(mapProjectionTemporalRouter)`; reads `intel_state_snapshot_versions` (`routes/mapProjectionTemporal.ts:397`) |
 
 ## 6. PR #475 — measured, not merged
