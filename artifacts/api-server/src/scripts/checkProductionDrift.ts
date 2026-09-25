@@ -780,6 +780,36 @@ export const KNOWN_PRODUCTION_GAPS: Record<string, Gap> = {
       "capped row is missed). Strike this off in the same change that applies " +
       "2998 to PRODUCTION and refreshes the two production snapshots.",
   },
+
+  // ── The anti-differencing gate's durable memory (3110): declared, unapplied ─
+  sensing_published_aggregates: {
+    classification: "unapplied",
+    note:
+      "Migration 3110_sensing_published_aggregates.sql, which this tree " +
+      "declares. Applied to NO database — not production, not portava-ci — " +
+      "because the owner runs all SQL and this lane applies nothing. Not " +
+      "'unmerged-pr': that classification is for a table whose migration is on " +
+      "some OTHER branch, and this check can see the file. " +
+      "WHAT IT IS: the durable last-published store lib/sensingDifferencingGate " +
+      "needs. That module's own header says 'the caller keeps the last " +
+      "published aggregate and hands it back in', and until 3110 there was " +
+      "nowhere to keep it — a previous value held in process memory resets on " +
+      "every deploy and replica, and a reset reads as no_previous, which " +
+      "PUBLISHES. intel_state_snapshots cannot serve: it is upserted in place, " +
+      "so the value the gate must compare against is already overwritten by the " +
+      "value it is being compared with. census-sensing S24 states both halves. " +
+      "WHAT ITS ABSENCE COSTS TODAY: nothing that any user can see. " +
+      "publishThroughDifferencingGate is the only caller of this table and it " +
+      "has no caller of its own — no route, no scheduler and no publisher " +
+      "reads a sensing aggregate, because `surface` and `share` are scopes " +
+      "SENSING_ANON_POLICY_V1 does not grant. Without the table its read fails " +
+      "and the gate answers previous_unreadable, which REFUSES rather than " +
+      "publishes; that is the fail-closed direction and it is asserted in " +
+      "src/test/sensingIngestDurableGate.test.ts. So this entry is a gap that " +
+      "must close BEFORE any publisher exists, not after. " +
+      "Strike it off in the same change that applies 3110 to PRODUCTION and " +
+      "refreshes the two production snapshots.",
+  },
 };
 
 /**

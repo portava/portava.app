@@ -405,4 +405,15 @@ router.use(experienceSessionsRouter);
 import nearbyReachableRouter from "./nearbyReachable.js";
 router.use(nearbyReachableRouter);
 
+// ── Sensing §4.3: the anonymous signal ingest ────────────────────────────
+// Its own file. It is the FIRST transport the anonymous sensing store has ever
+// had, and it deliberately carries no user session: it authenticates the opaque
+// contribution credential (2480) and nothing else, reads and writes no
+// actor_id, and never touches location_snapshots. routes/intel.ts — the
+// requireUser-bound human-claim capture — is untouched and shares no path with
+// it. Registered at the tail, and the import with it, so no line above moves:
+// census-sensing.md and sensing-surface-inventory.md cite this file by line.
+import sensingIngestRouter from "./sensingIngest.js";
+router.use(sensingIngestRouter);
+
 export default router;

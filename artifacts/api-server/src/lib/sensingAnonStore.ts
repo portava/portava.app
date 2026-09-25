@@ -20,10 +20,10 @@
  * product is still made by intel_observations -> intel_claims ->
  * intel_state_snapshots, which this file does not import, read or write.
  *
- * ── INERT ────────────────────────────────────────────────────────────────────
- * Nothing outside this module's tests imports it. There is no route, scheduler,
- * job or feature flag behind it. It is a contract, waiting for a decision to use
- * it.
+ * ── NO LONGER INERT ─────────────────────────────────────────────────────────
+ * This said "there is no route ... a contract, waiting for a decision to use it".
+ * The decision was taken (SENSING_AUTH_POSTURE, 2026-09-16) and the store now
+ * has exactly one HTTP writer. See "── Writer ──" below for what changed.
  *
  * ══════════════════════════════════════════════════════════════════════════════
  * THE ROTATING ID, AND HOW REVOCATION WORKS WITHOUT AN IDENTITY
@@ -410,6 +410,34 @@ export function isSensingContributionExpired(row: SensingContributionRow, nowMs:
 }
 
 // ── Writer ───────────────────────────────────────────────────────────────────
+//
+// THIS MODULE'S HEADER USED TO SAY THE STORE WAS INERT, and it was:
+//
+//     "Nothing outside this module's tests imports it. There is no route,
+//      scheduler, job or feature flag behind it. It is a contract, waiting for
+//      a decision to use it."
+//
+// The decision it was waiting for was SENSING_AUTH_POSTURE, and it was taken on
+// 2026-09-16 — `anonymous_capable`, Option B STAGED (lib/sensingAuthPosture.ts).
+// 2315, 2340 and 2480 were applied to production the same day
+// (src/lib/capability/production-applied-migrations.json, version
+// 20260916174227; the table with 2315's exact columns is visible in
+// src/lib/capability/snapshots/20260922-production-schema.json).
+//
+// So this store now has exactly ONE writer reachable over HTTP:
+// routes/sensingIngest.ts, which authenticates an opaque contribution
+// credential and no user session, reads and writes no actor_id, and never
+// touches location_snapshots. src/test/sensingAnonStore.test.ts holds the
+// allowlist and asserts the count is exactly one — not zero, which would mean
+// the writer was removed without the list moving, and not two.
+//
+// Unchanged: the TTL sweep (lib/sensingRetentionScheduler), the three
+// service-role bindings (lib/sensingAnonService), and the absence of any
+// feature flag — 2315 seeds none and seeding one is still an owner decision.
+//
+// This section is placed HERE rather than in the header on purpose: census
+// -sensing.md cites three lines above by number, and moving them would break
+// citations the repository's own guard (src/test/docCitations.test.ts) checks.
 
 /**
  * `duplicate: true` means the store already held this contributor's reading for
