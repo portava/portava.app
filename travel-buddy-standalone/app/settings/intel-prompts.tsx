@@ -23,6 +23,16 @@ import { useIntelPrompts } from '../../src/hooks/useIntelPrompts';
 import { VENUE_CATEGORIES, VENUE_LABELS } from '../../src/lib/intel/contracts';
 import { isCategoryPaused } from '../../src/lib/intel/promptPauseStorage';
 import { getIntelConsent, setIntelConsent, hasValidConsent, type IntelConsentState } from '../../src/services/intelConsent';
+import {
+  ACOUSTIC_PERMISSION_DENIED,
+  readAcousticSensingPermission,
+  requestAcousticSensingPermission,
+  withdrawAcousticSensingPermission,
+} from '../../src/services/sensing/acousticSensingPermission';
+import {
+  acousticCaptureAllowed,
+  type AcousticPermission,
+} from '../../src/lib/sensing/acousticPermission';
 
 export default function IntelPromptsSettingsScreen() {
   const {
@@ -50,6 +60,21 @@ export default function IntelPromptsSettingsScreen() {
     if (next) setConsent(next);
   }, []);
 
+  // §4.1's SEPARATE acoustic permission. Not the call/video microphone: its own
+  // scope, its own storage key, its own switch, and off until this row is used.
+  const [acoustic, setAcoustic] = React.useState<AcousticPermission | undefined>(undefined);
+  React.useEffect(() => {
+    let alive = true;
+    readAcousticSensingPermission()
+      .then((p) => { if (alive) setAcoustic(p); })
+      .catch(() => { if (alive) setAcoustic(ACOUSTIC_PERMISSION_DENIED); });
+    return () => { alive = false; };
+  }, []);
+  const acousticOn = acousticCaptureAllowed(acoustic);
+  const toggleAcoustic = React.useCallback(async (v: boolean) => {
+    setAcoustic(v ? await requestAcousticSensingPermission() : await withdrawAcousticSensingPermission());
+  }, []);
+
   return (
     <SettingsScreen title="Live intel prompts" subtitle="When we may ask you to share a signal">
       <SettingsSection
@@ -66,6 +91,33 @@ export default function IntelPromptsSettingsScreen() {
           value={consentOn}
           onValueChange={toggleConsent}
           disabled={consent === undefined}
+        />
+      </SettingsSection>
+
+      {/*
+        Sensing spec §4.1: coarse acoustic energy/rhythm ONLY under separate
+        explicit permission. This is that permission, and this row is the only
+        place it can be granted. It is deliberately its OWN section and its own
+        switch: Portava already holds a microphone permission for calls and
+        video, and §3 requires purpose-scoped authorization, so the microphone a
+        traveller granted to talk to a friend must not silently become a sensor.
+        Turning this on is what asks the OS; turning it off withdraws the
+        purpose scope and leaves calls untouched.
+      */}
+      <SettingsSection
+        title="Sound level sensing"
+        subtitle="Separate from the microphone used for calls and video."
+      >
+        <ToggleRow
+          title="Use a coarse sound level"
+          subtitle={
+            acousticOn
+              ? 'On — Portava takes a loudness and rhythm reading to tell whether a place is lively. No audio is recorded, kept or sent.'
+              : 'Off — Portava never listens for this. Granting the microphone for a call does not turn this on.'
+          }
+          value={acousticOn}
+          onValueChange={toggleAcoustic}
+          disabled={acoustic === undefined || !consentOn}
         />
       </SettingsSection>
 

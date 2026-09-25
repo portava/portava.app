@@ -33,7 +33,8 @@
         "NSLocationAlwaysAndWhenInUseUsageDescription": "Portava uses your location in the background to track route progress, trigger check-ins, and automatically publish your post after you leave a spot.",
         "NSCameraUsageDescription": "Portava uses your camera for video calls and so you can add photos to posts and your passport.",
         "NSPhotoLibraryUsageDescription": "Portava accesses your photo library so you can upload trip photos and profile pictures.",
-        "NSMicrophoneUsageDescription": "Portava uses your microphone for voice and video calls with your travel contacts, and for video content attached to posts."
+        "NSMicrophoneUsageDescription": "Portava uses your microphone for voice and video calls with your travel contacts, and for video content attached to posts.",
+        "NSMotionUsageDescription": "Portava reads coarse motion on this device to work out how busy a place is. The readings are turned into buckets on your phone and the raw motion never leaves it."
       }
     },
     "android": {
@@ -144,6 +145,23 @@
     "extra": {
       "eas": {
         "projectId": "b4147876-b8f9-4ea2-94f4-dd9f4e9cb65b"
+      },
+      "sensingPermissions": {
+        "_comment": "Sensing spec §4.1: coarse acoustic energy/rhythm ONLY under separate explicit permission, and §3: collect/retain/aggregate/infer/personalize/surface/share are distinct permissions. Neither iOS nor Android offers a second microphone switch, and Portava's existing one (NSMicrophoneUsageDescription / RECORD_AUDIO) was granted for LiveKit calls and expo-av video. So the separate permission is declared here as its own purpose scope with its own storage key, its own usage string and its own opt-in, and src/lib/sensing/acousticPermission.ts refuses every call/video microphone grant by name. The OS permission is required IN ADDITION, never INSTEAD.",
+        "acousticEnergy": {
+          "scope": "sensing.acoustic.energy",
+          "storageKey": "sensing_acoustic_permission_v1",
+          "defaultGranted": false,
+          "requiresExplicitOptIn": true,
+          "requiresOsPermission": "microphone",
+          "notSatisfiedBy": [
+            "call.microphone",
+            "livekit.microphone",
+            "video.microphone",
+            "expo-av.recording"
+          ],
+          "usageDescription": "Portava can take a coarse loudness and rhythm reading to tell whether a place is lively. It measures a level only — no audio is recorded, kept or sent — and it is off until you turn it on here, separately from the microphone used for calls and video."
+        }
       }
     },
     "owner": "travel-buddy1"
