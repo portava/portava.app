@@ -72,6 +72,7 @@ import { installInputPolicySync } from '../src/platform/input-assistance/service
 import { installLocalRecents } from '../src/platform/input-assistance/services/installLocalRecents';
 import { installInputTelemetryTransport } from '../src/platform/input-assistance/services/telemetryTransport';
 import { registerGeographicFields } from '../src/platform/input-assistance/geographic/geoFields';
+import { installSensingCapture } from '../src/services/sensing/installSensingCapture';
 
 /**
  * Session-aware root crash boundary. Sits inside SessionProvider so it can
@@ -240,6 +241,34 @@ function GeographicFieldsSetup() {
   return null;
 }
 
+/**
+ * §4.1 — attach the ON-DEVICE sensing capture loop once at boot.
+ *
+ * THIS IS THE LINE THAT MAKES THE DEVICE A SENSOR. Without it
+ * `src/lib/sensing/*` and `src/services/sensing/*` are a tree nothing imports,
+ * which is exactly the state the sensing census records for S28: "no client
+ * capture module produces the nine named features". The reduction, the privacy
+ * boundary and the transport are all unit-tested, and none of that would mean
+ * anything if no build ever ran them.
+ *
+ * It is fail-closed twice over before it samples anything:
+ * `installSensingCapture` starts nothing without an API base AND without valid
+ * server-authoritative Intelligence-Contribution consent, and it re-checks that
+ * consent on every foreground. Acoustic sensing stays off unless the SEPARATE
+ * `sensing.acoustic.energy` grant is held — the microphone Portava already has
+ * for calls and video buys nothing there (§4.1).
+ *
+ * Nothing leaves the handset but buckets: see
+ * `src/lib/sensing/contributionPayload.ts` and the privacy test beside it.
+ */
+function SensingCaptureSetup() {
+  useEffect(() => {
+    const handle = installSensingCapture();
+    return () => handle.dispose();
+  }, []);
+  return null;
+}
+
 function PushSetup() {
   usePushToken();
   useNotificationStream();
@@ -369,6 +398,7 @@ export default function RootLayout() {
                       <LocalRecentsSetup />
                       <InputTelemetrySetup />
                       <GeographicFieldsSetup />
+                      <SensingCaptureSetup />
                       <CompassFrontloadSetup />
                       <WallAnalyticsSetup />
                       <StatusBar style="dark" />
