@@ -2278,6 +2278,51 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "db/rollback/2026-09-12-2841-experience-session-flag-rollback.sql",
     "artifacts/api-server/src/test/experienceSession.test.ts",
     "artifacts/api-server/src/test/experienceSessionsRoute.test.ts",
+    // WIDENED 2026-09-25 (census-sensing §15-§17). check:census-scope-coverage
+    // put this census at 89% against a floor of 90%: §16 re-derived S3/S106
+    // against the four REAL fusion call sites and §15/§17 cited the modules that
+    // replaced deleted evidence, and none of those paths were watched. A census
+    // that cites a file to settle a verdict and then does not age when that file
+    // moves is the gap the scope check exists to close.
+    //
+    // The fusion store and its unrepresentability proof — §16's whole subject.
+    // `presence/domain/` was already here; `presence/fusion/` is where the
+    // store that domain describes actually lives.
+    "artifacts/api-server/src/presence/fusion/",
+    "artifacts/api-server/src/test/presenceFusionUnrepresentable.test.ts",
+    // The four production callers of `presenceFusion.admit`. §16.2 counts them
+    // against `read`/`resolve`/`clear`, so a fifth caller — or a first reader —
+    // must age this census. Two are already watched (mapAggregation,
+    // locateFriendsSession); these are the other two.
+    "artifacts/api-server/src/lib/circleResponseShaper.ts",
+    "artifacts/api-server/src/domain/trips/services/TripCrewLocationService.ts",
+    // Cited by §15.5 as NEW modules in other censuses' scopes — but they are
+    // sensing subject matter (grounding envelope, session revocation reach,
+    // experience-session bridge) and this census names them.
+    "artifacts/api-server/src/compass/CompassLiveClaimContext.ts",
+    "artifacts/api-server/src/services/memoryProjections/experienceSessionBridge.ts",
+    "artifacts/api-server/src/services/memoryProjections/sessionRevocationReach.ts",
+    // Long-standing sensing citations that were never watched. safetyPolicy is
+    // cited six times and intelProjectionAggregator four; a verdict resting on
+    // six citations of a file nothing watches is exactly the standing-claim
+    // problem this corpus is built to catch.
+    "artifacts/api-server/src/lib/safetyPolicy.ts",
+    "artifacts/api-server/src/lib/intelProjectionAggregator.ts",
+    "artifacts/api-server/src/lib/intelConsent.ts",
+    "artifacts/api-server/src/routes/hiddenGems.ts",
+    "artifacts/api-server/src/test/intelLiveStateEndpoint.test.ts",
+    "artifacts/api-server/src/test/intelPresenceVerification.test.ts",
+    "artifacts/api-server/src/test/safetyPublicationPath.test.ts",
+    // S19/S97/S111/S118 all turn on this migration; §17 grades its precondition.
+    "artifacts/api-server/src/migrations/3002_intel_contribution_identity.sql",
+    //
+    // DELIBERATELY NOT ADDED, because this census cites them as context rather
+    // than grading them, and widening scope to whatever a census mentions would
+    // make every census stale on every commit: routes/admin.ts,
+    // routes/moderation.ts, routes/meetups.ts, routes/telegraphChat.ts,
+    // lib/envValidation.ts, migrations/2402_telegraph_membership_rls_recursion.sql,
+    // baseline/20260819_baseline_structure.sql and app.json. Nor any src/scripts/
+    // path: the header above records that doing so broke CI on b94a6fae.
   ],
   "census-compass.md": [
     // B8, 2026-09-14: three modules census-compass grades and did not watch.
