@@ -498,10 +498,9 @@ export interface PresenceGateOutcome {
  * ── WHY THE MAP GOES THROUGH A PRESENCE STORE AT ALL ─────────────────────────
  * census-sensing S3 names four coexisting presence models and the map's
  * `social_zone` / `buddy_zone` / `crew_member` kinds are one of them. They are
- * built in five different places — `lib/mapProjection` (three projectors),
- * `domain/trips/projections/TripMapProjection`, `lib/locateFriendsSession` —
- * and until now each of those decided, alone, how revealing its own pin was.
- * That is the model, not the pin.
+ * built in four different places — `lib/mapProjection`'s three projectors and
+ * `domain/trips/projections/TripMapProjection` — and until now each of those
+ * decided, alone, how revealing its own pin was. That is the model, not the pin.
  *
  * `aggregateForViewport` is the ONE point every served map object passes
  * through (`routes/mapProjection.ts:1093`, `routes/mapProjectionTemporal.ts:663`),
@@ -1034,7 +1033,7 @@ export function aggregateForViewport(
   //
   //    1b. THE PRESENCE GATE (census-sensing S3). Every object of a presence
   //        kind — `social_zone`, `buddy_zone`, `crew_member`, whichever of the
-  //        five producers built it — goes through the one presence fusion
+  //        four producers built it — goes through the one presence fusion
   //        store here. It is re-stamped from the sealed estimate that comes
   //        back, or dropped with a named refusal. This is the point at which
   //        the map stops being a fourth presence model with its own privacy

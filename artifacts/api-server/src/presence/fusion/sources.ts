@@ -173,7 +173,6 @@ export const PRESENCE_SOURCE_CONTRACTS: Readonly<Record<PresenceSourceId, Presen
         "src/lib/mapProjection.ts:304 projectCircleMember — crew_member",
         "src/lib/mapProjection.ts:404 projectBuddy — buddy_zone",
         "src/domain/trips/projections/TripMapProjection.ts:284 — crew_member",
-        "src/lib/locateFriendsSession.ts:523 — crew_member probe",
       ],
       readsThrough: "src/lib/mapAggregation.ts",
       blockedBy: null,
