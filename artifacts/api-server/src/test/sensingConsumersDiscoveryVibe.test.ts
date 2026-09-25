@@ -30,7 +30,7 @@ const NOW = Date.UTC(2026, 8, 20, 21, 0, 0);
 function grade(id: string, coverage: CoverageBucket): DiscoveryLiveRank {
   return {
     id,
-    mode: "now" as DiscoveryLiveRank["mode"],
+    mode: "explore",
     evidence: "reading",
     axes: {
       compatibility: null, forecast: null, travel: null, friction: null,
@@ -42,14 +42,16 @@ function grade(id: string, coverage: CoverageBucket): DiscoveryLiveRank {
     truth: {
       truthClass: "observed",
       confidence: "likely_current",
-      freshness: "fresh",
+      freshness: "live",
       coverage,
       provenance: ["community_verified"],
     },
-    interception: { reachable: null } as DiscoveryLiveRank["interception"],
+    interception: {
+      reachable: null, etaMinutes: null, arrivalAt: null, horizonAt: null, marginMinutes: null,
+    },
     whyNow: ["busy"],
     claimRefs: ["snap-1"],
-  } as DiscoveryLiveRank;
+  };
 }
 
 /**

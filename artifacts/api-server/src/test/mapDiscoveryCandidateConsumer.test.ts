@@ -130,6 +130,10 @@ function candidateFor(id: string): DiscoveryCandidate {
     whyNow: null,
     whyForUser: ["categoryAffinity"],
     rankedBy: "pde",
+    // S49 — §5.1's fourth field. `unknown` is what this fixture's serve point
+    // gets: it ran no protected-zone pass, and `coverageForCandidate` fails
+    // closed rather than publishing a cohort bucket it could not clear.
+    coverage: "unknown",
     confidence: 0.8,
     freshness: { state: "unknown", ageMs: null, servedFrom: "map_read" },
     truthClass: "corroborated",

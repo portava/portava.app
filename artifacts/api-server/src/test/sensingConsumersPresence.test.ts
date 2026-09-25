@@ -125,7 +125,7 @@ describe("S39 — the consumer really consumes what the engine really produces",
     const rendered = buildSensingPresenceLines([state as unknown as ConsumablePresenceState]).join("\n");
     for (const r of rows) {
       assert.equal(rendered.includes(r.contributor_token), false, "a contributor token reached the prompt");
-      assert.equal(rendered.includes(r.group_token), false, "a group token reached the prompt");
+      if (r.group_token) assert.equal(rendered.includes(r.group_token), false, "a group token reached the prompt");
     }
     // 37 is chosen so the check cannot be satisfied by accident: it is not a
     // substring of any timestamp in the line, unlike a round number would be.
