@@ -4521,3 +4521,84 @@ the VIEWER.** Protected zones are policy — the same for everyone. A presence
 estimate's `precision` is not. Had either call site passed a user-scoped client,
 `protectedZoneStore` would be the same finding, and a lane changing that client
 should read this paragraph first.
+
+
+## §19 — 2026-09-25: `resolve` does not consult the privacy CLASS its own contract declares
+
+§18 made §16.5's step safe against the VIEWER. This section asks the same
+question about the SOURCE, and the answer is not one a lane may settle alone.
+
+### §19.1 The measurement
+
+`presenceClass` is a field on every source contract, and its doc line is
+unambiguous: `sources.ts:74#  /** §17 class. Distinct classes may not be fused into one another. */`
+
+**`presenceClass` appears ZERO times in `store.ts`.** `resolve` — the only
+function in the program that fuses across sources — filters on linkage, expiry
+and clock (`store.ts:580#      if (hit.linkage !== "account_scoped") continue;` and the two
+lines after it) and never on class. `#forAudience` folds `asking.ceiling` and
+the audience rung; neither is a class.
+
+The three ACCOUNT-SCOPED sources — the only ones `resolve` considers — do not
+share a class:
+
+| Source | `presenceClass` |
+|---|---|
+| `circle_presence` | `social` |
+| `locate_friends_session` | `social` |
+| `trip_crew_location_sessions` | **`trip_crew`** |
+
+So a Trip Crew surface asking `resolve` can be handed an estimate minted by a
+`social` source, and a social surface can be handed the crew's. Sharing your
+position with a trip crew is not consent to appear in a circle's presence view,
+and §17 is explicit that the shared architecture may reuse "low-level
+sensor/proximity infrastructure where possible, **NOT consent/policy
+semantics**".
+
+### §19.2 Why this is NOT recorded as a defect and fixed here
+
+Because an existing test asserts the opposite, deliberately:
+`presenceFusionStore.test.ts:211#    assert.equal(fused.source, "trip_crew_location_sessions");`
+— it admits through `locate_friends_session` and `trip_crew_location_sessions`,
+resolves AS `locate_friends_session`, and requires the crew estimate to win on
+recency. That is cross-class fusion, asserted on purpose by the lane that wrote
+the store.
+
+Two readings of the contract line survive that, and they are not
+distinguishable from the tree:
+
+1. **Classes must not fuse.** Then `resolve` is wrong, and the test encodes the
+   defect. The fix is one predicate in the loop.
+2. **"Fused" means the classes do not MERGE.** The returned estimate keeps
+   `source: best.source`, so a class never silently becomes another; the
+   consumer can still read which source answered and apply its own policy. Then
+   `resolve` is right and the contract line is about identity, not routing.
+
+Reading 2 is not a stretch — the estimate genuinely does carry its source
+through. Reading 1 is what a privacy reviewer assumes on first reading. **A lane
+does not get to pick**, because the two produce different data on a user-visible
+surface, and §18 is this pass's own demonstration of what happens when a lane
+resolves an ambiguity in the permissive direction on an unwired path.
+
+So nothing is changed: not the store, and NOT the lane's test, which would be
+the same overreach in reverse.
+
+### §19.3 The consequence for §16.5, stated as a third conjunct
+
+§16.5's RED WHEN, already amended by §18.6 with the audience rung, needs one
+more: **the first production consumer must state its class policy** — either it
+asks only within its own class, or it accepts cross-class estimates and the
+contract line at `sources.ts:74` is rewritten to say so. Wiring a fused read
+without answering this is how a crew position reaches a circle view.
+
+This is now the SECOND conjunct §16.5 was missing. That is itself the finding
+worth carrying forward: the step §16.5 called "one step" has needed two
+corrections in one day, both found by asking what the code would hand back
+rather than who calls it.
+
+### §19.4 MOVES NOTHING
+
+**C 103 · W 21 · N 2 · X 1 — unchanged.** `resolve` still has zero production
+callers, so no surface has ever fused anything, across classes or within one.
+S3 and S106 stay `W`. Nothing here is a served defect; all of it is a condition
+on a step nobody has taken.
