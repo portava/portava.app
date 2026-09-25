@@ -489,3 +489,185 @@ export async function readOwnContributorIdentities(
   // this account's view of ITS OWN rows.
   return { ok: true, identities: [...new Set([actorId, ...uuidArray(res.data)])], via: "token_rpc" };
 }
+
+/**
+ * How many consenting accounts one payee resolution will enumerate.
+ *
+ * See `readContributorPayees` for why this exists and why exceeding it is a
+ * REFUSAL rather than a truncation.
+ */
+export const MAX_PAYEE_ACCOUNTS = 10_000;
+
+export type ContributorPayeeAnswer =
+  | {
+      ok: true;
+      /**
+       * stored contributor id -> the ACCOUNT to pay. Only ids whose account
+       * currently consents appear; an id that is absent is either unknown or
+       * non-consenting, and both mean "do not book".
+       */
+      accountFor: Map<string, string>;
+      via: "account_id" | "token_rpc";
+      /** Consenting accounts considered. Diagnostic. */
+      consentingAccounts: number;
+    }
+  | {
+      ok: false;
+      /** Every value means WITHHOLD THE PASS. None means "nobody consented". */
+      reason:
+        | "bridge_unavailable"
+        | "bridge_failed"
+        | "consent_read_failed"
+        | "too_many_consenting_accounts";
+      detail: string;
+    };
+
+/**
+ * For a set of STORED contributor ids, which ACCOUNT each one should be paid to.
+ *
+ * ── WHY THIS IS NOT `readConsentedContributors` ─────────────────────────────
+ * That function answers "does this contributor consent", in the id space it was
+ * given, and deliberately tells the caller nothing about whose a token is. It
+ * is the right primitive for a reader deciding whether evidence may be counted.
+ *
+ * A REWARD PASS NEEDS MORE, and the difference is not a nuance. You cannot pay
+ * a token: `intel_reward_ledger.actor_id` is a profiles id by ruling (3003),
+ * because a payout is owed to a person and the token's pepper is deleted once
+ * retention has swept its rows. So the reward path must map a stored token back
+ * to an account, which is precisely the direction 3002 exists to destroy.
+ *
+ * ── SO IT RUNS THE MAP BACKWARDS, AND NEVER ASKS THE DATABASE ──────────────
+ * There is no token -> account function and there must not be one. Instead:
+ *
+ *   1. enumerate the accounts that currently consent — which the application is
+ *      entitled to know, because `intel_contribution_consent` is keyed by
+ *      account and always has been;
+ *   2. derive each of those accounts' OWN contributor identities through
+ *      `readOwnContributorIdentities`, which only ever runs account -> tokens;
+ *   3. invert that in memory.
+ *
+ * The database gains nothing. An account that does not consent is never
+ * enumerated, so its tokens are never derived, so no token it owns can be
+ * resolved by this path at all — the map is strictly narrower than "who is
+ * everyone", by construction rather than by filtering afterwards.
+ *
+ * ── THE BOUND IS A REFUSAL, NOT A PAGE ─────────────────────────────────────
+ * Step 2 is one round trip per consenting account. Above `MAX_PAYEE_ACCOUNTS`
+ * this answers `too_many_consenting_accounts` and the caller must book nothing.
+ *
+ * Paying a SUBSET would be worse than stopping, and the reason is that the
+ * subset would be the same subset every pass: the enumeration is deterministic,
+ * so a silent truncation would permanently starve whoever fell past the cut
+ * while the ledger looked healthy. A visible stop is a bug report; a silent
+ * partial payment is an unpaid contributor nobody is looking for. When this
+ * fires, the fix is a batched derivation, not a bigger number.
+ */
+export async function readContributorPayees(
+  sc: any,
+  storedContributorIds: readonly (string | null | undefined)[],
+): Promise<ContributorPayeeAnswer> {
+  const ids = [...new Set(storedContributorIds.filter((id): id is string => typeof id === "string" && id !== ""))];
+  if (ids.length === 0) {
+    return { ok: true, accountFor: new Map(), via: "account_id", consentingAccounts: 0 };
+  }
+
+  const shape = await resolveContributorIdentityShape(sc);
+  if (shape === "unreadable") {
+    return {
+      ok: false,
+      reason: "bridge_unavailable",
+      detail:
+        `${CONTRIBUTOR_TOKENS_FOR_ACTOR_RPC} is absent or unreachable while ${CONTRIBUTOR_TOKEN_MARKER_RPC} could not be ruled out: ` +
+        "the stored contributor ids may be rotating tokens, so who to pay is UNKNOWN — not nobody",
+    };
+  }
+
+  // ── Pre-3002: the stored id IS the account, so the map is the identity and
+  // the consent read can be narrowed to exactly the ids in hand.
+  if (shape === "account") {
+    try {
+      const { data, error } = await sc
+        .from("intel_contribution_consent")
+        .select("user_id")
+        .in("user_id", ids)
+        .eq("enabled", true)
+        .is("withdrawn_at", null);
+      if (error) {
+        return {
+          ok: false,
+          reason: "consent_read_failed",
+          detail: String((error as any).message ?? "consent read failed"),
+        };
+      }
+      const accountFor = new Map<string, string>();
+      for (const row of ((data as any[]) ?? [])) {
+        const u = row?.user_id;
+        if (typeof u === "string" && u !== "") accountFor.set(u, u);
+      }
+      return { ok: true, accountFor, via: "account_id", consentingAccounts: accountFor.size };
+    } catch (e) {
+      return {
+        ok: false,
+        reason: "consent_read_failed",
+        detail: e instanceof Error ? e.message : "consent read threw",
+      };
+    }
+  }
+
+  // ── Post-3002: enumerate consenting ACCOUNTS, then derive their tokens.
+  let accounts: string[];
+  try {
+    const { data, error } = await sc
+      .from("intel_contribution_consent")
+      .select("user_id")
+      .eq("enabled", true)
+      .is("withdrawn_at", null)
+      .limit(MAX_PAYEE_ACCOUNTS + 1);
+    if (error) {
+      return {
+        ok: false,
+        reason: "consent_read_failed",
+        detail: String((error as any).message ?? "consent read failed"),
+      };
+    }
+    accounts = [
+      ...new Set(
+        ((data as any[]) ?? [])
+          .map((r) => r?.user_id)
+          .filter((u): u is string => typeof u === "string" && u !== ""),
+      ),
+    ];
+  } catch (e) {
+    return {
+      ok: false,
+      reason: "consent_read_failed",
+      detail: e instanceof Error ? e.message : "consent read threw",
+    };
+  }
+
+  if (accounts.length > MAX_PAYEE_ACCOUNTS) {
+    return {
+      ok: false,
+      reason: "too_many_consenting_accounts",
+      detail:
+        `${accounts.length} consenting accounts exceeds MAX_PAYEE_ACCOUNTS=${MAX_PAYEE_ACCOUNTS}. ` +
+        "Booking a subset would starve the same accounts every pass, so nothing is booked. Batch the derivation.",
+    };
+  }
+
+  const wanted = new Set(ids);
+  const accountFor = new Map<string, string>();
+  for (const account of accounts) {
+    const own = await readOwnContributorIdentities(sc, account);
+    if (!own.ok) {
+      // ONE account's identities failing is the whole answer failing. Skipping
+      // it would silently drop that person's earnings while the pass reported
+      // success, which is the failure mode this module exists to refuse.
+      return { ok: false, reason: own.reason, detail: `${account}: ${own.detail}` };
+    }
+    for (const identity of own.identities) {
+      if (wanted.has(identity)) accountFor.set(identity, account);
+    }
+  }
+  return { ok: true, accountFor, via: "token_rpc", consentingAccounts: accounts.length };
+}

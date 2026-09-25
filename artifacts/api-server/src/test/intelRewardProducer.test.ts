@@ -24,6 +24,7 @@ import {
 import { ATTRIBUTION_FLAG } from "../lib/intelAttributionScheduler.js";
 import { QIU_TO_CREDITS } from "../lib/rewardEarnings.js";
 import { runIntelRewardPass } from "../lib/intelRewardScheduler.js";
+import { resetContributorIdentityShapeMemo } from "../lib/intelConsent.js";
 
 const ACTOR = "11111111-1111-4111-8111-111111111111";
 const ACTOR2 = "22222222-2222-4222-8222-222222222222";
@@ -45,6 +46,18 @@ interface Seed {
   consent: any[];
   /** I4a attribution ledger rows (intel_attributions) — the honest oracle's input. */
   attributions?: any[];
+  /**
+   * The POST-3002 world. When present, the double exposes `.rpc` and
+   * lib/intelConsent resolves the identity shape as `bridge`: the stored
+   * `actor_id` values are rotating contributor tokens and the only way back to
+   * an account is account -> tokens, which is what this map holds.
+   *
+   * Absent means the pre-3002 world: no `.rpc` at all, so the shape resolves to
+   * `account` and the stored id IS the account id.
+   */
+  tokensByAccount?: Record<string, string[]>;
+  /** Make every RPC fail, so the shape resolves `unreadable`. */
+  rpcBroken?: boolean;
 }
 function makeDb(seed: Seed) {
   const flags = seed.flags;
@@ -65,12 +78,20 @@ function makeDb(seed: Seed) {
     const eqs: [string, any][] = [];
     const gts: [string, any][] = [];
     const ins: [string, any[]][] = [];
+    // `.is(col, null)` — PostgREST's IS NULL. Added when the reward pass started
+    // resolving payees through lib/intelConsent, which asks for consent rows
+    // with `withdrawn_at IS NULL` rather than filtering in TypeScript after the
+    // fact. Without it the builder threw, the resolution reported
+    // `consent_read_failed`, and the pass correctly refused to pay anyone — the
+    // fake was incomplete, not the code.
+    const iss: [string, any][] = [];
 
     function readRows() {
       let rows = tables[table] ?? [];
       for (const [c, v] of eqs) rows = rows.filter((r) => r[c] === v);
       for (const [c, v] of gts) rows = rows.filter((r) => r[c] > v);
       for (const [c, vals] of ins) rows = rows.filter((r) => vals.includes(r[c]));
+      for (const [c, v] of iss) rows = rows.filter((r) => (v === null ? r[c] == null : r[c] === v));
       return rows;
     }
 
@@ -96,6 +117,7 @@ function makeDb(seed: Seed) {
       eq(c: string, v: any) { eqs.push([c, v]); return b; },
       gt(c: string, v: any) { gts.push([c, v]); return b; },
       in(c: string, vals: any[]) { ins.push([c, vals]); return b; },
+      is(c: string, v: any) { iss.push([c, v]); return b; },
       limit() { return b; },
       maybeSingle() { single = true; return Promise.resolve(run()); },
       single() { single = true; return Promise.resolve(run()); },
@@ -104,7 +126,37 @@ function makeDb(seed: Seed) {
     return b;
   }
 
-  return { _tables: tables, from: (t: string) => builder(t) };
+  const db: any = { _tables: tables, from: (t: string) => builder(t) };
+
+  if (seed.rpcBroken) {
+    // NOT an absence. lib/intelConsent is explicit that a failing RPC must
+    // resolve `unreadable` rather than fall back to the account branch, because
+    // taking the account branch on a tokenised store is the fabrication.
+    db.rpc = async () => ({ data: null, error: { code: "57014", message: "statement timeout" } });
+  } else if (seed.tokensByAccount) {
+    db.rpc = async (fn: string, args: Record<string, any>) => {
+      if (fn === "intel_consented_contributor_tokens") {
+        const consenting = new Set(
+          (tables.intel_contribution_consent ?? [])
+            .filter((c) => c.enabled === true && c.withdrawn_at == null)
+            .map((c) => c.user_id),
+        );
+        const wanted: string[] = Array.isArray(args?.p_tokens) ? args.p_tokens : [];
+        const out: string[] = [];
+        for (const [account, toks] of Object.entries(seed.tokensByAccount ?? {})) {
+          if (!consenting.has(account)) continue;
+          for (const t of toks) if (wanted.includes(t)) out.push(t);
+        }
+        return { data: out, error: null };
+      }
+      if (fn === "intel_contributor_tokens_for_actor") {
+        return { data: seed.tokensByAccount?.[args?.p_actor_id] ?? [], error: null };
+      }
+      return { data: null, error: { code: "42883", message: `function public.${fn} does not exist` } };
+    };
+  }
+
+  return db;
 }
 
 function servedWorld(overrides: Partial<Seed> = {}): Seed {
@@ -332,5 +384,116 @@ describe("reward producer — honest oracle, both flag states", () => {
     }));
     const r = await runIntelRewardPass({ client: db });
     assert.equal(r.ineligible, 1); assert.equal(db._tables.intel_reward_ledger.length, 0);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 3002/3003 — the pass has to pay an ACCOUNT out of a store that holds TOKENS
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// THE DEFECT THESE CASES EXIST FOR, stated so a later reader does not have to
+// reconstruct it. Before this work the pass did two things that both stop
+// working the moment 3002 lands:
+//
+//   1. `.in("user_id", <intel_observations.actor_id values>)` against
+//      intel_contribution_consent. Post-3002 those values are rotating
+//      contributor tokens and that filter matches NOTHING — while returning
+//      cleanly. Every candidate would read as non-consenting, the pass would
+//      book zero rewards forever, and it would report success.
+//   2. `recordEarnedReward(db, o.actor_id, …)` — handing that same token to a
+//      ledger whose actor_id REFERENCES profiles. Had consent somehow passed,
+//      the insert would have been rejected 23503.
+//
+// The fix runs the map backwards: enumerate the accounts that consent, derive
+// THEIR tokens, invert in memory. The database never resolves a token to an
+// account. These cases pin that, and the two refusals that protect it.
+const TOKEN_A = "aaaa1111-aaaa-4aaa-8aaa-aaaa11111111";
+const TOKEN_A_LAST_WEEK = "aaaa2222-aaaa-4aaa-8aaa-aaaa22222222";
+
+/** The same served world, but the store holds tokens instead of account ids. */
+function tokenisedWorld(overrides: Partial<Seed> = {}): Seed {
+  return servedWorld({
+    observations: [{
+      id: OBS, actor_id: TOKEN_A, subject_id: SUBJECT, zone_id: null,
+      claim_type: "crowd.level", moderation_state: "allowed", observed_at: "2026-08-31T00:00:00Z",
+    }],
+    tokensByAccount: { [ACTOR]: [TOKEN_A, TOKEN_A_LAST_WEEK] },
+    ...overrides,
+  });
+}
+
+describe("reward producer — post-3002, the payee is an account and the store holds tokens", () => {
+  it("books to the ACCOUNT, from an observation that names only a token", async () => {
+    resetContributorIdentityShapeMemo();
+    const db = makeDb(tokenisedWorld());
+    const r = await runIntelRewardPass({ client: db });
+    assert.equal(r.reason, null);
+    assert.equal(r.booked, 1, "the contribution is still booked — the token was resolved, not skipped");
+    const row = db._tables.intel_reward_ledger[0];
+    assert.equal(row.actor_id, ACTOR, "the LEDGER holds the account: you cannot pay a token");
+    assert.notEqual(row.actor_id, TOKEN_A);
+    assert.equal(row.idempotency_key, `observation:${OBS}`);
+  });
+
+  it("an EPOCH-OLD token still resolves, so last week's contribution is not disowned", async () => {
+    resetContributorIdentityShapeMemo();
+    const db = makeDb(tokenisedWorld({
+      observations: [{
+        id: OBS, actor_id: TOKEN_A_LAST_WEEK, subject_id: SUBJECT, zone_id: null,
+        claim_type: "crowd.level", moderation_state: "allowed", observed_at: "2026-08-31T00:00:00Z",
+      }],
+    }));
+    const r = await runIntelRewardPass({ client: db });
+    assert.equal(r.booked, 1);
+    assert.equal(db._tables.intel_reward_ledger[0].actor_id, ACTOR);
+  });
+
+  it("a token whose account WITHDREW consent is not resolved, so nothing is booked", async () => {
+    resetContributorIdentityShapeMemo();
+    const db = makeDb(tokenisedWorld({
+      consent: [{ user_id: ACTOR, enabled: true, withdrawn_at: "2026-08-30T00:00:00Z" }],
+    }));
+    const r = await runIntelRewardPass({ client: db });
+    assert.equal(r.booked, 0);
+    assert.equal(r.ineligible, 1, "ineligible — a measured refusal, not a resolution failure");
+    assert.equal(db._tables.intel_reward_ledger.length, 0);
+  });
+
+  it("a token belonging to NO consenting account books nothing and pays nobody else", async () => {
+    resetContributorIdentityShapeMemo();
+    const db = makeDb(tokenisedWorld({
+      // ACTOR2 consents; the observation's token is ACTOR's, and ACTOR does not.
+      consent: [{ user_id: ACTOR2, enabled: true, withdrawn_at: null }],
+      tokensByAccount: { [ACTOR2]: ["cccc3333-cccc-4ccc-8ccc-cccc33333333"] },
+    }));
+    const r = await runIntelRewardPass({ client: db });
+    assert.equal(r.booked, 0);
+    assert.equal(db._tables.intel_reward_ledger.length, 0, "no row at all — never a row credited to the wrong account");
+  });
+
+  it("a resolution that FAILED refuses the pass by name, and books nothing", async () => {
+    // THE CASE THE WHOLE DESIGN TURNS ON. An unreadable bridge means the stored
+    // ids MAY be tokens and the account behind them is unknown. Booking zero and
+    // calling that a clean pass would be the silent-forever failure; this reports
+    // `payees_unresolved` and skips.
+    resetContributorIdentityShapeMemo();
+    const db = makeDb(tokenisedWorld({ rpcBroken: true }));
+    const r = await runIntelRewardPass({ client: db });
+    assert.equal(r.skipped, true);
+    assert.equal(r.reason, "payees_unresolved");
+    assert.equal(r.payeeRefusal, "bridge_unavailable");
+    assert.equal(r.booked, 0);
+    assert.equal(r.candidates, 0, "nothing was even graded — the pass stopped before eligibility");
+    assert.equal(db._tables.intel_reward_ledger.length, 0);
+  });
+
+  it("the pre-3002 world is unchanged: no .rpc at all, and the account id is the stored id", async () => {
+    resetContributorIdentityShapeMemo();
+    const db = makeDb(servedWorld());
+    assert.equal(typeof (db as any).rpc, "undefined", "premise: the double exposes no rpc");
+    const r = await runIntelRewardPass({ client: db });
+    assert.equal(r.reason, null);
+    assert.equal(r.booked, 1);
+    assert.equal(db._tables.intel_reward_ledger[0].actor_id, ACTOR);
   });
 });

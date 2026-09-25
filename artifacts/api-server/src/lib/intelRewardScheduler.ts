@@ -55,6 +55,7 @@ import { getServiceClient } from "./supabase.js";
 import { logger } from "./logger.js";
 import { isFlagEnabled } from "./featureFlags.js";
 import { recordEarnedReward } from "../services/intel/RewardService.js";
+import { readContributorPayees } from "./intelConsent.js";
 import { reverseEarnedReward, reversalKeyFor } from "../services/ledger/RewardReversal.js";
 import {
   buildRewardEligibilityContext,
@@ -90,7 +91,16 @@ let _timer: ReturnType<typeof setTimeout> | null = null;
 
 export interface RewardPassResult {
   skipped: boolean;
-  reason: "disabled" | "no_client" | "error" | null;
+  /**
+   * Why the pass did nothing. `payees_unresolved` is the 3002/3003 case: the
+   * stored contributor ids are rotating tokens and the account behind them
+   * could not be established, so there is nobody it is safe to pay. It is a
+   * DISTINCT value from `error` on purpose — the pass ran correctly and
+   * refused, which is not the same fact as a pass that broke.
+   */
+  reason: "disabled" | "no_client" | "error" | "payees_unresolved" | null;
+  /** For `payees_unresolved`: which of readContributorPayees' refusals it was. */
+  payeeRefusal?: string;
   candidates: number;
   booked: number;   // ledger rows newly written this pass
   replayed: number; // already-rewarded contributions re-seen (no new row)
@@ -188,16 +198,46 @@ export async function runIntelRewardPass(opts: { client?: any; now?: Date } = {}
     );
     if (behindServed.length === 0) return { skipped: false, reason: null, candidates: 0, booked: 0, replayed: 0, ineligible: 0, reversed: 0 };
 
-    const actorIds = [...new Set(behindServed.map((o) => o.actor_id))];
+    const storedContributorIds = [...new Set(behindServed.map((o) => o.actor_id))];
 
-    // 3. Consent + prior-ledger reads for exactly those actors.
-    const consentRows = await fetchIn<ConsentRow>(
-      db, "intel_contribution_consent", "user_id, enabled, withdrawn_at", "user_id", actorIds,
-    );
-    const consentByActor = new Map<string, { enabled: boolean; withdrawn: boolean }>();
-    for (const c of consentRows) {
-      consentByActor.set(c.user_id, { enabled: c.enabled === true, withdrawn: c.withdrawn_at != null });
+    // 3. WHO GETS PAID — and this is no longer a join, because it cannot be one.
+    //
+    // `intel_observations.actor_id` holds a rotating contributor token the
+    // moment 3002 lands, and `.in("user_id", <tokens>)` against
+    // intel_contribution_consent then matches NOTHING while returning cleanly.
+    // Every candidate would read as non-consenting and the pass would book zero
+    // rewards, forever, reporting success. Worse: `recordEarnedReward` was being
+    // handed that same token as the payee, and intel_reward_ledger.actor_id
+    // REFERENCES profiles — so a contribution that did somehow pass consent
+    // would have been rejected 23503 at the insert.
+    //
+    // lib/intelConsent.readContributorPayees answers both halves in the only
+    // safe direction: it enumerates the accounts that consent, derives THEIR
+    // tokens, and inverts the map in memory. The database never resolves a
+    // token to an account.
+    const payees = await readContributorPayees(db, storedContributorIds);
+    if (!payees.ok) {
+      // A PASS THAT CANNOT TELL WHO TO PAY MUST NOT PAY, and must not report a
+      // quiet zero either: booking nothing is right, calling it a completed
+      // pass with no eligible candidates is not. Skipped, with the reason.
+      logger.warn(
+        { reason: payees.reason, detail: payees.detail },
+        "reward pass: contributor payees could not be resolved — booking nothing",
+      );
+      return {
+        skipped: true, reason: "payees_unresolved", payeeRefusal: payees.reason,
+        candidates: 0, booked: 0, replayed: 0, ineligible: 0, reversed: 0,
+      };
     }
+    const accountFor = payees.accountFor;
+
+    // Consent is now a property of BEING IN THE MAP: readContributorPayees only
+    // ever enumerates accounts whose consent is enabled and not withdrawn, so a
+    // stored id it did not map is one whose account did not consent, was
+    // withdrawn, or is not known to this database at all. All three mean the
+    // same thing here — do not book — and the eligibility context still receives
+    // them as the two separate booleans it has always taken.
+    const actorIds = [...new Set([...accountFor.values()])];
 
     // Anti-join: skip contributions already booked. recordEarnedReward is the real
     // at-most-once guarantee (23505 → replay), so this is an efficiency + accuracy
@@ -244,12 +284,19 @@ export async function runIntelRewardPass(opts: { client?: any; now?: Date } = {}
     const tally = { candidates: 0, booked: 0, replayed: 0, ineligible: 0, reversed: 0 };
     for (const o of behindServed) {
       const key = rewardKeyFor(o.id);
-      if (alreadyRewarded.has(`${o.actor_id}|${key}`)) continue;
+      // The ledger is keyed by ACCOUNT (3003 rules that it must be), so the
+      // anti-join and the booking below both use the payee, never the stored
+      // contributor id. Keying either on the token would make every pass look
+      // like a first booking and rely entirely on the 23505 to stop a double
+      // credit — which it would, but silently and on every single row.
+      const payeeForKey = accountFor.get(o.actor_id) ?? null;
+      if (payeeForKey !== null && alreadyRewarded.has(`${payeeForKey}|${key}`)) continue;
       tally.candidates++;
 
-      const consent = consentByActor.get(o.actor_id) ?? { enabled: false, withdrawn: false };
+      const payee = accountFor.get(o.actor_id) ?? null;
+      const consent = { enabled: payee !== null, withdrawn: false };
       const candidate: EarningCandidate = {
-        actorId: o.actor_id,
+        actorId: payee ?? o.actor_id,
         observationId: o.id,
         served: true, // it is in the served-key map by construction
         servedConfidence: servedConfidence.get(snapKey(o.subject_id, o.zone_id, o.claim_type)) ?? null,
@@ -269,7 +316,7 @@ export async function runIntelRewardPass(opts: { client?: any; now?: Date } = {}
       if (qiu <= 0) continue;
 
       try {
-        const res = await recordEarnedReward(db, o.actor_id, {
+        const res = await recordEarnedReward(db, payee as string, {
           qiu,
           eligibility: ctx,
           source: REWARD_SOURCE,

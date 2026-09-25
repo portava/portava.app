@@ -810,6 +810,40 @@ export const KNOWN_PRODUCTION_GAPS: Record<string, Gap> = {
       "Strike it off in the same change that applies 3110 to PRODUCTION and " +
       "refreshes the two production snapshots.",
   },
+
+  // ── The contributor token's pepper (3002): declared, unapplied ─────────────
+  intel_contributor_pepper: {
+    classification: "unapplied",
+    note:
+      "Migration 3002_intel_contribution_identity.sql, which this tree " +
+      "declares. Applied to NO database — not production, not portava-ci — " +
+      "because the owner runs all SQL and this lane applies nothing. Not " +
+      "'unmerged-pr': the file is in this tree and this check can see it. " +
+      "WHAT IT IS: one row per weekly epoch holding the HMAC pepper that " +
+      "derives a contributor token from an account id. It carries ZERO grants " +
+      "to every application role on purpose — the one-way property of the " +
+      "token is exactly 'no role outside the SECURITY DEFINER functions can " +
+      "read this table'. census-sensing S19/S118 turn on it. " +
+      "WHAT ITS ABSENCE COSTS TODAY: nothing a user can see, and the reason is " +
+      "worth stating because it is not 'the feature is off'. Every consumer of " +
+      "the token is written for BOTH schemas and PROBES rather than assumes: " +
+      "lib/intelConsent.resolveContributorIdentityShape asks the database " +
+      "which shape it has and answers `account` when 3002's functions are " +
+      "absent, so intel_observations.actor_id is read as what it currently is " +
+      "— a profiles id. The paths that would otherwise silently mismatch " +
+      "(lib/intelProjectionAggregator's consent join, lib/intelRewardScheduler's " +
+      "payee resolution) go through that probe and WITHHOLD rather than " +
+      "publish or pay on an unreadable answer. " +
+      "THE ORDER THIS IMPOSES, because it is the part that bites: 3002 must be " +
+      "applied BEFORE the code that assumes a nullable subject ships. " +
+      "routes/mapObservations.ts has already deleted its nearest-place " +
+      "resolver, and production still has " +
+      "intel_observations.subject_id NOT NULL REFERENCES places(id), so a zone " +
+      "contribution on that code against an un-migrated database fails its NOT " +
+      "NULL instead of storing `unknown`. " +
+      "Strike it off in the same change that applies 3002 to PRODUCTION and " +
+      "refreshes the two production snapshots.",
+  },
 };
 
 /**
