@@ -68,12 +68,23 @@
  *                         The truth class travels verbatim onto the line, so a
  *                         `stale` cohort cannot be read as a current one.
  */
-import { isFlagEnabled } from "../lib/featureFlags.js";
-
 /**
- * Literal name so `check-flag-polarity` resolves the read. `*_enabled` ⇒
- * capability, fail-closed. Seeded FALSE and flipped by an owner, never by an
- * environment variable — the standing shape for every input path in this tree.
+ * The flag name a future migration must seed when decision #9 is taken. It is
+ * DELIBERATELY NOT READ ANYWHERE, and that is the second half of this module's
+ * honesty.
+ *
+ * An earlier draft did read it, and `scripts/check-flag-polarity.mjs` refused
+ * the result for the right reason: *"PHANTOM FLAG — READ BUT NEVER SEEDED …
+ * The gate LOOKS deliberate and is not. It cannot be turned on without shipping
+ * a migration first."* A gate nothing can flip is not a gate; it is a comment
+ * that resolves to false forever, and shipping one here would have dressed an
+ * owner decision up as an engineering switch.
+ *
+ * So the name is reserved and the read is not written. Taking decision #9 means
+ * three things together, by whoever owns them: a migration seeding this flag
+ * FALSE (the integration owner), the owner flipping it, and a lane wiring a
+ * producer to `buildSensingPresenceLines`. Not one of the three is a lane's to
+ * take alone, which is exactly why S39 is not closed here.
  */
 export const SENSING_PRESENCE_CONTEXT_FLAG = "sensing_presence_context_enabled";
 
@@ -156,29 +167,4 @@ export function buildSensingPresenceLines(
     );
   }
   return lines;
-}
-
-/**
- * The gated read. OFF (the only state today) returns no lines and touches
- * nothing.
- *
- * `states` is supplied by the caller because nothing here may build one — see
- * the header's mechanism 2. With the flag off this does not even look at them.
- */
-export async function readSensingPresenceContext(
-  sc: any,
-  states: readonly ConsumablePresenceState[],
-  opts: { flag?: string } = {},
-): Promise<string[]> {
-  try {
-    if (!sc) return [];
-    const flag = opts.flag ?? SENSING_PRESENCE_CONTEXT_FLAG;
-    // Fail-closed: an absent, false or unreadable flag is OFF. Publishing any
-    // aggregate to a user-visible surface is the owner's decision #9, and this
-    // is the switch that decision turns on.
-    if (!(await isFlagEnabled(sc, flag))) return [];
-    return buildSensingPresenceLines(states);
-  } catch {
-    return [];
-  }
 }

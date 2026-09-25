@@ -30,7 +30,7 @@
  */
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -38,7 +38,6 @@ import {
   SENSING_PRESENCE_HEADER,
   buildSensingPresenceLines,
   isConsumablePresenceState,
-  readSensingPresenceContext,
   type ConsumablePresenceState,
 } from "../compass/CompassSensingPresence.js";
 import { buildSensingPresenceState } from "../lib/sensingPresenceState.js";
@@ -142,33 +141,22 @@ describe("S39 — the consumer really consumes what the engine really produces",
 });
 
 describe("S39 — it is inert, and decision #9 is why", () => {
-  it("the flag is fail-closed: absent, false or unreadable is OFF", async () => {
-    const { state } = realState(30, 6);
-    const states = [state as unknown as ConsumablePresenceState];
-    const client = (value: unknown, error: unknown = null) => ({
-      from: () => {
-        const self: Record<string, unknown> = {};
-        for (const m of ["select", "eq", "in", "limit", "order"]) self[m] = () => self;
-        self.maybeSingle = async () => ({ data: value, error });
-        self.single = async () => ({ data: value, error });
-        self.then = (ok: (v: unknown) => unknown) => Promise.resolve({ data: value, error }).then(ok);
-        return self;
-      },
-    });
-    // No client at all.
-    assert.deepEqual(await readSensingPresenceContext(null, states), []);
-    // Flag row absent.
-    assert.deepEqual(await readSensingPresenceContext(client(null), states), []);
-    // Flag unreadable.
-    assert.deepEqual(await readSensingPresenceContext(client(null, { message: "boom" }), states), []);
-    // Flag explicitly false.
-    assert.deepEqual(await readSensingPresenceContext(client({ enabled: false }), states), []);
-  });
-
-  it("the flag is spelled literally, as `*_enabled`, so check-flag-polarity resolves it", () => {
+  it("the flag name is RESERVED and deliberately not read — a gate nothing can flip is not a gate", () => {
     assert.equal(SENSING_PRESENCE_CONTEXT_FLAG, "sensing_presence_context_enabled");
     const code = readFileSync(join(SRC, "compass", "CompassSensingPresence.ts"), "utf8");
-    assert.match(code, /"sensing_presence_context_enabled"/);
+    // No flag READ. scripts/check-flag-polarity.mjs refuses a read of a name no
+    // migration seeds ("PHANTOM FLAG — READ BUT NEVER SEEDED … the gate LOOKS
+    // deliberate and is not"), and it was right: this module cannot ship a
+    // switch for a decision it does not own. If a read appears here, a
+    // migration seeding the flag must appear with it.
+    assert.doesNotMatch(code, /isFlagEnabled|featureFlags/);
+    // And the name is seeded by no migration today, which is the fact above.
+    const migrations = readdirSync(join(SRC, "migrations"));
+    const seeded = migrations.some((f) => {
+      try { return readFileSync(join(SRC, "migrations", f), "utf8").includes("sensing_presence_context_enabled"); }
+      catch { return false; }
+    });
+    assert.equal(seeded, false, "a migration now seeds the flag — S39 should be re-derived");
   });
 
   it("THE ROW IS BLOCKED: no route builds a presence state, because nothing may read the store", () => {

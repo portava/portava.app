@@ -52,13 +52,36 @@
  * from the general knowledge in its weights, and an absent observation must
  * read as "not known", never as "quiet".
  *
+ * ── WHY IT READS THE LIVE RUNG ONLY, AND NOT `resolvePlaceIntelState` ────────
+ * The obvious call is `resolvePlaceIntelState`, which walks the whole
+ * degradation order LIVE → EMERGING → TYPICAL → UNKNOWN. It is not used, and
+ * the reason is a production fact rather than a preference.
+ *
+ * Its TYPICAL rung reads `intel_historical_patterns`, and production does not
+ * have that table — the migration is unapplied. `COMPASS_ENABLED` is ON in
+ * production, so calling it from here makes a live, flag-on path name a table
+ * that is not there. `scripts/checkFlagSchemaPrerequisites.ts` catches exactly
+ * that and calls it what it is: *"NEW INSTANCE OF THE CLASS: COMPASS_ENABLED
+ * is ON in production and its code names intel_historical_patterns … which
+ * production lacks."* Its remedies are to apply the migration, register the
+ * capability and wire a consumer, or turn the flag off — none of which is a
+ * context builder's to do, and silencing it with a KNOWN entry would be
+ * allowlisting a real gap.
+ *
+ * So this reads `readLiveClaimEnvelopes` (the live rung, over
+ * `intel_state_snapshots`, which production HAS) and treats everything below it
+ * as UNKNOWN. That loses the "typical" answer and loses nothing about honesty:
+ * a subject with no live claim is reported as having no current evidence, which
+ * is the strictest of the available readings and the one that makes the
+ * grounding checker bite hardest.
+ *
  * ── FAIL-SOFT, LIKE EVERY OTHER CONTEXT BUILDER HERE ─────────────────────────
  * Any error yields no lines and EMPTY evidence. Empty evidence is the state
  * that existed before this module, so a failed read degrades the checker to
  * what it already was and never invents a band that would excuse a claim.
  */
 import {
-  resolvePlaceIntelState,
+  readLiveClaimEnvelopes,
   type LiveClaimEnvelope,
   type LiveState,
 } from "../lib/liveClaimRead.js";
@@ -173,32 +196,40 @@ function qualificationFor(state: LiveState, truthClass: TruthClass | null): stri
  * LIVE / EMERGING, then TYPICAL, then UNKNOWN — is applied in one place and
  * this module cannot get it wrong.
  */
-export async function buildLiveClaimContext(
-  sc: any,
+/** EMPTY is the state that existed before this module: no lines, no band. */
+export const EMPTY_LIVE_CLAIM_CONTEXT: LiveClaimContext = Object.freeze({
+  lines: [],
+  evidence: EMPTY_GROUNDING_EVIDENCE,
+});
+
+/**
+ * THE PURE CORE. Takes the envelopes already read for each subject and produces
+ * the lines and the band. No I/O, no clock — `nowMs` is injected.
+ *
+ * It is separate from the read below so the interesting half can be exercised
+ * on real `LiveClaimEnvelope` values rather than through a stub of five feature
+ * flags, a promoted-scope allowlist and a snapshot query. The rung choice lives
+ * in the shell; the honesty rules live here.
+ */
+export function liveClaimContextFrom(
   subjects: readonly LiveClaimSubject[],
-  opts: { now?: Date } = {},
-): Promise<LiveClaimContext> {
-  const empty: LiveClaimContext = { lines: [], evidence: EMPTY_GROUNDING_EVIDENCE };
-  try {
-    if (!sc || !Array.isArray(subjects) || subjects.length === 0) return empty;
-    const now = opts.now ?? new Date();
-    const nowMs = now.getTime();
+  envelopesBySubject: ReadonlyMap<string, readonly LiveClaimEnvelope[]>,
+  nowMs: number,
+): LiveClaimContext {
+  const wanted = dedupeSubjects(subjects);
+  if (wanted.length === 0) return EMPTY_LIVE_CLAIM_CONTEXT;
 
-    const seen = new Set<string>();
-    const wanted = subjects
-      .filter((s) => s && typeof s.subjectId === "string" && s.subjectId.length > 0 && typeof s.name === "string")
-      .filter((s) => (seen.has(s.subjectId) ? false : (seen.add(s.subjectId), true)))
-      .slice(0, LIVE_CLAIM_SUBJECT_CAP);
-    if (wanted.length === 0) return empty;
+  const lines: string[] = [];
+  const subjectEvidence: SubjectEvidence[] = [];
+  const sourceClasses = new Set<string>();
+  const turnClasses: TruthClass[] = [];
 
-    const lines: string[] = [];
-    const subjectEvidence: SubjectEvidence[] = [];
-    const sourceClasses = new Set<string>();
-    const turnClasses: TruthClass[] = [];
-
-    for (const subject of wanted) {
-      const resolved = await resolvePlaceIntelState(sc, subject.subjectId, { now });
-      const envelopes = (resolved.claims ?? []).slice(0, LIVE_CLAIM_PER_SUBJECT_CAP);
+  for (const subject of wanted) {
+    const envelopes = (envelopesBySubject.get(subject.subjectId) ?? []).slice(0, LIVE_CLAIM_PER_SUBJECT_CAP);
+    // The live rung only (see the header): anything below it is UNKNOWN.
+    const resolvedState: LiveState = envelopes.length === 0
+      ? "unknown"
+      : envelopes.some((e) => e.state === "live") ? "live" : "emerging";
       const label = wrapUgc(String(subject.name).slice(0, 200));
 
       if (envelopes.length === 0) {
@@ -237,31 +268,64 @@ export async function buildLiveClaimContext(
           `observed ${e.observedAt})`
         );
       });
-      const qualification = qualificationFor(resolved.state, evidence.truthClass);
+      const qualification = qualificationFor(resolvedState, evidence.truthClass);
       lines.push(
-        `${label} [${resolved.state}]: ${rendered.join("; ")}.${qualification ? ` ${qualification}` : ""}`,
+        `${label} [${resolvedState}]: ${rendered.join("; ")}.${qualification ? ` ${qualification}` : ""}`,
       );
+  }
+
+  if (lines.length === 0) return EMPTY_LIVE_CLAIM_CONTEXT;
+
+  const evidence: GroundingEvidence = {
+    // Turn-level booleans are the fallback for a sentence that names no
+    // subject, so ANY subject carrying the datum sets them — the per-subject
+    // band above is what makes a named sentence strict.
+    hasVerifiedLive: subjectEvidence.some((s) => s.hasVerifiedLive),
+    hasWaitDatum: subjectEvidence.some((s) => s.hasWaitDatum),
+    hasCrowdDatum: subjectEvidence.some((s) => s.hasCrowdDatum),
+    hasRouteDatum: false,
+    sourceClasses: [...sourceClasses].sort(),
+    truthClass: turnClasses.length > 0 ? weakestTruthClass(turnClasses) : null,
+    subjects: subjectEvidence,
+  };
+
+  return { lines: [LIVE_CLAIM_HEADER, ...lines], evidence };
+}
+
+function dedupeSubjects(subjects: readonly LiveClaimSubject[]): LiveClaimSubject[] {
+  if (!Array.isArray(subjects)) return [];
+  const seen = new Set<string>();
+  return subjects
+    .filter((s) => s && typeof s.subjectId === "string" && s.subjectId.length > 0 && typeof s.name === "string" && s.name.length > 0)
+    .filter((s) => (seen.has(s.subjectId) ? false : (seen.add(s.subjectId), true)))
+    .slice(0, LIVE_CLAIM_SUBJECT_CAP);
+}
+
+/**
+ * THE I/O SHELL. Reads the live rung for each subject and hands the envelopes
+ * to the pure core.
+ *
+ * Fail-soft: any error yields no lines and EMPTY evidence, which is the state
+ * that existed before this module — a failed read degrades the checker to what
+ * it already was and never invents a band that would excuse a claim.
+ */
+export async function buildLiveClaimContext(
+  sc: any,
+  subjects: readonly LiveClaimSubject[],
+  opts: { now?: Date } = {},
+): Promise<LiveClaimContext> {
+  try {
+    if (!sc) return EMPTY_LIVE_CLAIM_CONTEXT;
+    const wanted = dedupeSubjects(subjects);
+    if (wanted.length === 0) return EMPTY_LIVE_CLAIM_CONTEXT;
+    const now = opts.now ?? new Date();
+
+    const bySubject = new Map<string, readonly LiveClaimEnvelope[]>();
+    for (const subject of wanted) {
+      bySubject.set(subject.subjectId, await readLiveClaimEnvelopes(sc, subject.subjectId, { now }));
     }
-
-    if (lines.length === 0) return empty;
-
-    const evidence: GroundingEvidence = {
-      // Turn-level booleans are the fallback for a sentence that names no
-      // subject, so ANY subject carrying the datum sets them — the per-subject
-      // band above is what makes a named sentence strict.
-      hasVerifiedLive: subjectEvidence.some((s) => s.hasVerifiedLive),
-      hasWaitDatum: subjectEvidence.some((s) => s.hasWaitDatum),
-      hasCrowdDatum: subjectEvidence.some((s) => s.hasCrowdDatum),
-      hasRouteDatum: false,
-      sourceClasses: [...sourceClasses].sort(),
-      truthClass: turnClasses.length > 0 ? weakestTruthClass(turnClasses) : null,
-      subjects: subjectEvidence,
-    };
-
-    return { lines: [LIVE_CLAIM_HEADER, ...lines], evidence };
+    return liveClaimContextFrom(wanted, bySubject, now.getTime());
   } catch {
-    // Fail-soft: live grounding must never break chat, and a failed read must
-    // never widen what the checker will allow.
-    return empty;
+    return EMPTY_LIVE_CLAIM_CONTEXT;
   }
 }

@@ -9,8 +9,7 @@
  *
  * So this file is in that order too.
  *
- *   PART 1  the context really carries the claims, read through
- *           `lib/liveClaimRead.resolvePlaceIntelState` and graded through
+ *   PART 1  the context really carries the claims, graded through
  *           `lib/liveEnvelopeTruth.truthOfEnvelope`.
  *   PART 2  the checker REFUSES prose that claims a stronger truth band than
  *           those inputs support — including the sentence the OLD checker
@@ -21,13 +20,23 @@
  * each rejected sentence through the envelope with the EMPTY evidence a
  * tool-less turn used to carry. Where it returns ok, the old path published
  * that sentence unqualified.
+ *
+ * IT DRIVES THE PURE CORE WITH REAL ENVELOPES. `liveClaimContextFrom` takes the
+ * envelopes already read, so the interesting half is exercised on genuine
+ * `LiveClaimEnvelope` values instead of through a stub of five feature flags, a
+ * promoted-scope allowlist and a snapshot query. The I/O shell's own contract —
+ * fail-soft, and a failed read never widens the band — is tested separately at
+ * the bottom.
  */
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import {
-  buildLiveClaimContext,
+  EMPTY_LIVE_CLAIM_CONTEXT,
   LIVE_CLAIM_HEADER,
+  buildLiveClaimContext,
+  liveClaimContextFrom,
 } from "../compass/CompassLiveClaimContext.js";
+import type { LiveClaimEnvelope } from "../lib/liveClaimRead.js";
 import {
   EMPTY_GROUNDING_EVIDENCE,
   enforceCompassGroundingEnvelope,
@@ -43,76 +52,41 @@ const CAFE = "Cafe Otto";
 const CAFE_ID = "33333333-cccc-4ccc-8ccc-333333333333";
 
 /**
- * A Supabase stand-in. Every flag read fails, so the LIVE rung is refused and
- * `resolvePlaceIntelState` degrades to the TYPICAL rung — which is exactly the
- * interesting case: a real, current, k-gated historical pattern that must never
- * be spoken as an observation.
+ * A live-rung crowd claim whose reports MATERIALLY DISAGREE.
+ *
+ * This is the case the row turns on, and it is a real one rather than a
+ * contrived band: `lib/liveClaimRead` states that a material conflict means the
+ * state is never 'live' and the band is capped, and `deriveWallTruthClass`
+ * grades it `conflicting` — a class that may not be rendered as an observation.
+ * So there IS a crowd reading, and no sentence may assert a crowd state plainly
+ * on the strength of it.
  */
-function stubClient(patternsBySubject: Record<string, unknown[]>) {
-  const chain = (resolve: () => { data: unknown; error: unknown }) => {
-    const self: Record<string, unknown> = {};
-    for (const m of ["select", "eq", "in", "gt", "gte", "lt", "order", "limit", "is", "neq"]) {
-      self[m] = () => self;
-    }
-    self.maybeSingle = async () => resolve();
-    self.single = async () => resolve();
-    self.then = (onOk: (v: unknown) => unknown, onErr?: (e: unknown) => unknown) =>
-      Promise.resolve(resolve()).then(onOk, onErr);
-    return self;
-  };
-
+function conflictedCrowdClaim(): LiveClaimEnvelope {
   return {
-    from(table: string) {
-      if (table !== "intel_historical_patterns") {
-        // Flags, promoted scopes, snapshots: all unreadable ⇒ fail closed.
-        return chain(() => ({ data: null, error: { message: "unavailable in this test" } }));
-      }
-      let subject: string | null = null;
-      const self: Record<string, unknown> = {};
-      for (const m of ["select", "in", "gt", "gte", "order", "limit"]) self[m] = () => self;
-      self.eq = (col: string, val: unknown) => {
-        if (col === "subject_id") subject = String(val);
-        return self;
-      };
-      const resolve = () => ({ data: patternsBySubject[subject ?? ""] ?? [], error: null });
-      self.maybeSingle = async () => resolve();
-      self.single = async () => resolve();
-      self.then = (onOk: (v: unknown) => unknown, onErr?: (e: unknown) => unknown) =>
-        Promise.resolve(resolve()).then(onOk, onErr);
-      return self;
-    },
-  };
-}
-
-/** One k-cleared typical crowd pattern for the current weekday/hour. */
-function crowdPattern(id: string, value: unknown) {
-  return {
-    id,
-    zone_id: "zone-1",
-    claim_family: "crowd.level",
-    pattern_kind: "typical_crowd_by_weekday_hour",
-    time_band: `hour_${String(NOW.getUTCHours()).padStart(2, "0")}`,
-    dow: NOW.getUTCDay(),
-    value_json: value,
-    confidence: 0.7,
-    cohort_size: 40,
-    // Above PRIVACY_THRESHOLD_V1.minUniqueActors (15) so the rung serves at all.
-    distinct_contributors: 22,
-    window_days: 30,
-    is_invalidation: false,
-    computed_at: new Date(NOW_MS - 60 * 60 * 1000).toISOString(),
-  };
+    id: "snap-1",
+    claimType: "crowd.level",
+    value: "packed",
+    confidence: 0.6,
+    band: "likely_current",
+    sourceClass: "firsthand_unverified",
+    sourceCountBucket: "several",
+    observedAt: new Date(NOW_MS - 5 * 60 * 1000).toISOString(),
+    validUntil: new Date(NOW_MS + 40 * 60 * 1000).toISOString(),
+    state: "emerging",
+    conflictState: "material",
+    conflict: { state: "material", sidesCount: 2, lastUpdated: new Date(NOW_MS - 5 * 60 * 1000).toISOString() },
+  } as LiveClaimEnvelope;
 }
 
 const context = () =>
-  buildLiveClaimContext(
-    stubClient({ [BAR_ID]: [crowdPattern("pat-1", "packed")] }),
+  liveClaimContextFrom(
     [
       { subjectId: BAR_ID, name: BAR },
-      // No pattern at all — the "unknown is a fact" subject.
+      // No claim at all — the "unknown is a fact" subject.
       { subjectId: CAFE_ID, name: CAFE },
     ],
-    { now: NOW },
+    new Map([[BAR_ID, [conflictedCrowdClaim()]]]),
+    NOW_MS,
   );
 
 /** Was this sentence published unqualified before the context reached the checker? */
@@ -123,34 +97,35 @@ function vacuousBefore(sentence: string): boolean {
 // ── PART 1: the context carries the claims ───────────────────────────────────
 
 describe("S79 part 1 — live claims reach /compass/ask's context", () => {
-  it("emits the claim, its §5.1 band, and the name the model will write", async () => {
-    const { lines } = await context();
+  it("emits the claim, its §5.1 band, and the name the model will write", () => {
+    const { lines } = context();
     assert.equal(lines[0], LIVE_CLAIM_HEADER);
     const barLine = lines.find((l) => l.includes(BAR));
     assert.ok(barLine, `no line named ${BAR}: ${JSON.stringify(lines)}`);
     assert.match(barLine!, /crowd\.level=/);
-    assert.match(barLine!, /truth predicted/);
-    assert.match(barLine!, /source historical_pattern/);
-    assert.match(barLine!, /\[typical\]/);
+    assert.match(barLine!, /truth conflicting/);
+    assert.match(barLine!, /source firsthand_unverified/);
+    assert.match(barLine!, /REPORTS DIFFER/);
+    assert.match(barLine!, /\[emerging\]/);
     // And it tells the model what it may not say.
-    assert.match(barLine!, /TYPICAL pattern, not an observation/);
+    assert.match(barLine!, /Current but NOT live-verified/);
   });
 
-  it("a subject with no evidence says so — silence would be filled from the weights", async () => {
-    const { lines } = await context();
+  it("a subject with no evidence says so — silence would be filled from the weights", () => {
+    const { lines } = context();
     const cafeLine = lines.find((l) => l.includes(CAFE));
     assert.ok(cafeLine);
     assert.match(cafeLine!, /no current evidence/);
     assert.match(cafeLine!, /do not say whether it is busy, quiet, open or closed/);
   });
 
-  it("the band travels out of the context, per subject and by name", async () => {
-    const { evidence } = await context();
+  it("the band travels out of the context, per subject and by name", () => {
+    const { evidence } = context();
     const bar = evidence.subjects.find((s) => s.name === BAR);
     assert.ok(bar);
-    assert.equal(bar!.truthClass, "predicted");
+    assert.equal(bar!.truthClass, "conflicting");
     assert.equal(bar!.hasCrowdDatum, true, "a crowd.level pattern IS a crowd reading");
-    assert.equal(bar!.hasVerifiedLive, false, "a typical pattern is never live-qualified");
+    assert.equal(bar!.hasVerifiedLive, false, "an emerging claim is never live-qualified");
     assert.equal(bar!.hasRouteDatum, false);
 
     const cafe = evidence.subjects.find((s) => s.name === CAFE);
@@ -160,8 +135,8 @@ describe("S79 part 1 — live claims reach /compass/ask's context", () => {
     assert.equal(evidence.truthClass, "unknown");
   });
 
-  it("no contributor, no coordinate and no cohort count reach the prompt", async () => {
-    const { lines } = await context();
+  it("no contributor, no coordinate and no cohort count reach the prompt", () => {
+    const { lines } = context();
     const blob = lines.join("\n");
     for (const leak of ["distinct_contributors", "22", "cohort_size", "40", "lat", "lng", "zone-1"]) {
       assert.ok(!blob.includes(leak), `context leaked ${leak}`);
@@ -187,17 +162,18 @@ describe("S79 part 1 — live claims reach /compass/ask's context", () => {
     assert.deepEqual(await buildLiveClaimContext(null, [], { now: NOW }), {
       lines: [], evidence: EMPTY_GROUNDING_EVIDENCE,
     });
-    assert.deepEqual(await buildLiveClaimContext(stubClient({}), [], { now: NOW }), {
+    assert.deepEqual(await buildLiveClaimContext({ from: () => { throw new Error("unused"); } }, [], { now: NOW }), {
       lines: [], evidence: EMPTY_GROUNDING_EVIDENCE,
     });
+    assert.deepEqual(liveClaimContextFrom([], new Map(), NOW_MS), EMPTY_LIVE_CLAIM_CONTEXT);
   });
 });
 
 // ── PART 2: the checker REFUSES ──────────────────────────────────────────────
 
 describe("S79 part 2 — the checker refuses language stronger than its inputs", () => {
-  it("REFUSES a flat state claim over a PREDICTED pattern — and this used to publish", async () => {
-    const { evidence } = await context();
+  it("REFUSES a flat state claim over a PREDICTED pattern — and this used to publish", () => {
+    const { evidence } = context();
     const answer = `${BAR} is packed.`;
 
     // The sentence the old path published: no now-marker, no progressive crowd
@@ -208,14 +184,14 @@ describe("S79 part 2 — the checker refuses language stronger than its inputs",
     const r = enforceCompassGroundingEnvelope(answer, evidence);
     assert.equal(r.ok, false, "the checker must refuse it now");
     assert.deepEqual(r.violations.map((v) => v.kind), ["truth_class_not_qualified"]);
-    assert.equal(r.violations[0].available, "truth class predicted");
+    assert.equal(r.violations[0].available, "truth class conflicting");
     assert.match(r.correction ?? "", /not an observation/);
     // Nothing the model wrote is deleted; the correction is appended.
     assert.ok(r.text.startsWith(answer));
   });
 
-  it("REFUSES a state asserted about a subject the context knows NOTHING about", async () => {
-    const { evidence } = await context();
+  it("REFUSES a state asserted about a subject the context knows NOTHING about", () => {
+    const { evidence } = context();
     const answer = `${CAFE} is quiet.`;
     assert.equal(vacuousBefore(answer), true, "precondition: the old checker published this");
 
@@ -225,9 +201,9 @@ describe("S79 part 2 — the checker refuses language stronger than its inputs",
     assert.equal(r.violations[0].available, "truth class unknown");
   });
 
-  it("the spec's own example still cannot be said, and now for the accurate reason", async () => {
-    const { evidence } = await context();
-    // "everyone is dancing" over a typical crowd pattern. There WAS a crowd
+  it("the spec's own example still cannot be said, and now for the accurate reason", () => {
+    const { evidence } = context();
+    // "everyone is dancing" over a conflicted crowd reading. There WAS a crowd
     // reading, so the crowd trigger correctly stands down — and the truth-class
     // trigger takes over, because the reading was a prediction.
     const r = enforceCompassGroundingEnvelope(`At ${BAR}, everyone is dancing right now.`, evidence);
@@ -238,8 +214,8 @@ describe("S79 part 2 — the checker refuses language stronger than its inputs",
       "a reading existed; convicting on absence would be the wrong reason");
   });
 
-  it("a low-confidence pattern cannot become a verified-live sentence", async () => {
-    const { evidence } = await context();
+  it("a low-confidence pattern cannot become a verified-live sentence", () => {
+    const { evidence } = context();
     const r = enforceCompassGroundingEnvelope(`${BAR} is busy right now.`, evidence);
     assert.equal(r.ok, false);
     assert.ok(r.violations.some((v) => v.kind === "live_claim_without_verified_source"));
@@ -249,8 +225,8 @@ describe("S79 part 2 — the checker refuses language stronger than its inputs",
 // ── PART 3: it does not over-fire, and the fold only tightens ────────────────
 
 describe("S79 part 3 — the checker still permits honest prose", () => {
-  it("a correctly hedged sentence over the same evidence passes", async () => {
-    const { evidence } = await context();
+  it("a correctly hedged sentence over the same evidence passes", () => {
+    const { evidence } = context();
     for (const ok of [
       `${BAR} is typically packed at this hour.`,
       `${BAR} is usually busy, though that is a historical pattern rather than a live reading.`,
@@ -260,8 +236,8 @@ describe("S79 part 3 — the checker still permits honest prose", () => {
     }
   });
 
-  it("a sentence that asserts no state is untouched", async () => {
-    const { evidence } = await context();
+  it("a sentence that asserts no state is untouched", () => {
+    const { evidence } = context();
     const r = enforceCompassGroundingEnvelope(`${BAR} is a cocktail bar in the old town.`, evidence);
     assert.equal(r.ok, true);
     assert.equal(r.text, `${BAR} is a cocktail bar in the old town.`);
@@ -283,12 +259,12 @@ describe("S79 — the fold is fail-weak: context can only tighten the checker", 
     }],
   };
 
-  it("the WEAKEST truth class governs when the two halves disagree", async () => {
-    const { evidence } = await context();
+  it("the WEAKEST truth class governs when the two halves disagree", () => {
+    const { evidence } = context();
     const merged = mergeGroundingEvidence(toolSide, evidence);
     assert.equal(merged.truthClass, "unknown");
     const bar = merged.subjects.find((s) => s.name === BAR);
-    assert.equal(bar!.truthClass, "predicted", "observed + predicted is a predicted subject");
+    assert.equal(bar!.truthClass, "conflicting", "observed + conflicting is a conflicting subject");
     assert.equal(bar!.hasVerifiedLive, false, "one half's contradiction is a veto");
     // And the merged band convicts where the tool-only band would have passed.
     assert.equal(enforceCompassGroundingEnvelope(`${BAR} is packed.`, toolSide).ok, true);
@@ -302,8 +278,8 @@ describe("S79 — the fold is fail-weak: context can only tighten the checker", 
     assert.deepEqual(merged.subjects.map((s) => s.name), [BAR]);
   });
 
-  it("subjects merge by name rather than splitting into two half-evidenced ones", async () => {
-    const { evidence } = await context();
+  it("subjects merge by name rather than splitting into two half-evidenced ones", () => {
+    const { evidence } = context();
     const merged = mergeGroundingEvidence(toolSide, evidence);
     assert.equal(merged.subjects.filter((s) => s.name === BAR).length, 1);
     assert.equal(merged.subjects.length, 2, "Bar Luna merged, Cafe Otto carried through");
