@@ -67,12 +67,17 @@
 import {
   FEATURE_PRECISION_CEILING,
   PRECISION_LADDER,
-  isLiveState,
   narrowestPrecision,
   precisionRank,
   type LocationPrecision,
   type PresenceEstimateState,
+  type PresenceEvidenceType,
 } from "../presence/domain/types.js";
+import {
+  PRESENCE_WRITE_CAPABILITIES,
+  presenceFusion,
+  type PresenceClaim,
+} from "../presence/fusion/store.js";
 import {
   classifyAgainstProtected,
   type ProtectedZone,
@@ -268,6 +273,39 @@ export const RUNG_ESTIMATE_STATE = {
   last_known: "last_known",
   manual_checkpoint: "inferred",
 } as const satisfies Record<LocateSignalRung, PresenceEstimateState>;
+
+/**
+ * §8's evidence vocabulary for each §12 rung, so the fusion layer records WHAT
+ * SAW the subject rather than only how precise the answer was. Two rungs share
+ * `server_sync` and that is not a shortcut: an event's cached map fix and a
+ * remembered position are both the server handing back something it already
+ * had, with no live sensor behind either.
+ *
+ * `ble_direct` is listed for `device_proximity` even though
+ * CURRENT_STACK_CAPABILITIES says this stack has no BLE at all. Naming the
+ * evidence a rung WOULD produce is not the same as claiming the radio exists —
+ * the rung simply never fires today, and a table that omitted it would have to
+ * be edited again the day it does.
+ */
+export const RUNG_EVIDENCE_TYPE = {
+  network_location: "gps",
+  event_cached_location: "server_sync",
+  device_proximity: "ble_direct",
+  peer_relay: "peer",
+  last_known: "server_sync",
+  manual_checkpoint: "user_checkin",
+} as const satisfies Record<LocateSignalRung, PresenceEvidenceType>;
+
+/**
+ * How much the answering rung is believed, before freshness is considered at
+ * all (§10 keeps the two apart). Monotone non-increasing down §12's chain: a
+ * peer's second-hand sighting is never believed more than a live network fix.
+ */
+export function confidenceForRung(rung: LocateSignalRung): number {
+  const i = rungIndex(rung);
+  if (i < 0) return 0;
+  return Number((1 - i / LOCATE_SIGNAL_RUNGS.length).toFixed(4));
+}
 
 // ── §23 decay, server-side ────────────────────────────────────────────────────
 
@@ -768,7 +806,7 @@ export interface ProjectMemberInput {
 /**
  * One stored position → one client-shaped member state.
  *
- * The precision is the narrowest of FIVE independent bounds, and every one of
+ * The precision is the narrowest of SIX independent bounds, and every one of
  * them can only tighten:
  *
  *   1. what the writer stored (already narrowed at write time),
@@ -781,6 +819,21 @@ export interface ProjectMemberInput {
  * A member whose precision lands on `none` is returned as `notSharing` — the
  * same shape as a member with no signal at all, so a reader cannot distinguish
  * "suppressed" from "not reachable" and therefore cannot leak the difference.
+ *
+ * ── THE FOLD ITSELF NO LONGER HAPPENS HERE (census-sensing S3) ───────────────
+ * This function used to BE the fusion layer for one of four presence models,
+ * which is precisely S3's finding: four models, each folding its own ceilings,
+ * each minting its own idea of a presence estimate. It now assembles the six
+ * bounds and hands them to `presenceFusion.admit` as a claim; the narrowing,
+ * the §10 state downgrade and the freshness all come back on a sealed
+ * `FusedPresenceEstimate` that only the store can mint.
+ *
+ * The ARITHMETIC is unchanged — bound 2 is the store's contract ceiling for
+ * `locate_friends_session` and bounds 3–6 are claim ceilings, folded with the
+ * same `narrowestPrecision`. What changed is that there is now no expression in
+ * this module that produces a precision for a person without the store seeing
+ * it, and a refusal (suppressed, expired, no subject, unreadable clock) collapses
+ * to the same `notSharing` shape rather than to four different silences.
  */
 export function projectMember(input: ProjectMemberInput): MemberView {
   const { memberId, position, sessionCeiling, zones, nowMs } = input;
@@ -798,12 +851,9 @@ export function projectMember(input: ProjectMemberInput): MemberView {
       ? { lat: Number(position.lat), lng: Number(position.lng) }
       : null;
 
-  const precision = narrowestOfPrecisions(
-    position.precision,
-    LOCATE_FRIENDS_FEATURE_CEILING,
-    sessionCeiling,
-    RUNG_PRECISION_CEILING[position.rung],
-    DECAY_STAGE_CEILING[stage],
+  // The §24 bound, computed here because only this module knows where the
+  // member actually is; it travels to the store as a claim ceiling.
+  const protectionBound: LocationPrecision =
     // §24. Two distinct cases, and conflating them was a leak:
     //
     //  - POLICY UNKNOWN (`zones === null`, i.e. the read FAILED) constrains
@@ -827,13 +877,47 @@ export function projectMember(input: ProjectMemberInput): MemberView {
       ? "none"
       : rawPoint
         ? protectionCeiling(rawPoint, zones)
-        : "precise",
-  );
+        : "precise";
 
+  const claim: PresenceClaim = {
+    // The subject is the Portava account, so an estimate from this source can
+    // be fused with the other three by `PresenceFusionStore.resolve`. The
+    // session id is NOT part of the key: the latest observation of a person is
+    // the latest observation of that person, whichever session carried it, and
+    // keying per session would put the same human in the store twice.
+    subjectKey: memberId,
+    linkage: "account_scoped",
+    requestedPrecision: isLocationPrecision(position.precision) ? position.precision : "none",
+    ceilings: [
+      sessionCeiling,
+      RUNG_PRECISION_CEILING[position.rung],
+      DECAY_STAGE_CEILING[stage],
+      protectionBound,
+    ],
+    observedAtMs: observedMs,
+    state: estimateStateFor(position.rung, stage),
+    confidence: confidenceForRung(position.rung),
+    evidence: [RUNG_EVIDENCE_TYPE[position.rung]],
+    point: rawPoint,
+  };
+
+  const admission = presenceFusion.admit(
+    PRESENCE_WRITE_CAPABILITIES.locate_friends_session,
+    claim,
+    nowMs,
+  );
+  // Every refusal collapses to the same shape, deliberately: `suppressed`
+  // (§24 said no), `expired` (older than the store will serve) and a bad clock
+  // must be indistinguishable to a reader, or the difference between them is
+  // itself a disclosure.
+  if (!admission.ok) return notSharing(memberId);
+
+  const estimate = admission.estimate;
+  const precision = estimate.precision;
   if (precision === "none") return notSharing(memberId);
 
   const geometry = exposeGeometry(rawPoint, precision);
-  const state = estimateStateFor(position.rung, stage);
+  const state = estimate.state;
   const identity = mayRenderIdentity(precision);
 
   return {
@@ -844,7 +928,7 @@ export function projectMember(input: ProjectMemberInput): MemberView {
     decayStage: stage,
     rung: position.rung,
     degraded: rungIndex(position.rung) > 0 || stage !== "precise",
-    live: isLiveState(state),
+    live: estimate.live(nowMs),
     position: geometry.position,
     ring: geometry.ring,
     proximityBucket: position.proximity_bucket ?? null,

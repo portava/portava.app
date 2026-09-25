@@ -199,8 +199,8 @@
  *                           (user, context_type, context_id) holding a status and
  *                           venue / approximate LABELS — presence, with no
  *                           from-zone to be had, circle-scoped, consent-based and
- *                           per-viewer. src/presence/domain/* is Phase-0 types and
- *                           a transport selector: no store, no fusion layer.
+ *                           per-viewer. src/presence/fusion holds the ONE estimate
+ *                           store now; an estimate has no from-zone field at all.
  *   next_stop_contribution  REAL SCHEMA + REAL CAPTURE PATH, zero rows. THE ONLY
  *                           family whose source declares BOTH endpoints in one
  *                           act: the contributor is standing at the origin
@@ -385,7 +385,7 @@ export const UNFED_FAMILY_BLOCKERS: Readonly<Record<string, UnfedFamilyFinding>>
     alsoBlockedBy: ["party_scoped", "purpose_mismatch"],
     evidence: [
       "src/migrations/0108_circle_schema_tracked.sql:147 — circle_presence is one row per (user, context); a status and labels, no from-zone",
-      "src/presence/domain/** — Phase-0 types and a transport selector; no store, no fusion layer",
+      "src/presence/fusion/store.ts — a PresenceFusionStore now exists and is the ONLY minter of a PresenceEstimate, but a PresenceEstimate is a SUBJECT AT A PLACE: it has position, zoneId and floor, and no from-zone field anywhere on it. A fusion layer does not close this blocker, it confirms it — the store is where an origin WOULD have to appear, and it deliberately does not hold one, because a from-zone derived by sequencing two of its estimates is the per-actor trajectory this whole module exists to be incapable of building",
     ],
   },
 } as const;
