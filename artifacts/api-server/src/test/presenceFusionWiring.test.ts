@@ -17,6 +17,11 @@
  * is the point. A test that could only pass at 4/4 would be deleted the first
  * time it was inconvenient; this one has to be UPDATED, and updating it means
  * writing down what is true.
+ *
+ * As of 2026-09-25 what is true is 4 of 4: the tally below went red when
+ * `circle_presence` and `trip_crew_location_sessions` were wired, and was
+ * raised rather than relaxed. The mechanism is unchanged — it is still the
+ * register that must be edited, and the tally is still the thing that forces it.
  */
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
@@ -134,12 +139,37 @@ describe("presence fusion — the register is honest about all four models", () 
     // This assertion is the honest state of the migration and is EXPECTED to be
     // edited upward. If it fails because `wired` grew, the fix is to raise the
     // number here and clear that source's `blockedBy` — not to relax the test.
+    //
+    // 2026-09-25: it went red for exactly that reason and has been raised for
+    // exactly that reason. `circle_presence` now reads through
+    // lib/circleResponseShaper (both of its labels are gated on the admitted
+    // rung, and publicLat/publicLng come off the estimate's position) and
+    // `trip_crew_location_sessions` through
+    // domain/trips/services/TripCrewLocationService (every crew card's
+    // exactCoords is the point the store retained, or none). Both had their
+    // `blockedBy` cleared in the same diff; the test above proves neither
+    // claim is prose, and presenceWireCircleCrew.test.ts proves neither call
+    // throws its result away.
+    //
+    // THE LIST IS NOW FULL, which changes what a future failure means. `wired`
+    // cannot grow again without PRESENCE_SOURCES growing — a FIFTH presence
+    // model, which is the thing sensing §1 forbids and the closed union exists
+    // to make a reviewed diff. If this fails because the sorted lists differ
+    // by a new name, that name is the finding; and if it fails because a name
+    // moved back into `blocked`, a model has come UNWIRED and the register is
+    // telling the truth about it.
     assert.deepEqual(
       [...wired].sort(),
-      ["locate_friends_session", "map_social_presence"],
+      [
+        "circle_presence",
+        "locate_friends_session",
+        "map_social_presence",
+        "trip_crew_location_sessions",
+      ],
       `presence models reading through the fusion layer: ${wired.join(", ") || "none"}; ` +
         `still on their own: ${blocked.join(", ") || "none"}`,
     );
+    assert.deepEqual(blocked, [], "every one of census-sensing S3's four models now reads through the store");
   });
 });
 

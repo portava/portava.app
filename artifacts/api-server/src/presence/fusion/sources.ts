@@ -128,13 +128,12 @@ export const PRESENCE_SOURCE_CONTRACTS: Readonly<Record<PresenceSourceId, Presen
         "src/routes/circle.ts — the only writer and reader",
         "src/lib/circleResponseShaper.ts — the response shape",
       ],
-      readsThrough: null,
-      blockedBy:
-        "Every read and write of circle_presence lives in src/routes/circle.ts and " +
-        "src/lib/circleResponseShaper.ts. Neither file is in this lane's ownership, so the " +
-        "source is REGISTERED and CEILINGED here but nothing reads its estimates through the " +
-        "store yet. Wiring it is a one-call change in circleResponseShaper.shapePresence once that " +
-        "file is editable: build a claim from the row, admit it, take the rung from the estimate.",
+      // circleResponseShaper.shapePresence gates BOTH of this model's labels —
+      // approximate_label and venue_label — on the rung of the estimate
+      // `circlePresenceEstimate` admits, and takes publicLat/publicLng off the
+      // estimate's position, which the `venue` ceiling makes unreachable.
+      readsThrough: "src/lib/circleResponseShaper.ts",
+      blockedBy: null,
     }),
     trip_crew_location_sessions: Object.freeze({
       id: "trip_crew_location_sessions",
@@ -145,13 +144,15 @@ export const PRESENCE_SOURCE_CONTRACTS: Readonly<Record<PresenceSourceId, Presen
         "src/domain/trips/services/TripCrewLocationService.ts — the reader",
         "src/domain/trips/projections/TripMapProjection.ts:284 — its crew_member pins",
       ],
-      readsThrough: null,
-      blockedBy:
-        "src/domain/trips/services/TripCrewLocationService.ts owns the read and is not in " +
-        "this lane's ownership (the lane brief scopes services/tripCrew/**, which does not " +
-        "exist — the service lives under domain/trips/services/). Its MAP half does reach " +
-        "the store: TripMapProjection emits kind 'crew_member', and every crew_member served " +
-        "through routes/mapProjection passes aggregateForViewport's presence gate.",
+      // TripCrewLocationService.admitCrewPresence folds the §6.1 grant, the
+      // member's hotel/home blur and §10.2's currency bound into a claim, and
+      // every crew card's exactCoords is the point the store retained — or
+      // none. Its MAP half reaches the store by the other road as well:
+      // TripMapProjection emits kind 'crew_member', and every crew_member
+      // served through routes/mapProjection passes aggregateForViewport's
+      // presence gate.
+      readsThrough: "src/domain/trips/services/TripCrewLocationService.ts",
+      blockedBy: null,
     }),
     locate_friends_session: Object.freeze({
       id: "locate_friends_session",
