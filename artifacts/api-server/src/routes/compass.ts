@@ -159,10 +159,17 @@ import {
   type ToolExecution,
 } from "../compass/CompassTools.js";
 import {
+  EMPTY_GROUNDING_EVIDENCE,
   enforceCompassGroundingEnvelope,
+  mergeGroundingEvidence,
   readGroundingEvidence,
+  type GroundingEvidence,
   type GroundingResult,
 } from "../compass/CompassGroundingEnvelope.js";
+import {
+  buildLiveClaimContext,
+  type LiveClaimSubject,
+} from "../compass/CompassLiveClaimContext.js";
 import { buildCompassContext as buildLocationCompassContext } from "../services/location/CompassLocationContext.js";
 import { buildCompassMediaContext, formatMediaContextLines } from "../compass/CompassMediaContext.js";
 import { resolveViewer as resolveMediaViewer } from "../services/media/MediaProjectionService.js";
@@ -1363,17 +1370,29 @@ async function runToolCallingLoop(
 
 /**
  * Sensing `:148` output boundary — read the answer back against the confidence
- * band of the turn's OWN tool results before publishing it.
+ * band of the turn's inputs before publishing it.
+ *
+ * S79: "its inputs" is BOTH halves, and it used to be one. The tool log was the
+ * whole band, so a turn in which the model called no tool was checked against
+ * nothing: `truthClass` was null and the two truth-class triggers could not
+ * fire, leaving the answer constrained by prompt text alone. `contextEvidence`
+ * is the live claims this turn put IN THE PROMPT
+ * (`compass/CompassLiveClaimContext`), folded in fail-weak, so the checker now
+ * has a band to convict against even on a tool-less turn.
  *
  * Called on both the streamed and the non-streamed branch, with the same tool
- * log both branches already carry, so the two cannot drift. See
+ * log and the same context band, so the two cannot drift. See
  * `compass/CompassGroundingEnvelope.ts` for why a refusal appends rather than
  * replaces, and for what it deliberately does not police.
  */
-function groundCompassAnswer(message: string, toolLog: ToolExecution[]): GroundingResult {
+function groundCompassAnswer(
+  message: string,
+  toolLog: ToolExecution[],
+  contextEvidence: GroundingEvidence = EMPTY_GROUNDING_EVIDENCE,
+): GroundingResult {
   return enforceCompassGroundingEnvelope(
     message,
-    readGroundingEvidence(toolLog.map((t) => t.result)),
+    mergeGroundingEvidence(readGroundingEvidence(toolLog.map((t) => t.result)), contextEvidence),
   );
 }
 
@@ -1486,6 +1505,15 @@ router.post("/compass/ask", async (req, res) => {
   let topItemsContext:        string[]        = [];
   /** Place ids among the top items — the subjects the shared context kernel is assembled for. */
   let topPlaceIds:            string[]        = [];
+  /**
+   * S79 — the same subjects PAIRED WITH THE NAME the model will write. The
+   * kernel keys on the opaque id, but `CompassGroundingEnvelope` binds a
+   * sentence to a subject by name, so a band carried under an id could never be
+   * attached to the prose that mentions the place.
+   */
+  let topSubjects:            LiveClaimSubject[] = [];
+  /** S79 — the band of the live claims this turn put in the prompt. */
+  let liveClaimEvidence:      GroundingEvidence  = EMPTY_GROUNDING_EVIDENCE;
   let structuredLines:        string[]        = [];
   let modeWeightingLines:     string[]        = [];
 
@@ -1524,6 +1552,18 @@ router.post("/compass/ask", async (req, res) => {
       .filter((d) => d.type === "place")
       .map((d) => String((d.data as Record<string, unknown> | null)?.id ?? String(d.id ?? "").replace(/^place:/, "")))
       .filter((id) => id.length > 0);
+    // The name here is the RAW title, not the UGC-wrapped one: it is used to
+    // match the model's prose, and the model writes the title without the
+    // wrapper. The wrapper is applied where the name reaches the PROMPT.
+    topSubjects = feedSection.items
+      .slice(0, 5)
+      .map((itm: any) => (itm.item ?? {}) as Record<string, unknown>)
+      .filter((d) => d.type === "place")
+      .map((d) => ({
+        subjectId: String((d.data as Record<string, unknown> | null)?.id ?? String(d.id ?? "").replace(/^place:/, "")),
+        name: String(d.title ?? d.name ?? "").slice(0, 200).trim(),
+      }))
+      .filter((s: LiveClaimSubject) => s.subjectId.length > 0 && s.name.length > 0);
     topItemsContext = feedSection.items.slice(0, 5).map((itm: any) => {
       const d    = (itm.item ?? {}) as Record<string, unknown>;
       // `title` here can be raw UGC (a post body, a host-entered event title), so
@@ -1708,6 +1748,23 @@ router.post("/compass/ask", async (req, res) => {
     askProjections = { kernel: askKernel.kernel, readable: askKernel.readable };
   } catch { /* non-fatal — proceed without the kernel */ }
 
+  // ── S79: the live claims themselves, by name and with their §5.1 band ─────
+  // FIRST HALF OF THE ROW, AND IT HAS TO BE FIRST. The kernel above already
+  // carries a crowd density and a truth class per subject, but under an opaque
+  // subject id, and none of it ever reached the output checker. This block puts
+  // the claims in the prompt under the NAME the model writes, and keeps the
+  // band so `groundCompassAnswer` can hold the answer to it below — the census's
+  // order, because a checker over an empty context is vacuous.
+  //
+  // Reads through lib/liveClaimRead's own gates (flag, privacy_eligible, TTL),
+  // so it degrades to "no current evidence" rather than to a stale value
+  // presented as current. Never fatal.
+  try {
+    const live = await buildLiveClaimContext(sc, topSubjects, { now: new Date(turnNowMs) });
+    if (live.lines.length > 0) ctxLines.push(...live.lines);
+    liveClaimEvidence = live.evidence;
+  } catch { /* non-fatal — proceed without live claims, and with no band */ }
+
   // (c) CX-11 — downstream of the Opportunity Engine (lib/opportunityEngine),
   //     which answers only behind its pilot flag (migration 2840, seeded
   //     FALSE). Literal name so check-flag-polarity resolves the read;
@@ -1807,7 +1864,7 @@ router.post("/compass/ask", async (req, res) => {
       // Sensing `:148`. The tokens are already on the wire — the client rebuilds
       // the bubble from the accumulated deltas — so the correction is sent as
       // one more delta rather than by rewriting what was said.
-      const _grounded    = groundCompassAnswer(_rawMessage, toolLog);
+      const _grounded    = groundCompassAnswer(_rawMessage, toolLog, liveClaimEvidence);
       const message      = _grounded.text;
       if (_grounded.correction && !res.writableEnded) {
         req.log.warn(
@@ -1879,7 +1936,7 @@ router.post("/compass/ask", async (req, res) => {
     const _rawMessage  = finalRaw === "" ? SUMMARISE_EMPTY_FALLBACK_MESSAGE : _parsed.message;
     // Sensing `:148` — the same boundary the streamed branch applies, on the
     // same tool log, so the two branches cannot publish different answers.
-    const _grounded    = groundCompassAnswer(_rawMessage, toolLog);
+    const _grounded    = groundCompassAnswer(_rawMessage, toolLog, liveClaimEvidence);
     const message      = _grounded.text;
     if (_grounded.correction) {
       req.log.warn(
