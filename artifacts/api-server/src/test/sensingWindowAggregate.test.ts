@@ -350,7 +350,12 @@ describe("W7 — the four unsupported features stay unknown", () => {
     assert.equal(f.acousticPermissionGranted, false);
     // the median ordinal is carried OUT rather than interpreted
     assert.equal(w.medianSignalBucket, 2);
-    assert.ok(!("motionEnergy" in (w as Record<string, unknown>)));
+    // `Object.keys` rather than a cast: `w as Record<string, unknown>` is a
+    // TS2352 because the two types do not overlap, and the point of that
+    // diagnostic is the same point this assertion makes — SensingWindowFeatures
+    // has no such field. Asserting it through a cast that TypeScript rejects
+    // would be proving it by silencing the compiler that already knows.
+    assert.ok(!Object.keys(w).includes("motionEnergy"));
   });
 
   it("so the engine answers sociality and momentum, and NOT energy or dance", () => {
