@@ -380,7 +380,7 @@ NOT-BUILT · **?** = CANNOT-VERIFY. Backend paths are relative to
 | W118 | Post/video/Postcard media ← canonical media/content systems | C | `WallCandidateLoaders.loadVideoMediaCandidates` delegates to `services/media/MediaProjectionService` (imported `:41-45`). |
 | W119 | Place identity/state ← Places + Live Intelligence | C | `routes/wall.ts:468-488` reads `places`; state via `lib/liveClaimRead` only. |
 | W120 | Trip membership/saves ← Trips | C | `routes/wall.ts:223-234` reads `trip_members`; `:284-297` reads `trips`. |
-| W121 | Hidden Gem qualification ← Hidden Gem system | C | `routes/wall.ts:494-509` reads `hidden_gems`; `ContextThreadService` uses `deriveGemProjection` from `services/hiddenGems/`. |
+| W121 | Hidden Gem qualification ← Hidden Gem system | C | `routes/wall.ts:671#.from("hidden_gems")` reads `hidden_gems` (the earlier `:494-509` had rotted 177 lines onto `buildForYouRankViewer`; an UNANCHORED range cannot fail when the code moves, so it is anchored now); `ContextThreadService` uses `deriveGemProjection` from `services/hiddenGems/`. |
 | W122 | Buddy availability/service eligibility ← RAB | C | The opportunity loader reads `rent_buddy_profiles` and runs the canonical `enforceBookingCreationGates` imported from `routes/rentABuddy.ts` (`WallCandidateLoaders.ts:53`) — the Wall does not re-implement the gate. |
 | W123 | Viewer privacy/block eligibility ← Policy/Trust/Safety | C | `lib/postVisibility.decidePostReadable` and the `blocks` table are the only sources (`WallProjectionService.ts:206-222`). |
 | W124 | For You rank score ← Wall Ranking | C | `WallRankingService.rankForYou`. |
@@ -1434,7 +1434,7 @@ this pass changes that. **Stay `?`.**
 
 §12.5's cross-lane request is honoured: `wallIntentResolutionTruthfulness.test.ts`, the
 input-assistance gateway and the client mock checker are now in this census's scope
-(`artifacts/api-server/src/scripts/checkCensusFreshness.ts:1185#ADDED 2026-09-20 by census-wall §13`), which takes
+(`artifacts/api-server/src/scripts/checkCensusFreshness.ts:1406#ADDED 2026-09-20 by census-wall §13`), which takes
 `check:census-scope-coverage` for this census to 80 / 80 watched.
 
 ### 13.5 Headline — unchanged, restated

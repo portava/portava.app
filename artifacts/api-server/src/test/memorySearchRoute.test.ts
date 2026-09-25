@@ -253,6 +253,29 @@ describe("§15 POST /memories/search reaches the retrieval engine", () => {
     } finally { await app.close(); }
   });
 
+  it("the count is what the FILTERS selected, not what the page returned", async () => {
+    // ADDED after a mutation found the case above green when
+    // `deterministicMatchCount` was replaced by `hits.length`. With one
+    // matching Memory in the fixture the two numbers are equal, so `<=` held
+    // and the field was not pinned to anything — and this is the field that
+    // makes H111's claim ("the filters decide membership; a semantic pass may
+    // only reorder what they selected") checkable at all. A count that silently
+    // became the page size would report a truncated answer as a complete one.
+    const store = tables();
+    store.memories.push(
+      memory("dddddddd-dddd-dddd-dddd-dddddddddd04", VIEWER, { id: "dddddddd-dddd-dddd-dddd-dddddddddd04", title: "Hanoi noodle soup" }),
+      memory("dddddddd-dddd-dddd-dddd-dddddddddd05", VIEWER, { id: "dddddddd-dddd-dddd-dddd-dddddddddd05", title: "Hanoi noodle morning" }),
+    );
+    const app = await startApp({ store });
+    try {
+      const r = await search(app, VIEWER, { intent: { kind: "mine" }, limit: 1 });
+      assert.equal(r.status, 200);
+      assert.equal(r.body.hits.length, 1, "the page is what was asked for");
+      assert.equal(r.body.deterministicMatchCount, 3, "the count is what the filters selected, before the limit");
+      assert.ok(r.body.deterministicMatchCount > r.body.hits.length, "strictly greater — the two are not the same number");
+    } finally { await app.close(); }
+  });
+
   it("names the engine's ceiling on the wire: there is no semantic index", async () => {
     // H111. The default scorer is token overlap and no model is called on this
     // path. A search box that implied otherwise would promise an understanding

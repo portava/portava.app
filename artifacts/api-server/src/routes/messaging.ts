@@ -71,10 +71,17 @@ import {
 } from '../services/messageTranslation';
 import { shouldRetranslateOnLanguageChange } from '../lib/retranslateGate';
 import {
+  EDIT_HISTORY_UNAVAILABLE,
+  isEditHistorySchemaAbsent,
+  nextEditVersion,
+  orderEditsNewestFirst,
+} from '../services/telegraph/messageEdits.js';
+import {
   syncTripChatMembers,
   syncCircleChatMembers,
 } from '../services/groupChatSync';
 import {
+  applyHistoryWindow,
   historyBoundEnabled,
   membershipSelect,
   visibleFromOf,
@@ -1427,7 +1434,12 @@ router.get('/me/unread-counts', async (req, res) => {
       for (const m of lastMsgs ?? []) {
         // §14.3: a message outside the caller's window for its thread is not
         // theirs to count as unread. No-op while the flag is OFF.
-        if (!withinWindow((m as any).created_at, visibleFromByThread[(m as any).thread_id] ?? null)) continue;
+        // Q6: the caller's own earlier messages are theirs to see. This loop
+        // then skips them for the COUNT anyway (`sender_id === user.id`, five
+        // lines down) — a person's own message is never unread. The exception
+        // is passed regardless so the badge and the preview agree on one set.
+        if (!withinWindow((m as any).created_at, visibleFromByThread[(m as any).thread_id] ?? null,
+                          { senderId: (m as any).sender_id, viewerId: user.id })) continue;
         if (!lastMsgByThread[(m as any).thread_id]) {
           lastMsgByThread[(m as any).thread_id] = m;
         }
@@ -1703,12 +1715,19 @@ router.post('/threads/:threadId/read', async (req, res) => {
   // The threshold: the newest message this member is entitled to have loaded.
   let newestQuery = sc
     .from('messages')
-    .select('id, created_at')
+    .select('id, sender_id, created_at')
     .eq('thread_id', threadId)
     .is('deleted_at', null)
     .order('created_at', { ascending: false })
     .limit(1);
-  if (visibleFrom) newestQuery = newestQuery.gte('created_at', visibleFrom);
+  // Q6 in the QUERY, not only in a filter: this read has no JavaScript window
+  // check at all — it takes the newest row and trusts the bound. Left as a
+  // plain `.gte`, a rejoined member whose only visible message is one they sent
+  // themselves would be told `nothing_visible_to_mark` for a conversation they
+  // can see. The threshold can only move FORWARD (the caller compares it
+  // against `last_read_at` below), so admitting older own rows cannot rewind a
+  // marker.
+  newestQuery = applyHistoryWindow(newestQuery, visibleFrom, user.id);
   const { data: newestRows, error: newestErr } = await newestQuery;
 
   // An unreadable `messages` must NOT collapse to "there is nothing to mark
@@ -1721,7 +1740,13 @@ router.post('/threads/:threadId/read', async (req, res) => {
     return;
   }
 
-  const threshold = ((newestRows ?? [])[0] as any)?.created_at as string | undefined;
+  // The second layer for the threshold read. A row of the caller's own with a
+  // damaged `created_at` must not become the marker; `withinWindow` refuses it
+  // before the Q6 exception is consulted, and `Number.isNaN` below is the
+  // belt-and-braces the route already had.
+  const newestWindowed = ((newestRows ?? []) as any[]).filter((m) =>
+    withinWindow(m.created_at, visibleFrom, { senderId: m.sender_id, viewerId: user.id }));
+  const threshold = (newestWindowed[0] as any)?.created_at as string | undefined;
   if (!threshold) {
     res.status(200).json({ ok: true, threadId, lastReadAt: previous, advanced: false, reason: 'nothing_visible_to_mark' });
     return;
@@ -1797,11 +1822,18 @@ router.post('/threads/:threadId/e2ee', async (req, res) => {
   if (!sc) { sendError(res, 'server_not_configured', 'Service client not ready'); return; }
 
   // Membership — thread access is gated only by message_thread_members.
+  // `.is('left_at', null)` is load-bearing, not decoration. Leaving a thread KEEPS
+  // the row and stamps left_at (see the leave handler below), so a read that matches
+  // only on (thread_id, user_id) matches a departed member too and hands them a
+  // state change in a thread they walked out of. RLS does not catch this: 2402's
+  // mtm_select admits `auth.uid() = user_id` whatever left_at says, and this path
+  // reads through a client that bypasses RLS anyway.
   const { data: member, error: memberErr } = await sc
     .from('message_thread_members')
     .select('user_id')
     .eq('thread_id', threadId)
     .eq('user_id', user.id)
+    .is('left_at', null)
     .maybeSingle();
 
   // T344/T363, §17.8. supabase-js RESOLVES on a database failure, so a dropped
@@ -2017,8 +2049,12 @@ router.get('/me/threads', async (req, res) => {
   for (const m of memberships ?? []) {
     visibleFromByThread[(m as any).thread_id] = visibleFromOf(m as any, boundOn);
   }
+  // Q6: the caller's OWN earlier messages are theirs to preview. The exception
+  // is sender-scoped, so the preview a rejoined member sees can become their
+  // own old message but can never become ANOTHER sender's pre-window one.
   const windowedMsgs = ((lastMsgRes.data ?? []) as any[]).filter((m) =>
-    withinWindow(m.created_at, visibleFromByThread[m.thread_id] ?? null),
+    withinWindow(m.created_at, visibleFromByThread[m.thread_id] ?? null,
+                 { senderId: m.sender_id, viewerId: user.id }),
   );
 
   // Last message per thread.
@@ -2278,7 +2314,13 @@ router.get('/threads/:threadId/messages', async (req, res) => {
 
   if (before) query = query.lt('created_at', before);
   // The §14.3 window, applied in the query so pagination cannot walk past it.
-  if (visibleFrom) query = query.gte('created_at', visibleFrom);
+  //
+  // Q6 lives HERE, not only in a filter: this query carries `.limit(limit)` and
+  // `?before`, so PostgREST decides the page. A carve-out written only in
+  // `withinWindow` would leave this surface — the pagination surface — exactly
+  // as it is. The relaxed clause is `created_at >= bound OR sender_id = caller`;
+  // `thread_id`, the cursor and the ordering stay AND-ed outside it.
+  query = applyHistoryWindow(query, visibleFrom, user.id);
 
   const { data, error } = await query;
   if (error) {
@@ -2287,7 +2329,21 @@ router.get('/threads/:threadId/messages', async (req, res) => {
     return;
   }
 
-  const rows = (data ?? []) as any[];
+  // THE SECOND LAYER, which this read did not have and now needs.
+  //
+  // Every other windowed read in this tree re-checks the bound in JavaScript
+  // beside the query, for the reason `routes/groupChat.ts` spells out: `gte`
+  // and the filter must agree on the boundary instant across the two ISO
+  // spellings Postgres and Node produce. Q6 adds a second reason, and it is a
+  // FAIL-CLOSED one: `created_at >= bound` is NULL — and therefore not true —
+  // for a row with no timestamp, so the single-clause bound excluded a damaged
+  // row on its own. `sender_id.eq.<caller>` has no such property, so without
+  // this line a row of the caller's own carrying a NULL `created_at` would be
+  // admitted by the OR. `withinWindow` refuses an absent or unparseable
+  // `created_at` BEFORE it consults the exception, which is exactly the rule
+  // that has to survive.
+  const rows = ((data ?? []) as any[]).filter((m) =>
+    withinWindow(m.created_at, visibleFrom, { senderId: m.sender_id, viewerId: user.id }));
 
   // Universal display-name rule: sender names show only when opted in.
   {
@@ -2417,19 +2473,32 @@ router.get('/threads/:threadId/messages', async (req, res) => {
           // regardless of what is in the column.
           let quotedQuery = sc
             .from('messages')
-            .select(`id, body, sender_id, profile:profiles!messages_sender_id_fkey(name, handle, username, full_name)`)
+            .select(`id, body, sender_id, created_at, profile:profiles!messages_sender_id_fkey(name, handle, username, full_name)`)
             .eq('thread_id', threadId)
             .in('id', replyIds);
-          if (visibleFrom) quotedQuery = quotedQuery.gte('created_at', visibleFrom);
+          // Q6, AND THE LIMIT OF Q6. The quoted row is judged on ITS OWN
+          // sender, not on the sender of the message that quotes it: my reply
+          // being visible to me does not make the message it quotes visible.
+          // So a pre-window quote of MY OWN earlier message comes back (it is
+          // mine), and a pre-window quote of ANOTHER member's message does not
+          // — the `or` admits only `sender_id = caller`, and a row failing both
+          // clauses is never returned, so `replyContextMap` has no entry and
+          // the reply renders with `replyToBody: null` exactly as today.
+          quotedQuery = applyHistoryWindow(quotedQuery, visibleFrom, user.id);
           const { data: quotedRows, error: quotedErr } = await quotedQuery;
           if (quotedErr) {
             req.log.warn({ err: quotedErr, threadId },
               'thread read: quoted reply context unreadable — quotes omitted, not invented');
             replyQuotesUnreadable = true;
           }
+          // The second layer for the quote read, for the same fail-closed
+          // reason as the page read above. `created_at` is selected here only
+          // so the predicate can refuse a damaged row; it is never returned.
+          const quotedWindowed = ((quotedRows as any[]) ?? []).filter((qr: any) =>
+            withinWindow(qr.created_at, visibleFrom, { senderId: qr.sender_id, viewerId: user.id }));
           // Universal display-name rule: quoted sender shows @handle unless opted in.
-          const qAllowed = await nameVisibilitySet(sc, ((quotedRows as any[]) ?? []).map((q: any) => q.sender_id));
-          for (const qr of quotedRows as any[] ?? []) {
+          const qAllowed = await nameVisibilitySet(sc, quotedWindowed.map((q: any) => q.sender_id));
+          for (const qr of quotedWindowed) {
             const nameOk = qr.sender_id === user.id || qAllowed.has(qr.sender_id as string);
             const qHandle = resolveHandle(qr.profile);
             replyContextMap[qr.id] = {
@@ -3455,11 +3524,14 @@ router.post('/messages/:messageId/translate/retry', async (req, res) => {
     return;
   }
 
+  // Departed members keep their row with left_at stamped, so this gate must
+  // exclude them explicitly — see the POST /threads/:threadId/e2ee gate above.
   const { data: mem, error: memErr } = await client
     .from('message_thread_members')
     .select('user_id')
     .eq('thread_id', m.thread_id)
     .eq('user_id', user.id)
+    .is('left_at', null)
     .maybeSingle();
 
   if (memErr) { refuseUnreadableAccess(req, res, 'message_thread_members', { err: memErr, threadId: m.thread_id, userId: user.id }); return; }
@@ -3528,11 +3600,14 @@ router.patch('/threads/:threadId/messages/:messageId', async (req, res) => {
   if (newBody.length > 4000) { sendError(res, 'invalid_payload', 'body must be 4000 characters or fewer'); return; }
 
   // Verify thread membership.
+  // Departed members keep their row with left_at stamped, so this gate must
+  // exclude them explicitly — see the POST /threads/:threadId/e2ee gate above.
   const { data: mem, error: memErr } = await client
     .from('message_thread_members')
     .select('user_id')
     .eq('thread_id', threadId)
     .eq('user_id', user.id)
+    .is('left_at', null)
     .maybeSingle();
   if (memErr) { refuseUnreadableAccess(req, res, 'message_thread_members', { err: memErr, threadId, userId: user.id }); return; }
   if (!mem) { sendError(res, 'forbidden', 'Not a member of this thread'); return; }
@@ -3567,12 +3642,87 @@ router.patch('/threads/:threadId/messages/:messageId', async (req, res) => {
   if (m.sender_id !== user.id) { sendError(res, 'forbidden', 'Only the sender can edit this message'); return; }
 
   const now = new Date().toISOString();
+
+  // ── §7.5 version history (T80) ────────────────────────────────────────────
+  // The previous body is recorded BEFORE `messages.body` is overwritten, and
+  // the ordering is the guarantee, not a style choice: overwrite-then-record
+  // loses the old text for good the first time the record fails. See
+  // `services/telegraph/messageEdits.ts` for why the absent-table branch is
+  // narrow and why it degrades loudly instead of refusing.
+  const previousBody = (m.body as string | null) ?? null;
+  let recordedVersion: number | null = null;
+  let historyUnavailable = false;
+
+  const { data: existingEdits, error: existingEditsErr } = await sc
+    .from('message_edits')
+    .select('version')
+    .eq('message_id', messageId);
+
+  if (existingEditsErr && isEditHistorySchemaAbsent(existingEditsErr)) {
+    // Migration 2811 is unapplied on this deployment. Let the edit through,
+    // but do not pretend a version was kept.
+    historyUnavailable = true;
+    req.log.warn({ messageId, err: existingEditsErr },
+      'message_edits absent — editing without version history (migration 2811 unapplied)');
+  } else if (existingEditsErr) {
+    // NOT the schema gap: an unreadable history means the next version number
+    // is unknown, and writing the body now would lose `previousBody` with
+    // nothing recording it.
+    req.log.error({ err: existingEditsErr, messageId },
+      'message_edits read failed on edit — refusing rather than overwriting the body unrecorded');
+    sendError(res, 'degraded_unavailable', 'We could not record this edit right now. Please try again shortly.');
+    return;
+  } else {
+    const version = nextEditVersion(((existingEdits ?? []) as any[]).map((e) => ({ version: Number(e.version) })));
+    // The columns are named HERE rather than built by a helper. A payload the
+    // checker cannot resolve statically is a write it cannot verify against the
+    // live schema at all — a whole row of unverified column names, which is the
+    // worst kind of blind spot for a table this new. There is one call site, so
+    // the helper was buying nothing but that blindness.
+    const { error: insertEditErr } = await sc
+      .from('message_edits')
+      .insert({
+        message_id: messageId,
+        editor_id: user.id,
+        version,
+        previous_body: previousBody,
+        edited_at: now,
+      });
+
+    if (insertEditErr && isEditHistorySchemaAbsent(insertEditErr)) {
+      historyUnavailable = true;
+      req.log.warn({ messageId, err: insertEditErr },
+        'message_edits absent on insert — editing without version history');
+    } else if (insertEditErr) {
+      req.log.error({ err: insertEditErr, messageId, version },
+        'message_edits insert failed — refusing the edit so the previous body survives');
+      sendError(res, 'degraded_unavailable', 'We could not record this edit right now. Please try again shortly.');
+      return;
+    } else {
+      recordedVersion = version;
+    }
+  }
+
   const { error: updateErr } = await sc
     .from('messages')
     .update({ body: newBody, edited_at: now })
     .eq('id', messageId);
 
   if (updateErr) {
+    // Compensate the version row we already wrote. Left behind it would claim
+    // an edit that never happened AND burn that version number under
+    // UNIQUE (message_id, version), so the next real edit would collide.
+    if (recordedVersion !== null) {
+      const { error: rollbackErr } = await sc
+        .from('message_edits')
+        .delete()
+        .eq('message_id', messageId)
+        .eq('version', recordedVersion);
+      if (rollbackErr) {
+        req.log.error({ err: rollbackErr, messageId, version: recordedVersion },
+          'message_edits compensation failed — an orphan version row remains for this message');
+      }
+    }
     req.log.error({ err: updateErr }, 'message edit failed');
     sendError(res, 'db_error', updateErr.message);
     return;
@@ -3585,6 +3735,11 @@ router.patch('/threads/:threadId/messages/:messageId', async (req, res) => {
     body: newBody,
     deleted: false,
     editedAt: now,
+    // §7.5's second noun, and an honest report when it could not be kept. A
+    // client must not offer "view edit history" off an edit that recorded none.
+    versionHistory: historyUnavailable
+      ? { recorded: false, version: null, reason: EDIT_HISTORY_UNAVAILABLE }
+      : { recorded: true, version: recordedVersion },
   });
 
   // Realtime: notify other members the message body changed.
@@ -3618,6 +3773,122 @@ router.patch('/threads/:threadId/messages/:messageId', async (req, res) => {
     senderPreferenceUnreadable: senderLanguage.unreadable,
     logger: req.log,
   }).catch(() => {});
+});
+
+/* ---------------------------------------------------------------------------
+ * GET /api/threads/:threadId/messages/:messageId/edits
+ * ---------------------------------------------------------------------------
+ * Telegraph §7.5 / census T80 — the READ half of version history. Without it
+ * the PATCH writer above would be another write-only table, which is exactly
+ * the shape T119 recorded against `saved_messages`.
+ *
+ * A previous body IS message content, so it is authorized like message content
+ * and RE-AUTHORIZED at read time (§14.2 "read authorization is dynamic"):
+ *   - the caller is an ACTIVE member of the message's thread;
+ *   - the message is not deleted/unsent — §7.4 says an unsent message leaves
+ *     normal retrieval, and its drafts must not outlive it;
+ *   - the message is inside the caller's §14.3 history window when the bound
+ *     is on, so a member who joined later cannot read back through it.
+ *
+ * FAILS CLOSED. supabase-js RESOLVES a PostgREST refusal as `{data: null,
+ * error}`, so every read here is error-checked and an unreadable table becomes
+ * a named 503 — never `{ versions: [] }`, which would assert to the caller that
+ * this message has never been edited.
+ *
+ * INERT: no client calls this route today.
+ */
+router.get('/threads/:threadId/messages/:messageId/edits', async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+  const { threadId, messageId } = req.params;
+  if (!isUuid(threadId)) { sendError(res, 'invalid_payload', 'Invalid thread id'); return; }
+  if (!isUuid(messageId)) { sendError(res, 'invalid_payload', 'Invalid message id'); return; }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, 'server_not_configured', 'Service client not ready'); return; }
+
+  const boundOn = await historyBoundEnabled(sc);
+  // Two literal select lists rather than `membershipSelect(...)`, for the reason
+  // the four reads in groupChat.ts/telegraphStream.ts already give:
+  // check:write-path-columns resolves select lists STATICALLY, so a computed one
+  // is a blind spot where none of these columns is verified against the live
+  // schema. `membershipSelect` is still the single definition of what the bound
+  // adds and is still exercised by its own unit tests; this site just spells the
+  // answer out where the checker can read it.
+  const membershipQuery = boundOn
+    ? sc.from('message_thread_members').select('user_id, left_at, visible_from_at')
+    : sc.from('message_thread_members').select('user_id, left_at');
+  const { data: membership, error: membershipErr } = await membershipQuery
+    .eq('thread_id', threadId)
+    .eq('user_id', user.id)
+    .maybeSingle();
+
+  if (membershipErr) { refuseUnreadableAccess(req, res, 'message_thread_members', { err: membershipErr, threadId, userId: user.id }); return; }
+  if (!membership) { sendError(res, 'forbidden', 'Not a member of this thread'); return; }
+  if ((membership as any).left_at !== null && (membership as any).left_at !== undefined) {
+    sendError(res, 'forbidden', 'You no longer have access to this thread');
+    return;
+  }
+
+  const { data: msgRow, error: msgErr } = await sc
+    .from('messages')
+    .select('id, thread_id, sender_id, body, deleted_at, edited_at, created_at')
+    .eq('id', messageId)
+    .eq('thread_id', threadId)
+    .maybeSingle();
+
+  if (msgErr) {
+    req.log.error({ err: msgErr, messageId, threadId },
+      'edit history: messages read failed — refusing rather than reporting the message as nonexistent');
+    sendError(res, 'degraded_unavailable', 'We could not read that message right now. Please try again shortly.');
+    return;
+  }
+  if (!msgRow) { sendError(res, 'not_found', 'Message not found'); return; }
+  const msg = msgRow as any;
+  // §7.4: an unsent/deleted message is out of normal retrieval, and so are the
+  // bodies it used to have. Returning them here would make the edit history a
+  // way to read back exactly what deletion was meant to take away.
+  if (msg.deleted_at) { sendError(res, 'not_found', 'Message not found'); return; }
+
+  const visibleFrom = visibleFromOf(membership as any, boundOn);
+  // Q6, on DIRECT RETRIEVAL. The edit history of a message is the bodies that
+  // message used to have; for the caller's own message those are the caller's
+  // own words, and §14.3 was never about withholding a person's own history
+  // from them. Active membership (checked above) and the §7.4 tombstone rule
+  // (checked above) both still refuse first.
+  if (!withinWindow(msg.created_at, visibleFrom, { senderId: msg.sender_id, viewerId: user.id })) {
+    sendError(res, 'forbidden', 'That message is outside the part of this conversation you can see');
+    return;
+  }
+
+  const { data: editRows, error: editErr } = await sc
+    .from('message_edits')
+    .select('version, previous_body, editor_id, edited_at')
+    .eq('message_id', messageId);
+
+  if (editErr) {
+    // Both branches refuse; they differ only in what the log says. An absent
+    // table is a deployment fact (migration 2811) and an unreadable one is an
+    // outage, and NEITHER is "this message has never been edited".
+    if (isEditHistorySchemaAbsent(editErr)) {
+      req.log.warn({ messageId, err: editErr }, 'edit history unavailable: message_edits absent (migration 2811 unapplied)');
+      sendError(res, 'degraded_unavailable', EDIT_HISTORY_UNAVAILABLE);
+      return;
+    }
+    req.log.error({ err: editErr, messageId }, 'message_edits read failed — refusing rather than reporting no edit history');
+    sendError(res, 'degraded_unavailable', 'We could not load this message’s edit history right now. Please try again shortly.');
+    return;
+  }
+
+  res.status(200).json({
+    messageId,
+    threadId,
+    senderId: (msg.sender_id as string | null) ?? null,
+    currentBody: (msg.body as string | null) ?? null,
+    editedAt: (msg.edited_at as string | null) ?? null,
+    versions: orderEditsNewestFirst(((editRows ?? []) as any[])),
+  });
 });
 
 /* ---------------------------------------------------------------------------
@@ -4018,7 +4289,11 @@ router.get('/me/saved-messages', async (req, res) => {
 
   const items = msgs
     .filter((m) => activeThreads.has(m.thread_id as string))
-    .filter((m) => withinWindow(m.created_at, visibleFromByThread[m.thread_id as string] ?? null))
+    // Q6: a save of the caller's OWN earlier message survives the rejoin. The
+    // `activeThreads` filter above is the §14.2 re-authorization and runs
+    // FIRST — a save in a thread the caller has left is still withheld.
+    .filter((m) => withinWindow(m.created_at, visibleFromByThread[m.thread_id as string] ?? null,
+                                { senderId: m.sender_id, viewerId: user.id }))
     .map((m) => ({
       messageId: m.id as string,
       threadId: m.thread_id as string,

@@ -30,7 +30,7 @@
  */
 import { Router } from "express";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { requireUser, sendError } from "../lib/http.js";
+import { isAcceptedTripMember, requireUser, sendError } from "../lib/http.js";
 import { asyncHandler } from "../lib/asyncHandler.js";
 import { logger as rootLogger } from "../lib/logger.js";
 import {
@@ -325,6 +325,233 @@ router.get(
       threadType: ctx.threadType,
       participants,
       availabilityEnabled: windowsEnabled,
+    });
+  }),
+);
+
+// ── GET /api/threads/:threadId/discover-together ────────────────────
+
+/** How far ahead "what could we do" looks, when the caller names no window. */
+export const DISCOVER_TOGETHER_DEFAULT_HOURS = 12;
+/** The furthest ahead it will look. */
+export const DISCOVER_TOGETHER_MAX_HOURS = 72;
+
+/** One thing the conversation could do, and WHY it is in the set. */
+interface Opportunity {
+  objectId: string;
+  objectType: string;
+  title: string;
+  startsAt: string | null;
+  endsAt: string | null;
+  orderBand: string;
+  /**
+   * The three inputs §20's Discovery row names, per item, so a client can say
+   * why rather than presenting a ranked list nobody can question. `availability`
+   * is false when nobody's availability was readable — which is NOT the same as
+   * nobody being free, and `availabilityEntitled` below says which it was.
+   */
+  admittedBy: { context: true; time: boolean; availability: boolean };
+  /** Members whose live availability overlaps the window. Never a status label. */
+  availableParticipantIds: string[];
+}
+
+/**
+ * §20 Discovery — "Discover Together; shared opportunity set from availability,
+ * time and context".
+ *
+ * census-telegraph T266: "Sharing a discovery card is not 'Discover Together'.
+ * No shared opportunity set exists; Telegraph reads neither availability nor
+ * time context."
+ *
+ * ── WHAT THIS IS, AND THE HALF IT IS NOT ───────────────────────────────
+ * It is a SET, intersected from the three inputs the row names, and each item
+ * carries which of the three admitted it. The set is drawn from the
+ * conversation's own §3 shared context — the trips, plans, events, bookings and
+ * want-to-do items these people already share — and NOT from Discovery's
+ * candidate corpus. Ranking and proximity belong to another surface and this
+ * route does not reach into them; a reader who requires the Discovery corpus
+ * should read T266 as unbuilt rather than partial.
+ *
+ * ── AVAILABILITY IS READ ONLY WHERE SOMETHING ALREADY ENTITLES IT ──────────
+ * A person's availability is theirs. This route invents no new entitlement: it
+ * reads other members' quick availability only on a TRIP thread, and only after
+ * re-verifying ACCEPTED trip membership for the viewer AND for each other
+ * member — which is exactly the gate `GET /api/trips/:tripId/availability`
+ * already runs for the same data. The double check is the point, and it is
+ * T262's: the thread roster and the trip roster are not written in one
+ * transaction (T319), so a removed crew member is on the roster until a sync
+ * runs, and trusting the roster would leak their availability to a trip they
+ * have left.
+ *
+ * On a direct or circle thread the availability input is simply ABSENT and the
+ * response says `availabilityEntitled: false`. Building a new gate for those
+ * shapes is a privacy decision, not a coding one, and it is not this route's to
+ * take.
+ *
+ * ── EXPIRY IS RE-EVALUATED HERE ───────────────────────────────────
+ * §4.3: "Availability expires automatically and revokes across Telegraph,
+ * Discovery and Compass." A row past its `expires_at` is dropped on this read
+ * as well as being swept, so a stalled sweep cannot put a stale FREE NOW into
+ * an opportunity set. Both halves, deliberately — the sweep is what makes the
+ * event fire, this is what makes the answer right.
+ *
+ * ── THE DAY FRAME IS UTC AND SAYS SO ───────────────────────────────
+ * The window is an explicit number of hours from now, stated in the response,
+ * rather than "tonight" — census T423 records that this tree cannot compute a
+ * destination-local day, and a surface that implied one would be wrong for
+ * exactly the travellers it is for.
+ */
+router.get(
+  "/threads/:threadId/discover-together",
+  asyncHandler(async (req: any, res: any) => {
+    const auth = await requireUser(req, res);
+    if (!auth) return;
+    const { client, user } = auth;
+    const { threadId } = req.params;
+
+    if (!UUID.test(threadId)) {
+      sendError(res, "invalid_payload", "Invalid threadId");
+      return;
+    }
+
+    const hoursRaw = Number.parseInt(String(req.query.hours ?? ""), 10);
+    const hours =
+      Number.isFinite(hoursRaw) && hoursRaw > 0 && hoursRaw <= DISCOVER_TOGETHER_MAX_HOURS
+        ? hoursRaw
+        : DISCOVER_TOGETHER_DEFAULT_HOURS;
+
+    const loaded = await loadThreadContext(client, threadId, user.id);
+    if (!loaded.ok) {
+      sendError(res, loaded.code, loaded.message);
+      return;
+    }
+    const ctx = loaded.ctx;
+    const others = ctx.participantIds.filter((p) => p !== user.id);
+
+    const nowDate = new Date();
+    const nowMs = nowDate.getTime();
+    const windowEnds = new Date(nowMs + hours * 3600_000);
+
+    // ── input 1: CONTEXT ───────────────────────────────────────
+    const context = await buildSharedContextProjection(client, {
+      conversationId: threadId,
+      viewerId: user.id,
+      participantIds: ctx.participantIds,
+      now: nowDate,
+    });
+    const problems = [...context.problems];
+
+    // ── input 2: AVAILABILITY ─────────────────────────────────
+    let availabilityEntitled = false;
+    let availableParticipantIds: string[] = [];
+
+    if (ctx.tripId && others.length > 0 && others.length <= MAX_RAIL_PARTICIPANTS) {
+      try {
+      const viewerIsCrew = await isAcceptedTripMember(client, ctx.tripId, user.id);
+      if (viewerIsCrew) {
+        const crew: string[] = [];
+        for (const other of others) {
+          // Re-verified per member. See the header: the thread roster is not
+          // the trip roster, and the difference is somebody who has left.
+          if (await isAcceptedTripMember(client, ctx.tripId, other)) crew.push(other);
+        }
+        availabilityEntitled = true;
+        const subjects = [user.id, ...crew];
+        const { data: quick, error: qErr } = await client
+          .from("quick_availability_status")
+          .select("user_id, status, expires_at")
+          .in("user_id", subjects);
+        if (qErr) {
+          // NOT an empty availability set. "Nobody is free" and "we could not
+          // look" are different answers, and only one of them should stop a
+          // group making a plan.
+          log.warn({ threadId, message: qErr.message }, "discover-together availability read failed");
+          problems.push({ resolver: "quickAvailability", message: qErr.message ?? "read failed" });
+          availabilityEntitled = false;
+        } else {
+          const nowIso = nowDate.toISOString();
+          availableParticipantIds = ((quick as any[]) ?? [])
+            // §4.3 re-evaluated on the read, and `busy` is not availability.
+            .filter((r) => String(r.expires_at ?? "") > nowIso && String(r.status) !== "busy")
+            .map((r) => String(r.user_id))
+            .sort();
+        }
+      }
+      } catch (err) {
+        // `requireTripMember` THROWS on an unreadable `trip_members` rather
+        // than returning false, and §17.1 records what happens when that throw
+        // is turned into "not a member": a whole crew is evicted. It is not
+        // turned into that here, and it is not turned into a 500 either — the
+        // context half of this answer is still correct and still useful. The
+        // availability half is dropped, which is the FAIL-CLOSED direction, and
+        // the response reports that it could not be established.
+        log.warn({ threadId, err }, "discover-together crew re-verification unavailable");
+        availabilityEntitled = false;
+        availableParticipantIds = [];
+        problems.push({ resolver: "tripCrew", message: "crew membership unreadable" });
+      }
+    }
+
+    // ── input 3: TIME, and the intersection ──────────────────────────
+    const candidates = [
+      ...context.projection.now,
+      ...context.projection.upcoming,
+      ...context.projection.unresolved,
+    ];
+    const opportunities: Opportunity[] = [];
+    for (const item of candidates) {
+      const startsMs = item.startsAt ? Date.parse(item.startsAt) : NaN;
+      const endsMs = item.endsAt ? Date.parse(item.endsAt) : NaN;
+      // An UNRESOLVED item — a want-to-do with no date — is in the set and its
+      // `time` flag is false. Dropping it would make "discover together" mean
+      // "things already scheduled", which is the opposite of the request.
+      const inWindow = Number.isFinite(startsMs)
+        ? startsMs <= windowEnds.getTime() && (Number.isFinite(endsMs) ? endsMs >= nowMs : startsMs >= nowMs - 3600_000)
+        : false;
+      const timed = Number.isFinite(startsMs);
+      if (timed && !inWindow) continue;
+      opportunities.push({
+        objectId: item.objectId,
+        objectType: item.objectType,
+        title: item.title,
+        startsAt: item.startsAt ?? null,
+        endsAt: item.endsAt ?? null,
+        orderBand: item.orderBand,
+        admittedBy: {
+          context: true,
+          time: inWindow,
+          availability: availabilityEntitled && availableParticipantIds.length > 1,
+        },
+        availableParticipantIds,
+      });
+    }
+
+    res.status(200).json({
+      threadId,
+      generatedAt: nowDate.toISOString(),
+      opportunities,
+      /**
+       * The three inputs, each reported with whether it actually contributed.
+       * An opportunity set whose availability input was never readable looks
+       * identical to one where nobody is free unless the answer says which.
+       */
+      inputs: {
+        context: { items: candidates.length, incomplete: context.problems.length > 0 },
+        time: { from: nowDate.toISOString(), to: windowEnds.toISOString(), hours, frame: "UTC" },
+        availability: {
+          entitled: availabilityEntitled,
+          /** Why not, when not — so a client does not render "nobody is free". */
+          reason: availabilityEntitled
+            ? null
+            : ctx.tripId
+              ? "not_accepted_crew_or_unreadable"
+              : "no_entitlement_on_this_thread_type",
+          availableParticipantIds,
+        },
+      },
+      /** The opportunity set is the conversation's own shared context, not Discovery's corpus. */
+      source: "SHARED_CONTEXT",
+      incomplete: problems.length > 0,
     });
   }),
 );

@@ -278,8 +278,6 @@ const UNRESOLVED_ALLOWLIST = new Map<string, number>([
   ["src/routes/telegraphLifecycle.ts|select|select list not statically resolvable", 1],
   ["src/routes/telegraphMemory.ts|insert|payload not statically resolvable", 1],
   ["src/routes/telegraphMemory.ts|select|select list not statically resolvable", 2],
-  ["src/server/telegraph/readReceiptsRoute.ts|select|select list not statically resolvable", 1],
-  ["src/services/telegraphSearch.ts|select|select list not statically resolvable", 1],
   // ── Creator ledger: the row MAPPERS (07 §2 / 09 §7.2) ────────────────────
   // `services/creators/CreatorAttributionService.ts` hands supabase a NAME at
   // three sites, because both payloads come from mappers in
@@ -353,7 +351,6 @@ const UNRESOLVED_ALLOWLIST = new Map<string, number>([
   // 3 sites: feed-section registration + the two /compass/ask uiBlock
   // registration upserts (chat recommendation tokens) — row arrays built
   // dynamically from RecommendationRow; columns verified by the feed paths.
-  ["src/routes/compass.ts|upsert|payload not statically resolvable", 3],
   ["src/routes/compass.ts|upsert|payload partially resolvable", 2],
   // ── DC-19's batch POST /rank-events (routes/rankEvents.ts) ────────────────
   //
@@ -380,7 +377,6 @@ const UNRESOLVED_ALLOWLIST = new Map<string, number>([
   // 2 -> 1 on 2026-09-15: the map-built leg insert resolves now.
   ["src/routes/routePlan.ts|insert|payload not statically resolvable", 1],
   ["src/routes/telegraphChat.ts|update|payload not statically resolvable", 1],
-  ["src/services/hiddenGems/HiddenGemService.ts|update|payload not statically resolvable", 2],
 
   // ── Partially-resolvable payloads (static keys + dynamic spread/computed) ─
   ["src/routes/messaging.ts|update|payload partially resolvable", 1],

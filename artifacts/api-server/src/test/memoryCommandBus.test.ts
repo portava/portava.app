@@ -146,25 +146,54 @@ describe("§17 the seventeen commands are all accounted for — declared or expl
     }
     // Nothing in the "not declared" list is invented: every entry is a §17 name.
     for (const n of notDeclared) assert.ok(SPEC_17.includes(n), `${n} is not a §17 command name`);
-    // The one extension is marked as such by not being a §17 name.
+    // Both pinned BY NAME (§17/§21 reasoning: lib/memoryCommandBus.ts header).
     const extensions = [...declared].filter((d) => !SPEC_17.includes(d));
-    assert.deepEqual(extensions, ["UPDATE_MEMORY"]);
+    assert.deepEqual(extensions, ["UPDATE_MEMORY", "UNHIDE_HIGHLIGHT"]);
   });
 
   /**
-   * The census counted ELEVEN §17 commands as BUILT-BUT-WRONG. Two of those
-   * eleven — PUBLISH_HIGHLIGHT (routes/stories.ts) and HIDE_HIGHLIGHT
-   * (routes/highlights.ts) — belong to another lane and are in the
-   * not-declared list with that reason. The remaining NINE are declared here,
-   * plus CONFIRM_MEMORY, which the census counted as NOT-BUILT: ten §17 names.
+   * WAS TEN, IS NOW THIRTEEN, and the three that moved say what changed.
+   *
+   * The census counted ELEVEN §17 commands as BUILT-BUT-WRONG. Ten §17 names
+   * were declared here; PUBLISH_HIGHLIGHT and HIDE_HIGHLIGHT sat in the
+   * not-declared list with the reason "routes/stories.ts / routes/highlights.ts
+   * belong to another lane", and PIN/UNPIN_HIGHLIGHT with the same. THAT
+   * REASON WAS AN OWNERSHIP FACT, NOT A TECHNICAL ONE, and it expired.
+   *
+   * PIN_HIGHLIGHT, UNPIN_HIGHLIGHT and HIDE_HIGHLIGHT are now declared and
+   * routed through public.highlight_kernel_execute (migration 2993), which
+   * writes the event, the outbox row, the receipt and the audit row in one
+   * transaction with the column change.
+   *
+   * PUBLISH_HIGHLIGHT is STILL not declared, and the reason in
+   * MEMORY_COMMAND_TYPES_NOT_DECLARED is no longer about ownership: there is
+   * no storable "published" state. That entry is asserted below, because a
+   * reason that drifts back into being false is the exact failure this block
+   * exists to catch.
    */
-  it("ten §17 command names are declared: the nine memory-domain BBW rows plus CONFIRM_MEMORY", () => {
+  it("thirteen §17 command names are declared: the ten memory-domain names plus the three buildable Highlight commands", () => {
     const declaredSpecNames = MEMORY_COMMAND_TYPES.filter((t) => SPEC_17.includes(t));
-    assert.equal(declaredSpecNames.length, 10);
+    assert.equal(declaredSpecNames.length, 13);
     assert.deepEqual([...declaredSpecNames].sort(), [
       "ADD_MEDIA", "ADD_PERSON", "ARCHIVE_MEMORY", "CHANGE_PLACE", "CHANGE_VISIBILITY",
-      "CONFIRM_MEMORY", "CREATE_MEMORY", "DELETE_MEMORY", "REMOVE_MEDIA", "REMOVE_PERSON",
+      "CONFIRM_MEMORY", "CREATE_MEMORY", "DELETE_MEMORY", "HIDE_HIGHLIGHT",
+      "PIN_HIGHLIGHT", "REMOVE_MEDIA", "REMOVE_PERSON", "UNPIN_HIGHLIGHT",
     ]);
+  });
+
+  it("no not-declared reason blames another lane — an ownership reason is not a technical one", () => {
+    for (const [name, reason] of Object.entries(MEMORY_COMMAND_TYPES_NOT_DECLARED)) {
+      assert.ok(
+        !/another lane|owned by|belongs? to/i.test(reason),
+        `${name}'s reason is an ownership fact, not a reason the command cannot be built: ${reason}`,
+      );
+    }
+  });
+
+  it("PUBLISH_HIGHLIGHT's reason names the schema fact, not a lane", () => {
+    const reason = MEMORY_COMMAND_TYPES_NOT_DECLARED.PUBLISH_HIGHLIGHT as string;
+    assert.match(reason, /published_at/);
+    assert.match(reason, /lifecycle_state/);
   });
 
   it("the capability and event tables are TOTAL over the declared commands", () => {

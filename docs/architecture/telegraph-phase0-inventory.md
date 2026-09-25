@@ -32,41 +32,46 @@ are files, tables, routes, event types and literals, each re-derived on every ru
 
 ### 2. Migrations that touch a messaging table
 
-34 of 583 migration files reference at least one messaging table.
+25 of 599 migration files reference at least one messaging table.
+
+MEASURED ON THE SQL WITH COMMENTS STRIPPED. A table named only in a `--` or
+`/* */` comment is not counted; before this, 13 of the 37 files listed here
+qualified on a comment alone, one of them on the ordinary English word
+"messages" in the phrase *nudge messages*.
+
+STRING LITERALS ARE DELIBERATELY KEPT, and that is a trade-off rather than an
+oversight. Migrations legitimately name tables inside strings to drive
+dynamic DDL — `2136_profiles_auth_users_convergence.sql` iterates the array
+`'messages', 'message_threads'` and really does alter them — so stripping strings
+would lose true positives. The cost is that a table named only inside a
+`COMMENT ON ... IS '…'` string still counts; `2140_deletion_receipt.sql` and
+`2812_telegraph_report_evidence.sql` are in this list for that reason and
+touch no messaging table.
 
 - `src/migrations/0011_message_type.sql`
 - `src/migrations/0016_thread_reads.sql`
-- `src/migrations/0022_availability_nudges.sql`
 - `src/migrations/0057_reply_to_messages.sql`
-- `src/migrations/0063_interaction_foundation.sql`
 - `src/migrations/0117_beta_feature_flags.sql`
 - `src/migrations/0152_messages_media.sql`
-- `src/migrations/0161_friend_requests_responded_at.sql`
 - `src/migrations/0164_write_path_drift_columns_2.sql`
-- `src/migrations/0201_pin_search_path_authz_functions.sql`
-- `src/migrations/20260724_compass_memories.sql`
 - `src/migrations/20260803_messages_ciphertext.sql`
 - `src/migrations/20260805_events_core_flags.sql`
 - `src/migrations/2027_media_private_buckets_prep.sql`
-- `src/migrations/2070_rls_hardening.sql`
 - `src/migrations/2136_profiles_auth_users_convergence.sql`
 - `src/migrations/2139_shared_content_tombstones.sql`
 - `src/migrations/2140_deletion_receipt.sql`
-- `src/migrations/2182_close_authz_rpc_oracle.sql`
-- `src/migrations/2199_call_participants_rls_recursion.sql`
 - `src/migrations/2325_telegraph_unsend_before_seen.sql`
-- `src/migrations/2338_memory_location_precision.sql`
 - `src/migrations/2400_telegraph_history_bound.sql`
 - `src/migrations/2401_telegraph_messages_rls_latent_disclosure.sql`
 - `src/migrations/2402_telegraph_membership_rls_recursion.sql`
-- `src/migrations/2460_meetup_invites_self_invite_latent_disclosure.sql`
 - `src/migrations/2802_telegraph_live_references_flag.sql`
 - `src/migrations/2810_telegraph_message_kernel.sql`
 - `src/migrations/2811_telegraph_message_side_tables.sql`
 - `src/migrations/2812_telegraph_report_evidence.sql`
 - `src/migrations/2813_telegraph_request_origin.sql`
+- `src/migrations/2966_telegraph_history_bound_close.sql`
 - `src/migrations/2989_messages_audio_media_type.sql`
-- `src/migrations/2996_compass_conversations_phase1_schema.sql`
+- `src/migrations/2991_message_translations_confidence.sql`
 - `src/migrations/3000_telegraph_unsend_authoritative.sql`
 
 ### 3. Server routes that read or write a messaging table
@@ -81,17 +86,17 @@ are files, tables, routes, event types and literals, each re-derived on every ru
 | `src/routes/follows.ts` | 12 | message_thread_members |
 | `src/routes/groupChat.ts` | 6 | message_thread_members, message_threads, message_translations, messages |
 | `src/routes/hiddenGems.ts` | 27 | message_thread_members, messages |
-| `src/routes/highlights.ts` | 22 | message_thread_members, message_threads, messages |
+| `src/routes/highlights.ts` | 23 | message_thread_members, message_threads, messages |
 | `src/routes/meetups.ts` | 12 | message_threads, messages |
-| `src/routes/messaging.ts` | 31 | message_requests, message_thread_members, message_threads, message_translations, messages, saved_messages |
+| `src/routes/messaging.ts` | 32 | message_requests, message_thread_members, message_threads, message_translations, messages, saved_messages |
 | `src/routes/rentABuddy.ts` | 116 | message_thread_members, message_threads, messages |
 | `src/routes/telegraphChat.ts` | 7 | message_thread_members, message_threads, messages |
-| `src/routes/telegraphCoordination.ts` | 8 | message_thread_members, message_threads, messages |
+| `src/routes/telegraphCoordination.ts` | 9 | message_thread_members, message_threads, messages |
 | `src/routes/telegraphKinds.ts` | 4 | message_thread_members, message_threads, messages |
 | `src/routes/telegraphLifecycle.ts` | 3 | message_thread_members, messages |
 | `src/routes/telegraphMemory.ts` | 2 | message_thread_members, messages, saved_messages |
 | `src/routes/telegraphShare.ts` | 2 | message_thread_members, message_threads, messages |
-| `src/routes/telegraphSharedContext.ts` | 3 | message_thread_members, message_threads |
+| `src/routes/telegraphSharedContext.ts` | 4 | message_thread_members, message_threads |
 | `src/routes/telegraphStream.ts` | 2 | message_thread_members, messages |
 | `src/routes/telegraphVoice.ts` | 2 | message_threads, messages |
 
@@ -147,11 +152,15 @@ Processing and EXIF policy: `src/lib/mediaProcessing.ts`. Access: `src/lib/media
 
 `src/services/messageTranslation.ts` — per-recipient rows in `message_translations`.
 
+- `__resetConfidenceColumnProbe()`
 - `buildDisplayFields()`
+- `isMissingTranslationConfidenceColumn()`
+- `isStructuredEnvelopeBody()`
 - `markTranslationsPending()`
 - `retranslateForUser()`
 - `senderLanguageFrom()`
 - `translateMessageForThread()`
+- `translationConfidenceOf()`
 
 ### 9. Current enum literals
 
@@ -159,7 +168,7 @@ Processing and EXIF policy: `src/lib/mediaProcessing.ts`. Access: `src/lib/media
 
 `subtype` (static literals): `call_ended`, `call_started`, `compass_card`, `discovery_card`, `e2ee_welcome`, `event_context_card`, `hidden_gem`, `layover_suggestion`, `meetup`, `meetup_cancelled`, `meetup_confirmed`, `post_card`
 
-19 site(s) COMPUTE a message type rather than writing a literal, so no
+21 site(s) COMPUTE a message type rather than writing a literal, so no
 fixed enumeration of `subtype` is complete. They are declared in
 `src/domain/telegraph/policies/shareAuthorizationPolicy.ts` and re-derived by
 `check:telegraph-share-producers`:
@@ -169,8 +178,10 @@ fixed enumeration of `subtype` is complete. They are declared in
 - `artifacts/api-server/src/routes/telegraphKinds.ts` — `` subtype: (row.subtype as string) ?? null | msg_type: validated.msgType | subtype: validated.subtype | subtype: m.subtype ``
 - `artifacts/api-server/src/services/telegraph/messageKinds.ts` — `` subtype: subtypeFor(kind, parsed.data) `` (parser / passthrough, writes no message)
 - `artifacts/api-server/src/routes/telegraphCoordination.ts` — `` msg_type: validated.msgType | subtype: validated.subtype | subtype: m.subtype ``
+- `artifacts/api-server/src/services/telegraph/coordinationSessions.ts` — `` msg_type: validated.msgType | subtype: validated.subtype ``
 - `artifacts/api-server/src/services/telegraph/coordination.ts` — `` subtype: coordinationSubtype(kind, data) `` (parser / passthrough, writes no message)
 - `artifacts/api-server/src/routes/telegraphStream.ts` — `` msgType: r.msg_type ?? "text" | subtype: r.subtype ?? null `` (parser / passthrough, writes no message)
+- `artifacts/api-server/src/services/telegraph/savedMessages.ts` — `` subtype: source.subtype ?? null `` (parser / passthrough, writes no message)
 - `artifacts/api-server/src/services/telegraphReportEvidence.ts` — `` msg_type: (msg as any).msg_type ?? null | subtype: (msg as any).subtype ?? null | subtype: m.subtype ?? null `` (parser / passthrough, writes no message)
 - `artifacts/api-server/src/lib/liveReferenceMessages.ts` — `` msg_type: LIVE_REFERENCE_MSG_TYPE | subtype: LIVE_REFERENCE_MSG_SUBTYPE ``
 - `artifacts/api-server/src/lib/calls/callStoreAdapter.ts` — `` subtype: `call_${session.status}` ``

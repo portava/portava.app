@@ -14,16 +14,16 @@
  * `LayoverSafetyEngine` will add to the buffer — can be built. There is no
  * clock in this file, no I/O, no randomness: every function takes `nowMs`.
  *
- * ── WHAT THIS MODULE IS NOT, STATED BEFORE ANY OF ITS CLAIMS ─────────────────
- * IT IS NOT A PRODUCER, AND NOTHING ON THIS TREE PRODUCES AN OBSERVATION.
- * There is no ingest route, no external feed, no traveller report form, and the
- * table that would hold one (`airport_fact_observations`,
- * `src/migrations/2860_layover_airport_truth_and_events.sql`) is WRITTEN AND
- * NOT APPLIED — deliberately, following 2700's sequencing note: a writer that
- * names a column of an unapplied table fails outright on every database. So in
- * production this module is called by nothing, every session runs with
- * `liveConditions = null`, and the arithmetic is term-for-term what it was
- * before it existed. The census row for each §10 fact class says exactly that.
+ * ── WHAT THIS MODULE IS NOT — CORRECTED 2026-09-22 ───────────────────────────
+ * THIS BLOCK USED TO SAY NOTHING ON THIS TREE PRODUCES AN OBSERVATION, and that
+ * `airport_fact_observations` (migration 2860) was WRITTEN AND NOT APPLIED.
+ * Both halves are FALSE now: 2860 IS APPLIED to production, so is 2982's
+ * `submission_token`, and `POST /airport/sessions/:id/observations` is a live
+ * route whose only gate is `airport_mode_enabled` (TRUE in production).
+ *
+ * WHAT IS STILL TRUE, and it is what every §10 census row rests on: NOTHING
+ * SUPPLIES `liveConditions` OUTSIDE TESTS, so no observation moves a deadline
+ * and this module's arithmetic is term-for-term what it was before it existed.
  *
  * ── WHY THE POLICY LIVES HERE AND NOT IN THE ENGINE ──────────────────────────
  * The safety engine must not learn how to weigh a stranger's queue report

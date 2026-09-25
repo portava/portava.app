@@ -69,7 +69,7 @@ import { useScreenTiming } from '../../src/hooks/useScreenTiming';
 
 export default function PassportScreen() {
   const { pickMedia } = useMediaPicker();
-  const { profile, postcards, stamps, stampsNew, memories, suggestions, loading, error, stampsTotal, loadingMoreStamps, loadMoreStamps, updateStamp, reload, lastLoadedAt } = usePassport();
+  const { profile, postcards, stamps, stampsNew, memories, memoriesUnreadable, suggestions, loading, error, stampsTotal, loadingMoreStamps, loadMoreStamps, updateStamp, reload, lastLoadedAt } = usePassport();
   const { markFirstContent, epoch } = useScreenTiming('Passport');
   const { userId: ownUserId, signOut } = useSession();
   // Deep links (e.g. the stamp-earned toast) can request a specific tab via
@@ -274,6 +274,7 @@ export default function PassportScreen() {
         stampsNew={stampsNew}
         onStampUpdated={updateStamp}
         memories={memories}
+        memoriesUnreadable={memoriesUnreadable}
         trips={trips}
         tripsLoaded={tripsLoaded}
         tab={tab}
@@ -371,7 +372,7 @@ export default function PassportScreen() {
 // ─── PassportContent ──────────────────────────────────────────────────────────
 
 function PassportContent({
-  profile, postcards, stamps, stampsNew, onStampUpdated, memories, trips, tripsLoaded, tab, setTab,
+  profile, postcards, stamps, stampsNew, onStampUpdated, memories, memoriesUnreadable, trips, tripsLoaded, tab, setTab,
   menuOpen, setMenuOpen,
   openSettings, actions, handleEditProfile, handleViewAsPublic,
   reload, stampsTotal, loadingMoreStamps, loadMoreStamps,
@@ -389,6 +390,9 @@ function PassportContent({
   /** Propagates stamp edits (visibility) back into the shared pipeline. */
   onStampUpdated: (updated: import('../../src/services/passportStamps').PassportStampNew) => void;
   memories: PassportMemory[];
+  /** §28.11 — true when the Memories READ FAILED, so `memories` being empty is
+   *  "we could not find out" rather than "you have none". See MemoriesTab. */
+  memoriesUnreadable: boolean;
   trips: TripRow[];
   /** True once the initial trips fetch (for the Plans tab) has resolved. */
   tripsLoaded: boolean;
@@ -600,7 +604,7 @@ function PassportContent({
           />
         )}
         {tab === 'memories' && (
-          <MemoriesTab memories={memories} onReload={reload} trips={trips} />
+          <MemoriesTab memories={memories} onReload={reload} trips={trips} unreadable={memoriesUnreadable} />
         )}
         {tab === 'plans' && (
           <TripsTab trips={trips} isOwner loading={!tripsLoaded} />

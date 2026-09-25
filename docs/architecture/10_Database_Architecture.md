@@ -119,14 +119,31 @@ that no locale can ever be consulted. Four bands coexist in that one lexicograph
 | `20260720`–`20260815` | 8-digit dated | 27 | a parallel convention. Sorts **between** `0209` and `2027` — `"2026…" < "2095…"` on the second character. |
 | `2027`–`2095` | legacy 4-digit | 71 | late pre-cutover work. |
 | `2120`–`2309` | **post-cutover forward band, 2100-2999** | 133 | everything authored after the 2026-08-19 baseline cutover. |
+| `3000`–`3999` | **second post-cutover forward band** | 2 | ADDED 2026-09-23 when 2100-2999 ran out. See below. |
 
 The bands cannot interleave ambiguously, and that is by construction rather than luck.
-`src/scripts/migrationPrefixRules.ts:32` confines every **new** 4-digit prefix to
-`/^2[1-9]\d{2}_/` — a range whose second digit (1–9) can never appear in a `YYYYMMDD` prefix in
-this century (always `0`). Without it, a future `20270101_foo.sql` would sort *below* `"2100"` and
-be silently classified as pre-cutover (`migrationPrefixRules.ts:5-25`;
-`docs/RECONCILIATION-PACKET.md:384`). **2096–2099 are a permanently unusable reserved buffer**
-(`migrationPrefixRules.ts:28-29`), so there is no ambiguous edge immediately below 2100 either.
+`src/scripts/migrationPrefixRules.ts:58#NEW_NUMERIC_PREFIX_RE` confines every **new** 4-digit
+prefix to `/^(?:2[1-9]\d{2}|3\d{3})_/`. The `2[1-9]\d{2}` arm is the original: a range whose
+second digit (1–9) can never appear in a `YYYYMMDD` prefix in this century (always `0`). Without
+it, a future `20270101_foo.sql` would sort *below* `"2100"` and be silently classified as
+pre-cutover (`migrationPrefixRules.ts:5-25`; `docs/RECONCILIATION-PACKET.md:384`). **2096–2099 are
+a permanently unusable reserved buffer** (`migrationPrefixRules.ts:54#RESERVED_BUFFER_MIN`), so
+there is no ambiguous edge immediately below 2100 either.
+
+**The `3\d{3}` arm was added 2026-09-23 (PR #527) because 2100-2999 ran out** — `main` held
+prefixes to 2997 and 2998/2999 were both claimed by unmerged branches, so a new migration had no
+number it could take without planting a collision. The invariant survives by the same construction
+one digit earlier: a `3xxx` prefix cannot be mistaken for a date prefix because of its **first**
+digit, no `YYYYMMDD` in this millennium beginning with `3`
+(`migrationPrefixRules.ts:40#3000-3999`). It also sorts strictly after every `2xxx` prefix,
+which is what a forward migration needs, and it still satisfies the `filename >= "2100"` test
+`auditLiveVsCanonical` uses to mean "post-cutover". **4000 and above are deliberately unallocated**:
+when 3999 is reached, extend the arm and write down why rather than reaching for a dated prefix,
+which sorts near the START of the chain (`migrationPrefixRules.ts:49#unallocated`).
+
+The dated convention is **not** an escape hatch from a full band, and the old error message
+offering it was wrong to: `20260923_…` sorts below `2810_…` on the second character, so a dated
+file authored today would apply before the migrations it depends on.
 
 `2100`–`2118b` is separately reserved for the `reconciliation-staging/` proposals and has already
 been collided with once — `2100`–`2102`/`2109` were renumbered to `2120`–`2123`, which is why the
@@ -135,6 +152,8 @@ lowest post-cutover canonical file is `2120`
 
 ```
 -- POST-CUTOVER CANONICAL FORWARD MIGRATION (2100-2999 band).
+-- (Files in the 3000-3999 band carry the same banner; the parenthetical is
+--  the band the file was authored into, not a claim about the only band.)
 ```
 
 119 of the 416 files carry that banner (`grep -l` over the canonical dir), the earliest being

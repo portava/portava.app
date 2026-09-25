@@ -105,8 +105,16 @@ async function buildRecoverySteps(
   const steps: RecoveryStep[] = [];
   let priority = 1;
 
-  // Sort categories by how far below neutral they are
+  // Sort categories by how far below neutral they are.
+  //
+  // Q1 (owner decision 2026-09-22): an UNSCORED category (`null`) is dropped
+  // BEFORE any arithmetic. A person cannot recover from a measurement that was
+  // never taken, and the coercion is actively harmful here: `neutral - null` is
+  // 50, the largest deficit this function can produce, so an unmeasured
+  // category would out-rank every real one and tell a brand-new user their four
+  // worst problems are four things nobody has ever observed them do.
   const sorted = Object.entries(profile.categories)
+    .filter((e): e is [string, number] => e[1] !== null && Number.isFinite(e[1] as number))
     .map(([cat, score]) => ({ cat, score, deficit: Math.max(0, neutral - score) }))
     .filter((x) => x.deficit > 5)
     .sort((a, b) => b.deficit - a.deficit);
@@ -174,14 +182,26 @@ export async function getRecoveryStatus(
   }
   const profile = profileRead.profile;
 
-  const entries = Object.entries(profile.categories);
+  // Q1: only SCORED categories can be the lowest one. `null < 100` is true
+  // (null coerces to 0), so an unscored category would win this reduce outright
+  // and be published as the user's weakest area — a fabricated verdict, and the
+  // harshest one available, about something never measured.
+  const entries = Object.entries(profile.categories)
+    .filter((e): e is [string, number] => e[1] !== null && Number.isFinite(e[1] as number));
   const [lowestCat, lowestScore] = entries.reduce(
     ([ac, as_], [c, s]) => s < as_ ? [c, s] : [ac, as_],
-    ["", 100],
+    ["", 100] as [string, number],
   );
 
-  // Progress toward neutral (50) from the overall score
-  const overallProgress = Math.min(100, Math.max(0, profile.overall_score));
+  // Progress toward neutral (50) from the overall score. NOT SCORED stays not
+  // scored: the `profileRead.state !== "ok"` branch above already refuses to
+  // report a fabricated progress for a user with no profile, and a user whose
+  // profile exists but holds no measurement is in the same position — there is
+  // no progress to report. Clamping `null` would publish 0, i.e. "no progress
+  // at all", which is a claim rather than an absence.
+  const overallProgress = profile.overall_score === null
+    ? null
+    : Math.min(100, Math.max(0, profile.overall_score));
 
   const suggestedSteps = await buildRecoverySteps(db, userId);
 

@@ -91,7 +91,7 @@
  */
 import { isFlagEnabled } from "./featureFlags.js";
 import { clampObservedAt } from "./intelContracts.js";
-import { hasValidIntelConsent } from "./intelConsent.js";
+import { hasValidIntelConsent, readOwnContributorIdentities } from "./intelConsent.js";
 import { appStorageUrlInfo } from "./mediaUrl.js";
 import { ownerFromPath } from "./mediaAccess.js";
 import { INTEL_IDENTIFIABLE_RETENTION_SECONDS } from "./locationPurposes.js";
@@ -224,6 +224,30 @@ export async function attachMediaEvidence(
   const resolved = resolveOwnedMediaReference(input.mediaUri, actorId);
   if (!resolved.ok) return reject(resolved.reason);
 
+  // Gate 6a — WHICH STORED VALUES ARE THIS ACTOR'S.
+  //
+  // `intel_observations.actor_id` stopped being an account id at migration 3002:
+  // a BEFORE INSERT trigger replaces it with a rotating contributor token, one
+  // PER 7-DAY EPOCH, derived from a pepper no application role may read. So
+  // `obs.actor_id !== actorId` compares a token with an account id and is false
+  // for the owner's own observation — every media contribution would be refused
+  // as `unknown_observation`. A single-epoch lookup would not be enough either:
+  // an observation made last week carries last week's token.
+  //
+  // RESOLVED BEFORE THE OBSERVATION IS READ, ON PURPOSE. It does not depend on
+  // the observation, and doing it first keeps the collapse below intact: if this
+  // failed after the lookup, a `db_error` would only ever be returned for an id
+  // that EXISTS, which is precisely the existence oracle the collapse prevents.
+  // Failing here says nothing about any observation id.
+  const identities = await readOwnContributorIdentities(sc, actorId);
+  if (!identities.ok) {
+    // Fail CLOSED and DISTINGUISHABLY. Ownership is unknown, not disproved, so
+    // this must not be reported as `unknown_observation` — that is the answer for
+    // "not yours", and a client told that will not retry. db_error is retryable.
+    return reject("db_error", `contributor identity lookup: ${identities.detail}`);
+  }
+  const ownIdentities = new Set(identities.identities);
+
   // Gate 6 — the parent observation must exist, be THIS actor's, and be about
   // the subject the contribution named.
   const { data: obs, error: obsErr } = await sc
@@ -236,7 +260,9 @@ export async function attachMediaEvidence(
   // answer on purpose: distinguishing them would turn this endpoint into an
   // oracle for "does this observation id exist", which is a contribution
   // someone else made about a place they were at.
-  if (!obs || obs.actor_id !== actorId) return reject("unknown_observation");
+  if (!obs || !obs.actor_id || !ownIdentities.has(String(obs.actor_id))) {
+    return reject("unknown_observation");
+  }
   if (obs.subject_id !== input.subjectId) {
     return reject("observation_subject_mismatch", "the observation is about a different subject");
   }

@@ -1083,6 +1083,23 @@ export const PORTAVA_ROUTES: PortavaRouteDefinition[] = [
     ownerOnly: true,
   },
 
+  // ── Highlights ──────────────────────────────────────────────────────────────
+
+  {
+    // §21 Archive's "unless explicitly requested". `GET /highlights/archived`
+    // is the only read on the Highlights surface that returns archived rows;
+    // without this screen an archived Highlight is unreachable from inside the
+    // app, which would make Archive an irreversible removal wearing a softer
+    // word than Delete. Owner-only: the route is scoped to the caller.
+    key: 'highlights-archived',
+    path: 'highlights/archived',
+    title: 'Archived Highlights',
+    parent: null,
+    icon: null,
+    requiresAuth: true,
+    ownerOnly: true,
+  },
+
   // ── Hashtag ───────────────────────────────────────────────────────────────
 
   {
@@ -1167,6 +1184,15 @@ export const PORTAVA_ROUTES: PortavaRouteDefinition[] = [
     path: 'memory/edit',
     title: 'Edit Memory',
     parent: 'memory-detail',
+    icon: null,
+    requiresAuth: true,
+    ownerOnly: true,
+  },
+  {
+    key: 'memory-search',
+    path: 'memory/search',
+    title: 'Search Memories',
+    parent: null,
     icon: null,
     requiresAuth: true,
     ownerOnly: true,

@@ -67,6 +67,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import {
   CONTROL_EFFECTS,
   RESURFACING_CONTROLS,
+  controlSetter,
   feedSubjectScope,
   isSuppressed,
   readResurfacingSuppressionsForOwners,
@@ -77,6 +78,7 @@ import {
 import {
   consentFromRow,
   readProjectionPolicies,
+  MEMORY_CONSENT_DIMENSIONS,
   type MemoryConsentDimension,
   type ProjectionPolicyRead,
 } from "./highlightProjectionPolicy.js";
@@ -91,6 +93,65 @@ export const SURFACE_CONSENT_DIMENSIONS: Readonly<Record<NonOwnerSurface, readon
     proactive_resurfacing: ["RESURFACE", "SHARE"],
     public_projection: ["SHARE"],
   });
+
+export interface ConsentEnforcementMap {
+  /** Dimensions some non-owner surface actually reads. */
+  readonly enforced: readonly MemoryConsentDimension[];
+  /**
+   * Dimensions §10 names, 2721 stores, and NOTHING reads. Census H75's
+   * ceiling, on the wire rather than only in a document.
+   */
+  readonly unenforced: readonly MemoryConsentDimension[];
+  /** Which dimensions each non-owner surface asks about. */
+  readonly bySurface: Readonly<Record<NonOwnerSurface, readonly MemoryConsentDimension[]>>;
+  /** Why `unenforced` is not empty, in one sentence, for whoever renders it. */
+  readonly note: string;
+}
+
+/**
+ * Which §10 consent dimensions BITE, derived from the table the gate reads.
+ *
+ * ── WHY THIS IS ON THE WIRE ────────────────────────────────────────────────
+ * `GET /highlights/:id/projection-policy` publishes all five dimensions and
+ * accepts a patch for any of them, and `publicProjectionVerdict` above reads
+ * exactly two: `consentWithholds` is only ever asked for the dimensions in
+ * SURFACE_CONSENT_DIMENSIONS, and `mayProject` — the function that would ask
+ * the other three — has no production caller. A client rendering that GET
+ * therefore had two bad choices: five switches of which three do nothing, or
+ * a hard-coded copy of the enforced pair, which is a second vocabulary for
+ * something this module owns and one release from disagreeing with it.
+ *
+ * This is the same answer `unenforceableOnFeed` already gives for §11
+ * controls, for the same reason and in the same shape: the ceiling is a fact
+ * the server knows, so the server says it.
+ *
+ * ── DERIVED, AND THAT IS THE POINT ─────────────────────────────────────────
+ * `enforced` is the union of SURFACE_CONSENT_DIMENSIONS and `unenforced` is
+ * MEMORY_CONSENT_DIMENSIONS minus that union. Neither is a literal. The day a
+ * third dimension is wired — or a sixth is added to §10 — the wire changes
+ * with the gate and no client is edited. A retyped pair here would be the
+ * defect this codebase has already had twice (see FEED_ENFORCEABLE_CONTROLS).
+ *
+ * It is deliberately NOT a claim about whether a dimension is STORABLE: all
+ * five are, 2721 has the columns, and `setProjectionPolicy` writes any of
+ * them. Storing a preference nothing reads is honest; RENDERING it as a live
+ * control is not, and that distinction is what this map hands the client.
+ */
+export function consentEnforcement(): ConsentEnforcementMap {
+  const enforced = MEMORY_CONSENT_DIMENSIONS.filter((d) =>
+    NON_OWNER_SURFACES.some((s) => (SURFACE_CONSENT_DIMENSIONS[s] as readonly string[]).includes(d)),
+  );
+  const unenforced = MEMORY_CONSENT_DIMENSIONS.filter((d) => !(enforced as readonly string[]).includes(d));
+  return {
+    enforced,
+    unenforced,
+    bySurface: SURFACE_CONSENT_DIMENSIONS,
+    note:
+      "An unenforced dimension is STORED and read by no surface in this repository: `mayProject` has no production caller, " +
+      "so STORE, PERSONALIZE and CONTRIBUTE_TO_AGGREGATE_INTEL change nothing a viewer can observe. Render them as recorded " +
+      "preferences, not as live controls.",
+  };
+}
 
 /**
  * The §11 controls a surface over `public.highlights` can enforce for this
@@ -124,7 +185,20 @@ export type ProjectionVerdict =
     };
 
 export interface ProjectionInputs {
+  /**
+   * The controls the Highlights' OWNERS set about their own records —
+   * `highlight`- and `owner`-scoped. Read for the owners on the page.
+   */
   readonly controls: ResurfacingSuppressions;
+  /**
+   * The controls THE VIEWER set about other people — `person`-scoped.
+   * Optional, and its absence is NOT "nothing is suppressed": a caller that
+   * does not supply it simply has no person-scoped controls to apply, which is
+   * the case on every surface where the viewer is the owner. See
+   * `controlSetter` for the defect that made this a second field rather than
+   * one merged set.
+   */
+  readonly viewerControls?: ResurfacingSuppressions;
   readonly policies: ProjectionPolicyRead;
 }
 
@@ -147,12 +221,25 @@ export function publicProjectionVerdict(
   if (controls.state === "unreadable") {
     return { allow: false, kind: "unreadable", reason: `§11 controls unreadable: ${controls.reason}` };
   }
-  if (controls.state === "ready") {
-    for (const c of controlsSuppressing(surface)) {
-      const subject = feedSubjectScope(c) === "highlight" ? h.id : h.owner_id;
-      if (isSuppressed(controls, c, subject)) {
-        return { allow: false, kind: "suppressed", reason: `${c} is set on ${feedSubjectScope(c)} ${subject}` };
-      }
+  if (inputs.viewerControls?.state === "unreadable") {
+    // Same fail-closed reasoning as the owner set: a HIDE_PERSON the viewer set
+    // and we cannot read is a refusal we would be overriding.
+    return {
+      allow: false, kind: "unreadable",
+      reason: `§11 viewer controls unreadable: ${inputs.viewerControls.reason}`,
+    };
+  }
+
+  for (const c of controlsSuppressing(surface)) {
+    // WHOSE row governs this control — see `controlSetter`. A person-scoped
+    // control belongs to the VIEWER; every other one to the owner. Reading the
+    // owner set for a person-scoped control is what let any user suppress any
+    // other user for everybody (census H89).
+    const set = controlSetter(c) === "viewer" ? inputs.viewerControls : controls;
+    if (set === undefined || set.state !== "ready") continue;
+    const subject = feedSubjectScope(c) === "highlight" ? h.id : h.owner_id;
+    if (isSuppressed(set, c, subject)) {
+      return { allow: false, kind: "suppressed", reason: `${c} is set on ${feedSubjectScope(c)} ${subject}` };
     }
   }
 

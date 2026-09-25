@@ -113,7 +113,7 @@ export type TelegraphEventType =
   /** Sent to the client before closing a connection whose access has been revoked. */
   | "access.revoked"
   /** Sent to the client when the maximum connection lifetime is reached — client should reconnect. */
-  | "reconnect" | "message.delivered" | "stream.resumed"; // last two: see TELEGRAPH_DELIVERY_EVENT_NOTES
+  | "reconnect" | "message.delivered" | "stream.resumed" | "availability.started" | "availability.expired" | "location.started" | "location.expired" | "coordination.started" | "coordination.completed"; // see TELEGRAPH_DELIVERY_EVENT_NOTES and TELEGRAPH_LIFECYCLE_EVENT_NOTES
 
 export interface TelegraphEvent {
   type: TelegraphEventType;
@@ -720,4 +720,209 @@ export function emitSafetyReported(
 ): void {
   if (!reporterUserId) return;
   publishToUsers([reporterUserId], { type: "safety.reported", threadId: null, payload });
+}
+
+/**
+ * TELEGRAPH_LIFECYCLE_EVENT_NOTES — §13.2's six lifecycle events, declared on
+ * the `reconnect` line in `TelegraphEventType` above.
+ *
+ * They are folded onto that one line for the reason TELEGRAPH_DELIVERY_EVENT_NOTES
+ * gives: three sibling censuses cite this file by `path:line`, and one of them
+ * cites `:122`. A stanza per event inside the union would silently repoint
+ * another lane's evidence at the wrong line. The declaration stays put; the
+ * explanation lives here, below every cited line.
+ *
+ * census-telegraph T187-T192, verbatim: `availability.started` "Not in the
+ * union"; `availability.expired` "Not in the union; expiry is evaluated lazily
+ * on read (`2260:38-42`) and emits nothing"; `location.started` /
+ * `location.expired` "Not in the union"; `coordination.started` /
+ * `coordination.completed` "No coordination (T85)".
+ *
+ * WHO EACH ONE GOES TO, AND WHY THE TWO HALVES DIFFER
+ * ===================================================
+ * `availability.*` goes to the OWNER AND NOBODY ELSE. An availability signal is
+ * a presence disclosure — it says a person is free right now — and who is
+ * entitled to see it is decided by §4's visibility gates
+ * (`OpenToPlansService#projectPublicWindows`, the trip/circle availability
+ * routes), which this bus does not re-implement and must not route around. The
+ * owner's own other devices are the one audience already entitled, and they are
+ * the audience that needs it: §4.3 says "availability expires automatically and
+ * revokes across Telegraph, Discovery and Compass", and a second device holding
+ * a chip that says FREE NOW after the window closed is exactly that revocation
+ * failing to arrive. This is the same rule `emitDeliveryReceipt` applies to
+ * `message.delivered` for the same reason.
+ *
+ * `location.*` and `coordination.*` go to the CONVERSATION, because the fact
+ * they report was already published to that conversation as a `message.created`
+ * — the §6.2 LOCATION message carrying the scope, the COORDINATION_SESSION
+ * message that opened the session. They disclose nothing the audience does not
+ * already hold, and they must reach everybody who saw the original: a location
+ * scope whose expiry reaches four of five members leaves the fifth rendering a
+ * live share that has ended.
+ *
+ * NEITHER IS PRESENCE-CLASS. `PRESENCE_CLASS_EVENTS` sheds events "whose loss
+ * costs a reader nothing". The loss of an expiry costs a reader a stale privacy
+ * indicator, which is the most expensive kind of staleness this product has, so
+ * none of the six is in that set. They remain subject to FANOUT_HARD_MAX, whose
+ * degradation is a poll signal rather than silence.
+ *
+ * EVERY PAYLOAD CARRIES A STABLE `eventKey`, AND WHAT THAT DOES NOT CLAIM.
+ * §13.3's second sentence asks consumers to "consume asynchronously and
+ * idempotently", and a consumer cannot be idempotent without a key to dedupe
+ * on. `lifecycleEventKey` derives one from the event type and the subject id,
+ * so two deliveries of one expiry are recognisably the same fact. It is NOT a
+ * claim of exactly-once DELIVERY: this bus logs and swallows publish failures
+ * by design (see the file header), so it is at-most-once per connection, and
+ * the key is what lets a consumer survive the at-LEAST-once case a sweeper
+ * restart can produce. census T196 records that absence as a defect; this
+ * closes it for these six events and for no others.
+ */
+
+/** A stable dedupe key for a lifecycle event, for §13.3's idempotent consumers. */
+export function lifecycleEventKey(type: TelegraphEventType, subjectId: string): string {
+  return `${type}:${subjectId}`;
+}
+
+/**
+ * §13.2 `availability.started` — published to the OWNER, and to nobody else.
+ *
+ * A dedicated emitter rather than a bare `publishToUsers` at each availability
+ * writer, for the reason `emitSafetyReported` gives: the audience is the
+ * load-bearing part and a helper makes it impossible to widen by accident.
+ * There is no parameter here that could carry a thread id or a second
+ * recipient.
+ *
+ * The payload carries the status LABEL the owner themselves set and the expiry,
+ * and never a place, a coordinate or a counterpart.
+ */
+export function emitAvailabilityStarted(
+  ownerUserId: string,
+  payload: { status: string; startedAt: string; expiresAt: string | null },
+): void {
+  if (!ownerUserId) return;
+  publishToUsers([ownerUserId], {
+    type: "availability.started",
+    threadId: null,
+    payload: {
+      ...payload,
+      eventKey: lifecycleEventKey("availability.started", `${ownerUserId}:${payload.startedAt}`),
+    },
+  });
+}
+
+/**
+ * §13.2 `availability.expired` — published to the OWNER, and to nobody else.
+ *
+ * `expiredAt` is the signal's OWN `expires_at`, not the moment the sweep
+ * noticed. A sweep that ran late must not report the availability as having
+ * lasted until the sweep: the revocation §4.3 asks for happened when the window
+ * closed, and an event that said otherwise would make a late sweep look like a
+ * longer disclosure than it was. `sweptAt` carries the other number so the lag
+ * is visible rather than hidden.
+ */
+export function emitAvailabilityExpired(
+  ownerUserId: string,
+  payload: { status: string | null; expiredAt: string; sweptAt: string },
+): void {
+  if (!ownerUserId) return;
+  publishToUsers([ownerUserId], {
+    type: "availability.expired",
+    threadId: null,
+    payload: {
+      ...payload,
+      eventKey: lifecycleEventKey("availability.expired", `${ownerUserId}:${payload.expiredAt}`),
+    },
+  });
+}
+
+/**
+ * §13.2 `location.started` — published to the conversation the scope was
+ * declared in.
+ *
+ * NO COORDINATES, EVER. The event names the share, its precision, its purpose
+ * and when it ends. A member entitled to the coordinates already has them, in
+ * the LOCATION message itself and behind that message's own read gate; putting
+ * them on a fan-out as well would create a second copy on a path with a
+ * different audience calculation.
+ */
+export async function emitLocationStarted(
+  sc: SupabaseClient,
+  threadId: string,
+  payload: {
+    shareId: string;
+    ownerUserId: string;
+    precision: string;
+    purpose: string | null;
+    startedAt: string;
+    expiresAt: string;
+  },
+): Promise<void> {
+  if (!threadId || !payload.shareId) return;
+  await publishToThread(sc, threadId, {
+    type: "location.started",
+    payload: { ...payload, eventKey: lifecycleEventKey("location.started", payload.shareId) },
+  });
+}
+
+/**
+ * §13.2 `location.expired` — published to the conversation, everybody included.
+ *
+ * The actor is NOT excluded here, and that is deliberate: nobody performed this
+ * event. A clock did. Excluding "the actor" would silently mean excluding the
+ * person who started the share — the one whose screen is most likely to be
+ * showing it as live.
+ */
+export async function emitLocationExpired(
+  sc: SupabaseClient,
+  threadId: string,
+  payload: { shareId: string; ownerUserId: string; expiredAt: string; sweptAt: string },
+): Promise<void> {
+  if (!threadId || !payload.shareId) return;
+  await publishToThread(sc, threadId, {
+    type: "location.expired",
+    payload: { ...payload, eventKey: lifecycleEventKey("location.expired", payload.shareId) },
+  });
+}
+
+/** §13.2 `coordination.started` — published to the conversation. */
+export async function emitCoordinationStarted(
+  sc: SupabaseClient,
+  threadId: string,
+  payload: { sessionId: string; startedBy: string; startedAt: string; planObjectId: string | null },
+): Promise<void> {
+  if (!threadId || !payload.sessionId) return;
+  await publishToThread(sc, threadId, {
+    type: "coordination.started",
+    payload: { ...payload, eventKey: lifecycleEventKey("coordination.started", payload.sessionId) },
+  });
+}
+
+/**
+ * §13.2 `coordination.completed` — published to the conversation when the
+ * session reaches a TERMINAL state.
+ *
+ * §9's diagram has exactly two terminal states, COMPLETE and CANCELLED, and
+ * §13.2 names one event. Emitting only on COMPLETE would leave a cancelled
+ * session's panel open on every other client until the next poll, so this fires
+ * for both and names which one in `terminalState`. It is NOT collapsed into a
+ * single "ended" claim: a consumer that rendered a cancellation as a completion
+ * would tell people an evening happened that did not, and the recap surface
+ * (§10.3) is downstream of exactly that distinction.
+ */
+export async function emitCoordinationCompleted(
+  sc: SupabaseClient,
+  threadId: string,
+  payload: {
+    sessionId: string;
+    terminalState: "COMPLETE" | "CANCELLED";
+    endedAt: string;
+    declaredBy: string;
+    reason: string | null;
+  },
+): Promise<void> {
+  if (!threadId || !payload.sessionId) return;
+  await publishToThread(sc, threadId, {
+    type: "coordination.completed",
+    payload: { ...payload, eventKey: lifecycleEventKey("coordination.completed", payload.sessionId) },
+  });
 }

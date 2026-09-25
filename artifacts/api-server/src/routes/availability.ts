@@ -20,6 +20,7 @@ import { sendPushWithRetry } from "../lib/pushWithRetry.js";
 import { nameVisibilitySet, nameVisibleFor } from "../lib/publicIdentity.js";
 import { truncateDisplayName } from "../lib/displayName.js";
 import { isFlagEnabled } from "../lib/featureFlags.js";
+import { emitAvailabilityStarted } from "../lib/telegraphEvents.js";
 import {
   WINDOW_TYPES,
   INTENT_TYPES,
@@ -183,6 +184,24 @@ router.patch("/me/quick-availability", async (req, res) => {
   if (error) { req.log.error({ err: error }, "patch quick-availability"); sendError(res, "db_error", error.message); return; }
 
   res.json({ status: (data as any).status, expiresAt: (data as any).expires_at });
+
+  // Telegraph §13.2 `availability.started`, to the OWNER and nobody else.
+  //
+  // census T187 scored it "Not in the union". The audience is the one decision
+  // here and it is made in `lib/telegraphEvents.ts#emitAvailabilityStarted`
+  // rather than at this call site, so it cannot be widened by accident: who
+  // else may see a person's availability is §4's visibility question and is
+  // answered by the gates those routes already run, not by a realtime bus. What
+  // the owner's OTHER DEVICES need is exactly this — §4.3's "expires
+  // automatically and revokes" begins at the moment it starts, and a second
+  // device that missed the start shows nothing and then expires nothing.
+  //
+  // After the response, like every other publish on this tree's write paths.
+  emitAvailabilityStarted(user.id, {
+    status: (data as any).status,
+    startedAt: new Date(nowMs).toISOString(),
+    expiresAt: ((data as any).expires_at ?? null) as string | null,
+  });
 });
 
 // ── GET /api/trips/:tripId/availability ─────────────────────────────────────

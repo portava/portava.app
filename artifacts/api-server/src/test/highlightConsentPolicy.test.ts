@@ -58,8 +58,10 @@ import {
   makeFakeClient,
   VIEWER,
   OWNER,
+  OTHER,
   H_PUB,
   H_MINE,
+  highlight,
 } from "./highlightsSpecHarness.js";
 
 // ── §10 vocabulary ───────────────────────────────────────────────────────────
@@ -397,10 +399,28 @@ describe("§11 on the feeds: DO_NOT_RESURFACE suppresses proactive surfaces", ()
     } finally { await app.close(); }
   });
 
+  /**
+   * SETTER CORRECTED 2026-09-22, ASSERTIONS UNCHANGED.
+   *
+   * This case read `owner_id: OWNER` — OWNER asking not to be shown OWNER —
+   * and then asserted that VIEWER's feed lost H_PUB. Both halves of that are
+   * still here; what changed is WHOSE row produces the effect. §11 gives a
+   * person-scoped control to the person doing the resurfacing, so the row that
+   * empties VIEWER's feed is VIEWER's, and the old fixture was pinning the
+   * defect census §Q.6 records under H89: any user who owned one Highlight on
+   * the page could suppress any other user for everybody.
+   *
+   * Nothing is weakened. The assertion is the same sentence the title always
+   * made — "removes every highlight of that owner" — and it is now made by the
+   * only user §11 lets make it. The case that the OLD fixture would have
+   * covered, a third party's control reaching a stranger's feed, is not
+   * dropped either: it is asserted to be REFUSED in the suite at the end of
+   * this file, which went red against the unfixed route.
+   */
   it("HIDE_PERSON_FROM_RESURFACING removes every highlight of that owner", async () => {
     const app = await startApp({
       tables: tablesWith([
-        { id: "1", owner_id: OWNER, control: "HIDE_PERSON_FROM_RESURFACING", subject_type: "person", subject_id: OWNER },
+        { id: "1", owner_id: VIEWER, control: "HIDE_PERSON_FROM_RESURFACING", subject_type: "person", subject_id: OWNER },
       ]),
     });
     try {
@@ -525,6 +545,145 @@ describe("§10 on the feeds: the owner's selected precision is applied to what s
       assert.ok(
         app.errors.some((e) => /location precision is NOT DEPLOYED/.test(e.msg)),
         JSON.stringify(app.errors.map((e) => e.msg)),
+      );
+    } finally { await app.close(); }
+  });
+});
+
+/* ============================================================================
+ * §11 HIDE_PERSON_FROM_RESURFACING — WHOSE control is it?
+ *
+ * Census §Q.6, H89, states the defect this suite exists for, measured with the
+ * writer in hand:
+ *
+ *     "the set is read for the OWNERS on the page and the key is `h.owner_id`,
+ *      so a row `(owner Q, HIDE_PERSON_FROM_RESURFACING, subject O)` hides O's
+ *      Highlights from every viewer's feed that has Q on the page. §11's
+ *      control removes ONE PERSON from the SETTER's resurfacing; this removes
+ *      an owner from everyone's."
+ *
+ * `CONTROL_EFFECTS.HIDE_PERSON_FROM_RESURFACING.scope` is `"person"` and its
+ * own note reads "one control removes one person from every resurfaced
+ * Highlight" — the SETTER's resurfacing. Every other enforceable control is
+ * `highlight`-scoped: the owner saying something about their own record, which
+ * is correctly read for the owners on the page. Those two reader-scopes were
+ * collapsed into one query, and only the person-scoped control is wrong.
+ *
+ * WHY THIS IS WORTH A SUITE. It is not a leak — nothing private is disclosed —
+ * but it is an abuse vector with no rate limit and no audit: any user who owns
+ * one Highlight reaching a page can write one row and remove another user's
+ * Highlights from every viewer's proactive feeds. Nothing tells the suppressed
+ * owner, and nothing tells the viewers.
+ * ==========================================================================*/
+describe("§11 a person-scoped control belongs to the person who SET it", () => {
+  const H_OTHER = "30000000-0000-4000-8000-0000000000af";
+
+  /**
+   * The shared fixture gives OTHER no Highlight at all, and that detail is
+   * load-bearing rather than incidental. The defective read is
+   * `.in("owner_id", <the owners on the page>)`, so a third party's control row
+   * is only LOADED when that third party owns something the page contains — and
+   * the first version of this suite passed against the unfixed code purely
+   * because OTHER owned nothing. A test that cannot reach the defect is not
+   * evidence. OTHER gets a Highlight here so their row is in scope.
+   */
+  function withControls(rows: any[]) {
+    const t = fixtureTables();
+    t.highlights = [...t.highlights, highlight(H_OTHER, OTHER)];
+    t.highlight_resurfacing_preferences = rows;
+    return t;
+  }
+
+  /* ----------------------------------------------------------------------
+   * THE DEFECT, stated as a test. OTHER is a third party: not the viewer,
+   * not the owner of the Highlight being suppressed. Under §11 their control
+   * governs THEIR OWN resurfacing and must not touch VIEWER's feed.
+   * -------------------------------------------------------------------- */
+  it("a THIRD party's HIDE_PERSON does not remove that person from someone else's feed", async () => {
+    const app = await startApp({
+      tables: withControls([
+        // OTHER owns a Highlight that reaches the page (H_PUB's page includes
+        // them via the fixture), and asks not to be shown OWNER. That is a
+        // statement about OTHER's feed, not about VIEWER's.
+        { id: "1", owner_id: OTHER, control: "HIDE_PERSON_FROM_RESURFACING", subject_type: "person", subject_id: OWNER },
+      ]),
+    });
+    try {
+      const r = await call(app, "GET", "/api/highlights/active", VIEWER);
+      assert.equal(r.status, 200, JSON.stringify(r.body));
+      assert.ok(
+        listIds(r.body).has(H_PUB),
+        "§11: a control OTHER set about their OWN resurfacing removed OWNER's Highlight from " +
+          `VIEWER's feed. Any user can censor any other user for everyone. Served: ${JSON.stringify(r.body)}`,
+      );
+    } finally { await app.close(); }
+  });
+
+  /* ----------------------------------------------------------------------
+   * …and the control still WORKS, for the person who set it. Without this
+   * the fix above could be "stop enforcing HIDE_PERSON at all", which would
+   * trade an abuse vector for an ignored privacy control.
+   * -------------------------------------------------------------------- */
+  it("but the VIEWER's own HIDE_PERSON removes that person from the VIEWER's feed", async () => {
+    const app = await startApp({
+      tables: withControls([
+        { id: "1", owner_id: VIEWER, control: "HIDE_PERSON_FROM_RESURFACING", subject_type: "person", subject_id: OWNER },
+      ]),
+    });
+    try {
+      const r = await call(app, "GET", "/api/highlights/active", VIEWER);
+      assert.equal(r.status, 200, JSON.stringify(r.body));
+      assert.ok(
+        !listIds(r.body).has(H_PUB),
+        `the setter's own §11 control was ignored: ${JSON.stringify(r.body)}`,
+      );
+      assert.ok(listIds(r.body).has(H_MINE), "the viewer's own Highlight is not a 'person' they hid");
+    } finally { await app.close(); }
+  });
+
+  /* ----------------------------------------------------------------------
+   * The reader-scope rule itself, derived rather than retyped — the same
+   * discipline FEED_ENFORCEABLE_CONTROLS uses, and for the same reason: the
+   * two scopes were collapsed once already.
+   * -------------------------------------------------------------------- */
+  it("`controlSetter` sends every control to exactly one reader, derived from CONTROL_EFFECTS", async () => {
+    const { controlSetter, RESURFACING_CONTROLS, CONTROL_EFFECTS } = await import(
+      "../services/highlights/highlightResurfacing.js"
+    );
+    for (const c of RESURFACING_CONTROLS) {
+      const who = controlSetter(c);
+      assert.ok(who === "owner" || who === "viewer", `${c} has no reader`);
+      // A `person`-scoped control is a statement about OTHER people, made by
+      // the person reading the feed. Everything else is the owner speaking
+      // about their own record.
+      assert.equal(
+        who, CONTROL_EFFECTS[c].scope === "person" ? "viewer" : "owner",
+        `${c} is scoped ${CONTROL_EFFECTS[c].scope} and was routed to ${who}`,
+      );
+    }
+    assert.equal(controlSetter("HIDE_PERSON_FROM_RESURFACING"), "viewer");
+    assert.equal(controlSetter("DO_NOT_RESURFACE"), "owner");
+    assert.equal(controlSetter("KEEP_PRIVATE_FOREVER"), "owner");
+  });
+
+  /* ----------------------------------------------------------------------
+   * The owner-scoped controls must keep working, read for the OWNERS on the
+   * page. A fix that moved every control to the viewer would make
+   * KEEP_PRIVATE_FOREVER — the strongest control in §11 — unenforceable,
+   * because the person it protects is not the person reading the feed.
+   * -------------------------------------------------------------------- */
+  it("KEEP_PRIVATE_FOREVER is still read for the OWNER, not the viewer", async () => {
+    const app = await startApp({
+      tables: withControls([
+        { id: "1", owner_id: OWNER, control: "KEEP_PRIVATE_FOREVER", subject_type: "highlight", subject_id: H_PUB },
+      ]),
+    });
+    try {
+      const r = await call(app, "GET", "/api/highlights/active", VIEWER);
+      assert.equal(r.status, 200, JSON.stringify(r.body));
+      assert.ok(
+        !listIds(r.body).has(H_PUB),
+        `the owner's strongest §11 control stopped being enforced: ${JSON.stringify(r.body)}`,
       );
     } finally { await app.close(); }
   });

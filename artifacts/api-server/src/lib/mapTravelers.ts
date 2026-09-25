@@ -78,9 +78,19 @@ export interface LocationPrefsRow {
 const FRESH_LIVE_MS = 15 * 60 * 1000;
 const FRESH_MAX_MS = 60 * 60 * 1000;
 /** ~11 km cells — city-precision fallback when no canonical centroid exists. */
-const CITY_GRID_DEG = 0.1;
-/** ~2.2 km cells — the FINEST precision the map ever shows. */
-const AREA_GRID_DEG = 0.02;
+export const CITY_GRID_DEG = 0.1;
+/**
+ * ~2.2 km cells — the FINEST precision the map ever shows.
+ *
+ * EXPORTED because lib/proximityBuckets.ts derives its narrowest bucket edge
+ * from it: a proximity bucket whose edge were finer than the cell a position
+ * was snapped into would let bucket membership resolve that position more
+ * precisely than the coarsened coordinate it was computed from, which is the
+ * leak T25 exists to prevent. Keeping the number in one place means shrinking
+ * the grid cannot silently outrun the bucket ladder — the relation is asserted
+ * in src/test/proximityBuckets.test.ts.
+ */
+export const AREA_GRID_DEG = 0.02;
 const MAX_RESULTS = 100;
 const SCAN_LIMIT = 250;
 const CAND_TTL_MS = 20_000;
@@ -99,8 +109,52 @@ const MODE_DEFAULT_VIS: Record<string, string> = {
 // ── Pure helpers (exported for tests) ─────────────────────────────────────────
 
 /**
+ * Values of `discovery_visibility` that PUBLISH a person to an unrestricted
+ * people surface, and the precision rung each implies.
+ *
+ * ── WHY AN ALLOWLIST AND NOT A DENYLIST OF ONE VALUE ─────────────────────────
+ * This column carries TWO vocabularies and the code only ever knew one of them.
+ * `MODE_DEFAULT_VIS` above (mirroring LocationPermissionService) speaks
+ * `no_location | city_only | neighborhood | venue_tagged`, while the LIVE table
+ * constrains the column to `everyone | circle | trip_members | nobody`
+ * (`location_preferences_discovery_visibility_check`, baseline 20260819). The
+ * old rule — "hidden only when the value is exactly `no_location`" — therefore
+ * could not hide anybody on a real database, because `no_location` is a value
+ * the production CHECK does not admit:
+ *
+ *   nobody        a person who asked to be discoverable by NO ONE fell through
+ *                 as an unrecognised string and was published at ~2 km.
+ *   circle
+ *   trip_members  audience restrictions the public traveler map has no way to
+ *                 honour — it takes a viewport, not an audience — and which
+ *                 were likewise published to every viewer.
+ *
+ * Read as a denylist the bug is invisible; read as "publish only what is an
+ * affirmative, unrestricted grant" it cannot happen again, because a value
+ * nobody has taught this module about is hidden rather than shown. An unknown
+ * value now costs a person a pin on a map; the previous reading cost them the
+ * privacy setting they had chosen.
+ *
+ * `everyone` is the live default and is a genuine unrestricted grant. It is not
+ * a precision word, so it takes the same rung every non-`city_only` value takes
+ * (see coarsenPosition): the ~2.2 km area grid.
+ */
+const PUBLISHABLE_DISCOVERY_VIS: ReadonlySet<string> = new Set([
+  // LocationPermissionService's vocabulary
+  "city_only",
+  "neighborhood",
+  "venue_tagged",
+  "exact_hidden",
+  // the live column's vocabulary
+  "everyone",
+]);
+
+/**
  * Effective discovery visibility for a prefs row (null row = defaults).
  * Returns null when the user must NOT appear on the map at all.
+ *
+ * Fail-closed on the value as well as on the switches: anything that is not an
+ * affirmative, unrestricted grant returns null. See PUBLISHABLE_DISCOVERY_VIS.
  */
 export function effectiveDiscoveryVisibility(
   prefs: LocationPrefsRow | null | undefined,
@@ -109,8 +163,7 @@ export function effectiveDiscoveryVisibility(
   if (prefs?.sharing_paused) return null;
   if (mode === "off") return null;
   const vis = prefs?.discovery_visibility ?? MODE_DEFAULT_VIS[mode] ?? "city_only";
-  if (vis === "no_location") return null;
-  return vis;
+  return PUBLISHABLE_DISCOVERY_VIS.has(vis) ? vis : null;
 }
 
 /** FNV-1a hash → [0, 1). Deterministic per seed — stable marker positions. */

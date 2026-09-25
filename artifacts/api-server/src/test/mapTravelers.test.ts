@@ -63,6 +63,38 @@ test("explicit discovery_visibility override wins over mode default", () => {
   );
 });
 
+// ── the LIVE column's vocabulary, which this gate could not read ─────────────
+//
+// `location_preferences.discovery_visibility` is CHECK-constrained in
+// production to `everyone | circle | trip_members | nobody`, and the gate above
+// used to hide a person only when the value was exactly `no_location` — a value
+// that CHECK does not admit. So on a real database the column could not hide
+// anybody, and the three settings below all published a pin.
+
+test("discovery_visibility 'nobody' HIDES — the live column's way of saying no", () => {
+  assert.equal(effectiveDiscoveryVisibility({ location_mode: "nearby", discovery_visibility: "nobody" }), null);
+});
+
+test("audience-restricted values do not publish to an unrestricted map", () => {
+  // The traveler map takes a viewport, not an audience: it has no way to honour
+  // "my circle only", so publishing to it at all would publish to everyone.
+  assert.equal(effectiveDiscoveryVisibility({ location_mode: "nearby", discovery_visibility: "circle" }), null);
+  assert.equal(
+    effectiveDiscoveryVisibility({ location_mode: "nearby", discovery_visibility: "trip_members" }),
+    null,
+  );
+});
+
+test("'everyone' — the live default and a real unrestricted grant — still publishes", () => {
+  assert.equal(effectiveDiscoveryVisibility({ location_mode: "nearby", discovery_visibility: "everyone" }), "everyone");
+});
+
+test("a value nobody has taught this module about is HIDDEN, not published", () => {
+  assert.equal(effectiveDiscoveryVisibility({ discovery_visibility: "some_future_audience" }), null);
+  assert.equal(effectiveDiscoveryVisibility({ discovery_visibility: "constructor" }), null);
+  assert.equal(effectiveDiscoveryVisibility({ discovery_visibility: "toString" }), null);
+});
+
 test("unknown mode value → safe default city_only, not a crash", () => {
   assert.equal(effectiveDiscoveryVisibility({ location_mode: "something_new" }), "city_only");
 });

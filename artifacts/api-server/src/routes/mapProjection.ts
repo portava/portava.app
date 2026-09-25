@@ -125,6 +125,7 @@ import { readLiveClaims, toLiveClaimEnvelope } from "../lib/liveClaimRead.js";
 import { loadNearbyEvents } from "./mapSearch.js";
 import { aggregateForViewport, bboxContains, deriveCrowdFlow, type BBox } from "../lib/mapAggregation.js";
 import { applyProtection, type ProtectedZone } from "../lib/protectedLocations.js";
+import { clearProtectedZoneCache, loadActiveProtectedZones } from "../lib/protectedZoneStore.js";
 import { CROWD_FLOW_FLAG, produceZoneTransitions } from "../lib/crowdFlowProducer.js";
 import { readMeetingPoints } from "../lib/mapProducers/meetingPointProducer.js";
 import { readMemoryPins } from "../lib/mapProducers/memoryProducer.js";
@@ -219,46 +220,21 @@ const router = Router();
  * Cached briefly: the table is tiny and effectively static, and a per-request
  * read on a polled endpoint would be pure waste. 30s mirrors the flag cache.
  */
-const ZONE_CACHE_TTL_MS = 30_000;
-let _zoneCache: { zones: ProtectedZone[]; at: number } | null = null;
+// THE LOADER MOVED TO lib/protectedZoneStore, AND THAT IS THE POINT.
+//
+// Discovery needs the same zones for the same reason — lib/discoveryCandidate
+// cannot publish a cohort bucket without them — and the cheap move was to copy
+// this function there. Two readers of one privacy policy drift apart, and the
+// one that drifts LOOSE is the one nobody notices. So there is one reader, one
+// cache and one parse; both fail-closed rules (an unreadable policy is not an
+// absent one; a malformed ring stays in the list because unparseable geometry
+// is SUPPRESS) live in that module's header and are unchanged.
+//
+// The two names below are kept so this file's existing call sites and the test
+// hook that clears the cache do not have to move with it.
+const loadProtectedZones = loadActiveProtectedZones;
 
-export function _clearProtectedZoneCache(): void { _zoneCache = null; }
-
-async function loadProtectedZones(sc: any): Promise<ProtectedZone[] | null> {
-  if (_zoneCache && Date.now() - _zoneCache.at < ZONE_CACHE_TTL_MS) return _zoneCache.zones;
-  const { data, error } = await sc
-    .from("protected_zones")
-    .select("id, category, action, privacy_floor, shape, center_lat, center_lng, radius_meters, ring, jurisdiction, policy_ref")
-    .eq("active", true);
-  if (error || !Array.isArray(data)) return null;
-
-  const zones: ProtectedZone[] = [];
-  for (const row of data as any[]) {
-    const base = {
-      id: String(row.id),
-      category: String(row.category),
-      action: row.action ?? undefined,
-      privacyFloor: row.privacy_floor ?? undefined,
-      jurisdiction: row.jurisdiction ?? undefined,
-      policyRef: row.policy_ref ?? undefined,
-    };
-    if (row.shape === "circle") {
-      zones.push({
-        ...base,
-        shape: "circle",
-        center: { lat: Number(row.center_lat), lng: Number(row.center_lng) },
-        radiusMeters: Number(row.radius_meters),
-      } as ProtectedZone);
-    } else {
-      // A malformed ring stays in the list on purpose: applyProtection treats
-      // unparseable geometry as SUPPRESS, which is the safe direction. Dropping
-      // the row here would quietly turn a broken policy into no policy.
-      zones.push({ ...base, shape: "polygon", ring: row.ring } as ProtectedZone);
-    }
-  }
-  _zoneCache = { zones, at: Date.now() };
-  return zones;
-}
+export function _clearProtectedZoneCache(): void { clearProtectedZoneCache(); }
 
 /**
  * §10 flow zones (`geo_zones`).

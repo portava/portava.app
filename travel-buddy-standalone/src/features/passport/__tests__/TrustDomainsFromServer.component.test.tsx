@@ -311,13 +311,26 @@ function degradedProjection(): TrustProjectionEnvelope {
 }
 
 describe('a failed read is labelled and retryable, never dressed up or hidden', () => {
-  test('the view reports degraded, and confidence is unknown rather than low', () => {
+  test('the view reports degraded, and confidence is NOT banded rather than low', () => {
     const view = deriveTrustView(degradedProjection());
     expect(view.degraded).toBe(true);
     // `?? 'low'` here used to print "Early days" over a person the server had
     // declined to describe. Absent is its own state now.
-    expect(view.confidence).toBe('unknown');
-    expect(view.confidenceLabel).toBe('Confidence unavailable');
+    //
+    // MERGE, 2026-09-23: that absent state is `null`, not a `'unknown'` member
+    // of the band union. This assertion changed shape, NOT strength — what it
+    // exists to catch is a rendered band standing in for a refusal, and both
+    // halves of that are still asserted below. The other lane's reason for
+    // preferring `null` is recorded on `TrustView.confidence`: a pseudo-band
+    // beside the real ones is indexable into the band table, and the row it
+    // produced claimed a failed READ over accounts that merely have no profile.
+    expect(view.confidence).toBeNull();
+    expect(view.confidence).not.toBe('low');
+    // The failed-read wording, which is a different claim from "not yet
+    // measured" — see TrustScreen.confidenceUnmeasured.component.test.tsx.
+    expect(view.confidenceLabel).toBe('Not available');
+    expect(view.confidenceCopy).toMatch(/unavailable/i);
+    expect(view.confidenceCopy).not.toMatch(/New accounts start here/i);
   });
 
   test('the SCREEN says so and offers a retry', async () => {
