@@ -1805,7 +1805,7 @@ that inherit it are C.
 
 They are not being graded C, because the criterion is incomplete. A third gate
 exists that no row in this census names: `locate_friends_enabled`
-(`artifacts/api-server/src/lib/locateFriendsSession.ts:99#LOCATE_FRIENDS_FLAG`,
+(`artifacts/api-server/src/lib/locateFriendsSession.ts:104#LOCATE_FRIENDS_FLAG`,
 also read by `services/passport/PassportProjectionService.ts:1878#const LOCATE_FRIENDS_CAPABILITY_FLAG = "locate_friends_enabled"`). It is present
 in production and **FALSE**.
 

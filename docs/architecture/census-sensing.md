@@ -2934,7 +2934,7 @@ four. `MapObject` carries `freshness`, `confidence`, `sourceClass` and
 **The row stays W for a different reason, one nobody had written down.** The one
 server-built state Discovery consumes, `DiscoveryCandidate`, carries truth class,
 confidence and freshness and **no coverage**
-(`` `artifacts/api-server/src/lib/discoveryCandidate.ts:146#export interface DiscoveryCandidate {` ``)
+(`` `artifacts/api-server/src/lib/discoveryCandidate.ts:149#export interface DiscoveryCandidate {` ``)
 — even though the grade it is built from already carries a full `TruthMetadata`
 including coverage
 (`` `artifacts/api-server/src/lib/discoveryLiveRank.ts:212#TruthMetadata` ``).
@@ -3061,7 +3061,7 @@ re-executed here rather than taken:
   `` `artifacts/api-server/src/lib/protectedLocations.ts:748#delete out.coverage;` ``,
   under a comment reading *"`coverage` restates the cohort that `count` was
   deleted for."*
-- Discovery does not run it. `` `artifacts/api-server/src/lib/discoveryCandidate.ts:146#export interface DiscoveryCandidate {` ``,
+- Discovery does not run it. `` `artifacts/api-server/src/lib/discoveryCandidate.ts:149#export interface DiscoveryCandidate {` ``,
   `lib/discoveryLiveRank.ts` and the `routes/discovery*.ts` handlers contain
   **zero** references to `protectedLocations`, `protected_zones` or
   `protectedZone`.
@@ -3288,7 +3288,7 @@ anonymous contribution policy takes its precision ceiling from the same ladder
 (`` `artifacts/api-server/src/lib/sensingContributionPolicy.ts:49#import { FEATURE_PRECISION_CEILING, type LocationPrecision } from "../presence/domain/types.js";` ``)
 — and S51's *"the inference over exactly those signals"*, which overstates by
 one: §5.2's candidate list names **density**, and
-`` `artifacts/api-server/src/lib/vibeInference.ts:69#export interface VibeFeatureInput {` ``
+`` `artifacts/api-server/src/lib/vibeInference.ts:77#export interface VibeFeatureInput {` ``
 carries `coverage` (how much evidence stands behind the features) and no
 density (how crowded the place is). Those are different quantities and the
 module's own comment says so. Neither changes a verdict; both change what a
@@ -3339,9 +3339,9 @@ decision no diff can substitute for.
 | S35 | W | **W** | All four rejections exist and three are executed against the database (M3, M10, M11 red); there is no ingest to reject anything. **RED WHEN** S32 does. **WHO**: as S32. |
 | S39 | W | **W** | `` `artifacts/api-server/src/lib/sensingPresenceState.ts:69#  presence: "observed"` `` — two values, no `absent`, no zero, no person named (M8 red, executed on k and k − 1 real contributors); no surface consumes it. **RED WHEN** decision #9 is taken and a surface reads `buildSensingPresenceState`. Note this lane's read-model routes cannot be that surface while the anon-store tripwire stands. **WHO**: the owner (decision #9), then a lane. |
 | S42 | W | **W** | The engine and its guards are pinned (M5 red); not one input has a producer. **RED WHEN** S28 exists. **WHO**: a client build. |
-| S49 | W | **W** | **Part closed this pass (§10.1): the §19 read model now carries all four §5.1 fields, per claim and composed, through the one shared derivation.** The gap §8 named is untouched — `` `artifacts/api-server/src/lib/discoveryCandidate.ts:146#export interface DiscoveryCandidate {` `` still carries truth class, confidence and freshness and no coverage, and `lib/discoveryLiveRank.ts` computes the value in the same function. **RED WHEN** the owner rules the §24 question — either route `DiscoveryCandidate` through `protectedLocations`, or rule that a four-value bucket over an already k-gated state is not protected-zone sensitive — and Discovery adds the field. §10.1's argument that the bucket was already served does **not** transfer: `DiscoveryCandidate` carries no cohort signal today, so adding one there is a first disclosure. **WHO**: the owner, then the Discovery lane. |
+| S49 | W | **W** | **Part closed this pass (§10.1): the §19 read model now carries all four §5.1 fields, per claim and composed, through the one shared derivation.** The gap §8 named is untouched — `` `artifacts/api-server/src/lib/discoveryCandidate.ts:149#export interface DiscoveryCandidate {` `` still carries truth class, confidence and freshness and no coverage, and `lib/discoveryLiveRank.ts` computes the value in the same function. **RED WHEN** the owner rules the §24 question — either route `DiscoveryCandidate` through `protectedLocations`, or rule that a four-value bucket over an already k-gated state is not protected-zone sensitive — and Discovery adds the field. §10.1's argument that the bucket was already served does **not** transfer: `DiscoveryCandidate` carries no cohort signal today, so adding one there is a first disclosure. **WHO**: the owner, then the Discovery lane. |
 | S51 | W | **W** | The inference exists and is guarded; not one signal is produced anywhere. **Narrowed**: §5.2's candidate list names `density` and the input carries `coverage` instead (§10.4), so this row needs one more signal than the census said. **RED WHEN** S28 exists AND a density input joins `VibeFeatureInput`. **WHO**: a client build, then whoever owns `lib/vibeInference.ts`. |
-| S52 | W | **W** | Checked field-for-field against the SPEC's §5.2 list rather than the module's own: energy, sociality, dance_likelihood, volatility, momentum, scene/context tags, confidence, coverage, freshness, provenance — all ten present on `` `artifacts/api-server/src/lib/vibeInference.ts:93#export interface SensingVibeState {` ``. **Evidence corrected 2026-09-14 (§10.9)**: the earlier sentence *"truth class always `inferred`"* restated the module's own header, which is false about its own code — the no-coverage branch returns `unknown`, deliberately (*"Nothing is inferred from nothing"*), and `unknown` is one of §5.1's seven. So the state carries `inferred` where there is coverage and `unknown` where there is none, and the band is structurally below the live floor in both. That is the spec behaving correctly, not a defect, and it moves no verdict. **RED WHEN** something can populate it, i.e. S28. **WHO**: a client build. |
+| S52 | W | **W** | Checked field-for-field against the SPEC's §5.2 list rather than the module's own: energy, sociality, dance_likelihood, volatility, momentum, scene/context tags, confidence, coverage, freshness, provenance — all ten present on `` `artifacts/api-server/src/lib/vibeInference.ts:128#export interface SensingVibeState {` ``. **Evidence corrected 2026-09-14 (§10.9)**: the earlier sentence *"truth class always `inferred`"* restated the module's own header, which is false about its own code — the no-coverage branch returns `unknown`, deliberately (*"Nothing is inferred from nothing"*), and `unknown` is one of §5.1's seven. So the state carries `inferred` where there is coverage and `unknown` where there is none, and the band is structurally below the live floor in both. That is the spec behaving correctly, not a defect, and it moves no verdict. **RED WHEN** something can populate it, i.e. S28. **WHO**: a client build. |
 | S66 | W | **W** | Re-executed at both surfaces: Discovery demotes a Live-qualified `unsafe_density` behind every other row before any score is compared (`` `artifacts/api-server/src/lib/discoveryLiveRank.ts:464#    if (a.grade.safety.demoted !== b.grade.safety.demoted) return a.grade.safety.demoted ? 1 : -1;` ``) and the layover surface removes the card (`` `artifacts/api-server/src/lib/layoverLiveIntersection.ts:199#  if (state.unsafe) { drop = true; dropReason = "unsafe_density"; }` ``). **RED WHEN** a dangerous place is actually refused rather than refusable — the flags these paths ride are ON in a database and real `unsafe_density` state reaches them. **WHO**: nobody, deliberately: this is the census working, and it is recorded so the count of "W rows a lane should move" is not inflated by it. |
 | S79 | W | **W** | Re-executed as an absence, by opening the three modules rather than by a grep that stops: `routes/compass.ts`, `compass/CompassStructuredContext.ts` and `routes/telegraph.ts` contain **zero** references to `liveClaimRead`, `readLiveClaimEnvelopes`, `resolvePlaceIntelState` or `truthOfEnvelope`. The decision surface is grounded by construction; the conversational path has no structured truth in its context to be grounded against. **RED WHEN** live claims are carried into `/compass/ask`'s context and a grounding checker constrains the generated language to the band of its inputs — in that order, because a checker over an empty context is vacuous. **WHO**: the Compass lane. |
 | S83 | W | **W** | `compass/CompassTripContext.ts` still exports exactly one function, `buildTripContextLines`, and it is trip grounding — no world state, no opportunities, no disruptions, no sessions. **RED WHEN** S54 (`ExperienceSession`) exists and a `TripWorldContext` projection carries the five named parts. **WHO**: the Compass lane, after a commissioned `ExperienceSession`. |
@@ -3349,7 +3349,7 @@ decision no diff can substitute for.
 | S97 | W | **W** | Re-executed and the §7 ruling stands. `` `artifacts/api-server/src/routes/mapObservations.ts:656#export async function resolveZoneAnchorSubject(` `` resolves a §22 zone contribution to the *nearest* active place (`` `artifacts/api-server/src/routes/mapObservations.ts:648# * NEAREST active place within the zone's radius, and returns that place as the` ``) and the caller stores the observation against it (`` `artifacts/api-server/src/routes/mapObservations.ts:802#    subjectId = anchored.subjectId;` ``), with the FK given as the motive in its own header. **RED WHEN** the proximity resolution is removed, which needs either the Map's zone-contribution feature deleted or `subject_id NOT NULL REFERENCES places(id)` dropped. **WHO**: the owner. Both alternatives are rulings, not diffs. |
 | S106 | W | **W** | The ladder is still right and still has no store and no fusion layer. **Corrected**: *"only `locateFriends` consumes it"* is no longer true — the anonymous contribution policy takes its precision ceiling from the same ladder (§10.4), which is a second consumer and is the shape the row asks for. It changes no verdict: two type consumers are not a fusion layer. **RED WHEN** S3 does. **WHO**: as S3. |
 | S111 | W | **W** | All four §18.3 outcomes are representable and proximity never resolves ownership (M6 red) — `` `artifacts/api-server/src/lib/sensingSubjectReconciliation.ts:69#export type SensingSubjectRef =` ``. The resolver has no caller, and that is **now machine-checked** (§10.3, M18 red). **RED WHEN** `intel_observations.subject_id NOT NULL REFERENCES places(id)` is dropped so that `unknown` and `temporary_world_object` can be STORED. Giving the resolver a caller does not close it — the two outcomes that matter have nowhere to go. **WHO**: the owner, the same ruling as S19 and S97. |
-| S112 | W | **W** | Five stages are defined and executable (`` `artifacts/api-server/src/lib/sensingRevocationLineage.ts:50#export const SENSING_LINEAGE_STAGES = ["raw", "aggregate", "inference", "session", "memory"] as const;` ``) and proven against the SQL on a real cohort (M14 red). The session and memory stages are prevented only because nothing bridges to them. **RED WHEN** a session exists (S30) and a memory bridge exists (S54/S92) for a revocation to reach. **WHO**: the owner for the first, a commissioned build for the second. |
+| S112 | W | **W** | Five stages are defined and executable (`` `artifacts/api-server/src/lib/sensingRevocationLineage.ts:54#export const SENSING_LINEAGE_STAGES = ["raw", "aggregate", "inference", "session", "memory"] as const;` ``) and proven against the SQL on a real cohort (M14 red). The session and memory stages are prevented only because nothing bridges to them. **RED WHEN** a session exists (S30) and a memory bridge exists (S54/S92) for a revocation to reach. **WHO**: the owner for the first, a commissioned build for the second. |
 | S118 | W | **W** | The published side is right — k-gated, no contributor id. The stored side fails outright and for the same one line as S19. **RED WHEN** S19 does, and only then: k-gating the publication cannot repair a store that resolves a contribution to an account by design. **WHO**: the owner. |
 
 ### §10.6 What this section could not settle, and two things the integrator must do
@@ -3570,7 +3570,7 @@ no change.
 ten: motion_energy, movement periodicity, bounded spatial movement, dwell,
 arrival velocity, departure velocity, density, event/venue context, *optional*
 user observations, and *optional* explicitly-permitted acoustic energy.
-`` `artifacts/api-server/src/lib/vibeInference.ts:69#export interface VibeFeatureInput {` ``
+`` `artifacts/api-server/src/lib/vibeInference.ts:77#export interface VibeFeatureInput {` ``
 carries eight of the ten — `motionEnergy`, `periodicity`, `boundedMovement`,
 `dwellBucket`, `arrivalVelocity`, `departureVelocity`, `venueContext`, and the
 acoustic pair behind `acousticPermissionGranted`. **Two are absent and they are
@@ -3584,7 +3584,7 @@ have been convenient to overlook.
 
 **S52 — the ten `VibeState` fields, and one sentence that was wrong.** All ten
 of §5.2's outputs are on
-`` `artifacts/api-server/src/lib/vibeInference.ts:93#export interface SensingVibeState {` ``:
+`` `artifacts/api-server/src/lib/vibeInference.ts:128#export interface SensingVibeState {` ``:
 `energy`, `sociality`, `danceLikelihood`, `volatility`, `momentum`,
 `contextTags` (the spec's "scene/context tags where legitimately sourced"), and
 confidence / coverage / freshness / provenance carried together on `truth`.
@@ -3630,7 +3630,7 @@ members of `TRUTH_CLASSES` — checked against `lib/truthClass.ts`, never agains
 M31 is left in the table on purpose. A mutation that fails to redden is either a
 test that cannot fail or a guard that is stronger than the mutation, and the two
 are told apart by finding the guard — which here is
-`` `artifacts/api-server/src/lib/vibeInference.ts:140#  return bands.indexOf(band) < bands.indexOf(MIN_BAND_FOR_LIVE_STATE) ? band : "unverified";` ``.
+`` `artifacts/api-server/src/lib/vibeInference.ts:175#  return bands.indexOf(band) < bands.indexOf(MIN_BAND_FOR_LIVE_STATE) ? band : "unverified";` ``.
 M31b removes it and the case goes red, so the case can fail and the band
 guarantee has two independent defences rather than one. Recording only M31b
 would have made a weaker system look like a stronger test.

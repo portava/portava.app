@@ -2470,7 +2470,7 @@ weak test.
 
 | Row | Finding |
 | --- | --- |
-| MD162 | **Mis-cited.** It cites `lib/mapProducers/crowdFlowProducer.ts`; no such file exists. The producer is `artifacts/api-server/src/lib/crowdFlowProducer.ts:264#export const CROWD_FLOW_FLAG = "map_crowd_flow_enabled";`, which is where MD163 correctly points. The verdict is unaffected — Media still does not consume it — but the row is one of the 18 citations §0 says name no file in the tree, and this is which file it should have named. |
+| MD162 | **Mis-cited.** It cites `lib/mapProducers/crowdFlowProducer.ts`; no such file exists. The producer is `artifacts/api-server/src/lib/crowdFlowProducer.ts:265#export const CROWD_FLOW_FLAG = "map_crowd_flow_enabled";`, which is where MD163 correctly points. The verdict is unaffected — Media still does not consume it — but the row is one of the 18 citations §0 says name no file in the tree, and this is which file it should have named. |
 | MD152 | **Partly overstated, in the direction that flatters the gap.** "No uncertainty state on `PlaceProjection` or `WorldZone`" was true at the OBJECT level and false at the field level: the per-claim `conflictState` was already riding inside `currentState.claims[]` / `liveClaims[]`, so a client that knew to look could already find it. What was genuinely absent was any place-level or zone-level state and any copy. The row is now C on both. |
 | MD287–MD293 | **Re-graded N ×7 → W ×7.** See the row. |
 | MD228 · MD294 · MD173 | **Re-graded N → W.** Each says in its own cell which part closed and which did not. |
