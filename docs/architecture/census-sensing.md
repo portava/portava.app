@@ -4152,3 +4152,112 @@ owners; the entry names them so the debt is visible rather than absent.
 ### §15.6 MOVES NOTHING
 
 **C 103 · W 21 · N 2 · X 1 — unchanged.** §14's headline stands.
+
+
+## §16 — 2026-09-25: S3 and S106 re-derived against the four REAL call sites — a shared GATE, not shared STATE
+
+§14.2 held these two at `W` for a stated gap rather than a measured one:
+
+> *"That proof is a compile-time claim about a type, and it has not been
+> re-derived here against the four real call sites. Held W rather than moved on
+> a lane's report."*
+
+This section closes that gap by executing the measurement. **Neither row moves**,
+and the reason is no longer "not re-derived": it is a fact about the tree that a
+count settles and that nobody had run.
+
+### §16.1 S3's RED WHEN has three conjuncts, and they are not equally satisfied
+
+Quoted from §12 rather than paraphrased — *"one `PresenceEstimate` store and
+fusion layer exists behind the ladder **and** all four of `circle_presence`,
+`trip_crew_location_sessions`, `locateFriendsSession` and the map's
+`social_zone`/`buddy_zone`/`crew_member` kinds **read through it** — proven by a
+test that a second presence write path is unrepresentable"*:
+
+| Conjunct | Measured |
+|---|---|
+| (a) one store and fusion layer, behind the ladder | **HOLDS.** `artifacts/api-server/src/presence/fusion/store.ts:430#export class PresenceFusionStore` imports the precision ladder from `../domain/types.js` and exposes `admit` / `read` / `resolve` / `sweep`. |
+| (b) all four **read** through it | **PARTLY, and not in the sense the row means.** See §16.2. |
+| (c) unrepresentability proven by a test | **HOLDS as written.** `src/test/presenceFusionUnrepresentable.test.ts` type-checks six negative fixtures against the real store with a real `ts.Program`, plus a SANCTIONED seventh that must produce no diagnostic — which is what stops the file passing vacuously — and repeats every attempt at run time behind `as any`, because *"a compile-time-only lock is a lock with a cast-shaped key"*. |
+
+Conjunct (b) decides the row, and it is the one that does not hold.
+
+### §16.2 THE MEASUREMENT: four writers, zero cross-source readers
+
+Counted across `src/**` with tests excluded, on this tree:
+
+| Method | What it is | Production callers |
+|---|---|---|
+| `presenceFusion.admit` | mint one source's estimate | **4** — `lib/circleResponseShaper.ts:199`, `domain/trips/services/TripCrewLocationService.ts:194`, `lib/locateFriendsSession.ts:904`, `lib/mapAggregation.ts:568` |
+| `presenceFusion.read` | look up a retained estimate | **0** |
+| `presenceFusion.resolve` | **fuse across sources** | **0** |
+| `presenceFusion.sweep` | expire | **0 directly** (reached from `admit`; see §16.4) |
+| `presenceFusion.clear` | drop all | **0** |
+
+All four sources write through the store, and each then consumes **its own**
+admission synchronously — `return admission.ok ? admission.estimate : null`.
+None of them ever asks the store a question about another source. The only
+mentions of `resolve` outside the store and its own tests are four COMMENTS, one
+per call site, each saying that `PresenceFusionStore.resolve` *may* fuse the
+claim with the other three models. It is a sentence describing something that
+does not happen.
+
+**So the store is a shared GATE, not shared STATE.** What it genuinely delivers
+is a single write discipline: one minter, a forgeable-capability check, the
+precision ladder applied on the way in, and a point dropped when the ceiling
+says `venue`. That is real and it is worth having. What S3 asks for is the next
+thing — that the four models become ONE model — and four models minted by one
+gate and never fused are still four models. The row grades the fusion, because
+the fusion is what makes them one.
+
+### §16.3 This is the THIRD instance of one defect class in this census
+
+Worth naming as a class rather than as three coincidences, because it is what
+the next lane should look for first:
+
+| Row | The module | The defect |
+|---|---|---|
+| S42 · S52 | `lib/vibeInference` | Existed, correct, **no production caller at all**, until `lib/sensingWindowAggregate` was written this pass. |
+| S49 | the §24 protected-zone pass | Built, reachable, fail-closed — and **inert on every path**, because no caller supplied the zones or the positions. |
+| **S3 · S106** | `presence/fusion/store` | Four writers, **no cross-source reader**: the fusion entry point has no caller. |
+
+In all three the code is genuinely there, genuinely correct, and genuinely does
+not do the thing the row is about. A census that graded *"is it built"* would
+read all three green.
+
+### §16.4 A correction made in the course of writing this, kept rather than hidden
+
+The first draft of this section said the one-hour `PRESENCE_ESTIMATE_TTL_MS` was
+*"not enforced by anything today"*, reasoning that `sweep` has no external caller
+and is invoked only from inside the store. **That was wrong, and reading the
+object rather than the sentence about it is what caught it.** `store.ts:630#    if (nowMs !== null) this.sweep(nowMs);`
+sits inside the private `#retain`, which `admit` calls at `store.ts:525#    this.#retain(estimate, nowMs);` — on the WRITE
+path, not the read path. So the store does expire, on every admit that is given
+a clock.
+
+One real asymmetry survives that correction, stated as an observation and not as
+a defect: `circleResponseShaper` passes `null` for `nowMs`, so its admissions
+retain without sweeping. That is coherent with what a circle row is — a standing
+self-assertion rather than a sighting, with no coordinate columns behind it — and
+the other three sources pass a real clock, so the map is swept on their traffic.
+A lane wiring the first reader should confirm that still holds rather than assume
+it.
+
+### §16.5 What would move these rows, stated so it is one step
+
+**RED WHEN** — restated narrower and checkable, making §12's conjunct (b)
+precise rather than replacing it: a production consumer calls
+`presenceFusion.resolve` for at least one surface, that surface's output is
+derived from the fused estimate rather than from one source's own admission, and
+a test asserts the resolver is reached from the surface rather than from a test.
+The write discipline and the unrepresentability proof are already in hand; only
+the fused read is missing.
+
+**WHO**: a lane. This needs no owner decision, no migration and no deployment —
+which distinguishes it from every other `W` in §14, and makes it the cheapest
+remaining move in this census.
+
+### §16.6 MOVES NOTHING
+
+**C 103 · W 21 · N 2 · X 1 — unchanged.** §14's headline stands. S3 and S106
+stay `W`, now on evidence rather than on an unverified lane report.
