@@ -145,12 +145,40 @@ function extractIntelPolicies(dir: string): Policy[] {
 const BARE_OWN_ROW = /^\(?\s*(actor_id|user_id)\s*=\s*auth\.uid\(\)\s*\)?$/;
 
 /**
+ * The SECOND shape with the same property, and why there are now two.
+ *
+ * 3002 replaces the account id stored in `actor_id` with a rotating contributor
+ * token, so `actor_id = auth.uid()` stops matching ANYTHING the day it lands —
+ * a contributor could not see their own rows. The policy is re-keyed to the
+ * caller's OWN tokens, derived inside a SECURITY DEFINER function from
+ * `auth.uid()` and the peppers:
+ *
+ *     actor_id = ANY (public.intel_self_contributor_tokens())
+ *
+ * THE PROPERTY THIS FILE GUARDS IS UNCHANGED, and that is the point of
+ * admitting the shape rather than relaxing the rule. For a NULL `actor_id`,
+ * `NULL = ANY (...)` is NULL — denied — exactly as the bare equality is. And an
+ * anonymous caller has no `auth.uid()`, so the function returns an EMPTY array
+ * and `= ANY ('{}')` is FALSE for every row, which is stricter than the bare
+ * form rather than looser.
+ *
+ * It is pinned as an exact literal, not a pattern: `= ANY (<anything>)` would
+ * admit a policy keyed on somebody ELSE'S tokens.
+ */
+const SELF_TOKEN_OWN_ROW =
+  /^\(?\s*actor_id\s*=\s*ANY\s*\(\s*public\.intel_self_contributor_tokens\(\)\s*\)\s*\)?$/;
+
+/** Either shape. Both deny a NULL identity, and nothing else may be used. */
+const OWN_ROW_SHAPES = [BARE_OWN_ROW, SELF_TOKEN_OWN_ROW];
+const isOwnRowShape = (pred: string): boolean => OWN_ROW_SHAPES.some((re) => re.test(pred));
+
+/**
  * Evaluate a predicate for a row whose identity column is NULL, three-valued:
  * the bare equality is NULL (denied); anything mentioning IS NULL / coalesce /
  * OR / a bare true is treated as potentially TRUE (admits) and refused.
  */
 function admitsNullActor(pred: string): boolean {
-  if (BARE_OWN_ROW.test(pred)) return false;
+  if (isOwnRowShape(pred)) return false;
   return /\bIS\s+NULL\b|coalesce\s*\(|\bOR\b|^\s*true\s*$|\btrue\b/i.test(pred) || !/(actor_id|user_id)/.test(pred);
 }
 
@@ -162,16 +190,47 @@ describe("every own-row RLS policy on an intel table fails closed for a NULL act
     assert.ok(policies.some((p) => p.name === "intel_observations_select_own"));
   });
 
-  it("a client-facing policy is the bare own-row equality, which a NULL identity can never satisfy", () => {
+  it("a client-facing policy is an own-row shape, which a NULL identity can never satisfy", () => {
     for (const p of policies) {
       if (p.roles === "service_role") continue; // covered below
       for (const pred of [p.using, p.withCheck]) {
         if (pred === null) continue;
         assert.ok(!admitsNullActor(pred), `${p.file} ${p.name} on ${p.table}: "${pred}" could admit a NULL-actor row to ${p.roles}`);
-        assert.match(pred, BARE_OWN_ROW, `${p.file} ${p.name}: expected the bare own-row equality, got "${pred}"`);
+        assert.ok(
+          isOwnRowShape(pred),
+          `${p.file} ${p.name}: expected the bare own-row equality or the 3002 self-token form, got "${pred}"`,
+        );
       }
       assert.ok(/^(authenticated|anon|PUBLIC)$/.test(p.roles), `${p.name}: unexpected role list "${p.roles}"`);
       assert.notEqual(p.roles, "anon", `${p.name}: anon must never hold an intel policy`);
+    }
+  });
+
+  it("the self-token shape is pinned to the caller's OWN tokens, not to ANY token source", () => {
+    // Admitting a second shape is where a rule usually springs a leak. The
+    // literal is exact: a policy keyed on somebody else's tokens, or on a
+    // function this file does not name, is refused by the same assertion that
+    // admits the legitimate one.
+    assert.ok(isOwnRowShape("actor_id = ANY (public.intel_self_contributor_tokens())"));
+    // WRONG SOURCE. These deny a NULL actor perfectly well — `NULL = ANY (…)`
+    // is NULL either way — so `admitsNullActor` is the wrong question for them
+    // and is deliberately NOT asserted here. What makes them unacceptable is
+    // that they read rows keyed on something other than the caller's own
+    // tokens, and the exact literal is what refuses them.
+    for (const wrongSource of [
+      "actor_id = ANY (public.intel_contributor_tokens_for_actor(some_other))",
+      "actor_id = ANY (SELECT token FROM public.intel_contributor_pepper)",
+    ]) {
+      assert.equal(isOwnRowShape(wrongSource), false, `"${wrongSource}" must not pass as an own-row shape`);
+    }
+    // WIDENED. These fail BOTH tests: not an own-row shape, and genuinely able
+    // to admit a row whose identity column is NULL.
+    for (const widened of [
+      "actor_id = ANY (public.intel_self_contributor_tokens()) OR true",
+      "actor_id IS NULL OR actor_id = ANY (public.intel_self_contributor_tokens())",
+    ]) {
+      assert.equal(isOwnRowShape(widened), false, `"${widened}" must not pass as an own-row shape`);
+      assert.equal(admitsNullActor(widened), true, `"${widened}" must be reported as admitting a NULL actor`);
     }
   });
 

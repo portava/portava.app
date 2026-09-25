@@ -77,6 +77,22 @@ const flat = (s: string) => s.replace(/\s+/g, " ");
  * 2136_profiles_auth_users_convergence.sql also drops foreign keys to profiles
  * by catalogue lookup, and would be picked by the first two.
  */
+/**
+ * True when the SQL contains an ARRAY literal holding exactly the three
+ * contribution tables — the shape 3002 loops over to drop the constraint and
+ * the NOT NULL on each. Order-insensitive; whitespace-tolerant.
+ */
+function contributionTableArrayLiteral(sql: string): boolean {
+  const arrays = sql.match(/ARRAY\s*\[[^\]]*\]/g) ?? [];
+  return arrays.some((a) => {
+    const names = (a.match(/'([a-z_]+)'/g) ?? []).map((q) => q.slice(1, -1));
+    return (
+      names.length === CONTRIBUTION_TABLES.length &&
+      CONTRIBUTION_TABLES.every((t) => names.includes(t))
+    );
+  });
+}
+
 function fkDropper(): { file: string; sql: string } {
   const candidates = corpus()
     .filter((m) => (Number(m.file.split("_")[0]) || 0) > 2130)
@@ -84,7 +100,16 @@ function fkDropper(): { file: string; sql: string } {
       (m) =>
         /DROP CONSTRAINT/.test(m.sql) &&
         /confrelid\s*=\s*'public\.profiles'::regclass/.test(m.sql) &&
-        CONTRIBUTION_TABLES.every((t) => m.sql.includes(`'${t}'`)),
+        // THE THREE NAMES MUST DRIVE THE DROP, not merely appear in the file.
+        //
+        // The filter used to accept any migration that quoted all three names
+        // anywhere. 3003 quotes them as RETURN values inside the erasure
+        // function (`table_name := 'intel_evidence'`) while dropping foreign
+        // keys on three ENTIRELY DIFFERENT tables, so it was selected as "the
+        // dropper" and then failed for not dropping a NOT NULL it was never
+        // about. A quotation is not a DDL target; the array literal that the
+        // loop iterates is.
+        contributionTableArrayLiteral(m.sql),
     );
   assert.ok(
     candidates.length > 0,

@@ -134,6 +134,41 @@ describe("§9.1 — the sensing contribution stack is imported by its own siblin
     [join("lib", "sensingPresenceState.ts"), "a type import of the aggregate's decision; reads no store"],
     [join("lib", "sensingRevocationLineage.ts"), "models a revocation against the store's predicate; pure"],
     [join("lib", "sensingRetentionScheduler.ts"), "the TTL sweep — it DELETES; src/index.ts starts it and imports nothing else from the stack"],
+    // ── THREE ENTRIES ADDED 2026-09-25, AFTER THE ROWS WERE RE-DERIVED ───────
+    // This tripwire's failure message is an INSTRUCTION — "re-derive them in
+    // census-sensing rather than allowlisting here" — and it was followed
+    // before any of these was written down. census-sensing §14 re-derives every
+    // row each of them touches, and moves NOT ONE of them, because each turns
+    // on something applied to no database. The allowlist follows the census;
+    // the census did not follow the allowlist.
+    [
+      join("lib", "sensingWindowAggregate.ts"),
+      "the per-window aggregation S42/S52 waited on (census-sensing §14.2): joins adjacent k-gated cohorts " +
+        "into arrival/departure rates, coverage and dwell and hands them to vibeInference. A refused bucket " +
+        "contributes nothing, so no rate is computed over a sub-k cohort, and no token reaches its result. " +
+        "Pure; no route, no flag, no publisher — and its inputs are a table with zero rows.",
+    ],
+    [
+      join("routes", "sensingIngest.ts"),
+      "the ONE transport, and the reason the 'no route' assertion below is now scoped rather than absolute. " +
+        "POST /v1/sensing/contributions is authenticated by the opaque contribution credential and by nothing " +
+        "else. It REFUSES EVERY CALLER in production: SENSING_CONTRIBUTOR_PEPPER is unset and the pepper check " +
+        "is the handler's first statement. census-sensing §14.2 holds S18 and S32 at W for exactly that.",
+    ],
+    [
+      join("services", "intel", "IntelCaptureService.ts"),
+      "the HUMAN-CLAIM capture path, which is a different population: requireUser-bound, actor-keyed, and " +
+        "outside the anonymous store entirely. It imports sensingSubjectReconciliation only to decide which of " +
+        "§18.3's four outcomes a cluster is, which is the resolver's purpose. census-sensing §14.2 re-derives " +
+        "S111 against it and holds it at W: 3002 makes the two unowned outcomes STORABLE and is applied nowhere.",
+    ],
+    [
+      join("routes", "mapObservations.ts"),
+      "the §22 zone-contribution route. It acquired this import when resolveZoneAnchorSubject was DELETED — " +
+        "the nearest-place snap S97 names — and the subject now comes from the resolver, which answers " +
+        "`unknown` without an ownership signal. census-sensing §14.2 holds S97 at W and records the deployment " +
+        "hazard: production still has subject_id NOT NULL, so 3002 must be applied before this code ships.",
+    ],
   ]);
 
   it("the importer set is EXACTLY the allowlist — no route, no service, no producer", () => {
@@ -147,21 +182,65 @@ describe("§9.1 — the sensing contribution stack is imported by its own siblin
     for (const [, reason] of PERMITTED) assert.ok(reason.length > 20, "every entry gives a reason");
   });
 
-  it("no route and no service under services/ imports any of the ten", () => {
+  it("the only route and service surfaces are the three the census re-derived", () => {
+    // WHAT THIS USED TO ASSERT: that NO route and NO service imported any of the
+    // ten, because "an HTTP or service surface for the anonymous sensing path is
+    // an owner decision, not an implementation detail". That was right, and the
+    // owner took the posture decision on 2026-09-16, so a transport became
+    // buildable and was built.
+    //
+    // IT IS NOT RELAXED TO "ANY ROUTE MAY". It is narrowed to exactly three
+    // named files, each re-derived in census-sensing §14.2, so a FOURTH surface
+    // is as red as the first one would have been. Zero is also red: deleting the
+    // ingest without re-deriving S18/S32 would leave the census claiming a
+    // transport that no longer exists.
     const found = importers();
-    const offenders = [...found.keys()].filter((f) => f.startsWith("routes" + sep) || f.startsWith("services" + sep));
-    assert.deepEqual(offenders, [], "an HTTP or service surface for the anonymous sensing path is an owner decision, not an implementation detail");
+    const surfaces = [...found.keys()]
+      .filter((f) => f.startsWith("routes" + sep) || f.startsWith("services" + sep))
+      .sort();
+    assert.deepEqual(
+      surfaces,
+      [
+        join("routes", "mapObservations.ts"),
+        join("routes", "sensingIngest.ts"),
+        join("services", "intel", "IntelCaptureService.ts"),
+      ],
+      "the set of route/service surfaces over the sensing stack changed — re-derive S18/S32/S97/S111 in census-sensing rather than editing this list",
+    );
   });
 
-  it("S111 — the §18.3 subject resolver still has no caller at all", () => {
-    // The row's stated blocker. It is not that the resolver is wrong: all four
-    // outcomes are representable and proximity never resolves ownership. It is
-    // that intel_observations.subject_id is NOT NULL REFERENCES places(id), so
-    // `unknown` and `temporary_world_object` cannot be STORED — and giving the
-    // resolver a caller would not change that.
+  it("S111 — the resolver has callers now, and the row still cannot move", () => {
+    // THE ROW'S BLOCKER WAS NEVER THE CALLER, and this case is the clearest
+    // demonstration of it in the file. It used to assert the resolver had none.
+    // It has two. S111 does not move, because what blocks it is that
+    // intel_observations.subject_id is NOT NULL REFERENCES places(id) — so
+    // `unknown` and `temporary_world_object` cannot be STORED however many
+    // callers resolve them. 3002 drops that NOT NULL and is applied to no
+    // database; production was read on 2026-09-25 and still has it.
+    //
+    // The case is kept, pointed at the real condition, so that the day 3002
+    // lands the row is re-derived rather than quietly assumed.
     const found = importers();
-    const callers = [...found.entries()].filter(([, mods]) => mods.includes("sensingSubjectReconciliation"));
-    assert.deepEqual(callers.map(([f]) => f), [], "sensingSubjectReconciliation acquired a caller; re-derive S111");
+    const callers = [...found.entries()]
+      .filter(([, mods]) => mods.includes("sensingSubjectReconciliation"))
+      .map(([f]) => f)
+      .sort();
+    assert.deepEqual(
+      callers,
+      [join("routes", "mapObservations.ts"), join("services", "intel", "IntelCaptureService.ts")],
+      "the resolver's caller set changed; re-derive S111 in census-sensing §14",
+    );
+
+    // AND THE CONDITION THAT ACTUALLY HOLDS IT: some migration in the tree drops
+    // the NOT NULL. When it is applied, S111 is re-derivable; until then it is W.
+    const dropsSubjectNotNull = readdirSync(join(SRC, "migrations")).some((f) => {
+      try {
+        return /ALTER TABLE public\.intel_observations ALTER COLUMN subject_id DROP NOT NULL/.test(
+          readFileSync(join(SRC, "migrations", f), "utf8"),
+        );
+      } catch { return false; }
+    });
+    assert.equal(dropsSubjectNotNull, true, "no migration drops intel_observations.subject_id NOT NULL — S111's blocker is not even addressed in the tree");
   });
 
   // ── THIS TRIPWIRE FIRED, AND THAT IS WHAT IT WAS FOR ───────────────────────

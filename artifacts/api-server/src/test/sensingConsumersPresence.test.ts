@@ -38,6 +38,7 @@ import {
   SENSING_PRESENCE_HEADER,
   buildSensingPresenceLines,
   isConsumablePresenceState,
+  readSensingPresenceGate,
   type ConsumablePresenceState,
 } from "../compass/CompassSensingPresence.js";
 import { buildSensingPresenceState } from "../lib/sensingPresenceState.js";
@@ -52,6 +53,17 @@ import {
 } from "../lib/sensingAnonStore.js";
 
 process.env.SENSING_CONTRIBUTOR_PEPPER ??= "p".repeat(40);
+
+/**
+ * A gate that PERMITS, obtained the only way one can be: by asking a database
+ * that says the flag is on. There is no literal to write here — the gate
+ * carries a private brand precisely so a caller cannot mint permission — which
+ * is the property that makes the flag load-bearing rather than advisory.
+ */
+const flagClient = (enabled: boolean): any => ({
+  from: () => ({ select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: { enabled }, error: null }) }) }) }),
+});
+const PERMITTED = await readSensingPresenceGate(flagClient(true));
 
 const SRC = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const NOW = Date.UTC(2026, 8, 20, 22, 0, 0);
@@ -90,7 +102,7 @@ describe("S39 — the consumer really consumes what the engine really produces",
     const { state } = realState(30, 6);
     assert.equal(state.presence, "observed", "fixture cohort must clear the gate");
     assert.ok(isConsumablePresenceState(state), "the consumed shape has drifted from the produced one");
-    const lines = buildSensingPresenceLines([state as unknown as ConsumablePresenceState]);
+    const lines = buildSensingPresenceLines([state as unknown as ConsumablePresenceState], PERMITTED);
     assert.equal(lines[0], SENSING_PRESENCE_HEADER);
     assert.match(lines[1], /activity OBSERVED/);
     assert.match(lines[1], new RegExp(`truth ${state.truthClass}`));
@@ -102,7 +114,7 @@ describe("S39 — the consumer really consumes what the engine really produces",
     // not turn that refusal into a statement about the world.
     const { state } = realState(3, 3);
     assert.equal(state.presence, "unknown", "fixture must be refused by the gate");
-    const line = buildSensingPresenceLines([state as unknown as ConsumablePresenceState])[1];
+    const line = buildSensingPresenceLines([state as unknown as ConsumablePresenceState], PERMITTED)[1];
     assert.match(line, /activity NOT KNOWN/);
     assert.match(line, /Do not say it is quiet, empty or dead/);
     // No number of any kind appears for an unknown cohort.
@@ -112,7 +124,7 @@ describe("S39 — the consumer really consumes what the engine really produces",
 
   it("the ordinal stays UNLABELLED — busy ≠ good", () => {
     const { state } = realState(30, 6);
-    const line = buildSensingPresenceLines([state as unknown as ConsumablePresenceState])[1];
+    const line = buildSensingPresenceLines([state as unknown as ConsumablePresenceState], PERMITTED)[1];
     assert.match(line, /activity bucket \d of 4 \(unlabelled; reduction v1\)/);
     for (const invented of ["busy", "quiet", "packed", "lively", "dead", "heaving"]) {
       assert.equal(new RegExp(`\\b${invented}\\b`, "i").test(line), false, `invented the word "${invented}"`);
@@ -121,7 +133,7 @@ describe("S39 — the consumer really consumes what the engine really produces",
 
   it("names no person: no contributor token, group token or count survives", () => {
     const { rows, state } = realState(37, 6);
-    const rendered = buildSensingPresenceLines([state as unknown as ConsumablePresenceState]).join("\n");
+    const rendered = buildSensingPresenceLines([state as unknown as ConsumablePresenceState], PERMITTED).join("\n");
     for (const r of rows) {
       assert.equal(rendered.includes(r.contributor_token), false, "a contributor token reached the prompt");
       if (r.group_token) assert.equal(rendered.includes(r.group_token), false, "a group token reached the prompt");
@@ -134,29 +146,84 @@ describe("S39 — the consumer really consumes what the engine really produces",
 
   it("the withholding REASON is not rendered — which gate refused is itself information", () => {
     const { state } = realState(3, 3);
-    const rendered = buildSensingPresenceLines([state as unknown as ConsumablePresenceState]).join("\n");
+    const rendered = buildSensingPresenceLines([state as unknown as ConsumablePresenceState], PERMITTED).join("\n");
     assert.ok(state.provenance.withheld, "fixture must carry a reason");
     assert.equal(rendered.includes(String(state.provenance.withheld)), false);
   });
 });
 
 describe("S39 — it is inert, and decision #9 is why", () => {
-  it("the flag name is RESERVED and deliberately not read — a gate nothing can flip is not a gate", () => {
+  it("the READ and the SEED exist together, or neither does", () => {
+    // WHAT THIS CASE USED TO SAY, and why it says something stronger now.
+    //
+    // It asserted the flag was read by NOTHING and seeded by NO migration,
+    // because check-flag-polarity refuses a read of a name no migration seeds
+    // ("PHANTOM FLAG — READ BUT NEVER SEEDED … the gate LOOKS deliberate and is
+    // not"). Its own instruction was: "If a read appears here, a migration
+    // seeding the flag must appear with it."
+    //
+    // 3004 seeds it FALSE, so the read appeared with it — and the SAME guard
+    // catches the mirror failure from the other side: "SEEDED BUT NEVER READ".
+    // A switch nothing reads is as dead as a gate nothing can flip. So the
+    // invariant is the PAIR, which fails on either half alone.
     assert.equal(SENSING_PRESENCE_CONTEXT_FLAG, "sensing_presence_context_enabled");
     const code = readFileSync(join(SRC, "compass", "CompassSensingPresence.ts"), "utf8");
-    // No flag READ. scripts/check-flag-polarity.mjs refuses a read of a name no
-    // migration seeds ("PHANTOM FLAG — READ BUT NEVER SEEDED … the gate LOOKS
-    // deliberate and is not"), and it was right: this module cannot ship a
-    // switch for a decision it does not own. If a read appears here, a
-    // migration seeding the flag must appear with it.
-    assert.doesNotMatch(code, /isFlagEnabled|featureFlags/);
-    // And the name is seeded by no migration today, which is the fact above.
+    const reads = /isFlagEnabled/.test(code);
     const migrations = readdirSync(join(SRC, "migrations"));
     const seeded = migrations.some((f) => {
       try { return readFileSync(join(SRC, "migrations", f), "utf8").includes("sensing_presence_context_enabled"); }
       catch { return false; }
     });
-    assert.equal(seeded, false, "a migration now seeds the flag — S39 should be re-derived");
+    assert.equal(reads, seeded, reads
+      ? "the module reads the flag but no migration seeds it — a phantom gate"
+      : "a migration seeds the flag but nothing reads it — a dead switch");
+    assert.equal(reads, true, "3004 shipped, so both halves must be present");
+  });
+
+  it("PERMISSION CANNOT BE MINTED — only a database that says yes produces it", async () => {
+    // The whole reason the gate is a branded object and not a boolean. A
+    // future producer cannot forget to consult the flag, because the formatter
+    // will not accept anything a flag read did not return.
+    const off = await readSensingPresenceGate(flagClient(false));
+    assert.equal(off.enabled, false);
+    assert.equal(off.reason, "flag_off");
+    const { state } = realState(30, 6);
+    assert.deepEqual(
+      buildSensingPresenceLines([state as unknown as ConsumablePresenceState], off),
+      [],
+      "a k-CLEARED cohort still renders nothing while decision #9 stands",
+    );
+  });
+
+  it("the gate FAILS CLOSED on every path that is not an explicit true", async () => {
+    const noClient = await readSensingPresenceGate(null);
+    assert.equal(noClient.enabled, false);
+    assert.equal(noClient.reason, "no_client");
+
+    const thrower: any = { from: () => { throw new Error("boom"); } };
+    const unreadable = await readSensingPresenceGate(thrower);
+    assert.equal(unreadable.enabled, false, "an unreadable flag is OFF, never ON");
+    // `flag_off` rather than a distinct reason: isFlagEnabled folds every error
+    // into false before this module sees it, and telling the two apart would
+    // need a SECOND flag reader in the tree. The enabled decision — the one
+    // that matters — is the safe one either way.
+    assert.equal(unreadable.reason, "flag_off");
+
+    const absent: any = {
+      from: () => ({ select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: null, error: null }) }) }) }),
+    };
+    assert.equal((await readSensingPresenceGate(absent)).enabled, false, "an absent row is OFF");
+  });
+
+  it("the gate is checked BEFORE the states are inspected", async () => {
+    // A rendering decision that depended on what the cohort contained would
+    // leak the cohort: "nothing rendered" would mean something different for a
+    // refused cohort than for a refused flag.
+    const off = await readSensingPresenceGate(flagClient(false));
+    assert.deepEqual(buildSensingPresenceLines([], off), []);
+    assert.deepEqual(buildSensingPresenceLines([{ kind: "nope" } as never], off), []);
+    const { state } = realState(3, 3);
+    assert.deepEqual(buildSensingPresenceLines([state as unknown as ConsumablePresenceState], off), []);
   });
 
   it("THE ROW IS BLOCKED: no route builds a presence state, because nothing may read the store", () => {
@@ -177,7 +244,7 @@ describe("S39 — it is inert, and decision #9 is why", () => {
   });
 
   it("an empty or unusable input renders nothing rather than an empty header", () => {
-    assert.deepEqual(buildSensingPresenceLines([]), []);
-    assert.deepEqual(buildSensingPresenceLines([{ kind: "nope" } as never]), []);
+    assert.deepEqual(buildSensingPresenceLines([], PERMITTED), []);
+    assert.deepEqual(buildSensingPresenceLines([{ kind: "nope" } as never], PERMITTED), []);
   });
 });

@@ -7,9 +7,15 @@
  * over UNCHANGED: moving a reader is not the moment to retune its caching. Discovery now needs the
  * same zones for the same reason — `lib/discoveryCandidate.coverageForCandidate`
  * cannot publish a cohort bucket without them — and the obvious move, copying
- * the loader, is the failure `lib/sensingCoverageAggregate`'s header names
- * about thresholds: two readers of one privacy policy drift apart, and the one
- * that drifts LOOSE is the one nobody notices.
+ * the loader, is the failure the sensing aggregation modules warn about for
+ * thresholds: two readers of one privacy policy drift apart, and the one that
+ * drifts LOOSE is the one nobody notices.
+ *
+ * (The sensing modules are described rather than named here on purpose. The
+ * anonymous contribution store's tripwire polices PROSE MENTIONS as well as
+ * imports — so a real caller cannot hide behind "it is only mentioned" — and a
+ * comment naming one would register this file as a referrer of a store it never
+ * touches.)
  *
  * So the loader moved here and `mapProjection` calls it. There is one cache,
  * one parse, and one answer to "what does this database's policy say".

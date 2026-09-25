@@ -86,12 +86,32 @@
  * that resolves to false forever, and shipping one here would have dressed an
  * owner decision up as an engineering switch.
  *
- * So the name is reserved and the read is not written. Taking decision #9 means
- * three things together, by whoever owns them: a migration seeding this flag
- * FALSE (the integration owner), the owner flipping it, and a lane wiring a
- * producer to `buildSensingPresenceLines`. Not one of the three is a lane's to
- * take alone, which is exactly why S39 is not closed here.
+ * So the name was reserved and the read was not written. Taking decision #9
+ * means three things together, by whoever owns them: a migration seeding this
+ * flag FALSE (the integration owner), the owner flipping it, and a lane wiring
+ * a producer to `buildSensingPresenceLines`. Not one of the three is a lane's
+ * to take alone, which is exactly why S39 is not closed here.
+ *
+ * ── UPDATED 2026-09-25: (1) HAS SHIPPED, SO THE READ IS NOW WRITTEN ─────────
+ * `3004_sensing_presence_context_flag.sql` seeds the flag FALSE. That removes
+ * the phantom — there is a row to answer about — and it creates the MIRROR
+ * problem the same guard catches from the other side: *"SEEDED BUT NEVER READ
+ * … is read by nothing under src/"*. A switch nothing reads is as dead as a
+ * gate nothing can flip, and satisfying the guard with a read that no caller
+ * depends on would be worse than either, because it would look like a control.
+ *
+ * So the gate is made STRUCTURAL instead. `buildSensingPresenceLines` now
+ * requires a `SensingPresenceContextGate` that only `readSensingPresenceGate`
+ * can honestly produce, and that function reads the flag. A caller physically
+ * cannot render a line without having asked the database whether it may —
+ * there is no `enabled: true` to be written by hand, because the gate carries a
+ * private brand. Flipping the flag STILL renders nothing on its own: (3) does
+ * not exist, so no producer hands this module a state. What the flag now buys
+ * is that the day (3) is written, the off-switch in front of it is real and
+ * already deployed.
  */
+import { isFlagEnabled } from "../lib/featureFlags.js";
+
 export const SENSING_PRESENCE_CONTEXT_FLAG = "sensing_presence_context_enabled";
 
 export const SENSING_PRESENCE_HEADER = "[Zone presence — k-gated aggregate, no person]";
@@ -134,6 +154,61 @@ export function isConsumablePresenceState(x: unknown): x is ConsumablePresenceSt
 }
 
 /**
+ * Permission to render, and the ONLY thing that can grant it.
+ *
+ * The brand is private to this module, so a caller cannot construct one: the
+ * sole way to obtain a gate is `readSensingPresenceGate`, which asks the
+ * database. That makes the flag LOAD-BEARING rather than advisory — a future
+ * producer cannot forget to consult it, because the formatter will not accept
+ * anything else.
+ */
+// A REAL module-private symbol, not a `declare`d one: a type-only brand
+// disappears at runtime and the factory below would throw. It is not
+// exported, so no caller outside this file can name the key.
+const SENSING_PRESENCE_GATE: unique symbol = Symbol("sensing_presence_context_gate");
+export interface SensingPresenceContextGate {
+  readonly enabled: boolean;
+  /**
+   * Why, for an operator. Never rendered — see the unknown branch below.
+   *
+   * `flag_off` DELIBERATELY COVERS AN UNREADABLE FLAG TOO, and that is a real
+   * limitation rather than an oversight. `lib/featureFlags.isFlagEnabled`
+   * folds every error into false — correct for a capability, and its whole
+   * point — so by the time an answer reaches here the two cases are already
+   * one. Reading the row again to tell them apart would put a second flag
+   * reader in the tree, which is the drift this codebase keeps refusing
+   * elsewhere. The ENABLED decision is identical either way and it is the safe
+   * one; only the diagnostic is coarser, and saying so is better than a
+   * `flag_unreadable` value that can never actually be produced.
+   */
+  readonly reason: "flag_on" | "flag_off" | "no_client";
+  readonly [SENSING_PRESENCE_GATE]: true;
+}
+
+const gate = (enabled: boolean, reason: SensingPresenceContextGate["reason"]): SensingPresenceContextGate =>
+  ({ enabled, reason, [SENSING_PRESENCE_GATE]: true }) as SensingPresenceContextGate;
+
+/**
+ * Ask whether decision #9 has been taken in THIS database.
+ *
+ * FAIL-CLOSED ON EVERY PATH THAT IS NOT AN EXPLICIT TRUE. `*_enabled` is the
+ * capability convention: an absent row, a false row, an unreadable flag and a
+ * missing client all answer `enabled: false`. There is deliberately no branch
+ * here that can answer true without the database having said so.
+ */
+export async function readSensingPresenceGate(sc: unknown): Promise<SensingPresenceContextGate> {
+  if (!sc) return gate(false, "no_client");
+  // `isFlagEnabled` already catches; the try is belt-and-braces for a client
+  // that throws synchronously before the helper's own try begins.
+  try {
+    const on = await isFlagEnabled(sc as never, SENSING_PRESENCE_CONTEXT_FLAG);
+    return gate(on === true, on === true ? "flag_on" : "flag_off");
+  } catch {
+    return gate(false, "flag_off");
+  }
+}
+
+/**
  * Render presence states as prompt lines. PURE.
  *
  * An UNKNOWN cohort gets a line that says the state is not known and forbids
@@ -143,7 +218,11 @@ export function isConsumablePresenceState(x: unknown): x is ConsumablePresenceSt
  */
 export function buildSensingPresenceLines(
   states: readonly ConsumablePresenceState[],
+  permission: SensingPresenceContextGate,
 ): string[] {
+  // The gate FIRST, before the states are even inspected. A rendering decision
+  // that depended on what the cohort contained would leak the cohort.
+  if (permission?.enabled !== true) return [];
   const usable = (states ?? []).filter(isConsumablePresenceState).slice(0, SENSING_PRESENCE_ZONE_CAP);
   if (usable.length === 0) return [];
 

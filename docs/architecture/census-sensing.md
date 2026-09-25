@@ -3885,3 +3885,135 @@ not a claim that a single safety candidate has ever been filed. That distinction
 the same one this corpus applied to T240/T242 (a field in a migration no database
 has run) and the one Q5's ruling states as a rule: a service with no production
 caller is not completion.
+
+
+## §14 — 2026-09-25: the twenty-four non-C rows re-derived against what is APPLIED
+
+| | |
+|---|---|
+| **Measured at** | `sensing100-integration`, after the S42/S52 producer, the S118 identity bridges, the S49 zone pass and the S39 flag. Production read directly (`ajrurzioarfkagpuxfnb`) on the same day. |
+| **Why it exists** | §10.5 re-derived the non-C rows against the TREE. Five lanes have since built into that tree, and three of §10.5's RED WHEN conditions have fired there. This section asks the second question, which §10.5 did not: **is any of it applied?** |
+
+### §14.0 The reconciliation that had to come first
+
+A handoff claimed sixteen rows built. It said **thirteen** and listed **fourteen**.
+Recounted from §10.5's table rather than from the handoff:
+
+| | |
+|---|---|
+| The 21 W rows | S3 S18 S19 S21 S24 S26 S32 S39 S42 S49 S51 S52 S66 S79 S83 S92 S97 S106 S111 S112 S118 |
+| Claimed by a lane | **14** W — S3 S18 S19 S21 S32 S51 S79 S83 S92 S97 S106 S111 S112 S118 — plus the 2 N rows S28 S29. Fourteen, not thirteen. |
+| Claimed by nobody | **7** — S24 S26 S39 S42 S49 S52 S66 |
+| Denominator | **127**, unchanged. It is not shrunk here and no row is excluded. |
+| S17 | The single **X**, and correctly OUTSIDE the 21: non-C = 24 = 21 W + 2 N + 1 X. A reconciliation that folded it into the W list would have inflated the "buildable" set by one. |
+
+`of-built` — C/(C+W) — is the metric this section moves. At 103 C it reads
+**103 / 124 = 83.1 %**, and the 16.9 % gap is 21/124: 11.3 points claimed-built,
+1.6 S42/S52, 2.4 S24/S39/S49, 1.6 S26/S66.
+
+**Against `origin/main`: zero verdict differences.** All 122 id-keyed rows grade
+identically there and here; the only diffs are §13 and citation line numbers. So
+nothing below is a disagreement with main — it is new work measured against it.
+
+### §14.1 THE RULE THIS SECTION IS WRITTEN UNDER
+
+**A RED WHEN that fired in the tree moves a row to C only if the row's claim is
+about the tree.** Where the claim is about a database, the apply is the evidence
+and the tree is not. That distinction is the whole of §14, and it is why most of
+what follows does NOT move.
+
+Production, measured 2026-09-25 rather than inferred:
+
+* `2315`, `2340`, `2480`, `2998` applied (ledger, `applied_by` manual). `2481` absent, correctly.
+* **`3002`, `3003`, `3004`, `3110`, `3310` applied to NO database.**
+* All five intel tables still carry `actor_id -> profiles(id)`. `intel_observations.subject_id` is still `NOT NULL REFERENCES places(id)`.
+* `intel_contribution_retention_enabled` FALSE · `intel_capture_quick_signal` TRUE · `layover_safety_engine_enabled` TRUE · no `intel_safety_candidates_enabled` row · no `sensing_presence_context_enabled` row.
+* Every sensing and intel table holds **zero rows**, and `.agents/memory/production-has-no-real-users.md` records why: all 58 profiles are owner-created test accounts. A count of 0 is the expected state, not a defect.
+
+### §14.2 Rows whose RED WHEN fired in the TREE and NOT in a database
+
+| Row | §14 verdict | What fired, and what is still missing |
+|---|---|---|
+| S19 | **W** | 3002 drops the `actor_id -> profiles` FK on all three contribution tables by catalogue lookup, and 3003 does the same for the bridge tables. Neither is applied; production's five FKs were read today and all five stand. The row's own RED WHEN says *"a reviewed migration drops … the FK"* — the migration exists and is reviewed, and the FK is still there. |
+| S118 | **W** | Depends on S19, and on something §10.5 did not know. Post-3002 the reverse-link does not close: `intel_presence_verifications` holds `observation_id NOT NULL` beside an account `actor_id`, so one join resolves a tokenised observation to its author. 3003 tokenises it and two siblings, and RULES `intel_reward_ledger` unchanged — you cannot pay a token, and it is safe only because it names no contribution, which 3003 guards with a postcondition. Unapplied. |
+| S97 | **W** | **FIRED in the tree**: `resolveZoneAnchorSubject`, its haversine, its bbox pre-filter and its 3 km ceiling are deleted, and the subject now comes from `lib/sensingSubjectReconciliation`, which answers `unknown` without an ownership signal. It does NOT move, and the reason is a deployment hazard rather than a technicality: production still has `subject_id NOT NULL`, so this code ahead of 3002 makes a zone contribution fail its NOT NULL instead of storing `unknown`. **3002 must be applied before this code ships.** |
+| S111 | **W** | 3002 drops `subject_id NOT NULL` and adds a CHECK admitting all four §18.3 outcomes; the resolver has acquired two callers (`routes/mapObservations.ts`, `services/intel/IntelCaptureService.ts`), which §10.5 recorded as machine-checked absent. Unapplied, so `temporary_world_object` and `unknown` still have nowhere to be stored. |
+| S42 · S52 | **W** | **THE PRODUCER NOW EXISTS.** Measured before it was built: `lib/vibeInference` had no production caller at all. `lib/sensingWindowAggregate` joins adjacent k-gated cohorts into per-window arrival/departure rates, coverage and dwell and calls it. They stay W because the inputs are still absent: the window reads `sensing_anon_contributions`, which holds zero rows, and four features are left NULL on purpose — `motionEnergy` (the ordinal's meaning is unpinned and is an owner decision), `periodicity` and `acousticEnergy` (S28/S29), and `density`, because in this store the only population signal IS the contributor count and bucketing it twice would render "we have a lot of data" as "a lot of people are here". |
+| S49 | **W** | **FIRED, twice over, and still not C.** The conservative §24 arm was already built — a bucket is published only where a protected-zone pass cleared the row. It had never run: no caller supplied the zones or the positions, so every served `coverage` read `unknown` on every path. Both wrappers now run the pass through the one shared `lib/protectedZoneStore`. It stays W because `discovery_candidate_projection_enabled` is seeded FALSE and absent from production, so nothing serves a `DiscoveryCandidate` at all. |
+| S3 · S106 | **W** | One `FusedPresenceEstimate` store exists with a private constructor and a capability brand, and all four sources (`circle_presence`, `trip_crew_location_sessions`, `locateFriendsSession`, the map's zone kinds) declare a non-null `readsThrough`. The rows ask for more than the store existing: *"proven by a test that a second presence write path is unrepresentable"*. That proof is a compile-time claim about a type, and it has not been re-derived here against the four real call sites. Held W rather than moved on a lane's report. |
+| S18 · S32 | **W** | `POST /v1/sensing/contributions` exists and is mounted, and the anon-store tripwire was correctly upgraded from "no route" to "exactly ONE route, and it is the registered ingest". Both stay W for an operator fact, not a code one: no `SENSING_CONTRIBUTOR_PEPPER` is configured in production, and the route's FIRST statement refuses without it. A writer that refuses every caller is not a registered writer. |
+| S21 · S28 · S29 | **W / N / N** | The client half. Not re-derived here: no measurement of `travel-buddy-standalone` was taken in this pass, and §10.5's stands until one is. |
+| S79 · S83 · S92 · S112 | **W** | Compass grounding, `TripWorldContext`, memory eligibility and the revocation's session/memory stages. Each has a lane claim and none was verified in this pass beyond its wiring existing. **They are held W deliberately: an unverified claim is not evidence, and the directive this section was written under says the bookkeeping may not be called before the evidence establishes it.** |
+
+### §14.3 The three product rulings, and what became of them
+
+| Ruling | Outcome |
+|---|---|
+| **§24 (S49)** | **TAKEN, conservatively.** The census named two arms; the first — route the bucket through `protectedLocations` — is built and now actually runs. The second arm, ruling a four-value bucket non-sensitive, was NOT taken and is not needed. |
+| **decision #9 (S39, and S24 with it)** | **NOT TAKEN, and it cannot be taken here.** `sensing-input-gap.md` §3.2 offers no option to choose between — it states that publishing an aggregate to a user-visible surface IS a product change. What shipped is the integration owner's documented third of it: `3004` seeds `sensing_presence_context_enabled` FALSE, so there is a switch to flip, and `readSensingPresenceGate` makes the flag structural — `buildSensingPresenceLines` requires a branded gate only a flag read can produce. Flipping it alone still renders nothing, because no producer is wired and wiring one IS the decision. |
+| **S24 surface scope** | **The migration half is closed and the ruling half is decision #9 again.** `3110` gives the differencing gate the durable last-published store §10.5 said it needed, and `publishThroughDifferencingGate` fails closed on `previous_unreadable`. There is still no publisher, and there cannot be one until #9 — so S24 and S39 reduce to ONE question, not two. |
+
+### §14.4 S17, moved as far as evidence allows, and no further
+
+Three of the four artifacts are now in hand, and the fourth is not obtainable from
+this environment:
+
+| Half | Evidence |
+|---|---|
+| TLS to the database | **Measured on production**: `ssl = on`, `ssl_min_protocol_version = TLSv1.2`. |
+| At rest | **Provider statement**: Supabase's own documentation — *"Supabase projects are encrypted at rest by default which likely is sufficient for your compliance needs e.g. SOC2 & HIPAA"*. A vendor default, not a signed attestation naming this project. |
+| HSTS, as the server sets it | `helmet()` at `artifacts/api-server/src/app.ts:28`, whose default includes `Strict-Transport-Security`. |
+| HSTS, as the origin SERVES it | **NOT OBTAINED.** The environment's network policy refuses `portava.app:443` (the agent proxy answers 403 on CONNECT). This is the operator's artifact and only the operator can produce it. |
+
+**S17 stays X.** Three of four is not four, and the row asks for the served
+headers specifically. Recording what WAS obtained is the point: the remaining ask
+is now one curl and one dashboard export, not an open-ended question.
+
+### §14.5 S26 and S66 — relabelled, not moved
+
+Both were graded against production emptiness. `.agents/memory/production-has-no-real-users.md`
+establishes that production is **pre-launch**: every profile is an owner-created
+test account and nothing has ever contributed. So these two are
+**pre-launch-capped**, which is a different fact from deployment-capped:
+
+* **S26** needs 2315 written to, or 2173 applied with the retention flag on. 2315 is applied and has no writer that can run; the flag is FALSE. No amount of building moves it.
+* **S66** was re-executed at both surfaces and both refuse a dangerous place correctly. Its RED WHEN wants *"real `unsafe_density` state"* reaching flags that are ON. `layover_safety_engine_enabled` IS on in production — so one of its two surfaces is live — and there is no state to reach it because there are no contributions. **The row is right and the world is empty.**
+
+Neither is a gap a lane can close, and neither should be counted as one.
+
+### §14.6 What this section MOVES
+
+**Nothing.** Not one verdict changes.
+
+That is the finding, and it is deliberate. Five lanes built real work; three RED
+WHEN conditions genuinely fired; one product ruling was genuinely taken. And the
+rows still read as they did, because every one of them turns on something that is
+applied to no database, enabled by no flag, or verified by nobody. Moving them on
+the strength of a merged branch would be the exact failure this corpus was built
+to catch — **built on branch is not merged, merged is not deployed, deployed is
+not flag enabled, flag enabled is not production realized** — and it would have
+been easy, because the code is genuinely there.
+
+### §14 headline — restated from the rows, unchanged
+
+| | |
+|---|---|
+| **Denominator — testable requirements** | **127** |
+| BUILT-AND-CORRECT | **103** |
+| BUILT-BUT-WRONG | **21** |
+| NOT-BUILT | **2** |
+| CANNOT-VERIFY | **1** |
+| **CONSTRUCTED%** = (C+W)/127 | **124 / 127 = 97.6 %** |
+| **CORRECT%** (raw) = C/127 | **103 / 127 = 81.1 %** |
+| **of-built** = C/(C+W) | **103 / 124 = 83.1 %** |
+
+### §14.7 The shortest path to the next real move, in order
+
+1. **Apply `3002` → `3003` → `3110` → `3310`** to production, in that order, each with its postconditions. `3002` must land **before** the code that deletes the nearest-place resolver ships. Production holds zero intel rows, so the one-way relabelling converts nothing. That is four rows' worth: S19, S97, S111, S118.
+2. **Configure `SENSING_CONTRIBUTOR_PEPPER`.** Two rows: S18, S32.
+3. **Answer decision #9.** Two rows: S39, S24.
+4. **Produce the two S17 artifacts.** One row.
+5. The rest wait on a client build (S21, S28, S29) or on launch (S26, S66, S42, S52).
+
+Nine of the twenty-four are reachable without writing another line of application
+code. That is the honest state of Sensing on 2026-09-25.

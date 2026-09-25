@@ -386,6 +386,15 @@ const PERMITTED_REFERRERS = new Map<string, string>([
       "revoke. Pure; no route, no flag, no publisher.",
   ],
   [
+    join("lib", "sensingWindowAggregate.ts"),
+    'the per-WINDOW half of "cohort/coverage aggregation" (census-sensing S42/S52): joins a run of ' +
+      "adjacent cohort reads into arrival/departure rates, coverage and dwell, and hands them to " +
+      "lib/vibeInference. It holds contributor tokens only to DIFFERENCE them between adjacent " +
+      "buckets and returns numbers — no token, set or per-person field appears on its result, which " +
+      "is asserted on the serialised value. A bucket the privacy gate refused contributes nothing, " +
+      "so a rate is never computed over a sub-k cohort. Pure; no route, no flag, no publisher.",
+  ],
+  [
     join("lib", "sensingDifferencingGate.ts"),
     'the anti-differencing rule over "cohort/coverage aggregation" outputs (a type import): a ' +
       "re-publication must move by a whole independent party or not at all. Pure; keeps no token.",
