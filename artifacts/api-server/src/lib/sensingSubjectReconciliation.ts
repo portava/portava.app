@@ -8,21 +8,14 @@
  *    is unknown."                                                       (§14)
  *
  * ── WHY THIS EXISTS ──────────────────────────────────────────────────────────
- * This module is the RULE: a four-outcome subject reference and one pure
- * resolver whose default answer is `unknown`.
- *
- * It used to be a rule with nowhere to apply it. The canonical intel path could
- * not represent two of its four outcomes, because
- * `intel_observations.subject_id` was `NOT NULL REFERENCES places(id)` — a
- * cluster whose owner was UNKNOWN could not be stored at all, and there was no
- * temporary-world-object subject class. That is what migration
- * `3002_intel_contribution_identity.sql` changed: `subject_id` is now NULLABLE
- * (the places foreign key is KEPT for non-null subjects), `subject_kind` admits
- * `temporary_world_object` and `unknown`, and
- * `intel_observations_subject_resolution_check` refuses an unowned cluster that
- * carries a place id. All four outcomes are storable, so this resolver now has
- * somewhere to put its answer — and `routes/mapObservations.ts` calls it in
- * place of the nearest-place anchor it used to run.
+ * This module is the rule: a four-outcome subject reference and one pure
+ * resolver whose default answer is `unknown`. It used to be a rule with nowhere
+ * to apply it — `intel_observations.subject_id` was `NOT NULL REFERENCES
+ * places(id)`, so `unknown` and `temporary_world_object` could not be STORED.
+ * `3002_intel_contribution_identity.sql` made that column nullable (keeping the
+ * places FK for non-null subjects) and added the two subject kinds plus
+ * `intel_observations_subject_resolution_check`, so all four outcomes are
+ * storable and `routes/mapObservations.ts` calls this instead of snapping.
  *
  * ── THE RULE ─────────────────────────────────────────────────────────────────
  * A cluster is assigned to a Place or an Event ONLY on an explicit OWNERSHIP

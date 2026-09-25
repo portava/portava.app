@@ -163,6 +163,11 @@ BEGIN
   IF to_regclass('public.intel_confirmations') IS NULL THEN
     RAISE EXCEPTION 'PRECONDITION FAILED: public.intel_confirmations does not exist. Apply 2130 first.';
   END IF;
+  -- Referenced by the catalogue lookups below ('public.profiles'::regclass) and
+  -- by the postcondition that checks no stored value still resolves to an account.
+  IF to_regclass('public.profiles') IS NULL THEN
+    RAISE EXCEPTION 'PRECONDITION FAILED: public.profiles does not exist.';
+  END IF;
   IF to_regprocedure('public.erase_intel_for_actor(uuid)') IS NULL THEN
     RAISE EXCEPTION 'PRECONDITION FAILED: erase_intel_for_actor(uuid) is missing (2130, replaced by 2278). This migration rebuilds it as a superset and must not be the first to create it.';
   END IF;
@@ -396,15 +401,30 @@ COMMENT ON COLUMN public.intel_confirmations.actor_id IS
 -- transaction. The postcondition below asserts it came back enabled.
 DO $$
 DECLARE
-  t text;
-  n bigint;
+  t       text;
+  guard   text;
+  present boolean;
+  n       bigint;
 BEGIN
   FOREACH t IN ARRAY ARRAY['intel_observations','intel_evidence','intel_confirmations'] LOOP
-    EXECUTE format('ALTER TABLE public.%I DISABLE TRIGGER %I', t, t || '_no_update_delete');
+    guard := t || '_no_update_delete';
+    -- The guard's presence is checked, not assumed: 2137 and 2292 have both
+    -- removed triggers from this family before, and DISABLE on a trigger that is
+    -- not there aborts the migration for no reason.
+    SELECT EXISTS (
+      SELECT 1 FROM pg_trigger tg
+        JOIN pg_class rel ON rel.oid = tg.tgrelid
+        JOIN pg_namespace ns ON ns.oid = rel.relnamespace
+       WHERE ns.nspname = 'public' AND rel.relname = t
+         AND tg.tgname = guard AND NOT tg.tgisinternal
+    ) INTO present;
+
+    IF present THEN EXECUTE format('ALTER TABLE public.%I DISABLE TRIGGER %I', t, guard); END IF;
     EXECUTE format(
       'UPDATE public.%I SET actor_id = public.intel_contributor_token(actor_id, now()) WHERE actor_id IS NOT NULL', t);
     GET DIAGNOSTICS n = ROW_COUNT;
-    EXECUTE format('ALTER TABLE public.%I ENABLE TRIGGER %I', t, t || '_no_update_delete');
+    IF present THEN EXECUTE format('ALTER TABLE public.%I ENABLE TRIGGER %I', t, guard); END IF;
+
     RAISE NOTICE '3002: relabelled % contributor id(s) on public.%', n, t;
   END LOOP;
 END $$;

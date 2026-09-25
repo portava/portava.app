@@ -387,6 +387,29 @@ export const KNOWN: Record<string, Known> = {
   // outside the subgroup read 0 rows, as did a non-member of the trip. So
   // subgroup_id on that table is metadata for the notify path, NOT a read grant,
   // and nothing about 2794 widened who can see a Safe Return session.
+
+  // ── Added 2026-09-25: the intel contributor token, ahead of its migration ──
+  //
+  // Two entries, ONE object and ONE call site: intel_capture_quick_signal and
+  // intel_trail_followup are the two flags that open
+  // services/intel/IntelCaptureService.writeObservation (surfaceFlagEnabled), so
+  // the same closure is charged to both. They are struck together.
+  //
+  // Placed at the END of this map on purpose: inserting above shifts the line
+  // numbers census-compass.md cites into this file, and check-doc-citations
+  // catches that. Keep new entries here.
+  intel_capture_quick_signal: {
+    classification: "unguarded",
+    objects: ["intel_contributor_token()"],
+    note:
+      "IntelCaptureService.findReplayedObservation names public.intel_contributor_token(). " + "3002_intel_contribution_identity.sql is IN THE TREE, NOT APPLIED. It drops intel_observations.actor_id's foreign key to profiles and replaces the stored account id with a rotating contributor token (Sensing §3/§24, census S19/S118). The only code that has to know about the swap is writeObservation's idempotent-replay lookup, which reads a row back by contributor identity, and it is written for BOTH schemas: it filters on actor_id directly FIRST — the whole answer while 3002 is unapplied, because the stored actor_id IS the account id — and reaches intel_contributor_token() only when that finds nothing, which cannot happen before the apply. So the absent function is named on a branch production never executes; and were it ever reached, the call is wrapped so an unavailable RPC yields a retryable db_error, never a crash and never a dedup that was not verified. STRIKE THIS ENTRY when 3002 is applied and recorded in the migration ledger — the ratchet will report it STALE first.",
+  },
+  intel_trail_followup: {
+    classification: "unguarded",
+    objects: ["intel_contributor_token()"],
+    note:
+      "Same object, same call site: the trail surface shares writeObservation. " + "3002_intel_contribution_identity.sql is IN THE TREE, NOT APPLIED. It drops intel_observations.actor_id's foreign key to profiles and replaces the stored account id with a rotating contributor token (Sensing §3/§24, census S19/S118). The only code that has to know about the swap is writeObservation's idempotent-replay lookup, which reads a row back by contributor identity, and it is written for BOTH schemas: it filters on actor_id directly FIRST — the whole answer while 3002 is unapplied, because the stored actor_id IS the account id — and reaches intel_contributor_token() only when that finds nothing, which cannot happen before the apply. So the absent function is named on a branch production never executes; and were it ever reached, the call is wrapped so an unavailable RPC yields a retryable db_error, never a crash and never a dedup that was not verified. STRIKE THIS ENTRY when 3002 is applied and recorded in the migration ledger — the ratchet will report it STALE first.",
+  },
 };
 
 // ── Declared-by-a-migration ──────────────────────────────────────────────────
