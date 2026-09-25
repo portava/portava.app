@@ -23,11 +23,17 @@
  *   1. A FLAG, seeded FALSE and fail-closed. `sensing_presence_context_enabled`
  *      is spelled literally so `check-flag-polarity` resolves the read, and
  *      `*_enabled` means capability, so an absent or unreadable flag is OFF.
- *   2. NO PRODUCER. `readSensingPresenceContext` takes states that something
- *      else built. Nothing in this tree may build one for a surface: no route
- *      may reference `lib/sensingAnonStore` at all (the tripwire in
- *      `test/sensingAnonStore.test.ts`), so there is no path from a request to
- *      a cohort aggregate. This module does not create one, and must not.
+ *   2. NO PRODUCER. This module takes states that something else built, and
+ *      nothing in this tree may build one for a surface: the anonymous
+ *      contribution store has a standing tripwire that permits a short,
+ *      named list of sibling callers and NO ROUTE AT ALL, so there is no path
+ *      from a request to a cohort aggregate. This module does not create one,
+ *      and must not.
+ *
+ *      (That store is deliberately not named here by module path. Its tripwire
+ *      polices PROSE MENTIONS as well as imports — a real caller must not be
+ *      able to hide behind "it is only mentioned" — and a comment that names it
+ *      would register this file as a referrer of a store it never touches.)
  *
  * ── WHY IT DOES NOT IMPORT `lib/sensingPresenceState` ────────────────────────
  * It would like to, and it deliberately does not.
