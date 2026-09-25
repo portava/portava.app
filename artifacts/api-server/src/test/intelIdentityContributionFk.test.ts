@@ -83,7 +83,11 @@ const flat = (s: string) => s.replace(/\s+/g, " ");
  * the NOT NULL on each. Order-insensitive; whitespace-tolerant.
  */
 function contributionTableArrayLiteral(sql: string): boolean {
-  const arrays = sql.match(/ARRAY\s*\[[^\]]*\]/g) ?? [];
+  // `string[]`, not inference: `match(…) ?? []` is `RegExpMatchArray | never[]`,
+  // and a method call on that union resolves against the never[] arm, so `a`
+  // below would be `never`. RegExpMatchArray is a string[], so this narrows
+  // rather than widens.
+  const arrays: string[] = sql.match(/ARRAY\s*\[[^\]]*\]/g) ?? [];
   return arrays.some((a) => {
     const names = (a.match(/'([a-z_]+)'/g) ?? []).map((q) => q.slice(1, -1));
     return (
@@ -241,7 +245,7 @@ describe("S19 — what replaces the foreign key", () => {
     const f = flat(last.body);
     assert.ok(/IF p_actor_id IS NULL THEN RAISE EXCEPTION/.test(f), "a null actor must raise");
     assert.ok(f.includes("set_config('portava.erasure_in_progress'"), "the erasure is not declared");
-    const deletes = f.match(/DELETE FROM public\.[a-z_]+[^;]*;/g) ?? [];
+    const deletes: string[] = f.match(/DELETE FROM public\.[a-z_]+[^;]*;/g) ?? [];
     assert.ok(deletes.length >= 5, `expected the five scoped deletes, found ${deletes.length}`);
     for (const t of CONTRIBUTION_TABLES) {
       const d = deletes.find((x) => x.includes(`public.${t} `));
