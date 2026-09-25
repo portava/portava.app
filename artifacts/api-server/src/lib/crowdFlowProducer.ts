@@ -250,6 +250,7 @@ import { CONFIDENCE_STATES, type ConfidenceState } from "./mapObjects.js";
 import { CLAIM_TYPES, PILOT_CLAIMABLE_MODERATION_STATES } from "./intelContracts.js";
 import { isFlagEnabled } from "./featureFlags.js";
 import { logger } from "./logger.js";
+import { readConsentedContributors } from "./intelConsent.js";
 import {
   ACCEPTED_PLAN_FAMILY,
   ACCEPTED_PLAN_INDEPENDENCE,
@@ -870,6 +871,20 @@ export type SignalReadRefusal =
   | "no_service_client"
   | "read_failed";
 
+/**
+ * Per-family refusals for `next_stop_contribution`.
+ *
+ * `consent_unreadable` is DELIBERATELY NOT `read_failed`. The observations were
+ * read; what could not be established is which of their contributors consent —
+ * and since migration 3002 the stored `actor_id` is a rotating token that
+ * nothing outside the database can resolve, "could not establish" is a state
+ * that exists on its own. Collapsing it into `read_failed` would be survivable
+ * here (both feed nothing), but it would hide WHICH half failed from the
+ * operator reading familyRefusals, and it is the half that means "a migration
+ * is missing", not "the database is sick".
+ */
+export type NextStopFamilyRefusal = "read_failed" | "consent_unreadable";
+
 export interface ReadCrowdFlowSignalsResult {
   signals: MovementSignal[];
   /** Populated when nothing was read AT ALL. Never a silent empty. */
@@ -994,29 +1009,36 @@ export async function readCrowdFlowSignals(
       // Report the family's failure, keep whatever the other family produced.
       // Those signals carry ONE family, so deriveCrowdFlow refuses the bucket —
       // a failed read shrinks the result and cannot widen it.
-      familyRefusals.next_stop_contribution = "read_failed";
+      const refusal: NextStopFamilyRefusal = "read_failed";
+      familyRefusals.next_stop_contribution = refusal;
       return { signals, refusal: null, unfedFamilies: DECLARED_BUT_UNFED_FAMILIES, familyRefusals };
     }
 
     const fresh = (data as any[]).filter((o) => !o.expires_at || o.expires_at > nowIso);
 
-    // D4 consent parity with system promotion (2174). An actor who withdrew
-    // consent must not keep inflating a cohort. Fail-soft to EMPTY.
-    const actorIds = [...new Set(fresh.map((o) => o.actor_id).filter(Boolean))];
-    let consented = new Set<string>();
-    if (actorIds.length > 0) {
-      const { data: consentRows, error: consentErr } = await sc
-        .from("intel_contribution_consent")
-        .select("user_id")
-        .in("user_id", actorIds)
-        .eq("enabled", true)
-        .is("withdrawn_at", null);
-      if (consentErr) {
-        logger.warn({ err: consentErr }, "crowdFlowProducer: consent read failed; cohort empty");
-      } else {
-        consented = new Set(((consentRows as any[]) ?? []).map((r) => r.user_id as string));
-      }
+    // D4 consent parity with system promotion (2174). A contributor who withdrew
+    // consent must not keep inflating a cohort.
+    //
+    // NOT A JOIN ANY MORE. Migration 3002 stores a rotating contributor token in
+    // `actor_id`, so `.in("user_id", actorIds)` on intel_contribution_consent
+    // matches nothing after it lands — silently, because an empty filter result
+    // is not an error. lib/intelConsent's readConsentedContributors answers on
+    // both schemas through the database-side bridge and, crucially, reports
+    // "could not tell" AS A FAILURE. This family then refuses rather than
+    // reporting a cohort of nobody: an empty family and an unestablished one
+    // both publish nothing, but only one of them is a measurement.
+    const actorIds = [...new Set(fresh.map((o) => o.actor_id).filter(Boolean))] as string[];
+    const consentAnswer = await readConsentedContributors(sc, actorIds);
+    if (!consentAnswer.ok) {
+      logger.warn(
+        { reason: consentAnswer.reason, detail: consentAnswer.detail },
+        "crowdFlowProducer: contribution consent could not be established; next_stop_contribution refuses",
+      );
+      const refusal: NextStopFamilyRefusal = "consent_unreadable";
+      familyRefusals.next_stop_contribution = refusal;
+      return { signals, refusal: null, unfedFamilies: DECLARED_BUT_UNFED_FAMILIES, familyRefusals };
     }
+    const consented = consentAnswer.consented;
 
     for (const o of fresh) {
       if (!o.actor_id || !consented.has(o.actor_id)) continue;
