@@ -347,7 +347,17 @@ export async function runIntelRewardPass(opts: { client?: any; now?: Date } = {}
     //    pre-I4a behaviour is unchanged.
     for (const o of behindServed) {
       const key = rewardKeyFor(o.id);
-      const originalEntryId = originalEntryIdFor.get(`${o.actor_id}|${key}`);
+      // KEYED ON THE PAYEE, like the booking it reverses. The ledger holds an
+      // ACCOUNT (3003's ruling), so looking the original entry up by the stored
+      // contributor id — a token post-3002 — finds nothing and the sweep
+      // silently reverses NOTHING. A reversal that cannot find what it must take
+      // back is the one failure mode a compensating entry cannot tolerate.
+      //
+      // A contribution whose payee did not resolve has no booking to reverse
+      // either, so skipping it here is the same fact as not booking it above.
+      const reversalPayee = accountFor.get(o.actor_id) ?? null;
+      if (reversalPayee === null) continue;
+      const originalEntryId = originalEntryIdFor.get(`${reversalPayee}|${key}`);
       if (!originalEntryId) continue;                      // never rewarded ⇒ nothing to take back
       if (alreadyReversed.has(originalEntryId)) continue;  // already compensated
       if (attributionFor(o.id) !== "contradicted") continue;

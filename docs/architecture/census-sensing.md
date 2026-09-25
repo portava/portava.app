@@ -3936,7 +3936,7 @@ Production, measured 2026-09-25 rather than inferred:
 |---|---|---|
 | S19 | **W** | 3002 drops the `actor_id -> profiles` FK on all three contribution tables by catalogue lookup, and 3003 does the same for the bridge tables. Neither is applied; production's five FKs were read today and all five stand. The row's own RED WHEN says *"a reviewed migration drops … the FK"* — the migration exists and is reviewed, and the FK is still there. |
 | S118 | **W** | Depends on S19, and on something §10.5 did not know. Post-3002 the reverse-link does not close: `intel_presence_verifications` holds `observation_id NOT NULL` beside an account `actor_id`, so one join resolves a tokenised observation to its author. 3003 tokenises it and two siblings, and RULES `intel_reward_ledger` unchanged — you cannot pay a token, and it is safe only because it names no contribution, which 3003 guards with a postcondition. Unapplied. |
-| S97 | **W** | **FIRED in the tree**: `resolveZoneAnchorSubject`, its haversine, its bbox pre-filter and its 3 km ceiling are deleted, and the subject now comes from `lib/sensingSubjectReconciliation`, which answers `unknown` without an ownership signal. It does NOT move, and the reason is a deployment hazard rather than a technicality: production still has `subject_id NOT NULL`, so this code ahead of 3002 makes a zone contribution fail its NOT NULL instead of storing `unknown`. **3002 must be applied before this code ships.** |
+| S97 | **W** | **FIRED in the tree**: `resolveZoneAnchorSubject`, its haversine, its bbox pre-filter and its 3 km ceiling are deleted, and the subject now comes from `lib/sensingSubjectReconciliation`, which answers `unknown` without an ownership signal. It does NOT move, and the reason is a deployment hazard rather than a technicality: production still has `subject_id NOT NULL`, so this code ahead of 3002 makes a zone contribution fail its NOT NULL instead of storing `unknown`. See §14.8 — the ordering constraint runs BOTH ways and they are not compatible with applying 3002 on its own. |
 | S111 | **W** | 3002 drops `subject_id NOT NULL` and adds a CHECK admitting all four §18.3 outcomes; the resolver has acquired two callers (`routes/mapObservations.ts`, `services/intel/IntelCaptureService.ts`), which §10.5 recorded as machine-checked absent. Unapplied, so `temporary_world_object` and `unknown` still have nowhere to be stored. |
 | S42 · S52 | **W** | **THE PRODUCER NOW EXISTS.** Measured before it was built: `lib/vibeInference` had no production caller at all. `lib/sensingWindowAggregate` joins adjacent k-gated cohorts into per-window arrival/departure rates, coverage and dwell and calls it. They stay W because the inputs are still absent: the window reads `sensing_anon_contributions`, which holds zero rows, and four features are left NULL on purpose — `motionEnergy` (the ordinal's meaning is unpinned and is an owner decision), `periodicity` and `acousticEnergy` (S28/S29), and `density`, because in this store the only population signal IS the contributor count and bucketing it twice would render "we have a lot of data" as "a lot of people are here". |
 | S49 | **W** | **FIRED, twice over, and still not C.** The conservative §24 arm was already built — a bucket is published only where a protected-zone pass cleared the row. It had never run: no caller supplied the zones or the positions, so every served `coverage` read `unknown` on every path. Both wrappers now run the pass through the one shared `lib/protectedZoneStore`. It stays W because `discovery_candidate_projection_enabled` is seeded FALSE and absent from production, so nothing serves a `DiscoveryCandidate` at all. |
@@ -4009,7 +4009,7 @@ been easy, because the code is genuinely there.
 
 ### §14.7 The shortest path to the next real move, in order
 
-1. **Apply `3002` → `3003` → `3110` → `3310`** to production, in that order, each with its postconditions. `3002` must land **before** the code that deletes the nearest-place resolver ships. Production holds zero intel rows, so the one-way relabelling converts nothing. That is four rows' worth: S19, S97, S111, S118.
+1. **Apply `3002` → `3003` → `3110` → `3310`** to production, in that order, each with its postconditions, **in the same cutover as the code deploy** — see §14.8, which is the reason this is not "apply the migration first". Production holds zero intel rows, so the one-way relabelling converts nothing. That is four rows' worth: S19, S97, S111, S118.
 2. **Configure `SENSING_CONTRIBUTOR_PEPPER`.** Two rows: S18, S32.
 3. **Answer decision #9.** Two rows: S39, S24.
 4. **Produce the two S17 artifacts.** One row.
@@ -4017,3 +4017,46 @@ been easy, because the code is genuinely there.
 
 Nine of the twenty-four are reachable without writing another line of application
 code. That is the honest state of Sensing on 2026-09-25.
+
+### §14.8 3002 IS A COUPLED CUTOVER, AND THE FIRST DRAFT OF §14.7 HAD IT WRONG
+
+An earlier sentence in this section said *"3002 must be applied before this code
+ships"*. That is half the constraint, and stating half of it is worse than
+stating none, so here is the whole of it — found by checking what `origin/main`
+actually contains rather than by reasoning about the migration alone.
+
+**The constraint in one direction.** `routes/mapObservations.ts` on this branch
+has deleted the nearest-place resolver and stores `subject_id` NULL for an
+unowned cluster. Production still has `subject_id NOT NULL REFERENCES places(id)`.
+So THIS CODE AHEAD OF 3002 fails the NOT NULL on every zone contribution.
+
+**The constraint in the other direction, which is the one that was missed.**
+3002 installs a BEFORE INSERT trigger that replaces the submitted account id
+with a contributor token. The only code that has to know about that swap is
+`IntelCaptureService`'s idempotent-replay lookup, which reads a row back by
+contributor identity — and the version written for BOTH schemas is **on this
+branch and not on `origin/main`**, measured: `origin/main`'s copy of that file
+contains ZERO references to `intel_contributor_token`, this branch's contains
+two. Production runs main.
+
+So 3002 AHEAD OF THE DEPLOY means: the trigger writes tokens, main's replay
+lookup filters on the account id, it matches nothing, and every capture reads as
+a first write. `intel_capture_quick_signal` is **TRUE** in production, so that
+path is live. Within one weekly epoch the `(actor_id, idempotency_key)` unique
+index still catches a duplicate — as a 23505 the service was not expecting there
+— and ACROSS an epoch boundary the token changes, so it stops catching it at all.
+
+**Therefore neither may go first.** 3002 and this branch's application code are a
+single cutover, and the migration is not independently appliable. Saying so is
+the point of this subsection:
+
+* The two constraints are in different files, owned by different lanes, and each
+  is individually correct. Only the pair is a problem.
+* Nothing breaks today if they are applied out of order, because production has
+  zero intel rows and no real users — which is precisely why this would not be
+  noticed until it mattered.
+
+`3110`, `3310` and `3004` carry no such coupling: they add a table, two functions
+and one FALSE flag row that nothing reads. `3003` depends only on 3002 and goes
+in the same cutover with it.
+
