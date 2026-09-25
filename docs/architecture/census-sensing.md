@@ -4060,3 +4060,95 @@ the point of this subsection:
 and one FALSE flag row that nothing reads. `3003` depends only on 3002 and goes
 in the same cutover with it.
 
+
+
+## §15 — 2026-09-25: S3's evidence line, corrected — the verdict does not move
+
+Same shape as §13 and for the same reason: a citation stopped being true, the
+correction is recorded where a reader of the row will find it, and **no verdict
+moves**. §14's headline is still the document's claim and is not restated here.
+
+### §15.1 What went wrong with S3's citation
+
+§12's S3 cell quoted `lib/crowdFlowProducer.ts`'s own blocker evidence:
+
+> `presence/domain` still has *"no store, no fusion layer"*
+
+That sentence **no longer exists in any tree**. A lane on
+`sensing100-integration` built the store and REWROTE the evidence slot it lived
+in. `check:doc-citations` caught it as the one class it can catch without
+reading the claim — *"the WHOLE anchor appears NOWHERE in the file — the anchor
+text itself is wrong"* — and it is worth separating that from the ordinary case:
+
+| | |
+|---|---|
+| A **displacement** | the anchor still exists, at a different line. Repointing is mechanical and safe. |
+| **This** | the anchor was DELETED. There is no line to repoint to, and the tempting move — aim it at whatever replaced it — would have left the cell quoting text that says the OPPOSITE of the claim it was cited for. |
+
+So the cell now says the anchor was deleted, cites the line that replaced it,
+and warns the reader what that line actually argues.
+
+### §15.2 What the replacing line says, which is not what it looks like
+
+`artifacts/api-server/src/lib/crowdFlowProducer.ts:389#      "src/presence/fusion/store.ts — a PresenceFusionStore now exists and is the ONLY minter of a PresenceEstimate`
+is still an entry in `no_declared_origin`'s **blocker evidence**, and it says
+so: a `PresenceEstimate` is a subject at a place — position, zone, floor — and
+carries no from-zone anywhere on it. *"A fusion layer does not close this
+blocker, it confirms it."*
+
+A reader skimming for "a fusion store exists now" would take this for S3 turning
+green. It is the opposite: the store is where an origin WOULD have to appear and
+deliberately does not hold one, because a from-zone derived by sequencing two
+estimates is the per-actor trajectory that module exists to be incapable of
+building.
+
+### §15.3 Why S3 does not move on it
+
+Unchanged from §14.2, restated so this section is readable alone. S3 and S106 do
+not ask whether a store EXISTS. They ask for *"a test that a second presence
+write path is unrepresentable"* — a compile-time claim about a type, re-derived
+against the four real call sites. That was not done in this pass, and an
+unverified lane claim is not evidence. **S3 stays `W`. S106 stays `W`.**
+
+### §15.4 Two other citation classes, fixed the same way
+
+Both were red on this branch and neither is a defect in a checker. Each was a
+pointer that was CORRECT on `origin/main` and was displaced by work this branch
+merged, and each was found by building the same guard's output from an
+`origin/main` worktree and diffing the offender sets — never by arithmetic.
+
+* **`check:citation-symbols` 38 → 34** (its ceiling). Four symbol citations went
+  out of tolerance. A fifth, `telegraph_outbox`, looked like the same class and
+  is not: it was ALREADY misplaced on main, so it belongs to the ceiling and was
+  left alone.
+* **`check:citation-targets` 189 → 174**, under a ceiling of 176. The reason it
+  was red is worth recording because the raw number is BETTER than main's: main
+  measures 198 against a ceiling of 204, and a lane on this branch ratcheted the
+  ceiling to 176 from a measurement taken before the other lanes merged in. The
+  branch improved the count and tightened the ceiling past its own tree. Fifteen
+  citations were repointed by finding where each line's OWN TEXT went. One —
+  `crowdFlowProducer.ts:1015`, a consent-read warning — has no successor line at
+  all and was left dead rather than aimed at something that is not it.
+
+### §15.5 Freshness: this census is current, and seven others are not
+
+Sixteen counted files changed in census-sensing's scope. The acknowledgement in
+`CENSUS_STALENESS_ACKNOWLEDGED.json` now names all sixteen with a per-file
+argument, and `since` stays `1fe72289b` rather than being re-declared at a branch
+commit — §1's trap: this branch will be squash-merged, so a commit on it is an
+ancestor of nothing. **census-sensing reads FRESH.**
+
+`census-compass`, `census-discovery`, `census-highlights-memories`,
+`census-input-intelligence`, `census-map`, `census-media` and `census-trust` are
+**STILL STALE, deliberately.** An acknowledgement asserts that a change moved no
+verdict in THAT census, and this pass re-measured only Sensing. More pointedly,
+several of those files are NEW — `CompassLiveClaimContext.ts` (+331),
+`CompassTripContext.ts` (+352), `experienceSessionBridge.ts` (+243),
+`sessionRevocationReach.ts` (+205) — and a new module in a counted scope is
+exactly the thing that CAN move a row, usually upward. Silencing them would hide
+work that has been done, not just debt. They need re-measurement by their own
+owners; the entry names them so the debt is visible rather than absent.
+
+### §15.6 MOVES NOTHING
+
+**C 103 · W 21 · N 2 · X 1 — unchanged.** §14's headline stands.
