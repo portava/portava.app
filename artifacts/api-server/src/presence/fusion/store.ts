@@ -526,31 +526,46 @@ export class PresenceFusionStore {
     return { ok: true, estimate };
   }
 
-  /** Latest retained estimate for one source's subject, or null when expired/absent. */
+  /**
+   * Latest retained estimate for one source's subject, NARROWED TO THE AUDIENCE
+   * THAT IS ASKING — or null when expired, absent, or withheld from that
+   * audience.
+   *
+   * `audienceCeiling` is REQUIRED, and it is the caller's own §52 rung for THIS
+   * viewer and THIS subject — the live-share grant, the session ceiling, the
+   * circle visibility mode. It is NOT the source's static contract ceiling,
+   * which is a property of the model rather than of who is looking. `#forAudience`
+   * states what a read without it would serve.
+   */
   read(
     source: PresenceSourceId,
     subjectKey: string,
+    audienceCeiling: LocationPrecision,
     nowMs: number | null,
   ): FusedPresenceEstimate | null {
     const hit = this.#entries.get(`${source}${RETENTION_KEY_SEP}${subjectKey}`);
     if (!hit) return null;
     if (hit.expiredAt(nowMs)) return null;
-    return hit;
+    return this.#forAudience(hit, source, audienceCeiling);
   }
 
   /**
    * FUSION ACROSS SOURCES — one subject, many models, one answer.
    *
    * Takes every live ACCOUNT-SCOPED estimate for `subjectKey`, picks the most
-   * recent observation, and re-mints it under the ASKING source's ceiling, so a
+   * recent observation, and re-mints it under BOTH the asking source's ceiling
+   * and `audienceCeiling` — the rung THIS viewer holds over THIS subject — so a
    * feature can never see more through the fusion layer than its own §52 rung
-   * allows. `source_scoped` estimates are skipped entirely: §20 forbids
+   * allows, and one viewer can never see another viewer's. The source ceiling
+   * alone is not enough, and `#forAudience` states why in full.
+   * `source_scoped` estimates are skipped entirely: §20 forbids
    * reverse-linking anonymous world intelligence to an account, and the way to
    * honour that is to have no code path that does it.
    */
   resolve(
     subjectKey: string,
     forSource: PresenceSourceId,
+    audienceCeiling: LocationPrecision,
     nowMs: number | null,
   ): FusedPresenceEstimate | null {
     const asking = PRESENCE_SOURCE_CONTRACTS[forSource];
@@ -569,7 +584,51 @@ export class PresenceFusionStore {
     }
     if (best === null) return null;
 
-    const ceiling = narrowestPrecision(best.ceiling, asking.ceiling);
+    return this.#forAudience(best, forSource, audienceCeiling);
+  }
+
+  /**
+   * ── WHY EVERY READ PATH TAKES AN AUDIENCE CEILING ────────────────────────
+   *
+   * Retention is keyed `(source, subject)` and deliberately carries no viewer:
+   * `locateFriendsSession.ts` says so in as many words — "the latest observation
+   * of a person is the latest observation of that person, whichever session
+   * carried it". That is right about the OBSERVATION and wrong about the
+   * DISCLOSURE, because the estimate object carries both. `precision`, `ceiling`
+   * and `position` are folded from bounds that are properties of the VIEWER, not
+   * of the subject: the live-share grant (`allowed_member_ids` — per viewer),
+   * the Locate-My-Friends session ceiling (per session), the circle visibility
+   * mode (per circle). One slot, many viewers, last writer's entitlement.
+   *
+   * `#retain` replaces only on a STRICTLY newer observation, so the common case
+   * is the bad one: two viewers of the same sighting tie on `observedAtMs`, the
+   * narrower admission does not displace the wider, and the wider survives.
+   * Measured on this tree before the fix: a viewer holding a `precise` grant and
+   * a viewer holding none admit the same observation; the retained entry keeps
+   * the precise position, and a `resolve` on behalf of the ungranted viewer
+   * returned it in full, because the asking ceiling was read from the SOURCE
+   * CONTRACT (statically `precise` for that model) instead of from the viewer.
+   *
+   * So the fix is not a viewer in the key — that would store the same sighting
+   * once per viewer and make "the latest observation" false. It is that policy
+   * is applied at EGRESS: the store retains the fact, and every read states the
+   * rung the asker is entitled to. Both ladders still apply, and both only
+   * tighten — the source contract bounds the model, the audience bounds the
+   * viewer, and `foldCeilings` turns a bound it cannot read into `none` rather
+   * than ignoring it. A `none` audience withholds the row entirely, so a viewer
+   * who may not know the subject is present learns nothing from asking.
+   *
+   * This is required rather than optional on purpose: a reader that forgets it
+   * is a compile error, not a leak.
+   */
+  #forAudience(
+    best: FusedPresenceEstimate,
+    forSource: PresenceSourceId,
+    audienceCeiling: LocationPrecision,
+  ): FusedPresenceEstimate | null {
+    const asking = PRESENCE_SOURCE_CONTRACTS[forSource];
+    if (!asking) return null;
+    const ceiling = foldCeilings(best.ceiling, [asking.ceiling, audienceCeiling]);
     const precision = narrowestPrecision(best.precision, ceiling);
     if (precision === "none") return null;
     if (precision === best.precision && ceiling === best.ceiling && best.source === forSource) {

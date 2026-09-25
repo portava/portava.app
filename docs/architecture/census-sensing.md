@@ -4230,7 +4230,7 @@ read all three green.
 The first draft of this section said the one-hour `PRESENCE_ESTIMATE_TTL_MS` was
 *"not enforced by anything today"*, reasoning that `sweep` has no external caller
 and is invoked only from inside the store. **That was wrong, and reading the
-object rather than the sentence about it is what caught it.** `store.ts:630#    if (nowMs !== null) this.sweep(nowMs);`
+object rather than the sentence about it is what caught it.** `store.ts:689#    if (nowMs !== null) this.sweep(nowMs);`
 sits inside the private `#retain`, which `admit` calls at `store.ts:525#    this.#retain(estimate, nowMs);` — on the WRITE
 path, not the read path. So the store does expire, on every admit that is given
 a clock.
@@ -4355,3 +4355,169 @@ So the ordered path is finer-grained than §14.7 had it:
 **C 103 · W 21 · N 2 · X 1 — unchanged.** Nothing here is applied to any
 database by this pass: the local replay is a throwaway cluster and the CI read
 is read-only. A migration proven appliable is still not an applied one.
+
+
+## §18 — 2026-09-25: §16.5's "one step" would have shipped a coordinate leak
+
+§16.5 named the fused read as the cheapest remaining move in this census — "no
+owner decision, no migration and no deployment". That is still true about the
+COST. It was wrong about the STEP, and the difference is a served coordinate.
+
+This section is what P24 asks for out loud: *what exactly would turn this
+green claim red?* The answer was one measurement away, and it was not taken in
+§16 because §16 asked who CALLS the fusion layer and never asked what the
+fusion layer would HAND BACK.
+
+### §18.1 The measurement, run rather than reasoned
+
+Two viewers of one subject, through `locate_friends_session`. Viewer W holds a
+live-share grant, viewer V does not. Both fold their own §52 rung into the
+claim, and both admissions are CORRECT:
+
+| | admitted precision | admitted position |
+|---|---|---|
+| W (granted) | `precise` | the coordinate |
+| V (ungranted) | `venue` | null |
+
+**The write path was never the defect.** But the retained entry, and what a
+reader would have been handed, were these:
+
+| | precision | position |
+|---|---|---|
+| `read("locate_friends_session", subject, now)` | `precise` | **the coordinate** |
+| `resolve(subject, "locate_friends_session", now)` | `precise` | **the coordinate** |
+
+So the first production consumer wired on V's path would have served V a
+subject's exact GPS fix that V is not entitled to. §16.5, followed literally,
+was an instruction to build that consumer.
+
+### §18.2 Why, stated as two facts one object was carrying
+
+Retention is keyed `(source, subject)`. `locateFriendsSession.ts:883#    // The subject is the Portava account, so an estimate from this source can`
+argues for that key in as many words — *"the latest observation of a person is
+the latest observation of that person, whichever session carried it, and keying
+per session would put the same human in the store twice."*
+
+That reasoning is **right about the OBSERVATION and wrong about the
+DISCLOSURE**, because one `PresenceEstimate` carries both. `observedAtMs`,
+`state` and `evidenceTypes` are facts about the subject. `precision`, `ceiling`
+and `position` are folded from bounds that are facts about the VIEWER:
+
+| Source | The audience-dependent bound | Scope |
+|---|---|---|
+| `trip_crew_location_sessions` | `grantBound`, from `card.liveShareActive` | per viewer — `allowed_member_ids.includes(viewerId)` |
+| `locate_friends_session` | `sessionCeiling` | per session |
+| `circle_presence` | `VISIBILITY_MODE_CEILING[visibilityMode]` | per circle |
+| `map_social_presence` | none — its bounds are object-derived | n/a, and it is `source_scoped` besides |
+
+One slot, many viewers, and the surviving entry is whichever viewer's the
+retention rule kept.
+
+### §18.3 The retention rule makes the COMMON case the bad one
+
+`#retain` replaces only on a STRICTLY newer observation. Two viewers looking at
+the same sighting tie on `observedAtMs` — it is the subject's clock, not the
+request's — so the narrower admission does not displace the wider, and the
+wider survives. This is not a race or a corner: it is one person observed once
+and looked at by two people.
+
+And `resolve` then re-minted under `PRESENCE_SOURCE_CONTRACTS[forSource].ceiling`
+— the SOURCE's static rung, `precise` for both the crew and locate models — so
+the narrowing that was supposed to protect V applied nothing to V.
+
+### §18.4 The fix: policy at EGRESS, not a viewer in the key
+
+A viewer in the retention key was the obvious repair and is the wrong one: it
+stores the same sighting once per viewer and makes "the latest observation of a
+person" false — the very thing `locateFriendsSession.ts` was right to avoid.
+
+So the store keeps retaining the FACT, and every read states the rung the asker
+holds. `read` and `resolve` both take a REQUIRED `audienceCeiling`, folded
+through one private `#forAudience` with `foldCeilings`, which means:
+
+* both ladders apply — the source contract bounds the model, the audience
+  bounds the viewer — and both only tighten;
+* a bound the ladder does not contain becomes `none` rather than being ignored;
+* a `none` audience is returned `null`, so a viewer who may not know the subject
+  is present learns nothing by asking — the existence leak closes with the
+  precision leak;
+* a generous audience CANNOT widen a narrowly retained estimate (§52 keeps its
+  one direction);
+* a reader that forgets the audience is a **compile error**, not a leak. That is
+  the same lock the module already uses for the write path, applied to the read
+  path it had left open.
+
+### §18.5 Verified by watching it fail
+
+Eight cases in `presenceFusionStore.test.ts`, and three mutations, each reverted:
+
+| Mutation | Cases that went red |
+|---|---|
+| fold the source ceiling only (the original defect) | 5 of 8 |
+| fold without `foldCeilings`' sanitizer | exactly the unrecognised-ceiling case |
+| `read` returns the retained entry unnarrowed | exactly the three read-path cases |
+
+The cases that SURVIVED each mutation are the evidence the tests are aimed
+right: the write-path case, the retention case and the no-widening case survive
+all three, because no mutation touches what they assert — and narrowing less can
+never widen anything.
+
+**529/529 across the 26 presence-touching suites, 0 skipped.** The test-typecheck
+gate reads 863 diagnostics across 115 files against a baseline of 863 across
+115 — no file above its baseline, so this added none.
+
+### §18.6 MOVES NOTHING — and the reason matters
+
+**C 103 · W 21 · N 2 · X 1 — unchanged.**
+
+No row moves DOWN, and the temptation to move one is worth naming. Nothing was
+ever served through the defective path: `read` and `resolve` had **zero
+production callers**, which §16.2 measured and this pass re-confirmed — the only
+call sites in the tree are in `presenceFusionStore.test.ts`, which is why
+changing their arity touched no production file. A latent hazard in a path with
+no consumers is not a served defect, and grading it as one would be as wrong as
+grading the reverse.
+
+No row moves UP either. S3 and S106 stay `W` for exactly the reason §16 gave:
+still four writers, still no cross-source reader. **This pass did not take
+§16.5's step — it made the step safe to take.**
+
+§16.5's RED WHEN stands, with one conjunct added: the production consumer must
+pass its own audience rung, and a test must show an ungranted viewer served
+nothing through the fused read. A lane taking it should start from §18.1's
+two-viewer case rather than from a single-viewer one, because a single-viewer
+test passes against the defect.
+
+### §18.7 The fourth instance of §16.3's class, and a different shape
+
+§16.3 named three cases of *code that is there, correct, and does not do the
+thing the row is about*. This is the fourth, and it inverts them: `vibeInference`,
+the §24 pass and the fusion resolver were all HARMLESS while unwired. This one
+was harmless only while unwired, and wiring it was the recommended next action.
+
+The class to look for next is therefore not "what is built and inert" but
+**"what is inert, and what happens on the day someone wires it"** — the answer
+being obvious for the first three and a coordinate leak for this one.
+
+### §18.8 The same question asked of the other shared store, and answered NO
+
+§18.7's class is only useful if it is actually swept, so the one other
+process-wide store this pass introduced was checked rather than assumed:
+`lib/protectedZoneStore`, the §24 cache behind S49.
+
+It caches one `zones` array process-wide for 30 seconds with no viewer in the
+key — structurally the same shape as the defect above. It is **not** the same
+defect, for a reason that had to be read rather than guessed: its query filters
+on `active` alone, with no viewer predicate, and both call sites hand it a
+SERVICE-ROLE client — `routes/mapProjection.ts:456#getServiceClient` and the four
+`withDiscoveryCandidates(getServiceClient(), …)` sites in `routes/discovery.ts`.
+A service-role read bypasses RLS, so every request sees the identical row set
+and the cached object carries no viewer's entitlement.
+
+The distinction is the one that matters for the class, and it is worth stating
+as a rule rather than as a result: **a process-wide cache is safe exactly when
+what it holds is a property of the WORLD, and unsafe when it is a property of
+the VIEWER.** Protected zones are policy — the same for everyone. A presence
+estimate's `precision` is not. Had either call site passed a user-scoped client,
+`protectedZoneStore` would be the same finding, and a lane changing that client
+should read this paragraph first.

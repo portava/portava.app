@@ -205,7 +205,7 @@ describe("presence fusion — it actually FUSES", () => {
       claim({ subjectKey: "acct-9", observedAtMs: T0 + 500 }),
       T0 + 1_000,
     );
-    const fused = store.resolve("acct-9", "locate_friends_session", T0 + 1_000);
+    const fused = store.resolve("acct-9", "locate_friends_session", "precise", T0 + 1_000);
     assert.ok(fused);
     assert.equal(fused.observedAtMs, T0 + 500, "the newer observation must win");
     assert.equal(fused.source, "trip_crew_location_sessions");
@@ -219,8 +219,8 @@ describe("presence fusion — it actually FUSES", () => {
       claim({ subjectKey: "acct-9" }),
       T0,
     );
-    const asCrew = store.resolve("acct-9", "trip_crew_location_sessions", T0);
-    const asCircle = store.resolve("acct-9", "circle_presence", T0);
+    const asCrew = store.resolve("acct-9", "trip_crew_location_sessions", "precise", T0);
+    const asCircle = store.resolve("acct-9", "circle_presence", "precise", T0);
     assert.ok(asCrew && asCircle);
     assert.equal(asCrew.precision, "precise");
     assert.equal(
@@ -239,14 +239,14 @@ describe("presence fusion — it actually FUSES", () => {
       T0 + 1_000,
     );
     // Nothing account-scoped exists for that key, so there is nothing to fuse.
-    assert.equal(store.resolve("acct-9", "locate_friends_session", T0 + 1_000), null);
+    assert.equal(store.resolve("acct-9", "locate_friends_session", "precise", T0 + 1_000), null);
 
     store.admit(
       PRESENCE_WRITE_CAPABILITIES.locate_friends_session,
       claim({ subjectKey: "acct-9", observedAtMs: T0 }),
       T0 + 1_000,
     );
-    const fused = store.resolve("acct-9", "locate_friends_session", T0 + 1_000);
+    const fused = store.resolve("acct-9", "locate_friends_session", "precise", T0 + 1_000);
     assert.ok(fused);
     assert.equal(
       fused.source,
@@ -273,7 +273,7 @@ describe("presence fusion — it actually FUSES", () => {
     // The older claim still gets an honest answer about itself — projection is pure.
     assert.equal(older.estimate.precision, "zone");
     // But it did not displace the fresher retained one.
-    const held = store.read("locate_friends_session", "user-1", T0 + 2_000);
+    const held = store.read("locate_friends_session", "user-1", "precise", T0 + 2_000);
     assert.ok(held);
     assert.equal(held.observedAtMs, T0 + 1_000);
   });
@@ -281,8 +281,8 @@ describe("presence fusion — it actually FUSES", () => {
   test("an expired entry is not readable and sweeps away", () => {
     const store = new PresenceFusionStore();
     store.admit(PRESENCE_WRITE_CAPABILITIES.locate_friends_session, claim(), T0);
-    assert.ok(store.read("locate_friends_session", "user-1", T0));
-    assert.equal(store.read("locate_friends_session", "user-1", T0 + PRESENCE_ESTIMATE_TTL_MS), null);
+    assert.ok(store.read("locate_friends_session", "user-1", "precise", T0));
+    assert.equal(store.read("locate_friends_session", "user-1", "precise", T0 + PRESENCE_ESTIMATE_TTL_MS), null);
     assert.equal(store.sweep(T0 + PRESENCE_ESTIMATE_TTL_MS), 1);
     assert.equal(store.size, 0);
   });
@@ -325,5 +325,124 @@ describe("presence fusion — refusals are named, never silent", () => {
       T0,
     );
     assert.equal(r.ok === false && r.refusal, "unknown_state");
+  });
+});
+
+/**
+ * ── THE AUDIENCE, WHICH RETENTION DOES NOT CARRY ─────────────────────────────
+ *
+ * Retention is keyed `(source, subject)`. That is right about the OBSERVATION
+ * and wrong about the DISCLOSURE, because one estimate object carries both, and
+ * `precision`/`ceiling`/`position` are folded from bounds that belong to the
+ * VIEWER: the live-share grant (`allowed_member_ids`), the Locate-My-Friends
+ * session ceiling, the circle visibility mode.
+ *
+ * These cases pin the egress rule that makes that safe: every read states the
+ * rung the ASKER holds, both ladders apply, and both only tighten. Before the
+ * fix the asking ceiling came from the source CONTRACT — statically `precise`
+ * for the crew and locate models — so an ungranted viewer's `resolve` returned
+ * a granted viewer's coordinate in full.
+ */
+describe("presence fusion — one viewer never reads another viewer's entitlement", () => {
+  // Both viewers see the SAME sighting, so the clocks tie and `#retain`'s
+  // strictly-newer rule keeps the WIDER one. That is the common case, not a
+  // corner: it is one subject observed once and looked at by two people.
+  function twoViewers() {
+    const store = new PresenceFusionStore();
+    const granted = store.admit(
+      PRESENCE_WRITE_CAPABILITIES.locate_friends_session,
+      claim({ subjectKey: "acct-9", ceilings: ["precise"], observedAtMs: T0 }),
+      T0 + 1_000,
+    );
+    const ungranted = store.admit(
+      PRESENCE_WRITE_CAPABILITIES.locate_friends_session,
+      claim({ subjectKey: "acct-9", ceilings: ["venue"], observedAtMs: T0 }),
+      T0 + 1_000,
+    );
+    return { store, granted, ungranted };
+  }
+
+  test("admit still answers honestly about each viewer's own claim", () => {
+    const { granted, ungranted } = twoViewers();
+    assert.ok(granted.ok && ungranted.ok);
+    assert.equal(granted.estimate.precision, "precise");
+    assert.notEqual(granted.estimate.position, null);
+    assert.equal(ungranted.estimate.precision, "venue");
+    assert.equal(ungranted.estimate.position, null, "the write path was never the defect");
+  });
+
+  test("the retained entry is the WIDER one — the narrower admission does not displace it", () => {
+    const { store } = twoViewers();
+    const held = store.read("locate_friends_session", "acct-9", "precise", T0 + 1_000);
+    assert.ok(held);
+    assert.equal(held.precision, "precise", "this is exactly why egress must narrow");
+  });
+
+  test("read on behalf of the UNGRANTED viewer yields no coordinate", () => {
+    const { store } = twoViewers();
+    const seen = store.read("locate_friends_session", "acct-9", "venue", T0 + 1_000);
+    assert.ok(seen);
+    assert.equal(seen.precision, "venue");
+    assert.equal(seen.position, null);
+  });
+
+  test("resolve on behalf of the UNGRANTED viewer yields no coordinate", () => {
+    const { store } = twoViewers();
+    const fused = store.resolve("acct-9", "locate_friends_session", "venue", T0 + 1_000);
+    assert.ok(fused);
+    assert.equal(fused.precision, "venue");
+    assert.equal(fused.position, null);
+  });
+
+  test("a `none` audience is told nothing at all — existence is withheld, not just the point", () => {
+    const { store } = twoViewers();
+    assert.equal(store.read("locate_friends_session", "acct-9", "none", T0 + 1_000), null);
+    assert.equal(store.resolve("acct-9", "locate_friends_session", "none", T0 + 1_000), null);
+  });
+
+  test("§52 has one direction — a generous audience cannot widen a narrowly retained estimate", () => {
+    const store = new PresenceFusionStore();
+    store.admit(
+      PRESENCE_WRITE_CAPABILITIES.locate_friends_session,
+      claim({ subjectKey: "acct-9", ceilings: ["venue"] }),
+      T0,
+    );
+    for (const asking of ["precise", "nearby", "approximate"] as const) {
+      const seen = store.read("locate_friends_session", "acct-9", asking, T0);
+      assert.ok(seen);
+      assert.equal(seen.precision, "venue", `asking for ${asking} must not raise the rung`);
+      assert.equal(seen.position, null);
+    }
+  });
+
+  test("an audience ceiling the ladder does not contain is treated as `none`, not ignored", () => {
+    const { store } = twoViewers();
+    assert.equal(
+      store.read("locate_friends_session", "acct-9", "street-level" as never, T0 + 1_000),
+      null,
+      "a bound we cannot read is not a bound we get to ignore",
+    );
+    assert.equal(
+      store.resolve("acct-9", "locate_friends_session", undefined as never, T0 + 1_000),
+      null,
+    );
+  });
+
+  test("the audience ceiling composes WITH the source ceiling — the narrower of the two wins", () => {
+    const store = new PresenceFusionStore();
+    store.admit(
+      PRESENCE_WRITE_CAPABILITIES.trip_crew_location_sessions,
+      claim({ subjectKey: "acct-9", ceilings: ["precise"] }),
+      T0,
+    );
+    // circle_presence's CONTRACT ceiling is the narrower bound here...
+    const bySource = store.resolve("acct-9", "circle_presence", "precise", T0);
+    assert.ok(bySource);
+    assert.equal(bySource.precision, PRESENCE_SOURCE_CONTRACTS.circle_presence.ceiling);
+    // ...and here the AUDIENCE is, through a source whose contract permits more.
+    const byAudience = store.resolve("acct-9", "trip_crew_location_sessions", "zone", T0);
+    assert.ok(byAudience);
+    assert.equal(byAudience.precision, "zone");
+    assert.equal(byAudience.position, null);
   });
 });
