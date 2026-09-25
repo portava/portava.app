@@ -45,7 +45,16 @@ export type EvidenceSourceType =
   | "EVENT_TICKET_CHECKIN"
   | "TELEGRAPH_MESSAGE"
   | "STAMP_ISSUANCE"
-  | "USER_CORRECTION";
+  | "USER_CORRECTION"
+  /**
+   * S92 — a closed `ExperienceSession` (lib/experienceSession), the §5.4 bridge
+   * WORLD STATE → OPPORTUNITY → ACTION → SESSION → OUTCOME → MEMORY. The
+   * memory half of that arrow is `services/memoryProjections/
+   * experienceSessionBridge`, and the whole point of the source is that its
+   * OUTCOME decides what it asserts: a session that closed `did_not_go` is
+   * PLANNED and a session that closed `better` is OCCURRED, from the same row.
+   */
+  | "EXPERIENCE_SESSION";
 
 /** Section 4 TruthLevel. */
 export type TruthLevel =
@@ -150,6 +159,14 @@ export const EVIDENCE_SOURCE_STRENGTH: Readonly<Record<EvidenceSourceType, Evide
   STAMP_ISSUANCE: {
     truth_level: "SYSTEM_OBSERVED", max_confidence: 0.85, proves_occurrence_alone: true,
     caveat: "Strong IF stamp rules are deterministic and certified.",
+  },
+  EXPERIENCE_SESSION: {
+    truth_level: "SYSTEM_OBSERVED", max_confidence: 0.8, proves_occurrence_alone: true,
+    caveat:
+      "Strong occurrence evidence ONLY through the outcome. The platform observed the session open and " +
+      "close; the outcome inside it is the owner's own report. `proves_occurrence_alone` is read by the " +
+      "gate together with the assertion type, so a session that closed did_not_go (PLANNED) or " +
+      "could_not_enter (NEARBY) proves nothing on its own and is refused there, not here.",
   },
 });
 

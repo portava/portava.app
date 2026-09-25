@@ -29,6 +29,14 @@
  *                              a number. Contradicting evidence ⇒ ≤ 0.1.
  *   No coverage ≠ quiet        coverage `unknown` ⇒ every output is null and
  *                              the truth class is `unknown`. Never a zero.
+ *   No density ≠ empty         `density` is §5.2's seventh signal, bucketed in
+ *                              coverage's own four-value vocabulary. Absent or
+ *                              `unknown` leaves sociality exactly where coverage
+ *                              alone put it — it never reads as an empty room —
+ *                              and coverage CAPS it, so a claimed crowd can
+ *                              never exceed the evidence behind it. It feeds
+ *                              sociality only; occupancy is not a behaviour, so
+ *                              it may not touch dance_likelihood.
  *   Inference ≠ observation    truth class is ALWAYS `inferred`, and the
  *                              confidence band can never reach
  *                              MIN_BAND_FOR_LIVE_STATE, so no Live label can
@@ -81,6 +89,33 @@ export interface VibeFeatureInput {
   departureVelocity: number | null;
   /** Coverage behind these features — from the aggregate, never from one device. */
   coverage: CoverageBucket;
+  /**
+   * §5.2's seventh candidate signal: HOW MANY PEOPLE ARE HERE, as the same
+   * four-value bucket `coverage` uses (`CoverageBucket`) and never as a count —
+   * a number of people in a place is the figure §24 exists to withhold, and the
+   * bucket is the coarsest thing that still carries the signal.
+   *
+   * ── WHY IT IS NOT `coverage` UNDER A SECOND NAME ────────────────────────────
+   * They share a vocabulary and measure different things, and the census
+   * narrowed S51 on exactly this point: `coverage` is EPISTEMIC — how many
+   * independent contributors the aggregate rests on, i.e. how much the platform
+   * knows. `density` is about the WORLD — how occupied the place is. A quiet bar
+   * watched by many contributors is `coverage: many, density: few`; a packed one
+   * seen by one is `coverage: few, density: many`. Reading either as the other
+   * is how "we have a lot of data" becomes "a lot of people are here".
+   *
+   * ── HOW IT IS USED, AND WHERE IT IS REFUSED ─────────────────────────────────
+   * It feeds SOCIALITY only, and `coverage` CAPS it (see below): the engine may
+   * never claim a larger crowd than its evidence supports. It deliberately does
+   * NOT feed `danceLikelihood` — a full room is not a dancing room, and letting
+   * occupancy raise a behaviour likelihood is the "must not claim literal
+   * behavior without sufficient evidence" failure in a new place.
+   *
+   * Absent or null is UNKNOWN, not zero — the same rule every other feature here
+   * follows. An unknown density leaves sociality exactly where it was before
+   * this field existed, so "we did not measure" never renders as "nobody here".
+   */
+  density?: CoverageBucket | null;
   /** Venue/event context, where legitimately sourced. */
   venueContext: VenueContext | null;
   /** 0..1 coarse acoustic energy. Only with `acousticPermissionGranted`. */
@@ -173,6 +208,17 @@ export function inferVibe(features: VibeFeatureInput, nowMs: number): VibeInfere
   const coverageWeight = COVERAGE_WEIGHT[features.coverage];
   if (coverageWeight === undefined) return { ok: false, reason: "invalid_input", field: "coverage" };
 
+  // Density is OPTIONAL and absent means unknown, but a value that was SENT and
+  // is not a bucket is refused rather than coerced: silently reading an
+  // off-vocabulary density as `unknown` would let a producer ship a broken
+  // pipeline that looks like a quiet place.
+  const densityBucket: CoverageBucket | null =
+    features.density === undefined || features.density === null ? null : features.density;
+  const densityWeightRaw = densityBucket === null ? null : COVERAGE_WEIGHT[densityBucket];
+  if (densityBucket !== null && densityWeightRaw === undefined) {
+    return { ok: false, reason: "invalid_input", field: "density" };
+  }
+
   const freshness = deriveFreshness(features.observedAt, null, nowMs);
   const observedAtMs = features.observedAt === null ? NaN : new Date(features.observedAt).getTime();
   const temporal: TemporalEnvelope = {
@@ -221,12 +267,23 @@ export function inferVibe(features: VibeFeatureInput, nowMs: number): VibeInfere
   else if (motion !== null) energy = motion;
   else if (acoustic !== null) energy = acoustic;
 
-  // Sociality: how many independent people are here and how long they stay.
-  // Coverage is the base; dwell scales it. Null when dwell is unknown AND
-  // coverage is the only signal? No — coverage alone is a legitimate, weak
-  // sociality signal, so it stands, scaled by the neutral 0.5.
+  // Sociality: how many people are here and how long they stay.
+  //
+  // §5.2's `density` is the WORLD magnitude and `coverage` is the EVIDENCE
+  // behind it, so the base is density where it is known — and coverage CAPS it,
+  // because "one device ≠ a crowd" applies to a reported density exactly as it
+  // applies to an inferred one. A `many` density carried by a `few`-coverage
+  // aggregate is served as `few`: the engine may report no more sociality than
+  // its evidence can carry.
+  //
+  // Unknown density falls back to coverage alone, which is what this function
+  // did before density existed, so an absent signal changes nothing rather than
+  // quieting the place. Dwell scales whichever base won, by the neutral 0.5
+  // when dwell itself is unknown.
   const dwellFactor = dwell === null ? 0.5 : 0.5 + 0.5 * (dwell / 4);
-  const sociality = clamp(coverageWeight * dwellFactor, 0, VIBE_MAX_LIKELIHOOD);
+  const densityWeight = densityWeightRaw ?? null;
+  const socialityBase = densityWeight === null ? coverageWeight : Math.min(densityWeight, coverageWeight);
+  const sociality = clamp(socialityBase * dwellFactor, 0, VIBE_MAX_LIKELIHOOD);
 
   // Dance likelihood — the guarded one.
   let danceLikelihood: number | null;

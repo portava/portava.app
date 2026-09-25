@@ -130,6 +130,9 @@ import { explainReasons, type DiscoveryReason } from "./discoveryReasonCodes.js"
 import { isFlagEnabled } from "./featureFlags.js";
 import { loadPdeViewer, rankForViewer, type PdePlace } from "./discoveryPde.js";
 import type { DiscoveryLiveRank } from "./discoveryLiveRank.js";
+import { point } from "./mapObjects.js";
+import { classifyAgainstProtected, type ProtectedZone } from "./protectedLocations.js";
+import type { CoverageBucket } from "./truthClass.js";
 
 /** Literal name so check-flag-polarity resolves the read. `*_enabled` ⇒ capability, fail-closed. */
 export const DISCOVERY_CANDIDATE_PROJECTION_FLAG = "discovery_candidate_projection_enabled";
@@ -166,6 +169,27 @@ export interface DiscoveryCandidate {
     servedFrom: string;
   };
   truthClass: DiscoveryTruthClass;
+  /**
+   * §5.1's FOURTH field, and the last one this projection was missing.
+   *
+   * The cohort bucket behind `whyNow` — how many independent contributors the
+   * live grade rested on — in `lib/truthClass`'s four-value vocabulary, copied
+   * from `DiscoveryLiveRank.truth.coverage` and composed nowhere else. Never a
+   * count: the count is the figure §24 withholds, the bucket is what may be
+   * served in its place, and every published bucket already sits above the k
+   * floor the privacy gate applied before the claim existed.
+   *
+   * ── `unknown` IS THE WITHHOLDING VALUE, AND IT IS AMBIGUOUS ON PURPOSE ──────
+   * `unknown` means ONE of: no live grade ran, the grade found no reading, the
+   * gates refused the look, or `coverageForCandidate` REFUSED to publish the
+   * bucket because the §24 pass did not clear this row. Those cases are
+   * deliberately indistinguishable from outside, for the same reason `reasons`
+   * is: a candidate that said "withheld because this place is protected" would
+   * publish the protected status this field exists to hide. The server-side
+   * `coverageForCandidate` returns the reason for an operator; the wire does
+   * not carry it.
+   */
+  coverage: CoverageBucket;
   /**
    * `06` §5 cache metadata — model_version, feature_version, candidate source,
    * recommendation reasons, the feature vector and the ranking timestamp — for
@@ -221,6 +245,22 @@ export interface CandidateServeContext {
    * cache read is not a rank.
    */
   provenanceById?: ReadonlyMap<string, DiscoveryRankProvenance> | null;
+  /**
+   * §24 — the protected zones this serve must be checked against before any
+   * cohort signal may be published, and the position of each served row.
+   *
+   * BOTH ARE REQUIRED FOR A BUCKET TO BE SERVED, and absence is not "no zones
+   * nearby" — it is "the pass did not run", which fails closed to `unknown`.
+   * That is the whole difference between this and copying the Map's bucket
+   * across: the Map runs `applyProtection` over objects that carry their own
+   * geometry, and a `DiscoveryCandidate` carries none by design, so the serve
+   * point must hand the geometry in or get nothing.
+   *
+   * `positionById` is read ONLY to decide the zone question and never reaches
+   * the projection — no coordinate appears on a `DiscoveryCandidate`.
+   */
+  protectedZones?: readonly ProtectedZone[] | null;
+  positionById?: ReadonlyMap<string, { lat: number; lng: number }> | null;
   /** Clock, injectable for tests. */
   nowMs?: number;
 }
@@ -287,6 +327,83 @@ export function whyNowOf(id: string, ctx: Pick<CandidateServeContext, "liveRankB
   return grade.whyNow.length > 0 ? [...grade.whyNow] : null;
 }
 
+/**
+ * Why `coverage` reads as it does. SERVER-SIDE ONLY — see the field's comment
+ * for why the wire cannot carry this.
+ */
+export type CoverageWithholdReason =
+  /** A bucket was read and the §24 pass cleared it. */
+  | "served"
+  /** No live grade, no reading, or the live gates refused the look. */
+  | "no_reading"
+  /** The serve point ran no protected-zone pass, so nothing may be published. */
+  | "pass_did_not_run"
+  /** The pass ran and this row is inside (or may be inside) a protected zone. */
+  | "protected_zone";
+
+export interface CandidateCoverageDecision {
+  coverage: CoverageBucket;
+  reason: CoverageWithholdReason;
+}
+
+/**
+ * §24, answered CONSERVATIVELY — the arm that needs no ruling.
+ *
+ * The census left S49 on an owner question: either route `DiscoveryCandidate`
+ * through the same coarsening the Map runs, or rule that a four-value bucket
+ * over an already k-gated state is not protected-zone sensitive. This is the
+ * FIRST arm. It publishes a bucket only where a real protected-zone pass ran
+ * and cleared the row, so it cannot open the hole the second arm would have to
+ * be ruled safe: a `coverage` on Discovery for a place whose `coverage` the Map
+ * deliberately withholds is impossible by construction here.
+ *
+ * ── WHY IT PROBES AS `social_zone` ──────────────────────────────────────────
+ * `classifyAgainstProtected` decides on an object's KIND as well as its
+ * position, so the probe has to declare what kind of disclosure a cohort bucket
+ * is. It is an AMBIENT PRESENCE disclosure: `protectedLocations` defines that
+ * class as one where "the disclosure is the association with the place, which
+ * no amount of coordinate blurring removes", which is exactly a bucket saying
+ * independent people were observed at this place. So a coarsen-class zone
+ * ESCALATES to suppress for it, and this function withholds — the same answer
+ * the Map reaches when it deletes `coverage` inside a zone.
+ *
+ * Every non-`allow` answer withholds. There is no coarser honest bucket to fall
+ * back to: `few` over a protected place still says people were there.
+ *
+ * PURE. The probe is built, read and discarded here; no coordinate escapes.
+ */
+export function coverageForCandidate(
+  id: string,
+  ctx: Pick<CandidateServeContext, "liveRankById" | "protectedZones" | "positionById">,
+): CandidateCoverageDecision {
+  const bucket = ctx.liveRankById?.get(id)?.truth?.coverage ?? null;
+  // Nothing to withhold and nothing to serve. Checked FIRST so a row with no
+  // reading is not reported as protected — that would be a disclosure made out
+  // of an absence.
+  if (bucket === null || bucket === "unknown") return { coverage: "unknown", reason: "no_reading" };
+
+  const zones = ctx.protectedZones;
+  const position = ctx.positionById?.get(id) ?? null;
+  // Fail closed on BOTH halves. A serve point that passed no zones has not
+  // proved this row is outside one, and a row with no position cannot be
+  // placed against the zones that were passed.
+  if (!Array.isArray(zones) || position === null) return { coverage: "unknown", reason: "pass_did_not_run" };
+
+  const decision = classifyAgainstProtected(
+    {
+      id,
+      kind: "social_zone",
+      geometry: point(position.lat, position.lng),
+      title: "",
+      privacyClass: "place_level",
+      renderingPriority: 0,
+    },
+    zones,
+  );
+  if (decision.action !== "allow") return { coverage: "unknown", reason: "protected_zone" };
+  return { coverage: bucket, reason: "served" };
+}
+
 /** Project one served row. Pure; no I/O, no clock unless supplied. */
 export function projectDiscoveryCandidate(row: CandidateSourceRow, ctx: CandidateServeContext): DiscoveryCandidate {
   const nowMs = ctx.nowMs ?? Date.now();
@@ -315,6 +432,7 @@ export function projectDiscoveryCandidate(row: CandidateSourceRow, ctx: Candidat
     confidence: CONFIDENCE_PRIOR[truthClass as keyof typeof CONFIDENCE_PRIOR] ?? CONFIDENCE_PRIOR.unknown,
     freshness: classifyFreshness(ctx.cacheLevel, ctx.cachedAt, nowMs),
     truthClass,
+    coverage: coverageForCandidate(row.id, ctx).coverage,
     provenance,
     reasons: explainReasons(signals),
   };

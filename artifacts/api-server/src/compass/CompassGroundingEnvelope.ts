@@ -424,6 +424,75 @@ function bandForSentence(sentence: string, evidence: GroundingEvidence): Evidenc
 }
 
 /**
+ * S79 — fold the CONTEXT's band together with the TOOL RESULTS' band.
+ *
+ * The census requires live claims in `/compass/ask`'s context first, then a
+ * checker over the band of its inputs — and "its inputs" is both halves. A turn
+ * where the model called no tool had `truthClass: null` and the two truth-class
+ * triggers could not fire at all; carrying the context's claims in is what
+ * makes the checker non-vacuous there.
+ *
+ * THE FOLD IS FAIL-WEAK ON EVERY AXIS, so that adding context can only ever
+ * make the checker STRICTER:
+ *
+ *   • the datum booleans UNION. A crowd reading in either half means a crowd
+ *     reading was available, which is honest — and on its own it would LOOSEN
+ *     the crowd trigger, which is why the next line matters.
+ *   • the truth class takes the WEAKEST of the two. So a context that supplies
+ *     a `typical` crowd pattern turns off `crowd_claim_without_observation`
+ *     (there WAS a reading) and turns on `truth_class_not_qualified` (it was
+ *     not an observation). The sentence is still refused; it is refused for the
+ *     accurate reason, which is the point of grounding against a BAND rather
+ *     than against a presence bit.
+ *   • subjects MERGE BY NAME, and a merged subject is weakest-wins on its truth
+ *     class and AND-wins on `hasVerifiedLive`: a place the tools verified live
+ *     and the context knows only a stale pattern for is not a live subject.
+ *     `bandForSentence` already requires every named subject to carry a datum,
+ *     so this keeps that posture inside one subject too.
+ */
+export function mergeGroundingEvidence(
+  a: GroundingEvidence,
+  b: GroundingEvidence,
+): GroundingEvidence {
+  const byName = new Map<string, SubjectEvidence>();
+  for (const sub of [...(a.subjects ?? []), ...(b.subjects ?? [])]) {
+    const key = sub.name.toLowerCase();
+    const prior = byName.get(key);
+    if (!prior) { byName.set(key, sub); continue; }
+    byName.set(key, {
+      subjectId: prior.subjectId ?? sub.subjectId,
+      name: prior.name,
+      // AND, not OR: a subject is only live-verified if BOTH halves that
+      // mentioned it agree it is. One half's silence is not a veto — silence
+      // produces no subject entry at all — but one half's contradiction is.
+      hasVerifiedLive: prior.hasVerifiedLive && sub.hasVerifiedLive,
+      // A reading in either half IS a reading; the truth class below is what
+      // keeps that from becoming a licence.
+      hasWaitDatum: prior.hasWaitDatum || sub.hasWaitDatum,
+      hasCrowdDatum: prior.hasCrowdDatum || sub.hasCrowdDatum,
+      hasRouteDatum: prior.hasRouteDatum || sub.hasRouteDatum,
+      truthClass:
+        prior.truthClass === null ? sub.truthClass
+        : sub.truthClass === null ? prior.truthClass
+        : weakestTruthClass([prior.truthClass, sub.truthClass]),
+    });
+  }
+
+  const declared = [a.truthClass, b.truthClass].filter((c): c is TruthClass => c != null);
+  return {
+    hasVerifiedLive: a.hasVerifiedLive || b.hasVerifiedLive,
+    hasWaitDatum: a.hasWaitDatum || b.hasWaitDatum,
+    hasCrowdDatum: a.hasCrowdDatum || b.hasCrowdDatum,
+    hasRouteDatum: a.hasRouteDatum || b.hasRouteDatum,
+    sourceClasses: [...new Set([...(a.sourceClasses ?? []), ...(b.sourceClasses ?? [])])].sort(),
+    // An absent class stays absent — see GroundingEvidence.truthClass — but once
+    // either half DECLARES one, the weaker governs.
+    truthClass: declared.length > 0 ? weakestTruthClass(declared) : null,
+    subjects: [...byName.values()],
+  };
+}
+
+/**
  * Sensing `:148` — read the prose back against the confidence band of its
  * inputs, and publish nothing that over-claims without saying so.
  */
