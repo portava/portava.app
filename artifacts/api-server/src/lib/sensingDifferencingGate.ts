@@ -340,3 +340,51 @@ export async function publishThroughDifferencingGate(
   }
   return { ...decision, recorded: true };
 }
+
+/** The purge's outcome. Same shape as the contribution sweep's, for the same reason. */
+export type PublicationPurgeResult = { ok: true; deleted: number } | { ok: false; error: string };
+
+/**
+ * Sweep publications past their TTL.
+ *
+ * ── WHY THIS BINDING EXISTS, AND WHAT ITS ABSENCE WAS ───────────────────────
+ * 3110 ships `purge_expired_sensing_publications(timestamptz)` SECURITY DEFINER,
+ * and nothing called it. `check:security-definer-oracles` is the guard that
+ * noticed, and its finding is worth restating because "unused function" sounds
+ * harmless and this is not:
+ *
+ *   "NOTHING references it … Over PostgREST it is
+ *    POST /rpc/purge_expired_sensing_publications, and Supabase's default
+ *    privileges grant EXECUTE on it to anon and authenticated, so its entire
+ *    remaining effect is to answer an authorization question for anyone who
+ *    asks."
+ *
+ * There is a second cost on top of the reachability one, and it is the reason
+ * the remedy here is to WIRE rather than to ledger: the store's 72-hour TTL is
+ * a privacy bound, and a bound nothing enforces is a bound that does not hold.
+ * A last-published aggregate that outlives its window is a longer-lived record
+ * of a cohort than the policy permits.
+ *
+ * The caller is `lib/sensingRetentionScheduler`, beside the contribution sweep,
+ * because they are the same job: one hourly pass that removes what has aged out
+ * of the sensing stores. It is deliberately NOT a second scheduler.
+ */
+export async function purgeExpiredSensingPublications(
+  db: PublicationStore,
+  nowIso: string,
+): Promise<PublicationPurgeResult> {
+  if (!nowIso) return { ok: false, error: "now_required" };
+  const rpc = (db as unknown as { rpc?: (fn: string, args: Record<string, unknown>) => Promise<{ data: unknown; error: { message?: string } | null }> }).rpc;
+  if (typeof rpc !== "function") return { ok: false, error: "client_exposes_no_rpc" };
+  try {
+    const { data, error } = await rpc.call(db, "purge_expired_sensing_publications", { p_now: nowIso });
+    if (error) return { ok: false, error: error.message ?? "purge_failed" };
+    // A bigint arrives over PostgREST as a string. `Number(data) || 0` is the
+    // house idiom (lib/sensingAnonStore.purgeExpiredSensingContributions says
+    // why): a typeof check reports 0 for every real sweep, which is exactly how
+    // a working purge reads as an idle one in the logs.
+    return { ok: true, deleted: Number(data) || 0 };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "purge_threw" };
+  }
+}

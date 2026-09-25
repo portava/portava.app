@@ -37,7 +37,14 @@ const SRC = resolve(dirname(fileURLToPath(import.meta.url)), "..");
  * a HEAD select (`{ head: true }`); everything else on this fake exists so a
  * mis-shaped call is a loud failure rather than a silent undefined.
  */
-function client(opts: { present: boolean; deleted?: number | string; rpcError?: boolean }) {
+function client(opts: {
+  present: boolean;
+  deleted?: number | string;
+  rpcError?: boolean;
+  /** The 3110 publication purge's answer, keyed SEPARATELY from the contribution one. */
+  publications?: number | string;
+  pubsError?: boolean;
+}) {
   const state = { probes: 0, rpc: [] as Array<{ name: string; args: any }> };
   return {
     state,
@@ -59,6 +66,12 @@ function client(opts: { present: boolean; deleted?: number | string; rpcError?: 
     },
     rpc: async (name: string, args: any) => {
       state.rpc.push({ name, args });
+      if (name === "purge_expired_sensing_publications") {
+        return opts.pubsError
+          ? { data: null, error: { message: "function does not exist" } }
+          : { data: opts.publications ?? 0, error: null };
+      }
+      assert.equal(name, "purge_expired_sensing_contributions", "the sweep called an RPC nobody wired");
       return opts.rpcError
         ? { data: null, error: { message: "boom" } }
         : { data: opts.deleted ?? 0, error: null };
@@ -98,14 +111,69 @@ describe("sensing TTL sweep — must not run where the table is absent", () => {
 describe("sensing TTL sweep — the sweep itself", () => {
   beforeEach(() => _resetSensingStorePresence());
 
-  it("goes through the SECURITY DEFINER function, not a raw delete", async () => {
-    const c = client({ present: true, deleted: 4 });
+  it("goes through the SECURITY DEFINER functions, not a raw delete", async () => {
+    const c = client({ present: true, deleted: 4, publications: 2 });
     const r = await runSensingRetentionSweep({ client: c, now: new Date("2026-09-07T12:00:00.000Z") });
     assert.equal(r.deleted, 4);
+    assert.equal(r.publicationsDeleted, 2);
     assert.equal(r.skipped, false);
     assert.equal(r.reason, null);
-    assert.equal(c.state.rpc.length, 1);
-    assert.equal(c.state.rpc[0]!.name, "purge_expired_sensing_contributions");
+    // BOTH stores, named exactly, in dependency-free order. Asserting only a
+    // count would let a pass that swept one store twice look identical to a
+    // pass that swept both.
+    assert.deepEqual(
+      c.state.rpc.map((x) => x.name),
+      ["purge_expired_sensing_contributions", "purge_expired_sensing_publications"],
+    );
+  });
+
+  it("reports the two stores SEPARATELY — a sum would hide a store that never swept", async () => {
+    // The whole reason `publicationsDeleted` is its own field. 4 + 2 = 6 reads
+    // identically to 6 + 0, so a summed count cannot answer "did the publication
+    // TTL run at all", which is the question the 3110 privacy bound turns on.
+    const c = client({ present: true, deleted: 4, publications: 2 });
+    const r = await runSensingRetentionSweep({ client: c });
+    assert.equal(r.deleted, 4);
+    assert.equal(r.publicationsDeleted, 2);
+    assert.notEqual(r.deleted, 6);
+  });
+
+  it("a bigint publication count arrives as a STRING and is still counted", async () => {
+    const r = await runSensingRetentionSweep({ client: client({ present: true, publications: "900" }) });
+    assert.equal(r.publicationsDeleted, 900);
+  });
+
+  it("the publication purge failing does NOT fail the contribution sweep", async () => {
+    // 3110 is applied to no database yet, so on every machine this boots on
+    // today the publication RPC does not exist. If its absence turned a
+    // successful contribution purge into `reason: "error"`, wiring the new sweep
+    // would have STOPPED the sweep that was already working.
+    const c = client({ present: true, deleted: 7, pubsError: true });
+    const r = await runSensingRetentionSweep({ client: c });
+    assert.equal(r.skipped, false, "a failed publication purge must not skip the pass");
+    assert.equal(r.reason, null);
+    assert.equal(r.deleted, 7, "the contributions that WERE purged must still be reported");
+    assert.equal(r.publicationsDeleted, null, "null is 'not swept' and must not read as 'nothing expired'");
+    assert.notEqual(r.publicationsDeleted, 0);
+  });
+
+  it("null and 0 are different answers, and 0 is only reachable by actually sweeping", async () => {
+    const swept = await runSensingRetentionSweep({ client: client({ present: true, publications: 0 }) });
+    assert.equal(swept.publicationsDeleted, 0, "the RPC answered 0 — that IS a sweep");
+    _resetSensingStorePresence();
+    const notSwept = await runSensingRetentionSweep({ client: client({ present: false }) });
+    assert.equal(notSwept.publicationsDeleted, null);
+  });
+
+  it("the publication purge is given the SAME instant as the contribution purge", async () => {
+    // Two clocks in one pass would let a row be expired for one sweep and live
+    // for the other in the same hour.
+    const c = client({ present: true, publications: 1 });
+    await runSensingRetentionSweep({ client: c, now: new Date("2026-09-07T12:00:00.000Z") });
+    const pub = c.state.rpc.find((x) => x.name === "purge_expired_sensing_publications");
+    assert.ok(pub, "the publication purge did not run");
+    assert.deepEqual(pub!.args, { p_now: "2026-09-07T12:00:00.000Z" });
+    assert.deepEqual(pub!.args, c.state.rpc[0]!.args);
   });
 
   it("supplies the instant rather than letting the database read a clock", async () => {
@@ -145,7 +213,18 @@ describe("sensing TTL sweep — the sweep itself", () => {
     await runSensingRetentionSweep({ client: c });
     await runSensingRetentionSweep({ client: c });
     assert.equal(c.state.probes, 1, "the probe ran twice for a table that cannot disappear");
-    assert.equal(c.state.rpc.length, 2);
+    // Two passes, two stores each. The count is spelled out rather than written
+    // as `2` so that adding a third sweep to the pass fails HERE, loudly,
+    // instead of being absorbed by a number nobody re-reads.
+    assert.deepEqual(
+      c.state.rpc.map((x) => x.name),
+      [
+        "purge_expired_sensing_contributions",
+        "purge_expired_sensing_publications",
+        "purge_expired_sensing_contributions",
+        "purge_expired_sensing_publications",
+      ],
+    );
   });
 });
 
