@@ -27,6 +27,7 @@ import {
   classifyFreshness,
   whyForUserFromFeatures,
   withDiscoveryCandidates,
+  positionIndexOf,
   readDiscoveryCandidatesForViewer,
   invalidateCandidateProjectionFlagCache,
   CONFIDENCE_PRIOR,
@@ -34,6 +35,7 @@ import {
   type CandidateServeContext,
 } from "../lib/discoveryCandidate.js";
 import type { ScoredCandidate, RankCandidate } from "../lib/portavaRank.js";
+import { clearProtectedZoneCache } from "../lib/protectedZoneStore.js";
 
 const NOW = 1_800_000_000_000;
 
@@ -523,5 +525,144 @@ describe("reasonCodesByIdFromProvenance — 04 §5's reason codes, from what the
     assert.deepEqual(reasonCodesByIdFromProvenance(null), {});
     assert.deepEqual(reasonCodesByIdFromProvenance(undefined), {});
     assert.deepEqual(reasonCodesByIdFromProvenance(new Map()), {});
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// S49 / §24 — the zone pass the wrappers now run for themselves
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// WHAT WAS WRONG, and it was not the logic. `coverageForCandidate` was built,
+// reachable from all five serve points, and correct: it withholds unless a real
+// protected-zone pass cleared the row. But NO CALLER SUPPLIED THE ZONES OR THE
+// POSITIONS, so it took the `pass_did_not_run` branch every time. Every served
+// `coverage` read `unknown`, on every path, for every row — a §24 control that
+// could not be observed to do anything, which is indistinguishable from one
+// that is not there.
+//
+// The wrappers now load the policy and index the positions themselves, because
+// they already hold `sc` and the rows. These cases prove the pass RUNS (a
+// bucket is served where the policy clears it), that it still WITHHOLDS where
+// the policy does not, and that an unreadable policy is not an empty one.
+describe("G. §24 — withDiscoveryCandidates runs the protected-zone pass", () => {
+  const PLACE = "db/zoned";
+  // A COMPLETE live grade, not a coverage-shaped stub: `whyNowOf` reads
+  // `evidence` and `whyNow` off the same object, so a partial fake throws
+  // inside the projection and the case would fail for a reason that has
+  // nothing to do with §24.
+  const rank = (bucket: "few" | "several" | "many") =>
+    new Map([[PLACE, { evidence: "live", whyNow: [], truth: { coverage: bucket } } as any]]);
+
+  /** A client that answers the projection flag ON and serves a zone policy. */
+  function zoneClient(zoneRows: any[] | null, opts: { error?: boolean } = {}) {
+    const seen: string[] = [];
+    const sc: any = {
+      from: (t: string) => {
+        seen.push(t);
+        if (t === "protected_zones") {
+          return {
+            select: () => ({
+              eq: async () => (opts.error ? { data: null, error: { message: "boom" } } : { data: zoneRows ?? [], error: null }),
+            }),
+          };
+        }
+        return {
+          select: () => ({
+            eq: () => ({ maybeSingle: async () => ({ data: { enabled: true }, error: null }) }),
+          }),
+        };
+      },
+    };
+    return { sc, seen };
+  }
+
+  const CIRCLE = (lat: number, lng: number, radius: number) => ({
+    id: "z1", category: "shelter", action: "suppress", privacy_floor: null,
+    shape: "circle", center_lat: lat, center_lng: lng, radius_meters: radius,
+    ring: null, jurisdiction: null, policy_ref: null,
+  });
+
+  it("SERVES the bucket when the policy was read and the row is outside every zone", async () => {
+    invalidateCandidateProjectionFlagCache();
+    clearProtectedZoneCache();
+    const { sc, seen } = zoneClient([CIRCLE(0, 0, 100)]);
+    const places = [{ id: PLACE, lat: 51.5, lng: -0.12 }];
+    const out = await withDiscoveryCandidates(sc, places, ctx({ liveRankById: rank("several") }));
+    assert.ok(seen.includes("protected_zones"), "the pass must actually read the policy");
+    assert.equal(out[0]?.candidate?.coverage, "several", "cleared by the pass, so the bucket is served");
+  });
+
+  it("WITHHOLDS when the row is inside a protected zone", async () => {
+    invalidateCandidateProjectionFlagCache();
+    clearProtectedZoneCache();
+    const { sc } = zoneClient([CIRCLE(51.5, -0.12, 500)]);
+    const places = [{ id: PLACE, lat: 51.5, lng: -0.12 }];
+    const out = await withDiscoveryCandidates(sc, places, ctx({ liveRankById: rank("many") }));
+    assert.equal(out[0]?.candidate?.coverage, "unknown", "a bucket over a protected place is still a disclosure");
+  });
+
+  it("WITHHOLDS when the policy could not be read — unreadable is not empty", async () => {
+    invalidateCandidateProjectionFlagCache();
+    clearProtectedZoneCache();
+    const { sc } = zoneClient(null, { error: true });
+    const places = [{ id: PLACE, lat: 51.5, lng: -0.12 }];
+    const out = await withDiscoveryCandidates(sc, places, ctx({ liveRankById: rank("many") }));
+    assert.equal(out[0]?.candidate?.coverage, "unknown", "a database blip must not publish a protected place");
+  });
+
+  it("WITHHOLDS a row that carries no position — unplaceable is unprovable", async () => {
+    invalidateCandidateProjectionFlagCache();
+    clearProtectedZoneCache();
+    const { sc } = zoneClient([]);
+    const out = await withDiscoveryCandidates(sc, [{ id: PLACE }], ctx({ liveRankById: rank("many") }));
+    assert.equal(out[0]?.candidate?.coverage, "unknown");
+  });
+
+  it("an EMPTY policy is a measured empty, and clears the row", async () => {
+    invalidateCandidateProjectionFlagCache();
+    clearProtectedZoneCache();
+    const { sc } = zoneClient([]);
+    const out = await withDiscoveryCandidates(sc, [{ id: PLACE, lat: 1, lng: 1 }], ctx({ liveRankById: rank("few") }));
+    assert.equal(out[0]?.candidate?.coverage, "few", "no zones is a policy answer, not a policy failure");
+  });
+
+  it("a context that ALREADY ran its own pass is not overridden", async () => {
+    invalidateCandidateProjectionFlagCache();
+    clearProtectedZoneCache();
+    const { sc, seen } = zoneClient([CIRCLE(1, 1, 5000)]);
+    const out = await withDiscoveryCandidates(sc, [{ id: PLACE, lat: 1, lng: 1 }], ctx({
+      liveRankById: rank("many"),
+      protectedZones: [],                                    // caller says: cleared
+      positionById: new Map([[PLACE, { lat: 1, lng: 1 }]]),
+    }));
+    assert.ok(!seen.includes("protected_zones"), "a caller that did the pass is trusted, not re-run");
+    assert.equal(out[0]?.candidate?.coverage, "many");
+  });
+
+  it("NO COORDINATE reaches the projection", async () => {
+    invalidateCandidateProjectionFlagCache();
+    clearProtectedZoneCache();
+    const { sc } = zoneClient([]);
+    const out = await withDiscoveryCandidates(sc, [{ id: PLACE, lat: 51.50731, lng: -0.1276 }], ctx({ liveRankById: rank("several") }));
+    const json = JSON.stringify(out[0]?.candidate);
+    assert.ok(!json.includes("51.50731"), "the position is read for the zone question and discarded");
+    assert.ok(!json.includes("0.1276"));
+  });
+
+  it("positionIndexOf accepts both spellings and refuses anything else", () => {
+    const idx = positionIndexOf([
+      { id: "a", lat: 1, lng: 2 },
+      { id: "b", latitude: 3, longitude: 4 },
+      { id: "c", lat: "1", lng: 2 },            // not numbers
+      { id: "d", lat: Number.NaN, lng: 0 },     // not finite
+      { id: "e" },                               // no position at all
+      { lat: 9, lng: 9 },                        // no id
+    ]);
+    assert.deepEqual(idx.get("a"), { lat: 1, lng: 2 });
+    assert.deepEqual(idx.get("b"), { lat: 3, lng: 4 });
+    assert.equal(idx.has("c"), false);
+    assert.equal(idx.has("d"), false);
+    assert.equal(idx.has("e"), false);
+    assert.equal(idx.size, 2);
   });
 });

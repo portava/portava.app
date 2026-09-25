@@ -132,6 +132,7 @@ import { loadPdeViewer, rankForViewer, type PdePlace } from "./discoveryPde.js";
 import type { DiscoveryLiveRank } from "./discoveryLiveRank.js";
 import { point } from "./mapObjects.js";
 import { classifyAgainstProtected, type ProtectedZone } from "./protectedLocations.js";
+import { loadActiveProtectedZones } from "./protectedZoneStore.js";
 import type { CoverageBucket } from "./truthClass.js";
 
 /** Literal name so check-flag-polarity resolves the read. `*_enabled` ⇒ capability, fail-closed. */
@@ -456,6 +457,61 @@ export async function candidateProjectionEnabled(sc: any): Promise<boolean> {
 }
 
 /**
+ * The position of each served row, for the §24 zone question ONLY.
+ *
+ * `CandidateSourceRow` carries no coordinate by design — a `DiscoveryCandidate`
+ * must never be able to leak one — so the geometry is read off whatever the
+ * serve point's row actually is, under either spelling the codebase uses
+ * (`lat`/`lng` on a PdePlace, `latitude`/`longitude` on a place row). A row
+ * with neither simply gets no entry, and `coverageForCandidate` then answers
+ * `pass_did_not_run` and withholds. That is the fail-closed direction: an
+ * unplaceable row is one we cannot prove is outside a protected zone.
+ *
+ * The map is built, read by the zone probe and discarded. No coordinate reaches
+ * a projection.
+ */
+export function positionIndexOf(rows: readonly unknown[]): Map<string, { lat: number; lng: number }> {
+  const out = new Map<string, { lat: number; lng: number }>();
+  for (const row of rows) {
+    const r = row as Record<string, unknown> | null;
+    if (!r || typeof r.id !== "string" || r.id === "") continue;
+    const lat = typeof r.lat === "number" ? r.lat : typeof r.latitude === "number" ? r.latitude : null;
+    const lng = typeof r.lng === "number" ? r.lng : typeof r.longitude === "number" ? r.longitude : null;
+    if (lat === null || lng === null || !Number.isFinite(lat) || !Number.isFinite(lng)) continue;
+    out.set(r.id, { lat, lng });
+  }
+  return out;
+}
+
+/**
+ * Attach the §24 pass to a serve context the route built.
+ *
+ * WHY THE WRAPPERS DO THIS AND NOT THE ROUTES. `coverageForCandidate` needs two
+ * things — the active zones and each row's position — and it withholds unless
+ * it has both. Before this, no caller supplied either, so the §24 arm was
+ * built, reachable, fail-closed and INERT: every served `coverage` read
+ * `unknown`, on every path, for every row. Asking four Discovery serve points
+ * and one Map serve point to each remember to pass two fields is how one of
+ * them silently does not. The wrappers already hold `sc` and the rows, so they
+ * hold everything the pass needs.
+ *
+ * A context that ALREADY carries zones wins: a caller that has done its own
+ * pass is not overridden.
+ */
+async function withProtectedZonePass<T>(
+  sc: any,
+  places: readonly T[],
+  ctx: CandidateServeContext,
+): Promise<CandidateServeContext> {
+  if (ctx.protectedZones !== undefined && ctx.protectedZones !== null) return ctx;
+  // An unreadable policy stays null, and null is NOT an empty list — see
+  // lib/protectedZoneStore. Null here means the pass did not run, and every
+  // bucket is withheld.
+  const zones = await loadActiveProtectedZones(sc);
+  return { ...ctx, protectedZones: zones, positionById: ctx.positionById ?? positionIndexOf(places) };
+}
+
+/**
  * The one call the route makes. Flag OFF ⇒ returns `places` ITSELF (same
  * reference, nothing copied, nothing added). Flag ON ⇒ a new array whose
  * elements carry `candidate`. Never throws into a feed response.
@@ -468,7 +524,8 @@ export async function withDiscoveryCandidates<T extends CandidateSourceRow>(
   let on = false;
   try { on = await candidateProjectionEnabled(sc); } catch { on = false; }
   if (!on) return places;
-  return places.map((p) => ({ ...p, candidate: projectDiscoveryCandidate(p, ctx) }));
+  const served = await withProtectedZonePass(sc, places, ctx);
+  return places.map((p) => ({ ...p, candidate: projectDiscoveryCandidate(p, served) }));
 }
 
 // ── The Map-facing reader (Map §20; census-discovery A25) ─────────────────────
@@ -493,7 +550,18 @@ export async function readDiscoveryCandidatesForViewer<T extends CandidateSource
   opts: { cacheLevel?: string; cachedAt?: number | null; nowMs?: number } = {},
 ): Promise<CandidateReadOutcome<T>> {
   const cacheLevel = opts.cacheLevel ?? "map_read";
-  const base = { cacheLevel, cachedAt: opts.cachedAt ?? null, nowMs: opts.nowMs };
+  // The §24 pass, on this path too. The Map's own objects are coarsened by
+  // routes/mapProjection before they are served; a Discovery bucket attached to
+  // one of them has to clear the same zones or it re-opens what that coarsening
+  // closed — from a different module, which is exactly how it would be missed.
+  const zones = places.length === 0 ? null : await loadActiveProtectedZones(sc);
+  const base = {
+    cacheLevel,
+    cachedAt: opts.cachedAt ?? null,
+    nowMs: opts.nowMs,
+    protectedZones: zones,
+    positionById: positionIndexOf(places),
+  };
   if (!viewerId || places.length === 0) {
     const ctx: CandidateServeContext = { ...base, scoredById: null, rankedBy: "none" };
     return {
