@@ -50,7 +50,7 @@ import {
   runWithAskProjections,
   type AskRankingProjections,
 } from "../compass/CompassPlatformContext.js";
-import { buildOpportunities, opportunityWorldValueKeys, projectForSurface } from "../lib/opportunityEngine.js";
+import { buildOpportunities, opportunityWorldValueKeys, projectForSurface, type SurfaceProjection } from "../lib/opportunityEngine.js";
 import { parseIntentMode } from "../lib/intentModes.js";
 import { certifiedLayoverSnapshot, isDegradedRefusal } from "../services/airport/LayoverSnapshot.js";
 import {
@@ -134,7 +134,11 @@ import { buildRememberSurface } from "../compass/PassportRemembersService.js";
 import { generateRecap, buildOnThisDay, type RecapKind } from "../compass/MemoryRecapsService.js";
 import { recordIntentFromQuery } from "../lib/intentMemory.js";
 import { buildLiveChatContextLines }             from "../compass/CompassLiveEngine.js";
-import { buildTripContextLines }                 from "../compass/CompassTripContext.js";
+import {
+  buildTripContextLines,
+  buildTripWorldContext,
+  formatTripWorldContextLines,
+}                                                from "../compass/CompassTripContext.js";
 import { getOpenAI }                             from "../lib/openai.js";
 import { COMPASS_ASK_PROMPT, COMPASS_ASK_PROMPT_VERSION } from "../lib/prompts/compass-v1.js";
 import {
@@ -1736,6 +1740,15 @@ router.post("/compass/ask", async (req, res) => {
   //     The kernel half is UNGATED, exactly as the assembler above is.
   let askKernel: Awaited<ReturnType<typeof assembleAskKernel>> | null = null;
   let askProjections: AskRankingProjections | null = null;
+  /**
+   * S83 — the opportunity projection, when `opportunity_engine_enabled` let it
+   * run AND it cleared the §5 world-value guard. `undefined` means the gated
+   * half never ran, which `TripWorldContext` keeps distinct from "ran and
+   * promoted nothing".
+   */
+  let promotedOpportunities: readonly SurfaceProjection[] | undefined;
+  /** The opportunity block, held until the S83 block is in front of it — see below. */
+  let opportunityLines: string[] = [];
   try {
     askKernel = await assembleAskKernel(sc, user.id, topPlaceIds, {
       utcOffsetMinutes: tzOffsetForRequest(req),
@@ -1777,7 +1790,21 @@ router.post("/compass/ask", async (req, res) => {
       const { opportunities, refusals } = buildOpportunities(askKernel.kernel, nowMs);
       const wire = projectForSurface(opportunities, "compass");
       if (opportunityWorldValueKeys(wire).length === 0) {
-        ctxLines.push(...formatOpportunityLines(wire, refusals));
+        // HELD, NOT PUSHED YET. The opportunity block must be the LAST of the
+        // platform-context family on the prompt: `compassPlatformChain` CX-11
+        // reads everything from its header to the end of the context and
+        // refuses any §5 world value there, so a later block naming a crowd or
+        // a forecast would be attributed to the opportunity projection. The
+        // S83 block below carries exactly those words (legitimately — it
+        // projects the KERNEL's world, as formatKernelLines already does), so
+        // it goes in front and these lines follow it.
+        // CCL-05's order (ranker < home < kernel < opportunities) is preserved.
+        opportunityLines = formatOpportunityLines(wire, refusals);
+        // S83 — the same admitted projection the ranker gets, so the trip world
+        // context cannot show a different set of opportunities from the prompt.
+        // Set ONLY inside this flag read and only past the world-value guard,
+        // so `undefined` keeps meaning "the gated half never ran".
+        promotedOpportunities = wire;
         // CCL-05 — the opportunity half of what the ranker consumes. It is set
         // ONLY inside this flag read, so with `opportunity_engine_enabled` off
         // (every deployment) the field stays undefined and the ranker cannot
@@ -1789,6 +1816,31 @@ router.post("/compass/ask", async (req, res) => {
       }
     }
   } catch { /* non-fatal — proceed without opportunities */ }
+
+  // ── S83: TripWorldContext — the five parts, hung on the current trip ──────
+  // The census scored S83 BUILT-BUT-WRONG because CompassTripContext was trip
+  // grounding only: "no world state, no opportunities, no disruptions, no
+  // sessions". It now PROJECTS all five, composing owners that already exist
+  // rather than computing anything: the kernel's world and the opportunity
+  // projection are handed in (so the prompt and the ranker cannot see two
+  // different worlds), and disruptions, the viewer's open ExperienceSession and
+  // the trip crew are read on the trip itself.
+  //
+  // A part whose source could not answer is SAID to be unavailable rather than
+  // omitted — the same honesty rule formatHomeProjectionLines keeps, and the
+  // one that stops "we could not check" becoming "your day is clear".
+  // Never fatal.
+  try {
+    const tripWorld = await buildTripWorldContext(sc, user.id, {
+      now: new Date(turnNowMs),
+      kernel: askKernel?.kernel ?? null,
+      opportunities: promotedOpportunities,
+    });
+    ctxLines.push(...formatTripWorldContextLines(tripWorld));
+  } catch { /* non-fatal — proceed without the trip world projection */ }
+
+  // The held opportunity block, now last of the platform-context family.
+  ctxLines.push(...opportunityLines);
 
   // ── Phase 12: live-session grounding ──────────────────────────────────────
   // While a live session is active, chat answers are grounded in the rolling
