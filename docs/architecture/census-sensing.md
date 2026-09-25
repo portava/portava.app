@@ -4261,3 +4261,97 @@ remaining move in this census.
 
 **C 103 · W 21 · N 2 · X 1 — unchanged.** §14's headline stands. S3 and S106
 stay `W`, now on evidence rather than on an unverified lane report.
+
+
+## §17 — 2026-09-25: §14.7's step 1 was incomplete, and CI proved it on two databases
+
+§14.7 listed the shortest path and put *"Apply `3002` → `3003` → `3110` → `3310`
+… in the same cutover as the code deploy"* first. That ordering is **necessary
+and not sufficient**, and the missing part was found the way the rest of this
+census was: by running it, not by reading it.
+
+### §17.1 What ran, and on what
+
+Two databases, neither of them production, both reached through the project's
+own harnesses rather than by hand:
+
+| | |
+|---|---|
+| A local PostgreSQL 16 | `scripts/local-db/up.sh` restores the 2026-08-19 baseline and replays the canonical chain. Stopped before 3002, then each new migration applied on its own so each answer is the database's, not a prediction. |
+| `portava-ci` (`hwokxgbmezheskbzskfr`) | CI's `audit:schema` job, which compares every migration's claimed objects against the live schema. Read-only; the apply step is a dry run that writes nothing. |
+
+### §17.2 The local replay, one file at a time
+
+| Migration | Result |
+|---|---|
+| `3002` | `PRECONDITION FAILED: 2277/2278 tables missing — the erasure rebuild below would silently drop their deletes.` |
+| `3003` | `3003 requires 3002: public.intel_assign_contributor_token() does not exist.` |
+| `3310` | `PRECONDITION FAILED: public.intel_contributor_pepper does not exist.` |
+| `3004` | **APPLIED CLEAN** |
+| `3110` | **APPLIED CLEAN** |
+
+3003 and 3310 are consequential: their preconditions are doing exactly what they
+were written to do, on a database where 3002 could not run. **3002's is not
+consequential — it is the root**, and it is the one §14.7 did not account for.
+
+### §17.3 THE CORRECTION: 2277 → 2278 is a PREREQUISITE, not an aside
+
+§14.1 measured that `2277`/`2278` are applied to **no** database, production
+included. §14.2's S118 row already knew what that costs — *"2277 and 2278 are
+unapplied in production, so two of the three tables do not exist there. A
+migration that assumed they did would abort the whole apply on a database that
+is otherwise correct"* — and **3003 was written to survive it**, skipping an
+absent table with a NOTICE. Its test pins exactly that.
+
+**3002 was not.** Its erasure rebuild issues an unconditional
+`DELETE FROM public.intel_scoped_trust` and `DELETE FROM public.intel_attributions`,
+so it guards with a hard `RAISE`. That guard is *correct* — building an erasure
+function whose body would throw at call time is worse than refusing — but its
+consequence had not been written down:
+
+> **`3002` cannot be applied to production as it stands.** The cutover is
+> `2277 → 2278 → 3002 → 3003`, not `3002 → 3003`, and the first two are
+> themselves a schema change nobody has sanctioned.
+
+§14.8 established that 3002 and this branch's application code are a single
+coupled cutover. §17 adds that the cutover has two more migrations in front of
+it than the shortest path said.
+
+### §17.4 What CI added that the local replay could not
+
+`audit:schema` on `portava-ci` reports **58 missing objects across 9 files**, and
+for the sensing four it names them rather than summarising:
+
+* `3002` — `intel_contributor_pepper`, `intel_contributor_token_for_pepper`, `intel_contributor_token`, `intel_assign_contributor_token`, `intel_self_contributor_tokens`, `intel_observations_unowned_zone_claim_observed`
+* `3003` — the `intel_presence_verifications_contributor_token` trigger
+* `3110` — `sensing_published_aggregates`, `purge_expired_sensing_publications`, two indexes, the service policy
+* `3310` — `intel_consented_contributor_tokens`, `intel_contributor_tokens_for_actor`
+
+That is the same fact §14.1 states — none of it is applied anywhere — now
+**itemised by a tool that reads the live database**, which is a stronger form of
+the same evidence than a ledger row. The other five files belong to the layover,
+highlights and memory lanes and are not this pass's to apply.
+
+### §17.5 The one thing this LOOSENS, stated because it is a real gain
+
+`3004` and `3110` **applied clean on a real PostgreSQL**, in a chain, with their
+own postconditions passing. They are therefore *independently* appliable: they
+do not need 2277/2278, they do not need 3002, and §14.8's coupling does not
+reach them — as §14.8 itself said, they *"add a table, two functions and one
+FALSE flag row that nothing reads"*, and that is now executed rather than
+asserted.
+
+So the ordered path is finer-grained than §14.7 had it:
+
+1. `3004` and `3110` — appliable now, no prerequisites, no coupling. Applying
+   them enables nothing on their own: 3004's flag is FALSE and nothing reads it,
+   and 3110's store has no publisher until decision #9.
+2. `2277 → 2278` — an owner-sanctioned schema change, and the gate on everything
+   below it.
+3. `3002 → 3003 → 3310`, in the same cutover as this branch's code (§14.8).
+
+### §17.6 MOVES NOTHING
+
+**C 103 · W 21 · N 2 · X 1 — unchanged.** Nothing here is applied to any
+database by this pass: the local replay is a throwaway cluster and the CI read
+is read-only. A migration proven appliable is still not an applied one.
