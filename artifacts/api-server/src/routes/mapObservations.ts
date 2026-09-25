@@ -36,7 +36,32 @@
  *   observed-at       clampObservedAt — a future timestamp is rejected
  *   claim vocabulary  PHASE1_CAPTURE_CLAIM_TYPES + validateClaimValue
  *   idempotency       unique (actor_id, idempotency_key)
- *   subject           resolves in public.places, or `unknown_subject`
+ *   subject           a place id resolves in public.places, or `unknown_subject`;
+ *                     an UNOWNED subject (§18.3) must name its zone
+ *
+ * WHAT USED TO BE HERE AND IS NOT ANY MORE: `resolveZoneAnchorSubject`
+ * ===================================================================
+ * Until migration 3002 this route answered a §22 zone contribution by reading
+ * the geo_zone, finding the NEAREST active place inside it, and storing the
+ * observation against that place. Its own header gave the motive in as many
+ * words — "`intel_observations.subject_id` FKs `public.places`, and a zone is
+ * not a place" — which is the foreign key, which is the thing the spec names:
+ *
+ *   §18.3  "Never assign to the nearest place merely to satisfy a foreign key."
+ *   §14    "Temporary activity must not be forced onto nearest place ID when
+ *           ownership is unknown."
+ *
+ * A 3 km ceiling and a recorded `zone_id` bounded the mis-attribution; they did
+ * not make it absent, and neither sentence carries a radius. 3002 made
+ * `subject_id` NULLABLE, so the foreign key no longer has to be satisfied, so
+ * the resolver has nothing left to be for. It is DELETED, not bypassed — with
+ * it went the haversine, the bbox pre-filter, the radius ceiling and the
+ * default radius, because a distance threshold in this file is how "close
+ * enough" becomes ownership.
+ *
+ * What replaces it is lib/sensingSubjectReconciliation, which resolves a
+ * cluster to a place or an event ONLY on an ownership signal and answers
+ * `unknown` otherwise. See the zone section below.
  *
  * WHAT THIS ROUTE MAY NEVER DO
  * ============================
@@ -110,8 +135,11 @@ import {
 } from "../lib/intelContracts.js";
 import { writeObservation, type CaptureInput } from "../services/intel/IntelCaptureService.js";
 import { attachMediaEvidence } from "../lib/intelEvidenceCapture.js";
-import { haversineKm } from "../lib/mapSearch.js";
-import { KM_PER_DEGREE_LAT } from "../lib/mapAggregation.js";
+import {
+  reconcileSensingSubject,
+  subjectStorageFor,
+  type SubjectCandidate,
+} from "../lib/sensingSubjectReconciliation.js";
 
 const router = Router();
 
@@ -165,19 +193,21 @@ export const MEDIA_KINDS = ["photo", "video"] as const;
 // Mirrors KIND_PROMPTS in the client's liveTruth.ts. It is a SECOND gate, not
 // the only one: `objectKind` arrives in the body and a client could lie about
 // it. The gate that cannot be lied to is the capture service's subject check —
-// `intel_observations.subject_id` FKs `public.places`, so an id that is not a
-// place is refused as `unknown_subject` no matter what kind the body claims.
+// a NON-NULL `intel_observations.subject_id` FKs `public.places`, so an id
+// claimed as a place that is not one is refused as `unknown_subject` no matter
+// what kind the body claims.
 //
-// ZONE KINDS RESOLVE TO AN ANCHOR PLACE (§22, Table 12). activity_zone,
-// social_zone and crowd_flow are AREAS, not rows in `places`, so their
-// `objectId` is a `geo_zones.id`, not a place id — and handed straight to the
-// subject check it always failed as `unknown_subject`, silently discarding
+// ZONE KINDS ARE AREAS, AND AN AREA MAY HAVE NO OWNER (§22 Table 12, §18.3).
+// activity_zone, social_zone and crowd_flow are AREAS, not rows in `places`, so
+// their `objectId` is a `geo_zones.id`, not a place id — and handed straight to
+// the subject check it always failed as `unknown_subject`, silently discarding
 // every zone contribution §22 explicitly allows (crowd_direction on a flow, a
-// vibe on a social zone). `resolveZoneAnchorSubject` closes that: it reads the
-// geo_zone, finds the nearest active place inside it, and observes AGAINST that
-// place (`subject_id`) while recording the zone (`zone_id`) the contribution
-// came from. It FAILS CLOSED — `unknown_subject`, never a mis-file — when the
-// zone is unknown, has no usable geometry, or contains no place to anchor to.
+// vibe on a social zone). `resolveZoneSubject` below closes that WITHOUT
+// inventing an owner: it reads the geo_zone, asks
+// lib/sensingSubjectReconciliation which of §18.3's four outcomes applies, and
+// stores that answer — a place when the zone is REGISTERED against one, and
+// otherwise `unknown`, with `subject_id` null and the zone recorded. It FAILS
+// CLOSED — `unknown_zone`, never a mis-file — when the zone id names nothing.
 // A person-, service-, safety- or forecast-kind subject still takes no prompt
 // at all (KIND_PROMPTS below), so this path is reachable only for the three
 // zone kinds §22 names.
@@ -206,10 +236,10 @@ export const KIND_PROMPTS: Record<MapObjectKind, readonly MapContributionKind[]>
   prediction: [],
   // §36 Phase 7. None of the four takes a prompt, for one reason each:
   //   world_pulse / traveler_flow / city_model are ALREADY AGGREGATES over many
-  //   people. §22's zone contributions anchor to a nearby PLACE
-  //   (resolveZoneAnchorSubject); a continent cell or a city→city edge has no
-  //   place to anchor to, and "I observe that a continent is busy" is not an
-  //   observation of a physical state anyone can make.
+  //   people. A continent cell or a city→city edge is not a subject a person can
+  //   observe: "I observe that a continent is busy" is not an observation of a
+  //   physical state anyone can make. (That is NOT the old "nothing to anchor
+  //   to" reason — since 3002 a zone contribution anchors to nothing at all.)
   //   personal_city is the viewer's own history — the same reason `memory` is
   //   empty above.
   world_pulse: [],
@@ -550,6 +580,9 @@ const REASON_CODE: Readonly<Record<string, ApiErrorCode>> = {
   invalid_claim_type: "invalid_payload",
   invalid_value: "invalid_payload",
   unknown_subject: "not_found",
+  // A §22 zone contribution whose objectId names no geo_zone. Distinct from
+  // unknown_subject on purpose: the subject is not missing, the AREA is.
+  unknown_zone: "not_found",
   db_error: "db_error",
   // ── Evidence-arrow rejections (lib/intelEvidenceCapture) ──────────────────
   // `evidence_requires_observation` never reaches here: a media contribution
@@ -587,81 +620,78 @@ export function isZoneSubjectKind(kind: MapObjectKind): boolean {
 }
 
 /**
- * Search radius when the geo_zone declares no `radius_meters` (polygon / city /
- * neighborhood zones). 500 m is one block: close enough that the anchor place is
- * plausibly "in" the zone, far enough that a small circle zone still finds one.
+ * The §18.3 resolution of a zone contribution, in the three columns an
+ * observation stores a subject in.
  */
-export const ZONE_ANCHOR_DEFAULT_RADIUS_M = 500;
-
-/**
- * Ceiling on the search radius, INCLUDING an explicit `radius_meters`. A `city`
- * zone can be kilometres across; anchoring a crowd-direction observation to a
- * place 8 km away would attribute it to somewhere the contributor never was.
- * 3 km is generous for a neighbourhood and still local.
- */
-export const ZONE_ANCHOR_MAX_RADIUS_M = 3_000;
-
-/** How many candidate places the bbox pre-filter may return before we pick the nearest. */
-const ZONE_ANCHOR_CANDIDATE_LIMIT = 200;
-
-type ZoneAnchorResult =
-  | { ok: true; subjectId: string; zoneId: string }
+type ZoneSubjectResult =
+  | { ok: true; subjectKind: string; subjectId: string | null; zoneId: string }
   | { ok: false; detail: string };
 
-/** The zone's anchor point: its declared centre, else its polygon centroid. */
-function zoneAnchorPoint(zone: {
-  center_lat?: unknown;
-  center_lng?: unknown;
-  polygon_geojson?: unknown;
-}): { lat: number; lng: number } | null {
-  // `== null` first: Number(null) is 0 (finite), so a null centre would
-  // silently anchor the whole zone at (0, 0) in the Gulf of Guinea.
-  const cLat = zone.center_lat == null ? NaN : Number(zone.center_lat);
-  const cLng = zone.center_lng == null ? NaN : Number(zone.center_lng);
-  if (Number.isFinite(cLat) && Number.isFinite(cLng)) return { lat: cLat, lng: cLng };
+/** The shape `geo_zones.id` and a registered `metadata.place_id` both take. */
+const UUID_RE = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
 
-  // Polygon fallback: the mean of the outer ring's vertices. A centroid, not a
-  // bounding-box centre, so a concave zone still anchors inside its own mass.
-  const poly = zone.polygon_geojson as { coordinates?: unknown } | null | undefined;
-  const outer = Array.isArray(poly?.coordinates) ? (poly!.coordinates as unknown[])[0] : null;
-  if (!Array.isArray(outer) || outer.length === 0) return null;
-  let sumLat = 0;
-  let sumLng = 0;
-  let n = 0;
-  for (const p of outer) {
-    if (!Array.isArray(p) || p.length < 2) continue;
-    const lng = Number(p[0]);
-    const lat = Number(p[1]);
-    if (!Number.isFinite(lat) || !Number.isFinite(lng)) continue;
-    sumLat += lat;
-    sumLng += lng;
-    n += 1;
-  }
-  return n === 0 ? null : { lat: sumLat / n, lng: sumLng / n };
+/**
+ * A REGISTERED zone→place mapping, if the geo_zone carries one.
+ *
+ * `geo_zones` has no place foreign key; what it has is `zone_type` and a
+ * `metadata` jsonb. A zone of type `venue` whose metadata names a `place_id` is
+ * an OPERATOR ASSERTION that this area IS that venue — the "registered zone→place
+ * mapping" lib/sensingSubjectReconciliation calls a `venue_anchor`. That is
+ * ownership, and it is the only ownership signal a §22 payload can reach.
+ *
+ * Everything else is NOT ownership and is deliberately not looked for here:
+ * there is no distance, no bounding box, no name match and no "nearest". The
+ * resolver would refuse them anyway (proximity and name_match are outside
+ * OWNERSHIP_EVIDENCE), and not computing them is what keeps that true.
+ */
+function zoneOwnershipCandidates(zone: {
+  zone_type?: unknown;
+  metadata?: unknown;
+}): SubjectCandidate[] {
+  if (String(zone.zone_type ?? "") !== "venue") return [];
+  const meta = zone.metadata as Record<string, unknown> | null | undefined;
+  const placeId = meta && typeof meta === "object" ? meta["place_id"] : null;
+  if (typeof placeId !== "string" || !UUID_RE.test(placeId)) return [];
+  return [{ kind: "place", id: placeId, evidence: "venue_anchor" }];
 }
 
 /**
- * Resolve a §22 zone contribution to the place it should be observed against.
+ * Resolve a §22 zone contribution to a subject — WITHOUT proximity.
  *
- * `intel_observations.subject_id` FKs `public.places`, and a zone is not a
- * place. This reads the `geo_zones` row named by `zoneObjectId`, finds the
- * NEAREST active place within the zone's radius, and returns that place as the
- * subject plus the zone id to record alongside it.
+ * Reads the `geo_zones` row named by `zoneObjectId` and hands what it finds to
+ * `reconcileSensingSubject`, whose rule is that a cluster is assigned to a Place
+ * or an Event ONLY on an explicit ownership signal. Two outcomes are reachable
+ * from a §22 payload:
  *
- * FAIL-CLOSED, every branch: an unreadable/absent zone, a zone with no usable
- * geometry, an unreadable place list, or no place within range all return
- * `ok:false`. The caller maps that to `unknown_subject` — a refusal, never a
- * guess. It never widens the FK or invents a subject.
+ *   place     the zone is a `venue` registered against a place id. The
+ *             observation is stored against THAT place, with the zone recorded.
+ *   unknown   everything else. `subject_id` is NULL, the zone is recorded, and
+ *             the subject kind says `unknown` out loud. This is the answer §18.3
+ *             asks for, not a failure to find one — and since migration 3002 it
+ *             is storable, which is why the nearest-place resolver that used to
+ *             live here could be deleted rather than merely disabled.
+ *
+ * `temporary_world_object` is NOT produced here, and that is a ruling. It means
+ * "a cluster that has PERSISTED across more than one time bucket without an
+ * owner" — a property of an aggregation over many contributions, which a single
+ * human tap on a declared zone cannot establish. Asserting it from one tap would
+ * be inventing the evidence. The schema and the capture service accept it (see
+ * src/test/sensingIdentityZoneSubject.test.ts) for the aggregation path that
+ * will produce it.
+ *
+ * FAIL-CLOSED: an unreadable or absent geo_zone returns `ok:false` and the
+ * caller refuses with `unknown_zone`. A contribution to an area nobody has
+ * declared is not an observation of anywhere.
  */
-export async function resolveZoneAnchorSubject(
+export async function resolveZoneSubject(
   sc: any,
   zoneObjectId: string,
-): Promise<ZoneAnchorResult> {
+): Promise<ZoneSubjectResult> {
   let zoneRow: any = null;
   try {
     const { data, error } = await sc
       .from("geo_zones")
-      .select("id, zone_type, center_lat, center_lng, radius_meters, polygon_geojson")
+      .select("id, zone_type, metadata")
       .eq("id", zoneObjectId)
       .maybeSingle();
     if (error) return { ok: false, detail: `geo_zone read failed for ${zoneObjectId}` };
@@ -671,57 +701,24 @@ export async function resolveZoneAnchorSubject(
   }
   if (!zoneRow) return { ok: false, detail: `no geo_zone ${zoneObjectId}` };
 
-  const anchor = zoneAnchorPoint(zoneRow);
-  if (!anchor) return { ok: false, detail: `geo_zone ${zoneObjectId} has no usable geometry` };
-
-  const declared = Number(zoneRow.radius_meters);
-  const radiusM = Math.min(
-    ZONE_ANCHOR_MAX_RADIUS_M,
-    Number.isFinite(declared) && declared > 0 ? declared : ZONE_ANCHOR_DEFAULT_RADIUS_M,
-  );
-  const radiusKm = radiusM / 1000;
-
-  // A bbox pre-filter around the anchor keeps the scan bounded; the nearest is
-  // then chosen by true great-circle distance and re-checked against the radius,
-  // so a corner of the bbox that lies outside the circle cannot anchor.
-  const dLat = radiusKm / KM_PER_DEGREE_LAT;
-  const cosLat = Math.max(0.01, Math.cos((anchor.lat * Math.PI) / 180));
-  const dLng = radiusKm / (KM_PER_DEGREE_LAT * cosLat);
-
-  let placeRows: any[] | null = null;
-  try {
-    const { data, error } = await sc
-      .from("places")
-      .select("id, latitude, longitude")
-      .eq("status", "active")
-      .is("merged_into_place_id", null)
-      .gte("latitude", anchor.lat - dLat)
-      .lte("latitude", anchor.lat + dLat)
-      .gte("longitude", anchor.lng - dLng)
-      .lte("longitude", anchor.lng + dLng)
-      .limit(ZONE_ANCHOR_CANDIDATE_LIMIT);
-    if (error || !Array.isArray(data)) return { ok: false, detail: `place read failed near geo_zone ${zoneObjectId}` };
-    placeRows = data as any[];
-  } catch {
-    return { ok: false, detail: `place read threw near geo_zone ${zoneObjectId}` };
-  }
-
-  let bestId: string | null = null;
-  let bestKm = Infinity;
-  for (const r of placeRows) {
-    const lat = Number(r?.latitude);
-    const lng = Number(r?.longitude);
-    if (!Number.isFinite(lat) || !Number.isFinite(lng) || typeof r?.id !== "string") continue;
-    const km = haversineKm(anchor.lat, anchor.lng, lat, lng);
-    if (km <= radiusKm && km < bestKm) {
-      bestKm = km;
-      bestId = r.id;
-    }
-  }
-  if (bestId === null) {
-    return { ok: false, detail: `no active place within ${radiusM}m of geo_zone ${zoneObjectId}` };
-  }
-  return { ok: true, subjectId: bestId, zoneId: String(zoneRow.id) };
+  const zoneId = String(zoneRow.id);
+  const ref = reconcileSensingSubject({
+    zoneId,
+    candidates: zoneOwnershipCandidates(zoneRow),
+    // See the ruling above: one tap establishes no persistence.
+    persistent: false,
+  });
+  // `experience` is the intel system's subject kind for a venue; the resolver's
+  // own `place` is about HOW it resolved, not about what the claim system stores.
+  const stored = subjectStorageFor(ref, { placeSubjectKind: "experience", zoneId });
+  return {
+    ok: true,
+    subjectKind: stored.subjectKind,
+    subjectId: stored.subjectId,
+    // subjectStorageFor returns the zone for the unowned outcomes and the
+    // caller's zone for the owned ones; both are this zone.
+    zoneId: stored.zoneId ?? zoneId,
+  };
 }
 
 /**
@@ -789,18 +786,21 @@ export async function ingestMapContribution(
     return reject("unsupported_kind", `${c.kind} cannot be recorded yet: ${why}`);
   }
 
-  // §22 zone kinds are AREAS, not places. Resolve the geo_zone in `objectId` to
-  // the nearest active place inside it, and observe against THAT place while
-  // recording the zone. Fail-closed (unknown_subject) when the zone cannot be
-  // anchored — never widen the FK, never guess a subject. Place-shaped kinds
-  // pass straight through: their objectId already IS the place id.
-  let subjectId = c.objectId;
+  // §22 zone kinds are AREAS, not places. The geo_zone in `objectId` is resolved
+  // through §18.3 entity reconciliation: a place ONLY when the zone is registered
+  // against one, and otherwise `unknown` — subject_id null, the zone recorded,
+  // and the subject kind saying so. Fail-closed (`unknown_zone`) when the zone id
+  // names nothing. NOTHING HERE MEASURES A DISTANCE. Place-shaped kinds pass
+  // straight through: their objectId already IS the place id.
+  let subjectId: string | null = c.objectId;
+  let subjectKind = "experience";
   let zoneId: string | null = null;
   if (isZoneSubjectKind(c.objectKind)) {
-    const anchored = await resolveZoneAnchorSubject(sc, c.objectId);
-    if (!anchored.ok) return reject("unknown_subject", anchored.detail);
-    subjectId = anchored.subjectId;
-    zoneId = anchored.zoneId;
+    const resolved = await resolveZoneSubject(sc, c.objectId);
+    if (!resolved.ok) return reject("unknown_zone", resolved.detail);
+    subjectId = resolved.subjectId;
+    subjectKind = resolved.subjectKind;
+    zoneId = resolved.zoneId;
   }
 
   // The idempotency key is derived from the CLIENT's objectId (the zone), not
@@ -813,8 +813,12 @@ export async function ingestMapContribution(
   const input: CaptureInput = {
     subjectId,
     // The subject kind the intel system stores. `experience` is the service's
-    // own default; the map's own object kind is not a subject kind.
-    subjectKind: "experience",
+    // own default for a venue; the map's own object kind is not a subject kind.
+    // A zone contribution that reconciled to no owner carries `unknown` instead,
+    // and `subjectId` is null with it — the pair is enforced by
+    // intel_observations_subject_resolution_check (migration 3002), so a future
+    // edit cannot send one without the other.
+    subjectKind,
     zoneId,
     claimType: mapped.claimType,
     value: mapped.value,
@@ -852,7 +856,9 @@ export async function ingestMapContribution(
 function envelope(observation: any, kind: string): Record<string, unknown> {
   return {
     id: observation.id,
-    objectId: observation.subject_id,
+    // The subject, or — for a §18.3 unowned cluster, whose subject_id is null —
+    // the zone it was observed in. Never a place the server picked for it.
+    objectId: observation.subject_id ?? observation.zone_id ?? null,
     kind,
     claimType: observation.claim_type,
     value: observation.value,
