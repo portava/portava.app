@@ -41,6 +41,7 @@ import {
   CONFIDENCE_STATES,
   FRESHNESS_STATES,
   KIND_DEFAULT_PRIORITY,
+  PRIVACY_CLASSES,
   TREND_STATES,
   mayRenderAsLive,
   deriveFreshness,
@@ -54,6 +55,20 @@ import {
   type TrendState,
 } from "./mapObjects.js";
 import { PRIVACY_THRESHOLD_V1 } from "./intelContracts.js";
+import {
+  MAP_PRESENCE_KINDS,
+  MAP_PRESENCE_KIND_CEILING,
+  MAP_PRESENCE_KIND_CLASS_CEILING,
+  isMapPresenceKind,
+  type MapPresenceKind,
+} from "../presence/fusion/sources.js";
+import {
+  PRESENCE_WRITE_CAPABILITIES,
+  presenceFusion,
+  type FusedPresenceEstimate,
+  type PresenceClaim,
+} from "../presence/fusion/store.js";
+import { precisionRank as presencePrecisionRank, type LocationPrecision } from "../presence/domain/types.js";
 import { evaluatePrivacy, type PrivacyThreshold, type SuppressionReason } from "./privacyGate.js";
 import { meetsKAnonymity } from "./kAnonymity.js";
 
@@ -426,6 +441,158 @@ export function isNeverAggregated(kind: MapObjectKind): boolean {
   return NEVER_AGGREGATED_KINDS.includes(kind);
 }
 
+// ── The presence gate (census-sensing S3) ─────────────────────────────────────
+
+/**
+ * §23's classes, expressed as §52 rungs, CONSERVATIVELY.
+ *
+ * Identical to `lib/locateFriendsSession.PRIVACY_CLASS_AS_PRECISION_CEILING`
+ * and for the same reason: where the two ladders disagree, `approximate`
+ * becomes `zone` (the wider ring) rather than the server's `approximate`, so a
+ * class can never be translated into a looser rung than the policy that
+ * produced it. A test asserts the two tables are equal rather than leaving two
+ * copies to drift.
+ */
+export const PRIVACY_CLASS_AS_PRESENCE_PRECISION = {
+  none: "none",
+  aggregate_only: "presence_only",
+  approximate: "zone",
+  place_level: "venue",
+  precise_temporary: "precise",
+} as const satisfies Record<PrivacyClass, LocationPrecision>;
+
+/**
+ * The highest class at or below `current` whose rung fits under `allowed`.
+ *
+ * The walk STARTS at `current` and only goes down, which is what makes this
+ * incapable of widening regardless of how the two ladders order themselves —
+ * the worst it can do is fail to tighten as far as it might, and the class
+ * ceiling folded in beside it covers that.
+ */
+export function presenceClassUnder(
+  current: PrivacyClass,
+  allowed: LocationPrecision,
+): PrivacyClass {
+  const limit = presencePrecisionRank(allowed);
+  for (let i = PRIVACY_CLASSES.indexOf(current); i >= 0; i -= 1) {
+    const cls = PRIVACY_CLASSES[i] as PrivacyClass;
+    if (presencePrecisionRank(PRIVACY_CLASS_AS_PRESENCE_PRECISION[cls]) <= limit) return cls;
+  }
+  return "none";
+}
+
+export interface PresenceGateOutcome {
+  /** The object as it may be served, or null when the fusion layer refused it. */
+  object: MapObject | null;
+  /** The sealed estimate behind the decision. Null exactly when `object` is null. */
+  estimate: FusedPresenceEstimate | null;
+  /** Machine-readable refusal, or null. */
+  refusal: string | null;
+  /** True when the gate TIGHTENED the object's privacy class. */
+  narrowed: boolean;
+}
+
+/**
+ * Put ONE map presence object through the presence fusion layer.
+ *
+ * ── WHY THE MAP GOES THROUGH A PRESENCE STORE AT ALL ─────────────────────────
+ * census-sensing S3 names four coexisting presence models and the map's
+ * `social_zone` / `buddy_zone` / `crew_member` kinds are one of them. They are
+ * built in five different places — `lib/mapProjection` (three projectors),
+ * `domain/trips/projections/TripMapProjection`, `lib/locateFriendsSession` —
+ * and until now each of those decided, alone, how revealing its own pin was.
+ * That is the model, not the pin.
+ *
+ * `aggregateForViewport` is the ONE point every served map object passes
+ * through (`routes/mapProjection.ts:1093`, `routes/mapProjectionTemporal.ts:663`),
+ * so it is where the five producers become one. Each presence object becomes a
+ * `PresenceClaim`, the store folds the source ceiling and the per-kind ceiling
+ * over it, and the object is re-stamped from the sealed estimate that comes
+ * back. A producer that stamped itself too generously is narrowed here; a
+ * producer whose claim the store refuses is DROPPED and counted.
+ *
+ * ── WHAT THIS GATE DOES NOT TOUCH, AND WHY ───────────────────────────────────
+ * Freshness and confidence. `nowMs` is optional on a `ViewportRequest` and
+ * defaults to ABSENT — this module has no clock of its own and is not about to
+ * grow one. An absent clock means the estimate is untimed: it can never be
+ * live, it carries freshness 0, and it therefore has nothing to say about the
+ * object's own `freshness` band, which `deriveFreshness` already owns. The gate
+ * governs PRECISION and PRIVACY CLASS, which are the two things the five
+ * producers were each deciding for themselves.
+ *
+ * ── THE TWO LADDERS, BOTH APPLIED ────────────────────────────────────────────
+ * The rung bound rides on the estimate; the class bound (`presence/fusion/
+ * sources.MAP_PRESENCE_KIND_CLASS_CEILING`) is folded in with
+ * `narrowestPrivacyClass`. Both only tighten, so applying both cannot widen.
+ */
+export function gatePresenceObject(
+  obj: MapObject,
+  nowMs: number | null = null,
+): PresenceGateOutcome {
+  if (!isMapPresenceKind(obj?.kind)) {
+    return { object: obj, estimate: null, refusal: null, narrowed: false };
+  }
+  const kind: MapPresenceKind = obj.kind;
+  const subjectKey = typeof obj.id === "string" ? obj.id.trim() : "";
+  if (subjectKey === "") {
+    return { object: null, estimate: null, refusal: "no_subject", narrowed: false };
+  }
+
+  const centre = centroidOf(obj.geometry);
+  // An `observedAt` we cannot parse is treated as ABSENT rather than as a
+  // refusal: the honest consequence of not knowing an age is "this can never
+  // be presented as live", which is exactly what an untimed claim already is.
+  const parsed = typeof obj.observedAt === "string" ? Date.parse(obj.observedAt) : NaN;
+  const observedAtMs = Number.isFinite(parsed) ? parsed : null;
+
+  const claim: PresenceClaim = {
+    subjectKey,
+    // §20: "Anonymous intelligence may not be reverse-linked to a Portava
+    // account." A map pin's id is a RENDER HANDLE (`traveler:…`, `buddy:…`,
+    // `friend:…`), not an account key, so it is source-scoped and
+    // `PresenceFusionStore.resolve` will never fuse it with an account-scoped
+    // estimate from the crew or circle models. The default is "do not link", so
+    // linking would take a deliberate declaration rather than an oversight.
+    linkage: "source_scoped",
+    requestedPrecision: PRIVACY_CLASS_AS_PRESENCE_PRECISION[obj.privacyClass] ?? "none",
+    ceilings: [MAP_PRESENCE_KIND_CEILING[kind]],
+    observedAtMs,
+    // A map presence pin is not a sensor reading. `unknown` is the §10 state
+    // that says so; claiming `precise` here because the pin has a coordinate is
+    // exactly the "stale pin renders live" failure §37 names.
+    state: "unknown",
+    confidence: 0,
+    evidence: [],
+    point: centre ? { lat: centre.lat, lng: centre.lng } : null,
+  };
+
+  const admission = presenceFusion.admit(
+    PRESENCE_WRITE_CAPABILITIES.map_social_presence,
+    claim,
+    nowMs,
+  );
+  if (!admission.ok) {
+    return { object: null, estimate: null, refusal: admission.refusal, narrowed: false };
+  }
+
+  const served = narrowestPrivacyClass(
+    presenceClassUnder(obj.privacyClass, admission.estimate.precision),
+    MAP_PRESENCE_KIND_CLASS_CEILING[kind] as PrivacyClass,
+  );
+  if (served === "none") {
+    return { object: null, estimate: null, refusal: "suppressed", narrowed: true };
+  }
+  if (served === obj.privacyClass) {
+    return { object: obj, estimate: admission.estimate, refusal: null, narrowed: false };
+  }
+  return {
+    object: { ...obj, privacyClass: served },
+    estimate: admission.estimate,
+    refusal: null,
+    narrowed: true,
+  };
+}
+
 // ── Weakest-wins folds ────────────────────────────────────────────────────────
 
 /** CONFIDENCE_STATES is ordered weakest → strongest, so index is the band rank. */
@@ -777,6 +944,14 @@ export interface ViewportRequest {
   zoom: number;
   /** Cohort floor override; may only tighten. */
   k?: number;
+  /**
+   * Optional clock for the presence gate. ABSENT BY DEFAULT and that is the
+   * point: this module has no clock of its own, and an absent one means the
+   * presence estimates it mints are untimed — never live, freshness 0 — rather
+   * than stamped with a `Date.now()` nobody asked for. A caller that has a
+   * clock may pass it, and the §20 expiry rule then applies.
+   */
+  nowMs?: number | null;
 }
 
 export interface ViewportAggregation {
@@ -795,6 +970,15 @@ export interface ViewportAggregation {
   dropped: number;
   /** Subset of `dropped` withheld because a cell fell below the cohort floor. */
   suppressedForKAnonymity: number;
+  /**
+   * INPUT objects of a presence kind that were put through the fusion layer
+   * (census-sensing S3). Every `social_zone` / `buddy_zone` / `crew_member`
+   * that reached the viewport is counted here whether or not it was narrowed,
+   * so "the gate ran" is observable rather than assumed.
+   */
+  presenceGated: number;
+  /** Subset of `dropped` the presence fusion layer REFUSED, with reasons. */
+  presenceRefused: { id: string; kind: MapObjectKind; reason: string }[];
   /** Number of activity_zone summaries emitted. */
   zones: number;
   /** Cells that produced no zone, with a machine-readable reason. */
@@ -835,6 +1019,8 @@ export function aggregateForViewport(
     individual: 0,
     dropped: Array.isArray(objects) ? objects.length : 0,
     suppressedForKAnonymity: 0,
+    presenceGated: 0,
+    presenceRefused: [],
     zones: 0,
     suppressedCells: [],
     band,
@@ -845,8 +1031,19 @@ export function aggregateForViewport(
   }
 
   // 1. Viewport + servability filter. Anything that fails is DROPPED, counted.
+  //
+  //    1b. THE PRESENCE GATE (census-sensing S3). Every object of a presence
+  //        kind — `social_zone`, `buddy_zone`, `crew_member`, whichever of the
+  //        five producers built it — goes through the one presence fusion
+  //        store here. It is re-stamped from the sealed estimate that comes
+  //        back, or dropped with a named refusal. This is the point at which
+  //        the map stops being a fourth presence model with its own privacy
+  //        arithmetic and becomes a CONSUMER of the fusion layer.
   const inView: MapObject[] = [];
+  const presenceRefused: ViewportAggregation["presenceRefused"] = [];
+  let presenceGated = 0;
   let dropped = 0;
+  const nowMs = request?.nowMs ?? null;
   for (const obj of objects) {
     if (!isServable(obj)) {
       dropped += 1;
@@ -855,6 +1052,21 @@ export function aggregateForViewport(
     const c = centroidOf(obj.geometry);
     if (!c || !bboxContains(request?.bbox, c.lat, c.lng)) {
       dropped += 1;
+      continue;
+    }
+    if (isMapPresenceKind(obj.kind)) {
+      presenceGated += 1;
+      const gated = gatePresenceObject(obj, nowMs);
+      if (!gated.object) {
+        dropped += 1;
+        presenceRefused.push({
+          id: obj.id,
+          kind: obj.kind,
+          reason: gated.refusal ?? "refused",
+        });
+        continue;
+      }
+      inView.push(gated.object);
       continue;
     }
     inView.push(obj);
@@ -869,6 +1081,8 @@ export function aggregateForViewport(
       individual: sorted.length,
       dropped,
       suppressedForKAnonymity: 0,
+      presenceGated,
+      presenceRefused,
       zones: 0,
       suppressedCells: [],
       band,
@@ -927,6 +1141,8 @@ export function aggregateForViewport(
     individual: passthrough.length,
     dropped,
     suppressedForKAnonymity,
+    presenceGated,
+    presenceRefused,
     zones: zones.length,
     suppressedCells,
     band,
