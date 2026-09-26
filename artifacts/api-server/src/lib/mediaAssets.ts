@@ -858,7 +858,7 @@ export async function recordEntityMedia(
         mimeType: mediaType === "video" ? "video/mp4" : "image/jpeg",
         // Size/dimensions are unknown at entity-creation time (the upload path
         // measured them); honest zero, staged 'processing' so it is not served
-        // as ready until a dimension sweep fills it in.
+        // as ready until a dimension sweep fills it in. That sweep is the dimension sweep in lib/media/mediaProcessingWorker (census-media §32), behind media_processing_worker_enabled: it measures the stored object and completes this row with its size and dimensions, or fails it.
         sizeBytes: 0,
         sourceType: input.sourceType,
         processingStatus: "processing",

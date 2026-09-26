@@ -1707,6 +1707,14 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/test/schedulerRegistration.test.ts",
     "artifacts/api-server/src/test/backgroundWorkerWiring.test.ts",
     "artifacts/api-server/src/test/mediaAssetsRecord.test.ts",
+    // WIDENED 2026-09-26 by census-media §32 (Lane M), because
+    // check:census-scope-coverage required it (95% against the 96% floor).
+    // §32.4 grades the backfill script as staging its rows with the signature
+    // the dimension sweep finishes (mediaCanonicalRead's B3), and §32.6's
+    // privacy case drives the byte gate through a copy of mediaAccess.test.ts's
+    // query double. A change to either can falsify §32, so each ages the census.
+    "artifacts/api-server/src/scripts/backfill-media-assets.ts",
+    "artifacts/api-server/src/test/mediaAccess.test.ts",
   ],
   // census-telegraph.md — declared 2026-09-11 on the same basis as Media above:
   // 451 requirements out of CANNOT BE CHECKED, a clock started rather than a
