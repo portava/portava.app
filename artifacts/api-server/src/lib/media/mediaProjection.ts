@@ -43,7 +43,7 @@ export const MEDIA_PROJECTION_POST_COLUMNS =
 
 /** post_media child columns safe for projection. No coordinate columns exist here. */
 export const MEDIA_PROJECTION_POST_MEDIA_COLUMNS =
-  "id, media_type, public_url, thumbnail_url, duration_seconds, width, height, sort_order, " +
+  "id, media_type, public_url, thumbnail_url, feed_url, duration_seconds, width, height, sort_order, " + // feed_url: migration 0208 (census-wall §16)
   "processing_status, moderation_status";
 
 /**
@@ -101,7 +101,7 @@ export interface MediaProjection extends MediaProjectionLayers {
   id: string;
   mediaType: "image" | "video";
   url: string;
-  thumbnailUrl: string | null;
+  thumbnailUrl: string | null; /** Image only, and only when a post_media row stores one: the ≤1500 px feed variant (post_media.feed_url, 0208). Absent otherwise; media_assets and media_urls have none. */ feedUrl?: string | null;
   width: number | null;
   height: number | null;
   durationSeconds: number | null;
@@ -156,7 +156,7 @@ interface ResolvedMedia {
   id: string;
   mediaType: "image" | "video";
   url: string;
-  thumbnailUrl: string | null;
+  thumbnailUrl: string | null; feedUrl?: string | null;
   width: number | null;
   height: number | null;
   durationSeconds: number | null;
@@ -262,7 +262,7 @@ function firstReadyMedia(row: MediaCandidateRow): ResolvedMedia | null {
       id: String(m.id),
       mediaType: m.media_type === "video" ? "video" : "image",
       url: String(m.public_url).trim(),
-      thumbnailUrl: typeof m.thumbnail_url === "string" ? m.thumbnail_url : null,
+      thumbnailUrl: typeof m.thumbnail_url === "string" ? m.thumbnail_url : null, feedUrl: postMediaFeedVariant(m),
       width: typeof m.width === "number" ? m.width : null,
       height: typeof m.height === "number" ? m.height : null,
       durationSeconds: typeof m.duration_seconds === "number" ? m.duration_seconds : null,
@@ -337,7 +337,7 @@ export function toMediaProjection(row: MediaCandidateRow, nowMs: number): MediaP
     id: row.id,
     mediaType: media.mediaType,
     url: media.url,
-    thumbnailUrl: media.thumbnailUrl,
+    thumbnailUrl: media.thumbnailUrl, ...(media.feedUrl ? { feedUrl: media.feedUrl } : {}),
     width: media.width,
     height: media.height,
     durationSeconds: media.durationSeconds,
@@ -490,4 +490,16 @@ export function placeholderProjectionLayers(row: MediaCandidateRow): MediaProjec
     }),
     temporal: {},
   };
+}
+
+/**
+ * The stored feed variant of one `post_media` IMAGE row (longest edge <= FEED_DIM
+ * = 1500, migration 0208), or null when none is stored. Existence is reported by
+ * the row, never inferred from the path. A video has no feed variant; its still
+ * is the poster in `thumbnail_url`. Carried to MediaProjection.feedUrl only when
+ * present, so a projection without one is byte-identical to before.
+ */
+function postMediaFeedVariant(m: any): string | null {
+  if (!m || m.media_type === "video") return null;
+  return typeof m.feed_url === "string" && m.feed_url.trim().length > 0 ? m.feed_url.trim() : null;
 }

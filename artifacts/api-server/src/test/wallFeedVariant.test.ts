@@ -2,37 +2,46 @@
  * The Wall carries the stored feed variant (Wall spec §33 "Images: responsive
  * variants + CDN/cache"; census-wall W151).
  *
- * /media/upload stores up to three objects per post_media image: the original,
- * a ≤400 px thumbnail, and (migration 0208) a ≤FEED_DIM (1500 px) feed variant
- * built for exactly the Wall's full-width frames. The Wall's post_media read
- * selected the first two and never the third, so the projection could not name
- * it and the client drew the thumbnail at every size.
+ * /media/upload stores up to three objects per post_media image:
+ *   - the original;
+ *   - a ≤400 px thumbnail;
+ *   - (migration 0208) a ≤FEED_DIM (1500 px) feed variant, built for exactly
+ *     the Wall's full-width frames.
+ * Both of the Wall's image lanes read the first two and never the third, so
+ * the projection could not name it and the client drew the thumbnail at every
+ * size.
  *
  * ── THE CLAIMS ───────────────────────────────────────────────────────────────
- *   1. The Wall's post_media read SELECTS `feed_url`, as a statically resolvable
- *      literal (check:write-path-columns and check:schema-references audit only
- *      literals), and the column is declared by 0208.
- *   2. A ready image row's `feed_url` is projected as `DisplayMedia.feedUrl`,
- *      trimmed; NULL, blank or absent projects null (the migration's contract:
- *      null means "none stored — use another variant", never an inference).
+ *   1. The postcard lane's post_media read SELECTS `feed_url` as a statically
+ *      resolvable literal (check:write-path-columns and check:schema-references
+ *      audit only literals), and 0208 declares the column.
+ *   2. The postcard lane projects a ready image row's `feed_url` as
+ *      `DisplayMedia.feedUrl`, trimmed. NULL, blank or absent projects null:
+ *      that is the migration's contract, where null means "none stored — use
+ *      another variant", never an inference.
  *   3. A video row projects no feed variant; its still is the poster.
- *   4. The media lane carries it too. Media v2's candidate read embeds post_media
- *      WITHOUT `feed_url` and its projection has no field for one, so the Wall
- *      reads `id, feed_url` itself, in one batched read, and joins on the
- *      original the projection drew. A failed read costs no candidate.
- *      NOT exercised here: a canonical `media_assets` original (the canonical
- *      read is flag-gated). `media_assets` stores no feed variant, so such an
- *      original gets one only when its URL is a post_media original's URL, i.e.
- *      the same stored object; otherwise it stays null. That is argued from the
- *      join, not measured.
+ *   4. The media lane carries it through Media v2's own embed:
+ *      - MEDIA_PROJECTION_POST_MEDIA_COLUMNS selects `feed_url`;
+ *      - toMediaProjection carries it as `feedUrl` for post_media images;
+ *      - loadVideoMediaCandidates maps it to DisplayMedia;
+ *      - there is no extra read.
+ *   5. A Media v2 projection WITHOUT a stored feed variant is byte-identical to
+ *      before: the key is absent, not null. So the embed change adds a field
+ *      only where one is stored.
+ *      NOT exercised here: a canonical `media_assets` original. The canonical
+ *      read is flag-gated, and the canonical branch builds its ResolvedMedia
+ *      without the field; see lib/media/mediaProjection.ts.
  *
- * The fake below PROJECTS each post_media row to the columns the loader
- * selected, the way PostgREST does, so a select that drops `feed_url` loses the
+ * The fake below PROJECTS rows to the columns the caller selected, the way
+ * PostgREST does. That covers a flat post_media read and Media v2's
+ * `post_media(...)` embed. A select that drops `feed_url` therefore loses the
  * value instead of being handed it by a permissive fake.
  *
- * WATCHED IT FAIL (census-wall §16): (a) with `feed_url` removed from the
- * postcard lane's select literal, claims 1 and 2 go red; (f) with it removed
- * from the media lane's feed-variant read, claims 1 and 4 go red.
+ * WATCHED IT FAIL (census-wall §16):
+ *   (a) with `feed_url` removed from the postcard lane's select literal,
+ *       claims 1 and 2 go red;
+ *   (f) with it removed from MEDIA_PROJECTION_POST_MEDIA_COLUMNS, claim 4 goes
+ *       red.
  */
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
@@ -44,6 +53,11 @@ import {
   loadVideoMediaCandidates,
   type LoaderViewer,
 } from "../services/wall/WallCandidateLoaders.js";
+import {
+  MEDIA_PROJECTION_POST_MEDIA_COLUMNS,
+  toMediaProjection,
+  type MediaCandidateRow,
+} from "../lib/media/mediaProjection.js";
 import { extractSchemaReferences } from "../scripts/lib/schemaReferenceExtract.js";
 
 const __dir = dirname(fileURLToPath(import.meta.url));
@@ -51,14 +65,37 @@ const API_ROOT = resolve(__dir, "../..");
 const VIEWER = "viewer-1";
 const FOLLOWED: LoaderViewer = { viewerId: VIEWER, followedCreatorIds: new Set(["author-1"]) };
 
-/** Column names of a flat PostgREST select list (this read has no embeds). */
-function selectedColumns(sel: string): string[] {
-  return sel.split(",").map((c) => c.trim()).filter(Boolean);
+/** Top-level items of a PostgREST select list; an embed `rel(a, b)` stays one item. */
+function topLevel(sel: string): string[] {
+  const out: string[] = [];
+  let depth = 0;
+  let cur = "";
+  for (const ch of sel) {
+    if (ch === "(") depth++;
+    if (ch === ")") depth--;
+    if (ch === "," && depth === 0) { out.push(cur.trim()); cur = ""; } else cur += ch;
+  }
+  if (cur.trim()) out.push(cur.trim());
+  return out;
 }
 
+/** The flat column names of a select list (embeds excluded). */
+function selectedColumns(sel: string): string[] {
+  return topLevel(sel).filter((c) => !c.includes("("));
+}
+
+/** The column list of the `post_media(...)` embed in a select, or null. */
+function embeddedPostMediaColumns(sel: string): string[] | null {
+  const item = topLevel(sel).find((c) => c.startsWith("post_media("));
+  return item ? topLevel(item.slice("post_media(".length, -1)) : null;
+}
+
+const pick = (r: any, cols: string[]) => Object.fromEntries(cols.filter((c) => c in r).map((c) => [c, r[c]]));
+
 /**
- * Table-routed fake. Records every select string per table; post_media rows are
- * projected to exactly the selected columns.
+ * Table-routed fake. Records every select string per table. A flat post_media
+ * read, and the post_media embed of a posts read, return exactly the columns
+ * selected.
  */
 function projectingClient(tables: Record<string, any[]>) {
   const selects: Record<string, string[]> = {};
@@ -66,9 +103,13 @@ function projectingClient(tables: Record<string, any[]>) {
     let sel = "*";
     const rows = () => {
       const all = tables[table] ?? [];
-      if (table !== "post_media" || sel === "*") return all;
-      const cols = selectedColumns(sel);
-      return all.map((r) => Object.fromEntries(cols.filter((c) => c in r).map((c) => [c, r[c]])));
+      if (sel === "*") return all;
+      if (table === "post_media") return all.map((r) => pick(r, selectedColumns(sel)));
+      const embed = embeddedPostMediaColumns(sel);
+      if (table === "posts" && embed) {
+        return all.map((r) => (Array.isArray(r.post_media) ? { ...r, post_media: r.post_media.map((m: any) => pick(m, embed)) } : r));
+      }
+      return all;
     };
     const b: any = {
       select: (s: string) => {
@@ -125,15 +166,14 @@ describe("the Wall's post_media read selects feed_url (W151, claim 1)", () => {
     assert.ok(selectedColumns(reads[0]).includes("feed_url"), `feed_url selected: ${reads[0]}`);
   });
 
-  it("each select is a static literal the offline column extractor resolves, and 0208 declares the column", () => {
+  it("the select is a static literal the offline column extractor resolves, and 0208 declares the column", () => {
     const { sites, skipped } = extractSchemaReferences(API_ROOT, [resolve(API_ROOT, "src/services/wall")]);
     const pm = sites.filter(
       (s) => s.file.endsWith("services/wall/WallCandidateLoaders.ts") && s.table === "post_media" && s.method === "select",
     );
     const withFeed = pm.filter((s) => s.columns.includes("feed_url"));
-    // The postcard lane's media read, and the media lane's feed-variant read.
-    assert.equal(withFeed.length, 2, `two post_media selects name feed_url (saw ${JSON.stringify(pm)})`);
-    for (const s of withFeed) assert.equal(s.unresolved, false, `line ${s.line}: fully resolvable — no runtime-probed suffix`);
+    assert.equal(withFeed.length, 1, `one post_media select names feed_url, the postcard lane's (saw ${JSON.stringify(pm)})`);
+    assert.equal(withFeed[0].unresolved, false, "fully resolvable — no runtime-probed suffix");
     assert.deepEqual(
       skipped.filter((s) => s.file.endsWith("services/wall/WallCandidateLoaders.ts")),
       [],
@@ -170,11 +210,11 @@ describe("feed_url is projected as DisplayMedia.feedUrl (W151, claims 2 and 3)",
   });
 });
 
-describe("the media lane carries the feed variant Media v2 does not (W151, claim 4)", () => {
+describe("the media lane carries the feed variant through Media v2's embed (W151, claims 4 and 5)", () => {
   const author = { id: "author-1", username: "aya", display_name: "Aya", name: "Aya", avatar_url: null, verified: false, is_official: false, account_status: "active" };
-  // The embed as Media v2 selects it: MEDIA_PROJECTION_POST_MEDIA_COLUMNS has no feed_url.
+  // The embed rows as stored; the fake keeps only the columns the embed selects.
   const embedded = (id: string, over: Record<string, any> = {}) => {
-    const { feed_url: _omit, post_id: _pid, ...rest } = row(id, 0, over) as Record<string, any>;
+    const { post_id: _pid, ...rest } = row(id, 0, over) as Record<string, any>;
     return rest;
   };
   const post = (id: string, media: any[], created: string) => ({
@@ -184,47 +224,45 @@ describe("the media lane carries the feed variant Media v2 does not (W151, claim
     post_media: media, profiles: [author],
   });
   const POSTS = [
-    post("img-1", [embedded("m-i")], "2026-09-01T09:00:00Z"),
-    post("img-2", [embedded("m-j")], "2026-09-01T08:00:00Z"),
-    post("vid-1", [embedded("m-v", { media_type: "video", public_url: "post-media/author-1/clip.mp4", thumbnail_url: "post-media/author-1/clip.jpg", duration_seconds: 4 })], "2026-09-01T07:00:00Z"),
+    post("img-1", [embedded("m-i", { feed_url: "post-media/author-1/m-i.feed.jpg" })], "2026-09-01T09:00:00Z"),
+    post("img-2", [embedded("m-j", { feed_url: null })], "2026-09-01T08:00:00Z"),
+    post("vid-1", [embedded("m-v", { media_type: "video", public_url: "post-media/author-1/clip.mp4", thumbnail_url: "post-media/author-1/clip.jpg", feed_url: "post-media/author-1/clip.feed.jpg", duration_seconds: 4 })], "2026-09-01T07:00:00Z"),
   ];
-  // The table the Wall's own feed-variant read hits.
-  const FEED_ROWS = [
-    { id: "m-i", feed_url: "post-media/author-1/m-i.feed.jpg" },
-    { id: "m-j", feed_url: null },
-    { id: "m-v", feed_url: "post-media/author-1/clip.feed.jpg" },
-  ];
-  const tables = (over: Record<string, any[]> = {}) => ({
+  const tables = () => ({
     profiles: [{ id: VIEWER, location_country: "VN", date_of_birth: null, account_status: "active" }],
     user_follows: [{ following_id: "author-1" }],
     posts: POSTS,
-    post_media: FEED_ROWS,
-    ...over,
   });
 
-  it("an image whose post_media row stores a feed variant carries it; one that stores none carries null", async () => {
+  it("Media v2's post_media embed selects feed_url", () => {
+    assert.ok(
+      MEDIA_PROJECTION_POST_MEDIA_COLUMNS.split(",").map((c) => c.trim()).includes("feed_url"),
+      `MEDIA_PROJECTION_POST_MEDIA_COLUMNS = ${MEDIA_PROJECTION_POST_MEDIA_COLUMNS}`,
+    );
+  });
+
+  it("an image whose post_media row stores a feed variant carries it; one that stores none carries null; no extra read", async () => {
     const { client, selects } = projectingClient(tables());
     const loaded = await loadVideoMediaCandidates(client, VIEWER);
     const byId = new Map(loaded.candidates.map((c) => [c.canonicalObjectId, c]));
     assert.equal(byId.get("img-1")?.media?.[0].feedUrl, "post-media/author-1/m-i.feed.jpg");
     assert.equal(byId.get("img-2")?.media?.[0].feedUrl, null);
     assert.equal(byId.get("vid-1")?.media?.[0].feedUrl, null, "a video carries no feed variant");
-    const reads = selects.post_media ?? [];
-    assert.equal(reads.length, 1, "ONE batched read for the whole page");
-    assert.ok(selectedColumns(reads[0]).includes("feed_url"), `feed_url selected: ${reads[0]}`);
+    assert.equal(selects.post_media, undefined, "the media lane makes no post_media read of its own");
+    const embed = embeddedPostMediaColumns((selects.posts ?? [])[0] ?? "");
+    assert.ok(embed?.includes("feed_url"), `the posts read embeds post_media with feed_url: ${(selects.posts ?? [])[0]}`);
   });
 
-  it("a failed feed-variant read costs no candidate: every feedUrl is null and the page still projects", async () => {
-    const { client } = projectingClient(tables());
-    const failing = {
-      from: (t: string) => {
-        if (t !== "post_media") return client.from(t);
-        const b: any = { select: () => b, in: () => b, then: (onF: any, onR: any) => Promise.resolve({ data: null, error: { message: "boom" } }).then(onF, onR) };
-        return b;
-      },
-    };
-    const loaded = await loadVideoMediaCandidates(failing, VIEWER);
-    assert.equal(loaded.candidates.length, 3, "all three media posts still project");
-    for (const c of loaded.candidates) assert.equal(c.media?.[0].feedUrl, null);
+  it("toMediaProjection adds feedUrl only where one is stored: otherwise the key is absent, as before", () => {
+    const now = Date.parse("2026-09-02T00:00:00Z");
+    const base = POSTS[0] as unknown as MediaCandidateRow;
+    const withFeed = toMediaProjection(base, now);
+    assert.equal(withFeed?.feedUrl, "post-media/author-1/m-i.feed.jpg");
+    const none = toMediaProjection(POSTS[1] as unknown as MediaCandidateRow, now);
+    assert.ok(none && !("feedUrl" in none), "no stored variant: no key");
+    const video = toMediaProjection(POSTS[2] as unknown as MediaCandidateRow, now);
+    assert.ok(video && !("feedUrl" in video), "a video: no key");
+    const external = toMediaProjection({ ...base, post_media: [], media_urls: ["https://example.com/x.jpg"] } as unknown as MediaCandidateRow, now);
+    assert.ok(external && !("feedUrl" in external), "an external media_urls image: no key");
   });
 });
