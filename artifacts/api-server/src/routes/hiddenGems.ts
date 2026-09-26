@@ -30,7 +30,7 @@
  *          LLM calls (Compass): protected gems excluded entirely.
  */
 import { Router } from "express";
-import { randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto"; import { recordGemContributionSignal, recordGemAcceptedSignal, recordGemArrivalIfAttributable } from "../lib/mediaAnalytics.js";
 import { z } from "zod";
 import { requireUser, sendError, canEditPlan } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
@@ -197,7 +197,7 @@ const checkinSchema = z.object({
 // §16.3 structured gem contribution — an observation, never a canonical flip.
 const contributionSchema = z.object({
   contributionType: z.enum(GEM_CONTRIBUTION_TYPES),
-  notes: z.string().max(500).optional().nullable(),
+  notes: z.string().max(500).optional().nullable(), originMediaId: z.string().uuid().optional().nullable(),
 });
 
 // ── Helper: resolve caller ID from bearer token (optional auth) ───────────────
@@ -398,7 +398,7 @@ router.post("/hidden-gems", async (req, res) => {
   try {
     const gem = await submitGem(sc, { ...parsed.data, submittedBy: user.id });
     const safe = await applyGemPrivacy(gem, sc, user.id);
-    res.status(201).json({ ok: true, gem: safe });
+    res.status(201).json({ ok: true, gem: safe }); recordGemContributionSignal(sc, { userId: user.id, gemId: String((gem as any).id), kind: "gem_submission" });
   } catch (err: any) {
     sendError(res, "db_error", err.message);
   }
@@ -957,7 +957,7 @@ router.post("/hidden-gems/:id/verify-visit", async (req, res) => {
     const result = await recordGpsCheckin(sc, req.params.id, user.id, latitude, longitude);
 
     if (result.error === "gem_not_found") { sendError(res, "not_found", "Gem not found"); return; }
-    if (result.error === "gem_not_active") { sendError(res, "invalid_payload", "Gem is not active"); return; }
+    if (result.error === "gem_not_active") { sendError(res, "invalid_payload", "Gem is not active"); return; } if (result.ok && !result.isSuspicious) recordGemArrivalIfAttributable(sc, { userId: user.id, gemId: req.params.id });
 
     // Fire-and-forget: Passport stamp + suggested memory after verified visit
     if (result.ok && !result.isSuspicious) {
@@ -1141,7 +1141,7 @@ router.post("/hidden-gems/:id/contribute", async (req, res) => {
     if (result.error === "gem_not_found") { sendError(res, "not_found", "Gem not found"); return; }
     if (result.error === "gem_not_active") { sendError(res, "invalid_payload", "Gem is not active"); return; }
     if (result.error === "invalid_contribution_type") { sendError(res, "invalid_payload", "Invalid contribution type"); return; }
-    if (!result.ok) { sendError(res, "db_error", "Failed to record contribution"); return; }
+    if (!result.ok) { sendError(res, "db_error", "Failed to record contribution"); return; } if (!result.alreadyObserved) recordGemContributionSignal(sc, { userId: user.id, gemId: req.params.id, kind: parsed.data.contributionType, originMediaId: parsed.data.originMediaId ?? null });
 
     // Re-derive the projection so the caller sees the state as it now reads.
     const gem = await getGem(sc, req.params.id);
@@ -1541,6 +1541,11 @@ router.post("/admin/hidden-gems/:id/verify", async (req, res) => {
   } catch (err: any) {
     sendError(res, "db_error", err.message);
     return;
+  }
+
+  // census-media §21 — §44 "Contribution … accepted", attributed to the submitter.
+  if (parsed.data.result === "approved" && gemRow && (gemRow as any).submitted_by) {
+    recordGemAcceptedSignal(sc, { submitterId: String((gemRow as any).submitted_by), gemId: req.params.id });
   }
 
   // Fire-and-forget: award hidden_gem_explorer stamp to the submitter on approval.
