@@ -54,8 +54,11 @@ function makeFake(opts: { flagEnabled: boolean; existingAssetId?: string | null 
       return Promise.resolve({ data: opts.flagEnabled ? { enabled: true } : null, error: null });
     }
     if (table === "media_assets") {
+      // recordEntityMedia selects `id, owner_user_id` and refuses a storage key
+      // another user owns (census-media §20), so the reused asset is the
+      // caller's own — "user-1", BASE's owner.
       return Promise.resolve({
-        data: opts.existingAssetId ? { id: opts.existingAssetId } : null,
+        data: opts.existingAssetId ? { id: opts.existingAssetId, owner_user_id: "user-1" } : null,
         error: null,
       });
     }

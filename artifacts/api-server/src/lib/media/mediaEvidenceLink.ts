@@ -50,7 +50,7 @@
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { isFlagEnabled } from "../featureFlags.js";
-import { isEvidenceEligible, type EvidenceAssetInput } from "./mediaEvidenceEligibility.js";
+import { isEvidenceEligible, isOperationalEvidenceAt, type EvidenceAssetInput } from "./mediaEvidenceEligibility.js";
 
 /** The master gate for the whole seam. */
 export const MEDIA_EVIDENCE_FLAG = "media_evidence_enabled";
@@ -257,8 +257,12 @@ export async function observationsHaveEligibleMediaEvidence(
       .in("id", mediaIds);
     if (aErr) return false;
 
+    // §10/§11: eligible AND still operational. A current claim's evidence may
+    // not rest on a photograph whose operational lifetime (capture + 24 h,
+    // mediaEvidenceEligibility.INTELLIGENCE_OPERATIONAL_WINDOW_MS) has passed —
+    // it is a picture of a past "now", however clean its lineage.
     for (const a of (assets as EvidenceMediaAsset[]) ?? []) {
-      if (isEvidenceEligible({ ...a, now })) return true;
+      if (isOperationalEvidenceAt(a, now)) return true;
     }
     return false;
   } catch {

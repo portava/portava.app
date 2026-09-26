@@ -35,7 +35,7 @@ import {
   MEDIA_PROJECTION_POST_MEDIA_COLUMNS,
   MEDIA_PROJECTION_PROFILE_COLUMNS,
   applyLocationDisclosure,
-  toMediaProjection,
+  toMediaProjection, placeholderProjectionLayers,
   type MediaCandidateRow,
   type MediaProjection,
 } from "../../lib/media/mediaProjection.js";
@@ -64,7 +64,7 @@ import {
 } from "./MediaPerspectiveService.js";
 import { buildMyWorldMemory, type MyWorldMemory } from "./MyWorldMemoryService.js";
 import { rankMediaCandidates } from "./MediaRankingService.js";
-import { buildVisualConsensus, type VisualConsensus } from "./MediaConsensusService.js";
+import { buildVisualConsensus, type VisualConsensus } from "./MediaConsensusService.js"; import { attachCanonicalMedia } from "../../lib/media/mediaCanonicalRead.js"; import { mayViewUnderOverride } from "../../lib/mediaVisibility.js";
 
 const DEFAULT_CANDIDATE_LIMIT = 200;
 
@@ -676,7 +676,7 @@ export async function projectCandidatesProtected(
   rows: MediaCandidateRow[],
   nowMs: number,
 ): Promise<MediaProjection[]> {
-  if (rows.length === 0) return [];
+  if (rows.length === 0) return []; rows = await prepareCanonicalRows(sc, viewer, rows); if (rows.length === 0) return [];
   // Two independent batch reads, one round trip's worth of latency. The gem
   // context is fail-CLOSED (losing it widens disclosure); the neighborhood map
   // is fail-SOFT (losing it only removes a label) — see loadPlaceNeighborhoods.
@@ -1329,7 +1329,7 @@ export async function buildMyWorldProjection(
           country: typeof row.location_country === "string" ? row.location_country : null,
           category: typeof row.category === "string" ? row.category : null,
           freshness: "historical",
-          contributor: null,
+          contributor: null, ...placeholderProjectionLayers(row),
         },
       );
       continue;
@@ -1652,4 +1652,76 @@ export async function buildMediaMapProjection(
     .sort((a, b) => b.perspectiveCount - a.perspectiveCount);
 
   return { generatedAt, clusters, totalPerspectives: media.length };
+}
+
+// ── §6 canonical asset on the read path, §6.1 override per viewer ────────────
+
+/**
+ * The first step of `projectCandidatesProtected` (census-media §20): put the
+ * CANONICAL asset (spec §6) on the projection's read path, then apply each
+ * canonical attachment's §6.1 `visibility_override` for THIS viewer.
+ *
+ * 1. `attachCanonicalMedia` — gated by `media_canonical_read_enabled`, which is
+ *    off in both databases, so today this issues no query and changes nothing.
+ *    With it on, `mediaProjection.firstReadyMedia` prefers the asset over
+ *    `post_media` / `media_urls` and the §8 provenance layer is the asset's own.
+ *
+ * 2. The override. An attachment whose audience does not include the viewer is
+ *    REMOVED from `canonical_media`, and — because the legacy stores may hold
+ *    the very same file — that row's legacy branches are cleared as well, so the
+ *    projector cannot fall back to serving by `post_media` what the override just
+ *    withheld. If nothing canonical survives, the item is dropped; if another
+ *    canonical asset survives, it is served instead. Owner-only-sees-everything
+ *    and fail-closed-on-error both come from `lib/mediaVisibility`, the same rule
+ *    `lib/mediaAccess` applies before signing the bytes, so the served item and
+ *    the bytes cannot disagree.
+ *
+ * Rows are never mutated beyond what `attachCanonicalMedia` already does: a row
+ * that loses an attachment is replaced by a shallow copy, so a caller that
+ * still holds the page (counts, consensus) sees the rows it passed in.
+ */
+export async function prepareCanonicalRows(
+  sc: SupabaseClient,
+  viewer: ViewerResolved,
+  rows: MediaCandidateRow[],
+): Promise<MediaCandidateRow[]> {
+  await attachCanonicalMedia(sc, rows);
+  const memo = new Map<string, Promise<boolean>>();
+  const out: MediaCandidateRow[] = [];
+  for (const row of rows) {
+    const canonical = Array.isArray(row.canonical_media) ? row.canonical_media : [];
+    const narrowed = canonical.filter((m: any) => m && m.visibility_override != null);
+    if (narrowed.length === 0) {
+      out.push(row);
+      continue;
+    }
+    const ownerId = typeof row.author_id === "string" ? row.author_id : "";
+    const tripId = typeof (row as any).trip_id === "string" ? String((row as any).trip_id) : null;
+    const kept: any[] = [];
+    let withheld = false;
+    for (const m of canonical) {
+      if (m?.visibility_override == null) {
+        kept.push(m);
+        continue;
+      }
+      const key = `${row.id}:${ownerId}:${tripId ?? ""}:${String(m.visibility_override)}`;
+      let decision = memo.get(key);
+      if (!decision) {
+        decision = mayViewUnderOverride(sc, viewer.viewerId, ownerId, m.visibility_override, {
+          context: tripId ? { contextType: "trip", contextId: tripId } : undefined,
+          entity: { entityType: "post", entityId: String(row.id) },
+        });
+        memo.set(key, decision);
+      }
+      if (await decision) kept.push(m);
+      else withheld = true;
+    }
+    if (!withheld) {
+      out.push(row);
+      continue;
+    }
+    if (kept.length === 0) continue; // nothing this viewer may see — drop the item
+    out.push({ ...row, canonical_media: kept, post_media: [], media_urls: [] });
+  }
+  return out;
 }
