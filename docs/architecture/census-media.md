@@ -5715,3 +5715,201 @@ Every edit is line-neutral, and §25's citation of the default text
 the World footnote is shown and that "creators you engage with" is absent.
 With the prop removed, it goes red. No row moves; this is copy under MD428,
 which is already C.
+
+## 29. Lane I — the Media Map draws its covers from the cache, and Search asks 'near' — 2026-09-26
+
+§24 built the server and client-service halves of MD300 and MD288, and left
+each **W** for one reason: no screen used them. §24.2 and §24.3 each ended with
+a narrowed RED WHEN. This lane wired both into the screens. Each row is graded
+here against that falsifier, as §24 states it. No server file, migration, flag
+or seed was touched.
+
+Worked from `claude/sensing-completion-20260925` at `c91cc5665`, on branch
+`lane-i`. The code and tests are in `c7822eff1`; this section is in the commit
+after it.
+
+### 29.1 Row table
+
+| ID | Was | Now | Evidence |
+| --- | --- | --- | --- |
+| MD300 | **W** | **C** | §24.2's RED WHEN is met on every loader it names. The standalone map's default loader now reads through the `map_thumbnails` scope (`travel-buddy-standalone/src/features/media/screens/MediaMapScreen.tsx:65#mediaMapOffline({ city, signal: opts.signal }).then((r) =>`). The NOW lens and the Places overview Map also use that loader. The Places one-place Map (`travel-buddy-standalone/src/features/media/screens/MediaPlacesScreen.tsx:162#mediaMapOffline({ city, signal: opts.signal }).then((r) =>`) and the Experiences Map (`travel-buddy-standalone/src/features/media/screens/MediaExperiencesScreen.tsx:146#mediaMapOffline({ city, signal: opts.signal }).then((r) =>`) read through the same scope. Each cluster's `cover` is drawn on its map marker (`travel-buddy-standalone/src/features/media/components/MediaMapCanvas.tsx:116#const cover = clusterCoverImage(c);`) and on its list row (`travel-buddy-standalone/src/features/media/screens/MediaMapScreen.tsx:183#const cover = clusterCoverImage(c);`), through `CachedImage`. A video is drawn only by its poster (`travel-buddy-standalone/src/features/media/state/mediaMapCover.ts:32#if (m.mediaType === 'video') return thumb;`). When the map came from the cache, the screen shows `offline.label` (`travel-buddy-standalone/src/features/media/screens/MediaMapScreen.tsx:135#testID="media-map-cached"`), whichever loader supplied it (`travel-buddy-standalone/src/features/media/screens/MediaMapScreen.tsx:83#const { loader, cachedLabel } = useCachedLabel(`). Tests: `travel-buddy-standalone/src/features/media/__tests__/MediaMapCovers.component.test.tsx:138#describe('census-media §29 (MD300)` (4 cases, over the real cache) and `travel-buddy-standalone/src/features/media/__tests__/mapCoverAndSearchNear.test.ts:39#describe('MD300 — clusterCoverImage` (3). |
+| MD288 | **W** | **C** | §24.3's RED WHEN is met: the Search screen sends `near` with a center and a bounded radius (`travel-buddy-standalone/src/features/media/screens/MediaSearchScreen.tsx:102#const opts = { signal: o.signal, near: near.param }; return fetchMediaSearch(queryString, opts);`). The center is the place the search was opened from, or else the viewer's point (`travel-buddy-standalone/src/features/media/state/mediaFilterStore.ts:181#export function searchNearCenter(`). The radius is 1500 m (`travel-buddy-standalone/src/features/media/state/mediaFilterStore.ts:159#export const MEDIA_SEARCH_NEAR_RADIUS_M = 1_500;`). The viewer's point is the one `/media-world` hands the World shell and its Media Map (`travel-buddy-standalone/app/media-world/index.tsx:27#const coords = locationState.ok ? locationState.coords : null;`). The Search route passes the same field from its existing `useActiveLocation` call (`travel-buddy-standalone/app/media-search/index.tsx:45#viewerPoint={locationState.ok && locationState.coords ? { lat: locationState.coords.lat, lng: locationState.coords.lng } : null}`). The server's `center_unpositioned` renders as "We can't place that center" (`travel-buddy-standalone/src/features/media/screens/MediaSearchScreen.tsx:206#results?.near?.refusal === 'center_unpositioned' ? <NearRefused`). The city chip is unchanged (`travel-buddy-standalone/src/features/media/screens/MediaSearchScreen.tsx:180#onPress={() => dispatch({ type: 'set_city', city: filters.city === nearCity ? null : nearCity })}`). Tests: `travel-buddy-standalone/src/features/media/__tests__/MediaSearchNear.component.test.tsx:63#describe('census-media §29 (MD288)` (7 cases, including a CONTROL) and `travel-buddy-standalone/src/features/media/__tests__/mapCoverAndSearchNear.test.ts:59#describe('MD288 — the filter store` (5). |
+
+Both are construction verdicts. Neither is realised in production (§29.6).
+The two rows move the parsed media counts by two, from W to C. The headline is
+not restated here; restating it is the integrator's job (§28.2).
+
+### 29.2 MD300 on the screens
+
+**Which maps read through the cache.** Every Map surface that shows the
+world's clusters:
+- `/media-map`, the NOW lens's Map and the Places overview Map, through
+  `MediaMapScreen`'s default loader;
+- the Places one-place Map and the Experiences Map, through their own loaders.
+
+Two Map surfaces are left as they were, on purpose:
+- My World's Map shows the owner's own media grouped by place. It carries no
+  server cover and no cached label.
+- The Hidden Gems Map draws gems only.
+
+`fetchMediaMap` now has one caller, `mediaMapOffline` itself.
+
+**What is drawn.** `clusterCoverImage` only chooses which of the server's
+references to draw. It never picks a cover.
+- An image is drawn by its thumbnail, or else by its own file.
+- A video is drawn by its poster, never by the video file.
+- A cluster with no cover, or with a cover that has no image, renders as
+  before: the count bubble and the pin.
+
+The reference goes to `CachedImage`, which signs it. Offline, the image layer
+(`mediaUrl`) serves the cache's own copy, which §24.2 stored only after the
+signer allowed it.
+
+**The label.** `useCachedLabel` wraps whichever loader the map was given. It
+works like `useOfflineLens`: it holds the "Cached · updated …" label while the
+map on screen came from the cache, and clears it on the next live answer. So
+the Places and Experiences Maps show the label too.
+
+**The cited line.** `MediaMapScreen.tsx:65` is the loader line itself, so it had
+to change. It keeps its number. §24.1's anchor for it (the old
+`fetchMediaMap(...)` call) now sits in a note at the end of that same line, so
+§24's citation still resolves and shows what the line used to be.
+
+### 29.3 MD288 on the screen
+
+**One chip, offered and never applied by default.** It is labelled with its
+center and its radius:
+- "Near <place> · 1.5 km" when the search was opened from a canonical place;
+- otherwise "Near me · 1.5 km" when the viewer's point is known;
+- no chip when there is neither.
+
+Nothing invents a center. A place id that is not canonical cannot be a center,
+because the Map positions places by their canonical id.
+
+**What pressing it sends.** `fetchMediaSearch(q, { near })` with that center and
+`radiusM=1500`, next to whatever else was asked. With no words, "Near me" is a
+search on its own: the first answer arrives without typing
+(`travel-buddy-standalone/src/features/media/screens/MediaSearchScreen.tsx:200#{queryString == null && !near.param ? (`).
+"Near" is not part of the query string. The store says only whether it is on,
+and `toSearchNear` builds what is sent
+(`travel-buddy-standalone/src/features/media/state/mediaFilterStore.ts:194#export function toSearchNear(`).
+
+**The refusal.** When the server answers `near.refusal: 'center_unpositioned'`,
+every list is empty because the Map would not place the center, not because
+nothing matched. The screen says exactly that, and offers "Search without
+'near'" (`travel-buddy-standalone/src/features/media/screens/MediaSearchScreen.tsx:506#function NearRefused(`).
+A CONTROL case checks that a genuinely empty "near" answer still reads
+"Nothing matched".
+
+**The viewer's point.** The Search screen is its own route, pushed from the
+shell. It is not rendered inside the shell. That route already calls
+`useActiveLocation` for "Near <city>"
+(`travel-buddy-standalone/app/media-search/index.tsx:28#const { locationState } = useActiveLocation();`).
+It now also passes that call's coords, gated on `ok` exactly as `/media-world`
+gates the point it hands the shell. So there is no new location read and no new
+permission, and `MediaWorldShell.tsx` is unchanged. The point is not put in a
+URL.
+
+**What the server sees.** The point goes as `nearLat` / `nearLng` on
+`GET /media/search`. The Media Map already sends the same point to the Map
+gateway as a bbox query, and `useActiveLocation` already syncs it to
+`/api/me/location-state`. The search response carries no coordinate (§24.3).
+
+**Limit, recorded rather than hidden.** §38's own example names a city: "near
+Da Nang". A typed city is still the coarse city criterion, through the
+unchanged city chip and field. §24.3 lists three centers that satisfy its
+falsifier: the viewer's position, the place the search was opened from, or a
+place result. A named city is not one of them, and turning one into a radius
+needs the client's Map data (§24.3). Asked in Da Nang, the example becomes
+"beach" plus the gem kind plus "Near me · 1.5 km". Asked from elsewhere, it is
+city-coarse.
+
+### 29.4 Design choices the owner may want to revisit
+
+1. **One chip, not two.** A place context replaces "Near me" rather than
+   sitting beside it, following the rule "a place when there is one, else the
+   viewer".
+2. **A fixed 1500 m radius** with no picker. It sits inside the server's
+   100–5000 m bound, and the chip states it.
+3. **The place context arrives only as route params**
+   (`nearPlaceId`, optionally `nearPlaceName`). No in-app surface opens Search
+   with a place yet, and place results carry no "Search near here". Both would
+   be small additions. Neither is needed for the falsifier.
+4. **The refusal's way out** turns "near" off. It does not fall back to the city
+   silently.
+5. **`MediaMapScreen.tsx:65` was reworded in place** (§29.2), rather than left
+   as an unused raw loader to keep the old text alive.
+
+### 29.5 Mutations — each seen red, every file checked byte-identical after each run
+
+Map (`MediaMapCovers.component.test.tsx`, plus the node file where named):
+
+| # | Mutation | Red |
+| --- | --- | --- |
+| I-M1 | the standalone map's loader unwired (raw `fetchMediaMap`) | the offline standalone case; the Places case (its overview Map) |
+| I-M2 | the Places one-place loader unwired | the Places case |
+| I-M3 | the Experiences loader unwired | the Experiences case |
+| I-M4 | the cover dropped from the map marker | all 4 cases |
+| I-M5 | the cover dropped from the list row | the cover case |
+| I-M6 | the cached label dropped | the 3 offline cases |
+| I-M7 | the default loader drops the `offline` meta | the offline standalone case |
+| I-M8 | a video cover drawn by its `url` (the video file) | the cover case; node: the poster case |
+
+Search (`MediaSearchNear.component.test.tsx`, plus the node file where named):
+
+| # | Mutation | Red |
+| --- | --- | --- |
+| I-S1 | no `near` sent | 6 of 7 (all but the city-only case) |
+| I-S2 | the refusal rendered as empty ("Nothing matched") | the refusal case |
+| I-S3 | "near" on by default (applied silently) | 5 cases; node: 2 |
+| I-S4 | the place context ignored (always the viewer) | the place and refusal cases; node: 2 |
+| I-S5 | a radius past the server bound (10 km) | 6 cases; node: 2 |
+| I-S6 | the chip never offered | 6 cases |
+
+Every mutation went red on its first run.
+
+### 29.6 Production — nothing here is deployed
+
+Nothing in §29 is merged to main, pushed or deployed, so none of it is in any
+build a user has. No flag, seed or migration was touched, and no database was
+read. Once shipped, it stays dark behind the same two switches as §24:
+- The World shell is the only in-app path to the Media Map and to Search, and
+  `MEDIA_WORLD_SHELL_ENABLED` is seeded off and is OFF in production (§25).
+- The canonical Map gateway places nothing in production, because
+  `map_projection_enabled` has no row there (§23.1, §24.6). So no cluster, and
+  no cover, is positioned on a map.
+
+`/media-map` and `/media-search` are additive routes with no flag of their own,
+so a deep link could open them (§19).
+
+### 29.7 Checks
+
+- **Client.**
+  - `tsc` is clean.
+  - eslint on every changed file: 0 errors. The warnings are the test files'
+    `require` in `jest.mock` factories (the repo's pattern) and one
+    pre-existing warning in `MediaMapCanvas.tsx` at line 19, which this lane
+    did not touch.
+  - `lint:bare-image`, `lint:imports`, `lint:mocks`, `lint:orphan-tests` and
+    `lint:avatar-icon-sizing` pass. The last caught a hardcoded 40 px cover
+    bubble, which now uses `avatar.s40`.
+  - The media node tests pass: 346 / 346, 8 of them new.
+  - The 15 media jest suites pass: 95 / 95 tests, 11 of them new, in 2 new
+    suites.
+- **Census.**
+  - `check:doc-citations` passes, including §24's anchor on
+    `MediaMapScreen.tsx:65`.
+  - `check:citation-targets` stays at 165 / 165.
+  - `check:census-scope-coverage` FAILS for media: 215 of 225 watched
+    (95.6 %), against a floor of 96 %. It was 211 of 219 before this section.
+    The two newly counted unwatched files are the routes that MD288's evidence
+    rests on: `app/media-search/index.tsx` and `app/media-world/index.tsx`.
+    Both are outside census-media's `CENSUS_SCOPE`. §19 already cited both, but
+    in an anchored form this check does not count. Naming them here makes the
+    check count them, and that is the true state: census-freshness does not
+    watch the route that passes the viewer's point. This lane did not edit the
+    scope. Adding both paths to it is the integrator's call, and would put media
+    at 217 of 225.
+  - `check:census-integrity` FAILS, and it is expected to. The rows now count
+    two more C and two fewer W than the stated headline. Restating the headline
+    is the integrator's job (§28.2), so this section does not.
