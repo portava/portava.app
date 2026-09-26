@@ -37,22 +37,29 @@ describe('sensingZoneHint', () => {
 });
 
 describe('withSensingZone — the ask carries the zone only while capture is running', () => {
+  /** The shape the two ask paths pass: production hands in a typed options object, never a bare literal. */
+  type Ask = { city?: string; conversationId?: string; sensingZoneIds?: string[] };
+
   it('no source ⇒ the body has no sensingZoneIds at all', () => {
-    const out = withSensingZone({ city: 'Lisbon' as string | undefined });
+    const opts: Ask = { city: 'Lisbon' };
+    const out = withSensingZone(opts);
     assert.equal('sensingZoneIds' in out, false);
     assert.deepEqual(out, { city: 'Lisbon' });
   });
 
   it('a running capture ⇒ sensingZoneIds is exactly [its current zone], other fields untouched', () => {
     registerSensingZoneSource(() => 'u4pruy');
-    const out = withSensingZone({ city: 'Lisbon', conversationId: 'c1' });
+    const opts: Ask = { city: 'Lisbon', conversationId: 'c1' };
+    const out = withSensingZone(opts);
     assert.deepEqual(out, { city: 'Lisbon', conversationId: 'c1', sensingZoneIds: ['u4pruy'] });
   });
 
   it('an explicit sensingZoneIds wins over the hint; an explicit [] sends nothing', () => {
     registerSensingZoneSource(() => 'u4pruy');
-    assert.deepEqual(withSensingZone({ sensingZoneIds: ['zzzzzz'] }).sensingZoneIds, ['zzzzzz']);
-    const out = withSensingZone({ city: 'Lisbon', sensingZoneIds: [] });
+    const explicit: Ask = { sensingZoneIds: ['zzzzzz'] };
+    assert.deepEqual(withSensingZone(explicit).sensingZoneIds, ['zzzzzz']);
+    const empty: Ask = { city: 'Lisbon', sensingZoneIds: [] };
+    const out = withSensingZone(empty);
     assert.equal('sensingZoneIds' in out, false);
     assert.deepEqual(out, { city: 'Lisbon' });
   });
