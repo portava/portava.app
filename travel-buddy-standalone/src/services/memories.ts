@@ -310,7 +310,7 @@ export async function uploadMemoryMedia(
     });
 
     if (!uploadRes.ok) return null;
-    const json = await uploadRes.json();
+    const json = await uploadRes.json(); if (mediaType.startsWith('video/')) void attachPosterInBackground(json?.path, localUri, token); // §37 poster
     return typeof json?.url === 'string' ? json.url : null;
   } catch {
     return null;
@@ -721,3 +721,7 @@ export async function unlikeMemory(id: string): Promise<{ ok: boolean; likeCount
     return { ok: false };
   }
 }
+
+// §37 (census-media §22): a memory video gets its poster, attached in the
+// background. Imported at the TAIL so no line above moves; ESM hoists it.
+import { attachPosterInBackground } from './media/generalVideoPoster.ts';

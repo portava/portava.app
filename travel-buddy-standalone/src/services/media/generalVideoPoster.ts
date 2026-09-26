@@ -17,6 +17,7 @@
  *
  * Never throws; a video without a poster still posts.
  */
+import { extractVideoPoster } from './mediaProcessing.ts';
 
 export interface PosterHttpResult {
   status: number;
@@ -28,8 +29,12 @@ export interface GeneralPosterDeps {
   extract(videoUri: string): Promise<string | null>;
   /** POST the frame to the poster route for `videoPath`. Throws only when no response arrived. */
   postPoster(videoPath: string, frameUri: string): Promise<PosterHttpResult>;
-  /** The pre-existing path: upload the frame as a plain image; its URL or null. */
-  uploadAsImage(frameUri: string): Promise<string | null>;
+  /**
+   * The pre-existing path: upload the frame as a plain image; its URL or null.
+   * Absent for a caller that never had that fallback (stories, memories) — it
+   * then gets the derived poster or nothing, never a stray extra image.
+   */
+  uploadAsImage?(frameUri: string): Promise<string | null>;
 }
 
 export type PosterRoute = 'derived' | 'already_had_one' | 'legacy_image' | 'none';
@@ -74,12 +79,45 @@ export async function attachVideoPoster(
     }
   }
 
+  if (!deps.uploadAsImage) return { thumbnailUrl: null, route: 'none' };
   try {
     const url = await deps.uploadAsImage(frame);
     return url ? { thumbnailUrl: url, route: 'legacy_image' } : { thumbnailUrl: null, route: 'none' };
   } catch {
     return { thumbnailUrl: null, route: 'none' };
   }
+}
+
+/**
+ * For the upload helpers that post straight to `/api/media/upload` without
+ * `uploadMedia` (services/stories.ts, services/memories.ts): after a VIDEO
+ * upload, attach its poster in the background. Fire-and-forget — the caller's
+ * upload has already succeeded and is never delayed or failed by this — and
+ * with no image-upload fallback, because those callers never had one.
+ */
+export function attachPosterInBackground(
+  videoPath: unknown,
+  videoUri: string,
+  token: string,
+  deps?: GeneralPosterDeps,
+): Promise<PosterOutcome> {
+  if (typeof videoPath !== 'string' || videoPath.length === 0) {
+    return Promise.resolve({ thumbnailUrl: null, route: 'none' });
+  }
+  const run = async (): Promise<PosterOutcome> => {
+    const d = deps ?? (await deviceBackgroundDeps(token));
+    return attachVideoPoster(videoPath, videoUri, d);
+  };
+  return run().catch(() => ({ thumbnailUrl: null, route: 'none' as const }));
+}
+
+async function deviceBackgroundDeps(token: string): Promise<GeneralPosterDeps> {
+  const { uploadAsImage: _dropped, ...rest } = deviceGeneralPosterDeps(
+    process.env.EXPO_PUBLIC_API_BASE_URL ?? '',
+    token,
+    extractVideoPoster,
+  );
+  return rest;
 }
 
 /** The device's poster deps, over `fetch`, for an API base and a bearer token. */

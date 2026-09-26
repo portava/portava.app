@@ -20,9 +20,7 @@ import { color, radius, space } from '../../../theme/tokens.ts';
 import type { PresentationMode } from '../types/mediaContext.ts';
 import type { MediaExperienceProjection, ExperienceChain } from '../types/mediaExperience.ts';
 import { buildExperienceChain } from '../services/mediaProjection.ts';
-// §39: trip and event experiences answer from the offline media cache when the network is gone.
-import { experiencesOffline } from '../../../services/media/mediaOffline.ts';
-import { useOfflineLens } from '../../../services/media/useOfflineLens.ts';
+import { experiencesOffline } from '../../../services/media/mediaOffline.ts'; // §39 offline trip/event media
 import { ExperienceMosaic } from '../components/ExperienceMosaic.tsx';
 import { FreshnessBadge } from '../components/FreshnessBadge.tsx';
 import { LensStateView } from '../components/LensStateView.tsx';
@@ -157,3 +155,7 @@ const styles = StyleSheet.create({
   placeholderTitle: { color: color.onInk, fontSize: 18, fontWeight: '800' },
   placeholderBody: { color: color.onInkMute, fontSize: 14, lineHeight: 20, textAlign: 'center' },
 });
+
+// §39 (census-media §22): the lens reads through the offline cache and shows its
+// "Cached · updated …" label. Imported at the TAIL so no cited line moves.
+import { useOfflineLens } from '../../../services/media/useOfflineLens.ts';

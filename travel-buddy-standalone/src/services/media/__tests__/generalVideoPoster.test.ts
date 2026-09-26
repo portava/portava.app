@@ -8,7 +8,7 @@
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { attachVideoPoster, type GeneralPosterDeps } from '../generalVideoPoster.ts';
+import { attachPosterInBackground, attachVideoPoster, type GeneralPosterDeps } from '../generalVideoPoster.ts';
 
 const PATH = 'f0000000-0000-4000-a000-000000000001/1790000000000.mp4';
 
@@ -71,5 +71,26 @@ describe('attachVideoPoster', () => {
       uploadAsImage: async () => { throw new Error('offline'); },
     });
     assert.deepEqual(await attachVideoPoster(PATH, 'file:///v.mp4', bothFail), { thumbnailUrl: null, route: 'none' });
+  });
+});
+
+describe('attachPosterInBackground — stories and memories', () => {
+  it('no storage path → nothing is attempted', async () => {
+    const d = deps();
+    assert.deepEqual(await attachPosterInBackground(undefined, 'file:///v.mp4', 'tok', d), { thumbnailUrl: null, route: 'none' });
+    assert.deepEqual(d.calls, []);
+  });
+  it('the derived poster, and NO image-upload fallback — those callers never had one', async () => {
+    const d = deps({ postPoster: async () => ({ status: 404, body: null }) });
+    delete (d as Partial<GeneralPosterDeps>).uploadAsImage;
+    assert.deepEqual(await attachPosterInBackground(PATH, 'file:///v.mp4', 'tok', d), { thumbnailUrl: null, route: 'none' });
+    assert.equal(d.calls.includes('legacy'), false);
+    const ok = deps();
+    delete (ok as Partial<GeneralPosterDeps>).uploadAsImage;
+    assert.equal((await attachPosterInBackground(PATH, 'file:///v.mp4', 'tok', ok)).route, 'derived');
+  });
+  it('never rejects', async () => {
+    const d = deps({ extract: async () => { throw new Error('native'); } });
+    assert.equal((await attachPosterInBackground(PATH, 'file:///v.mp4', 'tok', d)).route, 'none');
   });
 });

@@ -19,8 +19,7 @@ import { avatar, color, radius, space } from '../../../theme/tokens.ts';
 import { CachedImage } from '../../../components/CachedImage.tsx';
 import type { MediaProjection } from '../types/media.ts';
 import type { PeopleLensGroup, PeopleLensProjection } from '../types/peopleLens.ts';
-// §39: offline, the lens shows the Trip Crew perspectives the device cached.
-import { peopleOffline } from '../../../services/media/mediaOffline.ts';
+import { peopleOffline } from '../../../services/media/mediaOffline.ts'; // §39: offline, the Trip Crew perspectives cached
 import { useOfflineLens } from '../../../services/media/useOfflineLens.ts';
 import { PerspectiveMosaic } from '../components/PerspectiveMosaic.tsx';
 import { FreshnessBadge } from '../components/FreshnessBadge.tsx';

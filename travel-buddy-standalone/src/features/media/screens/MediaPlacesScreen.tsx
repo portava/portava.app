@@ -24,12 +24,8 @@ import {
   isTimelineEmpty,
   mapTimeline,
 } from '../services/mediaProjection.ts';
+import { placeViewOffline } from '../../../services/media/mediaOffline.ts'; // §39 offline place view
 import { useLensProjection } from '../hooks/useLensProjection.ts';
-// §39: the place view answers from the offline media cache when the network is gone.
-import { placeViewOffline } from '../../../services/media/mediaOffline.ts';
-import { useOfflineLens } from '../../../services/media/useOfflineLens.ts';
-// §18: "Mixed reports — conditions may be changing", exactly when the server says so.
-import { uncertaintyBanner } from '../../../services/media/mediaIntelligence.ts';
 import { CurrentPictureBadge } from '../components/CurrentPictureBadge.tsx';
 import { IntelligenceStrip } from '../components/IntelligenceStrip.tsx';
 import { PerspectiveMosaic } from '../components/PerspectiveMosaic.tsx';
@@ -186,11 +182,7 @@ function PlaceDetail({
       ) : (
         <ScrollView contentContainerStyle={styles.detailContent} showsVerticalScrollIndicator={false}>
           <View style={styles.pictureBlock}>
-            {cachedLabel ? <Text style={styles.areaLabel} accessibilityRole="text">{cachedLabel}</Text> : null}
-            {view.stateLabel ? <Text style={styles.stateLabel}>{view.stateLabel}</Text> : null}
-            {uncertaintyBanner(view.consensus ?? null) ? (
-              <Text style={styles.areaLabel} accessibilityRole="alert">{uncertaintyBanner(view.consensus ?? null)}</Text>
-            ) : null}
+            {view.stateLabel ? <Text style={styles.stateLabel}>{view.stateLabel}</Text> : null}<PictureCaveats cachedLabel={cachedLabel} consensus={view.consensus ?? null} />
             {view.areaName ? <Text style={styles.areaLabel}>{view.areaName}</Text> : null}
             <CurrentPictureBadge
               strength={view.currentPicture.strength}
@@ -335,3 +327,23 @@ const styles = StyleSheet.create({
   },
   mapNote: { color: color.onInkMute, fontSize: 14, lineHeight: 20, paddingHorizontal: space.lg },
 });
+
+/**
+ * Under the place's state: the §39 "Cached · updated …" label whenever the view
+ * came from the offline cache, and the §18 uncertainty line exactly when the
+ * server says the reports disagree (services/media/mediaIntelligence.ts).
+ * Defined, with its imports, at the TAIL so no line above moves — census-media
+ * cites this file by line (census-media §22).
+ */
+function PictureCaveats({ cachedLabel, consensus }: { cachedLabel: string | null; consensus: VisualConsensusView | null }) {
+  const banner = uncertaintyBanner(consensus);
+  return (
+    <>
+      {cachedLabel ? <Text style={styles.areaLabel} accessibilityRole="text">{cachedLabel}</Text> : null}
+      {banner ? <Text style={styles.areaLabel} accessibilityRole="alert">{banner}</Text> : null}
+    </>
+  );
+}
+
+import { useOfflineLens } from '../../../services/media/useOfflineLens.ts';
+import { uncertaintyBanner, type VisualConsensusView } from '../../../services/media/mediaIntelligence.ts';
