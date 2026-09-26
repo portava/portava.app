@@ -348,10 +348,38 @@ const UNRESOLVED_ALLOWLIST = new Map<string, number>([
   ["src/routes/rentABuddyMarketplace.ts|select|select list not statically resolvable", 3],
 
   // ── Insert/upsert payloads built at runtime ───────────────────────────────
-  // 3 sites: feed-section registration + the two /compass/ask uiBlock
-  // registration upserts (chat recommendation tokens) — row arrays built
-  // dynamically from RecommendationRow; columns verified by the feed paths.
-  ["src/routes/compass.ts|upsert|payload partially resolvable", 2],
+  // FIVE sites, and the count moved from 2 to 5 without one new blind spot
+  // being opened. Before this branch these five were split across TWO keys:
+  //
+  //   compass.ts|upsert|payload not statically resolvable   3   (728/1833/1904)
+  //   compass.ts|upsert|payload partially resolvable        2   (2313/3132)
+  //
+  // The same-file row-builder case added to `resolvePayload` (see the
+  // 2026-09-15 note above and the builder comment in
+  // src/scripts/lib/schemaReferenceExtract.ts) taught the extractor to follow
+  // `dedupeByRecommendationId(...)` and
+  // `enrichUiBlocksWithRecommendationTokens(...)`, so the first three sites
+  // stopped being fully unreadable and became PARTIALLY readable — they moved
+  // into the second key. The 3-entry was deleted; this one was not bumped to
+  // match, which is the whole of the failure this restores. Five sites before,
+  // five sites now, and each is now at least partly visible where three of them
+  // used to be invisible, so the table itself is checked where it was not.
+  //
+  // What is still blind, precisely: all five bottom out in rows accumulated by
+  // `rows.push({...})` and returned through `rows.filter(cb)`
+  // (dedupeByRecommendationId), or in a `{ ...parsed.data }` spread of a zod
+  // output. The extractor models neither, so the COLUMNS of
+  // compass_served_recommendations / compass_user_preferences / compass_settings
+  // are unverified from these sites. Resolving `.filter(cb)` would not help —
+  // it returns the shape of the array it filters, and that array is built by
+  // pushes, which is the part nothing here reads.
+  //
+  //   739  feed-section registration      — dedupeByRecommendationId(...)
+  //   1942 /compass/ask stream uiBlocks   — enrichUiBlocks...(...) -> dedupe...
+  //   2013 /compass/ask uiBlocks          — enrichUiBlocks...(...) -> dedupe...
+  //   2422 PATCH /compass/me/preferences  — { ...parsed.data, user_id }
+  //   3241 PATCH /compass/settings        — upsertData built above the call
+  ["src/routes/compass.ts|upsert|payload partially resolvable", 5],
   // ── DC-19's batch POST /rank-events (routes/rankEvents.ts) ────────────────
   //
   // This entry USED to read "the only one of that file's five that could not be
@@ -518,6 +546,41 @@ const UNRESOLVED_ALLOWLIST = new Map<string, number>([
   // The upsert rows come from a `.map`, so the row literal resolves; one
   // spread inside it does not, which is what "partially" names.
   ["src/services/airport/LayoverRecommendationService.ts|upsert|payload partially resolvable", 1],
+  // ── Layover §4 certified computation: the ledger row is built ACROSS a ────
+  //    module boundary, which is the one thing `resolvePayload` refuses to
+  //    cross, and it refuses on purpose.
+  //
+  // The site is `LayoverDecisionStore.persistCertifiedComputation`'s parent
+  // insert. Its payload is `certifiedComputationRowFor(...)`, which IS declared
+  // in that file, so the same-file builder case reads it and the check sees
+  // five of its keys — snapshot_id, input_facts, source_refs, rules_applied,
+  // ledger_version. They are exactly the five this run reports as missing from
+  // the live schema (2993/2994, unapplied). The builder's first member is
+  // `...ledgerRowFor(userId, sessionId, record)`, and `ledgerRowFor` is
+  // IMPORTED from services/airport/layoverLedger.ts. resolvePayload's comment
+  // states the rule and the reason: resolution is same-file only, because
+  // "a builder that lives elsewhere is a genuine blind spot rather than one
+  // this pass can honestly close". So the spread resolves to nothing and the
+  // payload is marked partially resolvable.
+  //
+  // WHAT IS BLIND, named rather than counted — the 17 columns ledgerRowFor
+  // contributes: session_id, user_id, engine_version, feasibility_version,
+  // input_hash, computed_at, verdict, confidence, buffer_percentile,
+  // cutoff_at, hard_return_time, total_buffer_min, usable_minutes, inputs,
+  // breakdown, estimates, reason_codes. This site is their ONLY writer in the
+  // tree, so no other checked site covers them.
+  //
+  // WHY NOT INLINE THEM at certifiedComputationRowFor: the extractor's own
+  // header says inlining a literal at the call site "would have made the
+  // checker happy and the tests worse" — these builders exist so
+  // test/layoverDecisionLedger.test.ts can assert on them directly.
+  //
+  // CURRENTLY HARMLESS, verified rather than assumed: all 17 were confirmed
+  // present on public.layover_certified_computations in portava-ci
+  // (hwokxgbmezheskbzskfr) on 2026-09-26 by a read-only information_schema
+  // query. That is a statement about today, not a guarantee — it is precisely
+  // what this entry costs: a rename in layoverLedger.ts would not go red here.
+  ["src/services/layover/LayoverDecisionStore.ts|insert|payload partially resolvable", 1],
   ["src/routes/adminFeatured.ts|update|payload partially resolvable", 1],
   ["src/routes/events.ts|update|payload partially resolvable", 2],
   // ── Highlights §12 projection + §6.2 voice: REVEALED, not introduced ──────

@@ -122,6 +122,29 @@ import {
 const router = Router();
 
 /**
+ * The session table is spelled as a LITERAL at the `.from()` below, not as
+ * `SENSING_SESSIONS_TABLE`, and this tie is why that is safe.
+ *
+ * `check:write-path-columns` and `check:schema-references` resolve table names
+ * out of the TypeScript AST. Both read `.from(<string literal>)`; neither
+ * follows an imported const, and `src/scripts/lib/schemaReferenceExtract.ts`
+ * says why in its own words — a builder or a name that lives in another module
+ * "is a genuine blind spot rather than one this pass can honestly close".
+ * Passing the imported const made this route's nine-column select invisible to
+ * both checks: the columns below could have been renamed out from under it and
+ * nothing would have gone red.
+ *
+ * The literal restores the checks. The assignment restores the single source of
+ * truth: `SENSING_SESSIONS_TABLE` has the literal type
+ * `"sensing_contribution_sessions"`, so if 2480's table is ever renamed there
+ * and not here, THIS LINE stops compiling. A drift is a type error, not a
+ * runtime 42P01 in production.
+ */
+const _sensingSessionsTableTie: typeof SENSING_SESSIONS_TABLE =
+  "sensing_contribution_sessions";
+void _sensingSessionsTableTie;
+
+/**
  * What a device may send. Every field is either already reduced or is reduced
  * before storage; there is deliberately no field an account, device id,
  * installation id, session id or coordinate pair could occupy. `zoneId` is the
@@ -174,7 +197,7 @@ async function readSensingSession(
 ): Promise<{ ok: true; row: SensingContributionSessionRow | null } | { ok: false; error: string }> {
   try {
     const { data, error } = await db
-      .from(SENSING_SESSIONS_TABLE)
+      .from("sensing_contribution_sessions")
       .select(
         "credential_hash, policy_version, purpose_scopes, reduction_version, issuance_class, budget_cohorts_remaining, starts_at, expires_at, revoked_at",
       )
