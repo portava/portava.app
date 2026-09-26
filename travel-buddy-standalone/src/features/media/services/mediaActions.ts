@@ -32,6 +32,7 @@ import type {
   CompiledExperiencePlan,
   CompiledPlanStop,
   RouteStopRef,
+  LinkableEventRef,
 } from '../types/mediaActions.ts';
 
 // ── Token seam (mirrors services/mediaProjection.ts) ──────────────────────────
@@ -94,6 +95,7 @@ export const MEDIA_ACTION_IDS: readonly MediaActionId[] = [
   'invite_people',
   'follow_this_night',
   'save_route',
+  'link_event',
 ];
 
 export const MEDIA_INTENT_KINDS: readonly MediaIntentKind[] = [
@@ -243,6 +245,7 @@ export type MediaActionExecution =
   | { kind: 'save_route'; title: string; stops: RouteStopRef[]; mediaId: string | null }
   | { kind: 'invite'; momentId: string; mediaId: string | null }
   | { kind: 'contribute_gem'; gemId: string; mediaId: string | null }
+  | { kind: 'link_event'; mediaId: string; candidates: LinkableEventRef[] }
   | { kind: 'unsupported' };
 
 /** Default prompts seeded into Compass when opened from the media context (§32). */
@@ -398,6 +401,19 @@ export function resolveMediaActionExecution(
     case 'invite_people': {
       const momentId = paramStr(action, 'id');
       return momentId ? { kind: 'invite', momentId, mediaId: refId(entityRefs, 'media') } : { kind: 'unsupported' };
+    }
+    case 'link_event': {
+      // The author's own post → an event they took part in. Only the events the
+      // server offered (its predicate is the endpoint's); none → no row.
+      const mediaId = paramStr(action, 'id') ?? refId(entityRefs, 'media');
+      const candidates = asArray(action.target.params?.candidates)
+        .map((raw): LinkableEventRef | null => {
+          if (!isObj(raw)) return null;
+          const eventId = asString(raw.eventId);
+          return eventId ? { eventId, title: asString(raw.title), startsAt: asString(raw.startsAt) } : null;
+        })
+        .filter((x): x is LinkableEventRef => x !== null);
+      return mediaId && candidates.length > 0 ? { kind: 'link_event', mediaId, candidates } : { kind: 'unsupported' };
     }
     case 'contribute_gem': {
       const gemId = paramStr(action, 'id');
@@ -790,5 +806,31 @@ export async function saveMediaRoute(
     return typeof id === 'string' && id.length > 0 ? { ok: true, routeId: id } : { ok: false, reason: 'create_failed' };
   } catch {
     return { ok: false, reason: 'create_failed' };
+  }
+}
+
+/**
+ * POST /media/:id/event-link — the author links their own post to an event
+ * (census-media §21, MD103). The server re-checks the same predicate that
+ * offered the action; a refusal is reported, never swallowed. Never throws.
+ */
+export async function linkMediaToEvent(
+  mediaId: string,
+  eventId: string,
+): Promise<{ ok: true } | { ok: false; errorKind: 'auth' | 'refused' | 'server' | ProjectionErrorKind }> {
+  const token = await freshToken();
+  if (!token) return { ok: false, errorKind: 'auth' };
+  try {
+    const res = await fetch(`${apiBase()}/api/media/${encodeURIComponent(mediaId)}/event-link`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ eventId }),
+    });
+    if (res.status === 401) return { ok: false, errorKind: 'auth' };
+    if (res.status === 403 || res.status === 404) return { ok: false, errorKind: 'refused' };
+    if (!res.ok) return { ok: false, errorKind: 'server' };
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, errorKind: classifyFetchError(err) };
   }
 }

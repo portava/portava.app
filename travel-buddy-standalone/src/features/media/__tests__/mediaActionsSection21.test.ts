@@ -133,6 +133,42 @@ test('MD381 invite_people / MD400 contribute_gem carry the media id to the serve
   assert.equal(resolveMediaActionExecution(action('contribute_gem', {}, 'POST'), REFS).kind, 'unsupported');
 });
 
+test('MD103 link_event: only the server-offered events, and a row only when there is one', () => {
+  const exec = resolveMediaActionExecution(
+    action('link_event', { id: M, candidates: [{ eventId: T, title: 'Beach night', startsAt: null }, { title: 'no id' }, 'junk'] }, 'POST'),
+    REFS,
+  );
+  assert.deepEqual(exec, { kind: 'link_event', mediaId: M, candidates: [{ eventId: T, title: 'Beach night', startsAt: null }] });
+  assert.equal(resolveMediaActionExecution(action('link_event', { id: M, candidates: [] }, 'POST'), REFS).kind, 'unsupported');
+});
+
+test('MD103 linkMediaToEvent posts the event id to the link endpoint; a refusal is reported, not swallowed', async () => {
+  _setTestFreshToken('tok');
+  const original = globalThis.fetch;
+  const calls: Array<{ url: string; init?: RequestInit }> = [];
+  let status = 200;
+  (globalThis as { fetch: typeof fetch }).fetch = (async (url: string, init?: RequestInit) => {
+    calls.push({ url: String(url), init });
+    return new Response(JSON.stringify({ ok: status === 200 }), { status });
+  }) as unknown as typeof fetch;
+  try {
+    const { linkMediaToEvent } = await import('../services/mediaActions.ts');
+    assert.deepEqual(await linkMediaToEvent(M, T), { ok: true });
+    assert.match(calls[0]!.url, new RegExp(`/api/media/${M}/event-link$`));
+    assert.equal(calls[0]!.init?.method, 'POST');
+    assert.deepEqual(JSON.parse(String(calls[0]!.init?.body)), { eventId: T });
+    status = 403;
+    assert.deepEqual(await linkMediaToEvent(M, T), { ok: false, errorKind: 'refused' });
+  } finally {
+    (globalThis as { fetch: typeof fetch }).fetch = original;
+    _clearTestFreshToken();
+  }
+  const rail = read('features/media/components/MediaActionRail.tsx');
+  assert.match(rail, /case 'link_event':\s*setPanel\(\{ kind: 'link_event', mediaId: exec\.mediaId, candidates: exec\.candidates \}\);/);
+  assert.match(rail, /setNotice\('Linked to the event\.'\);\s*reload\(\);/);
+  assert.match(read('features/media/components/MediaActionPanels.tsx'), /const r = await linkMediaToEvent\(mediaId, eventId\);/);
+});
+
 // ── 1b. Go There — Directions STARTED only when the maps app opened ──────────
 
 const URLS = { appleMaps: 'maps://a', googleMaps: 'https://g', waze: 'waze://w' };
@@ -398,6 +434,23 @@ test('MD112 every gem submission surface runs the §16.1 duplicate check (merge-
     assert.match(text, /useCreationAssistance\(\{\s*context: 'hidden_gem_name'/, `${f} scans for duplicates`);
     assert.match(text, /<CreationAssist[\s\S]*?duplicates=\{[^}]+\.duplicates\}[\s\S]*?onPickExisting=\{/, `${f} offers the existing gem`);
   }
+});
+
+test('MD120 the gem page states what verified visitors found — only when the server floor gives a number', async () => {
+  const { normalizeGemVisitOutcomes, gemVisitOutcomeSentence } = await import('../../../services/hiddenGemsMappers.ts');
+  const o = normalizeGemVisitOutcomes({
+    determined: true, verifiedVisitors: 7, reportingVisitors: 4, confirmed: 3, degraded: 1, noted: 0, lastOutcomeDay: '2026-09-20', windowHours: 72,
+  });
+  assert.equal(gemVisitOutcomeSentence(o), 'Of 4 verified visitors who reported back, 3 found it still worth it and 1 found it changed or gone.');
+  // Below the floor / unreadable: no sentence, never "0 visitors".
+  assert.equal(gemVisitOutcomeSentence(normalizeGemVisitOutcomes({ determined: false, reason: 'below_threshold' })), null);
+  assert.equal(gemVisitOutcomeSentence(normalizeGemVisitOutcomes({ determined: false, reason: 'unreadable' })), null);
+  assert.equal(normalizeGemVisitOutcomes({ determined: true, reportingVisitors: 'x' }), null, 'garbage is no outcome');
+  assert.equal(gemVisitOutcomeSentence(undefined), null);
+  // The detail mapping carries it, and the page renders it.
+  assert.match(read('services/hiddenGems.ts'), /visitOutcomes: normalizeGemVisitOutcomes\(r\.visitOutcomes\),/);
+  const page = readFileSync(join(SRC, '..', 'app', 'gems', '[id].tsx'), 'utf8');
+  assert.match(page, /\{gemVisitOutcomeSentence\(gem\.visitOutcomes\) \? \(\s*<Text style=\{styles\.visitOutcome\}[^>]*>\{gemVisitOutcomeSentence\(gem\.visitOutcomes\)\}<\/Text>/);
 });
 
 test('MD393 profile_open / place_open, MD376 gem_open, MD374 visual_opportunity_open are emitted where the viewer opens them', () => {

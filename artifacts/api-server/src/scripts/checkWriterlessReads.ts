@@ -138,13 +138,6 @@ export const KNOWN_WRITERLESS_READS: Record<
       "refuses to advance without a circleId, and points at a create screen that does not " +
       "exist. Needs a product ruling — delete the readers, or build the create path.",
   },
-  post_event_links: {
-    readers: 2,
-    classification: "dead-lane",
-    note:
-      "Nothing links a post to an event, so Discovery's 'Live from events' path and the event " +
-      "hero-media rail can never return a row.",
-  },
   compass_user_profiles: {
     readers: 1,
     classification: "dead-lane",

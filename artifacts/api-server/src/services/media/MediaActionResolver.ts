@@ -138,7 +138,7 @@ export type MediaActionId =
   | "invite_people"
   | "follow_this_night"
   | "save_route"
-  | "report" | "directions" | "view_event" | "view_passport" | "find_quieter" | "find_cheaper" | "contribute_gem";
+  | "report" | "directions" | "view_event" | "view_passport" | "find_quieter" | "find_cheaper" | "contribute_gem" | "link_event";
 
 export interface MediaActionTarget {
   method: "GET" | "POST" | "DELETE";
@@ -687,7 +687,7 @@ export async function resolveMediaActions(
     }
   }
 
-  return { mediaId, entityRefs: entities.graphRefs, actions: await withSection21Actions(sc, viewer, entities, actions, { compassOn, editableTripIds }), planGateDetermined: planEditable !== null };
+  return { mediaId, entityRefs: entities.graphRefs, actions: await withSection21Actions(sc, viewer, entities, actions, { compassOn, editableTripIds, authorId: typeof (row as any).author_id === "string" ? (row as any).author_id : null, postCreatedAt: typeof (row as any).created_at === "string" ? (row as any).created_at : null }), planGateDetermined: planEditable !== null };
 }
 
 // ── Do This Experience (§15.2) ────────────────────────────────────────────────
@@ -1022,7 +1022,7 @@ export async function withSection21Actions(
   viewer: ViewerResolved,
   entities: ResolvedMediaEntities,
   actions: MediaAction[],
-  opts: { compassOn: boolean; editableTripIds: string[] },
+  opts: { compassOn: boolean; editableTripIds: string[]; authorId?: string | null; postCreatedAt?: string | null },
 ): Promise<MediaAction[]> {
   const out = [...actions];
   const mediaId = entities.mediaId;
@@ -1101,6 +1101,33 @@ export async function withSection21Actions(
     }
   } catch {
     /* fail closed — no event action */
+  }
+
+  // §15 "Link to event" (MD103's writer) — the AUTHOR attaches their own post to
+  // an event they took part in, which is what makes View Event (above), the
+  // §24 availability term and the event's hero media reachable at all:
+  // post_event_links had readers and no writer. Offered by the SAME predicate
+  // POST /media/:id/event-link enforces (listLinkableEvents), only while the
+  // rail's own flag is on, and only when the post links to nothing yet.
+  if (
+    opts.authorId && opts.authorId === viewer.viewerId && opts.postCreatedAt &&
+    !out.some((a) => a.id === "view_event") &&
+    (await isFlagEnabled(sc, "MEDIA_WORLD_SHELL_ENABLED").catch(() => false))
+  ) {
+    try {
+      const { listLinkableEvents } = await import("../../lib/mediaEventLinks.js");
+      const candidates = await listLinkableEvents(sc, viewer.viewerId, opts.postCreatedAt);
+      if (candidates && candidates.length > 0) {
+        out.push({
+          id: "link_event",
+          label: "Link to an event",
+          outcome: "contribute",
+          target: { method: "POST", endpoint: "/api/media/:id/event-link", params: { id: mediaId, candidates } },
+        });
+      }
+    } catch {
+      /* fail closed — no link action */
+    }
   }
 
   // §15 "View Passport" (MD103) — §29 keeps Passport on Postcards, so the

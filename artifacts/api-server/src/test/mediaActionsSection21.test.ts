@@ -242,6 +242,42 @@ describe("MD103 — View Event / View Passport", () => {
     });
     assert.ok((await actionsFor(data))!.actions.some((x) => x.id === "view_passport"));
   });
+
+  // The writer (lib/mediaEventLinks): the AUTHOR links their own post to an
+  // event they took part in. Same predicate as POST /media/:id/event-link.
+  const nearNow = { starts_at: new Date(Date.now() - 2 * 3_600_000).toISOString(), ends_at: new Date(Date.now() + 3_600_000).toISOString() };
+  const SHELL_ON = { flag: "MEDIA_WORLD_SHELL_ENABLED", enabled: true };
+
+  it("Link to an event is offered to the AUTHOR, for the event they are going to, and targets the link endpoint", async () => {
+    const set = await actionsFor(baseData({
+      posts: [makePost({ author_id: VIEWER })],
+      events: [eventRow(nearNow)],
+      event_roles: [],
+      event_rsvps: [{ event_id: EVENT_1, user_id: VIEWER, status: "going" }],
+      feature_flags: [SHELL_ON],
+    }));
+    const a = set!.actions.find((x) => x.id === "link_event");
+    assert.ok(a, "link_event offered");
+    assert.equal(a!.target.method, "POST");
+    assert.equal(a!.target.endpoint, "/api/media/:id/event-link");
+    assert.deepEqual((a!.target.params?.candidates as any[]).map((c) => c.eventId), [EVENT_1]);
+  });
+
+  it("Link to an event is NOT offered: to a non-author, while the shell flag is off, for a non-participant, or once linked", async () => {
+    const going = { event_rsvps: [{ event_id: EVENT_1, user_id: VIEWER, status: "going" }], event_roles: [] };
+    const notAuthor = await actionsFor(baseData({ posts: [makePost()], events: [eventRow(nearNow)], ...going, feature_flags: [SHELL_ON] }));
+    assert.equal(notAuthor!.actions.some((x) => x.id === "link_event"), false, "not the author");
+    const flagOff = await actionsFor(baseData({ posts: [makePost({ author_id: VIEWER })], events: [eventRow(nearNow)], ...going, feature_flags: [] }));
+    assert.equal(flagOff!.actions.some((x) => x.id === "link_event"), false, "shell flag off");
+    const notGoing = await actionsFor(baseData({ posts: [makePost({ author_id: VIEWER })], events: [eventRow(nearNow)], event_rsvps: [], event_roles: [], feature_flags: [SHELL_ON] }));
+    assert.equal(notGoing!.actions.some((x) => x.id === "link_event"), false, "not a participant");
+    const linked = await actionsFor(baseData({
+      posts: [makePost({ author_id: VIEWER })], events: [eventRow(nearNow)], ...going, feature_flags: [SHELL_ON],
+      post_event_links: [{ post_id: MEDIA_1, event_id: EVENT_1 }],
+    }));
+    assert.equal(linked!.actions.some((x) => x.id === "link_event"), false, "already linked");
+    assert.ok(linked!.actions.some((x) => x.id === "view_event"), "and View Event is what the link made reachable");
+  });
 });
 
 // ── MD101 ─────────────────────────────────────────────────────────────────────

@@ -44,11 +44,11 @@ import { closeThenNavigate } from '../../../lib/deferredNavigate.ts';
 import { usePlanPicker } from '../../../components/PlanPickerController.tsx';
 import { saveMedia, reportMedia } from '../../../services/mediaInteractions.ts';
 import { fetchExperiencePlan, resolveMediaActionExecution, fetchCompiledExperiencePlan } from '../services/mediaActions.ts';
-import type { CompiledExperiencePlan, MediaAction, MediaActionId, MediaEntityKind } from '../types/mediaActions.ts';
+import type { CompiledExperiencePlan, LinkableEventRef, MediaAction, MediaActionId, MediaEntityKind } from '../types/mediaActions.ts';
 import { useMediaActions } from '../hooks/useMediaActions.ts';
 import { useMediaAnalytics } from '../../../hooks/useMediaAnalytics.ts';
 import { emitMediaNorthStar, emitMediaSignal, emitsNorthStarOnTap } from '../telemetry/mediaTelemetry.ts';
-import { TripChoicePanel, InvitePanel, ContributePanel, TelegraphObjectShareSheet, SECTION21_ACTION_ICONS, openRailDirections, saveRailRoute } from './MediaActionPanels.tsx';
+import { TripChoicePanel, InvitePanel, ContributePanel, EventLinkPanel, TelegraphObjectShareSheet, SECTION21_ACTION_ICONS, openRailDirections, saveRailRoute } from './MediaActionPanels.tsx';
 
 // ── Icon + tone per action ────────────────────────────────────────────────────
 
@@ -85,7 +85,7 @@ export interface MediaActionRailProps {
 export function MediaActionRail({ mediaId, visible, onClose }: MediaActionRailProps) {
   const insets = useSafeAreaInsets();
   const planPicker = usePlanPicker();
-  const { status, actions, entityRefs, wanted, wantPending, toggleWant } = useMediaActions(
+  const { status, actions, entityRefs, wanted, wantPending, toggleWant, reload } = useMediaActions(
     mediaId,
     visible,
   );
@@ -261,6 +261,10 @@ export function MediaActionRail({ mediaId, visible, onClose }: MediaActionRailPr
           setPanel({ kind: 'contribute', gemId: exec.gemId, mediaId: exec.mediaId });
           return;
 
+        case 'link_event':
+          setPanel({ kind: 'link_event', mediaId: exec.mediaId, candidates: exec.candidates });
+          return;
+
         case 'unsupported':
         default:
           return;
@@ -315,6 +319,18 @@ export function MediaActionRail({ mediaId, visible, onClose }: MediaActionRailPr
             <InvitePanel momentId={panel.momentId} mediaId={panel.mediaId} onBack={() => setPanel(null)} />
           ) : panel?.kind === 'contribute' ? (
             <ContributePanel gemId={panel.gemId} mediaId={panel.mediaId} onBack={() => setPanel(null)} />
+          ) : panel?.kind === 'link_event' ? (
+            <EventLinkPanel
+              mediaId={panel.mediaId}
+              candidates={panel.candidates}
+              onBack={() => setPanel(null)}
+              onLinked={() => {
+                // The link is what makes View Event reachable: re-read the rail.
+                setPanel(null);
+                setNotice('Linked to the event.');
+                reload();
+              }}
+            />
           ) : status === 'loading' ? (
             <View style={s.centered}>
               <ActivityIndicator size="small" color={color.mute} />
@@ -374,7 +390,8 @@ export function MediaActionRail({ mediaId, visible, onClose }: MediaActionRailPr
 type RailPanel =
   | { kind: 'trip_choice'; plan: CompiledExperiencePlan }
   | { kind: 'invite'; momentId: string; mediaId: string | null }
-  | { kind: 'contribute'; gemId: string; mediaId: string | null };
+  | { kind: 'contribute'; gemId: string; mediaId: string | null }
+  | { kind: 'link_event'; mediaId: string; candidates: LinkableEventRef[] };
 
 // ── Styles ────────────────────────────────────────────────────────────────────
 

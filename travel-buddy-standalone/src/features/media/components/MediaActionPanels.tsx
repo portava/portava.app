@@ -35,6 +35,7 @@ import {
   UserPlus,
   Moon,
   Route,
+  CalendarCheck,
   type LucideIcon,
 } from 'lucide-react-native';
 
@@ -46,10 +47,11 @@ import {
   applyCompiledPlan,
   openDirectionsForPlace,
   saveMediaRoute,
+  linkMediaToEvent,
   type DirectionsOutcome,
   type SaveMediaRouteResult,
 } from '../services/mediaActions.ts';
-import type { CompiledExperiencePlan, MediaActionId, RouteStopRef } from '../types/mediaActions.ts';
+import type { CompiledExperiencePlan, LinkableEventRef, MediaActionId, RouteStopRef } from '../types/mediaActions.ts';
 import { getPlaceLiving, getCanonicalPlace } from '../../../services/places.ts';
 import { createRoutePlan } from '../../../services/routePlan.ts';
 import { recordMediaShare } from '../../../services/mediaInteractions.ts';
@@ -67,6 +69,7 @@ export const SECTION21_ACTION_ICONS = {
   invite_people: UserPlus,
   follow_this_night: Moon,
   save_route: Route,
+  link_event: CalendarCheck,
 } satisfies Partial<Record<MediaActionId, LucideIcon>>;
 
 /** Go There on this device: the Places page's directions, opened in the maps app. */
@@ -359,5 +362,58 @@ export function TelegraphObjectShareSheet({
         }
       }}
     />
+  );
+}
+
+// ── Link to an event ──────────────────────────────────────────────────────────
+
+/**
+ * The author picks which of the events the server offered this post belongs
+ * to. Nothing is linked until they tap one; a refusal is said, not hidden.
+ */
+export function EventLinkPanel({
+  mediaId,
+  candidates,
+  onBack,
+  onLinked,
+}: {
+  mediaId: string;
+  candidates: LinkableEventRef[];
+  onBack: () => void;
+  onLinked: (eventId: string) => void;
+}) {
+  const [busy, setBusy] = useState<string | null>(null);
+  const [failed, setFailed] = useState<string | null>(null);
+
+  const link = useCallback(
+    async (eventId: string) => {
+      if (busy) return;
+      setBusy(eventId);
+      setFailed(null);
+      const r = await linkMediaToEvent(mediaId, eventId);
+      setBusy(null);
+      if (r.ok) onLinked(eventId);
+      else setFailed(r.errorKind === 'refused' ? 'This post can’t be linked to that event.' : 'Couldn’t link it. Try again.');
+    },
+    [busy, mediaId, onLinked],
+  );
+
+  return (
+    <View>
+      <BackRow label="Which event is this from?" onBack={onBack} />
+      {candidates.map((ev) => (
+        <Pressable
+          key={ev.eventId}
+          style={({ pressed }) => [s.row, pressed && s.rowPressed]}
+          onPress={() => void link(ev.eventId)}
+          accessibilityRole="button"
+          accessibilityLabel={`Link to ${ev.title ?? 'this event'}`}
+        >
+          <Text style={s.rowLabel} numberOfLines={1}>{ev.title ?? 'Untitled event'}</Text>
+          {busy === ev.eventId ? <ActivityIndicator size="small" color={color.mute} /> : null}
+        </Pressable>
+      ))}
+      {failed ? <Text style={s.caption}>{failed}</Text> : null}
+    </View>
   );
 }

@@ -238,6 +238,7 @@ test('every known action id resolves to a supported execution with a full ref se
         { sourceType: 'place', sourceId: P, title: 'A' },
         { sourceType: 'place', sourceId: T, title: 'B' },
       ],
+      candidates: [{ eventId: T, title: 'An event', startsAt: null }],
     };
     const exec = resolveMediaActionExecution(action({ id, target: { method: 'GET', endpoint: '/x', params } }), REFS);
     assert.notEqual(exec.kind, 'unsupported', `action ${id} should be supported`);

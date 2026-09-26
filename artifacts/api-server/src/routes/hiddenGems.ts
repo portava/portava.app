@@ -783,7 +783,7 @@ router.get("/hidden-gems/:id", async (req, res) => {
     // coordinate values beyond presence, so it is privacy-neutral.
     const projection = await deriveGemProjection(sc, gem);
     (safe as any).gemState = projection.gemState;
-    (safe as any).gemConfidence = projection.gemConfidence;
+    (safe as any).gemConfidence = projection.gemConfidence; (safe as any).visitOutcomes = await import("../services/hiddenGems/HiddenGemOutcomeService.js").then((m) => m.readGemOutcomeSummary(sc, String((gem as any).id))).catch(() => ({ determined: false, reason: "unreadable" })); // §16.1 OUTCOME: verified visits linked to what the visitor reported (census-media §21)
 
     // Attach guide profile if gem has guide_verified_by
     let guideProfile: any = null;

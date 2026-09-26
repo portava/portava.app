@@ -6,7 +6,7 @@
  */
 import { supabase } from '../lib/supabase.ts';
 import { freshToken as freshApiToken } from './apiToken.ts';
-import { normalizeGuideProfile } from './hiddenGemsMappers.ts';
+import { normalizeGuideProfile, normalizeGemVisitOutcomes, type GemVisitOutcomes } from './hiddenGemsMappers.ts';
 import type {
   GemState,
   GemConfidence,
@@ -75,7 +75,7 @@ export interface HiddenGem {
    * §16 bounded evidence confidence ({ score 0..1, band }). A calm indicator,
    * NOT a popularity metric. Optional / degrade-safe like gemState.
    */
-  gemConfidence: GemConfidence | null;
+  gemConfidence: GemConfidence | null; /** §16.1 OUTCOME — verified visits linked to what visitors reported (floored). */ visitOutcomes?: GemVisitOutcomes | null;
 }
 
 export interface GuideProfile {
@@ -163,7 +163,7 @@ function mapGem(r: any): HiddenGem {
     // §16 Phase-8 projections. The backend attaches these camelCase on gem
     // detail + discovery-list responses; absent on older / non-enriched paths.
     gemState:              r.gemState ?? r.gem_state ?? null,
-    gemConfidence:         normalizeGemConfidence(r.gemConfidence ?? r.gem_confidence),
+    gemConfidence:         normalizeGemConfidence(r.gemConfidence ?? r.gem_confidence), visitOutcomes: normalizeGemVisitOutcomes(r.visitOutcomes),
   };
 }
 
@@ -460,3 +460,7 @@ export function verificationBadge(level: GemVerificationLevel): string {
     case 'admin':       return 'Official';
   }
 }
+
+// ── §16.1 OUTCOME (census-media §21) — pure helpers live in hiddenGemsMappers
+// (no react-native), so node tests and the gem page share one definition.
+export { normalizeGemVisitOutcomes, gemVisitOutcomeSentence, type GemVisitOutcomes } from './hiddenGemsMappers.ts';

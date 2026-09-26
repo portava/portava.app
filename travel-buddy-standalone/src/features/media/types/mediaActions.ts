@@ -39,7 +39,8 @@ export type MediaActionId =
   | 'contribute_gem'
   | 'invite_people'
   | 'follow_this_night'
-  | 'save_route';
+  | 'save_route'
+  | 'link_event';
 
 /** Outcome-oriented category (§26) — what real-world value the action drives. */
 export type MediaActionOutcome =
@@ -145,4 +146,13 @@ export interface RouteStopRef {
   sourceType: 'place';
   sourceId: string;
   title: string;
+}
+
+// ── Link to an event (census-media §21, MD103) ───────────────────────────────
+
+/** An event the author may link their post to — offered by the server, never guessed. */
+export interface LinkableEventRef {
+  eventId: string;
+  title: string | null;
+  startsAt: string | null;
 }
