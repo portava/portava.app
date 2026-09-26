@@ -319,7 +319,7 @@ the five are ordinary code questions, and the answer is "absent".**
 | Certification "runtime-QA required" | My verdict | Why it is not runtime-QA |
 | --- | --- | --- |
 | *Video playback on device (§37) — adaptive playback, captions, upload resume/retry, background upload, transcoding* | **NOT-BUILT ×6** | Whether an HLS/DASH manifest, a caption track, a resumable uploader, a background-upload task or a transcoder **exists** is answerable by reading the tree, and none does: no `m3u8`/`hls`/`dash`/`textTrack`/`resumable`/`transcod` anywhere in `travel-buddy-standalone/src` or `artifacts/api-server/src`; `lib/mediaProcessing.ts:18-22` states outright *"Videos are NOT transcoded here (no ffmpeg in this tier)"*. Calling these "device QA" moves six absent features out of the gap column. Genuinely device-dependent: playback smoothness and the *quality* of adaptation — not their existence. |
-| *Offline / degraded mode on device (§39)* | **NOT-BUILT ×7, C ×1** | §39 names seven things to cache. The tree has one: `state/freshness.ts` `cachedAsOfLabel`, used once (`MediaWorldShell.tsx:97`). There is no media cache, no trip-media bundle, no saved-place cache, no gem cache, no map-thumbnail cache. Absence is a construction fact. |
+| *Offline / degraded mode on device (§39)* | **NOT-BUILT ×7, C ×1** | §39 names seven things to cache. The tree has one: `state/freshness.ts` `cachedAsOfLabel`, used once (`MediaWorldShell.tsx:102#cachedAsOfLabel(ageMinutesFrom(world.generatedAt))`). There is no media cache, no trip-media bundle, no saved-place cache, no gem cache, no map-thumbnail cache. Absence is a construction fact. |
 | *Real-traffic latency & ranking (§24)* | **mixed, mostly W/N** | §24 is a list of 24 named ranking signals. Which of them the ranker reads is a code question; I answer it signal by signal below. Only the resulting *quality* is traffic-dependent. |
 | *Device accessibility (§46)* | **CANNOT-VERIFY ×1** | I agree with this one, narrowly: lived contrast/dynamic-type/screen-reader behaviour is not in the tree. It costs one requirement, not eleven. |
 | *HTTP suites need `listen(2)`* | not a requirement | Environment note. Fair. |
@@ -374,7 +374,7 @@ testable structure by §3 and §4.1. Narrative.
 | id | Requirement | V | Evidence |
 | --- | --- | --- | --- |
 | MD12 | NOW — current visual state around the viewer (city visual pulse, changing-now zones, relevant opportunities) | **C** | `MediaProjectionService.ts:455` `buildWorldProjection` → `cityVisualState` + `forYouNow` + `changingNow`; client `screens/MediaWorldScreen.tsx`. |
-| MD13 | PLACES — visual reality organised around canonical Places (Current View mosaics, time rail, place state, actions) | **C** | `MediaProjectionService.ts:519` `buildPlaceProjection`; client `screens/MediaPlacesScreen.tsx:170,213` renders time and map modes. |
+| MD13 | PLACES — visual reality organised around canonical Places (Current View mosaics, time rail, place state, actions) | **C** | `MediaProjectionService.ts:519` `buildPlaceProjection`; client `screens/MediaPlacesScreen.tsx:223#{mode === 'time' ? (` and `screens/MediaPlacesScreen.tsx:228#) : mode === 'map' ? (` renders time and map modes. |
 | MD14 | EXPERIENCES — media organised around real-world experiences | **C** | `services/media/MediaExperienceResolver.ts:1-14`, resolving a canonical Event or Trip; client `screens/MediaExperiencesScreen.tsx:56`. |
 | MD15 | HIDDEN GEMS — protected discovery and current Gem state | **W** | The lens exists but is not a Media v2 projection: `MediaWorldShell.tsx:24` imports the **pre-existing** `components/media/GemsFeed.tsx` and there is no `/media/gems` endpoint in `routes/mediaWorld.ts` (the seven registered routes at `:96,120,149,196,221,245,271` do not include one). §43's `GET /media/gems` is unserved and the lens shows the old feed. |
 | MD16 | PEOPLE — explicitly social lens | **C** | `MediaProjectionService.ts:1125#export async function buildPeopleProjection(` `buildPeopleProjection` (the only builder that requests `needFollows: true`, `routes/mediaWorld.ts:214`); client `screens/MediaPeopleScreen.tsx`. |
@@ -500,7 +500,7 @@ testable structure by §3 and §4.1. Narrative.
 | MD86 | Place Current View — trend, updated-at, current-picture strength, perspective/contributor counts, group chips, what's-changing, actions | **C** | `MediaProjectionService.ts:519` `buildPlaceProjection` returns `currentState` + `perspectives` + `freshness`; rendered by `screens/MediaPlacesScreen.tsx` with `components/CurrentPictureBadge.tsx` and `components/PerspectiveMosaic.tsx`. |
 | MD87 | The viewer is contextual, not a TikTok-style vertical stranger-video feed | **W** | The contextual viewer exists (`screens/MediaPerspectiveViewerScreen.tsx`, entered via `MediaWorldShell.tsx:63-78` which stages the place's other perspectives). It is not the viewer a user reaches: `app/media-viewer/[id].tsx` is the shipped one and its §15 rail is gated at `:568` on the dark shell flag; opening from the Watch feed lands in the paging vertical player. |
 | MD88 | Entry context **Place** → swipe collection is that Place's other perspectives | **C** | `MediaWorldShell.tsx:63-78` `openPlacePerspectiveViewer` sets `kind:'place'` with the place's groups and hero media, then routes to `/media-perspective/`. |
-| MD89 | Entry context **Event** → other Event perspectives | **N** | `state/perspectiveViewerContext.ts` accepts an entry-context kind, and `setPerspectiveViewerContext` has exactly one caller (`MediaWorldShell.tsx:69`) passing exactly one kind. No event producer. |
+| MD89 | Entry context **Event** → other Event perspectives | **N** | `state/perspectiveViewerContext.ts` accepts an entry-context kind, and `setPerspectiveViewerContext` has exactly one caller (`MediaWorldShell.tsx:74#kind: 'place',`) passing exactly one kind. No event producer. |
 | MD90 | Entry context **People** → that person / social context | **N** | As MD89. |
 | MD91 | Entry context **Trip** → Trip media | **N** | As MD89. |
 | MD92 | Entry context **Map** → current geographic cluster | **N** | As MD89, and there is no Media Map screen to enter from (MD25). |
@@ -810,7 +810,7 @@ over `travel-buddy-standalone/src`, `travel-buddy-standalone/app` and
 | MD299 | Cache recent relevant Place perspectives | **N** | As MD295. `useLensProjection`/`useMediaWorld` fetch and hold in memory; nothing persists. |
 | MD300 | Cache Map thumbnails | **W** | `components/CachedImage.tsx` wraps `expo-image`, which has its own disk cache — a per-image HTTP cache, not a curated offline set, with no eviction policy, no scope and no relation to a trip. It is caching, not §39. |
 | MD301 | Cache crew-relevant permitted media | **N** | As MD295. |
-| MD302 | Cached intelligence must show last-updated time and never be presented as live | **C** | `src/features/media/state/freshness.ts` `cachedAsOfLabel` ("Cached · updated Nm ago"), used at `MediaWorldShell.tsx:97`; and the never-live guarantee is structural — media freshness cannot take the value `live` (`lib/media/mediaFreshness.ts:21`). The one §39 requirement that is built is the one that matters most. |
+| MD302 | Cached intelligence must show last-updated time and never be presented as live | **C** | `src/features/media/state/freshness.ts` `cachedAsOfLabel` ("Cached · updated Nm ago"), used at `MediaWorldShell.tsx:102#cachedAsOfLabel(ageMinutesFrom(world.generatedAt))`; and the never-live guarantee is structural — media freshness cannot take the value `live` (`lib/media/mediaFreshness.ts:21`). The one §39 requirement that is built is the one that matters most. |
 
 ### §40 Mobile Client Structure
 
@@ -3230,3 +3230,323 @@ exists for — old code against new schema failing *quietly* rather than loudly.
 
 Totals unchanged. MD162 and MD197 both stay `N`, on tests re-executed today
 rather than carried forward.
+
+## 19. The Media client IA — five screens that did not exist, the §14 entry contexts, one Media Map, and a Search a user can actually ask — 2026-09-26
+
+This is the record of the 2026-09-26 **Lane A** pass (Media client IA: lenses,
+screens, viewer entry contexts, perspective groups, client structure, visual
+design and anti-patterns), one of four lanes run in parallel. Branch
+`claude/media-lane-a-client-ia-20260926`, cut from `bae9ea2d4`.
+
+It moves **twenty-eight rows to `C`**, moves **one row DOWN** (MD293, `W → N`,
+because the §38 `×7` row hid a query nothing answers), re-evidences **six `C`
+rows** whose grade had been resting on a placeholder or on a request the server
+never read, and attaches a RED WHEN and a WHO to every assigned row that stays
+open. It does **not** restate the headline — that is deliberate and is why
+`check:census-integrity` is red on this branch (§19.8) — and it does **not** move
+the document's `head_commit`, because it re-reads fifty-odd rows, not 450.
+
+### 19.1 The caps, stated before anything is claimed
+
+- **BUILT ON BRANCH IS NOT MERGED. MERGED IS NOT DEPLOYED. DEPLOYED IS NOT FLAG
+  ENABLED. FLAG ENABLED IS NOT PRODUCTION REALIZED.** Every `C` below is a
+  construction verdict on this branch. None of it is merged.
+- **The World shell is dark.** `MEDIA_WORLD_SHELL_ENABLED` is seeded
+  `artifacts/api-server/src/migrations/2300_phantom_feature_flag_rows.sql:116#false,`
+  (the row at `artifacts/api-server/src/migrations/2300_phantom_feature_flag_rows.sql:115#'MEDIA_WORLD_SHELL_ENABLED',`).
+  This census's §1 rule — *"Flag-dark is a deployment fact, not a verdict"* — is
+  what makes these rows `C`; **production-realized for every one of them is
+  zero.** This pass enabled no flag.
+- **The Media Map positions nothing in production.** Positions come only from
+  the canonical Map gateway, and `map_projection_enabled`
+  `docs/ops/map-completion-checkpoint.md:157#has NO ROW in production` (also
+  `docs/ops/input-intelligence-deployment-handoff.md:212#**NO ROW AT ALL**`).
+  Deployed today, every Map mode would LIST its clusters and place none of them,
+  and say so in words (`travel-buddy-standalone/src/features/media/state/mediaMapStore.ts:380#export function positionsUnavailableCopy(`).
+  The screen is built; the geography is the Map lane's and is off.
+- **Four new routes** (`/media-map`, `/media-search`, `/media-timeline`,
+  `/media-contribute`) are reachable by deep link exactly as `/media-world`
+  already is; nothing outside the dark shell links to them. Registered at the
+  END of the route array so no cited line moved:
+  `travel-buddy-standalone/src/navigation/portavaRoutes.ts:2080#key: 'media-map',`.
+- **Every proof is a fixture or a stand-in.** The client suites stub `fetch` or
+  the service module; the server suites use the in-memory Supabase double. A
+  mutation turning a suite red proves the test can fail. It proves nothing about
+  production data. No database was read or written; no migration was authored.
+
+### 19.2 What was built
+
+| Rows | What was built | Anchored |
+| --- | --- | --- |
+| MD15 · MD21 · MD33 · MD313 | §16 HIDDEN GEMS lens as a gem-STATE screen (not the pre-existing `GemsFeed`), with Overview sections in §3 order, a Visual mosaic of each gem's OWN image, and a gems-only Map; `HiddenGemCard` | `travel-buddy-standalone/src/features/media/screens/HiddenGemsMediaScreen.tsx:50#export function HiddenGemsMediaScreen(` · mounted `travel-buddy-standalone/src/features/media/screens/MediaWorldShell.tsx:24#import { HiddenGemsMediaScreen } from './HiddenGemsMediaScreen.tsx';` · modes `travel-buddy-standalone/src/features/media/screens/HiddenGemsMediaScreen.tsx:77#if (mode === 'map') {` / `travel-buddy-standalone/src/features/media/screens/HiddenGemsMediaScreen.tsx:101#if (mode === 'visual') {` · card `travel-buddy-standalone/src/features/media/components/HiddenGemCard.tsx:35#export function HiddenGemCard(` · transport `travel-buddy-standalone/src/features/media/services/mediaProjection.ts:1196#mapGemLensProjection, opts);` · server image `artifacts/api-server/src/services/media/MediaGemStateService.ts:409#imageUrl: typeof (gem as any).image_url === "string"` |
+| MD415 | §46.1 edge glow / contour from the gem's derived state: calm glow, a DIMMER protective contour when fragile, no glow when unavailable | `travel-buddy-standalone/src/features/media/state/gemLens.ts:273#export function gemContourTreatment(` · applied `travel-buddy-standalone/src/features/media/components/HiddenGemCard.tsx:37#const contour = gemContourTreatment(gem.state);` |
+| MD25 · MD329 · MD416 · MD405 | §4/§21 Media Map screen + `state/mediaMapStore`: counts from `GET /media/map`, positions ONLY from canonical place objects the Map gateway serves; an unpositioned cluster is listed, never placed; an APPROXIMATE gem is a filled, contoured AREA (never a pin) | `travel-buddy-standalone/src/features/media/screens/MediaMapScreen.tsx:70#export function MediaMapScreen(` · `travel-buddy-standalone/src/features/media/state/mediaMapStore.ts:135#export function joinClustersToPositions(` · `travel-buddy-standalone/src/features/media/state/mediaMapStore.ts:165#export function gemMapTreatment(` · `travel-buddy-standalone/src/features/media/state/mediaMapStore.ts:313#export function mediaMapReducer(` · zone layer `travel-buddy-standalone/src/features/media/components/MediaMapCanvas.tsx:80#<GeoJSONSource id="media-gem-zones" data={zoneData}>` · gateway `travel-buddy-standalone/src/features/media/hooks/useMediaMap.ts:70#: fetchMapProjection({` |
+| MD35 · MD449 · MD30 · MD31 · MD32 | Every lens Map mode is that one Media Map — NOW, PLACES, EXPERIENCES, HIDDEN GEMS and MY WORLD (the owner's own places, published + tagged only) | `travel-buddy-standalone/src/features/media/screens/MediaWorldScreen.tsx:79#<MediaMapScreen` · `travel-buddy-standalone/src/features/media/screens/MediaPlacesScreen.tsx:91#<MediaMapScreen` · `travel-buddy-standalone/src/features/media/screens/MediaExperiencesScreen.tsx:64#return <ExperiencesMap placeKey={placeKey}` · `travel-buddy-standalone/src/features/media/screens/MyWorldMediaScreen.tsx:128#<MediaMapScreen` |
+| MD26 | §4 Media Timeline / Time Rail screen: the place-scoped (or world) §17 rail plus the OBSERVED Earlier perspectives; NOW and PLACES Time modes mount it | `travel-buddy-standalone/src/features/media/screens/MediaTimelineScreen.tsx:43#export function MediaTimelineScreen(` · `travel-buddy-standalone/src/features/media/screens/MediaWorldScreen.tsx:53#return <MediaTimelineScreen onOpenMedia={onOpenMedia} />;` · `travel-buddy-standalone/src/features/media/screens/MediaPlacesScreen.tsx:227#<MediaTimelineScreen placeId={placeId}` |
+| MD27 · MD331 · MD228 · MD294 · MD287 · MD290 · MD291 · MD292 | §4/§38 Media Search screen over `state/mediaFilterStore` (the ONLY builder of the query; criteria-free asks nothing); all seven result kinds; "Search my world" inside My World; the city as its own criterion; "Search within this trip" | `travel-buddy-standalone/src/features/media/screens/MediaSearchScreen.tsx:70#export function MediaSearchScreen(` · `travel-buddy-standalone/src/features/media/state/mediaFilterStore.ts:127#export function toSearchQueryString(` · `travel-buddy-standalone/src/features/media/screens/MyWorldMediaScreen.tsx:90#<MediaSearchScreen initialScope="me" fixedScope` · `travel-buddy-standalone/src/features/media/screens/MediaSearchScreen.tsx:110#if (cityDraft.trim()) dispatch({ type: 'set_city', city: cityDraft });` · `travel-buddy-standalone/src/features/media/screens/MediaSearchScreen.tsx:290#dispatch({ type: 'set_scope', scope: 'trip', tripId: t.id });` · header `travel-buddy-standalone/src/features/media/screens/MediaWorldShell.tsx:114#onSearch={() => router.push('/media-search' as never)}` |
+| MD294 (server) | Events and Trips found BY TITLE in the canonical tables, each passed through the same `resolveExperience` gate `GET /media/experiences/:id` uses; an unreadable table is `undetermined`, never "none"; only for `scope=all` | `artifacts/api-server/src/services/media/MediaSearchService.ts:485#export async function searchCanonicalEventsAndTrips(` · gate `artifacts/api-server/src/services/media/MediaSearchService.ts:531#exp = await resolveExperience(sc, viewer, id, nowMs);` · served `artifacts/api-server/src/routes/mediaWorld.ts:347#withCanonicalKinds(results, await searchCanonicalEventsAndTrips(` |
+| MD332 | `state/myMediaStore`: §30 bucket order, a selection that falls back rather than pointing at nothing, search as state not a route | `travel-buddy-standalone/src/features/media/state/myMediaStore.ts:62#export function myMediaReducer(` |
+| MD28 · MD316 | §4 Media Contribution: a current perspective of ONE canonical place through the app's existing `uploadMedia` → `createPost` (no second ingest path); the post is bound to the VENUE's public name and coordinates, the device fix travels only as the private verification pair; precision maps onto `locationPrivacyMode` incl. §34 "after I leave"; a failed SAVE retries the save, never the upload; a held-back post says so | `travel-buddy-standalone/src/features/media/screens/MediaContributionScreen.tsx:53#export function MediaContributionScreen(` · `travel-buddy-standalone/src/features/media/components/MediaContributionSheet.tsx:40#export function MediaContributionSheet(` · `travel-buddy-standalone/src/features/media/state/mediaContribution.ts:143#locationLat: place.coordinates.lat,` · `travel-buddy-standalone/src/features/media/state/mediaContribution.ts:148#locationPrivacyMode: PRECISION_TO_PRIVACY_MODE[d.precision],` · entry `travel-buddy-standalone/src/features/media/screens/MediaPlacesScreen.tsx:198#{onContribute && UUID_RE.test(placeId) ? (` |
+| MD314 | §7 context sheet on the viewer's `•••`: only the edges the server resolved (the §28 Shared Moment edge included), each linking home; "Where was this taken?" | `travel-buddy-standalone/src/features/media/components/MediaContextSheet.tsx:44#export function MediaContextSheet(` · `travel-buddy-standalone/src/features/media/state/mediaContextGraph.ts:99#export function buildContextGraph(` · `travel-buddy-standalone/src/features/media/state/mediaContextGraph.ts:165#export function whereTakenHref(` · `travel-buddy-standalone/src/features/media/screens/MediaPerspectiveViewerScreen.tsx:255#testID="perspective-viewer-context"` |
+| MD89 · MD90 · MD91 · MD92 | The four missing §14 entry-context producers, as pure builders + openers: Event and Trip (kind from the projection, never guessed), People (that contributor only), Map (the cluster's canonical place, read through the gated place view, staged with kind `map`); the viewer's collection filter honours the new kinds | `travel-buddy-standalone/src/features/media/state/entryContextHandoffs.ts:97#export function experienceHandoff(` · `travel-buddy-standalone/src/features/media/state/entryContextHandoffs.ts:123#export function personHandoff(` · `travel-buddy-standalone/src/features/media/state/entryContextHandoffs.ts:58#export function mapClusterHandoff(` · `travel-buddy-standalone/src/features/media/services/perspectiveOpeners.ts:58#export async function openClusterPerspectives(` · `travel-buddy-standalone/src/features/media/state/perspectiveViewer.ts:100#if (kind === 'people') {` |
+| MD14 (finding) · MD89 · MD91 | The EXPERIENCES lens is handed real ids: deep-linked first, then the viewer's own events and trips, then nearby events; UUIDs only, capped | `travel-buddy-standalone/src/features/media/state/experienceSources.ts:32#export function experienceIdsFrom(` · `travel-buddy-standalone/src/features/media/screens/MediaWorldShell.tsx:170#experienceIds={experienceIds}` |
+| MD87 (shell half only) | A NOW "Changing now" card opens that PLACE's perspectives (§14 Place) instead of the generic single-item viewer | `travel-buddy-standalone/src/features/media/screens/MediaWorldShell.tsx:131#if (item.placeId) void openPlaceByIdPerspectives(item.placeId, hero ?? null);` · `travel-buddy-standalone/src/features/media/services/perspectiveOpeners.ts:70#export async function openPlaceByIdPerspectives(` |
+| MD12 (finding) | The World request sends the coarse `city` LABEL the route parses | `travel-buddy-standalone/src/features/media/services/mediaProjection.ts:1090#if (params.city) qs.set('city', params.city);` |
+
+**Tests, all in the tree.** Client node (`src/**/*.test.ts`, run by
+`scripts/run-node-tests.mjs`): `gemLens.test.ts`, `mediaMapStore.test.ts`,
+`entryContextHandoffs.test.ts`, `searchAndStores.test.ts`,
+`mediaContribution.test.ts`. Client component (jest, `*.component.test.tsx`):
+`HiddenGemsMediaScreen`, `MediaMapScreen`, `MediaSearchScreen`,
+`MediaWorldShell` (10 cases), `MediaContextSheet` (7 cases),
+`MediaContributionScreen` — all under
+`travel-buddy-standalone/src/features/media/__tests__/`. Server (appended to
+already-registered suites, so no `package.json` change):
+`artifacts/api-server/src/test/mediaGemStateLens.test.ts` ("MD33 — carries a
+disclosable gem's OWN image for Visual mode, and no image of a hidden one") and
+`artifacts/api-server/src/test/mediaWorldProjection.test.ts` (the "MD294 — §38
+finds EVENTS and TRIPS by what they are, through their own gates" block, eight
+cases, and the "MD287 · MD292 — §38 'right now' and 'from my trip' are real
+narrowings, and every gate still binds" block, three cases).
+
+### 19.3 Row moves
+
+| Row | Was | Now | What was built |
+| --- | --- | --- | --- |
+| MD15 | **W** | **C** | The row's stated defect — the lens imports `GemsFeed` and there is no `/media/gems` — is gone on both halves: the shell mounts the §16 gem-state screen at `travel-buddy-standalone/src/features/media/screens/MediaWorldShell.tsx:24#import { HiddenGemsMediaScreen } from './HiddenGemsMediaScreen.tsx';` over `GET /media/gems` (MD360). TESTED: `MediaWorldShell.component.test.tsx` "HIDDEN GEMS is the §16 gem-STATE screen (not GemsFeed), scoped by the city label, honouring all three modes". RED under mutation: the lens mounting nothing (C1); `fetchGems` mapping through the OLD client mapper, which dropped every gem the server sent (C2); `fetchGems` sending `cityId`, which the route never reads (C3). Cap: shell dark (§19.1). |
+| MD21 | **N** | **C** | `travel-buddy-standalone/src/features/media/screens/HiddenGemsMediaScreen.tsx:50#export function HiddenGemsMediaScreen(`. TESTED: `HiddenGemsMediaScreen.component.test.tsx` (six cases) and `gemLens.test.ts` (ten). RED: an unreadable gem list rendered as an empty city (C6); "worth the detour" decided before the protective states, filing a CLOSED gem under an enticing heading (C10). |
+| MD25 | **N** | **C** | `travel-buddy-standalone/src/features/media/screens/MediaMapScreen.tsx:70#export function MediaMapScreen(`, routed at `travel-buddy-standalone/app/media-map/index.tsx:35#<MediaMapScreen`. TESTED: `MediaMapScreen.component.test.tsx` "draws a bubble ONLY where the canonical Map positioned the place; the rest is listed, never placed" and six more. RED: an unpositioned cluster placed at an invented point — in the store (C11) and on the rendered canvas (C12). Cap: `map_projection_enabled` has no production row (§19.1) — deployed, it lists and places nothing. |
+| MD26 | **N** | **C** | `travel-buddy-standalone/src/features/media/screens/MediaTimelineScreen.tsx:43#export function MediaTimelineScreen(`, routed at `travel-buddy-standalone/app/media-timeline/index.tsx:24#<MediaTimelineScreen`, mounted as NOW's Time mode at `travel-buddy-standalone/src/features/media/screens/MediaWorldScreen.tsx:53#return <MediaTimelineScreen onOpenMedia={onOpenMedia} />;`. TESTED: `MediaContextSheet.component.test.tsx` "asks for the PLACE-scoped timeline and shows the rail plus the observed Earlier perspectives". RED: Earlier perspectives dropped (C23); a forecast rendered as a captured perspective (C24); NOW's Time mode not mounting it (C25). |
+| MD27 | **N** | **C** | `travel-buddy-standalone/src/features/media/screens/MediaSearchScreen.tsx:70#export function MediaSearchScreen(`, routed at `travel-buddy-standalone/app/media-search/index.tsx:36#<MediaSearchScreen`, opened by the shell header. TESTED: `MediaSearchScreen.component.test.tsx` (nine cases; each asserts the EXACT request). RED: a request per keystroke (C26); a criteria-free request (C27); an undetermined list shown as "nothing" (C28); the header going back to the global `/search` (C40). |
+| MD28 | **N** | **C** | `travel-buddy-standalone/src/features/media/screens/MediaContributionScreen.tsx:53#export function MediaContributionScreen(`, routed at `travel-buddy-standalone/app/media-contribute/index.tsx:50#<MediaContributionScreen placeId={placeId}`, entered from a canonical place's "Add your view". TESTED: `MediaContributionScreen.component.test.tsx` "uploads THEN saves a post bound to the venue with every choice the contributor made" and three more; `mediaContribution.test.ts` (six). RED: the post tagged with the contributor's position instead of the venue (C42); a failed save re-uploading the file (C43); a held-back post reported as live (C44); "Add your view" removed (C48). Cap: the write path is the existing gated post write — nothing here is a new server surface. |
+| MD33 | **W** | **C** | All three §5 modes are honoured by the lens itself (`travel-buddy-standalone/src/features/media/screens/HiddenGemsMediaScreen.tsx:101#if (mode === 'visual') {`, `travel-buddy-standalone/src/features/media/screens/HiddenGemsMediaScreen.tsx:77#if (mode === 'map') {`); Visual uses each gem's OWN image, served additively at `artifacts/api-server/src/services/media/MediaGemStateService.ts:409#imageUrl: typeof (gem as any).image_url === "string"` for disclosable gems only. TESTED: `HiddenGemsMediaScreen.component.test.tsx` "VISUAL: a mosaic of the gems' OWN images…" and "MAP: gems only, through the Media Map…"; server "MD33 — carries a disclosable gem's OWN image…". RED: Visual ignored (C4); Map ignored (C5); the server image forced null (A1). |
+| MD35 | **W** | **C** | The placeholder the row cites is gone: My World's Map is the Media Map over the owner's own places — published and tagged, never a draft, archive, upload or processing item (`travel-buddy-standalone/src/features/media/screens/MyWorldMediaScreen.tsx:128#<MediaMapScreen`). TESTED: `MediaWorldShell.component.test.tsx` "MY WORLD → Map is the Media Map over the owner's own places"; `searchAndStores.test.ts` "My World's map places published + tagged media once each…". RED: placeholder restored (C35); drafts placed on the map (C33). Cap: Map gateway off in production. |
+| MD89 | **N** | **C** | Event entry context: `travel-buddy-standalone/src/features/media/state/entryContextHandoffs.ts:97#export function experienceHandoff(`, kind read from the projection, opened from the EXPERIENCES lens, whose ids now come from the viewer's own events and trips (`travel-buddy-standalone/src/features/media/state/experienceSources.ts:32#export function experienceIdsFrom(`). TESTED: `MediaWorldShell.component.test.tsx` "EXPERIENCES resolves the viewer's own events and trips; a Trip opens the TRIP entry context, an Event the EVENT one"; `entryContextHandoffs.test.ts`. RED: every experience opened as an Event (C19); the lens handed no ids again (C20). |
+| MD90 | **N** | **C** | People entry context: `travel-buddy-standalone/src/features/media/state/entryContextHandoffs.ts:123#export function personHandoff(` — that contributor's media only. TESTED: `MediaWorldShell.component.test.tsx` "PEOPLE: tapping a person's perspective opens the PEOPLE entry context scoped to that person"; `entryContextHandoffs.test.ts` "MD90 People…". RED: another contributor's media paged in (C21); the tap going to the generic viewer (C22). |
+| MD91 | **N** | **C** | Trip entry context — the same builder, `kind: 'trip'` from the projection; the Trip case of the MD89 test. RED: C19, C20. |
+| MD92 | **N** | **C** | Map entry context: `travel-buddy-standalone/src/features/media/state/entryContextHandoffs.ts:58#export function mapClusterHandoff(` via `travel-buddy-standalone/src/features/media/services/perspectiveOpeners.ts:58#export async function openClusterPerspectives(` — the cluster's canonical place read through the SAME gated `GET /media/places/:id`, staged with kind `map`; an unreadable place opens nothing. TESTED: `MediaContextSheet.component.test.tsx` "reads the cluster's place through the gated place view and stages kind `map`" and "a cluster whose place view cannot be read opens NOTHING"; `MediaMapScreen.component.test.tsx` "selecting a cluster and opening it hands THAT cluster to the caller". RED: kind `map` lost (C17); another place's view staged (C18). Cap: the Map screen it is entered from positions nothing in production. |
+| MD228 | **W** | **C** | The row's own RED WHEN — *"a search field on the My World surface that issues `GET /media/search?scope=me`"* — is met: `travel-buddy-standalone/src/features/media/screens/MyWorldMediaScreen.tsx:90#<MediaSearchScreen initialScope="me" fixedScope`, a fixed scope that cannot be widened from inside it. TESTED: `MediaSearchScreen.component.test.tsx` "opens a search that is scope=me, cannot be widened, and closes back to the library". RED: My World's search sent to everyone (C30). The second settlement the row offered (a `q` on `GET /media/me`) was NOT built, on purpose: one matcher, one endpoint. |
+| MD287 | **W** | **C** | "What does An Thuong look like right now?" is askable (term + the "Right now" chip → `q=…&freshOnly=true`) and answered: the term inside the fresh window only. TESTED: server "'What does An Thuong look like right now?' is the term inside the FRESH window only"; client `searchAndStores.test.ts` "§38 'What does An Thuong look like right now?' is the term + freshOnly…". RED: `freshOnly` dropped server-side (S2); a new term clearing "Right now" (C57). |
+| MD290 | **W** | **C** | "Show my Bangkok rooftop photos" is askable end-to-end: My World's search with the city as its OWN criterion (`travel-buddy-standalone/src/features/media/screens/MediaSearchScreen.tsx:110#if (cityDraft.trim()) dispatch({ type: 'set_city', city: cityDraft });`) → `q=rooftop&city=Bangkok&scope=me`. TESTED: `MediaSearchScreen.component.test.tsx` "§38 'Show my Bangkok rooftop photos': the city is its own criterion…"; server "scope=me returns only the viewer's own media". RED: the city dropped (C51); the city smuggled into the free text (C52); clearing the city keeping the criterion (C56). |
+| MD291 | **W** | **C** | "Where was this photo taken?" is askable from the viewer: `•••` → context sheet → `travel-buddy-standalone/src/features/media/state/mediaContextGraph.ts:165#export function whereTakenHref(` → the search screen's "Taken at …" answer, which is the coarse place the disclosure choke point allows. TESTED: `MediaContextSheet.component.test.tsx` "shows the server-resolved graph…"; `MediaSearchScreen.component.test.tsx` "'Where was this photo taken?' answers with the coarse place…"; server "MD291 — 'Where was this photo taken?' resolves a media id to its coarse place". RED: the media id dropped from the link (C41); the `•••` inert (C38). |
+| MD292 | **W** | **C** | "Show festival media from my Vietnam Trip" is askable: a Trip found by name is searched WITHIN (`travel-buddy-standalone/src/features/media/screens/MediaSearchScreen.tsx:290#dispatch({ type: 'set_scope', scope: 'trip', tripId: t.id });`) → `q=festival&scope=trip&tripId=…`, narrowed server-side at `artifacts/api-server/src/services/media/MediaProjectionService.ts:303#if (filter.tripId) query = query.eq("trip_id", filter.tripId);`. TESTED: `MediaSearchScreen.component.test.tsx` "§38 'Show festival media from my Vietnam Trip'…"; server "'Show festival media from my Vietnam Trip' returns ONLY that trip's matching media" and "a trip scope does not open a gate…". RED: trip id lost on the client (C53); no within-trip affordance (C54); no trip chip (C55); trip id never reaching the loader (S1); the private-account guard dropped from the shared loader (S3b). |
+| MD293 | **W** | **N** | **Moved DOWN.** "Find places that look like this." was carried at `W` only as a member of the §38 `×7` row. On its own it is not built: there is no cross-place visual index, and the service says so rather than implying otherwise — `artifacts/api-server/src/services/media/MediaSearchService.ts:70#no cross-place visual index exists`, now rendered on screen under the results. Stating a limitation honestly is not building the capability. |
+| MD294 | **W** | **C** | The row's falsifier, verbatim — *"a search that finds the Beach Festival because it is called Beach Festival, not because somebody photographed it"* — is met at `artifacts/api-server/src/services/media/MediaSearchService.ts:485#export async function searchCanonicalEventsAndTrips(`, each candidate through `artifacts/api-server/src/services/media/MediaSearchService.ts:531#exp = await resolveExperience(sc, viewer, id, nowMs);`, served at `artifacts/api-server/src/routes/mediaWorld.ts:347#withCanonicalKinds(results, await searchCanonicalEventsAndTrips(`, rendered as Events and Trips sections. TESTED: the eight-case server block and `MediaSearchScreen.component.test.tsx` "renders the §38 result types — events and trips found by NAME…". RED: the gate bypassed (B1); `scope=me` reaching world events (B2); an unreadable table read as "none" (B3); no title read (B4); the `ilike` sanitiser removed (B5); the route sending plain results (B6); the client mapper dropping events/trips (C29). |
+| MD313 | **N** | **C** | `travel-buddy-standalone/src/features/media/components/HiddenGemCard.tsx:35#export function HiddenGemCard(`. TESTED: `HiddenGemsMediaScreen.component.test.tsx` "OVERVIEW: the card carries the §46.1 contour…"; `gemLens.test.ts` "the card authors no hype vocabulary and prints no number…". RED: contour dropped (C7); the card printing a count (C9). |
+| MD314 | **N** | **C** | `travel-buddy-standalone/src/features/media/components/MediaContextSheet.tsx:44#export function MediaContextSheet(`, opened from the viewer's `•••` (`travel-buddy-standalone/src/features/media/screens/MediaPerspectiveViewerScreen.tsx:255#testID="perspective-viewer-context"`). TESTED: `MediaContextSheet.component.test.tsx` "shows the server-resolved graph — including the Shared Moment edge…", "draws no edge the server did not send…", "pressing ••• shows 'What this is part of'…". RED: C36b / C36c (the Shared Moment edge dropped — see §19.5 for the survivor); an edge invented without a ref (C37); `•••` inert (C38). |
+| MD316 | **N** | **C** | `travel-buddy-standalone/src/features/media/components/MediaContributionSheet.tsx:40#export function MediaContributionSheet(` — what it shows, who sees it, how precisely the place is shown, an optional note; it offers ONLY the categories the server groups by and no §12 vantage (MD82–MD85). TESTED: as MD28. RED: precision going nowhere (C45); category going nowhere (C46); send enabled with nothing picked (C47). |
+| MD329 | **N** | **C** | `travel-buddy-standalone/src/features/media/state/mediaMapStore.ts:313#export function mediaMapReducer(` — no location / disabled gateway / failed gateway are three worded states, none of them "empty"; an unreadable count is an error. TESTED: `mediaMapStore.test.ts` (thirteen cases); `MediaMapScreen.component.test.tsx` "a disabled Map gateway is said in words…", "an unreadable count is an ERROR, never 'no one is out'". RED: a disabled gateway read as positions-available (C15); an unreadable count read as an empty map (C16). |
+| MD331 | **N** | **C** | `travel-buddy-standalone/src/features/media/state/mediaFilterStore.ts:127#export function toSearchQueryString(` — the one builder of the search query. TESTED: `searchAndStores.test.ts` "EMPTY MEANS EMPTY…", "a trip scope with no trip is a mistake, not a criterion". RED: a trip id surviving the scope change (C31); a trip scope with no trip sending a request (C32). |
+| MD332 | **N** | **C** | `travel-buddy-standalone/src/features/media/state/myMediaStore.ts:62#export function myMediaReducer(`. TESTED: `searchAndStores.test.ts` "myMediaStore: §30 order, a selection falls back rather than pointing at nothing, search is state not a route". RED: a stale selection pointing at nothing (C34); drafts on the map (C33). |
+| MD405 | **W** | **C** | The row's client half — *"there is no Media Map screen (MD25), no map store (MD329), and My World's map mode is a placeholder"* — is closed on all three counts (MD25, MD329, MD35 above), and every lens Map mode integrates the canonical Map rather than a second location engine (`travel-buddy-standalone/src/features/media/hooks/useMediaMap.ts:70#: fetchMapProjection({`). RED: C11, C12, C35, C49, C50. Cap: the canonical Map gateway is off in production. |
+| MD415 | **N** | **C** | `travel-buddy-standalone/src/features/media/state/gemLens.ts:273#export function gemContourTreatment(` — every one of the ten states has a treatment; fragile is dimmer than calm; unavailable has no glow. TESTED: `gemLens.test.ts` "§46.1 contour…"; the card case above. RED: C7; a fragile gem given the brightest glow (C8). Cap: style values asserted in the render tree; no device pixels were measured (MD403's reasoning applies). |
+| MD416 | **N** | **C** | `travel-buddy-standalone/src/features/media/state/mediaMapStore.ts:165#export function gemMapTreatment(` — the treatment is decided by the privacy rung alone: approximate → a filled, contoured area at neighbourhood scale (`travel-buddy-standalone/src/features/media/components/MediaMapCanvas.tsx:80#<GeoJSONSource id="media-gem-zones" data={zoneData}>`), place-level → a contoured marker, hidden rungs not drawn. TESTED: `MediaMapScreen.component.test.tsx` "§46.1: an APPROXIMATE gem is a filled, contoured AREA and never a marker…"; `mediaMapStore.test.ts` (three cases). RED: an approximate gem drawn as a pin (C13); a `none`-rung gem drawn (C14). Cap: jest renders the layer tree through a MapLibre stand-in; and in production the gateway positions no gem. |
+| MD449 | **W** | **C** | Phase 9's one missing piece was My World's Map (the row's own words); closed with MD35. RED: C35. |
+
+### 19.4 Six `C` rows whose grade was resting on something false
+
+Each of these was already `C` and stays `C`. What changed is that the evidence
+under the letter is now true; before this pass, in each case, it was not.
+
+| Row | Was | Now | What was wrong, and what backs it now |
+| --- | --- | --- | --- |
+| MD12 | **C** | **C** | The NOW lens was never city-scoped. The client sent `cityId`; `GET /media/world` parses `city` — so every request fell through to the unscoped path. Now `travel-buddy-standalone/src/features/media/services/mediaProjection.ts:1090#if (params.city) qs.set('city', params.city);`. TESTED: `searchAndStores.test.ts` "fetchGems / fetchMediaMap / fetchWorld send the coarse `city` LABEL the routes actually parse". RED: C3. |
+| MD14 | **C** | **C** | The EXPERIENCES lens was handed a constant empty id list by the shell, so on every open it could only render its empty state; the `C` rested on a screen that could not show an experience. Now `travel-buddy-standalone/src/features/media/screens/MediaWorldShell.tsx:170#experienceIds={experienceIds}` from the viewer's own events and trips. TESTED and RED as MD89 (C20). |
+| MD30 | **C** | **C** | NOW's Map mode was a placeholder paragraph (*"The Media Map … arrives in a later phase"*) when this was graded `C`. Now `travel-buddy-standalone/src/features/media/screens/MediaWorldScreen.tsx:79#<MediaMapScreen`. TESTED: `MediaWorldShell.component.test.tsx` "NOW → Map is the one Media Map and NOW → Time is the Media Timeline screen". RED: C39. |
+| MD31 | **C** | **C** | PLACES' Map mode was a placeholder (*"…arrive with the Media Map phase"*). Now `travel-buddy-standalone/src/features/media/screens/MediaPlacesScreen.tsx:91#<MediaMapScreen`. TESTED: "PLACES → Map and EXPERIENCES → Map are the one Media Map…". RED: C49. |
+| MD32 | **C** | **C** | EXPERIENCES' Map mode was a placeholder (*"Geographic experience clusters arrive with the Media Map phase."*). Now `travel-buddy-standalone/src/features/media/screens/MediaExperiencesScreen.tsx:64#return <ExperiencesMap placeKey={placeKey}`. RED: C50. |
+| MD417 | **C** | **C** | The row cites `gemStateDisplay.ts` for four labels; **"Worth the Detour" is not a label there** — it appears only as a contribution's description. It now exists as a lens section drawn from the §16.3 `still_worth_it` OBSERVATION, never from saves: `travel-buddy-standalone/src/features/media/state/gemLens.ts:160#worth_the_detour: 'Worth the detour',`. TESTED: `gemLens.test.ts` "'Worth the detour' is a visitor OBSERVATION — saves and visits cannot put a gem there". RED: C10. |
+
+§9.9 predicted this: *"Six were [re-read], and four of them were wrong."* This
+pass did not set out to audit the `C` column and found six `C` rows in its own
+lane resting on a placeholder, a dead request, or a label that did not exist. That is a rate, not a
+coincidence, and it says the §5 lens/mode block was graded from the mode bar,
+not from what each mode rendered.
+
+### 19.5 Mutations, in full, including the one that survived
+
+Seventy-two mutation runs, with a harness that applies one textual change,
+runs the named suite, and restores the file unconditionally. **Seventy-one
+reddened. One survived (mC36) and is reported, not quietly fixed** — it was
+killed after the test was corrected, by the re-runs mC36b and mC36c, which are
+two of the seventy-one.
+
+Server (`node --import tsx/esm --test`):
+
+| # | Mutation | Suite | Result |
+| --- | --- | --- | --- |
+| mA1 | gem `imageUrl` forced null | `mediaGemStateLens.test.ts` | RED — the MD33 case |
+| mB1 | canonical search bypasses `resolveExperience` | `mediaWorldProjection.test.ts` | RED — the private event and the stranger's trip leak |
+| mB2 | `scope=all` restriction dropped | same | RED — My World reaches world events |
+| mB3 | an unreadable candidate read returns `[]` | same | RED — `undetermined` case |
+| mB4 | events/trips found only via media (no title read) | same | RED — "finds a public event BY NAME…" |
+| mB5 | `ilike` sanitiser removed | same | RED |
+| mB6 | route sends plain results (fold removed) | same | RED — the router-source case |
+| mS1 | `tripId` never reaches the loader | same | RED — the Vietnam Trip case |
+| mS2 | `freshOnly` filter dropped | same | RED — the An Thuong case |
+| mS3b | private-account guard dropped from the shared loader | same | RED — "a trip scope does not open a gate…" |
+
+A tenth server mutation (mS3, injecting a raw row after projection) also
+reddened; it is not counted, because a mutation that ADDS a fake row tests the
+assertion rather than the code path. mS3b replaced it.
+
+Client (`node --import tsx --test` for `*.test.ts`; `npx jest` for
+`*.component.test.tsx`), grouped by what they prove:
+
+| # | Mutation | Result |
+| --- | --- | --- |
+| mC1–mC3 | shell mounts nothing for HIDDEN GEMS; `fetchGems` through the old mapper; `fetchGems` sends `cityId` | RED ×3 |
+| mC4–mC10 | Visual ignored; Map ignored; unreadable = empty; contour dropped; fragile gets brightest glow; card prints a count; "worth the detour" before protective | RED ×7 |
+| mC11–mC16 | invented position (store); invented position (canvas); approximate gem as pin; `none` rung drawn; disabled gateway = positions available; unreadable count = empty | RED ×6 |
+| mC17–mC22 | map kind lost; another place's view; every experience an Event; Experiences handed no ids; another contributor paged in; People tap to generic viewer | RED ×6 |
+| mC23–mC25 | Earlier dropped; forecast as perspective; NOW Time not mounted | RED ×3 |
+| mC26–mC35 | request per keystroke; criteria-free request; undetermined as nothing; events/trips dropped; My World searches everyone; trip id survives; tripless trip request; drafts on map; stale selection; My World map placeholder | RED ×10 |
+| mC36 | the context mapper drops the §28 Shared Moment edge | **SURVIVED**, then killed |
+| mC36b · mC36c | the same mutation, after the fix — component suite and node suite | RED ×2 |
+| mC37–mC41 | edge invented without a ref; `•••` inert; NOW Map not the Media Map; header to global `/search`; "Where was this taken?" drops the id | RED ×5 |
+| mC42–mC50 | contributor position instead of venue; re-upload on failed save; held-back as live; precision ignored; category ignored; send with nothing; "Add your view" removed; Places map placeholder; Experiences map placeholder | RED ×9 |
+| mC51–mC57 | city dropped; city in free text; within-trip loses id; no within-trip affordance; no trip chip; clearing city keeps it; new term clears "Right now" | RED ×7 |
+| mC58 · mC59 | changing-now card back to the single-item viewer; place opener ignores the tapped hero | RED ×2 |
+
+**mC36 is the one worth reading.** It made the context mapper drop the Shared
+Moment edge, and the component suite stayed green, because the suite's stand-in
+for `fetchMediaContextRefs` returned refs that were ALREADY mapped — the real
+mapper was never on the path the test exercised. A test named "shows the
+server-resolved graph — including the Shared Moment edge" was proving the
+stand-in, not the code. The stand-in now feeds the raw `/actions` body through
+the real mapper; the same mutation (mC36b) and its node twin (mC36c) now redden.
+
+### 19.6 Rows that stay open
+
+Every assigned row not moved above. Each blocker is one that only an owner
+decision, a deployment, production data or another lane's file can remove —
+and each says which.
+
+| Row | V | Why it does not move | RED WHEN | WHO |
+| --- | --- | --- | --- | --- |
+| MD1 | **W** | The World hierarchy is built; the Media tab a user opens is Watch (`travel-buddy-standalone/src/stores/mediaStore.ts:104#selectedMode: 'watch',`) and the World entry is behind the dark flag (`travel-buddy-standalone/app/(tabs)/media.tsx:190#isEnabled('MEDIA_WORLD_SHELL_ENABLED')`). §1: a spec about Media is not satisfied by a subsystem of it. | `MEDIA_WORLD_SHELL_ENABLED` true in production AND the tab no longer defaults to `'watch'` AND a reachability-ledger entry shows the shell reachable. | Integration owner (flag — lanes may not enable one) + owner decision to demote Watch (`travel-buddy-standalone/app/media-world/index.tsx:8#demoting the old surface (demotion is a later, deliberate step).`). |
+| MD2 | **W** | The live ranker's boost layer is per-creator (`artifacts/api-server/src/services/ranking/MediaFeedRankingService.ts:12#activeCreatorBoost  (MEDIA_ACTIVE_CREATOR_BOOST_ENABLED)`). Not a client file. | The shipped ordering carries no creator-identity boost, or the World shell is what ships (F1). | Lane C (ranker) + integration owner. |
+| MD3 | **W** | The paging feed is the shipped default; the shell has none. | F1, as MD1. | As MD1. |
+| MD29 | **W** | The dashboard is built; it is not the default page. | F1, as MD1. | As MD1. |
+| MD87 | **W** | Inside the shell every open is now an entry context — this pass closed the last generic open, NOW's "Changing now" cards (mC58/mC59). The viewer a user reaches is still the shipped `/media-viewer/[id]` from the Watch feed. | F1, and Watch-feed opens routed through an entry context rather than the paging player. | Integration owner + owner decision (Watch is the shipped surface). |
+| MD286 | **W** | Vertical autoplay is the seeded default (`artifacts/api-server/src/migrations/2037_media_tab_flags.sql:17#'MEDIA_VIEW_MODE_FULLSCREEN_ENABLED',`, seeded true). | That seed off or the default not `'watch'`, evidenced by the seed row and the store default. | Integration owner + owner decision. |
+| MD408 | **W** | The shipped overlay renders Stamp/comment/save counts as its primary rail (`travel-buddy-standalone/src/components/media/WatchItemOverlay.tsx:416#formatCompactCount(item.stampItCount!)`). Removing them changes the LIVE surface, which is a product decision, not a lane's. | The count rail no longer primary on the shipped overlay, or F1. | Owner decision, then the client lane. |
+| MD412 | **W** | Compass is a primary control in the dark rail and absent from the shipped overlay. | Compass primary on the surface that ships, or F1. | Owner decision + client lane. |
+| MD419 | **W** | F2 — the forbidden feed is built and is the default. | The full-screen paging feed is not the seeded default mode. | Integration owner + owner decision. |
+| MD424 | **W** | F2 — Stamp is the first and largest control on the default surface. | The Stamp/count rail is not the primary overlay. | Owner decision + client lane. |
+| MD425 | **W** | F2 — advancing the feed is the play control (`travel-buddy-standalone/src/components/media/WatchVideoCell.tsx:158#shouldPlay={isActive}`). | Autoplay-on-viewability is not the primary navigation of the default surface. | Owner decision + client lane. |
+| MD427 | **W** | F2 — opening the tab lands in the full-screen feed. | The tab opens on a context-first surface. | Integration owner + owner decision. |
+| MD428 | **W** | The sheet is right and its content is not §47's. `GET /media/world` emits no `whyThis` at all, so the shell now offers "Why this?" ONLY where the server supplied a reason (`travel-buddy-standalone/src/features/media/screens/MediaWorldShell.tsx:138#if (item.whyThis) setWhy({ visible: true, explanation: item.whyThis });`) — the sheet's generic fallback sentence was an invented explanation. | A §47 explanation on World items built from the five named reasons, two of which (MD184, MD185) are not ranking inputs today. The client already renders it the moment it is served. | Lane C (ranking + explanation), then nothing further here. |
+| MD82–MD85 | **N** ×4 | No column stores a vantage (`artifacts/api-server/src/services/media/MediaPerspectiveService.ts:6#There is no perspective COLUMN in the schema today`). The contribution sheet built here offers NO vantage on purpose (`travel-buddy-standalone/src/features/media/state/mediaContribution.ts:16#What it deliberately does NOT offer: the §12 physical VANTAGES`) — a choice with nowhere to be stored would be dropped on the floor. | A migration adds a vantage column with a CHECK over the §12 vocabularies, the post write accepts it, `MediaPerspectiveService` groups by it, and the sheet offers it. | Owner (schema), Lane B (grouping), the posts-route owner (write), then this lane (picker). |
+| MD444 | **W** | Phase 4's perspective GROUPS are MD82–MD85. | As MD82–MD85. | As MD82–MD85. |
+| MD288 | **W** | Askable (city + term + the gem kind), but "near" is city-coarse by design (`artifacts/api-server/src/services/media/MediaSearchService.ts:71#search is city-coarse; the canonical Map owns proximity`), and the Map that owns proximity is dark in production. | Search accepts a radius resolved through the canonical Map, OR the owner rules that city-coarse satisfies "near". | Owner decision; else the server search owner + Map lane. |
+| MD289 | **W** | Askable as category + "Right now"; nothing models "looks social". | A perspective-level social/busy-looking signal exists and search filters on it. | Owner decision (what counts as "looks social" is a classifier choice) + Lane B. |
+
+Not taken, although in sections this lane could take: **MD402** (§46 — the
+minutes-watched objective is wired into the ranker, Lane C's file) and **MD403**
+(`X`, measured contrast on a device — runtime QA no branch can supply).
+
+### 19.7 Files changed, citations repointed, and this census left STALE
+
+**Commits** (branch `claude/media-lane-a-client-ia-20260926`): `3c4b6890f`
+(server: §38 events/trips by name; gem image), `f9ade196c` (client IA),
+`028d6e38d` (§4 Contribution), `9c66cf39b` (search: city criterion, search
+within a trip), `8fc360695` (route registry moved to the array end), `2ea4827ef`
+(MD287/MD292 tests), `99ce7b11a` (changing-now place opener), and the commit
+carrying this section.
+
+**Outside the lane's file list, each minimal and additive:**
+`travel-buddy-standalone/src/navigation/portavaRoutes.ts` (four route entries,
+appended at the END — first inserted mid-array, which moved
+line 2038 of `portavaRoutes.ts`, which `intel-spine-liveness.md` cites by anchor;
+`check:doc-citations` went red, and the move is what fixed it);
+`artifacts/api-server/src/services/media/MediaSearchService.ts` and
+`MediaGemStateService.ts` (appended at EOF / declaration-merged, so no anchored
+line moved); `artifacts/api-server/src/routes/mediaWorld.ts` (two lines edited in
+place, one import appended).
+
+**Four pointers in EARLIER rows were repointed in place** — the only edits to
+earlier text, each because this pass's own line shifts broke it, each anchored
+now: row MD89's pointer to line 69 of `MediaWorldShell.tsx` (it had become a `*/`, which
+`check:citation-targets` counts as dead) → the same line it named,
+`travel-buddy-standalone/src/features/media/screens/MediaWorldShell.tsx:74#kind: 'place',`;
+the §39 summary row's and MD302's pointer to its line 97 →
+`travel-buddy-standalone/src/features/media/screens/MediaWorldShell.tsx:102#cachedAsOfLabel(ageMinutesFrom(world.generatedAt))`;
+MD13's pointer to lines 170 and 213 of `MediaPlacesScreen.tsx` → the time and map branches,
+`travel-buddy-standalone/src/features/media/screens/MediaPlacesScreen.tsx:223#{mode === 'time' ? (` and
+`travel-buddy-standalone/src/features/media/screens/MediaPlacesScreen.tsx:228#) : mode === 'map' ? (`. Rows this section SUPERSEDES (MD15, MD25, MD35,
+MD405, MD449, MD14, MD31, MD32) keep their historical pointers: they describe
+the tree they were graded against, and the live statement is here.
+
+**This census is left STALE.** `check:census-freshness` names **44 counted
+files** changed and not acknowledged — every one of them a file this section
+built or edited under `travel-buddy-standalone/src/features/media/` (screens,
+components, hooks, services, state, types and `__tests__`). This lane was
+instructed not to write the acknowledgement, and the honest acknowledgement
+would in any case not be *"cannot have moved a verdict"*: these files moved
+twenty-nine of them.
+
+### 19.8 Guard results, verbatim
+
+```
+check:census-integrity   — exit 1, by instruction (this section does not restate the headline):
+  ::error::census-media.md: its stated headline is C 301 / W 81 / N 66 / X 2 but its own rows
+  count C 329 / W 69 / N 50 / X 2. Both sum to 450, so this is not an arithmetic slip …
+  (the only ::error:: line in the run; 450 rows parsed, 0 counted where the tool cannot read)
+check:doc-citations      — RESULT clean (anchored 6568; UNANCHORED 6317, ceiling 6434)
+check:citation-targets   — ✓ at the ceiling: 166 / 166.
+check:citation-symbols   — 0 name a symbol the cited file does not contain (ceiling 0),
+                           34 point more than 2 line(s) from it (ceiling 34) — PASSED
+check:census-row-move-labels — PASSED
+check:census-policy-citations — PASSED
+check:census-scope-coverage  — PASSED; census-media 157 cited · 151 watched · 96% (floor 96%),
+                           at its floor, so no scope was widened
+check:test-registration  — 1462 registered + 33 allowlisted = 1495 — OK
+check:census-freshness   — census-media.md STALE: 44 counted files not named (§19.7)
+api-server tsc --noEmit  — clean; typecheck:tests 863 diagnostics / 115 files = baseline
+client tsc --noEmit      — clean; test-typecheck 173 / 60 = baseline
+client node tests        — 6827 / 6827 pass
+client media component suites (jest) — 13 suites, 87 / 87 pass
+api-server targeted      — mediaWorldProjection + mediaGemStateLens: all pass except
+  "MD367 — is registered (401/403, not 404)", which answers 503 in an environment with
+  no service client and fails identically at bae9ea2d4
+check:write-path-columns / check:schema-references — NOT RUN: they need live credentials
+```
+
+The integrity failure is the expected one: the row counts moved and the
+headline did not, because four lanes are moving rows in parallel and the
+headline must be restated ONCE, from the merged rows, by whoever merges them.
+Restating it here would publish a partition that is already stale the moment
+the next lane lands.
+
+### 19.9 Found outside this lane — reported, not fixed
+
+1. **MD369 (`N`) is stale.** Its evidence says *"No attachment endpoint"*;
+   `artifacts/api-server/src/routes/mediaActions.ts:8#POST /api/media/:id/attachments`
+   now documents one in Lane C's file. Whether it is `C` or still pointless
+   under the dark canonical flag (§15.4) is Lane C's re-read to make.
+2. **The client action-rail mapper narrows away the §28 edge.**
+   `src/features/media/services/mediaActions.ts` coerces an unknown entity kind
+   (including `shared_moment`) to `media`. This lane's context sheet does not
+   use it for that reason (`mapContextRefs` keeps the edge); the rail itself
+   still loses it. Lane C's file.
+3. **MD324 (`services/mediaSearch.ts`, Lane D).** A typed client of
+   `GET /api/media/search` now exists — `fetchMediaSearch` in
+   `services/mediaProjection.ts` — so MD324 is blocked only on its NAME and
+   location, which is Lane D's call.
+4. **The old client `fetchGems` dropped every gem the server sent** (its mapper
+   expected a feed shape). Fixed in-lane (mC2); recorded because MD360's `C`
+   was, for the client, a lens that could never show a gem.
+
+### 19.10 The least flattering true thing about this pass
+
+Twenty-eight rows moved to `C` and not one of them is reachable by a user
+today. The shell is dark, the Map positions nothing in production, and the
+four new routes are deep links nobody is sent to. This is exactly the shape §1
+permits and §9.10 put to the owner as a question that has not been answered:
+under this document's convention these are `C`; under the owner's honesty rule
+they are `C` over a path nothing reaches. The number that describes what a
+traveller can do with Media today did not change at all in this pass, and the
+twelve rows that would change it — MD1, MD2, MD3, MD29, MD87, MD286, MD408,
+MD412, MD419, MD424, MD425, MD427 — are all waiting on one decision that is not
+a lane's to take.
