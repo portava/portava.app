@@ -37,7 +37,7 @@ import { checkRateLimit } from "../lib/rateLimit.js";
 import { resolveViewer } from "../services/media/MediaProjectionService.js";
 import {
   resolveMediaActions,
-  buildDoThisExperiencePlan,
+  buildDoThisExperiencePlan, compileExperiencePlan,
   recordMediaIntent,
   loadEligibleMediaRow,
   resolveMediaEntities,
@@ -463,6 +463,33 @@ router.get(
       return;
     }
     const viewer = await resolveViewer(sc, auth.user.id, { needFollows: true });
+
+    // §15.2 "into an EXECUTABLE Compass plan" (census-media §21, MD107). With
+    // `compile`, the answer is compileExperiencePlan's — the Compass plan
+    // compiler (census-compass CM-02): ordered stops WITH times, for the day the
+    // client names (today when it names none), from an event / trip experience
+    // or from a published Trail. It writes nothing; the stops are what the
+    // client proposes into a trip through the existing plan-item endpoint.
+    const compile = req.query.compile === "1" || req.query.compile === "true";
+    if (compile) {
+      const source = req.query.source === "trail" ? "trail" : "experience";
+      const dayRaw = typeof req.query.day === "string" ? req.query.day : "";
+      const day = /^\d{4}-\d{2}-\d{2}$/.test(dayRaw) ? dayRaw : new Date(nowMs).toISOString().slice(0, 10);
+      const compiled = await compileExperiencePlan(sc, viewer, { kind: source, id: experienceId }, { day, nowMs });
+      if (!compiled.ok) {
+        if (compiled.reason === "source_unreadable") {
+          sendError(res, "db_error", "The experience could not be read");
+        } else if (compiled.reason === "source_unavailable") {
+          sendError(res, "feature_disabled", "Trails are not available");
+        } else {
+          sendError(res, "not_found", "Experience not available");
+        }
+        return;
+      }
+      res.json({ compiled: compiled.plan, generatedAt: new Date(nowMs).toISOString() });
+      return;
+    }
+
     const proposal = await buildDoThisExperiencePlan(sc, viewer, experienceId, nowMs);
     if (!proposal) {
       // Experience not visible to this viewer (private / blocked / missing).
