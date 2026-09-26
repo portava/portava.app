@@ -431,7 +431,7 @@ function PerspectiveFrame({ media }: { media: MediaProjection }) {
                 accessibilityLabel={showCaptions ? 'Hide captions' : 'Show captions'}
                 accessibilityState={{ selected: showCaptions }}
               >
-                <Captions size={16} color={color.onInk} />
+                <Captions size={16} color={showCaptions ? color.ink : color.onInk} />
               </Pressable>
             ) : null}
           </View>
@@ -648,7 +648,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     backgroundColor: 'rgba(17,17,15,0.7)',
   },
-  controlButtonActive: { backgroundColor: 'rgba(250,249,246,0.32)' },
+  controlButtonActive: { backgroundColor: color.onInk }, // census-media §31.12: ON is an opaque onInk badge under an ink icon (17.95:1); the old 0.32 light wash had no floor over a photo
   videoProgressTrack: {
     position: 'absolute',
     left: 14,

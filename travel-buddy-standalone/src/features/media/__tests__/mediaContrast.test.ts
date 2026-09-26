@@ -292,7 +292,7 @@ const S = {
   mapGemMarker: [MAP, 'rgba(16,185,129,0.12)'],
 } as const satisfies Record<string, readonly string[]>;
 
-type SurfaceId = keyof typeof S;
+type SurfaceId = keyof typeof S | keyof typeof S_TAIL; // census-media §31.12: plus the surfaces the tail measures
 type Kind = 'text' | 'ui' | 'decor';
 
 const THRESHOLD: Record<Exclude<Kind, 'decor'>, number> = { text: 4.5, ui: 3 };
@@ -774,13 +774,13 @@ interface Measured {
   floor: boolean;
 }
 
-const MEASURED: Measured[] = PAIRS.map((pair) => {
-  const layers = S[pair.on];
+const MEASURED: Measured[] = PAIRS.map(measurePair); function measurePair(pair: Pair): Measured { // census-media §31.12: named, so the tail can measure the pairs it adds
+  const layers = surfaceLayers(pair.on);
   const floor = layers[0] === PHOTO || layers[0] === MAP;
   const ratio = floor ? floorRatio(pair.fg, layers) : ratioOn(pair.fg, layers);
   const threshold = pair.kind === 'decor' ? null : THRESHOLD[pair.kind];
   return { pair, ratio, threshold, floor };
-});
+}
 
 const sourceCache = new Map<string, string>();
 function source(file: string): string {
@@ -933,4 +933,443 @@ test('print the measured table when MEDIA_CONTRAST_TABLE=1', () => {
     return `| ${m.pair.id} | ${m.pair.fg} | ${m.pair.on}${m.floor ? ' (floor)' : ''} | ${m.ratio.toFixed(2)} | ${m.threshold ?? '—'} | ${verdict} |`;
   });
   console.log(['| pair | fg | surface | ratio | threshold | result |', '| --- | --- | --- | --- | --- | --- |', ...rows].join('\n'));
+});
+
+// ═══ census-media §31.12 — appended at the TAIL so no line cited above moves ═══
+// (census-media cites :197, :808, :835, :841, :856 and :903 of this file.)
+//
+// Lane K's second pass measures three things the pairs above did not:
+//   1. Two World-shell state marks over photographs that had no floor (the
+//      perspective tile's evidence-class edge; the viewer's captions toggle when
+//      it is on), lane I's cover-count badge on the Media Map, and the shared
+//      StampButton the viewer renders.
+//   2. The shipped Media tab: every component under src/components/media, the
+//      tab route app/(tabs)/media.tsx, and the add-gem route's sheet.
+//   3. The shared components those surfaces render on a photograph or a Media
+//      sheet (PlaceQuickActions, FeaturedBadge, VerifiedStamp, StampIcon,
+//      StampButton, GemStateBadge, AppHeader's overlay, EmptyState). They are
+//      read here, never edited: a pair that only a change to one of them can fix
+//      is PINNED, and the guard at the end requires every pinned pair to cite
+//      the shared file that blocks it.
+//
+// Same rules as above: WCAG 2.x AA, text 4.5:1, state indicators 3:1, photo
+// floors over the 16-level grid, no large-text relief, every colour tied to its
+// file by a needle. `decor` is used for an icon whose meaning a visible text
+// label beside it already carries, an outline, a backdrop, a disabled control,
+// and the transient stamp-burst animation (1.4.3: pure decoration; the stamped
+// state is the rail's button, measured here).
+//
+// The pairs below are added at module evaluation and measured into MEASURED by
+// the last statement of this block. node:test runs every test() above only after
+// this module has finished evaluating, so the tests above see them; the first
+// test below fails if any pair was left unmeasured.
+
+const FT = {
+  watchOverlay: 'src/components/media/WatchItemOverlay.tsx',
+  videoCell: 'src/components/media/WatchVideoCell.tsx',
+  feedList: 'src/components/media/WatchFeedList.tsx',
+  watchFeed: 'src/components/media/WatchFeed.tsx',
+  modeSelector: 'src/components/media/MediaModeSelector.tsx',
+  gemsOverlay: 'src/components/media/GemsItemOverlay.tsx',
+  gemsFilter: 'src/components/media/GemsFilterBar.tsx',
+  gemsFeed: 'src/components/media/GemsFeed.tsx',
+  gridTile: 'src/components/media/GridTile.tsx',
+  gridFilter: 'src/components/media/GridFilterBar.tsx',
+  masonry: 'src/components/media/MasonryGrid.tsx',
+  gridFeed: 'src/components/media/GridFeed.tsx',
+  locationStamp: 'src/components/media/VerifiedLocationStamp.tsx',
+  radial: 'src/components/media/WatchRadialMenu.tsx',
+  burst: 'src/components/media/StampItBurst.tsx',
+  moreMenu: 'src/components/media/MediaMoreMenu.tsx',
+  quickCreate: 'src/components/media/MediaQuickCreateSheet.tsx',
+  routeIt: 'src/components/media/RouteItPlaceSheet.tsx',
+  addGem: 'src/components/media/AddGemForm.tsx',
+  addGemRoute: 'app/media/add-gem.tsx',
+  tab: 'app/(tabs)/media.tsx',
+  // Shared components the Media surfaces render — read, never edited here.
+  placeQuickActions: 'src/components/PlaceQuickActions.tsx',
+  featuredBadge: 'src/components/FeaturedBadge.tsx',
+  verifiedBadge: 'src/components/ui/VerifiedStamp.tsx',
+  stampIcon: 'src/components/stamps/StampIcon.tsx',
+  stampButton: 'src/components/stamps/StampButton.tsx',
+  gemStateBadge: 'src/components/gems/GemStateBadge.tsx',
+  appHeader: 'src/components/ui/AppHeader.tsx',
+  emptyState: 'src/components/ui/EmptyState.tsx',
+} as const;
+
+/** The shared files a pinned pair may name as its blocker. */
+const SHARED_BLOCKERS: readonly string[] = [FT.stampButton, FT.stampIcon, FT.appHeader, FT.emptyState];
+
+const W_ = (alpha: string) => `rgba(255,255,255,${alpha})`;
+const S_TAIL = {
+  // World shell.
+  tileEdgePhoto: [PHOTO, 'rgba(17,17,15,0.80)'],
+  tileEdgeFallback: ['#22221E', 'rgba(17,17,15,0.80)'],
+  coverCountPhoto: [PHOTO, 'rgba(17,17,15,0.92)'],
+  coverCountMap: [MAP, 'rgba(17,17,15,0.92)'],
+  // Watch: the overlay's two column backings, its create button, the cell, the list, the feed toggle.
+  watchLeftPhoto: [PHOTO, 'rgba(17,17,15,0.71)'],
+  watchLeftChip: [PHOTO, 'rgba(17,17,15,0.71)', W_('0.12')],
+  watchLeftFollowActive: [PHOTO, 'rgba(17,17,15,0.71)', W_('0.08')],
+  watchLeftFeatured: [PHOTO, 'rgba(17,17,15,0.71)', 'rgba(212, 160, 23, 0.22)'],
+  locationStampPhoto: [PHOTO, 'rgba(17,17,15,0.66)'],
+  watchRailPhoto: [PHOTO, 'rgba(17,17,15,0.80)'],
+  watchCreatePhoto: [PHOTO, 'rgba(17,17,15,0.58)'],
+  videoFailurePhoto: [PHOTO, 'rgba(17,17,15,0.71)'],
+  videoFailureFallback: [color.ink, 'rgba(17,17,15,0.71)'],
+  videoSpinnerPhoto: [PHOTO, 'rgba(17,17,15,0.52)'],
+  feedTrackPhoto: [PHOTO, 'rgba(17,17,15,0.80)'],
+  feedPausePhoto: [PHOTO, 'rgba(17,17,15,0.57)'],
+  feedMutePhoto: [PHOTO, 'rgba(17,17,15,0.55)'],
+  feedHintPhoto: [PHOTO, 'rgba(0,0,0,0.59)'],
+  feedTogglePhoto: [PHOTO, 'rgba(17,17,15,0.71)'],
+  feedToggleEmpty: [color.ink, 'rgba(17,17,15,0.71)'],
+  modeRowPhoto: [PHOTO, 'rgba(0,0,0,0.66)'],
+  // Gems.
+  gemsBottomPhoto: [PHOTO, 'rgba(0,0,0,0.81)'],
+  gemsTypeBadge: [PHOTO, 'rgba(0,0,0,0.81)', W_('0.18')],
+  gemsChip: [PHOTO, 'rgba(0,0,0,0.81)', 'rgba(0,0,0,0.30)'],
+  gemsQuickActions: [PHOTO, 'rgba(0,0,0,0.81)', W_('0.12')],
+  gemStateConfirmed: [PHOTO, 'rgba(0,0,0,0.81)', 'rgba(46,125,91,0.20)'],
+  gemStateHidden: [PHOTO, 'rgba(0,0,0,0.81)', 'rgba(10,61,74,0.42)'],
+  gemStateCalm: [PHOTO, 'rgba(0,0,0,0.81)', 'rgba(76,139,245,0.16)'],
+  gemStateAware: [PHOTO, 'rgba(0,0,0,0.81)', 'rgba(200,133,26,0.16)'],
+  gemStateCaution: [PHOTO, 'rgba(0,0,0,0.81)', 'rgba(200,133,26,0.20)'],
+  gemStateProtective: [PHOTO, 'rgba(0,0,0,0.81)', 'rgba(230,120,80,0.18)'],
+  gemsRailPhoto: [PHOTO, 'rgba(0,0,0,0.89)'],
+  gemsBannerPhoto: [PHOTO, 'rgba(0,0,0,0.83)'],
+  gemsFilterPhoto: [PHOTO, 'rgba(17,17,15,0.81)'],
+  gemsFilterArea: [PHOTO, 'rgba(17,17,15,0.81)', W_('0.12')],
+  gemsFilterCat: [PHOTO, 'rgba(17,17,15,0.81)', W_('0.10')],
+  signalFill: [color.signal],
+  // Grid.
+  gridScrimPhoto: [PHOTO, 'rgba(0,0,0,0.55)'],
+  gridScrimFallback: [color.haze, 'rgba(0,0,0,0.55)'],
+  gridProcessingPhoto: [PHOTO, 'rgba(17,17,15,0.65)'],
+  gridStampPhoto: [PHOTO, 'rgba(17,17,15,0.95)'],
+  // Sheets and forms, and the tab's own buttons.
+  errorTint: ['#FEF2F2'],
+  gemGreen: ['#0C875E'],
+  vermilionOnPaper: ['#C43B23'],
+  quickCreateHighlight: [color.paper, 'rgba(16,185,129,0.0314)'],
+  routeItMapThumb: ['#D6E8F0'],
+  radialPurple: ['#8558EC'],
+  radialSignal: ['#D64127'],
+  radialSky: ['#0B7DB1'],
+  radialGreen: ['#0C875E'],
+  addGemBadgePhoto: [PHOTO, 'rgba(17,17,15,0.65)'],
+  worldPillPhoto: [PHOTO, 'rgba(17,17,15,0.58)'],
+  // Shared components on a photograph (pinned below).
+  appHeaderOverlayPhoto: [PHOTO, 'rgba(0,0,0,0.28)'],
+  burstPhoto: [PHOTO, 'rgba(255,60,60,0.12)'],
+  radialBackdropPhoto: [PHOTO, 'rgba(0,0,0,0.35)'],
+} as const satisfies Record<string, readonly string[]>;
+
+/** Layers for a surface id — the tail's surfaces as well as the ones above. Hoisted; S_TAIL is read only for tail ids. */
+function surfaceLayers(id: SurfaceId): readonly string[] {
+  return Object.prototype.hasOwnProperty.call(S, id) ? S[id as keyof typeof S] : S_TAIL[id as keyof typeof S_TAIL];
+}
+
+const WHITE = '#FFFFFF'; // the source writes '#fff'; parseColor reads six digits
+
+// ─ 1. World shell ─
+// The perspective tile's evidence-class edge, now on a 0.80 ink casing (was straight on the photo: 1.00).
+const TILE_EDGE: Needle[] = [
+  [F.tile, 'const accent = OBSERVATION_COLOR[media.observationClass];'],
+  [F.tile, '<View style={tailStyles.edgeCasing} /><View style={[styles.edge, { backgroundColor: accent }]} />'],
+  [F.tile, "edgeCasing: { position: 'absolute', left: 0, top: 0, bottom: 0, width: 5, backgroundColor: 'rgba(17,17,15,0.80)' },"],
+];
+for (const [k, v] of Object.entries(OBSERVATION_COLOR)) {
+  add({ id: `tile.edge.${k}.photoFloor`, fg: v, on: 'tileEdgePhoto', kind: 'ui', at: TILE_EDGE });
+  add({ id: `tile.edge.${k}.fallback`, fg: v, on: 'tileEdgeFallback', kind: 'ui', at: [...TILE_EDGE, [F.tile, "fallback: { backgroundColor: '#22221E' }"]] });
+}
+// The viewer's captions toggle: ON is an opaque onInk badge under an ink icon (was onInk on a 0.32 light wash: 1.00).
+const CAPTIONS_ICON: Needle = [F.viewer, '<Captions size={16} color={showCaptions ? color.ink : color.onInk} />'];
+add({ id: 'viewer.captionsToggle.on', fg: color.ink, on: 'selected', kind: 'ui', at: [CAPTIONS_ICON, [F.viewer, 'controlButtonActive: { backgroundColor: color.onInk },']] });
+add({ id: 'viewer.captionsToggle.off.photoFloor', fg: color.onInk, on: 'viewerControlPhoto', kind: 'ui', at: [CAPTIONS_ICON, [F.viewer, "backgroundColor: 'rgba(17,17,15,0.7)'"]] });
+// Lane I's cover-count badge and the selected cover ring on the Media Map.
+const COVER_COUNT: Needle[] = [[F.mapCanvas, "coverCountText: { color: color.onInk, fontSize: 11, fontWeight: '800' },"], [F.mapCanvas, "backgroundColor: 'rgba(17,17,15,0.92)',"]];
+add({ id: 'mapCanvas.coverCount.photoFloor', fg: color.onInk, on: 'coverCountPhoto', kind: 'text', at: COVER_COUNT });
+add({ id: 'mapCanvas.coverCount.mapFloor', fg: color.onInk, on: 'coverCountMap', kind: 'text', at: COVER_COUNT });
+add({ id: 'mapCanvas.coverRing.selected.mapFloor', fg: color.onInk, on: 'map', kind: 'ui', at: [[F.mapCanvas, /coverBubble: \{[^}]*borderColor: color\.onInk,/], [F.mapCanvas, 'coverBubbleSelected: { borderWidth: 3, transform: [{ scale: 1.15 }] },']] });
+// The shared StampButton in the viewer's action row, on the 0.96 overlay.
+const STAMP_ICON_COLOUR: Needle = [FT.stampIcon, 'const c = colorProp ?? (active ? tokens.signal : tokens.mute);'];
+const STAMP_BUTTON_ICON: Needle = [FT.stampButton, '<StampIcon size={iconSize} active={visualIsStamped} />'];
+const STAMP_COUNT_IDLE: Needle = [FT.stampButton, /count: \{\s*\.\.\.typeTokens\.stamp,\s*color: color\.mute,/];
+const STAMP_COUNT_ACTIVE: Needle = [FT.stampButton, /countActive: \{\s*color: color\.signal,/];
+const VIEWER_STAMP: Needle = [F.viewer, '<StampButton'];
+add({ id: 'viewer.stampButton.icon.idle.photoFloor', fg: color.mute, on: 'viewerOverlayPhoto', kind: 'ui', at: [VIEWER_STAMP, STAMP_BUTTON_ICON, STAMP_ICON_COLOUR, VIEWER_OVERLAY] });
+add({ id: 'viewer.stampButton.icon.active.photoFloor', fg: color.signal, on: 'viewerOverlayPhoto', kind: 'ui', at: [VIEWER_STAMP, STAMP_BUTTON_ICON, STAMP_ICON_COLOUR, VIEWER_OVERLAY] });
+add({ id: 'viewer.stampButton.count.active.photoFloor', fg: color.signal, on: 'viewerOverlayPhoto', kind: 'text', at: [VIEWER_STAMP, STAMP_COUNT_ACTIVE, VIEWER_OVERLAY] });
+// PINNED: `mute` can never reach 4.5:1 on a dark ground (3.79 on black), and StampButton takes no colour. Fix: a dark tone in the shared StampButton.
+add({ id: 'viewer.stampButton.count.idle.photoFloor', fg: color.mute, on: 'viewerOverlayPhoto', kind: 'text', at: [VIEWER_STAMP, STAMP_COUNT_IDLE, VIEWER_OVERLAY], finding: 3.12 });
+
+// ─ 2. The shipped Media tab ─
+// WatchItemOverlay — the left column and the action rail each on an ink backing (the gradient is kept, and not relied on).
+const WATCH_LEFT: Needle = [FT.watchOverlay, "paddingRight: space.sm, padding: space.sm, borderRadius: radius.md, backgroundColor: 'rgba(17,17,15,0.71)',"];
+const WATCH_CHIP: Needle = [FT.watchOverlay, /chip: \{[^}]*backgroundColor: 'rgba\(255,255,255,0\.12\)'/];
+add({ id: 'watch.displayName', fg: color.onInk, on: 'watchLeftPhoto', kind: 'text', at: [WATCH_LEFT, [FT.watchOverlay, /displayName: \{\s*\.\.\.t\.bodyStrong,\s*color: color\.onInk,/]] });
+add({ id: 'watch.username', fg: color.onInkMute, on: 'watchLeftPhoto', kind: 'text', at: [WATCH_LEFT, [FT.watchOverlay, /username: \{\s*\.\.\.t\.stamp,\s*color: color\.onInkMute,/]] });
+add({ id: 'watch.follow', fg: color.onInk, on: 'watchLeftChip', kind: 'text', at: [WATCH_LEFT, [FT.watchOverlay, /followBtn: \{[^}]*backgroundColor: 'rgba\(255,255,255,0\.12\)'/], [FT.watchOverlay, /followBtnText: \{\s*\.\.\.t\.stamp,\s*color: color\.onInk,/]] });
+add({ id: 'watch.follow.following', fg: color.onInk, on: 'watchLeftFollowActive', kind: 'text', at: [WATCH_LEFT, [FT.watchOverlay, /followBtnActive: \{[^}]*backgroundColor: 'rgba\(255,255,255,0\.08\)'/]] });
+add({ id: 'watch.caption', fg: color.onInk, on: 'watchLeftPhoto', kind: 'text', at: [WATCH_LEFT, [FT.watchOverlay, /caption: \{\s*\.\.\.t\.body,\s*color: color\.onInk,/]] });
+add({ id: 'watch.captionMore', fg: color.onInkMute, on: 'watchLeftPhoto', kind: 'text', at: [WATCH_LEFT, [FT.watchOverlay, /captionMore: \{\s*\.\.\.t\.small,\s*color: color\.onInkMute,/]] });
+add({ id: 'watch.hashtags', fg: 'rgba(250,249,246,0.85)', on: 'watchLeftPhoto', kind: 'text', at: [WATCH_LEFT, [FT.watchOverlay, /hashtags: \{[^}]*color: color\.onInk,[^}]*opacity: 0\.85,/]] });
+add({ id: 'watch.placeAndEntityChip', fg: W_('0.9'), on: 'watchLeftChip', kind: 'text', at: [WATCH_LEFT, WATCH_CHIP, [FT.watchOverlay, /chipText: \{\s*\.\.\.t\.stamp,\s*color: 'rgba\(255,255,255,0\.9\)'/]] });
+add({ id: 'watch.chipIcons', fg: W_('0.85'), on: 'watchLeftChip', kind: 'decor', at: [[FT.watchOverlay, '<MapPin size={11} color="rgba(255,255,255,0.85)" />']] });
+add({ id: 'watch.audio', fg: W_('0.75'), on: 'watchLeftPhoto', kind: 'text', at: [WATCH_LEFT, [FT.watchOverlay, /audioText: \{\s*\.\.\.t\.stamp,\s*color: 'rgba\(255,255,255,0\.75\)'/]] });
+add({ id: 'watch.featuredBadge', fg: '#FDE68A', on: 'watchLeftFeatured', kind: 'text', at: [WATCH_LEFT, [FT.watchOverlay, '<FeaturedBadge category={item.featuredByPortava} size="sm" dark />'], [FT.featuredBadge, "const bg = dark ? 'rgba(212, 160, 23, 0.22)' : '#FEF3C7';"], [FT.featuredBadge, "const textColor = dark ? '#FDE68A' : '#92400E';"]] });
+add({ id: 'watch.verifiedCreator', fg: 'rgba(250,249,246,0.92)', on: 'watchLeftPhoto', kind: 'ui', at: [WATCH_LEFT, [FT.watchOverlay, '<VerifiedStamp size="sm" dark />'], [FT.verifiedBadge, "const ink = dark ? 'rgba(250,249,246,0.92)' : '#1A3A5C';"]] });
+const QUICK_ACTIONS_DARK: Needle[] = [[FT.placeQuickActions, /chipDark: \{[^}]*backgroundColor: 'rgba\(255,255,255,0\.12\)'/], [FT.placeQuickActions, /chipTextDark: \{[^}]*color: 'rgba\(255,255,255,0\.92\)'/]];
+add({ id: 'watch.placeQuickActions', fg: W_('0.92'), on: 'watchLeftChip', kind: 'text', at: [WATCH_LEFT, [FT.watchOverlay, 'variant="dark"'], ...QUICK_ACTIONS_DARK] });
+// VerifiedLocationStamp — now opaque (was opacity 0.38) on its own 0.66 ink backing; also drawn on grid tiles.
+const LOCATION_STAMP: Needle[] = [[FT.locationStamp, 'opacity: 1,'], [FT.locationStamp, "borderStyle: 'dashed', backgroundColor: 'rgba(17,17,15,0.66)',"]];
+add({ id: 'locationStamp.eyebrow.photoFloor', fg: '#E8DFC8', on: 'locationStampPhoto', kind: 'text', at: [...LOCATION_STAMP, [FT.locationStamp, /eyebrow: \{[^}]*color: '#E8DFC8',/], [FT.watchOverlay, '<VerifiedLocationStamp locationName={item.place.name} />']] });
+add({ id: 'locationStamp.name.photoFloor', fg: '#E8DFC8', on: 'locationStampPhoto', kind: 'text', at: [...LOCATION_STAMP, [FT.locationStamp, /name: \{[^}]*color: '#E8DFC8',/], [FT.gridTile, '<VerifiedLocationStamp']] });
+const WATCH_RAIL: Needle = [FT.watchOverlay, "paddingBottom: space.sm, paddingTop: space.md, paddingHorizontal: space.xs, borderRadius: radius.pill, backgroundColor: 'rgba(17,17,15,0.80)',"];
+add({ id: 'watch.rail.counts', fg: color.onInk, on: 'watchRailPhoto', kind: 'text', at: [WATCH_RAIL, [FT.watchOverlay, /actionCount: \{\s*\.\.\.t\.stamp,\s*color: color\.onInk,/]] });
+add({ id: 'watch.rail.icons', fg: WHITE, on: 'watchRailPhoto', kind: 'ui', at: [WATCH_RAIL, [FT.watchOverlay, '<MessageCircle size={28} color="#fff"'], [FT.watchOverlay, '<PortavaShareIcon size={26} color="#fff" />'], [FT.watchOverlay, '<MoreVertical size={26} color="#fff"']] });
+add({ id: 'watch.rail.saved', fg: color.signal, on: 'watchRailPhoto', kind: 'ui', at: [WATCH_RAIL, [FT.watchOverlay, "color={isSaved ? color.signal : '#fff'}"]] });
+const WATCH_STAMP: Needle = [FT.watchOverlay, "<StampIcon size={28} active={stampVisualIsStamped} color={stampVisualIsStamped ? color.signal : '#fff'} />"];
+add({ id: 'watch.rail.stamp.idle', fg: WHITE, on: 'watchRailPhoto', kind: 'ui', at: [WATCH_RAIL, WATCH_STAMP] });
+add({ id: 'watch.rail.stamp.active', fg: color.signal, on: 'watchRailPhoto', kind: 'ui', at: [WATCH_RAIL, WATCH_STAMP] });
+add({ id: 'watch.rail.stampItCount', fg: 'rgba(255,220,80,0.9)', on: 'watchRailPhoto', kind: 'text', at: [WATCH_RAIL, [FT.watchOverlay, /stampCount: \{[^}]*color: 'rgba\(255,220,80,0\.9\)'/]] });
+const WATCH_CREATE: Needle = [FT.watchOverlay, "backgroundColor: 'rgba(17,17,15,0.58)',"];
+add({ id: 'watch.create.label', fg: WHITE, on: 'watchCreatePhoto', kind: 'text', at: [WATCH_CREATE, [FT.watchOverlay, /createBtnText: \{\s*\.\.\.t\.stamp,\s*color: '#fff',/]] });
+add({ id: 'watch.create.icon', fg: WHITE, on: 'watchCreatePhoto', kind: 'ui', at: [WATCH_CREATE, [FT.watchOverlay, '<Camera size={16} color="#fff"']] });
+// WatchVideoCell — the failure overlay (poster, or the ink cell) and the buffering spinner's badge.
+const VIDEO_FAILURE: Needle[] = [[FT.videoCell, "backgroundColor: 'rgba(17,17,15,0.71)',"], [FT.videoCell, /failureText: \{\s*\.\.\.t\.small,\s*color: 'rgba\(255,255,255,0\.7\)'/]];
+add({ id: 'videoCell.failure.photoFloor', fg: W_('0.7'), on: 'videoFailurePhoto', kind: 'text', at: VIDEO_FAILURE });
+add({ id: 'videoCell.failure.fallback', fg: W_('0.7'), on: 'videoFailureFallback', kind: 'text', at: [...VIDEO_FAILURE, [FT.videoCell, /cell: \{[^}]*backgroundColor: color\.ink,/]] });
+add({ id: 'videoCell.failureIcon', fg: W_('0.7'), on: 'videoFailurePhoto', kind: 'decor', at: [[FT.videoCell, '<PlayCircle size={40} color="rgba(255,255,255,0.7)" />']] });
+add({ id: 'videoCell.spinner.photoFloor', fg: W_('0.8'), on: 'videoSpinnerPhoto', kind: 'ui', at: [[FT.videoCell, '<View style={tailStyles.spinnerBadge}><ActivityIndicator size="large" color="rgba(255,255,255,0.8)" /></View>'], [FT.videoCell, "spinnerBadge: { padding: 10, borderRadius: 999, backgroundColor: 'rgba(17,17,15,0.52)' },"]] });
+// WatchFeedList — the progress bar, the pause mark, the mute button, the swipe hint.
+const FEED_TRACK: Needle = [FT.feedList, "backgroundColor: 'rgba(17,17,15,0.80)',"];
+add({ id: 'feedList.progressFill.photoFloor', fg: color.signal, on: 'feedTrackPhoto', kind: 'ui', at: [FEED_TRACK, [FT.feedList, /progressFill: \{[^}]*backgroundColor: color\.signal,/]] });
+add({ id: 'feedList.scrubHandle.photoFloor', fg: WHITE, on: 'feedTrackPhoto', kind: 'ui', at: [FEED_TRACK, [FT.feedList, /scrubHandle: \{[^}]*backgroundColor: '#fff',/]] });
+add({ id: 'feedList.pauseBars.photoFloor', fg: W_('0.7'), on: 'feedPausePhoto', kind: 'ui', at: [[FT.feedList, "width: 44, borderRadius: radius.md, backgroundColor: 'rgba(17,17,15,0.57)',"], [FT.feedList, /pauseBar: \{[^}]*backgroundColor: 'rgba\(255,255,255,0\.7\)'/]] });
+add({ id: 'feedList.muteIcon.photoFloor', fg: WHITE, on: 'feedMutePhoto', kind: 'ui', at: [[FT.feedList, /muteBtn: \{[^}]*backgroundColor: 'rgba\(17,17,15,0\.55\)'/], [FT.feedList, '<VolumeX size={18} color="#fff" />']] });
+const FEED_HINT: Needle = [FT.feedList, "backgroundColor: 'rgba(0,0,0,0.59)',"];
+add({ id: 'feedList.swipeHint.arrow.photoFloor', fg: W_('0.85'), on: 'feedHintPhoto', kind: 'text', at: [FEED_HINT, [FT.feedList, /swipeHintArrow: \{[^}]*color: 'rgba\(255,255,255,0\.85\)'/]] });
+add({ id: 'feedList.swipeHint.label.photoFloor', fg: W_('0.85'), on: 'feedHintPhoto', kind: 'text', at: [FEED_HINT, [FT.feedList, /swipeHintLabel: \{[^}]*color: 'rgba\(255,255,255,0\.85\)'/]] });
+// WatchFeed — the For You / Following toggle (over the feed, and on the empty feed), the empty and error states.
+const FEED_TOGGLE: Needle = [FT.watchFeed, "gap: space.md, paddingHorizontal: space.md, paddingTop: space.xs, borderRadius: 999, backgroundColor: 'rgba(17,17,15,0.71)',"];
+for (const [where, on] of [['photoFloor', 'feedTogglePhoto'], ['emptyFeed', 'feedToggleEmpty']] as const) {
+  add({ id: `watchFeed.toggle.label.${where}`, fg: color.onInkMute, on, kind: 'text', at: [FEED_TOGGLE, [FT.watchFeed, /label: \{\s*\.\.\.t\.bodyStrong,\s*color: color\.onInkMute,/]] });
+  add({ id: `watchFeed.toggle.labelActive.${where}`, fg: color.onInk, on, kind: 'text', at: [FEED_TOGGLE, [FT.watchFeed, /labelActive: \{\s*color: color\.onInk,/]] });
+  add({ id: `watchFeed.toggle.underline.${where}`, fg: color.onInk, on, kind: 'ui', at: [FEED_TOGGLE, [FT.watchFeed, /tabActive: \{\s*borderBottomColor: color\.onInk,/]] });
+}
+const FEED_EMPTY: Needle = [FT.watchFeed, /container: \{[^}]*backgroundColor: color\.ink,/];
+add({ id: 'watchFeed.empty.title', fg: color.onInk, on: 'ink', kind: 'text', at: [FEED_EMPTY, [FT.watchFeed, /title: \{\s*\.\.\.t\.heading,\s*color: color\.onInk,/]] });
+add({ id: 'watchFeed.empty.subtitle', fg: color.onInkMute, on: 'ink', kind: 'text', at: [FEED_EMPTY, [FT.watchFeed, /subtitle: \{\s*\.\.\.t\.body,\s*color: color\.onInkMute,/]] });
+add({ id: 'watchFeed.empty.retry', fg: color.onInk, on: 'ink', kind: 'text', at: [FEED_EMPTY, [FT.watchFeed, /btnText: \{\s*\.\.\.t\.bodyStrong,\s*color: color\.onInk,/]] });
+add({ id: 'watchFeed.empty.icon', fg: color.onInkMute, on: 'ink', kind: 'decor', at: [[FT.watchFeed, '<WifiOff size={48} color={color.onInkMute} />']] });
+add({ id: 'watchFeed.loading', fg: color.signal, on: 'ink', kind: 'ui', at: [[FT.watchFeed, '<ActivityIndicator size="large" color={color.signal} />'], [FT.watchFeed, /centered: \{[^}]*backgroundColor: color\.ink,/]] });
+// MediaModeSelector — immersive (Watch/Gems, over the frame) and solid (Grid, on haze).
+const MODE_ROW: Needle = [FT.modeSelector, "backgroundColor: 'rgba(0,0,0,0.66)',"];
+add({ id: 'modeSelector.label.photoFloor', fg: color.onInkMute, on: 'modeRowPhoto', kind: 'text', at: [MODE_ROW, [FT.modeSelector, /labelImmersive: \{\s*color: color\.onInkMute,/]] });
+add({ id: 'modeSelector.selectedFill.photoFloor', fg: color.onInk, on: 'modeRowPhoto', kind: 'ui', at: [MODE_ROW, [FT.modeSelector, /itemActiveImmersive: \{\s*backgroundColor: color\.onInk,/]] });
+add({ id: 'modeSelector.labelActive', fg: color.ink, on: 'selected', kind: 'text', at: [[FT.modeSelector, /itemActiveImmersive: \{\s*backgroundColor: color\.onInk,/], [FT.modeSelector, /labelActiveImmersive: \{\s*color: color\.ink,/]] });
+add({ id: 'modeSelector.solid.label', fg: '#696660', on: 'haze', kind: 'text', at: [[FT.modeSelector, /rowSolid: \{\s*backgroundColor: color\.haze,/], [FT.modeSelector, /labelSolid: \{\s*color: '#696660',/]] });
+add({ id: 'modeSelector.solid.selectedFill', fg: color.ink, on: 'haze', kind: 'ui', at: [[FT.modeSelector, /rowSolid: \{\s*backgroundColor: color\.haze,/], [FT.modeSelector, /itemActiveSolid: \{\s*backgroundColor: color\.ink,/]] });
+add({ id: 'modeSelector.solid.labelActive', fg: color.onInk, on: 'ink', kind: 'text', at: [[FT.modeSelector, /itemActiveSolid: \{\s*backgroundColor: color\.ink,/], [FT.modeSelector, /labelActiveSolid: \{\s*color: color\.onInk,/]] });
+// GemsItemOverlay — the bottom content and the action column each on a black backing; the illustrative banner.
+const GEMS_BOTTOM: Needle = [FT.gemsOverlay, "gap: space.sm, paddingTop: space.md, backgroundColor: 'rgba(0,0,0,0.81)',"];
+const GEMS_TYPE_BADGE: Needle = [FT.gemsOverlay, /placeTypeBadge: \{[^}]*backgroundColor: 'rgba\(255,255,255,0\.18\)'/];
+add({ id: 'gems.placeType', fg: color.onInk, on: 'gemsTypeBadge', kind: 'text', at: [GEMS_BOTTOM, GEMS_TYPE_BADGE, [FT.gemsOverlay, /placeTypeBadgeText: \{\s*\.\.\.t\.stamp,\s*color: color\.onInk,/]] });
+add({ id: 'gems.verifiedPlaceMark', fg: '#B6D2C6', on: 'gemsTypeBadge', kind: 'text', at: [GEMS_BOTTOM, GEMS_TYPE_BADGE, [FT.gemsOverlay, /verifiedDot: \{\s*\.\.\.t\.stamp,\s*color: '#B6D2C6',/]] });
+add({ id: 'gems.placeName', fg: color.onInk, on: 'gemsBottomPhoto', kind: 'text', at: [GEMS_BOTTOM, [FT.gemsOverlay, /placeName: \{\s*\.\.\.t\.title,\s*color: color\.onInk,/]] });
+add({ id: 'gems.placeArea', fg: color.onInkMute, on: 'gemsBottomPhoto', kind: 'text', at: [GEMS_BOTTOM, [FT.gemsOverlay, /placeArea: \{\s*\.\.\.t\.small,\s*color: color\.onInkMute,/]] });
+add({ id: 'gems.viewPlaceChip', fg: color.onInk, on: 'gemsChip', kind: 'text', at: [GEMS_BOTTOM, [FT.gemsOverlay, /chip: \{[^}]*backgroundColor: 'rgba\(0,0,0,0\.30\)'/], [FT.gemsOverlay, /chipText: \{\s*\.\.\.t\.stamp,\s*color: color\.onInk,/]] });
+add({ id: 'gems.placeQuickActions', fg: W_('0.92'), on: 'gemsQuickActions', kind: 'text', at: [GEMS_BOTTOM, [FT.gemsOverlay, 'variant="dark"'], ...QUICK_ACTIONS_DARK] });
+add({ id: 'gems.creatorName', fg: color.onInk, on: 'gemsBottomPhoto', kind: 'text', at: [GEMS_BOTTOM, [FT.gemsOverlay, /creatorName: \{\s*\.\.\.t\.bodyStrong,\s*color: color\.onInk,/]] });
+add({ id: 'gems.creatorUsername', fg: color.onInkMute, on: 'gemsBottomPhoto', kind: 'text', at: [GEMS_BOTTOM, [FT.gemsOverlay, /creatorUsername: \{\s*\.\.\.t\.small,\s*color: color\.onInkMute,/]] });
+add({ id: 'gems.follow', fg: color.onInk, on: 'gemsBottomPhoto', kind: 'text', at: [GEMS_BOTTOM, [FT.gemsOverlay, /followBtnText: \{\s*\.\.\.t\.stamp,\s*color: color\.onInk,/]] });
+add({ id: 'gems.caption', fg: color.onInkMute, on: 'gemsBottomPhoto', kind: 'text', at: [GEMS_BOTTOM, [FT.gemsOverlay, /caption: \{\s*\.\.\.t\.small,\s*color: color\.onInkMute,/]] });
+const GEM_STATE_TONES: ReadonlyArray<readonly [tone: string, fg: string, bg: string, on: SurfaceId]> = [
+  ['confirmed', '#6FD39A', 'rgba(46,125,91,0.20)', 'gemStateConfirmed'],
+  ['hidden', '#7FD4E0', 'rgba(10,61,74,0.42)', 'gemStateHidden'],
+  ['calm', '#9DB8E8', 'rgba(76,139,245,0.16)', 'gemStateCalm'],
+  ['aware', '#E0B36A', 'rgba(200,133,26,0.16)', 'gemStateAware'],
+  ['caution', '#E8B24D', 'rgba(200,133,26,0.20)', 'gemStateCaution'],
+  ['protective', '#F0A98C', 'rgba(230,120,80,0.18)', 'gemStateProtective'],
+];
+for (const [tone, fg, bg, on] of GEM_STATE_TONES) {
+  add({ id: `gems.gemState.${tone}`, fg, on, kind: 'text', at: [GEMS_BOTTOM, [FT.gemsOverlay, '<GemStateBadge'], [FT.gemStateBadge, `fg: '${fg}', bg: '${bg}'`]] });
+}
+for (const [tone, fg] of [['strong', '#6FD39A'], ['good', '#9DB8E8'], ['emerging', '#C9B382'], ['faint', '#8A9BB5']] as const) {
+  add({ id: `gems.confidence.${tone}`, fg, on: 'gemsBottomPhoto', kind: 'text', at: [GEMS_BOTTOM, [FT.gemsOverlay, 'showConfidence'], [FT.gemStateBadge, new RegExp(`${tone}:\\s*'${fg}',`)]] });
+}
+const GEMS_RAIL: Needle = [FT.gemsOverlay, "gap: space.lg, paddingVertical: space.sm, paddingHorizontal: space.xs, borderRadius: 999, backgroundColor: 'rgba(0,0,0,0.89)',"];
+add({ id: 'gems.rail.glyphs', fg: color.onInk, on: 'gemsRailPhoto', kind: 'ui', at: [GEMS_RAIL, [FT.gemsOverlay, /actionBtnIcon: \{\s*fontSize: 26,\s*color: color\.onInk,/], [FT.gemsOverlay, 'label="⋯"']] });
+add({ id: 'gems.rail.counts', fg: color.onInkMute, on: 'gemsRailPhoto', kind: 'text', at: [GEMS_RAIL, [FT.gemsOverlay, /actionBtnSublabel: \{\s*\.\.\.t\.stamp,\s*color: color\.onInkMute,/]] });
+const GEMS_STAMP: Needle = [FT.gemsOverlay, '<StampButton'];
+add({ id: 'gems.rail.stampButton.icon.idle', fg: color.mute, on: 'gemsRailPhoto', kind: 'ui', at: [GEMS_RAIL, GEMS_STAMP, STAMP_BUTTON_ICON, STAMP_ICON_COLOUR] });
+add({ id: 'gems.rail.stampButton.icon.active', fg: color.signal, on: 'gemsRailPhoto', kind: 'ui', at: [GEMS_RAIL, GEMS_STAMP, STAMP_BUTTON_ICON, STAMP_ICON_COLOUR] });
+add({ id: 'gems.rail.stampButton.count.active', fg: color.signal, on: 'gemsRailPhoto', kind: 'text', at: [GEMS_RAIL, GEMS_STAMP, STAMP_COUNT_ACTIVE] });
+// PINNED: as viewer.stampButton.count.idle — `mute` text has no dark ground at 4.5:1; the fix is a dark tone in the shared StampButton.
+add({ id: 'gems.rail.stampButton.count.idle', fg: color.mute, on: 'gemsRailPhoto', kind: 'text', at: [GEMS_RAIL, GEMS_STAMP, STAMP_COUNT_IDLE], finding: 3.07 });
+add({ id: 'gems.illustrativeBanner', fg: color.warn, on: 'gemsBannerPhoto', kind: 'text', at: [[FT.gemsOverlay, "backgroundColor: 'rgba(0,0,0,0.83)',"], [FT.gemsOverlay, /illustrativeBannerText: \{\s*\.\.\.t\.stamp,\s*color: color\.warn,/]] });
+const GEMS_MENU: Needle = [FT.gemsOverlay, /moreMenu: \{[^}]*backgroundColor: color\.paperRaised,/];
+add({ id: 'gems.moreMenu.item', fg: color.ink, on: 'paperRaised', kind: 'text', at: [GEMS_MENU, [FT.gemsOverlay, /moreMenuItemText: \{\s*\.\.\.t\.body,\s*color: color\.ink,/]] });
+add({ id: 'gems.moreMenu.cancel', fg: color.mute, on: 'paperRaised', kind: 'text', at: [GEMS_MENU, [FT.gemsOverlay, /moreMenuItemCancel: \{\s*color: color\.mute,/]] });
+// GemsFilterBar — floats over the gem image, now on an ink backing.
+const GEMS_FILTER: Needle = [FT.gemsFilter, "paddingTop: space.sm, paddingBottom: space.sm, backgroundColor: 'rgba(17,17,15,0.81)',"];
+add({ id: 'gemsFilter.area.label', fg: color.onInkMute, on: 'gemsFilterArea', kind: 'text', at: [GEMS_FILTER, [FT.gemsFilter, /areaChip: \{[^}]*backgroundColor: 'rgba\(255,255,255,0\.12\)'/], [FT.gemsFilter, /areaChipLabel: \{\s*\.\.\.t\.stamp,\s*color: color\.onInkMute,/]] });
+add({ id: 'gemsFilter.area.selectedFill', fg: color.onInk, on: 'gemsFilterPhoto', kind: 'ui', at: [GEMS_FILTER, [FT.gemsFilter, /areaChipActive: \{\s*backgroundColor: color\.onInk,/]] });
+add({ id: 'gemsFilter.area.labelActive', fg: color.ink, on: 'selected', kind: 'text', at: [[FT.gemsFilter, /areaChipActive: \{\s*backgroundColor: color\.onInk,/], [FT.gemsFilter, /areaChipLabelActive: \{\s*color: color\.ink,/]] });
+add({ id: 'gemsFilter.area.spinner', fg: color.onInk, on: 'gemsFilterArea', kind: 'ui', at: [GEMS_FILTER, [FT.gemsFilter, '<ActivityIndicator size="small" color={color.onInk} style={styles.chipSpinner} />']] });
+add({ id: 'gemsFilter.category.label', fg: color.onInkMute, on: 'gemsFilterCat', kind: 'text', at: [GEMS_FILTER, [FT.gemsFilter, /catChip: \{[^}]*backgroundColor: 'rgba\(255,255,255,0\.10\)'/], [FT.gemsFilter, /catChipLabel: \{\s*\.\.\.t\.small,\s*color: color\.onInkMute,/]] });
+add({ id: 'gemsFilter.category.selectedFill', fg: color.signal, on: 'gemsFilterPhoto', kind: 'ui', at: [GEMS_FILTER, [FT.gemsFilter, /catChipActive: \{\s*backgroundColor: color\.signal,/]] });
+add({ id: 'gemsFilter.category.labelActive', fg: color.ink, on: 'signalFill', kind: 'text', at: [[FT.gemsFilter, /catChipActive: \{\s*backgroundColor: color\.signal,/], [FT.gemsFilter, /catChipLabelActive: \{\s*color: color\.ink,/]] });
+// GemsFeed — its loaders and empty/error copy sit on the ink ground.
+const GEMS_EMPTY: Needle = [FT.gemsFeed, /emptyState: \{[^}]*backgroundColor: color\.ink,/];
+add({ id: 'gemsFeed.empty.title', fg: color.onInk, on: 'ink', kind: 'text', at: [GEMS_EMPTY, [FT.gemsFeed, /emptyTitle: \{\s*\.\.\.t\.heading,\s*color: color\.onInk,/]] });
+add({ id: 'gemsFeed.empty.body', fg: color.onInkMute, on: 'ink', kind: 'text', at: [GEMS_EMPTY, [FT.gemsFeed, /emptyBody: \{\s*\.\.\.t\.body,\s*color: color\.onInkMute,/]] });
+add({ id: 'gemsFeed.loading', fg: color.onInk, on: 'ink', kind: 'ui', at: [[FT.gemsFeed, '<ActivityIndicator size="large" color={color.onInk} />'], [FT.gemsFeed, /container: \{\s*flex: 1,\s*backgroundColor: color\.ink,/]] });
+// GridTile — badges and meta row on black backings (poster, or the haze cell), the processing overlay, the stamp's backing.
+const GRID_BADGE: Needle = [FT.gridTile, /badge: \{[^}]*backgroundColor: 'rgba\(0,0,0,0\.55\)'/];
+const GRID_META: Needle[] = [[FT.gridTile, "const SCRIM_BOTTOM = 'rgba(0,0,0,0.55)';"], [FT.gridTile, 'backgroundColor: SCRIM_BOTTOM']];
+add({ id: 'gridTile.badge.photoFloor', fg: color.onInk, on: 'gridScrimPhoto', kind: 'text', at: [GRID_BADGE, [FT.gridTile, /badgeText: \{[^}]*color: color\.onInk,/]] });
+add({ id: 'gridTile.badge.fallback', fg: color.onInk, on: 'gridScrimFallback', kind: 'text', at: [GRID_BADGE, [FT.gridTile, /cell: \{[^}]*backgroundColor: color\.haze,/]] });
+add({ id: 'gridTile.meta.photoFloor', fg: color.onInk, on: 'gridScrimPhoto', kind: 'text', at: [...GRID_META, [FT.gridTile, /metaText: \{[^}]*color: color\.onInk,/]] });
+add({ id: 'gridTile.meta.fallback', fg: color.onInk, on: 'gridScrimFallback', kind: 'text', at: [...GRID_META, [FT.gridTile, /cell: \{[^}]*backgroundColor: color\.haze,/]] });
+add({ id: 'gridTile.badgeIcons', fg: color.onInk, on: 'gridScrimPhoto', kind: 'decor', at: [[FT.gridTile, '<MapPin size={8} color={color.onInk}'], [FT.gridTile, '<VideoIcon size={8} color={color.onInk}']] });
+const GRID_PROCESSING: Needle = [FT.gridTile, /processingOverlay: \{[^}]*backgroundColor: 'rgba\(17,17,15,0\.65\)'/];
+add({ id: 'gridTile.processing.photoFloor', fg: 'rgba(250,249,246,0.85)', on: 'gridProcessingPhoto', kind: 'text', at: [GRID_PROCESSING, [FT.gridTile, /processingText: \{[^}]*color: color\.onInk,[^}]*opacity: 0\.85,/]] });
+add({ id: 'gridTile.processingSpinner.photoFloor', fg: color.onInk, on: 'gridProcessingPhoto', kind: 'ui', at: [GRID_PROCESSING, [FT.gridTile, '<ActivityIndicator size="small" color={color.onInk} />']] });
+const GRID_STAMP: Needle[] = [[FT.gridTile, "zIndex: 6, borderRadius: 999, backgroundColor: 'rgba(17,17,15,0.95)',"], [FT.gridTile, '<StampButton']];
+add({ id: 'gridTile.stampButton.icon.idle.photoFloor', fg: color.mute, on: 'gridStampPhoto', kind: 'ui', at: [...GRID_STAMP, STAMP_BUTTON_ICON, STAMP_ICON_COLOUR] });
+add({ id: 'gridTile.stampButton.icon.active.photoFloor', fg: color.signal, on: 'gridStampPhoto', kind: 'ui', at: [...GRID_STAMP, STAMP_BUTTON_ICON, STAMP_ICON_COLOUR] });
+add({ id: 'gridTile.stampButton.count.active.photoFloor', fg: color.signal, on: 'gridStampPhoto', kind: 'text', at: [...GRID_STAMP, STAMP_COUNT_ACTIVE] });
+// PINNED: as viewer.stampButton.count.idle.
+add({ id: 'gridTile.stampButton.count.idle.photoFloor', fg: color.mute, on: 'gridStampPhoto', kind: 'text', at: [...GRID_STAMP, STAMP_COUNT_IDLE], finding: 3.04 });
+// GridFilterBar, MasonryGrid, GridFeed — on paper.
+add({ id: 'gridFilter.chip', fg: '#696660', on: 'haze', kind: 'text', at: [[FT.gridFilter, /chip: \{[^}]*backgroundColor: color\.haze,/], [FT.gridFilter, /chipText: \{\s*\.\.\.t\.small,\s*color: '#696660',/]] });
+add({ id: 'gridFilter.chipActive', fg: color.onInk, on: 'ink', kind: 'text', at: [[FT.gridFilter, /chipActive: \{\s*backgroundColor: color\.ink,/], [FT.gridFilter, /chipTextActive: \{\s*color: color\.onInk,/]] });
+add({ id: 'gridFilter.selectedFill', fg: color.ink, on: 'paper', kind: 'ui', at: [[FT.gridFilter, /wrapper: \{\s*backgroundColor: color\.paper,/], [FT.gridFilter, /chipActive: \{\s*backgroundColor: color\.ink,/]] });
+add({ id: 'gridFilter.nearbyIcon', fg: color.mute, on: 'haze', kind: 'decor', at: [[FT.gridFilter, 'color={active ? color.paper : color.mute}']] });
+add({ id: 'gridFilter.locationError', fg: color.mute, on: 'paper', kind: 'text', at: [[FT.gridFilter, /locationErrorText: \{\s*\.\.\.t\.small,\s*color: color\.mute,/]] });
+add({ id: 'masonry.refresh', fg: color.signal, on: 'paper', kind: 'ui', at: [[FT.masonry, 'tintColor={color.signal}'], [FT.masonry, /scroll: \{\s*flex: 1,\s*backgroundColor: color\.paper,/]] });
+const EMPTY_STATE: Needle[] = [[FT.gridFeed, '<EmptyState'], [FT.gridFeed, /container: \{\s*flex: 1,\s*backgroundColor: color\.paper,/]];
+add({ id: 'gridFeed.emptyState.title', fg: color.ink, on: 'paper', kind: 'text', at: [...EMPTY_STATE, [FT.emptyState, /title: \{\s*\.\.\.typography\.sectionTitle,\s*color: color\.ink,/]] });
+add({ id: 'gridFeed.emptyState.description', fg: color.mute, on: 'paper', kind: 'text', at: [...EMPTY_STATE, [FT.emptyState, /description: \{\s*\.\.\.typography\.body,\s*color: color\.mute,/]] });
+// PINNED: the shared EmptyState's primary action is onInk on `signal`; the Grid's error state shows it. The fix is in src/components/ui/EmptyState.tsx.
+add({ id: 'gridFeed.emptyState.retryButton', fg: color.onInk, on: 'signalFill', kind: 'text', at: [...EMPTY_STATE, [FT.gridFeed, "primaryAction={{ label: 'Try again', onPress: loadFeed }}"], [FT.emptyState, /btn: \{[^}]*backgroundColor: color\.signal,/], [FT.emptyState, /btnText: \{\s*\.\.\.typography\.button,\s*color: color\.onInk,/]], finding: 3.14 });
+// WatchRadialMenu — each arc button's fill darkened in its own hue until its white 8 px label reads 4.5:1.
+const RADIAL_LABEL: Needle = [FT.radial, /arcLabel: \{[^}]*color: '#fff',/];
+for (const [id, fill, on] of [['gem', '#8558EC', 'radialPurple'], ['route', '#D64127', 'radialSignal'], ['announce', '#0B7DB1', 'radialSky'], ['verify', '#0C875E', 'radialGreen']] as const) {
+  add({ id: `radial.${id}.label`, fg: WHITE, on, kind: 'text', at: [[FT.radial, `bgColor: '${fill}',`], RADIAL_LABEL] });
+  add({ id: `radial.${id}.icon`, fg: WHITE, on, kind: 'decor', at: [[FT.radial, `bgColor: '${fill}',`], [FT.radial, "{item.icon(18, '#fff')}"]] });
+}
+add({ id: 'radial.hub', fg: WHITE, on: 'radialBackdropPhoto', kind: 'decor', at: [[FT.radial, /hubInner: \{[^}]*backgroundColor: '#fff',/], [FT.radial, "backgroundColor: 'rgba(0,0,0,0.35)',"]] });
+// StampItBurst — a transient celebration; decorative (1.4.3). Measured and printed, not asserted.
+add({ id: 'burst.stampedLabel', fg: color.signal, on: 'burstPhoto', kind: 'decor', at: [[FT.burst, /stampLabel: \{[^}]*color: color\.signal,/], [FT.burst, "backgroundColor: 'rgba(255,60,60,0.12)',"]] });
+// MediaMoreMenu, MediaQuickCreateSheet, RouteItPlaceSheet — paper sheets.
+const MORE_SHEET: Needle = [FT.moreMenu, /sheet: \{[^}]*backgroundColor: color\.paper,/];
+add({ id: 'moreMenu.title', fg: color.ink, on: 'paper', kind: 'text', at: [MORE_SHEET, [FT.moreMenu, /sheetTitle: \{\s*\.\.\.t\.heading,\s*color: color\.ink,/]] });
+add({ id: 'moreMenu.row', fg: color.ink, on: 'paper', kind: 'text', at: [MORE_SHEET, [FT.moreMenu, /rowLabel: \{\s*\.\.\.t\.body,\s*color: color\.ink,/]] });
+add({ id: 'moreMenu.rowDestructive', fg: '#C43B23', on: 'paper', kind: 'text', at: [MORE_SHEET, [FT.moreMenu, /rowLabelDestructive: \{\s*color: '#C43B23',/]] });
+add({ id: 'moreMenu.close', fg: color.mute, on: 'paper', kind: 'ui', at: [MORE_SHEET, [FT.moreMenu, '<X size={20} color={color.mute}']] });
+add({ id: 'moreMenu.rowIcons', fg: color.ink, on: 'paper', kind: 'decor', at: [[FT.moreMenu, 'const iconColor = color.ink;']] });
+const QC_SHEET: Needle = [FT.quickCreate, /sheet: \{\s*backgroundColor: color\.paper,/];
+add({ id: 'quickCreate.title', fg: color.ink, on: 'paper', kind: 'text', at: [QC_SHEET, [FT.quickCreate, /headerTitle: \{\s*\.\.\.t\.heading,\s*color: color\.ink,/]] });
+add({ id: 'quickCreate.rowLabel', fg: color.ink, on: 'paper', kind: 'text', at: [QC_SHEET, [FT.quickCreate, /rowLabel: \{\s*\.\.\.t\.bodyStrong,\s*color: color\.ink,/]] });
+add({ id: 'quickCreate.rowSub', fg: color.mute, on: 'paper', kind: 'text', at: [QC_SHEET, [FT.quickCreate, /rowSub: \{\s*\.\.\.t\.small,\s*color: color\.mute,/]] });
+add({ id: 'quickCreate.gemLabel', fg: '#065F46', on: 'quickCreateHighlight', kind: 'text', at: [[FT.quickCreate, "backgroundColor: '#10B98108',"], [FT.quickCreate, /rowLabelHighlight: \{\s*color: '#065F46',/]] });
+add({ id: 'quickCreate.gemSub', fg: color.mute, on: 'quickCreateHighlight', kind: 'text', at: [[FT.quickCreate, "backgroundColor: '#10B98108',"], [FT.quickCreate, /rowSub: \{\s*\.\.\.t\.small,\s*color: color\.mute,/]] });
+add({ id: 'quickCreate.close', fg: color.ink, on: 'paperRaised', kind: 'ui', at: [[FT.quickCreate, '<X size={18} color={color.ink} />'], [FT.quickCreate, /closeBtn: \{[^}]*backgroundColor: color\.paperRaised,/]] });
+add({ id: 'quickCreate.entryIcons', fg: color.signal, on: 'paper', kind: 'decor', at: [[FT.quickCreate, '<IconComponent size={20} color={entry.iconColor} strokeWidth={1.8} />']] });
+add({ id: 'routeIt.title', fg: color.ink, on: 'paper', kind: 'text', at: [[FT.routeIt, /title: \{\s*\.\.\.t\.heading,\s*color: color\.ink,/]] });
+add({ id: 'routeIt.placeName', fg: color.ink, on: 'paperRaised', kind: 'text', at: [[FT.routeIt, /placeCard: \{[^}]*backgroundColor: color\.paperRaised,/], [FT.routeIt, /placeName: \{\s*\.\.\.t\.bodyStrong,\s*color: color\.ink,/]] });
+add({ id: 'routeIt.placeMeta', fg: color.mute, on: 'paperRaised', kind: 'text', at: [[FT.routeIt, /placeMeta: \{\s*\.\.\.t\.small,\s*color: color\.mute,/]] });
+add({ id: 'routeIt.mapLabel', fg: color.deep, on: 'routeItMapThumb', kind: 'text', at: [[FT.routeIt, "backgroundColor: '#D6E8F0',"], [FT.routeIt, /mapThumbLabel: \{\s*\.\.\.t\.small,\s*color: color\.deep,/]] });
+add({ id: 'routeIt.addToTrip', fg: color.onInk, on: 'vermilionOnPaper', kind: 'text', at: [[FT.routeIt, "backgroundColor: '#C43B23',"], [FT.routeIt, /addBtnText: \{\s*\.\.\.t\.bodyStrong,\s*color: color\.onInk,/]] });
+add({ id: 'routeIt.emptyTitle', fg: color.ink, on: 'paper', kind: 'text', at: [[FT.routeIt, /emptyTitle: \{\s*\.\.\.t\.bodyStrong,\s*color: color\.ink,/]] });
+add({ id: 'routeIt.emptyBody', fg: color.mute, on: 'paper', kind: 'text', at: [[FT.routeIt, /emptyBody: \{\s*\.\.\.t\.body,\s*color: color\.mute,/]] });
+add({ id: 'routeIt.close', fg: color.ink, on: 'paperRaised', kind: 'ui', at: [[FT.routeIt, '<X size={18} color={color.ink} />']] });
+// AddGemForm — the add-gem route's paper sheet.
+const ADD_GEM_SHEET: Needle = [FT.addGemRoute, /sheet: \{\s*backgroundColor: color\.paper,/];
+const VERMILION = '#C43B23';
+const ADD_GEM_TEXT: ReadonlyArray<readonly [id: string, fg: string, on: SurfaceId, needle: Needle]> = [
+  ['stepTitle', color.ink, 'paper', [FT.addGem, /stepTitle: \{\s*\.\.\.t\.heading,\s*color: color\.ink,/]],
+  ['stepSubtitle', color.mute, 'paper', [FT.addGem, /stepSubtitle: \{\s*\.\.\.t\.small,\s*color: color\.mute,/]],
+  ['back', VERMILION, 'paper', [FT.addGem, /backBtnText: \{\s*\.\.\.t\.small,\s*color: '#C43B23',/]],
+  ['description', color.mute, 'paper', [FT.addGem, /stepDescription: \{\s*\.\.\.t\.body,\s*color: color\.mute,/]],
+  ['mediaPicker', color.mute, 'paperRaised', [FT.addGem, /mediaPickerBtnText: \{\s*\.\.\.t\.small,\s*color: color\.mute,/]],
+  ['hint', color.mute, 'paper', [FT.addGem, /hint: \{\s*\.\.\.t\.small,\s*color: color\.mute,/]],
+  ['label', color.mute, 'paper', [FT.addGem, /label: \{[^}]*color: color\.mute,/]],
+  ['requiredMark', VERMILION, 'paper', [FT.addGem, /required: \{\s*color: '#C43B23',/]],
+  ['input', color.ink, 'paperRaised', [FT.addGem, /input: \{\s*\.\.\.t\.body,\s*color: color\.ink,\s*backgroundColor: color\.paperRaised,/]],
+  ['placeholder', color.mute, 'paperRaised', [FT.addGem, 'placeholderTextColor={color.mute}']],
+  ['fieldError', VERMILION, 'paper', [FT.addGem, /fieldError: \{\s*\.\.\.t\.small,\s*color: '#C43B23',/]],
+  ['placeButton', color.ink, 'paperRaised', [FT.addGem, /placeBtnText: \{[^}]*color: color\.ink,/]],
+  ['placeButtonPlaceholder', color.mute, 'paperRaised', [FT.addGem, /placeBtnPlaceholder: \{\s*color: color\.mute,/]],
+  ['chip', color.ink, 'paperRaised', [FT.addGem, /chipText: \{\s*\.\.\.t\.small,\s*color: color\.ink,/]],
+  ['chipActive', WHITE, 'gemGreen', [FT.addGem, /chipTextActive: \{\s*color: '#fff',/]],
+  ['confirm', color.ink, 'paperRaised', [FT.addGem, /checkboxText: \{\s*\.\.\.t\.body,\s*color: color\.ink,/]],
+  ['confirmError', VERMILION, 'errorTint', [FT.addGem, /checkboxTextError: \{\s*color: '#C43B23',/]],
+  ['optionalSection', color.mute, 'paper', [FT.addGem, /optionalSection: \{\s*\.\.\.t\.small,\s*color: color\.mute,/]],
+  ['optionalBadge', color.mute, 'paper', [FT.addGem, /optionalBadge: \{\s*\.\.\.t\.small,\s*color: color\.mute,/]],
+  ['error', VERMILION, 'errorTint', [FT.addGem, /errorText: \{\s*\.\.\.t\.small,\s*color: '#C43B23',/]],
+  ['primaryButton', WHITE, 'gemGreen', [FT.addGem, /primaryBtnText: \{\s*\.\.\.t\.bodyStrong,\s*color: '#fff',/]],
+  ['centeredTitle', color.ink, 'paper', [FT.addGem, /centeredTitle: \{\s*\.\.\.t\.heading,\s*color: color\.ink,/]],
+  ['centeredBody', color.mute, 'paper', [FT.addGem, /centeredBody: \{\s*\.\.\.t\.body,\s*color: color\.mute,/]],
+  ['closeText', VERMILION, 'paper', [FT.addGem, /closeTextBtnLabel: \{\s*\.\.\.t\.bodyStrong,\s*color: '#C43B23',/]],
+];
+for (const [id, fg, on, needle] of ADD_GEM_TEXT) add({ id: `addGem.${id}`, fg, on, kind: 'text', at: [ADD_GEM_SHEET, needle] });
+add({ id: 'addGem.chipSelectedFill', fg: '#0C875E', on: 'paper', kind: 'ui', at: [ADD_GEM_SHEET, [FT.addGem, /chipActive: \{\s*backgroundColor: '#0C875E',/]] });
+add({ id: 'addGem.confirmChecked', fg: '#0C875E', on: 'paperRaised', kind: 'ui', at: [[FT.addGem, '<CheckSquare size={20} color="#0C875E" strokeWidth={2} />'], [FT.addGem, /checkboxRow: \{[^}]*backgroundColor: color\.paperRaised,/]] });
+add({ id: 'addGem.confirmUnchecked', fg: color.mute, on: 'paperRaised', kind: 'ui', at: [[FT.addGem, '<Square size={20} color={errors.confirms ? color.signal : color.mute} strokeWidth={1.8} />']] });
+add({ id: 'addGem.confirmUncheckedError', fg: color.signal, on: 'errorTint', kind: 'ui', at: [[FT.addGem, '<Square size={20} color={errors.confirms ? color.signal : color.mute} strokeWidth={1.8} />'], [FT.addGem, "backgroundColor: '#FEF2F2',"]] });
+add({ id: 'addGem.spinner', fg: color.signal, on: 'paper', kind: 'ui', at: [[FT.addGem, '<ActivityIndicator size="large" color={color.signal} />']] });
+add({ id: 'addGem.submitSpinner', fg: WHITE, on: 'gemGreen', kind: 'ui', at: [[FT.addGem, '<ActivityIndicator size="small" color="#fff" />'], [FT.addGem, /primaryBtn: \{\s*backgroundColor: '#0C875E',/]] });
+add({ id: 'addGem.close', fg: color.ink, on: 'paperRaised', kind: 'ui', at: [[FT.addGem, '<X size={18} color={color.ink} />'], [FT.addGem, /closeBtn: \{[^}]*backgroundColor: color\.paperRaised,/]] });
+const ADD_GEM_PREVIEW: Needle = [FT.addGem, /durationBadge: \{[^}]*backgroundColor: 'rgba\(17,17,15,0\.65\)'/];
+add({ id: 'addGem.duration.photoFloor', fg: WHITE, on: 'addGemBadgePhoto', kind: 'text', at: [ADD_GEM_PREVIEW, [FT.addGem, /durationText: \{[^}]*color: '#fff',/]] });
+add({ id: 'addGem.removeMedia.photoFloor', fg: WHITE, on: 'addGemBadgePhoto', kind: 'ui', at: [[FT.addGem, /mediaRemoveBtn: \{[^}]*backgroundColor: 'rgba\(17,17,15,0\.65\)'/], [FT.addGem, '<X size={14} color="#fff" />']] });
+add({ id: 'addGem.submitDisabled', fg: 'rgba(255,255,255,0.4)', on: 'gemGreen', kind: 'decor', at: [[FT.addGem, /btnDisabled: \{\s*opacity: 0\.4,/]] });
+// The tab route — its floating buttons and the World pill.
+add({ id: 'tab.fab.icon', fg: WHITE, on: 'signalFill', kind: 'ui', at: [[FT.tab, /fab: \{[^}]*backgroundColor: color\.signal,/], [FT.tab, '<Camera size={22} color="#fff"']] });
+add({ id: 'tab.fabGems.icon', fg: WHITE, on: 'gemGreen', kind: 'ui', at: [[FT.tab, /fabGems: \{[^}]*backgroundColor: '#0C875E',/], [FT.tab, '<Gem size={22} color="#fff"']] });
+add({ id: 'tab.worldPill.photoFloor', fg: WHITE, on: 'worldPillPhoto', kind: 'text', at: [[FT.tab, "backgroundColor: 'rgba(17,17,15,0.58)',"], [FT.tab, "<Text style={[styles.worldEntryText, { color: isImmersive ? '#fff' : color.ink }]}>World</Text>"]] });
+add({ id: 'tab.worldPill.light', fg: color.ink, on: 'paperRaised', kind: 'text', at: [[FT.tab, /worldEntryBtnLight: \{\s*backgroundColor: color\.paperRaised,/], [FT.tab, "<Text style={[styles.worldEntryText, { color: isImmersive ? '#fff' : color.ink }]}>World</Text>"]] });
+add({ id: 'tab.gridCreate.icon', fg: color.ink, on: 'paperRaised', kind: 'ui', at: [[FT.tab, /gridCreateBtn: \{[^}]*backgroundColor: color\.paperRaised,/], [FT.tab, '<Camera size={18} color={color.ink}']] });
+// PINNED: the shared AppHeader's overlay title ("Watch" / "Gems") is #fff on a 0.28 black tint over the frame; the tab has no prop to change it. The fix is in src/components/ui/AppHeader.tsx.
+add({ id: 'tab.appHeaderOverlay.title.photoFloor', fg: WHITE, on: 'appHeaderOverlayPhoto', kind: 'text', at: [[FT.tab, 'variant="overlay"'], [FT.appHeader, "const overlayBg = transparent ? 'transparent' : 'rgba(0,0,0,0.28)';"], [FT.appHeader, "{centeredTitle('#fff')}"]], finding: 1.99 });
+
+// Measure every pair added since MEASURED was first built.
+MEASURED.push(...PAIRS.slice(MEASURED.length).map(measurePair));
+
+test('census-media §31.12: every pair, the tail\'s included, is measured', () => {
+  assert.equal(MEASURED.length, PAIRS.length);
+  assert.deepEqual(MEASURED.map((m) => m.pair.id), PAIRS.map((p) => p.id));
+  assert.ok(PAIRS.length >= 500, `expected >= 500 pairs, got ${PAIRS.length}`);
+});
+
+test('census-media §31.12: every file the tail lists is cited by a pair', () => {
+  const cited = new Set(PAIRS.flatMap((p) => p.at.map(([file]) => file)));
+  for (const file of Object.values(FT)) assert.ok(cited.has(file), `${file} is listed but no pair cites it`);
+});
+
+test('census-media §31.12: a pinned pair names the shared file that blocks its fix', () => {
+  const unblocked = PAIRS.filter((p) => p.finding !== undefined && !p.at.some(([file]) => SHARED_BLOCKERS.includes(file))).map((p) => p.id);
+  assert.deepEqual(unblocked, [], 'a failure inside Media\'s own files must be fixed, not pinned');
+});
+
+test('dynamic type (the shipped Media tab): no Text opts out of, or caps, OS font scaling', () => {
+  const files: string[] = [];
+  walk('src/components/media', files);
+  files.push(FT.tab, FT.addGemRoute);
+  let textElements = 0;
+  const offenders: string[] = [];
+  for (const file of files) {
+    const text = source(file);
+    textElements += (text.match(/<Text\b/g) ?? []).length;
+    if (/allowFontScaling\s*=\s*\{\s*false\s*\}/.test(text)) offenders.push(`${file}: allowFontScaling={false}`);
+    if (/maxFontSizeMultiplier/.test(text)) offenders.push(`${file}: maxFontSizeMultiplier`);
+  }
+  assert.ok(files.length >= 20, `scanned ${files.length} files`);
+  assert.ok(textElements >= 80, `found ${textElements} <Text elements`);
+  assert.deepEqual(offenders, []);
 });

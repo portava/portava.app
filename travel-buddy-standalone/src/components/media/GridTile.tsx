@@ -183,7 +183,7 @@ export const GridTile = memo(GridTileInner);
 
 // ── Styles ────────────────────────────────────────────────────────────────────
 
-const SCRIM_BOTTOM = 'rgba(0,0,0,0.48)';
+const SCRIM_BOTTOM = 'rgba(0,0,0,0.55)'; // census-media §31.12: the least alpha at which the 9 px meta line clears 4.5:1 over a white poster; was 0.48
 
 const styles = StyleSheet.create({
   cell: {
@@ -223,7 +223,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 2,
-    backgroundColor: 'rgba(0,0,0,0.45)',
+    backgroundColor: 'rgba(0,0,0,0.55)', // census-media §31.12: the least alpha at which the 8 px badge text clears 4.5:1 over a white poster; was 0.45
     borderRadius: radius.sm,
     paddingHorizontal: 4,
     paddingVertical: 2,
@@ -282,6 +282,6 @@ const styles = StyleSheet.create({
     position: 'absolute',
     bottom: 4,
     right: 4,
-    zIndex: 6,
+    zIndex: 6, borderRadius: 999, backgroundColor: 'rgba(17,17,15,0.95)', // census-media §31.12: an ink backing, the least alpha at which the shared StampButton's idle `mute` icon clears 3:1 over any poster
   },
 });

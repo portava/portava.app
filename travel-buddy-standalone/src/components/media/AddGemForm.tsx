@@ -560,7 +560,7 @@ export function AddGemForm({ onSuccess, onClose }: AddGemFormProps) {
             value={placeName}
             onChangeText={setPlaceName}
             placeholder="e.g. Warung Nasi Campur Bu Oka"
-            placeholderTextColor={color.faint}
+            placeholderTextColor={color.mute}
             editable={!submitting}
           />
           {errors.placeName && (
@@ -603,7 +603,7 @@ export function AddGemForm({ onSuccess, onClose }: AddGemFormProps) {
             value={cityArea}
             onChangeText={setCityArea}
             placeholder="e.g. Ubud, Bali"
-            placeholderTextColor={color.faint}
+            placeholderTextColor={color.mute}
             editable={!submitting}
           />
           {errors.cityArea && (
@@ -621,7 +621,7 @@ export function AddGemForm({ onSuccess, onClose }: AddGemFormProps) {
             value={caption}
             onChangeText={setCaption}
             placeholder="Describe what makes this place special…"
-            placeholderTextColor={color.faint}
+            placeholderTextColor={color.mute}
             multiline
             numberOfLines={4}
             textAlignVertical="top"
@@ -671,7 +671,7 @@ export function AddGemForm({ onSuccess, onClose }: AddGemFormProps) {
           accessibilityState={{ checked: confirmedDepicts }}
         >
           {confirmedDepicts ? (
-            <CheckSquare size={20} color="#10B981" strokeWidth={2} />
+            <CheckSquare size={20} color="#0C875E" strokeWidth={2} />
           ) : (
             <Square size={20} color={errors.confirms ? color.signal : color.mute} strokeWidth={1.8} />
           )}
@@ -696,7 +696,7 @@ export function AddGemForm({ onSuccess, onClose }: AddGemFormProps) {
             value={bestTimeToVisit}
             onChangeText={setBestTimeToVisit}
             placeholder="e.g. Early morning on weekdays"
-            placeholderTextColor={color.faint}
+            placeholderTextColor={color.mute}
             editable={!submitting}
           />
         </View>
@@ -749,7 +749,7 @@ export function AddGemForm({ onSuccess, onClose }: AddGemFormProps) {
             value={accessibility}
             onChangeText={setAccessibility}
             placeholder="e.g. Wheelchair accessible, stairs required…"
-            placeholderTextColor={color.faint}
+            placeholderTextColor={color.mute}
             editable={!submitting}
           />
         </View>
@@ -762,7 +762,7 @@ export function AddGemForm({ onSuccess, onClose }: AddGemFormProps) {
             value={tips}
             onChangeText={setTips}
             placeholder="Share what you wish you knew before going…"
-            placeholderTextColor={color.faint}
+            placeholderTextColor={color.mute}
             multiline
             numberOfLines={3}
             textAlignVertical="top"
@@ -914,7 +914,7 @@ const styles = StyleSheet.create({
   },
   backBtnText: {
     ...t.small,
-    color: color.signal,
+    color: '#C43B23', // census-media §31.12: `signal` x 0.77 (4.99:1 on paper; `signal` is 3.14)
     fontWeight: '600',
   },
   stepBody: {
@@ -987,7 +987,7 @@ const styles = StyleSheet.create({
   },
   hint: {
     ...t.small,
-    color: color.faint,
+    color: color.mute, // census-media §31.12: `faint` is 2.73:1 on paper
     fontSize: 11,
   },
 
@@ -1004,7 +1004,7 @@ const styles = StyleSheet.create({
     textTransform: 'uppercase',
   },
   required: {
-    color: color.signal,
+    color: '#C43B23', // census-media §31.12: `signal` x 0.77
   },
   input: {
     ...t.body,
@@ -1025,7 +1025,7 @@ const styles = StyleSheet.create({
   },
   fieldError: {
     ...t.small,
-    color: color.signal,
+    color: '#C43B23', // census-media §31.12: `signal` x 0.77
     fontWeight: '600',
   },
 
@@ -1050,7 +1050,7 @@ const styles = StyleSheet.create({
     color: color.ink,
   },
   placeBtnPlaceholder: {
-    color: color.faint,
+    color: color.mute, // census-media §31.12: `faint` is 2.88:1 on paperRaised
   },
 
   // Chips
@@ -1068,8 +1068,8 @@ const styles = StyleSheet.create({
     backgroundColor: color.paperRaised,
   },
   chipActive: {
-    backgroundColor: '#10B981',
-    borderColor: '#10B981',
+    backgroundColor: '#0C875E', // census-media §31.12: #10B981 x 0.73, the lightest same-hue fill under which white text reads 4.5:1
+    borderColor: '#0C875E',
   },
   chipText: {
     ...t.small,
@@ -1103,7 +1103,7 @@ const styles = StyleSheet.create({
     lineHeight: 20,
   },
   checkboxTextError: {
-    color: color.signal,
+    color: '#C43B23', // census-media §31.12: `signal` x 0.77 (4.80:1 on the error tint)
   },
 
   // Optional section divider
@@ -1121,7 +1121,7 @@ const styles = StyleSheet.create({
   },
   optionalBadge: {
     ...t.small,
-    color: color.faint,
+    color: color.mute, // census-media §31.12: `faint` is 2.73:1 on paper
     fontWeight: '400',
     textTransform: 'none',
     letterSpacing: 0,
@@ -1135,7 +1135,7 @@ const styles = StyleSheet.create({
   },
   errorText: {
     ...t.small,
-    color: color.signal,
+    color: '#C43B23', // census-media §31.12: `signal` x 0.77 (4.80:1 on the error tint)
     fontWeight: '600',
   },
 
@@ -1147,7 +1147,7 @@ const styles = StyleSheet.create({
     borderTopColor: color.haze,
   },
   primaryBtn: {
-    backgroundColor: '#10B981',
+    backgroundColor: '#0C875E', // census-media §31.12: #10B981 x 0.73 (white on it, 4.53:1)
     borderRadius: radius.md,
     paddingVertical: 14,
     alignItems: 'center',
@@ -1186,6 +1186,6 @@ const styles = StyleSheet.create({
   },
   closeTextBtnLabel: {
     ...t.bodyStrong,
-    color: color.signal,
+    color: '#C43B23', // census-media §31.12: `signal` x 0.77
   },
 });

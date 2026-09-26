@@ -30,14 +30,14 @@ export function VerifiedLocationStamp({ locationName, style }: VerifiedLocationS
 const s = StyleSheet.create({
   wrap: {
     alignSelf: 'flex-start',
-    opacity: 0.38,
+    opacity: 1, // census-media §31.12: was 0.38 with no backing, which no photo guaranteed; the stamp now carries its own ink backing
     transform: [{ rotate: '-12deg' }],
   },
   stamp: {
     borderWidth: 2,
     borderColor: '#E8DFC8',
     borderRadius: 40,
-    borderStyle: 'dashed',
+    borderStyle: 'dashed', backgroundColor: 'rgba(17,17,15,0.66)', // census-media §31.12: the least alpha at which the stamp's text clears 4.5:1 over a white photo
     paddingHorizontal: 12,
     paddingVertical: 6,
     alignItems: 'center',

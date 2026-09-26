@@ -622,7 +622,7 @@ const s = StyleSheet.create({
   },
   progressTrack: {
     height: 3,
-    backgroundColor: 'rgba(255,255,255,0.22)',
+    backgroundColor: 'rgba(17,17,15,0.80)', // census-media §31.12: a dark track, the least alpha at which the `signal` fill clears 3:1 over any frame; was a 0.22 light wash (1.00:1)
   },
   progressTrackActive: {
     height: 5,
@@ -654,7 +654,7 @@ const s = StyleSheet.create({
   pauseIcon: {
     flexDirection: 'row',
     gap: 6,
-    width: 44,
+    width: 44, borderRadius: radius.md, backgroundColor: 'rgba(17,17,15,0.57)', // census-media §31.12: an ink backing, the least alpha at which the pause bars clear 3:1 over any frame
     height: 52,
     alignItems: 'center',
     justifyContent: 'center',
@@ -686,7 +686,7 @@ const s = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
-    backgroundColor: 'rgba(0,0,0,0.4)',
+    backgroundColor: 'rgba(0,0,0,0.59)', // census-media §31.12: the least alpha at which the hint clears 4.5:1 over a white frame; was 0.4
     borderRadius: radius.pill,
     paddingHorizontal: 10,
     paddingVertical: 5,

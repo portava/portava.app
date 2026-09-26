@@ -232,7 +232,7 @@ const s = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     gap: 8,
-    backgroundColor: color.signal,
+    backgroundColor: '#C43B23', // census-media §31.12: `signal` x 0.77; onInk on it is 4.99:1 (on `signal`, 3.14)
     borderRadius: radius.md,
     paddingVertical: 14,
   },

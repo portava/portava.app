@@ -403,7 +403,7 @@ export function WatchItemOverlay({
           <View ref={stampGroupRef} style={s.heartGroup}>
             <Animated.View style={stampButtonStyle as any}>
               <ActionBtn
-                icon={<StampIcon size={28} active={stampVisualIsStamped} />}
+                icon={<StampIcon size={28} active={stampVisualIsStamped} color={stampVisualIsStamped ? color.signal : '#fff'} />}
                 count={stampVisualCount}
                 onPress={onStampPress}
                 label={stampVisualIsStamped ? 'Unstamp' : 'Stamp'}
@@ -495,7 +495,7 @@ const s = StyleSheet.create({
   leftCol: {
     flex: 1,
     gap: 6,
-    paddingRight: space.sm,
+    paddingRight: space.sm, padding: space.sm, borderRadius: radius.md, backgroundColor: 'rgba(17,17,15,0.71)', // census-media §31.12: an ink backing under the left column, the least alpha at which every line in it clears 4.5:1 over a white frame
   },
   creatorRow: {
     flexDirection: 'row',
@@ -602,7 +602,7 @@ const s = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 6,
     borderRadius: 16,
-    backgroundColor: 'rgba(255,255,255,0.18)',
+    backgroundColor: 'rgba(17,17,15,0.58)', // census-media §31.12: was a 0.18 light wash (1.00:1 over a white frame)
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.35)',
     flexDirection: 'row',
@@ -618,7 +618,7 @@ const s = StyleSheet.create({
   rightCol: {
     alignItems: 'center',
     gap: space.xl,
-    paddingBottom: space.sm,
+    paddingBottom: space.sm, paddingTop: space.md, paddingHorizontal: space.xs, borderRadius: radius.pill, backgroundColor: 'rgba(17,17,15,0.80)', // census-media §31.12: an ink backing under the action rail; 0.80 is set by the saved bookmark in `signal`
   },
   actionBtn: {
     alignItems: 'center',
