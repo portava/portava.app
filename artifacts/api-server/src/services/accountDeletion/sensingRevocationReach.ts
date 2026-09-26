@@ -176,7 +176,7 @@ export async function enumerateSensingRevocationReach(
     await readAll(
       () =>
         sc
-          .from(SESSION_EVENTS_TABLE)
+          .from("canonical_events")
           .select("id, actor_id, subject_id, payload, occurred_at")
           .in("verb", [...SESSION_VERBS])
           .eq("subject_kind", "place")
@@ -215,3 +215,13 @@ export async function enumerateSensingRevocationReach(
     memoryStore: "none_persisted",
   };
 }
+
+/**
+ * Compile-time tie for the literal `.from("canonical_events")` above. It is a
+ * literal, not `SESSION_EVENTS_TABLE`, because check:write-path-columns
+ * resolves table names statically and reads an imported constant as a blind
+ * spot. If `SESSION_EVENTS_TABLE` ever changes, this line stops compiling
+ * (TS2322) before a query can go to the wrong table.
+ */
+const _sessionEventsTableTie: typeof SESSION_EVENTS_TABLE = "canonical_events";
+void _sessionEventsTableTie;
