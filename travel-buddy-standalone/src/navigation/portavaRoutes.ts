@@ -1036,47 +1036,6 @@ export const PORTAVA_ROUTES: PortavaRouteDefinition[] = [
     icon: null,
     requiresAuth: false,
   },
-  {
-    key: 'media-map',
-    path: 'media-map/index',
-    title: 'Media Map',
-    parent: null,
-    icon: null,
-    requiresAuth: false,
-    // §4/§21 Media Map (census-media §19). Additive; reached from the World
-    // shell's lens Map modes and by deep link. Positions come from the
-    // canonical Map gateway — the screen owns no location engine.
-  },
-  {
-    key: 'media-search',
-    path: 'media-search/index',
-    title: 'Media Search',
-    parent: null,
-    icon: null,
-    requiresAuth: false,
-    // §4/§38 Media Search (census-media §19). Additive; reached from the World
-    // shell header and the viewer's "Where was this taken?".
-  },
-  {
-    key: 'media-timeline',
-    path: 'media-timeline/index',
-    title: 'Media Timeline',
-    parent: null,
-    icon: null,
-    requiresAuth: false,
-    // §4/§17 Media Timeline / Time Rail (census-media §19). Also mounted as the
-    // Time mode of the NOW and PLACES lenses.
-  },
-  {
-    key: 'media-contribute',
-    path: 'media-contribute/index',
-    title: 'Add your view',
-    parent: null,
-    icon: null,
-    requiresAuth: true,
-    // §4 Media Contribution (census-media §19). A current perspective of one
-    // canonical place, through the existing upload + post write.
-  },
 
   // ── Posts ─────────────────────────────────────────────────────────────────
 
@@ -2113,6 +2072,50 @@ export const PORTAVA_ROUTES: PortavaRouteDefinition[] = [
     icon: null,
     requiresAuth: true,
     adminOnly: true,
+  },
+
+  // ── Media client IA (census-media §19) — appended at the end so no cited
+  //    line above moves.
+  {
+    key: 'media-map',
+    path: 'media-map/index',
+    title: 'Media Map',
+    parent: null,
+    icon: null,
+    requiresAuth: false,
+    // §4/§21 Media Map (census-media §19). Additive; reached from the World
+    // shell's lens Map modes and by deep link. Positions come from the
+    // canonical Map gateway — the screen owns no location engine.
+  },
+  {
+    key: 'media-search',
+    path: 'media-search/index',
+    title: 'Media Search',
+    parent: null,
+    icon: null,
+    requiresAuth: false,
+    // §4/§38 Media Search (census-media §19). Additive; reached from the World
+    // shell header and the viewer's "Where was this taken?".
+  },
+  {
+    key: 'media-timeline',
+    path: 'media-timeline/index',
+    title: 'Media Timeline',
+    parent: null,
+    icon: null,
+    requiresAuth: false,
+    // §4/§17 Media Timeline / Time Rail (census-media §19). Also mounted as the
+    // Time mode of the NOW and PLACES lenses.
+  },
+  {
+    key: 'media-contribute',
+    path: 'media-contribute/index',
+    title: 'Add your view',
+    parent: null,
+    icon: null,
+    requiresAuth: true,
+    // §4 Media Contribution (census-media §19). A current perspective of one
+    // canonical place, through the existing upload + post write.
   },
 ];
 
