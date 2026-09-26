@@ -1645,3 +1645,117 @@ describe("GET /api/media/file — public vs signed mode", () => {
     assert.ok(r.location?.includes("token=signed"), `expected signed URL, got: ${r.location}`);
   });
 });
+
+// ── A message video's poster (census-media §26) ──────────────────────────────
+// Lane D (§22) changed what `uploadMedia` stores as a message video's
+// thumbnail: `/media/upload/poster` now writes the frame at the video's DERIVED
+// poster path (`<uid>/<ms>.mp4.poster.jpg`) and the composer stores that as
+// `messages.media_thumbnail_url`. §23.4 recorded that no messaging test covered
+// it. These cases are written against the rows the real writers produce:
+// `media_url` is `/media/upload`'s `post-media/<path>` relay form
+// (routes/posts.ts), and the thumbnail is the poster route's `thumbnailUrl`.
+// Appended at the tail so no cited line above moves.
+describe("a message video's derived poster is shown to exactly its thread (census-media §26)", () => {
+  const VIDEO = `${OWNER}/1790000000000.mp4`;
+  const POSTER = `${VIDEO}.poster.jpg`;
+  const SENT_AT = "2026-09-20T10:00:00.000Z";
+  const messageRow = (over: Record<string, unknown> = {}) => ({
+    thread_id: THREAD,
+    sender_id: OWNER,
+    created_at: SENT_AT,
+    media_url: `post-media/${VIDEO}`,
+    media_thumbnail_url: `post-media/${POSTER}`,
+    ...over,
+  });
+  const member = (over: Record<string, unknown> = {}) => ({ thread_id: THREAD, user_id: VIEWER, left_at: null, ...over });
+
+  it("a thread member loads the poster; an outsider does not", async () => {
+    assert.equal(
+      await authorizeMediaAccess(makeClient({ messages: [messageRow()], threadMembers: [member()] }), VIEWER, "post-media", POSTER),
+      true,
+      "a member of the thread the video was sent to sees its poster",
+    );
+    _clearMediaAccessCache();
+    assert.equal(
+      await authorizeMediaAccess(makeClient({ messages: [messageRow()], threadMembers: [] }), VIEWER, "post-media", POSTER),
+      false,
+      "an outsider is refused the poster",
+    );
+  });
+
+  it("the poster is decided as its VIDEO, so it is served even when the row names no thumbnail", async () => {
+    // An older client, or a poster upload that raced the send, leaves
+    // `media_thumbnail_url` null. The poster still exists at the derived path,
+    // and it is a frame of THIS video, so the video's audience decides it.
+    const row = messageRow({ media_thumbnail_url: null });
+    assert.equal(
+      await authorizeMediaAccess(makeClient({ messages: [row], threadMembers: [member()] }), VIEWER, "post-media", POSTER),
+      true,
+    );
+    _clearMediaAccessCache();
+    assert.equal(
+      await authorizeMediaAccess(makeClient({ messages: [row], threadMembers: [] }), VIEWER, "post-media", POSTER),
+      false,
+    );
+  });
+
+  it("a member who has LEFT the thread is refused the poster", async () => {
+    assert.equal(
+      await authorizeMediaAccess(makeClient({ messages: [messageRow()], threadMembers: [member({ left_at: "2026-09-21T00:00:00.000Z" })] }), VIEWER, "post-media", POSTER),
+      false,
+    );
+  });
+
+  it("the §14.3 history bound applies to the poster as it does to the video", async () => {
+    const flags = { telegraph_history_bound_enabled: true };
+    // Control: a member whose window opened before the message was sent.
+    assert.equal(
+      await authorizeMediaAccess(makeClient({ flags, messages: [messageRow()], threadMembers: [member({ visible_from_at: "2026-09-19T00:00:00.000Z" })] }), VIEWER, "post-media", POSTER),
+      true,
+    );
+    _clearMediaAccessCache();
+    // A member who joined AFTER the message was sent does not get its poster.
+    assert.equal(
+      await authorizeMediaAccess(makeClient({ flags, messages: [messageRow()], threadMembers: [member({ visible_from_at: "2026-09-21T00:00:00.000Z" })] }), VIEWER, "post-media", POSTER),
+      false,
+    );
+  });
+
+  it("a message naming SOMEONE ELSE's video does not make its poster readable to that thread", async () => {
+    // The poster is decided as the video, and the video's 3c row must be sent
+    // by the video's owner. A thread the attacker controls is not a key.
+    const ATTACKER = "99999999-9999-4999-8999-999999999999";
+    const sc = makeClient({
+      messages: [messageRow({ sender_id: ATTACKER })],
+      threadMembers: [member(), { thread_id: THREAD, user_id: ATTACKER, left_at: null }],
+    });
+    assert.equal(await authorizeMediaAccess(sc, VIEWER, "post-media", POSTER), false);
+    _clearMediaAccessCache();
+    assert.equal(await authorizeMediaAccess(sc, ATTACKER, "post-media", POSTER), false);
+  });
+
+  describe("on the wire — GET /api/media/file", () => {
+    before(() => {
+      const app = express();
+      app.use(express.json());
+      app.use((r: any, _res: any, next: any) => { r.log = { error() {}, info() {}, warn() {}, debug() {} }; next(); });
+      app.use("/api", mediaFileRouter);
+      return new Promise<void>((resolve) => { server = app.listen(0, "127.0.0.1", () => { base = `http://127.0.0.1:${(server.address() as any).port}`; resolve(); }); });
+    });
+    after(() => new Promise<void>((r) => server.close(() => r())));
+
+    it("a member is redirected to a signed poster URL; an outsider gets 403", async () => {
+      _clearMediaAccessCache();
+      setClients(makeClient({ messages: [messageRow()], threadMembers: [member()] }));
+      const ok = await req("GET", `/api/media/file/post-media/${POSTER}`);
+      assert.equal(ok.status, 302);
+      assert.ok(ok.location?.includes(`/object/sign/post-media/${POSTER}`), ok.location);
+
+      _clearMediaAccessCache();
+      setClients(makeClient({ messages: [messageRow()], threadMembers: [] }));
+      const refused = await req("GET", `/api/media/file/post-media/${POSTER}`);
+      assert.equal(refused.status, 403);
+      assert.equal(refused.body.error, "forbidden");
+    });
+  });
+});

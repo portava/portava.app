@@ -12,7 +12,7 @@
 import React from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { TrendingUp, TrendingDown } from 'lucide-react-native';
-import { color, radius, space, dot } from '../../../theme/tokens.ts';
+import { color, radius, space, dot, typography } from '../../../theme/tokens.ts';
 import type { CityVisualZone } from '../types/mediaContext.ts';
 import { ZONE_COLOR } from '../state/stateColors.ts';
 import { zoneStateLabel, zoneGlyph, zoneIntensity } from '../state/cityPulse.ts';
@@ -42,39 +42,47 @@ export function CityVisualPulse({ zones, onSelectZone }: CityVisualPulseProps) {
             ? `${z.perspectiveCount}`
             : null;
         return (
-          <Pressable
-            key={z.id}
-            style={({ pressed }) => [styles.row, pressed && styles.rowPressed]}
-            onPress={onSelectZone ? () => onSelectZone(z) : undefined}
-            accessibilityRole={onSelectZone ? 'button' : undefined}
-            accessibilityLabel={stateText ? `${z.name}, ${stateText}` : z.name}
-          >
-            <Text style={styles.zoneName} numberOfLines={1}>
-              {z.name}
-            </Text>
-            {/* subtle intensity bar — sized by qualitative state, not views */}
-            <View style={styles.barTrack}>
-              <View
-                style={[styles.barFill, { width: `${Math.round(intensity * 100)}%`, backgroundColor: accent }]}
-              />
-            </View>
-            <View style={styles.stateWrap}>
-              {stateText ? (
-                <>
-                  <Text style={[styles.stateLabel, { color: accent }]}>{stateText}</Text>
-                  {glyph === 'arrow-up' ? (
-                    <TrendingUp size={13} color={accent} strokeWidth={2.4} />
-                  ) : glyph === 'arrow-down' ? (
-                    <TrendingDown size={13} color={accent} strokeWidth={2.4} />
-                  ) : (
-                    <View style={[styles.holdDot, { backgroundColor: accent }]} />
-                  )}
-                </>
-              ) : coverageText ? (
-                <Text style={styles.coverageLabel}>{coverageText}</Text>
-              ) : null}
-            </View>
-          </Pressable>
+          <View key={z.id}>
+            <Pressable
+              style={({ pressed }) => [styles.row, pressed && styles.rowPressed]}
+              onPress={onSelectZone ? () => onSelectZone(z) : undefined}
+              accessibilityRole={onSelectZone ? 'button' : undefined}
+              accessibilityLabel={stateText ? `${z.name}, ${stateText}` : z.name}
+            >
+              <Text style={styles.zoneName} numberOfLines={1}>
+                {z.name}
+              </Text>
+              {/* subtle intensity bar — sized by qualitative state, not views */}
+              <View style={styles.barTrack}>
+                <View
+                  style={[styles.barFill, { width: `${Math.round(intensity * 100)}%`, backgroundColor: accent }]}
+                />
+              </View>
+              <View style={styles.stateWrap}>
+                {stateText ? (
+                  <>
+                    <Text style={[styles.stateLabel, { color: accent }]}>{stateText}</Text>
+                    {glyph === 'arrow-up' ? (
+                      <TrendingUp size={13} color={accent} strokeWidth={2.4} />
+                    ) : glyph === 'arrow-down' ? (
+                      <TrendingDown size={13} color={accent} strokeWidth={2.4} />
+                    ) : (
+                      <View style={[styles.holdDot, { backgroundColor: accent }]} />
+                    )}
+                  </>
+                ) : coverageText ? (
+                  <Text style={styles.coverageLabel}>{coverageText}</Text>
+                ) : null}
+              </View>
+            </Pressable>
+            {/* §18: the zone's "Mixed reports" line, exactly when the server's zone
+                consensus says its reports disagree (census-media §26, MD152). */}
+            {z.uncertaintyLabel ? (
+              <Text style={styles.uncertainty} accessibilityRole="alert" testID={`zone-uncertainty-${z.id}`}>
+                {z.uncertaintyLabel}
+              </Text>
+            ) : null}
+          </View>
         );
       })}
     </View>
@@ -127,4 +135,5 @@ const styles = StyleSheet.create({
   stateLabel: { fontSize: 13, fontWeight: '800', letterSpacing: -0.2 },
   coverageLabel: { color: color.faint, fontSize: 12, fontWeight: '700' },
   holdDot: { width: dot.s7, height: dot.s7, borderRadius: dot.s7 / 2 },
+  uncertainty: { ...typography.label, color: color.warn, marginTop: -space.xs, marginBottom: space.xs },
 });

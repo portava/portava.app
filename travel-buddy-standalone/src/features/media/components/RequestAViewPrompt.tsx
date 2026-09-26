@@ -10,7 +10,7 @@
  *     component renders NOTHING (fail-soft to hidden), so existing place screens
  *     are visually untouched until the capability is enabled.
  *   - even when on, it only appears for a real coverage GAP (stale / no coverage);
- *     a fresh place shows nothing.
+ *     a fresh, UNDISPUTED place shows nothing (a §18 dispute: see the tail).
  *
  * DEGRADE (§33/§46): coverage 404 / empty / error ⇒ hidden, never throws. Backend
  * refusals (rate_limited / protected_location / disabled / duplicate) render a
@@ -60,9 +60,17 @@ type SendState =
   | { kind: 'sending' }
   | { kind: 'done'; outcome: ViewRequestOutcome };
 
-export function RequestAViewPrompt({ placeId, city = null, coverageScore = null }: RequestAViewPromptProps) {
+export function RequestAViewPrompt({ placeId, city = null, coverageScore = null, requestAnotherObservation = false, onTakePhoto, onAnswerNow, tone = 'paper' }: RequestAViewPromptProps & RequestAViewMissionProps) {
   const { isEnabled } = useFeatureFlags();
   const enabled = isEnabled(REQUEST_A_VIEW_FLAG);
+  // §19 mission half, "Is the entrance still busy? [Quiet] [Moderate] [Busy]":
+  // answering is an Intelligence Gathering capture, so it keeps THAT surface's
+  // gates — its own flag, and never during Safe Return — the same two the Living
+  // page's "Share a signal" entry uses. The Safe Return read is inert (no
+  // network call) unless everything else would already show the chip.
+  const captureGate = enabled && Boolean(onAnswerNow) && isEnabled(INTEL_FLAGS.quickSignal);
+  const safeReturn = useSafeReturnActive(captureGate);
+  const canAnswer = captureGate && !safeReturn.active && !safeReturn.loading;
 
   const [coverage, setCoverage] = useState<VisualCoverage | null>(null);
   const [send, setSend] = useState<SendState>({ kind: 'idle' });
@@ -107,41 +115,63 @@ export function RequestAViewPrompt({ placeId, city = null, coverageScore = null 
     [placeId, city, coverageScore],
   );
 
-  // ── Dormant by default: hidden when the flag is off, or the place is fresh ──
-  if (!shouldShowRequestPrompt(coverage, enabled)) return null;
+  // ── Dormant by default: hidden when the flag is off, or the place is fresh
+  //    and nothing on it is in dispute (§18 routes a dispute here) ──
+  if (!shouldShowMissionPrompt(coverage, enabled, requestAnotherObservation)) return null;
 
   const cov = coverage as VisualCoverage;
   const freshnessLine = cov.noCoverage || !cov.lastUpdateLabel
     ? 'No recent visual update'
     : `Last visual update ${cov.lastUpdateLabel}`;
+  const st = tone === 'ink' ? ink : s;
+  const showMission = Boolean(onTakePhoto) || canAnswer;
 
   return (
-    <View style={s.card} accessibilityRole="summary">
+    <View style={st.card} accessibilityRole="summary" testID="request-a-view-prompt">
       <View style={s.headerRow}>
-        <Eye size={16} color={color.deep} strokeWidth={2.2} />
-        <Text style={s.freshness} numberOfLines={1}>{freshnessLine}</Text>
+        <Eye size={16} color={tone === 'ink' ? color.onInkMute : color.deep} strokeWidth={2.2} />
+        <Text style={st.freshness} numberOfLines={1}>{freshnessLine}</Text>
       </View>
 
+      {showMission ? (
+        // §19's mission: the viewer who is THERE shows what is happening.
+        <>
+          <Text style={st.prompt}>Show what’s happening?</Text>
+          <View style={s.chipRow}>
+            {onTakePhoto ? (
+              <MissionChip label="Take a photo" testID="mission-take-photo" onPress={onTakePhoto} tone={tone} />
+            ) : null}
+            {canAnswer && onAnswerNow ? (
+              <MissionChip label="Say how busy it is" testID="mission-answer-now" onPress={onAnswerNow} tone={tone} />
+            ) : null}
+          </View>
+        </>
+      ) : null}
+
       {send.kind === 'done' ? (
-        <ResultLine outcome={send.outcome} />
+        <ResultLine outcome={send.outcome} tone={tone} />
       ) : (
         <>
-          <Text style={s.prompt}>Want a current perspective? Ask nearby contributors for a fresh view.</Text>
+          <Text style={st.prompt}>
+            {showMission
+              ? 'Not there? Ask nearby contributors for a fresh view.'
+              : 'Want a current perspective? Ask nearby contributors for a fresh view.'}
+          </Text>
           <View style={s.chipRow}>
             {QUESTION_PRESETS.map((p) => (
               <Pressable
                 key={p.key}
-                style={({ pressed }) => [s.chip, pressed && s.chipPressed]}
+                style={({ pressed }) => [st.chip, pressed && s.chipPressed]}
                 onPress={() => onAsk(p)}
                 disabled={send.kind === 'sending'}
                 accessibilityRole="button"
                 accessibilityLabel={p.label}
               >
-                <Text style={s.chipText}>{p.label}</Text>
+                <Text style={st.chipText}>{p.label}</Text>
               </Pressable>
             ))}
             {send.kind === 'sending' ? (
-              <ActivityIndicator size="small" color={color.deep} style={s.spinner} />
+              <ActivityIndicator size="small" color={tone === 'ink' ? color.onInk : color.deep} style={s.spinner} />
             ) : null}
           </View>
         </>
@@ -156,10 +186,27 @@ export function RequestAViewPrompt({ placeId, city = null, coverageScore = null 
  * "a zero that was never counted is not a zero" rule is unit-tested rather than
  * buried in a render.
  */
-function ResultLine({ outcome }: { outcome: ViewRequestOutcome }) {
+function ResultLine({ outcome, tone = 'paper' }: { outcome: ViewRequestOutcome; tone?: PromptTone }) {
   const line = viewRequestOutcomeLine(outcome);
+  const st = tone === 'ink' ? ink : s;
   // Calm refusal — a single line, never an error toast storm.
-  return <Text style={outcome.ok ? s.resultOk : s.resultMuted}>{line}</Text>;
+  return <Text style={outcome.ok ? st.resultOk : st.resultMuted}>{line}</Text>;
+}
+
+/** One §19 mission action: a user-initiated step, never an automatic write. */
+function MissionChip({ label, testID, onPress, tone }: { label: string; testID: string; onPress: () => void; tone: PromptTone }) {
+  const st = tone === 'ink' ? ink : s;
+  return (
+    <Pressable
+      style={({ pressed }) => [st.chip, pressed && s.chipPressed]}
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      testID={testID}
+    >
+      <Text style={st.chipText}>{label}</Text>
+    </Pressable>
+  );
 }
 
 const s = StyleSheet.create({
@@ -190,3 +237,80 @@ const s = StyleSheet.create({
   resultOk: { ...t.small, color: color.success },
   resultMuted: { ...t.small, color: color.mute },
 });
+
+/** The same card on the Media World shell's dark surface (`tone="ink"`). */
+const ink = StyleSheet.create({
+  card: {
+    backgroundColor: color.ink,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: color.onInkMute,
+    padding: space.md,
+    gap: space.sm,
+  },
+  freshness: { ...t.small, color: color.onInkMute, flexShrink: 1 },
+  prompt: { ...t.bodyStrong, color: color.onInk },
+  chip: {
+    backgroundColor: color.ink,
+    borderWidth: 1,
+    borderColor: color.onInk,
+    borderRadius: radius.pill,
+    paddingVertical: space.xs,
+    paddingHorizontal: space.md,
+  },
+  chipText: { ...t.small, color: color.onInk, fontWeight: '700' },
+  resultOk: { ...t.small, color: color.success },
+  resultMuted: { ...t.small, color: color.onInkMute },
+});
+
+// ── §19 mission half and §18 routing (census-media §26, MD153) ───────────────
+//
+// Declared BELOW the component so the line census-media cites
+// (`export function RequestAViewPrompt(`) stays where it is: TypeScript
+// resolves types regardless of order, and ESM hoists the imports.
+
+type PromptTone = 'paper' | 'ink';
+
+/**
+ * What a HOST may add to the prompt. Every field is optional, so the existing
+ * mount on the place detail screen (app/place/[id].tsx) renders exactly as it
+ * did: the Request-a-View half only.
+ */
+export interface RequestAViewMissionProps {
+  /**
+   * §18 "optionally request another observation": the server's consensus says a
+   * fresh observation would settle a MATERIAL dispute here. Shows the prompt
+   * even when coverage is fresh — the dispute, not the age, is the gap. Still
+   * flag-gated, and still hidden when coverage could not be read.
+   */
+  requestAnotherObservation?: boolean;
+  /** §19 [Take Photo]: the host's existing contribution flow for this place. */
+  onTakePhoto?: () => void;
+  /**
+   * §19 [Quiet] [Moderate] [Busy]: the host opens the existing Quick Signal
+   * composer for this place. Shown only while `intel_capture_quick_signal` is
+   * on and no Safe Return session is active; the composer keeps its own
+   * consent gate and private-by-default visibility.
+   */
+  onAnswerNow?: () => void;
+  /** 'ink' on the Media World shell's dark surface; 'paper' (default) elsewhere. */
+  tone?: PromptTone;
+}
+
+/**
+ * PURE: should the §19 prompt render? The flag must be on and coverage must
+ * have been READ — an unread coverage is never a reason to prompt. Then either
+ * the place's visual coverage is stale or absent (the §19 gap), or the
+ * server's §18 consensus asked for another observation.
+ */
+export function shouldShowMissionPrompt(
+  coverage: VisualCoverage | null,
+  flagEnabled: boolean,
+  requestAnotherObservation: boolean,
+): boolean {
+  if (shouldShowRequestPrompt(coverage, flagEnabled)) return true;
+  return flagEnabled && coverage !== null && requestAnotherObservation === true;
+}
+
+import { useSafeReturnActive } from '../../../hooks/useSafeReturnActive.ts';
+import { INTEL_FLAGS } from '../../../lib/intel/contracts.ts';

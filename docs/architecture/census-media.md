@@ -5133,3 +5133,146 @@ integration owner's flag decision in §14 F1.
    - **Effect on this row.** The explanation built here applies the filter to its own inputs, so it does not widen the leak. The counts, however, already disclose the recency that the explanation withholds.
    - **Owner:** the World builder, together with the §33 visibility owner (`lib/mediaVisibility`). It is not part of MD428.
 2. **The sheet's footnote describes a different ranker.** The footnote reads `travel-buddy-standalone/src/components/media/WhyThisSheet.tsx:81#Your feed is shaped by your travel interests, the places you've explored, and creators you engage with.` The World ranker reads no engagement by design; it reads the follow graph. The sheet is shared with Watch and Gems, whose ranker does read engagement. The copy is static and belongs to the client lane, and this section does not grade it.
+
+## 26. Lane G — three C grades re-read against the spec, and the message-poster test — 2026-09-26
+
+Built on `claude/sensing-completion-20260925` at `b1903565b` (§23.7). §22.6
+items 2–3 and §23.4 recorded three `C` rows as possibly wrong. Each is re-read
+here against the spec's own sentence and against the code at that commit. This
+section also adds the messaging test §23.4 said was missing. Earlier rows are
+not edited; the table below is the later statement.
+
+This section is appended at the file's end because this lane was told to put
+it there. §23's opening says the integration section stays last. The
+integrator places it.
+
+### 26.1 Row moves
+
+| ID | Was | Now | Evidence |
+| --- | --- | --- | --- |
+| MD152 | **C** | **C** | **The old `C` was overstated, and it is now proven.** The spec asks for it wherever reports disagree (`docs/specs/Portava_Media_Engineering_Architecture_and_Design_Spec.txt:210#When reports disagree, surface uncertainty`). The server emits the line on the place projection (`artifacts/api-server/src/services/media/MediaProjectionService.ts:954#consensus: buildVisualConsensus(media, currentState.claims, nowMs, {`) and on every world zone (`artifacts/api-server/src/services/media/MediaProjectionService.ts:830#consensus: buildVisualConsensus(z.items, current.claims, nowMs, {`). The client rendered it on the place view only. Both zone mappers dropped it, so the NOW lens's city pulse, its "Changing now" cards and the Places lens's zone list showed a disputed zone exactly like one whose reports agreed. The "Changing now" card is the case that matters. It is filtered to zones WITH a live claim (`artifacts/api-server/src/services/media/MediaProjectionService.ts:838#const changingNow = cityVisualState.filter((z) => z.liveClaims.length > 0);`), and those are the only zones whose claims can conflict. Its crowd label is the plurality value even under a material conflict (`artifacts/api-server/src/services/media/MediaProjectionService.ts:738#crowdLabel = typeof level === "string" && level.length > 0 ? level : null;`). So a disputed zone showed a confident state and nothing else. **Now:** both mappers keep the line (`travel-buddy-standalone/src/features/media/services/mediaProjection.ts:399#uncertaintyLabel: zoneUncertainty(raw.consensus),` and `travel-buddy-standalone/src/features/media/services/mediaProjection.ts:450#placeId: asString(raw.placeId), uncertaintyLabel: zoneUncertainty(raw.consensus),`). They use the place view's rule, which never invents a line and never drops one (`travel-buddy-standalone/src/features/media/services/mediaProjection.ts:1413#function zoneUncertainty(rawConsensus: unknown): string | null {`). Three surfaces render it: the city pulse (`travel-buddy-standalone/src/features/media/components/CityVisualPulse.tsx:81#<Text style={styles.uncertainty} accessibilityRole="alert"`), the changing-now card (`travel-buddy-standalone/src/features/media/components/ChangingNowCard.tsx:78#<Text style={styles.uncertainty} accessibilityRole="alert"`) and the Places zone list (`travel-buddy-standalone/src/features/media/screens/MediaPlacesScreen.tsx:124#<ZoneUncertainty zone={z} />`). Tests: `travel-buddy-standalone/src/features/media/__tests__/worldZoneUncertainty.component.test.tsx:69#it('a mixed zone carries the line on the city pulse AND on its changing-now card`, `travel-buddy-standalone/src/features/media/__tests__/worldZoneUncertainty.component.test.tsx:75#it('never invents one`, `travel-buddy-standalone/src/features/media/__tests__/worldZoneUncertainty.component.test.tsx:89#it('NOW lens: under the disputed zone`, `travel-buddy-standalone/src/features/media/__tests__/worldZoneUncertainty.component.test.tsx:102#it('Places lens overview: under the disputed zone in the list`. Mutations u1–u6, each seen red (§26.2). Dark: all three surfaces are in the World shell. |
+| MD153 | **C** | **C** | **Re-proven, and one earlier finding is corrected.** §22.6 item 3 said the prompt was "mounted nowhere". That is false. It has been mounted since #305 on the place detail screen (`travel-buddy-standalone/app/place/[id].tsx:423#<RequestAViewPrompt placeId={canonicalPlace.id} city={city} />`), but only on the classic fallback branch. That branch renders when `live_places_enabled` is off or the living read returns nothing (`travel-buddy-standalone/app/place/[id].tsx:383#if (canonicalPlace !== null && living !== null) {`). What was actually wrong is below. **The spec's prompt** (`docs/specs/Portava_Media_Engineering_Architecture_and_Design_Spec.txt:212#Last visual update 28m agoShow what's happening?Is the entrance still busy?[Quiet] [Moderate] [Busy] [Take Photo]`) is a MISSION: the viewer who is there shows what is happening. Request a View, which asks OTHER people, is the next sentence and its own row, MD154. The component had only the Request-a-View half. It was absent from the Media place view (§13), and the §18 flag the server says routes to it (`artifacts/api-server/src/services/media/MediaConsensusService.ts:132#requestAnotherObservation: boolean;`) reached nothing. **Now** it is mounted on the Places lens's place view, both when the view is ready (`travel-buddy-standalone/src/features/media/screens/MediaPlacesScreen.tsx:264#</View><PlaceMissionPrompt`) and when a place has no picture yet (`travel-buddy-standalone/src/features/media/screens/MediaPlacesScreen.tsx:245#{state.status === 'empty' ? <PlaceMissionPrompt`). It mounts only for a canonical place (`travel-buddy-standalone/src/features/media/screens/MediaPlacesScreen.tsx:399#if (!UUID_RE.test(placeId)) return null;`). §18 is routed to it (`travel-buddy-standalone/src/features/media/screens/MediaPlacesScreen.tsx:405#requestAnotherObservation={consensus?.requestAnotherObservation === true}`). It shows on a stale or absent picture, or on a dispute, but never on a coverage that could not be read (`travel-buddy-standalone/src/features/media/components/RequestAViewPrompt.tsx:312#return flagEnabled && coverage !== null && requestAnotherObservation === true;`). The mission actions are: [Take Photo] opens this lens's existing §4 contribution (`travel-buddy-standalone/src/features/media/screens/MediaPlacesScreen.tsx:406#onTakePhoto={onContribute ? () => onContribute(placeId) : undefined}`), and [Quiet] [Moderate] [Busy] opens the existing Quick Signal composer for this place in its `arrival` context (`travel-buddy-standalone/src/features/media/screens/MediaPlacesScreen.tsx:409#pathname: '/intel/quick-signal',`). The answer chip keeps Intelligence Gathering's own gates, its flag and no Safe Return (`travel-buddy-standalone/src/features/media/components/RequestAViewPrompt.tsx:71#const captureGate = enabled && Boolean(onAnswerNow) && isEnabled(INTEL_FLAGS.quickSignal);`, `travel-buddy-standalone/src/features/media/components/RequestAViewPrompt.tsx:73#const canAnswer = captureGate && !safeReturn.active && !safeReturn.loading;`). Those are the same two the Living page's "Share a signal" uses (`travel-buddy-standalone/src/components/place/living/LivingDestinationPage.tsx:375#const showShare = captureEnabled && !safeReturnActive;`). **Same job, different shape**, stated rather than hidden: the answer is one tap into the composer, whose options are dead / quiet / good energy / busy / packed. It is not three inline chips. The composer keeps its own consent gate and private default, and no write happens from the Media card. The place detail mount is unchanged, with the Request-a-View half only. Tests: `travel-buddy-standalone/src/features/media/__tests__/requestAViewMission.component.test.tsx:108#it('flag on and coverage stale`, plus eleven more cases in that file (`travel-buddy-standalone/src/features/media/__tests__/requestAViewMission.component.test.tsx:107#describe('MD153`). Mutations m1–m11, each seen red (§26.2). **RED WHEN** the Quick Signal composer stops accepting `subjectId` with `context: 'arrival'`, the answer chip shows while `intel_capture_quick_signal` is off or Safe Return is active, or a place view renders without the prompt while the flag is on and its coverage is stale. |
+| MD262 | **C** | **W** | **The `C` rested on a protection, not on a choice.** In the spec, "Show neighborhood only" is one of the five §34 Delayed Publishing options a person picks when they post (`docs/specs/Portava_Media_Engineering_Architecture_and_Design_Spec.txt:313#Show neighborhood only`). The row cited line 98 of mediaLocationVisibility.ts, which is stale; the case is at `artifacts/api-server/src/lib/mediaLocationVisibility.ts:110#case "approximate":`. That is `gemSensitivityToCeiling`: a Hidden Gem's sensitivity capping media NEAR the gem. Nobody posting media can choose it. **FALSIFIER, measured:** (1) The owner's post modes have no neighbourhood mode (`artifacts/api-server/src/lib/mediaLocationVisibility.ts:385#export const POST_LOCATION_PRIVACY_MODES = [`), and the mode-to-ceiling map sends every restrictive mode to `city` (`artifacts/api-server/src/lib/mediaLocationVisibility.ts:412#export function locationPrivacyModeToCeiling(`). (2) The canonical writer never sends `media_assets.location_visibility` (`artifacts/api-server/src/lib/mediaAssets.ts:24#(location_visibility is never sent by this writer)`), and the legacy feed read defaults a post to `place` (`artifacts/api-server/src/routes/mediaFeed.ts:230#locationVisibility: (row as any).location_visibility ?? "place",`). (3) One per-post `neighborhood` input exists: `POST /posts` accepts it (`artifacts/api-server/src/lib/postSchemas.ts:224#locationVisibility: pulseLocationVisibility.optional(),`) and hands it only to the Pulse geo-tag writer (`artifacts/api-server/src/routes/posts.ts:864#locationVisibilityOverride: (locationVisibility ?? null) as any,`). No client sends it: `grep -rn locationVisibility` over the client's composers and post service returns nothing. No Media route reads `pulse_geo_tags`. The client's four-way selector, whose third option is `neighborhood` (`travel-buddy-standalone/src/components/selectors/LocationPrivacySelector.tsx:23#{ value: 'neighborhood', label: 'Area', sub: 'Neighborhood', Icon: MapPin },`), is mounted nowhere. **Not built here, because it is a privacy and product change.** The options are a new post location mode that Media's disclosure honours, or making Media honour `pulse_geo_tags`. Either one widens what a poster can publish, and the owner decides. **RED WHEN** a person posting media can choose neighbourhood-only, and every Media read discloses that post at no finer than `neighborhood`. **Blocker: owner decision.** |
+
+**Headline.** It is not restated here. MD262's move leaves the rows one `C`
+lower and one `W` higher than §23.6 states, so `check:census-integrity` reports
+that difference until the integrator restates. MD152 and MD153 do not move.
+
+### 26.2 Mutations, every one seen red on the final tree and restored
+
+Each mutation was one exact-string change, run, then restored from a copy made
+before the runs. The file's hash was checked against the copy after every run.
+
+| Mutation | File | Red |
+| --- | --- | --- |
+| m1 the prompt unmounted from the ready place view | MediaPlacesScreen | 7 of 12 MD153 cases |
+| m2 the prompt unmounted from the empty place view | MediaPlacesScreen | "a place with no current picture yet" |
+| m3 a §18 dispute never prompts | RequestAViewPrompt | the §18 case, the pure case |
+| m4 a dispute prompts on an unread coverage | RequestAViewPrompt | the §18 case, "could not be read", the pure case |
+| m5 Safe Return ignored | RequestAViewPrompt | both Safe Return cases |
+| m6 the capture flag ignored | RequestAViewPrompt | the first case (answer chip must be absent) |
+| m7 Take a photo not wired | MediaPlacesScreen | 4 cases |
+| m8 the canonical-place guard removed | MediaPlacesScreen | "a label-only zone never asks" |
+| m9 the answer opens the wrong composer context | MediaPlacesScreen | the answer case |
+| m10 the §18 flag not routed | MediaPlacesScreen | the §18 case |
+| m11 the `media_request_a_view_enabled` gate removed | RequestAViewPrompt | "flag off: nothing renders" |
+| u1 the city-pulse mapper drops the line | mediaProjection | all 4 MD152 cases |
+| u2 the changing-now mapper drops the line | mediaProjection | the mapper case, the NOW-lens case |
+| u3 the city pulse does not render it | CityVisualPulse | the NOW-lens case |
+| u4 the changing-now card does not render it | ChangingNowCard | the NOW-lens case |
+| u5 the Places zone list does not render it | MediaPlacesScreen | the Places case |
+| u6 every zone gets the line | mediaProjection | all 4 MD152 cases |
+
+m4 went red partly by crashing: the prompt rendered before its coverage was read, and dereferenced null. That is red, and it is also the reason the rule exists.
+
+### 26.3 The message-video poster test §23.4 asked for
+
+Lane D changed what `uploadMedia` stores as a message video's thumbnail. It is
+now the poster the server writes at the video's derived path. The upload route
+returns the video as its relay path (`artifacts/api-server/src/routes/posts.ts:254#const mediaRelayUrl =`),
+and the poster route returns `post-media/<video>.poster.jpg`. The byte gate decides
+a poster as its video (`artifacts/api-server/src/lib/mediaAccess.ts:369#{ const posterOf = derivedPosterBase(path); if (posterOf !== null) return decide(sc, viewerId, bucket, posterOf); }`),
+and a video carried by a message is decided in branch 3c
+(`artifacts/api-server/src/lib/mediaAccess.ts:594#.or(`). `mediaAccess.ts` was
+not edited.
+
+The tests are appended to an existing registered file,
+`artifacts/api-server/src/test/mediaAccess.test.ts:1658#describe("a message video's derived poster is shown to exactly its thread (census-media §26)"`.
+They use the rows the real writers produce:
+- a thread member loads the poster and an outsider does not (`artifacts/api-server/src/test/mediaAccess.test.ts:1672#it("a thread member loads the poster; an outsider does not"`);
+- the poster is served when the row names no thumbnail, because it is decided as its video (`artifacts/api-server/src/test/mediaAccess.test.ts:1686#it("the poster is decided as its VIDEO`);
+- a member who has left is refused (`artifacts/api-server/src/test/mediaAccess.test.ts:1702#it("a member who has LEFT the thread is refused the poster"`);
+- the §14.3 history bound applies (`artifacts/api-server/src/test/mediaAccess.test.ts:1709#it("the §14.3 history bound applies to the poster`);
+- a message naming someone else's video is not a key (`artifacts/api-server/src/test/mediaAccess.test.ts:1724#it("a message naming SOMEONE ELSE's video`);
+- on the wire, a member gets a signed 302 and an outsider a 403 (`artifacts/api-server/src/test/mediaAccess.test.ts:1747#it("a member is redirected to a signed poster URL; an outsider gets 403"`).
+
+Every denial carries an allowing control. Suite: 89 tests, 0 failures.
+
+| Mutation (on `mediaAccess.ts`, restored byte-identical) | Red |
+| --- | --- |
+| G1 the §37 poster rule removed | "decided as its VIDEO" |
+| G2 3c membership not required | the member/outsider case, "decided as its VIDEO", "LEFT", the wire case, and the pre-existing "message media: thread member allowed, outsider denied" |
+| G3 the §14.3 window ignored | the history-bound case |
+| G4 the sender need not own the object | "SOMEONE ELSE's video", and the pre-existing MEDIA-2 case |
+
+**G1 left the first case green, and that is a finding, not a gap.** A message's
+poster is authorized twice: by the poster rule (as its video) and by 3c's own
+`media_thumbnail_url` clause, because the poster's path owner is the sender.
+The two agree today. The null-thumbnail case is what makes the poster rule
+load-bearing, and it is what G1 turned red.
+
+### 26.4 Production
+
+**Nothing here is deployed**, and no flag was changed. No database was read,
+so every production statement below is a seed or an earlier section's
+reading, not a new one.
+- **MD152:** all three new surfaces are inside the Media World shell, which
+  `MEDIA_WORLD_SHELL_ENABLED` keeps dark (seeded `false` by 2300).
+- **MD153:** the place-view prompt needs both the World shell and
+  `media_request_a_view_enabled` (seeded `false` by 2257; this census records
+  2257's tables as absent from production, §6). Its answer chip also needs
+  `intel_capture_quick_signal` (seeded `false` by 2165). The place detail mount
+  is unchanged and needs `media_request_a_view_enabled`.
+- **MD262:** nothing was built.
+- **The poster test:** it changes no behaviour.
+
+### 26.5 Found while doing it — recorded, not fixed
+
+1. **Media shows a zone's plurality crowd state under a material dispute.**
+   `readCurrentState` takes the crowd value from the rich envelope (§26.1,
+   MD152). The legacy string read refuses it under the same conflict
+   (`artifacts/api-server/src/lib/liveClaimRead.ts:461#if (crowd.conflictState === "material") return null;`).
+   The "Mixed reports" line now accompanies the state. Whether the state chip
+   should also be withheld is a projection change in
+   `MediaProjectionService.ts`, and it is left for its owner.
+2. **The mobile reachability ledger** lists `RequestAViewPrompt.tsx` as the
+   consumer of the visual-coverage and view-request routes with
+   `"screens": []`. Its line numbers for `viewRequest.ts` (312, 366) are behind
+   this tree's (332, 386). The ledger is pinned to commit `22ab17151b98…`, which
+   this clone does not contain. Whether `"screens": []` was already wrong at
+   that pin cannot be checked here.
+3. **MD262's own citation**, line 98 of mediaLocationVisibility.ts, is
+   unanchored and stale; the case is on line 110. It is superseded by the row
+   above, not repointed.
+
+### 26.6 Counted files this section changed
+
+- **Counted by census-media only:**
+  - `travel-buddy-standalone/src/features/media/components/RequestAViewPrompt.tsx`;
+  - `CityVisualPulse.tsx`, `ChangingNowCard.tsx`;
+  - `travel-buddy-standalone/src/features/media/screens/MediaPlacesScreen.tsx`;
+  - `travel-buddy-standalone/src/features/media/services/mediaProjection.ts`;
+  - `travel-buddy-standalone/src/features/media/types/mediaContext.ts`;
+  - the two new suites under `travel-buddy-standalone/src/features/media/__tests__/`.
+- **Counted by census-telegraph:** the byte-gate suite
+  (`artifacts/api-server/src/test/mediaAccess.test.ts:1658#describe("a message video's derived poster is shown to exactly its thread (census-media §26)"`).
+  The new cases are appended at its tail, so its cited lines 798 and 858 do not move.
+  That file is not in census-media's own scope. Adding it is a change to
+  `checkCensusFreshness.ts`, which this lane does not edit; the integrator may add it.
+- **Cited lines kept in place:**
+  - `travel-buddy-standalone/src/features/media/components/RequestAViewPrompt.tsx:63#export function RequestAViewPrompt(` (the one line this census cites in that file);
+  - every line of `MediaPlacesScreen.tsx` that §19–§22 cite. Its edits extend
+    existing lines, and the new components and imports sit at the tail.
+  - `mediaProjection.ts`, whose two mapper edits extend existing lines. The helper and import are at the tail.
+  - `MediaWorldShell.tsx` was not edited.
+- **No acknowledgement was edited.**

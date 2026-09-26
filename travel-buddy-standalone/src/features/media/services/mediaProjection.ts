@@ -396,7 +396,7 @@ export function mapCityVisualZone(raw: unknown): CityVisualZone | null {
     state,
     trend: raw.trend != null ? oneOf<ActivityTrend>(raw.trend, TRENDS, 'steady') : null,
     perspectiveCount: asNumber(raw.perspectiveCount),
-    freshness: raw.freshness != null ? freshnessClass(raw.freshness) : null,
+    freshness: raw.freshness != null ? freshnessClass(raw.freshness) : null, uncertaintyLabel: zoneUncertainty(raw.consensus),
   };
 }
 
@@ -447,7 +447,7 @@ function mapChangingNow(raw: unknown): ChangingNowItem | null {
     freshnessLabel: asString(raw.freshnessLabel),
     whyThis: asString(raw.whyThis),
     heroMedia: mapMediaList(raw.heroMedia),
-    placeId: asString(raw.placeId),
+    placeId: asString(raw.placeId), uncertaintyLabel: zoneUncertainty(raw.consensus),
   };
 }
 
@@ -1400,4 +1400,16 @@ export function fetchMediaContextRefs(
 }
 // §18 (census-media §22, MD323): the client's reading of the server's Visual
 // Consensus. Imported at the TAIL so no line above moves; ESM hoists it.
-import { mapVisualConsensus, currentPictureFromConsensus } from '../../../services/media/mediaIntelligence.ts';
+import { mapVisualConsensus, currentPictureFromConsensus, uncertaintyBanner } from '../../../services/media/mediaIntelligence.ts';
+
+/**
+ * §18 on a §43 WorldZone (census-media §26, MD152): the server emits the zone's
+ * Visual Consensus on every zone, and "Mixed reports — conditions may be
+ * changing" when its reports materially disagree. The line is the SAME rule the
+ * place view applies (uncertaintyBanner): shown exactly when the server says so,
+ * never invented, never dropped. An unreadable consensus is absent → null.
+ * Appended at the tail so no line census-media cites above moves.
+ */
+function zoneUncertainty(rawConsensus: unknown): string | null {
+  return uncertaintyBanner(mapVisualConsensus(rawConsensus));
+}
