@@ -297,7 +297,7 @@ function readyMediaToDisplay(rows: any[]): DisplayMedia[] {
       mediaId: String(m.id),
       kind: m.media_type === "video" ? ("video" as const) : ("image" as const),
       url: String(m.public_url).trim(),
-      thumbnailUrl: typeof m.thumbnail_url === "string" ? m.thumbnail_url : null,
+      thumbnailUrl: typeof m.thumbnail_url === "string" ? m.thumbnail_url : null, feedUrl: feedVariantOf(m),
       width: typeof m.width === "number" ? m.width : null,
       height: typeof m.height === "number" ? m.height : null,
       durationMs: typeof m.duration_seconds === "number" ? Math.round(m.duration_seconds * 1000) : null,
@@ -451,7 +451,7 @@ export async function loadPostcardCandidates(
         await sc
           .from("post_media")
           .select(
-            "id, post_id, media_type, public_url, thumbnail_url, width, height, duration_seconds, sort_order, processing_status, moderation_status",
+            "id, post_id, media_type, public_url, thumbnail_url, feed_url, width, height, duration_seconds, sort_order, processing_status, moderation_status",
           )
           .in("post_id", postIds.slice(0, 500)),
       );
@@ -579,7 +579,7 @@ export async function loadVideoMediaCandidates(
         mediaId: proj.id,
         kind: proj.mediaType,
         url: proj.url,
-        thumbnailUrl: proj.thumbnailUrl,
+        thumbnailUrl: proj.thumbnailUrl, feedUrl: proj.mediaType === "image" ? proj.feedUrl ?? null : null, // Media v2 carries a post_media row's feed variant (lib/media/mediaProjection postMediaFeedVariant); media_assets and media_urls have none
         width: proj.width,
         height: proj.height,
         durationMs: proj.durationSeconds != null ? Math.round(proj.durationSeconds * 1000) : null,
@@ -1410,4 +1410,16 @@ export async function loadQuickMediaRow(
     if (out.length >= limit) break;
   }
   return { items: out, failed: false };
+}
+
+/**
+ * The stored feed variant of one `post_media` IMAGE row (longest edge <= FEED_DIM
+ * = 1500, built by /media/upload; migration 0208), or null when none is stored.
+ * NULL is the contract, never an inference: the client falls back to another
+ * stored variant (travel-buddy-standalone features/wall/services/wallImageVariant).
+ * Videos get no feed variant; their still is the poster.
+ */
+function feedVariantOf(m: any): string | null {
+  if (!m || m.media_type === "video") return null;
+  return typeof m.feed_url === "string" && m.feed_url.trim().length > 0 ? m.feed_url.trim() : null;
 }

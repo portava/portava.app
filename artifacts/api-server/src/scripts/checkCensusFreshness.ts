@@ -1438,6 +1438,20 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/test/wallOpportunityLoader.test.ts",
     "artifacts/api-server/src/test/wallOpportunityRoute.test.ts",
     "artifacts/api-server/src/test/wallPromotionDisclosure.test.ts",
+    "artifacts/api-server/src/test/wallFeedVariant.test.ts",
+    "artifacts/api-server/src/lib/media/mediaProjection.ts",
+    // WIDENED 2026-09-26 by census-wall §16 (W151 re-read and rebuilt): its
+    // citations took census-wall to 86 watched of 91 cited, under the 95% floor.
+    // The two files above are what W151's C now rests on.
+    //   - wallFeedVariant.test.ts is the row's server proof.
+    //   - lib/media/mediaProjection.ts holds the Media v2 post_media embed
+    //     (MEDIA_PROJECTION_POST_MEDIA_COLUMNS) and the mapping that carries
+    //     feed_url to the Wall's media lane. An edit there can break W151 with
+    //     no Wall file changing.
+    // Left unwatched on purpose, because they are cited but not graded:
+    //   - services/media/MediaProjectionService.ts, cited only for the
+    //     extractor's blind spot;
+    //   - the app config, cited for the supported-device range.
   ],
   // Discovery has NO SPEC. Its 67 rows are 25 inbound obligations from other
   // surfaces' specs, 9 rows shared with the Global Input Intelligence census,
