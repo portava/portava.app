@@ -59,7 +59,7 @@ export function MediaContributionSheet({
         testID="media-contribution-pick"
       >
         {draft.media ? (
-          <CachedImage source={{ uri: draft.media.uri }} style={styles.preview} resizeMode="cover" />
+          <CachedImage source={{ uri: draft.media.uri }} style={styles.preview} resizeMode="cover" fallbackBg={color.mute} />
         ) : (
           <Text style={styles.mediaHint}>Add a photo or clip from here</Text>
         )}

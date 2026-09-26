@@ -526,7 +526,7 @@ function ViewerPage({ item, isActive, isMuted, postData }: ViewerPageProps) {
           ) : null}
         </>
       ) : (
-        <CachedImage source={{ uri: mediaUrl }} style={StyleSheet.absoluteFill} resizeMode="cover" />
+        <CachedImage source={{ uri: mediaUrl }} style={StyleSheet.absoluteFill} resizeMode="cover" fallbackBg={color.mute} />
       )}
     </View>
   );

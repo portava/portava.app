@@ -92,7 +92,7 @@ function GridTileInner({ item, index, cellWidth, cellHeight, onPress, isVisible 
         uri={posterUri}
         width={cellWidth}
         height={cellHeight}
-        resizeMode="cover"
+        resizeMode="cover" fallbackBg={color.mute}
         style={StyleSheet.absoluteFill}
       />
 

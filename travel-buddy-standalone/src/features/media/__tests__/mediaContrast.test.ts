@@ -994,7 +994,7 @@ const FT = {
   stampButton: 'src/components/stamps/StampButton.tsx',
   gemStateBadge: 'src/components/gems/GemStateBadge.tsx',
   appHeader: 'src/components/ui/AppHeader.tsx',
-  emptyState: 'src/components/ui/EmptyState.tsx',
+  emptyState: 'src/components/ui/EmptyState.tsx', cachedImage: 'src/components/CachedImage.tsx', mediaFallback: 'src/components/ui/DisplayMediaImage.tsx', avatar: 'src/components/ui/Avatar.tsx', gemContribute: 'src/components/gems/GemContributeSection.tsx', // §31.13
 } as const;
 
 /** The shared files a pinned pair may name as its blocker. */
@@ -1057,7 +1057,7 @@ const S_TAIL = {
   radialSignal: ['#D64127'],
   radialSky: ['#0B7DB1'],
   radialGreen: ['#0C875E'],
-  addGemBadgePhoto: [PHOTO, 'rgba(17,17,15,0.65)'],
+  addGemBadgePhoto: [PHOTO, 'rgba(17,17,15,0.65)'], mediaFallbackGround: [color.mute], gemContributeCard: ['#13213A'], gemContributeDoneGreen: ['#13213A', 'rgba(111,211,154,0.1333)'], gemContributeDoneBlue: ['#13213A', 'rgba(157,184,232,0.1333)'], gemContributeDoneAmber: ['#13213A', 'rgba(232,178,77,0.1333)'], // §31.13
   worldPillPhoto: [PHOTO, 'rgba(17,17,15,0.58)'],
   mvTopButtonPhoto: [PHOTO, 'rgba(17,17,15,0.55)'], mvLeftPhoto: [PHOTO, 'rgba(17,17,15,0.71)'], mvLeftChip: [PHOTO, 'rgba(17,17,15,0.71)', W_('0.12')], mvRightPhoto: [PHOTO, 'rgba(17,17,15,0.80)'], mvSpinnerPhoto: [PHOTO, 'rgba(17,17,15,0.47)'], mvDotsPhoto: [PHOTO, 'rgba(17,17,15,0.87)'], mvCloseOnInk: [color.ink, 'rgba(17,17,15,0.6)'], // §31.13: the Grid's full-screen viewer. Then shared components on a photograph.
   appHeaderOverlayPhoto: [PHOTO, 'rgba(17,17,15,0.58)'], // §31.13: the tab's overlayTint; the header's own default is 0.28 black
@@ -1432,6 +1432,45 @@ add({ id: 'mediaViewer.pageDot.inactive.photoFloor', fg: W_('0.35'), on: 'mvDots
 // The "Media not available" state, on the ink screen.
 add({ id: 'mediaViewer.unavailable.text', fg: W_('0.45'), on: 'ink', kind: 'text', at: [[MV, /errText: \{\s*color: 'rgba\(255,255,255,0\.45\)',/], [MV, /screen: \{\s*flex: 1,\s*backgroundColor: color\.ink,/]] });
 add({ id: 'mediaViewer.unavailable.close', fg: color.onInk, on: 'mvCloseOnInk', kind: 'ui', at: [[MV, '<X size={20} color={color.onInk} strokeWidth={2.5} />'], [MV, /closeBtnInner: \{[^}]*backgroundColor: 'rgba\(17,17,15,0\.6\)'/]] });
+
+// ─ Shared components drawn inside Media's own layouts that no pass had measured ─
+// The image-error fallback. CachedImage and DisplayMediaImage draw MediaFallback when an image
+// fails: a box with the caption "Image unavailable" in paper on `haze` (1.19:1). Each Media site
+// that shows the caption now passes a `mute` ground (CachedImage's optional fallbackBg, §31.13;
+// DisplayMediaImage already had one). Sites that pass fallbackLabel="" show no caption.
+const FALLBACK_CAPTION: Needle[] = [[FT.mediaFallback, "label: { ...t.small, color: color.paper, fontWeight: '600'"], [FT.mediaFallback, 'bg ? { backgroundColor: bg } : undefined']];
+const CACHED_BG: Needle = [FT.cachedImage, '{...(fallbackBg !== undefined ? { bg: fallbackBg } : {})}'];
+for (const [id, file, line] of [
+  ['world.gemCard', F.gemCard, '<CachedImage source={{ uri: gem.imageUrl }} style={styles.tileImg} resizeMode="cover" fallbackBg={color.mute} />'],
+  ['world.changingNow', F.changing, '<CachedImage source={{ uri: hero.thumbnailUrl }} style={styles.heroImg} resizeMode="cover" fallbackBg={color.mute} />'],
+  ['world.contribution', F.contribution, '<CachedImage source={{ uri: draft.media.uri }} style={styles.preview} resizeMode="cover" fallbackBg={color.mute} />'],
+  ['world.perspectiveTile', F.tile, '<CachedImage source={{ uri: media.thumbnailUrl }} style={styles.img} resizeMode="cover" fallbackBg={color.mute} />'],
+  ['world.experienceMosaic', F.expMosaic, '<CachedImage source={{ uri: m.thumbnailUrl }} style={styles.heroImg} resizeMode="cover" fallbackBg={color.mute} />'],
+  ['world.people', F.people, '<CachedImage source={{ uri: c.avatarUrl }} style={styles.avatar} resizeMode="cover" fallbackBg={color.mute} />'],
+  ['mediaViewer', MV, '<CachedImage source={{ uri: mediaUrl }} style={StyleSheet.absoluteFill} resizeMode="cover" fallbackBg={color.mute} />'],
+] as const) {
+  add({ id: `${id}.imageFallback.caption`, fg: color.paper, on: 'mediaFallbackGround', kind: 'text', at: [[file, line], CACHED_BG, ...FALLBACK_CAPTION] }); // FIXED by lane K (census-media §31.13): was 1.19 (paper on haze)
+}
+add({ id: 'gridTile.imageFallback.caption', fg: color.paper, on: 'mediaFallbackGround', kind: 'text', at: [[FT.gridTile, 'resizeMode="cover" fallbackBg={color.mute}'], [FT.mediaFallback, 'bg={fallbackBg}'], ...FALLBACK_CAPTION] }); // FIXED by lane K (census-media §31.13): was 1.19
+add({ id: 'imageFallback.dot', fg: 'rgba(250,249,246,0.6)', on: 'mediaFallbackGround', kind: 'decor', at: [[FT.mediaFallback, 'backgroundColor: color.paper, opacity: 0.6 }']] });
+// Avatar: with no photo, initials in ink on a `haze` disc (its own ground). The name beside it is the label.
+const AVATAR_INITIALS: Needle[] = [[FT.avatar, "initial: { ...t.small, fontWeight: '700', color: color.ink },"], [FT.avatar, /fallback: \{\s*backgroundColor: color\.haze,/]];
+for (const [id, file] of [['watch', FT.watchOverlay], ['gems', FT.gemsOverlay], ['viewer', F.viewer], ['mediaViewer', MV]] as const) {
+  add({ id: `${id}.avatar.initials`, fg: color.ink, on: 'haze', kind: 'text', at: [[file, '<Avatar'], ...AVATAR_INITIALS] });
+}
+// GemContributeSection, inside the action rail's "Update this gem" panel: its own navy card.
+const GEM_CARD: Needle = [FT.gemContribute, "backgroundColor: '#13213A',"];
+add({ id: 'railPanel.gemContribute.title', fg: '#E8F0FE', on: 'gemContributeCard', kind: 'text', at: [[F.actionPanels, '<GemContributeSection'], GEM_CARD, [FT.gemContribute, "color: '#E8F0FE',"]] });
+add({ id: 'railPanel.gemContribute.subtitle', fg: '#8A9BB5', on: 'gemContributeCard', kind: 'text', at: [GEM_CARD, [FT.gemContribute, /subtitle: \{[^}]*color: '#8A9BB5',/]] });
+add({ id: 'railPanel.gemContribute.signedOut', fg: '#8A9BB5', on: 'gemContributeCard', kind: 'text', at: [GEM_CARD, [FT.gemContribute, /signedOutText: \{[^}]*color: '#8A9BB5',/]] });
+for (const [tone, fg, done] of [['positive', '#6FD39A', 'gemContributeDoneGreen'], ['neutral', '#9DB8E8', 'gemContributeDoneBlue'], ['caution', '#E8B24D', 'gemContributeDoneAmber']] as const) {
+  const toneNeedle: Needle = [FT.gemContribute, `${tone}: '${fg}',`];
+  add({ id: `railPanel.gemContribute.chip.${tone}`, fg, on: 'gemContributeCard', kind: 'text', at: [GEM_CARD, toneNeedle, [FT.gemContribute, '<Text style={[styles.chipText, { color: fg }]}>']] });
+  add({ id: `railPanel.gemContribute.chip.${tone}.done`, fg, on: done, kind: 'text', at: [GEM_CARD, toneNeedle, [FT.gemContribute, 'isDoneThis && { backgroundColor: `${fg}22`']] });
+  add({ id: `railPanel.gemContribute.spinner.${tone}`, fg, on: 'gemContributeCard', kind: 'ui', at: [GEM_CARD, toneNeedle, [FT.gemContribute, '<ActivityIndicator size="small" color={fg} />']] });
+}
+add({ id: 'railPanel.gemContribute.feedback', fg: '#6FD39A', on: 'gemContributeCard', kind: 'text', at: [GEM_CARD, [FT.gemContribute, /feedback: \{[^}]*color: '#6FD39A',/]] });
+add({ id: 'railPanel.gemContribute.error', fg: '#FF6B6B', on: 'gemContributeCard', kind: 'text', at: [GEM_CARD, [FT.gemContribute, /feedbackError: \{[^}]*color: '#FF6B6B',/]] });
 
 // Measure every pair added since the last push.
 MEASURED.push(...PAIRS.slice(MEASURED.length).map(measurePair));

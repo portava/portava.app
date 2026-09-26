@@ -58,7 +58,7 @@ export function HiddenGemCard({ gem, variant = 'row', onOpen }: HiddenGemCardPro
     >
       {variant === 'tile' ? (
         gem.imageUrl ? (
-          <CachedImage source={{ uri: gem.imageUrl }} style={styles.tileImg} resizeMode="cover" />
+          <CachedImage source={{ uri: gem.imageUrl }} style={styles.tileImg} resizeMode="cover" fallbackBg={color.mute} />
         ) : (
           <View style={[styles.tileImg, styles.tileFallback]}>
             <View testID="hidden-gem-marker" style={[styles.marker, styles.markerLarge]} />

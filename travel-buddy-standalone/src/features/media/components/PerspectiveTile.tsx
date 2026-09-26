@@ -36,7 +36,7 @@ export function PerspectiveTile({ media, perspectiveLabel, height = 180, onOpen 
       accessibilityLabel={perspectiveLabel ? `${perspectiveLabel} perspective` : 'Perspective'}
     >
       {media.thumbnailUrl ? (
-        <CachedImage source={{ uri: media.thumbnailUrl }} style={styles.img} resizeMode="cover" />
+        <CachedImage source={{ uri: media.thumbnailUrl }} style={styles.img} resizeMode="cover" fallbackBg={color.mute} />
       ) : (
         <View style={[styles.img, styles.fallback]} />
       )}

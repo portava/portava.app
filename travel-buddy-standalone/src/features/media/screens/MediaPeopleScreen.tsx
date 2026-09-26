@@ -82,7 +82,7 @@ function PeopleGroupSection({
     <View style={styles.group}>
       <View style={styles.header}>
         {c.avatarUrl ? (
-          <CachedImage source={{ uri: c.avatarUrl }} style={styles.avatar} resizeMode="cover" />
+          <CachedImage source={{ uri: c.avatarUrl }} style={styles.avatar} resizeMode="cover" fallbackBg={color.mute} />
         ) : (
           <View style={[styles.avatar, styles.avatarFallback]} />
         )}

@@ -43,7 +43,7 @@ export function ChangingNowCard({ item, onPress, onWhyThis }: ChangingNowCardPro
     >
       <View style={styles.hero}>
         {hero?.thumbnailUrl ? (
-          <CachedImage source={{ uri: hero.thumbnailUrl }} style={styles.heroImg} resizeMode="cover" />
+          <CachedImage source={{ uri: hero.thumbnailUrl }} style={styles.heroImg} resizeMode="cover" fallbackBg={color.mute} />
         ) : (
           <View style={[styles.heroImg, styles.heroFallback]} />
         )}
