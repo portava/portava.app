@@ -3493,3 +3493,128 @@ on the column and fails closed, publishing nothing. Order for production:
            (SELECT data_type FROM information_schema.columns WHERE table_schema='public' AND table_name='sensing_anon_contributions' AND column_name='surface_permitted') AS surface_permitted,
            (SELECT enabled FROM public.feature_flags WHERE flag='sensing_publication_enabled') AS publication_flag;
     -- portava-ci: _uuid, boolean, false   |   production: NULL, NULL, NULL
+
+## 2026-09-26 — 3320 and 3321 applied to `portava-ci` under owner decision A; NOT to production
+
+Media lane B's two files (census-media §20), merged on branch
+`claude/sensing-completion-20260925` (PR #528). They were applied nowhere when
+merged, and the live-DB job's `audit:schema` failed on `4b57e8746` with the
+four objects they create missing. Both files' headers assign the portava-ci
+apply to the integrator after review. Decision A's condition held: CI's
+`node:test` suite concluded success on `4b57e8746`, a tree containing both files.
+
+| | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
+|---|---|---|
+| `3320_media_canonical_contract_constraints.sql` (blob `1e02b85c41…`) | **applied** 18:29:14 UTC | not applied |
+| `3321_media_moderation_canonical_state.sql` (blob `5d042d761e…`) | **applied** 18:29:47 UTC | not applied |
+
+Ledger rows: both `applied_by='manual'`, checksum = sha256 of the file bytes
+(`e6b57ec1f6…`, `0c95882754…`), written inside the same transaction as the
+DDL; `notes` carries the blob id, the branch and `owner-decision=A-2026-09-26`.
+The ledger went from 604 rows to 606. The 2481 row was not touched (read back:
+`ci`, 2026-09-09).
+
+### Reviewed before applying
+
+3321 changes what new rows hold: the default becomes `processing`, and a
+legacy `pending`/`approved`/`flagged` write is stored as
+`processing`/`active`/`limited`. Every reader of `media_assets.moderation_status`
+was read first, and each already speaks §36:
+
+- the projection's unservable set includes `limited`;
+- eligibility's non-distributable set includes it;
+- the Quick Media block includes it;
+- the moderation service and the presence receipt use the canonical states;
+- shareables accept `active`.
+
+The `!== "flagged"` checks in posts, pulse, passport, the feed item and the
+post-media resolver read `post_media`, which 3321 does not touch.
+
+One reader does not speak §36. The 20260811 RLS policies
+(`media_assets_public_select`, `media_attachments_public_select`) admit an
+`authenticated` direct read only when the asset's
+`moderation_status = 'approved'`. No client or server path reads these tables
+as `authenticated`, because the API uses the service role. So the effect is
+that such a read of a public `active` row returns nothing: it fails closed.
+Widening the policy is a protection change and is not made here (census-media §23.2).
+
+### How they were applied
+
+As for 3313–3315: `classifyMigration`, `checksumOf` and `buildApplyStatement`
+from `scripts/src/apply-migrations.ts` built each statement, and it was sent
+unchanged through the Management-API query endpoint. Both files were classified
+**`unwrapped`**, so their header comments above `BEGIN` are not in the
+statement. The precondition and postcondition `DO` blocks are inside the text
+between the file's own `BEGIN` and `COMMIT`, so they ran in the wrapping
+transaction. Before sending, the checksum was recomputed with `sha256sum` and
+the blob compared with `HEAD`; both matched.
+
+Preconditions read beforehand: `media_assets_moderation_status_canonical_check`
+(the §36 superset from 2470) present; 0 rows in `media_assets` and
+`media_attachments`; 0 violators of any new CHECK; neither function nor trigger
+present.
+
+### Verified from the catalog after each commit
+
+- **CHECKs.** The three have the files' definitions:
+  - `media_attachments_entity_type_check`: the nine §6.1 types;
+  - `media_attachments_visibility_override_check`: `IS NULL OR` inherit plus the six §33 audiences;
+  - `media_assets_visibility_check`: inherit plus the same six.
+- **Triggers.** `media_assets_version_bump` (BEFORE UPDATE) and
+  `media_assets_canonical_moderation` (BEFORE INSERT OR UPDATE OF
+  moderation_status) are both enabled.
+- **Functions.** Both have `search_path=""` and are not SECURITY DEFINER.
+  `REVOKE ALL … FROM PUBLIC` ran, but the ACL still lists EXECUTE for `anon`
+  and `authenticated`, from Supabase's default privileges on `public`. Both
+  functions `RETURNS trigger`, and PostgreSQL refuses to call such a function
+  outside a trigger, so the grant reaches nothing.
+- **Default.** `moderation_status` defaults to `'processing'`.
+
+Controls, all in one block that raised at the end to roll back (afterwards 0
+rows in both tables, 0 `ctl/%` paths):
+
+| probe | outcome |
+|---|---|
+| INSERT `flagged` / `approved` / `pending` | stored `limited` / `active` / `processing` |
+| INSERT naming no status | `processing` |
+| INSERT `rejected` (already §36) | `rejected`, unchanged |
+| UPDATE status to `approved`, then to `flagged` | `active` v2, then `limited` v3 |
+| UPDATE sending `version = 99`, then `version = 1` | stored 4, then 5: the version cannot be forged or rewound |
+| compare-and-set `WHERE version = 3` on a row at 5 | 0 rows: the lost race is refused |
+| `visibility = 'everyone'`; `entity_type = 'bogus'`; `visibility_override = 'friends'` | each refused, SQLSTATE 23514 |
+| attachment `post` with NULL override; `observation` with `trip_crew` | admitted |
+
+### Production, read 2026-09-26 (read-only)
+
+Neither file is applied and neither was applied as a side effect: no ledger
+row, no trigger, no function, and the default is still `'pending'`.
+
+**Contrary to 3321's own header, its precondition would pass there.**
+Production carries `media_assets_moderation_status_canonical_check`, because
+2470 was applied on 2026-09-16 (ledger: `manual`, *"under ORDER B, on explicit
+owner decision"*). All four canonical columns are present. 3320's
+preconditions would also pass: 11 assets, all `pending` and `inherit`, and 0
+attachments.
+
+`media_canonical_enabled` reads **FALSE** there, last updated 2026-09-25
+15:39 UTC; the tree records no reason. Applying either file to production is
+the owner's decision.
+
+The header is not edited. The ledger checksum is the file's bytes, and the
+runner reports a changed file as drift (`apply-migrations.ts`, the `drifted`
+arm). census-media §23.2 carries the correction.
+
+### Rollback
+
+    -- 3321: db/rollback/2026-09-26-3321-media-moderation-canonical-state-rollback.sql
+    -- 3320: db/rollback/2026-09-26-3320-media-canonical-contract-constraints-rollback.sql
+    -- in that order, then for each: DELETE FROM public.schema_migration_ledger WHERE filename = '<file>';
+
+### Re-establish independently
+
+    SELECT filename, applied_by, length(checksum) FROM public.schema_migration_ledger
+     WHERE filename ~ '^332[01]_' ORDER BY filename;
+    -- portava-ci: 2 rows, manual, 64   |   production: 0 rows
+
+    SELECT tgname FROM pg_trigger WHERE tgrelid = 'public.media_assets'::regclass AND NOT tgisinternal ORDER BY 1;
+    -- portava-ci: media_assets_canonical_moderation, media_assets_version_bump   |   production: none

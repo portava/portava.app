@@ -3660,7 +3660,7 @@ Every mutation was applied, run, and reverted; after each batch `git status` sho
 | MD78 | **N** | **C** | `intelligenceExpiresAt` produced from the asset's own operational expiry and served. §20.M1, §20.M5, §20.M7 red. |
 | MD274 | **W** | **C** | 3321: §36 default and a trigger that stores every legacy spelling as its §36 meaning; the moderation service writes §36 values; the two readers that could not read them were aligned. §20.D6–D8, §20.MM1, §20.MM2, §20.MM5, §20.MM7, §20.MM8 red. |
 | MD338 | **W** | **C** | By responsibility: write (schema-guarded), versioned edit, attach, the post link, lifecycle (MediaLifecycleService), contract and read. Its W was "cannot act under the flag" — a deployment fact under §1, and §20.5 states it. |
-| MD339 | **W** | **C** | Attachments are written by six callers and the endpoint, CHECKed by the table, read by the canonical read, the Wall and the byte path. Its W was "reads rows the write side cannot create" — the write side now exists for the post, and cannot create rows in production only because of MEDIA_CANONICAL_FLAG (§20.5). |
+| MD339 | **W** | **C** | Attachments are written by six callers and the endpoint, CHECKed by the table, read by the canonical read, the Wall and the byte path. Its W was "reads rows the write side cannot create" — the write side now exists for the post, and cannot create rows in production only because of MEDIA_CANONICAL_FLAG (§20.5). *(Reason corrected in §23.2: production's writer is off by `media_canonical_enabled = FALSE`; the columns are there.)* |
 | MD343 | **W** | **C** | By responsibility (capture, lineage under CAS, classification, serving); its W was "no served object has provenance", which is no longer true. §20.M5, §20.M16 red. |
 | MD351 | **W** | **C** | `MediaModerationService` owns the §36 transition table, the decision→state mapping, the distribution predicate and the decision's reach into the canonical store; the admin route goes through it. §20.MM1–MM6 red. **Contested against F12, deliberately:** F12 binds MD351 to "a classifier with a hold state". The classifier is §36's Safety-moderation STAGE, MD269, which stays **W**; keeping the §41 SERVICE open on the same missing classifier would grade one absence twice. §9.2's reason for this row — "there is no such module" — is what was built against. |
 | MD369 | **N** | **C** | The endpoint existed (re-read, §20.1); it is now proved over HTTP. §20.MA1–MA4 red. |
@@ -3670,7 +3670,7 @@ This section's moves: 14 `W → C` and 4 `N → C`. No row moved backward.
 
 ### 20.5 Production verification — stated separately, per the owner's rule
 
-**P1** — `media_canonical_enabled` is TRUE in production while migration 2250/2470's columns are absent (`artifacts/api-server/src/lib/mediaAssets.ts:15#media_canonical_enabled = TRUE`), so the schema-capability guard refuses every canonical write there. Removing it is the owner decision `docs/architecture/migration-disposition-ledger.md:154#MEDIA_CANONICAL_FLAG` (take the flag down and apply 2250, or apply 2470 under the live flag). **P2** — `media_canonical_read_enabled` is FALSE in portava-ci and absent in production (`artifacts/api-server/src/lib/media/mediaCanonicalRead.ts:162#export const MEDIA_CANONICAL_READ_FLAG`); turning it on is an operator act gated on that file's B1–B5 (2250 applied, the writer seen landing a row, a dimension sweep, coverage measured, rollback by flag). **P3** — `MEDIA_WORLD_SHELL_ENABLED` is seeded false (§14.4 F1), so no user reaches a World projection. **P4** — migrations 3320 and 3321 are applied NOWHERE; the integrator applies them to portava-ci after review, and 3321 refuses production until P1.
+**P1** — `media_canonical_enabled` is TRUE in production while migration 2250/2470's columns are absent (`artifacts/api-server/src/lib/mediaAssets.ts:15#media_canonical_enabled = TRUE`), so the schema-capability guard refuses every canonical write there. Removing it is the owner decision `docs/architecture/migration-disposition-ledger.md:154#MEDIA_CANONICAL_FLAG` (take the flag down and apply 2250, or apply 2470 under the live flag). **P2** — `media_canonical_read_enabled` is FALSE in portava-ci and absent in production (`artifacts/api-server/src/lib/media/mediaCanonicalRead.ts:162#export const MEDIA_CANONICAL_READ_FLAG`); turning it on is an operator act gated on that file's B1–B5 (2250 applied, the writer seen landing a row, a dimension sweep, coverage measured, rollback by flag). **P3** — `MEDIA_WORLD_SHELL_ENABLED` is seeded false (§14.4 F1), so no user reaches a World projection. **P4** — migrations 3320 and 3321 are applied NOWHERE; the integrator applies them to portava-ci after review, and 3321 refuses production until P1. *(Corrected in §23.2 against production's catalog: 2470's columns are present there and `media_canonical_enabled` reads FALSE, so P1 is the flag, not the schema. 3321's precondition would pass on production. 3320 and 3321 are now applied to portava-ci.)*
 
 | Row | Implementation | What keeps it out of production — RED WHEN it is realized | WHO |
 | --- | --- | --- | --- |
@@ -3805,7 +3805,60 @@ findings (MD12, MD14, MD30–MD32, MD417). **None of lane A's 28 moved rows is
 realised in production:** the World shell is seeded off, and the Media Map
 places nothing in production while `map_projection_enabled` has no row there.
 
-### 23.2 Restated headline
+### 23.2 3320 and 3321 applied to portava-ci; three sentences about production that its catalog contradicts
+
+**Why now.** The live-DB job's `audit:schema` failed on `4b57e8746` with four
+objects missing: the two functions and two triggers of 3320 and 3321. Both
+files came with lane B and were applied nowhere. Their headers assign the
+portava-ci apply to the integrator after review; decision A's condition (CI's
+`node:test` green on a tree containing them) held.
+
+**Reviewed before applying: who reads what 3321 changes.** 3321 stores
+`flagged` as `limited`, `approved` as `active` and `pending` as `processing`,
+so every reader of `media_assets.moderation_status` was read.
+- **Already speak §36:** the projection's unservable set, eligibility's
+  non-distributable set, the Quick Media block, the moderation service and the
+  presence receipt all treat `limited` as blocked. Shareables accept `active`.
+- **Not affected:** the `!== "flagged"` checks in posts, pulse, passport, the
+  feed item and the post-media resolver read `post_media`, which 3321 does not
+  touch.
+- **The one that does not speak §36:** the 20260811 RLS policies admit an
+  `authenticated` direct read only for `moderation_status = 'approved'`. No
+  path reads these tables as `authenticated`, because the API uses the service
+  role, so the effect is that such a read of a public `active` row returns
+  nothing. That fails closed. Widening it is a protection change and is left
+  to the owner; recorded, not done.
+
+**Applied runner-identically, then controlled** (`docs/migrations.md`, the
+2026-09-26 entry for 3320 and 3321). Catalog read back: three CHECKs, two
+enabled triggers, default `processing`, ledger 604 to 606, the 2481 row
+untouched. In one rolled-back block, the database did each of these:
+- stored `flagged`, `approved` and `pending` as `limited`, `active` and `processing`;
+- refused a forged or rewound `version` (99 and 1 became 4 and 5);
+- matched zero rows on a stale compare-and-set;
+- refused `everyone`, `bogus` and `friends` with 23514.
+
+**Three sentences corrected**, read from production's catalog on 2026-09-26
+(read-only):
+
+| Sentence | Where | What production's catalog says |
+|---|---|---|
+| P1: `media_canonical_enabled` is TRUE while 2250/2470's columns are absent | §20.5 | **2470 is applied** (2026-09-16, `manual`, *"under ORDER B, on explicit owner decision"*); all four columns are present. **`media_canonical_enabled` reads FALSE**, last updated 2026-09-25 15:39 UTC; the tree records no reason. The canonical writer is off in production **by the flag**, not refused by the schema. The source of P1 was the comment at `artifacts/api-server/src/lib/mediaAssets.ts:13#THE FLAG IS NOT OFF. MEASURED 2026-09-07`, true when measured and not re-read. |
+| P4: 3321 refuses production until P1 | §20.5, and 3321's own header | Production carries the §36 superset CHECK (`media_assets_moderation_status_canonical_check`), so **3321's precondition would pass there**. 3320's would too: 11 assets, all `pending`/`inherit`; 0 attachments. Neither file is applied there, and applying them is the owner's decision. The header is not edited, because portava-ci's ledger checksum is the file's bytes and the runner reports a changed file as drift. |
+| MD339's reason: production cannot create attachment rows "only because of MEDIA_CANONICAL_FLAG" | §20.4 | The binding step is turning `media_canonical_enabled` on. That is an owner act, and it was turned off yesterday. |
+
+**What moves: no verdict.** Every row §20 moved was graded on branch code.
+§20.5's per-row table still names the right owner, because P1 and P4 still
+name production steps. What changes is what those steps are:
+- **P1** is now one owner act, turning the flag on; the schema is ready.
+- **P4** is done on portava-ci. On production it is applying 3320 then 3321,
+  and both preconditions pass today.
+
+MD38 (a lost race refused) and MD41 (a tenth entity type refused) are now
+**observed on portava-ci's real schema**, not only on local PostgreSQL. They
+remain unrealised in production.
+
+### 23.3 Restated headline
 
 > | Measure | Was, §20.10 | Now |
 > | --- | --- | --- |

@@ -566,7 +566,13 @@ import {
  * onto the declaration it names, which retired one more dead target. Same rule
  * as above: the guard printed "176 < 177 — LOWER THE CEILING", and a ceiling
  * left above the measured count re-admits the rot just removed. */
-export const MAX_DEAD_TARGETS = 166;
+/* RATCHETED 2026-09-26 166 -> 165, late. The census-sensing §27 pass
+ * (123ce774e) repointed 37 citations after line shifts, and one of them had
+ * been a dead target; from that commit on the guard printed "165 < 166 — LOWER
+ * THE CEILING", and the ceiling was not lowered with it. Measured at
+ * 123ce774e (165), at the media lane B merge's second parent (the lane's own
+ * tip, cut before 123ce774e: 166) and at every head since: 165. */
+export const MAX_DEAD_TARGETS = 165;
 
 /** Pinned to a commit by its own declaration; its lines must not track HEAD. */
 const PINNED_DOCS = new Set(['docs/architecture/mobile-reachability-ledger.md']);
