@@ -661,3 +661,534 @@ describe("census-media §30 (MD338) — migration 3338", () => {
     assert.match(code, /enabled = TRUE;\s*IF on_count <> 0 THEN\s*RAISE EXCEPTION/, "a seed that finds it ON refuses");
   });
 });
+
+// ═════════════════════════════════════════════════════════════════════════════
+// 6. census-media §32 — the dimension sweep finishes recordEntityMedia's rows
+// ═════════════════════════════════════════════════════════════════════════════
+//
+// Imports are at the TAIL so no line above moves: census-media cites this file
+// by line. ESM hoists them, so evaluation order is unchanged.
+import { readdirSync } from "node:fs";
+import { authorizeMediaAccess, _clearMediaAccessCache } from "../lib/mediaAccess.js";
+import { probeVideoContainer } from "../lib/videoMetadata.js";
+import { isEntityMediaSweepRow } from "../lib/media/mediaProcessingWorker.js";
+import { webmWithoutLocationTag } from "./videoFixtures.js";
+
+/** `media_attachments` as 0191 declares it. */
+const ATTACHMENT_COLUMNS = [
+  "id", "media_asset_id", "entity_type", "entity_id", "position", "is_cover", "visibility_override", "created_at",
+];
+
+/**
+ * A row exactly as `recordEntityMedia` stages it (lib/mediaAssets.ts): size 0,
+ * no dimensions, `processing`, no lease — plus the column defaults the
+ * migrations give every column it does not send (0191 `visibility`, 3321
+ * `moderation_status`, 2951's lifecycle columns via `asset()`).
+ */
+function staged(n: number, over: Row = {}): Row {
+  return asset(n, {
+    size_bytes: 0,
+    width: null,
+    height: null,
+    processing_status: "processing",
+    moderation_status: "processing",
+    visibility: "inherit",
+    source_type: "user",
+    created_at: new Date(Date.UTC(2026, 8, 1, 0, n)).toISOString(),
+    ...over,
+  });
+}
+
+/** The §6.1 link recordEntityMedia writes after the asset. */
+function link(n: number, entityType: string, entityId: string): Row {
+  return {
+    id: `bbbbbbbb-bbbb-4bbb-8bbb-${String(n).padStart(12, "0")}`,
+    media_asset_id: id(n),
+    entity_type: entityType,
+    entity_id: entityId,
+    position: 0,
+    is_cover: true,
+    visibility_override: null,
+    created_at: "2026-09-01T00:00:00.000Z",
+  };
+}
+
+/** `makeWorld` with `media_attachments` in it, under 0191's column list. */
+function makeSweepWorld(w: World & { links?: Row[] }) {
+  const tables: Record<string, Row[]> = {
+    feature_flags: w.flag === undefined || w.flag === "unreadable"
+      ? []
+      : [{ flag: MEDIA_PROCESSING_WORKER_FLAG, enabled: w.flag }],
+    media_assets: w.assets,
+    media_processing_attempts: w.attempts ?? [],
+    media_attachments: w.links ?? [],
+  };
+  const oracle = makeOracle({
+    tables,
+    columns: {
+      media_assets: MEDIA_ASSET_COLUMNS,
+      media_processing_attempts: ATTEMPT_COLUMNS,
+      media_attachments: ATTACHMENT_COLUMNS,
+    },
+    unique: { media_processing_attempts: ["media_asset_id", "attempt_number"] },
+    failReads: w.flag === "unreadable" ? { feature_flags: { code: "57014", message: "canceling statement due to statement timeout" } } : undefined,
+  });
+  const objects = new Map(Object.entries(w.objects ?? {}));
+  const downloads: string[] = [];
+  const storageWrites: string[] = [];
+  const sc: any = {
+    from: (table: string) => oracle.client.from(table),
+    storage: {
+      from(bucket: string) {
+        return {
+          async download(path: string) {
+            downloads.push(`${bucket}/${path}`);
+            const b = objects.get(`${bucket}/${path}`);
+            return b ? { data: new Blob([b]), error: null } : { data: null, error: { message: "Object not found" } };
+          },
+          async upload(path: string) { storageWrites.push(`upload ${bucket}/${path}`); return { error: { message: "refused by the test" } }; },
+          async remove(paths: string[]) { storageWrites.push(`remove ${bucket}/${paths.join(",")}`); return { error: { message: "refused by the test" } }; },
+        };
+      },
+    },
+  };
+  const writesTo = (table: string) =>
+    oracle.log.filter((r) => r.method !== "GET" && r.method !== "HEAD" && new URL(r.url).pathname.endsWith(`/${table}`));
+  const row = (n: number) => tables.media_assets.find((r) => r.id === id(n))!;
+  return { sc, oracle, tables, objects, downloads, storageWrites, writesTo, row };
+}
+
+describe("census-media §32 — the dimension sweep finishes recordEntityMedia's staged rows", () => {
+  const MEMORY = id(900);
+  const GEM = id(901);
+  const POSTCARD = id(902);
+  const POST = id(903);
+
+  it("sweeps a memory, hidden-gem, postcard and post-link image to READY with the measured width, height and SIZE — and never writes storage", async () => {
+    const images = { 30: await jpeg(64, 48), 31: await jpeg(40, 90), 32: await jpeg(120, 30), 33: await jpeg(17, 23) };
+    const w = makeSweepWorld({
+      flag: true,
+      assets: [staged(30), staged(31), staged(32), staged(33)],
+      links: [link(30, "memory", MEMORY), link(31, "hidden_gem", GEM), link(32, "postcard", POSTCARD), link(33, "post", POST)],
+      objects: { [obj(30)]: images[30], [obj(31)]: images[31], [obj(32)]: images[32], [obj(33)]: images[33] },
+    });
+    const r = await runMediaProcessingPass({ client: w.sc });
+    assert.equal(r.staged, 4, JSON.stringify(r));
+    assert.equal(r.claimed, 4);
+    assert.equal(r.completed, 4);
+    const expected: Record<number, [number, number]> = { 30: [64, 48], 31: [40, 90], 32: [120, 30], 33: [17, 23] };
+    for (const n of [30, 31, 32, 33] as const) {
+      const a = w.row(n);
+      assert.equal(a.processing_status, "ready", `asset ${n}`);
+      assert.deepEqual([a.width, a.height], expected[n], `asset ${n}: measured, not guessed`);
+      assert.equal(a.size_bytes, images[n].length, `asset ${n}: the honest zero became the stored object's size`);
+      assert.equal(a.processing_lease_token, null);
+      assert.equal(a.processing_error, null);
+      assert.equal(a.processing_attempt_count, 1);
+    }
+    assert.deepEqual(w.tables.media_processing_attempts.map((t) => t.status), ["succeeded", "succeeded", "succeeded", "succeeded"]);
+    assert.deepEqual(w.storageWrites, [], "the sweep never writes storage");
+  });
+
+  it("sweeps an entity VIDEO with the container's display size, its stated duration and its size; FAILS terminally one whose container states no size", async () => {
+    const plain = Buffer.from(PLAIN_MP4);
+    const silent = webmWithoutLocationTag();
+    const w = makeSweepWorld({
+      flag: true,
+      assets: [
+        staged(34, { media_type: "video", mime_type: "video/mp4", storage_path: `${OWNER}/34.mp4` }),
+        staged(35, { media_type: "video", mime_type: "video/mp4", storage_path: `${OWNER}/35.webm` }),
+      ],
+      links: [link(34, "memory", MEMORY), link(35, "memory", MEMORY)],
+      objects: { [obj(34, "mp4")]: plain, [obj(35, "webm")]: silent },
+    });
+    const r = await runMediaProcessingPass({ client: w.sc });
+    assert.equal(r.completed, 1, JSON.stringify(r));
+    assert.equal(r.terminal, 1);
+    const v = w.row(34);
+    assert.equal(v.processing_status, "ready");
+    assert.deepEqual([v.width, v.height], [64, 48]);
+    const stated = probeVideoContainer(Buffer.from(PLAIN_MP4))?.durationMs ?? null;
+    assert.ok(stated !== null && stated > 0, "fixture: the container states a duration");
+    assert.equal(v.duration_ms, stated, "the container's duration, not a guess");
+    assert.equal(v.size_bytes, plain.length);
+    const s = w.row(35);
+    assert.equal(s.processing_status, "failed");
+    assert.equal(s.processing_terminal, true);
+    assert.match(s.processing_error, /no display size/);
+    assert.equal(s.width, null);
+    assert.equal(s.size_bytes, 0, "a failed row keeps its honest zero");
+  });
+
+  it("FAILS terminally, never ready, a staged entity still whose stored bytes carry a GPS IFD — no dimensions, no size written", async () => {
+    const w = makeSweepWorld({
+      flag: true,
+      assets: [staged(36)],
+      links: [link(36, "memory", MEMORY)],
+      objects: { [obj(36)]: withGpsIfd(await jpeg(64, 48)) },
+    });
+    const r = await runMediaProcessingPass({ client: w.sc });
+    assert.equal(r.claimed, 1, JSON.stringify(r));
+    assert.equal(r.completed, 0);
+    const a = w.row(36);
+    assert.equal(a.processing_status, "failed");
+    assert.equal(a.processing_terminal, true);
+    assert.match(a.processing_error, /GPS/);
+    assert.equal(a.width, null);
+    assert.equal(a.height, null);
+    assert.equal(a.size_bytes, 0);
+  });
+
+  it("never claims the upload route's dimensionless VIDEO (its size is recorded; this tier cannot measure it), a live-leased staged row, or an unattached one — while a linked staged row in the same pass IS swept", async () => {
+    const now = new Date();
+    const silent = webmWithoutLocationTag();
+    const upload = asset(60, {
+      processing_status: "processing", media_type: "video", mime_type: "video/webm",
+      storage_path: `${OWNER}/60.webm`, size_bytes: silent.length, width: null, height: null,
+      thumbnail_path: `${OWNER}/60.webm.poster.jpg`, visibility: "inherit",
+      created_at: "2026-08-01T00:00:00.000Z",
+    });
+    const leased = staged(61, {
+      processing_lease_token: "live", processing_lease_until: new Date(now.getTime() + 60_000).toISOString(), processing_attempt_count: 1,
+    });
+    const orphan = staged(62);
+    const linked = staged(63);
+    const w = makeSweepWorld({
+      flag: true,
+      assets: [upload, leased, orphan, linked],
+      // The upload row is linked too (recordPostMediaAttachments reuses it), so
+      // the attachment is not what keeps it out: its recorded size is.
+      links: [link(60, "post", POST), link(61, "memory", MEMORY), link(63, "memory", MEMORY)],
+      objects: { [obj(60, "webm")]: silent, [obj(61)]: await jpeg(8, 8), [obj(62)]: await jpeg(8, 8), [obj(63)]: await jpeg(8, 8) },
+    });
+    const before = structuredClone([w.row(60), w.row(61), w.row(62)]);
+    const r = await runMediaProcessingPass({ client: w.sc, now });
+    assert.equal(r.completed, 1, JSON.stringify(r));
+    assert.equal(r.staged, 1);
+    assert.equal(r.unattached, 1, "the orphan is seen and left");
+    assert.equal(w.row(63).processing_status, "ready", "CONTROL: the sweep ran");
+    assert.deepEqual([w.row(60), w.row(61), w.row(62)], before, "untouched: no claim, no lease, no attempt");
+    assert.deepEqual(w.downloads, [obj(63)]);
+    assert.deepEqual(w.tables.media_processing_attempts.map((t) => t.media_asset_id), [id(63)]);
+  });
+
+  it("GATED OFF: with staged entity rows waiting, one flag read and nothing else", async () => {
+    for (const flag of [false, undefined, "unreadable"] as const) {
+      const w = makeSweepWorld({
+        flag,
+        assets: [staged(64)],
+        links: [link(64, "memory", MEMORY)],
+        objects: { [obj(64)]: await jpeg(8, 8) },
+      });
+      const before = structuredClone(w.row(64));
+      const r = await runMediaProcessingPass({ client: w.sc });
+      assert.equal(r.reason, "disabled");
+      assert.equal(r.claimed, 0);
+      assert.equal(w.oracle.requests(), 1, `flag ${String(flag)}: only the flag read`);
+      assert.deepEqual(w.downloads, []);
+      assert.deepEqual(w.row(64), before);
+    }
+  });
+
+  it("a staged row whose object could not be read is failed for retry — then completed by the claimable path WITH its measured size", async () => {
+    const now = new Date();
+    const w = makeSweepWorld({ flag: true, assets: [staged(65)], links: [link(65, "hidden_gem", GEM)], objects: {} });
+    const first = await runMediaProcessingPass({ client: w.sc, now });
+    assert.equal(first.failed, 1, JSON.stringify(first));
+    assert.equal(w.row(65).processing_status, "failed");
+    assert.equal(w.row(65).processing_terminal, false);
+    assert.equal(w.row(65).size_bytes, 0);
+    const bytes = await jpeg(33, 44);
+    w.objects.set(obj(65), bytes);
+    const later = new Date(now.getTime() + 10 * 60_000);
+    const second = await runMediaProcessingPass({ client: w.sc, now: later });
+    assert.equal(second.staged, 0, "no longer staged: it is claimable work now");
+    assert.equal(second.completed, 1, JSON.stringify(second));
+    const a = w.row(65);
+    assert.equal(a.processing_status, "ready");
+    assert.deepEqual([a.width, a.height], [33, 44]);
+    assert.equal(a.size_bytes, bytes.length, "the claimable path writes the size too");
+    assert.equal(a.processing_attempt_count, 2);
+  });
+
+  it("keeps §30.3's per-pass bound: the sweep takes only what the DUE claimable work leaves, oldest first", async () => {
+    const now = new Date();
+    const w = makeSweepWorld({
+      flag: true,
+      assets: [
+        asset(80),
+        asset(81, { processing_status: "failed", processing_attempt_count: 1, processing_next_retry_at: new Date(now.getTime() + 60_000).toISOString() }),
+        staged(82),
+        staged(83),
+      ],
+      attempts: [{ media_asset_id: id(81), attempt_number: 1, lease_token: "t81", status: "retryable_failure" }],
+      links: [link(82, "memory", MEMORY), link(83, "memory", MEMORY)],
+      objects: { [obj(80)]: await jpeg(8, 8), [obj(81)]: await jpeg(8, 8), [obj(82)]: await jpeg(8, 8), [obj(83)]: await jpeg(8, 8) },
+    });
+    const r = await runMediaProcessingPass({ client: w.sc, now, limit: 2 });
+    assert.equal(r.notDue, 1, JSON.stringify(r));
+    assert.equal(r.staged, 1, "limit 2, one DUE claimable item: one staged row");
+    assert.equal(r.claimed, 2);
+    assert.equal(w.row(80).processing_status, "ready");
+    assert.equal(w.row(82).processing_status, "ready", "the OLDER staged row");
+    assert.equal(w.row(83).processing_status, "processing");
+    assert.equal(w.row(83).processing_attempt_count, 0);
+
+    const full = makeSweepWorld({
+      flag: true,
+      assets: [asset(84), staged(85)],
+      links: [link(85, "memory", MEMORY)],
+      objects: { [obj(84)]: await jpeg(8, 8), [obj(85)]: await jpeg(8, 8) },
+    });
+    const f = await runMediaProcessingPass({ client: full.sc, now, limit: 1 });
+    assert.equal(f.staged, 0, JSON.stringify(f));
+    assert.equal(full.row(85).processing_status, "processing");
+    assert.ok(
+      !full.oracle.log.some((q) => new URL(q.url).pathname.endsWith("/media_attachments")),
+      "no budget left: the sweep does not even read",
+    );
+  });
+
+  it("isEntityMediaSweepRow is exactly recordEntityMedia's signature", () => {
+    const base = { id: id(1), processing_status: "processing", processing_lease_token: null, size_bytes: 0, width: null, height: null, processing_terminal: false };
+    assert.equal(isEntityMediaSweepRow(base), true);
+    for (const [why, over] of [
+      ["a recorded size (the upload route)", { size_bytes: 5702 }],
+      ["no size at all", { size_bytes: null }],
+      ["a width", { width: 10 }],
+      ["a height", { height: 10 }],
+      ["a lease", { processing_lease_token: "t" }],
+      ["queued", { processing_status: "queued" }],
+      ["failed", { processing_status: "failed" }],
+      ["ready", { processing_status: "ready" }],
+      ["terminal", { processing_terminal: true }],
+      ["no id", { id: undefined }],
+    ] as const) {
+      assert.equal(isEntityMediaSweepRow({ ...base, ...over }), false, why);
+    }
+    assert.equal(isEntityMediaSweepRow(null), false);
+  });
+});
+
+// ── The byte gate, driven by the fake mediaAccess.test.ts uses ────────────────
+//
+// A COPY of `makeClient`'s query builder in src/test/mediaAccess.test.ts — the
+// same filter semantics (eq / in / is / contains / overlaps / a real top-level
+// `or`), the same live-column enforcement for the tables it enforces — keyed by
+// table name instead of by FakeState field. It is copied, not imported: that
+// file does not export it, and importing a test file runs its suites.
+
+const BYTE_GATE_LIVE_COLUMNS: Record<string, readonly string[]> = {
+  user_follows: ["follower_id", "following_id", "created_at"],
+  post_media: [
+    "id", "post_id", "user_id", "media_type", "mime_type", "storage_bucket",
+    "storage_path", "public_url", "thumbnail_storage_path", "thumbnail_url",
+    "feed_storage_path", "feed_url", "width", "height", "duration_seconds",
+    "file_size_bytes", "sort_order", "moderation_status", "processing_status",
+    "phash", "dedup_processed", "canonical_place_id", "stamp_overlay",
+    "created_at", "updated_at",
+  ],
+  media_attachments: ATTACHMENT_COLUMNS,
+  circle_member_visibility_overrides: [
+    "id", "user_id", "target_user_id", "context_type",
+    "context_id", "direction", "hidden", "created_at",
+  ],
+};
+
+function byteGateClient(tables: Record<string, Row[]>): any {
+  function builder(table: string) {
+    const filters: Array<(r: any) => boolean> = [];
+    let unknownColumn: string | null = null;
+    const rows = () => (tables[table] ?? []).filter((r) => filters.every((f) => f(r)));
+    const undefinedColumn = () => ({ data: null, error: { code: "42703", message: `column ${table}.${unknownColumn} does not exist` } });
+    const b: any = {
+      select(cols?: string) {
+        if (typeof cols === "string" && cols !== "*") {
+          const live = BYTE_GATE_LIVE_COLUMNS[table];
+          if (live) unknownColumn = cols.split(",").map((c) => c.trim()).filter(Boolean).find((c) => !live.includes(c)) ?? null;
+        }
+        return b;
+      },
+      eq(col: string, val: any) { filters.push((r) => r[col] === val); return b; },
+      in(col: string, vals: any[]) { filters.push((r) => vals.includes(r[col])); return b; },
+      is(col: string, val: any) { filters.push((r) => (val === null ? r[col] == null : r[col] === val)); return b; },
+      contains(col: string, vals: any[]) { filters.push((r) => Array.isArray(r[col]) && vals.every((v) => r[col].includes(v))); return b; },
+      overlaps(col: string, vals: any[]) { filters.push((r) => Array.isArray(r[col]) && vals.some((v) => r[col].includes(v))); return b; },
+      or(expr: string) {
+        const clauses: string[] = [];
+        let depth = 0, cur = "";
+        for (const ch of expr) {
+          if (ch === "(") depth++;
+          if (ch === ")") depth--;
+          if (ch === "," && depth === 0) { clauses.push(cur); cur = ""; continue; }
+          cur += ch;
+        }
+        if (cur.trim()) clauses.push(cur);
+        const preds = clauses.map((c) => {
+          const m = c.trim().match(/^(\w+)\.(\w+)\.(.*)$/);
+          if (!m) return () => false;
+          const [, col, op, rawVal] = m;
+          if (op === "in") {
+            const vals = (rawVal.match(/"((?:[^"\\]|\\.)*)"/g) ?? []).map((q) => q.slice(1, -1).replace(/\\"/g, '"'));
+            return (r: any) => vals.includes(String(r[col]));
+          }
+          return (r: any) => String(r[col]) === rawVal;
+        });
+        filters.push((r) => preds.some((f) => f(r)));
+        return b;
+      },
+      limit() { return b; }, not() { return b; }, order() { return b; },
+      maybeSingle() {
+        if (unknownColumn) return Promise.resolve(undefinedColumn());
+        return Promise.resolve({ data: rows()[0] ?? null, error: null });
+      },
+      then(onF: any, onR: any) {
+        if (unknownColumn) return Promise.resolve(undefinedColumn()).then(onF, onR);
+        return Promise.resolve({ data: rows(), error: null }).then(onF, onR);
+      },
+    };
+    return b;
+  }
+  return { from: builder };
+}
+
+describe("census-media §32 — PRIVACY: a swept entity asset reaches nobody its entity would not be shown to", () => {
+  const FOLLOWER = "33333333-3333-4333-8333-333333333333";
+  const MEMORY = id(910);
+  const GEM = id(911);
+  const POSTCARD = id(912);
+  const PRIVATE_POST = id(913);
+  const PUBLIC_POST = id(914);
+  const OLD_SUPABASE_URL = process.env.SUPABASE_URL;
+  before(() => { process.env.SUPABASE_URL = "http://sb.example.test"; });
+  after(() => { process.env.SUPABASE_URL = OLD_SUPABASE_URL; });
+
+  /** The objects each file belongs to, as their own tables hold them (decide() reads none of the first three). */
+  const entityTables = (): Record<string, Row[]> => ({
+    passport_memories: [{ id: MEMORY, user_id: OWNER, status: "active", visibility: "private", photo_url: `${BUCKET}/${OWNER}/40.jpg` }],
+    hidden_gems: [{ id: GEM, submitted_by: OWNER, status: "pending", image_url: `${BUCKET}/${OWNER}/41.jpg` }],
+    passport_postcards: [{ id: POSTCARD, post_id: PRIVATE_POST, user_id: OWNER, status: "active", visibility: "private", media_url: `${BUCKET}/${OWNER}/42.jpg` }],
+    posts: [
+      { id: PRIVATE_POST, author_id: OWNER, visibility: "private", status: "active", post_status: "published", trip_id: null, media_urls: [`${BUCKET}/${OWNER}/42.jpg`] },
+      { id: PUBLIC_POST, author_id: OWNER, visibility: "public", status: "active", post_status: "published", trip_id: null, media_urls: [`${BUCKET}/${OWNER}/43.jpg`] },
+    ],
+    post_media: [
+      { post_id: PRIVATE_POST, storage_path: `${OWNER}/42.jpg`, moderation_status: "approved", processing_status: "ready" },
+      { post_id: PUBLIC_POST, storage_path: `${OWNER}/43.jpg`, moderation_status: "approved", processing_status: "ready" },
+    ],
+    user_follows: [{ follower_id: FOLLOWER, following_id: OWNER, created_at: "2026-01-01T00:00:00.000Z" }],
+    blocks: [],
+  });
+
+  it("a PRIVATE memory's photo, a hidden gem's photo and a private post's postcard, swept READY, are refused to a stranger and to a follower exactly as before the sweep; a PUBLIC post's file is the control", async () => {
+    const w = makeSweepWorld({
+      flag: true,
+      assets: [staged(40), staged(41), staged(42), staged(43)],
+      links: [link(40, "memory", MEMORY), link(41, "hidden_gem", GEM), link(42, "postcard", POSTCARD), link(43, "post", PUBLIC_POST)],
+      objects: { [obj(40)]: await jpeg(40, 30), [obj(41)]: await jpeg(41, 30), [obj(42)]: await jpeg(42, 30), [obj(43)]: await jpeg(43, 30) },
+    });
+    const viewers = { stranger: STRANGER, follower: FOLLOWER, owner: OWNER } as const;
+    const decisions = async () => {
+      const out: Record<string, Record<string, boolean>> = {};
+      for (const n of [40, 41, 42, 43]) {
+        out[n] = {};
+        for (const [who, viewer] of Object.entries(viewers)) {
+          _clearMediaAccessCache();
+          // The byte gate reads the canonical rows exactly as the sweep left them.
+          const gate = byteGateClient({
+            ...entityTables(),
+            media_assets: structuredClone(w.tables.media_assets),
+            media_attachments: structuredClone(w.tables.media_attachments),
+          });
+          out[n][who] = await authorizeMediaAccess(gate, viewer, BUCKET, `${OWNER}/${n}.jpg`);
+        }
+      }
+      return out;
+    };
+
+    const before = await decisions();
+    const r = await runMediaProcessingPass({ client: w.sc });
+    assert.equal(r.completed, 4, JSON.stringify(r));
+    for (const n of [40, 41, 42, 43]) {
+      assert.equal(w.row(n).processing_status, "ready", `asset ${n}: the sweep really did publish it as ready`);
+      assert.equal(w.row(n).visibility, "inherit", `asset ${n}: still inherits its entity's audience`);
+    }
+    const after = await decisions();
+
+    for (const n of [40, 41, 42]) {
+      assert.deepEqual(after[n], { stranger: false, follower: false, owner: true }, `asset ${n}: only its owner, after the sweep`);
+    }
+    assert.deepEqual(after[43], { stranger: true, follower: true, owner: true }, "CONTROL: a file a PUBLIC post publishes is served — the double can say yes");
+    assert.deepEqual(after, before, "ready changed no viewer's access to any object");
+  });
+
+  it("the sweep writes lifecycle, dimension and size columns only — never visibility, owner, moderation, a storage key or an attachment — and never `ready` without both dimensions (2089)", async () => {
+    const w = makeSweepWorld({
+      flag: true,
+      assets: [
+        staged(44),
+        staged(45, { media_type: "video", mime_type: "video/mp4", storage_path: `${OWNER}/45.mp4` }),
+        staged(46),
+      ],
+      links: [link(44, "memory", MEMORY), link(45, "postcard", POSTCARD), link(46, "hidden_gem", GEM)],
+      objects: { [obj(44)]: await jpeg(20, 10), [obj(45, "mp4")]: Buffer.from(PLAIN_MP4), [obj(46)]: withGpsIfd(await jpeg(20, 10)) },
+    });
+    const PROTECTED = ["owner_user_id", "uploader_user_id", "storage_bucket", "storage_path", "public_url", "visibility", "moderation_status", "source_type", "media_type", "provenance", "location_visibility"];
+    const snapshot = () => w.tables.media_assets.map((a) => Object.fromEntries(PROTECTED.map((k) => [k, a[k]])));
+    const before = structuredClone(snapshot());
+    const r = await runMediaProcessingPass({ client: w.sc });
+    assert.equal(r.completed, 2, JSON.stringify(r));
+    assert.equal(r.failed, 1);
+
+    const ALLOWED = new Set([
+      "processing_status", "processing_attempt_count", "processing_last_attempt_at", "processing_lease_until",
+      "processing_lease_token", "processing_error", "processing_completed_at", "processing_next_retry_at",
+      "processing_terminal", "width", "height", "duration_ms", "thumbnail_path", "thumbnail_url", "size_bytes", "updated_at",
+    ]);
+    const patches = w.writesTo("media_assets");
+    assert.ok(patches.length > 0);
+    for (const p of patches) {
+      assert.equal(p.method, "PATCH", "the sweep only updates rows it recognised; it inserts none");
+      const body = JSON.parse(p.body ?? "{}");
+      for (const k of Object.keys(body)) assert.ok(ALLOWED.has(k), `the sweep wrote ${k}`);
+      if (body.processing_status === "ready") {
+        assert.ok(Number.isInteger(body.width) && body.width > 0 && Number.isInteger(body.height) && body.height > 0,
+          "2089: ready and both dimensions in ONE statement");
+      }
+    }
+    assert.equal(w.writesTo("media_attachments").length, 0, "no attachment is written, moved or widened");
+    assert.deepEqual(snapshot(), before);
+  });
+
+  it("the proof's premises are in the tree: each canonical reader that serves a READY asset to a non-owner resolves it through a POST, and the byte gate reads the canonical row for its owner only", () => {
+    const read = (rel: string) => readFileSync(join(SRC, rel), "utf8");
+    // (1) The projection's canonical read is `post` unless a caller names another
+    //     entity type, and its one caller names none.
+    assert.match(read("lib/media/mediaCanonicalRead.ts"), /const entityType = opts\.entityType \?\? "post";/);
+    const callers: string[] = [];
+    for (const f of readdirSync(SRC, { recursive: true }) as string[]) {
+      if (!f.endsWith(".ts") || f.startsWith("test")) continue;
+      const src = stripComments(read(f));
+      for (const m of src.matchAll(/\battachCanonicalMedia\s*\(([^)]*)\)/g)) {
+        if (/function\s+attachCanonicalMedia\s*\($/.test(src.slice(Math.max(0, m.index! - 40), m.index! + "attachCanonicalMedia(".length))) continue;
+        callers.push(`${f}: ${m[1]!.trim()}`);
+      }
+    }
+    assert.deepEqual(callers, ["services/media/MediaProjectionService.ts: sc, rows"]);
+    // (2) The Wall's Quick Media serves a ready asset only through a post or
+    //     postcard attachment (or a post_media row), then only if that POST is
+    //     the owner's and readable by this viewer.
+    const wall = read("services/wall/WallCandidateLoaders.ts");
+    assert.match(wall, /\.in\("entity_type", \["post", "postcard"\]\)/);
+    assert.match(wall, /readableByPost\.set\(pid, active && published && decidePostReadable\(p, viewerId, tripMember\)\.readable\);/);
+    assert.match(wall, /if \(String\(post\.author_id\) !== ownerId\) continue;/);
+    // (3) The byte gate reads the canonical row once, for owner attribution.
+    const gate = read("lib/mediaAccess.ts");
+    assert.equal((gate.match(/\.from\("media_assets"\)/g) ?? []).length, 1);
+    assert.match(gate, /\.from\("media_assets"\)\s*\.select\("id, owner_user_id"\)/);
+    // (4) Telegraph's MEDIA share needs `public` for a non-owner, and the
+    //     canonical writer never sends `visibility` (0191 defaults it to inherit).
+    assert.match(read("services/telegraph/shareables.ts"), /if \(!mine\) \{\s*if \(r\.visibility !== "public"\) return \{ state: UNAVAILABLE\("private"\), projection: null \};/);
+    assert.doesNotMatch(read("lib/mediaAssets.ts"), /\bvisibility\s*:/);
+  });
+});

@@ -23,12 +23,12 @@
  *   3. Claims each one, re-runs the EXISTING pipeline over the STORED object
  *      (below), then completes it with the lease token — or fails it.
  *
- * NOT CLAIMED: a `processing` row with no lease. The upload route writes one
- * for a video whose container states no dimensions, and `recordEntityMedia`
- * writes one for every memory / hidden-gem / postcard file it records, staged
- * "until a dimension sweep fills it in". Completing those would publish them
- * as `ready` on the canonical read paths; that sweep is a separate decision and
- * this worker does not take it (census-media §30.6).
+ * A `processing` row with no lease has two writers. The upload route writes one
+ * for a video whose container states no dimensions (its size is the stored
+ * length, never 0); this tier cannot measure it, so it is NEVER read here.
+ * `recordEntityMedia` writes one for each memory / hidden-gem / postcard / post
+ * file it has to create (size 0, no dimensions): THE DIMENSION SWEEP at the end
+ * of this file finishes those through the same claim and pipeline (§32).
  *
  * ── WHAT "PROCESSING" MEANS HERE — THE EXISTING PIPELINE, RE-RUN ─────────────
  * The upload paths process bytes they are HOLDING (`routes/posts.ts`
@@ -119,13 +119,13 @@ export interface MediaProcessingPassResult {
   /** Candidates the claim refused: not due, leased, terminal, or a lost race. */
   contended: number;
   /** A claimed asset whose completion or failure no longer matched its lease. */
-  lost: number;
+  lost: number; /** census-media §32 — staged entity-media rows the dimension sweep added to this pass, and staged rows it left because no attachment links them. */ staged: number; unattached: number;
   lastError: string | null;
 }
 
 const EMPTY: MediaProcessingPassResult = {
   skipped: true, reason: null, recovered: 0, scanned: 0, notDue: 0, claimed: 0, completed: 0,
-  failed: 0, terminal: 0, contended: 0, lost: 0, lastError: null,
+  failed: 0, terminal: 0, contended: 0, lost: 0, lastError: null, staged: 0, unattached: 0,
 };
 
 /** The asset fields processing reads, re-read AFTER the claim under its lease. */
@@ -136,11 +136,11 @@ export interface ClaimedAssetRow {
   media_type: string;
   duration_ms: number | null;
   thumbnail_path: string | null;
-  thumbnail_url: string | null;
+  thumbnail_url: string | null; /** census-media §32: 0 is recordEntityMedia's honest zero, replaced by the measured size under the lease. */ size_bytes?: number | null;
 }
 
 export type StoredAssetOutcome =
-  | { ok: true; width: number; height: number; durationMs: number | null }
+  | { ok: true; width: number; height: number; durationMs: number | null; /** census-media §32: the stored object's length in bytes. */ sizeBytes?: number }
   | { ok: false; permanent: boolean; message: string };
 
 /**
@@ -174,7 +174,7 @@ export async function processStoredMediaAsset(sc: any, asset: ClaimedAssetRow): 
     }
     try {
       const img = await processImage(bytes, sniffed, MEASURE_MAX_DIM);
-      return { ok: true, width: img.width, height: img.height, durationMs: null };
+      return { ok: true, width: img.width, height: img.height, durationMs: null, sizeBytes: bytes.length };
     } catch {
       return { ok: false, permanent: true, message: "Corrupt or undecodable image file" };
     }
@@ -194,13 +194,13 @@ export async function processStoredMediaAsset(sc: any, asset: ClaimedAssetRow): 
       message: "The video container states no display size, and this tier has no decoder to measure one",
     };
   }
-  return { ok: true, width: probe.width, height: probe.height, durationMs: probe.durationMs };
+  return { ok: true, width: probe.width, height: probe.height, durationMs: probe.durationMs, sizeBytes: bytes.length };
 }
 
 async function readClaimedAsset(db: any, claim: ProcessingClaim): Promise<ClaimedAssetRow | null> {
   const { data, error } = await db
     .from("media_assets")
-    .select("id, storage_bucket, storage_path, media_type, duration_ms, thumbnail_path, thumbnail_url")
+    .select("id, storage_bucket, storage_path, media_type, duration_ms, thumbnail_path, thumbnail_url, size_bytes")
     .eq("id", claim.assetId)
     .eq("processing_lease_token", claim.leaseToken)
     .maybeSingle();
@@ -248,7 +248,7 @@ export async function runMediaProcessingPass(
       return { ...out, reason: "error", lastError: String(error.message ?? error) };
     }
 
-    const rows = Array.isArray(data) ? (data as Array<{ id: string; processing_next_retry_at: string | null }>) : [];
+    const claimable = Array.isArray(data) ? (data as Array<{ id: string; processing_next_retry_at: string | null }>) : []; const rows = [...claimable, ...(await readEntityMediaSweep(db, out, claimable, { now, limit }))]; // census-media §32: the dimension sweep's staged rows follow the claimable work
     out.scanned = rows.length;
 
     for (const row of rows) {
@@ -273,7 +273,7 @@ export async function runMediaProcessingPass(
           outcome = { ok: false, permanent: false, message: err instanceof Error ? err.message : String(err) };
         }
       }
-
+      if (outcome.ok && asset) outcome = await withMeasuredSize(db, claim, asset, outcome); // census-media §32: before it can be ready, an honest zero becomes the stored object's size, under this lease
       if (outcome.ok && asset) {
         let done = false;
         try {
@@ -363,4 +363,167 @@ export function stopMediaProcessingWorker(): void {
 /** Test hook: is a timer currently scheduled? */
 export function _mediaProcessingWorkerArmed(): boolean {
   return _timer !== null;
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// THE DIMENSION SWEEP — census-media §32
+// ═════════════════════════════════════════════════════════════════════════════
+//
+// `recordEntityMedia` (lib/mediaAssets) creates a canonical row for a memory,
+// hidden-gem, postcard or post file that has none yet. It cannot measure the
+// file, so it writes an honest zero and stages the row `processing` "so it is
+// not served as ready until a dimension sweep fills it in". Until §32 nothing
+// did: lane J's pass (above) claims `queued` and `failed` work only, and
+// `recoverStaleMediaProcessing` matches a lapsed lease, which these rows never
+// had. So every such row stayed `processing` for good, off every canonical read.
+//
+// This is that sweep. It is not a second worker: it adds the staged rows to the
+// same pass, behind the same flag (`media_processing_worker_enabled`, read at
+// the top of the pass), and each one is claimed by `claimMediaProcessing`,
+// re-run through `processStoredMediaAsset` (verify the bytes and the kind; a
+// still must carry no GPS IFD; a video must carry no location atom and must
+// state its display size), then completed with the measured width, height,
+// size and container duration, or failed. Nothing here writes storage.
+//
+// RECOGNITION — exactly recordEntityMedia's signature, and nothing else:
+//   processing_status = 'processing'   staged, never attempted to completion
+//   processing_lease_token IS NULL     no attempt holds it (a held lease is the
+//                                      claim's; a lapsed one is the recovery's)
+//   size_bytes = 0                     the honest zero. The upload route writes
+//                                      the stored buffer's length, which
+//                                      verifyUploadedBytes proves non-empty, so
+//                                      its dimensionless videos are never 0 and
+//                                      never read here — this tier has no
+//                                      decoder to measure them (§30.4)
+//   width IS NULL AND height IS NULL   nothing has measured it
+//   processing_terminal = false
+//   AND a media_attachments row        it is ENTITY media: an object links it.
+//                                      recordEntityMedia writes the asset first
+//                                      and the attachment second, so an asset
+//                                      with none is in flight or orphaned; it
+//                                      is left until something attaches it.
+// `source_type` does NOT discriminate — both writers default it to 'user' — so
+// it is not part of the signature. scripts/backfill-media-assets.ts stages its
+// rows with the same signature (and attaches them), so a backfill, if one is
+// ever run, is finished by this sweep too; that script has not been run.
+//
+// BUDGET. §30.3's "at most `limit` assets per pass" still holds: the sweep takes
+// what the due claimable work leaves, oldest first, so an owner's retry is never
+// queued behind a backlog of entity media.
+//
+// WHAT READY MEANS FOR PRIVACY is argued in census-media §32 and tested in
+// mediaProcessingWorker.test.ts: the sweep writes the processing columns, the
+// dimensions and the size only — never visibility, owner, moderation, storage
+// keys or attachments — and the byte gate (lib/mediaAccess) never reads
+// `processing_status`, so no viewer's access to any object changes.
+
+/** Staged rows read per pass before the attachment check narrows them. */
+export const ENTITY_MEDIA_SWEEP_SCAN_LIMIT = 100;
+
+/**
+ * The in-memory re-check of the sweep's read, so a row fed past the query
+ * filters (a stale replica, a test double) is never claimed as entity media.
+ */
+export function isEntityMediaSweepRow(row: unknown): boolean {
+  const r = row as Record<string, unknown> | null;
+  return (
+    !!r &&
+    typeof r.id === "string" &&
+    r.processing_status === "processing" &&
+    r.processing_lease_token == null &&
+    r.size_bytes != null &&
+    Number(r.size_bytes) === 0 &&
+    r.width == null &&
+    r.height == null &&
+    r.processing_terminal !== true
+  );
+}
+
+/**
+ * The staged entity-media rows this pass may claim, after the claimable work.
+ * Fail-soft for the pass and fail-closed for the sweep: an unreadable read
+ * sweeps nothing this pass, and the claimable work above is unaffected.
+ */
+async function readEntityMediaSweep(
+  db: any,
+  out: MediaProcessingPassResult,
+  claimable: Array<{ id: string; processing_next_retry_at: string | null }>,
+  opts: { now: Date; limit: number },
+): Promise<Array<{ id: string; processing_next_retry_at: string | null }>> {
+  const due = claimable.filter(
+    (r) => !r.processing_next_retry_at || Date.parse(r.processing_next_retry_at) <= opts.now.getTime(),
+  ).length;
+  const budget = opts.limit - due;
+  if (budget <= 0) return [];
+
+  const { data, error } = await db
+    .from("media_assets")
+    .select("id, processing_status, processing_lease_token, processing_next_retry_at, processing_terminal, size_bytes, width, height")
+    .eq("processing_status", "processing")
+    .is("processing_lease_token", null)
+    .eq("size_bytes", 0)
+    .is("width", null)
+    .is("height", null)
+    .eq("processing_terminal", false)
+    .order("created_at", { ascending: true })
+    .limit(ENTITY_MEDIA_SWEEP_SCAN_LIMIT);
+  if (error) {
+    logger.warn({ err: error }, "media processing pass: dimension-sweep read failed — no entity media swept this pass");
+    out.lastError = String(error.message ?? error);
+    return [];
+  }
+  const staged = (Array.isArray(data) ? data : []).filter(isEntityMediaSweepRow) as Array<{
+    id: string;
+    processing_next_retry_at: string | null;
+  }>;
+  if (staged.length === 0) return [];
+
+  const { data: links, error: linkError } = await db
+    .from("media_attachments")
+    .select("media_asset_id")
+    .in("media_asset_id", staged.map((r) => r.id));
+  if (linkError) {
+    // Without the attachment read nothing can be recognised as entity media.
+    logger.warn({ err: linkError }, "media processing pass: dimension-sweep attachment read failed — no entity media swept this pass");
+    out.lastError = String(linkError.message ?? linkError);
+    return [];
+  }
+  const attached = new Set(
+    (Array.isArray(links) ? links : []).map((l: { media_asset_id?: unknown }) => String(l.media_asset_id ?? "")),
+  );
+  const picked: Array<{ id: string; processing_next_retry_at: string | null }> = [];
+  for (const row of staged) {
+    if (!attached.has(row.id)) { out.unattached += 1; continue; }
+    if (picked.length < budget) picked.push({ id: row.id, processing_next_retry_at: row.processing_next_retry_at ?? null });
+  }
+  out.staged = picked.length;
+  return picked;
+}
+
+/**
+ * Replace an honest zero with the stored object's measured size while this
+ * attempt still holds the lease, so a row whose size write fails is failed
+ * (retryably), never `ready` with size 0. `completeMediaProcessing` writes the
+ * dimensions, duration and thumbnails but not `size_bytes` (0191's column), and
+ * it is not this file's to widen. Conditional on the lease AND on the zero, so a
+ * recorded size (every upload-route row) is never overwritten.
+ */
+async function withMeasuredSize(
+  db: any,
+  claim: ProcessingClaim,
+  asset: ClaimedAssetRow,
+  outcome: StoredAssetOutcome,
+): Promise<StoredAssetOutcome> {
+  if (!outcome.ok) return outcome;
+  if (asset.size_bytes == null || Number(asset.size_bytes) !== 0) return outcome;
+  if (!(typeof outcome.sizeBytes === "number" && outcome.sizeBytes > 0)) return outcome;
+  const { error } = await db
+    .from("media_assets")
+    .update({ size_bytes: outcome.sizeBytes })
+    .eq("id", claim.assetId)
+    .eq("processing_lease_token", claim.leaseToken)
+    .eq("size_bytes", 0)
+    .select("id");
+  if (error) return { ok: false, permanent: false, message: "The measured size could not be recorded" };
+  return outcome;
 }
