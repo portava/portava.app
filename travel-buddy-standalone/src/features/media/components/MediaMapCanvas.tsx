@@ -18,7 +18,7 @@ import { View, Text, Pressable, StyleSheet } from 'react-native';
 const _ml: any = (() => { try { return require('@maplibre/maplibre-react-native'); } catch { return {}; } })();
 // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
 const { Map: MLMap, Camera, Marker, GeoJSONSource, Layer } = _ml as typeof import('@maplibre/maplibre-react-native');
-import { color, space } from '../../../theme/tokens.ts';
+import { color, icon, space } from '../../../theme/tokens.ts';
 import type { StyleSpecification } from '@maplibre/maplibre-gl-style-spec';
 import {
   FALLBACK_MAP_STYLE_URL,
@@ -151,9 +151,9 @@ const styles = StyleSheet.create({
   bubbleText: { color: color.onInk, fontSize: 12, fontWeight: '800' },
   // §46.1 contoured gem marker: a geometric discovery marker with an edge glow.
   gemMarker: {
-    width: 26,
-    height: 26,
-    borderRadius: 13,
+    width: icon.s26,
+    height: icon.s26,
+    borderRadius: icon.s26 / 2,
     borderWidth: 1.5,
     borderColor: GEM_ACCENT,
     alignItems: 'center',
