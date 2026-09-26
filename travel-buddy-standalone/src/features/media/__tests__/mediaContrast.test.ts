@@ -983,7 +983,7 @@ const FT = {
   moreMenu: 'src/components/media/MediaMoreMenu.tsx',
   quickCreate: 'src/components/media/MediaQuickCreateSheet.tsx',
   routeIt: 'src/components/media/RouteItPlaceSheet.tsx',
-  addGem: 'src/components/media/AddGemForm.tsx',
+  addGem: 'src/components/media/AddGemForm.tsx', creationAssist: 'src/platform/input-assistance/creation/CreationAssist.tsx', correctionBanner: 'src/platform/input-assistance/components/CorrectionBanner.tsx', entityRow: 'src/platform/input-assistance/components/EntitySuggestionRow.tsx', // §31.13 (pass 4): CreationAssist, inline in the add-gem sheet
   addGemRoute: 'app/media/add-gem.tsx',
   tab: 'app/(tabs)/media.tsx', mediaViewer: 'app/media-viewer/[id].tsx', // the Grid's full-screen viewer (§31.13)
   // Shared components the Media surfaces render — read here; §31.13 adds an optional prop to StampButton, AppHeader and EmptyState.
@@ -1471,6 +1471,38 @@ for (const [tone, fg, done] of [['positive', '#6FD39A', 'gemContributeDoneGreen'
 }
 add({ id: 'railPanel.gemContribute.feedback', fg: '#6FD39A', on: 'gemContributeCard', kind: 'text', at: [GEM_CARD, [FT.gemContribute, /feedback: \{[^}]*color: '#6FD39A',/]] });
 add({ id: 'railPanel.gemContribute.error', fg: '#FF6B6B', on: 'gemContributeCard', kind: 'text', at: [GEM_CARD, [FT.gemContribute, /feedbackError: \{[^}]*color: '#FF6B6B',/]] });
+
+// ─ Lane K pass 4 (census-media §31.13) ─
+// The gems rail's comment and save controls were colour emoji (💬, 🔖/🏷), whose colours come from
+// the platform font and could not be measured. They are now lucide glyphs in source colours, as on
+// the Watch rail and the Grid viewer: comment and idle save in onInk, saved a filled `signal` bookmark.
+const GEMS_ICON: Needle = [FT.gemsOverlay, '{icon ?? <Text style={[styles.actionBtnIcon, active && styles.actionBtnIconActive]}>'];
+const GEMS_BOOKMARK: Needle = [FT.gemsOverlay, "icon={<Bookmark size={26} color={(isSaved ?? item.viewerState.hasSaved) ? color.signal : color.onInk} fill={(isSaved ?? item.viewerState.hasSaved) ? color.signal : 'transparent'}"];
+add({ id: 'gems.rail.comment.icon', fg: color.onInk, on: 'gemsRailPhoto', kind: 'ui', at: [GEMS_RAIL, GEMS_ICON, [FT.gemsOverlay, 'icon={<MessageCircle size={26} color={color.onInk} strokeWidth={1.8} />}']] }); // FIXED by lane K (census-media §31.13): was an unmeasurable emoji
+add({ id: 'gems.rail.save.idle', fg: color.onInk, on: 'gemsRailPhoto', kind: 'ui', at: [GEMS_RAIL, GEMS_ICON, GEMS_BOOKMARK] }); // FIXED by lane K (census-media §31.13): was an unmeasurable emoji
+add({ id: 'gems.rail.save.saved', fg: color.signal, on: 'gemsRailPhoto', kind: 'ui', at: [GEMS_RAIL, GEMS_ICON, GEMS_BOOKMARK] }); // FIXED by lane K (census-media §31.13): was an unmeasurable emoji swap
+// CreationAssist, inline in the add-gem sheet on its `paperRaised` card. The sheet passes
+// quietColor={color.mute}; CreationAssist hands it to CorrectionBanner (dismissColor) and to
+// EntitySuggestionRow (reasonColor). The banner's accept button is not drawn here (no accept handler).
+const ASSIST: Needle = [FT.addGem, 'onPickExisting={pickExistingGem} quietColor={color.mute}'];
+const ASSIST_CARD: Needle = [FT.creationAssist, /dupCard: \{[^}]*backgroundColor: color\.paperRaised,/];
+const BANNER: Needle = [FT.correctionBanner, /banner: \{[^}]*backgroundColor: color\.paperRaised,/];
+const BANNER_ACCENT: Needle = [FT.correctionBanner, "const accent = tone === 'error' ? color.signal : color.warn;"];
+add({ id: 'addGem.creationAssist.bannerDismiss', fg: color.mute, on: 'paperRaised', kind: 'ui', at: [ASSIST, BANNER, [FT.creationAssist, '{...(quietColor !== undefined ? { dismissColor: quietColor } : {})}'], [FT.correctionBanner, 'color={dismissColor ?? color.faint}']] }); // FIXED by lane K (census-media §31.13): was `faint`, 2.88
+add({ id: 'addGem.creationAssist.duplicateReason', fg: color.mute, on: 'paperRaised', kind: 'text', at: [ASSIST, ASSIST_CARD, [FT.creationAssist, '{...(quietColor !== undefined ? { reasonColor: quietColor } : {})}'], [FT.entityRow, '[styles.reason, { color: reasonColor }]']] }); // FIXED by lane K (census-media §31.13): was `faint`, 2.88
+add({ id: 'addGem.creationAssist.bannerMessage', fg: color.ink, on: 'paperRaised', kind: 'text', at: [ASSIST, BANNER, [FT.correctionBanner, /message: \{[^}]*color: color\.ink,/]] });
+add({ id: 'addGem.creationAssist.bannerBorder.warning', fg: color.warn, on: 'paperRaised', kind: 'ui', at: [ASSIST, BANNER, BANNER_ACCENT, [FT.correctionBanner, 'style={[styles.banner, { borderColor: accent }]}']] });
+add({ id: 'addGem.creationAssist.bannerBorder.error', fg: color.signal, on: 'paperRaised', kind: 'ui', at: [ASSIST, BANNER, BANNER_ACCENT, [FT.correctionBanner, 'style={[styles.banner, { borderColor: accent }]}']] });
+add({ id: 'addGem.creationAssist.bannerIcon', fg: color.warn, on: 'paperRaised', kind: 'decor', at: [BANNER_ACCENT, [FT.correctionBanner, '<AlertCircle size={iconToken.s16} color={accent} />']] });
+add({ id: 'addGem.creationAssist.header', fg: color.deep, on: 'paperRaised', kind: 'text', at: [ASSIST, ASSIST_CARD, [FT.creationAssist, /dupHeaderText: \{[^}]*color: color\.deep,/]] });
+add({ id: 'addGem.creationAssist.headerIcon', fg: color.deep, on: 'paperRaised', kind: 'decor', at: [ASSIST_CARD, [FT.creationAssist, '<Copy size={iconToken.s16} color={color.deep} />']] });
+add({ id: 'addGem.creationAssist.seeAll', fg: color.deep, on: 'paperRaised', kind: 'text', at: [ASSIST, ASSIST_CARD, [FT.creationAssist, /dupActionText: \{[^}]*color: color\.deep,/]] });
+add({ id: 'addGem.creationAssist.keepCreating', fg: color.mute, on: 'paperRaised', kind: 'text', at: [ASSIST, ASSIST_CARD, [FT.creationAssist, /dupDismissText: \{[^}]*color: color\.mute,/]] });
+add({ id: 'addGem.creationAssist.rowTitle', fg: color.ink, on: 'paperRaised', kind: 'text', at: [ASSIST, ASSIST_CARD, [FT.entityRow, /title: \{[^}]*color: color\.ink,/]] });
+add({ id: 'addGem.creationAssist.rowSubtitle', fg: color.mute, on: 'paperRaised', kind: 'text', at: [ASSIST, ASSIST_CARD, [FT.entityRow, /subtitle: \{[^}]*color: color\.mute,/]] });
+add({ id: 'addGem.creationAssist.rowBadge', fg: color.deep, on: 'paper', kind: 'text', at: [ASSIST, [FT.entityRow, /badge: \{[^}]*backgroundColor: color\.paper,/], [FT.entityRow, /badgeText: \{[^}]*color: color\.deep,/]] });
+add({ id: 'addGem.creationAssist.rowFresh', fg: color.deep, on: 'paper', kind: 'text', at: [ASSIST, [FT.entityRow, /freshBadge: \{[^}]*backgroundColor: color\.paper,/], [FT.entityRow, /freshText: \{[^}]*color: color\.deep,/]] });
+add({ id: 'addGem.creationAssist.rowIcon', fg: color.deep, on: 'paper', kind: 'decor', at: [[FT.entityRow, '<EntityIcon entityType={suggestion.entityType} tint={color.deep} />']] });
 
 // Measure every pair added since the last push.
 MEASURED.push(...PAIRS.slice(MEASURED.length).map(measurePair));

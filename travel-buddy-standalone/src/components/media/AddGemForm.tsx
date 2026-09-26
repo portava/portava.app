@@ -569,7 +569,7 @@ export function AddGemForm({ onSuccess, onClose }: AddGemFormProps) {
           <CreationAssist
             duplicates={gemAssist.duplicates}
             validation={gemAssist.validation}
-            onPickExisting={pickExistingGem}
+            onPickExisting={pickExistingGem} quietColor={color.mute}
           />
         </View>
 

@@ -39,7 +39,7 @@ export interface CreationAssistProps {
   onPickExisting?: (candidate: DuplicateCandidate) => void;
   /** User accepts a §23 canonical correction (only offered when one exists). */
   onAcceptCorrection?: (validation: CreationValidationView) => void;
-  testID?: string;
+  testID?: string; /** Optional colour (census-media §31.13) for the two tertiary marks this notice draws in `faint`: the banner's dismiss icon and a duplicate row's reason. A screen whose ground takes `faint` below AA passes e.g. `mute`. Absent: renders exactly as before. */ quietColor?: string;
 }
 
 /** How many candidates to show inline before offering the "see all" sheet. */
@@ -65,7 +65,7 @@ function CreationAssistBase({
   entityNoun,
   onPickExisting,
   onAcceptCorrection,
-  testID,
+  testID, quietColor,
 }: CreationAssistProps) {
   const [sheetOpen, setSheetOpen] = useState(false);
   const [dismissedDupKey, setDismissedDupKey] = useState<string | null>(null);
@@ -110,7 +110,7 @@ function CreationAssistBase({
               : undefined
           }
           onDismiss={() => setDismissedValKey(valKey)}
-          testID="creation-validation-banner"
+          testID="creation-validation-banner" {...(quietColor !== undefined ? { dismissColor: quietColor } : {})}
         />
       ) : null}
 
@@ -129,7 +129,7 @@ function CreationAssistBase({
                 key={`${d.entityType}:${d.entityId}`}
                 suggestion={d.suggestion}
                 onPress={() => onPickExisting?.(d)}
-                testID={`creation-duplicate-${d.entityId}`}
+                testID={`creation-duplicate-${d.entityId}`} {...(quietColor !== undefined ? { reasonColor: quietColor } : {})}
               />
             ))}
           </View>

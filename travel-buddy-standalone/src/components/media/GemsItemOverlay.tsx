@@ -28,7 +28,7 @@ import {
   Platform,
 } from 'react-native';
 import { Avatar } from '../ui/Avatar.tsx';
-import { LinearGradient } from 'expo-linear-gradient';
+import { LinearGradient } from 'expo-linear-gradient'; import { Bookmark, MessageCircle } from 'lucide-react-native'; // census-media §31.13: the rail's comment and save glyphs
 import { color, space, radius, type as t } from '../../theme/tokens.ts';
 import type { GemsFeedItem } from '../../hooks/useGemsFeed.ts';
 import { PlaceQuickActions } from '../PlaceQuickActions.tsx';
@@ -151,14 +151,14 @@ export function GemsItemOverlay({
         {/* Comments are disabled for gem items (not post-backed); only shown when onComment is wired. */}
         {onComment && (
           <ActionButton
-            label="💬"
+            icon={<MessageCircle size={26} color={color.onInk} strokeWidth={1.8} />} // census-media §31.13: was label="💬", a colour emoji the source cannot colour
             sublabel={String(item.stats.commentCount || '')}
             onPress={() => onComment(item)}
             accessibilityLabel="Comment"
           />
         )}
         <ActionButton
-          label={(isSaved ?? item.viewerState.hasSaved) ? '🔖' : '🏷'}
+          icon={<Bookmark size={26} color={(isSaved ?? item.viewerState.hasSaved) ? color.signal : color.onInk} fill={(isSaved ?? item.viewerState.hasSaved) ? color.signal : 'transparent'} strokeWidth={(isSaved ?? item.viewerState.hasSaved) ? 0 : 1.8} />} // census-media §31.13: was the emoji swap 🔖 / 🏷; saved is now a filled `signal` bookmark, as on the Watch rail
           sublabel={String(item.stats.saveCount || '')}
           active={isSaved ?? item.viewerState.hasSaved}
           onPress={() => onSave?.(item)}
@@ -311,14 +311,14 @@ export function GemsItemOverlay({
 // ── ActionButton ──────────────────────────────────────────────────────────────
 
 interface ActionButtonProps {
-  label: string;
+  label?: string; /** A source-coloured glyph drawn in place of `label` (census-media §31.13): unlike a colour emoji, the contrast test can measure it. */ icon?: React.ReactNode;
   sublabel?: string;
   active?: boolean;
   onPress: () => void;
   accessibilityLabel: string;
 }
 
-function ActionButton({ label, sublabel, active, onPress, accessibilityLabel }: ActionButtonProps) {
+function ActionButton({ label, icon, sublabel, active, onPress, accessibilityLabel }: ActionButtonProps) {
   return (
     <Pressable
       style={({ pressed }) => [styles.actionBtn, pressed && styles.chipPressed]}
@@ -326,9 +326,9 @@ function ActionButton({ label, sublabel, active, onPress, accessibilityLabel }: 
       accessibilityLabel={accessibilityLabel}
       accessibilityState={{ selected: active }}
     >
-      <Text style={[styles.actionBtnIcon, active && styles.actionBtnIconActive]}>
+      {icon ?? <Text style={[styles.actionBtnIcon, active && styles.actionBtnIconActive]}>
         {label}
-      </Text>
+      </Text>}
       {sublabel ? (
         <Text style={styles.actionBtnSublabel}>{sublabel}</Text>
       ) : null}

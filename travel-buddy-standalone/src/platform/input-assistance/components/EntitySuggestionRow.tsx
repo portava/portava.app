@@ -31,10 +31,10 @@ export interface EntitySuggestionRowProps {
   active?: boolean;
   /** Optional custom leading element (e.g. a sanctioned avatar wrapper). */
   leading?: React.ReactNode;
-  testID?: string;
+  testID?: string; /** Optional colour for the reason line (census-media §31.13), e.g. `mute` where `faint` is below 4.5:1 on the row's ground. Absent: renders exactly as before. */ reasonColor?: string;
 }
 
-function EntitySuggestionRowBase({ suggestion, onPress, active, leading, testID }: EntitySuggestionRowProps) {
+function EntitySuggestionRowBase({ suggestion, onPress, active, leading, testID, reasonColor }: EntitySuggestionRowProps) {
   // §31: render ONLY the freshness the server attached — the state label plus the
   // "Updated 4m ago" age, verbatim. Never synthesized; absent ⇒ no chip.
   const fresh = freshnessDisplay(suggestion.freshness).text;
@@ -130,7 +130,7 @@ function EntitySuggestionRowBase({ suggestion, onPress, active, leading, testID 
           </View>
         ) : null}
         {suggestion.reason ? (
-          <Text style={styles.reason} numberOfLines={1}>
+          <Text style={reasonColor === undefined ? styles.reason : [styles.reason, { color: reasonColor }]} numberOfLines={1}>
             {suggestion.reason}
           </Text>
         ) : null}
