@@ -400,6 +400,7 @@ export default function RootLayout() {
                       <GeographicFieldsSetup />
                       <SensingCaptureSetup />
                       <MediaUploadResumeSetup />
+                      <MediaOfflineWarmupSetup />
                       <CompassFrontloadSetup />
                       <WallAnalyticsSetup />
                       <StatusBar style="dark" />
@@ -459,3 +460,19 @@ function MediaUploadResumeSetup() {
   return null;
 }
 import { installPostcardUploadResume } from '../src/services/media/postcardUploadDevice';
+
+/**
+ * Media §39 — pre-cache the signed-in user's saved places and current trips
+ * for offline use, on launch and on each foreground (throttled). Installed only
+ * while MEDIA_WORLD_SHELL_ENABLED is on: the offline surfaces are the World
+ * lenses, and no request or storage is spent for a surface nobody can open.
+ * Defined at the tail with its imports, for the same reason as the setup above.
+ */
+function MediaOfflineWarmupSetup() {
+  const { isEnabled } = useFeatureFlags();
+  const shellOn = isEnabled('MEDIA_WORLD_SHELL_ENABLED');
+  useEffect(() => (shellOn ? installMediaOfflineWarmup(AppState) : undefined), [shellOn]);
+  return null;
+}
+import { useFeatureFlags } from '../src/context/FeatureFlagsContext';
+import { installMediaOfflineWarmup } from '../src/services/media/mediaOfflineDevice';

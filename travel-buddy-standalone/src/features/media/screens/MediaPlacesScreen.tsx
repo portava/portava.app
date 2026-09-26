@@ -19,13 +19,15 @@ import type { PlaceCurrentView } from '../types/perspective.ts';
 import type { MediaProjection } from '../types/media.ts';
 import type { MediaTimelineProjection } from '../types/mediaTimeline.ts';
 import {
-  fetchPlaceView,
   isPlaceViewEmpty,
   fetchTimeline,
   isTimelineEmpty,
   mapTimeline,
 } from '../services/mediaProjection.ts';
 import { useLensProjection } from '../hooks/useLensProjection.ts';
+// §39: the place view answers from the offline media cache when the network is gone.
+import { placeViewOffline } from '../../../services/media/mediaOffline.ts';
+import { useOfflineLens } from '../../../services/media/useOfflineLens.ts';
 import { CurrentPictureBadge } from '../components/CurrentPictureBadge.tsx';
 import { IntelligenceStrip } from '../components/IntelligenceStrip.tsx';
 import { PerspectiveMosaic } from '../components/PerspectiveMosaic.tsx';
@@ -131,13 +133,13 @@ function PlaceDetail({
       if (!UUID_RE.test(placeId)) {
         return Promise.resolve({ ok: true as const, data: null });
       }
-      return fetchPlaceView(placeId, { signal: opts.signal });
+      return placeViewOffline(placeId, { signal: opts.signal });
     },
     [placeId],
   );
   // Empty when the projection is absent OR carries zero perspectives — a real
   // place with no media yet renders the honest "No current picture" state.
-  const { state, reload } = useLensProjection<PlaceCurrentView | null>(
+  const { state, reload, cachedLabel } = useOfflineLens<PlaceCurrentView | null>(
     fetcher,
     isPlaceViewEmpty,
     [placeId],
@@ -182,6 +184,7 @@ function PlaceDetail({
       ) : (
         <ScrollView contentContainerStyle={styles.detailContent} showsVerticalScrollIndicator={false}>
           <View style={styles.pictureBlock}>
+            {cachedLabel ? <Text style={styles.areaLabel} accessibilityRole="text">{cachedLabel}</Text> : null}
             {view.stateLabel ? <Text style={styles.stateLabel}>{view.stateLabel}</Text> : null}
             {view.areaName ? <Text style={styles.areaLabel}>{view.areaName}</Text> : null}
             <CurrentPictureBadge
