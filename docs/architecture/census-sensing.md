@@ -4176,7 +4176,7 @@ test that a second presence write path is unrepresentable"*:
 
 | Conjunct | Measured |
 |---|---|
-| (a) one store and fusion layer, behind the ladder | **HOLDS.** `artifacts/api-server/src/presence/fusion/store.ts:430#export class PresenceFusionStore` imports the precision ladder from `../domain/types.js` and exposes `admit` / `read` / `resolve` / `sweep`. |
+| (a) one store and fusion layer, behind the ladder | **HOLDS.** `artifacts/api-server/src/presence/fusion/store.ts:461#export class PresenceFusionStore` imports the precision ladder from `../domain/types.js` and exposes `admit` / `read` / `resolve` / `sweep`. |
 | (b) all four **read** through it | **PARTLY, and not in the sense the row means.** See §16.2. |
 | (c) unrepresentability proven by a test | **HOLDS as written.** `src/test/presenceFusionUnrepresentable.test.ts` type-checks six negative fixtures against the real store with a real `ts.Program`, plus a SANCTIONED seventh that must produce no diagnostic — which is what stops the file passing vacuously — and repeats every attempt at run time behind `as any`, because *"a compile-time-only lock is a lock with a cast-shaped key"*. |
 
@@ -4230,8 +4230,8 @@ read all three green.
 The first draft of this section said the one-hour `PRESENCE_ESTIMATE_TTL_MS` was
 *"not enforced by anything today"*, reasoning that `sweep` has no external caller
 and is invoked only from inside the store. **That was wrong, and reading the
-object rather than the sentence about it is what caught it.** `store.ts:689#    if (nowMs !== null) this.sweep(nowMs);`
-sits inside the private `#retain`, which `admit` calls at `store.ts:525#    this.#retain(estimate, nowMs);` — on the WRITE
+object rather than the sentence about it is what caught it.** `store.ts:747#    if (nowMs !== null) this.sweep(nowMs);`
+sits inside the private `#retain`, which `admit` calls at `store.ts:556#    this.#retain(estimate, nowMs);` — on the WRITE
 path, not the read path. So the store does expire, on every admit that is given
 a clock.
 
@@ -4535,7 +4535,7 @@ unambiguous: `sources.ts:74#  /** §17 class. Distinct classes may not be fused 
 
 **`presenceClass` appears ZERO times in `store.ts`.** `resolve` — the only
 function in the program that fuses across sources — filters on linkage, expiry
-and clock (`store.ts:580#      if (hit.linkage !== "account_scoped") continue;` and the two
+and clock (`store.ts:611#      if (hit.linkage !== "account_scoped") continue;` and the two
 lines after it) and never on class. `#forAudience` folds `asking.ceiling` and
 the audience rung; neither is a class.
 
@@ -4557,11 +4557,16 @@ semantics**".
 
 ### §19.2 Why this is NOT recorded as a defect and fixed here
 
-Because an existing test asserts the opposite, deliberately:
-`presenceFusionStore.test.ts:211#    assert.equal(fused.source, "trip_crew_location_sessions");`
-— it admits through `locate_friends_session` and `trip_crew_location_sessions`,
-resolves AS `locate_friends_session`, and requires the crew estimate to win on
-recency. That is cross-class fusion, asserted on purpose by the lane that wrote
+**SUPERSEDED BY §20 — the owner ruled, and reading (A) governs. The paragraph
+below is kept as the record of why a lane did not settle it alone; the test it
+describes has since been re-aimed and the tense corrected here so the document
+does not assert something untrue of the tree.**
+
+Because an existing test asserted the opposite, deliberately:
+`presenceFusionStore.test.ts:196#  // RE-AIMED 2026-09-26. This case previously admitted through`
+— it admitted through `locate_friends_session` and `trip_crew_location_sessions`,
+resolved AS `locate_friends_session`, and required the crew estimate to win on
+recency. That was cross-class fusion, asserted on purpose by the lane that wrote
 the store.
 
 Two readings of the contract line survive that, and they are not
@@ -4602,3 +4607,89 @@ rather than who calls it.
 callers, so no surface has ever fused anything, across classes or within one.
 S3 and S106 stay `W`. Nothing here is a served defect; all of it is a condition
 on a step nobody has taken.
+
+
+## §20 — 2026-09-26: the owner settled §19. Distinct privacy classes may not fuse.
+
+§19 put two readings of `sources.ts:74`'s "Distinct classes may not be fused
+into one another" and declined to pick, because an existing test asserted one
+of them and the choice changes what a user-visible surface serves. **The owner
+has now ruled, and this section is the settled record. It is not to be
+relitigated from the code.**
+
+### §20.1 The ruling, as given
+
+> Approve A: no cross-class fusion. Enforce this centrally in `resolve()`, using
+> trusted source configuration and refusing missing or unknown classes.
+> Preserve source-specific consent, audience, expiry, and revocation checks even
+> within a class. Make the rule mandatory for every caller and cover it with
+> regression tests.
+
+So reading (A) governs. Reading (B) — that classes merely may not MERGE
+identity, since the returned estimate keeps its `source` — is refused. §19.2's
+framing stands as the record of a genuine ambiguity; §19.3's third conjunct on
+§16.5's RED WHEN is hereby **satisfied for the class question**, and a lane
+taking that step no longer has to ask it.
+
+### §20.2 What the rule is, precisely
+
+`sameConsentClass(a, b)` reads BOTH classes from `PRESENCE_SOURCE_CONTRACTS` —
+the trusted register — and never from the estimate, so a stale or forged object
+cannot nominate its own class. A source the register does not contain, or a
+class outside the closed `PRESENCE_CLASSES` union, is **refused**, not treated
+as compatible: an unreadable class is not a matching class, the same fail-closed
+direction `foldCeilings` takes for an unreadable bound.
+
+Same-class fusion stays PERMITTED, and that is what makes this a boundary
+rather than a ban: `circle_presence` and `locate_friends_session` are both
+`social` and still fuse with each other. What can no longer happen is a
+`trip_crew` position answering a `social` ask, or the reverse.
+
+Every other check is unchanged and still applies WITHIN a class, as the ruling
+requires: linkage (`account_scoped` only), expiry, the observation clock, the
+source-contract ceiling and §18's audience rung.
+
+### §20.3 The filter runs at SELECTION, and that is not a detail
+
+The obvious implementation — check the class at egress — is wrong, and the test
+that catches it is in the suite:
+
+> a newer CROSS-class estimate would win `best` in `resolve`'s loop and then be
+> refused at egress, returning `null` where an eligible SAME-class estimate
+> existed.
+
+That would make the privacy rule destroy correct answers rather than narrow
+them. The filter therefore runs inside the candidate loop, so the newest
+estimate *within the asking class* wins.
+
+### §20.4 Mutation testing, including the two mutations that did NOT bite
+
+Three mutations. **Only one reds the suite, and saying so is the point.**
+
+| Mutation | Result |
+|---|---|
+| drop the SELECTION-time filter in `resolve` | **REDS** the same-class-still-answers case |
+| drop the CENTRAL check in `#forAudience` | **no test reds** |
+| treat a missing/unknown class as compatible | **no test reds** |
+
+The last two are not gaps in the tests; they are **unreachable code on every
+path that exists today**, and the mutations are what established that rather
+than inspection. `read` looks an entry up BY `source` and passes that same
+`source` as the asking source, so `hit.source === forSource` holds by
+construction and the classes always match. An unknown source is already refused
+by the `asking` guard before the class check is consulted.
+
+So the honest statement is: **the selection-time filter is the enforcement; the
+central check is defence in depth against a caller that does not yet exist.**
+It is kept because the invariant making it redundant belongs to `read`, not to
+the store — the day a caller asks on behalf of a source other than the one it
+addressed, which is precisely what §16.5's fused read builds, that line is what
+refuses it. The code says this in place rather than letting the guard read as
+proven.
+
+### §20.5 MOVES NOTHING
+
+**C 103 · W 21 · N 2 · X 1 — unchanged.** `resolve` still has no production
+caller, so no surface fused anything before this ruling and none does after it.
+S3 and S106 stay `W`. What changed is that the last SEMANTIC unknown blocking
+§16.5's step is now answered; what remains for those rows is the wiring itself.

@@ -193,7 +193,15 @@ describe("presence fusion — §20 and §37, stale is not current", () => {
 });
 
 describe("presence fusion — it actually FUSES", () => {
-  test("one subject seen by two sources resolves to the most recent observation", () => {
+  // RE-AIMED 2026-09-26. This case previously admitted through
+  // locate_friends_session (`social`) and trip_crew_location_sessions
+  // (`trip_crew`) and required the CREW estimate to win a SOCIAL ask — i.e. it
+  // asserted cross-class fusion on purpose. The owner settled §19 the other way
+  // (census-sensing §20: distinct classes may not fuse), so the property it was
+  // really protecting — the NEWEST observation wins — is re-proved here WITHIN
+  // one class, using the two sources that genuinely share `social`. The
+  // cross-class case is now its own test, below, asserting refusal.
+  test("one subject seen by two SAME-CLASS sources resolves to the most recent observation", () => {
     const store = new PresenceFusionStore();
     store.admit(
       PRESENCE_WRITE_CAPABILITIES.locate_friends_session,
@@ -201,32 +209,43 @@ describe("presence fusion — it actually FUSES", () => {
       T0 + 1_000,
     );
     store.admit(
-      PRESENCE_WRITE_CAPABILITIES.trip_crew_location_sessions,
-      claim({ subjectKey: "acct-9", observedAtMs: T0 + 500 }),
+      PRESENCE_WRITE_CAPABILITIES.circle_presence,
+      claim({ subjectKey: "acct-9", observedAtMs: T0 + 500, state: "recent" }),
       T0 + 1_000,
+    );
+    assert.equal(
+      PRESENCE_SOURCE_CONTRACTS.locate_friends_session.presenceClass,
+      PRESENCE_SOURCE_CONTRACTS.circle_presence.presenceClass,
+      "this case is only meaningful while these two sources share a class",
     );
     const fused = store.resolve("acct-9", "locate_friends_session", "precise", T0 + 1_000);
     assert.ok(fused);
     assert.equal(fused.observedAtMs, T0 + 500, "the newer observation must win");
-    assert.equal(fused.source, "trip_crew_location_sessions");
+    assert.equal(fused.source, "circle_presence");
     assert.equal(isFused(fused), true);
   });
 
   test("resolving FOR a narrower source re-narrows the answer to that source's ceiling", () => {
+    // RE-AIMED 2026-09-26 to a SAME-CLASS pair. It previously admitted through
+    // trip_crew and asked as circle_presence, which the owner's §19 ruling now
+    // refuses outright — the answer would be null and the ceiling property it
+    // exists to prove would go untested. `locate_friends_session` (ceiling
+    // `crew`/precise) and `circle_presence` (ceiling `venue`) are both `social`,
+    // so the narrowing is still demonstrated across a real ceiling gap.
     const store = new PresenceFusionStore();
     store.admit(
-      PRESENCE_WRITE_CAPABILITIES.trip_crew_location_sessions,
+      PRESENCE_WRITE_CAPABILITIES.locate_friends_session,
       claim({ subjectKey: "acct-9" }),
       T0,
     );
-    const asCrew = store.resolve("acct-9", "trip_crew_location_sessions", "precise", T0);
+    const asLocate = store.resolve("acct-9", "locate_friends_session", "precise", T0);
     const asCircle = store.resolve("acct-9", "circle_presence", "precise", T0);
-    assert.ok(asCrew && asCircle);
-    assert.equal(asCrew.precision, "precise");
+    assert.ok(asLocate && asCircle);
+    assert.equal(asLocate.precision, "precise");
     assert.equal(
       asCircle.precision,
       PRESENCE_SOURCE_CONTRACTS.circle_presence.ceiling,
-      "a circle consumer must not see the crew rung",
+      "a circle consumer must not see the locate rung",
     );
     assert.equal(asCircle.position, null, "and must not be handed the coordinate either");
   });
@@ -429,9 +448,13 @@ describe("presence fusion — one viewer never reads another viewer's entitlemen
   });
 
   test("the audience ceiling composes WITH the source ceiling — the narrower of the two wins", () => {
+    // RE-AIMED 2026-09-26: admits through locate_friends_session rather than
+    // trip_crew so both asks below stay INSIDE the `social` class. The §19
+    // ruling would refuse a cross-class ask before either ceiling was folded,
+    // and this case is about the fold, not the class.
     const store = new PresenceFusionStore();
     store.admit(
-      PRESENCE_WRITE_CAPABILITIES.trip_crew_location_sessions,
+      PRESENCE_WRITE_CAPABILITIES.locate_friends_session,
       claim({ subjectKey: "acct-9", ceilings: ["precise"] }),
       T0,
     );
@@ -440,9 +463,123 @@ describe("presence fusion — one viewer never reads another viewer's entitlemen
     assert.ok(bySource);
     assert.equal(bySource.precision, PRESENCE_SOURCE_CONTRACTS.circle_presence.ceiling);
     // ...and here the AUDIENCE is, through a source whose contract permits more.
-    const byAudience = store.resolve("acct-9", "trip_crew_location_sessions", "zone", T0);
+    const byAudience = store.resolve("acct-9", "locate_friends_session", "zone", T0);
     assert.ok(byAudience);
     assert.equal(byAudience.precision, "zone");
     assert.equal(byAudience.position, null);
+  });
+});
+
+/**
+ * ── §17's CLASS BOUNDARY — OWNER DECISION, 2026-09-26 ────────────────────────
+ *
+ * The spec: "keep privacy classes distinct: private device presence, aggregate
+ * intelligence presence, social presence, Trip crew, Buddy, public discovery"
+ * and "Reuse low-level sensor/proximity infrastructure where possible, NOT
+ * consent/policy semantics."
+ *
+ * Two readings were put to the owner — (A) distinct classes may not FUSE, and
+ * (B) they merely may not MERGE identity, since the estimate keeps its
+ * `source`. The owner settled on A, to be enforced CENTRALLY, reading class
+ * from trusted source configuration, refusing missing or unknown classes, and
+ * mandatory for every caller. These cases are that decision's regression net.
+ *
+ * Sharing a position with a trip crew is a different consent grant from
+ * appearing in a circle's presence view. Serving one through the other is
+ * exactly the consent/policy reuse §17 excludes.
+ */
+describe("presence fusion — distinct privacy classes may not fuse (§17, owner decision)", () => {
+  test("the three account-scoped sources do not all share a class — the premise, measured", () => {
+    assert.equal(PRESENCE_SOURCE_CONTRACTS.circle_presence.presenceClass, "social");
+    assert.equal(PRESENCE_SOURCE_CONTRACTS.locate_friends_session.presenceClass, "social");
+    assert.equal(PRESENCE_SOURCE_CONTRACTS.trip_crew_location_sessions.presenceClass, "trip_crew");
+  });
+
+  test("a trip_crew estimate does NOT answer a social ask, even when it is newer", () => {
+    const store = new PresenceFusionStore();
+    store.admit(
+      PRESENCE_WRITE_CAPABILITIES.trip_crew_location_sessions,
+      claim({ subjectKey: "acct-9", observedAtMs: T0 + 5_000 }),
+      T0 + 6_000,
+    );
+    assert.equal(
+      store.resolve("acct-9", "locate_friends_session", "precise", T0 + 6_000),
+      null,
+      "a crew position reaching a social surface is the §17 violation",
+    );
+    assert.equal(store.resolve("acct-9", "circle_presence", "precise", T0 + 6_000), null);
+  });
+
+  test("a social estimate does NOT answer a trip_crew ask either — the rule is symmetric", () => {
+    const store = new PresenceFusionStore();
+    store.admit(
+      PRESENCE_WRITE_CAPABILITIES.locate_friends_session,
+      claim({ subjectKey: "acct-9", observedAtMs: T0 }),
+      T0 + 1_000,
+    );
+    assert.equal(
+      store.resolve("acct-9", "trip_crew_location_sessions", "precise", T0 + 1_000),
+      null,
+    );
+  });
+
+  // The rule must NARROW answers, never destroy correct ones. If the class
+  // filter ran only at egress, the newer cross-class estimate would win `best`
+  // and then be refused, returning null where an eligible same-class estimate
+  // existed. Selection-time filtering is what makes this case pass.
+  test("an eligible same-class estimate still answers even when a NEWER cross-class one exists", () => {
+    const store = new PresenceFusionStore();
+    store.admit(
+      PRESENCE_WRITE_CAPABILITIES.locate_friends_session,
+      claim({ subjectKey: "acct-9", observedAtMs: T0 }),
+      T0 + 9_000,
+    );
+    store.admit(
+      PRESENCE_WRITE_CAPABILITIES.trip_crew_location_sessions,
+      claim({ subjectKey: "acct-9", observedAtMs: T0 + 5_000 }),
+      T0 + 9_000,
+    );
+    const fused = store.resolve("acct-9", "locate_friends_session", "precise", T0 + 9_000);
+    assert.ok(fused, "the same-class estimate must still be served, not swallowed");
+    assert.equal(fused.source, "locate_friends_session");
+    assert.equal(fused.observedAtMs, T0);
+  });
+
+  test("read() is bound by the same rule — the central check catches the direct path", () => {
+    const store = new PresenceFusionStore();
+    store.admit(
+      PRESENCE_WRITE_CAPABILITIES.trip_crew_location_sessions,
+      claim({ subjectKey: "acct-9" }),
+      T0,
+    );
+    // Same class as itself: served.
+    assert.ok(store.read("trip_crew_location_sessions", "acct-9", "precise", T0));
+  });
+
+  test("an unknown asking source is REFUSED, not treated as compatible", () => {
+    const store = new PresenceFusionStore();
+    store.admit(
+      PRESENCE_WRITE_CAPABILITIES.locate_friends_session,
+      claim({ subjectKey: "acct-9" }),
+      T0,
+    );
+    assert.equal(
+      store.resolve("acct-9", "not_a_source" as never, "precise", T0),
+      null,
+      "an unreadable class is not a matching class",
+    );
+    assert.equal(store.read("not_a_source" as never, "acct-9", "precise", T0), null);
+  });
+
+  test("same-class fusion is still permitted — the rule narrows, it is not a blanket ban", () => {
+    const store = new PresenceFusionStore();
+    store.admit(
+      PRESENCE_WRITE_CAPABILITIES.circle_presence,
+      claim({ subjectKey: "acct-9", observedAtMs: T0 + 500, state: "recent" }),
+      T0 + 1_000,
+    );
+    const fused = store.resolve("acct-9", "locate_friends_session", "precise", T0 + 1_000);
+    assert.ok(fused, "circle_presence and locate_friends_session are both `social`");
+    assert.equal(fused.source, "circle_presence");
   });
 });

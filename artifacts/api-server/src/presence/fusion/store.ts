@@ -68,6 +68,7 @@ import {
   type PresenceEvidenceType,
 } from "../domain/types.js";
 import {
+  PRESENCE_CLASSES,
   PRESENCE_SOURCES,
   PRESENCE_SOURCE_CONTRACTS,
   type PresenceSourceId,
@@ -410,6 +411,36 @@ function foldCeilings(
   return acc;
 }
 
+/**
+ * §17's CLASS BOUNDARY — "keep privacy classes distinct … reuse low-level
+ * sensor/proximity infrastructure where possible, NOT consent/policy semantics".
+ *
+ * OWNER DECISION, 2026-09-26: distinct classes MAY NOT FUSE. The competing
+ * reading — that classes merely may not MERGE identity, since the estimate
+ * keeps its `source` — was put to the owner and refused. Recorded in
+ * census-sensing §20; do not relitigate it from the code.
+ *
+ * Both sides are read from the TRUSTED REGISTER (`PRESENCE_SOURCE_CONTRACTS`)
+ * rather than from the estimate, so a forged or stale object cannot nominate
+ * its own class. A source the register does not contain, or one whose class is
+ * not a member of the closed `PRESENCE_CLASSES` union, is REFUSED rather than
+ * treated as compatible: an unreadable class is not a matching class, which is
+ * the same fail-closed direction `foldCeilings` takes for an unreadable bound.
+ *
+ * Same-class fusion stays permitted, and that is the rule doing real work
+ * rather than a blanket ban: `circle_presence` and `locate_friends_session` are
+ * BOTH `social`, so they still fuse with each other. What can no longer happen
+ * is a `trip_crew` position answering a `social` surface, or the reverse.
+ */
+function sameConsentClass(a: PresenceSourceId, b: PresenceSourceId): boolean {
+  const ca = PRESENCE_SOURCE_CONTRACTS[a]?.presenceClass;
+  const cb = PRESENCE_SOURCE_CONTRACTS[b]?.presenceClass;
+  if (!ca || !cb) return false;
+  if (!(PRESENCE_CLASSES as readonly string[]).includes(ca)) return false;
+  if (!(PRESENCE_CLASSES as readonly string[]).includes(cb)) return false;
+  return ca === cb;
+}
+
 function isEstimateState(v: unknown): v is PresenceEstimateState {
   return typeof v === "string" && (ESTIMATE_STATES as readonly string[]).includes(v);
 }
@@ -578,6 +609,14 @@ export class PresenceFusionStore {
       const hit = this.#entries.get(`${source}${RETENTION_KEY_SEP}${key}`);
       if (!hit) continue;
       if (hit.linkage !== "account_scoped") continue;
+      // §17 CLASS BOUNDARY, applied during SELECTION and not only at egress.
+      // If a cross-class estimate were allowed to win `best` here and were then
+      // refused below, the answer would be `null` where an eligible same-class
+      // estimate existed — the rule would silently destroy correct answers
+      // instead of narrowing them. Filtering here means the newest estimate
+      // WITHIN the asking class wins, which is what fusion means once classes
+      // may not cross.
+      if (!sameConsentClass(hit.source, forSource)) continue;
       if (hit.expiredAt(nowMs)) continue;
       if (hit.observedAtMs === null) continue;
       if (best === null || (hit.observedAtMs as number) > (best.observedAtMs as number)) best = hit;
@@ -628,6 +667,25 @@ export class PresenceFusionStore {
   ): FusedPresenceEstimate | null {
     const asking = PRESENCE_SOURCE_CONTRACTS[forSource];
     if (!asking) return null;
+    // §17 CLASS BOUNDARY — owner decision 2026-09-26, central backstop.
+    //
+    // HONEST ABOUT ITS REACH: this line is UNREACHABLE on every path that
+    // exists today, and mutation testing is what established that rather than
+    // inspection. Deleting it turns no test red. `read` looks the entry up BY
+    // `source` and passes that same `source` as `forSource`, so `hit.source ===
+    // forSource` holds by construction and the classes always match; an
+    // unknown source is already refused by the `asking` guard above. The load-
+    // bearing enforcement is the selection-time filter in `resolve`, which IS
+    // covered (deleting it reds "an eligible same-class estimate still answers
+    // even when a NEWER cross-class one exists").
+    //
+    // It stays because the owner asked for the rule to be mandatory for every
+    // caller, and the invariant that makes it redundant is `read`'s, not the
+    // store's: the day a caller asks on behalf of a source other than the one
+    // it addressed — a fused read with an explicit asking class, which is
+    // exactly what §16.5's step builds — this is the line that refuses it.
+    // Redundant today, load-bearing the moment that invariant is relaxed.
+    if (!sameConsentClass(best.source, forSource)) return null;
     const ceiling = foldCeilings(best.ceiling, [asking.ceiling, audienceCeiling]);
     const precision = narrowestPrecision(best.precision, ceiling);
     if (precision === "none") return null;
