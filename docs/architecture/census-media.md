@@ -4891,6 +4891,338 @@ the owner's is whether to turn the canonical writer back on, which 3321
 requires before it will run on production. No executable line changed, and no
 verdict moves.
 
+## 24. Lane E — a representative image per map cluster, and search by radius — 2026-09-26
+
+Two W rows were assigned: MD300 (§39 "Map thumbnails") and MD288 (§38
+"Show hidden beaches near Da Nang"). Both are now built on the server and in
+the client services, tested and mutated. **Neither moves to C.** In each case
+the step that lets a user reach the work is a screen outside this lane's
+files, and this census has already ruled what that means. MD297 stayed **W**
+while nothing reached its offline scope (§22.5) and became **C** only when its
+lens read through it (§23.5). The §38 examples became **C** only when the
+Search screen could ask them (§19: MD287, MD290–MD292). §24.2 and §24.3 each
+end with the one step left and who owns it.
+
+Worked from `claude/sensing-completion-20260925` at `b1903565b`, on branch
+`worktree-agent-a355e4e2894b581d6`. The code and tests are in `de83385e3`;
+this section is in the commit after it. No migration was written and no flag
+was touched.
+
+### 24.1 Row table
+
+| ID | Was | Now | Evidence |
+| --- | --- | --- | --- |
+| MD300 | **W** | **W** | The half §22.5 named is built. `/media/map` clusters now carry one cover each (`artifacts/api-server/src/services/media/MediaProjectionService.ts:1654#return attachClusterCovers(sc, viewer, { generatedAt, clusters, totalPerspectives: media.length }, zoneMap);`), chosen after the directional override (`artifacts/api-server/src/services/media/MediaProjectionService.ts:1857#const kept = await filterMediaProjectionVisibility(sc, viewer.viewerId, pool);`). The client maps the cover (`travel-buddy-standalone/src/features/media/services/mediaProjection.ts:1449#export function mapMediaMapWithCovers(`), and the cache has the scope (`travel-buddy-standalone/src/services/media/mediaCache.ts:51#'map_thumbnails';`, `travel-buddy-standalone/src/services/media/mediaOffline.ts:335#export function mediaMapOffline(`). §22.5's own falsifier is met. **Still W:** nothing reaches the scope and nothing draws the cover. The one Media Map loads through the raw fetcher (`travel-buddy-standalone/src/features/media/screens/MediaMapScreen.tsx:65#fetchMediaMap({ city, signal: opts.signal }).then((r) =>`), and so do the Places and Experiences map modes. This is MD297's §22.5 state exactly. |
+| MD288 | **W** | **W** | The first half of §19.6's falsifier is built: `GET /media/search` accepts a center (a canonical place, or a point) and a radius of 100 m to 5 km (`artifacts/api-server/src/routes/mediaWorld.ts:329#const near = parseMediaSearchNear(req.query); if (!near.ok) { sendError(res, "invalid_payload", near.message); return; }`). The radius is resolved through the canonical Map's own place contract (§24.3), and the typed client sends it (`travel-buddy-standalone/src/features/media/services/mediaProjection.ts:1488#export function mediaSearchNearParams(`). **Still W:** no screen sends it. The Search screen's "Near <city>" chip sets the CITY criterion (`travel-buddy-standalone/src/features/media/screens/MediaSearchScreen.tsx:180#onPress={() => dispatch({ type: 'set_city', city: filters.city === nearCity ? null : nearCity })}`), and the screen calls the search with no `near` (`travel-buddy-standalone/src/features/media/screens/MediaSearchScreen.tsx:102#fetchMediaSearch(queryString, opts)`). So "near Da Nang", asked on the screen, is still answered city-coarse. |
+
+These rows change no parsed count.
+
+### 24.2 MD300 — one cover per cluster, and the `map_thumbnails` scope
+
+**Server.** Each cluster carries `coverMedia`, an array of zero or one items.
+No new rule decides who may see a cover:
+
+1. **The candidates.** A cover is one of the cluster's own items. Every item has
+   already passed the loader's gates (eligibility, blocks, mutes, private
+   accounts, delayed publish). It has also passed `projectCandidatesProtected`:
+   the servable-media gate over processing and moderation, the §6 canonical
+   read, the §6.1 attachment override for this viewer, and the location choke
+   point. These are the same steps the place projection's perspectives take.
+2. **The directional override.** Candidates are filtered with the router's own
+   boundary function BEFORE one is chosen. If a crew member hid themselves from
+   this viewer in a trip, the cluster shows its next item and does not lose its
+   image
+   (`artifacts/api-server/src/test/mediaWorldProjection.test.ts:1867#it("a crew member who hid themselves from this viewer in that trip is never the cover — the next item is"`).
+3. **Why an array.** That boundary filter prunes media only out of arrays
+   (`artifacts/api-server/src/lib/mediaVisibility.ts:387#if (Array.isArray(value)) return value.filter((item) => {`).
+   A cover sent as a lone object would pass it unexamined.
+4. **An image or nothing.** A cover is an image, or a video that has its
+   server-derived poster
+   (`artifacts/api-server/src/services/media/MediaProjectionService.ts:1819#export function hasClusterCoverImage(`).
+   A video file is never a thumbnail.
+5. **Fail closed on images.** If the directional read cannot complete, the
+   clusters are served with no covers. The counts are served as before.
+6. **Slim.** A cover carries id, media type, url, thumbnail, dimensions,
+   capture time and freshness. It carries no contributor, no place labels and
+   no provenance. The byte gate still decides the file's signature.
+
+**Client.** `fetchMediaMap` now maps each cluster's cover
+(`travel-buddy-standalone/src/features/media/services/mediaProjection.ts:1270#return getJson(`).
+It keeps a cover only if it carries an image
+(`travel-buddy-standalone/src/features/media/services/mediaProjection.ts:1444#const hasImage = m.mediaType === 'video' ? !!m.thumbnailUrl : !!(m.thumbnailUrl || m.url);`).
+The device never picks a cover of its own.
+
+**The scope.** `map_thumbnails` is keyed per city, with a one-day TTL and six
+entries
+(`travel-buddy-standalone/src/services/media/mediaCache.ts:71#map_thumbnails: { requirement: 'Map thumbnails', ttlMs: 1 * DAY, maxEntries: 6 },`).
+It is filled through lane D's cache-through rule, so every §39 rule already
+enforced there binds:
+
+- **Only what the server chose is stored.** The images are fetched through the
+  signer, so a cover the byte gate refuses for this viewer is never written to
+  the device.
+- **Revocation is honoured.** A server answer of "no clusters here" deletes the
+  stored map
+  (`travel-buddy-standalone/src/services/media/mediaOffline.ts:344#{ isEmpty: (p) => p.clusters.length === 0, toStore: storedMap },`).
+- **An auth failure is never covered** by the cache.
+- **Freshness only decays.** Offline, the map is served with its "Cached ·
+  updated" label and never reads live. One gap was closed here: a cluster's
+  freshness has no age of its own, so `decayFreshness` could never demote it.
+  Each stored cluster is therefore stamped with the least age it can have had
+  (`travel-buddy-standalone/src/services/media/mediaOffline.ts:320#ageMinutes: 0,`),
+  and each cover with its real age. A "fresh" pin read back three hours later
+  reads "recent".
+- **No coordinates.** The payload carries none, and the store's scrub still
+  runs.
+
+CAP: cache-through only. A city's map is stored when it is viewed online; the
+§39 warm-up does not pre-fill it, as MD298 is capped in §22.3.
+
+**Tests.**
+- Server: `artifacts/api-server/src/test/mediaWorldProjection.test.ts:1803#describe("MD300 — each /media/map cluster carries ONE cover image the viewer may open"`
+  (8 cases, including a CONTROL that the hidden crew item IS the cover when
+  there is no override) and, over HTTP,
+  `artifacts/api-server/src/test/mediaWorldProjection.test.ts:2162#it("GET /media/map serves each cluster's cover, and not a hidden crew member's"`.
+- Client: `travel-buddy-standalone/src/features/media/__tests__/searchAndStores.test.ts:271#test('MD300 fetchMediaMap carries each cluster`
+  and `travel-buddy-standalone/src/services/media/__tests__/mediaOffline.test.ts:487#describe('MD300 — Map thumbnails:`
+  (4 cases).
+
+**RED WHEN (narrowed from §22.5):** the Media Map's cluster source reads
+through `mediaMapOffline`, draws each cluster's `cover`, and shows
+`offline.label` when it is served from the cache. That covers the standalone
+screen's default loader and the Places / Experiences map modes, which each
+pass their own loader. **WHO:** the owner of the Media Map screens (lane A's
+files; the World shell is excluded from this lane by name), or the
+integrator. Nothing server-side remains.
+
+### 24.3 MD288 — "near X" as a bounded radius, resolved through the canonical Map
+
+**What the request takes.** The request adds `nearPlaceId` (a canonical place)
+or `nearLat` + `nearLng` (a point), plus `radiusM`: a whole number of metres
+from 100 to 5000. The parameters are validated with zod
+(`artifacts/api-server/src/services/media/MediaSearchService.ts:683#export function parseMediaSearchNear(`).
+A half-given center, two centers, or a radius outside the bounds is refused
+with 400. It is never clamped and never dropped.
+
+**What "resolved through the canonical Map" means here.** A place's position is
+the one the Map's own pipeline would publish for it:
+
+- **The Map's place projector.** The canonical `places` row goes through
+  `projectPlace` (`artifacts/api-server/src/lib/mapProjectPlace.ts:205#export function projectPlace(`),
+  which drops an inactive, merged, coordinate-less or unservable row.
+- **Then the §24 gate.**
+  `artifacts/api-server/src/services/media/MediaSearchService.ts:760#for (const obj of applyProtection(objects, zones).objects) {`
+  uses the policy from the ONE zone reader
+  (`artifacts/api-server/src/services/media/MediaSearchService.ts:772#const zones = await loadActiveProtectedZones(sc);`).
+  A place in a suppress-class zone has no position, so it is never near
+  anything. A place in a coarsen-class zone sits at the zone's anchor, where
+  the Map would draw it.
+- **The filter.** Distance runs from that position
+  (`artifacts/api-server/src/services/media/MediaSearchService.ts:384#if (nearCtx) matched = await keepWithinRadius(sc, nearCtx, matched);`),
+  before places, people, gems and experiences are rolled up.
+- **Events and trips.** Those found by name are kept only through a place of
+  their own inside the radius
+  (`artifacts/api-server/src/services/media/MediaSearchService.ts:541#if (query.near && !(await anyPlaceWithinRadius(sc, query.near, exp.placeIds))) continue;`).
+
+**The rules it stays inside, read before it was written.**
+
+- **The gateway-bypass guard.** The guard reserves `loadViewportPlaceRows` for
+  the gateway
+  (`artifacts/api-server/src/test/gatewayBypassGuard.test.ts:105#loadViewportPlaceRows: {`).
+  It is not called. Search reads `places` BY ID, and only the places a result
+  already names. That is the narrower read Discovery's search takes, for the
+  reason Discovery gives
+  (`artifacts/api-server/src/routes/discoverySearch.ts:1275#WHY IT DOES NOT CALL`):
+  search is not a projection, has no viewport, and serves no MapObject. The
+  guard suite still passes with no approval added.
+- **The zone model.** It is the gateway's alone
+  (`artifacts/api-server/src/routes/mapProjection.ts:91#THE ZONE MODEL IS THIS ROUTE'S JOB, AND ONLY THIS ROUTE'S.`),
+  which is why MD162 stays blocked. This change reads no `geo_zones` and
+  resolves no zone for any place. For the same reason, a center named only as a
+  city ("Da Nang") cannot be resolved server-side. It must arrive as a
+  canonical place or a point.
+- **No coordinate leaves.** The response carries
+  `near: { center, radiusM, refusal }`: the center's KIND and the radius, never
+  a point. The router's boundary scrub still stands behind it.
+- **Only disclosed places.** Candidates are the places the disclosure choke
+  point already lets this viewer be told about. So the radius narrows an answer
+  and never widens one. A Hidden Gem's ceiling binds first: a place hosting a
+  `protected` gem has no disclosed id, so it is never a radius result (tested).
+- **A place center.** It goes through the same two steps and nothing else. It
+  is deliberately NOT refused for hosting a gem. The Map's place layer
+  publishes that position anyway (§24.6, item 2), and a gem-dependent refusal
+  would itself answer "is this place a hidden gem?".
+
+**Fail-closed, in two different ways.**
+
+- **An unreadable §24 policy or place read refuses with a retryable 503.** It is
+  the same envelope `MediaCandidatesUnavailableError` uses
+  (`artifacts/api-server/src/services/media/MediaSearchService.ts:774#throw new MediaSearchNearUnavailableError("protected_zones", "the §24 policy could not be read");`).
+- **A center the Map would not place gets an empty answer that says so**
+  (`artifacts/api-server/src/services/media/MediaSearchService.ts:355#if (nearCtx?.report.refusal) return answer(emptyResults(nowMs, criteriaUsed));`).
+  The unplaceable cases are: unknown, merged, coordinate-less, or suppressed by
+  §24.
+
+**Recall.** Stated in the service header: the radius narrows the shared
+loader's page, as free text does.
+
+**Client.** `fetchMediaSearch(queryString, { near })` appends the parameters
+(`travel-buddy-standalone/src/features/media/services/mediaProjection.ts:1386#return path.kind === 'request' ? getJson(path.url, mapMediaSearchWithNear, opts) : Promise.resolve(path.answer);`).
+A `near` the server would refuse is refused on the device, with no request
+(`travel-buddy-standalone/src/features/media/services/mediaProjection.ts:1512#if (near && !nearQs) {`).
+Sending the search without it would answer city-coarse under a "near" label.
+The server's report is mapped
+(`travel-buddy-standalone/src/features/media/services/mediaProjection.ts:1532#export function mapMediaSearchWithNear(`).
+
+**The capability boundary string** was reworded in place, keeping its anchor for
+§19.6's citation: `artifacts/api-server/src/services/media/MediaSearchService.ts:71#search is city-coarse; the canonical Map owns proximity`.
+It now reads "wider than 5 km, or with no center given".
+
+**Tests.**
+- Server: `artifacts/api-server/src/test/mediaWorldProjection.test.ts:1952#describe("MD288 — parseMediaSearchNear`
+  (3 cases) and
+  `artifacts/api-server/src/test/mediaWorldProjection.test.ts:1983#describe("MD288 — §38 'near X' is a radius resolved through the canonical Map's own place contract"`
+  (10 cases). Each suppress, coarsen and gem case has a no-zone or no-gem
+  CONTROL. Over HTTP:
+  `artifacts/api-server/src/test/mediaWorldProjection.test.ts:2145#it("GET /media/search refuses a radius past the bound with 400, and answers a bounded one"`.
+- Client: four cases from
+  `travel-buddy-standalone/src/features/media/__tests__/searchAndStores.test.ts:294#test('MD288 fetchMediaSearch appends`.
+
+**RED WHEN (narrowed from §19.6):** the Search screen sends `near` with a
+center and a bounded radius. The center can be the viewer's coarse position
+(the one the World shell already hands the Media Map), the place the search was
+opened from, or a place result. A named city is resolved by the client's Map
+data, not by Media. The alternative stands unchanged: the owner rules that
+city-coarse satisfies "near", which makes this row C as it is. **WHO:** the
+Search screen and filter-store owner (lane A's files) together with the World
+shell (outside this lane by name), or the owner. Nothing server-side remains.
+
+### 24.4 Mutations — each seen red, the file checked byte-identical after every run
+
+Server (`mediaWorldProjection.test.ts`, 101 tests):
+
+| # | Mutation | Red |
+| --- | --- | --- |
+| E-M1 | covers never attached | 7 map cases, HTTP map |
+| E-M2 | directional pre-filter removed (cover chosen before the override) | hidden-crew builder case, boundary-delivery case, fail-closed case, HTTP map |
+| E-M3 | an unreadable directional read treated as "all visible" | fail-closed case |
+| E-M4 | a posterless video accepted as a cover | video case |
+| E-M5 | cover taken from the whole page, not the cluster's own items | own-items case, video case |
+| E-M6 | cover sent as a lone object | 7 map cases, HTTP map |
+| E-M7 | the full projection sent as the cover | own-items (slim) case |
+| E-M8 | upstream gate dropped: the private-account guard in the loader | the private-account cover case, plus 3 pre-existing private-account cases |
+| E-R1 | no radius filter | point, place, suppress, coarsen, gem, places-unreadable, HTTP search |
+| E-R2 | radius ignored (×100) | point, place, coarsen, HTTP search |
+| E-R3 | §24 skipped (raw rows positioned) | suppress, coarsen, suppressed-center |
+| E-R4 | §24 coarsen ignored (raw position, not the anchor) | coarsen |
+| E-R5 | unreadable §24 policy treated as no policy | policy-unreadable |
+| E-R6 | unreadable place read treated as no places | places-unreadable |
+| E-R7 | an unpositioned center falls back to an unfiltered answer | unpositioned-center |
+| E-R8 | radius tested on the RAW candidate place id (bypasses disclosure) | protected-gem place |
+| E-R9 | events and trips found by name not filtered by `near` | event-by-name |
+| E-R10 | route does not refuse an invalid `near` | HTTP 400 |
+| E-R11 | parser drops the radius upper bound | parser refusals, HTTP 400 |
+
+Client (`searchAndStores.test.ts` + `mediaOffline.test.ts`, 49 tests):
+
+| # | Mutation | Red |
+| --- | --- | --- |
+| E-C1 | client drops the covers | fetchMediaMap case, both offline storage cases |
+| E-C2 | a posterless video accepted as a cover | fetchMediaMap case |
+| E-C3 | `near` never sent | place-center and point-center cases |
+| E-C4 | a `near` the server would refuse is sent, which drops it | local-refusal case |
+| E-C5 | the near report never mapped | place-center and point-center cases |
+| E-C6 | the client's radius upper bound dropped | local-refusal case |
+| E-O1 | the map never written to its scope | online/offline case, signer-refusal case |
+| E-O2 | an empty map kept as content | "no clusters here" case |
+| E-O3 | no age stamped on stored clusters and covers | online/offline case (freshness never decays) |
+| E-O4 | read back from a scope it is not written to | online/offline case |
+| E-O5 | map thumbnails kept a fortnight | scope-policy case |
+
+Every mutation went red on its first run. None survived, so no test had to be
+added for one.
+
+### 24.5 Checks
+
+- **Server tests.**
+  - `mediaWorldProjection.test.ts`: 101 / 101.
+  - The 81 server test files that import or scan the changed files, run
+    together: 1799 / 1799. They include `gatewayBypassGuard`,
+    `schemaReferenceStatic`, `silentSchemaErrorCatches`, `mapProjectPlace`,
+    `protectedLocations`, `mapProtectionUnreadable`, `mediaAccess` and
+    `docCitations`.
+- **Client tests.**
+  - `searchAndStores` and `mediaOffline` under node:test: 49 / 49.
+  - The seven jest suites that render the Media Map, Search, World shell,
+    offline lenses, Hidden Gems, context sheet and place consensus: 47 / 47.
+- **Types and lint.**
+  - `tsc` is clean in both packages.
+  - `typecheck:tests` is at baseline in both: 863 and 173 diagnostics. It first
+    caught a duplicate import in the new server cases, which was removed.
+  - eslint on every changed file: 0 errors.
+  - The client's `lint:imports`, `lint:mocks`, `lint:orphan-tests` and
+    `lint:bare-image` pass.
+- **Census checks.**
+  - `check:doc-citations` passes.
+  - `check:citation-targets` stays at 165 / 165.
+  - `check:census-integrity` passes, with media unchanged at 450 / 398 C / 38 W /
+    12 N / 2 X.
+  - `check:census-scope-coverage` passes: media 210 of 218 watched, unchanged.
+  - `check:test-registration` passes.
+  - What `check:census-freshness` flags for the changed counted files is
+    reported to the integrator. The acknowledgement ledger is not a lane's to
+    edit.
+- **Registration.** No new test file was added; every case sits in a file
+  already registered or discovered.
+
+### 24.6 Production — nothing here is deployed
+
+Nothing in §24 is merged or deployed. No flag, seed or migration was touched.
+
+**MD300 depends on:**
+- the World shell, the only way to reach the Media Map
+  (`MEDIA_WORLD_SHELL_ENABLED`, seeded off);
+- the canonical Map gateway, which places nothing in production while
+  `map_projection_enabled` has no row there (§23.1);
+- the screen wiring in §24.2.
+
+Covers come from `post_media` while `media_canonical_read_enabled` is off, so
+there are covers only where there is media.
+
+**MD288:**
+- The route change is live on deploy. It has no flag, and it answers only
+  callers that send `near`, which today is none.
+- `protected_zones` exists in production with zero rows (applied 2026-09-21, per
+  `checkProductionDrift.ts`). So `applyProtection` is an identity pass there
+  and positions are the canonical rows' own. That is exactly what the Map would
+  publish.
+- How many canonical `places` in production carry coordinates was not measured
+  by this lane. It read no database.
+- The search itself is reached only through the dark World shell.
+
+### 24.7 Found outside the rows — recorded, not fixed
+
+1. **Counts include items the directional override hides.** A cluster's
+   `perspectiveCount` is taken from its items
+   (`artifacts/api-server/src/services/media/MediaProjectionService.ts:1649#perspectiveCount: z.items.length,`)
+   before the router's directional filter runs. That filter prunes item arrays,
+   not numbers. The `/media/world` zone counts work the same way. A crew member
+   who hid themselves from the viewer in a trip is therefore still counted at
+   that place, which discloses existence (not identity). The covers above do
+   not have this problem. **Owner:** the projection and visibility owner.
+2. **The Map's place layer does not consult Hidden Gem sensitivity.** Between
+   `projectPlace` and the wire, no step was found that joins a place to a gem.
+   The gateway's place task, `projectPlace` and the map libraries were read.
+   A canonical place linked to a `protected` gem is therefore drawn at
+   `place_level`, while the gem layer withholds that gem's coordinates. What
+   stays protected is the association, not the position. This lane's radius
+   mirrors the Map rather than diverging from it. Recorded for census-map to
+   confirm.
+3. **A stale header.** The header of `MediaSearchService` still says its
+   client half is "still unbuilt and its census rows stay N" (lines 6–8), but
+   MD324 is C (§23.5). Comment only. It was left alone because it is not in
+   this lane's change.
+
 ## 25. Lane F — World items explain themselves from the terms that ranked them (§47) — 2026-09-26
 
 Lane F of the Media pass owns one row, **MD428**. The work is on branch

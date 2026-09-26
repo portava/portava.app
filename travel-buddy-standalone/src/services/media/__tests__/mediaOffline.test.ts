@@ -479,3 +479,91 @@ describe('§39 warm-up — the user\'s saved places and current trips are cached
     assert.equal(listener, null);
   });
 });
+
+// ── census-media §24 (Lane E): Map thumbnails (MD300) ─────────────────────────
+
+import { mediaMapOffline } from '../mediaOffline.ts';
+
+describe('MD300 — Map thumbnails: the map\'s clusters and their server-chosen covers, cached per city', () => {
+  let env: ReturnType<typeof fakeEnv>;
+  const settle = () => new Promise((r) => setTimeout(r, 5));
+  const strip = (u: string) => u.replace('https://signed.test/', '').replace('?t=1', '');
+  const A = '41444444-4444-4444-8444-444444444444';
+  const B = '42444444-4444-4444-8444-444444444444';
+  const mapBody = (extra: Record<string, unknown> = {}) => ({
+    generatedAt: '2026-09-26T00:00:00Z',
+    totalPerspectives: 3,
+    clusters: [
+      { placeId: A, label: 'An Thuong', perspectiveCount: 2, freshness: 'fresh',
+        coverMedia: [{ id: 'c1', mediaType: 'image', url: 'post-media/u/c1.jpg', thumbnailUrl: 'post-media/u/c1.thumb.jpg',
+          freshness: 'fresh', capturedAt: new Date(Date.now() - 5 * MIN).toISOString() }] },
+      { placeId: B, label: 'My Khe', perspectiveCount: 1, freshness: 'recent',
+        coverMedia: [{ id: 'v1', mediaType: 'video', url: 'post-media/u/v1.mp4', thumbnailUrl: 'post-media/u/v1.mp4.poster.jpg', freshness: 'recent' }] },
+    ],
+    ...extra,
+  });
+  beforeEach(() => {
+    env = fakeEnv();
+    _setMediaCache(new MediaCache(env));
+    _setTestFreshToken('t');
+    useFakeNetwork();
+  });
+  afterEach(() => {
+    _setMediaCache(null);
+    _clearTestFreshToken();
+    (globalThis as { fetch: unknown }).fetch = realFetch;
+  });
+
+  it('online → stored under map_thumbnails with ONLY the covers the server chose; offline → served, aged, labelled, never live', async () => {
+    handler = (p) => (p.startsWith('/api/media/map') ? { status: 200, body: mapBody() } : { status: 404 });
+    const online = await mediaMapOffline({ city: 'Da Nang' });
+    assert.equal(online.ok && online.offline, undefined, 'a live answer carries no cached label');
+    await settle();
+    const inv = await (await import('../mediaCache.ts')).getMediaCache().then((c) => c.inventory());
+    assert.deepEqual(inv.map((e) => [e.scope, e.key, e.images]), [['map_thumbnails', 'Da Nang', 2]]);
+    assert.deepEqual(
+      env.downloads.map(strip).sort(),
+      ['post-media/u/c1.thumb.jpg', 'post-media/u/v1.mp4.poster.jpg'],
+      'the covers and the poster; never the video file, never an image the server did not choose',
+    );
+    env.tick(3 * 60 * MIN);
+    handler = () => 'throw';
+    const off = await mediaMapOffline({ city: 'Da Nang' });
+    assert.ok(off.ok);
+    assert.equal(off.offline?.label, 'Cached · updated 3h ago');
+    const a = off.data.clusters.find((c) => c.placeId === A)!;
+    assert.equal(a.cover?.id, 'c1');
+    assert.equal(a.freshness, 'recent', 'a "fresh" pin three hours in the cache reads "recent"');
+    assert.equal(a.cover?.freshness, 'recent');
+    assert.equal(JSON.stringify(off.data).includes('"live"'), false, 'nothing served from here reads live');
+  });
+
+  it('a cover the signer refuses for this viewer is never written to the device', async () => {
+    env = fakeEnv({ deny: new Set(['post-media/u/c1.thumb.jpg']) });
+    _setMediaCache(new MediaCache(env));
+    handler = () => ({ status: 200, body: mapBody() });
+    await mediaMapOffline({ city: 'Da Nang' });
+    await settle();
+    assert.deepEqual(env.downloads.map(strip), ['post-media/u/v1.mp4.poster.jpg']);
+  });
+
+  it('a server ANSWER of "no clusters here" deletes the stored map; an auth failure is never covered by it', async () => {
+    handler = () => ({ status: 200, body: mapBody() });
+    await mediaMapOffline({ city: 'Da Nang' });
+    await settle();
+    handler = () => ({ status: 401, body: {} });
+    const auth = await mediaMapOffline({ city: 'Da Nang' });
+    assert.equal(auth.ok, false, 'a 401 is not an outage');
+    handler = () => ({ status: 200, body: mapBody({ clusters: [] }) });
+    await mediaMapOffline({ city: 'Da Nang' });
+    await settle();
+    handler = () => 'throw';
+    const gone = await mediaMapOffline({ city: 'Da Nang' });
+    assert.equal(gone.ok, false, 'the stored map went when the server said there was nothing here');
+  });
+
+  it('the scope is §39\'s "Map thumbnails", short-lived like the perspectives its pins stand for', () => {
+    assert.equal(SCOPE_POLICY.map_thumbnails.requirement, 'Map thumbnails');
+    assert.ok(SCOPE_POLICY.map_thumbnails.ttlMs <= 24 * 60 * MIN);
+  });
+});

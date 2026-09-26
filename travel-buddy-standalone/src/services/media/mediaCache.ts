@@ -36,11 +36,10 @@
  */
 
 /**
- * One scope per §39 line that has a projection to cache. "Map thumbnails" has
- * NONE: GET /media/map carries per-place counts and no image at all
- * (MediaProjectionService.buildMediaMapProjection), and no client surface
- * renders it — so there is deliberately no scope for it here rather than an
- * empty one that would read as coverage.
+ * One scope per §39 line that has a projection to cache. "Map thumbnails" got
+ * its scope once GET /media/map carried ONE server-chosen cover per cluster
+ * (census-media §24, MD300); before that it had no image, and so no scope,
+ * rather than an empty one that would have read as coverage.
  */
 export type MediaCacheScope =
   | 'trip_media'
@@ -48,7 +47,8 @@ export type MediaCacheScope =
   | 'hidden_gems'
   | 'event_checkpoints'
   | 'place_perspectives'
-  | 'crew_media';
+  | 'crew_media'
+  | 'map_thumbnails';
 
 export interface ScopePolicy {
   /** The §39 line this scope implements. */
@@ -64,11 +64,11 @@ export const SCOPE_POLICY: Readonly<Record<MediaCacheScope, ScopePolicy>> = {
   trip_media: { requirement: 'Cache Trip media', ttlMs: 14 * DAY, maxEntries: 12 },
   saved_places: { requirement: 'Saved Places', ttlMs: 7 * DAY, maxEntries: 60 },
   hidden_gems: { requirement: 'Hidden Gems where permitted', ttlMs: 3 * DAY, maxEntries: 6 },
-  // Events are over quickly; their checkpoint visuals stop being useful fast.
-  event_checkpoints: { requirement: 'Event checkpoint visuals', ttlMs: 2 * DAY, maxEntries: 12 },
+  event_checkpoints: { requirement: 'Event checkpoint visuals', ttlMs: 2 * DAY, maxEntries: 12 }, // Events are over quickly; their checkpoint visuals stop being useful fast.
   // "Recent relevant": a short life and least-recently-read eviction ARE the definition.
   place_perspectives: { requirement: 'Recent relevant Place perspectives', ttlMs: 1 * DAY, maxEntries: 30 },
   crew_media: { requirement: 'Crew-relevant permitted media', ttlMs: 3 * DAY, maxEntries: 12 },
+  map_thumbnails: { requirement: 'Map thumbnails', ttlMs: 1 * DAY, maxEntries: 6 }, // one entry per city map; the pins are recent perspectives, so a day, like them
 };
 
 /** Images stored per cached entry — a cover per item, not a whole library. */
