@@ -1674,6 +1674,20 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     // to either can falsify it. Lane I measured media at 215/225 without them.
     "travel-buddy-standalone/app/media-search/index.tsx",
     "travel-buddy-standalone/app/media-world/index.tsx",
+    // WIDENED 2026-09-26 by census-media §31.13 (lane K), because
+    // check:census-scope-coverage required it (228/239, 95%, against the 96%
+    // floor). MD403's §31.13 evidence rests on three shared components'
+    // optional props (StampButton's tone, AppHeader's overlayTint, EmptyState's
+    // primaryAction.fill) rendering as Media needs while every other caller is
+    // unchanged, so a change to any of them can falsify it. The Grid's
+    // full-screen viewer and the Media tab route are measured and fixed there
+    // too; the coverage check cannot see them (its citation pattern skips
+    // brackets and parentheses), but the same reason applies.
+    "travel-buddy-standalone/src/components/stamps/StampButton.tsx",
+    "travel-buddy-standalone/src/components/ui/AppHeader.tsx",
+    "travel-buddy-standalone/src/components/ui/EmptyState.tsx",
+    "travel-buddy-standalone/app/media-viewer/[id].tsx",
+    "travel-buddy-standalone/app/(tabs)/media.tsx",
   ],
   // census-telegraph.md — declared 2026-09-11 on the same basis as Media above:
   // 451 requirements out of CANNOT BE CHECKED, a clock started rather than a
