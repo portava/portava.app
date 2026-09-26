@@ -45,7 +45,7 @@ import {
   type MediaIntentKind,
 } from "../services/media/MediaActionResolver.js";
 import { authorizeMediaContext } from "../lib/mediaVisibility.js";
-import { retryMediaProcessing } from "../services/media/MediaLifecycleService.js";
+import { retryMediaProcessing, type RetryProcessingResult } from "../services/media/MediaLifecycleService.js";
 import { recordMediaAttachment } from "../lib/mediaAssets.js";
 
 const router = Router();
@@ -210,7 +210,7 @@ router.post(
       sendError(res, "rate_limited", "Too many requests. Please wait.");
       return;
     }
-    const result = await retryMediaProcessing(sc, id, auth.user.id);
+    const result = await retryMediaProcessing(sc, id, auth.user.id); if (sendRetryRefusal(res, result)) return; // census-media §30: the owner's own asset, refused without a write
     if (!result.ok) {
       sendError(res, "not_found", "Media item not found");
       return;
@@ -575,3 +575,27 @@ router.delete(
 );
 
 export default router;
+
+// ── census-media §30 (MD338): the answers a refused retry gets ───────────────
+// Appended here, and called from the retry route by extending its call line in
+// place, because the census cites this file by line.
+//
+// Both refusals are given only to the asset's OWNER: a missing asset and one
+// owned by somebody else still share the route's one `not_found`, so neither
+// answer tells a stranger that an id exists. Neither refusal wrote anything.
+//   • 409 `invalid_state_transition` — the asset is the caller's, but its
+//     processing did not fail (it is ready, removed, rejected, …), so there is
+//     nothing to retry. Re-queuing a ready asset took it off every read path.
+//   • 404 `feature_disabled` — its processing failed, but the worker that would
+//     claim a re-queued asset is off; queuing it would park it for good.
+function sendRetryRefusal(res: any, result: RetryProcessingResult): boolean {
+  if (result.notRetryable) {
+    sendError(res, "invalid_state_transition", "Only media whose processing failed can be retried");
+    return true;
+  }
+  if (result.workerDisabled) {
+    sendError(res, "feature_disabled", "Media processing is not available");
+    return true;
+  }
+  return false;
+}
