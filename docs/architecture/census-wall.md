@@ -1708,7 +1708,7 @@ census-media §23.7 recorded W151 for re-reading. It found that the Wall's rende
 - the client renders through `CachedImage` and the `expo-image` cache;
 - `prefetchWallMedia` warms that cache.
 
-This pass re-read each claim from the code, at `0f0ecde26`, the head of `claude/sensing-completion-20260925`. That head includes census-media §23.7. It then built what was missing on branch `lane-l`. The code is in `8afc2790f` and `06e364244`, and this section is in the commit after them. No database was queried, no flag was touched, and nothing was deployed.
+This pass re-read each claim from the code, at `0f0ecde26`, the head of `claude/sensing-completion-20260925`. That head includes census-media §23.7. It then built what was missing on branch `lane-l`. The code is in `8afc2790f` and `06e364244`. After the integration owner's review (16.8) it is also in `9915558fe`, `133aaec16` and `1afa525d9`. This section is in the commits after them. No database was queried, no flag was touched, and nothing was deployed.
 
 ### 16.1 What the code said at `0f0ecde26`
 
@@ -1726,115 +1726,181 @@ The first claim holds. The upload path stores three objects per image: the origi
 
 **On production data the defects were masked, not absent.** census-media §23.7 read production on 2026-09-26, read-only; this lane did not re-read it. It found 6 `post_media` rows: 1 with a feed variant and 0 with a thumbnail. With no thumbnails, `thumbnailUrl ?? url` and `url ?? thumbnailUrl` both give `url`. So the renderer and the prefetch agreed on production's rows by accident of the data, and the one stored feed variant was never drawn. The code disagrees for every row that has a thumbnail, and every upload through `/media/upload` writes one.
 
-### 16.2 What was built
+### 16.2 What was built (as it stands after the review in 16.8)
 
 **Server.**
-- `feed_url` is a literal in the postcard lane's select, `artifacts/api-server/src/services/wall/WallCandidateLoaders.ts:454#public_url, thumbnail_url, feed_url, width,`. It is mapped at `artifacts/api-server/src/services/wall/WallCandidateLoaders.ts:300#feedUrl: feedVariantOf(m),`.
-- The mapping is `artifacts/api-server/src/services/wall/WallCandidateLoaders.ts:1422#function feedVariantOf(m: any): string`. It covers images only and trims the value. NULL, blank or absent all project `null`, which is 0208's contract: existence is reported, never inferred.
-- The media lane gets the variant Media v2 does not carry:
-  - One batched literal read, `artifacts/api-server/src/services/wall/WallCandidateLoaders.ts:1457#.select("id, feed_url")`, covers the image rows the embed already returned.
-  - It is started beside the projection, at `artifacts/api-server/src/services/wall/WallCandidateLoaders.ts:560#const feedVariantsP = mediaLaneFeedVariants(sc, rows);`.
-  - It is joined on the original the projection chose to draw, at `artifacts/api-server/src/services/wall/WallCandidateLoaders.ts:582#feedUrl: proj.mediaType === "image" ? feedByUrl.get(proj.url) ?? null : null,`.
-  - It never rejects. A failed read leaves every `feedUrl` null and costs no candidate.
-  - It enriches only rows the Media v2 gate has already cleared, so it admits nothing.
-- Both `DisplayMedia` types gain an optional field: `artifacts/api-server/src/lib/wallProjection.ts:89#feedUrl?: string` and `travel-buddy-standalone/src/features/wall/types/wallProjection.ts:57#feedUrl?: string`.
-- No boundary scrub had to admit the field. `WallProjectionService` passes `media` through whole, and the client's cache check reads only the ids.
+- **The postcard lane.** `feed_url` is a literal in its select, `artifacts/api-server/src/services/wall/WallCandidateLoaders.ts:454#public_url, thumbnail_url, feed_url, width,`. It is mapped at `artifacts/api-server/src/services/wall/WallCandidateLoaders.ts:300#feedUrl: feedVariantOf(m),`. The mapping covers images only and trims the value. NULL, blank or absent all project `null`, which is 0208's contract: existence is reported, never inferred.
+- **The media lane reads the variant through Media v2's own embed.** There is no read of its own.
+  - `MEDIA_PROJECTION_POST_MEDIA_COLUMNS` selects `feed_url`: `artifacts/api-server/src/lib/media/mediaProjection.ts:46#public_url, thumbnail_url, feed_url, duration_seconds,`.
+  - The projection's post_media branch carries it, for images only: `artifacts/api-server/src/lib/media/mediaProjection.ts:265#feedUrl: postMediaFeedVariant(m),`.
+  - `toMediaProjection` adds the key only when a variant is stored: `artifacts/api-server/src/lib/media/mediaProjection.ts:340#...(media.feedUrl ? { feedUrl: media.feedUrl } : {}),`.
+  - The Wall maps it: `artifacts/api-server/src/services/wall/WallCandidateLoaders.ts:582#feedUrl: proj.mediaType === "image" ? proj.feedUrl ?? null : null,`.
+- **Where no variant exists.** The canonical `media_assets` branch and the external `media_urls` branch build their media without the field, so they carry no feed variant.
+- **Both `DisplayMedia` types gain an optional field:** `artifacts/api-server/src/lib/wallProjection.ts:89#feedUrl?: string` and `travel-buddy-standalone/src/features/wall/types/wallProjection.ts:57#feedUrl?: string`. No boundary scrub had to admit it. `WallProjectionService` passes `media` through whole, and the client's cache check reads only the ids.
 
 **Client: one pure picker, `travel-buddy-standalone/src/features/wall/services/wallImageVariant.ts`.**
-- **Thresholds.** It takes the smallest stored variant whose cap covers the target:
-  - the thumbnail up to 400 px (`travel-buddy-standalone/src/features/wall/services/wallImageVariant.ts:34#export const WALL_THUMBNAIL_DIM = 400;`);
-  - the feed variant up to 1500 px (`travel-buddy-standalone/src/features/wall/services/wallImageVariant.ts:37#export const WALL_FEED_DIM = 1500;`);
-  - the original above that.
-  The selection is `travel-buddy-standalone/src/features/wall/services/wallImageVariant.ts:76#const covering = tiers.findIndex((t) => target <= t.cap);`.
-- **Fallbacks.** If the covering variant is absent, the picker takes the next larger variant that is present. If nothing at or above the target is present, it takes the largest smaller one.
-- **Video.** A video yields its poster only (`travel-buddy-standalone/src/features/wall/services/wallImageVariant.ts:67#if (media.kind === 'video') return present(media.thumbnailUrl);`).
-- **Pinned caps.** Both caps are pinned equal to the server's `artifacts/api-server/src/lib/mediaProcessing.ts:118#export const THUMBNAIL_DIM = 400;` and `artifacts/api-server/src/lib/mediaProcessing.ts:150#export const FEED_DIM = 1500;` by `travel-buddy-standalone/src/features/wall/services/__tests__/wallImageVariant.test.ts:160#test('WALL_FEED_DIM equals the server FEED_DIM'` and its sibling.
+- **The rule.** It takes the narrowest stored variant whose WIDTH covers the target (`travel-buddy-standalone/src/features/wall/services/wallImageVariant.ts:102#const covering = tiers.find((t) => t.width >= target);`). If no stored variant is wide enough, it takes the widest stored one; a tie goes to the smaller variant, which gives the same pixels for fewer bytes.
+- **Width when the original's `width` and `height` are known.** A variant capped at DIM on its longest edge is `w × min(1, DIM / max(w, h))` wide (`travel-buddy-standalone/src/features/wall/services/wallImageVariant.ts:77#return width * Math.min(1, cap / Math.max(width, height));`). A 9:16 original's feed variant is 844 px wide, not 1500.
+- **Width when either dimension is unknown.** The cap stands in for the width, which is the old longest-edge rule unchanged (`travel-buddy-standalone/src/features/wall/services/wallImageVariant.ts:76#if (!positive(width) || !positive(height)) return cap;`):
+  - thumbnail up to 400 px;
+  - feed variant up to 1500 px;
+  - original above that.
+- **Caps.** Both caps are pinned equal to the server's (`travel-buddy-standalone/src/features/wall/services/wallImageVariant.ts:39#export const WALL_THUMBNAIL_DIM = 400;`, `travel-buddy-standalone/src/features/wall/services/wallImageVariant.ts:42#export const WALL_FEED_DIM = 1500;`, `artifacts/api-server/src/lib/mediaProcessing.ts:118#export const THUMBNAIL_DIM = 400;`, `artifacts/api-server/src/lib/mediaProcessing.ts:150#export const FEED_DIM = 1500;`) by `travel-buddy-standalone/src/features/wall/services/__tests__/wallImageVariant.test.ts:221#test('WALL_FEED_DIM equals the server FEED_DIM'` and its sibling.
+- **Video.** A video yields its poster only: `travel-buddy-standalone/src/features/wall/services/wallImageVariant.ts:90#if (media.kind === 'video') return present(media.thumbnailUrl);`.
 - **Target.** The target is window width × scale, a deterministic upper bound on every Wall frame. The renderer reads it with `useWindowDimensions()` and the prefetch reads it with `Dimensions.get('window')`.
 - **Drawing.** `WallImage` draws the pick: `travel-buddy-standalone/src/features/wall/components/objects/wallItemShared.tsx:287#const uri = pickWallImageRef(media, wallImageTargetPx(useWindowDimensions()));`.
 - **Warming.** The prefetch warms the same pick, for the same target, of the one item the Wall draws:
   - `travel-buddy-standalone/src/features/wall/services/wallPrefetch.ts:257#const ref = pickWallImageRef(m, targetPx);`
   - `travel-buddy-standalone/src/features/wall/services/wallPrefetch.ts:254#for (const m of [drawnWallMediaOf(item)]) {`
   - `travel-buddy-standalone/src/features/wall/services/wallPrefetch.ts:329#return wallImageTargetPx(Dimensions.get('window'));`
-- **Same cache entry.** Both paths sign through `hydrateMediaUrls` with no transform. That goes through `batchSignUrls`' cache (`travel-buddy-standalone/src/services/mediaUrl.ts:90#Call batchSignUrls (handles chunking ≤50 per request + LRU cache).`), so a warmed ref and a drawn ref get the same signed URL and hit the same `expo-image` entry. No test here asserts that cache behaviour; this sentence rests on reading the code.
+- **Same cache entry.** Both paths sign through `hydrateMediaUrls` with no transform, which goes through `batchSignUrls`' cache (`travel-buddy-standalone/src/services/mediaUrl.ts:90#Call batchSignUrls (handles chunking ≤50 per request + LRU cache).`). So a warmed ref and a drawn ref get the same signed URL and hit the same `expo-image` entry. No test here asserts that cache behaviour; this sentence rests on reading the code.
 
-**Line-neutral.** Every edit in a cited file extends an existing line in place, and new helpers and imports sit at the file tails. `check:doc-citations` stayed clean with no citation repointed.
+**Line-neutral.** Every edit in a file cited outside this section extends an existing line in place, and new helpers and imports sit at the file tails. That covers the Wall files and `lib/media/mediaProjection.ts`. The only citations repointed are this section's own. No citation elsewhere in `docs/` moved.
 
 ### 16.3 The row
 
 | ID | Was | Now | Evidence |
 | --- | --- | --- | --- |
 | W151 | C | W | Re-read at `0f0ecde26`; the C did not hold. The stored ≤1500 px feed variant never reached the Wall: neither of its two image lanes selected `feed_url`, and `DisplayMedia` had no field for it. `WallImage` drew `thumbnailUrl ?? url` at every frame size, so a full-width card drew the ≤400 px thumbnail whenever one was stored. The prefetch warmed `url ?? thumbnailUrl`, an object the renderer did not draw, and also warmed `media[1..]` and opportunity covers that no renderer draws. See 16.1. |
-| W151 | W | C | The variant is carried on both `post_media` lanes: `artifacts/api-server/src/services/wall/WallCandidateLoaders.ts:454#public_url, thumbnail_url, feed_url, width,` and `artifacts/api-server/src/services/wall/WallCandidateLoaders.ts:582#feedUrl: proj.mediaType === "image" ? feedByUrl.get(proj.url) ?? null : null,`. It is drawn by the frame's pixel width at `travel-buddy-standalone/src/features/wall/components/objects/wallItemShared.tsx:287#const uri = pickWallImageRef(media, wallImageTargetPx(useWindowDimensions()));`, and the drawn object is exactly the warmed one: `travel-buddy-standalone/src/features/wall/services/wallPrefetch.ts:257#const ref = pickWallImageRef(m, targetPx);`. Proven by `artifacts/api-server/src/test/wallFeedVariant.test.ts:120#it("the postcard lane's post_media select names feed_url"`, `artifacts/api-server/src/test/wallFeedVariant.test.ts:205#it("an image whose post_media row stores a feed variant carries it; one that stores none carries null"`, `travel-buddy-standalone/src/features/wall/components/objects/__tests__/WallImage.variant.component.test.tsx:100#it('a full-width frame on a 390 dp 3× device (1170 px) draws the feed variant'` and `travel-buddy-standalone/src/features/wall/components/objects/__tests__/WallImage.variant.component.test.tsx:154#describe('the prefetch warms exactly what the renderer draws (§31 × §33)'`. The last covers all seven object types at 360, 780, 1170 and 2048 px. "CDN/cache" is read as §2 read it, satisfied by the device cache; see the notes under this table. |
+| W151 | W | C | The variant is carried on both `post_media` lanes: `artifacts/api-server/src/services/wall/WallCandidateLoaders.ts:454#public_url, thumbnail_url, feed_url, width,` and, through Media v2's embed, `artifacts/api-server/src/lib/media/mediaProjection.ts:46#public_url, thumbnail_url, feed_url, duration_seconds,`. It is drawn by the frame's pixel width, aspect-aware, at `travel-buddy-standalone/src/features/wall/components/objects/wallItemShared.tsx:287#const uri = pickWallImageRef(media, wallImageTargetPx(useWindowDimensions()));`, and the drawn object is exactly the warmed one: `travel-buddy-standalone/src/features/wall/services/wallPrefetch.ts:257#const ref = pickWallImageRef(m, targetPx);`. Proven by `artifacts/api-server/src/test/wallFeedVariant.test.ts:161#it("the postcard lane's post_media select names feed_url"`, `artifacts/api-server/src/test/wallFeedVariant.test.ts:244#it("an image whose post_media row stores a feed variant carries it; one that stores none carries null; no extra read"`, `travel-buddy-standalone/src/features/wall/components/objects/__tests__/WallImage.variant.component.test.tsx:114#it('a full-width frame on a 390 dp 3× device (1170 px) draws the feed variant'`, `travel-buddy-standalone/src/features/wall/components/objects/__tests__/WallImage.variant.component.test.tsx:124#it('a 9:16 portrait on the same 1170 px frame draws the original: its feed variant is only 844 px wide'` and `travel-buddy-standalone/src/features/wall/components/objects/__tests__/WallImage.variant.component.test.tsx:176#describe('the prefetch warms exactly what the renderer draws (§31 × §33)'`. The last covers all seven object types, plus a 9:16 portrait, at 360, 780, 1170 and 2048 px. "CDN/cache" is read as §2 read it, satisfied by the device cache; see the notes under this table. |
 
 **What remains, and whether it keeps the row W.** The spec asks for "Responsive variants + CDN/cache" (§33). None of the following re-opens the row:
-- **The canonical `media_assets` store has no feed-variant column.** An image the media lane draws from it has a thumbnail and an original. The picker still chooses the smaller one that covers the frame, which is the responsive choice among what that store keeps. This path does not serve today: `media_canonical_enabled` is FALSE in production (census-media §23.8, 2026-09-26). If that flag turns on while the store still has no feed tier, a phone frame drawing a canonical image gets the original. That case belongs to the store's design and census-media, but the Wall row should then be re-read.
+- **The canonical `media_assets` store has no feed-variant column.** An image the media lane draws from it has a thumbnail and an original. The picker still chooses the narrower one that covers the frame, which is the responsive choice among what that store keeps. This path does not serve today: `media_canonical_enabled` is FALSE in production (census-media §23.8, 2026-09-26). If that flag turns on while the store still has no feed tier, a phone frame drawing a canonical image gets the original. That case belongs to the store's design and census-media, but the Wall row should then be re-read.
 - **External `posts.media_urls` images have no variants at all.** They are third-party URLs, and there is nothing stored to choose between.
 - **The CDN half is not measured.** The Wall signs plain Storage object URLs and requests no transform, and this repository configures no CDN. §2 graded "CDN/cache" as satisfied by the cache half: the `expo-image` disk and memory cache, warmed by the prefetch. This pass keeps that reading and says so. If the owner rules that the spec requires a CDN, that half needs production measurement, which makes the row `?`, not W.
-- **The thresholds compare the target to each variant's longest-edge cap, as the integration owner specified.** The cap is an upper bound on the variant's width. Wall frames are landscape (`aspect.card` is 4:3 and `aspect.wide` is 16:9).
-  - For a landscape image, the feed variant covers a 1170 px frame.
-  - A portrait image fills the frame by width, and its feed variant is narrower than the cap: 1125 px for a 3:4 original and 844 px for a 9:16 one. At 1170 px those are drawn scaled up about 1.04× and about 1.39×.
-  - The picker does not read `width`/`height` to prefer the original for tall portraits. That is a quality edge, not a return to the old defect, which scaled a 400 px thumbnail up about 2.9×. A width-aware rule is the next step if it matters. This is not verdict-moving, and it is recorded so it is not rediscovered.
+- **The width rule is exact for width-limited frames, not for height-limited ones.** Wall frames are landscape (`aspect.card` is 4:3 and `aspect.wide` is 16:9), and the image fills them with `cover`.
+  - An image narrower in aspect than its frame fills it by width. That covers every portrait and a 3:2 photo in a 16:9 frame. For those, "width covers the frame" is exact.
+  - An image wider in aspect than its frame (a 16:9 photo in a 4:3 card) fills it by HEIGHT. Its feed variant can then be drawn scaled up about 1.04×.
+  - Before, a 9:16 portrait's feed variant was scaled up about 1.39×. Before the rebuild, the thumbnail was scaled up about 2.9×.
+  - The remaining height-limited edge is not verdict-moving.
 
-**On every supported device the pick is the feed variant or the original.** `travel-buddy-standalone/app.json` pins phone portrait (`orientation` is portrait and `supportsTablet` is false). At 2–3×, the certification widths of 320–430 dp give 640–1290 px. So on those devices the Wall never draws the thumbnail: it draws the feed variant where one is stored and the original where none is.
+**On every supported device the pick is the feed variant or the original.** `travel-buddy-standalone/app.json` pins phone portrait (`orientation` is portrait and `supportsTablet` is false). At 2–3×, the certification widths of 320–430 dp give 640–1290 px. So on those devices the Wall never draws the thumbnail. It draws the feed variant where one is stored and wide enough, and the original otherwise.
 
 ### 16.4 Mutations, each seen red and then restored
 
-Each mutation was applied with `sed` to the committed tree (`06e364244`). The named tests were run, the file was restored with `git checkout`, and `git diff --quiet` was confirmed clean before the next one.
+All seven were re-run on the final tree, `1afa525d9`. Each was applied with `sed`, the named tests were run, the file was restored with `git checkout`, and `git diff --quiet` was confirmed clean before the next one.
 
 | Mutation | Where | Red |
 | --- | --- | --- |
-| (a) the postcard lane's select drops `feed_url` | `WallCandidateLoaders.ts`, the line-454 literal | `wallFeedVariant.test.ts`: 3 of 7 red. Red cases: the select names `feed_url`; the extractor finds two resolvable `feed_url` selects; the image's feed variant is carried. |
-| (b) the renderer ignores `feedUrl` (`pickWallImageRef(media && { ...media, feedUrl: null }, …)`) | `wallItemShared.tsx`, line 287 | `WallImage.variant.component.test.tsx`: 9 of 31 red. Red cases: the 3× feed test, and the four image types at 780 px and at 1170 px. |
-| (c) the prefetch goes back to `url ?? thumbnailUrl` | `wallPrefetch.ts`, line 257 | Same file: 12 of 31 red. Red cases: the four image types at 360, 780 and 1170 px. At 2048 px both choices are the original. |
-| (d) the picker starts at the thumbnail whatever the target (`const covering = 0`) | `wallImageVariant.ts`, line 76 | `wallImageVariant.test.ts`: 5 of 19 red. `WallImage.variant.component.test.tsx`: 14 of 31 red. |
-| (e) the prefetch warms every media item of every type again (`item.media ?? []`) | `wallPrefetch.ts`, line 254 | `WallImage.variant.component.test.tsx`: 24 of 31 red. Red cases: every row whose projection carries media it does not draw. |
-| (f) the media lane's read drops `feed_url` (`.select("id")`) | `WallCandidateLoaders.ts`, line 1457 | `wallFeedVariant.test.ts`: 2 of 7 red. Red cases: the two-select extractor case; the media lane carries the variant. |
+| (a) the postcard lane's select drops `feed_url` | `WallCandidateLoaders.ts`, the line-454 literal | `wallFeedVariant.test.ts`: 3 of 8 red. Red cases: the select names `feed_url`; the extractor finds a resolvable `feed_url` select; the image's feed variant is carried. |
+| (b) the renderer ignores `feedUrl` (`pickWallImageRef(media && { ...media, feedUrl: null }, …)`) | `wallItemShared.tsx`, line 287 | `WallImage.variant.component.test.tsx`: 11 of 36 red. Red cases: the 3× feed test, the four image types at 780 and 1170 px, and the portrait at 360 and 780 px. |
+| (c) the prefetch goes back to `url ?? thumbnailUrl` | `wallPrefetch.ts`, line 257 | Same file: 14 of 36 red. Red cases: the four image types at 360, 780 and 1170 px, and the portrait at 360 and 780 px. |
+| (d) the picker ignores the target and returns the smallest stored variant (`const covering = tiers[0]`) | `wallImageVariant.ts`, line 102 | `wallImageVariant.test.ts`: 12 of 27 red. `WallImage.variant.component.test.tsx`: 19 of 36 red. |
+| (e) the prefetch warms every media item of every type again (`item.media ?? []`) | `wallPrefetch.ts`, line 254 | `WallImage.variant.component.test.tsx`: 28 of 36 red. Red cases: every row whose projection carries media it does not draw. |
+| (f) Media v2's embed drops `feed_url` | `lib/media/mediaProjection.ts`, line 46 | `wallFeedVariant.test.ts`: 2 of 8 red. Red cases: the embed selects `feed_url`; the media lane carries the variant. |
+| (g) the picker goes back to the longest-edge rule when dimensions ARE known (`cap > 0` added to the unknown-shape guard, so every variant's width is its cap) | `wallImageVariant.ts`, line 76 | `wallImageVariant.test.ts`: 4 of 27 red (the variant-width identity and three portrait cases). `WallImage.variant.component.test.tsx`: 3 of 36 red (the portrait frame test, and the portrait row at 1170 and 2048 px). |
 
-Mutations (a) to (d) are the four the integration owner named. (b) was also run in its older form, the original `thumbnailUrl ?? url` line, against the first commit (`8afc2790f`): 14 of 23 red. (e) and (f) cover the two parts this pass added. Every file was byte-identical afterwards.
+(a) to (d) are the four the integration owner named. (d) is now phrased for the width rule, because "returns the thumbnail for a large target" is what `tiers[0]` does when a thumbnail is stored. (e) and (f) cover the parts this pass added, and (g) is the reversion the review asked for. (f) replaces the first version's mutation of the media lane's own read, which no longer exists. Every file was byte-identical afterwards.
 
 ### 16.5 Production — nothing here is deployed
 
 - **This branch is not merged and not deployed.** No flag gates it.
 - **Non-owners fetching a feed variant depends on census-media §23.7, which is also not deployed.** Before §23.7, the byte gate refused every variant to a non-owner. A refused sign is final for `CachedImage`: it renders its fallback and does not retry with `url`. **If this ships without §23.7, the one production postcard with a feed variant would regress for every non-owner, from its original to a placeholder.** The two must ship together, or §23.7 first.
 - **Only a minority of production rows have a feed variant: 1 of 6** (census-media §23.7, 2026-09-26; not re-read here). The other five draw the original, exactly as before, because production holds no thumbnails. The fallback is therefore the common path, not an edge case. `backfillFeedVariants` exists but 0208 says no backfill is scheduled.
-- **The postcard lane's literal select assumes 0208 is applied.** Production has it, since a row holds a value in the column. In an environment without it, PostgREST would reject the read. That read sits in a `try` that logs and projects postcards without media. The media lane's read fails soft to `feedUrl: null`.
-- **Cost.** The media lane issues one more Supabase call per page whenever its page has at least one `post_media` image. The call runs beside the projection, not after it. The first-page harness (`wallPerformance.test.ts`) measured 345 calls both before and after, because its corpus has no `post_media` rows and so cannot see the new read. The harness's serialized depth did not move.
+- **Both literal uses of `feed_url` assume 0208 is applied.** One is the postcard lane's select; the other is Media v2's embed. Production has 0208, since a row holds a value in the column.
+  - In an environment without 0208, PostgREST rejects the whole read.
+  - The postcard lane's read sits in a `try` that logs and projects postcards without media.
+  - Media v2's candidate read throws `MediaCandidatesUnavailableError`. So every Media v2 surface refuses loudly, as it does for any unreadable column, instead of emptying quietly.
+  - That is why `routes/posts.ts` probes the column with `feedVariantCol` instead. This pass follows the integration owner's direction to use literals.
+- **Payload.** Media v2 projections served to clients gain a `feedUrl` key only for a `post_media` image that stores a variant (1 of 6 rows in production). Every other projection is byte-identical, and no extra query is issued.
 
-### 16.6 Checks run, at `06e364244` plus this section
+### 16.6 Checks run, at `1afa525d9` plus this section
 
-- **api-server type checks.** `pnpm -s run typecheck` is clean. `typecheck:tests` is at baseline: 863 diagnostics across 115 files, none above baseline.
+- **api-server type checks.** `pnpm -s run typecheck` is clean. `typecheck:tests` is at baseline: 863 diagnostics across 115 files.
 - **api-server tests.**
-  - `wallFeedVariant.test.ts`: 7/7.
-  - Every `src/test/wall*.test.ts`: 441 of 443 pass. The two that fail are wallFirstPageLiveDb and wallSessionIntentLiveDb, the live-DB tests, which refuse locally with "KNOWN_PROD_PROJECT_REF is empty". Neither is in the `test` script.
-  - `schemaReferenceStatic`, `silentSchemaErrorCatches` and `feedVariantContract`: 40/40.
+  - `wallFeedVariant.test.ts`: 8/8.
+  - Every `src/test/wall*.test.ts`: 442 of 444 pass. The two that fail are wallFirstPageLiveDb and wallSessionIntentLiveDb, the live-DB tests, which refuse locally with "KNOWN_PROD_PROJECT_REF is empty". Neither is in the `test` script.
+  - Every `src/test/media*.test.ts`: 1214/1214, the same count as before the embed change.
+  - The other suites that exercise Media v2 (age gate, gems, map evidence, feeds, privacy filter, schema-reference, silent-catch and feed-variant contract suites): 361/361.
 - **Column extraction.**
-  - The offline extractor (`extractSchemaReferences`) reads `WallCandidateLoaders.ts` as 15 sites with 0 skipped and 0 unresolved before this pass, and 16 sites with 0 skipped and 0 unresolved after. The postcard select grew from 11 to 12 columns including `feed_url`, and the new `id, feed_url` site resolves.
-  - `check:schema-references`: 5572 → 5573 resolvable, 170 unresolvable before and after, and no new undeclared column.
+  - The offline extractor reads `WallCandidateLoaders.ts` as 15 sites, 0 skipped and 0 unresolved, both at `0f0ecde26` and now. The postcard select grew from 11 to 12 columns including `feed_url`.
+  - `check:schema-references`: 5572 resolvable and 170 unresolvable, both unchanged from `0f0ecde26`, and no new undeclared column.
   - `check:write-path-columns` fails locally with "KNOWN_PROD_PROJECT_REF is empty", as expected.
+  - Whether it can see the embed is answered in 16.8.
 - **Registration and citations.**
-  - `check:test-registration` passes, with the new test registered in `test`.
-  - `check:doc-citations` is clean: 0 unresolved and 0 anchor mismatches.
+  - `check:test-registration` passes.
+  - `check:doc-citations` is clean.
   - `check:citation-targets` is at its ceiling, 165 / 165.
-  - `check:census-scope-coverage` passes for census-wall: 90 cited, 86 watched, 96% against a 95% floor.
-    - A first draft of this section went under the floor, at 91 cited and 86 watched. It named a live-DB test that grades nothing, and it wrote a bare app.json path that the tool resolved to the wrong file. Both were corrected in the text. Because the section as written is above the floor, `CENSUS_SCOPE` was not widened.
-    - Three files this row rests on stay unwatched: the server proof, `lib/media/mediaProjection.ts` (the Media v2 embed the media lane reads beside, and its join key) and the app config. Watching them is the integrator's call, and it would add freshness churn.
+  - `check:census-scope-coverage` passes for census-wall at the 95% floor. The figures are in 16.8.
+  - `check:census-integrity`, `check:census-row-move-labels` and `check:citation-symbols` all pass.
 - **Client.**
-  - `npx tsc --noEmit -p .` is clean. `typecheck:tests` is at baseline: 173 diagnostics across 60 files.
-  - `wallImageVariant.test.ts` (node:test): 19/19. The client runner discovers it; no registration is needed.
-  - Every Wall jest suite: 30 suites, 195/195. The web-render certification suite: 4/4.
+  - `npx tsc --noEmit -p .` is clean. `typecheck:tests` is at baseline: 173 diagnostics.
+  - `wallImageVariant.test.ts`: 27/27.
+  - Every Wall jest suite: 30 suites, 200/200. The web-render certification suite: 4/4.
   - `lint:imports`, `lint:bare-image`, `lint:avatar-icon-sizing`, `lint:mocks` and `lint:orphan-tests` are all clean.
 
 ### 16.7 What this pass did not do, and what it leaves for the integrator
 
-- **It did not restate the headline.** W151 ends at **C**, which is the letter the headline already counts it under. So `check:census-integrity` still reconciles for wall, and it was run after this section. The headline's own sentences were not touched.
-- **`check:census-freshness` now reports census-wall STALE.** Six counted client files changed that the acknowledgement does not name:
-  - `wallItemShared.tsx`
-  - `wallPrefetch.ts`
-  - `types/wallProjection.ts`
-  - `wallImageVariant.ts`
-  - the two new tests
-
-  The acknowledgement already names `WallCandidateLoaders.ts` and `lib/wallProjection.ts`, but it argues earlier edits, not these. This pass did not edit `CENSUS_STALENESS_ACKNOWLEDGED.json`; that is the integrator's.
-- **Three records now say something literally false.** Each says "the Wall reads no viewport width at all": `wallCertFixtures.ts` (a comment beside `CERT_WIDTHS`), `wall-certification-packet.md` §5.1 and `docs/wall/measurement/W159-W167-design-review-packet.md`. `WallImage` now reads the window width and scale. It uses them only to choose which stored image to fetch, so their conclusion still holds: width switches no layout. None of the three is this lane's file, and none was edited.
+- **It did not restate the headline.** W151 ends at **C**, which is the letter the headline already counts it under. So `check:census-integrity` still reconciles for wall. The headline's own sentences were not touched.
+- **`check:census-freshness` reports census-wall STALE.** The integrator's acknowledgements must name the files this branch changes; they are listed in 16.8. This pass did not edit `CENSUS_STALENESS_ACKNOWLEDGED.json`.
 - **A poster-less video frame changed what it shows.** Before, `WallImage` handed a video's `.mp4` to the image pipeline when no poster was stored. It now shows the "No preview" placeholder under the play icon. That holds only while the inline player is not mounted: before the item scrolls into view, or under reduced motion. `VideoWallItem`'s own player poster (`thumbnailUrl ?? url`) is unchanged.
-- **The media lane's extra read is a Wall-local fix for a Media v2 gap.** The structural fix is to add `feed_url` to `MEDIA_PROJECTION_POST_MEDIA_COLUMNS` and a field to `MediaProjection`, which would remove the extra read. That library is census-media's, so it was not edited here.
+- **The client's Media screens do not use the new field.** Media v2 now serves `feedUrl` where one is stored, but the Media surfaces were not changed to draw it. That is census-media's to take up if it wants.
+
+### 16.8 The review, 2026-09-26: three changes, and the files the acknowledgements must name
+
+The integration owner asked for three changes before merging. Each is on `lane-l`:
+
+1. **`9915558fe`: the picker is aspect-aware** (16.2). This replaces the first version's longest-edge rule, which scaled a 9:16 portrait's 844 px feed variant up to a 1170 px frame. The longest-edge rule is kept only for media whose dimensions are unknown. New tests:
+   - `travel-buddy-standalone/src/features/wall/services/__tests__/wallImageVariant.test.ts:72#test('a 9:16 portrait on a 1170 px frame draws the original: its feed variant is only 844 px wide'`
+   - `travel-buddy-standalone/src/features/wall/services/__tests__/wallImageVariant.test.ts:85#test('a landscape image still draws the feed variant on a 1170 px frame'`
+   - `travel-buddy-standalone/src/features/wall/services/__tests__/wallImageVariant.test.ts:101#test('unknown dimensions keep the longest-edge rule'`
+   - the portrait rows of the component agreement table.
+
+   Mutation (g) was seen red.
+2. **`133aaec16`: the media lane reads the variant through Media v2's embed.** The first version's extra `post_media` read and its helper are removed; that version is in `06e364244`.
+   - **What it touched.** In `lib/media/mediaProjection.ts`: lines 46, 104, 159, 265 and 340, each extended in place, plus `postMediaFeedVariant` at the tail. In `WallCandidateLoaders.ts`: line 582, and lines 560 and 569 restored to their text at `0f0ecde26`.
+   - **Every reader of the embed was checked.** `MEDIA_PROJECTION_POST_MEDIA_COLUMNS` is used only by the `SELECT` at `artifacts/api-server/src/services/media/MediaProjectionService.ts:71#const SELECT =`. That `SELECT` is read in two places:
+     - `loadEligibleCandidatesOrRefuse`, which feeds `buildWorldProjection`, `buildPlaceProjection`, `buildPeopleProjection`, `loadTaggedMedia`, `buildTimelineProjection`, `buildMediaMapProjection`, the experience resolver (events and trips), `loadEligibleMediaRow` (media actions and Compass media context), `searchMedia`, and the Wall's media lane;
+     - `buildMyWorldProjection`'s owner read.
+   - **Why the change is additive.**
+     - Every path that reaches a client goes through `toMediaProjection`, which builds a whitelisted object and then `applyLocationDisclosure`, which spreads it.
+     - Raw rows stay internal: ranking, entity resolution, the My World processing check, and `prepareCanonicalRows`, which blanks `post_media`.
+     - The only client-visible change is the optional `feedUrl` key where a variant is stored.
+     - No test asserts the full key set of a `MediaProjection`. The one exact-key cover assertion reads `toClusterCover`, which picks its fields. No snapshot test covers these projections.
+     - The media tests pass 1214/1214 before and after the change.
+   - **No reason was found that the embed change is unsafe**, apart from its dependency on 0208 (16.5), which production meets.
+   - **Resolvability: the template-composed `SELECT` is a blind spot, and not a counted one.**
+     - The offline extractor finds its table (`posts`), because `(sc as any).from("posts")` is unwrapped.
+     - It cannot resolve the three substitutions, because they are imported constants.
+     - The text then parses to no top-level column, and `scanFile` drops the site without adding it to the skipped list. So it is not among the 170 unresolvable sites or in any allowlist.
+     - Even if it were resolvable, `parseSelectList` never audits the columns of an embedded `post_media(...)`.
+     - So `check:write-path-columns` sees `post_media.feed_url` as resolvable at exactly one site, the Wall's postcard literal (`artifacts/api-server/src/services/wall/WallCandidateLoaders.ts:454#public_url, thumbnail_url, feed_url, width,`). The Media v2 embed is unaudited, as all of its columns already were.
+3. **`1afa525d9`: the three records are corrected in place.** They said "the Wall reads no viewport width":
+   - `travel-buddy-standalone/src/features/wall/certification/wallCertFixtures.ts:80#MEASURED, NOT ASSUMED, about this tree: the Wall reads no viewport width (SUPERSEDED by census-wall §16`
+   - `docs/architecture/wall-certification-packet.md:576#(SUPERSEDED by census-wall §16`
+   - `docs/wall/measurement/W159-W167-design-review-packet.md:131#(SUPERSEDED by census-wall §16`
+
+   Each line keeps its text, with the note appended. Their conclusion, that no layout switches on width, still holds.
+
+**Files this branch changes, `0f0ecde26..lane-l`, for the acknowledgements.**
+- **Server:**
+  - `artifacts/api-server/package.json` (test registration);
+  - `artifacts/api-server/src/scripts/checkCensusFreshness.ts` (census-wall's `CENSUS_SCOPE` widened; see below);
+  - `artifacts/api-server/src/lib/wallProjection.ts`;
+  - `artifacts/api-server/src/lib/media/mediaProjection.ts`;
+  - `artifacts/api-server/src/services/wall/WallCandidateLoaders.ts`;
+  - `artifacts/api-server/src/test/wallFeedVariant.test.ts` (new).
+- **Client:**
+  - `travel-buddy-standalone/src/features/wall/types/wallProjection.ts`;
+  - `travel-buddy-standalone/src/features/wall/components/objects/wallItemShared.tsx`;
+  - `travel-buddy-standalone/src/features/wall/services/wallPrefetch.ts`;
+  - `travel-buddy-standalone/src/features/wall/services/wallImageVariant.ts` (new);
+  - `travel-buddy-standalone/src/features/wall/services/__tests__/wallImageVariant.test.ts` (new);
+  - `travel-buddy-standalone/src/features/wall/components/objects/__tests__/WallImage.variant.component.test.tsx` (new);
+  - `travel-buddy-standalone/src/features/wall/certification/wallCertFixtures.ts`.
+- **Docs:** `docs/architecture/census-wall.md` (this section), `docs/architecture/wall-certification-packet.md` and `docs/wall/measurement/W159-W167-design-review-packet.md`.
+
+**Which acknowledgement needs which file.**
+- **census-wall.** Its `CENSUS_SCOPE` counts `services/wall/`, `lib/wallProjection.ts` and all of `features/wall/`, and after the widening below it also counts `wallFeedVariant.test.ts` and `lib/media/mediaProjection.ts`. `check:census-freshness` now reports nine files its acknowledgement does not name: the seven client files above, `wallFeedVariant.test.ts` and `mediaProjection.ts`. Its acknowledgement already names `WallCandidateLoaders.ts` and `lib/wallProjection.ts`, but it argues earlier edits, not these.
+- **census-media.** It counts `lib/media/`, so `mediaProjection.ts` ages it. Its acknowledgement already names that file, which is why `check:census-freshness` reports it "ACKNOWLEDGED". The argument recorded there covers earlier edits, not this one.
+- **Neither.** `package.json`, `checkCensusFreshness.ts` and the docs age neither census.
+
+**Scope coverage, and the widening it forced.** With this section's final citations, census-wall cited 91 files and watched 86. That is under its 95% floor, which the first version of this section had stayed above.
+- **Widened.** As the lane rules require, the files W151 now rests on were appended to census-wall's `CENSUS_SCOPE`, with a `WIDENED 2026-09-26 by census-wall §16` comment at the end of the entry:
+  - `wallFeedVariant.test.ts`, the server proof;
+  - `lib/media/mediaProjection.ts`, which holds the embed constant and the mapping.
+- **Result.** 88 watched of 91 cited, 97% against the 95% floor. The floor was not touched.
+- **Left unwatched, because they are cited but not graded:**
+  - `services/media/MediaProjectionService.ts`, cited only for the extractor's blind spot;
+  - the app config;
+  - `wallFailureVsEmpty.test.ts`, unwatched before this pass.
