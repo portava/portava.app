@@ -1668,6 +1668,12 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     // (or masks) every Media object; §28.8 grades its header mask and §23.7 its
     // variant path through lib/mediaAccess, so a change to it must age the census.
     "artifacts/api-server/src/routes/mediaFile.ts",
+    // WIDENED 2026-09-26 by the integration owner at the lane I merge (census-
+    // media §29.7, §28.9): MD288's C verdict rests on these two routes passing the
+    // viewer's point (gated on `ok`) to the World shell and to Search, so a change
+    // to either can falsify it. Lane I measured media at 215/225 without them.
+    "travel-buddy-standalone/app/media-search/index.tsx",
+    "travel-buddy-standalone/app/media-world/index.tsx",
   ],
   // census-telegraph.md — declared 2026-09-11 on the same basis as Media above:
   // 451 requirements out of CANNOT BE CHECKED, a clock started rather than a

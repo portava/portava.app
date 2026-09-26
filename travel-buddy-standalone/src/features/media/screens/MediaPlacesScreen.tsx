@@ -18,8 +18,8 @@ import { color, radius, space } from '../../../theme/tokens.ts';
 import type { PresentationMode, CityVisualZone } from '../types/mediaContext.ts';
 import type { PlaceCurrentView } from '../types/perspective.ts';
 import type { MediaProjection } from '../types/media.ts';
-import { isPlaceViewEmpty, fetchMediaMap } from '../services/mediaProjection.ts';
-import { placeViewOffline } from '../../../services/media/mediaOffline.ts'; // §39 offline place view
+import { isPlaceViewEmpty } from '../services/mediaProjection.ts';
+import { placeViewOffline, mediaMapOffline } from '../../../services/media/mediaOffline.ts'; // §39 offline place view; the map's clusters + covers (census-media §29)
 import { CurrentPictureBadge } from '../components/CurrentPictureBadge.tsx';
 import { IntelligenceStrip } from '../components/IntelligenceStrip.tsx';
 import { PerspectiveMosaic } from '../components/PerspectiveMosaic.tsx';
@@ -159,8 +159,8 @@ function PlaceDetail({
   // the map shows where it sits without inventing a point if the Map has none.
   const loadThisPlace = useMemo(
     () => (opts: { signal: AbortSignal }) =>
-      fetchMediaMap({ city, signal: opts.signal }).then((r) =>
-        r.ok ? { ok: true as const, data: r.data.clusters.filter((c) => c.placeId === placeId) } : r,
+      mediaMapOffline({ city, signal: opts.signal }).then((r) => // §39 "Map thumbnails" (census-media §29, MD300)
+        r.ok ? { ok: true as const, data: r.data.clusters.filter((c) => c.placeId === placeId), offline: r.offline } : r,
       ),
     [city, placeId],
   );

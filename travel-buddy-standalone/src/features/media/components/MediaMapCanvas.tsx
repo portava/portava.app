@@ -18,7 +18,7 @@ import { View, Text, Pressable, StyleSheet } from 'react-native';
 const _ml: any = (() => { try { return require('@maplibre/maplibre-react-native'); } catch { return {}; } })();
 // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
 const { Map: MLMap, Camera, Marker, GeoJSONSource, Layer } = _ml as typeof import('@maplibre/maplibre-react-native');
-import { color, icon, space } from '../../../theme/tokens.ts';
+import { avatar, color, icon, space } from '../../../theme/tokens.ts';
 import type { StyleSpecification } from '@maplibre/maplibre-gl-style-spec';
 import {
   FALLBACK_MAP_STYLE_URL,
@@ -109,7 +109,7 @@ export function MediaMapCanvas({
         ))}
 
         {clusters.map((c) => {
-          const selected = c.placeId === selectedPlaceId;
+          const selected = c.placeId === selectedPlaceId; const cover = clusterCoverImage(c); // §39 "Map thumbnails": the server-chosen cover, or none (census-media §29)
           return (
             <Marker key={`cluster-${c.placeId}`} lngLat={[c.lng, c.lat]}>
               <Pressable
@@ -117,9 +117,9 @@ export function MediaMapCanvas({
                 onPress={() => onSelectCluster?.(c.placeId)}
                 accessibilityRole="button"
                 accessibilityLabel={`${c.label}: ${c.perspectiveCount} ${c.perspectiveCount === 1 ? 'perspective' : 'perspectives'}`}
-                style={[styles.bubble, selected && styles.bubbleSelected]}
+                style={cover ? [tailStyles.coverBubble, selected && tailStyles.coverBubbleSelected] : [styles.bubble, selected && styles.bubbleSelected]}
               >
-                <Text style={styles.bubbleText}>{c.perspectiveCount}</Text>
+                <ClusterBubbleFace placeId={c.placeId} cover={cover} count={c.perspectiveCount} selected={selected} />
               </Pressable>
             </Marker>
           );
@@ -171,3 +171,88 @@ const styles = StyleSheet.create({
     backgroundColor: GEM_ACCENT,
   },
 });
+
+// ── census-media §29 — appended at the TAIL so no line cited above moves ──────
+// (census-media cites :80 and :92; lane H's §27 cites :150 and :151.)
+
+/**
+ * What a cluster bubble shows.
+ *   • With a cover (§39 "Map thumbnails", MD300): the ONE image the server chose
+ *     for the cluster, drawn through the signing image component, with the
+ *     count as a badge.
+ *   • Without one: the count, exactly as before covers existed.
+ *
+ * A SELECTED bubble is filled `color.onInk` (`styles.bubbleSelected`), and its
+ * count used to stay `color.onInk` too: 1.00:1, invisible (found by lane H,
+ * census-media §27). Selected, the count is now `color.ink`, the same pair the
+ * Media Map's own "See these perspectives" button uses.
+ */
+function ClusterBubbleFace({
+  placeId,
+  cover,
+  count,
+  selected,
+}: {
+  placeId: string;
+  cover: string | null;
+  count: number;
+  selected: boolean;
+}) {
+  if (!cover) {
+    return (
+      <Text style={[styles.bubbleText, selected && tailStyles.bubbleTextSelected]} testID={`media-map-cluster-count-${placeId}`}>
+        {count}
+      </Text>
+    );
+  }
+  return (
+    <>
+      <CachedImage
+        source={{ uri: cover }}
+        style={tailStyles.coverImg}
+        resizeMode="cover"
+        fallbackLabel=""
+        testID={`media-map-cover-${placeId}`}
+      />
+      <View style={tailStyles.coverCount}>
+        <Text style={tailStyles.coverCountText}>{count}</Text>
+      </View>
+    </>
+  );
+}
+
+const tailStyles = StyleSheet.create({
+  // Selected bubble: ink on the onInk fill (lane H, census-media §27).
+  bubbleTextSelected: { color: color.ink },
+  // A cluster with a cover: the image in a ringed circle, its count as a badge.
+  coverBubble: {
+    width: avatar.s40,
+    height: avatar.s40,
+    borderRadius: avatar.s40 / 2,
+    borderWidth: 2,
+    borderColor: color.onInk,
+    backgroundColor: '#22221E',
+  },
+  // Selected: larger and heavier-ringed. Not the gem accent — green means a gem here.
+  coverBubbleSelected: { borderWidth: 3, transform: [{ scale: 1.15 }] },
+  coverImg: { width: '100%', height: '100%', borderRadius: avatar.s40 / 2 - 2 },
+  coverCount: {
+    position: 'absolute',
+    right: -6,
+    bottom: -6,
+    minWidth: 20,
+    height: 20,
+    paddingHorizontal: 5,
+    borderRadius: 10,
+    backgroundColor: 'rgba(17,17,15,0.92)',
+    borderWidth: 1,
+    borderColor: color.onInk,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  coverCountText: { color: color.onInk, fontSize: 11, fontWeight: '800' },
+});
+
+// Imported at the TAIL so no cited line above moves; ESM hoists them.
+import { CachedImage } from '../../../components/CachedImage.tsx';
+import { clusterCoverImage } from '../state/mediaMapCover.ts';

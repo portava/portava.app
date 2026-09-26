@@ -20,12 +20,12 @@
  * caller, which opens the §14 contextual viewer with the MAP entry context
  * (census MD92: "Map → current geographic cluster").
  */
-import React, { useCallback, useMemo } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import { View, Text, Pressable, ScrollView, StyleSheet } from 'react-native';
 import { MapPin, Layers } from 'lucide-react-native';
 import { color, radius, space } from '../../../theme/tokens.ts';
-import type { ProjectionResult } from '../types/media.ts';
-import { fetchMediaMap } from '../services/mediaProjection.ts';
+import { CachedImage } from '../../../components/CachedImage.tsx'; import { clusterCoverImage } from '../state/mediaMapCover.ts'; // each cluster's server-chosen cover (census-media §29)
+import { mediaMapOffline, type OfflineResult } from '../../../services/media/mediaOffline.ts'; // §39 "Map thumbnails" (census-media §29, MD300)
 import { useMediaMap, MEDIA_MAP_ZOOM } from '../hooks/useMediaMap.ts';
 import {
   positionsUnavailableCopy,
@@ -46,7 +46,7 @@ export interface MediaMapScreenProps {
    * passes the owner's own media grouped by place; the Places / Experiences
    * lenses pass a subset of the world's clusters.
    */
-  loadClusters?: (opts: { signal: AbortSignal }) => Promise<ProjectionResult<MediaMapCluster[]>>;
+  loadClusters?: (opts: { signal: AbortSignal }) => Promise<OfflineResult<MediaMapCluster[]>>; // `offline` set ⇒ served from the §39 cache, and labelled
   /** Draw §46.1 gem zones from the canonical Map's `hidden_gem` objects. */
   includeGems?: boolean;
   /** Restrict drawn gems to these ids (the §16 lens's own disclosure). */
@@ -61,9 +61,9 @@ export interface MediaMapScreenProps {
 }
 
 function defaultLoader(city: string | null) {
-  return (opts: { signal: AbortSignal }): Promise<ProjectionResult<MediaMapCluster[]>> =>
-    fetchMediaMap({ city, signal: opts.signal }).then((r) =>
-      r.ok ? { ok: true as const, data: r.data.clusters } : r,
+  return (opts: { signal: AbortSignal }): Promise<OfflineResult<MediaMapCluster[]>> =>
+    mediaMapOffline({ city, signal: opts.signal }).then((r) => // census-media §29: read through the §39 `map_thumbnails` cache; §24 cited this line when it read fetchMediaMap({ city, signal: opts.signal }).then((r) =>
+      r.ok ? { ok: true as const, data: r.data.clusters, offline: r.offline } : r,
     );
 }
 
@@ -80,7 +80,7 @@ export function MediaMapScreen({
   onOpenCluster,
   onOpenGem,
 }: MediaMapScreenProps) {
-  const loader = useMemo(() => loadClusters ?? defaultLoader(city), [loadClusters, city]);
+  const { loader, cachedLabel } = useCachedLabel(useMemo(() => loadClusters ?? defaultLoader(city), [loadClusters, city]));
   const { state, reload, selectCluster } = useMediaMap({
     loadClusters: loader,
     center,
@@ -127,7 +127,7 @@ export function MediaMapScreen({
             {state.totalPerspectives} {state.totalPerspectives === 1 ? 'perspective' : 'perspectives'}
           </Text>
         ) : null}
-      </View>
+      </View>{cachedLabel ? <Text style={tailStyles.cached} accessibilityRole="text" testID="media-map-cached">{cachedLabel}</Text> : null}
 
       {canDraw && center ? (
         <MediaMapCanvas
@@ -182,7 +182,7 @@ export function MediaMapScreen({
                 accessibilityLabel={`${c.label}, ${c.perspectiveCount} ${c.perspectiveCount === 1 ? 'perspective' : 'perspectives'}`}
                 testID={`media-map-row-${c.placeId}`}
               >
-                <MapPin size={16} color={color.onInkMute} strokeWidth={2} />
+                <ClusterRowMark placeId={c.placeId} cover={clusterCoverImage(c)} />
                 <Text style={styles.rowLabel} numberOfLines={1}>
                   {c.label}
                 </Text>
@@ -263,4 +263,52 @@ const styles = StyleSheet.create({
   rowLabel: { flex: 1, color: color.onInk, fontSize: 15, fontWeight: '700' },
   rowCount: { color: color.onInkMute, fontSize: 12, fontWeight: '700' },
   gemDot: { width: 10, height: 10, transform: [{ rotate: '45deg' }], backgroundColor: '#10B981' },
+});
+
+// ── census-media §29 (MD300) — appended at the TAIL so no line cited above moves ──
+// (census-media cites :65 and :70; lane H's §27 cites :262.)
+
+type ClusterLoader = (opts: { signal: AbortSignal }) => Promise<OfflineResult<MediaMapCluster[]>>;
+
+/**
+ * Whichever cluster source the map was given, remember whether its last answer
+ * came from the offline cache, and say so: `cachedLabel` is the "Cached ·
+ * updated 2h ago" of that answer, and null the moment a live answer replaces it
+ * (the rule `useOfflineLens` keeps for the other lenses). A source that never
+ * reads the cache (My World's own media) never sets it. §39: what the map shows
+ * from the cache says its age, and nothing on it is presented as live.
+ */
+function useCachedLabel(base: ClusterLoader): { loader: ClusterLoader; cachedLabel: string | null } {
+  const [cachedLabel, setCachedLabel] = useState<string | null>(null);
+  const loader = useCallback<ClusterLoader>(
+    async (opts) => {
+      const r = await base(opts);
+      if (!opts.signal.aborted) setCachedLabel(r.ok && r.offline ? r.offline.label : null);
+      return r;
+    },
+    [base],
+  );
+  return { loader, cachedLabel };
+}
+
+/**
+ * The mark at the head of a cluster's list row: its server-chosen cover through
+ * the signing image component, or, with no cover, the pin it always had.
+ */
+function ClusterRowMark({ placeId, cover }: { placeId: string; cover: string | null }) {
+  if (!cover) return <MapPin size={16} color={color.onInkMute} strokeWidth={2} />;
+  return (
+    <CachedImage
+      source={{ uri: cover }}
+      style={tailStyles.rowCover}
+      resizeMode="cover"
+      fallbackLabel=""
+      testID={`media-map-row-cover-${placeId}`}
+    />
+  );
+}
+
+const tailStyles = StyleSheet.create({
+  rowCover: { width: 32, height: 32, borderRadius: radius.sm, backgroundColor: '#22221E' },
+  cached: { color: color.onInkMute, fontSize: 12, fontWeight: '700', paddingHorizontal: space.lg },
 });

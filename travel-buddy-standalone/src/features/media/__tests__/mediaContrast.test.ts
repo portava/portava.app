@@ -613,7 +613,7 @@ add({ id: 'mapScreen.gemDot', fg: '#10B981', on: 'card', kind: 'ui', at: [[F.map
 const BUBBLE: Needle[] = [[F.mapCanvas, "backgroundColor: 'rgba(17,17,15,0.86)',"], [F.mapCanvas, "bubbleText: { color: color.onInk, fontSize: 12, fontWeight: '800' },"]];
 add({ id: 'mapCanvas.bubbleCount.fallback', fg: color.onInk, on: 'mapBubbleFallback', kind: 'text', at: [...BUBBLE, [F.mapCanvas, "backgroundColor: '#1A1A17',"]] });
 add({ id: 'mapCanvas.bubbleCount.mapFloor', fg: color.onInk, on: 'mapBubble', kind: 'text', at: BUBBLE });
-add({ id: 'mapCanvas.bubbleCount.selected', fg: color.onInk, on: 'selected', kind: 'text', at: [[F.mapCanvas, 'bubbleSelected: { backgroundColor: color.onInk },'], [F.mapCanvas, '<Text style={styles.bubbleText}>{c.perspectiveCount}</Text>']], finding: 1 });
+add({ id: 'mapCanvas.bubbleCount.selected', fg: color.ink, on: 'selected', kind: 'text', at: [[F.mapCanvas, 'bubbleSelected: { backgroundColor: color.onInk },'], [F.mapCanvas, 'bubbleTextSelected: { color: color.ink },'], [F.mapCanvas, '<Text style={[styles.bubbleText, selected && tailStyles.bubbleTextSelected]}']] }); // FIXED by lane I (census-media §29.8): the selected count is `ink` on the `onInk` fill (was onInk on onInk, 1.00:1).
 // The outline is not the bubble's only cue: its count text passes over the map (above).
 add({ id: 'mapCanvas.bubbleOutline.mapFloor', fg: color.onInk, on: 'map', kind: 'decor', at: [[F.mapCanvas, 'borderColor: color.onInk,']] });
 add({ id: 'mapCanvas.gemMarkerRing.mapFloor', fg: GEM_ACCENT, on: 'map', kind: 'ui', at: [[F.mapCanvas, 'borderColor: GEM_ACCENT,']] });
