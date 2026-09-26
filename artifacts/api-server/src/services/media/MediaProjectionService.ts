@@ -64,7 +64,7 @@ import {
 } from "./MediaPerspectiveService.js";
 import { buildMyWorldMemory, type MyWorldMemory } from "./MyWorldMemoryService.js";
 import { rankCandidatesForViewer, type MediaRankingScore } from "./MediaRankingService.js";
-import { buildVisualConsensus, type VisualConsensus } from "./MediaConsensusService.js"; import { attachCanonicalMedia } from "../../lib/media/mediaCanonicalRead.js"; import { mayViewUnderOverride } from "../../lib/mediaVisibility.js"; import { explainWorldZones, type Section47Reason } from "./MediaExplanationService.js";
+import { buildVisualConsensus, type VisualConsensus } from "./MediaConsensusService.js"; import { attachCanonicalMedia } from "../../lib/media/mediaCanonicalRead.js"; import { mayViewUnderOverride, filterMediaProjectionVisibility } from "../../lib/mediaVisibility.js"; import { explainWorldZones, type Section47Reason } from "./MediaExplanationService.js";
 
 const DEFAULT_CANDIDATE_LIMIT = 200;
 
@@ -197,7 +197,7 @@ export interface CandidateFilter {
  * Which candidate-loader input could not be read. Carried on the refusal so a
  * log line names the failing read rather than "media unavailable".
  */
-export type MediaCandidateInput = "posts" | "eligibility";
+export type MediaCandidateInput = "posts" | "eligibility" | "visibility";
 
 /**
  * Raised when the candidate read could not be performed — NOT when it found
@@ -695,7 +695,7 @@ export async function projectCandidatesProtected(
       ),
     );
   }
-  return out;
+  return visibleToViewerOrRefuse(sc, viewer.viewerId, out); // census-media §28: every count downstream is taken from what this viewer may see
 }
 
 // ── Live current-state (gated, fail-closed) ──────────────────────────────────
@@ -1742,4 +1742,34 @@ export interface WorldZone {
   whyThis?: string;
   /** The same reasons as codes, in the same order. */
   whyThisReasons?: Section47Reason[];
+}
+
+
+/**
+ * The trip-context circle filter, applied where the page is PROJECTED rather
+ * than only where the response is SENT (census-media §28).
+ *
+ * `routes/mediaWorld.ts`'s `sendProjection` runs `filterMediaProjectionVisibility`
+ * on the finished payload, and that removes hidden media OBJECTS. It cannot
+ * reach a number. Every builder here counts its page before the route sees it
+ * (a World zone's `perspectiveCount`, freshness and consensus, a bucket's
+ * `freshPerspectives`, `totalPerspectives`, a place's perspective summary, an
+ * experience's counts), so a perspective the viewer may not see still moved
+ * those numbers: a hidden trip post at a place was announced as "2 perspectives,
+ * fresh". Filtering here, before anything is counted, makes every count a count
+ * of what this viewer is served. The route's own filter stays as the second
+ * line. An undecidable filter refuses (503), as an unreadable candidate read
+ * already does, rather than counting a page it could not decide about.
+ */
+async function visibleToViewerOrRefuse(
+  sc: SupabaseClient,
+  viewerId: string,
+  media: MediaProjection[],
+): Promise<MediaProjection[]> {
+  if (media.length === 0) return media;
+  const visible = await filterMediaProjectionVisibility(sc, viewerId, media);
+  if (!Array.isArray(visible)) {
+    throw new MediaCandidatesUnavailableError("visibility", "trip-context visibility could not be decided for this page");
+  }
+  return visible as MediaProjection[];
 }

@@ -979,3 +979,73 @@ describe("MD428 — GET /media/world serves the explanation the ranker's own sco
     });
   });
 });
+
+// ── census-media §28: a hidden perspective moves no number the viewer is served ──
+//
+// Found by lane F (§25): `/media/world`'s zone and bucket counts were taken
+// BEFORE the route's visibility filter, which removes media objects and cannot
+// reach a number. A trip post hidden from this viewer by a circle override was
+// still counted as a perspective at its place, made the zone "fresh", and
+// raised the page's totals. The fix filters where the page is projected, so
+// every count is a count of what this viewer is served.
+describe("census-media §28 — World counts are counts of what this viewer may see", () => {
+  const HIDDEN = "99999999-0000-4000-8000-000000000011";
+  const SEEN = "99999999-0000-4000-8000-000000000012";
+  const TRIP_2 = "eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee";
+  const posts = [worldPost(HIDDEN, { author: AUTHOR_B, tripId: TRIP_2, createdAgo: 5 * MIN }), worldPost(SEEN, { createdAgo: 3 * DAY })];
+  const OVERRIDE = { id: "o1", user_id: AUTHOR_B, target_user_id: VIEWER, context_type: "trip", context_id: TRIP_2, direction: "hide_me_from", hidden: true };
+
+  async function world(data: Dataset) {
+    const sc = makeSc(worldData(data));
+    const viewer = await resolveViewer(sc, VIEWER);
+    return buildWorldProjection(sc, viewer, null, Date.now());
+  }
+  const sum = (w: any, k: "freshPerspectives" | "totalPerspectives") =>
+    (w.forYouNow as any[]).reduce((n, b) => n + Number(b[k] ?? 0), 0);
+
+  it("control: with no override, both perspectives are counted, and the fresh one makes the zone fresh", async () => {
+    const w = await world({ posts });
+    const z = w.cityVisualState.find((x) => x.placeId === PLACE_1)!;
+    assert.equal(z.perspectiveCount, 2);
+    assert.equal(w.totalPerspectives, 2);
+    assert.equal(sum(w, "totalPerspectives"), 2);
+    assert.equal(sum(w, "freshPerspectives"), 1);
+  });
+
+  it("with the owner hiding their trip from this viewer, the hidden post is in no count, no freshness and no total", async () => {
+    const open = await world({ posts });
+    const w = await world({ posts, circle_member_visibility_overrides: [OVERRIDE] });
+    const z = w.cityVisualState.find((x) => x.placeId === PLACE_1)!;
+    assert.ok(z, "the zone is still served, from the perspective the viewer may see");
+    assert.equal(z.perspectiveCount, 1);
+    assert.equal(w.totalPerspectives, 1);
+    assert.equal(sum(w, "totalPerspectives"), 1);
+    assert.equal(sum(w, "freshPerspectives"), 0, "a 3-day-old post is the only one left, so nothing is fresh");
+    assert.notEqual(z.freshness, open.cityVisualState.find((x) => x.placeId === PLACE_1)!.freshness,
+      "the zone's freshness is no longer the hidden post's");
+  });
+
+  it("when visibility cannot be decided, the page is refused (503), never counted unfiltered", async () => {
+    const base = makeSc(worldData({ posts }));
+    const viewer = await resolveViewer(base, VIEWER);
+    // Fail ONLY the visibility filter's read (posts: id, author_id, trip_id), so
+    // the candidate read still succeeds and only the deny arm can refuse.
+    const sc = new Proxy(base as any, {
+      get(target, prop) {
+        if (prop !== "from") return Reflect.get(target, prop);
+        return (table: string) => {
+          const q = target.from(table);
+          if (table !== "posts") return q;
+          const select = q.select.bind(q);
+          q.select = (cols: string, ...rest: unknown[]) => cols === "id, author_id, trip_id"
+            ? { in: () => Promise.resolve({ data: null, error: { code: "57P01", message: "terminating connection" } }) }
+            : select(cols, ...rest);
+          return q;
+        };
+      },
+    });
+    const control = await buildWorldProjection(base, viewer, null, Date.now());
+    assert.equal(control.totalPerspectives, 2, "control: the same page is served when visibility is decidable");
+    await assert.rejects(buildWorldProjection(sc, viewer, null, Date.now()), (e: any) => e?.name === "MediaCandidatesUnavailableError" && e?.input === "visibility" && e?.status === 503);
+  });
+});
