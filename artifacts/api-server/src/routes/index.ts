@@ -424,4 +424,8 @@ router.use(sensingIngestRouter);
 import postcardMediaTransportRouter from "./postcardMediaTransport.js";
 router.use(postcardMediaTransportRouter);
 
+// ── Media §37: the poster for a video uploaded through POST /media/upload ─────
+import mediaVideoPosterRouter from "./mediaVideoPoster.js";
+router.use(mediaVideoPosterRouter);
+
 export default router;

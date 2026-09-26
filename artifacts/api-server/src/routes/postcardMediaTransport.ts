@@ -133,7 +133,7 @@ async function preamble(
 }
 
 /** Bounded raw-body collector: stops buffering the moment the ceiling is passed. */
-function collectBody(limitBytes: number) {
+export function collectBody(limitBytes: number) {
   return (req: any, res: any, next: any) => {
     const chunks: Buffer[] = [];
     let total = 0;

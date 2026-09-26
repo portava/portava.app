@@ -904,7 +904,7 @@ export async function mediaAccessDeadline(
   path: string,
 ): Promise<number | null> {
   if (bucket !== "post-media") return null;
-
+  { const posterOf = derivedPosterBase(path); if (posterOf !== null) return mediaAccessDeadline(sc, viewerId, bucket, posterOf); } // §37: a poster keeps its video's deadline
   const owner = ownerFromPath(path);
   if (owner && owner === viewerId) return null; // owner archive: no boundary
 

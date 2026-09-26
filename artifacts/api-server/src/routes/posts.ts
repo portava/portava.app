@@ -270,7 +270,7 @@ router.post(
       // omitted the field, so media_assets.captured_at had no writer at all and
       // the Wall's §16 experienceAt could never differ from publishedAt.
       capturedAt,
-    });
+    }).then((assetId) => recordMeasuredDuration(sc, assetId, videoProbe)); // §37: the probed duration_ms, never the declared one
 
     // Response stays backward-compatible ({url, path}); new fields are additive.
     // `phash` is included so the client can persist it on the post_media row.
@@ -3653,3 +3653,7 @@ router.post("/posts/:id/wrong-place", async (req, res) => {
 });
 
 export default router;
+
+// §37 (census-media §22): the canonical row's duration_ms is the probed one. Imported at the
+// TAIL so no line above moves (census-wall cites this file by line); ESM hoists imports.
+import { recordMeasuredDuration } from "../lib/mediaVideoPoster.js";
