@@ -1543,3 +1543,193 @@ describe("a failed candidate read refuses; an empty one does not", () => {
     );
   });
 });
+
+// ═════════════════════════════════════════════════════════════════════════════
+// §38 result types EVENTS and TRIPS — census-media MD294 (§19 of that document)
+// ═════════════════════════════════════════════════════════════════════════════
+/**
+ * MD294's falsifier: "an `events` and a `trips` array on `MediaSearchResults`,
+ * each populated from the canonical event/trip surfaces through their own
+ * eligibility gates … a search that finds the Beach Festival because it is
+ * called Beach Festival, not because somebody photographed it."
+ *
+ * So the first case has NO media at all, and the rest are negative: an event or
+ * trip the viewer may not see must not appear — not its id, not its title.
+ */
+import {
+  searchCanonicalEventsAndTrips,
+  withCanonicalKinds,
+  canonicalTitleTerm,
+} from "../services/media/MediaSearchService.js";
+
+const EVENT_PUBLIC = "c1c1c1c1-c1c1-c1c1-c1c1-c1c1c1c1c1c1";
+const EVENT_PRIVATE = "c2c2c2c2-c2c2-c2c2-c2c2-c2c2c2c2c2c2";
+const TRIP_MINE = "d1d1d1d1-d1d1-d1d1-d1d1-d1d1d1d1d1d1";
+const TRIP_THEIRS = "d2d2d2d2-d2d2-d2d2-d2d2-d2d2d2d2d2d2";
+
+function canonicalData(): Dataset {
+  return baseData({
+    posts: [],
+    post_event_links: [],
+    event_rsvps: [],
+    event_roles: [],
+    events: [
+      { id: EVENT_PUBLIC, title: "Beach Festival", visibility: "public", host_id: AUTHOR_A, state: "published", place_id: null },
+      { id: EVENT_PRIVATE, title: "Beach Festival afterparty", visibility: "invite_only", host_id: AUTHOR_B, state: "published", place_id: null },
+    ],
+    trips: [
+      { id: TRIP_MINE, title: "Vietnam beach week", owner_id: AUTHOR_A, visibility: "members", start_date: null, end_date: null },
+      { id: TRIP_THEIRS, title: "Secret beach retreat", owner_id: AUTHOR_B, visibility: "members", start_date: null, end_date: null },
+    ],
+    trip_members: [{ trip_id: TRIP_MINE, user_id: VIEWER, role: "member" }],
+  });
+}
+
+describe("MD294 — §38 finds EVENTS and TRIPS by what they are, through their own gates", () => {
+  it("finds a public event BY NAME although not one photograph is attached to it", async () => {
+    const sc = makeSc(canonicalData());
+    const viewer = await resolveViewer(sc, VIEWER, { needFollows: false });
+    const kinds = await searchCanonicalEventsAndTrips(sc, viewer, { q: "beach festival", scope: "all" }, Date.now());
+    assert.deepEqual(kinds.events.map((e) => e.id), [EVENT_PUBLIC]);
+    assert.equal(kinds.events[0]!.title, "Beach Festival");
+    assert.equal(kinds.events[0]!.perspectiveCount, 0, "found by its name, not by a photo of it");
+    assert.deepEqual(kinds.undetermined, []);
+  });
+
+  it("an event the viewer may not see is dropped WHOLE — no id and no title leave", async () => {
+    const sc = makeSc(canonicalData());
+    const viewer = await resolveViewer(sc, VIEWER, { needFollows: false });
+    const kinds = await searchCanonicalEventsAndTrips(sc, viewer, { q: "afterparty", scope: "all" }, Date.now());
+    assert.deepEqual(kinds.events, []);
+    const blob = JSON.stringify(kinds);
+    assert.equal(blob.includes(EVENT_PRIVATE), false);
+    assert.equal(blob.toLowerCase().includes("afterparty"), false);
+  });
+
+  it("finds a trip the viewer is a MEMBER of by name; a stranger's members-only trip never appears", async () => {
+    const sc = makeSc(canonicalData());
+    const viewer = await resolveViewer(sc, VIEWER, { needFollows: false });
+    const kinds = await searchCanonicalEventsAndTrips(sc, viewer, { q: "beach", scope: "all" }, Date.now());
+    assert.deepEqual(kinds.trips.map((t) => t.id), [TRIP_MINE]);
+    assert.equal(kinds.trips[0]!.kind, "trip");
+    const blob = JSON.stringify(kinds);
+    assert.equal(blob.includes(TRIP_THEIRS), false, "the trip gate must bind on search");
+    assert.equal(blob.includes("Secret beach retreat"), false);
+  });
+
+  it("a My World (scope=me) search does not reach into the world's events and trips", async () => {
+    const sc = makeSc(canonicalData());
+    const viewer = await resolveViewer(sc, VIEWER, { needFollows: false });
+    const kinds = await searchCanonicalEventsAndTrips(sc, viewer, { q: "beach", scope: "me" }, Date.now());
+    assert.deepEqual(kinds.events, []);
+    assert.deepEqual(kinds.trips, []);
+  });
+
+  it("an UNREADABLE events table is reported undetermined — never as 'no events'", async () => {
+    const base = makeSc(canonicalData());
+    const failing = {
+      from(table: string) {
+        if (table !== "events") return base.from(table);
+        const b: any = {
+          select: () => b, not: () => b, ilike: () => b, eq: () => b, limit: () => b,
+          maybeSingle: () => Promise.resolve({ data: null, error: { message: "boom", code: "57P01" } }),
+          then: (onF: any, onR: any) =>
+            Promise.resolve({ data: null, error: { message: "boom", code: "57P01" } }).then(onF, onR),
+        };
+        return b;
+      },
+    } as any;
+    const viewer = await resolveViewer(failing, VIEWER, { needFollows: false });
+    const kinds = await searchCanonicalEventsAndTrips(failing, viewer, { q: "beach", scope: "all" }, Date.now());
+    assert.deepEqual(kinds.events, []);
+    assert.ok(kinds.undetermined.includes("events"), "the caller must be able to tell 'not looked at' from 'none'");
+    assert.equal(kinds.undetermined.includes("trips"), false, "the trips read still answered");
+  });
+
+  it("withCanonicalKinds ADDS events/trips and their totals without touching the five media-derived lists", async () => {
+    const sc = makeSc(canonicalData());
+    const viewer = await resolveViewer(sc, VIEWER, { needFollows: false });
+    const base = await searchMedia(sc, viewer, { q: "beach" }, Date.now());
+    const kinds = await searchCanonicalEventsAndTrips(sc, viewer, { q: "beach", scope: "all" }, Date.now());
+    const merged = withCanonicalKinds(base, kinds);
+    assert.deepEqual(merged.media, base.media);
+    assert.deepEqual(merged.experiences, base.experiences);
+    assert.equal(merged.totals.events, merged.events.length);
+    assert.equal(merged.totals.trips, merged.trips.length);
+    assert.ok(merged.events.length + merged.trips.length > 0, "the fixture must actually produce canonical hits");
+  });
+
+  it("GET /media/search actually SENDS the canonical kinds — the wiring, checked in the router source", async () => {
+    // The HTTP-level MD367 case needs a configured service client and cannot
+    // reach this handler's body in an unconfigured run, so the route's use of
+    // the fold is asserted structurally: inside the `/media/search` handler, the
+    // terminal send must carry `withCanonicalKinds(…searchCanonicalEventsAndTrips…)`.
+    const { readFileSync } = await import("node:fs");
+    const { fileURLToPath } = await import("node:url");
+    const src = readFileSync(fileURLToPath(new URL("../routes/mediaWorld.ts", import.meta.url)), "utf8");
+    const start = src.indexOf('"/media/search"');
+    const end = src.indexOf('"/media/map"', start);
+    assert.ok(start > 0 && end > start, "the search handler must be locatable in the router source");
+    const handler = src.slice(start, end);
+    assert.match(
+      handler,
+      /sendProjection\(res, "search", withCanonicalKinds\(results, await searchCanonicalEventsAndTrips\(/,
+      "the search response must fold in events and trips found by name",
+    );
+  });
+
+  it("a title term cannot smuggle ilike wildcards or PostgREST list syntax", () => {
+    assert.equal(canonicalTitleTerm("100%_off,(x)"), "100 off x");
+    assert.equal(canonicalTitleTerm("%"), null, "a bare wildcard is not a search term");
+    assert.equal(canonicalTitleTerm(null), null);
+  });
+});
+
+describe("MD287 · MD292 — §38 'right now' and 'from my trip' are real narrowings, and every gate still binds", () => {
+  const TRIP_VN = "dddddddd-dddd-dddd-dddd-dddddddddddd";
+
+  it("'Show festival media from my Vietnam Trip' returns ONLY that trip's matching media", async () => {
+    const sc = makeSc(
+      baseData({
+        posts: [
+          makePost({ id: "vn-fest", content: "festival lanterns", tripId: TRIP_VN }),
+          makePost({ id: "vn-beach", content: "beach day", tripId: TRIP_VN }),
+          makePost({ id: "other-fest", content: "festival crowd", tripId: null }),
+        ],
+      }),
+    );
+    const viewer = await resolveViewer(sc, VIEWER, { needFollows: false });
+    const r = await searchMedia(sc, viewer, { q: "festival", scope: "trip", tripId: TRIP_VN }, Date.now());
+    assert.deepEqual(r.media.map((m) => m.id), ["vn-fest"]);
+    assert.ok(r.criteriaUsed.includes("tripId"));
+  });
+
+  it("a trip scope does not open a gate: a private account's post in that trip still never appears", async () => {
+    const sc = makeSc(
+      baseData({
+        posts: [
+          makePost({ id: "vn-open", content: "festival", tripId: TRIP_VN }),
+          makePost({ id: "vn-private", author_id: AUTHOR_B, content: "festival", tripId: TRIP_VN, authorIsPrivate: true }),
+        ],
+      }),
+    );
+    const viewer = await resolveViewer(sc, VIEWER, { needFollows: false });
+    const r = await searchMedia(sc, viewer, { q: "festival", scope: "trip", tripId: TRIP_VN }, Date.now());
+    assert.deepEqual(r.media.map((m) => m.id), ["vn-open"]);
+  });
+
+  it("'What does An Thuong look like right now?' is the term inside the FRESH window only", async () => {
+    const sc = makeSc(
+      baseData({
+        posts: [
+          makePost({ id: "now", locationName: "An Thuong Bar", createdAt: isoAgo(5 * 60 * 1000) }),
+          makePost({ id: "last-night", locationName: "An Thuong Bar", createdAt: isoAgo(10 * 60 * 60 * 1000) }),
+          makePost({ id: "elsewhere-now", locationName: "My Khe Beach", createdAt: isoAgo(5 * 60 * 1000) }),
+        ],
+      }),
+    );
+    const viewer = await resolveViewer(sc, VIEWER, { needFollows: false });
+    const r = await searchMedia(sc, viewer, { q: "an thuong", freshOnly: true }, Date.now());
+    assert.deepEqual(r.media.map((m) => m.id), ["now"]);
+  });
+});

@@ -402,6 +402,11 @@ export async function buildGemStateProjection(
       verificationLevel:
         typeof (gem as any).verification_level === "string" ? (gem as any).verification_level : null,
       lastUpdatedAt: typeof (gem as any).updated_at === "string" ? (gem as any).updated_at : null,
+      // The gem's own submitted image, for the lens's VISUAL mode (census-media
+      // §19, MD33). Already in MEDIA_GEM_LENS_COLUMNS and already served for the
+      // same gem by the canonical Map as `payload.thumbnailUrl`; a URL, never a
+      // coordinate. Only a gem that survived `mayDiscloseGemIdentity` reaches here.
+      imageUrl: typeof (gem as any).image_url === "string" && (gem as any).image_url !== "" ? (gem as any).image_url : null,
     };
   });
 
@@ -413,4 +418,15 @@ export async function buildGemStateProjection(
     determined: stateDetermined,
     undetermined: stateDetermined ? [] : ["gemState"],
   };
+}
+
+/**
+ * `imageUrl` joins `MediaGemStateItem` by declaration merging, HERE rather than
+ * inside the interface above, so that no line above `buildGemStateProjection`
+ * moves: census-media cites that function by an anchored line number and the
+ * rule for this file is zero-shift (census-media §12.9, §15.6).
+ */
+export interface MediaGemStateItem {
+  /** The gem's own image URL (`hidden_gems.image_url`), or null. Never a coordinate. */
+  imageUrl: string | null;
 }

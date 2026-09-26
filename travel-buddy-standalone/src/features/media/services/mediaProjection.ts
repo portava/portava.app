@@ -41,7 +41,22 @@ import type {
   ExperienceChain,
   ExperienceChainStep,
 } from '../types/mediaExperience.ts';
-import type { HiddenGemMediaProjection, HiddenGemState, GemLocationPrecision } from '../types/hiddenGemMedia.ts';
+import type {
+  HiddenGemMediaProjection,
+  HiddenGemState,
+  GemLocationPrecision,
+  HiddenGemLensProjection,
+} from '../types/hiddenGemMedia.ts';
+import { mapGemLensProjection } from '../state/gemLens.ts';
+import { mapMediaMapProjection, type MediaMapProjection } from '../state/mediaMapStore.ts';
+import { mapContextRefs, type ContextRef } from '../state/mediaContextGraph.ts';
+import type {
+  MediaSearchResultsView,
+  SearchCanonicalResult,
+  SearchGemResult,
+  SearchPersonResult,
+  SearchPlaceResult,
+} from '../types/mediaSearchResults.ts';
 import type { ConfidenceState } from '../types/media.ts';
 import type { PeopleLensGroup, PeopleLensProjection, PeopleLensRelation } from '../types/peopleLens.ts';
 import type {
@@ -615,6 +630,7 @@ export function mapExperienceProjection(raw: unknown): MediaExperienceProjection
       : null;
   return {
     id,
+    kind: kind === 'event' || kind === 'trip' ? kind : null,
     title,
     placeIds: asArray(raw.placeIds)
       .map((p) => asString(p))
@@ -1058,6 +1074,12 @@ function errMessage(err: unknown): string {
 
 export interface WorldParams {
   cityId?: string | null;
+  /**
+   * The coarse city LABEL. `GET /media/world` scopes by `city` (its `parseCity`);
+   * it has never read `cityId`, so without this the NOW lens was always the
+   * unscoped global projection (census-media §19).
+   */
+  city?: string | null;
   lat?: number | null;
   lng?: number | null;
   signal?: AbortSignal;
@@ -1065,6 +1087,7 @@ export interface WorldParams {
 
 function worldQuery(params: WorldParams): string {
   const qs = new URLSearchParams();
+  if (params.city) qs.set('city', params.city);
   if (params.cityId) qs.set('cityId', params.cityId);
   if (params.lat != null) qs.set('lat', String(params.lat));
   if (params.lng != null) qs.set('lng', String(params.lng));
@@ -1156,20 +1179,21 @@ export async function fetchExperiencesByIds(
   return { ok: true, data };
 }
 
-/** GET /media/gems — hidden-gem media (§16). */
+/**
+ * GET /media/gems — the §16 Hidden Gems LENS (census-media §19).
+ *
+ * Reads the server's REAL `MediaGemStateProjection` through `mapGemLensProjection`
+ * and sends the coarse `city` LABEL the route parses (`parseCity`). The previous
+ * version sent `cityId` — a parameter the route never reads — and mapped the
+ * body through `mapHiddenGemList`, which looks for `id`/`title` on a payload
+ * that carries `gemId`/`name`, so every served gem was silently dropped.
+ */
 export function fetchGems(opts?: {
-  cityId?: string | null;
+  city?: string | null;
   signal?: AbortSignal;
-}): Promise<ProjectionResult<HiddenGemMediaProjection[]>> {
-  const qs = opts?.cityId ? `?cityId=${encodeURIComponent(opts.cityId)}` : '';
-  return getJson(
-    `/api/media/gems${qs}`,
-    (b) => {
-      const inner = isObj(b) && 'gems' in b ? (b as Record<string, unknown>).gems : b;
-      return mapHiddenGemList(inner);
-    },
-    opts,
-  );
+}): Promise<ProjectionResult<HiddenGemLensProjection>> {
+  const qs = opts?.city ? `?city=${encodeURIComponent(opts.city)}` : '';
+  return getJson(`/api/media/gems${qs}`, mapGemLensProjection, opts);
 }
 
 /** GET /media/people — explicitly social lens grouped by contributor (§27). */
@@ -1226,4 +1250,147 @@ export function fetchMedia(
     },
     opts,
   );
+}
+
+/**
+ * GET /media/map — §21 perspective counts per canonical place (census-media §19).
+ * The payload carries NO geometry; `mediaMapStore.joinClustersToPositions`
+ * positions it from the canonical Map gateway. Sends the coarse `city` label
+ * the route's `parseCity` reads.
+ */
+export function fetchMediaMap(opts?: {
+  city?: string | null;
+  signal?: AbortSignal;
+}): Promise<ProjectionResult<MediaMapProjection>> {
+  const qs = opts?.city ? `?city=${encodeURIComponent(opts.city)}` : '';
+  return getJson(`/api/media/map${qs}`, mapMediaMapProjection, opts);
+}
+
+// ── §38 Search (census-media §19) ─────────────────────────────────────────────
+
+function searchFreshness(v: unknown): FreshnessClass | null {
+  return v === 'fresh' || v === 'recent' || v === 'historical' ? v : null;
+}
+
+function mapSearchCanonical(raw: unknown, kind: 'event' | 'trip'): SearchCanonicalResult | null {
+  if (!isObj(raw)) return null;
+  const id = asString(raw.id);
+  // A result of the wrong kind is dropped, not relabelled.
+  if (!id || (raw.kind != null && raw.kind !== kind)) return null;
+  return {
+    id,
+    kind,
+    title: asString(raw.title),
+    startedAt: asString(raw.startedAt),
+    expectedEndAt: asString(raw.expectedEndAt),
+    placeIds: asArray(raw.placeIds).map(asString).filter((p): p is string => p !== null),
+    perspectiveCount: asNumber(raw.perspectiveCount) ?? 0,
+    freshness: searchFreshness(raw.freshness),
+  };
+}
+
+/**
+ * Map the `GET /media/search` body into the seven §38 result lists. Safe on
+ * `{}` / garbage. A person's `name` is carried only as the server sent it —
+ * the handle-first projection already decided what may be shown.
+ */
+export function mapMediaSearchResults(raw: unknown): MediaSearchResultsView {
+  const o = isObj(raw) ? raw : {};
+  const strings = (v: unknown) => asArray(v).filter((s): s is string => typeof s === 'string');
+  return {
+    generatedAt: asString(o.generatedAt),
+    criteriaUsed: strings(o.criteriaUsed),
+    media: mapMediaList(o.media),
+    places: asArray(o.places)
+      .map((p): SearchPlaceResult | null => {
+        if (!isObj(p)) return null;
+        const placeId = asString(p.placeId);
+        if (!placeId) return null;
+        return {
+          placeId,
+          label: asString(p.label),
+          neighborhood: asString(p.neighborhood),
+          city: asString(p.city),
+          country: asString(p.country),
+          perspectiveCount: asNumber(p.perspectiveCount) ?? 0,
+          freshPerspectiveCount: asNumber(p.freshPerspectiveCount) ?? 0,
+          freshness: searchFreshness(p.freshness),
+        };
+      })
+      .filter((p): p is SearchPlaceResult => p !== null),
+    people: asArray(o.people)
+      .map((p): SearchPersonResult | null => {
+        if (!isObj(p)) return null;
+        const id = asString(p.id);
+        if (!id) return null;
+        return {
+          id,
+          username: asString(p.username),
+          name: asString(p.name),
+          avatarUrl: asString(p.avatarUrl),
+          verified: asBool(p.verified),
+          isOfficial: asBool(p.isOfficial),
+          perspectiveCount: asNumber(p.perspectiveCount) ?? 0,
+        };
+      })
+      .filter((p): p is SearchPersonResult => p !== null),
+    hiddenGems: asArray(o.hiddenGems)
+      .map((g): SearchGemResult | null => {
+        if (!isObj(g)) return null;
+        const gemId = asString(g.gemId);
+        const placeId = asString(g.placeId);
+        if (!gemId || !placeId) return null;
+        return { gemId, name: asString(g.name), placeId };
+      })
+      .filter((g): g is SearchGemResult => g !== null),
+    experiences: mapExperienceList(o.experiences),
+    events: asArray(o.events)
+      .map((e) => mapSearchCanonical(e, 'event'))
+      .filter((e): e is SearchCanonicalResult => e !== null),
+    trips: asArray(o.trips)
+      .map((t) => mapSearchCanonical(t, 'trip'))
+      .filter((t): t is SearchCanonicalResult => t !== null),
+    unsupported: strings(o.unsupported),
+    undetermined: strings(o.undetermined),
+  };
+}
+
+/** True when every result list is empty (whatever the reason — see `undetermined`). */
+export function isMediaSearchEmpty(r: MediaSearchResultsView): boolean {
+  return (
+    r.media.length === 0 &&
+    r.places.length === 0 &&
+    r.people.length === 0 &&
+    r.hiddenGems.length === 0 &&
+    r.experiences.length === 0 &&
+    r.events.length === 0 &&
+    r.trips.length === 0
+  );
+}
+
+/**
+ * GET /media/search — §38. Takes the query string `mediaFilterStore.
+ * toSearchQueryString` built; a null query (no criteria) is answered locally
+ * with an empty result and NO request, mirroring the server's "empty means
+ * empty" rule.
+ */
+export function fetchMediaSearch(
+  queryString: string | null,
+  opts?: { signal?: AbortSignal },
+): Promise<ProjectionResult<MediaSearchResultsView>> {
+  if (!queryString) return Promise.resolve({ ok: true, data: mapMediaSearchResults({}) });
+  return getJson(`/api/media/search?${queryString}`, mapMediaSearchResults, opts);
+}
+
+/**
+ * The server-resolved §7 context refs of one media item — the `entityRefs` of
+ * `GET /media/:id/actions`, which that route emits only for edges the viewer may
+ * see. Read with `mapContextRefs`, which keeps the Shared Moment kind the action
+ * rail's mapper narrows away (census-media §19, MD314).
+ */
+export function fetchMediaContextRefs(
+  mediaId: string,
+  opts?: { signal?: AbortSignal },
+): Promise<ProjectionResult<ContextRef[]>> {
+  return getJson(`/api/media/${encodeURIComponent(mediaId)}/actions`, mapContextRefs, opts);
 }
