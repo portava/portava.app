@@ -112,7 +112,20 @@ router.post(
       purposeScopes: requested,
     });
     if (!built.ok) return sendError(res, "invalid_payload", built.error);
-    const { error } = await db.from("sensing_contribution_sessions").insert(built.row);
+    // Every column named, so check:write-path-columns can verify each against
+    // the live schema — and so a reader can see there is no identity column.
+    const r = built.row;
+    const { error } = await db.from("sensing_contribution_sessions").insert({
+      credential_hash: r.credential_hash,
+      policy_version: r.policy_version,
+      purpose_scopes: r.purpose_scopes,
+      reduction_version: r.reduction_version,
+      issuance_class: r.issuance_class,
+      budget_cohorts_remaining: r.budget_cohorts_remaining,
+      starts_at: r.starts_at,
+      expires_at: r.expires_at,
+      revoked_at: r.revoked_at,
+    });
     if (error) {
       logger.warn({ code: (error as any)?.code }, "sensing session was not written");
       return sendError(res, "db_error", "sensing session could not be issued");

@@ -3584,11 +3584,18 @@ for (const f of files) {
     // output said so. Unioning the two working-tree diffs closes that: a
     // pre-commit run now measures what the commit will contain, and a clean
     // tree gives exactly the old answer, so CI is unaffected.
+    //
+    // AND UNTRACKED FILES. Neither working-tree diff lists a file git does not
+    // track yet, so a NEW file in a counted directory passed this check locally
+    // and failed it in CI the moment it was committed: on 2026-09-26 three
+    // censuses went red on PR #528 for exactly that reason, after a green local
+    // run. `ls-files --others --exclude-standard` names what `git add` would add.
     const committed = git(["diff", "--name-only", `${commit}..${head}`, "--", ...scope]);
     const staged = git(["diff", "--name-only", "--cached", "--", ...scope]);
     const unstaged = git(["diff", "--name-only", "--", ...scope]);
+    const untracked = git(["ls-files", "--others", "--exclude-standard", "--", ...scope]);
     changed = [...new Set(
-      [committed, staged, unstaged].flatMap((out) => out.split("\n")).filter(Boolean),
+      [committed, staged, unstaged, untracked].flatMap((out) => out.split("\n")).filter(Boolean),
     )].sort();
   } catch {
     problems.push(`::error::${f}: git could not diff ${commit}..HEAD, though ${commit.slice(0, 8)} resolves and is an ancestor of HEAD. This is not the unreachable-declaration case; read the git error above.`);

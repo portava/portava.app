@@ -3409,3 +3409,48 @@ This section's moves: 14 `W → C` and 4 `N → C`. No row moved backward.
 **Eighteen letters moved and not one of them is true in production.** Every moved row sits behind at least one of four things this lane may not do: an unmade owner decision about migration 2250, a read flag an operator has not turned, a shell flag seeded false, or two migrations nobody has applied. That is the §1 convention working as written — and it is also exactly the shape the owner warned about, which is why §20.5 lists the missing step for each row instead of letting a C stand for itself. A reader who adopts §12.8's "a flag-dark row is not a realized row" should read §20.4 as fourteen rows that remain W and four that remain N, with their code finished.
 
 Second, and narrower: **two of the moves are judgement calls against this document's own register** — MD351 against F12, and MD41 against F5's "plus writers for … observation" — each argued in its row. If the integrator rejects either argument, the row goes back with its code intact and nothing else changes.
+
+### 20.10 Integration — the two contested moves ruled on, and the headline restated from the rows
+
+Merged into `claude/sensing-completion-20260925` on 2026-09-26 by the
+integration owner, after reading the lane's diff, not its summary.
+
+**MD351 against F12: accepted.** The row's requirement is the §41 module
+`MediaModerationService`, and §9.2's reason for W was that "there is no such
+module". It now exists and the admin route goes through it. F12's missing
+classifier is §36's moderation STAGE, which MD269 grades and which stays
+**W**. What turns MD351 red again: the admin route writing moderation state
+around the service, or the service losing the compare-and-set on the
+canonical row (§20.MM1–MM6 are the tripwires).
+
+**MD41 against F5: accepted.** The row's requirement is that `entityType`
+covers the nine §6.1 values, and 3320's CHECK now enforces exactly those
+nine. The `observation` writer is the dark evidence seam, graded on MD53 and
+MD65, both still **W**. What turns MD41 red again: a tenth value admitted, or
+one of the nine refused (§20.D1b, §20.D5).
+
+**Reviewed before merging, because they widen or reach outside the lane:**
+the override rule's `inherit` now allows the parent's audience, and both of
+its callers apply the parent post's own visibility before asking, so it
+narrows and never widens; the new post-route attachment write catches every
+error and stops at the schema probe wherever the canonical columns are
+absent, which includes production today; the Wall's deny-set gains
+`limited` and Telegraph accepts §36's `active`, each one line.
+
+**3320 and 3321 are applied nowhere**, not to `portava-ci` and not to
+production. 3321 refuses a database that lacks 2250/2470's widened CHECK,
+which is production's state.
+
+> | Measure | Was, §15.7 | Now |
+> | --- | --- | --- |
+> | Denominator (testable requirements) | 450 | **450** |
+> | BUILT-AND-CORRECT | 301 | **319** |
+> | BUILT-BUT-WRONG | 81 | **67** |
+> | NOT-BUILT | 66 | **62** |
+> | CANNOT-VERIFY | 2 | **2** |
+> | **CONSTRUCTED%** = (C+W)/450 | 84.9 % | **386 / 450 = 85.8 %** |
+> | **CORRECT%** (raw) = C/450 | 66.9 % | **319 / 450 = 70.9 %** |
+>
+> Restated from `check:census-integrity`, not by hand, after lane B only.
+> The spec-attributable figure is not re-derived here. **None of the eighteen
+> moved rows is realised in production** (§20.5).
