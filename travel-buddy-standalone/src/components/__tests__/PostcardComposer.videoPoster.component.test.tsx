@@ -50,9 +50,17 @@ jest.mock('../../services/postcards.ts', () => ({
 }));
 
 const mockUploadVideoPoster = jest.fn(async (..._args: unknown[]) => 'u/post-1/media-1.mp4.poster.jpg');
-// NOTE: intentionally exhaustive — uploadVideoPoster is the only export the composer uses.
+// NOTE: intentionally exhaustive — the two uploadHttp exports the composer uses.
 jest.mock('../../services/media/uploadHttp.ts', () => ({
   uploadVideoPoster: (...args: unknown[]) => mockUploadVideoPoster(...args),
+  readFileBlob: async () => ({ size: 3_300_000 }),
+}));
+
+type Prepared = { ok: true; resized: boolean; asset: Record<string, unknown> } | { ok: false; message: string };
+const mockPrepare = jest.fn(async (a: Record<string, unknown>): Promise<Prepared> => ({ ok: true, resized: false, asset: a }));
+jest.mock('../../services/media/mediaProcessing.ts', () => ({
+  ...jest.requireActual('../../services/media/mediaProcessing.ts'),
+  prepareImageForUpload: (a: Record<string, unknown>) => mockPrepare(a),
 }));
 
 // NOTE: intentionally exhaustive — validateMedia gates video duration at pick time.
@@ -97,13 +105,13 @@ jest.mock('../../lib/location/locationPayload.ts', () => ({
 
 import { PostcardComposer } from '../PostcardComposer.tsx';
 
-function asset(kind: 'video' | 'image'): ImagePickerNS.ImagePickerAsset {
+function asset(kind: 'video' | 'image', size: { width: number; height: number } = { width: 1080, height: 1920 }): ImagePickerNS.ImagePickerAsset {
   return {
     uri: kind === 'video' ? 'file:///clip.mp4' : 'file:///photo.jpg',
     type: kind,
     mimeType: kind === 'video' ? 'video/mp4' : 'image/jpeg',
-    width: 1080,
-    height: 1920,
+    width: size.width,
+    height: size.height,
     fileName: kind === 'video' ? 'clip.mp4' : 'photo.jpg',
     fileSize: 2_000_000,
     duration: kind === 'video' ? 12_000 : null,
@@ -114,7 +122,7 @@ function asset(kind: 'video' | 'image'): ImagePickerNS.ImagePickerAsset {
   } as ImagePickerNS.ImagePickerAsset;
 }
 
-async function pickAndPost(kind: 'video' | 'image') {
+async function pickAndPost(kind: 'video' | 'image', size?: { width: number; height: number }, expectComplete = true) {
   const onSuccess = jest.fn();
   const view = await render(<PostcardComposer visible={true} onClose={jest.fn()} onSuccess={onSuccess} />);
   await act(async () => {
@@ -122,14 +130,14 @@ async function pickAndPost(kind: 'video' | 'image') {
   });
   await waitFor(() => expect(resolvePick).not.toBeNull());
   await act(async () => {
-    resolvePick!([asset(kind)]);
+    resolvePick!([asset(kind, size)]);
   });
   await waitFor(() => expect(view.getByText('Post')).toBeTruthy());
   await act(async () => {
     fireEvent.press(view.getByText('Post'));
   });
-  await waitFor(() => expect(mockCompleteUpload).toHaveBeenCalledTimes(1));
-  return { onSuccess };
+  if (expectComplete) await waitFor(() => expect(mockCompleteUpload).toHaveBeenCalledTimes(1));
+  return { onSuccess, view };
 }
 
 describe('PostcardComposer — a video postcard gets a real poster (§37)', () => {
@@ -139,6 +147,7 @@ describe('PostcardComposer — a video postcard gets a real poster (§37)', () =
     mockCompleteUpload.mockClear();
     mockUploadVideoPoster.mockClear();
     mockDiscard.mockClear();
+    mockPrepare.mockClear();
   });
 
   it('extracts and uploads a frame for the reserved slot, and hands /complete the server-derived path', async () => {
@@ -164,5 +173,41 @@ describe('PostcardComposer — a video postcard gets a real poster (§37)', () =
     const { onSuccess } = await pickAndPost('video');
     expect((mockCompleteUpload.mock.calls[0]![2] as { thumbnailPath?: string }).thumbnailPath).toBeUndefined();
     await waitFor(() => expect(onSuccess).toHaveBeenCalled());
+  });
+});
+
+describe('PostcardComposer — the server envelope is enforced on the device (§40 mediaProcessing)', () => {
+  beforeEach(() => {
+    resolvePick = null;
+    mockCompleteUpload.mockClear();
+    mockPrepare.mockClear();
+  });
+
+  it('a photo larger than the server keeps is RESIZED before it travels — the resized file is what uploads', async () => {
+    mockPrepare.mockImplementationOnce(async (a) => ({
+      ok: true, resized: true,
+      asset: { ...a, uri: 'file:///photo.resized.jpg', mimeType: 'image/jpeg', fileName: 'photo.jpg', width: 4096, height: 3072 },
+    }));
+    const { uploadToSignedUrl, getUploadUrl } = jest.requireMock('../../services/postcards.ts') as Record<string, jest.Mock>;
+    uploadToSignedUrl.mockClear();
+    getUploadUrl.mockClear();
+    await pickAndPost('image', { width: 8000, height: 6000 });
+    expect(mockPrepare).toHaveBeenCalledWith(expect.objectContaining({ width: 8000, height: 6000, isVideo: false }));
+    expect(uploadToSignedUrl.mock.calls[0]![1]).toBe('file:///photo.resized.jpg');
+    expect(getUploadUrl.mock.calls[0]![1]).toEqual({ mimeType: 'image/jpeg', fileSizeBytes: 3_300_000 });
+  });
+
+  it('a required resize that FAILS stops the post — the oversized original is never sent', async () => {
+    mockPrepare.mockImplementationOnce(async () => ({ ok: false, message: 'This photo is too large and could not be resized on your device. Try a smaller photo.' }));
+    const { createPostcard } = jest.requireMock('../../services/postcards.ts') as Record<string, jest.Mock>;
+    createPostcard.mockClear();
+    const { view } = await pickAndPost('image', { width: 8000, height: 6000 }, false);
+    await waitFor(() => expect(view.getByText(/could not be resized/)).toBeTruthy());
+    expect(createPostcard).not.toHaveBeenCalled();
+  });
+
+  it('a video is never passed through the image envelope', async () => {
+    await pickAndPost('video');
+    expect(mockPrepare).not.toHaveBeenCalled();
   });
 });

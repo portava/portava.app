@@ -30,8 +30,8 @@ import {
   type UploadCancelRef,
 } from '../services/postcards.ts';
 import { validateMedia } from '../services/media.ts';
-import { uploadVideoPoster } from '../services/media/uploadHttp.ts';
-import { normalizePickedAsset } from '../services/media/mediaProcessing.ts';
+import { readFileBlob, uploadVideoPoster } from '../services/media/uploadHttp.ts';
+import { normalizePickedAsset, prepareImageForUpload } from '../services/media/mediaProcessing.ts';
 import { isResumableMediaUploadEnabled } from '../services/media/uploadTransportFlag.ts';
 import { color, space, radius, type as t, shadow, avatar } from '../theme/tokens.ts';
 import { KeyboardSafeView } from './ui/KeyboardSafeView.tsx';
@@ -278,8 +278,15 @@ export function PostcardComposer({ visible, onClose, onSuccess }: Props) {
     setProgress(0);
     abortedRef.current = false;
 
+    // §40 mediaProcessing — a photo OUTSIDE the server's envelope (longest edge
+    // over 4096 px, or over 15 MB) is resized on this device, so it neither
+    // travels whole only to be resampled nor is refused on arrival. A photo
+    // inside the envelope, and every video, is uploaded untouched.
+    const upload = await withinServerEnvelope(asset);
+    if (!upload) return;
+
     if (isResumableMediaUploadEnabled()) {
-      await postThroughQueue();
+      await postThroughQueue(upload);
       return;
     }
 
@@ -311,8 +318,8 @@ export function PostcardComposer({ visible, onClose, onSuccess }: Props) {
     const postId = postRes.data.id;
 
     const urlRes = await getUploadUrl(postId, {
-      mimeType: asset.mimeType,
-      fileSizeBytes: asset.fileSizeBytes > 0 ? asset.fileSizeBytes : 1,
+      mimeType: upload.mimeType,
+      fileSizeBytes: upload.fileSizeBytes > 0 ? upload.fileSizeBytes : 1,
     });
 
     if (!urlRes.ok || abortedRef.current) {
@@ -328,8 +335,8 @@ export function PostcardComposer({ visible, onClose, onSuccess }: Props) {
 
     const uploadRes = await uploadToSignedUrl(
       uploadUrl,
-      asset.uri,
-      asset.mimeType,
+      upload.uri,
+      upload.mimeType,
       (p) => setProgress(p),
       cancelRef.current,
     );
@@ -346,21 +353,21 @@ export function PostcardComposer({ visible, onClose, onSuccess }: Props) {
     // §37 "Thumbnail generation": a video postcard gets a real poster frame,
     // extracted on this device and stored by the server beside the video (the
     // server has no decoder). Fail-soft — a video without one still posts.
-    const thumbnailPath = asset.isVideo ? await uploadVideoPoster(postId, mediaId, asset.uri) : null;
+    const thumbnailPath = upload.isVideo ? await uploadVideoPoster(postId, mediaId, upload.uri) : null;
     if (abortedRef.current) {
       void discardPostcardShell(postId);
       return;
     }
 
     const completeRes = await completeUpload(postId, mediaId, {
-      mimeType: asset.mimeType,
-      fileSizeBytes: asset.fileSizeBytes > 0 ? asset.fileSizeBytes : 1,
-      durationSeconds: asset.durationSeconds,
-      width: asset.width,
-      height: asset.height,
+      mimeType: upload.mimeType,
+      fileSizeBytes: upload.fileSizeBytes > 0 ? upload.fileSizeBytes : 1,
+      durationSeconds: upload.durationSeconds,
+      width: upload.width,
+      height: upload.height,
       thumbnailPath: thumbnailPath ?? undefined,
       stampOverlay:
-        stampOverlay && !asset.isVideo ? completePayloadFromDraft(stampOverlay) : undefined,
+        stampOverlay && !upload.isVideo ? completePayloadFromDraft(stampOverlay) : undefined,
     });
 
     if (!completeRes.ok) {
@@ -386,6 +393,39 @@ export function PostcardComposer({ visible, onClose, onSuccess }: Props) {
     }
   }
 
+  /** The picked asset, brought inside the server's envelope — or null (error already shown). */
+  async function withinServerEnvelope(picked: PickedAsset): Promise<PickedAsset | null> {
+    if (picked.isVideo) return picked;
+    const prepared = await prepareImageForUpload(
+      normalizePickedAsset({
+        uri: picked.uri,
+        mimeType: picked.mimeType,
+        fileName: picked.fileName,
+        fileSize: picked.fileSizeBytes > 0 ? picked.fileSizeBytes : null,
+        width: picked.width ?? null,
+        height: picked.height ?? null,
+        type: 'image',
+      }),
+    );
+    if (!prepared.ok) {
+      setError(prepared.message);
+      setPhase('pick');
+      return null;
+    }
+    if (!prepared.resized) return picked;
+    // The re-encoded size is what the slot is reserved for — read it, never guess.
+    const resizedBytes = await readFileBlob(prepared.asset.uri).then((b) => b.size, () => 0);
+    return {
+      ...picked,
+      uri: prepared.asset.uri,
+      mimeType: prepared.asset.mimeType,
+      fileName: prepared.asset.fileName,
+      fileSizeBytes: resizedBytes,
+      width: prepared.asset.width ?? undefined,
+      height: prepared.asset.height ?? undefined,
+    };
+  }
+
   function stopWatchingQueue() {
     queueUnsubRef.current?.();
     queueUnsubRef.current = null;
@@ -403,26 +443,25 @@ export function PostcardComposer({ visible, onClose, onSuccess }: Props) {
    * persists it before the first request and resumes it after a closed screen,
    * a backgrounded app or a relaunch. This composer only WATCHES the job.
    */
-  async function postThroughQueue() {
-    if (!asset) return;
+  async function postThroughQueue(upload: PickedAsset) {
     const { getPostcardUploadQueue } = await import('../services/media/postcardUploadQueue.ts');
     const queue = await getPostcardUploadQueue();
     const job = await queue.enqueue({
       asset: normalizePickedAsset({
-        uri: asset.uri,
-        mimeType: asset.mimeType,
-        fileName: asset.fileName,
-        fileSize: asset.fileSizeBytes > 0 ? asset.fileSizeBytes : null,
-        width: asset.width ?? null,
-        height: asset.height ?? null,
-        type: asset.isVideo ? 'video' : 'image',
-        duration: asset.durationSeconds != null ? asset.durationSeconds * 1000 : null,
+        uri: upload.uri,
+        mimeType: upload.mimeType,
+        fileName: upload.fileName,
+        fileSize: upload.fileSizeBytes > 0 ? upload.fileSizeBytes : null,
+        width: upload.width ?? null,
+        height: upload.height ?? null,
+        type: upload.isVideo ? 'video' : 'image',
+        duration: upload.durationSeconds != null ? upload.durationSeconds * 1000 : null,
       }),
       caption: caption.trim() || undefined,
       visibility,
       location: { ...placeToLocationFields(place) },
       addToPassport: true,
-      stampOverlay: stampOverlay && !asset.isVideo ? completePayloadFromDraft(stampOverlay) : undefined,
+      stampOverlay: stampOverlay && !upload.isVideo ? completePayloadFromDraft(stampOverlay) : undefined,
     });
     if (!job) {
       setError('Please sign in to continue');
