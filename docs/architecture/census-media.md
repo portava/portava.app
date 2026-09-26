@@ -6277,6 +6277,36 @@ an error.
 
 The file passes 24/24 on Node 22 and Node 24.
 
+### 28.13 `DELETE /media/:id` told a stranger which ids exist (found by lane J, §30.11 item 5)
+
+**The defect.** The legacy owner delete answered a non-owner **403**
+("Only the owner can delete this post", or "… this item" for a Hidden Gem),
+and a missing id **404**. So any signed-in caller could learn which post and
+Hidden Gem ids exist, including those of private posts. The byte gate and the
+§30 retry already give a stranger the same answer as a missing id.
+
+**The fix.** A non-owner now gets exactly the missing-id answer, `not_found`,
+for a post
+(`artifacts/api-server/src/routes/mediaFeed.ts:2582#if ((postRow as any).author_id !== user.id) { sendError(res, "not_found", "Media item not found"); return; }`)
+and for a Hidden Gem (line 2597). Both edits are in place, and the old answer
+survives in a trailing comment, so §30.11's citation still reads. The only
+client caller (`MediaMoreMenu`) reads `result.ok` and is offered to owners
+only, so nothing it shows changes.
+
+**Tests and mutations.** No test covered this route before. The new tests are
+at `artifacts/api-server/src/test/mediaFeed.test.ts` §28.13:
+- a stranger's delete of someone else's post returns the same status and body
+  as a missing id, and writes nothing;
+- the same for a Hidden Gem;
+- a CONTROL: the owner still deletes.
+
+| # | Mutation | Red |
+| --- | --- | --- |
+| D-M1 | the post branch answers `forbidden` again | the post case |
+| D-M2 | the gem branch answers `forbidden` again | the gem case |
+
+All 86 cases in the file pass.
+
 ## 29. Lane I — the Media Map draws its covers from the cache, and Search asks 'near' — 2026-09-26
 
 §24 built the server and client-service halves of MD300 and MD288, and left
@@ -6886,7 +6916,7 @@ All were run from `artifacts/api-server` on the final tree.
    The test is not this lane's file. The re-queue's values are asserted here,
    against the migrations' columns, in "re-queues a FAILED asset (terminal or
    not)…".
-5. **The legacy owner delete still distinguishes "exists" from "not yours".**
+5. **The legacy owner delete still distinguishes "exists" from "not yours".** (**Fixed in §28.13.**)
    `DELETE /media/:id` answers a non-owner 403
    (`artifacts/api-server/src/routes/mediaFeed.ts:2582#sendError(res, "forbidden", "Only the owner can delete this post"); return; }`)
    and a missing id 404. That lets a caller tell which post ids exist. It is

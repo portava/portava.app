@@ -2579,7 +2579,7 @@ router.delete("/media/:id", asyncHandler(async (req, res) => {
     .maybeSingle();
 
   if (postRow) {
-    if ((postRow as any).author_id !== user.id) { sendError(res, "forbidden", "Only the owner can delete this post"); return; }
+    if ((postRow as any).author_id !== user.id) { sendError(res, "not_found", "Media item not found"); return; } // census-media §28.13: a stranger gets what a missing id gets (was: sendError(res, "forbidden", "Only the owner can delete this post"); return; })
     const { error } = await sc.from("posts").update({ status: "deleted" }).eq("id", id);
     if (error) { req.log.error({ err: error }, "post delete failed"); sendError(res, "db_error", error.message); return; }
     res.json({ ok: true, mediaId: id, deleted: true });
@@ -2594,7 +2594,7 @@ router.delete("/media/:id", asyncHandler(async (req, res) => {
     .maybeSingle();
 
   if (!gemRow) { sendError(res, "not_found", "Media item not found"); return; }
-  if ((gemRow as any).submitted_by !== user.id) { sendError(res, "forbidden", "Only the owner can delete this item"); return; }
+  if ((gemRow as any).submitted_by !== user.id) { sendError(res, "not_found", "Media item not found"); return; } // census-media §28.13 (was: "forbidden", "Only the owner can delete this item")
 
   const { error } = await sc.from("hidden_gems").update({ status: "deleted" }).eq("id", id);
   if (error) { req.log.error({ err: error }, "hidden_gem delete failed"); sendError(res, "db_error", error.message); return; }
