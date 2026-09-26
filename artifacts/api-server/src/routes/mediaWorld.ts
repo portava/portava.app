@@ -8,7 +8,7 @@
  *   GET /api/media/me                         §30   owner library (My World)
  *   GET /api/media/timeline                   §17   Earlier / Now rails (observed only, no forecast)
  *   GET /api/media/map                        §21   perspective counts per canonical place
- *   GET /api/media/search                     §38   media / places / people / gems / experiences
+ *   GET /api/media/search                     §38   media / places / people / gems / experiences / events / trips
  *   GET /api/media/gems                       §16   Hidden Gems lens — derived gem state, not a feed
  * ADDITIVE. These are NEW routes and touch NO existing media serving
  * (mediaFeed.ts is unchanged). They are registered BEFORE mediaFeedRouter in
@@ -344,7 +344,7 @@ router.get(
       },
       nowMs,
     );
-    await sendProjection(res, "search", results, { sc, viewerId: auth.user.id });
+    await sendProjection(res, "search", withCanonicalKinds(results, await searchCanonicalEventsAndTrips(sc, viewer, { q: str(req.query.q), scope }, nowMs)), { sc, viewerId: auth.user.id }); // §38 events + trips by name (census-media §19, MD294)
   }),
 );
 
@@ -420,5 +420,12 @@ router.get(
     await sendProjection(res, "gems", projection, { sc, viewerId: auth.user.id });
   }),
 );
+
+// §38 EVENTS and TRIPS result kinds, used by `GET /media/search` above
+// (census-media §19, MD294). Imported HERE, below every anchored line, for the
+// same reason as the gems route's imports: an import added at the top of this
+// file would move `"/media/search"` and `sendProjection(res,` off the lines
+// census-media anchors them to. ESM hoists it either way.
+import { searchCanonicalEventsAndTrips, withCanonicalKinds } from "../services/media/MediaSearchService.js";
 
 export default router;

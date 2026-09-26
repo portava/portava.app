@@ -71,6 +71,8 @@ interface GemOverrides {
   visit_count?: number;
   updated_at?: string;
   canonical_place_id?: string | null;
+  /** The gem's own image (census-media §19, MD33 — the lens's Visual mode). */
+  image_url?: string | null;
   /** Deliberately present so the "no coordinates" assertions are meaningful. */
   withCoords?: boolean;
 }
@@ -97,6 +99,7 @@ function makeGem(o: GemOverrides = {}): Record<string, any> {
     created_at: isoAgo(400),
     updated_at: o.updated_at ?? isoAgo(400),
   };
+  if (o.image_url !== undefined) row.image_url = o.image_url;
   // hidden_gems carries exact AND approximate coordinates. The lens must never
   // read them; putting them on every fixture is what makes (4) falsifiable.
   if (o.withCoords !== false) {
@@ -273,5 +276,34 @@ describe("MD360 — GET /media/gems serves a §16 gem-STATE projection", () => {
       out.undetermined.includes("gemState"),
       "a gem state derived from an unreadable aggregate must be declared undetermined",
     );
+  });
+
+  it("MD33 — carries a disclosable gem's OWN image for Visual mode, and no image of a hidden one", async () => {
+    // census-media §19: the lens's Visual mode draws the gem's submitted image.
+    // The image rides only on a gem `mayDiscloseGemIdentity` allowed; a
+    // protected gem's image URL must not appear anywhere in the payload.
+    const shown = makeGem({ id: "shown", image_url: "https://cdn.example.test/gems/shown.jpg" });
+    const bare = makeGem({ id: "bare" });
+    const hidden = makeGem({
+      id: "hidden",
+      sensitivity_level: "protected",
+      image_url: "https://cdn.example.test/gems/hidden.jpg",
+    });
+    const out = await buildGemStateProjection(
+      clientWith([shown, bare, hidden]),
+      viewer(),
+      { city: "Da Nang" },
+      NOW,
+    );
+    const byId = new Map(out.gems.map((g) => [g.gemId, g]));
+    assert.equal(byId.get("shown")?.imageUrl, "https://cdn.example.test/gems/shown.jpg");
+    assert.equal(byId.get("bare")?.imageUrl, null, "no image is null, never an invented one");
+    assert.equal(byId.has("hidden"), false);
+    assert.equal(
+      JSON.stringify(out).includes("hidden.jpg"),
+      false,
+      "an undisclosable gem's image must not leak through the lens",
+    );
+    assert.equal(isLocationSafe(out), true, "an image URL is not a coordinate, and none rides with it");
   });
 });

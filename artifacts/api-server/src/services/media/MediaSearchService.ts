@@ -425,3 +425,150 @@ export async function searchMedia(
     undetermined,
   };
 }
+
+// ── §38 result types EVENTS and TRIPS, found by what they ARE ────────────────
+//
+// census-media MD294 (§19 of that document). The five kinds above reach an
+// event or a trip only as an `experience`, and only through a MATCHED POST's
+// `trip_id` — so a search could not return an event nobody had photographed,
+// or a trip with no perspectives. MD294's falsifier, verbatim: "a search that
+// finds the Beach Festival because it is called Beach Festival, not because
+// somebody photographed it."
+//
+// APPENDED AT THE END OF THE FILE ON PURPOSE: census-media anchors citations at
+// `searchMedia` and `MediaSearchResults` above, and nothing may move them.
+//
+// NOT A NEW GATE. Candidates are found by title in the canonical `events` and
+// `trips` tables, and every candidate is then passed through
+// `resolveExperience` — the SAME per-kind visibility gate `GET
+// /media/experiences/:id` uses (public-or-participant plus
+// `checkEventEligibility` for events; public-or-owner-or-member for trips). A
+// candidate the viewer may not see resolves to null and is dropped whole: no
+// id, no title. The title read itself never leaves the server.
+
+/** At most this many of each kind are gated per search — each gate is its own read. */
+const MAX_CANONICAL_PER_KIND = 3;
+/** Candidate page read by title before gating. */
+const CANONICAL_CANDIDATE_LIMIT = 10;
+
+export interface MediaSearchCanonicalResult {
+  id: string;
+  kind: "event" | "trip";
+  title: string | null;
+  startedAt: string | null;
+  expectedEndAt: string | null;
+  placeIds: string[];
+  /** Perspectives the viewer may see — 0 is a real answer: found by name, not by photo. */
+  perspectiveCount: number;
+  freshness: FreshnessState;
+}
+
+export interface MediaSearchCanonicalKinds {
+  events: MediaSearchCanonicalResult[];
+  trips: MediaSearchCanonicalResult[];
+  /** "events" / "trips" when that kind could not be determined on this request. */
+  undetermined: string[];
+}
+
+/** A title term safe inside a PostgREST `ilike` pattern: wildcard and list syntax removed. */
+export function canonicalTitleTerm(q: string | null): string | null {
+  if (!q) return null;
+  const t = q.replace(/[%_\\,()*]/g, " ").replace(/\s+/g, " ").trim();
+  return t.length >= 2 ? t : null;
+}
+
+/**
+ * Events and trips whose TITLE matches the free-text term, each gated through
+ * `resolveExperience`. Only for `scope: "all"` — a "my world" or "this trip"
+ * search is about the viewer's media, not about the world's events.
+ */
+export async function searchCanonicalEventsAndTrips(
+  sc: SupabaseClient,
+  viewer: ViewerResolved,
+  query: Pick<MediaSearchQuery, "q" | "scope">,
+  nowMs: number,
+): Promise<MediaSearchCanonicalKinds> {
+  const out: MediaSearchCanonicalKinds = { events: [], trips: [], undetermined: [] };
+  const scope: MediaSearchScope = query.scope === "me" || query.scope === "trip" ? query.scope : "all";
+  const term = canonicalTitleTerm(normalizeSearchTerm(query.q));
+  if (!term || scope !== "all") return out;
+
+  const candidates = async (table: "events" | "trips"): Promise<string[] | null> => {
+    try {
+      const { data, error } =
+        table === "events"
+          ? await (sc as any)
+              .from("events")
+              .select("id")
+              .not("state", "in", '("draft","cancelled","archived")')
+              .ilike("title", `%${term}%`)
+              .limit(CANONICAL_CANDIDATE_LIMIT)
+          : await (sc as any)
+              .from("trips")
+              .select("id")
+              .ilike("title", `%${term}%`)
+              .limit(CANONICAL_CANDIDATE_LIMIT);
+      if (error || !Array.isArray(data)) return null;
+      return (data as any[])
+        .map((r) => (typeof r?.id === "string" ? r.id : null))
+        .filter((id): id is string => !!id && UUID_RE.test(id));
+    } catch {
+      return null;
+    }
+  };
+
+  for (const kind of ["event", "trip"] as const) {
+    const ids = await candidates(kind === "event" ? "events" : "trips");
+    const list = kind === "event" ? out.events : out.trips;
+    if (ids === null) {
+      out.undetermined.push(kind === "event" ? "events" : "trips");
+      continue;
+    }
+    for (const id of ids) {
+      if (list.length >= MAX_CANONICAL_PER_KIND) break;
+      let exp: MediaExperienceProjection | null = null;
+      try {
+        exp = await resolveExperience(sc, viewer, id, nowMs);
+      } catch {
+        const key = kind === "event" ? "events" : "trips";
+        if (!out.undetermined.includes(key)) out.undetermined.push(key);
+        continue;
+      }
+      // The gate said no, or the id resolved to the OTHER kind: not a result here.
+      if (!exp || exp.kind !== kind) continue;
+      list.push({
+        id: exp.id,
+        kind: exp.kind,
+        title: exp.title,
+        startedAt: exp.startedAt,
+        expectedEndAt: exp.expectedEndAt,
+        placeIds: exp.placeIds,
+        perspectiveCount: exp.perspectiveCount,
+        freshness: exp.freshness,
+      });
+    }
+  }
+  return out;
+}
+
+/**
+ * Fold the canonical kinds into a search response. The five existing lists are
+ * untouched; `events` / `trips` and their totals are added, and their
+ * undetermined names join the response's own.
+ */
+export function withCanonicalKinds(
+  results: MediaSearchResults,
+  kinds: MediaSearchCanonicalKinds,
+): MediaSearchResults & {
+  events: MediaSearchCanonicalResult[];
+  trips: MediaSearchCanonicalResult[];
+  totals: MediaSearchResults["totals"] & { events: number; trips: number };
+} {
+  return {
+    ...results,
+    events: kinds.events,
+    trips: kinds.trips,
+    totals: { ...results.totals, events: kinds.events.length, trips: kinds.trips.length },
+    undetermined: [...results.undetermined, ...kinds.undetermined.filter((u) => !results.undetermined.includes(u))],
+  };
+}
