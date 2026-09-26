@@ -121,7 +121,7 @@ export function MediaPlacesScreen({
           <MapPin size={18} color={color.onInkMute} strokeWidth={2} />
           <View style={{ flex: 1 }}>
             <Text style={styles.placeName}>{z.name}</Text>
-            <Text style={styles.placeState}>{zoneSubtitle(z)}</Text>
+            <Text style={styles.placeState}>{zoneSubtitle(z)}</Text><ZoneUncertainty zone={z} />
           </View>
           <ChevronRight size={18} color={color.faint} strokeWidth={2} />
         </Pressable>
@@ -237,12 +237,12 @@ function PlaceDetail({
           onOpenCluster={onOpenCluster}
         />
       ) : state.status !== 'ready' || !view ? (
-        <LensStateView
+        <><LensStateView
           status={state.status === 'idle' ? 'loading' : state.status}
           title="No current picture yet"
           message="When people share perspectives from here, the current view appears."
           onRetry={reload}
-        />
+        />{state.status === 'empty' ? <PlaceMissionPrompt placeId={placeId} placeName={placeName} city={city} consensus={null} onContribute={onContribute} /> : null}</>
       ) : (
         <ScrollView contentContainerStyle={styles.detailContent} showsVerticalScrollIndicator={false}>
           <View style={styles.pictureBlock}>
@@ -261,7 +261,7 @@ function PlaceDetail({
                 ? ` · updated ${relativeAgeLabel(view.currentPicture.ageMinutes)}`
                 : ''}
             </Text>
-          </View>
+          </View><PlaceMissionPrompt placeId={placeId} placeName={view.placeName ?? placeName} city={city} consensus={view.consensus ?? null} onContribute={onContribute} />
 
           {view.heroMedia[0] ? (
             <View style={styles.heroStripBlock}>
@@ -353,3 +353,74 @@ function PictureCaveats({ cachedLabel, consensus }: { cachedLabel: string | null
 
 import { useOfflineLens } from '../../../services/media/useOfflineLens.ts';
 import { uncertaintyBanner, type VisualConsensusView } from '../../../services/media/mediaIntelligence.ts';
+
+// ── census-media §26: §18 on the zone list, and the §19 prompt on the place view ──
+// Appended at the TAIL, with their imports, so no line above moves: census-media
+// cites this file by line (MD13, MD31, and §19–§22's evidence).
+
+/**
+ * MD152 on the Places lens overview: the zone's §18 "Mixed reports" line under
+ * its sub-line, exactly when the server's zone consensus says its reports
+ * disagree (features/media/services/mediaProjection.ts `zoneUncertainty`).
+ */
+function ZoneUncertainty({ zone }: { zone: CityVisualZone }) {
+  if (!zone.uncertaintyLabel) return null;
+  return (
+    <Text style={tailStyles.zoneUncertainty} accessibilityRole="alert" testID={`places-zone-uncertainty-${zone.id}`}>
+      {zone.uncertaintyLabel}
+    </Text>
+  );
+}
+
+/**
+ * MD153 — §19's prompt on the §13 Place Current View, where the spec's "Last
+ * visual update Nm ago" belongs and where the server's §18
+ * `requestAnotherObservation` arrives. The prompt is dark unless
+ * `media_request_a_view_enabled` is on, and it renders only for a canonical
+ * place (the coverage read is keyed by a places.id UUID). Its three actions:
+ *   - Take a photo → this lens's existing §4 contribution flow (`onContribute`);
+ *   - Say how busy it is → the existing Quick Signal composer for this place,
+ *     which keeps its own flag, consent gate and private default;
+ *   - ask nearby contributors → §19 Request a View (POST /media/view-requests).
+ */
+function PlaceMissionPrompt({
+  placeId,
+  placeName,
+  city,
+  consensus,
+  onContribute,
+}: {
+  placeId: string;
+  placeName: string;
+  city: string | null;
+  consensus: VisualConsensusView | null;
+  onContribute?: (placeId: string) => void;
+}) {
+  if (!UUID_RE.test(placeId)) return null;
+  return (
+    <View style={tailStyles.missionWrap}>
+      <RequestAViewPrompt
+        placeId={placeId}
+        city={city}
+        requestAnotherObservation={consensus?.requestAnotherObservation === true}
+        onTakePhoto={onContribute ? () => onContribute(placeId) : undefined}
+        onAnswerNow={() =>
+          router.push({
+            pathname: '/intel/quick-signal',
+            params: { subjectId: placeId, subjectName: placeName, context: 'arrival' },
+          } as never)
+        }
+        tone="ink"
+      />
+    </View>
+  );
+}
+
+const tailStyles = StyleSheet.create({
+  zoneUncertainty: { ...typography.label, color: color.warn, marginTop: space.xs },
+  missionWrap: { paddingHorizontal: space.lg },
+});
+
+import { router } from 'expo-router';
+import { typography } from '../../../theme/tokens.ts';
+import { RequestAViewPrompt } from '../components/RequestAViewPrompt.tsx';
