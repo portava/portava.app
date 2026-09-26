@@ -6149,3 +6149,73 @@ declaration rather than letting this section imply it.
 `check:rank-events-surfaces`). **Exit 2 is UNVERIFIED, not green**, and nothing
 above rests on any of them. No verdict in this section moves, so the §43.5
 headline stands unchanged at C 82 / W 82 / N 21 / X 3.
+
+---
+
+## §45 — 2026-09-26: the candidate grew a `coverage` field, and A03 still does not move
+
+**Re-measured, not acknowledged.** `check:census-freshness` named two counted
+files changed since `1fe72289b` and not covered:
+`lib/discoveryCandidate.ts` (+190 / −2) and its test (+141).
+
+**NO VERDICT MOVES.**
+
+### §45.1 What was actually added
+
+The Sensing lane's S49 / §24 conservative arm. `DiscoveryCandidate` gained a
+`coverage: CoverageBucket` field, and `coverageForCandidate` decides it by
+running a real protected-zone pass: it builds a `social_zone` probe, asks
+`classifyAgainstProtected`, and **withholds on every non-`allow` answer**,
+including when no pass ran at all. There is deliberately no coarser fallback —
+`few` over a protected place still says people were there.
+
+This is a substantive addition, and it is the arm that needed no owner ruling:
+a `coverage` on Discovery for a place whose `coverage` the Map withholds is
+impossible by construction, because this path publishes a bucket only where a
+pass cleared the row.
+
+### §45.2 Reachability, checked rather than assumed
+
+It is **production-reachable**, and it is worth writing down how, because a
+first grep says otherwise. `coverageForCandidate` has no caller under a name
+search that excludes its own file — it is called at
+`lib/discoveryCandidate.ts:436#coverage:` inside the projection, and the
+projection's only entry point is `withDiscoveryCandidates`, which
+`routes/discovery.ts:1889#const` calls on the serve path. A search that skips
+the defining module concludes "tests only", which is wrong.
+
+The test file records the defect this replaced, and it is the sharper half of
+the story: the function was reachable BEFORE this change too, but **no caller
+supplied the zones or the positions**, so it took `pass_did_not_run` every
+time and every served `coverage` read `unknown` — *"a §24 control that could
+not be observed to do anything, which is indistinguishable from one that is not
+there"*. The wrappers now load the policy and index the positions themselves.
+
+### §45.3 Why A03 does not move
+
+**A03 stays `W`.** Its verdict does not turn on which fields the candidate
+carries; it turns on whether any deployment serves them. The row's own last
+statement is that it is **doubly deployment-gated**, and both gates were
+re-read on the live CI database today:
+
+| Flag | Migration | Value on portava-ci, 2026-09-26 |
+|---|---|---|
+| `discovery_candidate_projection_enabled` | 2361 | **false** |
+| `discovery_live_rank_enabled` | 2850 | **false** |
+
+So `whyNow` is still null on every row in every deployment, and `coverage` is
+still served by nothing. Adding a correct field behind a closed gate changes
+what the row would be worth if the gate opened; it does not change the row.
+
+### §45.4 What this section is NOT claiming
+
+The §24 arm is graded in **census-sensing S49**, not here. This census counts
+the file, so the change ages it and had to be read; the verdict that the arm
+was correctly taken belongs to the census that owns the requirement. Nothing
+above should be quoted as this census ratifying S49.
+
+### §45.5 MOVES NOTHING
+
+Totals unchanged. A03 stays `W` on the flags, not on absence — and the
+distinction matters, because it is the difference between a row waiting for a
+build and a row waiting for a deployment.

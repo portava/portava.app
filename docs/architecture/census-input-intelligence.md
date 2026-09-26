@@ -611,7 +611,7 @@ A typed `da nang` matches BOTH through `search_key` and only the first through `
 | G133 | Telegraph actions: share Place, meeting point, Trip stop, Event, media, location when permitted | **N** | **NOT MOVED.** Re-measured: `type: 'share_entity'` still has no producer anywhere outside the type declarations, and `telegraph_message` still has a registered policy and **no registered field**, so the context is unreachable from any screen. (This branch adds `share_entity` to a §48 capability VOCABULARY at `artifacts/api-server/src/lib/inputAssistance/compatibility.ts:79#'share_entity',` — a membership set, not a producer. The row is unaffected.) **WHY REGISTERING THE FIELD WOULD NOT CLOSE IT:** a `registerField('telegraph.message', 'telegraph_message')` with no composer rendering an assisted input is another declaration with no consumer, which is the §6 failure mode this same document scores four times over. The row needs a producer for `share_entity` AND a Telegraph composer that renders the shared overlay — two builds in another lane's screens. |
 | G134 | Search actions: Add to Trip, Save, Open Map, Ask Compass, Start directions | W | **NOT MOVED — still one of five end-to-end.** Save, Open Map and Start directions still have no producer anywhere in `lib/`. What changed is only the honesty of the `open_compass` half: the client's silent drop is now a DECLARED capability (`travel-buddy-standalone/src/platform/input-assistance/contexts/clientCapabilities.ts:117#export const GLOBAL_SEARCH_CAPABILITIES`), so the serve stops building a row the search bar was always going to discard — §48/G343's negotiation. **That does not move this row and must not be read as progress on it:** the requirement is five dispatchable search actions and the count is unchanged at one. A client that DOES declare `open_compass` still receives the row, so the producer is intact for whoever builds the dispatch target. **WHAT WOULD TURN THIS RED:** a dispatcher on the search screen for `open_compass`, plus producers for Save, Open Map and Start directions. |
 | G135 | Trip actions: add stop, reorder plan, add destination, invite Crew | **N** | **NOT MOVED**, re-measured: no producer for any of the four, and `SuggestionAction` still has no variant that could carry them — a search of `lib/` for `add_stop`, `reorder_plan`, `add_destination` or `invite_crew` returns nothing. This is the widest of the §21 gaps: it needs four new members of the §43 action union, four producers in `semanticIntent.ts`, and four dispatch targets on the Trip screens, and every one of them is a write path with its own authorization (§47). Not attempted this pass. |
-| G136 | Hidden Gem actions: drop pin, use approximate area, confirm existing Gem, add new Gem | W | **NOT MOVED — still two of four.** Re-measured: no producer in `lib/inputAssistance/` for "use approximate area" or "add a new Gem" (the `approximate_area` hits in the tree are `circleResponseShaper.ts` and `locationPurposes.ts`, the Circles visibility mode, a different feature that happens to share the phrase — and citing it here would be exactly the wrong-symbol citation `check:citation-symbols` exists to catch). Drop-pin and confirm-existing are unchanged and real. **WHAT WOULD TURN THIS RED:** an `approximate_area` structured value over the gem's city or neighbourhood, and an "add a new Gem" action row on the no-match path — the latter is §37's "Add a new Place" too, so the two rows close together or not at all. |
+| G136 | Hidden Gem actions: drop pin, use approximate area, confirm existing Gem, add new Gem | W | **NOT MOVED — still two of four.** Re-measured: no producer in `lib/inputAssistance/` for "use approximate area" or "add a new Gem" (the `approximate_area` hits in the tree are `circleResponseShaper.ts`, `locationPurposes.ts`, `compass/CompassSocialEngine.ts` and `routes/circle.ts` — CORRECTED 2026-09-26 by §33, which found four where this row said two; all four are the Circles visibility mode, a different feature that happens to share the phrase — and citing it here would be exactly the wrong-symbol citation `check:citation-symbols` exists to catch). Drop-pin and confirm-existing are unchanged and real. **WHAT WOULD TURN THIS RED:** an `approximate_area` structured value over the gem's city or neighbourhood, and an "add a new Gem" action row on the no-match path — the latter is §37's "Add a new Place" too, so the two rows close together or not at all. |
 | G137 | Compass action: convert a phrase into a structured request/action with referenced entities | C | `semanticIntent.ts:231-268` — an editable `ai_suggestion` row whose action is `open_compass` carrying the parsed structure, and `projection.ts:283-288` attaches coarse `{surface, city, cityId, tripId}` refs to every starter. |
 
 ### §22 AI-Assisted Writing
@@ -5083,3 +5083,65 @@ wherever else that helper is used with a partial override.
   sentences are constrained where the requirement constrains them — no retry
   promise, no claim of freshness, no "no matches" — and are otherwise a
   judgement.
+
+---
+
+## §33 — 2026-09-26: the one counted file that moved, and the sentence it made wrong
+
+**Re-measured against the integrated tree, not acknowledged.** `check:census-freshness`
+named exactly one counted file changed since `a97bfdac0` and not covered:
+`artifacts/api-server/src/lib/circleResponseShaper.ts` (+157 / −8).
+
+**NO VERDICT MOVES. One evidence sentence was wrong and is corrected.**
+
+### §33.1 What changed in that file, and why it is not this census's work
+
+The diff is the §52 presence-fusion rewiring from the Sensing lane. The module
+used to decide, by itself, how revealing a circle member's row was allowed to
+be; it now turns the row into a `PresenceClaim`, hands it to
+`presenceFusion.admit`, and gates every label on the rung the store returns. The
+arithmetic is unchanged. Nothing in it touches input assistance.
+
+### §33.2 The only row it could bear on, re-read
+
+**G136** — *Hidden Gem actions: drop pin, use approximate area, confirm
+existing Gem, add new Gem* — is the one row in this census that mentions the
+file, and it mentions it as an EXCLUSION: the `approximate_area` hits are the
+Circles visibility mode, "a different feature that happens to share the phrase".
+
+Re-read against the current tree, both halves of G136's W still hold, measured:
+
+- `grep -rn approximate_area src/lib/inputAssistance/` → **no match**. There is
+  still no producer for "use approximate area" on a Hidden Gem.
+- No `add_new_gem` / `addNewGem` producer anywhere outside tests. The "add a new
+  Gem" action is still absent.
+
+So G136 stays **W**, two of four, and its RED WHEN is unchanged.
+
+### §33.3 The correction: the row named two files and there are four
+
+G136 says *"the `approximate_area` hits in the tree are `circleResponseShaper.ts`
+and `locationPurposes.ts`"*. **That is now false.** The current set is four:
+
+| File | What the occurrence is |
+|---|---|
+| `lib/circleResponseShaper.ts` | the visibility-mode → presence-rung table |
+| `lib/locationPurposes.ts` | as before |
+| `compass/CompassSocialEngine.ts` | `approximateArea` field, commented *"Approximate area ONLY (visibility mode approximate_area)"*, populated only when `mode === "approximate_area"` |
+| `routes/circle.ts` | a zod `z.enum` of the Circles visibility modes, three times |
+
+Both new sites were opened and read. Both are the **same Circles visibility
+mode** the row already excluded — neither is a Hidden Gem producer — so the
+exclusion's CONCLUSION is not merely intact, it is better supported than when
+it was written. What was wrong was the enumeration, and an enumeration in a
+census is a claim like any other: a reader checking G136 by grepping would have
+found four hits where the row promised two and had no way to tell whether the
+extra two were the counterexample.
+
+The sentence is corrected in place rather than moved, per LAST-STATEMENT-WINS.
+
+### §33.4 MOVES NOTHING
+
+Verdict totals unchanged. This section exists because a file this census counts
+changed, and the honest response to that is to re-read the row it touches and
+say what was found — which here is one intact verdict and one stale sentence.
