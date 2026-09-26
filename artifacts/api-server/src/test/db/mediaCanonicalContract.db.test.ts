@@ -18,6 +18,8 @@
  *          update lib/mediaAssets.casUpdateMediaAsset exists to detect.
  *   MD44   one asset, one storage key, many product objects: the attachment
  *          rows fan out while the file's row stays single.
+ *   MD274  (migration 3321) the moderation default is §36 'processing' and a
+ *          legacy spelling written by any writer is STORED as its §36 meaning.
  *
  * ANTI-VACUITY: every refusal case is paired with an admission case on the
  * same table in the same test, so a missing table or a broken seed fails
@@ -51,7 +53,7 @@ function refused(sql: string): string {
   return r.stderr;
 }
 
-describe("census-media §20 — migration 3320, executed", { skip: !HAVE_DB }, () => {
+describe("census-media §20 — migrations 3320 and 3321, executed", { skip: !HAVE_DB }, () => {
   before(() => {
     U = seedUser("md3320");
   });
@@ -147,6 +149,37 @@ describe("census-media §20 — migration 3320, executed", { skip: !HAVE_DB }, (
       scalar(`SELECT provenance->'editHistory'->0->>'op' FROM public.media_assets WHERE id = '${asset}'`),
       "crop",
     );
+  });
+
+  it("MD274 (3321) — the default is §36 and a legacy spelling is STORED as its §36 meaning", () => {
+    const fresh = seedAsset();
+    assert.equal(scalar(`SELECT moderation_status FROM public.media_assets WHERE id = '${fresh}'`), "processing",
+      "a new asset starts in §36 'processing', not the legacy 'pending'");
+    // The DECLARED default too, not only its effect: the normalising trigger
+    // would mask a legacy default on INSERT (mutation D7b survived until this
+    // line existed), and a later rollback of the trigger alone must not bring
+    // 'pending' back.
+    assert.match(
+      scalar(`SELECT column_default FROM information_schema.columns
+               WHERE table_schema = 'public' AND table_name = 'media_assets' AND column_name = 'moderation_status'`) ?? "",
+      /^'processing'/,
+    );
+    // A writer that still speaks the legacy vocabulary, on INSERT…
+    const legacy = randomUUID();
+    exec(`INSERT INTO public.media_assets
+            (id, owner_user_id, uploader_user_id, storage_bucket, storage_path, media_type, mime_type, width, height, moderation_status)
+          VALUES ('${legacy}', '${U}', '${U}', 'post-media', '${U}/${legacy}.jpg', 'image', 'image/jpeg', 800, 600, 'approved');`);
+    assert.equal(scalar(`SELECT moderation_status FROM public.media_assets WHERE id = '${legacy}'`), "active");
+    // …and on UPDATE.
+    exec(`UPDATE public.media_assets SET moderation_status = 'flagged' WHERE id = '${legacy}';`);
+    assert.equal(scalar(`SELECT moderation_status FROM public.media_assets WHERE id = '${legacy}'`), "limited");
+    exec(`UPDATE public.media_assets SET moderation_status = 'pending' WHERE id = '${legacy}';`);
+    assert.equal(scalar(`SELECT moderation_status FROM public.media_assets WHERE id = '${legacy}'`), "processing");
+    // §36 values pass through untouched, and the CHECK still refuses nonsense.
+    exec(`UPDATE public.media_assets SET moderation_status = 'owner_deleted' WHERE id = '${legacy}';`);
+    assert.equal(scalar(`SELECT moderation_status FROM public.media_assets WHERE id = '${legacy}'`), "owner_deleted");
+    const err = refused(`UPDATE public.media_assets SET moderation_status = 'banana' WHERE id = '${legacy}';`);
+    assert.match(err, /moderation_status/);
   });
 
   it("MD44 — one asset, many product objects, one file row", () => {

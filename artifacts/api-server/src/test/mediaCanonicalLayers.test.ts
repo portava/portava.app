@@ -568,6 +568,20 @@ describe("MD339 — the canonical asset on the read path, and the override on th
     assert.equal(out[0]!.url, "post-media/open.jpg");
   });
 
+  it("when the only surviving canonical asset is not servable, the item is DROPPED — never served from post_media", async () => {
+    // Found by mutation M10: with the legacy branches left in place, this row
+    // fell through to post_media and served a file the override had withheld.
+    const { client } = db({
+      readFlag: true,
+      attachments: [
+        attachment({ position: 0, visibility_override: "private", media_assets: assetRow({ id: "ma-private" }) }),
+        attachment({ position: 1, visibility_override: null, media_assets: assetRow({ id: "ma-processing", processing_status: "processing" }) }),
+      ],
+    });
+    const out = await projectCandidatesProtected(client, viewer(), [postRow()], NOW);
+    assert.equal(out.length, 0, "post_media holds the same file the private attachment withheld");
+  });
+
   it("does not mutate the caller's rows beyond the attach", async () => {
     const { client } = db({ readFlag: true, attachments: [attachment({ visibility_override: "private" })] });
     const rows = [postRow()];

@@ -1155,7 +1155,7 @@ export interface QuickMediaItem {
 /** moderation states that must never reach a social surface (media_assets). */
 const QUICK_MEDIA_BLOCKED_MODERATION: ReadonlySet<string> = new Set([
   "rejected",
-  "flagged",
+  "flagged", "limited", // §36 'limited' = restricted distribution; 'flagged' is STORED as 'limited' once 3321 lands (census-media §20)
   "removed",
   "owner_deleted",
 ]);

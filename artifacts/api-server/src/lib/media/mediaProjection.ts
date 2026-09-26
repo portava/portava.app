@@ -459,10 +459,16 @@ function projectionLayers(row: MediaCandidateRow, media: ResolvedMedia, nowMs: n
     post: row as { location_source?: unknown; location_verified?: unknown; geotag_verified?: unknown },
     contributor: contributor ? { verified: contributor.verified, isOfficial: contributor.isOfficial } : null,
   });
+  // §10 locationConfidence is a property of the (asset, post) PAIR — the same
+  // file tagged by a verified GPS fix in one post and a typed venue in another
+  // is not equally well located — so the post's basis is folded in here, at
+  // read, and never written back onto the asset.
   const eligibility = canonical
     ? evaluateEvidenceEligibility({
         source_type: canonical.sourceType,
-        provenance: canonical.provenance,
+        provenance: canonical.provenance
+          ? { ...canonical.provenance, locationBasis: canonical.provenance.locationBasis ?? provenance.locationBasis ?? undefined }
+          : null,
         captured_at: canonical.capturedAt ?? null,
         now: nowMs,
       })
