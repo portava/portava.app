@@ -18,6 +18,11 @@
  *
  * `initialScope: 'me'` makes this "Search my world" (§30): only the viewer's
  * own media, through the loader's owner path.
+ *
+ * The §38 example queries are askable as the server answers them: "Show my
+ * Bangkok rooftop photos" is the term plus the separate city criterion under
+ * `scope=me`; "Show festival media from my Vietnam Trip" is a Trip result
+ * searched WITHIN (`scope=trip` + that trip's id, gated server-side).
  */
 import React, { useCallback, useMemo, useReducer, useState } from 'react';
 import { View, Text, TextInput, Pressable, ScrollView, StyleSheet } from 'react-native';
@@ -83,6 +88,14 @@ export function MediaSearchScreen({
   );
   // The typed text is local until submitted, so a request is not fired per keystroke.
   const [draft, setDraft] = useState(initialQuery);
+  // §38 "Show my Bangkok rooftop photos": the city is its own criterion, not a
+  // word in the free text (the server matches the term as one phrase).
+  const [cityDraft, setCityDraft] = useState('');
+  // A trip the viewer chose to search WITHIN ("Show festival media from my
+  // Vietnam Trip"): a route-given trip, or one picked from a Trip result.
+  const [scopedTrip, setScopedTrip] = useState<{ id: string; title: string | null } | null>(
+    tripId ? { id: tripId, title: null } : null,
+  );
   const queryString = useMemo(() => toSearchQueryString(filters), [filters]);
 
   const fetcher = useCallback(
@@ -92,11 +105,14 @@ export function MediaSearchScreen({
   const { state, reload } = useLensProjection<MediaSearchResultsView>(fetcher, isMediaSearchEmpty, [queryString]);
   const results = state.data;
 
-  const submit = useCallback(() => dispatch({ type: 'set_query', q: draft }), [draft]);
+  const submit = useCallback(() => {
+    dispatch({ type: 'set_query', q: draft });
+    if (cityDraft.trim()) dispatch({ type: 'set_city', city: cityDraft });
+  }, [draft, cityDraft]);
   const scopes: { key: MediaSearchScope; label: string }[] = [
     { key: 'all', label: 'Everywhere' },
     { key: 'me', label: 'My world' },
-    ...(tripId ? [{ key: 'trip' as const, label: 'This trip' }] : []),
+    ...(scopedTrip ? [{ key: 'trip' as const, label: scopedTrip.title ? `In ${scopedTrip.title}` : 'This trip' }] : []),
   ];
 
   return (
@@ -116,6 +132,33 @@ export function MediaSearchScreen({
           autoCorrect={false}
         />
       </View>
+      <View style={[styles.inputRow, styles.cityRow]}>
+        <TextInput
+          testID="media-search-city"
+          style={styles.cityInput}
+          value={cityDraft}
+          onChangeText={setCityDraft}
+          onSubmitEditing={submit}
+          returnKeyType="search"
+          placeholder="In a city (optional)"
+          placeholderTextColor={color.faint}
+          accessibilityLabel="City to search in"
+          autoCorrect={false}
+        />
+        {filters.city ? (
+          <Pressable
+            onPress={() => {
+              setCityDraft('');
+              dispatch({ type: 'set_city', city: null });
+            }}
+            accessibilityRole="button"
+            accessibilityLabel={`Clear city ${filters.city}`}
+            testID="media-search-city-clear"
+          >
+            <Text style={styles.clear}>{filters.city} ✕</Text>
+          </Pressable>
+        ) : null}
+      </View>
 
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chips}>
         {!fixedScope
@@ -125,7 +168,7 @@ export function MediaSearchScreen({
                 label={s.label}
                 active={filters.scope === s.key}
                 testID={`media-search-scope-${s.key}`}
-                onPress={() => dispatch({ type: 'set_scope', scope: s.key, tripId })}
+                onPress={() => dispatch({ type: 'set_scope', scope: s.key, tripId: scopedTrip?.id ?? null })}
               />
             ))
           : null}
@@ -228,14 +271,29 @@ export function MediaSearchScreen({
           {results.trips.length > 0 ? (
             <Section title="Trips">
               {results.trips.map((t) => (
-                <Row
-                  key={t.id}
-                  testID={`media-search-trip-${t.id}`}
-                  icon={<Plane size={16} color={color.onInkMute} strokeWidth={2} />}
-                  title={t.title ?? 'Trip'}
-                  meta={t.perspectiveCount > 0 ? `${t.perspectiveCount} perspectives` : 'No perspectives yet'}
-                  onPress={onOpenExperience ? () => onOpenExperience(t) : undefined}
-                />
+                <View key={t.id}>
+                  <Row
+                    testID={`media-search-trip-${t.id}`}
+                    icon={<Plane size={16} color={color.onInkMute} strokeWidth={2} />}
+                    title={t.title ?? 'Trip'}
+                    meta={t.perspectiveCount > 0 ? `${t.perspectiveCount} perspectives` : 'No perspectives yet'}
+                    onPress={onOpenExperience ? () => onOpenExperience(t) : undefined}
+                  />
+                  {!fixedScope ? (
+                    <Pressable
+                      style={styles.within}
+                      testID={`media-search-within-trip-${t.id}`}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Search within ${t.title ?? 'this trip'}`}
+                      onPress={() => {
+                        setScopedTrip({ id: t.id, title: t.title });
+                        dispatch({ type: 'set_scope', scope: 'trip', tripId: t.id });
+                      }}
+                    >
+                      <Text style={styles.withinText}>Search within this trip</Text>
+                    </Pressable>
+                  ) : null}
+                </View>
               ))}
             </Section>
           ) : null}
@@ -354,6 +412,11 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(250,249,246,0.08)',
   },
   input: { flex: 1, color: color.onInk, fontSize: 15, paddingVertical: space.md },
+  cityRow: { marginTop: space.xs },
+  cityInput: { flex: 1, color: color.onInk, fontSize: 13, paddingVertical: space.sm },
+  clear: { color: color.onInkMute, fontSize: 12, fontWeight: '700' },
+  within: { marginHorizontal: space.lg, marginTop: 2, paddingHorizontal: space.md, paddingVertical: 4, alignSelf: 'flex-start' },
+  withinText: { color: color.onInkMute, fontSize: 12, fontWeight: '700', textDecorationLine: 'underline' },
   chips: { gap: space.sm, paddingHorizontal: space.lg, paddingVertical: space.md },
   chip: {
     paddingHorizontal: space.md,

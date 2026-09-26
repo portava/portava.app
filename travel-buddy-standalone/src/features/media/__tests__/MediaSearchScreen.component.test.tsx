@@ -114,6 +114,27 @@ describe('MediaSearchScreen', () => {
     expect(screen.getByText(/Taken at Vertigo Rooftop · Bangkok/)).toBeTruthy();
   });
 
+  it('§38 "Show festival media from my Vietnam Trip": a Trip result is searched WITHIN — scope=trip + its tripId', async () => {
+    respond = () => FULL_RESULTS;
+    await render(<MediaSearchScreen />);
+    await fireEvent.changeText(screen.getByTestId('media-search-input'), 'vietnam');
+    await fireEvent(screen.getByTestId('media-search-input'), 'submitEditing');
+    await waitFor(() => expect(screen.getByTestId('media-search-within-trip-t1')).toBeTruthy());
+    expect(screen.queryByTestId('media-search-scope-trip')).toBeNull(); // no trip chip until a trip is chosen
+    await fireEvent.press(screen.getByTestId('media-search-within-trip-t1'));
+    await waitFor(() => expect(screen.getByTestId('media-search-scope-trip')).toBeTruthy());
+    expect(screen.getByText('In Vietnam')).toBeTruthy();
+    expect(screen.getByTestId('media-search-scope-trip').props.accessibilityState.selected).toBe(true);
+    await fireEvent.changeText(screen.getByTestId('media-search-input'), 'festival');
+    await fireEvent(screen.getByTestId('media-search-input'), 'submitEditing');
+    await waitFor(() =>
+      expect(requests[requests.length - 1]).toMatch(/\/api\/media\/search\?q=festival&scope=trip&tripId=t1$/),
+    );
+    // Widening back to "Everywhere" drops the trip id — it is not silently kept.
+    await fireEvent.press(screen.getByTestId('media-search-scope-all'));
+    await waitFor(() => expect(requests[requests.length - 1]).toMatch(/\/api\/media\/search\?q=festival$/));
+  });
+
   it('a failed search says it could not run — it does not say "nothing matched"', async () => {
     (global as { fetch: typeof fetch }).fetch = jest.fn(async () => ({ ok: false, status: 503, json: async () => ({}) })) as unknown as typeof fetch;
     await render(<MediaSearchScreen initialQuery="beach" />);
@@ -141,5 +162,27 @@ describe('My World — "Search my world" (§30, MD228)', () => {
     expect(requests.some((u) => /search\?q=rooftop$/.test(u))).toBe(false);
     await fireEvent.press(screen.getByTestId('my-world-search-close'));
     await waitFor(() => expect(screen.queryByTestId('media-search-screen')).toBeNull());
+  });
+
+  it('§38 "Show my Bangkok rooftop photos": the city is its own criterion — q=rooftop&city=Bangkok&scope=me', async () => {
+    respond = (url) =>
+      url.includes('/api/media/me')
+        ? { generatedAt: '2026-09-26T00:00:00Z', buckets: [{ key: 'all', label: 'All', ownerOnly: false, count: 1, media: [{ id: 'mine', mediaType: 'image', observationClass: 'observed' }] }] }
+        : FULL_RESULTS;
+    await render(<MyWorldMediaScreen mode="grid" />);
+    await waitFor(() => expect(screen.getByTestId('my-world-search-open')).toBeTruthy());
+    await fireEvent.press(screen.getByTestId('my-world-search-open'));
+    await waitFor(() => expect(screen.getByTestId('media-search-city')).toBeTruthy());
+    await fireEvent.changeText(screen.getByTestId('media-search-input'), 'rooftop');
+    await fireEvent.changeText(screen.getByTestId('media-search-city'), 'Bangkok');
+    await fireEvent(screen.getByTestId('media-search-input'), 'submitEditing');
+    await waitFor(() =>
+      expect(requests.some((u) => /\/api\/media\/search\?q=rooftop&city=Bangkok&scope=me$/.test(u))).toBe(true),
+    );
+    // The city is not smuggled into the free text.
+    expect(requests.some((u) => /q=rooftop(\+|%20)Bangkok/.test(u))).toBe(false);
+    await waitFor(() => expect(screen.getByTestId('media-search-city-clear')).toBeTruthy());
+    await fireEvent.press(screen.getByTestId('media-search-city-clear'));
+    await waitFor(() => expect(requests[requests.length - 1]).toMatch(/\/api\/media\/search\?q=rooftop&scope=me$/));
   });
 });
