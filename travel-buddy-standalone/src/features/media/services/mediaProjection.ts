@@ -1265,9 +1265,9 @@ export function fetchMedia(
 export function fetchMediaMap(opts?: {
   city?: string | null;
   signal?: AbortSignal;
-}): Promise<ProjectionResult<MediaMapProjection>> {
+}): Promise<ProjectionResult<MediaMapProjectionWithCovers>> {
   const qs = opts?.city ? `?city=${encodeURIComponent(opts.city)}` : '';
-  return getJson(`/api/media/map${qs}`, mapMediaMapProjection, opts);
+  return getJson(`/api/media/map${qs}`, mapMediaMapWithCovers, opts); // + each cluster's cover (census-media §24, MD300)
 }
 
 // ── §38 Search (census-media §19) ─────────────────────────────────────────────
@@ -1374,16 +1374,16 @@ export function isMediaSearchEmpty(r: MediaSearchResultsView): boolean {
 
 /**
  * GET /media/search — §38. Takes the query string `mediaFilterStore.
- * toSearchQueryString` built; a null query (no criteria) is answered locally
- * with an empty result and NO request, mirroring the server's "empty means
- * empty" rule.
+ * toSearchQueryString` built and an optional `near` (census-media §24): with
+ * neither, it is answered locally with an empty result and NO request,
+ * mirroring the server's "empty means empty" rule.
  */
 export function fetchMediaSearch(
   queryString: string | null,
-  opts?: { signal?: AbortSignal },
-): Promise<ProjectionResult<MediaSearchResultsView>> {
-  if (!queryString) return Promise.resolve({ ok: true, data: mapMediaSearchResults({}) });
-  return getJson(`/api/media/search?${queryString}`, mapMediaSearchResults, opts);
+  opts?: { signal?: AbortSignal; near?: MediaSearchNearParam | null },
+): Promise<ProjectionResult<MediaSearchResultsWithNear>> {
+  const path = mediaSearchPath(queryString, opts?.near ?? null);
+  return path.kind === 'request' ? getJson(path.url, mapMediaSearchWithNear, opts) : Promise.resolve(path.answer);
 }
 
 /**
@@ -1401,3 +1401,122 @@ export function fetchMediaContextRefs(
 // §18 (census-media §22, MD323): the client's reading of the server's Visual
 // Consensus. Imported at the TAIL so no line above moves; ESM hoists it.
 import { mapVisualConsensus, currentPictureFromConsensus } from '../../../services/media/mediaIntelligence.ts';
+
+// ── §39 "Map thumbnails": each `/media/map` cluster's cover (census-media §24, MD300) ──
+import type { MediaMapCluster } from '../state/mediaMapStore.ts';
+
+/** A Media Map cluster with the ONE image the server chose for it. */
+export interface MediaMapClusterWithCover extends MediaMapCluster {
+  /**
+   * The server's choice, after every gate it applies to the viewer. Null when
+   * it sent none. The device never picks a cover of its own: an image the
+   * server did not choose is one it did not clear for this viewer.
+   */
+  cover: MediaProjection | null;
+}
+
+export interface MediaMapProjectionWithCovers extends MediaMapProjection {
+  clusters: MediaMapClusterWithCover[];
+}
+
+/**
+ * The server sends `coverMedia` as an array of zero or one. A cover must carry
+ * an image: an image item's own file or thumbnail, or a video's poster. A video
+ * with no poster is not a cover, because its `url` is the video file.
+ */
+function mapClusterCover(raw: unknown): MediaProjection | null {
+  const first = asArray(raw)[0];
+  if (!isObj(first)) return null;
+  const m = mapMediaProjection(first);
+  if (!m.id) return null;
+  const hasImage = m.mediaType === 'video' ? !!m.thumbnailUrl : !!(m.thumbnailUrl || m.url);
+  return hasImage ? m : null;
+}
+
+/** `mapMediaMapProjection`, plus each kept cluster's cover, matched by place id. */
+export function mapMediaMapWithCovers(raw: unknown): MediaMapProjectionWithCovers {
+  const base = mapMediaMapProjection(raw);
+  const covers = new Map<string, MediaProjection | null>();
+  for (const c of asArray(isObj(raw) ? raw.clusters : null)) {
+    if (!isObj(c)) continue;
+    const placeId = asString(c.placeId);
+    if (placeId && !covers.has(placeId)) covers.set(placeId, mapClusterCover(c.coverMedia));
+  }
+  return { ...base, clusters: base.clusters.map((c) => ({ ...c, cover: covers.get(c.placeId) ?? null })) };
+}
+
+// ── §38 "near X": a center and a bounded radius (census-media §24, MD288) ─────
+
+/** The server's bounds (MediaSearchService NEAR_RADIUS_MIN_M / _MAX_M). */
+export const MEDIA_SEARCH_NEAR_RADIUS_MIN_M = 100;
+export const MEDIA_SEARCH_NEAR_RADIUS_MAX_M = 5_000;
+
+/** Near a canonical place, or near a point — each within `radiusM` metres. */
+export type MediaSearchNearParam =
+  | { placeId: string; radiusM: number }
+  | { lat: number; lng: number; radiusM: number };
+
+/** How the server resolved a "near" search. It never echoes a coordinate. */
+export interface MediaSearchNearView {
+  center: 'place' | 'point';
+  radiusM: number;
+  /** `center_unpositioned`: the canonical Map would not place the center, so every list is empty for THAT reason. */
+  refusal: 'center_unpositioned' | null;
+}
+
+export type MediaSearchResultsWithNear = MediaSearchResultsView & { near: MediaSearchNearView | null };
+
+const NEAR_PLACE_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * The `near` query parameters, or null for a `near` the server would refuse.
+ * Such a `near` is refused HERE, with no request, rather than dropped: a
+ * search sent without it would be answered city-coarse and read as "near".
+ */
+export function mediaSearchNearParams(near: MediaSearchNearParam): URLSearchParams | null {
+  const r = near.radiusM;
+  if (!Number.isInteger(r) || r < MEDIA_SEARCH_NEAR_RADIUS_MIN_M || r > MEDIA_SEARCH_NEAR_RADIUS_MAX_M) return null;
+  const qs = new URLSearchParams();
+  if ('placeId' in near) {
+    if (!NEAR_PLACE_ID_RE.test(near.placeId)) return null;
+    qs.set('nearPlaceId', near.placeId);
+  } else {
+    if (!Number.isFinite(near.lat) || !Number.isFinite(near.lng)) return null;
+    if (Math.abs(near.lat) > 90 || Math.abs(near.lng) > 180) return null;
+    qs.set('nearLat', String(near.lat));
+    qs.set('nearLng', String(near.lng));
+  }
+  qs.set('radiusM', String(r));
+  return qs;
+}
+
+function mediaSearchPath(
+  queryString: string | null,
+  near: MediaSearchNearParam | null,
+):
+  | { kind: 'request'; url: string }
+  | { kind: 'local'; answer: ProjectionResult<MediaSearchResultsWithNear> } {
+  const nearQs = near ? mediaSearchNearParams(near) : null;
+  if (near && !nearQs) {
+    return {
+      kind: 'local',
+      answer: { ok: false, data: null, errorKind: 'unknown', message: 'A "near" search needs one center and a radius of 100 m to 5 km' },
+    };
+  }
+  const parts = [queryString, nearQs ? nearQs.toString() : null].filter((p): p is string => !!p);
+  if (parts.length === 0) return { kind: 'local', answer: { ok: true, data: mapMediaSearchWithNear({}) } };
+  return { kind: 'request', url: `/api/media/search?${parts.join('&')}` };
+}
+
+function mapMediaSearchNear(raw: unknown): MediaSearchNearView | null {
+  if (!isObj(raw)) return null;
+  const center = raw.center === 'place' || raw.center === 'point' ? raw.center : null;
+  const radiusM = asNumber(raw.radiusM);
+  if (!center || radiusM == null) return null;
+  return { center, radiusM, refusal: raw.refusal === 'center_unpositioned' ? 'center_unpositioned' : null };
+}
+
+/** `mapMediaSearchResults`, plus the server's report on how "near" resolved. */
+export function mapMediaSearchWithNear(raw: unknown): MediaSearchResultsWithNear {
+  return { ...mapMediaSearchResults(raw), near: mapMediaSearchNear(isObj(raw) ? raw.near : null) };
+}

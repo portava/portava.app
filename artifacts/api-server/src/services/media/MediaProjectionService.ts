@@ -1618,7 +1618,7 @@ export interface MediaMapProjection {
    * projection (spec §21 — Media Map does not own a second location engine). The
    * client joins these counts onto positions it already has from the Map gateway.
    */
-  clusters: MapCluster[];
+  clusters: MapClusterWithCover[]; // each carries at most ONE cover image: see attachClusterCovers, end of file (census-media §24, MD300)
   totalPerspectives: number;
 }
 
@@ -1651,7 +1651,7 @@ export async function buildMediaMapProjection(
     }))
     .sort((a, b) => b.perspectiveCount - a.perspectiveCount);
 
-  return { generatedAt, clusters, totalPerspectives: media.length };
+  return attachClusterCovers(sc, viewer, { generatedAt, clusters, totalPerspectives: media.length }, zoneMap); // §39 "Map thumbnails" (census-media §24, MD300)
 }
 
 // ── §6 canonical asset on the read path, §6.1 override per viewer ────────────
@@ -1725,3 +1725,108 @@ export async function prepareCanonicalRows(
   }
   return out;
 }
+
+// ── §39 "Map thumbnails": ONE cover image per `/media/map` cluster ───────────
+//
+// census-media MD300 (§22.5): "`/media/map` carries counts and no image, so
+// there is nothing to cache." Each cluster now carries at most one cover, and
+// NOTHING NEW DECIDES WHO MAY SEE IT:
+//
+//   1. A cover is one of the cluster's OWN items, and every item already came
+//      through `loadEligibleCandidatesOrRefuse` (eligibility, blocks, mutes,
+//      private accounts, delayed publish) and `projectCandidatesProtected` (the
+//      servable-media gate over processing and moderation, the §6 canonical
+//      read, the §6.1 per-viewer attachment override and the location choke
+//      point) — the same two steps the place projection's perspectives take.
+//   2. The directional circle override is applied to the candidates HERE,
+//      BEFORE one is chosen, with the function the router applies at its
+//      boundary (`lib/mediaVisibility.filterMediaProjectionVisibility`).
+//      Choosing first and leaving it to the boundary would strip a cluster of
+//      its image whenever its top item was hidden from this viewer, although
+//      another item was not.
+//   3. The cover rides in an ARRAY of zero or one. That boundary filter prunes
+//      media only out of arrays; a lone object would pass it unexamined, and
+//      step 2 would be the only line instead of the first of two.
+//   4. A candidate must carry an IMAGE: an image item, or a video with its
+//      server-derived poster (`thumbnailUrl`). A video file is never a cover.
+//   5. A directional read that cannot be completed yields NO covers — fail
+//      closed on images. The counts are served exactly as before this change.
+//
+// The cover is SLIM on purpose: no contributor, no place labels (the cluster
+// carries its own), no provenance. A map thumbnail is not a second item view.
+// The byte gate (`lib/mediaAccess`) still decides the signature on the file.
+
+/** The image a Media Map cluster is shown with. No coordinates, by construction. */
+export type MapClusterCover = Pick<
+  MediaProjection,
+  "id" | "mediaType" | "url" | "thumbnailUrl" | "width" | "height" | "capturedAt" | "freshness"
+>;
+
+export interface MapClusterWithCover extends MapCluster {
+  /** Zero or one item. An array so the router's directional filter can prune it (step 3 above). */
+  coverMedia: MapClusterCover[];
+}
+
+/** Step 4: an image item, or a video that has its poster. */
+export function hasClusterCoverImage(m: MediaProjection): boolean {
+  if (m.mediaType === "video") return typeof m.thumbnailUrl === "string" && m.thumbnailUrl.length > 0;
+  return (
+    (typeof m.url === "string" && m.url.length > 0) ||
+    (typeof m.thumbnailUrl === "string" && m.thumbnailUrl.length > 0)
+  );
+}
+
+function toClusterCover(m: MediaProjection): MapClusterCover {
+  return {
+    id: m.id,
+    mediaType: m.mediaType,
+    url: m.url,
+    thumbnailUrl: m.thumbnailUrl,
+    width: m.width,
+    height: m.height,
+    capturedAt: m.capturedAt,
+    freshness: m.freshness,
+  };
+}
+
+/**
+ * Give each cluster its cover: the HIGHEST-RANKED item of that cluster that has
+ * an image and survives the directional override for this viewer. Items arrive
+ * in ranked order (`rankAndProject`, and `groupZones` keeps it), so "first" is
+ * the ranker's choice, not recency's.
+ */
+async function attachClusterCovers(
+  sc: SupabaseClient,
+  viewer: ViewerResolved,
+  base: { generatedAt: string; clusters: MapCluster[]; totalPerspectives: number },
+  zones: Map<string, { placeId: string | null; label: string; items: MediaProjection[] }>,
+): Promise<MediaMapProjection> {
+  const itemsOf = (c: MapCluster): MediaProjection[] =>
+    c.placeId ? (zones.get(c.placeId)?.items ?? []) : [];
+  const pool = base.clusters.flatMap((c) => itemsOf(c).filter(hasClusterCoverImage));
+  let visible: Set<string> | null = null;
+  if (pool.length > 0) {
+    const kept = await filterMediaProjectionVisibility(sc, viewer.viewerId, pool);
+    if (Array.isArray(kept)) {
+      visible = new Set((kept as MediaProjection[]).map((m) => m.id));
+    } else {
+      logger.warn(
+        { clusters: base.clusters.length },
+        "mediaMap: directional media visibility could not be resolved — clusters served without covers",
+      );
+    }
+  }
+  const allowed = visible;
+  return {
+    ...base,
+    clusters: base.clusters.map((c) => {
+      const cover = allowed
+        ? itemsOf(c).find((m) => hasClusterCoverImage(m) && allowed.has(m.id))
+        : undefined;
+      return { ...c, coverMedia: cover ? [toClusterCover(cover)] : [] };
+    }),
+  };
+}
+
+// Imported at the TAIL so no cited line above moves (census-media §12.9); ESM hoists it.
+import { filterMediaProjectionVisibility } from "../../lib/mediaVisibility.js";

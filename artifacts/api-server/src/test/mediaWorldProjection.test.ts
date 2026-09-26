@@ -1736,3 +1736,444 @@ describe("MD287 · MD292 — §38 'right now' and 'from my trip' are real narrow
     assert.deepEqual(r.media.map((m) => m.id), ["now"]);
   });
 });
+
+// ═════════════════════════════════════════════════════════════════════════════
+// census-media §24 (Lane E)
+//   MD300 — every `/media/map` cluster carries ONE cover image the viewer may open.
+//   MD288 — §38 "near X" is a bounded radius resolved through the canonical Map.
+// ═════════════════════════════════════════════════════════════════════════════
+import { beforeEach } from "node:test";
+import { sendProjection } from "../routes/mediaWorld.js";
+import { clearProtectedZoneCache } from "../lib/protectedZoneStore.js";
+import {
+  parseMediaSearchNear,
+  MediaSearchNearUnavailableError,
+  NEAR_RADIUS_MAX_M,
+  NEAR_RADIUS_MIN_M,
+  type MediaSearchNear,
+} from "../services/media/MediaSearchService.js";
+import { _setTestClient, _clearTestClient } from "../lib/http.js";
+import { _setTestServiceClient } from "../lib/supabase.js";
+
+const uid = (n: number) => `c0000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
+const TRIP_T = "f0000000-0000-4000-8000-000000000001";
+const PLACE_2 = "aaaaaaaa-aaaa-4aaa-8aaa-000000000002";
+const PLACE_3 = "aaaaaaaa-aaaa-4aaa-8aaa-000000000003";
+
+/** makeSc, with the reads `fails` names answering a PostgREST error instead of rows. */
+function makeScFailing(data: Dataset, fails: (table: string, columns: string) => boolean) {
+  const base = makeSc(data);
+  return {
+    from(table: string) {
+      const b = base.from(table);
+      let columns = "";
+      const select = b.select;
+      b.select = (cols?: string) => {
+        columns = String(cols ?? "");
+        select.call(b);
+        return b;
+      };
+      const then = b.then;
+      b.then = (onF: any, onR: any) =>
+        fails(table, columns)
+          ? Promise.resolve({ data: null, error: { message: "simulated read failure" } }).then(onF, onR)
+          : then.call(b, onF, onR);
+      return b;
+    },
+  } as any;
+}
+
+/** A post whose only media is a video — with, or without, its server-derived poster. */
+function videoPost(o: PostOverrides & { poster: boolean }): any {
+  const row = makePost({ ...o, mediaType: "video" });
+  row.post_media[0].public_url = `https://cdn.example/${row.id}.mp4`;
+  row.post_media[0].thumbnail_url = o.poster ? `https://cdn.example/${row.id}.mp4.poster.jpg` : null;
+  return row;
+}
+
+/** A response double for `sendProjection` (json / status / setHeader). */
+function fakeRes() {
+  const r: any = { statusCode: 200, body: undefined };
+  r.status = (c: number) => { r.statusCode = c; return r; };
+  r.json = (v: unknown) => { r.body = v; return r; };
+  r.setHeader = () => r;
+  return r;
+}
+
+describe("MD300 — each /media/map cluster carries ONE cover image the viewer may open", () => {
+  const clustersOf = async (sc: any) => {
+    const viewer = await resolveViewer(sc, VIEWER);
+    const m = await buildMediaMapProjection(sc, viewer, "Da Nang", Date.now());
+    return { m, byPlace: new Map(m.clusters.map((c) => [c.placeId, c])) };
+  };
+
+  it("a cluster's cover is one of its OWN items — slim, in an array, with no coordinates", async () => {
+    const { m, byPlace } = await clustersOf(makeSc(baseData({ posts: [
+      makePost({ id: uid(1), placeId: PLACE_1, createdAt: isoAgo(5 * 60_000) }),
+      makePost({ id: uid(2), placeId: PLACE_1, createdAt: isoAgo(50 * 60_000) }),
+      makePost({ id: uid(3), placeId: PLACE_2, locationName: "My Khe Beach" }),
+    ] })));
+    const c1 = byPlace.get(PLACE_1)!;
+    assert.ok(Array.isArray(c1.coverMedia), "an ARRAY, so the router's directional filter can prune it");
+    assert.equal(c1.coverMedia.length, 1, "ONE image per cluster");
+    assert.ok([uid(1), uid(2)].includes(c1.coverMedia[0]!.id), "the cover is one of this cluster's items");
+    assert.deepEqual(byPlace.get(PLACE_2)!.coverMedia.map((x) => x.id), [uid(3)], "never another cluster's item");
+    assert.equal(c1.perspectiveCount, 2, "the counts are unchanged");
+    assert.deepEqual(
+      Object.keys(c1.coverMedia[0]!).sort(),
+      ["capturedAt", "freshness", "height", "id", "mediaType", "thumbnailUrl", "url", "width"],
+      "slim: no contributor, no place labels, no provenance",
+    );
+    assert.match(c1.coverMedia[0]!.url, /^https:\/\/cdn\.example\/c0000000/);
+    assert.equal(isLocationSafe(m), true, "no coordinate anywhere in the map projection");
+  });
+
+  it("a video is a cover ONLY through its server-derived poster — the video file is never a thumbnail", async () => {
+    const { byPlace } = await clustersOf(makeSc(baseData({ posts: [
+      videoPost({ id: uid(11), placeId: PLACE_2, poster: false }),
+      videoPost({ id: uid(12), placeId: PLACE_3, poster: true }),
+    ] })));
+    assert.equal(byPlace.get(PLACE_2)?.perspectiveCount, 1, "the posterless video is still counted");
+    assert.deepEqual(byPlace.get(PLACE_2)!.coverMedia, [], "no poster ⇒ no cover, never the .mp4");
+    const c3 = byPlace.get(PLACE_3)!.coverMedia;
+    assert.equal(c3.length, 1);
+    assert.equal(c3[0]!.mediaType, "video");
+    assert.match(String(c3[0]!.thumbnailUrl), /\.mp4\.poster\.jpg$/);
+  });
+
+  it("an item a gate withholds is never a cover: a private ACCOUNT's post, though it is the newer one", async () => {
+    const { m, byPlace } = await clustersOf(makeSc(baseData({ posts: [
+      makePost({ id: uid(21), author_id: AUTHOR_B, placeId: PLACE_1, authorIsPrivate: true, createdAt: isoAgo(60_000) }),
+      makePost({ id: uid(22), author_id: AUTHOR_A, placeId: PLACE_1, createdAt: isoAgo(90 * 60_000) }),
+    ] })));
+    assert.deepEqual(byPlace.get(PLACE_1)!.coverMedia.map((x) => x.id), [uid(22)]);
+    assert.equal(JSON.stringify(m).includes(uid(21)), false, "the withheld item is nowhere in the projection");
+  });
+
+  const hideMeFrom = {
+    id: "ov-1", user_id: AUTHOR_B, target_user_id: VIEWER, context_type: "trip",
+    context_id: TRIP_T, direction: "hide_me_from", hidden: true,
+  };
+  const crewPosts = () => [
+    makePost({ id: uid(31), author_id: AUTHOR_B, placeId: PLACE_1, tripId: TRIP_T, createdAt: isoAgo(60_000) }),
+    makePost({ id: uid(32), author_id: AUTHOR_A, placeId: PLACE_1, createdAt: isoAgo(90 * 60_000) }),
+  ];
+
+  it("CONTROL: with no override, the crew member's higher-ranked item IS the cover", async () => {
+    const { byPlace } = await clustersOf(makeSc(baseData({ posts: crewPosts() })));
+    assert.deepEqual(byPlace.get(PLACE_1)!.coverMedia.map((x) => x.id), [uid(31)]);
+  });
+
+  it("a crew member who hid themselves from this viewer in that trip is never the cover — the next item is", async () => {
+    const { byPlace } = await clustersOf(
+      makeSc(baseData({ posts: crewPosts(), circle_member_visibility_overrides: [hideMeFrom] })),
+    );
+    assert.deepEqual(
+      byPlace.get(PLACE_1)!.coverMedia.map((x) => x.id),
+      [uid(32)],
+      "chosen AFTER the directional filter, so the cluster keeps an image it may show",
+    );
+  });
+
+  it("…and after the router's own boundary filter the served cover is still the permitted item", async () => {
+    const sc = makeSc(baseData({ posts: crewPosts(), circle_member_visibility_overrides: [hideMeFrom] }));
+    const viewer = await resolveViewer(sc, VIEWER);
+    const m = await buildMediaMapProjection(sc, viewer, "Da Nang", Date.now());
+    const res = fakeRes();
+    await sendProjection(res, "map", m, { sc, viewerId: VIEWER });
+    const served = (res.body as any).clusters.find((c: any) => c.placeId === PLACE_1);
+    assert.deepEqual(served.coverMedia.map((x: any) => x.id), [uid(32)]);
+    assert.equal(JSON.stringify(res.body).includes(uid(31)), false, "the hidden item's id is nowhere in the body");
+  });
+
+  it("the boundary is a SECOND line: a hidden cover that reached it inside the array is pruned there", async () => {
+    const sc = makeSc(baseData({ posts: crewPosts(), circle_member_visibility_overrides: [hideMeFrom] }));
+    const res = fakeRes();
+    await sendProjection(res, "map", {
+      generatedAt: new Date().toISOString(),
+      clusters: [{
+        placeId: PLACE_1, label: "An Thuong Bar", perspectiveCount: 1, freshness: "fresh",
+        coverMedia: [{ id: uid(31), mediaType: "image", url: "https://cdn.example/x.jpg", thumbnailUrl: null, width: 1, height: 1, capturedAt: isoAgo(60_000), freshness: "fresh" }],
+      }],
+      totalPerspectives: 1,
+    }, { sc, viewerId: VIEWER });
+    assert.deepEqual((res.body as any).clusters[0].coverMedia, []);
+  });
+
+  it("a directional read that cannot be completed serves the counts with NO covers — fail closed on images", async () => {
+    const sc = makeScFailing(
+      baseData({ posts: crewPosts() }),
+      (table, cols) => table === "posts" && cols === "id, author_id, trip_id",
+    );
+    const { byPlace } = await clustersOf(sc);
+    assert.equal(byPlace.get(PLACE_1)!.perspectiveCount, 2, "the counts still serve");
+    assert.deepEqual(byPlace.get(PLACE_1)!.coverMedia, [], "no image the override could not be checked for");
+  });
+});
+
+// ── MD288 ─────────────────────────────────────────────────────────────────────
+
+const C = { lat: 16.06, lng: 108.22 };
+const P_CENTER = "bbbbbbbb-0000-4000-8000-000000000001"; // at C
+const P_NEAR = "bbbbbbbb-0000-4000-8000-000000000002"; // ~500 m north of C
+const P_FAR = "bbbbbbbb-0000-4000-8000-000000000003"; // ~8 km north of C
+const P_SHELTER = "bbbbbbbb-0000-4000-8000-000000000004"; // ~220 m north, inside a suppress zone
+
+function placeRow(id: string, lat: number, lng: number, over: Record<string, unknown> = {}) {
+  return {
+    id, name: `Place ${id.slice(-1)}`, primary_category: "beach", city: "Da Nang", neighborhood: null,
+    country_code: "VN", latitude: lat, longitude: lng, status: "active", merged_into_place_id: null, ...over,
+  };
+}
+const PLACES = [
+  placeRow(P_CENTER, C.lat, C.lng),
+  placeRow(P_NEAR, C.lat + 0.0045, C.lng),
+  placeRow(P_FAR, C.lat + 0.072, C.lng),
+  placeRow(P_SHELTER, C.lat + 0.002, C.lng),
+];
+function zone(id: string, action: "suppress" | "coarsen", lat: number, lng: number, radius: number) {
+  return {
+    id, category: "policy_defined", action, privacy_floor: action === "coarsen" ? "approximate" : null,
+    shape: "circle", center_lat: lat, center_lng: lng, radius_meters: radius, ring: null,
+    jurisdiction: null, policy_ref: null, active: true,
+  };
+}
+const beachPosts = () => [
+  makePost({ id: uid(41), placeId: P_CENTER, content: "beach at the centre" }),
+  makePost({ id: uid(42), placeId: P_NEAR, content: "beach just up the road" }),
+  makePost({ id: uid(43), placeId: P_FAR, content: "beach across the bay" }),
+];
+const nearPoint = (radiusM = 1000): MediaSearchNear => ({ center: "point", lat: C.lat, lng: C.lng, radiusM });
+
+describe("MD288 — parseMediaSearchNear: one center and a bounded radius, or the request is refused", () => {
+  it("no near parameter is not a criterion", () => {
+    assert.deepEqual(parseMediaSearchNear({ q: "beach" }), { ok: true, near: null });
+  });
+
+  it("accepts a canonical place center, or a point, each with a radius", () => {
+    assert.deepEqual(parseMediaSearchNear({ nearPlaceId: P_CENTER, radiusM: "1500" }), {
+      ok: true, near: { center: "place", placeId: P_CENTER, radiusM: 1500 },
+    });
+    assert.deepEqual(parseMediaSearchNear({ nearLat: "16.06", nearLng: "108.22", radiusM: "800" }), {
+      ok: true, near: { center: "point", lat: 16.06, lng: 108.22, radiusM: 800 },
+    });
+  });
+
+  it("refuses — never clamps, never guesses — a radius past either bound, a half center, two centers, or none", () => {
+    const bad: Record<string, unknown>[] = [
+      { nearPlaceId: P_CENTER, radiusM: String(NEAR_RADIUS_MAX_M + 1) },
+      { nearPlaceId: P_CENTER, radiusM: String(NEAR_RADIUS_MIN_M - 1) },
+      { nearPlaceId: P_CENTER, radiusM: "1000.5" },
+      { nearPlaceId: P_CENTER },
+      { radiusM: "1000" },
+      { nearLat: "16.06", radiusM: "1000" },
+      { nearPlaceId: P_CENTER, nearLat: "16.06", nearLng: "108.22", radiusM: "1000" },
+      { nearPlaceId: "not-a-uuid", radiusM: "1000" },
+      { nearLat: "91", nearLng: "108.22", radiusM: "1000" },
+      { nearLat: ["16.06", "16.07"], nearLng: "108.22", radiusM: "1000" },
+    ];
+    for (const q of bad) assert.equal(parseMediaSearchNear(q).ok, false, JSON.stringify(q));
+  });
+});
+
+describe("MD288 — §38 'near X' is a radius resolved through the canonical Map's own place contract", () => {
+  beforeEach(() => clearProtectedZoneCache());
+  const run = async (data: Dataset, near: MediaSearchNear | null, q = "beach") => {
+    const sc = makeSc(baseData(data));
+    const viewer = await resolveViewer(sc, VIEWER, { needFollows: false });
+    return searchMedia(sc, viewer, { q, near }, Date.now());
+  };
+
+  it("CONTROL: without 'near', the term alone finds all three beaches", async () => {
+    const r = await run({ posts: beachPosts(), places: PLACES, protected_zones: [] }, null);
+    assert.deepEqual(r.media.map((m) => m.id).sort(), [uid(41), uid(42), uid(43)]);
+    assert.equal(r.near, null);
+  });
+
+  it("a point and a radius keep only media whose place the Map positions inside it — and say so without a coordinate", async () => {
+    const r = await run({ posts: beachPosts(), places: PLACES, protected_zones: [] }, nearPoint(1000));
+    assert.deepEqual(r.media.map((m) => m.id).sort(), [uid(41), uid(42)]);
+    assert.deepEqual(r.places.map((p) => p.placeId).sort(), [P_CENTER, P_NEAR].sort(), "roll-ups follow the radius");
+    assert.ok(r.criteriaUsed.includes("near"));
+    assert.deepEqual(r.near, { center: "point", radiusM: 1000, refusal: null });
+    assert.equal(isLocationSafe(r), true);
+    assert.equal(JSON.stringify(r).includes("108.22"), false, "the center point is never echoed");
+  });
+
+  it("a canonical place as the center resolves through the same contract", async () => {
+    const r = await run(
+      { posts: beachPosts(), places: PLACES, protected_zones: [] },
+      { center: "place", placeId: P_CENTER, radiusM: 1000 },
+    );
+    assert.deepEqual(r.media.map((m) => m.id).sort(), [uid(41), uid(42)]);
+    assert.deepEqual(r.near, { center: "place", radiusM: 1000, refusal: null });
+  });
+
+  it("§24: a place inside a SUPPRESS zone has no position, so it is never near anything (control: no zone, it is)", async () => {
+    const posts = [makePost({ id: uid(51), placeId: P_SHELTER, content: "beach by the shelter" })];
+    const open = await run({ posts, places: PLACES, protected_zones: [] }, nearPoint(1000));
+    assert.deepEqual(open.media.map((m) => m.id), [uid(51)], "control");
+    clearProtectedZoneCache();
+    const shut = await run(
+      { posts, places: PLACES, protected_zones: [zone("z-s", "suppress", C.lat + 0.002, C.lng, 60)] },
+      nearPoint(1000),
+    );
+    assert.deepEqual(shut.media, []);
+    assert.deepEqual(shut.places, []);
+  });
+
+  it("§24: a place inside a COARSEN zone sits at the zone's anchor, where the Map would draw it (control: no zone)", async () => {
+    // P_NEAR is ~500 m from C; the zone covering it is anchored ~3 km from C.
+    const posts = [makePost({ id: uid(52), placeId: P_NEAR, content: "beach up the road" })];
+    const open = await run({ posts, places: PLACES, protected_zones: [] }, nearPoint(1000));
+    assert.deepEqual(open.media.map((m) => m.id), [uid(52)], "control: its true position is inside");
+    clearProtectedZoneCache();
+    const coarse = await run(
+      { posts, places: PLACES, protected_zones: [zone("z-c", "coarsen", C.lat + 0.027, C.lng, 3500)] },
+      nearPoint(1000),
+    );
+    assert.deepEqual(coarse.media, [], "distance is taken from the anchor the Map publishes, not the row");
+  });
+
+  it("a place the viewer may not be told about is never a radius result — a protected Hidden Gem's place (control: no gem)", async () => {
+    const posts = [makePost({ id: uid(53), placeId: P_NEAR, content: "beach at the cove" })];
+    const gem = {
+      id: "gem-1", canonical_place_id: P_NEAR, sensitivity_level: "protected", status: "active",
+      latitude: C.lat + 0.0045, longitude: C.lng, approx_latitude: null, approx_longitude: null,
+      name: "Secret cove", submitted_by: AUTHOR_B, city: "Da Nang",
+    };
+    const open = await run({ posts, places: PLACES, protected_zones: [] }, nearPoint(1000));
+    assert.deepEqual(open.media.map((m) => m.id), [uid(53)], "control");
+    const hidden = await run({ posts, places: PLACES, protected_zones: [], hidden_gems: [gem] }, nearPoint(1000));
+    assert.deepEqual(hidden.media, [], "the gem's ceiling withheld the place id, so the radius cannot name it");
+    assert.equal(JSON.stringify(hidden).includes(P_NEAR), false);
+  });
+
+  it("a center the Map would not place is an EMPTY answer that says so — not an unfiltered one", async () => {
+    const suppressed = await run(
+      { posts: beachPosts(), places: PLACES, protected_zones: [zone("z-c0", "suppress", C.lat, C.lng, 60)] },
+      { center: "place", placeId: P_CENTER, radiusM: 5000 },
+    );
+    assert.deepEqual(suppressed.media, []);
+    assert.deepEqual(suppressed.near, { center: "place", radiusM: 5000, refusal: "center_unpositioned" });
+    clearProtectedZoneCache();
+    const unknown = await run(
+      { posts: beachPosts(), places: PLACES, protected_zones: [] },
+      { center: "place", placeId: "bbbbbbbb-0000-4000-8000-0000000000ff", radiusM: 5000 },
+    );
+    assert.deepEqual(unknown.media, []);
+    assert.equal(unknown.near?.refusal, "center_unpositioned");
+  });
+
+  it("an unreadable §24 policy REFUSES (503), never answers as if there were no protected places", async () => {
+    const sc = makeScFailing(
+      baseData({ posts: beachPosts(), places: PLACES, protected_zones: [] }),
+      (table) => table === "protected_zones",
+    );
+    const viewer = await resolveViewer(sc, VIEWER, { needFollows: false });
+    await assert.rejects(
+      searchMedia(sc, viewer, { q: "beach", near: nearPoint(1000) }, Date.now()),
+      (e: unknown) => e instanceof MediaSearchNearUnavailableError && e.status === 503 && e.input === "protected_zones",
+    );
+  });
+
+  it("an unreadable place read REFUSES (503), never answers 'nothing near'", async () => {
+    const sc = makeScFailing(
+      baseData({ posts: beachPosts(), places: PLACES, protected_zones: [] }),
+      (table, cols) => table === "places" && cols.includes("latitude"),
+    );
+    const viewer = await resolveViewer(sc, VIEWER, { needFollows: false });
+    await assert.rejects(
+      searchMedia(sc, viewer, { q: "beach", near: nearPoint(1000) }, Date.now()),
+      (e: unknown) => e instanceof MediaSearchNearUnavailableError && e.input === "places",
+    );
+  });
+
+  it("an event found BY NAME is near only through a place of its own inside the radius (control: no near)", async () => {
+    const data = baseData({
+      events: [{ id: EVENT_1, title: "Beach Festival", visibility: "public", host_id: AUTHOR_A, place_id: "not-a-uuid" }],
+      post_event_links: [{ post_id: uid(61), event_id: EVENT_1 }],
+      posts: [makePost({ id: uid(61), placeId: P_FAR, content: "festival" })],
+      places: PLACES,
+      protected_zones: [],
+    });
+    const sc = makeSc(data);
+    const viewer = await resolveViewer(sc, VIEWER, { needFollows: false });
+    const all = await searchCanonicalEventsAndTrips(sc, viewer, { q: "festival", scope: "all" }, Date.now());
+    assert.deepEqual(all.events.map((e) => e.id), [EVENT_1], "control");
+    const near = await searchCanonicalEventsAndTrips(
+      sc, viewer, { q: "festival", scope: "all", near: nearPoint(1000) }, Date.now(),
+    );
+    assert.deepEqual(near.events, [], "its only place is ~8 km away");
+  });
+});
+
+describe("MD288 · MD300 — over HTTP", () => {
+  const serve = async (data: Dataset) => {
+    const express = (await import("express")).default;
+    const { createServer } = await import("node:http");
+    const { default: mediaWorldRouter } = await import("../routes/mediaWorld.js");
+    const client = makeSc(baseData(data));
+    client.auth = {
+      getUser: async (t: string) =>
+        t === "tok" ? { data: { user: { id: VIEWER } }, error: null } : { data: { user: null }, error: { message: "bad" } },
+    };
+    _setTestClient(client, true);
+    const app = express();
+    app.use((req: any, _res: any, next: any) => { req.log = { info() {}, error() {}, warn() {}, debug() {} }; next(); });
+    app.use("/api", mediaWorldRouter);
+    const server = createServer(app);
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const port = (server.address() as any).port;
+    const get = async (path: string) => {
+      const r = await fetch(`http://127.0.0.1:${port}${path}`, { headers: { Authorization: "Bearer tok" } });
+      return { status: r.status, text: await r.text() };
+    };
+    const close = () => {
+      server.close();
+      _clearTestClient();
+      _setTestServiceClient(null);
+    };
+    return { get, close };
+  };
+  beforeEach(() => clearProtectedZoneCache());
+
+  it("GET /media/search refuses a radius past the bound with 400, and answers a bounded one", async () => {
+    const { get, close } = await serve({ posts: beachPosts(), places: PLACES, protected_zones: [] });
+    try {
+      const wide = await get(`/api/media/search?q=beach&nearLat=16.06&nearLng=108.22&radiusM=${NEAR_RADIUS_MAX_M + 1}`);
+      assert.equal(wide.status, 400);
+      assert.equal(JSON.parse(wide.text).error, "invalid_payload");
+      const ok = await get("/api/media/search?q=beach&nearLat=16.06&nearLng=108.22&radiusM=1000");
+      assert.equal(ok.status, 200);
+      const body = JSON.parse(ok.text);
+      assert.deepEqual(body.media.map((m: any) => m.id).sort(), [uid(41), uid(42)]);
+      assert.deepEqual(body.near, { center: "point", radiusM: 1000, refusal: null });
+      assert.equal(ok.text.includes("108.22"), false, "the center never comes back");
+    } finally {
+      close();
+    }
+  });
+
+  it("GET /media/map serves each cluster's cover, and not a hidden crew member's", async () => {
+    const { get, close } = await serve({
+      posts: [
+        makePost({ id: uid(71), author_id: AUTHOR_B, placeId: PLACE_1, tripId: TRIP_T, createdAt: isoAgo(60_000) }),
+        makePost({ id: uid(72), author_id: AUTHOR_A, placeId: PLACE_1, createdAt: isoAgo(90 * 60_000) }),
+      ],
+      circle_member_visibility_overrides: [{
+        id: "ov-2", user_id: AUTHOR_B, target_user_id: VIEWER, context_type: "trip",
+        context_id: TRIP_T, direction: "hide_me_from", hidden: true,
+      }],
+    });
+    try {
+      const r = await get("/api/media/map?city=Da%20Nang");
+      assert.equal(r.status, 200);
+      const cluster = JSON.parse(r.text).clusters.find((c: any) => c.placeId === PLACE_1);
+      assert.deepEqual(cluster.coverMedia.map((x: any) => x.id), [uid(72)]);
+      assert.equal(r.text.includes(uid(71)), false);
+    } finally {
+      close();
+    }
+  });
+});

@@ -265,3 +265,78 @@ test('the §7 graph shows only what the server resolved — no trip edge without
   assert.equal(buildContextGraph({ media, refs: [], entry: { kind: 'place', entityId: U1, entityLabel: 'x' } }).some((e) => e.kind === 'event'), false);
   assert.equal(whereTakenHref('m1'), '/media-search?mediaId=m1');
 });
+
+// ── census-media §24 (Lane E): map covers (MD300) and "near" (MD288) ───────────
+
+test('MD300 fetchMediaMap carries each cluster\'s ONE server-chosen cover — a posterless video is no cover', async () => {
+  _setTestFreshToken('tok');
+  stubFetch({
+    generatedAt: '2026-09-26T00:00:00Z',
+    totalPerspectives: 4,
+    clusters: [
+      { placeId: U1, label: 'An Thuong', perspectiveCount: 2, freshness: 'fresh',
+        coverMedia: [{ id: 'c1', mediaType: 'image', url: 'post-media/u/c1.jpg', thumbnailUrl: null, freshness: 'fresh' }] },
+      { placeId: U2, label: 'My Khe', perspectiveCount: 1, freshness: 'recent',
+        coverMedia: [{ id: 'v1', mediaType: 'video', url: 'post-media/u/v1.mp4', thumbnailUrl: null }] },
+      { placeId: '33333333-3333-3333-3333-333333333333', label: 'Riverside', perspectiveCount: 1, freshness: 'recent' },
+    ],
+  });
+  const r = await fetchMediaMap({ city: 'Da Nang' });
+  assert.ok(r.ok);
+  const byPlace = new Map(r.data.clusters.map((c) => [c.placeId, c]));
+  assert.equal(byPlace.get(U1)!.cover?.id, 'c1');
+  assert.equal(byPlace.get(U1)!.cover?.url, 'post-media/u/c1.jpg');
+  assert.equal(byPlace.get(U2)!.cover, null, 'a video without its poster is never a thumbnail');
+  assert.equal(byPlace.get('33333333-3333-3333-3333-333333333333')!.cover, null, 'no cover sent, none invented');
+  assert.equal(byPlace.get(U1)!.perspectiveCount, 2, 'the counts map as before');
+});
+
+test('MD288 fetchMediaSearch appends a place center and radius to the filter query, and maps the server\'s near report', async () => {
+  _setTestFreshToken('tok');
+  stubFetch({ criteriaUsed: ['q', 'near'], media: [], near: { center: 'place', radiusM: 1500, refusal: null } });
+  const r = await fetchMediaSearch('q=beach', { near: { placeId: U1, radiusM: 1500 } });
+  assert.equal(calls.length, 1);
+  assert.match(calls[0]!, new RegExp(`/api/media/search\\?q=beach&nearPlaceId=${U1}&radiusM=1500$`));
+  assert.ok(r.ok);
+  assert.deepEqual(r.data.near, { center: 'place', radiusM: 1500, refusal: null });
+});
+
+test('MD288 a point center alone is a criterion: it is SENT, not answered locally — and a refusal comes back as such', async () => {
+  _setTestFreshToken('tok');
+  stubFetch({ criteriaUsed: ['near'], media: [], near: { center: 'point', radiusM: 800, refusal: 'center_unpositioned' } });
+  const r = await fetchMediaSearch(null, { near: { lat: 16.06, lng: 108.22, radiusM: 800 } });
+  assert.equal(calls.length, 1);
+  assert.match(calls[0]!, /\/api\/media\/search\?nearLat=16\.06&nearLng=108\.22&radiusM=800$/);
+  assert.ok(r.ok);
+  assert.equal(r.data.near?.refusal, 'center_unpositioned');
+});
+
+test('MD288 a "near" the server would refuse is refused HERE, with no request — never dropped into a city-coarse search', async () => {
+  _setTestFreshToken('tok');
+  for (const near of [
+    { placeId: U1, radiusM: 5001 },
+    { placeId: U1, radiusM: 99 },
+    { placeId: U1, radiusM: 1500.5 },
+    { placeId: 'not-a-uuid', radiusM: 1500 },
+    { lat: 91, lng: 108.22, radiusM: 1500 },
+    { lat: Number.NaN, lng: 108.22, radiusM: 1500 },
+  ]) {
+    stubFetch({});
+    const r = await fetchMediaSearch('q=beach', { near });
+    assert.equal(calls.length, 0, JSON.stringify(near));
+    assert.equal(r.ok, false, JSON.stringify(near));
+  }
+});
+
+test('MD288 without "near" nothing changes: the report maps to null and a criteria-free search still makes no request', async () => {
+  _setTestFreshToken('tok');
+  stubFetch({ criteriaUsed: ['q'], media: [] });
+  const r = await fetchMediaSearch('q=beach');
+  assert.match(calls[0]!, /\/api\/media\/search\?q=beach$/);
+  assert.ok(r.ok);
+  assert.equal(r.data.near, null);
+  stubFetch({});
+  const none = await fetchMediaSearch(null, { near: null });
+  assert.equal(calls.length, 0);
+  assert.equal(none.ok && none.data.near, null);
+});

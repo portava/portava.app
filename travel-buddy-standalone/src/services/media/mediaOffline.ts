@@ -9,7 +9,7 @@
  *   Hidden Gems where permitted            hidden_gems          GET /media/gems (disclosure-gated; location-hidden gems NOT stored)
  *   Event checkpoint visuals               event_checkpoints    GET /media/experiences/:eventId
  *   Recent relevant Place perspectives     place_perspectives   GET /media/places/:placeId (as viewed)
- *   Map thumbnails                         —                    NOT CACHED: /media/map carries no image (see mediaCache.ts)
+ *   Map thumbnails                         map_thumbnails       GET /media/map (each cluster's ONE server-chosen cover; `mediaMapOffline`)
  *   Crew-relevant permitted media          crew_media           GET /media/people → only the trip_crew groups
  *   Cached intelligence shows its age      every read           decayFreshness + `offline.label`
  *
@@ -296,3 +296,54 @@ export async function prepareOfflineMedia(ctx: OfflineContext): Promise<{ stored
   }
   return { stored, skipped };
 }
+
+// ── Map thumbnails (census-media §24, MD300) ──────────────────────────────────
+
+/**
+ * A stored copy of the map. Clusters carry a freshness class but no age of
+ * their own, so `decayFreshness` could never demote one; each is stamped with
+ * the least age it can have had when stored (0), and a cover with its real age
+ * from its capture time. From there the cache re-ages them like everything
+ * else: a "fresh" pin read back three hours later reads "recent", and nothing
+ * served from here reads "live".
+ */
+function storedMap(p: MediaMapProjectionWithCovers): unknown {
+  const now = Date.now();
+  const ageOf = (iso: string | null | undefined): number | null => {
+    const t = iso ? Date.parse(iso) : NaN;
+    return Number.isFinite(t) ? Math.max(0, (now - t) / 60_000) : null;
+  };
+  return {
+    ...p,
+    clusters: p.clusters.map((c) => ({
+      ...c,
+      ageMinutes: 0,
+      cover: c.cover ? { ...c.cover, ageMinutes: c.cover.ageMinutes ?? ageOf(c.cover.capturedAt) } : null,
+    })),
+  };
+}
+
+/**
+ * The Media Map's clusters and their covers (§39 "Map thumbnails"), filed per
+ * city under `map_thumbnails`. What is stored is exactly what `GET /media/map`
+ * chose for this viewer: the cache never picks an image, so it can never hold
+ * one the server did not clear. The images themselves are fetched only through
+ * the signer, which refuses what this viewer may not see (`MediaCache.put`),
+ * and a later refusal purges them (`forgetRef`). A server answer of "no
+ * clusters here" deletes the stored map; an outage serves it, aged and labelled.
+ */
+export function mediaMapOffline(opts?: {
+  city?: string | null;
+  signal?: AbortSignal;
+}): Promise<OfflineResult<MediaMapProjectionWithCovers>> {
+  return cacheThrough<MediaMapProjectionWithCovers>(
+    'map_thumbnails',
+    ['map_thumbnails'],
+    opts?.city ?? 'here',
+    () => fetchMediaMap(opts),
+    { isEmpty: (p) => p.clusters.length === 0, toStore: storedMap },
+  );
+}
+
+// Imported at the TAIL so no cited line above moves; ESM hoists it.
+import { fetchMediaMap, type MediaMapProjectionWithCovers } from '../../features/media/services/mediaProjection.ts';
