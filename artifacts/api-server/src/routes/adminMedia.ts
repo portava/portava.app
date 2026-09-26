@@ -33,7 +33,7 @@ import { requireAdmin } from "../lib/requireAdmin.js";
 import { resolveStoragePath } from "../lib/storagePath.js";
 import { resolveContentOwnerDetailed, type ContentOwnerOutcome } from "../lib/contentOwner.js";
 import { logModerationAction, auditReportAction } from "../lib/moderationAudit.js";
-import { affectedRows } from "../lib/affectedRows.js";
+import { affectedRows } from "../lib/affectedRows.js"; import { applyCanonicalModerationDecision, type CanonicalModerationOutcome } from "../services/media/MediaModerationService.js";
 
 const router = Router();
 
@@ -678,7 +678,7 @@ router.post("/admin/media/:id/moderate", asyncHandler(async (req, res) => {
    * lookup refuses before any bytes are removed (see that branch).
    */
   type AuditOutcome = "recorded" | "skipped_no_owner" | "skipped_owner_lookup_failed" | "not_applicable";
-  let auditOutcome: AuditOutcome = "not_applicable";
+  let auditOutcome: AuditOutcome = "not_applicable"; let canonicalOutcome: CanonicalModerationOutcome | null = null;
 
   /**
    * Resolve the owner and say, out loud, which of the four outcomes happened.
@@ -838,7 +838,7 @@ router.post("/admin/media/:id/moderate", asyncHandler(async (req, res) => {
     const { error: delErr } = await sc.from("post_media").delete().eq("id", id);
     if (delErr) { sendError(res, "db_error", delErr.message); return; }
 
-    res.json({ ok: true, id, action, target, deleted: true, objectsRemoved: paths.length });
+    res.json({ ok: true, id, action, target, deleted: true, objectsRemoved: paths.length, canonical: await applyCanonicalModerationDecision(sc, { bucket, path: ref.kind === "path" ? ref.path : null, decision: "remove" }) });
     return;
 
   } else if (target === "post_media") {
@@ -851,7 +851,7 @@ router.post("/admin/media/:id/moderate", asyncHandler(async (req, res) => {
       .from("post_media")
       .update({ moderation_status: newStatus })
       .eq("id", id)
-      .select("id");
+      .select("id, storage_bucket, storage_path");
 
     if (error) { sendError(res, "db_error", error.message); return; }
     if (!updated || (updated as any[]).length === 0) {
@@ -868,6 +868,25 @@ router.post("/admin/media/:id/moderate", asyncHandler(async (req, res) => {
       );
       if (!audit.ok) { sendError(res, "db_error", `Audit write failed: ${audit.error}`, { exposeDetail: true }); return; }
       auditOutcome = "recorded";
+    }
+
+    // §36 (census-media §20, MD351/MD274): carry the decision to the FILE's
+    // canonical record, through the one module that owns the state machine.
+    // The legacy post_media value above is unchanged; this is the second store
+    // that used to keep serving what the first one had just rejected. Reported,
+    // never swallowed — and at error level when a RESTRICTIVE decision failed
+    // to land, because that is the two stores disagreeing in the unsafe direction.
+    const pm = (updated as any[])[0] ?? {};
+    canonicalOutcome = await applyCanonicalModerationDecision(sc, {
+      bucket: pm.storage_bucket,
+      path: pm.storage_path,
+      decision: action === "approve" ? "approve" : action === "reject" ? "reject" : "flag",
+    });
+    if (action !== "approve" && (canonicalOutcome === "failed" || canonicalOutcome === "conflict")) {
+      req.log.error(
+        { id, action, canonicalOutcome, adminUserId: userId },
+        "admin media moderate: post_media moderated and audited, but the canonical asset did NOT follow — it may still be served from media_assets",
+      );
     }
 
   } else if (target === "hidden_gem") {
@@ -964,7 +983,7 @@ router.post("/admin/media/:id/moderate", asyncHandler(async (req, res) => {
   // `audit` is additive and is the whole point of the change above: an operator
   // who moderates content is told whether the action left an accountable record,
   // instead of getting an unqualified `ok: true` for an action with no audit row.
-  res.json({ ok: true, id, action, target, audit: auditOutcome });
+  res.json({ ok: true, id, action, target, audit: auditOutcome, ...(canonicalOutcome ? { canonical: canonicalOutcome } : {}) });
 }));
 
 export default router;

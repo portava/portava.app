@@ -57,7 +57,7 @@ import {
   verifyUploadedBytes,
   ALLOWED_MEDIA_MIME,
 } from "../lib/mediaPipeline.js";
-import { recordMediaAsset, capturedAtFromImageBytes } from "../lib/mediaAssets.js";
+import { recordMediaAsset, capturedAtFromImageBytes, recordPostMediaAttachments } from "../lib/mediaAssets.js";
 import { resolvePostPlace } from "../lib/places/placeResolve.js";
 import { classifyBuckets, incrementBucketCounts } from "../lib/places/bucketClassifier.js";
 import { ensurePlaceDay, isEligiblePlaceDayPost } from "../lib/places/placeDays.js";
@@ -676,7 +676,7 @@ router.post("/posts", async (req, res) => {
     sendError(res, "db_error", error.message);
     return;
   }
-
+  { const msc = getServiceClient(); if (msc) void recordPostMediaAttachments(msc, { postId: String((data as any).id), authorId: user.id, mediaUrls: mediaUrls ?? [] }); } // §6.1 post→asset link, gated inside (census-media §20)
   // Compass activity ingestion — fire-and-forget
   recordActivityEvent(
     getServiceClient(),
