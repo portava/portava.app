@@ -6439,7 +6439,7 @@ here.
 
 | ID | Was | Now | Evidence |
 | --- | --- | --- | --- |
-| MD403 | **W** | **W** | §27 states no RED WHEN for MD403. Its row names four failure groups, and §28.9 names the three that remained after §29.8. All are fixed in Media's own files (§31.2), and every pinned pair is now asserted as a pass: `travel-buddy-standalone/src/features/media/__tests__/mediaContrast.test.ts:835#test('every solid-ground and fallback pair meets WCAG AA` holds over all 312 asserted pairs, and `travel-buddy-standalone/src/features/media/__tests__/mediaContrast.test.ts:841#test('pinned findings are still below threshold` finds none pinned. The row is not C, because two §46 state indicators over photographs are outside the test and floor at 1.00:1. One is the perspective tile's evidence-class edge (`travel-buddy-standalone/src/features/media/components/PerspectiveTile.tsx:45#<View style={[styles.edge, { backgroundColor: accent }]} />`). The other is the viewer's captions toggle when it is on (`travel-buddy-standalone/src/features/media/screens/MediaPerspectiveViewerScreen.tsx:651#controlButtonActive: { backgroundColor: 'rgba(250,249,246,0.32)' },`). **RED WHEN** both are measured by the test and pass, AND one of two things holds: the shipped Media tab's overlays (`src/components/media`, outside the test's scope and measured by no lane) are measured and pass, or the owner rules that MD403 grades the World shell only. **Blocker:** branch work, plus that owner ruling on scope. |
+| MD403 | **W** | **W** | §27 states no RED WHEN for MD403. Its row names four failure groups, and §28.9 names the three that remained after §29.8. All are fixed in Media's own files (§31.2), and every pinned pair is now asserted as a pass: `travel-buddy-standalone/src/features/media/__tests__/mediaContrast.test.ts:835#test('every solid-ground and fallback pair meets WCAG AA` holds over all 312 asserted pairs, and `travel-buddy-standalone/src/features/media/__tests__/mediaContrast.test.ts:841#test('pinned findings are still below threshold` finds none pinned. The row is not C, because two §46 state indicators over photographs are outside the test and floor at 1.00:1. One is the perspective tile's evidence-class edge (`travel-buddy-standalone/src/features/media/components/PerspectiveTile.tsx:45#<View style={[styles.edge, { backgroundColor: accent }]} />`). The other is the viewer's captions toggle when it is on (`travel-buddy-standalone/src/features/media/screens/MediaPerspectiveViewerScreen.tsx:651#controlButtonActive: { backgroundColor: color.onInk },`, repointed in §31.12, which fixes it and restates this row). **RED WHEN** both are measured by the test and pass, AND one of two things holds: the shipped Media tab's overlays (`src/components/media`, outside the test's scope and measured by no lane) are measured and pass, or the owner rules that MD403 grades the World shell only. **Blocker:** branch work, plus that owner ruling on scope. |
 
 ### 31.2 What was fixed, and how each value was chosen
 
@@ -6637,10 +6637,12 @@ outside those files:
    - It floors at 1.00:1 for all five classes, and measures 4.77 to 8.83 on
      the no-image fill.
 2. **The captions toggle, when on, has no floor.** Its `onInk` icon
-   (`travel-buddy-standalone/src/features/media/screens/MediaPerspectiveViewerScreen.tsx:434#<Captions size={16} color={color.onInk} />`)
-   sits on a 0.32 light wash that replaces the button's 0.7 ink when selected
-   (`travel-buddy-standalone/src/features/media/screens/MediaPerspectiveViewerScreen.tsx:651#controlButtonActive: { backgroundColor: 'rgba(250,249,246,0.32)' },`).
-   It floors at 1.00:1.
+   (`travel-buddy-standalone/src/features/media/screens/MediaPerspectiveViewerScreen.tsx:434#<Captions size={16} color={showCaptions ? color.ink : color.onInk} />`)
+   sat on a 0.32 light wash that replaced the button's 0.7 ink when selected
+   (`travel-buddy-standalone/src/features/media/screens/MediaPerspectiveViewerScreen.tsx:651#controlButtonActive: { backgroundColor: color.onInk },`).
+   It floored at 1.00:1. Both anchors were repointed by §31.12, which fixes
+   it; at `2e79803cd` these lines read `color={color.onInk}` and
+   `'rgba(250,249,246,0.32)'`.
 3. **Lane I's cover-count badge is not in the test, but passes.** The badge
    is `travel-buddy-standalone/src/features/media/components/MediaMapCanvas.tsx:247#backgroundColor: 'rgba(17,17,15,0.92)',`,
    and its count is `travel-buddy-standalone/src/features/media/components/MediaMapCanvas.tsx:253#coverCountText: { color: color.onInk, fontSize: 11, fontWeight: '800' },`.
@@ -6726,3 +6728,354 @@ No flag, seed or migration was touched, and no database was read.
 | `travel-buddy-standalone/src/features/media/components/MediaMapCanvas.tsx` | one opacity, in place |
 | `travel-buddy-standalone/src/features/media/__tests__/mediaContrast.test.ts` | 33 pairs converted; surfaces and needles updated; line-neutral |
 | `docs/architecture/census-media.md` | this section, appended |
+
+### 31.12 Second pass — MD403's three gaps closed, the shipped Media tab measured and fixed
+
+The integration owner sent this lane back to finish MD403 on the same branch.
+Commits `fe6411253`, `c14d22a54` and `ac700c293` hold the code, and this
+subsection is the census record. It does three things:
+- It closes §31.7's items 1–3 in Media's own files.
+- It measures the shipped Media tab, `src/components/media`, together with
+  the tab route and the add-gem sheet, under the same rules, and fixes every
+  failure that sits in those Media files.
+- It pins the failures that only a change to a shared, non-Media component
+  can fix.
+
+**MD403 stays W.** Five pairs are pinned, each blocked by a shared component,
+and one Media surface is still not measured (§31.12.4, §31.12.8).
+
+#### 31.12.1 Row table
+
+| ID | Was | Now | Evidence |
+| --- | --- | --- | --- |
+| MD403 | **W** | **W** | Every failure inside Media's own files is fixed and asserted: 491 of 496 asserted pairs pass, across 519 pairs (`travel-buddy-standalone/src/features/media/__tests__/mediaContrast.test.ts:835#test('every solid-ground and fallback pair meets WCAG AA`). Five are pinned, and a guard requires each to name the shared file that blocks its fix (`travel-buddy-standalone/src/features/media/__tests__/mediaContrast.test.ts:1355#test('census-media §31.12: a pinned pair names the shared file that blocks its fix'`). Three of the five are the shared StampButton's idle count in `mute` (`travel-buddy-standalone/src/components/stamps/StampButton.tsx:301#color: color.mute,`), which no dark ground brings to 4.5:1, on the viewer, the gems rail and the grid tile. One is the shared AppHeader's overlay title (`travel-buddy-standalone/src/components/ui/AppHeader.tsx:305#const overlayBg = transparent ? 'transparent' : 'rgba(0,0,0,0.28)';`), 1.99:1. One is the shared EmptyState's primary button (`travel-buddy-standalone/src/components/ui/EmptyState.tsx:75#backgroundColor: color.signal,`), 3.14:1. The Grid's full-screen viewer, `app/media-viewer/[id].tsx`, is not measured. **RED WHEN** three things hold: the test has no pinned pair, `app/media-viewer/[id].tsx` is measured and passes, and nothing else §46 requires is found unmet. **Blocker:** the three shared components, which are outside Media's files; then branch work. |
+
+#### 31.12.2 What is measured, and how it is classed
+
+The measurement is in the same test, appended at its tail. The builder of
+`MEASURED` became a named function and `SurfaceId` includes the tail's
+surfaces. Both are edited in place, so none of the file's cited lines moves:
+- `travel-buddy-standalone/src/features/media/__tests__/mediaContrast.test.ts:777#function measurePair(pair: Pair): Measured {`
+- `travel-buddy-standalone/src/features/media/__tests__/mediaContrast.test.ts:295#type SurfaceId = keyof typeof S | keyof typeof S_TAIL;`
+
+The tail's pairs are measured into `MEASURED` at module evaluation
+(`travel-buddy-standalone/src/features/media/__tests__/mediaContrast.test.ts:1342#MEASURED.push(...PAIRS.slice(MEASURED.length).map(measurePair));`).
+node:test runs the tests above only after the module has evaluated, and a new
+test fails if any pair is left unmeasured
+(`travel-buddy-standalone/src/features/media/__tests__/mediaContrast.test.ts:1344#test('census-media §31.12: every pair, the tail\'s included, is measured'`).
+
+**Scope.**
+- The World shell's three gaps.
+- Every component under `src/components/media`, the tab route
+  `app/(tabs)/media.tsx`, and the add-gem route's paper sheet.
+- The shared components those surfaces draw on a photograph or a Media
+  sheet: PlaceQuickActions, FeaturedBadge, VerifiedStamp, StampIcon,
+  StampButton, GemStateBadge, AppHeader's overlay and EmptyState. They are
+  read and never edited here.
+
+**Rules.** WCAG 2.x AA applies: text at 4.5:1, state indicators at 3:1, photo
+floors over the 16-level grid, no large-text relief, and every colour tied to
+its file by a needle.
+
+**What counts as `decor`.** It is measured and printed, but not asserted:
+- an icon whose meaning a visible text label beside it already carries;
+- an outline or a backdrop;
+- a disabled control;
+- the transient stamp-burst animation (WCAG 1.4.3: pure decoration; the
+  stamped state is the rail's button, which is asserted).
+
+**Not measured.**
+- **Pressed states.** They last only as long as a touch.
+- **The emoji glyphs on the gems rail** (`💬`, `🔖`, `🏷`). Their colour
+  comes from the platform font, not from the source. The saved state is the
+  swap between two emoji.
+
+**The dynamic-type half now covers the shipped tab too**
+(`travel-buddy-standalone/src/features/media/__tests__/mediaContrast.test.ts:1360#test('dynamic type (the shipped Media tab): no Text opts out of, or caps, OS font scaling'`).
+No Text there opts out of or caps OS font scaling.
+
+#### 31.12.3 The fixes
+
+Every value is the least alpha on a 0.01 grid, or the lightest same-hue
+shade, at which every pair on that surface clears. The search used the test's
+own formulas, and the test then measured each chosen value independently.
+- **Scrim colours.** Where the file already drew a scrim, its alpha was
+  raised and its colour kept, black or ink. A new backing is the app's ink,
+  `rgba(17,17,15,a)`.
+- **No token changed.** Colour fixes are Media-local literals or existing
+  tokens.
+- **Structure is unchanged.** No element was added, removed or reordered,
+  except two backing views: the tile's edge casing and the video cell's
+  spinner badge.
+
+**The World shell**
+
+| Surface | Line | Chosen | Tightest pair: before → after |
+| --- | --- | --- | --- |
+| Perspective tile's evidence-class edge: a 5 px ink casing | `travel-buddy-standalone/src/features/media/components/PerspectiveTile.tsx:45#<View style={tailStyles.edgeCasing} /><View style={[styles.edge, { backgroundColor: accent }]} />`, `travel-buddy-standalone/src/features/media/components/PerspectiveTile.tsx:102#edgeCasing: { position: 'absolute', left: 0, top: 0, bottom: 0, width: 5, backgroundColor: 'rgba(17,17,15,0.80)' },` | 0.80 | `generated` edge: 1.00 → 3.07 (all five classes: 1.00 before) |
+| Viewer captions toggle when on: an ink icon on an opaque onInk badge | `travel-buddy-standalone/src/features/media/screens/MediaPerspectiveViewerScreen.tsx:651#controlButtonActive: { backgroundColor: color.onInk },`, `travel-buddy-standalone/src/features/media/screens/MediaPerspectiveViewerScreen.tsx:434#<Captions size={16} color={showCaptions ? color.ink : color.onInk} />` | opaque | 1.00 → 17.95 |
+| Lane I's cover-count badge and selected cover ring | now guarded; no change | — | 14.76 over any photo, 17.36 over the map; ring 9.33 |
+
+**The Watch overlay and feed**
+
+| Surface | Line | Chosen | Tightest pair: before → after |
+| --- | --- | --- | --- |
+| Backing under the left column (name, handle, follow, caption, hashtags, chips, audio, featured badge, verified mark, quick actions) | `travel-buddy-standalone/src/components/media/WatchItemOverlay.tsx:498#paddingRight: space.sm, padding: space.sm, borderRadius: radius.md, backgroundColor: 'rgba(17,17,15,0.71)',` | 0.71 | 12 pairs, each at 1.00 before; tightest after: featured badge 4.54 |
+| Backing under the action rail; idle stamp icon white (it was the shared StampIcon's `mute`) | `travel-buddy-standalone/src/components/media/WatchItemOverlay.tsx:621#backgroundColor: 'rgba(17,17,15,0.80)',`, `travel-buddy-standalone/src/components/media/WatchItemOverlay.tsx:406#color={stampVisualIsStamped ? color.signal : '#fff'}` | 0.80 | 6 pairs at 1.00 before; tightest after: saved bookmark (`signal`) 3.11 |
+| Create button: a light wash became ink | `travel-buddy-standalone/src/components/media/WatchItemOverlay.tsx:605#backgroundColor: 'rgba(17,17,15,0.58)',` | 0.58 | 1.00 → 4.62 |
+| Video cell failure overlay | `travel-buddy-standalone/src/components/media/WatchVideoCell.tsx:203#backgroundColor: 'rgba(17,17,15,0.71)',` | 0.71 | 3.34 → 4.59 |
+| Video cell buffering spinner on a badge | `travel-buddy-standalone/src/components/media/WatchVideoCell.tsx:181#<View style={tailStyles.spinnerBadge}>`, `travel-buddy-standalone/src/components/media/WatchVideoCell.tsx:219#spinnerBadge: { padding: 10, borderRadius: 999, backgroundColor: 'rgba(17,17,15,0.52)' },` | 0.52 | 1.00 → 3.04 |
+| Feed progress track: a light wash became an ink track | `travel-buddy-standalone/src/components/media/WatchFeedList.tsx:625#backgroundColor: 'rgba(17,17,15,0.80)',` | 0.80 | fill 1.00 → 3.11 |
+| Backing under the pause mark | `travel-buddy-standalone/src/components/media/WatchFeedList.tsx:657#width: 44, borderRadius: radius.md, backgroundColor: 'rgba(17,17,15,0.57)',` | 0.57 | 1.00 → 3.08 |
+| Swipe hint | `travel-buddy-standalone/src/components/media/WatchFeedList.tsx:689#backgroundColor: 'rgba(0,0,0,0.59)',` | 0.59 | 2.49 → 4.53 |
+| Backing under the For You / Following toggle | `travel-buddy-standalone/src/components/media/WatchFeed.tsx:123#backgroundColor: 'rgba(17,17,15,0.71)',` | 0.71 | 1.00 → 4.55 |
+| Mode selector row (Watch, Gems) | `travel-buddy-standalone/src/components/media/MediaModeSelector.tsx:128#backgroundColor: 'rgba(0,0,0,0.66)',` | 0.66 | inactive label 1.68 → 4.50 |
+| Mode selector, selected (Watch, Gems): an opaque onInk pill, ink label | `travel-buddy-standalone/src/components/media/MediaModeSelector.tsx:145#backgroundColor: color.onInk,` | opaque | fill 1.18 → 6.90; label 1.70 → 17.95 |
+| Mode selector on Grid: selected is an ink pill; idle text `mute` x 0.98 | `travel-buddy-standalone/src/components/media/MediaModeSelector.tsx:149#backgroundColor: color.ink,`, `travel-buddy-standalone/src/components/media/MediaModeSelector.tsx:163#color: '#696660',` | #696660 | fill 1.26 → 15.03; label 4.41 → 4.55 |
+
+**Gems**
+
+| Surface | Line | Chosen | Tightest pair: before → after |
+| --- | --- | --- | --- |
+| Backing under the place block and creator row (with GemStateBadge's pills and confidence) | `travel-buddy-standalone/src/components/media/GemsItemOverlay.tsx:430#gap: space.sm, paddingTop: space.md, backgroundColor: 'rgba(0,0,0,0.81)',` | 0.81 | 19 pairs, 1.00 to 1.38 before; tightest after: `faint` confidence 4.64 |
+| Verified-place mark: `success` tinted 0.65 toward white | `travel-buddy-standalone/src/components/media/GemsItemOverlay.tsx:451#color: '#B6D2C6',` | #B6D2C6 | 1.00 → 4.58 (`success` there: 1.48) |
+| Backing under the action column | `travel-buddy-standalone/src/components/media/GemsItemOverlay.tsx:372#backgroundColor: 'rgba(0,0,0,0.89)',` | 0.89 | 1.00 → 3.07 (the shared StampButton's idle icon sets it) |
+| Illustrative-image banner | `travel-buddy-standalone/src/components/media/GemsItemOverlay.tsx:353#backgroundColor: 'rgba(0,0,0,0.83)',` | 0.83 | 1.55 → 4.58 |
+| Backing under the filter chips; the active category label becomes ink | `travel-buddy-standalone/src/components/media/GemsFilterBar.tsx:176#backgroundColor: 'rgba(17,17,15,0.81)',`, `travel-buddy-standalone/src/components/media/GemsFilterBar.tsx:230#color: color.ink,` | 0.81 | area label 1.00 → 4.58; active category 3.14 → 5.72 |
+
+**The Grid**
+
+| Surface | Line | Chosen | Tightest pair: before → after |
+| --- | --- | --- | --- |
+| Tile badges | `travel-buddy-standalone/src/components/media/GridTile.tsx:226#backgroundColor: 'rgba(0,0,0,0.55)',` | 0.55 | 3.18 → 4.52 |
+| Tile meta row | `travel-buddy-standalone/src/components/media/GridTile.tsx:186#const SCRIM_BOTTOM = 'rgba(0,0,0,0.55)';` | 0.55 | 3.52 → 4.52 |
+| Backing under the tile's StampButton | `travel-buddy-standalone/src/components/media/GridTile.tsx:285#zIndex: 6, borderRadius: 999, backgroundColor: 'rgba(17,17,15,0.95)',` | 0.95 | idle icon 1.00 → 3.04 |
+| Filter chip text: `mute` x 0.98 | `travel-buddy-standalone/src/components/media/GridFilterBar.tsx:214#color: '#696660',` | #696660 | 4.41 → 4.55 |
+| VerifiedLocationStamp (Watch and grid): opaque, on its own backing | `travel-buddy-standalone/src/components/media/VerifiedLocationStamp.tsx:33#opacity: 1,`, `travel-buddy-standalone/src/components/media/VerifiedLocationStamp.tsx:40#borderStyle: 'dashed', backgroundColor: 'rgba(17,17,15,0.66)',` | 0.66 | 1.00 → 4.61 |
+
+**Sheets, menus and the tab's own buttons**
+
+| Surface | Line | Chosen | Tightest pair: before → after |
+| --- | --- | --- | --- |
+| Radial menu fills, each darkened in its own hue | `travel-buddy-standalone/src/components/media/WatchRadialMenu.tsx:38#bgColor: '#8558EC',` (and the three other fills) | x0.96, x0.84, x0.76, x0.73 | white 8 px label: 2.54 → 4.52 |
+| More-menu destructive row | `travel-buddy-standalone/src/components/media/MediaMoreMenu.tsx:461#color: '#C43B23',` | #C43B23 | 3.14 → 4.99 |
+| Route It button | `travel-buddy-standalone/src/components/media/RouteItPlaceSheet.tsx:235#backgroundColor: '#C43B23',` | #C43B23 | 3.14 → 4.99 |
+| Add-gem form: `signal` text (back, required mark, field and form errors, close) | `travel-buddy-standalone/src/components/media/AddGemForm.tsx:1028#color: '#C43B23',` (and five more lines) | #C43B23 | 3.02 → 4.80 on the error tint |
+| Add-gem form: `faint` hints, placeholders and badge | `travel-buddy-standalone/src/components/media/AddGemForm.tsx:563#placeholderTextColor={color.mute}` (and five more) | `mute` | 2.73 → 5.27 |
+| Add-gem form: the gem green under white text | `travel-buddy-standalone/src/components/media/AddGemForm.tsx:1071#backgroundColor: '#0C875E',`, `travel-buddy-standalone/src/components/media/AddGemForm.tsx:1150#backgroundColor: '#0C875E',` | #10B981 x0.73 | 2.54 → 4.52 |
+| Tab's gem FAB | `travel-buddy-standalone/app/(tabs)/media.tsx:279#backgroundColor: '#0C875E',` | #0C875E | 2.54 → 4.52 |
+| Tab's World pill | `travel-buddy-standalone/app/(tabs)/media.tsx:291#backgroundColor: 'rgba(17,17,15,0.58)',` | 0.58 | 3.04 → 4.62 |
+
+**Before and after.** "Before" is each pair on the source at `2e79803cd`,
+measured with the test's formulas. "After" is the test's own table.
+- Of the 118 pairs these fixes touch, 108 failed before.
+- 116 of the 118 now pass. The other two are pinned (§31.12.4).
+- The ten that passed before were fallback or empty-feed variants and one
+  Grid selected label; all of them still pass.
+
+#### 31.12.4 Pinned: five pairs that only a shared component can fix
+
+Each pinned pair names its blocking file, and the guard enforces it. None is a
+Media file, and this lane edits none of them.
+
+| Pair | Ratio | Why no Media-side fix exists | Blocker |
+| --- | --- | --- | --- |
+| `viewer.stampButton.count.idle.photoFloor` (World shell) | 3.12 | See below. | `travel-buddy-standalone/src/components/stamps/StampButton.tsx:301#color: color.mute,` |
+| `gems.rail.stampButton.count.idle` | 3.07 | As above. | as above |
+| `gridTile.stampButton.count.idle.photoFloor` | 3.04 | As above; the tile's new backing fixes its icon, not its idle count. | as above |
+| `tab.appHeaderOverlay.title.photoFloor` | 1.99 | The shared header draws `#fff` on a 0.28 black tint over the frame (`travel-buddy-standalone/src/components/ui/AppHeader.tsx:313#{centeredTitle('#fff')}`). The tab passes only `variant="overlay"` (`travel-buddy-standalone/app/(tabs)/media.tsx:129#variant="overlay"`); no prop sets the tint. | `travel-buddy-standalone/src/components/ui/AppHeader.tsx:305#const overlayBg = transparent ? 'transparent' : 'rgba(0,0,0,0.28)';` |
+| `gridFeed.emptyState.retryButton` | 3.14 | The Grid's error state shows the shared EmptyState's primary action, `onInk` on `signal` (`travel-buddy-standalone/src/components/ui/EmptyState.tsx:82#color: color.onInk,`). EmptyState takes no colour. | `travel-buddy-standalone/src/components/ui/EmptyState.tsx:75#backgroundColor: color.signal,` |
+
+**Why the StampButton's idle count cannot be fixed from Media's side.**
+- The count is `mute` when idle and `signal` when stamped, and StampButton
+  takes no colour.
+- On a dark backing, `mute` text reaches at most 3.79:1 (on pure black).
+- On a light backing, `signal` text reaches at most 3.31:1 (on white); on
+  paper it reads 3.14:1.
+- So a dark backing fails the idle count and a light one fails the stamped
+  count. No single backing clears both.
+- The idle count is reachable: after a stamp, the server's count replaces the
+  local one (`travel-buddy-standalone/src/hooks/useStamp.ts:64#setCount(result.data.count);`),
+  and after an unstamp other people's stamps stay counted.
+
+#### 31.12.5 Pair counts
+
+| | Pairs | Asserted | Pass | Pinned | Decorative | Floors |
+| --- | --- | --- | --- | --- | --- | --- |
+| Before this pass (`2e79803cd`) | 321 | 312 | 312 | 0 | 9 | 41 |
+| After (`ac700c293`) | 519 | 496 | 491 | 5 | 23 | 138 |
+
+- **Nothing was dropped.** All 321 earlier pairs are still measured, under
+  the same ids, and all still pass.
+- **198 pairs are new.** 118 cover the surfaces fixed above (116 pass, 2
+  pinned). 80 cover surfaces that needed no change (63 pass, 3 pinned, 14
+  decorative).
+
+#### 31.12.6 Mutations, each run on the final tree and restored
+
+Each mutation reverts one fix in place. The test holds the colour as a
+literal tied to the component by a needle, so a revert turns
+`travel-buddy-standalone/src/features/media/__tests__/mediaContrast.test.ts:808#test('every pair is anchored in the source`
+red and names each pair that rests on the fix.
+
+After every run the file was restored byte for byte, and `git diff --quiet`
+exited 0. §31's K-M1 to K-M10 were re-run on this tree too, and each was red
+again.
+
+| # | Fix reverted | Pairs red |
+| --- | --- | --- |
+| K-M11 | tile edge casing removed | 10 |
+| K-M12 | captions on back to `onInk` on the 0.32 wash | 2 |
+| K-M13 | guard: cover-count badge 0.92 → 0.5 | 2 |
+| K-M14 | Watch left-column backing removed | 12 |
+| K-M15 | Watch rail backing removed | 6 |
+| K-M16 | Watch idle stamp back to the StampIcon default | 2 |
+| K-M17 | Watch create button back to the 0.18 light wash | 2 |
+| K-M18 | video failure overlay 0.71 → 0.6 | 2 |
+| K-M19 | video spinner badge unapplied | 1 |
+| K-M20 | feed track back to the 0.22 light wash | 2 |
+| K-M21 | pause backing removed | 1 |
+| K-M22 | swipe hint 0.59 → 0.4 | 2 |
+| K-M23 | feed-toggle backing removed | 6 |
+| K-M24 | mode row 0.66 → 0.30 | 2 |
+| K-M25 | mode selected back to the 0.20 wash, `onInk` label | 2 |
+| K-M26 | Grid mode selector back to `mute` / paperRaised | 3 |
+| K-M27 | gems bottom backing removed | 20 |
+| K-M28 | gems verified mark back to `success` | 1 |
+| K-M29 | gems action-column backing removed | 6 |
+| K-M30 | gems banner 0.83 → 0.55 | 1 |
+| K-M31 | gems filter backing removed | 5 |
+| K-M32 | gems active category label back to `onInk` | 1 |
+| K-M33 | grid badge 0.55 → 0.45 | 2 |
+| K-M34 | grid meta row 0.55 → 0.48 | 2 |
+| K-M35 | grid stamp backing removed | 4 |
+| K-M36 | grid filter chip back to `mute` | 1 |
+| K-M37 | location stamp back to opacity 0.38, no backing | 2 |
+| K-M38 | radial fills back to the original hues | 8 |
+| K-M39 | more-menu destructive back to `signal` | 1 |
+| K-M40 | Route It button back to `signal` | 1 |
+| K-M41 | add-gem vermilion text back to `signal` | 6 |
+| K-M42 | add-gem hints and placeholders back to `faint` | 4 |
+| K-M43 | add-gem green back to `#10B981` | 5 |
+| K-M44 | tab gem FAB back to `#10B981` | 1 |
+| K-M45 | tab World pill 0.58 → 0.45 | 1 |
+
+**K-M43 first went red on only 3 pairs.** The add-gem text pairs on the green
+and on the error tint did not name their fill. Commit `c14d22a54` ties them
+to it, and the re-run reported 5.
+
+#### 31.12.7 Citations
+
+No line above §31 was edited. This pass changed two viewer lines that §31
+itself cited. §31.1's row and §31.7's item 2 had three anchors on them, and
+all three were repointed within §31 to the lines' current text. §31.7 also
+records the text those lines had at `2e79803cd`.
+
+Every source edit is line-neutral above its file's tail. The anchored
+citations other documents make into the shipped files still hold, as
+`check:doc-citations` confirms. They are in WatchItemOverlay, WatchVideoCell,
+MediaMoreMenu, GemsFeed, AddGemForm, MediaCommentSheet and the tab route.
+
+#### 31.12.8 Found, not fixed
+
+1. **`app/media-viewer/[id].tsx` is not measured.** It is the shipped Grid's
+   full-screen viewer, 866 lines, outside `src/components/media`. It is one
+   of the reasons the row is W.
+2. **Shared sheets opened from Media surfaces are not measured.** They are
+   `CommentsSheet`, `ShareSheet`, `GlobalPlacePicker`, `CreationAssist` and
+   `PlanPickerController`. They are app-wide components, not Media's.
+3. **Three calls the owner may overrule.**
+   - The stamp burst is classed `decor`. It floors at 1.00, and pure
+     decoration is exempt under 1.4.3.
+   - Pressed states are not measured.
+   - An icon beside a label that names it is classed `decor`.
+
+#### 31.12.9 Design choices the owner may want to revisit
+
+- **Watch and Gems now draw visible dark backings.** Each column and rail
+  sits on a rounded backing.
+  - The rails keep their order, sizes and counts.
+  - The backing makes them read as panels. Whether that changes "the count
+    rail's prominence", which MD408 and MD424 leave to the owner, is the
+    owner's call.
+  - The gradients are kept, but nothing relies on them.
+- **Backings behind the shared StampButton are heavy.** The gems column is
+  at 0.89 and the grid tile's disc at 0.95. The shared StampButton's idle
+  `mute` icon sets both. A dark tone in StampButton would let them drop to
+  about 0.80.
+- **Selected mode chips are inverted.** On a dark ground, selected is an
+  opaque onInk pill with ink text; on the Grid it is an ink pill. This
+  matches the World shell's tabs.
+- **Two stamps changed character.**
+  - VerifiedLocationStamp is now an opaque dark stamp. It had been a faint,
+    0.38 watermark.
+  - The captions toggle, when on, inverts.
+
+#### 31.12.10 Production — nothing here is deployed
+
+Nothing in §31.12 is merged to main, pushed or deployed, so none of it is in
+any build a user has. The change is client-only. No flag, seed or migration
+was touched, and no database was read. This lane did not re-read which Media
+flags are on in production.
+
+#### 31.12.11 Checks
+
+- **Contrast test.** `mediaContrast.test.ts` passes 13 / 13, with 519 pairs,
+  5 pinned and 0 unpinned failing.
+- **Media node tests.** 19 files pass, 280 / 280 (Node 22, `--import tsx`).
+- **Jest.**
+  - `features/media` component suites: 11 suites, 79 / 79.
+  - `components/media` component suites: 6 suites, 37 / 37.
+  - The other suites that render a changed file pass: 4 suites, 14 / 14.
+    They are the AddGemForm HEIC case and three `app/(tabs)` media suites.
+- **Client.**
+  - `tsc --noEmit -p .` is clean.
+  - The test typecheck is at its baseline, with 0 diagnostics in the
+    contrast test.
+  - eslint on the 18 changed files gives 0 errors and no new warning against
+    `HEAD`.
+  - `lint:imports`, `lint:bare-image`, `lint:avatar-icon-sizing`, `lint:mocks`
+    and `lint:orphan-tests` pass.
+- **Census.**
+  - `check:doc-citations` passes, with 0 unresolved and 0 moved anchors.
+    Anchored citations rose from 7,057 to 7,112, and unanchored ones stayed
+    at 6,355.
+  - `check:citation-targets` stays at 165 / 165.
+  - `check:census-scope-coverage` passes. Media is at 228 of 236 watched
+    (96.6 %), against a floor of 96 %, so the scope was not widened.
+  - `check:census-integrity` passes. MD403 does not move, so media still
+    counts C 400 · W 38 · N 12 · X 0.
+  - `check:census-freshness` reports census-media STALE. Across both passes,
+    14 changed files are not named in its acknowledgement: 12 under
+    `src/components/media` (GemsFilterBar, GemsItemOverlay, GridFilterBar,
+    GridTile, MediaModeSelector, MediaMoreMenu, RouteItPlaceSheet,
+    VerifiedLocationStamp, WatchFeed, WatchFeedList, WatchRadialMenu,
+    WatchVideoCell), plus ContributorTrustChips and PerspectiveTile. The lane
+    does not edit the acknowledgement; the integrator adds them.
+
+#### 31.12.12 Files changed by this pass
+
+All are client files. No server file, token, scope entry or ledger is
+edited.
+
+| File | Change |
+| --- | --- |
+| `travel-buddy-standalone/src/features/media/components/PerspectiveTile.tsx` | an ink casing under the evidence-class edge (one line in place; a tail style) |
+| `travel-buddy-standalone/src/features/media/screens/MediaPerspectiveViewerScreen.tsx` | the captions toggle's on state (two lines, in place) |
+| `travel-buddy-standalone/src/components/media/WatchItemOverlay.tsx` | two backings, the create button, the idle stamp colour (in place) |
+| `travel-buddy-standalone/src/components/media/WatchVideoCell.tsx` | failure overlay alpha, the spinner badge (in place; a tail style) |
+| `travel-buddy-standalone/src/components/media/WatchFeedList.tsx` | the progress track, the pause backing, the swipe hint (in place) |
+| `travel-buddy-standalone/src/components/media/WatchFeed.tsx` | the toggle's backing (in place) |
+| `travel-buddy-standalone/src/components/media/MediaModeSelector.tsx` | row alpha, selected colours, the Grid idle grey (in place) |
+| `travel-buddy-standalone/src/components/media/GemsItemOverlay.tsx` | two backings, the banner, the verified mark (in place) |
+| `travel-buddy-standalone/src/components/media/GemsFilterBar.tsx` | a backing, the active category label (in place) |
+| `travel-buddy-standalone/src/components/media/GridTile.tsx` | badge and meta alphas, the stamp backing (in place) |
+| `travel-buddy-standalone/src/components/media/GridFilterBar.tsx` | the idle chip grey (in place) |
+| `travel-buddy-standalone/src/components/media/VerifiedLocationStamp.tsx` | opacity and a backing (in place) |
+| `travel-buddy-standalone/src/components/media/WatchRadialMenu.tsx` | four fills; an unused import dropped (in place) |
+| `travel-buddy-standalone/src/components/media/MediaMoreMenu.tsx` | the destructive label (in place) |
+| `travel-buddy-standalone/src/components/media/RouteItPlaceSheet.tsx` | the button fill (in place) |
+| `travel-buddy-standalone/src/components/media/AddGemForm.tsx` | vermilion, `mute` and green colours (in place) |
+| `travel-buddy-standalone/app/(tabs)/media.tsx` | the gem FAB fill, the World pill alpha (in place) |
+| `travel-buddy-standalone/src/features/media/__tests__/mediaContrast.test.ts` | 198 pairs and 4 tests appended; two lines made extensible in place |
+| `docs/architecture/census-media.md` | this subsection; three §31 anchors repointed |
