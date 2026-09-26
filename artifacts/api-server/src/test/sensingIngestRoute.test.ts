@@ -373,6 +373,56 @@ describe("purpose scopes are distinct permissions and default deny", () => {
   });
 });
 
+// ── 3315: the contribution's own consent to be shown to others ──────────────
+
+describe("3315 — surface_permitted reaches the row only when `surface` was ADMITTED", () => {
+  it("an ordinary session under the policy in force: the row carries no surface consent", async () => {
+    const credential = generateSensingCredential();
+    const now = Date.now();
+    const c = client({ session: session(credential, now) });
+    _setTestServiceClient(c as any);
+    const r = await post(app(), contribution(now), { authorization: `Bearer ${credential}` });
+    assert.equal(r.status, 202);
+    assert.equal(c.state.inserts.length, 1);
+    assert.notEqual(c.state.inserts[0]!.surface_permitted, true);
+    assert.equal("surface_permitted" in c.state.inserts[0]!, false, "omitted, so a pre-3315 database still accepts the row");
+  });
+
+  it("a session that carries `surface` cannot even contribute while the POLICY does not grant it — consent alone surfaces nothing", async () => {
+    const credential = generateSensingCredential();
+    const now = Date.now();
+    const c = client({ session: session(credential, now, { purpose_scopes: ["collect", "retain", "aggregate", "surface"] }) });
+    _setTestServiceClient(c as any);
+    const r = await post(app(), contribution(now), { authorization: `Bearer ${credential}` });
+    assert.equal(r.status, 400);
+    assert.match(JSON.stringify(r.body), /scope_not_granted/);
+    assert.deepEqual(c.state.inserts, []);
+  });
+
+  it("the store's builder writes the bit only when it is TRUE — and a contribution admitted with `surface` carries it", async () => {
+    const { buildSensingContributionRow } = await import("../lib/sensingAnonStore.js");
+    const now = Date.now();
+    const base = contribution(now);
+    const on = buildSensingContributionRow({ ...base, surfacePermitted: true }, now);
+    const off = buildSensingContributionRow({ ...base, surfacePermitted: false }, now);
+    assert.ok(on.ok && off.ok);
+    assert.equal(on.ok && on.row.surface_permitted, true);
+    assert.equal(off.ok && "surface_permitted" in off.row, false);
+  });
+
+  it("the same session asking only for what the policy grants is admitted — and the row is NOT marked surfaceable", async () => {
+    const credential = generateSensingCredential();
+    const now = Date.now();
+    const c = client({ session: session(credential, now, { purpose_scopes: ["collect", "retain", "aggregate", "surface"] }) });
+    _setTestServiceClient(c as any);
+    const r = await post(app(), contribution(now, { purposeScopes: ["collect", "retain", "aggregate"] }), {
+      authorization: `Bearer ${credential}`,
+    });
+    assert.equal(r.status, 202);
+    assert.equal("surface_permitted" in c.state.inserts[0]!, false, "the bit follows what THIS contribution was admitted for");
+  });
+});
+
 // ── 2340's time bounds and 2315's TTL ceiling, honoured by a real caller ─────
 
 describe("impossible timestamps and over-long TTLs are refused (2315 / 2340)", () => {

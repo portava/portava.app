@@ -439,6 +439,8 @@ export interface SensingContributionRow {
   acoustic_energy_bucket?: number | null;
   acoustic_rhythm?: SensingAcousticRhythm | null;
   acoustic_health_centi?: number | null;
+  // ── 3315: this contribution's own consent to be shown to others ────────────
+  surface_permitted?: boolean;
 }
 
 /**
@@ -463,6 +465,13 @@ export interface SensingContributionInput {
   reductionVersion?: number;
   /** The device's nine features + density + acoustic pair (3312). Optional. */
   features?: SensingContributionFeatures | null;
+  /**
+   * 3315 — true only when the contribution was ADMITTED with the `surface`
+   * scope, i.e. its contributor's recorded consent AND the policy in force both
+   * cover it (routes/sensingSession → routes/sensingIngest). Never a device's
+   * claim: the ingest derives it from the admitted scopes.
+   */
+  surfacePermitted?: boolean;
 }
 
 export type SensingBuildResult =
@@ -530,6 +539,9 @@ export function buildSensingContributionRow(
     ok: true,
     row: {
       ...features.columns,
+      // Omitted when false, so a legacy-shape insert (and a pre-3315 database)
+      // is unchanged; the column's own default is false.
+      ...(input.surfacePermitted === true ? { surface_permitted: true } : {}),
       contributor_token: deriveContributorToken(input.rotationEpoch, input.commitment),
       rotation_epoch: input.rotationEpoch,
       group_token: deriveGroupToken(input.rotationEpoch, input.groupTag ?? null),
@@ -646,19 +658,25 @@ export async function readSensingCohort(
   cohortKey: string,
   nowIso: string,
   limit: number = SENSING_READ_LIMIT,
+  opts: { surfaceOnly?: boolean } = {},
 ): Promise<SensingReadResult> {
   if (!cohortKey) return { ok: false, complete: false, rows: [], error: "cohort_key_required", reportedCount: null };
   if (!nowIso) return { ok: false, complete: false, rows: [], error: "now_required", reportedCount: null };
   try {
-    const { data, error, count } = await db
+    let query = db
       .from(SENSING_TABLE)
       .select(
         "contributor_token, rotation_epoch, group_token, zone_id, time_bucket, cohort_key, signal_bucket, reduction_version, created_at, expires_at, zone_precision, place_candidate, movement_class, motion_energy_centi, periodicity_centi, dwell_bucket, transition_kind, transport_mode, transport_mode_centi, density_bucket, bounded_movement, sensor_health_centi, acoustic_energy_bucket, acoustic_rhythm, acoustic_health_centi",
         { count: "exact" },
       )
       .eq("cohort_key", cohortKey)
-      .gt("expires_at", nowIso)
-      .limit(limit);
+      .gt("expires_at", nowIso);
+    // 3315: a SURFACE read counts only contributions whose own contributor
+    // consented to being shown. Every other read is unchanged (so it works on a
+    // pre-3315 database). On a pre-3315 database this filter fails and the read
+    // reports failure — the aggregate then withholds, never widens.
+    if (opts.surfaceOnly === true) query = query.eq("surface_permitted", true);
+    const { data, error, count } = await query.limit(limit);
     if (error) {
       return {
         ok: false,

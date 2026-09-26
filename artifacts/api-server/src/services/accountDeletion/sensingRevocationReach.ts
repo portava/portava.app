@@ -49,14 +49,16 @@
  *               account's own sessions are excluded and counted, because the
  *               deletion handles them itself and counting them as "reached"
  *               would inflate the figure with rows that are being removed.
- *   memories    NONE, and this is a measured fact rather than an omission: the
- *               S92 bridge's `NormalizedEvidence` — the only record that carries
- *               `provenance_json.claim_refs` — is never persisted.
- *               `memoryProjectionScheduler.runSessionMemoryBridge` returns
- *               verdicts and `runMemoryProjectionPass` projects through
- *               `project_all_memory`, which reads no claim_refs. There is no
- *               store to enumerate, so `memoryStore` says so out loud instead
- *               of reporting an empty list as "nothing reached".
+ *   memories    OTHER accounts' memory_projections rows whose 3314 `claim_refs`
+ *               overlap the affected snapshot set — written by
+ *               `services/memoryProjections/sessionMemoryStore` when a session
+ *               closes. The departing account's own memories are excluded and
+ *               counted: `erase_memory_for_user` removes them in the same run.
+ *               On a database WITHOUT 3314 the read fails on the unknown column
+ *               and `memoryStore` reads `column_absent` — which is a true
+ *               statement that nothing can have been persisted with refs (the
+ *               store refuses to write without the column), not "nothing
+ *               reached". Any other read failure throws.
  *
  * ── FAIL CLOSED, LIKE EVERY OTHER READ IN THE DELETION RUN ───────────────────
  * Any unreadable precondition THROWS, so the deletion STEP fails and warns.
@@ -75,7 +77,7 @@ import { readOwnContributorIdentities } from "../../lib/intelConsent.js";
 import { SESSION_EVENTS_TABLE, SESSION_VERBS } from "../../lib/experienceSessionStore.js";
 import { isExperienceSessionEnvelope, type ExperienceSessionEnvelope } from "../../lib/experienceSession.js";
 import { revocationReach, type SensingLineageStage } from "../memoryProjections/sessionRevocationReach.js";
-import type { AffectedSnapshot } from "./sensingErasureRecompute.js";
+import type { AffectedMemory, AffectedSnapshot } from "./sensingErasureRecompute.js";
 
 /**
  * The service's paged reader, typed structurally so this module can be tested
@@ -112,10 +114,18 @@ export interface SensingRevocationReachOutcome {
   sessionsReached: number;
   /** The departing account's own sessions, excluded from the count above. */
   ownSessionsExcluded: number;
+  /** Other accounts' stored memories whose claim_refs overlap the affected snapshots. */
+  memoriesConsidered: number;
+  /** Of those, the ones the pure judge finds resting on an affected snapshot. */
+  memoriesReached: number;
+  /** The departing account's own memories that overlapped — erased by erase_memory_for_user, not counted above. */
+  ownMemoriesExcluded: number;
+  /** The reached memories, keyed for the erasure's lineage pass. Row ids and refs only; no owner. */
+  affectedMemories: AffectedMemory[];
   /** §18.4 stages the reach module reports as touched, in order. */
   stagesReached: SensingLineageStage[];
-  /** Why the memory half is empty — a fact about the tree, not this run. */
-  memoryStore: "none_persisted";
+  /** Whether the memory store could be asked: 3314 present, or absent (nothing persisted with refs). */
+  memoryStore: "persisted" | "column_absent";
 }
 
 function chunk<T>(items: readonly T[], size: number): T[][] {
@@ -255,9 +265,47 @@ export async function enumerateSensingRevocationReach(
     );
   }
 
-  // 5. The pure reach, over what could be read. The memory list is empty for
-  //    the reason the header gives, and the outcome names it.
-  const report = revocationReach([...latestBySession.values()], [], snapshotIds);
+  // 5. Memories resting on the affected snapshots (3314). Other accounts'
+  //    only: the departing account's own are erased by erase_memory_for_user in
+  //    the same run, so they are counted and set aside. The owner column is
+  //    read only to make that exclusion and is never returned.
+  const storedById = new Map<string, AffectedMemory>();
+  let ownMemoriesExcluded = 0;
+  let memoryStore: "persisted" | "column_absent" = "persisted";
+  const snapshotIdList = [...snapshotIds].sort();
+  try {
+    for (const part of chunk(snapshotIdList, REACH_IN_LIST_CHUNK)) {
+      await readAll(
+        () =>
+          sc
+            .from("memory_projections")
+            .select("id, user_id, claim_refs")
+            .overlaps("claim_refs", part)
+            .order("id", { ascending: true }),
+        (rows) => {
+          for (const r of rows) {
+            if (typeof r?.id !== "string" || r.id === "") continue;
+            if (r?.user_id === userId) {
+              ownMemoriesExcluded += 1;
+              continue;
+            }
+            const refs = Array.isArray(r?.claim_refs) ? (r.claim_refs as unknown[]).filter((x): x is string => typeof x === "string") : [];
+            storedById.set(r.id, { id: r.id, claimRefs: refs });
+          }
+          return rows.length;
+        },
+      );
+    }
+  } catch (err) {
+    const message = String((err as Error)?.message ?? err);
+    if (!/claim_refs/.test(message)) throw err;
+    memoryStore = "column_absent";
+  }
+  const storedMemories = [...storedById.values()];
+
+  // 6. The pure reach, over what could be read.
+  const report = revocationReach([...latestBySession.values()], [], snapshotIds, storedMemories);
+  const reachedMemoryIds = new Set(report.memories.filter((m) => m.verdict === "reached").map((m) => m.sourceId));
 
   return {
     via: ids.via,
@@ -272,8 +320,12 @@ export async function enumerateSensingRevocationReach(
     sessionsConsidered: latestBySession.size,
     sessionsReached: report.sessions.filter((s) => s.verdict === "reached").length,
     ownSessionsExcluded,
+    memoriesConsidered: storedMemories.length,
+    memoriesReached: reachedMemoryIds.size,
+    ownMemoriesExcluded,
+    affectedMemories: storedMemories.filter((m) => reachedMemoryIds.has(m.id)),
     stagesReached: report.stagesReached,
-    memoryStore: "none_persisted",
+    memoryStore,
   };
 }
 

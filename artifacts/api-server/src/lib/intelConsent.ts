@@ -25,6 +25,20 @@
  */
 export const INTEL_CONSENT_DISCLOSURE_VERSION = "intel_contributions_v1";
 
+/**
+ * The text a grant WITHOUT a displayed version was agreed to. Every client
+ * shipped before the grant carried `disclosureVersion` hard-coded the v1 copy,
+ * so a bare `{ enabled: true }` is evidence of v1 and nothing newer. Without
+ * this, the day the constant above moves, an old client still showing v1 words
+ * would have its grant recorded against text nobody on it ever saw.
+ */
+export const LEGACY_CLIENT_DISCLOSURE_VERSION = "intel_contributions_v1";
+
+/** May a grant whose client displayed `seen` be recorded under `stamped`? */
+export function displayedDisclosureMatches(seen: string | undefined, stamped: string): boolean {
+  return (seen ?? LEGACY_CLIENT_DISCLOSURE_VERSION) === stamped;
+}
+
 export interface IntelConsentState {
   enabled: boolean;
   consentVersion: string | null;
@@ -131,8 +145,22 @@ export async function setIntelConsent(
   sc: any,
   actorId: string,
   enabled: boolean,
+  /**
+   * The disclosure version the client DISPLAYED when the person agreed. When
+   * given, a grant is refused unless it equals the version this server would
+   * stamp — so the recorded version can never name text the person did not
+   * see (the window between a server bumping INTEL_CONSENT_DISCLOSURE_VERSION
+   * and an old client still rendering the previous copy). When absent, the
+   * client is one that hard-coded the v1 copy (LEGACY_CLIENT_DISCLOSURE_VERSION).
+   * The client still never supplies the version that is RECORDED; that is
+   * always the constant.
+   */
+  seenDisclosureVersion?: string,
 ): Promise<{ ok: boolean; state?: IntelConsentState; reason?: string }> {
   if (!sc || !actorId) return { ok: false, reason: "no_client_or_actor" };
+  if (enabled && !displayedDisclosureMatches(seenDisclosureVersion, INTEL_CONSENT_DISCLOSURE_VERSION)) {
+    return { ok: false, reason: "disclosure_version_mismatch" };
+  }
   const now = new Date().toISOString();
   const row = enabled
     ? {

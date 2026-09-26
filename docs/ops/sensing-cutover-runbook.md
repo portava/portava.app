@@ -26,21 +26,45 @@ detail for every apply is in `docs/migrations.md`.
 | 3310 consent bridge functions | applied 02:47 | absent | identity runbook |
 | 3311 snapshot input provenance | applied 09:36 | absent | migrations.md (2026-09-26 second batch) |
 | 3312 anonymous-store feature columns | applied 09:37 | absent | migrations.md (same entry) |
-| 3313 `sensing_publication_enabled` seed (FALSE) | **not applied anywhere** | absent | this file |
+| 3313 `sensing_publication_enabled` seed (FALSE) | applied 16:50 (row read back `false`) | absent | migrations.md (2026-09-26 third batch) |
+| 2841 `experience_session_enabled` seed (FALSE) — the sessions S92/S112 are made from | applied by CI; row `false` | **absent**: no ledger row, no flag row | read 2026-09-26 |
+| 3314 `memory_projections.claim_refs` + retraction exemption | applied 16:52 | absent | migrations.md (same entry) |
+| 3315 `sensing_anon_contributions.surface_permitted` | applied 16:51 | absent | migrations.md (same entry) |
 | `SENSING_CONTRIBUTOR_PEPPER` (env, S18/S32) | — | **unconfigured**; the ingest's first statement refuses without it | census-sensing §14.2 |
-| Branch code (PR #528) | CI-verified | **not deployed** | — |
+| Branch code (PR #528), incl. the session issuer `POST /v1/sensing/session` | CI-verified | **not deployed** | — |
+| Consent disclosure v2 (`sensing_contributions_v2`) | defined in code, not stamped | **not in force**: the server stamps v1 | `docs/contracts/sensing-consent-disclosure-v2.md` |
 | Client build (capture, commitment, features, zone hint) | tests green | **not shipped** | — |
 
 Flags, read on portava-ci after the last apply: `discovery_candidate_projection_enabled`,
 `intel_claim_projection_crowd`, `media_evidence_enabled`, `memory_projection`,
-`sensing_presence_context_enabled` all `false`; `sensing_publication_enabled`
-has no row (3313 unapplied) and reads false. On production every one of these
+`sensing_presence_context_enabled` and `sensing_publication_enabled` all
+`false`. On production every one of these
 is `false` or absent, and the identity runbook §3 records the two capture
 flags that are `true` there.
 
 Row counts on both databases, every sensing table: **0**. That is the fact
 that makes this cutover cheap and its rollback honest; re-read it before
 every step (§2, query Q0).
+
+### 0a. Reconciliation: 3110 and 3004 are in the chain
+
+census-sensing §26.5 once wrote the chain as `2277 → 2278 → 3002 → 3003 →
+3310 → 3311 → 3312 (→ 3313)`, which omits 3110 and 3004. This runbook has
+always carried both, as §3 step 5. Read on 2026-09-26, not assumed:
+
+| | portava-ci | production |
+|---|---|---|
+| `3004_sensing_presence_context_flag.sql` in the ledger | yes, `manual`, 2026-09-25 20:41, sha `307a362614f2…` | **no row** |
+| `sensing_presence_context_enabled` row | present, `false` | **no row** |
+| `3110_sensing_published_aggregates.sql` in the ledger | yes, `manual`, 2026-09-25 20:43, sha `a2c91261449c…` | **no row** |
+| `to_regclass('public.sensing_published_aggregates')` | present | **NULL** |
+
+So 3110 is **satisfied on portava-ci, missing on production, and superseded by
+nothing**: no later file creates `sensing_published_aggregates`, and the
+publisher's differencing gate cannot keep its last published value without it
+(3110's header). The omission was in the census sentence, not in the plan.
+§27 of census-sensing corrects the sentence; the order below is the
+authoritative one.
 
 ---
 
@@ -52,7 +76,9 @@ every step (§2, query Q0).
                                      ├→ [CODE DEPLOY] → un-quiesce
 3311 ────────────────────────────────┤
 3312 ────────────────────────────────┤   (3312 also BEFORE the client build)
-3004, 3110, 3313 (flag seeds; any time before the flips) ─┘
+3314 ────────────────────────────────┤   (before memory_projection is turned on)
+3315 ────────────────────────────────┤   (before surface is granted)
+3004, 3110, 3313 (flag seeds + store; any time before the flips) ─┘
 ```
 
 | Edge | Why |
@@ -61,6 +87,8 @@ every step (§2, query Q0).
 | 3002 → 3003 → 3310, then the code, inside ONE quiesced window | Coupled both ways: new code on old schema fails `subject_id NOT NULL`; old code on new schema writes duplicate rows past the token-aware replay check (identity runbook §1a/§1b). |
 | **3311 before the code** | The projection writer tries `input_observation_ids`; on the schema-cache error for an unknown column it retries WITHOUT it and logs `intel.projection.provenance_unavailable`. Code-first therefore does not break projection — it degrades every snapshot written in the gap to "provenance unrecorded", and the deletion reach then falls back to SUBJECT granularity for those rows (over-inclusive, still correct). Schema-first gives exact provenance from the first write. |
 | **3312 before the CLIENT build** | A contribution WITHOUT `features` inserts on a pre-3312 database (the row carries none of the fifteen columns). A contribution WITH `features` on a pre-3312 database fails on the unknown column and the ingest answers `error` — every featured contribution from a shipped client would be refused until 3312 lands. The server itself may go either side of 3312. |
+| **3314 before `memory_projection` ON** | With the flag on and 3314 absent, the session memory writer REFUSES (`claim_refs_unavailable`) rather than write a memory without its lineage, so memories from closed sessions are simply not written. With 3314 present and the flag on, the SQL projector's watermark would otherwise retract every session memory on its next pass; 3314's one predicate prevents that. Code may go either side of 3314. |
+| **3315 before `surface` is granted** | The publisher's cohort read filters on `surface_permitted` and fails closed without the column, so publication yields nothing. The ingest only names the column when a session carries `surface`, which no consent recorded today can produce, so the ingest works either side. |
 | 3004 / 3110 / 3313 before their flips | Flag seeds and the publication store. Each changes no behaviour when applied (all seeded FALSE; the store is written only by the publisher, which refuses on its first gate). |
 | `SENSING_CONTRIBUTOR_PEPPER` before any contribution | Operator artifact. Without it the anonymous ingest refuses every caller by design; with it and 3002 absent the human-claim path is unaffected (different population). |
 
@@ -86,14 +114,22 @@ select (select count(*) from public.intel_observations)            as observatio
 
 -- Q1. Which of the chain is already in the ledger.
 select filename, applied_by, applied_at from public.schema_migration_ledger
- where filename ~ '^(2277|2278|3002|3003|3004|3110|3310|3311|3312|3313)_' order by filename;
+ where filename ~ '^(2277|2278|3002|3003|3004|3110|3310|3311|3312|3313|3314|3315)_' order by filename;
 
 -- Q2. The catalog, not the ledger: what actually exists.
 select to_regclass('public.intel_contributor_pepper')       as pepper,
        to_regclass('public.sensing_published_aggregates')   as published_store,
        (select count(*) from information_schema.columns where table_schema='public' and column_name='input_observation_ids') as provenance_cols, -- 2 after 3311
        (select count(*) from pg_constraint where conname like 'sensing_anon_features_%') as feature_checks,  -- 3 after 3312
-       (select is_nullable from information_schema.columns where table_schema='public' and table_name='intel_observations' and column_name='subject_id') as subject_nullable; -- YES after 3002
+       (select is_nullable from information_schema.columns where table_schema='public' and table_name='intel_observations' and column_name='subject_id') as subject_nullable, -- YES after 3002
+       (select udt_name from information_schema.columns where table_schema='public' and table_name='memory_projections' and column_name='claim_refs') as claim_refs,        -- _uuid after 3314
+       (select data_type from information_schema.columns where table_schema='public' and table_name='sensing_anon_contributions' and column_name='surface_permitted') as surface_col; -- boolean after 3315
+
+-- Q2b. 3314 replaces a function. Before applying it, the live body must be 2195's
+-- (whitespace aside); after, its md5 must be c12a0ff3cf71a23373b03f025fb2a938.
+select md5(p.prosrc), regexp_replace(p.prosrc, '\s+', ' ', 'g')
+  from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+ where n.nspname = 'public' and p.proname = 'project_user_memory_with_retraction';
 
 -- Q3. Flags the cutover touches. Absent row reads false.
 select flag, enabled from public.feature_flags
@@ -104,7 +140,7 @@ select flag, enabled from public.feature_flags
 ```
 
 Expected on production today: Q0 all 0 and `published = -1`; Q1 zero rows;
-Q2 `NULL, NULL, 0, 0, NO`; Q3 the two capture flags `true`, everything else
+Q2 `NULL, NULL, 0, 0, NO, NULL, NULL`; Q2b 2195's body; Q3 the two capture flags `true`, everything else
 `false` or absent.
 
 ---
@@ -125,7 +161,9 @@ that, including a `body === file` assertion before sending.
 | 2 | 3002 → 3003 → 3310 | **quiesced** (identity runbook §4 steps 1–4) | identity runbook §6 queries | identity runbook §5a (only while Q0 is all-zero) |
 | 3 | 3311 | any time before the code | Q2 `provenance_cols = 2`; both GIN indexes by name | `db/rollback/2026-09-26-3311-intel-snapshot-input-provenance-rollback.sql`, then delete its ledger row |
 | 4 | 3312 | any time before the client ships | Q2 `feature_checks = 3`; fifteen nullable columns; 0 FKs; the five negative controls in migrations.md re-run and roll back | `db/rollback/2026-09-26-3312-sensing-anon-contribution-features-rollback.sql`, then the ledger row |
-| 5 | 3004, 3110, 3313 | any time before the flips | Q3 shows the three seeds `false`; `published_store` non-NULL | each seed's rollback refuses if the flag was turned on since; 3110's own section |
+| 5 | 3004, 3110, 3313 | any time before the flips | Q3 shows the seeds `false` **and** Q1 shows their ledger rows. A flag seed creates no table or column, so no schema check can see it, and an absent row reads `false` at runtime exactly as the seed does: only the row plus the ledger row prove it ran (migrations.md, third batch). `published_store` non-NULL | each seed's rollback refuses if the flag was turned on since; 3110's own section |
+| 6 | 3314 | any time before `memory_projection` ON; Q2b first | Q2 `claim_refs = _uuid`; the GIN index by name; Q2b md5 as stated | `db/rollback/2026-09-26-3314-memory-projection-claim-refs-rollback.sql` (refuses while any session memory exists), then the ledger row |
+| 7 | 3315 | any time before `surface` is granted | Q2 `surface_col = boolean`; `select count(*) … where surface_permitted` = 0 | `db/rollback/2026-09-26-3315-sensing-anon-surface-consent-rollback.sql` (refuses while any row reads true), then the ledger row |
 
 Each file is atomic with its ledger row; a raised postcondition rolls the whole
 file back and leaves no row. Stop at the first failure and diagnose with the
@@ -148,7 +186,11 @@ Additional smoke for this branch, all read-only, all expected to be quiet:
   — the publisher is alive and refusing on its FIRST gate;
 - no `intel.projection.provenance_unavailable` line (3311 preceded the code);
 - `POST /v1/sensing/contributions` answers the pepper refusal until
-  `SENSING_CONTRIBUTOR_PEPPER` is configured (S18/S32).
+  `SENSING_CONTRIBUTOR_PEPPER` is configured (S18/S32);
+- `POST /v1/sensing/session` answers the same pepper refusal until then, and
+  after it, for every signed-in account, `403 disclosure_does_not_cover_passive_sensing`:
+  every consent recorded today is v1, which covers no passive sensing. The
+  installed client does not start its capture loop under v1 either.
 
 ---
 
@@ -162,9 +204,9 @@ recovery is one step.
 | Requirement | Act | Prerequisites | Verify (read-only) | Recover |
 |---|---|---|---|---|
 | S49 | `update feature_flags set enabled=true where flag='discovery_candidate_projection_enabled'` | 2361 seeded (present); nothing schema-side on this branch | a `DiscoveryCandidate` is served with `coverage` populated by the §24 protected-zone pass (`src/test/mapDiscoveryCandidateConsumer.test.ts` is the controlled form) | set it back to `false` |
-| S92 | `… flag='memory_projection'` | the memory kernel's tables (2320 etc.) applied — a memory-lane decision, not a sensing one | `memoryProjectionScheduler` stops answering `disabled` (its own log line) | set it back to `false`; the sweep expires what was projected |
-| S112 (memory stage) | same flag as S92, plus a lane persisting the bridge's `provenance_json.claim_refs` (design in census-sensing §26.1) | the recompute for the SNAPSHOT stage needs nothing — it runs on any schema and any flag (§1) | after an erasure the deletion log shows `recompute_intel_snapshots_after_erase` with `retracted`/`written` counts and no `retractionFailures` | none needed; the step is idempotent per erasure |
-| S39 · S24 | (a) grant `surface` — a ONE-LINE change to `SENSING_ANON_GRANTED_SCOPES` in `lib/sensingContributionPolicy.ts`, reviewed and deployed; then (b) `flag='sensing_publication_enabled'` (3313); then (c) `flag='sensing_presence_context_enabled'` (3004) | 3110, 3313, 3004 applied; the pepper configured; contributions flowing | (b): `sensing publication pass` logs `published > 0` and `sensing_published_aggregates` gains rows with **no contributor column**; (c): a Compass turn that sends `sensingZoneIds` gets the `[Zone presence …]` header — observed/unknown only | (c) then (b) back to `false` — the producer renders nothing the same instant; (a) is a code revert |
+| S92 | `… flag='memory_projection'`, and `… flag='experience_session_enabled'` (2841) so that sessions exist to be judged | the memory kernel's tables (2320 etc.) applied — a memory-lane decision, not a sensing one; **2841 applied** (on portava-ci since CI; absent on production, read 2026-09-26) | `memoryProjectionScheduler` stops answering `disabled` (its own log line) | set it back to `false`; the sweep expires what was projected |
+| S112 (memory stage) | same two flags as S92. The persisting lane is built: closing a session writes the memory with its `claim_refs` (3314), the reach enumerates memories by overlap, and the erasure prunes withdrawn refs | 3314 applied (§3 step 6); the SNAPSHOT stage needs nothing (§1) | after an erasure the deletion log shows `recompute_intel_snapshots_after_erase` and then `prune_memory_lineage_after_erase` with `pruned`/`refsRemoved` counts and no failures | none needed; both steps are idempotent per erasure |
+| S39 · S24 | (0) put consent v2 in force: the owner approves the text in `docs/contracts/sensing-consent-disclosure-v2.md`, and one release ships `INTEL_CONSENT_DISCLOSURE_VERSION = "sensing_contributions_v2"` with a client carrying that text; people then grant it one by one. (a) grant `surface` — a ONE-LINE change to `SENSING_ANON_GRANTED_SCOPES` in `lib/sensingContributionPolicy.ts`, reviewed and deployed; then (b) `flag='sensing_publication_enabled'` (3313); then (c) `flag='sensing_presence_context_enabled'` (3004) | 3110, 3313, 3004, 3315 applied; the pepper configured; at least k contributors per cohort holding v2 consent | (b): `sensing publication pass` logs `published > 0` and `sensing_published_aggregates` gains rows with **no contributor column**; (c): a Compass turn that sends `sensingZoneIds` gets the `[Zone presence …]` header — observed/unknown only | (c) then (b) back to `false` — the producer renders nothing the same instant; (a) is a code revert |
 | S18 · S32 | configure `SENSING_CONTRIBUTOR_PEPPER` in production | 3002 applied (the pepper the DATABASE holds is a different secret: this env value is the ingest's, per `routes/sensingIngest.ts` header) | the ingest stops refusing with the pepper reason | unset it — the ingest refuses again |
 | S17 | outside every tool here: `curl -sI https://portava.replit.app` from an origin the proxy does not block; Supabase's at-rest attestation | the Replit publish currently reads `failed` (`get_publish_status` 2026-09-26) and must be republished first | HSTS and TLS in the served headers | — |
 
@@ -173,6 +215,12 @@ publisher and the producer both test the scope BEFORE reading their flag, so
 (b) or (c) taken before (a) does nothing, and the suites go red if that order
 is ever reversed (`sensingPublicationScheduler.test.ts` "the DEFAULT policy
 refuses BEFORE any client exists").
+
+**And (a) without (0) surfaces nothing.** The policy is the owner's ruling on
+what the store may do; it cannot establish what anyone agreed to. A session
+carries the intersection of the policy and its holder's recorded consent, each
+contribution records `surface_permitted` from its own session, and the
+publisher counts only rows where it is true. Under v1 consent that is no row.
 
 ---
 
@@ -190,7 +238,7 @@ refuses BEFORE any client exists").
 
 ## 7. What the rehearsal proved, and what it did not
 
-**Proved, on portava-ci:** 3004, 3110, 3002, 3003, 3310, 3311 and 3312 apply
+**Proved, on portava-ci:** 3004, 3110, 3002, 3003, 3310, 3311, 3312, 3313, 3314 and 3315 apply
 cleanly in the stated order against a database in production's shape; every
 postcondition passed; each object was read back from the catalog; five
 negative controls on 3312's CHECKs refused and two positive controls accepted
@@ -200,7 +248,8 @@ exercises `check:write-path-columns` against portava-ci's real schema on PR #528
 
 **Not proved:**
 
-- 3313 has been applied nowhere; its own postcondition has run on no database.
+- 3313, 3314 and 3315 are applied on portava-ci only (third batch); none has
+  run on production.
 - No contribution has been written through the new code against any database,
   so nothing here is production-verified, and S26/S66's "the census working"
   rows remain launch-capped for that reason (census-sensing §23, §26).

@@ -417,6 +417,13 @@ const PERMITTED_REFERRERS = new Map<string, string>([
       "aggregate — surface and share are scopes SENSING_ANON_POLICY_V1 does not grant.",
   ],
   [
+    join("routes", "sensingSession.ts"),
+    "the ELIGIBILITY route (§3) that issues the opaque credential the ingest authenticates. It WRITES " +
+      "2480's session table, never this store: from the store modules it takes exactly the pure " +
+      "rotation-epoch function and the pepper posture (so it refuses when the ingest would), which the " +
+      "route-level case below pins import by import. It names neither this table nor any writer.",
+  ],
+  [
     // ADDED 2026-09-26 (census-sensing §26.3): the PUBLISHER, §21.4's blocker #2.
     join("lib", "sensingPublicationScheduler.ts"),
     'the one production reader of "cohort/coverage aggregation" that RECORDS: on its own clock, per ' +
@@ -673,24 +680,41 @@ describe("exactly one writer, reached only through the opaque credential", () =>
   }
 
   const WRITER = join("routes", "sensingIngest.ts");
+  const ISSUER = join("routes", "sensingSession.ts");
   const WRITER_TS = readFileSync(join(SRC, WRITER), "utf8");
   const WRITER_CODE = stripTsComments(WRITER_TS);
   const INDEX_TS = readFileSync(join(SRC, "routes", "index.ts"), "utf8");
 
-  it("exactly ONE route reaches the store, and it is the registered ingest route", () => {
+  it("exactly ONE route WRITES the store — the registered ingest; the one other route importing a store module is the issuer, taking pure helpers only", () => {
     const routes = walkRoutes(join(SRC, "routes"));
     assert.ok(routes.length > 100, "premise: the route tree was found");
-    const offenders = routes
+    const rel = (f: string) => f.slice(SRC.length + 1);
+    const reachers = routes
       .filter((f) => {
         const text = readFileSync(f, "utf8");
         return /sensingAnonStore|sensingCoverageAggregate|sensingAnonService/.test(text) || text.includes(TABLE);
       })
-      .map((f) => f.slice(SRC.length + 1));
+      .map(rel)
+      .sort();
     assert.deepEqual(
-      offenders,
-      [WRITER],
-      "the anonymous sensing store must have exactly one HTTP writer — a second transport, or none, is a change to what census-sensing §11 authorised",
+      reachers,
+      [ISSUER, WRITER].sort(),
+      "a route outside the ingest and its issuer imports the anonymous store — a second transport is a change to what census-sensing §11 authorised",
     );
+    // WRITING means naming the table or calling a writer. Only the ingest does.
+    const writers = routes
+      .filter((f) => {
+        const code = stripTsComments(readFileSync(f, "utf8"));
+        return code.includes(TABLE) || /recordAnonSensingContribution|recordSensingContribution|revokeSensingContributions|revokeAnonSensingContributions/.test(code);
+      })
+      .map(rel);
+    assert.deepEqual(writers, [WRITER], "the anonymous sensing store must have exactly one HTTP writer");
+    // And the issuer's imports from the store modules are exactly the pure helpers it needs.
+    const issuer = stripTsComments(readFileSync(join(SRC, ISSUER), "utf8"));
+    const taken = [...issuer.matchAll(/import\s*\{([^}]*)\}\s*from\s*"\.\.\/lib\/(?:sensingAnonStore|sensingAnonService|sensingCoverageAggregate)\.js"/g)]
+      .flatMap((m) => m[1]!.split(",").map((x) => x.trim()).filter(Boolean))
+      .sort();
+    assert.deepEqual(taken, ["SENSING_PEPPER_ENV", "rotationEpochFor", "sensingPepperPosture"]);
   });
 
   it("the writer is MOUNTED — a route that is not registered is a file, not a writer", () => {

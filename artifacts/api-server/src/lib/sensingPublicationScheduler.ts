@@ -211,7 +211,10 @@ export async function runSensingPublicationPass(
   };
 
   for (const ref of refs) {
-    const read = await readSensingCohort(db, ref.cohort_key, nowIso);
+    // SURFACE read: only contributions whose own contributor consented to
+    // being shown count toward the k-gate (3315). A cohort of fifteen people
+    // of whom fourteen consented is a cohort of fourteen here.
+    const read = await readSensingCohort(db, ref.cohort_key, nowIso, undefined, { surfaceOnly: true });
     const aggregate = aggregateSensingCohort(read, { nowMs });
     if (aggregate.publishable !== true) {
       // The k-gate (or an unreadable / incomplete read) withheld it. Not a

@@ -416,4 +416,11 @@ router.use(nearbyReachableRouter);
 import sensingIngestRouter from "./sensingIngest.js";
 router.use(sensingIngestRouter);
 
+// ── Sensing §3: ELIGIBILITY — the credential the ingest above authenticates ──
+// The one sensing request that carries an account, and the place consent is
+// read: the session carries only the scopes the person's recorded disclosure
+// covers (lib/sensingConsentScopes). Tail-registered for the same reason.
+import sensingSessionRouter from "./sensingSession.js";
+router.use(sensingSessionRouter);
+
 export default router;

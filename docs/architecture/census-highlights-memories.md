@@ -6258,13 +6258,13 @@ evidence clauses have gone false.
 **S92** says: *"`grep` over `lib/memoryProjectionScheduler.ts` and
 `services/memoryProjections/` finds no `ExperienceSession` of any spelling."*
 That grep now finds it in **both** places. The bridge is imported at
-`artifacts/api-server/src/lib/memoryProjectionScheduler.ts:44#}` and the
+`artifacts/api-server/src/lib/memoryProjectionScheduler.ts:52#}` and the
 scheduler is started from `artifacts/api-server/src/index.ts:58#import`. The
 row's RED WHEN — *S54 exists and memory eligibility is computed from a
 session's outcome* — has fired on the code.
 
 It stays `W` on **deployment**: the scheduler returns `disabled` at
-`artifacts/api-server/src/lib/memoryProjectionScheduler.ts:116#if` unless
+`artifacts/api-server/src/lib/memoryProjectionScheduler.ts:124#if` unless
 `memory_projection` is on, and that flag is **false on production AND on
 portava-ci**, both read today. Same shape as A03 and M7 — built, wired, and
 serving nothing.

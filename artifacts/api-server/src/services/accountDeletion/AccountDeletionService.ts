@@ -126,7 +126,7 @@
  */
 import { logger as rootLogger } from "../../lib/logger.js";
 import { enumerateSensingRevocationReach, type SensingRevocationReachOutcome } from "./sensingRevocationReach.js";
-import { recomputeSnapshotsAfterErasure } from "./sensingErasureRecompute.js";
+import { pruneMemoryLineageAfterErasure, recomputeSnapshotsAfterErasure } from "./sensingErasureRecompute.js";
 import { presenceFusion } from "../../presence/fusion/store.js";
 import { resolveStoragePath } from "../../lib/storagePath.js";
 import { ownerFromPath } from "../../lib/mediaAccess.js";
@@ -1231,6 +1231,9 @@ export async function executeAccountDeletion(
           sessionsConsidered: reach.sessionsConsidered,
           sessionsReached: reach.sessionsReached,
           ownSessionsExcluded: reach.ownSessionsExcluded,
+          memoriesConsidered: reach.memoriesConsidered,
+          memoriesReached: reach.memoriesReached,
+          ownMemoriesExcluded: reach.ownMemoriesExcluded,
           stagesReached: reach.stagesReached,
           memoryStore: reach.memoryStore,
         },
@@ -1300,6 +1303,19 @@ export async function executeAccountDeletion(
       return r.retracted;
     });
     if (!recomputeOk) warnings.push("derived intel snapshots may still rest on erased observations");
+  }
+  // The memory stage (3314), after the snapshots: other accounts' memories are
+  // RETAINED, and every reference they hold to a snapshot this erasure withdrew
+  // is removed and the removal recorded. Runs after the recompute so a snapshot
+  // that was REWRITTEN (and still stands) keeps its references.
+  if (eraseStep?.ok && reachForRecompute && reachForRecompute.affectedMemories.length > 0) {
+    const lineageOk = await step(steps, "prune_memory_lineage_after_erase", async () => {
+      const m = await pruneMemoryLineageAfterErasure(sc, reachForRecompute.affectedMemories, reachForRecompute.observationIds, new Date());
+      logger.info({ userId, ...m }, "executeAccountDeletion: memory lineage pruned after erase_intel_for_actor");
+      if (m.failures > 0) throw new Error(`${m.failures} memory lineage update(s) failed or still name withdrawn evidence`);
+      return m.refsRemoved;
+    });
+    if (!lineageOk) warnings.push("derived memories may still reference withdrawn evidence");
   }
 
   // ── IG mission-candidate acceptance (migration 2167) ──────────────────────

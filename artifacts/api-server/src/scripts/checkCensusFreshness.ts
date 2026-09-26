@@ -2362,6 +2362,23 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     // The two remaining revocation points the fused read depends on.
     "artifacts/api-server/src/domain/trips/services/TripCrewLiveShareService.ts",
     "artifacts/api-server/src/routes/circle.ts",
+    // WIDENED 2026-09-26 (census-sensing §27): S112's memory stage (the writer,
+    // 3314 and its proofs), the consent layer S39/S24 now rest on (the scopes a
+    // disclosure covers, 3315, the displayed-version rule and the client gate),
+    // and the session issuer S18/S32 were re-derived against. §27 grades each.
+    "artifacts/api-server/src/services/memoryProjections/sessionMemoryStore.ts",
+    "artifacts/api-server/src/test/sessionMemoryStore.test.ts",
+    "artifacts/api-server/src/test/db/sessionMemoryLineage.db.test.ts",
+    "artifacts/api-server/src/migrations/3314_memory_projection_claim_refs.sql",
+    "artifacts/api-server/src/migrations/3315_sensing_anon_surface_consent.sql",
+    "db/rollback/2026-09-26-3314-memory-projection-claim-refs-rollback.sql",
+    "db/rollback/2026-09-26-3315-sensing-anon-surface-consent-rollback.sql",
+    "artifacts/api-server/src/lib/sensingConsentScopes.ts",
+    "artifacts/api-server/src/routes/sensingSession.ts",
+    "artifacts/api-server/src/test/sensingSessionRoute.test.ts",
+    "artifacts/api-server/src/test/intelConsent.test.ts",
+    "docs/contracts/sensing-consent-disclosure-v2.md",
+    "travel-buddy-standalone/src/components/intel/IntelConsentGate.tsx",
     //
     // DELIBERATELY NOT ADDED, because this census cites them as context rather
     // than grading them, and widening scope to whatever a census mentions would

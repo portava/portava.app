@@ -67,6 +67,9 @@ function contributions(n: number, over: Row = {}): Row[] {
     // is well past the publication delay at NOW, however many there are.
     created_at: new Date(Date.parse(BUCKET) + i * 10_000).toISOString(),
     expires_at: new Date(NOW_MS + 3_600_000).toISOString(),
+    // 3315: every fixture contributor consented to being surfaced unless a case
+    // says otherwise — the world a GRANTING policy is meant for.
+    surface_permitted: true,
     ...over,
   }));
 }
@@ -191,6 +194,31 @@ describe("what one pass publishes, and what it refuses", () => {
     assert.equal(pubs[0].distinct_contributors, 20);
     assert.equal(pubs[0].distinct_groups, 20);
     for (const col of Object.keys(pubs[0])) assert.doesNotMatch(col, /token|actor|user|device|contributor_id/);
+  });
+
+  it("3315 — PER-CONTRIBUTION CONSENT: with the scope granted, contributors who did NOT consent to being shown are not counted, and twenty such people publish nothing", async () => {
+    fresh();
+    const d = db({ flagOn: true, contributions: contributions(20, { surface_permitted: false }) });
+    const r = await runSensingPublicationPass({ client: d, now: NOW, policy: GRANTING });
+    assert.equal(r.withheld, 1, "the policy permits surfacing; these contributors never agreed to it");
+    assert.equal(r.published, 0);
+    assert.equal(d._tables[SENSING_PUBLISHED_TABLE].length, 0);
+  });
+
+  it("3315 — the k-gate counts ONLY consenting contributors: 20 people of whom k-1 consented are withheld; k who consented publish, counted as k", async () => {
+    const k = PRIVACY_THRESHOLD_V1.minUniqueActors;
+    const mixed = (consenting: number) =>
+      contributions(20).map((row, i) => ({ ...row, surface_permitted: i < consenting }));
+    fresh();
+    const below = db({ flagOn: true, contributions: mixed(k - 1) });
+    const rb = await runSensingPublicationPass({ client: below, now: NOW, policy: GRANTING });
+    assert.equal(rb.withheld, 1);
+    assert.equal(rb.published, 0);
+    fresh();
+    const at = db({ flagOn: true, contributions: mixed(k) });
+    const ra = await runSensingPublicationPass({ client: at, now: NOW, policy: GRANTING });
+    assert.equal(ra.published, 1);
+    assert.equal(at._tables[SENSING_PUBLISHED_TABLE][0].distinct_contributors, k, "the non-consenting five are not in the published count");
   });
 
   it("a cohort BELOW k is withheld: the differencing gate is not consulted and no row exists to say it was suppressed", async () => {

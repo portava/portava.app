@@ -138,6 +138,31 @@ export function memoryReach(
   };
 }
 
+/**
+ * A memory as it is STORED (3314): its row id and the `claim_refs` column the
+ * session memory store wrote. Kept as a separate shape rather than folded into
+ * `NormalizedEvidence`, because a stored row is not evidence — it is what the
+ * gate admitted — and the reach must not pretend otherwise to reuse a type.
+ */
+export interface StoredMemoryRef {
+  id: string;
+  claimRefs: readonly string[];
+}
+
+/** Does a revocation of these snapshot ids reach this STORED memory? */
+export function storedMemoryReach(
+  memory: StoredMemoryRef,
+  revokedClaimRefs: ReadonlySet<string>,
+): MemoryReach {
+  const claimRefs = normalizeRefs(memory?.claimRefs as unknown);
+  return {
+    sourceId: String(memory?.id ?? ""),
+    sourceType: "memory_projection",
+    claimRefs,
+    ...judge(claimRefs, revokedClaimRefs),
+  };
+}
+
 export interface LineageReachReport {
   /** The stages this revocation actually touched, in §18.4 order. */
   stagesReached: SensingLineageStage[];
@@ -160,12 +185,16 @@ export function revocationReach(
   sessions: readonly ExperienceSessionEnvelope[],
   memories: readonly NormalizedEvidence[],
   revokedClaimRefs: Iterable<string>,
+  storedMemories: readonly StoredMemoryRef[] = [],
 ): LineageReachReport {
   const revoked = new Set<string>();
   for (const r of revokedClaimRefs) if (typeof r === "string" && r.length > 0) revoked.add(r);
 
   const sessionReports = sessions.map((s) => sessionReach(s, revoked));
-  const memoryReports = memories.map((m) => memoryReach(m, revoked));
+  const memoryReports = [
+    ...memories.map((m) => memoryReach(m, revoked)),
+    ...storedMemories.map((m) => storedMemoryReach(m, revoked)),
+  ];
 
   const stages: SensingLineageStage[] = [];
   // `raw` and `aggregate` are reached by definition: a revocation is a deletion

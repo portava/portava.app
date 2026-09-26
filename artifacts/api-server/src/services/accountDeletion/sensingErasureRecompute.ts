@@ -32,9 +32,38 @@
  * ── WHAT THIS DOES NOT DO ────────────────────────────────────────────────────
  * It does not touch the ANONYMOUS store (2315/3110): that store keeps no
  * per-row provenance by design (§20), and its revocation is
- * `revoke_sensing_contributions` under the device's own epoch secret. It does
- * not recompute memory: nothing persists `claim_refs` (sensingRevocationReach
- * header). It never reads or writes an actor id.
+ * `revoke_sensing_contributions` under the device's own epoch secret. It never
+ * reads or writes an actor id.
+ *
+ * ── THE MEMORY STAGE (3314), AFTER THE SNAPSHOTS ─────────────────────────────
+ * `pruneMemoryLineageAfterErasure` runs once the snapshots have been
+ * recomputed or retracted. A memory written from a closed session carries
+ * `claim_refs` — the snapshots its world opportunity rested on. What the
+ * erasure does to it, and why:
+ *
+ *   RETAINED.  The memory is ANOTHER person's record of their own evening,
+ *              admitted by the section-6 gate from THEIR reported outcome. The
+ *              world evidence supported the recommendation, not the fact that
+ *              they went; deleting their memory because a third party erased
+ *              a contribution would destroy someone else's data — 2130:449-452's
+ *              reasoning, one stage further on. Content and confidence are not
+ *              touched, because no input to them changed.
+ *   PRUNED.    Every reference to a snapshot the erasure WITHDREW is removed:
+ *              retracted (privacy_eligible false or expired), gone, or — if a
+ *              retraction failed to land — still naming an erased observation.
+ *              A reference to a snapshot that was REWRITTEN from the evidence
+ *              that remains is kept: that snapshot still stands, and no longer
+ *              rests on the erased evidence.
+ *   RECORDED.  `provenance.lineage` gains one entry — event `input_erased`,
+ *              when, and how many references were removed — naming no snapshot
+ *              and no person, so the record says the memory's lineage changed
+ *              without saying whose erasure changed it.
+ *   VERIFIED.  The memories are re-read; any that still names a withdrawn
+ *              snapshot is counted and the deletion step warns.
+ *
+ * Fail-closed: if the snapshots' post-erasure state cannot be read, EVERY
+ * affected reference is treated as withdrawn — removing a reference is the
+ * privacy-safe direction; keeping one to evidence that may be gone is not.
  */
 import { randomUUID } from "node:crypto";
 import { logger as rootLogger } from "../../lib/logger.js";
@@ -197,5 +226,141 @@ export async function recomputeSnapshotsAfterErasure(
   }
 
   logger.info({ ...outcome, affected: affected.length, erasedObservations: erased.size }, "erasure recompute: done");
+  return outcome;
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// The memory stage (3314): prune references to withdrawn snapshots
+// ═════════════════════════════════════════════════════════════════════════════
+
+export interface AffectedMemory {
+  /** memory_projections.id — another account's memory; its owner is never carried. */
+  id: string;
+  claimRefs: string[];
+}
+
+export interface MemoryLineageOutcome {
+  /** Memories examined. */
+  memories: number;
+  /** Memories whose claim_refs lost at least one withdrawn reference. */
+  pruned: number;
+  /** References removed across all memories. */
+  refsRemoved: number;
+  /** Memories whose references all still stand (every snapshot was rewritten, not withdrawn). */
+  unchanged: number;
+  /** Updates that failed, plus memories still naming a withdrawn snapshot after the pass. */
+  failures: number;
+  /** True when the snapshot state could not be read and every affected reference was treated as withdrawn. */
+  verifiedBlind: boolean;
+}
+
+/**
+ * After the erasure and the snapshot recompute: remove, from every affected
+ * memory, each reference to a snapshot that no longer stands. See the header.
+ */
+export async function pruneMemoryLineageAfterErasure(
+  sc: any,
+  memories: readonly AffectedMemory[],
+  erasedObservationIds: readonly string[],
+  now: Date,
+): Promise<MemoryLineageOutcome> {
+  const outcome: MemoryLineageOutcome = { memories: 0, pruned: 0, refsRemoved: 0, unchanged: 0, failures: 0, verifiedBlind: false };
+  if (memories.length === 0) return outcome;
+  outcome.memories = memories.length;
+  const erased = new Set(erasedObservationIds.map((id) => String(id).toLowerCase()));
+  const nowMs = now.getTime();
+  const nowIso = now.toISOString();
+
+  // 1. Which referenced snapshots still STAND? Read, never assumed from the
+  //    recompute's own counts: a rewrite and a retraction both leave a row.
+  const referenced = [...new Set(memories.flatMap((m) => m.claimRefs.map((r) => r.toLowerCase())))].sort();
+  const standing = new Set<string>();
+  let blind = false;
+  for (const part of chunk(referenced, IN_CHUNK)) {
+    const { data, error } = await sc
+      .from("intel_state_snapshots")
+      .select("id, privacy_eligible, expires_at, input_observation_ids")
+      .in("id", part);
+    if (error) {
+      blind = true;
+      logger.warn({ err: error }, "erasure memory lineage: snapshot state unreadable; treating every affected reference as withdrawn (fail-closed)");
+      break;
+    }
+    for (const row of (data as any[]) ?? []) {
+      const expires = Date.parse(String(row?.expires_at ?? ""));
+      const eligible = row?.privacy_eligible === true && Number.isFinite(expires) && expires > nowMs;
+      const idsOnRow: unknown[] = Array.isArray(row?.input_observation_ids) ? row.input_observation_ids : [];
+      const restsOnErased = idsOnRow.some((x) => erased.has(String(x).toLowerCase()));
+      if (eligible && !restsOnErased) standing.add(String(row.id).toLowerCase());
+    }
+  }
+  if (blind) standing.clear();
+  outcome.verifiedBlind = blind;
+  const withdrawn = (ref: string) => !standing.has(ref.toLowerCase());
+
+  // 2. Prune. The current provenance is re-read so the lineage entry is
+  //    appended to what is there now, not to what the reach saw.
+  const byId = new Map(memories.map((m) => [m.id, m] as const));
+  const current = new Map<string, { claim_refs: string[]; provenance: Record<string, unknown> }>();
+  for (const part of chunk([...byId.keys()], IN_CHUNK)) {
+    const { data, error } = await sc.from("memory_projections").select("id, claim_refs, provenance").in("id", part);
+    if (error) {
+      outcome.failures += part.length;
+      logger.warn({ err: error }, "erasure memory lineage: memory rows unreadable; their references were not pruned");
+      continue;
+    }
+    for (const row of (data as any[]) ?? []) {
+      current.set(String(row.id), {
+        claim_refs: Array.isArray(row?.claim_refs) ? row.claim_refs.map(String) : [],
+        provenance: row?.provenance && typeof row.provenance === "object" ? row.provenance : {},
+      });
+    }
+  }
+
+  const touched: string[] = [];
+  for (const [id, row] of current) {
+    const removed = row.claim_refs.filter(withdrawn);
+    if (removed.length === 0) {
+      outcome.unchanged += 1;
+      continue;
+    }
+    const kept = row.claim_refs.filter((r) => !withdrawn(r));
+    const priorLineage = Array.isArray((row.provenance as any).lineage) ? ((row.provenance as any).lineage as unknown[]) : [];
+    const { error: updErr } = await sc
+      .from("memory_projections")
+      .update({
+        claim_refs: kept,
+        provenance: {
+          ...row.provenance,
+          lineage: [...priorLineage, { event: "input_erased", at: nowIso, refs_removed: removed.length }],
+        },
+        updated_at: nowIso,
+      })
+      .eq("id", id);
+    if (updErr) {
+      outcome.failures += 1;
+      logger.warn({ err: updErr, memory: id }, "erasure memory lineage: prune update failed");
+      continue;
+    }
+    outcome.pruned += 1;
+    outcome.refsRemoved += removed.length;
+    touched.push(id);
+  }
+
+  // 3. VERIFY: nothing examined may still name a withdrawn snapshot.
+  for (const part of chunk([...current.keys()], IN_CHUNK)) {
+    const { data, error } = await sc.from("memory_projections").select("id, claim_refs").in("id", part);
+    if (error) {
+      outcome.failures += part.length;
+      logger.warn({ err: error }, "erasure memory lineage: post-prune state unreadable");
+      continue;
+    }
+    for (const row of (data as any[]) ?? []) {
+      const refs: string[] = Array.isArray(row?.claim_refs) ? row.claim_refs.map(String) : [];
+      if (refs.some(withdrawn)) outcome.failures += 1;
+    }
+  }
+
+  logger.info({ ...outcome, touched: touched.length }, "erasure memory lineage: done");
   return outcome;
 }

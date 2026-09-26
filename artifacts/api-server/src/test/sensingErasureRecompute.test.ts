@@ -19,7 +19,7 @@
 import { describe, it, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 
-import { recomputeSnapshotsAfterErasure, type AffectedSnapshot, type RecomputeDeps } from "../services/accountDeletion/sensingErasureRecompute.js";
+import { pruneMemoryLineageAfterErasure, recomputeSnapshotsAfterErasure, type AffectedSnapshot, type RecomputeDeps } from "../services/accountDeletion/sensingErasureRecompute.js";
 import { PROJECTION_ALGORITHM_VERSION } from "../lib/intelProjection.js";
 import { SEED_FRESHNESS_POLICIES, invalidateFreshnessPolicyCache } from "../lib/freshnessPolicy.js";
 import { CLAIM_TYPES } from "../lib/intelContracts.js";
@@ -287,5 +287,43 @@ describe("END TO END — the real aggregator and writer, a real erasure, a verif
     assert.equal(after.privacy_eligible, false);
     assert.equal(after.expires_at, NOW.toISOString());
     assert.equal(sc._tables.intel_state_snapshot_versions[0].privacy_reason, "input_erased");
+  });
+
+  // ── The memory stage (3314), downstream of the same real recompute ─────────
+  const MEM = "e3e3e3e3-0000-4000-8000-000000000001";
+  const STANDING_ELSEWHERE = "e3e3e3e3-0000-4000-8000-0000000000aa";
+  function memoryRow(): Row {
+    return { id: MEM, user_id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc", subject_type: "experience_session", claim_refs: [SNAP], provenance: { derivation: "experience_session" } };
+  }
+
+  it("a memory resting on a snapshot the recompute REWROTE keeps its reference — that snapshot still stands and no longer rests on the erased evidence", async () => {
+    const { sc } = world();
+    sc._tables.memory_projections = [memoryRow()];
+    sc._tables.intel_observations = sc._tables.intel_observations.filter((o) => o.id !== ERASED);
+    const r = await recomputeSnapshotsAfterErasure(sc, affected(), [ERASED], NOW);
+    assert.equal(r.written, 1, "premise: the real writer rewrote the snapshot");
+    const m = await pruneMemoryLineageAfterErasure(sc, [{ id: MEM, claimRefs: [SNAP] }], [ERASED], NOW);
+    assert.deepEqual(m, { memories: 1, pruned: 0, refsRemoved: 0, unchanged: 1, failures: 0, verifiedBlind: false });
+    assert.deepEqual(sc._tables.memory_projections[0].claim_refs, [SNAP]);
+    assert.equal(sc._tables.memory_projections[0].provenance.lineage, undefined, "nothing changed, so nothing is recorded");
+  });
+
+  it("a memory resting on a snapshot the recompute RETRACTED loses that reference, keeps the others, and records that its lineage changed", async () => {
+    const { sc } = world();
+    sc._tables.feature_flags = [{ flag: "intel_claim_projection_crowd", enabled: false }];
+    sc._tables.memory_projections = [{ ...memoryRow(), claim_refs: [SNAP, STANDING_ELSEWHERE] }];
+    sc._tables.intel_state_snapshots.push(snapshotRow({ id: STANDING_ELSEWHERE, subject_id: "f0f0f0f0-0000-4000-8000-000000000000", input_observation_ids: [uuid(7)] }));
+    sc._tables.intel_observations = sc._tables.intel_observations.filter((o) => o.id !== ERASED);
+    const r = await recomputeSnapshotsAfterErasure(sc, affected(), [ERASED], NOW);
+    assert.equal(r.retracted, 1, "premise: the flag is off, so the recompute retracted the stale snapshot");
+    const m = await pruneMemoryLineageAfterErasure(sc, [{ id: MEM, claimRefs: [SNAP, STANDING_ELSEWHERE] }], [ERASED], NOW);
+    assert.equal(m.pruned, 1);
+    assert.equal(m.refsRemoved, 1);
+    assert.equal(m.failures, 0);
+    const mem = sc._tables.memory_projections[0];
+    assert.deepEqual(mem.claim_refs, [STANDING_ELSEWHERE], "THE EFFECT: the memory no longer rests on withdrawn evidence");
+    assert.equal(mem.subject_type, "experience_session", "and the memory itself is retained");
+    assert.deepEqual(mem.provenance.lineage, [{ event: "input_erased", at: NOW.toISOString(), refs_removed: 1 }]);
+    assert.equal(mem.provenance.derivation, "experience_session", "the rest of the provenance is preserved");
   });
 });

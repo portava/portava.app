@@ -23,6 +23,7 @@ import { useIntelPrompts } from '../../src/hooks/useIntelPrompts';
 import { VENUE_CATEGORIES, VENUE_LABELS } from '../../src/lib/intel/contracts';
 import { isCategoryPaused } from '../../src/lib/intel/promptPauseStorage';
 import { getIntelConsent, setIntelConsent, hasValidConsent, type IntelConsentState } from '../../src/services/intelConsent';
+import { disclosureFor, needsReconsent } from '../../src/lib/sensing/consentDisclosure';
 import {
   ACOUSTIC_PERMISSION_DENIED,
   readAcousticSensingPermission,
@@ -55,10 +56,16 @@ export default function IntelPromptsSettingsScreen() {
     return () => { alive = false; };
   }, []);
   const consentOn = hasValidConsent(consent);
+  // The words shown are the words of a VERSION: what the person agreed to when
+  // on, what a grant would record when off. A version this build has no text
+  // for offers no grant — it never shows older words (lib/sensing/consentDisclosure).
+  const recorded = disclosureFor(consent?.consentVersion);
+  const offered = disclosureFor(consent?.currentDisclosureVersion);
+  const reconsent = needsReconsent(consent);
   const toggleConsent = React.useCallback(async (v: boolean) => {
-    const next = await setIntelConsent(v);
+    const next = await setIntelConsent(v, v ? offered?.version : undefined);
     if (next) setConsent(next);
-  }, []);
+  }, [offered]);
 
   // §4.1's SEPARATE acoustic permission. Not the call/video microphone: its own
   // scope, its own storage key, its own switch, and off until this row is used.
@@ -85,12 +92,16 @@ export default function IntelPromptsSettingsScreen() {
           title="Contribute to live place intelligence"
           subtitle={
             consentOn
-              ? 'On — your signals count toward aggregated intelligence. Your identity and exact location are never shown publicly with them.'
-              : "Off — your signals won't contribute, and capture stays disabled until you turn this on."
+              ? `On — ${recorded?.summary ?? offered?.summary ?? 'your signals count toward aggregated intelligence.'}${
+                  reconsent ? ' The terms have changed since you agreed; turn this off and on again to review them.' : ''
+                }`
+              : offered
+                ? `Off — your signals won't contribute, and capture stays disabled until you turn this on. On: ${offered.summary}`
+                : "Off — the terms for contributing can't be shown on this version of the app. Update the app to review them."
           }
           value={consentOn}
           onValueChange={toggleConsent}
-          disabled={consent === undefined}
+          disabled={consent === undefined || (!consentOn && !offered)}
         />
       </SettingsSection>
 

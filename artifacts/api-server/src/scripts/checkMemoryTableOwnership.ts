@@ -101,6 +101,19 @@ const LEGACY_SIDE = new Set([
   // as a source_table, which is what the spine records provenance ABOUT. It
   // names memory_domain_events nowhere — the §17 command kernel is untouched.
   "test/memoryEpisodeContract.test.ts",
+  // ADDED 2026-09-26 by the Sensing integration owner, for S112's memory stage.
+  // 3314 adds claim_refs to memory_projections and replaces the projection
+  // family's own project_user_memory_with_retraction (2195's body plus one
+  // predicate). It names public.memory_events for exactly one reason: its last
+  // postcondition RAISES if memory_events gained a claim_refs column, so the
+  // lineage stays on the owner's projection and never widens the event log.
+  // PROJECTION-side; names memory_domain_events nowhere.
+  "migrations/3314_memory_projection_claim_refs.sql",
+  // 3314's behavioural proof against a real PostgreSQL. It names
+  // public.memory_events only in its cleanup, deleting its own seeded user's
+  // rows so the account-deletion case starts from a known state.
+  // PROJECTION-side; names memory_domain_events nowhere.
+  "test/db/sessionMemoryLineage.db.test.ts",
   "lib/deletionDispositions.ts",
   "lib/memoryProjectionScheduler.ts",
   "services/accountDeletion/AccountDeletionService.ts",

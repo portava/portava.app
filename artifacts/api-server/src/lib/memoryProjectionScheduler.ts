@@ -29,10 +29,18 @@
  * it is the limit of this step: there is no enumeration of closed sessions
  * anywhere in the tree, because S54's read seam offers no list and no history
  * read ON PURPOSE — that absence is what makes the bridge not a tracking
- * history. So this step evaluates the sessions it is HANDED. The producer that
- * hands them over is the session-closing path, and until it does the step runs
- * over an empty list and reports `sessionsConsidered: 0` rather than pretending
- * to have swept anything.
+ * history. So this step evaluates the sessions it is HANDED, and with none it
+ * reports `sessionsConsidered: 0` rather than pretending to have swept anything.
+ *
+ * The WRITE does not happen here. The session-closing path
+ * (`routes/experienceSessions.ts`, POST …/close) calls
+ * `services/memoryProjections/sessionMemoryStore.persistSessionMemory` in the
+ * same request, while the session is still readable: it runs this same gate and,
+ * when the gate admits, writes the memory WITH the claim refs it was derived
+ * from (3314's `memory_projections.claim_refs`), so the revocation reach and
+ * erasure can find it later. Nothing is queued for this pass to pick up; this
+ * step stays for a caller that holds session ids of its own, and it is gated by
+ * the same `memory_projection` flag the store checks.
  */
 import { getServiceClient } from "./supabase.js";
 import { logger } from "./logger.js";

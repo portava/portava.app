@@ -15,6 +15,11 @@
  *   2. No Intelligence-Contribution consent (the EXISTING server-authoritative
  *      consent, `services/intelConsent.ts` — §4.2 says to use the existing
  *      consent architecture rather than invent a parallel one) → nothing starts.
+ *      And consent is not enough by being ON: the disclosure VERSION it was
+ *      recorded under must describe passive sensing
+ *      (`lib/sensing/consentDisclosure.consentCoversPassiveSensing`). The v1
+ *      words describe Quick Signals only, so under v1 nothing starts — the
+ *      server's session issuer refuses the same consent for the same reason.
  *   3. Acoustic: off unless the SEPARATE `sensing.acoustic.energy` grant AND
  *      the OS microphone permission are both held. Not asked for here.
  *
@@ -23,7 +28,8 @@
  */
 import { AppState, type AppStateStatus } from 'react-native';
 import { freshToken } from '../apiToken.ts';
-import { getIntelConsent, hasValidConsent } from '../intelConsent.ts';
+import { getIntelConsent } from '../intelConsent.ts';
+import { consentCoversPassiveSensing } from '../../lib/sensing/consentDisclosure.ts';
 import {
   startSensingCapture,
   type SensingCaptureHandle,
@@ -113,7 +119,7 @@ export function installSensingCapture(): SensingCaptureInstallation {
   async function start(): Promise<void> {
     if (disposed || capture) return;
     if (!apiBase()) return;
-    if (!hasValidConsent(await getIntelConsent())) return;
+    if (!consentCoversPassiveSensing(await getIntelConsent())) return;
     if (disposed) return;
 
     acoustic = await readAcousticSensingPermission();
@@ -146,7 +152,7 @@ export function installSensingCapture(): SensingCaptureInstallation {
   const sub = AppState.addEventListener('change', (state: AppStateStatus) => {
     if (state !== 'active') return;
     void (async () => {
-      const allowed = apiBase() !== '' && hasValidConsent(await getIntelConsent());
+      const allowed = apiBase() !== '' && consentCoversPassiveSensing(await getIntelConsent());
       if (!allowed) {
         stop();
         transport.reset();

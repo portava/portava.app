@@ -194,6 +194,23 @@ describe("§9.1 — the sensing contribution stack is imported by its own siblin
         "(an owner consent act; SENSING_ANON_POLICY_V1 does not) and then unless sensing_publication_enabled " +
         "is true (3313, seeded FALSE). census-sensing §26 re-derives S39/S24 against it.",
     ],
+    // ── ADDED 2026-09-26 (census-sensing §27): the ISSUER and the consent map ──
+    // §3's eligibility call. The client asked POST /v1/sensing/session and no
+    // route answered, so the ingest above could never receive a contribution —
+    // a gap §26 did not name. §27 re-derives S18, S20, S30 and S32 against it.
+    [
+      join("routes", "sensingSession.ts"),
+      "the ELIGIBILITY route: requireUser → sensingEligibility → the person's RECORDED consent version " +
+        "(lib/sensingConsentScopes) → a session whose scopes are the intersection of that consent and the " +
+        "policy in force, written to 2480's table with no identity column. Writes no contribution and reads " +
+        "no aggregate. Refuses every caller in production twice over: the pepper is unset, and the only " +
+        "consent anyone can hold (v1, Quick Signals) covers no passive-sensing scope.",
+    ],
+    [
+      join("lib", "sensingConsentScopes.ts"),
+      "maps a recorded consent disclosure version to the purpose scopes it covers and intersects them with " +
+        "the policy — pure, a type/constant import of the contribution policy, no store, no I/O.",
+    ],
     [
       join("routes", "mapObservations.ts"),
       "the §22 zone-contribution route. It acquired this import when resolveZoneAnchorSubject was DELETED — " +
@@ -214,16 +231,16 @@ describe("§9.1 — the sensing contribution stack is imported by its own siblin
     for (const [, reason] of PERMITTED) assert.ok(reason.length > 20, "every entry gives a reason");
   });
 
-  it("the only route and service surfaces are the three the census re-derived", () => {
+  it("the only route and service surfaces are the four the census re-derived", () => {
     // WHAT THIS USED TO ASSERT: that NO route and NO service imported any of the
     // ten, because "an HTTP or service surface for the anonymous sensing path is
     // an owner decision, not an implementation detail". That was right, and the
     // owner took the posture decision on 2026-09-16, so a transport became
     // buildable and was built.
     //
-    // IT IS NOT RELAXED TO "ANY ROUTE MAY". It is narrowed to exactly three
-    // named files, each re-derived in census-sensing §14.2, so a FOURTH surface
-    // is as red as the first one would have been. Zero is also red: deleting the
+    // IT IS NOT RELAXED TO "ANY ROUTE MAY". It is narrowed to exactly four
+    // named files — three re-derived in census-sensing §14.2 and the issuer in
+    // §27 — so a FIFTH surface is as red as the first one would have been. Zero is also red: deleting the
     // ingest without re-deriving S18/S32 would leave the census claiming a
     // transport that no longer exists.
     const found = importers();
@@ -235,6 +252,7 @@ describe("§9.1 — the sensing contribution stack is imported by its own siblin
       [
         join("routes", "mapObservations.ts"),
         join("routes", "sensingIngest.ts"),
+        join("routes", "sensingSession.ts"),
         join("services", "intel", "IntelCaptureService.ts"),
       ],
       "the set of route/service surfaces over the sensing stack changed — re-derive S18/S32/S97/S111 in census-sensing rather than editing this list",

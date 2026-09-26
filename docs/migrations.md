@@ -3355,3 +3355,141 @@ production: `docs/ops/sensing-cutover-runbook.md`.
     SELECT (SELECT count(*) FROM information_schema.columns WHERE table_schema='public' AND column_name='input_observation_ids') AS provenance_cols,
            (SELECT count(*) FROM pg_constraint WHERE conname LIKE 'sensing_anon_features_%') AS feature_checks;
     -- portava-ci: 2, 3   |   production: 0, 0
+
+## 2026-09-26 — 3313, 3314 and 3315 applied to `portava-ci` under owner decision A; NOT to production
+
+The third batch under the same ruling (*"option A for portava-ci only"*). All
+three files were written on branch `claude/sensing-completion-20260925`
+(PR #528). The blob ids identify the exact bytes independently of any later
+commit.
+
+| | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
+|---|---|---|
+| `3313_sensing_publication_flag.sql` (blob `1d5b51f2f5…`) | **applied** 16:50:23 UTC | not applied |
+| `3315_sensing_anon_surface_consent.sql` (blob `ace36c056c…`) | **applied** 16:51:14 UTC | not applied |
+| `3314_memory_projection_claim_refs.sql` (blob `16563d02db…`) | **applied** 16:52:39 UTC | not applied |
+
+Ledger rows: all `applied_by='manual'`, checksum = sha256 of the file bytes
+(`4b6d3a231e…`, `648132eeea…`, `59f7a20c78…`), written inside the same
+transaction as the DDL. `notes` carries the blob id, the branch and
+`owner-decision=A-2026-09-26`. The ledger went from 601 rows to 604. The 2481
+row was not touched (read back: `2481_sensing_sessions_option_a_issuer.sql`,
+`ci`, `56c1244782e8…`).
+
+### How they were applied
+
+Same method as the two batches above: `classifyMigration`, `checksumOf` and
+`buildApplyStatement` from `scripts/src/apply-migrations.ts` built each
+statement, which was sent unchanged through the Management-API query endpoint.
+
+- **3314 and 3315** classified **`bare`**. The statement is the whole file,
+  comments intact, wrapped in `BEGIN … COMMIT` with the ledger insert inside;
+  `body === file` was asserted before sending.
+- **3313** classified **`unwrapped`**: the file carries its own `BEGIN;` and
+  `COMMIT;`, so the runner takes the text between them and re-wraps it with the
+  ledger insert. The header comments above the file's `BEGIN` are therefore
+  not in the statement. Its postcondition `DO` block sits between the file's
+  `BEGIN` and `COMMIT`, so it ran inside the wrapping transaction. The ledger
+  note for 3313 says exactly this rather than "comments intact".
+
+### Before 3314: the function it replaces was read from both databases
+
+3314 replaces `project_user_memory_with_retraction`, last defined in the tree
+by 2195. Replacing a function from a file is only safe if the live body is the
+body the file starts from, so it was read first:
+
+- portava-ci's live `prosrc` and production's live `prosrc` are both 2195's
+  body (same declarations, flag check, `project_user_memory` +
+  `project_inferred_preferences`, same retraction predicate), differing from
+  the file only in whitespace. No later migration redefines the function
+  (2200, 2963 and 2965 mention it; none replace it).
+- After the apply, portava-ci's live `prosrc` md5 is `c12a0ff3cf71a233…`,
+  length 1062, which equals the md5 of the text between `$fn$ … $fn$` in the
+  3314 file. The deployed body is byte-for-byte the file's.
+
+### Verified from the catalog after each commit
+
+**3313.** `sensing_publication_enabled` present, `enabled = false`. Negative
+control: inside a rolled-back sub-block the row was set to `true` and the
+file's postcondition re-run; it raised `POSTCONDITION FAILED:
+sensing_publication_enabled seeded ON …`. The row read `false` afterwards.
+
+**3315.** `sensing_anon_contributions.surface_permitted` is `boolean`,
+`NOT NULL`, default `false`, commented; still **0** foreign keys; 0 rows before
+and after. Controls, each rolled back:
+
+| probe | outcome |
+|---|---|
+| legacy shape, column not named | **accepted**; `surface_permitted` read `false` |
+| `surface_permitted = NULL` | refused: `violates not-null constraint` |
+| `surface_permitted = true` | **accepted**; read `true` |
+
+**3314.** `memory_projections.claim_refs` is `_uuid`, `NOT NULL`, default
+`'{}'::uuid[]`; `memory_projections_claim_refs_gin` present; the function is
+executable by `service_role` only (anon and authenticated `false`);
+`memory_events` has no `claim_refs`. The 16 existing memory rows all read an
+empty `claim_refs`. Controls, all inside one rolled-back block against one
+existing CI user:
+
+| probe | outcome |
+|---|---|
+| a session memory carrying one ref; overlap query on that ref | finds **1** memory |
+| the watermark pass (`project_user_memory_with_retraction(u, false)`) over a stale session memory and a stale city memory | session memory stays **active**; city memory **retracted** |
+| `claim_refs = NULL` | refused: `violates not-null constraint` |
+| `claim_refs = ARRAY['not-a-uuid']` | refused: `is of type uuid[] but expression is of type text[]` |
+
+The watermark pass in that block reported 2 retracted: the probe's city row and
+one existing row of that CI user that the projector did not re-affirm. The
+second is 2195's pre-existing behaviour, unchanged by 3314. The block rolled
+back; afterwards 16 rows, 0 retracted.
+
+### 3313's status, and what green schema checks do not prove
+
+Before this entry, 3313 had been applied **nowhere**, and PR #528's CI was
+fully green on `bae9ea2d4`, including the live-DB job that reads portava-ci's
+real schema. That is the evidence that the schema checks cannot see a flag
+seed. `audit:schema` and `check:write-path-columns` read tables and columns;
+3313 creates neither, only a `feature_flags` row. At runtime an absent row and
+a `false` row also read the same, because `isFlagEnabled` fails closed. So
+neither CI nor behaviour distinguishes "3313 applied" from "3313 never run".
+
+The only proof that a flag-seed migration was applied is reading both:
+
+    SELECT flag, enabled FROM public.feature_flags WHERE flag = 'sensing_publication_enabled';
+    SELECT filename, applied_by, checksum FROM public.schema_migration_ledger
+     WHERE filename = '3313_sensing_publication_flag.sql';
+    -- portava-ci now: (sensing_publication_enabled, false) and (…, manual, 4b6d3a231e…)
+    -- production:     0 rows and 0 rows
+
+### Production
+
+Not applied, and not applied as a side effect. None of the three files is in
+production's ledger; `sensing_publication_enabled` has no row there;
+`memory_projections.claim_refs` and `sensing_anon_contributions.surface_permitted`
+are absent. Without 3314, the session memory writer refuses
+(`claim_refs_unavailable`) rather than writing a memory without its lineage,
+and the reach reports `memoryStore: "column_absent"`. Without 3315, the ingest
+omits the column when a session lacks `surface`, which is every session under
+today's consent, so it inserts unchanged; the publisher's cohort read filters
+on the column and fails closed, publishing nothing. Order for production:
+`docs/ops/sensing-cutover-runbook.md`.
+
+### Rollback
+
+    -- 3314: db/rollback/2026-09-26-3314-memory-projection-claim-refs-rollback.sql
+    --       (refuses while any subject_type = 'experience_session' row exists)
+    -- 3315: db/rollback/2026-09-26-3315-sensing-anon-surface-consent-rollback.sql
+    --       (refuses while any row reads surface_permitted = true)
+    -- 3313: db/rollback/2026-09-26-3313-sensing-publication-flag-rollback.sql
+    -- and for each: DELETE FROM public.schema_migration_ledger WHERE filename = '<file>';
+
+### Re-establish independently
+
+    SELECT filename, applied_by, length(checksum) FROM public.schema_migration_ledger
+     WHERE filename ~ '^331[345]_' ORDER BY filename;
+    -- portava-ci: 3 rows, manual, 64   |   production: 0 rows
+
+    SELECT (SELECT udt_name FROM information_schema.columns WHERE table_schema='public' AND table_name='memory_projections' AND column_name='claim_refs') AS claim_refs,
+           (SELECT data_type FROM information_schema.columns WHERE table_schema='public' AND table_name='sensing_anon_contributions' AND column_name='surface_permitted') AS surface_permitted,
+           (SELECT enabled FROM public.feature_flags WHERE flag='sensing_publication_enabled') AS publication_flag;
+    -- portava-ci: _uuid, boolean, false   |   production: NULL, NULL, NULL

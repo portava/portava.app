@@ -376,6 +376,10 @@ router.post(
         ttlSeconds: body.ttlSeconds,
         reductionVersion: body.reductionVersion,
         features: body.features ?? null,
+        // 3315: shown to others only if this contribution was ADMITTED with
+        // `surface` — the scopes it asked for, already proven ⊆ the session's
+        // consented scopes ⊆ the policy in force by the ladder above.
+        surfacePermitted: (body.purposeScopes ?? session.row?.purpose_scopes ?? []).includes("surface"),
       },
       { client: db, nowMs },
     );
