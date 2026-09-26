@@ -259,7 +259,8 @@ const ink = StyleSheet.create({
     paddingHorizontal: space.md,
   },
   chipText: { ...t.small, color: color.onInk, fontWeight: '700' },
-  resultOk: { ...t.small, color: color.success },
+  // `success` green measures 3.78:1 on `ink` (census-media §28.6); the words carry the outcome.
+  resultOk: { ...t.small, color: color.onInk },
   resultMuted: { ...t.small, color: color.onInkMute },
 });
 
