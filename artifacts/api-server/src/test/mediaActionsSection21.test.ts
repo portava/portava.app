@@ -291,6 +291,10 @@ describe("MD101 — Find Quieter / Cheaper reach Compass with the comparator it 
     assert.equal(q!.target.endpoint, "/api/compass/ask");
     assert.equal(q!.target.params?.comparator, "quieter");
     assert.equal(c!.target.params?.comparator, "cheaper");
+    // The ask carries THIS media item, which is what makes Compass build the
+    // §32 media context (and its comparator baselines) for the anchor place.
+    assert.equal(q!.target.params?.mediaId, MEDIA_1);
+    assert.equal(c!.target.params?.mediaId, MEDIA_1);
   });
 
   it("absent when Compass is off, and absent with no anchor place", async () => {
