@@ -249,12 +249,12 @@ export async function clearFirstPageCache(
 }
 
 /** Pull the still-image URLs worth warming from one projection. */
-function imageRefsOf(item: WallProjection): string[] {
+function imageRefsOf(item: WallProjection, targetPx: number = currentWallImageTargetPx()): string[] {
   const out: string[] = [];
-  for (const m of item.media ?? []) {
+  for (const m of (item.media ?? []).slice(0, 1)) { // every Wall renderer draws media[0] only; warm nothing it will not draw
     if (!m || m.processing) continue;
     // Video: warm the still poster only, never the payload (§11/§31).
-    const ref = m.kind === 'video' ? m.thumbnailUrl : (m.url ?? m.thumbnailUrl);
+    const ref = pickWallImageRef(m, targetPx); // THE renderer's pick (WallImage), same target: warm exactly what will be drawn
     if (typeof ref === 'string' && ref.length > 0) out.push(ref);
   }
   return out;
@@ -269,7 +269,7 @@ function imageRefsOf(item: WallProjection): string[] {
 export async function prefetchWallMedia(
   items: WallProjection[],
   opts: {
-    count?: number;
+    count?: number; /** Frame pixel width; defaults to the window's, as WallImage uses. */ targetPx?: number;
     hydrate?: typeof hydrateMediaUrls;
     prefetch?: (urls: string[]) => Promise<unknown>;
   } = {},
@@ -285,7 +285,7 @@ export async function prefetchWallMedia(
   const refs: string[] = [];
   const seen = new Set<string>();
   for (const item of items.slice(0, count)) {
-    for (const ref of imageRefsOf(item)) {
+    for (const ref of imageRefsOf(item, opts.targetPx)) {
       if (seen.has(ref)) continue;
       seen.add(ref);
       refs.push(ref);
@@ -318,3 +318,20 @@ export function formatCacheAge(ageMs: number): string {
   const d = Math.floor(h / 24);
   return `${d}d ago`;
 }
+
+/**
+ * The pixel width WallImage draws at on this device: window width × scale, read
+ * the way `useWindowDimensions()` reads it, so the warm-up and the draw pick the
+ * same variant (services/wallImageVariant).
+ */
+function currentWallImageTargetPx(): number {
+  try {
+    return wallImageTargetPx(Dimensions.get('window'));
+  } catch {
+    return 0;
+  }
+}
+
+// Imported at the TAIL so no cited line above moves; ESM hoists them.
+import { Dimensions } from 'react-native';
+import { pickWallImageRef, wallImageTargetPx } from './wallImageVariant.ts';
