@@ -573,7 +573,7 @@ unanswered as of this document's date.**
 
 **Nothing in this repository declares one.** `app.json` sets no minimum width,
 the theme declares no breakpoints, and — measured, not assumed — **the Wall
-reads no viewport width at all**: `grep -rn 'useWindowDimensions\|Dimensions.get' src/features/wall/`
+reads no viewport width at all**: `grep -rn 'useWindowDimensions\|Dimensions.get' src/features/wall/` (SUPERSEDED by census-wall §16, 2026-09-26: the Wall image picker now reads the window width and scale, so that grep finds wallItemShared.tsx and wallPrefetch.ts; it only chooses which stored image to fetch, and no LAYOUT switches on width)
 returns nothing. Width therefore switches no layout in the Wall; it only changes
 where text wraps, how tall a fixed-aspect media well is, and whether the
 three-chip row wraps.
