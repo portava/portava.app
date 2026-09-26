@@ -4809,3 +4809,79 @@ The seven rows "claimed by nobody" are unchanged at **7** — S24 S26 S39 S42 S4
 S52 S66. #9 being taken removed a decision from S39's path and revealed two
 build blockers behind it; the row is no closer to `C` and this section does not
 pretend otherwise.
+
+---
+
+## §22 — 2026-09-26: S92 and S112 are both `W` on evidence that has gone false
+
+**LAST-STATEMENT-WINS. MOVES NOTHING.** Found while re-measuring
+census-highlights-memories, whose scope counts
+`services/memoryProjections/` — the directory both of these rows grep. Its §Z
+records the measurement; the corrections belong here.
+
+**`C 103 · W 21 · N 2 · X 1` — unchanged, and confirmed by
+`check:census-integrity` today (127 rows).**
+
+### §22.1 S92 — the grep it rests on now finds the thing
+
+S92 reads: *"the bridge is a graph-edge projection and `grep` over
+`lib/memoryProjectionScheduler.ts` and `services/memoryProjections/` finds no
+`ExperienceSession` of any spelling."*
+
+**That grep now finds it in both places.** `services/memoryProjections/experienceSessionBridge.ts`
+exists (+243) and its own first line calls itself *"S92's arrow, built from the
+session's OUTCOME"*. It is imported at
+`artifacts/api-server/src/lib/memoryProjectionScheduler.ts:44#}`, and the
+scheduler is started from `artifacts/api-server/src/index.ts:58#import`.
+
+The row's RED WHEN — *S54 exists AND memory eligibility is computed from a
+session's OUTCOME rather than from a graph edge* — has **fired on the code**.
+
+**S92 stays `W`, on deployment rather than absence.** The scheduler answers
+`disabled` at
+`artifacts/api-server/src/lib/memoryProjectionScheduler.ts:116#if` unless
+`memory_projection` is on, and that flag is **false on production and false on
+portava-ci**, both read on 2026-09-24 through 2026-09-26. Nothing computes
+eligibility from an outcome in any deployment.
+
+This is the third row in this corpus with that shape, after A03 (census-discovery)
+and M7 (census-map): built, wired, and serving nothing. The distinction worth
+keeping is that S92's blocker is now **one flag**, where the row still describes
+it as a missing module.
+
+### §22.2 S112 — something bridges to them now, and still nothing calls it
+
+S112 reads that the session and memory stages *"are prevented only because
+nothing bridges to them. RED WHEN a session exists (S30) and a memory bridge
+exists (S54/S92) for a revocation to reach."*
+
+`services/memoryProjections/sessionRevocationReach.ts` exists (+205) and calls
+itself *"S112's last two stages, made reachable"*. So the clause is false: a
+bridge exists.
+
+**S112 stays `W` for a reason it does not record.** Searched without
+truncation, the module's **only importer is
+`artifacts/api-server/src/test/sensingConsumersRevocationReach.test.ts`**;
+`lib/sensingRevocationLineage.ts` names it in a comment and imports nothing. So
+the correct statement is not *"nothing bridges to them"* but **"the reach is
+built and no production caller invokes it"** — a different defect, and one a
+lane can close without an owner decision.
+
+### §22.3 Restated RED WHENs
+
+> **S92 RED WHEN** — `memory_projection` is enabled on the database being
+> measured, so `memoryProjectionScheduler` stops answering `disabled` and the
+> bridge actually computes eligibility from a session outcome. The code half is
+> done. **WHO**: whoever flips the flag.
+
+> **S112 RED WHEN** — a production (non-test) caller invokes
+> `sessionRevocationReach`, AND the `memory_projection` path it depends on is
+> enabled. **WHO**: a lane for the caller, then the flag.
+
+### §22.4 MOVES NOTHING
+
+No verdict moves. Two evidence clauses are replaced, two RED WHENs are restated
+against what actually blocks them, and the totals are unchanged. Both rows were
+`W` before this section and are `W` after it — but a reader planning work now
+knows that S92 needs a flag and S112 needs a caller, where the census previously
+said both needed a module that already exists.

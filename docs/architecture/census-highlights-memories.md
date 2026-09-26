@@ -6222,3 +6222,75 @@ above are ADDED to this census's `CENSUS_SCOPE` in the same commit, because a
 section that rests its argument on a screen must age when that screen changes;
 that is the same rule §Y applied to `migrationPrefixRules.ts`. Nothing here was
 run against a device or a deployed API.
+
+---
+
+## §Z — 2026-09-26: ten counted files, none of them this census's, and two Sensing rows falsified in passing
+
+**Re-measured, not acknowledged.** `check:census-freshness` named ten counted
+files changed since `4f89330b9` and not covered: `compass/CompassGroundingEnvelope.ts`,
+`lib/locateFriendsSession.ts`, `lib/memoryProjectionScheduler.ts`,
+`routes/compass.ts`, `routes/mapObservations.ts`, `routes/mapProjection.ts`,
+`services/memoryProjections/evidence.ts`,
+`services/memoryProjections/experienceSessionBridge.ts` (**new**, +243),
+`services/memoryProjections/sessionRevocationReach.ts` (**new**, +205), and
+`test/compassCensusCorrectness.test.ts`.
+
+**NO VERDICT MOVES IN THIS CENSUS.** Not one of the ten is cited by any row
+here — the two new modules score **zero mentions** in this document. They are
+counted because `services/memoryProjections/` is a counted directory, which is
+the right rule and is why this section exists rather than an acknowledgement.
+
+### §Z.1 What the two new modules actually are
+
+They are **Sensing lane work living in a Memory directory**, and they say so in
+their own first lines: `experienceSessionBridge` is *"S92's arrow, built from
+the session's OUTCOME"*; `sessionRevocationReach` is *"S112's last two stages,
+made reachable"*. Both are graded in **census-sensing**, not here.
+
+### §Z.2 The cross-census finding: S92 and S112 are both W on false evidence
+
+Measured while reading these files, and recorded here because this is where the
+files live. **Both rows stay `W`** — census-sensing's totals are unchanged at
+`C=103 W=21 N=2 X=1`, confirmed by `check:census-integrity` today — but both
+evidence clauses have gone false.
+
+**S92** says: *"`grep` over `lib/memoryProjectionScheduler.ts` and
+`services/memoryProjections/` finds no `ExperienceSession` of any spelling."*
+That grep now finds it in **both** places. The bridge is imported at
+`artifacts/api-server/src/lib/memoryProjectionScheduler.ts:44#}` and the
+scheduler is started from `artifacts/api-server/src/index.ts:58#import`. The
+row's RED WHEN — *S54 exists and memory eligibility is computed from a
+session's outcome* — has fired on the code.
+
+It stays `W` on **deployment**: the scheduler returns `disabled` at
+`artifacts/api-server/src/lib/memoryProjectionScheduler.ts:116#if` unless
+`memory_projection` is on, and that flag is **false on production AND on
+portava-ci**, both read today. Same shape as A03 and M7 — built, wired, and
+serving nothing.
+
+**S112** says the session and memory stages *"are prevented only because
+nothing bridges to them"*. Something does now. But `sessionRevocationReach` has
+**no production importer at all** — searched without truncation, the only
+importer is `test/sensingConsumersRevocationReach.test.ts`, and
+`lib/sensingRevocationLineage.ts` merely names it in a comment. So S112 stays
+`W` for a different reason than it records: not "nothing bridges to them" but
+"the reach is built and nothing calls it".
+
+Both corrections belong in census-sensing and are made there, in its §22. This
+section records the measurement and does not move a Sensing row from a Memory
+census.
+
+### §Z.3 The rest of the ten
+
+`memoryProjectionScheduler.ts` (+98) and `evidence.ts` (+19) are the scheduler
+and evidence sides of the same S92 bridge. `locateFriendsSession.ts`,
+`routes/mapObservations.ts` and `routes/mapProjection.ts` are Map-lane work
+re-measured in census-map §44. `routes/compass.ts` and
+`CompassGroundingEnvelope.ts` are Compass-lane, re-measured in census-compass
+§28. None is cited by a row here.
+
+### §Z.4 MOVES NOTHING
+
+Totals unchanged. Ten counted files read, zero cited by this census, and the
+one substantive finding handed to the census that owns it.
