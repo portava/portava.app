@@ -124,8 +124,8 @@
  * media" is not a guarantee, and a mismatched remove() destroys a third party's
  * file — a worse outcome than the orphan being fixed.
  */
-
 import { logger as rootLogger } from "../../lib/logger.js";
+import { enumerateSensingRevocationReach } from "./sensingRevocationReach.js";
 import { resolveStoragePath } from "../../lib/storagePath.js";
 import { ownerFromPath } from "../../lib/mediaAccess.js";
 import { requestProviderDeletionForUser } from "../identityVerification/providerErasure.js";
@@ -1195,6 +1195,44 @@ export async function executeAccountDeletion(
     must(await sc.from("devices").delete().eq("user_id", userId), "delete devices");
   });
   if (!devOk) warnings.push("devices rows may remain");
+
+  // ── Sensing revocation lineage reach (census-sensing S112) — READ-ONLY ─────
+  // `erase_intel_contributions` below is the one production revocation of
+  // canonical intel evidence. §18.4's lineage says a revocation reaches the
+  // session and memory stages, and `sessionRevocationReach` answers WHICH
+  // records rest on the erased evidence — but nothing ever asked it in
+  // production. This step asks, BEFORE the erase removes the observations the
+  // question is keyed on. It deletes nothing and never serves another
+  // account's ids; it hands the deletion record counts and the stages touched.
+  // Subject-level and over-inclusive on purpose, and the memory half is empty
+  // because nothing persists `claim_refs` — see sensingRevocationReach.ts.
+  // Fail-closed: an unreadable precondition fails the step and warns, per
+  // failOpenAccountDeletionReads. Non-fatal: the erase still runs.
+  await pagedRowStep(
+    steps,
+    warnings,
+    { name: "sensing_revocation_reach", subject: "sensing lineage reach — sessions resting on the erased evidence" },
+    async (readAll) => {
+      const reach = await enumerateSensingRevocationReach(sc, userId, readAll);
+      logger.info(
+        {
+          userId,
+          via: reach.via,
+          identities: reach.identities,
+          observations: reach.observations,
+          subjects: reach.subjects,
+          snapshots: reach.snapshots,
+          sessionsConsidered: reach.sessionsConsidered,
+          sessionsReached: reach.sessionsReached,
+          ownSessionsExcluded: reach.ownSessionsExcluded,
+          stagesReached: reach.stagesReached,
+          memoryStore: reach.memoryStore,
+        },
+        "executeAccountDeletion: sensing revocation reach enumerated before erase_intel_for_actor",
+      );
+      return reach.sessionsReached;
+    },
+  );
 
   // Notifications received AND ones naming the user as actor, plus push
   // registration rows; then search history.

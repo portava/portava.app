@@ -2321,6 +2321,11 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/test/safetyPublicationPath.test.ts",
     // S19/S97/S111/S118 all turn on this migration; §17 grades its precondition.
     "artifacts/api-server/src/migrations/3002_intel_contribution_identity.sql",
+    // WIDENED 2026-09-26 (census-sensing §24.4): S112's production caller and
+    // its suite. The reach module itself is already watched above; the caller
+    // is what changed the row's measurement, so it must age this census too.
+    "artifacts/api-server/src/services/accountDeletion/sensingRevocationReach.ts",
+    "artifacts/api-server/src/test/accountDeletionSensingRevocationReach.test.ts",
     //
     // DELIBERATELY NOT ADDED, because this census cites them as context rather
     // than grading them, and widening scope to whatever a census mentions would

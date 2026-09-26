@@ -111,14 +111,14 @@ Paths are relative to `artifacts/api-server/` unless prefixed `travel-buddy-stan
 | Measure | Value |
 |---|---|
 | **Denominator — testable requirements** | **127** |
-| BUILT-AND-CORRECT | **103** |
-| BUILT-BUT-WRONG | **21** |
+| BUILT-AND-CORRECT | **105** |
+| BUILT-BUT-WRONG | **19** |
 | NOT-BUILT | **2** |
 | CANNOT-VERIFY | **1** |
 | **CONSTRUCTED%** = (C+W)/127 | **124 / 127 = 97.6 %** |
-| **CORRECT%** (raw) = C/127 | **103 / 127 = 81.1 %** |
+| **CORRECT%** (raw) = C/127 | **105 / 127 = 82.7 %** |
 
-> **HEADLINE RESTATED 2026-09-16 FROM THE ROWS, not the other way round.** It read
+> **HEADLINE RESTATED 2026-09-26 (§24: S79 and S83 W→C; C 105 / W 19 / N 2 / X 1, CORRECT% 82.7 %) AND 2026-09-16 FROM THE ROWS, not the other way round.** Before §24 it read C 103 / W 21 from §11. Earlier, it read
 > C 98 / W 26 until §11 moved S20, S25, S30, S33 and S35 from W to BC on the owner's
 > Option B posture decision. `check:census-integrity` caught the drift the moment it
 > appeared — *"a headline that stopped describing the table underneath it"* — which is
@@ -5013,3 +5013,275 @@ S26 W→W, S66 W→W, S17 X→X. The headline is unchanged. What changed is that
 two of the three now rest on measurements of both databases and one
 controlled test, and the third has acquired a fact that argues *against*
 readiness rather than for it.
+
+---
+
+## §24 — 2026-09-26: the final head verified; S79 and S83 re-derived and MOVED; §16.5's step measured a third time; S112 acquired its caller; the completion checklist by blocker class
+
+**LAST-STATEMENT-WINS.** This section supersedes §14.2's reading of S79 and
+S83, §22.3's RED WHEN for S112, and §16.5/§18.6/§20.5's reading of what the
+next step for S3/S106 is. It moves TWO verdicts and it says exactly why every
+other non-C row does not move.
+
+### §24.0 What CI established on `d7358e8f7`, measured rather than summarised
+
+The head carrying §23 and the nine-migration record. Every run was read at the
+job level, and cancelled / skipped / passed are kept distinct:
+
+| Run | Outcome |
+|---|---|
+| CI (pull_request) | **success.** `api-server · node:test suite`: `suites=6220 tests=26030 pass=26030 fail=0 skipped=0 cancelled=0`. typecheck, typecheck:tests, schema-references, enum-literals, writerless-reads, doc-citations, citation-targets, citation-symbols, test-registration (floor 392; 1458 registered) all passed. |
+| CI (live DB) (pull_request) | **success.** `schema drift · apply migrations, certify, then audit vs live`: dry run passed, **apply and certify SKIPPED** (nothing pending — the nine went to `portava-ci` by hand under decision A, §23), `audit:schema` **passed**. `live DB · RLS + role/is_official write boundaries`: **RAN**, 28/28 boundary suites passed — on every earlier head of this branch this job was SKIPPED behind the schema-drift failure. `post-media revocation · before-proof, apply, after-proof`: **RAN**, all three proofs passed — likewise previously skipped. `api-server · check:all (7 checks incl. the live_pulse gate)` and `check:security` passed. |
+| Unwired checks (probation) | success, on both the push and the pull_request event. |
+
+What this does not say: nothing here reached production (`ajrurzioarfkagpuxfnb`,
+still read-only, ledger 469, none of the nine); every feature gate this census
+names still reads false or absent on both databases (§23.2).
+
+### §24.1 S79 — live claims are carried into `/compass/ask` and the checker constrains the answer to their band. W → C.
+
+§14.2 held S79 W *"deliberately: an unverified claim is not evidence"*. This
+pass verified it, in the order the RED WHEN demands — claims into the context
+FIRST, checker over that context SECOND, *"because a checker over an empty
+context is vacuous"*:
+
+* The context half. `` `artifacts/api-server/src/routes/compass.ts:1778#liveClaimEvidence = live.evidence;` ``
+  — `buildLiveClaimContext` pushes its lines onto the prompt and keeps the
+  per-subject band it derived, on the request path, before any answer exists.
+* The checker half, on BOTH branches so streamed and non-streamed answers
+  cannot drift: `` `artifacts/api-server/src/routes/compass.ts:1919#const _grounded    = groundCompassAnswer(_rawMessage, toolLog, liveClaimEvidence);` ``
+  and `` `artifacts/api-server/src/routes/compass.ts:1991#const _grounded    = groundCompassAnswer(_rawMessage, toolLog, liveClaimEvidence);` ``.
+  `groundCompassAnswer` merges the tool-log evidence with the context band
+  and hands the union to `enforceCompassGroundingEnvelope`.
+* The proof is a REGISTERED suite, not a reading: `` `artifacts/api-server/src/test/compassGroundingLiveClaims.test.ts:99#describe("S79 part 1` ``
+  (the claim, its §5.1 band and the name the model will write reach the
+  context; no contributor, coordinate or cohort count does; an unreadable
+  database says UNKNOWN and never widens the band) and
+  `` `artifacts/api-server/src/test/compassGroundingLiveClaims.test.ts:174#describe("S79 part 2` ``
+  (a flat state over a predicted pattern is REFUSED — *"and this used to
+  publish"*; a state about a subject the context knows nothing about is
+  refused; a low-confidence pattern cannot become a verified-live sentence),
+  plus part 3 (honest hedged prose passes) and the fail-weak fold (context can
+  only tighten the checker). Run on this head: 27/27 across this file and
+  S83's, and inside CI's 26030.
+
+**What C does not mean here.** The read is gated:
+`` `artifacts/api-server/src/lib/liveClaimRead.ts:312#if (!(await isFlagEnabled(sc, "intel_live_label_crowd"))) return false;` ``
+and three sibling flags. Where they are off — every deployment — the context
+says *no current evidence* and the checker refuses every state claim, which is
+the safe direction and is what the tests pin. The row's claim is about the
+tree and the tree satisfies it; production REALISATION of a grounded live
+answer waits on those flags and on data, and is not what this verdict says.
+
+### §24.2 S83 — `TripWorldContext` carries the five named parts. W → C.
+
+The row was scored W because `CompassTripContext` was *"trip grounding only:
+no world state, no opportunities, no disruptions, no sessions"*. Re-derived:
+
+* The five parts are a closed list the module exports and the test pins by
+  value: `` `artifacts/api-server/src/compass/CompassTripContext.ts:286#export const TRIP_WORLD_PARTS = ["world_state", "opportunities", "disruptions", "sessions", "crew"] as const;` ``.
+* The projection is built from their EXISTING owners and computes nothing of
+  its own: `` `artifacts/api-server/src/compass/CompassTripContext.ts:382#export async function buildTripWorldContext(` ``
+  takes the kernel this turn already assembled and the opportunity projection
+  the ranker was handed, and reads disruptions, the viewer's open
+  `ExperienceSession` and the crew on the trip itself.
+* It is on the request path, handed the same kernel and the same admitted
+  opportunities the prompt gets, so the trip world cannot show a different
+  world from the ranker: `` `artifacts/api-server/src/routes/compass.ts:1834#const tripWorld = await buildTripWorldContext(sc, user.id, {` ``.
+* The suite: `` `artifacts/api-server/src/test/sensingConsumersTripWorld.test.ts:88#describe("S83 — the projection carries all five named parts"` ``
+  — builds all five from a stub client that FILTERS per table, asserts a
+  closed session is not an open one, that the disruption claim types are the
+  ones that say a planned thing may not happen and exclude `crowd.level`, and
+  (second describe) that an unreadable source is reported UNAVAILABLE rather
+  than as an empty part.
+
+S54 (`ExperienceSession`) is BC since §6.6, so both conjuncts of the RED WHEN
+hold. **Read the limit:** the five-part proof runs against a stub client; what
+it proves is the projection's SHAPE and its honesty rule, and the route read
+proves the wiring. No live-database run of `/compass/ask` was taken here.
+
+### §24.3 S3 · S106 — §16.5's step, measured a THIRD time: the audience is a MEMBERSHIP, not only a rung. MOVES NOTHING.
+
+§16.5 named the fused read as *"the cheapest remaining move in this census"*.
+§18 measured it once and found a coordinate leak; §20 settled the class
+question. This pass started to take the step — a production consumer calling
+`presenceFusion.resolve` with its own audience rung — and asked P24's question
+first. The answer is that the step is STILL unsafe, for a reason neither §18
+nor §20 examined, and it would also be wrong on the merits.
+
+**The measurement.** Retention is keyed `(source, subject)` and carries no
+scope: `` `artifacts/api-server/src/presence/fusion/store.ts:735#${RETENTION_KEY_SEP}${estimate.subjectKey}` ``.
+The subject is the ACCOUNT for all three fusable sources —
+`` `artifacts/api-server/src/lib/locateFriendsSession.ts:888#subjectKey: memberId,` ``,
+`` `artifacts/api-server/src/domain/trips/services/TripCrewLocationService.ts:178#subjectKey: raw.userId,` ``,
+and `circlePresenceEstimate` uses `profile.userId` — across every session,
+trip and circle that person is in. `resolve` selects on linkage
+(`` `artifacts/api-server/src/presence/fusion/store.ts:611#if (hit.linkage !== "account_scoped") continue;` ``),
+class (`` `artifacts/api-server/src/presence/fusion/store.ts:619#if (!sameConsentClass(hit.source, forSource)) continue;` ``),
+expiry, and then NEWEST WINS
+(`` `artifacts/api-server/src/presence/fusion/store.ts:622#if (best === null || (hit.observedAtMs as number) > (best.observedAtMs as number)) best = hit;` ``).
+Nothing in that loop, and nothing a consumer can pass, says whether the asking
+viewer is inside the OTHER source's audience for this subject. §18.4's
+`audienceCeiling` is a PRECISION — the rung the viewer holds — and a rung
+bounds how much of a fact is served, not whether the viewer was ever in the
+room where the fact was shared.
+
+**Both directions, on the only same-class pair that exists** (`circle_presence`
+and `locate_friends_session` are `social`; the trip crew is alone in its class
+and the map is `source_scoped`):
+
+| Direction | What the fused read would hand over | Whose consent that is under |
+|---|---|---|
+| circle → locate surface | The circle's `state` (`recent` / `last_known`), its freshness, and its `evidenceTypes` — `` `artifacts/api-server/src/lib/circleResponseShaper.ts:192#evidence: [checkedIn ? "user_checkin" : "server_sync"],` `` — re-minted at the session viewer's rung; `#forAudience` carries evidence through untouched (`` `artifacts/api-server/src/presence/fusion/store.ts:707#evidenceTypes: best.evidenceTypes,` ``). | The circle's visibility mode, granted to CIRCLE MEMBERS. A locate-session member is not necessarily one. "A checked in somewhere 20 s ago" is feature-usage metadata the subject gave the circle. |
+| locate → circle surface | A `live` state with a seconds-old `observedAt` (a circle claim is never live), position nulled below `precise`. | The session's grant, given to SESSION MEMBERS. A circle member not in the session learns the subject is actively sharing location right now. |
+
+Neither is a coordinate. Both are disclosures the subject scoped to one
+audience, served to another, and §20.1's ruling — *"Preserve source-specific
+consent, audience, expiry, and revocation checks even within a class"* — names
+audience explicitly. The rung is one of the checks; it is not the audience.
+
+**And the step would be wrong on the merits even if it were safe.** A circle
+row is a STANDING self-assertion whose `observedAt` moves whenever the person
+touches it; it carries no point (`circleResponseShaper` admits `point: null`).
+Under newest-wins a circle assertion refreshed 20 s ago outranks a live
+sighting 40 s old, so a wired locate surface would DOWNGRADE a live, precise
+position to a coordinate-less `recent` for as long as the circle row stays
+fresher. The newest observation is not the best observation once sources carry
+different evidence classes, and `resolve` does not know that.
+
+**So the step is not taken, and this is the fifth instance of §18.7's class** —
+*"what is inert, and what happens on the day someone wires it."* The four
+writers still admit through the store (§16.2 stands); zero cross-source
+readers, still, and now with the reason stated in full.
+
+**RED WHEN, restated with the missing conjunct.** §16.5's three conjuncts and
+§18.6's audience conjunct stand, AND the fused read must be limited to
+estimates whose source-audience for that subject the asking viewer
+demonstrably holds — either (A) because the admitted estimate carries its
+CONSENT SCOPE (`{ kind: "locate_session" | "circle" | "trip_crew", id }`) and
+`read` / `resolve` take the viewer's scopes and select only within them, with
+retention then per (source, subject, scope) and a ranking that prefers a live
+sighting to a standing assertion; or (B) because the owner rules that for S3
+and S106 *"reads through it"* is satisfied by each surface reading its own
+source back through the store at the viewer's rung, and that CROSS-SOURCE
+fusion is refused by design rather than wired. **WHO**: the owner, for A or B.
+A changes the store's contract (§18.4 as recorded, and the ruling §20 built on
+it); B narrows the census's own §16 reading of the spec, and this section
+does not do that on its own authority. The store, the tests and the four
+admitting surfaces are untouched by this pass.
+
+**One owner decision, prepared:** A or B above. Cost of A: a claim field, two
+read signatures, a ranking rule, retention keyed by scope (which is what
+`locateFriendsSession.ts:883` argued against and would now be argued for on
+consent grounds), and the four admit sites supplying their scope — a lane's
+day, no migration. Cost of B: no code; S3/S106 become a `read`-based wiring
+per surface and move on a lane's report plus a test that an ungranted viewer
+is served nothing. Neither is chosen here.
+
+### §24.4 S112 — the caller exists; the row stays W on the flag and on a provenance fact measured here
+
+§22.3: *"S112 RED WHEN — a production (non-test) caller invokes
+sessionRevocationReach, AND the memory_projection path it depends on is
+enabled. WHO: a lane for the caller, then the flag."* The lane's half is done.
+
+**Where the caller had to be.** There is one production revocation of
+canonical intel evidence — account deletion, through `erase_intel_for_actor`
+— and the anonymous path's `purge_sensing_contributions_for_token()` has no
+route and no caller. So the reach runs inside the deletion, BEFORE the erase
+removes the observations the question is keyed on:
+`` `artifacts/api-server/src/services/accountDeletion/AccountDeletionService.ts:1214#{ name: "sensing_revocation_reach", subject: "sensing lineage reach — sessions resting on the erased evidence" },` ``,
+through the service's one pager, calling
+`` `artifacts/api-server/src/services/accountDeletion/sensingRevocationReach.ts:115#export async function enumerateSensingRevocationReach(` ``,
+which is now `sessionRevocationReach`'s first non-test importer.
+
+**What the caller honestly cannot know, and says.** The reach module wants the
+snapshot ids the erased observations fed. `intel_state_snapshots` records
+`` `artifacts/api-server/src/migrations/2130_intel_storage.sql:296#source_count    integer NOT NULL DEFAULT 0,` ``
+and `distinct_actors` and NO input provenance; adding an observation→snapshot
+link would be a standing reverse path towards contributors, which §20 and spec
+§17 forbid for the anonymous store. So the enumeration is at SUBJECT
+granularity and over-inclusive by construction: the account's contributor
+identities (account id plus one token per live epoch, via 3310's
+`intel_contributor_tokens_for_actor`, the way the evidence-ownership gate
+reads them) → the subjects its observations name → every snapshot of those
+subjects, treated as the revoked claim refs → every OTHER account's
+`ExperienceSession` on those subjects, one envelope per session id. The
+departing account's own sessions are excluded and counted, because the
+deletion handles them and counting them would inflate the figure. When in
+doubt, reach: a recomputation owner told "may rest on erased evidence" can
+recompute; one told "unaffected" wrongly cannot recover.
+
+**The memory half is empty for a reason that is a fact about the tree.** The
+only record carrying `provenance_json.claim_refs` is the S92 bridge's
+`NormalizedEvidence`, and it is never persisted:
+`` `artifacts/api-server/src/lib/memoryProjectionScheduler.ts:93#const verdict = sessionMemoryEligibility(ownerId, read.session.envelope, nowMs);` ``
+returns a verdict, and the projection pass goes through
+`` `artifacts/api-server/src/lib/memoryProjectionScheduler.ts:124#const { data: projData, error: projErr } = await db.rpc("project_all_memory", { p_enforce_flag: true });` ``,
+which reads no claim_refs. There is no store to enumerate, so the outcome says
+`` `artifacts/api-server/src/services/accountDeletion/sensingRevocationReach.ts:215#memoryStore: "none_persisted",` ``
+rather than reporting an empty list as "nothing reached".
+
+**Fail-closed, and shown to be.** Any unreadable precondition throws, the
+deletion STEP fails and warns, and the erase still runs. Seven cases in
+`` `artifacts/api-server/src/test/accountDeletionSensingRevocationReach.test.ts:183#describe("S112 — the reach is enumerated at subject granularity, before the erase"` ``
+and `` `artifacts/api-server/src/test/accountDeletionSensingRevocationReach.test.ts:242#describe("S112 — the account-deletion run is the production caller"` ``,
+registered and run; three mutations, each reverted: moving the step after the
+erase reds 1 of 7; no longer excluding the account's own sessions reds 3;
+answering "reached nothing" on a failed read reds 2. The nine deletion suites
+that already existed (86 cases, including the fail-open guard and the §9.1
+import tripwire) pass unchanged.
+
+**S112 stays W.** RED WHEN, restated: `memory_projection` is enabled on the
+database being measured (the owner), AND the bridge's `provenance_json` is
+persisted somewhere the reach can read (a lane, behind the flag — until then
+the memory stage cannot be enumerated even with the flag on, and the caller
+says so). **WHO**: the owner, then a lane.
+
+### §24.5 The completion checklist — twenty-two non-C rows, each with the one thing that moves it and who holds it
+
+Denominator 127, unchanged. 105 C · 19 W · 2 N · 1 X. Every non-C row is
+listed; none is excluded, deferred or folded into another.
+
+| Class | Rows | Exactly what moves the row | Who |
+|---|---|---|---|
+| OWNER RULING — the 3002 cutover to production | S19 · S97 · S111 · S118 | `3002 → 3003 → 3110 → 3310` applied to production **in the same cutover as this branch's `IntelCaptureService`** (§14.8: neither may go first). All four are applied and certified on `portava-ci`; production holds none. | the owner (production apply), with the integration owner |
+| OWNER RULING — consent scope | S39 · S24 | `surface` added to `SENSING_ANON_GRANTED_SCOPES` (§21.2, a separate act from #9's flag), THEN a lane wires a publisher through `publishThroughDifferencingGate` and a zone identity into the conversation (§21.4). | the owner, then a lane |
+| OWNER RULING — a flag | S49 | `discovery_candidate_projection_enabled` flipped where it is measured; the §24 pass and the store are built and run (§14.2). | the owner |
+| OWNER RULING — a flag | S92 | `memory_projection` enabled where it is measured (§22.3). | the owner |
+| OWNER RULING — a flag, then a lane | S112 | §24.4: the flag, then the bridge's provenance persisted. | the owner, then a lane |
+| OWNER RULING — a design | S3 · S106 | §24.3: option A (consent scope in the estimate) or B (single-source read-back is "reads through"). | the owner, then a lane |
+| OPERATOR ARTIFACT | S18 · S32 | `SENSING_CONTRIBUTOR_PEPPER` configured in production; the route's first statement refuses without it (§14.2). | ops |
+| OPERATOR ARTIFACT | S17 | The served headers of `https://portava.replit.app` (whose last publish reads `failed`, §23.3) and Supabase's at-rest attestation. One `curl -sI` from outside this proxy answers the header half. | the operator |
+| CLIENT BUILD | S28 · S29 (N) · S21 · S42 · S51 · S52 | A `travel-buddy-standalone` capture module producing the nine features under a separate microphone permission (S28/S29); S21's on-device reduction; S42/S51/S52 are waiting on exactly that input, and S42's `motionEnergy` ordinal meaning is additionally an owner decision (§14.2). No lane in this wave owns that tree. | a commissioned client build |
+| LAUNCH-CAPPED — the census working | S26 · S66 | Real contributions reaching a live database with the relevant gate ON (§23.1, §23.2). Both are refusable on every surface and refusing on none, and there is nothing to refuse. | nobody, deliberately |
+
+Nine of the twenty-two need no application code at all (S19 S97 S111 S118
+S18 S32 S49 S92 S17). Six are a client build. Two are the world being empty.
+Five are an owner design or consent act with a lane behind it.
+
+### §24.6 Headline — restated from the rows
+
+| | |
+|---|---|
+| **Denominator — testable requirements** | **127** |
+| BUILT-AND-CORRECT | **105** |
+| BUILT-BUT-WRONG | **19** |
+| NOT-BUILT | **2** |
+| CANNOT-VERIFY | **1** |
+| **CONSTRUCTED%** = (C+W)/127 | **124 / 127 = 97.6 %** |
+| **CORRECT%** (raw) = C/127 | **105 / 127 = 82.7 %** |
+| **of-built** = C/(C+W) | **105 / 124 = 84.7 %** |
+
+### Rows that move
+
+| Row | Was | Now | Why |
+|---|---|---|---|
+| S79 live-claim grounding on /compass/ask | W | **C** | §24.1 — claims into the context first, the checker over that band second, on both answer branches; 27 registered cases, in CI's 26030. Gated by four `intel_*` flags in production; the gate's off-state is the safe one and is what the tests pin. |
+| S83 TripWorldContext carries the five named parts | W | **C** | §24.2 — `TRIP_WORLD_PARTS` closed and pinned; built from existing owners on the request path with the same kernel and admitted opportunities the ranker gets; unavailable is never reported as empty. Shape proven against a stub client; wiring proven by the route. |
+
+### Rows that explicitly DO NOT move
+
+S3 S106 (§24.3 — the step is consent-unsafe as specified and needs a ruling),
+S112 (§24.4 — the flag, then persisted provenance), and the nineteen others
+§24.5 places by class. `check:census-integrity` over this document reads
+C=105 W=19 N=2 X=1, which is what the top headline now states.
