@@ -5715,3 +5715,59 @@ Every edit is line-neutral, and §25's citation of the default text
 the World footnote is shown and that "creators you engage with" is absent.
 With the prop removed, it goes red. No row moves; this is copy under MD428,
 which is already C.
+
+### 28.4 Lane E (§24) merged, and how §28.1 changes one of its cases
+
+**Lane E merged at `c91cc5665`:** MD300 and MD288 stay **W**, with narrower
+falsifiers. The server and the client services are built and each mutation was
+seen red. What remains is screen wiring. Lane I (§29) was started on it.
+
+**Conflicts, and how they were resolved.**
+- `MediaProjectionService.ts` and the client's `mediaProjection.ts` each had
+  two tails appended at once. Both were kept.
+- Lane E imported `filterMediaProjectionVisibility` a second time at its tail.
+  That import was dropped, because §28.1 already imports it on the file's
+  import line.
+- The census conflicted at its tail, and §24 is placed before §25.
+- Eleven §24 citations shifted in the merge. They were repointed from
+  `check:doc-citations`' own "the WHOLE anchor is at" statements.
+
+**One case changes meaning.** Lane E wrote "a directional read that cannot be
+completed serves the counts with no covers" when the counts were still taken
+before the filter. After §28.1, counts are taken from what the viewer may see,
+so a page whose visibility cannot be decided has no counts to serve either. It
+is refused with a 503, and the test now asserts that. The cover's own filter
+in `attachClusterCovers` stays as the second line.
+
+**Lane E's §24.7 finding 1 is fixed by §28.1.** Lane E found that `/media/map`
+cluster counts and `/media/world` zone counts included items hidden by the
+directional override. Both builders project through
+`projectCandidatesProtected`, which now filters before anything is counted.
+
+**The headline after E** is **C 398 · W 38 · N 12 · X 2** of 450, unchanged,
+as `check:census-integrity` reads it from the rows.
+
+### 28.5 CI on `c91cc5665`: one new blind spot for the column checker, removed
+
+**What failed.** `check:write-path-columns` was red on `c91cc5665`.
+
+Lane E's "near" place read passed `.select(PLACE_SELECT_COLUMNS)`, an
+identifier imported from `lib/mapProjectPlace`. The checker resolves a select
+list only when it is a literal at the call site, so this site was a new
+statically unresolvable site. That is a blind spot: nothing verifies its
+columns against the live schema.
+
+**The fix.**
+- The select list is now written as the literal
+  (`artifacts/api-server/src/services/media/MediaSearchService.ts:749#.select("id, name, primary_category, city, neighborhood, country_code, latitude, longitude, status, merged_into_place_id")`).
+- A test pins it equal to `PLACE_SELECT_COLUMNS`, so the two cannot drift
+  (`artifacts/api-server/src/test/mediaWorldProjection.test.ts` §28.5 case).
+  Dropping a column from the literal turns that test red.
+
+**Verified.**
+- The offline extractor now counts 75 unresolvable sites, not 76.
+- Read-only on portava-ci, `places` has all ten columns.
+- The module header's stale "client half is still unbuilt" is corrected in
+  place, as §24.7 item 3 recorded.
+
+No row moves.

@@ -2181,3 +2181,21 @@ describe("MD288 · MD300 — over HTTP", () => {
     }
   });
 });
+
+// ── census-media §28.5: the "near" place read names exactly the Map's columns ──
+// MediaSearchService writes the select list as a LITERAL so that
+// check:write-path-columns can verify it against the live schema (an imported
+// identifier is a blind spot to that check). This pins the literal to
+// mapProjectPlace's PLACE_SELECT_COLUMNS, so the two cannot drift: projectPlace
+// reads what that constant names.
+describe("census-media §28.5 — the near-search place read is the Map's PLACE_SELECT_COLUMNS, as a literal", () => {
+  it("the literal in MediaSearchService equals PLACE_SELECT_COLUMNS", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { PLACE_SELECT_COLUMNS: cols } = await import("../lib/mapProjectPlace.js");
+    const src = readFileSync(new URL("../services/media/MediaSearchService.ts", import.meta.url), "utf8");
+    const m = src.match(/\.from\("places"\)\s*\.select\("([^"]+)"\)/);
+    assert.ok(m, "the places read must pass a string literal to .select");
+    const norm = (s: string) => s.split(",").map((c) => c.trim()).join(",");
+    assert.equal(norm(m![1]!), norm(cols));
+  });
+});

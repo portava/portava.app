@@ -4,8 +4,8 @@
  * census-media MD349/MD367 both read **N**: there was no media search service
  * and no `/media/search` route, and §38's seven example queries (MD287–MD293)
  * therefore had nothing to answer them. This is the SERVER half. The client half
- * (`services/mediaSearch.ts`, `MediaSearchScreen`) is still unbuilt and its
- * census rows stay N.
+ * was built later: `fetchMediaSearch` in features/media/services/mediaProjection.ts
+ * and `MediaSearchScreen` (census-media §19; MD324 is C, §23.5).
  *
  * ── IT IS NOT A SECOND READ PATH ─────────────────────────────────────────────
  * A search endpoint is the classic way a privacy gate gets forked: someone
@@ -746,7 +746,7 @@ async function mapPositions(
     try {
       ({ data, error } = await (sc as any)
         .from("places")
-        .select(PLACE_SELECT_COLUMNS)
+        .select("id, name, primary_category, city, neighborhood, country_code, latitude, longitude, status, merged_into_place_id") // = mapProjectPlace PLACE_SELECT_COLUMNS, as a literal so check:write-path-columns can verify it; pinned equal by mediaWorldProjection.test.ts
         .in("id", ids.slice(i, i + PLACE_ID_CHUNK)));
     } catch (e) {
       throw new MediaSearchNearUnavailableError("places", e instanceof Error ? e.message : "read threw");
@@ -837,5 +837,5 @@ async function anyPlaceWithinRadius(
 import { z } from "zod";
 import { loadActiveProtectedZones } from "../../lib/protectedZoneStore.js";
 import { applyProtection, haversineMeters, type ProtectedZone } from "../../lib/protectedLocations.js";
-import { PLACE_SELECT_COLUMNS, projectPlace, type PlaceRowLike } from "../../lib/mapProjectPlace.js";
+import { projectPlace, type PlaceRowLike } from "../../lib/mapProjectPlace.js";
 import { centroidOf, type MapObject } from "../../lib/mapObjects.js";
