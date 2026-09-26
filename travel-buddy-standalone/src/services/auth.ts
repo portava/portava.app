@@ -4,6 +4,21 @@
  */
 import { supabase, isSupabaseConfigured } from '../lib/supabase.ts';
 import { freshToken as freshApiToken } from './apiToken.ts';
+import { getSentry } from '../lib/sentry.ts';
+
+/**
+ * Report a silent ensureProfile failure to Sentry. Observability only — never
+ * changes control flow, never blocks the caller. PII: userId only, per the
+ * same convention as crashReporter.ts.
+ */
+export function reportEnsureProfileFailure(stage: string, userId: string, e: unknown): void {
+  const sentry = getSentry();
+  sentry?.withScope(scope => {
+    scope.setUser({ id: userId });
+    scope.setTag('ensureProfile_stage', stage);
+    sentry.captureException(e);
+  });
+}
 
 /** Test seam — set to a fake token to bypass supabase.auth.getSession in ensureProfile. */
 let _testSessionToken: string | null = null;
@@ -100,6 +115,7 @@ export async function signUp(email: string, password: string, meta?: { name?: st
       // not configured yet). The onboarding screen calls getMyProfile on
       // mount and SessionContext has a recovery path, so we don't block sign-up.
       if (__DEV__) console.warn('[Auth] ensureProfile failed during signUp (non-fatal):', e);
+      reportEnsureProfileFailure('signUp', userId, e);
     }
   }
   return { userId, error: null };
@@ -169,6 +185,7 @@ export async function signIn(email: string, password: string): Promise<AuthResul
       // Non-fatal: if ensureProfile fails the profile row already exists for
       // returning users, or SessionContext will recover it on sign-in.
       if (__DEV__) console.warn('[Auth] ensureProfile failed during signIn (non-fatal):', e);
+      reportEnsureProfileFailure('signIn', userId, e);
     }
   }
   return { userId, error: null };
