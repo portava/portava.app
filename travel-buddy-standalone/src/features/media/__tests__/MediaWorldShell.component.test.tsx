@@ -10,7 +10,7 @@
  * the right §14 entry-context KIND with a collection scoped to that entity.
  */
 import React from 'react';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react-native';
+import { fireEvent, getDefaultNormalizer, render, screen, waitFor } from '@testing-library/react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { MediaWorldShell } from '../screens/MediaWorldShell.tsx';
 
@@ -277,5 +277,24 @@ describe('MediaWorldShell', () => {
     await openLens('My World');
     await fireEvent.press(screen.getByLabelText('Map'));
     await waitFor(() => expect(screen.getByText('Your world on the map')).toBeTruthy());
+  });
+
+  it('NOW: "Why this?" opens the §47 reasons the SERVER derived for that zone, verbatim; a zone served with none offers no "Why this?" (MD428, census-media §25)', async () => {
+    const SERVED = "• You want to go to Bach Dang\n• In Da Nang, where you're travelling now\n• You saved this place";
+    // The WorldZone shape GET /media/world serves: changingNow is a filter of
+    // cityVisualState, so a card carries its zone's whyThis / whyThisReasons.
+    mockChangingNow = [
+      { placeId: '77777777-7777-7777-7777-777777777777', label: 'Bach Dang', perspectiveCount: 3, freshness: 'recent', liveClaims: [{ claimType: 'crowd.level' }], liveCrowdLabel: null, whyThis: SERVED, whyThisReasons: ['intent_match', 'distance', 'prior_saves'] },
+      { placeId: '88888888-8888-8888-8888-888888888888', label: 'My Khe', perspectiveCount: 2, freshness: 'recent', liveClaims: [{ claimType: 'crowd.level' }], liveCrowdLabel: null },
+    ];
+    await render(<Shell cityName="Da Nang" lat={16.05} lng={108.22} />);
+    await waitFor(() => expect(screen.getByLabelText('Bach Dang')).toBeTruthy());
+    expect(screen.getByLabelText('My Khe')).toBeTruthy();
+    // One affordance: on the zone the server explained, none on the zone it did not.
+    expect(screen.getAllByLabelText('Why am I seeing this?')).toHaveLength(1);
+    await fireEvent.press(screen.getByLabelText('Why am I seeing this?'));
+    const exact = { normalizer: getDefaultNormalizer({ trim: false, collapseWhitespace: false }) };
+    await waitFor(() => expect(screen.getByText(SERVED, exact)).toBeTruthy());
+    expect(screen.queryByText(/matches your travel preferences and recent activity/)).toBeNull();
   });
 });

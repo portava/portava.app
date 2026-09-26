@@ -218,10 +218,10 @@ export function scoreMediaCandidate(
  */
 export function rankMediaCandidates(
   candidates: MediaCandidateRow[],
-  context: MediaRankingContext,
+  context: MediaRankingContext, scoresOut?: Map<string, MediaRankingScore>,
 ): MediaCandidateRow[] {
   const page = buildRankingPage(candidates, context.nowMs);
-  const scored = candidates.map((row, index) => ({ row, index, score: scoreMediaCandidate(row, context, page) }));
+  const scored = candidates.map((row, index) => ({ row, index, score: scoreMediaCandidate(row, context, page) })); for (const e of scored) scoresOut?.set(String(e.row.id), e.score);
   const remaining = [...scored];
   const output: typeof scored = [];
   const placeCounts = new Map<string, number>();
@@ -282,7 +282,7 @@ export async function rankCandidatesForViewer(
   sc: SupabaseClient,
   viewer: RankingViewer,
   candidates: MediaCandidateRow[],
-  context: MediaRankingContext,
+  context: MediaRankingContext, scoresOut?: Map<string, MediaRankingScore>,
 ): Promise<MediaCandidateRow[]> {
   if (candidates.length === 0) return candidates;
   let signals: MediaRankingSignals = EMPTY_MEDIA_RANKING_SIGNALS;
@@ -297,5 +297,17 @@ export async function rankCandidatesForViewer(
     ...context,
     followedCreatorIds: context.followedCreatorIds ?? viewer.followedCreatorIds,
     signals,
-  });
+  }, scoresOut);
 }
+
+/*
+ * ── `scoresOut`: the per-term values each row was ranked on (§47) ───────────
+ * `rankMediaCandidates` and `rankCandidatesForViewer` take an optional
+ * `scoresOut` map. When one is passed it receives, keyed by row id, the SAME
+ * `MediaRankingScore` object the row was ordered by: the term values
+ * `MEDIA_RANKING_WEIGHTS` multiplies, before the diversity pass and the §2
+ * partition. `services/media/MediaExplanationService` explains a World item
+ * from exactly these numbers, so an explanation cannot come from a second
+ * computation that disagrees with the ranking (census-media §25). Passing it
+ * changes neither the order nor the set.
+ */

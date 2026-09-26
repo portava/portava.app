@@ -8,7 +8,8 @@
  * MD196 (useful social connection), MD197 (contribution value), MD198
  * (narrative value), MD201 (− low-confidence live claims), MD348
  * (MediaRankingService is §24's ranker), MD356 (a ranking stage before the
- * client).
+ * client). And, at the end, MD428 (census-media §25): §47 "Why this?" on the
+ * World zones, from the terms that ranked them.
  *
  * Fake Supabase clients only — no DB, no network.
  *
@@ -16,13 +17,14 @@
  *   SUPABASE_URL=http://127.0.0.1:9 SUPABASE_SERVICE_ROLE_KEY=dummy \
  *   node --import tsx/esm --test src/test/mediaRankingObjectives.test.ts
  */
-import { describe, it } from "node:test";
+import { describe, it, after } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { createServer } from "node:http";
 
-import type { MediaCandidateRow } from "../lib/media/mediaProjection.js";
+import { toMediaProjection, type MediaCandidateRow, type MediaProjection } from "../lib/media/mediaProjection.js";
 import {
   EMPTY_MEDIA_RANKING_SIGNALS,
   buildRankingPage,
@@ -43,9 +45,22 @@ import {
   resolveViewer,
   buildPlaceProjection,
   buildPeopleProjection,
+  buildWorldProjection,
 } from "../services/media/MediaProjectionService.js";
 import { resolveExperience } from "../services/media/MediaExperienceResolver.js";
 import type { LiveClaim } from "../lib/liveClaimRead.js";
+import {
+  MATERIAL_LIFT,
+  SECTION_47_REASONS,
+  explainWorldZone,
+  explainWorldZones,
+  materialReasons,
+  neutralRankingScore,
+  reasonLift,
+  type ExplainableItem,
+  type Section47Reason,
+} from "../services/media/MediaExplanationService.js";
+import { _setTestClient, _clearTestClient } from "../lib/http.js";
 
 // ── Fixtures ──────────────────────────────────────────────────────────────────
 
@@ -652,5 +667,315 @@ describe("MD356 — the ranked order reaches the client", () => {
     const exp = await resolveExperience(sc, viewer, TRIP_1, Date.now());
     assert.ok(exp, "the public trip resolves");
     assert.equal(exp!.heroMedia[0]?.id, "wanted");
+  });
+});
+
+// ── MD428 — §47 "Why this?" on the World zones, from the terms that ranked them ─
+// census-media §25. MediaExplanationService reads the MediaRankingScore the
+// ranker ORDERED each row by, says only §47's five reasons, only when a
+// reason's term MATERIALLY lifted the score, and only from what this viewer is
+// already served at the zone's place.
+
+interface TestZone {
+  placeId: string | null;
+  label: string;
+  liveClaims: unknown[];
+  whyThis?: string;
+  whyThisReasons?: Section47Reason[];
+}
+
+const ZONE: TestZone = { placeId: PLACE_1, label: "Somewhere", liveClaims: [] };
+const LIVE_ZONE: TestZone = { ...ZONE, liveClaims: [claim("live")] };
+/** Three days old: the freshness lift is 0.0105, below MATERIAL — so a test moves one reason at a time. */
+const OLD = { created_at: iso(NOW - 3 * DAY) };
+const MIN = 60_000;
+const TRIP_TODAY = [{ id: TRIP_1, city: "Da Nang", country: "Vietnam", startMs: NOW - DAY, endMs: NOW + DAY }];
+
+function explainable(r: MediaCandidateRow, s: MediaRankingSignals): ExplainableItem {
+  const projection = toMediaProjection(r, NOW);
+  assert.ok(projection, "the fixture row projects");
+  return { row: r, score: score(r, s), projection: projection as MediaProjection };
+}
+
+function why(r: MediaCandidateRow, s: MediaRankingSignals, zone: TestZone = ZONE) {
+  return explainWorldZone(zone, [explainable(r, s)], NOW);
+}
+
+function wants(o: { mediaIds?: string[]; placeIds?: string[]; categories?: string[] }): MediaRankingSignals["intent"] {
+  return { mediaIds: new Set(o.mediaIds ?? []), placeIds: new Set(o.placeIds ?? []), categories: new Set(o.categories ?? []) };
+}
+
+describe("MD428 — §47's five reasons, each bound to the ranker term that implements it", () => {
+  const here = dirname(fileURLToPath(import.meta.url));
+  const spec = readFileSync(resolve(here, "../../../../docs/specs/Portava_Media_Engineering_Architecture_and_Design_Spec.txt"), "utf8").split("\n");
+  const at = spec.findIndex((l) => l.trim() === "47. Why This? Explanations");
+  const bullets = spec[at + 1].split("•").map((t) => t.trim()).slice(1);
+
+  it("reads the five reasons out of the spec text itself, and binds every one of them, in §47's order", () => {
+    assert.equal(bullets.length, 5);
+    assert.deepEqual(SECTION_47_REASONS.map((r) => r.spec), bullets);
+  });
+
+  it("each reason is the §24 input SPEC_24_COVERAGE says its term implements", () => {
+    for (const r of SECTION_47_REASONS) {
+      const c = SPEC_24_COVERAGE.find((x) => x.spec === r.input24);
+      assert.ok(c, `${r.reason}: §24 has no input "${r.input24}"`);
+      assert.ok(c!.by.split("+").includes(`weight:${r.plus}`), `${r.reason}: "${r.input24}" is not implemented by weight:${r.plus}`);
+      if (r.minus) assert.equal(SPEC_24_COVERAGE.find((x) => x.by === `weight:${r.minus}`)?.spec, "- Low-confidence Live Claims");
+    }
+  });
+
+  it("MATERIAL is a quarter of the largest single weight, measured from what the ranker gives an item it knows nothing about", () => {
+    const largest = Math.max(...Object.entries(MEDIA_RANKING_WEIGHTS).filter(([k]) => k !== "lowConfidenceLive").map(([, w]) => w));
+    assert.equal(MATERIAL_LIFT, largest / 4);
+    assert.equal(MATERIAL_LIFT, 0.03);
+    const n = neutralRankingScore();
+    assert.deepEqual([n.intent, n.location, n.freshness, n.live, n.lowConfidenceLive, n.discovery], [0, 0, 0.5, 0, 0, 0]);
+  });
+
+  it("rankMediaCandidates hands back, per row, the very score it ordered by — and passing the map changes nothing", () => {
+    const s = signals({ savedPlaceIds: new Set([PLACE_2]), intent: wants({ categories: ["food"] }) });
+    const rows = [row("a"), row("b", { canonical_place_id: PLACE_2, author_id: AUTHOR_B }), row("c", { canonical_place_id: PLACE_3, author_id: AUTHOR_C })];
+    const out = new Map<string, MediaRankingScore>();
+    const ranked = rankMediaCandidates(rows, { nowMs: NOW, signals: s }, out);
+    assert.deepEqual(ids(ranked), ids(rankMediaCandidates(rows, { nowMs: NOW, signals: s })));
+    assert.deepEqual([...out.keys()].sort(), ["a", "b", "c"]);
+    const page = buildRankingPage(rows, NOW);
+    for (const r of rows) assert.deepEqual(out.get(String(r.id)), scoreMediaCandidate(r, { nowMs: NOW, signals: s }, page));
+  });
+});
+
+describe("MD428 — one case per §47 reason: its term moved, and it is the only thing said", () => {
+  it("intent — the wanted item itself", () => {
+    const e = why(row("i", OLD), signals({ intent: wants({ mediaIds: ["i"] }) }));
+    assert.deepEqual(e?.whyThisReasons, ["intent_match"]);
+    assert.equal(e?.whyThis, "• You marked a perspective here as one you want");
+  });
+
+  it("intent — a wanted place", () => {
+    const e = why(row("p", OLD), signals({ intent: wants({ placeIds: [PLACE_1] }) }));
+    assert.deepEqual(e?.whyThisReasons, ["intent_match"]);
+    assert.equal(e?.whyThis, "• You want to go to Somewhere");
+  });
+
+  it("intent — a wanted category, §47's own example", () => {
+    const e = why(row("c", OLD), signals({ intent: wants({ categories: ["food"] }) }));
+    assert.deepEqual(e?.whyThisReasons, ["intent_match"]);
+    assert.equal(e?.whyThis, "• Food matches what you want");
+  });
+
+  it("distance — a trip active today in the media's city; the larger trip-context term is not a §47 reason and is not said", () => {
+    const r = row("d", OLD);
+    const s = signals({ trips: TRIP_TODAY });
+    assert.equal(score(r, s).tripAffinity, 0.8);
+    const e = why(r, s);
+    assert.deepEqual(e?.whyThisReasons, ["distance"]);
+    assert.equal(e?.whyThis, "• In Da Nang, where you're travelling now");
+  });
+
+  it("freshness — a perspective posted minutes ago", () => {
+    const e = why(row("f", { created_at: iso(NOW - 5 * MIN) }), EMPTY_MEDIA_RANKING_SIGNALS);
+    assert.deepEqual(e?.whyThisReasons, ["fresh_perspective"]);
+    assert.equal(e?.whyThis, "• A fresh perspective, posted in the last 10 minutes");
+    assert.equal(why(row("f2", { created_at: iso(NOW - 45 * MIN) }), EMPTY_MEDIA_RANKING_SIGNALS)?.whyThis, "• A fresh perspective, posted in the last hour");
+  });
+
+  it("area activity — a live-qualified claim the zone itself serves", () => {
+    const e = why(row("l", OLD), signals({ livePlaces: new Map([[PLACE_1, { live: true, lowConfidence: false }]]) }), LIVE_ZONE);
+    assert.deepEqual(e?.whyThisReasons, ["area_activity"]);
+    assert.equal(e?.whyThis, "• Live reports of what's happening here right now");
+  });
+
+  it("prior saves — a place the viewer saved", () => {
+    const e = why(row("s", OLD), signals({ savedPlaceIds: new Set([PLACE_1]) }));
+    assert.deepEqual(e?.whyThisReasons, ["prior_saves"]);
+    assert.equal(e?.whyThis, "• You saved this place");
+  });
+
+  it("several reasons: strongest lift first, an exact tie in §47's order", () => {
+    const r = row("m", { created_at: iso(NOW - 5 * MIN) });
+    const s = signals({
+      intent: wants({ categories: ["food"] }),
+      livePlaces: new Map([[PLACE_1, { live: true, lowConfidence: false }]]),
+      savedPlaceIds: new Set([PLACE_1]),
+    });
+    const sc = score(r, s);
+    const lift = (reason: Section47Reason) => reasonLift(sc, SECTION_47_REASONS.find((x) => x.reason === reason)!);
+    assert.equal(lift("intent_match"), 0.06);
+    assert.equal(lift("area_activity"), 0.06);
+    assert.equal(lift("prior_saves"), 0.04);
+    assert.ok(lift("fresh_perspective") > MATERIAL_LIFT && lift("fresh_perspective") < 0.04);
+    const e = why(r, s, LIVE_ZONE);
+    assert.deepEqual(e?.whyThisReasons, ["intent_match", "area_activity", "prior_saves", "fresh_perspective"]);
+    assert.equal(
+      e?.whyThis,
+      "• Food matches what you want\n• Live reports of what's happening here right now\n• You saved this place\n• A fresh perspective, posted in the last 10 minutes",
+    );
+  });
+});
+
+describe("MD428 — 'materially contributed' is a threshold, and a term below it says nothing", () => {
+  it("the viewer's home country scores 0.3 on location and is NOT 'distance'", () => {
+    const r = row("h", OLD);
+    const s = signals({ homeCountry: "Vietnam" });
+    assert.equal(score(r, s).location, 0.3, "the term DID contribute");
+    assert.deepEqual(materialReasons(score(r, s)), []);
+    assert.equal(why(r, s), null);
+  });
+
+  it("a day-old post lifted freshness by 0.026 and is NOT 'fresh'; twelve hours old is, thirteen is not", () => {
+    const day = row("y", { created_at: iso(NOW - DAY) });
+    assert.ok(score(day, EMPTY_MEDIA_RANKING_SIGNALS).freshness > 0.5, "the term DID contribute");
+    assert.equal(why(day, EMPTY_MEDIA_RANKING_SIGNALS), null);
+    assert.equal(why(row("12", { created_at: iso(NOW - 12 * HOUR) }), EMPTY_MEDIA_RANKING_SIGNALS)?.whyThis, "• A fresh perspective, posted in the last 12 hours");
+    assert.equal(why(row("13", { created_at: iso(NOW - 13 * HOUR) }), EMPTY_MEDIA_RANKING_SIGNALS), null);
+  });
+
+  it("a live claim the ranker penalised as materially conflicted is NOT 'activity'", () => {
+    const r = row("x", OLD);
+    const s = signals({ livePlaces: new Map([[PLACE_1, { live: true, lowConfidence: true }]]) });
+    assert.equal(score(r, s).live, 1, "the live term DID contribute");
+    assert.equal(why(r, s, LIVE_ZONE), null);
+  });
+
+  it("perspectives lifted only by terms §47 does not name get NO explanation — not a generic one", () => {
+    const r = row("n", { ...OLD, content: "a long caption that runs well past the eight word narrative floor", profiles: { id: AUTHOR_A, verified: true, is_official: true } });
+    const s = signals({
+      followed: new Set([AUTHOR_A]),
+      affinity: { tripCrew: new Set([AUTHOR_A]), sharedMoment: new Set() },
+      outcomes: new Map([["n", { outcomes: 50, impressions: 60 }]]),
+    });
+    const sc = score(r, s);
+    assert.deepEqual([sc.follow, sc.usefulSocial, sc.utility, sc.authorTrust], [1, 1, 1, 1], "large non-§47 terms");
+    assert.equal(why(r, s), null);
+  });
+});
+
+describe("MD428 privacy — an explanation says nothing this viewer is not already served", () => {
+  it("the city sentence needs the SERVED city, the category sentence the SERVED category", () => {
+    const item = explainable(row("d", OLD), signals({ trips: TRIP_TODAY, intent: wants({ categories: ["food"] }) }));
+    assert.deepEqual(explainWorldZone(ZONE, [item], NOW)?.whyThisReasons, ["intent_match", "distance"]);
+    const withheld = { ...item, projection: { ...item.projection, city: null, category: null } };
+    assert.equal(explainWorldZone(ZONE, [withheld], NOW), null);
+  });
+
+  it("the activity sentence needs the zone's own served live claims", () => {
+    const s = signals({ livePlaces: new Map([[PLACE_1, { live: true, lowConfidence: false }]]) });
+    assert.equal(why(row("l", OLD), s, ZONE), null);
+  });
+
+  it("a perspective not served AT the zone's place contributes nothing, and a zone with no place is never explained", () => {
+    const item = explainable(row("s", OLD), signals({ savedPlaceIds: new Set([PLACE_1]) }));
+    assert.equal(explainWorldZone(ZONE, [{ ...item, projection: { ...item.projection, placeId: null } }], NOW), null);
+    assert.equal(explainWorldZone({ ...ZONE, placeId: null }, [item], NOW), null);
+    // A perspective bound to no place at all, in a zone keyed by no place: its
+    // distance term is material, and it is still not said — "here" would name
+    // nothing the viewer is served.
+    const placeless = explainable(row("z", { ...OLD, canonical_place_id: null }), signals({ trips: TRIP_TODAY }));
+    assert.deepEqual(materialReasons(placeless.score).map((m) => m.reason), ["distance"]);
+    assert.equal(explainWorldZone({ ...ZONE, placeId: null }, [placeless], NOW), null);
+  });
+
+  it("when the circle-override filter cannot decide, no zone is explained — and there is no fallback sentence", async () => {
+    const id = "99999999-0000-4000-8000-000000000003";
+    const r = row(id, OLD);
+    const scores = new Map([[id, score(r, signals({ savedPlaceIds: new Set([PLACE_1]) }))]]);
+    const p = toMediaProjection(r, NOW) as MediaProjection;
+    const decided: TestZone[] = [{ ...ZONE }];
+    await explainWorldZones(makeSc({ posts: [{ id, author_id: AUTHOR_A, trip_id: null }] }), VIEWER, decided, [[p]], [r], scores, NOW);
+    assert.equal(decided[0].whyThis, "• You saved this place");
+    const undecided: TestZone[] = [{ ...ZONE }];
+    await explainWorldZones(makeSc({}, { failing: ["posts"] }), VIEWER, undecided, [[p]], [r], scores, NOW);
+    assert.equal("whyThis" in undecided[0], false);
+  });
+});
+
+describe("MD428 — GET /media/world serves the explanation the ranker's own scores support", () => {
+  const day = (offset: number) => new Date(Date.now() + offset * DAY).toISOString().slice(0, 10);
+  const ACTIVE_TRIP = { id: TRIP_1, owner_id: VIEWER, title: "T", visibility: "private", destination_city: "Da Nang", destination_country: "Vietnam", start_date: day(-1), end_date: day(1) };
+  const VIEWER_SIGNALS: Dataset = {
+    trips: [ACTIVE_TRIP],
+    saved_places: [{ user_id: VIEWER, place_id: PLACE_1 }],
+    media_intent_signals: [{ user_id: VIEWER, media_id: null, entity_type: "place", entity_id: PLACE_1, updated_at: iso(Date.now()) }],
+  };
+  const TWO_ZONES = [worldPost("w1", { createdAgo: 3 * DAY }), { ...worldPost("w2", { placeId: PLACE_2, createdAgo: 3 * DAY }), location_city: "Hoi An" }];
+
+  async function world(data: Dataset) {
+    const sc = makeSc(worldData(data));
+    const viewer = await resolveViewer(sc, VIEWER);
+    return buildWorldProjection(sc, viewer, null, Date.now());
+  }
+
+  it("a zone's reasons are the ranker's material terms for its perspectives; a zone with none has no whyThis key", async () => {
+    const w = await world({ ...VIEWER_SIGNALS, posts: TWO_ZONES });
+    const z1 = w.cityVisualState.find((z) => z.placeId === PLACE_1);
+    const z2 = w.cityVisualState.find((z) => z.placeId === PLACE_2);
+    assert.ok(z1 && z2);
+    assert.deepEqual(z1!.whyThisReasons, ["intent_match", "distance", "prior_saves"]);
+    assert.equal(z1!.whyThis, "• You want to go to Cafe\n• In Da Nang, where you're travelling now\n• You saved this place");
+    assert.equal("whyThis" in z2!, false);
+    assert.equal("whyThisReasons" in z2!, false);
+  });
+
+  it("a perspective hidden from this viewer by a circle override cannot speak for its zone", async () => {
+    const HIDDEN = "99999999-0000-4000-8000-000000000001";
+    const SEEN = "99999999-0000-4000-8000-000000000002";
+    const TRIP_2 = "eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee";
+    const posts = [worldPost(HIDDEN, { author: AUTHOR_B, tripId: TRIP_2, createdAgo: 5 * MIN }), worldPost(SEEN, { createdAgo: 3 * DAY })];
+    const open = await world({ posts });
+    assert.deepEqual(open.cityVisualState.find((z) => z.placeId === PLACE_1)?.whyThisReasons, ["fresh_perspective"], "control: the fresh perspective is a reason when the viewer may see it");
+    const hidden = await world({
+      posts,
+      circle_member_visibility_overrides: [{ id: "o1", user_id: AUTHOR_B, target_user_id: VIEWER, context_type: "trip", context_id: TRIP_2, direction: "hide_me_from", hidden: true }],
+    });
+    const z = hidden.cityVisualState.find((x) => x.placeId === PLACE_1);
+    assert.ok(z, "the zone is still served (from the perspective the viewer may see)");
+    assert.equal("whyThis" in z!, false, "the hidden author's fresh post must not explain the zone");
+  });
+
+  it("a perspective whose owner withheld its place gives the viewer's own save and want of that place no voice", async () => {
+    const control = await world({ ...VIEWER_SIGNALS, posts: [worldPost("h", { createdAgo: 3 * DAY })] });
+    assert.ok(control.cityVisualState.find((z) => z.placeId === PLACE_1)?.whyThis?.includes("You saved this place"));
+    const w = await world({ ...VIEWER_SIGNALS, posts: [{ ...worldPost("h", { createdAgo: 3 * DAY }), location_privacy_mode: "city_only" }] });
+    assert.equal(w.cityVisualState.some((z) => z.placeId === PLACE_1), false, "the place is not served");
+    for (const z of w.cityVisualState) assert.equal("whyThis" in z, false, "no zone speaks for a withheld place");
+  });
+
+  it("another person's save, the viewer's follows and trip crew are never a reason", async () => {
+    const w = await world({
+      posts: [worldPost("o", { createdAgo: 3 * DAY })],
+      saved_places: [{ user_id: AUTHOR_B, place_id: PLACE_1 }],
+      user_follows: [{ follower_id: VIEWER, following_id: AUTHOR_A }],
+    });
+    const z = w.cityVisualState.find((x) => x.placeId === PLACE_1);
+    assert.ok(z);
+    assert.equal("whyThis" in z!, false);
+  });
+
+  describe("over HTTP", () => {
+    let server: ReturnType<typeof createServer> | null = null;
+    after(() => { server?.close(); _clearTestClient(); });
+
+    it("GET /api/media/world carries each zone's whyThis on the wire, and none where no reason applies", async () => {
+      const express = (await import("express")).default;
+      const { default: router } = await import("../routes/mediaWorld.js");
+      const sc = makeSc(worldData({ ...VIEWER_SIGNALS, posts: TWO_ZONES }));
+      sc.auth = { getUser: async () => ({ data: { user: { id: VIEWER } }, error: null }) };
+      _setTestClient(sc, true);
+      const app = express();
+      app.use((req: any, _res: any, next: any) => { req.log = { info() {}, error() {}, warn() {}, debug() {} }; next(); });
+      app.use("/api", router);
+      server = createServer(app);
+      await new Promise<void>((r) => server!.listen(0, "127.0.0.1", r));
+      const port = (server.address() as any).port;
+      const hit = await fetch(`http://127.0.0.1:${port}/api/media/world`, { headers: { Authorization: "Bearer t" } });
+      assert.equal(hit.status, 200);
+      const body: any = await hit.json();
+      const z1 = body.cityVisualState.find((z: any) => z.placeId === PLACE_1);
+      const z2 = body.cityVisualState.find((z: any) => z.placeId === PLACE_2);
+      assert.equal(z1.whyThis, "• You want to go to Cafe\n• In Da Nang, where you're travelling now\n• You saved this place");
+      assert.deepEqual(z1.whyThisReasons, ["intent_match", "distance", "prior_saves"]);
+      assert.equal("whyThis" in z2, false);
+    });
   });
 });

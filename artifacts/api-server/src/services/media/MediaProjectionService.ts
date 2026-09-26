@@ -63,8 +63,8 @@ import {
   type PerspectiveSummary,
 } from "./MediaPerspectiveService.js";
 import { buildMyWorldMemory, type MyWorldMemory } from "./MyWorldMemoryService.js";
-import { rankCandidatesForViewer } from "./MediaRankingService.js";
-import { buildVisualConsensus, type VisualConsensus } from "./MediaConsensusService.js"; import { attachCanonicalMedia } from "../../lib/media/mediaCanonicalRead.js"; import { mayViewUnderOverride } from "../../lib/mediaVisibility.js";
+import { rankCandidatesForViewer, type MediaRankingScore } from "./MediaRankingService.js";
+import { buildVisualConsensus, type VisualConsensus } from "./MediaConsensusService.js"; import { attachCanonicalMedia } from "../../lib/media/mediaCanonicalRead.js"; import { mayViewUnderOverride } from "../../lib/mediaVisibility.js"; import { explainWorldZones, type Section47Reason } from "./MediaExplanationService.js";
 
 const DEFAULT_CANDIDATE_LIMIT = 200;
 
@@ -648,7 +648,7 @@ async function rankAndProject(
   sc: SupabaseClient,
   viewer: ViewerResolved,
   candidates: MediaCandidateRow[],
-  nowMs: number,
+  nowMs: number, scoresOut?: Map<string, MediaRankingScore>,
 ): Promise<MediaProjection[]> {
   return projectCandidatesProtected(
     sc,
@@ -658,7 +658,7 @@ async function rankAndProject(
       viewerTripIds: viewer.viewerTripIds,
       intentMediaIds: viewer.intentMediaIds,
       nowMs,
-    }),
+    }, scoresOut),
     nowMs,
   );
 }
@@ -797,7 +797,7 @@ export async function buildWorldProjection(
     limit: DEFAULT_CANDIDATE_LIMIT,
     nowMs,
   });
-  const media = await rankAndProject(sc, viewer, candidates, nowMs);
+  const scores = new Map<string, MediaRankingScore>(); const media = await rankAndProject(sc, viewer, candidates, nowMs, scores);
 
   const forYouNow = buildCategoryBuckets(media, nowMs);
 
@@ -833,7 +833,7 @@ export async function buildWorldProjection(
       };
     }),
   );
-
+  await explainWorldZones(sc, viewer.viewerId, cityVisualState, zoneList.map((z) => z.items), candidates, scores, nowMs); // §47, from the ranker's own scores (census-media §25)
   // "Changing now" is ONLY zones with a gated live claim. No live claims → empty.
   const changingNow = cityVisualState.filter((z) => z.liveClaims.length > 0);
 
@@ -1724,4 +1724,22 @@ export async function prepareCanonicalRows(
     out.push({ ...row, canonical_media: kept, post_media: [], media_urls: [] });
   }
   return out;
+}
+
+/**
+ * §47 "Why this?" on a World zone (census-media §25, MD428). Merged into
+ * `WorldZone` here, at the file's tail, so no line cited above it moves.
+ *
+ * Written by `MediaExplanationService.explainWorldZones` in
+ * `buildWorldProjection`, from the scores the §24 ranker ordered this page by.
+ * PRESENT only when at least one of §47's five reasons materially lifted a
+ * perspective disclosed at this zone's place for this viewer; ABSENT otherwise.
+ * Never a generic sentence. `changingNow` is a filter of the same zone objects,
+ * so a changing-now card carries exactly its zone's explanation.
+ */
+export interface WorldZone {
+  /** The §47 bullets, one per material reason, strongest first, joined by newlines. */
+  whyThis?: string;
+  /** The same reasons as codes, in the same order. */
+  whyThisReasons?: Section47Reason[];
 }
