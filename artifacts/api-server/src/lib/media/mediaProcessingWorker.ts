@@ -82,7 +82,7 @@ import {
   completeMediaProcessing,
   failMediaProcessing,
   recoverStaleMediaProcessing,
-  isMediaProcessingWorkerEnabled,
+  isMediaProcessingWorkerEnabled, recordMeasuredMediaSize,
   type ProcessingClaim,
 } from "../../services/media/MediaLifecycleService.js";
 
@@ -517,13 +517,13 @@ async function withMeasuredSize(
   if (!outcome.ok) return outcome;
   if (asset.size_bytes == null || Number(asset.size_bytes) !== 0) return outcome;
   if (!(typeof outcome.sizeBytes === "number" && outcome.sizeBytes > 0)) return outcome;
-  const { error } = await db
-    .from("media_assets")
-    .update({ size_bytes: outcome.sizeBytes })
-    .eq("id", claim.assetId)
-    .eq("processing_lease_token", claim.leaseToken)
-    .eq("size_bytes", 0)
-    .select("id");
-  if (error) return { ok: false, permanent: false, message: "The measured size could not be recorded" };
+  // census-media §32.13: the write is MediaLifecycleService's — a lease-
+  // conditioned lifecycle write on canonical storage, not a projection this
+  // worker owns. It is conditional on the id, this lease and the zero, and it
+  // reads its row back; anything but exactly this row (a write error, a lost
+  // lease, a size someone else recorded) fails the attempt retryably, so the
+  // asset is never completed `ready` over an unrecorded size.
+  const recorded = await recordMeasuredMediaSize(db, claim, outcome.sizeBytes);
+  if (!recorded) return { ok: false, permanent: false, message: "The measured size could not be recorded" };
   return outcome;
 }

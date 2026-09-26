@@ -7830,10 +7830,10 @@ been run.
    the thumbnails, but not `size_bytes`
    (`artifacts/api-server/src/services/media/MediaLifecycleService.ts:158#processing_status: "ready",`
    opens the one UPDATE; it has no `size_bytes`). So the worker writes the
-   stored object's length first, while it holds the lease
-   (`artifacts/api-server/src/lib/media/mediaProcessingWorker.ts:522#.update({ size_bytes: outcome.sizeBytes })`).
+   stored object's length first, while it holds the lease, through the lifecycle service (§32.13)
+   (`artifacts/api-server/src/services/media/MediaLifecycleService.ts:462#.update({ size_bytes: sizeBytes })`).
    The write is conditional on the lease and on the zero
-   (`artifacts/api-server/src/lib/media/mediaProcessingWorker.ts:525#.eq("size_bytes", 0)`),
+   (`artifacts/api-server/src/services/media/MediaLifecycleService.ts:463#.eq("size_bytes", 0)`),
    so a recorded size is never overwritten. If the write fails, the attempt
    fails retryably; a row is never `ready` with a size of 0. The same step runs
    on the claimable path, so a staged row that failed once and is retried
@@ -8048,3 +8048,88 @@ constructs a client.
 **The headline is unchanged.** No row moved in K, L or M. It stays
 C 401 / W 37 / N 12 / X 0 of 450, as `check:census-integrity` reads it from
 the rows.
+
+### 32.13 The measured size moves into the lifecycle service, and its failure path gets tests
+
+**What failed.** CI on `0d3699aa6` failed one test out of 26,555:
+`src/test/projectionConsumers.test.ts`, "CONTROL — the real tree and the real
+registry pass". The message was: "UNREGISTERED PROJECTION: media_assets is
+written by lib/media/mediaProcessingWorker.ts". Lane M's `withMeasuredSize`
+wrote `media_assets.size_bytes` directly, and `check:projection-consumers`
+treats any writer whose basename contains "worker" as a projection producer.
+This failure was a gap in my local runs before pushing, not a flake:
+`projectionConsumers.test.ts` was not among the suites I ran.
+
+**Why it was not fixed by registering the table.** `media_assets` is
+canonical storage, not a projection, and it has no projection consumers to
+list. Registering it would have made the guard green by describing the table
+falsely. The write is a lease-conditioned lifecycle write, the same kind as
+every other write in `MediaLifecycleService`, so that is where it now lives:
+`recordMeasuredMediaSize`
+(`artifacts/api-server/src/services/media/MediaLifecycleService.ts:460#export async function recordMeasuredMediaSize(`),
+appended at that file's tail. It keeps the file's invariant 1:
+- It is conditional on the asset id, the lease token the caller holds, and
+  the zero it read
+  (`artifacts/api-server/src/services/media/MediaLifecycleService.ts:463#.eq("processing_lease_token", claim.leaseToken).eq("size_bytes", 0)`).
+- It reads the row back. It is true only when exactly this asset's row came
+  back carrying the size written.
+- It refuses anything that is not a positive whole byte count, and in that
+  case sends nothing.
+
+The worker calls it in place of the old write, in the same eight lines
+(`artifacts/api-server/src/lib/media/mediaProcessingWorker.ts:526#const recorded = await recordMeasuredMediaSize(db, claim, outcome.sizeBytes);`).
+A false result fails the attempt retryably. The worker now makes no
+`.update/.insert/.upsert/.delete` call of its own.
+
+**One behaviour changed, and it is stricter.** Before the move, a zero-row
+UPDATE counted as recorded. PostgREST answers one with `error: null`, and the
+old code checked only `error`. So if another writer recorded a size between
+the claim's read and this write, the worker completed the asset `ready` over
+a size it had not written. Now that attempt fails retryably
+(`retryable_failure`, not terminal), and the other writer's size stands.
+
+**What had no test before, and now has one.** §32 said a failed size write
+fails the attempt retryably. Nothing tested that. Five cases are appended to
+`artifacts/api-server/src/test/mediaProcessingWorker.test.ts`, over the real
+supabase-js client and the PostgREST oracle:
+- the lease, zero and read-back conditions;
+- sizes that are not positive whole byte counts;
+- a write error;
+- the worker, end to end, with a concurrent writer recording a size
+  mid-attempt;
+- a source check that the worker has no direct write.
+
+**Seen red.** Each of these mutations was run against the suite, and the
+file was restored after each one:
+
+| Mutation | Result |
+| --- | --- |
+| No read-back (`return !error`) | 2 fail |
+| No lease condition | 1 fails |
+| No zero condition | 2 fail |
+| Worker ignores the result | 1 fails |
+| No positive-integer guard | 1 fails |
+| The direct write put back in the worker | `projectionConsumers.test.ts` fails with the CI message above |
+
+With the tree restored: the worker suite passes 42/42 and
+`projectionConsumers.test.ts` passes 21/21.
+
+**Rows.** No row moves. §32 moved no row either, and this is a fix within
+§32's own claim. The headline stays C 401 / W 37 / N 12 / X 0 of 450.
+
+| File | Change | Counted by census-media |
+| --- | --- | --- |
+| `artifacts/api-server/src/services/media/MediaLifecycleService.ts` | `recordMeasuredMediaSize` appended; no earlier line edited | yes |
+| `artifacts/api-server/src/lib/media/mediaProcessingWorker.ts` | eight lines replaced by eight; one import line extended in place | yes (directory) |
+| `artifacts/api-server/src/test/mediaProcessingWorker.test.ts` | five cases appended; import at the tail | yes |
+| `artifacts/api-server/src/scripts/checkCensusScopeCoverage.ts` | `src/test/projectionConsumers.test.ts` added to `NOT_GRADED` | no (machinery) |
+| `docs/architecture/census-media.md` | §32 item 4: three lines edited in place to repoint two citations; this section appended | — |
+
+**Scope coverage.** Naming the guard's suite in this section took
+census-media from 242 of 252 watched files to 242 of 253. That is 95.65 %,
+under its 96 % floor, and `check:census-scope-coverage` failed.
+`projectionConsumers.test.ts` is the guard's own suite, and
+`check:projection-consumers` runs nowhere else. It grades no media behaviour.
+So it is added to `NOT_GRADED`, under the rule written there for
+`securityCheckSuite.test.ts` and `uncheckedSupabaseReads.test.ts`: naming the
+thing that measured you should not cost coverage. The floor is not lowered.

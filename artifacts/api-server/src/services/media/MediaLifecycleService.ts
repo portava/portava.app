@@ -435,3 +435,33 @@ async function retryRefusal(sc: SupabaseClient, processingStatus: unknown): Prom
   if (!(await isMediaProcessingWorkerEnabled(sc))) return { ok: false, alreadyQueued: false, workerDisabled: true };
   return null;
 }
+
+// ── census-media §32.13: the measured size, written where the lifecycle is ────
+//
+// Appended at the end, because the census cites this file by line.
+//
+// The processing worker (`lib/media/mediaProcessingWorker.ts`) replaces an
+// honest zero `size_bytes` with the stored object's measured size before the
+// asset can be completed `ready`. That write used to live in the worker itself,
+// which made a file named "worker" a writer of `media_assets` — canonical
+// storage, not a projection — and `check:projection-consumers` rightly refused
+// it. It is a lease-conditioned lifecycle write like every other in this file,
+// so it lives here and keeps invariant 1: conditional on the asset id, the lease
+// token the caller holds AND the zero it read (so a recorded size, which every
+// upload-route row has, is never overwritten), and read back, because a
+// zero-row UPDATE is `error: null` too.
+
+/**
+ * Record the stored object's measured size over an honest zero, while `claim`
+ * still holds the lease. True only when exactly this asset's row came back: a
+ * write error, a lost lease or a size someone else already recorded are all false,
+ * and the caller fails the attempt retryably rather than completing it.
+ */
+export async function recordMeasuredMediaSize(sc: SupabaseClient, claim: ProcessingClaim, sizeBytes: number): Promise<boolean> {
+  if (!(Number.isInteger(sizeBytes) && sizeBytes > 0)) return false;
+  const { data, error } = await sc.from("media_assets").update({ size_bytes: sizeBytes })
+    .eq("id", claim.assetId).eq("processing_lease_token", claim.leaseToken).eq("size_bytes", 0)
+    .select("id, size_bytes");
+  if (error || !Array.isArray(data) || data.length !== 1) return false;
+  return data[0]?.id === claim.assetId && Number(data[0]?.size_bytes) === sizeBytes;
+}

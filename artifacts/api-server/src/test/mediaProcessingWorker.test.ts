@@ -1192,3 +1192,74 @@ describe("census-media §32 — PRIVACY: a swept entity asset reaches nobody its
     assert.doesNotMatch(read("lib/mediaAssets.ts"), /\bvisibility\s*:/);
   });
 });
+
+// ── census-media §32.13 — the measured size is a lifecycle write, read back ───
+//
+// The size write moved from the worker into MediaLifecycleService
+// (`recordMeasuredMediaSize`), because a file named "worker" writing
+// `media_assets` is what check:projection-consumers refuses, and canonical
+// storage is not a projection. Nothing tested the write's failure path before
+// the move; these do. RED WHEN: the write is not conditional on the lease or the
+// zero, a zero-row UPDATE counts as recorded, or the worker completes an asset
+// `ready` whose size it could not record.
+import { recordMeasuredMediaSize } from "../services/media/MediaLifecycleService.js";
+
+describe("census-media §32.13 — recordMeasuredMediaSize: conditional, read back, and the worker fails for retry when it does not land", () => {
+  const LEASE = "lease-13";
+  const claimOf = (n: number, leaseToken = LEASE) => ({ assetId: id(n), attemptNumber: 1, leaseToken, leaseUntil: "2099-01-01T00:00:00.000Z" });
+
+  it("writes over the honest zero under the held lease, and only there", async () => {
+    const w = makeSweepWorld({ flag: true, assets: [staged(70, { processing_lease_token: LEASE }), staged(71, { processing_lease_token: LEASE, size_bytes: 5702 })] });
+    assert.equal(await recordMeasuredMediaSize(w.sc, claimOf(70, "someone-else"), 1234), false, "a lease this caller does not hold writes nothing");
+    assert.equal(w.row(70).size_bytes, 0);
+    assert.equal(await recordMeasuredMediaSize(w.sc, claimOf(71), 1234), false, "a recorded size is never overwritten");
+    assert.equal(w.row(71).size_bytes, 5702);
+    assert.equal(await recordMeasuredMediaSize(w.sc, claimOf(70), 1234), true);
+    assert.equal(w.row(70).size_bytes, 1234);
+    assert.equal(await recordMeasuredMediaSize(w.sc, claimOf(70), 99), false, "once recorded, the zero is gone — a second write lands nowhere");
+    assert.equal(w.row(70).size_bytes, 1234);
+  });
+
+  it("refuses a size that is not a positive whole byte count, sending nothing", async () => {
+    const w = makeSweepWorld({ flag: true, assets: [staged(72, { processing_lease_token: LEASE })] });
+    for (const bad of [0, -1, 1.5, Number.NaN]) assert.equal(await recordMeasuredMediaSize(w.sc, claimOf(72), bad), false, String(bad));
+    assert.deepEqual(w.writesTo("media_assets"), []);
+    assert.equal(w.row(72).size_bytes, 0);
+  });
+
+  it("a write error is not a recorded size", async () => {
+    const tables: Record<string, Row[]> = { media_assets: [staged(73, { processing_lease_token: LEASE })] };
+    const oracle = makeOracle({ tables, columns: { media_assets: MEDIA_ASSET_COLUMNS }, failWrites: { media_assets: { code: "57014", message: "canceling statement due to statement timeout" } } });
+    assert.equal(await recordMeasuredMediaSize(oracle.client as any, claimOf(73), 1234), false);
+    assert.equal(tables.media_assets[0].size_bytes, 0);
+  });
+
+  it("the worker FAILS FOR RETRY — never completes `ready` — an asset whose size write lands on no row", async () => {
+    const bytes = await jpeg(16, 12);
+    const w = makeSweepWorld({ flag: true, assets: [staged(74)], links: [link(74, "memory", id(920))], objects: { [obj(74)]: bytes } });
+    // A concurrent writer records a size after the claim read the zero and
+    // before the worker's conditional write — the write lands on no row.
+    const storage = w.sc.storage;
+    w.sc.storage = {
+      from(bucket: string) {
+        const inner = storage.from(bucket);
+        return { ...inner, async download(path: string) { w.row(74).size_bytes = 777; return inner.download(path); } };
+      },
+    };
+    const r = await runMediaProcessingPass({ client: w.sc });
+    assert.equal(r.claimed, 1, JSON.stringify(r));
+    assert.equal(r.completed, 0, "a size that did not land is not a completed asset");
+    const a = w.row(74);
+    assert.equal(a.processing_status, "failed");
+    assert.equal(a.processing_terminal, false, "retryable: the next claim measures again");
+    assert.equal(a.processing_lease_token, null);
+    assert.equal(a.size_bytes, 777, "the concurrent writer's size stands");
+    assert.deepEqual(w.tables.media_processing_attempts.map((t) => t.status), ["retryable_failure"]);
+  });
+
+  it("the worker writes media_assets through MediaLifecycleService only", () => {
+    const src = stripComments(readFileSync(join(SRC, "lib/media/mediaProcessingWorker.ts"), "utf8"));
+    assert.doesNotMatch(src, /\.(update|insert|upsert|delete)\s*\(/, "no direct write in the worker");
+    assert.match(src, /await recordMeasuredMediaSize\(db, claim, outcome\.sizeBytes\)/);
+  });
+});

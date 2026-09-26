@@ -120,6 +120,11 @@ const NOT_GRADED: readonly string[] = [
   // measured you should not cost coverage.
   "artifacts/api-server/src/test/securityCheckSuite.test.ts",
   "artifacts/api-server/src/test/uncheckedSupabaseReads.test.ts",
+  // The same rule, 2026-09-26: `check:projection-consumers` has no npm script;
+  // it runs only inside this suite, which is where it went red in CI when a file
+  // named "worker" wrote canonical storage. census-media.md §32.13 names it as
+  // the thing that caught that. It grades no media behaviour.
+  "artifacts/api-server/src/test/projectionConsumers.test.ts",
   ".github/workflows/ci.yml",
   ".github/workflows/live-db.yml",
 ];
