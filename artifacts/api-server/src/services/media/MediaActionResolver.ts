@@ -36,7 +36,7 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { canEditPlan, isAcceptedTripMember } from "../../lib/http.js";
-import { isKillSwitchEngaged } from "../../lib/featureFlags.js";
+import { isKillSwitchEngaged, isFlagEnabled } from "../../lib/featureFlags.js";
 import { isCompassEnabled } from "../../compass/flags.js";
 import {
   disclosureForRow,
@@ -138,7 +138,7 @@ export type MediaActionId =
   | "invite_people"
   | "follow_this_night"
   | "save_route"
-  | "report" | "directions" | "view_event" | "view_passport" | "find_quieter" | "find_cheaper";
+  | "report" | "directions" | "view_event" | "view_passport" | "find_quieter" | "find_cheaper" | "contribute_gem";
 
 export interface MediaActionTarget {
   method: "GET" | "POST" | "DELETE";
@@ -162,7 +162,7 @@ export interface MediaAction {
     | "want"
     | "share"
     | "moderate"
-    | "discover";
+    | "discover" | "contribute";
   target: MediaActionTarget;
 }
 
@@ -1056,6 +1056,20 @@ export async function withSection21Actions(
       label: "Find somewhere cheaper",
       outcome: "compass",
       target: { method: "POST", endpoint: "/api/compass/ask", params: { mediaId, prompt: "Find a cheaper version of this.", comparator: "cheaper" } },
+    });
+  }
+
+  // §16.3 gem contribution FROM this media (MD383 / MD400) → the gem's own
+  // contribution endpoint, carrying the media id so the server can record
+  // "Media → Contribution". Only for a gem the viewer may be TOLD about
+  // (entities.gemId is set only through mayDiscloseGemIdentity) and only while
+  // hidden_gems_enabled — the flag that endpoint checks first.
+  if (entities.gemId && (await isFlagEnabled(sc, "hidden_gems_enabled").catch(() => false))) {
+    out.push({
+      id: "contribute_gem",
+      label: "Update this gem",
+      outcome: "contribute",
+      target: { method: "POST", endpoint: "/api/hidden-gems/:id/contribute", params: { id: entities.gemId, originMediaId: mediaId } },
     });
   }
 

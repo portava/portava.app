@@ -265,6 +265,29 @@ describe("MD101 — Find Quieter / Cheaper reach Compass with the comparator it 
   });
 });
 
+// ── MD383 / MD400 ─────────────────────────────────────────────────────────────
+
+describe("MD383 / MD400 — Update this gem, from the media, reaches the gem's own contribution endpoint", () => {
+  const GEM = "66666666-6666-6666-6666-666666666666";
+  const gem = (o: Record<string, unknown> = {}) => ({ id: GEM, name: "Quiet cove", status: "active", sensitivity_level: "public", canonical_place_id: PLACE_1, submitted_by: AUTHOR_A, ...o });
+
+  it("offered for a disclosable gem while hidden_gems_enabled, carrying the media id", async () => {
+    const set = await actionsFor(baseData({ posts: [makePost()], hidden_gems: [gem()], feature_flags: [{ flag: "hidden_gems_enabled", enabled: true }] }));
+    const a = set!.actions.find((x) => x.id === "contribute_gem");
+    assert.ok(a);
+    assert.equal(a!.target.endpoint, "/api/hidden-gems/:id/contribute");
+    assert.deepEqual(a!.target.params, { id: GEM, originMediaId: MEDIA_1 });
+  });
+
+  it("absent with the flag off, and absent for a gem the viewer may not be told about", async () => {
+    const off = await actionsFor(baseData({ posts: [makePost()], hidden_gems: [gem()] }));
+    assert.equal(off!.actions.some((x) => x.id === "contribute_gem"), false);
+    const hidden = await actionsFor(baseData({ posts: [makePost()], hidden_gems: [gem({ sensitivity_level: "protected" })], feature_flags: [{ flag: "hidden_gems_enabled", enabled: true }] }));
+    assert.equal(hidden!.actions.some((x) => x.id === "contribute_gem"), false);
+    assert.equal(JSON.stringify(hidden).includes(GEM), false, "no id of an undisclosable gem");
+  });
+});
+
 // ── MD107 ─────────────────────────────────────────────────────────────────────
 
 describe("MD107 — Do This Experience compiles an EXECUTABLE plan", () => {
