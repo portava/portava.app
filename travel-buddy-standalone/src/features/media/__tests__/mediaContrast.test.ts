@@ -265,25 +265,25 @@ const S = {
   disabledSubmit: [color.ink, 'rgba(250,249,246,0.4)'],
 
   // Over photography: `…Fallback` is the painted no-image fill, `…Photo` the scrim over a photo.
-  tileScrimFallback: ['#22221E', 'rgba(17,17,15,0.55)'],
-  tileScrimPhoto: [PHOTO, 'rgba(17,17,15,0.55)'],
+  tileScrimFallback: ['#22221E', 'rgba(17,17,15,0.71)'], // census-media §31: was 0.55
+  tileScrimPhoto: [PHOTO, 'rgba(17,17,15,0.71)'], // census-media §31: was 0.55
   tilePlayFallback: ['#22221E', 'rgba(17,17,15,0.5)'],
   tilePlayPhoto: [PHOTO, 'rgba(17,17,15,0.5)'],
-  cardChipFallback: ['#22221E', 'rgba(17,17,15,0.55)'],
-  cardChipPhoto: [PHOTO, 'rgba(17,17,15,0.55)'],
-  viewerOverlayFallback: ['#1B1B18', 'rgba(17,17,15,0.62)'],
-  viewerOverlayPhoto: [PHOTO, 'rgba(17,17,15,0.62)'],
-  viewerChipFallback: ['#1B1B18', 'rgba(17,17,15,0.62)', WASH('0.10')],
-  viewerChipPhoto: [PHOTO, 'rgba(17,17,15,0.62)', WASH('0.10')],
-  viewerPillFallback: ['#1B1B18', 'rgba(17,17,15,0.62)', WASH('0.14')],
-  viewerPillPhoto: [PHOTO, 'rgba(17,17,15,0.62)', WASH('0.14')],
-  viewerBareFallback: ['#1B1B18'],
-  viewerBarePhoto: [PHOTO],
+  cardChipFallback: ['#22221E', 'rgba(17,17,15,0.88)'], // census-media §31: was 0.55
+  cardChipPhoto: [PHOTO, 'rgba(17,17,15,0.88)'], // census-media §31: was 0.55
+  viewerOverlayFallback: ['#1B1B18', 'rgba(17,17,15,0.96)'], // census-media §31: was 0.62 (and on the five lines below)
+  viewerOverlayPhoto: [PHOTO, 'rgba(17,17,15,0.96)'],
+  viewerChipFallback: ['#1B1B18', 'rgba(17,17,15,0.96)', WASH('0.10')],
+  viewerChipPhoto: [PHOTO, 'rgba(17,17,15,0.96)', WASH('0.10')],
+  viewerPillFallback: ['#1B1B18', 'rgba(17,17,15,0.96)', WASH('0.14')],
+  viewerPillPhoto: [PHOTO, 'rgba(17,17,15,0.96)', WASH('0.14')],
+  viewerTitleFallback: ['#1B1B18', 'rgba(17,17,15,0.59)'], viewerBufferingFallback: ['#1B1B18', 'rgba(17,17,15,0.71)'], // census-media §31: each on its own badge (was bare `viewerBareFallback`)
+  viewerTitlePhoto: [PHOTO, 'rgba(17,17,15,0.59)'], viewerBufferingPhoto: [PHOTO, 'rgba(17,17,15,0.71)'], // census-media §31: each on its own badge (was bare `viewerBarePhoto`, 1.00:1)
   viewerIconBtnPhoto: [PHOTO, 'rgba(17,17,15,0.55)'],
   viewerControlPhoto: [PHOTO, 'rgba(17,17,15,0.7)'],
-  viewerPlayBadgePhoto: [PHOTO, 'rgba(17,17,15,0.5)'],
+  viewerPlayBadgePhoto: [PHOTO, 'rgba(17,17,15,0.59)'], // census-media §31: was 0.5
   viewerCaptionPhoto: [PHOTO, 'rgba(17,17,15,0.74)'],
-  viewerProgressTrackPhoto: [PHOTO, WASH('0.26')],
+  viewerProgressTrackPhoto: [PHOTO, 'rgba(17,17,15,0.80)'], // census-media §31: a dark track; was WASH('0.26')
 
   // Over the in-tree dark map.
   map: [MAP],
@@ -361,7 +361,7 @@ const ROUTE_GROUND = (file: string): Needle => [file, 'safe: { flex: 1, backgrou
 const CARD = (file: string): Needle => [file, "backgroundColor: 'rgba(250,249,246,0.05)'"];
 const CHIP08 = (file: string): Needle => [file, "backgroundColor: 'rgba(250,249,246,0.08)'"];
 const PILL10 = (file: string): Needle => [file, "backgroundColor: 'rgba(250,249,246,0.10)'"];
-const VIEWER_OVERLAY: Needle = [F.viewer, "backgroundColor: 'rgba(17,17,15,0.62)'"];
+const VIEWER_OVERLAY: Needle = [F.viewer, "backgroundColor: 'rgba(17,17,15,0.96)'"]; // census-media §31: was 0.62
 const VIEWER_FALLBACK: Needle = [F.viewer, "frameFallback: { backgroundColor: '#1B1B18' }"];
 const VIEWER_CHIP: Needle = [F.viewer, "backgroundColor: 'rgba(250,249,246,0.10)'"];
 
@@ -422,17 +422,17 @@ add({ id: 'changing.title', fg: color.onInk, on: 'card', kind: 'text', at: [CARD
 add({ id: 'changing.subtitle', fg: color.onInkMute, on: 'card', kind: 'text', at: [CARD(F.changing), [F.changing, 'subtitle: { color: color.onInkMute, fontSize: 13']] });
 add({ id: 'changing.whyThis', fg: color.onInkMute, on: 'card', kind: 'text', at: [CARD(F.changing), [F.changing, 'whyText: { color: color.onInkMute, fontSize: 12']] });
 add({ id: 'changing.whyThisIcon', fg: color.onInkMute, on: 'card', kind: 'ui', at: [[F.changing, '<HelpCircle size={13} color={color.onInkMute}']] });
-const CHIP_FINDING: Record<string, number> = {
-  starting: 1.81, building: 2.31, peak: 2.02, moderate: 1.66, quiet: 1.4, winding_down: 1.45,
-};
+// Pinned by lane H (census-media §27) on the 0.55 chip scrim, floors:
+//   starting 1.81, building 2.31, peak 2.02, moderate 1.66, quiet 1.40, winding_down 1.45.
+// The scrim is now 0.88, the least alpha at which all six clear 4.5:1 (census-media §31).
 for (const [k, v] of Object.entries(ZONE_COLOR)) {
   const at: Needle[] = [
     [F.changing, '<Text style={[styles.stateChipText, { color: accent }]}>'],
-    [F.changing, "backgroundColor: 'rgba(17,17,15,0.55)'"],
+    [F.changing, "backgroundColor: 'rgba(17,17,15,0.88)'"], // census-media §31: was 0.55
     [F.changing, "heroFallback: { backgroundColor: '#22221E' }"],
   ];
   add({ id: `changing.stateChip.${k}.fallback`, fg: v, on: 'cardChipFallback', kind: 'text', at });
-  add({ id: `changing.stateChip.${k}.photoFloor`, fg: v, on: 'cardChipPhoto', kind: 'text', at, finding: CHIP_FINDING[k] });
+  add({ id: `changing.stateChip.${k}.photoFloor`, fg: v, on: 'cardChipPhoto', kind: 'text', at }); // FIXED by lane K (census-media §31)
 }
 
 // ─ CityVisualPulse — on its card ─
@@ -449,9 +449,9 @@ add({ id: 'pulse.bar.neutral', fg: 'rgba(250,249,246,0.45)', on: 'pill10OnCard',
 // ─ ContributorTrustChips — a paper card inside the dark perspective viewer ─
 const TRUST_CARD: Needle = [F.trust, 'backgroundColor: color.paper,'];
 add({ id: 'trust.label', fg: color.ink, on: 'paper', kind: 'text', at: [TRUST_CARD, [F.trust, 'label: { ...t.small, color: color.ink']] });
-add({ id: 'trust.description', fg: color.faint, on: 'paper', kind: 'text', at: [TRUST_CARD, [F.trust, 'desc: { fontSize: 11, lineHeight: 14, color: color.faint }']], finding: 2.73 });
+add({ id: 'trust.description', fg: color.mute, on: 'paper', kind: 'text', at: [TRUST_CARD, [F.trust, 'desc: { fontSize: 11, lineHeight: 14, color: color.mute }']] }); // FIXED by lane K (census-media §31): was `faint`, 2.73:1
 add({ id: 'trust.percent', fg: color.mute, on: 'paper', kind: 'text', at: [TRUST_CARD, [F.trust, 'pct: { ...t.stamp, color: color.mute']] });
-add({ id: 'trust.caption', fg: color.faint, on: 'paper', kind: 'text', at: [TRUST_CARD, [F.trust, 'caption: { fontSize: 11, lineHeight: 14, color: color.faint']], finding: 2.73 });
+add({ id: 'trust.caption', fg: color.mute, on: 'paper', kind: 'text', at: [TRUST_CARD, [F.trust, 'caption: { fontSize: 11, lineHeight: 14, color: color.mute']] }); // FIXED by lane K (census-media §31): was `faint`, 2.73:1
 add({ id: 'trust.meterFill', fg: color.deep, on: 'haze', kind: 'ui', at: [[F.trust, 'backgroundColor: color.haze,'], [F.trust, 'backgroundColor: color.deep }']] });
 
 // ─ ExperienceMosaic ─
@@ -503,14 +503,14 @@ add({ id: 'gems.heading', fg: color.onInkMute, on: 'ink', kind: 'text', at: [[F.
 
 // ─ IntelligenceStrip — on the ground in Places; on the viewer overlay over the photo ─
 const INTEL_CLASS: Needle[] = [[F.intel, 'const accent = OBSERVATION_COLOR[observationClass];'], [F.intel, '<Text style={[styles.classText, { color: accent }]}>']];
-const INTEL_PHOTO_FINDING: Record<string, number> = {
-  observed: 2.93, inferred: 2.11, user_claimed: 1.84, predicted: 2.56, generated: 1.58,
-};
+// Pinned by lane H (census-media §27) on the viewer's 0.62 overlay, floors:
+//   observed 2.93, inferred 2.11, user_claimed 1.84, predicted 2.56, generated 1.58.
+// The overlay is now 0.96; `generated` alone needs 0.91 (census-media §31).
 for (const [k, v] of Object.entries(OBSERVATION_COLOR)) {
   // The class chip's dot and border share this colour on the same ground.
   add({ id: `intel.class.${k}.onGround`, fg: v, on: 'ink', kind: 'text', at: [...INTEL_CLASS, [F.places, '<IntelligenceStrip']] });
   add({ id: `intel.class.${k}.viewerFallback`, fg: v, on: 'viewerOverlayFallback', kind: 'text', at: [...INTEL_CLASS, VIEWER_OVERLAY, VIEWER_FALLBACK] });
-  add({ id: `intel.class.${k}.viewerPhotoFloor`, fg: v, on: 'viewerOverlayPhoto', kind: 'text', at: [...INTEL_CLASS, VIEWER_OVERLAY], finding: INTEL_PHOTO_FINDING[k] });
+  add({ id: `intel.class.${k}.viewerPhotoFloor`, fg: v, on: 'viewerOverlayPhoto', kind: 'text', at: [...INTEL_CLASS, VIEWER_OVERLAY] }); // FIXED by lane K (census-media §31)
 }
 add({ id: 'intel.perspective.onGround', fg: color.onInkMute, on: 'ink', kind: 'text', at: [[F.intel, /perspective: \{\s*color: color\.onInkMute,/]] });
 
@@ -549,11 +549,11 @@ add({ id: 'mosaic.chipActive', fg: color.ink, on: 'selected', kind: 'text', at: 
 add({ id: 'mosaic.empty', fg: color.onInkMute, on: 'ink', kind: 'text', at: [[F.mosaic, 'empty: { color: color.onInkMute, fontSize: 14']] });
 
 // ─ PerspectiveTile — overlay scrim on the tile photo ─
-const TILE_SCRIM: Needle[] = [[F.tile, "backgroundColor: 'rgba(17,17,15,0.55)'"], [F.tile, "fallback: { backgroundColor: '#22221E' }"]];
+const TILE_SCRIM: Needle[] = [[F.tile, "backgroundColor: 'rgba(17,17,15,0.71)'"], [F.tile, "fallback: { backgroundColor: '#22221E' }"]]; // census-media §31: was 0.55
 add({ id: 'tile.perspective.fallback', fg: color.onInk, on: 'tileScrimFallback', kind: 'text', at: [...TILE_SCRIM, [F.tile, 'perspective: { color: color.onInk, fontSize: 13']] });
-add({ id: 'tile.perspective.photoFloor', fg: color.onInk, on: 'tileScrimPhoto', kind: 'text', at: [...TILE_SCRIM, [F.tile, 'perspective: { color: color.onInk, fontSize: 13']], finding: 3.96 });
+add({ id: 'tile.perspective.photoFloor', fg: color.onInk, on: 'tileScrimPhoto', kind: 'text', at: [...TILE_SCRIM, [F.tile, 'perspective: { color: color.onInk, fontSize: 13']] }); // FIXED by lane K (census-media §31): was 3.96 on 0.55
 add({ id: 'tile.age.fallback', fg: color.onInkMute, on: 'tileScrimFallback', kind: 'text', at: [...TILE_SCRIM, [F.tile, 'age: { color: color.onInkMute, fontSize: 11']] });
-add({ id: 'tile.age.photoFloor', fg: color.onInkMute, on: 'tileScrimPhoto', kind: 'text', at: [...TILE_SCRIM, [F.tile, 'age: { color: color.onInkMute, fontSize: 11']], finding: 2.87 });
+add({ id: 'tile.age.photoFloor', fg: color.onInkMute, on: 'tileScrimPhoto', kind: 'text', at: [...TILE_SCRIM, [F.tile, 'age: { color: color.onInkMute, fontSize: 11']] }); // FIXED by lane K (census-media §31): was 2.87 on 0.55
 add({ id: 'tile.playIcon.fallback', fg: color.onInk, on: 'tilePlayFallback', kind: 'ui', at: [[F.tile, "backgroundColor: 'rgba(17,17,15,0.5)'"], [F.tile, '<Play size={14} color={color.onInk}']] });
 add({ id: 'tile.playIcon.photoFloor', fg: color.onInk, on: 'tilePlayPhoto', kind: 'ui', at: [[F.tile, "backgroundColor: 'rgba(17,17,15,0.5)'"], [F.tile, '<Play size={14} color={color.onInk}']] });
 
@@ -618,8 +618,8 @@ add({ id: 'mapCanvas.bubbleCount.selected', fg: color.ink, on: 'selected', kind:
 add({ id: 'mapCanvas.bubbleOutline.mapFloor', fg: color.onInk, on: 'map', kind: 'decor', at: [[F.mapCanvas, 'borderColor: color.onInk,']] });
 add({ id: 'mapCanvas.gemMarkerRing.mapFloor', fg: GEM_ACCENT, on: 'map', kind: 'ui', at: [[F.mapCanvas, 'borderColor: GEM_ACCENT,']] });
 add({ id: 'mapCanvas.gemMarkerCore.mapFloor', fg: GEM_ACCENT, on: 'mapGemMarker', kind: 'ui', at: [[F.mapCanvas, "backgroundColor: 'rgba(16,185,129,0.12)',"], [F.mapCanvas, 'backgroundColor: GEM_ACCENT,']] });
-// Below 3:1 only where it crosses a major-road casing (mapBase.roadCasing); >= 3.03 over every other paint.
-add({ id: 'mapCanvas.gemZoneContour.mapFloor', fg: 'rgba(16,185,129,0.7)', on: 'map', kind: 'ui', at: [[F.mapCanvas, "paint={{ 'line-color': GEM_ACCENT, 'line-width': 1.5, 'line-opacity': 0.7"]], finding: 2.65 });
+// At 0.7 opacity it fell to 2.65 over a major-road casing (mapBase.roadCasing); drawn opaque, its floor is the casing's 3.87.
+add({ id: 'mapCanvas.gemZoneContour.mapFloor', fg: GEM_ACCENT, on: 'map', kind: 'ui', at: [[F.mapCanvas, "paint={{ 'line-color': GEM_ACCENT, 'line-width': 1.5, 'line-opacity': 1,"]] }); // FIXED by lane K (census-media §31): 'line-opacity' 0.7 -> 1
 
 // ─ Search (the Search lens entry, /media-search and My World search) ─
 const SEARCH_FIELD: Needle = [F.search, "backgroundColor: 'rgba(250,249,246,0.08)',"];
@@ -660,45 +660,45 @@ add({ id: 'contributionScreen.doneButton', fg: color.ink, on: 'selected', kind: 
 add({ id: 'viewer.emptyTitle', fg: color.onInk, on: 'ink', kind: 'text', at: [[F.viewer, 'screen: { flex: 1, backgroundColor: color.ink }'], [F.viewer, 'emptyTitle: { color: color.onInk, fontSize: 17']] });
 add({ id: 'viewer.emptyBody', fg: color.onInkMute, on: 'ink', kind: 'text', at: [[F.viewer, 'emptyBody: { color: color.onInkMute, fontSize: 14']] });
 const TOP_TITLE: Needle = [F.viewer, /topTitle: \{\s*flex: 1,\s*color: color\.onInk,/];
-add({ id: 'viewer.topTitle.fallback', fg: color.onInk, on: 'viewerBareFallback', kind: 'text', at: [TOP_TITLE, VIEWER_FALLBACK] });
-add({ id: 'viewer.topTitle.photoFloor', fg: color.onInk, on: 'viewerBarePhoto', kind: 'text', at: [TOP_TITLE, [F.viewer, 'resizeMode="cover"']], finding: 1.0 });
+add({ id: 'viewer.topTitle.fallback', fg: color.onInk, on: 'viewerTitleFallback', kind: 'text', at: [TOP_TITLE, VIEWER_FALLBACK, [F.viewer, '<Text style={[styles.topTitle, tailStyles.topTitleScrim]}'], [F.viewer, "topTitleScrim: { flex: 0, flexShrink: 1, backgroundColor: 'rgba(17,17,15,0.59)'"]] }); // census-media §31: now on its badge
+add({ id: 'viewer.topTitle.photoFloor', fg: color.onInk, on: 'viewerTitlePhoto', kind: 'text', at: [TOP_TITLE, [F.viewer, 'resizeMode="cover"'], [F.viewer, '<Text style={[styles.topTitle, tailStyles.topTitleScrim]}'], [F.viewer, "topTitleScrim: { flex: 0, flexShrink: 1, backgroundColor: 'rgba(17,17,15,0.59)'"]] }); // FIXED by lane K (census-media §31): was 1.00 with no scrim
 add({ id: 'viewer.topBarIcons.photoFloor', fg: color.onInk, on: 'viewerIconBtnPhoto', kind: 'ui', at: [[F.viewer, '<ChevronLeft size={22} color={color.onInk}'], [F.viewer, "backgroundColor: 'rgba(17,17,15,0.55)'"]] });
-const OVERLAY_TEXT: ReadonlyArray<readonly [id: string, fg: string, needle: Needle, photoFinding?: number]> = [
+const OVERLAY_TEXT: ReadonlyArray<readonly [id: string, fg: string, needle: Needle]> = [
   ['headline', color.onInk, [F.viewer, /headline: \{\s*color: color\.onInk,/]],
   ['contributorName', color.onInk, [F.viewer, 'contributorName: { color: color.onInk, fontSize: 14']],
-  ['trustLabel', color.onInkMute, [F.viewer, 'trustLabel: { color: color.onInkMute, fontSize: 12'], 3.48],
+  ['trustLabel', color.onInkMute, [F.viewer, 'trustLabel: { color: color.onInkMute, fontSize: 12']], // census-media §27 pinned its photo floor at 3.48
   ['note', color.onInk, [F.viewer, "note: { color: color.onInk, fontSize: 15, fontStyle: 'italic'"]],
-  ['relatedHeading', color.onInkMute, [F.viewer, /relatedHeading: \{\s*color: color\.onInkMute,/], 3.48],
-  ['intelPerspective', color.onInkMute, [F.intel, /perspective: \{\s*color: color\.onInkMute,/], 3.48],
+  ['relatedHeading', color.onInkMute, [F.viewer, /relatedHeading: \{\s*color: color\.onInkMute,/]], // census-media §27 pinned its photo floor at 3.48
+  ['intelPerspective', color.onInkMute, [F.intel, /perspective: \{\s*color: color\.onInkMute,/]], // census-media §27 pinned its photo floor at 3.48
 ];
-for (const [id, fg, needle, photoFinding] of OVERLAY_TEXT) {
+for (const [id, fg, needle] of OVERLAY_TEXT) {
   add({ id: `viewer.${id}.fallback`, fg, on: 'viewerOverlayFallback', kind: 'text', at: [needle, VIEWER_OVERLAY, VIEWER_FALLBACK] });
-  add({ id: `viewer.${id}.photoFloor`, fg, on: 'viewerOverlayPhoto', kind: 'text', at: [needle, VIEWER_OVERLAY], finding: photoFinding });
+  add({ id: `viewer.${id}.photoFloor`, fg, on: 'viewerOverlayPhoto', kind: 'text', at: [needle, VIEWER_OVERLAY] }); // FIXED by lane K (census-media §31): the three pinned rows above
 }
-const VIEWER_CHIP_TEXT: ReadonlyArray<readonly [id: string, fg: string, needle: Needle, photoFinding: number]> = [
-  ['relatedChip', color.onInkMute, [F.viewer, 'chipText: { color: color.onInkMute, fontSize: 13'], 2.95],
-  ['relatedChipCount', color.faint, [F.viewer, 'chipCount: { color: color.faint, fontSize: 12'], 1.5],
-  ['freshnessText', color.onInkMute, FRESH_TEXT, 2.95],
+const VIEWER_CHIP_TEXT: ReadonlyArray<readonly [id: string, fg: string, needle: Needle]> = [
+  ['relatedChip', color.onInkMute, [F.viewer, 'chipText: { color: color.onInkMute, fontSize: 13']], // census-media §27 pinned its photo floor at 2.95
+  ['relatedChipCount', color.faint, [F.viewer, 'chipCount: { color: color.faint, fontSize: 12']], // census-media §27 pinned it at 1.50; it sets the overlay's 0.96
+  ['freshnessText', color.onInkMute, FRESH_TEXT], // census-media §27 pinned its photo floor at 2.95
 ];
-for (const [id, fg, needle, photoFinding] of VIEWER_CHIP_TEXT) {
+for (const [id, fg, needle] of VIEWER_CHIP_TEXT) {
   add({ id: `viewer.${id}.fallback`, fg, on: 'viewerChipFallback', kind: 'text', at: [needle, VIEWER_CHIP, VIEWER_FALLBACK] });
-  add({ id: `viewer.${id}.photoFloor`, fg, on: 'viewerChipPhoto', kind: 'text', at: [needle, VIEWER_CHIP], finding: photoFinding });
+  add({ id: `viewer.${id}.photoFloor`, fg, on: 'viewerChipPhoto', kind: 'text', at: [needle, VIEWER_CHIP, VIEWER_OVERLAY] }); // FIXED by lane K (census-media §31)
 }
-const FRESH_DOT_PHOTO_FINDING: Record<string, number> = { live: 2.39, fresh: 1.69, recent: 1.45, historical: 1.29 };
+// Pinned by lane H (census-media §27) on the 0.62 overlay: live 2.39, fresh 1.69, recent 1.45, historical 1.29.
 for (const [k, v] of Object.entries(FRESHNESS_COLOR)) {
-  add({ id: `viewer.freshnessDot.${k}.photoFloor`, fg: v, on: 'viewerChipPhoto', kind: 'ui', at: [[F.freshness, '{ backgroundColor: dotColor }'], VIEWER_CHIP], finding: FRESH_DOT_PHOTO_FINDING[k] });
+  add({ id: `viewer.freshnessDot.${k}.photoFloor`, fg: v, on: 'viewerChipPhoto', kind: 'ui', at: [[F.freshness, '{ backgroundColor: dotColor }'], VIEWER_CHIP, VIEWER_OVERLAY] }); // FIXED by lane K (census-media §31)
 }
 add({ id: 'viewer.pill.fallback', fg: color.onInk, on: 'viewerPillFallback', kind: 'text', at: [[F.viewer, 'pillText: { color: color.onInk, fontSize: 13'], [F.viewer, "backgroundColor: 'rgba(250,249,246,0.14)'"]] });
-add({ id: 'viewer.pill.photoFloor', fg: color.onInk, on: 'viewerPillPhoto', kind: 'text', at: [[F.viewer, 'pillText: { color: color.onInk, fontSize: 13'], [F.viewer, "backgroundColor: 'rgba(250,249,246,0.14)'"]], finding: 3.79 });
+add({ id: 'viewer.pill.photoFloor', fg: color.onInk, on: 'viewerPillPhoto', kind: 'text', at: [[F.viewer, 'pillText: { color: color.onInk, fontSize: 13'], [F.viewer, "backgroundColor: 'rgba(250,249,246,0.14)'"], VIEWER_OVERLAY] }); // FIXED by lane K (census-media §31): was 3.79 on 0.62
 add({ id: 'viewer.chipActive', fg: color.ink, on: 'selected', kind: 'text', at: [[F.viewer, 'chipTextActive: { color: color.ink }'], [F.viewer, 'chipActive: { backgroundColor: color.onInk }']] });
 add({ id: 'viewer.verifiedCheck', fg: color.ink, on: 'selected', kind: 'ui', at: [[F.viewer, '<Check size={10} color={color.ink}'], [F.viewer, 'backgroundColor: color.onInk,']] });
 add({ id: 'viewer.caption.photoFloor', fg: color.onInk, on: 'viewerCaptionPhoto', kind: 'text', at: [[F.viewer, 'captionText: { color: color.onInk, fontSize: 14'], [F.viewer, "backgroundColor: 'rgba(17,17,15,0.74)'"]] });
-add({ id: 'viewer.retryLabel.photoFloor', fg: color.onInk, on: 'viewerPlayBadgePhoto', kind: 'text', at: [[F.viewer, "controlLabel: { color: color.onInk, fontSize: 11, fontWeight: '700' }"], [F.viewer, "backgroundColor: 'rgba(17,17,15,0.5)'"]], finding: 3.37 });
-add({ id: 'viewer.playIcons.photoFloor', fg: color.onInk, on: 'viewerPlayBadgePhoto', kind: 'ui', at: [[F.viewer, '<RotateCcw size={18} color={color.onInk}'], [F.viewer, "backgroundColor: 'rgba(17,17,15,0.5)'"]] });
+add({ id: 'viewer.retryLabel.photoFloor', fg: color.onInk, on: 'viewerPlayBadgePhoto', kind: 'text', at: [[F.viewer, "controlLabel: { color: color.onInk, fontSize: 11, fontWeight: '700' }"], [F.viewer, "backgroundColor: 'rgba(17,17,15,0.59)'"]] }); // FIXED by lane K (census-media §31): was 3.37 on 0.5
+add({ id: 'viewer.playIcons.photoFloor', fg: color.onInk, on: 'viewerPlayBadgePhoto', kind: 'ui', at: [[F.viewer, '<RotateCcw size={18} color={color.onInk}'], [F.viewer, "backgroundColor: 'rgba(17,17,15,0.59)'"]] }); // census-media §31: the badge was 0.5
 add({ id: 'viewer.controlIcons.photoFloor', fg: color.onInk, on: 'viewerControlPhoto', kind: 'ui', at: [[F.viewer, '<Rewind size={16} color={color.onInk} />'], [F.viewer, "backgroundColor: 'rgba(17,17,15,0.7)'"]] });
-add({ id: 'viewer.buffering.fallback', fg: color.onInkMute, on: 'viewerBareFallback', kind: 'text', at: [[F.viewer, /bufferingLabel: \{[^}]*color: color\.onInkMute,/], VIEWER_FALLBACK] });
-add({ id: 'viewer.buffering.photoFloor', fg: color.onInkMute, on: 'viewerBarePhoto', kind: 'text', at: [[F.viewer, /bufferingLabel: \{[^}]*color: color\.onInkMute,/]], finding: 1.0 });
-add({ id: 'viewer.progressFill.photoFloor', fg: color.signal, on: 'viewerProgressTrackPhoto', kind: 'ui', at: [[F.viewer, "backgroundColor: 'rgba(250,249,246,0.26)'"], [F.viewer, 'backgroundColor: color.signal,']], finding: 1.0 });
+add({ id: 'viewer.buffering.fallback', fg: color.onInkMute, on: 'viewerBufferingFallback', kind: 'text', at: [[F.viewer, /bufferingLabel: \{[^}]*color: color\.onInkMute,/], VIEWER_FALLBACK, [F.viewer, '<Text style={[styles.bufferingLabel, tailStyles.bufferingScrim]}>'], [F.viewer, "bufferingScrim: { backgroundColor: 'rgba(17,17,15,0.71)'"]] }); // census-media §31: now on its badge
+add({ id: 'viewer.buffering.photoFloor', fg: color.onInkMute, on: 'viewerBufferingPhoto', kind: 'text', at: [[F.viewer, /bufferingLabel: \{[^}]*color: color\.onInkMute,/], [F.viewer, '<Text style={[styles.bufferingLabel, tailStyles.bufferingScrim]}>'], [F.viewer, "bufferingScrim: { backgroundColor: 'rgba(17,17,15,0.71)'"]] }); // FIXED by lane K (census-media §31): was 1.00 with no scrim
+add({ id: 'viewer.progressFill.photoFloor', fg: color.signal, on: 'viewerProgressTrackPhoto', kind: 'ui', at: [[F.viewer, "backgroundColor: 'rgba(17,17,15,0.80)'"], [F.viewer, 'backgroundColor: color.signal,']] }); // FIXED by lane K (census-media §31): was 1.00 on a 0.26 light track
 
 // ─ MediaContextSheet — "What this is part of", opened from the viewer ─
 const CONTEXT_SHEET: Needle = [F.contextSheet, "backgroundColor: '#161614',"];
@@ -717,9 +717,9 @@ add({ id: 'rail.title', fg: color.ink, on: 'paper', kind: 'text', at: [RAIL_SHEE
 add({ id: 'rail.notice', fg: color.mute, on: 'paper', kind: 'text', at: [RAIL_SHEET, [F.actionRail, /notice: \{[^}]*color: color\.mute,/]] });
 add({ id: 'rail.empty', fg: color.mute, on: 'paper', kind: 'text', at: [RAIL_SHEET, [F.actionRail, /empty: \{\s*\.\.\.t\.body,\s*color: color\.mute,/]] });
 add({ id: 'rail.rowLabel', fg: color.ink, on: 'paper', kind: 'text', at: [RAIL_SHEET, [F.actionRail, /rowLabel: \{\s*\.\.\.t\.body,\s*color: color\.ink,/]] });
-add({ id: 'rail.rowLabel.active', fg: color.signal, on: 'paperSignalTint', kind: 'text', at: [[F.actionRail, /rowLabelActive: \{\s*color: color\.signal,/], [F.actionRail, "backgroundColor: 'rgba(255,77,46,0.08)'"]], finding: 2.85 });
-add({ id: 'rail.rowIcon', fg: color.ink, on: 'paper', kind: 'ui', at: [[F.actionRail, 'color={active ? color.signal : color.ink}']] });
-add({ id: 'rail.rowIcon.active', fg: color.signal, on: 'paperSignalTint', kind: 'ui', at: [[F.actionRail, 'color={active ? color.signal : color.ink}'], [F.actionRail, "backgroundColor: 'rgba(255,77,46,0.08)'"]], finding: 2.85 });
+add({ id: 'rail.rowLabel.active', fg: '#C43B23', on: 'paperSignalTint', kind: 'text', at: [[F.actionRail, /rowLabelActive: \{\s*color: ACTIVE_ON_PAPER,/], [F.actionRail, "const ACTIVE_ON_PAPER = '#C43B23';"], [F.actionRail, "backgroundColor: 'rgba(255,77,46,0.08)'"]] }); // FIXED by lane K (census-media §31): was `signal`, 2.85:1
+add({ id: 'rail.rowIcon', fg: color.ink, on: 'paper', kind: 'ui', at: [[F.actionRail, 'color={active ? ACTIVE_ON_PAPER : color.ink}']] });
+add({ id: 'rail.rowIcon.active', fg: '#C43B23', on: 'paperSignalTint', kind: 'ui', at: [[F.actionRail, 'color={active ? ACTIVE_ON_PAPER : color.ink}'], [F.actionRail, "fill={active ? ACTIVE_ON_PAPER : 'transparent'}"], [F.actionRail, "const ACTIVE_ON_PAPER = '#C43B23';"], [F.actionRail, "backgroundColor: 'rgba(255,77,46,0.08)'"]] }); // FIXED by lane K (census-media §31): was `signal`, 2.85:1
 add({ id: 'rail.headerIcon', fg: color.deep, on: 'paper', kind: 'ui', at: [[F.actionRail, '<Compass size={iconToken.s20} color={color.deep}']] });
 add({ id: 'rail.closeIcon', fg: color.mute, on: 'paper', kind: 'ui', at: [[F.actionRail, '<X size={iconToken.s20} color={color.mute}']] });
 add({ id: 'rail.spinner', fg: color.mute, on: 'paper', kind: 'ui', at: [[F.actionRail, '<ActivityIndicator size="small" color={color.mute} />']] });

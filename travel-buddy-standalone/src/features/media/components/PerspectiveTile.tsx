@@ -86,7 +86,7 @@ const styles = StyleSheet.create({
     right: 0,
     bottom: 0,
     padding: space.sm,
-    backgroundColor: 'rgba(17,17,15,0.55)',
+    backgroundColor: 'rgba(17,17,15,0.71)', // census-media §31: the least alpha at which the age line (onInkMute) clears 4.5:1 over a white photo; was 0.55
   },
   perspective: { color: color.onInk, fontSize: 13, fontWeight: '800', letterSpacing: -0.2 },
   age: { color: color.onInkMute, fontSize: 11, fontWeight: '600', marginTop: 1 },
