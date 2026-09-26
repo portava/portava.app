@@ -50,7 +50,7 @@ import { NotificationService } from "../services/notifications/NotificationServi
 import { NotificationRouter } from "../services/notifications/NotificationRouter.js";
 import { isKillSwitchEngaged, killSwitchStateUnknown, KILL_SWITCH_UNKNOWN_MESSAGE } from '../lib/featureFlags.js';
 import { processImage, makeThumbnail, makeFeedVariant, computePHash } from "../lib/mediaProcessing.js";
-import { stripVideoLocationMetadata } from "../lib/videoMetadata.js";
+import { stripVideoLocationMetadata, probeVideoContainer, probedDurationSeconds } from "../lib/videoMetadata.js";
 import { hidePostForViewer } from "../lib/postHide.js";
 import {
   guardUploadRequest,
@@ -143,7 +143,7 @@ router.post(
     // to read. Null for video and for any image without a plausible EXIF date.
     const capturedAt =
       sniffed.kind === "image" ? capturedAtFromImageBytes(rawBody) : null;
-
+    const videoProbe = sniffed.kind === "video" ? probeVideoContainer(rawBody) : null; // §37, measured
     if (sniffed.kind === "image") {
       try {
         // Strip EXIF/GPS + auto-orient + cap dimensions, and build a real
@@ -191,10 +191,10 @@ router.post(
       }
     } else {
       // VIDEO — no transcode tier, but the container still has to give up its
-      // capture coordinates. Length-preserving in-place scrub; see
-      // lib/videoMetadata.ts for why the bytes are overwritten rather than
-      // removed. Fail-closed: a video whose location metadata cannot be proven
-      // gone is refused, never stored.
+      // capture coordinates (length-preserving in-place scrub, lib/videoMetadata.ts;
+      // fail-closed: refused, never stored) — and it STATES its display size and
+      // duration (§37), read by lib/videoProbe.ts from these bytes, not the client.
+      [width, height] = [videoProbe?.width ?? null, videoProbe?.height ?? null];
       const scrub = stripVideoLocationMetadata(rawBody, sniffed);
       if (!scrub.ok) {
         req.log.warn({ mime: sniffed.mime }, "video location metadata could not be stripped — upload rejected");
@@ -281,7 +281,7 @@ router.post(
     // client must treat null as "use `url`". It must never construct a variant
     // path itself: for every pre-existing post that URL would 404.
     res.status(201).json({
-      url: mediaRelayUrl, path, thumbnailUrl, feedUrl, width, height, processed, phash,
+      url: mediaRelayUrl, path, thumbnailUrl, feedUrl, width, height, processed, phash, durationSeconds: probedDurationSeconds(videoProbe),
     });
   },
 );

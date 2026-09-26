@@ -366,7 +366,7 @@ async function decide(
   }
 
   if (bucket !== "post-media") return false;
-
+  { const posterOf = derivedPosterBase(path); if (posterOf !== null) return decide(sc, viewerId, bucket, posterOf); } // §37: a poster IS its video
   // 1. Owner sees their own bytes — unless they deleted the story that holds
   //    them, in which case "deleted" has to mean deleted for them too.
   const pathOwner = ownerFromPath(path);
@@ -952,3 +952,14 @@ export async function mediaAccessDeadline(
     return Date.now();
   }
 }
+
+// ── §37 video posters ─────────────────────────────────────────────────────────
+// A postcard video's poster is stored at `<storage_path>.poster.jpg`, a path the
+// SERVER derives from the slot (routes/postcardMediaTransport.ts) and the only
+// thumbnail path /complete admits. The one-line branch at the top of decide()
+// therefore authorizes a poster by authorizing the video it was cut from —
+// exactly that audience, no wider and no narrower — instead of letting it fall
+// through every branch to §4's deny as an unreferenced object. Imported at the
+// TAIL so no line above moves (census-highlights-memories cites this file by
+// line); ESM hoists imports, so evaluation order is unchanged.
+import { derivedPosterBase } from "./mediaPosterPath.js";

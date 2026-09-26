@@ -702,11 +702,11 @@ router.post('/postcards/:id/media/:mediaId/complete', async (req, res) => {
   // Audit privacy fix: postcard media goes DIRECT to storage via signed URL, so
   // the server never saw the bytes — EXIF/GPS survived and width/height were
   // client-declared. For images: download, strip EXIF/auto-orient, re-upload in
-  // place, and measure real dimensions server-side. Fail-closed for images —
-  // a corrupt image rejects completion (retryable) rather than skipping the
-  // GPS strip. Videos are not transcoded (no ffmpeg tier), but their container
-  // location atoms ARE stripped — see the location-metadata scrub in the video
-  // branch below.
+  // place, and measure real dimensions server-side. Fail-closed for images.
+  // Videos are not transcoded (no ffmpeg tier), but their container location
+  // atoms ARE stripped, and their duration + display size are READ from the
+  // container (§37, lib/videoProbe.ts) — server-measured wins, as for images.
+  let probedVideo: VideoProbe | null = null;
   let measuredWidth: number | null = null;
   let measuredHeight: number | null = null;
   let computedPhash: string | null = null;
@@ -921,7 +921,7 @@ router.post('/postcards/:id/media/:mediaId/complete', async (req, res) => {
       // BYTES — content.
       const verifiedFull = verifyUploadedBytes(videoBuf, 'video');
       if (!verifiedFull.ok) throw contentFailure(verifiedFull.failure.message);
-
+      probedVideo = probeVideoContainer(videoBuf); // duration + display size, from the verified bytes
       const scrub = stripVideoLocationMetadata(videoBuf, verifiedFull.value);
       if (!scrub.ok) {
         // A specific, actionable refusal — not the generic verification error.
@@ -945,11 +945,11 @@ router.post('/postcards/:id/media/:mediaId/complete', async (req, res) => {
     }
   }
 
-  // Compute thumbnail bare bucket/path if client supplied a thumbnail path
-  let thumbnailUrl: string | null = null;
-  if (p.thumbnailPath) {
-    thumbnailUrl = `${STORAGE_BUCKET}/${p.thumbnailPath}`;
-  }
+  // Thumbnail: only THIS slot's own server-written poster (routes/postcardMediaTransport.ts).
+  const poster = admissiblePosterPath(storagePath, p.thumbnailPath);
+  if (!poster.ok) { sendError(res, 'invalid_payload', poster.message); return; }
+  const thumbnailUrl: string | null = poster.path ? `${STORAGE_BUCKET}/${poster.path}` : null;
+  const storedDuration = resolveStoredDuration(probedVideo, p.durationSeconds);
 
   // Optional stamp overlay — resolved & pinned server-side. An ineligible or
   // unavailable stamp NEVER blocks the upload: we complete without the overlay
@@ -979,17 +979,23 @@ router.post('/postcards/:id/media/:mediaId/complete', async (req, res) => {
     public_url:             publicUrl,
     mime_type:              p.mimeType,
     file_size_bytes:        p.fileSizeBytes,
-    duration_seconds:       p.durationSeconds ?? null,
+    duration_seconds:       storedDuration.seconds,
     // Server-measured dimensions win over client-declared (audit trust fix).
-    width:                  measuredWidth ?? p.width ?? null,
-    height:                 measuredHeight ?? p.height ?? null,
+    width:                  measuredWidth ?? probedVideo?.width ?? p.width ?? null,
+    height:                 measuredHeight ?? probedVideo?.height ?? p.height ?? null,
     thumbnail_url:          thumbnailUrl,
-    thumbnail_storage_path: p.thumbnailPath ?? null,
+    thumbnail_storage_path: poster.path,
     updated_at:             new Date().toISOString(),
     // Perceptual hash for near-duplicate grouping (null for videos or when
     // computation failed — worker skips rows with phash IS NULL).
     phash:                  computedPhash,
   };
+  if ((mediaRow as any).media_type === 'video' && storedDuration.source !== 'measured') {
+    // §37: the container did not state a duration (a live-recorded WebM, a
+    // fragmented file with no timing). The stored value is the client's word,
+    // and the log says so rather than the row pretending it was measured.
+    req.log.warn({ mediaId, source: storedDuration.source }, 'postcards: video duration not stated by its container');
+  }
 
   // Dimension guard: width and height must be present before we can flip the
   // row to 'ready'. For images this is guaranteed — server-side processing
@@ -1209,6 +1215,9 @@ router.delete('/postcards/:id/media/:mediaId', async (req, res) => {
       .from(STORAGE_BUCKET)
       .remove([storagePath, `${storagePath}.feed.jpg`])
       .then(undefined, () => {});
+    // The video poster and any resumable parts are derivatives of this exact
+    // object too (routes/postcardMediaTransport.ts); they go with it.
+    await removeTransportArtifacts(sc.storage.from(STORAGE_BUCKET), storagePath).then(undefined, () => {});
   }
 
   // Re-derive parent media counts
@@ -1535,6 +1544,17 @@ router.post('/postcards/sweep-orphans', async (req, res) => {
           errors++;
           continue; // Leave the DB row so the next sweep can try again.
         }
+        // A pending slot is exactly where an abandoned resumable upload leaves
+        // its parts (and possibly a poster). Same retry rule as the original.
+        const { error: artErr } = await removeTransportArtifacts(
+          sc.storage.from(row.storage_bucket || STORAGE_BUCKET), row.storage_path,
+        );
+        if (artErr) {
+          req.log?.warn?.({ err: artErr, mediaId: row.id, storagePath: row.storage_path },
+            'sweep-orphans: transport artifact removal failed — retaining DB row for retry');
+          errors++;
+          continue;
+        }
       }
 
       // Storage objects gone (or there was no path). Now safe to delete the row.
@@ -1559,3 +1579,11 @@ router.post('/postcards/sweep-orphans', async (req, res) => {
 });
 
 export default router;
+
+// ── Media §37 (video duration, poster, resumable parts) ──────────────────────
+// Imported at the TAIL so no line above moves: census-media.md cites this file
+// by line (the pending/approved moderation literals). ESM hoists imports, so
+// placement does not change evaluation order.
+import { probeVideoContainer, resolveStoredDuration, type VideoProbe } from '../lib/videoMetadata.js';
+import { admissiblePosterPath } from '../lib/mediaPosterPath.js';
+import { removeTransportArtifacts } from '../lib/postcardMediaTransport.js';
