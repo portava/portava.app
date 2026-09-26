@@ -131,7 +131,8 @@ export function scrubCoordinates<T>(value: T): T {
  *     one class at least from `live`;
  *   • `freshnessLabel` → the true age, or null;
  *   • `stateLabel` (a live crowd state) → null, and `live` flags → false —
- *     a live reading is never served from a cache.
+ *     a live reading is never served from a cache;
+ *   • `consensus` (§18, fresh-window witnesses and "Mixed reports") → null.
  */
 export function decayFreshness<T>(value: T, elapsedMinutes: number): T {
   const elapsed = Math.max(0, elapsedMinutes);
@@ -153,6 +154,8 @@ export function decayFreshness<T>(value: T, elapsedMinutes: number): T {
     }
     if ('freshnessLabel' in src) out.freshnessLabel = age !== null ? `Updated ${relativeAge(age)}` : null;
     if ('stateLabel' in src) out.stateLabel = null;
+    // §18: a consensus is a statement about the FRESH window at generation time — never replayed from a cache.
+    if ('consensus' in src) out.consensus = null;
     if (typeof src.live === 'boolean') out.live = false;
     if (Array.isArray(src.liveClaims)) out.liveClaims = [];
     return out;

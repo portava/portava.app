@@ -28,6 +28,8 @@ import { useLensProjection } from '../hooks/useLensProjection.ts';
 // §39: the place view answers from the offline media cache when the network is gone.
 import { placeViewOffline } from '../../../services/media/mediaOffline.ts';
 import { useOfflineLens } from '../../../services/media/useOfflineLens.ts';
+// §18: "Mixed reports — conditions may be changing", exactly when the server says so.
+import { uncertaintyBanner } from '../../../services/media/mediaIntelligence.ts';
 import { CurrentPictureBadge } from '../components/CurrentPictureBadge.tsx';
 import { IntelligenceStrip } from '../components/IntelligenceStrip.tsx';
 import { PerspectiveMosaic } from '../components/PerspectiveMosaic.tsx';
@@ -186,6 +188,9 @@ function PlaceDetail({
           <View style={styles.pictureBlock}>
             {cachedLabel ? <Text style={styles.areaLabel} accessibilityRole="text">{cachedLabel}</Text> : null}
             {view.stateLabel ? <Text style={styles.stateLabel}>{view.stateLabel}</Text> : null}
+            {uncertaintyBanner(view.consensus ?? null) ? (
+              <Text style={styles.areaLabel} accessibilityRole="alert">{uncertaintyBanner(view.consensus ?? null)}</Text>
+            ) : null}
             {view.areaName ? <Text style={styles.areaLabel}>{view.areaName}</Text> : null}
             <CurrentPictureBadge
               strength={view.currentPicture.strength}

@@ -71,6 +71,7 @@ describe('MD325 — what a cached payload may claim about itself', () => {
   it('FRESHNESS ONLY DECAYS: nothing served from the cache reads live, and every age grows', () => {
     const payload = {
       stateLabel: 'Getting busier',
+      consensus: { state: 'mixed', uncertaintyLabel: 'Mixed reports — conditions may be changing' } as unknown,
       live: true,
       liveClaims: [{ x: 1 }],
       heroMedia: [
@@ -82,6 +83,7 @@ describe('MD325 — what a cached payload may claim about itself', () => {
     };
     const out = decayFreshness(payload, 90);
     assert.equal(out.stateLabel, null, 'a live crowd state is never served from a cache');
+    assert.equal(out.consensus, null, 'a §18 consensus is about the fresh window — never replayed from a cache');
     assert.equal(out.live, false);
     assert.deepEqual(out.liveClaims, []);
     assert.equal(out.heroMedia[0]!.freshness, 'recent', '2m + 90m of cache time is recent, not live');
