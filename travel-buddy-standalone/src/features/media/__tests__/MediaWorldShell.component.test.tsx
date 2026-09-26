@@ -52,8 +52,11 @@ jest.mock('../services/mediaProjection.ts', () => {
     }),
     fetchPlaceView: (...a: unknown[]) => mockFetchPlaceView(...a),
     fetchGems: (...a: unknown[]) => mockFetchGems(...a),
-    // The lens calls fetchExperiencesByIds; route each id through the one mock so
-    // the test controls every experience the lens resolves.
+    // The lens resolves each id through the §39 offline cache
+    // (services/media/mediaOffline.experiencesOffline), which calls
+    // fetchExperience per id; the batch fetch is kept for any other caller. Both
+    // go through the one mock, so the test controls every experience resolved.
+    fetchExperience: (...a: unknown[]) => mockFetchExperience(...a),
     fetchExperiencesByIds: async (ids: string[]) => {
       const data = [];
       for (const id of ids) {
