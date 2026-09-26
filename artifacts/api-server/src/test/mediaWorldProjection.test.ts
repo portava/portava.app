@@ -155,8 +155,11 @@ describe("MediaRankingService — mutation-proof ranking signals", () => {
     const c = row("c", { canonical_place_id: "place-2", category: "art" });
     assert.deepEqual(rankMediaCandidates([a, b], { nowMs }).map((r) => r.id), ["a", "b"]);
     const diverse = rankMediaCandidates([a, b, c], { nowMs });
-    assert.equal(diverse[0].id, "a");
-    assert.equal(diverse[1].id, "c");
+    // c is a different place AND fills a coverage gap (§24 Contribution Value),
+    // so it may lead; what the diversity pass must guarantee is that the REPEAT
+    // of a's place, category and author — b — is the one pushed to the back.
+    assert.equal(diverse[2].id, "b");
+    assert.deepEqual(new Set(diverse.slice(0, 2).map((r) => r.id)), new Set(["a", "c"]));
   });
 
   /**

@@ -27,7 +27,7 @@ import {
   type CurrentState,
   type ViewerResolved,
 } from "./MediaProjectionService.js";
-import { rankMediaCandidates } from "./MediaRankingService.js";
+import { rankCandidatesForViewer } from "./MediaRankingService.js";
 import { aggregateFreshness, type FreshnessState } from "../../lib/media/mediaFreshness.js";
 
 /**
@@ -248,7 +248,7 @@ async function resolveEvent(
     media = await projectCandidatesProtected(
       sc,
       viewer,
-      rankMediaCandidates(candidates as MediaCandidateRow[], {
+      await rankCandidatesForViewer(sc, viewer, candidates as MediaCandidateRow[], {
         viewerId: viewer.viewerId,
         viewerTripIds: viewer.viewerTripIds,
         intentMediaIds: viewer.intentMediaIds,
@@ -330,7 +330,7 @@ async function resolveTrip(
   const media = await projectCandidatesProtected(
     sc,
     viewer,
-    rankMediaCandidates(candidates as MediaCandidateRow[], {
+    await rankCandidatesForViewer(sc, viewer, candidates as MediaCandidateRow[], {
       viewerId: viewer.viewerId,
       viewerTripIds: viewer.viewerTripIds,
       intentMediaIds: viewer.intentMediaIds,
