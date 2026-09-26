@@ -4932,7 +4932,7 @@ implement it.
 
 The row's statements about the CLIENT still hold, and the client code was not
 changed:
-- The card offers "Why this?" only when a reason is served: `travel-buddy-standalone/src/features/media/components/ChangingNowCard.tsx:76#{item.whyThis && onWhyThis ? (`.
+- The card offers "Why this?" only when a reason is served: `travel-buddy-standalone/src/features/media/components/ChangingNowCard.tsx:84#{item.whyThis && onWhyThis ? (`.
 - The shell opens the sheet with exactly that reason: `travel-buddy-standalone/src/features/media/screens/MediaWorldShell.tsx:139#if (item.whyThis) setWhy({ visible: true, explanation: item.whyThis });`.
 - The changing-now mapper already reads the field: `travel-buddy-standalone/src/features/media/services/mediaProjection.ts:448#whyThis: asString(raw.whyThis),`.
 
@@ -5276,3 +5276,84 @@ reading, not a new one.
   - `mediaProjection.ts`, whose two mapper edits extend existing lines. The helper and import are at the tail.
   - `MediaWorldShell.tsx` was not edited.
 - **No acknowledgement was edited.**
+
+## 28. Integration of lanes E–H, and a privacy fix one of them found — 2026-09-26
+
+The lanes' own sections are §24 (E), §25 (F), §26 (G) and §27 (H). Each is
+appended in merge order, after §23, and each records its own rows. This section
+records only what the integration itself changed.
+
+### 28.1 World counts leaked perspectives hidden from the viewer (found by lane F, §25)
+
+**The defect.** `routes/mediaWorld.ts` filters every response through the
+trip-context visibility rule
+(`artifacts/api-server/src/routes/mediaWorld.ts:110#const filtered = await filterMediaProjectionVisibility(ctx.sc, ctx.viewerId, payload);`).
+That filter removes hidden media OBJECTS from the payload. It cannot reach a
+number, and every builder counts its page before the route sees it:
+- a World zone's `perspectiveCount`, freshness and consensus;
+- a bucket's fresh and total perspectives;
+- `totalPerspectives`.
+
+So a trip post that its owner hid from this viewer with a circle override was
+still counted. In lane F's fixture, a hidden fresh post at a place made that
+place "2 perspectives, fresh" for a viewer who could see one three-day-old
+perspective.
+
+**The fix.** It is in the one projection path that the world, place,
+experience, people and search builders all use.
+`artifacts/api-server/src/services/media/MediaProjectionService.ts:698#return visibleToViewerOrRefuse(sc, viewer.viewerId, out);`
+filters the projected page through the same rule before anything is counted.
+The helper is appended at the file's tail:
+`artifacts/api-server/src/services/media/MediaProjectionService.ts:1764#async function visibleToViewerOrRefuse(`.
+
+A filter that cannot decide refuses the page with
+`artifacts/api-server/src/services/media/MediaProjectionService.ts:1772#throw new MediaCandidatesUnavailableError("visibility"`,
+which returns a 503, as an unreadable candidate read already does. It never
+counts a page it could not decide about. The route's own filter stays as the
+second line. Every edit is on an existing line or at the file's tail, and no
+cited line moved.
+
+**Tests and mutations.** The tests are at
+`artifacts/api-server/src/test/mediaRankingObjectives.test.ts:991#describe("census-media §28 — World counts are counts of what this viewer may see"`:
+- a control;
+- the override case (`artifacts/api-server/src/test/mediaRankingObjectives.test.ts:1015#it("with the owner hiding their trip from this viewer`);
+- the undecidable case (`artifacts/api-server/src/test/mediaRankingObjectives.test.ts:1028#it("when visibility cannot be decided`), which fails only the filter's own read, so the candidate read still succeeds.
+
+Both mutations were seen red:
+- Bypassing the filter turned 2 tests red.
+- Treating "undecidable" as "keep everything" turned 1 test red. It survived the first draft, which had no undecidable case.
+
+Across the media server suites, 2,970 tests pass. The 7 file-level failures
+are live-database tests that refuse to run without credentials, and they fail
+identically with and without this change.
+
+**Rows.** No row moves. The fix narrows what a count may include, and no
+graded row rested on a hidden perspective being counted. MD9 ("privacy …
+resolve before client projection") is C, and after this fix it is true of the
+counts as well as the objects.
+
+**Production.** Not deployed. `/media/world` has no flag of its own, but no
+screen a user can reach calls it: the World shell is seeded off. Circle
+overrides that hide a trip do exist as a production feature, so this leak
+would matter the moment the shell is turned on.
+
+### 28.2 Merges, and the headline
+
+**Lane F (§25).** Merged at `71a6327b2`. MD428 moves W → C.
+
+**Lane G (§26).** Merged at `6b5ad4608`:
+- MD262 moves C → W;
+- MD152 and MD153 stay C and are re-proven;
+- six message-poster cases are appended to the byte-gate test.
+
+**The census.** Both merges conflicted only at this file's tail, and every
+section was kept.
+
+**Freshness.** The census-media acknowledgement names every file the lanes
+changed, as a re-measurement. The five other censuses that count
+`MediaProjectionService.ts` carry a note for §25 and §28.1.
+
+**The headline after F and G** is **C 398 · W 38 · N 12 · X 2** of 450. It is
+unchanged from §23.6 because the two moves cancel. `check:census-integrity`
+reads it from the rows. Lanes E (§24) and H (§27) are not yet merged, and the
+headline is restated again when they are.
