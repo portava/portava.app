@@ -342,6 +342,8 @@ export async function contributeToGem(
   gemId: string,
   contributionType: GemContributionType,
   notes?: string,
+  /** The media item the contribution was made from (§45 Media → Contribution). */
+  opts: { originMediaId?: string | null } = {},
 ): Promise<{
   ok: boolean;
   contributionId: string | null;
@@ -357,7 +359,7 @@ export async function contributeToGem(
     gemConfidence: any;
   }>(`/api/hidden-gems/${gemId}/contribute`, {
     method: 'POST',
-    body: JSON.stringify({ contributionType, notes }),
+    body: JSON.stringify(opts.originMediaId ? { contributionType, notes, originMediaId: opts.originMediaId } : { contributionType, notes }),
   });
   return {
     ok: data.ok ?? false,

@@ -142,3 +142,25 @@ export async function hideMedia(mediaId: string): Promise<MediaActionResult> {
 export async function reactToMediaStampIt(mediaId: string): Promise<MediaActionResult> {
   return call('POST', `/api/media/${encodeURIComponent(mediaId)}/react`);
 }
+
+// ── §44 signals from surfaces that hold no analytics hook (census-media §21) ──
+
+/**
+ * Send ONE §44 client signal straight to POST /media/analytics/batch — for a
+ * list row or a navigation that leaves the screen before a debounced hook
+ * would flush. The payload is built by features/media/telemetry's
+ * `emitMediaSignal`, which drops any forbidden key before this is called; the
+ * server applies its own event and payload allow-lists and its
+ * MEDIA_ANALYTICS_ENABLED gate on top. Fire-and-forget: never throws.
+ */
+export async function recordMediaSignal(
+  type: string,
+  payload: object,
+): Promise<MediaActionResult> {
+  return call('POST', '/api/media/analytics/batch', { events: [{ type, payload }] });
+}
+
+/** A recorder with the shape `emitMediaSignal` takes, sending each signal on its own. */
+export function mediaSignalRecorder(type: string, payload?: object): void {
+  void recordMediaSignal(type, payload ?? {}).catch(() => {});
+}

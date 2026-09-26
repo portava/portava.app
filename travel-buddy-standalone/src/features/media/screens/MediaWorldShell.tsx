@@ -21,7 +21,7 @@ import { router } from 'expo-router';
 import { color } from '../../../theme/tokens.ts';
 import { MediaStoreProvider } from '../../../stores/mediaStore.ts';
 import { WhyThisSheet } from '../../../components/media/WhyThisSheet.tsx';
-import { GemsFeed } from '../../../components/media/GemsFeed.tsx';
+import { GemsFeed } from '../../../components/media/GemsFeed.tsx'; import { mediaSignalRecorder } from '../../../services/mediaInteractions.ts'; import { emitMediaSignal } from '../telemetry/mediaTelemetry.ts';
 
 import { lensNavReducer, INITIAL_LENS_NAV, modesForLens } from '../state/lens.ts';
 import { cachedAsOfLabel } from '../state/freshness.ts';
@@ -117,13 +117,13 @@ function MediaWorldShellInner({ cityId, lat, lng }: MediaWorldShellProps) {
             state={worldState}
             mode={nav.mode}
             onReload={reload}
-            onSelectZone={() => selectLens('places')}
+            onSelectZone={() => { emitMediaSignal(mediaSignalRecorder, 'visual_opportunity_open', { surface: 'now_zone' }); selectLens('places'); }}
             onOpenChanging={(item) => {
               const hero = item.heroMedia?.[0];
-              if (hero) openMediaViewer(hero);
+              if (hero) { emitMediaSignal(mediaSignalRecorder, 'visual_opportunity_open', { mediaId: hero.id, surface: 'now_changing' }); openMediaViewer(hero); }
             }}
             onWhyThis={(item) => setWhy({ visible: true, explanation: item.whyThis ?? null })}
-            onSelectForYou={(item) => selectLens(item.lens ?? 'now')}
+            onSelectForYou={(item) => { emitMediaSignal(mediaSignalRecorder, 'visual_opportunity_open', { surface: 'now_for_you' }); selectLens(item.lens ?? 'now'); }}
           />
         )}
 
