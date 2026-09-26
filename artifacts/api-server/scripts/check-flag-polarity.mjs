@@ -455,6 +455,18 @@ const CLASSIFIED = [
   { flag: 'MEDIA_RANKING_ENABLED',               kind: 'CAPABILITY', reason: 'SCREAMING_CASE capability gate: media feed ranking. `true` = ranking applied.' },
   { flag: 'MEDIA_ANALYTICS_ENABLED',             kind: 'CAPABILITY', reason: 'SCREAMING_CASE capability gate: media analytics collection. `true` = collected.' },
   {
+    flag: 'MEDIA_WORLD_SHELL_ENABLED', kind: 'CAPABILITY',
+    reason:
+      'SCREAMING_CASE capability gate: the Media v2 World shell. `true` = the shell and its action rail are ' +
+      "available. The app reads it through isEnabled('MEDIA_WORLD_SHELL_ENABLED') (app/(tabs)/media.tsx, " +
+      'app/media-viewer/[id].tsx); since census-media §21 (2026-09-26) the API reads it too, to keep the ' +
+      'rail-only write POST/DELETE /api/media/:id/event-link and the link_event offer as dark as the rail ' +
+      'that shows them (routes/mediaActions.ts, services/media/MediaActionResolver.ts). An unreadable flag ' +
+      'leaves both OFF. It sat on APP_TREE_READS until that server read existed: seeded by ' +
+      '2300_phantom_feature_flag_rows.sql, and before that it existed nowhere, so no operator action could ' +
+      'reach the surface.',
+  },
+  {
     flag: 'MEDIA_SHARES_ENABLED', kind: 'CAPABILITY',
     reason:
       'SCREAMING_CASE capability gate: the media share/export surface (POST /api/media/:id/share). `true` = ' +
@@ -1515,21 +1527,6 @@ const APP_TREE_READS = [
       'reconciliation rests on — it lived ONLY in production, so a restored environment got no row, read false ' +
       'through the fail-closed helper, and the entry point was permanently invisible, which was mistaken for a ' +
       'deliberate design choice rather than a missing row.',
-  },
-  {
-    flag: 'MEDIA_WORLD_SHELL_ENABLED',
-    file: 'app/(tabs)/media.tsx',
-    line: 190,
-    reason:
-      "isEnabled('MEDIA_WORLD_SHELL_ENABLED') gates the World entry pill on the Media tab and, at " +
-      'app/media-viewer/[id].tsx, the World shell affordances in the viewer — i.e. the whole Media v2 client ' +
-      'surface and its /media-world route. Entered this list on 2026-09-05 with ' +
-      '2300_phantom_feature_flag_rows.sql, which seeds the row: this is the SAME shape as the ' +
-      'MEDIA_HIDDEN_GEMS_CREATE_ENABLED precedent above, one rung worse. That flag at least existed in ' +
-      'production; this one existed nowhere at all, so no operator action of any kind could reach the ' +
-      'surface — it needed a migration first. The reason it survived the reconciliation that caught the ' +
-      'other is that this check reads only the API src/ tree, and a flag read ONLY in the app tree was ' +
-      'invisible to both directions of the old rules. R9 now scans the app tree for exactly this.',
   },
   // city_launch_mode had an entry here from 2026-08-12 until 2026-08-13: an
   // app-tree read whose banner was its ONLY reader, recorded as
