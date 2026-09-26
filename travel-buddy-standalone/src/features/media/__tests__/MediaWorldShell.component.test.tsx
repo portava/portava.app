@@ -39,7 +39,16 @@ jest.mock('../services/mediaProjection.ts', () => {
   const actual = jest.requireActual('../services/mediaProjection.ts');
   return {
     ...actual,
-    fetchWorld: async () => ({ ok: true, data: actual.mapWorldProjection({ city: 'Da Nang', cityVisualState: [], forYouNow: [], changingNow: [] }) }),
+    fetchWorld: async () => ({
+      ok: true,
+      data: actual.mapWorldProjection({
+        city: 'Da Nang',
+        cityVisualState: [{ placeId: '66666666-6666-6666-6666-666666666666', label: 'An Thuong', perspectiveCount: 3, freshness: 'fresh' }],
+        forYouNow: [],
+        changingNow: [],
+      }),
+    }),
+    fetchPlaceView: async () => ({ ok: true, data: null }),
     fetchGems: (...a: unknown[]) => mockFetchGems(...a),
     // The lens calls fetchExperiencesByIds; route each id through the one mock so
     // the test controls every experience the lens resolves.
@@ -199,6 +208,27 @@ describe('MediaWorldShell', () => {
     await render(<Shell cityName="Da Nang" />);
     await fireEvent.press(screen.getByLabelText('Search media'));
     expect(mockPush).toHaveBeenCalledWith('/media-search');
+  });
+
+  it('PLACES: a canonical place offers "Add your view", which opens the §4 Media Contribution screen for it', async () => {
+    await render(<Shell cityName="Da Nang" />);
+    await openLens('Places');
+    await waitFor(() => expect(screen.getByLabelText('Open An Thuong')).toBeTruthy());
+    await fireEvent.press(screen.getByLabelText('Open An Thuong'));
+    await waitFor(() => expect(screen.getByTestId('place-add-your-view')).toBeTruthy());
+    await fireEvent.press(screen.getByTestId('place-add-your-view'));
+    expect(mockPush).toHaveBeenCalledWith('/media-contribute?placeId=66666666-6666-6666-6666-666666666666');
+  });
+
+  it('PLACES → Map and EXPERIENCES → Map are the one Media Map (no "arrives in a later phase" placeholder)', async () => {
+    await render(<Shell cityName="Da Nang" lat={16.05} lng={108.22} />);
+    await openLens('Places');
+    await fireEvent.press(screen.getByLabelText('Map'));
+    await waitFor(() => expect(screen.getByText('No perspectives on the map yet')).toBeTruthy());
+    await openLens('Experiences');
+    await fireEvent.press(screen.getByLabelText('Map'));
+    await waitFor(() => expect(screen.getByText('No experiences on the map yet')).toBeTruthy());
+    expect(screen.queryByText(/arrive(s)? with the Media Map phase/)).toBeNull();
   });
 
   it('MY WORLD → Map is the Media Map over the owner\'s own places', async () => {

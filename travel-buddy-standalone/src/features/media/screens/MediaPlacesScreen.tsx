@@ -13,7 +13,7 @@
  */
 import React, { useCallback, useMemo, useState } from 'react';
 import { View, Text, Pressable, ScrollView, StyleSheet } from 'react-native';
-import { ChevronLeft, MapPin, Compass, ChevronRight } from 'lucide-react-native';
+import { ChevronLeft, MapPin, Compass, ChevronRight, Camera } from 'lucide-react-native';
 import { color, radius, space } from '../../../theme/tokens.ts';
 import type { PresentationMode, CityVisualZone } from '../types/mediaContext.ts';
 import type { PlaceCurrentView } from '../types/perspective.ts';
@@ -49,6 +49,8 @@ export interface MediaPlacesScreenProps {
   center?: { lat: number; lng: number } | null;
   /** §14 Map entry context from a selected place's map cluster. */
   onOpenCluster?: (cluster: MediaMapCluster) => void;
+  /** §4 Media Contribution: add your own current view of a canonical place. */
+  onContribute?: (placeId: string) => void;
 }
 
 export function MediaPlacesScreen({
@@ -60,6 +62,7 @@ export function MediaPlacesScreen({
   city = null,
   center = null,
   onOpenCluster,
+  onContribute,
 }: MediaPlacesScreenProps) {
   const [selected, setSelected] = useState<{ id: string; name: string } | null>(null);
 
@@ -76,6 +79,7 @@ export function MediaPlacesScreen({
         city={city}
         center={center}
         onOpenCluster={onOpenCluster}
+        onContribute={onContribute}
       />
     );
   }
@@ -137,6 +141,7 @@ function PlaceDetail({
   city,
   center,
   onOpenCluster,
+  onContribute,
 }: {
   placeId: string;
   placeName: string;
@@ -148,6 +153,7 @@ function PlaceDetail({
   city: string | null;
   center: { lat: number; lng: number } | null;
   onOpenCluster?: (cluster: MediaMapCluster) => void;
+  onContribute?: (placeId: string) => void;
 }) {
   // Map mode for ONE place: the world's clusters restricted to this place, so
   // the map shows where it sits without inventing a point if the Map has none.
@@ -189,6 +195,18 @@ function PlaceDetail({
         <Text style={styles.detailTitle} numberOfLines={1}>
           {view?.placeName ?? placeName}
         </Text>
+        {onContribute && UUID_RE.test(placeId) ? (
+          // §4 Media Contribution — only a CANONICAL place can hold a perspective.
+          <Pressable
+            onPress={() => onContribute(placeId)}
+            hitSlop={10}
+            accessibilityRole="button"
+            accessibilityLabel="Add your view of this place"
+            testID="place-add-your-view"
+          >
+            <Camera size={22} color={color.onInk} strokeWidth={2} />
+          </Pressable>
+        ) : null}
         {onAskCompass ? (
           <Pressable
             onPress={() => onAskCompass(placeId)}

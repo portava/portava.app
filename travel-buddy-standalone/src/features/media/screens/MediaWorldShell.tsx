@@ -153,6 +153,7 @@ function MediaWorldShellInner({ cityId, cityName: cityNameProp = null, lat, lng,
             city={cityName}
             center={center}
             onOpenCluster={(c) => void openClusterPerspectives(c)}
+            onContribute={(placeId) => router.push(`/media-contribute?placeId=${encodeURIComponent(placeId)}` as never)}
           />
         )}
 

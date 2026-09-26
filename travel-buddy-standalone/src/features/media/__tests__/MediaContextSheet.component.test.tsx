@@ -69,13 +69,21 @@ beforeEach(() => {
 
 describe('MediaContextSheet (§7)', () => {
   it('shows the server-resolved graph — including the Shared Moment edge — and links each edge to its home', async () => {
+    // The RAW `GET /media/:id/actions` body, run through the real context mapper —
+    // the mapper is what keeps the §28 Shared Moment kind the rail's mapper narrows.
+    const { mapContextRefs } = jest.requireActual('../state/mediaContextGraph.ts');
     mockContextRefs.mockResolvedValue({
       ok: true,
-      data: [
-        { kind: 'place', id: PLACE, label: 'An Thuong' },
-        { kind: 'trip', id: 't1', label: 'Vietnam' },
-        { kind: 'shared_moment', id: 'sm1', label: 'Sunset crew' },
-      ],
+      data: mapContextRefs({
+        mediaId: 'm1',
+        entityRefs: [
+          { kind: 'media', id: 'm1', label: null },
+          { kind: 'place', id: PLACE, label: 'An Thuong' },
+          { kind: 'trip', id: 't1', label: 'Vietnam' },
+          { kind: 'shared_moment', id: 'sm1', label: 'Sunset crew' },
+        ],
+        actions: [],
+      }),
     });
     const onNavigate = jest.fn();
     const onClose = jest.fn();

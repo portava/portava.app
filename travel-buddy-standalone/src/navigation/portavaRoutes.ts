@@ -1067,6 +1067,16 @@ export const PORTAVA_ROUTES: PortavaRouteDefinition[] = [
     // §4/§17 Media Timeline / Time Rail (census-media §19). Also mounted as the
     // Time mode of the NOW and PLACES lenses.
   },
+  {
+    key: 'media-contribute',
+    path: 'media-contribute/index',
+    title: 'Add your view',
+    parent: null,
+    icon: null,
+    requiresAuth: true,
+    // §4 Media Contribution (census-media §19). A current perspective of one
+    // canonical place, through the existing upload + post write.
+  },
 
   // ── Posts ─────────────────────────────────────────────────────────────────
 
