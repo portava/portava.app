@@ -3041,7 +3041,7 @@ to apply — not because reversal is anticipated.
              WHERE table_schema='public' AND table_name='story_purge_queue');
     -- portava-ci: story_purge_queue, 14   |   production: NULL, 0
 
-## `3001_highlight_kernel_admits_unhide.sql` — REHEARSED on a throwaway database, applied NOWHERE
+## `3001_highlight_kernel_admits_unhide.sql` — REHEARSED on a throwaway database; applied to `portava-ci` 2026-09-26 (see the batch entry below), NOT to production
 
 Recorded here because a migration that exists and has been executed somewhere
 should be findable from this document, and because census-highlights-memories
@@ -3117,9 +3117,142 @@ row, and the only `UPDATE` in the new branch is the one that clears
                         '3001_highlight_kernel_admits_unhide.sql');
     -- portava-ci: 0 rows   |   production: 0 rows
 
-**Neither 2993 nor 3001 is applied to any shared database.** 3001 must never be
-applied before 2993, which creates the function it replaces; the file's own
-precondition raises if `to_regprocedure('public.highlight_kernel_execute(jsonb)')`
-is NULL, so the order is enforced rather than documented. Applying either follows
-the same path as 2992/2993/2994 and is the same external step; nothing here
-shortens it.
+**SUPERSEDED 2026-09-26 — both are now applied to `portava-ci`; neither to
+production.** The statement above was true when written (2026-09-23) and the
+re-establish query then returned 0 rows on both databases. It now returns
+`2993` and `3001` on `portava-ci` (both `applied_by='manual'`, real sha256) and
+still 0 rows on production. The ordering claim stands and was exercised: 2993
+went at 06:07:25 UTC and 3001 at 06:11:15 UTC, and 3001's own precondition was
+what would have refused the reverse. The full record is the batch entry below.
+
+## 2026-09-26 — nine migrations applied to `portava-ci` under owner decision A; NOT to production
+
+Owner decision, quoted: *"Choose option A for portava-ci only, conditional on
+the running node:test suite passing."* The condition was met first —
+`api-server · node:test suite` on `8679f5cc9` concluded **success** — and then
+the nine were applied in dependency order, one transaction each, stopping at
+the first failure. There was no failure.
+
+| | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
+|---|---|---|
+| `2977_layover_maturity_gate_flag.sql` | **applied** 05:57:19 UTC | not applied |
+| `2981_layover_event_ingest_flag.sql` | **applied** 05:59:41 UTC | not applied |
+| `2986_layover_sessions_fanout_indexes.sql` | **applied** 06:02:02 UTC | not applied |
+| `2990_nearby_reachable_flag.sql` | **applied** 06:03:57 UTC | not applied |
+| `2992_layover_decision_record_and_operational_tables.sql` | **applied** 06:05:51 UTC | not applied |
+| `2993_highlight_command_boundary.sql` | **applied** 06:07:25 UTC | not applied |
+| `2994_memory_relations_and_outbox_consumer.sql` | **applied** 06:08:54 UTC | not applied |
+| `2999_trust_profiles_nullable_scores.sql` | **applied** 06:10:00 UTC | not applied |
+| `3001_highlight_kernel_admits_unhide.sql` | **applied** 06:11:15 UTC | not applied |
+
+Ledger rows: all nine `applied_by='manual'`, a real 64-character sha256 of the
+file bytes, written inside the same transaction as the migration. `notes`
+carries `sha=2efbd91ec…`, the tree the files were read from, and
+`owner-decision=A-2026-09-26`. The ledger went from 590 rows to 599. The 2481
+row (`applied_by='ci'`, 2026-09-09) was not touched; it is deliberate and
+load-bearing, as `auditMigrationsVsLive.ts` records.
+
+### How they were applied, and the one way it differs from `db:apply-migrations`
+
+The Management-API token the runner needs is not available from the
+environment that did this, so the runner binary did not execute. Everything
+the runner *decides* was done by the runner's own exported functions —
+`classifyMigration` (all nine classified `unwrapped`, 2999 `bare`; no
+refusals), `checksumOf`, and `buildApplyStatement`, which wraps body + ledger
+row in one `BEGIN … COMMIT` — and the byte-exact statements those produced were
+sent to the same endpoint the runner targets,
+`api.supabase.com/v1/projects/<ref>/database/query`, through a different
+client. The transport is the only difference. Nothing was hand-edited.
+
+Every one of the nine carries its postconditions **inside** the transaction
+(the runner classified no post-COMMIT tail), so the only outcomes possible
+were `applied` or a full rollback with no ledger row. `postcondition-failed`
+could not occur.
+
+### What was verified after each file, and after all nine
+
+**Per file, read from the catalog immediately after the commit** — not from
+the apply reporting on itself: 2977/2981/2990 each one flag row, `false`; 2986
+both partial indexes; 2992 five tables, five columns on
+`layover_certified_computations`, the immutability function, eight indexes,
+three triggers, the gate row `false`; 2993 `highlight_id` on all four kernel
+tables, `highlight_kernel_execute`, the owner policy, the audit index, all
+four constraints, `memory_id` nullable on `memory_domain_events`, and **zero**
+probe audit rows left behind; 2994 `memory_relations` with RLS on, all four
+functions, `locked_until`, four indexes, the owner policy, the owner-match
+trigger, and zero leased outbox rows; 2999 ten columns nullable **and**
+default-less, `public_level` still `NOT NULL`, `trust_profiles` still 0 rows
+(the NULL-insert probe rolled itself back); 3001 the installed function has a
+`WHEN 'UNHIDE_HIGHLIGHT'` branch.
+
+**Certification, the two halves `certify:migrations` would have run.** Its
+STAGE 1 (ledger parity) it cannot pass on this branch for reasons unrelated to
+these nine (see the 2998 entry above), so the two stages that matter were run
+by hand against `portava-ci`:
+
+* **STAGE 2 equivalent — objects.** Every object `audit:schema` named on
+  `8679f5cc9` was queried by name: 6 tables, 10 columns, 15 indexes, 6
+  functions, 2 policies, 4 triggers = **43 of 43 present**. (`audit:schema`'s
+  "44" counts `highlight_kernel_execute` once for 2993 and once for 3001.)
+* **STAGE 4 equivalent — postconditions re-run after commit.** 2992's block
+  (catalog-only by design, the largest of the nine) was executed standalone
+  and all ten assertions held.
+* **Negative control**, because a block that raises nothing is
+  indistinguishable from a block that ran nothing: 2999's postcondition 4 was
+  copied with its sense inverted (demanding `public_level` be nullable) and
+  run the same way. It failed loudly — `P0001: NEGATIVE CONTROL BIT:
+  public_level is NOT NULL (true)`. The silent passes above are therefore
+  passes.
+
+**Flags after the apply**, read rather than assumed: `layover_maturity_gate_enabled`,
+`layover_event_ingest_enabled`, `nearby_reachable_enabled`,
+`layover_decision_persistence_enabled`, `memory_kernel_enabled` all `false`;
+`trust_engine_enabled` has no row, which `isFlagEnabled` reads as false. Nothing
+was enabled. No scope was granted.
+
+### Production
+
+Not applied, and not applied as a side effect. Read 2026-09-26 06:12 UTC:
+0 of the nine in the ledger, `layover_time_budgets` and `memory_relations`
+absent, `trust_profiles.overall_score` still `NOT NULL`, 0 of the four new
+flag rows, ledger total 469.
+
+**2999 and production, stated plainly because the order is load-bearing:** this
+branch's `TrustScoreService.computeCategoryScore` returns `null` where `main`
+returns `50`. Against production's schema that write raises 23502. It does not
+raise today only because `trust_engine_enabled` has no row there. 2999 must
+reach production before anything enables that engine.
+
+### Rollback
+
+Each file's own section, in reverse order; every table any of them touches was
+at **0 rows** before and after, so none of these destroys data as the database
+stands:
+
+    -- 3001: re-run 2993's function body (a second CREATE OR REPLACE)
+    -- 2999: for each of the ten columns —
+    --   ALTER TABLE public.trust_profiles ALTER COLUMN <col> SET DEFAULT 50.00, ALTER COLUMN <col> SET NOT NULL;
+    --   (fails if any NULL has been written by then; that failure is the point)
+    -- 2994: DROP TABLE public.memory_relations; DROP FUNCTION memory_outbox_claim/_ack/_fail, memory_relations_owner_matches_source;
+    --       ALTER TABLE public.memory_event_outbox DROP COLUMN locked_until;
+    -- 2993: its REVERSIBLE BY block, in the order it gives
+    -- 2992: UPDATE feature_flags SET enabled=false WHERE flag='layover_decision_persistence_enabled'  (already false)
+    --       then DROP TABLE layover_outcomes, layover_checkpoints, layover_return_plans, layover_time_budgets, layover_constraints;
+    --       ALTER TABLE layover_certified_computations DROP COLUMN snapshot_id, input_facts, source_refs, rules_applied, ledger_version;
+    -- 2986: DROP INDEX IF EXISTS layover_sessions_airport_active_idx, layover_sessions_manual_iata_active_idx;
+    -- 2977/2981/2990: DELETE FROM public.feature_flags WHERE flag IN (...)  -- rows this apply created, all false
+    -- and for each: DELETE FROM public.schema_migration_ledger WHERE filename = '<file>';
+
+### Re-establish any of this independently
+
+    SELECT filename, applied_by, applied_at, length(checksum)
+      FROM public.schema_migration_ledger
+     WHERE notes LIKE '%owner-decision=A-2026-09-26%'
+     ORDER BY filename;
+    -- portava-ci: 9 rows, all manual, 64   |   production: 0 rows
+
+    SELECT to_regclass('public.layover_time_budgets'), to_regclass('public.memory_relations'),
+           (SELECT is_nullable FROM information_schema.columns
+             WHERE table_schema='public' AND table_name='trust_profiles' AND column_name='overall_score');
+    -- portava-ci: layover_time_budgets, memory_relations, YES   |   production: NULL, NULL, NO
+

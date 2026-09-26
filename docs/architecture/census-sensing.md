@@ -4885,3 +4885,131 @@ against what actually blocks them, and the totals are unchanged. Both rows were
 `W` before this section and are `W` after it — but a reader planning work now
 knows that S92 needs a flag and S112 needs a caller, where the census previously
 said both needed a module that already exists.
+
+## §23 Operational evidence for S26, S66 and S17, measured 2026-09-26 — and the nine non-sensing migrations that went to portava-ci
+
+Written after the owner's decision A landed nine other lanes' migrations on
+`portava-ci` (none of them sensing; the record is `docs/migrations.md`,
+2026-09-26 batch entry). This section is about the three rows that were being
+held "honestly unverified" and what evidence now exists for them. Verdicts are
+re-derived under the rules above; none is moved on a claim.
+
+### §23.1 S26 — the 72-hour cap is live on BOTH databases, and it bites
+
+The §14/§21 statement for S26 read "2315 IS in the tree … and it is applied
+to no database and has no writer". Half of that is now false and was checked
+rather than inherited:
+
+* **2315 is applied to portava-ci AND production.** Both ledgers carry
+  `2315_sensing_anon_contributions.sql / manual`. §14.1's production line
+  already said so; the S26 row's own prose did not, and the two disagreed.
+* **The structural cap is in the live catalog on both**, as
+  `sensing_anon_contributions_ttl_check`: `CHECK (expires_at > created_at AND
+  expires_at <= created_at + '72:00:00'::interval)` — the constraint the row
+  cites at `` `artifacts/api-server/src/migrations/2315_sensing_anon_contributions.sql:172#    CHECK (expires_at > created_at AND expires_at <= created_at + interval '72 hours'),` ``.
+  (A first query for it found nothing because it matched the source spelling
+  `'72 hours'`; Postgres renders the interval as `'72:00:00'`. Recorded so the
+  next reader does not repeat it.)
+* **Controlled test, portava-ci only, labelled as such.** One `DO` block
+  attempted two inserts and then raised on every path so nothing could
+  persist: a row with `expires_at = created_at + 72h` was **ACCEPTED** (the
+  positive control — without it a rejection proves nothing about *this*
+  constraint), and a row at `+ 73h` was **REJECTED 23514 … violates check
+  constraint "sensing_anon_contributions_ttl_check"**. Row count before and
+  after: 0. No user activity was invented; the probe never committed.
+* **No writer has written.** 0 rows on both databases. The route exists
+  (`` `artifacts/api-server/src/routes/sensingIngest.ts` ``) and its first
+  statement refuses without `SENSING_CONTRIBUTOR_PEPPER`, which §14.2 records
+  as unconfigured in production.
+
+**Verdict: W, unchanged — but for a different and narrower reason.** The RED
+WHEN's second half ("2315 applied and written to") is now half-true: applied,
+yes, on both; written to, no. The anon store's short-retention property is no
+longer a claim about a migration file; it is a measured constraint that
+refuses a 73-hour row on a real database. What still keeps this W is the
+first half of the RED WHEN — `intel_observations` keeps 180 days behind
+`intel_contribution_retention_enabled`, measured `false` on both databases —
+and that "short" for identifiable rows is an owner ruling nobody has made.
+
+### §23.2 S66 — refusable on every surface, refusing on none, measured on both databases
+
+The rule for prohibitions stands: a "must never" is C only when something
+refuses it on a DEFAULT deployment. §22 said the flags these paths ride are
+seeded FALSE. Now measured rather than read from seed files:
+
+| gate | portava-ci | production |
+|---|---|---|
+| `discovery_live_rank_enabled` (2850) | `false` | no row → false |
+| `layover_live_intersection_enabled` (2851) | `false` | no row → false |
+| `map_sensing_projection_enabled` (2350) | no row → false | no row → false |
+| `intel_contribution_retention_enabled` | `false` | `false` |
+
+And the input side: `sensing_anon_contributions` holds 0 rows on both, so no
+real `unsafe_density` state exists to reach any of the four paths even if a
+gate were on.
+
+**Verdict: W, unchanged, and now with the operational half measured.** The
+code paths are asserted by tests and the demotion logic is unchanged since
+§22. What cannot be manufactured here is the RED WHEN itself — a flag ON in a
+database *and* real unsafe state reaching it — because turning a gate on is
+an owner act this pass was told not to take, and the state would have to come
+from contributions nobody has made. This is the census working, not a lane
+falling short; it is recorded so the count of "W a lane should move" is not
+inflated by it.
+
+### §23.3 S17 — the deployed origin's last publish FAILED, and the served headers remain unobservable from here
+
+S17 asks for two operator artifacts: the served response headers of the
+deployed origin (TLS termination, an HSTS `max-age`) and Supabase's at-rest
+attestation. Neither is a diff. What an authorized environment could establish
+today, and what it could not:
+
+* **The origin exists and is configured as an autoscale deployment.** The
+  Replit workspace's `.replit` declares `deploymentTarget = "autoscale"`, run
+  command `pnpm --filter @workspace/api-server run start`, and
+  `ALLOWED_ORIGINS = "https://portava.replit.app"` for production. Its own
+  comment warns that settings in the Replit UI override this file.
+* **The most recent publish of `https://portava.replit.app` is `failed`.**
+  Read from Replit's publish status (`deploymentId 86067815-…`). Whether an
+  earlier successful deployment is still serving, or nothing is, could not be
+  determined: the Replit agent timed out twice on the question and the CI
+  proxy refuses the host outright (`CONNECT tunnel failed, 403`). **This is a
+  new fact and it bears on every "deployed" claim in this corpus, not only on
+  S17.**
+* **HSTS is configured, not observed.** `` `artifacts/api-server/src/app.ts:28#app.use(helmet());` ``
+  with no options; helmet 8.3.0 applies its default
+  `Strict-Transport-Security`. What the origin actually sends cannot be read
+  from here, and a configured header on an origin whose last publish failed is
+  a statement about a file.
+* **The at-rest attestation** is a Supabase artifact this environment has no
+  path to.
+
+**Verdict: X, unchanged.** No code change can move it, and the one piece of
+evidence gathered points the other way. **Owner question, the single one this
+pass raises:** is `https://portava.replit.app` currently serving, and if so
+from which deployment? A `curl -sI https://portava.replit.app/` from any
+machine outside this proxy answers the header half in one line.
+
+### §23.4 Stale prose that §11/§14 already out-graded
+
+Three sentences in earlier sections read as facts and are not, though the
+verdicts they sit under were already restated later in this document (last
+statement wins). They are named so nobody re-derives from them:
+
+* §11's S30 row text, "2480 is applied to no database" — 2480 is applied to
+  both (`portava-ci` by `ci` 2026-09-09; production by `manual`). S30 is
+  already **BC** at §12.
+* §14.1's "`2481` absent, correctly" — true of the objects on both databases,
+  and the `portava-ci` **ledger row** for 2481 is present on purpose and
+  load-bearing (`auditMigrationsVsLive.ts`, "THE PART THAT SURPRISES PEOPLE").
+  A pass through this branch misread that row as a false apply and retracted
+  the claim in `8fdf94ba9`; it is recorded here so the same misreading is not
+  made a third time.
+* §21's S26 prose, "applied to no database" — see §23.1.
+
+### §23.5 MOVES NOTHING
+
+S26 W→W, S66 W→W, S17 X→X. The headline is unchanged. What changed is that
+two of the three now rest on measurements of both databases and one
+controlled test, and the third has acquired a fact that argues *against*
+readiness rather than for it.

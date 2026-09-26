@@ -526,3 +526,31 @@ the TypeScript cannot be separated silently.
 contain writers for objects no migration declares, `check:schema-references`
 would say so on every PR, and the only thing achieved would be moving the
 evidence from a lane that runs sometimes to a lane that runs always.
+
+---
+
+## 10. Executed — decision A, portava-ci only, 2026-09-26
+
+The owner chose **A**, conditional on the running test suite passing. It
+passed (`api-server · node:test suite` on `8679f5cc9`: success), and the nine
+were applied to `portava-ci` in the §7.4 order, one transaction each, no
+failure. §5's "NOT EXECUTED" banner is historical from this point.
+
+The full record — timestamps, per-file catalog verification, the STAGE-2 and
+STAGE-4 equivalents, the negative control, production's untouched state, and
+rollback — is the 2026-09-26 batch entry at the end of `docs/migrations.md`.
+The facts this document's earlier sections predicted and that held:
+
+| Predicted | Measured |
+|---|---|
+| §7.3: a failed apply rolls back DDL and ledger row together | not exercised — no apply failed |
+| §7.3: `postcondition-failed` is the only outcome needing a human | could not occur — all nine carry postconditions inside the transaction |
+| §4/§8: two hard edges, 2993→2994 and 2993→3001 | 2994's precondition and 3001's precondition both passed *because* 2993 preceded them |
+| §7.1: 2977/2981/2990/2999 move `audit:schema` by zero objects | not re-measured separately; all 43 distinct objects come from the other five |
+| §8.1: the flag rows change no behaviour | all four inserted `false`; every gate reads `false` after |
+| §7.3: all affected tables at 0 rows | still 0 rows after — every probe rolled itself back |
+
+**What this does not do.** Production is unchanged (0 of the nine, verified
+read-only). No feature was enabled. No scope was granted. `certify:migrations`'s
+STAGE 1 still cannot pass on this branch for the reason the 2998 entry records,
+which is unrelated to these nine.
