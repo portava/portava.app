@@ -145,7 +145,7 @@ export function GemsItemOverlay({
           entityId={item.id}
           initialCount={item.stats.likeCount ?? 0}
           initialIsStamped={item.viewerState?.hasLiked ?? false}
-          iconSize={24}
+          iconSize={24} tone="onDark"
           style={styles.stampBtnWrapper}
         />
         {/* Comments are disabled for gem items (not post-backed); only shown when onComment is wired. */}
@@ -369,7 +369,7 @@ const styles = StyleSheet.create({
     right: space.md,
     bottom: BOTTOM_SAFE + 120,
     alignItems: 'center',
-    gap: space.lg, paddingVertical: space.sm, paddingHorizontal: space.xs, borderRadius: 999, backgroundColor: 'rgba(0,0,0,0.89)', // census-media §31.12: a backing under the action column; 0.89 is set by the shared StampButton's idle `mute` icon
+    gap: space.lg, paddingVertical: space.sm, paddingHorizontal: space.xs, borderRadius: 999, backgroundColor: 'rgba(0,0,0,0.89)', // census-media §31.12/§31.13: a backing under the action column. Under the StampButton's onDark tone every asserted pair on it clears from 0.74; 0.89 is kept because the rail's emoji, whose colours come from the platform font and are not measured, sit on it too
   },
   stampBtnWrapper: {
     minHeight: 44,

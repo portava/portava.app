@@ -306,7 +306,7 @@ function ViewerOverlay({
               entityId={post.id}
               initialCount={post.likeCount}
               initialIsStamped={post.likedByMe}
-              iconSize={28}
+              iconSize={28} tone="onDark"
               style={ov.stampBtnWrapper}
             />
           ) : null}
@@ -386,7 +386,7 @@ const ov = StyleSheet.create({
   leftCol: {
     flex: 1,
     gap: 6,
-    paddingRight: space.sm,
+    paddingRight: space.sm, padding: space.sm, borderRadius: radius.md, backgroundColor: 'rgba(17,17,15,0.71)', // census-media §31.13: an ink backing under the left column (the gradient is kept, and not relied on); 0.71 is set by the handle in onInkMute
   },
   authorRow: {
     flexDirection: 'row',
@@ -438,7 +438,7 @@ const ov = StyleSheet.create({
   rightCol: {
     alignItems: 'center',
     gap: space.xl,
-    paddingBottom: 4,
+    paddingBottom: space.sm, paddingTop: space.md, paddingHorizontal: space.xs, borderRadius: radius.pill, backgroundColor: 'rgba(17,17,15,0.80)', // census-media §31.13: an ink backing under the action column; 0.80 is set by the saved bookmark and the stamped icon in `signal`
   },
   actionBtn: {
     alignItems: 'center',
@@ -499,7 +499,7 @@ function ViewerPage({ item, isActive, isMuted, postData }: ViewerPageProps) {
           {posterUrl ? (
             <CachedImage source={{ uri: posterUrl }} style={StyleSheet.absoluteFill} resizeMode="cover" fallbackLabel="" />
           ) : null}
-          <ActivityIndicator size="large" color={color.onInk} />
+          <View style={tailStyles.spinnerBadge}><ActivityIndicator size="large" color={color.onInk} /></View>
         </View>
       ) : isVideo ? (
         <>
@@ -806,12 +806,12 @@ export default function MediaViewer() {
           style={[ms.dots, { bottom: Math.max(insets.bottom + 80, 90) }]}
           pointerEvents="none"
         >
-          {items.map((_, i) => (
+          <View style={tailStyles.dotsPill}>{items.map((_, i) => (
             <View
               key={i}
               style={[ms.dot, i === activeIndex && ms.dotActive]}
             />
-          ))}
+          ))}</View>
         </View>
       ) : null}
     </View>
@@ -862,4 +862,15 @@ const ms = StyleSheet.create({
     width: 14,
     borderRadius: 2.5,
   },
+});
+
+// census-media §31.13 — two badges, appended at the tail so no cited line moves.
+// The page spinner sat straight on the poster: 1.00:1 over a poster its own
+// colour. 0.47 is the least ink alpha at which onInk clears 3:1 over any frame.
+// The page dots sat straight on the frame. 0.87 is the least alpha at which
+// the inactive dot (white at 0.35) clears 3:1 over any frame; the active dot
+// is also 14 px wide against 5, so the page does not rest on colour alone.
+const tailStyles = StyleSheet.create({
+  spinnerBadge: { padding: 10, borderRadius: 999, backgroundColor: 'rgba(17,17,15,0.47)' },
+  dotsPill: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 8, paddingVertical: 6, borderRadius: 999, backgroundColor: 'rgba(17,17,15,0.87)' },
 });

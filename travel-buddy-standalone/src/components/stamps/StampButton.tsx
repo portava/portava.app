@@ -98,7 +98,7 @@ export interface StampButtonProps {
    */
   localBurst?: boolean;
   /** Fired (in localBurst mode) at the moment a stamp is added. */
-  onLocalBurst?: () => void;
+  onLocalBurst?: () => void; /** 'onDark' (census-media §31.13): for a caller on a dark backing. The idle icon and the count draw in onInk, because `mute` cannot reach 4.5:1 on any dark ground; the stamped icon stays `signal`. Absent or 'default': renders exactly as before. */ tone?: 'default' | 'onDark';
 }
 
 // ---------------------------------------------------------------------------
@@ -116,7 +116,7 @@ export function StampButton({
   style,
   controlledStamp,
   localBurst = false,
-  onLocalBurst,
+  onLocalBurst, tone = 'default',
 }: StampButtonProps) {
   // ── API state (optimistic + rollback via useStamp) ───────────────────────
   // A private useStamp instance is always created (hooks can't be
@@ -260,13 +260,13 @@ export function StampButton({
               justifyContent: 'center',
             }}
           >
-            <StampIcon size={iconSize} active={visualIsStamped} />
+            <StampIcon size={iconSize} active={visualIsStamped} {...(tone === 'onDark' && !visualIsStamped ? { color: color.onInk } : {})} />
           </View>
 
           {visualCount > 0 && (
             <Animated.View style={countStyle as AnimatedStyle<ViewStyle>}>
               <Text
-                style={[s.count, visualIsStamped && s.countActive]}
+                style={tone === 'onDark' ? [s.count, onDark.count] : [s.count, visualIsStamped && s.countActive]}
                 numberOfLines={1}
               >
                 {visualCount}
@@ -304,4 +304,13 @@ const s = StyleSheet.create({
   countActive: {
     color: color.signal,
   },
+});
+
+// census-media §31.13 — the count under `tone="onDark"`. On a dark backing
+// `mute` text reaches at most 3.79:1 (on pure black), so no backing brings the
+// idle count to 4.5:1. On a dark ground the count keeps one colour in both
+// states; the stamped state is carried by the icon (filled, tilted, `signal`)
+// and by accessibilityState.selected. Only a caller that passes the tone reads it.
+const onDark = StyleSheet.create({
+  count: { color: color.onInk },
 });

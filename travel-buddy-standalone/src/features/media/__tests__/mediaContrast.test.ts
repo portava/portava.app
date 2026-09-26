@@ -948,7 +948,7 @@ test('print the measured table when MEDIA_CONTRAST_TABLE=1', () => {
 //   3. The shared components those surfaces render on a photograph or a Media
 //      sheet (PlaceQuickActions, FeaturedBadge, VerifiedStamp, StampIcon,
 //      StampButton, GemStateBadge, AppHeader's overlay, EmptyState). They are
-//      read here, never edited: a pair that only a change to one of them can fix
+//      read here, and edited only to add an optional prop (§31.13): a pair that only a change to one of them can fix
 //      is PINNED, and the guard at the end requires every pinned pair to cite
 //      the shared file that blocks it.
 //
@@ -985,8 +985,8 @@ const FT = {
   routeIt: 'src/components/media/RouteItPlaceSheet.tsx',
   addGem: 'src/components/media/AddGemForm.tsx',
   addGemRoute: 'app/media/add-gem.tsx',
-  tab: 'app/(tabs)/media.tsx',
-  // Shared components the Media surfaces render — read, never edited here.
+  tab: 'app/(tabs)/media.tsx', mediaViewer: 'app/media-viewer/[id].tsx', // the Grid's full-screen viewer (§31.13)
+  // Shared components the Media surfaces render — read here; §31.13 adds an optional prop to StampButton, AppHeader and EmptyState.
   placeQuickActions: 'src/components/PlaceQuickActions.tsx',
   featuredBadge: 'src/components/FeaturedBadge.tsx',
   verifiedBadge: 'src/components/ui/VerifiedStamp.tsx',
@@ -1046,7 +1046,7 @@ const S_TAIL = {
   gridScrimPhoto: [PHOTO, 'rgba(0,0,0,0.55)'],
   gridScrimFallback: [color.haze, 'rgba(0,0,0,0.55)'],
   gridProcessingPhoto: [PHOTO, 'rgba(17,17,15,0.65)'],
-  gridStampPhoto: [PHOTO, 'rgba(17,17,15,0.95)'],
+  gridStampPhoto: [PHOTO, 'rgba(17,17,15,0.80)'], // §31.13: was 0.95, for the idle `mute` icon
   // Sheets and forms, and the tab's own buttons.
   errorTint: ['#FEF2F2'],
   gemGreen: ['#0C875E'],
@@ -1059,8 +1059,8 @@ const S_TAIL = {
   radialGreen: ['#0C875E'],
   addGemBadgePhoto: [PHOTO, 'rgba(17,17,15,0.65)'],
   worldPillPhoto: [PHOTO, 'rgba(17,17,15,0.58)'],
-  // Shared components on a photograph (pinned below).
-  appHeaderOverlayPhoto: [PHOTO, 'rgba(0,0,0,0.28)'],
+  mvTopButtonPhoto: [PHOTO, 'rgba(17,17,15,0.55)'], mvLeftPhoto: [PHOTO, 'rgba(17,17,15,0.71)'], mvLeftChip: [PHOTO, 'rgba(17,17,15,0.71)', W_('0.12')], mvRightPhoto: [PHOTO, 'rgba(17,17,15,0.80)'], mvSpinnerPhoto: [PHOTO, 'rgba(17,17,15,0.47)'], mvDotsPhoto: [PHOTO, 'rgba(17,17,15,0.87)'], mvCloseOnInk: [color.ink, 'rgba(17,17,15,0.6)'], // §31.13: the Grid's full-screen viewer. Then shared components on a photograph.
+  appHeaderOverlayPhoto: [PHOTO, 'rgba(17,17,15,0.58)'], // §31.13: the tab's overlayTint; the header's own default is 0.28 black
   burstPhoto: [PHOTO, 'rgba(255,60,60,0.12)'],
   radialBackdropPhoto: [PHOTO, 'rgba(0,0,0,0.35)'],
 } as const satisfies Record<string, readonly string[]>;
@@ -1094,15 +1094,15 @@ add({ id: 'mapCanvas.coverCount.mapFloor', fg: color.onInk, on: 'coverCountMap',
 add({ id: 'mapCanvas.coverRing.selected.mapFloor', fg: color.onInk, on: 'map', kind: 'ui', at: [[F.mapCanvas, /coverBubble: \{[^}]*borderColor: color\.onInk,/], [F.mapCanvas, 'coverBubbleSelected: { borderWidth: 3, transform: [{ scale: 1.15 }] },']] });
 // The shared StampButton in the viewer's action row, on the 0.96 overlay.
 const STAMP_ICON_COLOUR: Needle = [FT.stampIcon, 'const c = colorProp ?? (active ? tokens.signal : tokens.mute);'];
-const STAMP_BUTTON_ICON: Needle = [FT.stampButton, '<StampIcon size={iconSize} active={visualIsStamped} />'];
-const STAMP_COUNT_IDLE: Needle = [FT.stampButton, /count: \{\s*\.\.\.typeTokens\.stamp,\s*color: color\.mute,/];
-const STAMP_COUNT_ACTIVE: Needle = [FT.stampButton, /countActive: \{\s*color: color\.signal,/];
-const VIEWER_STAMP: Needle = [F.viewer, '<StampButton'];
-add({ id: 'viewer.stampButton.icon.idle.photoFloor', fg: color.mute, on: 'viewerOverlayPhoto', kind: 'ui', at: [VIEWER_STAMP, STAMP_BUTTON_ICON, STAMP_ICON_COLOUR, VIEWER_OVERLAY] });
+const STAMP_BUTTON_ICON: Needle = [FT.stampButton, "<StampIcon size={iconSize} active={visualIsStamped} {...(tone === 'onDark' && !visualIsStamped ? { color: color.onInk } : {})} />"];
+const STAMP_COUNT_TONE: Needle = [FT.stampButton, "style={tone === 'onDark' ? [s.count, onDark.count] : [s.count, visualIsStamped && s.countActive]}"]; // §31.13: under tone="onDark" the count is onDark.count, idle or stamped
+const STAMP_COUNT_ON_DARK: Needle = [FT.stampButton, /const onDark = StyleSheet\.create\(\{\s*count: \{ color: color\.onInk \},/];
+const VIEWER_STAMP: Needle = [F.viewer, /<StampButton[^>]*tone="onDark"/];
+add({ id: 'viewer.stampButton.icon.idle.photoFloor', fg: color.onInk, on: 'viewerOverlayPhoto', kind: 'ui', at: [VIEWER_STAMP, STAMP_BUTTON_ICON, VIEWER_OVERLAY] });
 add({ id: 'viewer.stampButton.icon.active.photoFloor', fg: color.signal, on: 'viewerOverlayPhoto', kind: 'ui', at: [VIEWER_STAMP, STAMP_BUTTON_ICON, STAMP_ICON_COLOUR, VIEWER_OVERLAY] });
-add({ id: 'viewer.stampButton.count.active.photoFloor', fg: color.signal, on: 'viewerOverlayPhoto', kind: 'text', at: [VIEWER_STAMP, STAMP_COUNT_ACTIVE, VIEWER_OVERLAY] });
-// PINNED: `mute` can never reach 4.5:1 on a dark ground (3.79 on black), and StampButton takes no colour. Fix: a dark tone in the shared StampButton.
-add({ id: 'viewer.stampButton.count.idle.photoFloor', fg: color.mute, on: 'viewerOverlayPhoto', kind: 'text', at: [VIEWER_STAMP, STAMP_COUNT_IDLE, VIEWER_OVERLAY], finding: 3.12 });
+add({ id: 'viewer.stampButton.count.active.photoFloor', fg: color.onInk, on: 'viewerOverlayPhoto', kind: 'text', at: [VIEWER_STAMP, STAMP_COUNT_TONE, STAMP_COUNT_ON_DARK, VIEWER_OVERLAY] });
+// FIXED by lane K (census-media §31.13): was pinned at 3.12 — `mute` can never reach 4.5:1 on a dark ground (3.79 on black). The viewer now passes StampButton's optional tone="onDark", so the count is onInk.
+add({ id: 'viewer.stampButton.count.idle.photoFloor', fg: color.onInk, on: 'viewerOverlayPhoto', kind: 'text', at: [VIEWER_STAMP, STAMP_COUNT_TONE, STAMP_COUNT_ON_DARK, VIEWER_OVERLAY] });
 
 // ─ 2. The shipped Media tab ─
 // WatchItemOverlay — the left column and the action rail each on an ink backing (the gradient is kept, and not relied on).
@@ -1203,12 +1203,12 @@ for (const [tone, fg] of [['strong', '#6FD39A'], ['good', '#9DB8E8'], ['emerging
 const GEMS_RAIL: Needle = [FT.gemsOverlay, "gap: space.lg, paddingVertical: space.sm, paddingHorizontal: space.xs, borderRadius: 999, backgroundColor: 'rgba(0,0,0,0.89)',"];
 add({ id: 'gems.rail.glyphs', fg: color.onInk, on: 'gemsRailPhoto', kind: 'ui', at: [GEMS_RAIL, [FT.gemsOverlay, /actionBtnIcon: \{\s*fontSize: 26,\s*color: color\.onInk,/], [FT.gemsOverlay, 'label="⋯"']] });
 add({ id: 'gems.rail.counts', fg: color.onInkMute, on: 'gemsRailPhoto', kind: 'text', at: [GEMS_RAIL, [FT.gemsOverlay, /actionBtnSublabel: \{\s*\.\.\.t\.stamp,\s*color: color\.onInkMute,/]] });
-const GEMS_STAMP: Needle = [FT.gemsOverlay, '<StampButton'];
-add({ id: 'gems.rail.stampButton.icon.idle', fg: color.mute, on: 'gemsRailPhoto', kind: 'ui', at: [GEMS_RAIL, GEMS_STAMP, STAMP_BUTTON_ICON, STAMP_ICON_COLOUR] });
+const GEMS_STAMP: Needle = [FT.gemsOverlay, /<StampButton[^>]*tone="onDark"/];
+add({ id: 'gems.rail.stampButton.icon.idle', fg: color.onInk, on: 'gemsRailPhoto', kind: 'ui', at: [GEMS_RAIL, GEMS_STAMP, STAMP_BUTTON_ICON] });
 add({ id: 'gems.rail.stampButton.icon.active', fg: color.signal, on: 'gemsRailPhoto', kind: 'ui', at: [GEMS_RAIL, GEMS_STAMP, STAMP_BUTTON_ICON, STAMP_ICON_COLOUR] });
-add({ id: 'gems.rail.stampButton.count.active', fg: color.signal, on: 'gemsRailPhoto', kind: 'text', at: [GEMS_RAIL, GEMS_STAMP, STAMP_COUNT_ACTIVE] });
-// PINNED: as viewer.stampButton.count.idle — `mute` text has no dark ground at 4.5:1; the fix is a dark tone in the shared StampButton.
-add({ id: 'gems.rail.stampButton.count.idle', fg: color.mute, on: 'gemsRailPhoto', kind: 'text', at: [GEMS_RAIL, GEMS_STAMP, STAMP_COUNT_IDLE], finding: 3.07 });
+add({ id: 'gems.rail.stampButton.count.active', fg: color.onInk, on: 'gemsRailPhoto', kind: 'text', at: [GEMS_RAIL, GEMS_STAMP, STAMP_COUNT_TONE, STAMP_COUNT_ON_DARK] });
+// FIXED by lane K (census-media §31.13): was pinned at 3.07, as viewer.stampButton.count.idle; the gems rail passes tone="onDark".
+add({ id: 'gems.rail.stampButton.count.idle', fg: color.onInk, on: 'gemsRailPhoto', kind: 'text', at: [GEMS_RAIL, GEMS_STAMP, STAMP_COUNT_TONE, STAMP_COUNT_ON_DARK] });
 add({ id: 'gems.illustrativeBanner', fg: color.warn, on: 'gemsBannerPhoto', kind: 'text', at: [[FT.gemsOverlay, "backgroundColor: 'rgba(0,0,0,0.83)',"], [FT.gemsOverlay, /illustrativeBannerText: \{\s*\.\.\.t\.stamp,\s*color: color\.warn,/]] });
 const GEMS_MENU: Needle = [FT.gemsOverlay, /moreMenu: \{[^}]*backgroundColor: color\.paperRaised,/];
 add({ id: 'gems.moreMenu.item', fg: color.ink, on: 'paperRaised', kind: 'text', at: [GEMS_MENU, [FT.gemsOverlay, /moreMenuItemText: \{\s*\.\.\.t\.body,\s*color: color\.ink,/]] });
@@ -1238,12 +1238,12 @@ add({ id: 'gridTile.badgeIcons', fg: color.onInk, on: 'gridScrimPhoto', kind: 'd
 const GRID_PROCESSING: Needle = [FT.gridTile, /processingOverlay: \{[^}]*backgroundColor: 'rgba\(17,17,15,0\.65\)'/];
 add({ id: 'gridTile.processing.photoFloor', fg: 'rgba(250,249,246,0.85)', on: 'gridProcessingPhoto', kind: 'text', at: [GRID_PROCESSING, [FT.gridTile, /processingText: \{[^}]*color: color\.onInk,[^}]*opacity: 0\.85,/]] });
 add({ id: 'gridTile.processingSpinner.photoFloor', fg: color.onInk, on: 'gridProcessingPhoto', kind: 'ui', at: [GRID_PROCESSING, [FT.gridTile, '<ActivityIndicator size="small" color={color.onInk} />']] });
-const GRID_STAMP: Needle[] = [[FT.gridTile, "zIndex: 6, borderRadius: 999, backgroundColor: 'rgba(17,17,15,0.95)',"], [FT.gridTile, '<StampButton']];
-add({ id: 'gridTile.stampButton.icon.idle.photoFloor', fg: color.mute, on: 'gridStampPhoto', kind: 'ui', at: [...GRID_STAMP, STAMP_BUTTON_ICON, STAMP_ICON_COLOUR] });
+const GRID_STAMP: Needle[] = [[FT.gridTile, "zIndex: 6, borderRadius: 999, backgroundColor: 'rgba(17,17,15,0.80)',"], [FT.gridTile, /<StampButton[^>]*tone="onDark"/]];
+add({ id: 'gridTile.stampButton.icon.idle.photoFloor', fg: color.onInk, on: 'gridStampPhoto', kind: 'ui', at: [...GRID_STAMP, STAMP_BUTTON_ICON] });
 add({ id: 'gridTile.stampButton.icon.active.photoFloor', fg: color.signal, on: 'gridStampPhoto', kind: 'ui', at: [...GRID_STAMP, STAMP_BUTTON_ICON, STAMP_ICON_COLOUR] });
-add({ id: 'gridTile.stampButton.count.active.photoFloor', fg: color.signal, on: 'gridStampPhoto', kind: 'text', at: [...GRID_STAMP, STAMP_COUNT_ACTIVE] });
-// PINNED: as viewer.stampButton.count.idle.
-add({ id: 'gridTile.stampButton.count.idle.photoFloor', fg: color.mute, on: 'gridStampPhoto', kind: 'text', at: [...GRID_STAMP, STAMP_COUNT_IDLE], finding: 3.04 });
+add({ id: 'gridTile.stampButton.count.active.photoFloor', fg: color.onInk, on: 'gridStampPhoto', kind: 'text', at: [...GRID_STAMP, STAMP_COUNT_TONE, STAMP_COUNT_ON_DARK] });
+// FIXED by lane K (census-media §31.13): was pinned at 3.04, as viewer.stampButton.count.idle; the tile passes tone="onDark", and its disc drops from 0.95 to 0.80.
+add({ id: 'gridTile.stampButton.count.idle.photoFloor', fg: color.onInk, on: 'gridStampPhoto', kind: 'text', at: [...GRID_STAMP, STAMP_COUNT_TONE, STAMP_COUNT_ON_DARK] });
 // GridFilterBar, MasonryGrid, GridFeed — on paper.
 add({ id: 'gridFilter.chip', fg: '#696660', on: 'haze', kind: 'text', at: [[FT.gridFilter, /chip: \{[^}]*backgroundColor: color\.haze,/], [FT.gridFilter, /chipText: \{\s*\.\.\.t\.small,\s*color: '#696660',/]] });
 add({ id: 'gridFilter.chipActive', fg: color.onInk, on: 'ink', kind: 'text', at: [[FT.gridFilter, /chipActive: \{\s*backgroundColor: color\.ink,/], [FT.gridFilter, /chipTextActive: \{\s*color: color\.onInk,/]] });
@@ -1254,8 +1254,8 @@ add({ id: 'masonry.refresh', fg: color.signal, on: 'paper', kind: 'ui', at: [[FT
 const EMPTY_STATE: Needle[] = [[FT.gridFeed, '<EmptyState'], [FT.gridFeed, /container: \{\s*flex: 1,\s*backgroundColor: color\.paper,/]];
 add({ id: 'gridFeed.emptyState.title', fg: color.ink, on: 'paper', kind: 'text', at: [...EMPTY_STATE, [FT.emptyState, /title: \{\s*\.\.\.typography\.sectionTitle,\s*color: color\.ink,/]] });
 add({ id: 'gridFeed.emptyState.description', fg: color.mute, on: 'paper', kind: 'text', at: [...EMPTY_STATE, [FT.emptyState, /description: \{\s*\.\.\.typography\.body,\s*color: color\.mute,/]] });
-// PINNED: the shared EmptyState's primary action is onInk on `signal`; the Grid's error state shows it. The fix is in src/components/ui/EmptyState.tsx.
-add({ id: 'gridFeed.emptyState.retryButton', fg: color.onInk, on: 'signalFill', kind: 'text', at: [...EMPTY_STATE, [FT.gridFeed, "primaryAction={{ label: 'Try again', onPress: loadFeed }}"], [FT.emptyState, /btn: \{[^}]*backgroundColor: color\.signal,/], [FT.emptyState, /btnText: \{\s*\.\.\.typography\.button,\s*color: color\.onInk,/]], finding: 3.14 });
+// FIXED by lane K (census-media §31.13): was pinned at 3.14 (onInk on `signal`). The Grid's error state passes EmptyState's optional primaryAction.fill, the Media-local vermilion #C43B23.
+add({ id: 'gridFeed.emptyState.retryButton', fg: color.onInk, on: 'vermilionOnPaper', kind: 'text', at: [...EMPTY_STATE, [FT.gridFeed, "primaryAction={{ label: 'Try again', onPress: loadFeed, fill: '#C43B23'"], [FT.emptyState, '[styles.btn, { backgroundColor: primaryAction.fill }, pressed && { opacity: layout.pressedOpacity }]'], [FT.emptyState, /btnText: \{\s*\.\.\.typography\.button,\s*color: color\.onInk,/]] });
 // WatchRadialMenu — each arc button's fill darkened in its own hue until its white 8 px label reads 4.5:1.
 const RADIAL_LABEL: Needle = [FT.radial, /arcLabel: \{[^}]*color: '#fff',/];
 for (const [id, fill, on] of [['gem', '#8558EC', 'radialPurple'], ['route', '#D64127', 'radialSignal'], ['announce', '#0B7DB1', 'radialSky'], ['verify', '#0C875E', 'radialGreen']] as const) {
@@ -1335,8 +1335,8 @@ add({ id: 'tab.fabGems.icon', fg: WHITE, on: 'gemGreen', kind: 'ui', at: [[FT.ta
 add({ id: 'tab.worldPill.photoFloor', fg: WHITE, on: 'worldPillPhoto', kind: 'text', at: [[FT.tab, "backgroundColor: 'rgba(17,17,15,0.58)',"], [FT.tab, "<Text style={[styles.worldEntryText, { color: isImmersive ? '#fff' : color.ink }]}>World</Text>"]] });
 add({ id: 'tab.worldPill.light', fg: color.ink, on: 'paperRaised', kind: 'text', at: [[FT.tab, /worldEntryBtnLight: \{\s*backgroundColor: color\.paperRaised,/], [FT.tab, "<Text style={[styles.worldEntryText, { color: isImmersive ? '#fff' : color.ink }]}>World</Text>"]] });
 add({ id: 'tab.gridCreate.icon', fg: color.ink, on: 'paperRaised', kind: 'ui', at: [[FT.tab, /gridCreateBtn: \{[^}]*backgroundColor: color\.paperRaised,/], [FT.tab, '<Camera size={18} color={color.ink}']] });
-// PINNED: the shared AppHeader's overlay title ("Watch" / "Gems") is #fff on a 0.28 black tint over the frame; the tab has no prop to change it. The fix is in src/components/ui/AppHeader.tsx.
-add({ id: 'tab.appHeaderOverlay.title.photoFloor', fg: WHITE, on: 'appHeaderOverlayPhoto', kind: 'text', at: [[FT.tab, 'variant="overlay"'], [FT.appHeader, "const overlayBg = transparent ? 'transparent' : 'rgba(0,0,0,0.28)';"], [FT.appHeader, "{centeredTitle('#fff')}"]], finding: 1.99 });
+// FIXED by lane K (census-media §31.13): was pinned at 1.99 (#fff on the header's 0.28 black tint over the frame). The tab passes AppHeader's optional overlayTint, an ink tint at 0.58.
+add({ id: 'tab.appHeaderOverlay.title.photoFloor', fg: WHITE, on: 'appHeaderOverlayPhoto', kind: 'text', at: [[FT.tab, 'variant="overlay" overlayTint="rgba(17,17,15,0.58)"'], [FT.appHeader, 'backgroundColor: overlayTint !== undefined && !transparent ? overlayTint : overlayBg'], [FT.appHeader, "{centeredTitle('#fff')}"]] });
 
 // Measure every pair added since MEASURED was first built.
 MEASURED.push(...PAIRS.slice(MEASURED.length).map(measurePair));
@@ -1360,7 +1360,7 @@ test('census-media §31.12: a pinned pair names the shared file that blocks its 
 test('dynamic type (the shipped Media tab): no Text opts out of, or caps, OS font scaling', () => {
   const files: string[] = [];
   walk('src/components/media', files);
-  files.push(FT.tab, FT.addGemRoute);
+  files.push(FT.tab, FT.addGemRoute, FT.mediaViewer); // §31.13: the Grid's full-screen viewer too
   let textElements = 0;
   const offenders: string[] = [];
   for (const file of files) {
@@ -1372,4 +1372,81 @@ test('dynamic type (the shipped Media tab): no Text opts out of, or caps, OS fon
   assert.ok(files.length >= 20, `scanned ${files.length} files`);
   assert.ok(textElements >= 80, `found ${textElements} <Text elements`);
   assert.deepEqual(offenders, []);
+});
+
+// ═══ census-media §31.13 — appended at the TAIL so no line cited above moves ═══
+//
+// Lane K's third pass:
+//   1. Unpins the five pairs above (StampButton ×3, EmptyState, AppHeader). Each
+//      shared component gains an OPTIONAL prop that Media passes; with the prop
+//      absent it renders exactly as before, so no other caller changes.
+//   2. Measures the Grid's full-screen viewer, app/media-viewer/[id].tsx, under
+//      the same rules, and fixes it in that file (backings and badges) and
+//      through StampButton's tone.
+//   3. Records the EmptyState icon as `decor` (the title beside it names it).
+// The shared sheets opened from Media (CommentsSheet, ShareSheet,
+// GlobalPlacePicker, CreationAssist, PlanPickerController) are not pairs here:
+// census-media §31.13 records their measurement and the ruling that §46 does
+// not govern them, with the spec text.
+
+const MV = FT.mediaViewer;
+add({ id: 'gridFeed.emptyState.icon', fg: color.faint, on: 'paper', kind: 'decor', at: [...EMPTY_STATE, [FT.emptyState, '<Icon size={36} color={color.faint} strokeWidth={1.5} />']] });
+
+// ─ The Grid's full-screen viewer ─
+// Top bar: the back and mute buttons sit on their own 0.55 ink discs (unchanged; they clear).
+const MV_TOP: Needle = [MV, /iconBtn: \{[^}]*backgroundColor: 'rgba\(17,17,15,0\.55\)'/];
+add({ id: 'mediaViewer.back.photoFloor', fg: WHITE, on: 'mvTopButtonPhoto', kind: 'ui', at: [MV_TOP, [MV, '<ChevronLeft size={22} color="#fff" strokeWidth={2.5} />']] });
+add({ id: 'mediaViewer.mute.photoFloor', fg: WHITE, on: 'mvTopButtonPhoto', kind: 'ui', at: [MV_TOP, [MV, '? <VolumeX size={18} color="#fff" />'], [MV, ': <Volume2 size={18} color="#fff" />']] });
+// Left column: now on a 0.71 ink backing (was straight on the frame under a gradient: every line floored at 1.00).
+const MV_LEFT: Needle = [MV, /leftCol: \{[^}]*backgroundColor: 'rgba\(17,17,15,0\.71\)'/];
+const MV_CHIP: Needle = [MV, /placeChip: \{[^}]*backgroundColor: 'rgba\(255,255,255,0\.12\)'/];
+add({ id: 'mediaViewer.authorName.photoFloor', fg: color.onInk, on: 'mvLeftPhoto', kind: 'text', at: [MV_LEFT, [MV, /authorName: \{\s*\.\.\.t\.bodyStrong,\s*color: color\.onInk,/]] }); // FIXED by lane K (census-media §31.13)
+add({ id: 'mediaViewer.authorHandle.photoFloor', fg: color.onInkMute, on: 'mvLeftPhoto', kind: 'text', at: [MV_LEFT, [MV, /authorHandle: \{\s*\.\.\.t\.stamp,\s*color: color\.onInkMute,/]] }); // FIXED by lane K (census-media §31.13)
+add({ id: 'mediaViewer.caption.photoFloor', fg: color.onInk, on: 'mvLeftPhoto', kind: 'text', at: [MV_LEFT, [MV, /caption: \{\s*\.\.\.t\.body,\s*color: color\.onInk,/]] }); // FIXED by lane K (census-media §31.13)
+add({ id: 'mediaViewer.placeText.photoFloor', fg: W_('0.9'), on: 'mvLeftChip', kind: 'text', at: [MV_LEFT, MV_CHIP, [MV, /placeText: \{\s*\.\.\.t\.stamp,\s*color: 'rgba\(255,255,255,0\.9\)',/]] }); // FIXED by lane K (census-media §31.13)
+add({ id: 'mediaViewer.placePin', fg: W_('0.85'), on: 'mvLeftChip', kind: 'decor', at: [MV_CHIP, [MV, '<MapPin size={10} color="rgba(255,255,255,0.85)" />']] });
+add({ id: 'mediaViewer.placeQuickActions.photoFloor', fg: W_('0.92'), on: 'mvLeftChip', kind: 'text', at: [MV_LEFT, [MV, 'variant="dark"'], ...QUICK_ACTIONS_DARK] }); // FIXED by lane K (census-media §31.13)
+add({ id: 'mediaViewer.locationStamp.name.photoFloor', fg: '#E8DFC8', on: 'locationStampPhoto', kind: 'text', at: [...LOCATION_STAMP, [MV, '<VerifiedLocationStamp locationName={locationName} />']] });
+add({ id: 'mediaViewer.loading.photoFloor', fg: W_('0.5'), on: 'mvLeftPhoto', kind: 'ui', at: [MV_LEFT, [MV, '<ActivityIndicator size="small" color="rgba(255,255,255,0.5)" />']] }); // FIXED by lane K (census-media §31.13)
+add({ id: 'mediaViewer.avatarRing', fg: W_('0.6'), on: 'mvLeftPhoto', kind: 'decor', at: [[MV, /avatarRing: \{[^}]*borderColor: 'rgba\(255,255,255,0\.6\)'/]] });
+// Right column: now on a 0.80 ink backing (was straight on the frame: every icon and count floored at 1.00).
+const MV_RIGHT: Needle = [MV, /rightCol: \{[^}]*backgroundColor: 'rgba\(17,17,15,0\.80\)'/];
+const MV_STAMP: Needle = [MV, /<StampButton[^>]*tone="onDark"/];
+add({ id: 'mediaViewer.stampButton.icon.idle.photoFloor', fg: color.onInk, on: 'mvRightPhoto', kind: 'ui', at: [MV_RIGHT, MV_STAMP, STAMP_BUTTON_ICON] }); // FIXED by lane K (census-media §31.13)
+add({ id: 'mediaViewer.stampButton.icon.active.photoFloor', fg: color.signal, on: 'mvRightPhoto', kind: 'ui', at: [MV_RIGHT, MV_STAMP, STAMP_BUTTON_ICON, STAMP_ICON_COLOUR] }); // FIXED by lane K (census-media §31.13)
+add({ id: 'mediaViewer.stampButton.count.idle.photoFloor', fg: color.onInk, on: 'mvRightPhoto', kind: 'text', at: [MV_RIGHT, MV_STAMP, STAMP_COUNT_TONE, STAMP_COUNT_ON_DARK] }); // FIXED by lane K (census-media §31.13)
+add({ id: 'mediaViewer.stampButton.count.active.photoFloor', fg: color.onInk, on: 'mvRightPhoto', kind: 'text', at: [MV_RIGHT, MV_STAMP, STAMP_COUNT_TONE, STAMP_COUNT_ON_DARK] }); // FIXED by lane K (census-media §31.13)
+add({ id: 'mediaViewer.comment.photoFloor', fg: WHITE, on: 'mvRightPhoto', kind: 'ui', at: [MV_RIGHT, [MV, '<MessageCircle size={28} color="#fff" strokeWidth={1.8} />']] }); // FIXED by lane K (census-media §31.13)
+const MV_BOOKMARK: Needle = [MV, "<Bookmark size={28} color={isSaved ? color.signal : '#fff'} fill={isSaved ? color.signal : 'transparent'}"];
+add({ id: 'mediaViewer.save.idle.photoFloor', fg: WHITE, on: 'mvRightPhoto', kind: 'ui', at: [MV_RIGHT, MV_BOOKMARK] }); // FIXED by lane K (census-media §31.13)
+add({ id: 'mediaViewer.save.saved.photoFloor', fg: color.signal, on: 'mvRightPhoto', kind: 'ui', at: [MV_RIGHT, MV_BOOKMARK] }); // FIXED by lane K (census-media §31.13)
+add({ id: 'mediaViewer.counts.photoFloor', fg: color.onInk, on: 'mvRightPhoto', kind: 'text', at: [MV_RIGHT, [MV, /actionCount: \{\s*\.\.\.t\.stamp,\s*color: color\.onInk,/]] }); // FIXED by lane K (census-media §31.13)
+add({ id: 'mediaViewer.creatorStamps.photoFloor', fg: 'rgba(255,220,80,0.9)', on: 'mvRightPhoto', kind: 'ui', at: [MV_RIGHT, [MV, '<Zap size={26} color="rgba(255,220,80,0.9)"']] }); // FIXED by lane K (census-media §31.13)
+add({ id: 'mediaViewer.share.photoFloor', fg: WHITE, on: 'mvRightPhoto', kind: 'ui', at: [MV_RIGHT, [MV, '<PortavaShareIcon size={26} color="#fff" />']] }); // FIXED by lane K (census-media §31.13)
+add({ id: 'mediaViewer.actions.photoFloor', fg: WHITE, on: 'mvRightPhoto', kind: 'ui', at: [MV_RIGHT, [MV, '<Compass size={28} color="#fff" strokeWidth={1.8} />']] }); // FIXED by lane K (census-media §31.13)
+// The page: the loading spinner on a badge over the poster, the page dots on a pill over the frame.
+add({ id: 'mediaViewer.pageSpinner.photoFloor', fg: color.onInk, on: 'mvSpinnerPhoto', kind: 'ui', at: [[MV, '<View style={tailStyles.spinnerBadge}><ActivityIndicator size="large" color={color.onInk} /></View>'], [MV, "spinnerBadge: { padding: 10, borderRadius: 999, backgroundColor: 'rgba(17,17,15,0.47)' },"]] }); // FIXED by lane K (census-media §31.13)
+const MV_DOTS: Needle[] = [[MV, '<View style={tailStyles.dotsPill}>{items.map((_, i) => ('], [MV, /dotsPill: \{[^}]*backgroundColor: 'rgba\(17,17,15,0\.87\)'/]];
+add({ id: 'mediaViewer.pageDot.active.photoFloor', fg: WHITE, on: 'mvDotsPhoto', kind: 'ui', at: [...MV_DOTS, [MV, /dotActive: \{\s*backgroundColor: '#fff',/]] }); // FIXED by lane K (census-media §31.13)
+add({ id: 'mediaViewer.pageDot.inactive.photoFloor', fg: W_('0.35'), on: 'mvDotsPhoto', kind: 'ui', at: [...MV_DOTS, [MV, /dot: \{[^}]*backgroundColor: 'rgba\(255,255,255,0\.35\)'/]] }); // FIXED by lane K (census-media §31.13)
+// The "Media not available" state, on the ink screen.
+add({ id: 'mediaViewer.unavailable.text', fg: W_('0.45'), on: 'ink', kind: 'text', at: [[MV, /errText: \{\s*color: 'rgba\(255,255,255,0\.45\)',/], [MV, /screen: \{\s*flex: 1,\s*backgroundColor: color\.ink,/]] });
+add({ id: 'mediaViewer.unavailable.close', fg: color.onInk, on: 'mvCloseOnInk', kind: 'ui', at: [[MV, '<X size={20} color={color.onInk} strokeWidth={2.5} />'], [MV, /closeBtnInner: \{[^}]*backgroundColor: 'rgba\(17,17,15,0\.6\)'/]] });
+
+// Measure every pair added since the last push.
+MEASURED.push(...PAIRS.slice(MEASURED.length).map(measurePair));
+
+test('census-media §31.13: no pair is pinned, and every StampButton on a Media surface passes the dark tone', () => {
+  assert.deepEqual(PAIRS.filter((p) => p.finding !== undefined).map((p) => p.id), []);
+  // All four sit on a dark backing, where the default `mute` count cannot reach 4.5:1.
+  const callers: string[] = [F.viewer, FT.gemsOverlay, FT.gridTile, MV];
+  for (const file of callers) {
+    const calls = source(file).match(/<StampButton\b[^>]*/g) ?? [];
+    assert.equal(calls.length, 1, `${file}: expected one StampButton`);
+    assert.match(calls[0], /tone="onDark"/, `${file}: a StampButton on a dark backing must pass tone="onDark"`);
+  }
+  const shipped: string[] = [];
+  walk('src/components/media', shipped);
+  const unlisted = shipped.filter((f) => /<StampButton\b/.test(source(f)) && !callers.includes(f));
+  assert.deepEqual(unlisted, [], 'a new StampButton on a Media surface must be measured and given the tone its ground needs');
 });

@@ -546,7 +546,7 @@ function PerspectiveContext({
             entityId={media.id}
             initialCount={0}
             initialIsStamped={false}
-            iconSize={22}
+            iconSize={22} tone="onDark"
             style={styles.stampBtn}
           />
         ) : null}

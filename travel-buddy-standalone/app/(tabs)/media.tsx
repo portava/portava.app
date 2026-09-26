@@ -126,7 +126,7 @@ function MediaScreenInner() {
       {/* ── Overlay header for immersive modes (Watch / Gems) ───────── */}
       {isImmersive && (
         <AppHeader
-          variant="overlay"
+          variant="overlay" overlayTint="rgba(17,17,15,0.58)"
           title={selectedMode === 'watch' ? 'Watch' : 'Gems'}
         />
       )}

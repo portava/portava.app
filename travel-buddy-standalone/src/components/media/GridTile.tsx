@@ -172,7 +172,7 @@ function GridTileInner({ item, index, cellWidth, cellHeight, onPress, isVisible 
           entityId={item.id}
           initialCount={0}
           initialIsStamped={false}
-          iconSize={16}
+          iconSize={16} tone="onDark"
         />
       </View>
     </Pressable>
@@ -282,6 +282,6 @@ const styles = StyleSheet.create({
     position: 'absolute',
     bottom: 4,
     right: 4,
-    zIndex: 6, borderRadius: 999, backgroundColor: 'rgba(17,17,15,0.95)', // census-media §31.12: an ink backing, the least alpha at which the shared StampButton's idle `mute` icon clears 3:1 over any poster
+    zIndex: 6, borderRadius: 999, backgroundColor: 'rgba(17,17,15,0.80)', // census-media §31.13: under the StampButton's onDark tone 0.80 is set by the stamped icon in `signal` (§31.12 had zIndex: 6, borderRadius: 999, backgroundColor: 'rgba(17,17,15,0.95)', for its idle `mute` icon)
   },
 });

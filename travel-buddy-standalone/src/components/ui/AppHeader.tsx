@@ -90,7 +90,7 @@ export interface AppHeaderProps {
   /** search variant only — controls the TextInput. */
   searchProps?: AppHeaderSearchProps;
   /** overlay variant: use a fully transparent background instead of the tint. */
-  transparent?: boolean;
+  transparent?: boolean; /** overlay variant (census-media §31.13): a tint in place of the default 0.28 black, e.g. one under which the white title clears 4.5:1 over any frame. Ignored when `transparent`. Absent: renders exactly as before. */ overlayTint?: string;
   /**
    * primary variant only — Reanimated animated style (from useCollapsingHeader's
    * `largeHeaderStyle`) applied to the wrapper so the large title fades and
@@ -107,7 +107,7 @@ export function AppHeader({
   rightActions = [],
   overflowActions = [],
   searchProps,
-  transparent = false,
+  transparent = false, overlayTint,
   animatedStyle,
 }: AppHeaderProps) {
   const insets = useSafeAreaInsets();
@@ -306,7 +306,7 @@ export function AppHeader({
   return (
     <>
       <View
-        style={[s.overlayOuter, { paddingTop: Math.max(insets.top, 54), backgroundColor: overlayBg }]}
+        style={[s.overlayOuter, { paddingTop: Math.max(insets.top, 54), backgroundColor: overlayTint !== undefined && !transparent ? overlayTint : overlayBg }]}
         pointerEvents="box-none"
       >
         <View style={s.bar}>
