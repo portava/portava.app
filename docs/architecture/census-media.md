@@ -5726,14 +5726,16 @@ or seed was touched.
 
 Worked from `claude/sensing-completion-20260925` at `c91cc5665`, on branch
 `lane-i`. The code and tests are in `c7822eff1`; this section is in the commit
-after it.
+after it. A follow-up commit, `1170da620`, makes the two map files and the
+Search route line-neutral against the base, so lane H's citations into them
+hold. It also fixes the selected-bubble contrast that lane H found (§29.8).
 
 ### 29.1 Row table
 
 | ID | Was | Now | Evidence |
 | --- | --- | --- | --- |
-| MD300 | **W** | **C** | §24.2's RED WHEN is met on every loader it names. The standalone map's default loader now reads through the `map_thumbnails` scope (`travel-buddy-standalone/src/features/media/screens/MediaMapScreen.tsx:65#mediaMapOffline({ city, signal: opts.signal }).then((r) =>`). The NOW lens and the Places overview Map also use that loader. The Places one-place Map (`travel-buddy-standalone/src/features/media/screens/MediaPlacesScreen.tsx:162#mediaMapOffline({ city, signal: opts.signal }).then((r) =>`) and the Experiences Map (`travel-buddy-standalone/src/features/media/screens/MediaExperiencesScreen.tsx:146#mediaMapOffline({ city, signal: opts.signal }).then((r) =>`) read through the same scope. Each cluster's `cover` is drawn on its map marker (`travel-buddy-standalone/src/features/media/components/MediaMapCanvas.tsx:116#const cover = clusterCoverImage(c);`) and on its list row (`travel-buddy-standalone/src/features/media/screens/MediaMapScreen.tsx:183#const cover = clusterCoverImage(c);`), through `CachedImage`. A video is drawn only by its poster (`travel-buddy-standalone/src/features/media/state/mediaMapCover.ts:32#if (m.mediaType === 'video') return thumb;`). When the map came from the cache, the screen shows `offline.label` (`travel-buddy-standalone/src/features/media/screens/MediaMapScreen.tsx:135#testID="media-map-cached"`), whichever loader supplied it (`travel-buddy-standalone/src/features/media/screens/MediaMapScreen.tsx:83#const { loader, cachedLabel } = useCachedLabel(`). Tests: `travel-buddy-standalone/src/features/media/__tests__/MediaMapCovers.component.test.tsx:138#describe('census-media §29 (MD300)` (4 cases, over the real cache) and `travel-buddy-standalone/src/features/media/__tests__/mapCoverAndSearchNear.test.ts:39#describe('MD300 — clusterCoverImage` (3). |
-| MD288 | **W** | **C** | §24.3's RED WHEN is met: the Search screen sends `near` with a center and a bounded radius (`travel-buddy-standalone/src/features/media/screens/MediaSearchScreen.tsx:102#const opts = { signal: o.signal, near: near.param }; return fetchMediaSearch(queryString, opts);`). The center is the place the search was opened from, or else the viewer's point (`travel-buddy-standalone/src/features/media/state/mediaFilterStore.ts:181#export function searchNearCenter(`). The radius is 1500 m (`travel-buddy-standalone/src/features/media/state/mediaFilterStore.ts:159#export const MEDIA_SEARCH_NEAR_RADIUS_M = 1_500;`). The viewer's point is the one `/media-world` hands the World shell and its Media Map (`travel-buddy-standalone/app/media-world/index.tsx:27#const coords = locationState.ok ? locationState.coords : null;`). The Search route passes the same field from its existing `useActiveLocation` call (`travel-buddy-standalone/app/media-search/index.tsx:45#viewerPoint={locationState.ok && locationState.coords ? { lat: locationState.coords.lat, lng: locationState.coords.lng } : null}`). The server's `center_unpositioned` renders as "We can't place that center" (`travel-buddy-standalone/src/features/media/screens/MediaSearchScreen.tsx:206#results?.near?.refusal === 'center_unpositioned' ? <NearRefused`). The city chip is unchanged (`travel-buddy-standalone/src/features/media/screens/MediaSearchScreen.tsx:180#onPress={() => dispatch({ type: 'set_city', city: filters.city === nearCity ? null : nearCity })}`). Tests: `travel-buddy-standalone/src/features/media/__tests__/MediaSearchNear.component.test.tsx:63#describe('census-media §29 (MD288)` (7 cases, including a CONTROL) and `travel-buddy-standalone/src/features/media/__tests__/mapCoverAndSearchNear.test.ts:59#describe('MD288 — the filter store` (5). |
+| MD300 | **W** | **C** | §24.2's RED WHEN is met on every loader it names. The standalone map's default loader now reads through the `map_thumbnails` scope (`travel-buddy-standalone/src/features/media/screens/MediaMapScreen.tsx:65#mediaMapOffline({ city, signal: opts.signal }).then((r) =>`). The NOW lens and the Places overview Map also use that loader. The Places one-place Map (`travel-buddy-standalone/src/features/media/screens/MediaPlacesScreen.tsx:162#mediaMapOffline({ city, signal: opts.signal }).then((r) =>`) and the Experiences Map (`travel-buddy-standalone/src/features/media/screens/MediaExperiencesScreen.tsx:146#mediaMapOffline({ city, signal: opts.signal }).then((r) =>`) read through the same scope. Each cluster's `cover` is drawn on its map marker (`travel-buddy-standalone/src/features/media/components/MediaMapCanvas.tsx:112#const cover = clusterCoverImage(c);`) and on its list row (`travel-buddy-standalone/src/features/media/screens/MediaMapScreen.tsx:185#<ClusterRowMark placeId={c.placeId} cover={clusterCoverImage(c)} />`), through `CachedImage`. A video is drawn only by its poster (`travel-buddy-standalone/src/features/media/state/mediaMapCover.ts:32#if (m.mediaType === 'video') return thumb;`). When the map came from the cache, the screen shows `offline.label` (`travel-buddy-standalone/src/features/media/screens/MediaMapScreen.tsx:130#testID="media-map-cached"`), whichever loader supplied it (`travel-buddy-standalone/src/features/media/screens/MediaMapScreen.tsx:83#const { loader, cachedLabel } = useCachedLabel(`). Tests: `travel-buddy-standalone/src/features/media/__tests__/MediaMapCovers.component.test.tsx:156#describe('census-media §29 (MD300)` (5 cases, over the real cache) and `travel-buddy-standalone/src/features/media/__tests__/mapCoverAndSearchNear.test.ts:39#describe('MD300 — clusterCoverImage` (3). |
+| MD288 | **W** | **C** | §24.3's RED WHEN is met: the Search screen sends `near` with a center and a bounded radius (`travel-buddy-standalone/src/features/media/screens/MediaSearchScreen.tsx:102#const opts = { signal: o.signal, near: near.param }; return fetchMediaSearch(queryString, opts);`). The center is the place the search was opened from, or else the viewer's point (`travel-buddy-standalone/src/features/media/state/mediaFilterStore.ts:181#export function searchNearCenter(`). The radius is 1500 m (`travel-buddy-standalone/src/features/media/state/mediaFilterStore.ts:159#export const MEDIA_SEARCH_NEAR_RADIUS_M = 1_500;`). The viewer's point is the one `/media-world` hands the World shell and its Media Map (`travel-buddy-standalone/app/media-world/index.tsx:27#const coords = locationState.ok ? locationState.coords : null;`). The Search route passes the same field from its existing `useActiveLocation` call (`travel-buddy-standalone/app/media-search/index.tsx:41#viewerPoint={viewerPointFrom(locationState)}`, built at `travel-buddy-standalone/app/media-search/index.tsx:71#function viewerPointFrom(`). The server's `center_unpositioned` renders as "We can't place that center" (`travel-buddy-standalone/src/features/media/screens/MediaSearchScreen.tsx:206#results?.near?.refusal === 'center_unpositioned' ? <NearRefused`). The city chip is unchanged (`travel-buddy-standalone/src/features/media/screens/MediaSearchScreen.tsx:180#onPress={() => dispatch({ type: 'set_city', city: filters.city === nearCity ? null : nearCity })}`). Tests: `travel-buddy-standalone/src/features/media/__tests__/MediaSearchNear.component.test.tsx:63#describe('census-media §29 (MD288)` (7 cases, including a CONTROL) and `travel-buddy-standalone/src/features/media/__tests__/mapCoverAndSearchNear.test.ts:59#describe('MD288 — the filter store` (5). |
 
 Both are construction verdicts. Neither is realised in production (§29.6).
 The two rows move the parsed media counts by two, from W to C. The headline is
@@ -5770,8 +5772,11 @@ works like `useOfflineLens`: it holds the "Cached · updated …" label while th
 map on screen came from the cache, and clears it on the next live answer. So
 the Places and Experiences Maps show the label too.
 
-**The cited line.** `MediaMapScreen.tsx:65` is the loader line itself, so it had
-to change. It keeps its number. §24.1's anchor for it (the old
+**The cited lines.** In the two map files and the Search route, every line of
+the base keeps its number. Edits sit on existing lines or at each file's tail,
+so this census's citations and lane H's (§27: `MediaMapCanvas.tsx` :92, :150,
+:151, and `MediaMapScreen.tsx` :262) still land. `MediaMapScreen.tsx:65` is the
+loader line itself, so it had to change. §24.1's anchor for it (the old
 `fetchMediaMap(...)` call) now sits in a note at the end of that same line, so
 §24's citation still resolves and shows what the line used to be.
 
@@ -5849,11 +5854,12 @@ Map (`MediaMapCovers.component.test.tsx`, plus the node file where named):
 | I-M1 | the standalone map's loader unwired (raw `fetchMediaMap`) | the offline standalone case; the Places case (its overview Map) |
 | I-M2 | the Places one-place loader unwired | the Places case |
 | I-M3 | the Experiences loader unwired | the Experiences case |
-| I-M4 | the cover dropped from the map marker | all 4 cases |
+| I-M4 | the cover dropped from the map marker | the 4 cover and cache cases |
 | I-M5 | the cover dropped from the list row | the cover case |
 | I-M6 | the cached label dropped | the 3 offline cases |
 | I-M7 | the default loader drops the `offline` meta | the offline standalone case |
 | I-M8 | a video cover drawn by its `url` (the video file) | the cover case; node: the poster case |
+| I-M9 | a selected bubble's count left `onInk` on its `onInk` fill (§29.8) | the selected-contrast case |
 
 Search (`MediaSearchNear.component.test.tsx`, plus the node file where named):
 
@@ -5866,7 +5872,8 @@ Search (`MediaSearchNear.component.test.tsx`, plus the node file where named):
 | I-S5 | a radius past the server bound (10 km) | 6 cases; node: 2 |
 | I-S6 | the chip never offered | 6 cases |
 
-Every mutation went red on its first run.
+All fifteen went red on their first run. I-M1 to I-M8 and I-S1 to I-S6 were
+re-run after the line-neutral rework, and each was red again.
 
 ### 29.6 Production — nothing here is deployed
 
@@ -5894,7 +5901,7 @@ so a deep link could open them (§19).
     `lint:avatar-icon-sizing` pass. The last caught a hardcoded 40 px cover
     bubble, which now uses `avatar.s40`.
   - The media node tests pass: 346 / 346, 8 of them new.
-  - The 15 media jest suites pass: 95 / 95 tests, 11 of them new, in 2 new
+  - The 15 media jest suites pass: 96 / 96 tests, 12 of them new, in 2 new
     suites.
 - **Census.**
   - `check:doc-citations` passes, including §24's anchor on
@@ -5913,3 +5920,36 @@ so a deep link could open them (§19).
   - `check:census-integrity` FAILS, and it is expected to. The rows now count
     two more C and two fewer W than the stated headline. Restating the headline
     is the integrator's job (§28.2), so this section does not.
+
+### 29.8 A selected map bubble's count was invisible — found by lane H (§27), fixed here
+
+**The defect.** Lane H measured it. A selected count bubble is filled
+`color.onInk`
+(`travel-buddy-standalone/src/features/media/components/MediaMapCanvas.tsx:150#bubbleSelected: { backgroundColor: color.onInk },`).
+Its count stayed `color.onInk` too
+(`travel-buddy-standalone/src/features/media/components/MediaMapCanvas.tsx:151#bubbleText: { color: color.onInk,`),
+which measures 1.00:1. So the count vanished the moment its cluster was
+selected.
+
+**The fix.** Both cited lines are unchanged. When the bubble is selected, the
+count is drawn in `color.ink`
+(`travel-buddy-standalone/src/features/media/components/MediaMapCanvas.tsx:203#selected && tailStyles.bubbleTextSelected`,
+`travel-buddy-standalone/src/features/media/components/MediaMapCanvas.tsx:226#bubbleTextSelected: { color: color.ink },`).
+That is the pair the Media Map's own "See these perspectives" button already
+uses, and it measures well above 4.5:1. The unselected count is unchanged. A
+cluster with a cover draws its count on its own dark badge, so this defect
+never applied to it.
+
+**Test and mutation.** The selected-contrast case is
+`travel-buddy-standalone/src/features/media/__tests__/MediaMapCovers.component.test.tsx:211#it('a SELECTED count bubble keeps its count readable`.
+It asserts four things:
+- the selected fill is `color.onInk`;
+- the count's colour differs from that fill;
+- their WCAG contrast is at least 4.5:1 (the AA threshold for 12 px text,
+  above the 3:1 floor that was asked for);
+- the unselected count is still `color.onInk`.
+
+With the selected style removed (I-M9) it goes red. Lane H's
+`mediaContrast.test.ts` pins this pair as a known failure and is not on this
+branch. The integrator reconciles that pinned value when both lanes are merged.
+No row moves: MD403 is lane H's row.
