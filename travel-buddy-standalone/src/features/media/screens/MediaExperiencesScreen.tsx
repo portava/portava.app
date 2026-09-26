@@ -10,20 +10,22 @@
  *
  * Overview/Visual render the experience mosaic plus any experience CHAIN
  * (Dinner → Rooftop → Nightclub, §23.1) derived from an experience's own places.
- * Map is deferred to the later Media Map phase. Degrades cleanly (§33/§39): an
- * unavailable/blocked experience is dropped, an all-failed load shows retry.
+ * Map is the one Media Map, restricted to the experiences' own canonical places.
+ * Degrades cleanly (§33/§39): an unavailable/blocked experience is dropped.
  */
-import React, { useCallback } from 'react';
+import React, { useCallback, useMemo } from 'react';
 import { View, Text, ScrollView, StyleSheet } from 'react-native';
 import { ChevronRight } from 'lucide-react-native';
 import { color, radius, space } from '../../../theme/tokens.ts';
 import type { PresentationMode } from '../types/mediaContext.ts';
 import type { MediaExperienceProjection, ExperienceChain } from '../types/mediaExperience.ts';
-import { fetchExperiencesByIds, buildExperienceChain } from '../services/mediaProjection.ts';
+import { fetchExperiencesByIds, buildExperienceChain, fetchMediaMap } from '../services/mediaProjection.ts';
 import { useLensProjection } from '../hooks/useLensProjection.ts';
 import { ExperienceMosaic } from '../components/ExperienceMosaic.tsx';
 import { FreshnessBadge } from '../components/FreshnessBadge.tsx';
 import { LensStateView } from '../components/LensStateView.tsx';
+import type { MediaMapCluster } from '../state/mediaMapStore.ts';
+import { MediaMapScreen } from './MediaMapScreen.tsx';
 
 export interface MediaExperiencesScreenProps {
   mode: PresentationMode;
@@ -32,13 +34,17 @@ export interface MediaExperiencesScreenProps {
    * a time; the lens fans out over these). Empty → the honest empty state.
    */
   experienceIds?: string[];
+  /** §14: tapping an experience opens its Event / Trip entry context. */
   onOpenExperience?: (experience: MediaExperienceProjection) => void;
+  /** Map mode: coarse city scope and viewport centre. */
+  city?: string | null; center?: { lat: number; lng: number } | null;
+  onOpenCluster?: (cluster: MediaMapCluster) => void;
 }
 
 export function MediaExperiencesScreen({
   mode,
   experienceIds,
-  onOpenExperience,
+  onOpenExperience, city = null, center = null, onOpenCluster,
 }: MediaExperiencesScreenProps) {
   const ids = experienceIds ?? EMPTY_IDS;
   const idsKey = ids.join(',');
@@ -52,16 +58,10 @@ export function MediaExperiencesScreen({
     (data) => data.length === 0,
     [idsKey],
   );
+  const placeKey = (state.data ?? []).flatMap((e) => e.placeIds).join(',');
 
   if (mode === 'map') {
-    return (
-      <View style={styles.placeholder}>
-        <Text style={styles.placeholderTitle}>Experiences on the map</Text>
-        <Text style={styles.placeholderBody}>
-          Geographic experience clusters arrive with the Media Map phase.
-        </Text>
-      </View>
-    );
+    return <ExperiencesMap placeKey={placeKey} city={city} center={center} onOpenCluster={onOpenCluster} />;
   }
 
   if (state.status !== 'ready' || !state.data) {
@@ -123,6 +123,43 @@ function ExperienceChainRow({ chain }: { chain: ExperienceChain }) {
 
 const EMPTY_IDS: string[] = [];
 
+/**
+ * EXPERIENCES → Map: the one Media Map, its clusters restricted to the canonical
+ * places the lens's experiences themselves name. An experience's place the world
+ * projection has no perspectives for simply has no cluster — nothing is invented.
+ */
+function ExperiencesMap({
+  placeKey,
+  city,
+  center,
+  onOpenCluster,
+}: {
+  placeKey: string;
+  city: string | null;
+  center: { lat: number; lng: number } | null;
+  onOpenCluster?: (cluster: MediaMapCluster) => void;
+}) {
+  const loadClusters = useMemo(() => {
+    const allowed = new Set(placeKey ? placeKey.split(',') : []);
+    return (opts: { signal: AbortSignal }) =>
+      fetchMediaMap({ city, signal: opts.signal }).then((r) =>
+        r.ok ? { ok: true as const, data: r.data.clusters.filter((c) => allowed.has(c.placeId)) } : r,
+      );
+  }, [placeKey, city]);
+  return (
+    <MediaMapScreen
+      city={city}
+      center={center}
+      loadClusters={loadClusters}
+      reloadKey={placeKey}
+      title="Experiences"
+      emptyTitle="No experiences on the map yet"
+      emptyMessage="Experiences appear here by the places they happen at, once those places have perspectives."
+      onOpenCluster={onOpenCluster}
+    />
+  );
+}
+
 const styles = StyleSheet.create({
   content: { paddingVertical: space.lg, gap: space.md, paddingBottom: space.xxxl },
   intro: { color: color.onInkMute, fontSize: 13, lineHeight: 18, paddingHorizontal: space.lg },
@@ -144,13 +181,4 @@ const styles = StyleSheet.create({
   chainSteps: { flexDirection: 'row', alignItems: 'center', gap: space.xs, flexWrap: 'wrap' },
   chainStep: { color: color.onInkMute, fontSize: 13, fontWeight: '700' },
   chainFooter: { flexDirection: 'row', marginTop: 2 },
-  placeholder: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: space.xl,
-    gap: space.sm,
-  },
-  placeholderTitle: { color: color.onInk, fontSize: 18, fontWeight: '800' },
-  placeholderBody: { color: color.onInkMute, fontSize: 14, lineHeight: 20, textAlign: 'center' },
 });

@@ -26,10 +26,10 @@ import { FreshnessBadge } from '../components/FreshnessBadge.tsx';
 import { LensStateView } from '../components/LensStateView.tsx';
 
 export interface MediaPeopleScreenProps {
-  onOpenMedia?: (media: MediaProjection) => void;
+  onOpenMedia?: (media: MediaProjection) => void; /** §14 People entry context — preferred over onOpenMedia (census-media §19). */ onOpenPerson?: (group: PeopleLensGroup, media: MediaProjection) => void;
 }
 
-export function MediaPeopleScreen({ onOpenMedia }: MediaPeopleScreenProps) {
+export function MediaPeopleScreen({ onOpenMedia, onOpenPerson }: MediaPeopleScreenProps) {
   const fetcher = useCallback((opts: { signal: AbortSignal }) => fetchPeople({ signal: opts.signal }), []);
   const { state, reload } = useLensProjection<PeopleLensProjection>(
     fetcher,
@@ -55,7 +55,13 @@ export function MediaPeopleScreen({ onOpenMedia }: MediaPeopleScreenProps) {
         live location.
       </Text>
       {state.data.people.map((group) => (
-        <PeopleGroupSection key={group.contributor.id} group={group} onOpenMedia={onOpenMedia} />
+        <PeopleGroupSection
+          key={group.contributor.id}
+          group={group}
+          // §14 "People → that person / social context": a tap pages THIS
+          // person's perspectives, not everyone's (census-media §19, MD90).
+          onOpenMedia={onOpenPerson ? (m) => onOpenPerson(group, m) : onOpenMedia}
+        />
       ))}
     </ScrollView>
   );

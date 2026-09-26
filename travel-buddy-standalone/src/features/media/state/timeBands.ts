@@ -13,8 +13,9 @@
  *
  * No react-native imports — safe for node:test.
  */
-import type { ObservationClass } from '../types/media.ts';
+import type { MediaProjection, ObservationClass } from '../types/media.ts';
 import type {
+  MediaTimelineProjection,
   TimeBandRenderClass,
   TimeConfidenceBand,
   TimelineBand,
@@ -94,4 +95,27 @@ export function nowStateLabel(now: TimelineBand): string {
 /** True when the Now band should render its live treatment (never fabricated). */
 export function nowIsLive(now: TimelineBand): boolean {
   return now.live && now.items.some((it) => it.live);
+}
+
+/**
+ * The observed EARLIER perspectives on a timeline, newest first, de-duplicated —
+ * what MediaTimelineScreen shows under the rail (census-media §19, MD26). Only an
+ * `observed` item with real media qualifies: a pattern or a forecast is never
+ * rendered as a perspective somebody captured.
+ */
+export function earlierPerspectives(timeline: MediaTimelineProjection | null | undefined): MediaProjection[] {
+  if (!timeline) return [];
+  const seen = new Set<string>();
+  const out: MediaProjection[] = [];
+  for (const it of timeline.bands.earlier.items) {
+    const m = it.media;
+    if (!m || !m.id || seen.has(m.id) || it.renderClass !== 'observed') continue;
+    seen.add(m.id);
+    out.push(m);
+  }
+  const t = (m: MediaProjection) => {
+    const v = Date.parse(m.capturedAt ?? '');
+    return Number.isFinite(v) ? v : -Infinity;
+  };
+  return out.sort((a, b) => t(b) - t(a));
 }

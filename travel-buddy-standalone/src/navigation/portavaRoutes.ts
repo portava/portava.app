@@ -1036,6 +1036,37 @@ export const PORTAVA_ROUTES: PortavaRouteDefinition[] = [
     icon: null,
     requiresAuth: false,
   },
+  {
+    key: 'media-map',
+    path: 'media-map/index',
+    title: 'Media Map',
+    parent: null,
+    icon: null,
+    requiresAuth: false,
+    // §4/§21 Media Map (census-media §19). Additive; reached from the World
+    // shell's lens Map modes and by deep link. Positions come from the
+    // canonical Map gateway — the screen owns no location engine.
+  },
+  {
+    key: 'media-search',
+    path: 'media-search/index',
+    title: 'Media Search',
+    parent: null,
+    icon: null,
+    requiresAuth: false,
+    // §4/§38 Media Search (census-media §19). Additive; reached from the World
+    // shell header and the viewer's "Where was this taken?".
+  },
+  {
+    key: 'media-timeline',
+    path: 'media-timeline/index',
+    title: 'Media Timeline',
+    parent: null,
+    icon: null,
+    requiresAuth: false,
+    // §4/§17 Media Timeline / Time Rail (census-media §19). Also mounted as the
+    // Time mode of the NOW and PLACES lenses.
+  },
 
   // ── Posts ─────────────────────────────────────────────────────────────────
 

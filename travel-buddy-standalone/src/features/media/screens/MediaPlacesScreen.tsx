@@ -8,31 +8,27 @@
  * · Rooftops …), and, in Time mode, the observed-vs-forecast rail (§17).
  *
  * Everything degrades cleanly while /media/places/:id is landing in the parallel
- * backend PR (a 404 → empty state, never a crash).
+ * backend PR (a 404 → empty state, never a crash). Map mode is the one Media
+ * Map (census-media §19): the lens's places positioned by the canonical Map.
  */
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import { View, Text, Pressable, ScrollView, StyleSheet } from 'react-native';
 import { ChevronLeft, MapPin, Compass, ChevronRight } from 'lucide-react-native';
 import { color, radius, space } from '../../../theme/tokens.ts';
 import type { PresentationMode, CityVisualZone } from '../types/mediaContext.ts';
 import type { PlaceCurrentView } from '../types/perspective.ts';
 import type { MediaProjection } from '../types/media.ts';
-import type { MediaTimelineProjection } from '../types/mediaTimeline.ts';
-import {
-  fetchPlaceView,
-  isPlaceViewEmpty,
-  fetchTimeline,
-  isTimelineEmpty,
-  mapTimeline,
-} from '../services/mediaProjection.ts';
+import { fetchPlaceView, isPlaceViewEmpty, fetchMediaMap } from '../services/mediaProjection.ts';
 import { useLensProjection } from '../hooks/useLensProjection.ts';
 import { CurrentPictureBadge } from '../components/CurrentPictureBadge.tsx';
 import { IntelligenceStrip } from '../components/IntelligenceStrip.tsx';
 import { PerspectiveMosaic } from '../components/PerspectiveMosaic.tsx';
-import { MediaTimeRail } from '../components/MediaTimeRail.tsx';
 import { LensStateView } from '../components/LensStateView.tsx';
 import { relativeAgeLabel } from '../state/freshness.ts';
 import { zoneStateLabel } from '../state/cityPulse.ts';
+import type { MediaMapCluster } from '../state/mediaMapStore.ts';
+import { MediaMapScreen } from './MediaMapScreen.tsx';
+import { MediaTimelineScreen } from './MediaTimelineScreen.tsx';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -48,6 +44,11 @@ export interface MediaPlacesScreenProps {
    */
   onOpenPerspective?: (args: { media: MediaProjection; view: PlaceCurrentView }) => void;
   onAskCompass?: (placeId: string) => void;
+  /** Map mode: coarse city scope and viewport centre (census-media §19). */
+  city?: string | null;
+  center?: { lat: number; lng: number } | null;
+  /** §14 Map entry context from a selected place's map cluster. */
+  onOpenCluster?: (cluster: MediaMapCluster) => void;
 }
 
 export function MediaPlacesScreen({
@@ -56,6 +57,9 @@ export function MediaPlacesScreen({
   onOpenMedia,
   onOpenPerspective,
   onAskCompass,
+  city = null,
+  center = null,
+  onOpenCluster,
 }: MediaPlacesScreenProps) {
   const [selected, setSelected] = useState<{ id: string; name: string } | null>(null);
 
@@ -69,6 +73,22 @@ export function MediaPlacesScreen({
         onOpenMedia={onOpenMedia}
         onOpenPerspective={onOpenPerspective}
         onAskCompass={onAskCompass}
+        city={city}
+        center={center}
+        onOpenCluster={onOpenCluster}
+      />
+    );
+  }
+
+  if (mode === 'map') {
+    // PLACES → Map: the lens's places on the one Media Map. Opening a cluster
+    // SELECTS that place in this lens (its current view), rather than leaving it.
+    return (
+      <MediaMapScreen
+        city={city}
+        center={center}
+        title="Places"
+        onOpenCluster={(c) => setSelected({ id: c.placeId, name: c.label })}
       />
     );
   }
@@ -114,6 +134,9 @@ function PlaceDetail({
   onOpenMedia,
   onOpenPerspective,
   onAskCompass,
+  city,
+  center,
+  onOpenCluster,
 }: {
   placeId: string;
   placeName: string;
@@ -122,7 +145,19 @@ function PlaceDetail({
   onOpenMedia?: (media: MediaProjection) => void;
   onOpenPerspective?: (args: { media: MediaProjection; view: PlaceCurrentView }) => void;
   onAskCompass?: (placeId: string) => void;
+  city: string | null;
+  center: { lat: number; lng: number } | null;
+  onOpenCluster?: (cluster: MediaMapCluster) => void;
 }) {
+  // Map mode for ONE place: the world's clusters restricted to this place, so
+  // the map shows where it sits without inventing a point if the Map has none.
+  const loadThisPlace = useMemo(
+    () => (opts: { signal: AbortSignal }) =>
+      fetchMediaMap({ city, signal: opts.signal }).then((r) =>
+        r.ok ? { ok: true as const, data: r.data.clusters.filter((c) => c.placeId === placeId) } : r,
+      ),
+    [city, placeId],
+  );
   const fetcher = useCallback(
     (opts: { signal: AbortSignal }) => {
       // The §43 place view is keyed by a canonical place UUID. A zone that is only
@@ -171,7 +206,18 @@ function PlaceDetail({
         // The §17 Time rail is its own place-scoped projection (GET /media/timeline),
         // independent of the current-picture load, so it renders even when this
         // place has no observed media yet (it may still carry Typical / Likely-Next).
-        <PlaceTimeRail placeId={placeId} />
+        <MediaTimelineScreen placeId={placeId} label={view?.placeName ?? placeName} onOpenMedia={onOpenMedia} />
+      ) : mode === 'map' ? (
+        <MediaMapScreen
+          city={city}
+          center={center}
+          loadClusters={loadThisPlace}
+          reloadKey={placeId}
+          title={view?.placeName ?? placeName}
+          emptyTitle="Not on the map yet"
+          emptyMessage="This place appears on the map once it has perspectives the map can place."
+          onOpenCluster={onOpenCluster}
+        />
       ) : state.status !== 'ready' || !view ? (
         <LensStateView
           status={state.status === 'idle' ? 'loading' : state.status}
@@ -210,24 +256,18 @@ function PlaceDetail({
             </View>
           ) : null}
 
-          {mode === 'map' ? (
-            <Text style={styles.mapNote}>
-              Place-level perspective clusters on the map arrive with the Media Map phase.
-            </Text>
-          ) : (
-            <PerspectiveMosaic
-              media={view.heroMedia}
-              groups={view.groups}
-              // §14: prefer the contextual open (hands the whole current view so the
-              // viewer can navigate this place's OTHER perspectives), else the
-              // generic per-item open.
-              onOpen={
-                onOpenPerspective
-                  ? (media) => onOpenPerspective({ media, view })
-                  : onOpenMedia
-              }
-            />
-          )}
+          <PerspectiveMosaic
+            media={view.heroMedia}
+            groups={view.groups}
+            // §14: prefer the contextual open (hands the whole current view so the
+            // viewer can navigate this place's OTHER perspectives), else the
+            // generic per-item open.
+            onOpen={
+              onOpenPerspective
+                ? (media) => onOpenPerspective({ media, view })
+                : onOpenMedia
+            }
+          />
         </ScrollView>
       )}
     </View>
@@ -241,49 +281,6 @@ function zoneSubtitle(z: CityVisualZone): string {
     return `${z.perspectiveCount} ${z.perspectiveCount === 1 ? 'perspective' : 'perspectives'}`;
   }
   return 'Tap to see its current picture';
-}
-
-/**
- * PLACES → Time mode: the §17 four-band rail for a place, sourced from the real
- * GET /media/timeline bands (Earlier / Now / Typical / Likely-Next). Loads
- * independently of the current-picture view and degrades cleanly (§33/§39):
- * empty ⇒ empty bands (rendered as neutral states), a failed refresh keeps the
- * last good data (SWR) but is flagged `stale` so it is never shown as live.
- */
-function PlaceTimeRail({ placeId }: { placeId: string }) {
-  const fetcher = useCallback(
-    (opts: { signal: AbortSignal }) => {
-      // A label-only zone (no canonical place UUID) has no place-scoped timeline;
-      // short-circuit to a well-formed empty projection rather than a doomed call.
-      if (!UUID_RE.test(placeId)) {
-        return Promise.resolve({ ok: true as const, data: mapTimeline({}) });
-      }
-      return fetchTimeline({ placeId, signal: opts.signal });
-    },
-    [placeId],
-  );
-  const { state, reload } = useLensProjection<MediaTimelineProjection>(fetcher, isTimelineEmpty, [placeId]);
-  const timeline = state.data;
-  // A 'ready' status that still carries an error kind = a failed refresh over
-  // good data (SWR). Treat that data as stale so the Now band is not shown live.
-  const stale = state.status === 'ready' && state.errorKind != null;
-
-  if (timeline && (state.status === 'ready' || state.status === 'empty' || state.status === 'revalidating')) {
-    return (
-      <ScrollView contentContainerStyle={styles.timeScroll} showsVerticalScrollIndicator={false}>
-        <Text style={styles.timeIntro}>Earlier · Now · Typical · Likely next</Text>
-        <MediaTimeRail bands={timeline.bands} stale={stale} />
-      </ScrollView>
-    );
-  }
-  return (
-    <LensStateView
-      status={state.status === 'idle' ? 'loading' : state.status}
-      title="No timeline yet"
-      message="Earlier, Now, Typical and Likely-Next fill in as this place gathers perspectives and intelligence."
-      onRetry={reload}
-    />
-  );
 }
 
 const styles = StyleSheet.create({
@@ -317,13 +314,4 @@ const styles = StyleSheet.create({
   areaLabel: { color: color.onInkMute, fontSize: 13, fontWeight: '700', marginTop: -2 },
   coverage: { color: color.onInkMute, fontSize: 13, fontWeight: '600' },
   heroStripBlock: { paddingHorizontal: space.lg },
-  timeScroll: { paddingTop: space.sm, paddingBottom: space.xxxl, gap: space.md },
-  timeIntro: {
-    color: color.onInkMute,
-    fontSize: 12,
-    fontWeight: '700',
-    letterSpacing: 0.4,
-    paddingHorizontal: space.lg,
-  },
-  mapNote: { color: color.onInkMute, fontSize: 14, lineHeight: 20, paddingHorizontal: space.lg },
 });

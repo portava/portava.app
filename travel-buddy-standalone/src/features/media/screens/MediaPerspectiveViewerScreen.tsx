@@ -75,7 +75,7 @@ import {
   firstIndexOfGroup,
   relatedPerspectives,
 } from '../state/perspectiveViewer.ts';
-import { relativeAgeLabel } from '../state/freshness.ts';
+import { relativeAgeLabel } from '../state/freshness.ts'; import { MediaContextSheet } from '../components/MediaContextSheet.tsx'; // §7 (census-media §19) — on this line so nothing below moves
 
 const { width: SCREEN_W } = Dimensions.get('window');
 
@@ -88,7 +88,7 @@ export interface MediaPerspectiveViewerScreenProps {
   /** §14 "View Place" — open the entity's place screen (when a place id is known). */
   onViewPlace?: (placeId: string) => void;
   /** §14 "Ask Compass" — hand the entity to Compass. */
-  onAskCompass?: (entityId: string | null) => void;
+  onAskCompass?: (entityId: string | null) => void; /** §7 context sheet links (census-media §19, MD314). */ onNavigate?: (href: string) => void;
 }
 
 export function MediaPerspectiveViewerScreen({
@@ -96,7 +96,7 @@ export function MediaPerspectiveViewerScreen({
   initialMediaId,
   onClose,
   onViewPlace,
-  onAskCompass,
+  onAskCompass, onNavigate,
 }: MediaPerspectiveViewerScreenProps) {
   const insets = useSafeAreaInsets();
 
@@ -106,7 +106,7 @@ export function MediaPerspectiveViewerScreen({
     [input],
   );
 
-  const empty = isEmptyCollection(collection);
+  const empty = isEmptyCollection(collection); const [contextOpen, setContextOpen] = useState(false);
 
   const [activeIndex, setActiveIndex] = useState(() =>
     collection ? initialIndexForMedia(collection, initialMediaId) : 0,
@@ -174,8 +174,8 @@ export function MediaPerspectiveViewerScreen({
       />
 
       {/* Top bar — back to the entity + overflow. */}
-      <TopBar entityLabel={entityLabel} onClose={onClose} insetsTop={insets.top} />
-
+      <TopBar entityLabel={entityLabel} onClose={onClose} insetsTop={insets.top} onMore={activeMedia ? () => setContextOpen(true) : undefined} />
+      {activeMedia ? <MediaContextSheet visible={contextOpen} media={activeMedia} entry={input ? { kind: input.kind, entityId: collection.entityId, entityLabel } : null} onClose={() => setContextOpen(false)} onNavigate={onNavigate} /> : null}
       {/* Bottom contextual overlay. */}
       <View
         style={[styles.overlay, { paddingBottom: Math.max(insets.bottom + space.md, space.xl) }]}
@@ -228,11 +228,11 @@ export function MediaPerspectiveViewerScreen({
 function TopBar({
   entityLabel,
   onClose,
-  insetsTop,
+  insetsTop, onMore,
 }: {
   entityLabel: string | null;
   onClose: () => void;
-  insetsTop: number;
+  insetsTop: number; onMore?: () => void;
 }) {
   return (
     <View style={[styles.topBar, { paddingTop: insetsTop + space.sm }]} pointerEvents="box-none">
@@ -252,9 +252,9 @@ function TopBar({
       ) : (
         <View style={{ flex: 1 }} />
       )}
-      <View style={styles.iconBtn} pointerEvents="none">
+      <Pressable style={styles.iconBtn} onPress={onMore} disabled={!onMore} accessibilityRole="button" accessibilityLabel="What this is part of" testID="perspective-viewer-context" hitSlop={8}>
         <MoreHorizontal size={20} color={color.onInk} strokeWidth={2.2} />
-      </View>
+      </Pressable>
     </View>
   );
 }
