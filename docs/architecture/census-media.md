@@ -4867,3 +4867,26 @@ M4 survived the first version of test 6. That test had no later branch that woul
 W151 belongs to census-wall and is left for its owner to re-read.
 
 **Branch versus production.** This fix is built on the branch. It is not merged and not deployed. Production still refuses the one variant it holds to every non-owner until this code ships. No flag gates the fix, so deploying it is the whole production step.
+
+### 23.8 Three stale records of the canonical flag, superseded in place
+
+§23.2 corrected this census's own sentences about `media_canonical_enabled`. Three
+records outside it still said the 2026-09-07 thing. On 2026-09-26 the flag and
+the schema were re-read, read-only, from production:
+- `media_canonical_enabled` is FALSE, `updated_at` 2026-09-25 15:39:58 UTC.
+- `media_assets` has all four of 2250's columns (`captured_at`,
+  `intelligence_eligibility`, `location_visibility`, `provenance`).
+- The ledger has `2470_media_asset_canonical_columns_flag_agnostic.sql`,
+  `manual`, 2026-09-16.
+
+Each record is marked superseded in place, so none of the citations into it moves:
+- `artifacts/api-server/src/lib/mediaAssets.ts:13#THE FLAG IS NOT OFF. MEASURED 2026-09-07`.
+  The note is appended to the same line. The 09-07 text is kept as the record
+  it was, so §20.5's and §23.2's citations still resolve.
+- `docs/architecture/blocker-ledger.md`, the `MEDIA_CANONICAL_FLAG` row.
+- `docs/architecture/migration-disposition-ledger.md:154#MEDIA_CANONICAL_FLAG`.
+
+Both ledger rows now say the original condition no longer holds. What remains
+the owner's is whether to turn the canonical writer back on, which 3321
+requires before it will run on production. No executable line changed, and no
+verdict moves.

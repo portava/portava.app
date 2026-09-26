@@ -10,7 +10,7 @@
  * exactly as before. The idempotent backfill script
  * (scripts/backfill-media-assets.ts) links pre-existing media.
  *
- * THE FLAG IS NOT OFF. MEASURED 2026-09-07 (do not infer this from 0191's seed):
+ * THE FLAG IS NOT OFF. MEASURED 2026-09-07 (do not infer this from 0191's seed): [SUPERSEDED. Re-measured read-only 2026-09-26: production reads FALSE (set 2026-09-25 15:39 UTC) and 2470's four columns are present, so the writer is off BY THE FLAG, not refused by the schema; census-media §23.2. The 09-07 text below is kept as the record it was.]
  *
  *   travel-buddy  ajrurzioarfkagpuxfnb  (production)  media_canonical_enabled = TRUE
  *   portava-ci    hwokxgbmezheskbzskfr  (CI)          NO ROW AT ALL -> false
