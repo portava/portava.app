@@ -3230,3 +3230,381 @@ exists for — old code against new schema failing *quietly* rather than loudly.
 
 Totals unchanged. MD162 and MD197 both stay `N`, on tests re-executed today
 rather than carried forward.
+
+## 22. §37 video transport, §39 offline mode and the §40 client services — 2026-09-26
+
+Lane D of the 2026-09-26 media pass, on branch `claude/media-lane-d-20260926`
+from `bae9ea2d4`. It owns the twenty-one rows of §37 (video), §39 (offline /
+degraded mode) and the §40 client service modules. It moves fourteen of them
+and leaves seven open, each with the thing that would move it and who can
+supply that thing.
+
+**Implementation is graded here. Production verification is not, and is stated
+separately for every moved row in §22.4.** Nothing in this section is merged,
+deployed or flag-enabled. Where the requirement is device behaviour — resume
+after an app kill, a background transfer, a cache read with the radio off — the
+proof is a test over injected fakes plus real HTTP against a fake Storage, never
+a device run, and the row says so.
+
+### 22.1 What was built
+
+**§37 server — the container states its own duration and size.**
+`artifacts/api-server/src/lib/videoProbe.ts:83#export function probeVideoContainer`
+reads ISO-BMFF (`mvhd`, `mehd`, per-track `mdhd`, `moof`/`trun` fragments, the
+`tkhd` display matrix) and Matroska `Info`/`Tracks`, and returns the display
+size after rotation. It is total — every truncation of a real file returns a
+probe or null — and refuses implausible values rather than reporting them.
+The fixtures are six real ffmpeg 6.0 files (MP4 with moov-after-mdat, a
+portrait clip coded 64×48 with a 90° matrix, a faststart QuickTime file, VP8
+WebM, a fragmented MP4 whose `mvhd` says 0, audio-only M4A).
+`POST /media/upload` probes the raw bytes
+(`artifacts/api-server/src/routes/posts.ts:146#probeVideoContainer(rawBody)`),
+returns the measured duration
+(`artifacts/api-server/src/routes/posts.ts:284#durationSeconds: probedDurationSeconds(videoProbe)`)
+and writes it onto the canonical row as `media_assets.duration_ms`, a column
+with no writer on this path until now
+(`artifacts/api-server/src/routes/posts.ts:273#recordMeasuredDuration(sc, assetId, videoProbe)`,
+`artifacts/api-server/src/lib/mediaVideoPoster.ts:175#export async function recordMeasuredDuration(`).
+The postcard `/complete` stores the measured duration and size over what the
+client declared
+(`artifacts/api-server/src/routes/postcards.ts:952#resolveStoredDuration(probedVideo, p.durationSeconds)`,
+policy at `artifacts/api-server/src/lib/videoProbe.ts:113#export function resolveStoredDuration`).
+It falls back to the declared figure only when the container states no
+duration at all, and logs that case at warn.
+
+**§37 server — a poster for every video, shown to exactly the video's audience.**
+The device cuts the frame, because this server has no video decoder. The server
+re-encodes it with no metadata
+(`artifacts/api-server/src/lib/mediaProcessing.ts:421#export async function makeVideoPoster`)
+and stores it at a path it DERIVES from the video: `<storage_path>.poster.jpg`.
+There are two routes, one per upload transport:
+
+- For a reserved postcard slot, the route is
+  `artifacts/api-server/src/routes/postcardMediaTransport.ts:176#"/postcards/:id/media/:mediaId/poster"`.
+  `/complete` admits no thumbnail path except that slot's own poster
+  (`artifacts/api-server/src/routes/postcards.ts:949#admissiblePosterPath(storagePath, p.thumbnailPath)`)
+  and writes it into the column the Watch feed reads
+  (`artifacts/api-server/src/routes/postcards.ts:987#thumbnail_storage_path: poster.path`).
+  Before this, `/complete` stored whatever `thumbnailPath` a client sent.
+- For a general upload, the route is
+  `artifacts/api-server/src/routes/mediaVideoPoster.ts:46#"/media/upload/poster"`.
+  It serves only the caller's own video, only in the `/media/upload` layout,
+  only within an hour of the upload
+  (`artifacts/api-server/src/lib/mediaVideoPoster.ts:57#export function parseOwnVideoPath`),
+  and it writes the poster once, with no swap. It records the poster on the
+  owner's canonical row
+  (`artifacts/api-server/src/lib/mediaVideoPoster.ts:138#export async function recordPosterOnAsset(`).
+  That is the writer for `media_assets.thumbnail_path` on video which the §14.4
+  register asked for. If the row has not landed yet, the miss is reported as
+  `assetRecorded: false` and never claimed.
+
+Authorization is by derivation rather than by row:
+`artifacts/api-server/src/lib/mediaAccess.ts:369#return decide(sc, viewerId, bucket, posterOf)`
+decides a poster exactly as the video it was cut from, and
+`artifacts/api-server/src/lib/mediaAccess.ts:907#return mediaAccessDeadline(sc, viewerId, bucket, posterOf)`
+gives it the video's story deadline, so a signed poster URL cannot outlive the
+story. `artifacts/api-server/src/lib/mediaPosterPath.ts:41#export function derivedPosterBase`
+refuses anything whose base is not a video. It also refuses anything under
+the client-writable `memories/` and `stories/` prefixes (the out-of-band storage
+grant `scripts/auditStagingBoundaryGrant.ts` documents), because the server
+never EXIF-stripped those objects. The client sends its frame to the derived
+route
+(`travel-buddy-standalone/src/services/media.ts:249#extractAndUploadVideoThumbnail(media.uri, token, (body as any)?.path ?? null)`,
+`travel-buddy-standalone/src/services/media/generalVideoPoster.ts:53#export async function attachVideoPoster(`).
+It falls back to the previous behaviour, a plain image upload, only against an
+API that lacks the route. Two helpers post to `/api/media/upload` without going
+through `uploadMedia`, so their videos had no frame at all. They now attach the
+poster in the background, with no image fallback, because they never had one:
+stories at `travel-buddy-standalone/src/services/stories.ts:116#attachPosterInBackground(json?.path, localUri, token)`
+and memories at `travel-buddy-standalone/src/services/memories.ts:313#attachPosterInBackground(json?.path, localUri, token)`. The postcard composer uploads a poster before
+`/complete`
+(`travel-buddy-standalone/src/components/PostcardComposer.tsx:356#await uploadVideoPoster(postId, mediaId, upload.uri)`).
+
+**§37 — resumable, retried, queued transport (ships OFF).** On the server, the
+slot is the resume token. `artifacts/api-server/src/routes/postcardMediaTransport.ts:212#"/postcards/:id/media/:mediaId/upload-session"`
+lists which 4 MiB parts already landed and signs only the missing ones.
+`artifacts/api-server/src/routes/postcardMediaTransport.ts:253#"/postcards/:id/media/:mediaId/upload-session/assemble"`
+concatenates the parts into the slot's own object
+(`artifacts/api-server/src/lib/postcardMediaTransport.ts:231#export async function assembleParts(`).
+Before it does, it re-checks every part's downloaded size against the listing,
+the total against the size declared at reservation, and the assembled bytes'
+kind. A part of the wrong size counts as MISSING, not received
+(`artifacts/api-server/src/lib/postcardMediaTransport.ts:114#export function summarizeParts(`).
+On the client, `travel-buddy-standalone/src/services/media/uploadRetry.ts:85#export async function withRetry`
+applies full-jitter backoff, honours `Retry-After`, retries no-answer, 408, 425,
+429 and 5xx, and never retries another 4xx.
+`travel-buddy-standalone/src/services/media/resumableUpload.ts:109#export async function uploadSlotResumable(`
+resumes from what landed. `travel-buddy-standalone/src/services/media/postcardUploadPipeline.ts:141#export async function runPostcardUpload`
+persists every stage, so a new process resumes a job without re-creating the
+post.
+`travel-buddy-standalone/src/services/media/postcardUploadQueue.ts:64#export class PostcardUploadQueue`
+is account-scoped and stops if the account changes mid-drain. Each part is an
+OS background transfer of exactly its byte range
+(`travel-buddy-standalone/src/services/media/backgroundTransfer.ts:142#sessionType: mod.FileSystemSessionType.BACKGROUND,`),
+and the queue is resumed on every foreground
+(`travel-buddy-standalone/src/services/media/postcardUploadDevice.ts:135#export function installPostcardUploadResume`,
+mounted at `travel-buddy-standalone/app/_layout.tsx:402#<MediaUploadResumeSetup />`).
+The whole path is gated by a client constant that is FALSE
+(`travel-buddy-standalone/src/services/media/uploadTransportFlag.ts:19#DEFAULT_ENABLED = false`).
+With it off, the composer takes the pre-existing signed-PUT path. The only
+changes on that path are the poster and the MD320 envelope check.
+
+**§39 — an offline media cache that is scoped, aged, account-isolated and revocable.**
+`travel-buddy-standalone/src/services/media/mediaCache.ts:228#export class MediaCache`
+keeps one scope per §39 line that has a projection to cache, each with its own
+TTL and cap (`travel-buddy-standalone/src/services/media/mediaCache.ts:63#export const SCOPE_POLICY`).
+It evicts least-recently-read first and holds a global image byte budget.
+It keys every entry by account and writes nothing without one, and it stores no
+coordinate at any depth
+(`travel-buddy-standalone/src/services/media/mediaCache.ts:113#export function scrubCoordinates`).
+Every read re-ages the payload
+(`travel-buddy-standalone/src/services/media/mediaCache.ts:137#export function decayFreshness`),
+so freshness only decays and nothing reads live. A live crowd label is never
+served from the cache, and neither is a §18 consensus
+(`travel-buddy-standalone/src/services/media/mediaCache.ts:158#if ('consensus' in src) out.consensus = null;`).
+The cache answers only on an OUTAGE. A server answer of "nothing here" deletes
+the copy, and an auth failure is never covered.
+The lenses read through it:
+
+- Places: `travel-buddy-standalone/src/features/media/screens/MediaPlacesScreen.tsx:134#placeViewOffline(placeId, { signal: opts.signal })`
+  over `travel-buddy-standalone/src/services/media/mediaOffline.ts:147#export function placeViewOffline(`.
+- People: `travel-buddy-standalone/src/features/media/screens/MediaPeopleScreen.tsx:33#peopleOffline({ signal: opts.signal })`,
+  which stores only the Trip Crew groups
+  (`travel-buddy-standalone/src/services/media/mediaOffline.ts:216#export function crewSlice`).
+- Experiences: `travel-buddy-standalone/src/features/media/screens/MediaExperiencesScreen.tsx:46#experiencesOffline(ids, { signal: opts.signal })`.
+  A trip is filed as trip media and an event as event checkpoint visuals, and a
+  mixed list is labelled by its OLDEST member.
+
+Each lens renders the §39 "Cached · updated …" label whenever what is on screen
+came from the cache, for example
+`travel-buddy-standalone/src/features/media/screens/MediaPlacesScreen.tsx:342#{cachedLabel ? <Text`.
+Private images resolve to the cached local file only when the sign endpoint is
+UNREACHABLE. A DENIAL purges the copy
+(`travel-buddy-standalone/src/services/mediaUrl.ts:102#await applyOfflineCopies(unsigned, result)`).
+Saved places and current or upcoming trips are cached BEFORE they are needed
+(`travel-buddy-standalone/src/services/media/mediaOffline.ts:267#export async function prepareOfflineMedia`,
+`travel-buddy-standalone/src/services/media/mediaOfflineDevice.ts:72#export function installMediaOfflineWarmup(`).
+That warm-up is mounted only while `MEDIA_WORLD_SHELL_ENABLED` is on
+(`travel-buddy-standalone/app/_layout.tsx:403#<MediaOfflineWarmupSetup />`).
+
+**§40 services, under `travel-buddy-standalone/src/services/media/`.** They sit
+beside `features/media/services/`, not inside it, because the file ownership
+for this pass split those trees. §40 is judged by responsibility; the path
+divergence is recorded, not hidden.
+
+- **mediaProcessing.** `travel-buddy-standalone/src/services/media/mediaProcessing.ts:160#export async function prepareImageForUpload`
+  brings a photo inside the server's envelope on the device and FAILS CLOSED
+  when a required resize fails. It resizes only OUTSIDE the envelope
+  (`travel-buddy-standalone/src/services/media/mediaProcessing.ts:95#export function imageUploadPlan`)
+  on purpose: a re-encode on the device destroys the EXIF capture time the
+  server reads for `captured_at` before it strips the metadata. So a 12 MB photo
+  inside the envelope still travels whole, and that is the correct trade. The
+  postcard composer consumes it
+  (`travel-buddy-standalone/src/components/PostcardComposer.tsx:285#const upload = await withinServerEnvelope(asset);`).
+  A drift guard pins the client envelope to the server constants it mirrors.
+- **mediaPrivacy.** `travel-buddy-standalone/src/services/media/mediaPrivacy.ts:83#export const DISCLOSURE`
+  is one table of what each location choice discloses to a non-author. The
+  words the post composer shows
+  (`travel-buddy-standalone/src/services/media/mediaPrivacy.ts:133#export function locationPrivacyHint(`),
+  its choices and its request fields are all derived from that table
+  (`travel-buddy-standalone/src/components/PulseCreate.tsx:700#{LOCATION_CHOICES.map(`,
+  `travel-buddy-standalone/src/components/PulseCreate.tsx:713#locationPrivacyHint(locationPrivacyMode`,
+  `travel-buddy-standalone/src/components/PulseCreate.tsx:432#...locationRequestFields(locationPrivacyMode, scheduledTime),`).
+  `artifacts/api-server/src/test/mediaPrivacyClientParity.test.ts` runs the
+  table against the server's own `mapPublicPost`,
+  `locationPrivacyModeToCeiling` and the create route's default, for every
+  mode. See §22.6 for what the old copy promised.
+- **mediaIntelligence.** `travel-buddy-standalone/src/services/media/mediaIntelligence.ts:65#export function mapVisualConsensus`
+  reads the §18 Visual Consensus the server has served on every place
+  projection since 2026-09-14 (§14). The client had dropped it. The current-picture badge now
+  takes its strength and count from FRESH independent witnesses
+  (`travel-buddy-standalone/src/services/media/mediaIntelligence.ts:104#export function currentPictureFromConsensus(`,
+  wired at `travel-buddy-standalone/src/features/media/services/mediaProjection.ts:544#currentPictureFromConsensus(consensus`).
+  Before, it counted every perspective of any age
+  (`artifacts/api-server/src/services/media/MediaPerspectiveService.ts:193#independentSourceCount: countIndependentSources(media, opts.groupKeyById),`),
+  so three sources from last month rendered as a strong CURRENT picture. A
+  material dispute caps the badge at low. It can only lower confidence, never
+  raise it. The Places lens shows "Mixed reports — conditions may be changing"
+  exactly when the server says the reports disagree
+  (`travel-buddy-standalone/src/features/media/screens/MediaPlacesScreen.tsx:185#<PictureCaveats cachedLabel={cachedLabel} consensus={view.consensus ?? null} />`,
+  rendering `travel-buddy-standalone/src/features/media/screens/MediaPlacesScreen.tsx:343#{banner ? <Text`).
+- **mediaCache.** The §39 module above.
+
+### 22.2 Mutations, and what each turned red
+
+Every implementation below was mutated and the named test seen to fail. The
+harness applies one textual mutation, runs the suite, and restores the file
+byte-exact. **Five mutations did NOT redden their suite on the first run. Each
+is reported as a survivor, with the test that was strengthened until it did.**
+
+| Id | Mutation | Turned red |
+| --- | --- | --- |
+| S1 · S5 | probe: ignore the display matrix / invert the rotation direction | "a PORTRAIT phone clip is stored at its DISPLAY size" |
+| S2 · S3 | drop the fragment-sum / Matroska duration path | the fragmented-MP4 and WebM probe cases |
+| S4 | treat an all-ones `mvhd` duration as a value | **SURVIVED first.** The fixture's timescale made the bogus value fall inside the plausibility bound. The test now uses 90 kHz, and "an all-ones 'unknown' mvhd duration is null — not 13 hours" is red. |
+| S6 · S7 · S22 · S18 | `/complete` or `/media/upload` store/return the declared duration or size | "postcard /complete stores the MEASURED duration and size…", "POST /media/upload returns the PROBED duration…" |
+| S8 · S9 | `/complete` accepts any `thumbnailPath` | "/complete REFUSES a thumbnailPath that is not this slot's poster" |
+| S10 · S11 | poster authorized by row instead of by its video | "mediaAccess authorizes a poster EXACTLY as its video…" |
+| S12 · S13 · S14 | wrong-sized part counted as received; assembled junk kept; every part re-signed | the three MD281 on-the-wire session tests |
+| S21 | skip the post-listing size re-check at assemble | **SURVIVED first.** No test replaced a part mid-assembly. The added test "a part whose BYTES disagree with the listing … is refused" is now red. |
+| S15 · S16 · S19 · S20 · S17 | poster keeps EXIF; image slot takes a poster; emergency stop ignored; non-owner accepted; delete leaves poster/parts | their named route tests |
+| G1 | drop the `duration_ms` write from `/media/upload` | "the canonical row carries the probed size, and duration_ms = 1500…" |
+| G2 · G3 · G8 | general poster for another user's / an old / a missing video | the three `parseOwnVideoPath` and route refusal tests |
+| G4 | poster written with upsert (swappable) | "a second poster for the same video is refused and the first frame is kept" |
+| G5 · G6 · G13 | canonical write not owner-scoped; miss claimed as success; late row not retried | the three `recordPosterOnAsset` tests |
+| G7 | store the raw frame instead of the re-encoded one | "…with no EXIF…" |
+| G9 | general poster ignores the emergency stop | "honours the upload emergency stop" |
+| G10 | drop the deadline recursion | "a signed poster URL must not outlive the story its video belongs to" |
+| G11 · G12 | a `memories/`/`stories/` path or a photo treated as a poster | "client-writable prefixes and non-video bases are not posters" |
+| G14 | write `duration_ms` when the container states none | "writes nothing without an asset id or a measured duration" |
+| G15 | skip the image sniff on the general poster | **SURVIVED first.** An MP4 body failed later, in the decoder, so the refusal came from the wrong layer. The added GIF case (it decodes, but it is not an admitted image) is now red. |
+| C1–C21 | resume offset, size check, unsupported-vs-refused, expired URL, retry classes, exhaustion→pause, stage persistence, pause-keeps-shell, poster-at-complete, account gate, relaunch resume, MAX_RUNS, BACKGROUND session, exact byte range, part-file cleanup, envelope, fail-closed resize, ms→s, ships-off, transient complete | each named test in `travel-buddy-standalone/src/services/media/__tests__/mediaUploadTransport.test.ts` |
+| C22 | queue ignores an account switch mid-drain | **SURVIVED first.** No test switched accounts during a run. "an account switch DURING a run stops the run before the next job starts" is now red. |
+| P1–P6 | composer: no poster, poster path not sent, photo asks for poster, no resize, failed resize still posts, video through image envelope | `PostcardComposer.videoPoster.component.test.tsx` |
+| P7–P12 | general poster client: skip derived route, 409 not honoured, no fallback, `travel-buddy-standalone/src/services/media.ts` drops the path or the query | `generalVideoPoster.test.ts`, `uploadMediaPoster.component.test.tsx` |
+| P13–P17 | story or memory video gets no poster; the no-fallback rule is dropped; a photo asks for a poster; a missing path is still attempted | `storyMemoryPoster.component.test.tsx`, `generalVideoPoster.test.ts` |
+| O1–O20 · O22 | cache: live not decayed, live label kept, coordinates kept, no TTL, LRU by write, shared key, write without account, revocation kept, no byte budget, unsigned image stored, auth covered, "gone" kept, non-crew stored, hidden gem stored, mixed list labelled by newest, denial served, denial not purged, video file collected, warm-up unthrottled, finished trips cached, saved places not read | each named test in `mediaOffline.test.ts` |
+| O21 | a cache that cannot load takes the lens down | **SURVIVED first.** No seam could fail the load. A `_failMediaCacheLoad` seam was added, and "a cache that cannot even load never takes the lens down" is now red. |
+| L1–L5 | lens hook or People / Places / Experiences screen drops the cached label; a live answer labelled cached | `offlineLenses.component.test.tsx` |
+| V1 · V2 · V3 | client table says `hidden` shows the place; "Now" read as now; SERVER stops withholding the name for `hidden` | `mediaPrivacyClientParity.test.ts`. V3 mutates the SERVER and the parity test catches it. |
+| V4–V9 | composer shows the "Now" copy without the place rule; sends `none` explicitly; circle promise restored; time sent for every mode; unknown read as `none`; a choice dropped | `PulseCreate.locationPrivacy.component.test.tsx`, `travel-buddy-standalone/src/services/media/__tests__/mediaPrivacy.test.ts` |
+| I1–I11 | no dispute cap; legacy strength kept; confidence raised; banner lost without label; consensus dropped by the mapper; mapper ignores it; screen drops the banner; unknown conflict read minor; consensus replayed from cache; unreadable consensus guessed; caveats unmounted | `mediaIntelligence.test.ts`, `placeConsensus.component.test.tsx`, `mediaOffline.test.ts` |
+
+### 22.3 Row moves
+
+| Row | Was | Now | Why — and what caps it |
+| --- | --- | --- | --- |
+| MD275 | **W** | **C** | Every video upload path now ends with a poster that the server re-encoded, that lives at a path the server derived, and that is shown to exactly its video's audience. There are two server transports, the postcard slot and `/media/upload`, and four client entry points reach them: the postcard composer, `uploadMedia`, stories and memories. The postcard slot writes the poster into `post_media.thumbnail_storage_path`, and `/complete` accepts no other path. A general upload writes it into `media_assets.thumbnail_path`, which is the §14.4 falsifier. Tests: `mediaVideoTransport.test.ts` "MD275 on the wire", `mediaVideoPosterGeneral.test.ts` "MD275 on the wire — POST /media/upload/poster". S8–S11, S15, S16, G2–G13, P1–P3 and P7–P17 red. CAP: the frame is cut on the device by `expo-video-thumbnails`, the native call `uploadMedia` already shipped. No device run was made in this pass. |
+| MD276 | **W** | **C** | Duration and display size are read from the container, and the declared figure never beats a measured one. The measured values reach `post_media.duration_seconds`, `width` and `height` (postcards) and `media_assets.duration_ms`, `width` and `height` (general uploads). Tests: "MD276 — duration and display size are READ FROM THE CONTAINER" and the two "on the wire" suites. S1–S7, S18, S22, G1 and G14 red. RESIDUAL: `posts.media_duration_seconds` still accepts a client figure. No composer in this tree sends one, and the column is not in the public post read. |
+| MD281 | **N** | **C** | The postcard slot is a resume token. Parts resume from what landed, a wrong-sized part is re-sent, an expired URL gets a fresh session, and retries follow the classes and backoff above. A paused job survives the process. Tests: `mediaUploadTransport.test.ts` "MD281 — …" and `mediaVideoTransport.test.ts` "MD281 on the wire". S12–S14, S21 and C1–C13 red. CAP: ships OFF behind a client constant. The Storage it has run against is a fake, and it has never run on a device. |
+| MD284 | **N** | **W** | The upload no longer dies with the screen. The queue owns it, persists it and resumes it on every foreground, and each part is an OS `BACKGROUND` transfer. Background upload of the whole file is still not delivered: the parts run serially from JS, so only the in-flight part continues while the app is suspended (iOS), and Android has no background session at all. See §22.5. C14–C16 red. |
+| MD295 | **N** | **C** | Trip media is cached (`trip_media`, 14 days), pre-warmed for current and upcoming trips, and served offline with its age. Test: "MD295 + MD298: a trip is filed as trip media…". O15, O19, O20 and L4 red. CAP: reached through the World shell, which is dark (`MEDIA_WORLD_SHELL_ENABLED` false). Device storage not exercised on a device. |
+| MD296 | **N** | **C** | Saved places are pre-warmed and read offline even if never opened. Test: "MD296 saved places: a pre-warmed saved place is there offline though it was never opened". O22 red. Same cap as MD295. |
+| MD297 | **N** | **W** | `gemsOffline` caches only gems whose location is not hidden (test "MD297 hidden gems where permitted…", O14 red). NOTHING on this branch reaches it: the Hidden Gems lens here still renders the pre-existing `GemsFeed` (MD15). This is §11.2 group (b). See §22.5. |
+| MD298 | **N** | **C** | An event experience's visuals are filed under `event_checkpoints` (3 days) and served offline, labelled with the age of the list's oldest member. Test as MD295. O15 red. CAP: cache-through only. An event is cached when opened online and is not pre-warmed. |
+| MD299 | **N** | **C** | Every place view read online is stored with its images (`place_perspectives`, 1 day) and served offline, aged, without its live label or consensus. Test: "MD299 place perspectives…". O1–O12, O16–O18 and L3 red. Same cap as MD295. |
+| MD301 | **N** | **C** | Only Trip Crew groups are stored, and offline the People lens shows exactly those, saying so. Test: "MD301 crew media…". O13, L1 and L2 red. Same cap as MD295. |
+| MD320 | **W** | **C** | The client processing module exists and the postcard composer uses it. The W's "a 15 MB photo travels whole" is now a decision rather than an absence: a device re-encode would destroy the capture time the server reads for `captured_at`, so only a photo OUTSIDE the envelope is resized. Tests: "MD320 — the device enforces the server envelope…" and the composer suite. C17–C19 and P4–P6 red. DIVERGENCE: the path is `src/services/media/`, not `features/media/services/`, and the Pulse composer still refuses, rather than resizes, a photo above the envelope. |
+| MD321 | **W** | **C** | A client privacy module exists and the post composer consults it for its choices, its copy and its request fields. The module's table is proved against the server by a parity test over every mode. V1–V9 red, V3 on the server side. |
+| MD323 | **N** | **C** | The client reads the server's §18 consensus, draws the current picture from fresh witnesses, and surfaces "Mixed reports" on the Places lens. I1–I11 red. CAP: the World-zone cards do not render the zone consensus yet, and the Places lens is inside the dark World shell. |
+| MD325 | **N** | **C** | `src/services/media/mediaCache.ts`, the §39 store above. Divergent path, same job. |
+
+These moves change the parsed counts by **+12 C, −2 W, −10 N**. The headline
+is NOT restated here. `check:census-integrity` will report the last headline
+(§15.7) as no longer describing the rows until the integrating lane restates
+it from the rows.
+
+### 22.4 Production verification, stated separately
+
+| Rows | Implementation | Production verification |
+| --- | --- | --- |
+| MD275 · MD276 (server) | built, tested over real HTTP with a fake Storage and six real ffmpeg files | not merged, not deployed. The routes are default-on once deployed. `recordMeasuredDuration` and `recordPosterOnAsset` write only where a canonical row exists (`media_canonical_enabled`). |
+| MD281 · MD284 | built, tested over injected fakes | not merged. Ships OFF (client constant). Never run against real Supabase Storage signed part URLs or on a device. |
+| MD295–MD301 | built, tested over injected fakes plus jest renders of the three lenses | not merged. Reached only through the dark World shell. Never run on a device with the radio off. |
+| MD320 · MD321 · MD323 · MD325 | built, tested (node:test, jest, one server-side parity suite) | not merged. MD321's composer is the live Pulse composer. MD320's is the live postcard composer. |
+
+**A behaviour change the integrator must see.** Before this pass, a general
+video upload's canonical row carried null dimensions, which parks it in
+`processing` (`artifacts/api-server/src/lib/mediaAssets.ts:397#input.width != null && input.height != null ? "ready" : "processing"`).
+Nothing ever moves such a row on, because there is no transcoder. With probed
+dimensions it is written `ready`, which makes a new video's canonical row
+servable exactly as a new image's has always been. That is the 2089 contract
+applied, not a flag turned on. But it is a change in what the canonical branch
+can serve, and it was not previously true for video.
+
+### 22.5 Rows that stay open
+
+| Row | Verdict | RED WHEN | WHO |
+| --- | --- | --- | --- |
+| MD277 | **N** | A rendition ladder (HLS or DASH) exists for an uploaded video and the player selects between renditions. Needs a transcoding tier. This tier has no video decoder, and none can be added by a lane. | Owner: choose and fund a transcoder (a hosted service or an ffmpeg worker tier), then a lane. |
+| MD280 | **N** | A timed text track travels with the asset and the player renders its cues. The renderer half is buildable. The SOURCE is not: either an ASR service or an authoring flow must produce the cues. §15.9 stands: a "Captions" toggle over the creator's note is not this. | Owner: decide the caption source (ASR vendor and its credentials, or an authored-WebVTT flow). |
+| MD282 | **N** | Video bytes are re-encoded to a bounded bitrate before storage, on the server or the device. The server has no decoder. The device needs a native compression module that is not in `package.json`, so it needs a native build. | Owner (infra or native-module decision) plus a native build. |
+| MD283 | **W** | A classifier decides video moderation. §9's F12 stands: the pipeline decides nothing for images either. One thing changed: every video now has a server-stored frame, so an image classifier has something to look at. | Owner (classifier vendor), then the moderation lane. |
+| MD284 | **W** | An iOS device build shows a multi-part upload completing while the app is suspended from the moment it is backgrounded. That needs every missing part enqueued as a background task at once rather than serially. Android also needs a foreground service, which is native. | A native build plus a device run (operator), and the owner to flip `DEFAULT_ENABLED`. |
+| MD297 | **W** | The Hidden Gems lens fetches through `gemsOffline`, and `gemsOffline` is typed to the lens it serves. Lane A's `HiddenGemsMediaScreen` (branch `claude/media-lane-a-client-ia-20260926`) is the consumer, and that branch CHANGES `fetchGems`: the parameter becomes `city`, and the result becomes a `HiddenGemLensProjection` whose items name the gem by `gemId`/`name`. So at merge `gemsOffline` and its `permittedGems` filter must be re-typed to the new shape, with the "never a `hidden`-precision gem" rule re-derived on it, before the screen's fetcher can point at it. The merge will not typecheck until then. | The integrator at merge, or this lane after it. |
+| MD300 | **W** | The map projection carries an image per cluster. `/media/map` carries counts and no image, so there is nothing to cache. The cache then needs one more scope. | The server media lane (projection), then this module. |
+| MD322 | **N** | A client context service reads the server-resolved §7 context of a media item. Lane A's branch builds exactly that (its `mediaContextGraph` state module plus a `fetchMediaContextRefs` call). This lane deliberately did not write a second mapper over the same server contract, because two mappers over one contract is how they drift. | The integrator, at merge: grade it against Lane A's module. |
+| MD324 | **N** | A client search service calls `GET /api/media/search`, typed against `MediaSearchResults`. Lane A's branch builds it (`fetchMediaSearch` beside its `MediaSearchScreen`). Not duplicated here, for the same reason. | The integrator, at merge. |
+
+### 22.6 Found while doing it — reported, not fixed
+
+1. **The Pulse composer's location copy promised more than the server
+   delivers.** "Location stays completely hidden" was shown while city and
+   country stay on the post
+   (`artifacts/api-server/src/lib/postSchemas.ts:180#export function mapPublicPost`
+   nulls only the venue name). "Only people in your Trusted Circle can see
+   where you are" was shown while no audience sees the place. "Now" published
+   nothing now: the composer omits the field for `none`, and the create route's
+   default for a tagged post is after-exit
+   (`artifacts/api-server/src/routes/posts.ts:580#const privacyMode: LocationPrivacyMode = reqPrivacyMode ?? defaultPrivacyMode(locationSource, sens);`).
+   The words are now true (MD321). **The labels "Now", "Hidden" and "Trusted
+   circle" are an owner decision and were not changed.** So is whether "Now"
+   should send `none` explicitly: that would publish a tagged place at once,
+   which is a privacy change, not a refactor.
+2. **MD262 "Show neighborhood only" is C on the gem ceiling**
+   (`artifacts/api-server/src/lib/mediaLocationVisibility.ts:110#case "approximate":`).
+   That is a Hidden-Gem sensitivity, not a choice a person posting media can
+   make. No post location mode maps to `neighborhood`. Likely mis-graded.
+   Not re-graded here: it is outside this lane's rows.
+3. **MD153's cited component is mounted nowhere.**
+   `travel-buddy-standalone/src/features/media/components/RequestAViewPrompt.tsx:63#export function RequestAViewPrompt(`
+   is exported, and outside its own file only its flag constant is imported. No
+   screen renders it. The §18 `requestAnotherObservation` flag this pass now
+   reads has no surface to route to either.
+4. **Postcard feed variants.** `<storage_path>.feed.jpg`, the postcard image
+   variant `/complete` writes to `feed_storage_path`, is not authorized for
+   non-owner viewers. `mediaAccess` 3a matches `post_media.storage_path`
+   exactly, and no later branch names the variant, so a non-owner's request for
+   it ends in the §4 deny. The poster rule above is the shape of the fix:
+   authorize a derived object as its base. It is not applied here because the
+   variant belongs to the image pipeline, not to this lane's rows.
+5. **`RecordAssetInput` has no duration field.** This pass writes `duration_ms`
+   through a follow-up update rather than widening a Lane B type. The postcard
+   canonical row (`recordEntityMedia`) still has no duration or size.
+
+### 22.7 Counted files this section changed
+
+Changed files that `check:census-freshness` counts:
+
+- **census-media, not named in its acknowledgement:**
+  `artifacts/api-server/src/lib/videoMetadata.ts`,
+  `artifacts/api-server/src/routes/postcards.ts`,
+  `travel-buddy-standalone/src/features/media/screens/MediaExperiencesScreen.tsx`,
+  `MediaPeopleScreen.tsx`, `MediaPlacesScreen.tsx`,
+  `travel-buddy-standalone/src/features/media/services/mediaProjection.ts`,
+  and `travel-buddy-standalone/src/features/media/types/perspective.ts`.
+- **Newly counted by census-media, because §22 widens its scope** in
+  `artifacts/api-server/src/scripts/checkCensusFreshness.ts`: the new
+  `travel-buddy-standalone/src/services/media/` directory,
+  `travel-buddy-standalone/src/services/media.ts`,
+  `travel-buddy-standalone/src/services/mediaUrl.ts`,
+  `travel-buddy-standalone/src/services/stories.ts`,
+  `travel-buddy-standalone/src/services/memories.ts`,
+  `PostcardComposer.tsx`, `travel-buddy-standalone/src/components/PulseCreate.tsx`
+  and their two component tests. On the server:
+  `artifacts/api-server/src/lib/videoProbe.ts`,
+  `artifacts/api-server/src/lib/mediaPosterPath.ts`,
+  `artifacts/api-server/src/lib/mediaVideoPoster.ts`,
+  `artifacts/api-server/src/routes/mediaVideoPoster.ts`,
+  `artifacts/api-server/src/lib/postcardMediaTransport.ts`,
+  `artifacts/api-server/src/routes/postcardMediaTransport.ts`,
+  `artifacts/api-server/src/lib/postSchemas.ts` and the three new server test
+  files.
+  `check:census-scope-coverage` required the widening: §22's citations had taken
+  the watched share to 87% against a 96% floor.
+- **Already named in an acknowledgement:**
+  `artifacts/api-server/src/lib/mediaAccess.ts` (media, highlights-memories,
+  telegraph), `artifacts/api-server/src/lib/mediaProcessing.ts` (media,
+  telegraph), `artifacts/api-server/src/routes/posts.ts` (media, wall),
+  `artifacts/api-server/src/routes/index.ts` (highlights-memories, telegraph)
+  and `travel-buddy-standalone/app/_layout.tsx` (input-intelligence, sensing).
+
+The census-media acknowledgement was NOT edited. This section is the
+re-measure of the rows those seven files serve, and the integrator re-declares
+`head_commit`. The edit to `travel-buddy-standalone/app/_layout.tsx` mounts two media setups after
+`<SensingCaptureSetup />` and changes nothing it renders. Every line number the
+other censuses cite in the other shared files was preserved: the edits there
+were net-zero or appended at the file's tail. The three Media screens are held to
+the same rule, because this census cites them by line (rows MD13, MD14, MD31 and
+MD32, and the People-lens evidence in §12). Their new imports and the Places lens's caveat
+component live at each file's tail.
