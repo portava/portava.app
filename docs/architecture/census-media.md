@@ -7977,7 +7977,7 @@ All were run from `artifacts/api-server` on the final tree.
    `recordEntityMedia` writes are read by nothing else.
    That is why the sweep is safe, and it is also a gap in MD339's "one asset,
    many objects" reading. It is not graded here.
-2. **Quick Media reads a postcard link as if it named a post** (census-wall
+2. (**Fixed in census-wall §17.**) **Quick Media reads a postcard link as if it named a post** (census-wall
    W72's loader). The link's id is a `passport_postcards` id
    (`artifacts/api-server/src/routes/postcards.ts:1126#entityId: (pcIns.data as any).id as string,`),
    and the loader looks it up in `posts`

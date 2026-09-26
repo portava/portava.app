@@ -1904,3 +1904,46 @@ The integration owner asked for three changes before merging. Each is on `lane-l
   - `services/media/MediaProjectionService.ts`, cited only for the extractor's blind spot;
   - the app config;
   - `wallFailureVsEmpty.test.ts`, unwatched before this pass.
+
+## §17 — W72's Quick Media loader read a postcard link as a post id; fixed — 2026-09-26
+
+**Found by census-media §32.10 item 2 (lane M).** A `media_attachments` row
+with `entity_type = 'postcard'` names a `passport_postcards` id, not a post
+id. `routes/postcards.ts` records it with the passport postcard's own id.
+Quick Media's step 4 read it as a post id, so the post lookup found nothing
+and the asset was dropped. Because whichever link was read first won, an
+asset that also carried a readable `post` link went missing from the row
+whenever the postcard link came back first. Nothing leaked: the failure mode
+was a missing file, never an extra one.
+
+**The fix.** Line-neutral: three lines extended in place, and the resolver at
+the tail.
+- A `post` link maps directly, as before. A `postcard` link is collected
+  (`artifacts/api-server/src/services/wall/WallCandidateLoaders.ts:1304#if (att.entity_type === "postcard") { if (att.entity_id) postcardLinks.push({ aid, postcardId: String(att.entity_id) }); }`).
+- Postcard links are then resolved to the post that published them, through
+  `passport_postcards.post_id`, without overriding a direct `post` link
+  (`artifacts/api-server/src/services/wall/WallCandidateLoaders.ts:1309#await resolvePostcardLinksToPosts(sc, postcardLinks, postIdByAsset);`,
+  `artifacts/api-server/src/services/wall/WallCandidateLoaders.ts:1437#async function resolvePostcardLinksToPosts(`).
+- A failed read resolves nothing, and those assets fall through to the
+  `post_media` path, as before.
+- The resolved post is still gated by the same post policy, so a private
+  post's postcard stays hidden.
+
+**Tests and mutations.** The cases are at
+`artifacts/api-server/src/test/wallQuickMedia.test.ts:403#describe("census-wall §17 — Quick Media resolves a postcard link to the post that published it"`.
+There are four:
+- a postcard link read first no longer hides the asset;
+- a postcard-only link resolves through `passport_postcards`;
+- a private post's postcard stays hidden;
+- an unresolvable postcard link publishes nothing.
+
+| # | Mutation | Red |
+| --- | --- | --- |
+| Q-M1 | the old line: a postcard id read as a post id | the first two cases |
+| Q-M2 | postcard links never resolved | the postcard-only case |
+
+All 21 cases in the file pass.
+
+**Verdict.** W72 stays **C**. The row grades the §18 surface and its
+exclusions, and the defect dropped legitimate items rather than admitting
+illegitimate ones. The headline is unchanged. Nothing here is deployed.
