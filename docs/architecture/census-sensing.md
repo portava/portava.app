@@ -111,14 +111,14 @@ Paths are relative to `artifacts/api-server/` unless prefixed `travel-buddy-stan
 | Measure | Value |
 |---|---|
 | **Denominator — testable requirements** | **127** |
-| BUILT-AND-CORRECT | **105** |
-| BUILT-BUT-WRONG | **19** |
+| BUILT-AND-CORRECT | **107** |
+| BUILT-BUT-WRONG | **17** |
 | NOT-BUILT | **2** |
 | CANNOT-VERIFY | **1** |
 | **CONSTRUCTED%** = (C+W)/127 | **124 / 127 = 97.6 %** |
-| **CORRECT%** (raw) = C/127 | **105 / 127 = 82.7 %** |
+| **CORRECT%** (raw) = C/127 | **107 / 127 = 84.3 %** |
 
-> **HEADLINE RESTATED 2026-09-26 (§24: S79 and S83 W→C; C 105 / W 19 / N 2 / X 1, CORRECT% 82.7 %) AND 2026-09-16 FROM THE ROWS, not the other way round.** Before §24 it read C 103 / W 21 from §11. Earlier, it read
+> **HEADLINE RESTATED 2026-09-26 (§25: S3 and S106 W→C; C 107 / W 17 / N 2 / X 1, CORRECT% 84.3 %) AND 2026-09-16 FROM THE ROWS, not the other way round.** Before §25 it read C 105 / W 19 from §24; before §24, C 103 / W 21 from §11. Earlier, it read
 > C 98 / W 26 until §11 moved S20, S25, S30, S33 and S35 from W to BC on the owner's
 > Option B posture decision. `check:census-integrity` caught the drift the moment it
 > appeared — *"a headline that stopped describing the table underneath it"* — which is
@@ -439,7 +439,7 @@ Legend: **BC** BUILT-AND-CORRECT · **BW** BUILT-BUT-WRONG · **NB** NOT-BUILT �
 | id | Requirement | V | Evidence / divergence |
 |---|---|---|---|
 | S39 | Presence engine → `PresenceObservation` + coverage; must not claim public person identity | **BW** | The *types* exist and are careful (`presence/domain/types.ts:88,114`); there is no engine. What actually feeds aggregates is human observation counts. No per-zone `PresenceObservation` is ever produced. |
-| S40 | Crowd engine → `CrowdState` (density, momentum, arrival-departure balance); must not claim safety or quality | **BW** | The vocabulary is there — `CROWD_LEVELS`, `TRAJECTORIES`, `CROWD_DIRECTIONS` (`intelContracts.ts:246,259,286`), `activityForCohort` (`mapAggregation.ts:534`) — and the must-not-claim half is enforced (S8). But there is no `CrowdState` object: density is a claim value, momentum is a trend label, and arrival/departure balance is a human tap, not a computed balance. |
+| S40 | Crowd engine → `CrowdState` (density, momentum, arrival-departure balance); must not claim safety or quality | **BW** | The vocabulary is there — `CROWD_LEVELS`, `TRAJECTORIES`, `CROWD_DIRECTIONS` (`intelContracts.ts:246,259,286`), `activityForCohort` (`mapAggregation.ts:535#const kind: MapPresenceKind = obj.kind;`) — and the must-not-claim half is enforced (S8). But there is no `CrowdState` object: density is a claim value, momentum is a trend label, and arrival/departure balance is a human tap, not a computed balance. |
 | S41 | Flow engine → `FlowState`/edges; must not claim individual trajectory | **BC** | The strongest item in the census. `crowdFlowProducer.ts:14-30` — *"There is no per-actor path type, anywhere. The input unit is ONE HOP … so a path cannot be assembled even internally"*; actor ids enter a `Set` and never leave it; `src/test/crowdFlowProducer.test.ts` walks the serialized output for sentinel ids. `deriveCrowdFlow` (`mapAggregation.ts:1115`) applies four gates; geometry is a `LineString` between zone centroids (`:1192,1236-1237`). |
 | S42 | Vibe engine → `VibeState`; must not claim literal behaviour without sufficient evidence | **BW** | `vibe.state` exists as a five-value human claim (`intelContracts.ts:303`) with a live-label ruling (`:587`). There is no inference engine and no `VibeState`. |
 | S43 | Experience engine → `ExperienceState`; must not treat personal preference as world truth | **NB** | No `ExperienceState` under that or any equivalent name. `grep -ri experience_state\|ExperienceState src/` → nothing. |
@@ -471,7 +471,7 @@ Legend: **BC** BUILT-AND-CORRECT · **BW** BUILT-BUT-WRONG · **NB** NOT-BUILT �
 | S59 | Add server-built `ExperienceState` to place/event projections rather than separate overlapping vibe pins | **BW** | The **shape** is right and the payload is wrong: `mapProjection.applyLiveClaims` (`:676-701`) folds live claims onto the place object instead of emitting parallel vibe pins — exactly what the spec asks — but what it folds on is individual claims, not an ExperienceState. |
 | S60 | Promote `world_pulse` into transient world-change projections: heating up, forming, moving, clearing, unexpected activity, event spillover, traveler surge | **BW** | `world_pulse` exists and is well built (`worldPulseProducer.ts`), but it is an **activity-concentration cell** with `payload.basis = 'observed_aggregates'` — a *level*, not a *change*. None of the seven named change types exists. `TREND_STATES` (`mapObjects.ts:233`) attach to places, not to world objects. |
 | S61 | Render crowd_flow / traveler_flow as privacy-safe directional geometry, not ordinary pins | **BC** | `mapAggregation.ts:1192,1236-1237` — a `LineString` between two zone centroids, with `:982` recording *"deliberately NO per-person field and no route geometry"*. `travelerFlowProducer.ts:277` runs its own privacy gate. |
-| S62 | `TemporaryWorldObject` only if no canonical contract exists; no fake permanent Place rows for transient clusters | **BC** | Transient clusters are emitted as synthetic map objects with cell/edge geometry and no `places` row: `mapAggregation.ts:675` (`cellPolygon`), `:1451` (flow edge), `meetingPointProducer`. No code inserts a `places` row from activity — the only writer is the manual `scripts/backfill-canonical-places.ts`. |
+| S62 | `TemporaryWorldObject` only if no canonical contract exists; no fake permanent Place rows for transient clusters | **BC** | Transient clusters are emitted as synthetic map objects with cell/edge geometry and no `places` row: `mapAggregation.ts:675` (`cellPolygon`), `lib/mapAggregation.ts:1457#geometry: {` (flow edge), `meetingPointProducer`. No code inserts a `places` row from activity — the only writer is the manual `scripts/backfill-canonical-places.ts`. |
 | S63 | Semantic zoom: city→neighborhood/world dynamics; district→hotspots/flows; place→vibe/crowd/queue | **BC** | `mapAggregation.ts:202-244` — five bands with explicit content ladders, `AGGREGATING_BANDS = ['world','city']`, fail-closed to `world` on a bad zoom. Enforced, not just documented: `worldPulseProducer.ts:280` returns nothing when `!bandCarriesWorldIntelligence(band)`. |
 | S64 | Truth/freshness/coverage metadata, and predicted visually distinguished from observed | **BW** | Freshness, confidence, source class, provenance and the predicted/observed split are all present and mirrored on the client. **Coverage is absent from `MapObject`** (`mapObjects.ts:362-398`). |
 | S65 | Display resolver / clutter budget so safety, mode, zoom, user intent and relevance decide what renders | **BW** | What exists is a priority sort plus a page cap: `rankObjects` (`mapProjection.ts:1166`), `compareByRenderingPriority` (`mapObjects.ts:420`), `paginate` with `Math.min(200, …)` (`mapProjection.ts:1226`), `filterKinds`. Zoom decides aggregation. **Mode, user intent and relevance decide nothing**, and no budget is allocated across classes. |
@@ -4176,7 +4176,7 @@ test that a second presence write path is unrepresentable"*:
 
 | Conjunct | Measured |
 |---|---|
-| (a) one store and fusion layer, behind the ladder | **HOLDS.** `artifacts/api-server/src/presence/fusion/store.ts:461#export class PresenceFusionStore` imports the precision ladder from `../domain/types.js` and exposes `admit` / `read` / `resolve` / `sweep`. |
+| (a) one store and fusion layer, behind the ladder | **HOLDS.** `artifacts/api-server/src/presence/fusion/store.ts:619#export class PresenceFusionStore` imports the precision ladder from `../domain/types.js` and exposes `admit` / `read` / `resolve` / `sweep`. |
 | (b) all four **read** through it | **PARTLY, and not in the sense the row means.** See §16.2. |
 | (c) unrepresentability proven by a test | **HOLDS as written.** `src/test/presenceFusionUnrepresentable.test.ts` type-checks six negative fixtures against the real store with a real `ts.Program`, plus a SANCTIONED seventh that must produce no diagnostic — which is what stops the file passing vacuously — and repeats every attempt at run time behind `as any`, because *"a compile-time-only lock is a lock with a cast-shaped key"*. |
 
@@ -4230,8 +4230,8 @@ read all three green.
 The first draft of this section said the one-hour `PRESENCE_ESTIMATE_TTL_MS` was
 *"not enforced by anything today"*, reasoning that `sweep` has no external caller
 and is invoked only from inside the store. **That was wrong, and reading the
-object rather than the sentence about it is what caught it.** `store.ts:747#    if (nowMs !== null) this.sweep(nowMs);`
-sits inside the private `#retain`, which `admit` calls at `store.ts:556#    this.#retain(estimate, nowMs);` — on the WRITE
+object rather than the sentence about it is what caught it.** `store.ts:988#    if (nowMs !== null) this.sweep(nowMs);`
+sits inside the private `#retain`, which `admit` calls at `store.ts:724#    this.#retain(estimate, nowMs);` — on the WRITE
 path, not the read path. So the store does expire, on every admit that is given
 a clock.
 
@@ -4393,7 +4393,7 @@ was an instruction to build that consumer.
 
 ### §18.2 Why, stated as two facts one object was carrying
 
-Retention is keyed `(source, subject)`. `locateFriendsSession.ts:883#    // The subject is the Portava account, so an estimate from this source can`
+Retention is keyed `(source, subject)`. `locateFriendsSession.ts:907#    // The subject is the Portava account, so an estimate from this source can`
 argues for that key in as many words — *"the latest observation of a person is
 the latest observation of that person, whichever session carried it, and keying
 per session would put the same human in the store twice."*
@@ -4531,11 +4531,11 @@ question about the SOURCE, and the answer is not one a lane may settle alone.
 ### §19.1 The measurement
 
 `presenceClass` is a field on every source contract, and its doc line is
-unambiguous: `sources.ts:74#  /** §17 class. Distinct classes may not be fused into one another. */`
+unambiguous: `sources.ts:153#  /** §17 class. Distinct classes may not be fused into one another. */`
 
 **`presenceClass` appears ZERO times in `store.ts`.** `resolve` — the only
 function in the program that fuses across sources — filters on linkage, expiry
-and clock (`store.ts:611#      if (hit.linkage !== "account_scoped") continue;` and the two
+and clock (`store.ts:808#      if (hit.linkage !== "account_scoped") continue;` and the two
 lines after it) and never on class. `#forAudience` folds `asking.ceiling` and
 the audience rung; neither is a class.
 
@@ -4563,7 +4563,7 @@ describes has since been re-aimed and the tense corrected here so the document
 does not assert something untrue of the tree.**
 
 Because an existing test asserted the opposite, deliberately:
-`presenceFusionStore.test.ts:196#  // RE-AIMED 2026-09-26. This case previously admitted through`
+`presenceFusionStore.test.ts:219#  // RE-AIMED 2026-09-26. This case previously admitted through`
 — it admitted through `locate_friends_session` and `trip_crew_location_sessions`,
 resolved AS `locate_friends_session`, and required the crew estimate to win on
 recency. That was cross-class fusion, asserted on purpose by the lane that wrote
@@ -4593,7 +4593,7 @@ the same overreach in reverse.
 §16.5's RED WHEN, already amended by §18.6 with the audience rung, needs one
 more: **the first production consumer must state its class policy** — either it
 asks only within its own class, or it accepts cross-class estimates and the
-contract line at `sources.ts:74` is rewritten to say so. Wiring a fused read
+contract line at `sources.ts:153#/** §17 class. Distinct classes may not be fused` is rewritten to say so. Wiring a fused read
 without answering this is how a crew position reaches a circle view.
 
 This is now the SECOND conjunct §16.5 was missing. That is itself the finding
@@ -4611,7 +4611,7 @@ on a step nobody has taken.
 
 ## §20 — 2026-09-26: the owner settled §19. Distinct privacy classes may not fuse.
 
-§19 put two readings of `sources.ts:74`'s "Distinct classes may not be fused
+§19 put two readings of `sources.ts:153#/** §17 class. Distinct classes may not be fused`'s "Distinct classes may not be fused
 into one another" and declined to pick, because an existing test asserted one
 of them and the choice changes what a user-visible surface serves. **The owner
 has now ruled, and this section is the settled record. It is not to be
@@ -5110,16 +5110,16 @@ first. The answer is that the step is STILL unsafe, for a reason neither §18
 nor §20 examined, and it would also be wrong on the merits.
 
 **The measurement.** Retention is keyed `(source, subject)` and carries no
-scope: `` `artifacts/api-server/src/presence/fusion/store.ts:735#${RETENTION_KEY_SEP}${estimate.subjectKey}` ``.
+scope: `` `${RETENTION_KEY_SEP}${estimate.subjectKey}` `` (line 735 of `store.ts` as it stood at `2387bc306`; §25 changed it).
 The subject is the ACCOUNT for all three fusable sources —
-`` `artifacts/api-server/src/lib/locateFriendsSession.ts:888#subjectKey: memberId,` ``,
-`` `artifacts/api-server/src/domain/trips/services/TripCrewLocationService.ts:178#subjectKey: raw.userId,` ``,
+`` `artifacts/api-server/src/lib/locateFriendsSession.ts:914#subjectKey: memberId,` ``,
+`` `artifacts/api-server/src/domain/trips/services/TripCrewLocationService.ts:181#subjectKey: raw.userId,` ``,
 and `circlePresenceEstimate` uses `profile.userId` — across every session,
 trip and circle that person is in. `resolve` selects on linkage
-(`` `artifacts/api-server/src/presence/fusion/store.ts:611#if (hit.linkage !== "account_scoped") continue;` ``),
-class (`` `artifacts/api-server/src/presence/fusion/store.ts:619#if (!sameConsentClass(hit.source, forSource)) continue;` ``),
+(`` `artifacts/api-server/src/presence/fusion/store.ts:808#if (hit.linkage !== "account_scoped") continue;` ``),
+class (`` `if (!sameConsentClass(hit.source, forSource)) continue;` `` (line 619 of `store.ts` at `2387bc306`; §25 moved it)),
 expiry, and then NEWEST WINS
-(`` `artifacts/api-server/src/presence/fusion/store.ts:622#if (best === null || (hit.observedAtMs as number) > (best.observedAtMs as number)) best = hit;` ``).
+(`` `if (best === null || (hit.observedAtMs as number) > (best.observedAtMs as number)) best = hit;` `` (line 622 of `store.ts` at `2387bc306`; §25 replaced it)).
 Nothing in that loop, and nothing a consumer can pass, says whether the asking
 viewer is inside the OTHER source's audience for this subject. §18.4's
 `audienceCeiling` is a PRECISION — the rung the viewer holds — and a rung
@@ -5132,7 +5132,7 @@ and the map is `source_scoped`):
 
 | Direction | What the fused read would hand over | Whose consent that is under |
 |---|---|---|
-| circle → locate surface | The circle's `state` (`recent` / `last_known`), its freshness, and its `evidenceTypes` — `` `artifacts/api-server/src/lib/circleResponseShaper.ts:192#evidence: [checkedIn ? "user_checkin" : "server_sync"],` `` — re-minted at the session viewer's rung; `#forAudience` carries evidence through untouched (`` `artifacts/api-server/src/presence/fusion/store.ts:707#evidenceTypes: best.evidenceTypes,` ``). | The circle's visibility mode, granted to CIRCLE MEMBERS. A locate-session member is not necessarily one. "A checked in somewhere 20 s ago" is feature-usage metadata the subject gave the circle. |
+| circle → locate surface | The circle's `state` (`recent` / `last_known`), its freshness, and its `evidenceTypes` — `` `artifacts/api-server/src/lib/circleResponseShaper.ts:226#evidence: [checkedIn ? "user_checkin" : "server_sync"],` `` — re-minted at the session viewer's rung; `#forAudience` carries evidence through untouched (`` `artifacts/api-server/src/presence/fusion/store.ts:899#evidenceTypes: best.evidenceTypes,` ``). | The circle's visibility mode, granted to CIRCLE MEMBERS. A locate-session member is not necessarily one. "A checked in somewhere 20 s ago" is feature-usage metadata the subject gave the circle. |
 | locate → circle surface | A `live` state with a seconds-old `observedAt` (a circle claim is never live), position nulled below `precise`. | The session's grant, given to SESSION MEMBERS. A circle member not in the session learns the subject is actively sharing location right now. |
 
 Neither is a coordinate. Both are disclosures the subject scoped to one
@@ -5189,7 +5189,7 @@ canonical intel evidence — account deletion, through `erase_intel_for_actor`
 — and the anonymous path's `purge_sensing_contributions_for_token()` has no
 route and no caller. So the reach runs inside the deletion, BEFORE the erase
 removes the observations the question is keyed on:
-`` `artifacts/api-server/src/services/accountDeletion/AccountDeletionService.ts:1214#{ name: "sensing_revocation_reach", subject: "sensing lineage reach — sessions resting on the erased evidence" },` ``,
+`` `artifacts/api-server/src/services/accountDeletion/AccountDeletionService.ts:1215#{ name: "sensing_revocation_reach", subject: "sensing lineage reach — sessions resting on the erased evidence" },` ``,
 through the service's one pager, calling
 `` `artifacts/api-server/src/services/accountDeletion/sensingRevocationReach.ts:115#export async function enumerateSensingRevocationReach(` ``,
 which is now `sessionRevocationReach`'s first non-test importer.
@@ -5285,3 +5285,227 @@ S3 S106 (§24.3 — the step is consent-unsafe as specified and needs a ruling),
 S112 (§24.4 — the flag, then persisted provenance), and the nineteen others
 §24.5 places by class. `check:census-integrity` over this document reads
 C=105 W=19 N=2 X=1, which is what the top headline now states.
+
+## §25 — 2026-09-26: OWNER DECISION A taken — consent scopes carried through fusion and reads; the competition rule defined; revocation wired and proven; S3 and S106 re-derived and MOVED
+
+The owner ruled on §24.3's question: *"pursue option A: preserve and enforce
+source-specific consent and audience restrictions throughout fusion and reads.
+Define how observations of different quality and freshness compete. Test
+cross-audience denial and revocation. Do not choose single-source read-back
+merely to count the requirement complete."* This section records what was
+built, cites the line for each claim, states what turned each proof red, and
+re-derives the two rows against the RED WHEN §24.3 restated — not against a
+weaker one.
+
+### §25.0 The mechanism — a scope on every claim, a scope on every read
+
+| §24.3 named this | Now | Where |
+|---|---|---|
+| "the admitted estimate carries its CONSENT SCOPE (`{ kind, id }`)" | Four kinds, closed: `locate_session`, `circle`, `trip_crew`, `map_public`. Each source's contract declares the ONE kind its claims may carry. | `` `artifacts/api-server/src/presence/fusion/sources.ts:107#export const PRESENCE_CONSENT_SCOPE_KINDS = [` ``; `` `artifacts/api-server/src/presence/fusion/sources.ts:160#readonly consentScopeKind: PresenceConsentScopeKind;` `` |
+| a claim without a scope | Refused `no_scope`; a scope of another source's kind refused `scope_mismatch` — a session position cannot be relabelled a circle one. | `` `artifacts/api-server/src/presence/fusion/store.ts:655#if (!isPresenceConsentScope(claim.scope)) return { ok: false, refusal: "no_scope" };` ``; `` `artifacts/api-server/src/presence/fusion/store.ts:657#return { ok: false, refusal: "scope_mismatch" };` `` |
+| "retention then per (source, subject, scope)" | The retention key is (source, scope key, subject); the same human seen by two sessions is two estimates with two audiences. The estimate carries its scope, frozen. | `` `artifacts/api-server/src/presence/fusion/store.ts:600#function retentionKey(` ``; `` `artifacts/api-server/src/presence/fusion/store.ts:389#this.scope = Object.freeze({ kind: init.scope.kind, id: init.scope.id });` `` |
+| "`read` / `resolve` take the viewer's scopes and select only within them" | `PresenceAudience { ceiling, scopes }` replaces the bare ceiling on both reads; candidates are looked up ONLY through the audience's scopes of each source's kind, then ranked. A missing, malformed or unreadable scope unlocks nothing. | `` `artifacts/api-server/src/presence/fusion/store.ts:224#export interface PresenceAudience {` ``; `` `artifacts/api-server/src/presence/fusion/store.ts:754#for (const scope of audienceScopes(audience, contract.consentScopeKind)) {` ``; `` `artifacts/api-server/src/presence/fusion/store.ts:805#for (const scope of audienceScopes(audience, contract.consentScopeKind)) {` `` |
+| "a ranking that prefers a live sighting to a standing assertion" | `competePresence` — §25.3. | `` `artifacts/api-server/src/presence/fusion/store.ts:574#export function competePresence(` `` |
+| revocation | `revokeScope`, `revokeSubjectInScope`, `revokeSubject`, `revokeScopeKind`, each returning what it dropped — §25.4. | `` `artifacts/api-server/src/presence/fusion/store.ts:934#revokeScope(scope: PresenceConsentScope): number {` ``; `` `artifacts/api-server/src/presence/fusion/store.ts:940#revokeSubjectInScope(subjectKey: string, scope: PresenceConsentScope): number {` ``; `` `artifacts/api-server/src/presence/fusion/store.ts:955#revokeScopeKind(kind: PresenceConsentScopeKind): number {` `` |
+
+### §25.1 The four admit sites name their scope
+
+| Source | Scope | Line |
+|---|---|---|
+| `locate_friends_session` | `{ locate_session, sessionId }` — `ProjectMemberInput` gains `sessionId`; the session IS the consent. | `` `artifacts/api-server/src/lib/locateFriendsSession.ts:916#scope: locateSessionScope(sessionId),` `` |
+| `circle_presence` | `{ circle, "trip:<id>" \| "event:<id>" }` — `circlePresenceEstimate` and `shapePresence` take the context; both route call sites pass the one they already had. | `` `artifacts/api-server/src/lib/circleResponseShaper.ts:209#scope: circleConsentScope(context.type, context.id),` ``; `` `artifacts/api-server/src/presence/fusion/sources.ts:147#export function circleConsentScope(` `` |
+| `trip_crew_location_sessions` | `{ trip_crew, tripId }` — `admitCrewPresence` takes the trip; `getCrewMap` passes it. The per-viewer `allowed_member_ids` grant stays a CEILING, folded at admit. | `` `artifacts/api-server/src/domain/trips/services/TripCrewLocationService.ts:183#scope: { kind: "trip_crew", id: tripId },` `` |
+| `map_social_presence` | `{ map_public, kind }` — one per map kind. Source-scoped subjects are never fused, so this scope makes the claim well-formed and revocable rather than unlocking a cross-source read. | `` `artifacts/api-server/src/lib/mapAggregation.ts:561#scope: mapPublicScope(kind),` ``; `` `artifacts/api-server/src/presence/fusion/sources.ts:294#export function mapPublicScope(` `` |
+
+§16.2's count stands: four writers, all through `admit`, and a fifth admit
+site cannot name a scope kind the register does not contain — the union is
+closed and the contract field is typed to it.
+
+### §25.2 The fused production consumer — §16.5's three conjuncts, met
+
+§16.5: *"a production consumer calls `presenceFusion.resolve` for at least one
+surface, that surface's output is derived from the fused estimate rather than
+from one source's own admission, and a test asserts the resolver is reached
+from the surface rather than from a test."* Plus §18.6's audience conjunct and
+§24.3's membership conjunct.
+
+| Conjunct | Met by |
+|---|---|
+| a production consumer calls `resolve` | `fuseMemberView`, called by `readSessionForViewer` for every member of a Locate session: `` `artifacts/api-server/src/lib/locateFriendsSession.ts:1085#const fused = presenceFusion.resolve(memberId, "locate_friends_session", audience, nowMs);` ``; `` `artifacts/api-server/src/lib/locateFriendsSession.ts:1482#return fuseMemberView(own, id, sessionId, { ceiling: sessionCeiling, scopes }, nowMs);` `` |
+| the surface's output is derived from the fused estimate | When the winner is another source, the `MemberView` is rendered FROM it — rung, §10 state, age, `live`, and a new `fusedFrom` field naming the source: `` `artifacts/api-server/src/lib/locateFriendsSession.ts:1117#fusedFrom: fused.source,` ``. When the winner is this session's own entry, the current projection answers, never the store's retained copy: `` `artifacts/api-server/src/lib/locateFriendsSession.ts:1087#if (fused.source === "locate_friends_session") {` ``. |
+| a test asserts the resolver is reached from the surface | `` `artifacts/api-server/src/test/presenceFusionConsent.test.ts:667#describe("E. readSessionForViewer fuses a Circle estimate only through Circle's own guard, per member"` `` — the first case reads through the real `readSessionForViewer` with a fake database and a fake guard and asserts `fusedFrom: "circle_presence"`; deleting the `fuseMemberView` call reds two cases (§25.4). |
+| §18.6 — the viewer's rung | The audience ceiling is the SESSION's ceiling, folded with the estimate's own bound; both only tighten. |
+| §24.3 — the viewer's MEMBERSHIP in the other source's audience | The circle scope is granted PER MEMBER, PER READ, only when Circle's own `canViewCirclePresenceBatch` allows THIS viewer to see THAT member in THAT context — kill switch, both memberships, bans, blocks, global and per-context pause, consent version, visibility mode — AND the row it read admits through `circlePresenceEstimate` now: `` `artifacts/api-server/src/lib/locateFriendsSession.ts:1020#circlePresenceBatch: canViewCirclePresenceBatch,` ``; `` `artifacts/api-server/src/lib/locateFriendsSession.ts:1057#return fresh === null ? null : circleConsentScope(circle.type, circle.id);` ``. A guard that throws or answers `unavailable` grants nobody anything: `` `artifacts/api-server/src/lib/locateFriendsSession.ts:1462#circleAccess = await deps.circlePresenceBatch(db, viewerId, otherIds, circle.type, circle.id);` ``. Gate (5) still governs: with the §24 policy unreadable the fused step is not taken at all: `` `artifacts/api-server/src/lib/locateFriendsSession.ts:1458#const circle = zones === null ? null : circleContextOf(session);` ``. |
+
+**What that guard-driven design buys, stated because it is the P24 answer to
+the obvious objection.** The fusion store is process-local (§18.2's design
+decision, unchanged). A pause handled by another server instance revokes THAT
+instance's copy and not this one's, and a copy lives up to 60 minutes. So the
+fused read does not trust a retained circle estimate: it re-derives from the
+row Circle's guard just read and admits it fresh under the scope, and a
+retained copy with no current row behind it is NOT served — `` `artifacts/api-server/src/test/presenceFusionConsent.test.ts:728#test("MULTI-PROCESS: a retained copy with no current row behind it is NOT served` ``.
+The in-store `revoke*` calls are defence in depth for the instance that
+handled the revocation. This is what makes the read correct across instances,
+and it is why "the store was revoked" is not the whole of §25.4's proof.
+
+**What is deliberately NOT wired, and why it does not bear on the rows.** The
+only legal same-class pairing is `circle_presence` ↔ `locate_friends_session`
+(§20: the crew is alone in `trip_crew`; the map is `source_scoped` and never
+fuses). The Locate surface now fuses the circle's assertion; the Circle surface
+does not fuse a Locate position. It could, consent-safely, under the same
+scope rule — but a circle card has a `venue` ceiling, so all a session position
+could add to it is a `live` state with no coordinate, for a viewer who is in
+the session and can already see the position there. The rows ask for one
+model and one derivation that every surface reads through, not for every
+pairing to be wired in both directions.
+
+### §25.3 Competition — how observations of different quality and freshness compete
+
+§24.3 measured the previous rule — newest `observedAt` wins — as wrong on the
+merits: a circle assertion refreshed 20 s ago outranked a live sighting 40 s
+old and would have DOWNGRADED a live precise position to a coordinate-less
+`recent`. The rule is now one exported function, ordered:
+
+| # | Criterion | Why in this position | Line |
+|---|---|---|---|
+| 1 | LIVE beats not-live | A current position is not history however fresh the history is (§20). | `` `artifacts/api-server/src/presence/fusion/store.ts:581#if (liveA !== liveB) return liveB - liveA;` `` |
+| 2 | §10 state strength: `precise` > `nearby` > `relayed` > `recent` > `last_known` > `inferred` = `predicted` > `unknown` | Above recency on purpose: a `recent` observation four minutes old outranks a `last_known` assertion one minute old, because the second source is saying it does not know. | `` `artifacts/api-server/src/presence/fusion/store.ts:562#export const PRESENCE_STATE_STRENGTH` ``; `` `artifacts/api-server/src/presence/fusion/store.ts:584#if (sa !== sb) return sb - sa;` `` |
+| 3 | newest `observedAt`; untimed loses to any timed | Same strength: recency decides. | — |
+| 4 | higher confidence | Same clock: the better evidence. | — |
+| 5 | register order, then scope key | A total order — the answer is a function of the retained set, not of insertion order. | — |
+
+The §24.3 scenario now resolves to the live sighting — `` `artifacts/api-server/src/test/presenceFusionStore.test.ts:231#test("one subject seen by two SAME-CLASS sources resolves to the CURRENT position` `` — and
+the case that ISOLATES rule 1 from rule 2 (a live `nearby` beating a stale
+`precise`, and losing to it while both are live) is `` `artifacts/api-server/src/test/presenceFusionConsent.test.ts:483#describe("D. how observations of different quality and freshness compete"` ``. Both were seen
+red: deleting rule 1 reds 2 cases, deleting rule 2 reds 3.
+
+### §25.4 Cross-audience denial and revocation — the proofs, and what turned them red
+
+**Denial** (`` `artifacts/api-server/src/test/presenceFusionConsent.test.ts:181#describe("B. a viewer reaches an estimate only through the scope it was admitted under"` ``): session B's member does not see session A's precise
+position and gets B's `zone` entry instead; no scopes serves nothing (existence
+withheld, not just the point); a scope with the right id and the wrong kind, or
+the right kind and the wrong id, or no id at all, unlocks nothing; a circle
+scope for trip Y does not reach trip X's estimate; holding only the circle
+scope reaches the circle estimate and NOT the session positions; the audience
+ceiling still narrows what a scope unlocks. **Admission** (`` `artifacts/api-server/src/test/presenceFusionConsent.test.ts:114#describe("A. a claim without a consent scope is not admitted"` ``): no
+scope, empty scope, malformed scope → `no_scope`; every source × every other
+kind → `scope_mismatch`, measured over the register rather than listed.
+
+**Revocation** (`` `artifacts/api-server/src/test/presenceFusionConsent.test.ts:291#describe("C. revocation drops exactly what was consented, and reports it"` ``, `` `artifacts/api-server/src/test/presenceFusionConsent.test.ts:415#describe("C. the production revocation points reach the store"` ``): each of the four store operations drops
+exactly what it names and reports the count; a second revoke reports 0; a
+malformed request drops nothing; re-admission after revocation is admitted (a
+revoke is not a ban). The production points:
+
+| Consent ends when | Store half | Line |
+|---|---|---|
+| a member leaves a Locate session | `revokeSubjectInScope(user, {locate_session, session})` FIRST — before any row is read or written, even when the membership row is unreadable — and the count is returned. | `` `artifacts/api-server/src/lib/locateFriendsSession.ts:1535#const revokedEstimates = presenceFusion.revokeSubjectInScope(userId, locateSessionScope(sessionId));` `` |
+| a member stops a crew live share | `revokeSubjectInScope(user, {trip_crew, trip})` before the row is closed; count returned. | `` `artifacts/api-server/src/domain/trips/services/TripCrewLiveShareService.ts:158#const revokedEstimates = presenceFusion.revokeSubjectInScope(userId, { kind: "trip_crew", id: tripId });` `` |
+| a member pauses one Circle context / pauses all / the session-end pause | `revokeCirclePresence` / `revokeAllCirclePresence` — helpers on the shaper, one line per handler. | `` `artifacts/api-server/src/routes/circle.ts:1345#revokeCirclePresence(user.id, type, id);` ``; `` `artifacts/api-server/src/lib/circleResponseShaper.ts:65#export function revokeCirclePresence(` `` |
+| the sweep deletes an expired row, or a trip or event ends | per row / `revokeCircleContext` per ended context | `` `artifacts/api-server/src/routes/circle.ts:2275#for (const tid of endedTripIds) revokeCircleContext("trip", tid);` `` |
+| an admin disables a context, or engages the kill switch | `revokeCircleContext` / `revokeEveryCirclePresence` | `` `artifacts/api-server/src/routes/circle.ts:2186#if (enabled) revokeEveryCirclePresence();` `` |
+| an account is deleted | `revokeSubject(user)` — every source, every scope; logged, deliberately NOT a receipt count (one process's cache is not a durable deletion). | `` `artifacts/api-server/src/services/accountDeletion/AccountDeletionService.ts:1313#{ userId, revokedPresenceEstimates: presenceFusion.revokeSubject(userId) },` `` |
+
+**Mutation results, measured on the suite of 45** (each mutation applied,
+run, and reverted; the file was diffed clean afterwards):
+
+| Mutation | Red cases |
+|---|---|
+| `admit` skips the `scope_mismatch` check | 1 |
+| `resolve` ignores the scope key (finds by source + subject) | 5 |
+| `revokeSubjectInScope` is a no-op returning 1 | 6 |
+| `competePresence` drops live-first | 2 |
+| `competePresence` drops state strength | 3 |
+| `leaveSession` does not revoke | 2 |
+| `stopLiveShare` does not revoke | 1 |
+| `circleScopeFor` ignores `allowed` | 2 |
+| `circleScopeFor` grants without a fresh admission | 2 |
+| the guard's throw is not caught | 1 |
+| `readSessionForViewer` never fuses | 2 |
+| the fused read ignores an unreadable §24 policy | 1 |
+| `fuseMemberView` serves the store's copy of the session's own source | 2 |
+| `audienceScopes` stops filtering by kind | **0** — equivalent: the retention key already carries the kind, so a wrong-kind scope builds a key nothing holds. The filter stays as the stated intent; the property is proven by the "wrong kind, right id" case above, which the scope-key mutation reds. |
+| the explicit `precise_live` skip in `circleScopeFor` is deleted | **0** — equivalent: `VISIBILITY_MODE_CEILING` has no such rung and the fold lands on `none`, so the store refuses. The skip stays so the route and the fused read agree by reading. |
+
+Two equivalent mutants are reported rather than hidden; neither is a gap in
+the property, both are a second line saying what a first line already enforces.
+
+### §25.5 S3 and S106 re-derived. W → C.
+
+**S3 RED WHEN** (§14.2, §15.3, unchanged): *"one `PresenceEstimate` store and
+fusion layer exists behind the ladder and all four of `circle_presence`,
+`trip_crew_location_sessions`, `locateFriendsSession` and the map's
+`social_zone`/`buddy_zone`/`crew_member` kinds read through it — proven by a
+test that a second presence write path is unrepresentable, not by the store's
+existence."* §16 established the store, the four writers and the
+unrepresentability proof, and held the row on the one missing thing: *"four
+writers, no cross-source reader."* §16.5 made that one step; §18 and §24.3
+found the step unsafe as specified and restated it with the audience and
+membership conjuncts. Every conjunct is now met by a cited line and a test
+that has been seen red: the scope on every claim (§25.0, §25.1), the read that
+selects within the viewer's scopes (§25.0), the competition rule (§25.3), the
+one production consumer deriving its output from the fused estimate through
+the other source's own consent guard (§25.2), and revocation that produces
+the effect at every point consent ends (§25.4). **S3 → C.**
+
+**S106 RED WHEN S3 does**, with the class distinction §17 asks for: §20's
+ruling (distinct classes may not fuse) is enforced at selection, and §25 adds
+the audience distinction WITHIN a class that §20.1 asked to be preserved.
+**S106 → C.**
+
+**P24 — exactly what turns these red, and the two ways they are capped.**
+(1) A fifth presence source, or a reader that reaches the map without the
+audience's scopes: the union and the read signatures are closed types, and the
+scope-key mutation reds five cases. (2) DEPLOYMENT-CAPPED, like S79 and S83:
+the fused consumer sits behind `locate_friends_enabled` (census-map M7: FALSE
+in production) and Circle's kill switch; on this branch it is implemented and
+CI-verified, and it is not production-realised until the branch is merged,
+deployed and that flag is on. (3) Another server instance's retained copy
+outlives a revoke by up to the 60-minute TTL — bounded for the fused read by
+the guard-and-row re-derivation (§25.2), and stated as the store's contract
+for any FUTURE `read()` caller that skips it: today no production caller does.
+
+### §25.6 The completion checklist — twenty non-C rows
+
+Denominator 127, unchanged. 107 C · 17 W · 2 N · 1 X. Every non-C row is
+listed; none is excluded, deferred or folded into another.
+
+| Class | Rows | Exactly what moves the row | Who |
+|---|---|---|---|
+| OWNER RULING — the 3002 cutover to production | S19 · S97 · S111 · S118 | `3002 → 3003 → 3110 → 3310` applied to production **in the same cutover as this branch's `IntelCaptureService`** (§14.8: neither may go first). All four are applied and certified on `portava-ci`; production holds none. | the owner (production apply), with the integration owner |
+| OWNER RULING — consent scope | S39 · S24 | `surface` added to `SENSING_ANON_GRANTED_SCOPES` (§21.2, a separate act from #9's flag), THEN a lane wires a publisher through `publishThroughDifferencingGate` and a zone identity into the conversation (§21.4). | the owner, then a lane |
+| OWNER RULING — a flag | S49 | `discovery_candidate_projection_enabled` flipped where it is measured; the §24 pass and the store are built and run (§14.2). | the owner |
+| OWNER RULING — a flag | S92 | `memory_projection` enabled where it is measured (§22.3). | the owner |
+| OWNER RULING — a flag, then a lane | S112 | §24.4: the flag, then the bridge's provenance persisted. | the owner, then a lane |
+| OPERATOR ARTIFACT | S18 · S32 | `SENSING_CONTRIBUTOR_PEPPER` configured in production; the route's first statement refuses without it (§14.2). | ops |
+| OPERATOR ARTIFACT | S17 | The served headers of `https://portava.replit.app` (whose last publish reads `failed`, §23.3) and Supabase's at-rest attestation. One `curl -sI` from outside this proxy answers the header half. | the operator |
+| CLIENT BUILD | S28 · S29 (N) · S21 · S42 · S51 · S52 | A `travel-buddy-standalone` capture module producing the nine features under a separate microphone permission (S28/S29); S21's on-device reduction; S42/S51/S52 are waiting on exactly that input, and S42's `motionEnergy` ordinal meaning is additionally an owner decision (§14.2). No lane in this wave owns that tree. | a commissioned client build |
+| LAUNCH-CAPPED — the census working | S26 · S66 | Real contributions reaching a live database with the relevant gate ON (§23.1, §23.2). Both are refusable on every surface and refusing on none, and there is nothing to refuse. | nobody, deliberately |
+
+Nine of the twenty need no application code at all (S19 S97 S111 S118 S18
+S32 S49 S92 S17). Six are a client build. Two are the world being empty.
+Three are an owner consent act or flag with a lane behind it.
+
+### §25.7 Headline — restated from the rows
+
+| | |
+|---|---|
+| **Denominator — testable requirements** | **127** |
+| BUILT-AND-CORRECT | **107** |
+| BUILT-BUT-WRONG | **17** |
+| NOT-BUILT | **2** |
+| CANNOT-VERIFY | **1** |
+| **CONSTRUCTED%** = (C+W)/127 | **124 / 127 = 97.6 %** |
+| **CORRECT%** (raw) = C/127 | **107 / 127 = 84.3 %** |
+| **of-built** = C/(C+W) | **107 / 124 = 86.3 %** |
+
+### Rows that move
+
+| Row | Was | Now | Why |
+|---|---|---|---|
+| S3 No second social presence model | W | **C** | §25 — one store, four writers through `admit`, one fused production reader that selects within the viewer's consent scopes and derives its output from the winner; the competition rule replaces newest-wins; revocation produces the effect at every point consent ends; every proof seen red. Deployment-capped behind `locate_friends_enabled`, whose off-state is the safe one. |
+| S106 Shared platform Presence architecture keeping private device / aggregate intelligence / social / trip crew / buddy / public discovery classes distinct | W | **C** | §25 — §20's class boundary at selection plus §25's audience boundary within a class: two consents of the same kind, given to different people, are two estimates with two audiences and never one answer. Capped as S3. |
+
+### Rows that explicitly DO NOT move
+
+The twenty rows §25.6 places by class. `check:census-integrity` over this
+document reads C=107 W=17 N=2 X=1, which is what the top headline now states.

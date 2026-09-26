@@ -27,15 +27,38 @@ import {
 import {
   PRESENCE_SOURCES,
   PRESENCE_SOURCE_CONTRACTS,
+  type PresenceConsentScope,
+  type PresenceSourceId,
 } from "../presence/fusion/sources.js";
-import { PRECISION_LADDER, precisionRank } from "../presence/domain/types.js";
+import { PRECISION_LADDER, precisionRank, type LocationPrecision } from "../presence/domain/types.js";
 
 const T0 = 1_700_000_000_000;
 
-function claim(over: Partial<PresenceClaim> = {}): PresenceClaim {
+/**
+ * One consent scope per source, of the kind that source's contract declares
+ * (owner decision A). Every claim in this file carries one, and every read
+ * names the same set, so the cases below stay about what they were about —
+ * ceilings, decay, class — and `presenceFusionConsent.test.ts` is where the
+ * scope itself is exercised.
+ */
+const SCOPE: Readonly<Record<PresenceSourceId, PresenceConsentScope>> = Object.freeze({
+  locate_friends_session: { kind: "locate_session", id: "session-1" },
+  circle_presence: { kind: "circle", id: "trip:trip-1" },
+  trip_crew_location_sessions: { kind: "trip_crew", id: "trip-1" },
+  map_social_presence: { kind: "map_public", id: "social_zone" },
+});
+const ALL_SCOPES: readonly PresenceConsentScope[] = Object.freeze(Object.values(SCOPE));
+
+/** An audience holding every scope above at `ceiling` — the pre-decision-A read, restated. */
+function aud(ceiling: LocationPrecision): { ceiling: LocationPrecision; scopes: readonly PresenceConsentScope[] } {
+  return { ceiling, scopes: ALL_SCOPES };
+}
+
+function claim(over: Partial<PresenceClaim> = {}, source: PresenceSourceId = "locate_friends_session"): PresenceClaim {
   return {
     subjectKey: "user-1",
     linkage: "account_scoped",
+    scope: SCOPE[source],
     requestedPrecision: "precise",
     observedAtMs: T0,
     state: "precise",
@@ -54,7 +77,7 @@ describe("presence fusion — §52, the ladder can only narrow", () => {
         const store = new PresenceFusionStore();
         const r = store.admit(
           PRESENCE_WRITE_CAPABILITIES[source],
-          claim({ requestedPrecision: requested }),
+          claim({ requestedPrecision: requested }, source),
           T0,
         );
         if (!r.ok) {
@@ -156,7 +179,7 @@ describe("presence fusion — §20 and §37, stale is not current", () => {
     const store = new PresenceFusionStore();
     const r = store.admit(
       PRESENCE_WRITE_CAPABILITIES.map_social_presence,
-      claim({ observedAtMs: null, state: "precise", linkage: "source_scoped" }),
+      claim({ observedAtMs: null, state: "precise", linkage: "source_scoped" }, "map_social_presence"),
       null,
     );
     assert.ok(r.ok);
@@ -197,11 +220,15 @@ describe("presence fusion — it actually FUSES", () => {
   // locate_friends_session (`social`) and trip_crew_location_sessions
   // (`trip_crew`) and required the CREW estimate to win a SOCIAL ask — i.e. it
   // asserted cross-class fusion on purpose. The owner settled §19 the other way
-  // (census-sensing §20: distinct classes may not fuse), so the property it was
-  // really protecting — the NEWEST observation wins — is re-proved here WITHIN
-  // one class, using the two sources that genuinely share `social`. The
-  // cross-class case is now its own test, below, asserting refusal.
-  test("one subject seen by two SAME-CLASS sources resolves to the most recent observation", () => {
+  // (census-sensing §20: distinct classes may not fuse), so the property was
+  // re-proved WITHIN one class, using the two sources that genuinely share
+  // `social`. RE-AIMED AGAIN 2026-09-26 (owner decision A, census-sensing
+  // §25): "the NEWEST observation wins" was the rule §24.3 measured as unsafe —
+  // a newer `recent` assertion downgraded a live position. The rule is now
+  // `competePresence`: live beats not-live, then state strength, THEN recency.
+  // So the same two admissions now resolve to the LIVE position, and recency
+  // decides only between estimates of the same strength — both proved here.
+  test("one subject seen by two SAME-CLASS sources resolves to the CURRENT position, not merely the newest assertion", () => {
     const store = new PresenceFusionStore();
     store.admit(
       PRESENCE_WRITE_CAPABILITIES.locate_friends_session,
@@ -210,7 +237,7 @@ describe("presence fusion — it actually FUSES", () => {
     );
     store.admit(
       PRESENCE_WRITE_CAPABILITIES.circle_presence,
-      claim({ subjectKey: "acct-9", observedAtMs: T0 + 500, state: "recent" }),
+      claim({ subjectKey: "acct-9", observedAtMs: T0 + 500, state: "recent" }, "circle_presence"),
       T0 + 1_000,
     );
     assert.equal(
@@ -218,11 +245,32 @@ describe("presence fusion — it actually FUSES", () => {
       PRESENCE_SOURCE_CONTRACTS.circle_presence.presenceClass,
       "this case is only meaningful while these two sources share a class",
     );
-    const fused = store.resolve("acct-9", "locate_friends_session", "precise", T0 + 1_000);
+    const fused = store.resolve("acct-9", "locate_friends_session", aud("precise"), T0 + 1_000);
     assert.ok(fused);
-    assert.equal(fused.observedAtMs, T0 + 500, "the newer observation must win");
-    assert.equal(fused.source, "circle_presence");
+    assert.equal(fused.source, "locate_friends_session", "a live position outranks a newer non-live assertion");
+    assert.equal(fused.observedAtMs, T0);
+    assert.equal(fused.live(T0 + 1_000), true);
     assert.equal(isFused(fused), true);
+  });
+
+  test("…and between two estimates of the SAME strength, the newer observation wins", () => {
+    const store = new PresenceFusionStore();
+    // Both non-live `recent`: the session position aged out of the live window,
+    // the circle assertion newer. Same strength, so recency decides.
+    store.admit(
+      PRESENCE_WRITE_CAPABILITIES.locate_friends_session,
+      claim({ subjectKey: "acct-9", observedAtMs: T0, state: "recent" }),
+      T0 + 1_000,
+    );
+    store.admit(
+      PRESENCE_WRITE_CAPABILITIES.circle_presence,
+      claim({ subjectKey: "acct-9", observedAtMs: T0 + 500, state: "recent" }, "circle_presence"),
+      T0 + 1_000,
+    );
+    const fused = store.resolve("acct-9", "locate_friends_session", aud("precise"), T0 + 1_000);
+    assert.ok(fused);
+    assert.equal(fused.source, "circle_presence");
+    assert.equal(fused.observedAtMs, T0 + 500, "same strength: the newer observation must win");
   });
 
   test("resolving FOR a narrower source re-narrows the answer to that source's ceiling", () => {
@@ -238,8 +286,8 @@ describe("presence fusion — it actually FUSES", () => {
       claim({ subjectKey: "acct-9" }),
       T0,
     );
-    const asLocate = store.resolve("acct-9", "locate_friends_session", "precise", T0);
-    const asCircle = store.resolve("acct-9", "circle_presence", "precise", T0);
+    const asLocate = store.resolve("acct-9", "locate_friends_session", aud("precise"), T0);
+    const asCircle = store.resolve("acct-9", "circle_presence", aud("precise"), T0);
     assert.ok(asLocate && asCircle);
     assert.equal(asLocate.precision, "precise");
     assert.equal(
@@ -254,18 +302,18 @@ describe("presence fusion — it actually FUSES", () => {
     const store = new PresenceFusionStore();
     store.admit(
       PRESENCE_WRITE_CAPABILITIES.map_social_presence,
-      claim({ subjectKey: "acct-9", linkage: "source_scoped", observedAtMs: T0 + 900 }),
+      claim({ subjectKey: "acct-9", linkage: "source_scoped", observedAtMs: T0 + 900 }, "map_social_presence"),
       T0 + 1_000,
     );
     // Nothing account-scoped exists for that key, so there is nothing to fuse.
-    assert.equal(store.resolve("acct-9", "locate_friends_session", "precise", T0 + 1_000), null);
+    assert.equal(store.resolve("acct-9", "locate_friends_session", aud("precise"), T0 + 1_000), null);
 
     store.admit(
       PRESENCE_WRITE_CAPABILITIES.locate_friends_session,
       claim({ subjectKey: "acct-9", observedAtMs: T0 }),
       T0 + 1_000,
     );
-    const fused = store.resolve("acct-9", "locate_friends_session", "precise", T0 + 1_000);
+    const fused = store.resolve("acct-9", "locate_friends_session", aud("precise"), T0 + 1_000);
     assert.ok(fused);
     assert.equal(
       fused.source,
@@ -292,7 +340,7 @@ describe("presence fusion — it actually FUSES", () => {
     // The older claim still gets an honest answer about itself — projection is pure.
     assert.equal(older.estimate.precision, "zone");
     // But it did not displace the fresher retained one.
-    const held = store.read("locate_friends_session", "user-1", "precise", T0 + 2_000);
+    const held = store.read("locate_friends_session", "user-1", aud("precise"), T0 + 2_000);
     assert.ok(held);
     assert.equal(held.observedAtMs, T0 + 1_000);
   });
@@ -300,8 +348,8 @@ describe("presence fusion — it actually FUSES", () => {
   test("an expired entry is not readable and sweeps away", () => {
     const store = new PresenceFusionStore();
     store.admit(PRESENCE_WRITE_CAPABILITIES.locate_friends_session, claim(), T0);
-    assert.ok(store.read("locate_friends_session", "user-1", "precise", T0));
-    assert.equal(store.read("locate_friends_session", "user-1", "precise", T0 + PRESENCE_ESTIMATE_TTL_MS), null);
+    assert.ok(store.read("locate_friends_session", "user-1", aud("precise"), T0));
+    assert.equal(store.read("locate_friends_session", "user-1", aud("precise"), T0 + PRESENCE_ESTIMATE_TTL_MS), null);
     assert.equal(store.sweep(T0 + PRESENCE_ESTIMATE_TTL_MS), 1);
     assert.equal(store.size, 0);
   });
@@ -392,14 +440,14 @@ describe("presence fusion — one viewer never reads another viewer's entitlemen
 
   test("the retained entry is the WIDER one — the narrower admission does not displace it", () => {
     const { store } = twoViewers();
-    const held = store.read("locate_friends_session", "acct-9", "precise", T0 + 1_000);
+    const held = store.read("locate_friends_session", "acct-9", aud("precise"), T0 + 1_000);
     assert.ok(held);
     assert.equal(held.precision, "precise", "this is exactly why egress must narrow");
   });
 
   test("read on behalf of the UNGRANTED viewer yields no coordinate", () => {
     const { store } = twoViewers();
-    const seen = store.read("locate_friends_session", "acct-9", "venue", T0 + 1_000);
+    const seen = store.read("locate_friends_session", "acct-9", aud("venue"), T0 + 1_000);
     assert.ok(seen);
     assert.equal(seen.precision, "venue");
     assert.equal(seen.position, null);
@@ -407,7 +455,7 @@ describe("presence fusion — one viewer never reads another viewer's entitlemen
 
   test("resolve on behalf of the UNGRANTED viewer yields no coordinate", () => {
     const { store } = twoViewers();
-    const fused = store.resolve("acct-9", "locate_friends_session", "venue", T0 + 1_000);
+    const fused = store.resolve("acct-9", "locate_friends_session", aud("venue"), T0 + 1_000);
     assert.ok(fused);
     assert.equal(fused.precision, "venue");
     assert.equal(fused.position, null);
@@ -415,8 +463,8 @@ describe("presence fusion — one viewer never reads another viewer's entitlemen
 
   test("a `none` audience is told nothing at all — existence is withheld, not just the point", () => {
     const { store } = twoViewers();
-    assert.equal(store.read("locate_friends_session", "acct-9", "none", T0 + 1_000), null);
-    assert.equal(store.resolve("acct-9", "locate_friends_session", "none", T0 + 1_000), null);
+    assert.equal(store.read("locate_friends_session", "acct-9", aud("none"), T0 + 1_000), null);
+    assert.equal(store.resolve("acct-9", "locate_friends_session", aud("none"), T0 + 1_000), null);
   });
 
   test("§52 has one direction — a generous audience cannot widen a narrowly retained estimate", () => {
@@ -427,7 +475,7 @@ describe("presence fusion — one viewer never reads another viewer's entitlemen
       T0,
     );
     for (const asking of ["precise", "nearby", "approximate"] as const) {
-      const seen = store.read("locate_friends_session", "acct-9", asking, T0);
+      const seen = store.read("locate_friends_session", "acct-9", aud(asking), T0);
       assert.ok(seen);
       assert.equal(seen.precision, "venue", `asking for ${asking} must not raise the rung`);
       assert.equal(seen.position, null);
@@ -437,12 +485,12 @@ describe("presence fusion — one viewer never reads another viewer's entitlemen
   test("an audience ceiling the ladder does not contain is treated as `none`, not ignored", () => {
     const { store } = twoViewers();
     assert.equal(
-      store.read("locate_friends_session", "acct-9", "street-level" as never, T0 + 1_000),
+      store.read("locate_friends_session", "acct-9", aud("street-level" as never), T0 + 1_000),
       null,
       "a bound we cannot read is not a bound we get to ignore",
     );
     assert.equal(
-      store.resolve("acct-9", "locate_friends_session", undefined as never, T0 + 1_000),
+      store.resolve("acct-9", "locate_friends_session", aud(undefined as never), T0 + 1_000),
       null,
     );
   });
@@ -459,11 +507,11 @@ describe("presence fusion — one viewer never reads another viewer's entitlemen
       T0,
     );
     // circle_presence's CONTRACT ceiling is the narrower bound here...
-    const bySource = store.resolve("acct-9", "circle_presence", "precise", T0);
+    const bySource = store.resolve("acct-9", "circle_presence", aud("precise"), T0);
     assert.ok(bySource);
     assert.equal(bySource.precision, PRESENCE_SOURCE_CONTRACTS.circle_presence.ceiling);
     // ...and here the AUDIENCE is, through a source whose contract permits more.
-    const byAudience = store.resolve("acct-9", "locate_friends_session", "zone", T0);
+    const byAudience = store.resolve("acct-9", "locate_friends_session", aud("zone"), T0);
     assert.ok(byAudience);
     assert.equal(byAudience.precision, "zone");
     assert.equal(byAudience.position, null);
@@ -499,15 +547,15 @@ describe("presence fusion — distinct privacy classes may not fuse (§17, owner
     const store = new PresenceFusionStore();
     store.admit(
       PRESENCE_WRITE_CAPABILITIES.trip_crew_location_sessions,
-      claim({ subjectKey: "acct-9", observedAtMs: T0 + 5_000 }),
+      claim({ subjectKey: "acct-9", observedAtMs: T0 + 5_000 }, "trip_crew_location_sessions"),
       T0 + 6_000,
     );
     assert.equal(
-      store.resolve("acct-9", "locate_friends_session", "precise", T0 + 6_000),
+      store.resolve("acct-9", "locate_friends_session", aud("precise"), T0 + 6_000),
       null,
       "a crew position reaching a social surface is the §17 violation",
     );
-    assert.equal(store.resolve("acct-9", "circle_presence", "precise", T0 + 6_000), null);
+    assert.equal(store.resolve("acct-9", "circle_presence", aud("precise"), T0 + 6_000), null);
   });
 
   test("a social estimate does NOT answer a trip_crew ask either — the rule is symmetric", () => {
@@ -518,7 +566,7 @@ describe("presence fusion — distinct privacy classes may not fuse (§17, owner
       T0 + 1_000,
     );
     assert.equal(
-      store.resolve("acct-9", "trip_crew_location_sessions", "precise", T0 + 1_000),
+      store.resolve("acct-9", "trip_crew_location_sessions", aud("precise"), T0 + 1_000),
       null,
     );
   });
@@ -536,10 +584,10 @@ describe("presence fusion — distinct privacy classes may not fuse (§17, owner
     );
     store.admit(
       PRESENCE_WRITE_CAPABILITIES.trip_crew_location_sessions,
-      claim({ subjectKey: "acct-9", observedAtMs: T0 + 5_000 }),
+      claim({ subjectKey: "acct-9", observedAtMs: T0 + 5_000 }, "trip_crew_location_sessions"),
       T0 + 9_000,
     );
-    const fused = store.resolve("acct-9", "locate_friends_session", "precise", T0 + 9_000);
+    const fused = store.resolve("acct-9", "locate_friends_session", aud("precise"), T0 + 9_000);
     assert.ok(fused, "the same-class estimate must still be served, not swallowed");
     assert.equal(fused.source, "locate_friends_session");
     assert.equal(fused.observedAtMs, T0);
@@ -549,11 +597,11 @@ describe("presence fusion — distinct privacy classes may not fuse (§17, owner
     const store = new PresenceFusionStore();
     store.admit(
       PRESENCE_WRITE_CAPABILITIES.trip_crew_location_sessions,
-      claim({ subjectKey: "acct-9" }),
+      claim({ subjectKey: "acct-9" }, "trip_crew_location_sessions"),
       T0,
     );
     // Same class as itself: served.
-    assert.ok(store.read("trip_crew_location_sessions", "acct-9", "precise", T0));
+    assert.ok(store.read("trip_crew_location_sessions", "acct-9", aud("precise"), T0));
   });
 
   test("an unknown asking source is REFUSED, not treated as compatible", () => {
@@ -564,21 +612,21 @@ describe("presence fusion — distinct privacy classes may not fuse (§17, owner
       T0,
     );
     assert.equal(
-      store.resolve("acct-9", "not_a_source" as never, "precise", T0),
+      store.resolve("acct-9", "not_a_source" as never, aud("precise"), T0),
       null,
       "an unreadable class is not a matching class",
     );
-    assert.equal(store.read("not_a_source" as never, "acct-9", "precise", T0), null);
+    assert.equal(store.read("not_a_source" as never, "acct-9", aud("precise"), T0), null);
   });
 
   test("same-class fusion is still permitted — the rule narrows, it is not a blanket ban", () => {
     const store = new PresenceFusionStore();
     store.admit(
       PRESENCE_WRITE_CAPABILITIES.circle_presence,
-      claim({ subjectKey: "acct-9", observedAtMs: T0 + 500, state: "recent" }),
+      claim({ subjectKey: "acct-9", observedAtMs: T0 + 500, state: "recent" }, "circle_presence"),
       T0 + 1_000,
     );
-    const fused = store.resolve("acct-9", "locate_friends_session", "precise", T0 + 1_000);
+    const fused = store.resolve("acct-9", "locate_friends_session", aud("precise"), T0 + 1_000);
     assert.ok(fused, "circle_presence and locate_friends_session are both `social`");
     assert.equal(fused.source, "circle_presence");
   });

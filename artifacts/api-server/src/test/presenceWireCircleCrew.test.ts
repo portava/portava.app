@@ -44,6 +44,9 @@ import { buildCrewCard, type RawMemberLocation } from "../domain/trips/services/
 
 // ── circle_presence ───────────────────────────────────────────────────────────
 
+/** The Circle context the rows below belong to — the claim's consent scope. */
+const CTX = { type: "trip", id: "44444444-4444-4444-8444-444444444444" };
+
 const PROFILE: CircleProfileSnippet = {
   userId: "11111111-1111-4111-8111-111111111111",
   avatarUrl: null,
@@ -73,7 +76,7 @@ describe("circle_presence reads its rung through the fusion store", () => {
   });
 
   test("the shaper's rung is a SEALED estimate from the store, not a local decision", () => {
-    const e = circlePresenceEstimate(PROFILE, presenceRow(), "approximate_area", false);
+    const e = circlePresenceEstimate(PROFILE, presenceRow(), "approximate_area", false, CTX);
     assert.ok(e, "no estimate was minted for a visible circle presence row");
     assert.ok(isFused(e), "the shaper produced something the store did not mint");
     assert.equal(e.source, "circle_presence");
@@ -82,25 +85,25 @@ describe("circle_presence reads its rung through the fusion store", () => {
   });
 
   test("status_only lands BELOW the label rung, which is why it carries no label", () => {
-    const e = circlePresenceEstimate(PROFILE, presenceRow(), "status_only", false);
+    const e = circlePresenceEstimate(PROFILE, presenceRow(), "status_only", false, CTX);
     assert.ok(e && isFused(e));
     assert.equal(e.precision, "presence_only");
     assert.ok(
       precisionRank(e.precision) < precisionRank("venue"),
       "status_only must not reach the rung a venue/area label occupies",
     );
-    const shaped = shapePresence(PROFILE, presenceRow(), "status_only", false);
+    const shaped = shapePresence(PROFILE, presenceRow(), "status_only", false, CTX);
     assert.equal(shaped.approximateLabel, null);
     assert.equal(shaped.venueLabel, null);
   });
 
   test("venue_checkin reaches the label rung only when the member is checked in", () => {
-    const out = circlePresenceEstimate(PROFILE, presenceRow({ checked_in: false }), "venue_checkin", false);
+    const out = circlePresenceEstimate(PROFILE, presenceRow({ checked_in: false }), "venue_checkin", false, CTX);
     assert.equal(out?.precision, "presence_only");
-    const inn = circlePresenceEstimate(PROFILE, presenceRow({ checked_in: true }), "venue_checkin", false);
+    const inn = circlePresenceEstimate(PROFILE, presenceRow({ checked_in: true }), "venue_checkin", false, CTX);
     assert.equal(inn?.precision, "venue");
     assert.equal(
-      shapePresence(PROFILE, presenceRow({ checked_in: true }), "venue_checkin", false).venueLabel,
+      shapePresence(PROFILE, presenceRow({ checked_in: true }), "venue_checkin", false, CTX).venueLabel,
       "SM Mall",
     );
   });
@@ -111,8 +114,8 @@ describe("circle_presence reads its rung through the fusion store", () => {
     // nothing between the row and the response had an opinion about the
     // subject. The label now depends on an admission that did not happen.
     const anonymous: CircleProfileSnippet = { ...PROFILE, userId: "   " };
-    assert.equal(circlePresenceEstimate(anonymous, presenceRow(), "approximate_area", false), null);
-    const shaped = shapePresence(anonymous, presenceRow(), "approximate_area", false);
+    assert.equal(circlePresenceEstimate(anonymous, presenceRow(), "approximate_area", false, CTX), null);
+    const shaped = shapePresence(anonymous, presenceRow(), "approximate_area", false, CTX);
     assert.equal(shaped.approximateLabel, null, "a label was served for a presence the store refused");
     assert.equal(shaped.venueLabel, null);
     // Everything that is NOT a location still renders: a refused location is
@@ -126,16 +129,16 @@ describe("circle_presence reads its rung through the fusion store", () => {
     // source ceiling is `venue`, and the store retains a point only at
     // `precise`, so no future column can put a coordinate on this response
     // without the register's ceiling being raised in a reviewed diff.
-    const e = circlePresenceEstimate(PROFILE, presenceRow(), "approximate_area", false);
+    const e = circlePresenceEstimate(PROFILE, presenceRow(), "approximate_area", false, CTX);
     assert.equal(e?.position, null);
-    const shaped = shapePresence(PROFILE, presenceRow(), "approximate_area", false);
+    const shaped = shapePresence(PROFILE, presenceRow(), "approximate_area", false, CTX);
     assert.equal(shaped.publicLat, null);
     assert.equal(shaped.publicLng, null);
   });
 
   test("an absent presence row mints nothing and still shapes the member", () => {
-    assert.equal(circlePresenceEstimate(PROFILE, null, "approximate_area", false), null);
-    const shaped = shapePresence(PROFILE, null, "approximate_area", false);
+    assert.equal(circlePresenceEstimate(PROFILE, null, "approximate_area", false, CTX), null);
+    const shaped = shapePresence(PROFILE, null, "approximate_area", false, CTX);
     assert.equal(shaped.presenceAbsent, true);
     assert.equal(shaped.approximateLabel, null);
   });
@@ -182,8 +185,10 @@ function sharer(over: Partial<RawMemberLocation> = {}): RawMemberLocation {
   };
 }
 
+const TRIP = "55555555-5555-4555-8555-555555555555";
+
 function admit(raw: RawMemberLocation, nowMs: number = NOW) {
-  return admitCrewPresence(buildCrewCard(raw, nowMs), raw, nowMs);
+  return admitCrewPresence(buildCrewCard(raw, nowMs), raw, nowMs, TRIP);
 }
 
 describe("trip_crew_location_sessions reads its rung through the fusion store", () => {
@@ -254,7 +259,7 @@ describe("trip_crew_location_sessions reads its rung through the fusion store", 
     // it is the crew analogue of the map's over-claim case.
     const raw = sharer({ liveShare: null });
     const overclaimed = { ...buildCrewCard(raw, NOW), exactCoords: { ...POINT } };
-    const r = admitCrewPresence(overclaimed, raw, NOW);
+    const r = admitCrewPresence(overclaimed, raw, NOW, TRIP);
     assert.equal(r.card.exactCoords ?? null, null, "a coordinate with no grant behind it was served");
     assert.deepEqual(overclaimed.exactCoords, POINT, "the input card must not be mutated");
   });
@@ -265,7 +270,7 @@ describe("trip_crew_location_sessions reads its rung through the fusion store", 
     // clock the rest of the map is judged on, not a wall clock of its own.
     const raw = sharer();
     const later = NOW + 90 * MIN;
-    const r = admitCrewPresence(buildCrewCard(raw, later), raw, later);
+    const r = admitCrewPresence(buildCrewCard(raw, later), raw, later, TRIP);
     assert.equal(r.card.exactCoords ?? null, null);
     assert.notEqual(r.estimate?.precision, "precise");
   });

@@ -581,7 +581,7 @@ it can run in production: all four tables are absent** (`scripts/checkProduction
 | M135 | Map Objects as the wire type | C | `lib/mapObjects.ts`; mirrored client-side, drift-guarded. |
 | M136 | Map Ranking | C | `lib/mapProjection.ts:1217#rankObjects` — distance is a **tie-break**, not the sort key, because §5 makes safety and navigation precede popularity. *(Repointed 2026-09-14 from line 1166, 51 lines short.)* |
 | M137 | Privacy / Eligibility stage | C | `routes/mapProjection.ts:29-36` — the block set is resolved **once**, fail-closed, and handed to every people-bearing source so the request cannot hold two answers to "who is blocked"; `lib/mapObjects.ts:426-434` `isServable` drops `privacyClass:'none'` at the boundary whatever produced it. |
-| M138 | Viewport Aggregation | C | `lib/mapAggregation.ts:2`; `:216-238` only wide bands aggregate; `:429` `NEVER_AGGREGATED_KINDS`. |
+| M138 | Viewport Aggregation | C | `lib/mapAggregation.ts:2`; `:216-238` only wide bands aggregate; `lib/mapAggregation.ts:430#export const NEVER_AGGREGATED_KINDS` `NEVER_AGGREGATED_KINDS`. |
 | M139 | The mobile client must not independently reconstruct Portava intelligence rules; the service is the "Map Intelligence Gateway" | **W** | The name and the guard are real — `src/test/gatewayBypassGuard.test.ts:32#READERS` enumerates each privacy-complete reader with every file allowed to call it and a stated reason, and the test fails on any caller absent from that list *(repointed 2026-09-14 from lines 28-33, the doc comment above it)*. But with the flag off, `clientProjection.ts` **is** a second, on-device reconstruction, and it is the one in service. **Turns red when:** M133 turns red — the same flag flip, in the same order. The guard is not the blocker and never was; it holds today. |
 
 ### §20 Data Ownership (13)
@@ -754,7 +754,7 @@ not exist under those names**; every responsibility they name has a home.
 
 | id | Requirement | V | Evidence |
 | --- | --- | --- | --- |
-| M236 | Viewport queries | C | `lib/mapProjection.ts:1175#parseBbox` — rejects malformed, out-of-range and antimeridian-crossing viewports rather than guessing; `lib/mapAggregation.ts:120#bboxContains`. *(`parseBbox` repointed 2026-09-14 from line 1124; `bboxContains` was already right and is now anchored.)* |
+| M236 | Viewport queries | C | `lib/mapProjection.ts:1175#parseBbox` — rejects malformed, out-of-range and antimeridian-crossing viewports rather than guessing; `lib/mapAggregation.ts:121#bboxContains`. *(`parseBbox` repointed 2026-09-14 from line 1124; `bboxContains` was already right and is now anchored.)* |
 | M237 | Server aggregation | C | `lib/mapAggregation.ts:2,216-238,272-335`. |
 | M238 | Client clustering | C | `src/features/map/render/collision.ts:474-645`. |
 | M239 | Render thresholds | C | `collision.ts:227-236` `ZOOM_BAND_MIN` → band; `:276-293` `VISIBLE_BY_BAND` built cumulatively so "a kind visible at a wider band is always visible closer in". |
@@ -870,7 +870,7 @@ violation unrepresentable or refuses it. All nine clear that bar.
 | M284 | No public real-time people tracker | C | `lib/locateFriendsSession.ts:4,105` — *"§37 names two things this feature is one careless decision away from becoming"*; there is no `public` member and no public read path (`migrations/2219:310`). |
 | M285 | No permanent exact-location sharing | C | `longPress.ts:323` `SHARE_MAX_TTL_MS = 1 h`; `presenceLadder.ts:529-565` the four-stage decay; `2219:118` the 12-hour CHECK; `locateFriendsSession.ts:874,943` names the exact failure mode it is preventing. |
 | M286 | Not a place-rating directory | C | `lib/mapObjects.ts:363-400` — `MapObject` has **no rating axis at all**; §7's four axes are activity, trend, confidence and freshness. |
-| M287 | No screen full of unranked POI pins | C | `lib/mapProjection.ts:1217#rankObjects`; `collision.ts:634#resolveCollisions`; `lib/mapAggregation.ts:234#AGGREGATING_BANDS` — only `world` and `city` aggregate, so wide bands collapse to cells. *(`rankObjects` and `resolveCollisions` repointed 2026-09-14.)* |
+| M287 | No screen full of unranked POI pins | C | `lib/mapProjection.ts:1217#rankObjects`; `collision.ts:634#resolveCollisions`; `lib/mapAggregation.ts:235#AGGREGATING_BANDS` — only `world` and `city` aggregate, so wide bands collapse to cells. *(`rankObjects` and `resolveCollisions` repointed 2026-09-14.)* |
 | M288 | Compass must not invent live conditions | C | `compassMapModel.ts:8,191`; `lib/mapProjection.ts:675#Never upgrades` — *"if the claims are empty the object is returned untouched"* — enforced in `lib/mapProjection.ts:696#applyLiveClaims`. *(Repointed 2026-09-14 from line 667.)* |
 | M289 | Predictions must not look like observations | C | `lib/mapObjects.ts:112` `FORECAST_KINDS` + `isForecastKind`; `timeMachine.ts:30-39` the discriminated union; `zoneStyle.ts:22-25,183` dashed **and** dimmed; `lib/mapProjectPlace.ts:202` cites §37 twice. |
 | M290 | Paid businesses must not buy factual confidence | C | `lib/mapProjection.ts:518` `sourceCountBucket` nullable and load-bearing; `lib/mapObjects.ts:199-217` publishes the source **class** as a value so a renderer never has to regex English to learn a claim was sponsored; `routes/mapObservations.ts:70` rewards and observations do not join. |
@@ -1805,7 +1805,7 @@ that inherit it are C.
 
 They are not being graded C, because the criterion is incomplete. A third gate
 exists that no row in this census names: `locate_friends_enabled`
-(`artifacts/api-server/src/lib/locateFriendsSession.ts:104#LOCATE_FRIENDS_FLAG`,
+(`artifacts/api-server/src/lib/locateFriendsSession.ts:112#LOCATE_FRIENDS_FLAG`,
 also read by `services/passport/PassportProjectionService.ts:1878#const LOCATE_FRIENDS_CAPABILITY_FLAG = "locate_friends_enabled"`). It is present
 in production and **FALSE**.
 

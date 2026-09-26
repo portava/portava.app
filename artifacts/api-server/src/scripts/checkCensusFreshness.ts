@@ -2326,6 +2326,16 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     // is what changed the row's measurement, so it must age this census too.
     "artifacts/api-server/src/services/accountDeletion/sensingRevocationReach.ts",
     "artifacts/api-server/src/test/accountDeletionSensingRevocationReach.test.ts",
+    // WIDENED 2026-09-26 (census-sensing §25, owner decision A): the consent-
+    // scope proof and the files it grades. S3/S106 moved on this evidence, so
+    // every file that carries it must age this census.
+    "artifacts/api-server/src/test/presenceFusionConsent.test.ts",
+    "artifacts/api-server/src/test/presenceFusionStore.test.ts",
+    "artifacts/api-server/src/test/presenceWireCircleCrew.test.ts",
+    "artifacts/api-server/src/test/locateFriendsSession.test.ts",
+    // The two remaining revocation points the fused read depends on.
+    "artifacts/api-server/src/domain/trips/services/TripCrewLiveShareService.ts",
+    "artifacts/api-server/src/routes/circle.ts",
     //
     // DELIBERATELY NOT ADDED, because this census cites them as context rather
     // than grading them, and widening scope to whatever a census mentions would

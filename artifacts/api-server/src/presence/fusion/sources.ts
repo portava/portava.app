@@ -69,10 +69,95 @@ export const PRESENCE_CLASSES = [
 ] as const;
 export type PresenceClass = (typeof PRESENCE_CLASSES)[number];
 
+// ── Consent scopes (§17 / §19 — OWNER DECISION A, 2026-09-26) ─────────────────
+
+/**
+ * WHAT A CONSENT SCOPE IS, AND WHY EVERY CLAIM MUST NAME ONE.
+ *
+ * census-sensing §24.3 measured the fused read three times and found the same
+ * hole each time: a presence estimate carried its SOURCE and its CEILING but
+ * not the AUDIENCE the subject consented to. A `locate_friends_session`
+ * position is shared with the members of ONE session; a `circle_presence` row
+ * with the accepted members of ONE trip or event; a crew coordinate with the
+ * `allowed_member_ids` of ONE trip's live share. "Same class" says the two
+ * consents are the same KIND of consent — it does not say they were given to
+ * the same PEOPLE. Fusing across them by class alone would let a member of
+ * session A learn where the subject was seen by session B.
+ *
+ * Owner decision A: preserve and enforce the source-specific consent and
+ * audience restrictions THROUGH fusion and reads. The mechanism is this type.
+ * A claim names the scope it was consented to, the store keys retention by
+ * (source, scope, subject), and a read names the scopes the VIEWER verifiably
+ * holds. An estimate is reachable only through a scope in both lists. A claim
+ * with no scope is refused (`no_scope`); a claim whose scope kind is not the
+ * one its source's contract declares is refused (`scope_mismatch`), so a
+ * source cannot launder a session position as a circle one.
+ *
+ *   locate_session  one Locate-My-Friends session; `id` is the session id.
+ *   circle          one Circle context; `id` is `${contextType}:${contextId}`
+ *                   (`trip:…` or `event:…`), the same pair 0117 keys rows by.
+ *   trip_crew       one trip's crew map; `id` is the trip id. The per-viewer
+ *                   `allowed_member_ids` grant is a CEILING (folded at admit),
+ *                   not a scope: the scope is the trip the subject joined.
+ *   map_public      the map's public-discovery rendering; `id` is the map kind.
+ *                   Subjects here are source-scoped and never fused, so the
+ *                   scope exists to make the claim well-formed and revocable,
+ *                   not to unlock a cross-source read.
+ */
+export const PRESENCE_CONSENT_SCOPE_KINDS = [
+  "locate_session",
+  "circle",
+  "trip_crew",
+  "map_public",
+] as const;
+export type PresenceConsentScopeKind = (typeof PRESENCE_CONSENT_SCOPE_KINDS)[number];
+
+export interface PresenceConsentScope {
+  readonly kind: PresenceConsentScopeKind;
+  /** Non-empty. The unit the consent was given to, in that kind's own id space. */
+  readonly id: string;
+}
+
+export function isPresenceConsentScopeKind(v: unknown): v is PresenceConsentScopeKind {
+  return typeof v === "string" && (PRESENCE_CONSENT_SCOPE_KINDS as readonly string[]).includes(v);
+}
+
+/**
+ * Structural check, FAIL-CLOSED: an unreadable scope is not a scope. Used on
+ * the write side (a malformed claim is refused) and on the read side (a
+ * malformed audience entry unlocks nothing).
+ */
+export function isPresenceConsentScope(v: unknown): v is PresenceConsentScope {
+  if (typeof v !== "object" || v === null) return false;
+  const o = v as { kind?: unknown; id?: unknown };
+  if (!isPresenceConsentScopeKind(o.kind)) return false;
+  return typeof o.id === "string" && o.id.trim() !== "";
+}
+
+/** The retention-key spelling of a scope. `kind` cannot contain ':'; `id` may. */
+export function consentScopeKey(scope: PresenceConsentScope): string {
+  return `${scope.kind}:${scope.id.trim()}`;
+}
+
+export function sameConsentScope(a: PresenceConsentScope, b: PresenceConsentScope): boolean {
+  return a.kind === b.kind && a.id.trim() === b.id.trim();
+}
+
+/** The circle scope for one context, spelled the one way the store will match. */
+export function circleConsentScope(contextType: string, contextId: string): PresenceConsentScope {
+  return { kind: "circle", id: `${contextType}:${contextId}` };
+}
+
 export interface PresenceSourceContract {
   readonly id: PresenceSourceId;
   /** §17 class. Distinct classes may not be fused into one another. */
   readonly presenceClass: PresenceClass;
+  /**
+   * The ONE consent-scope kind this source's claims may carry. The store
+   * refuses a claim whose scope is of any other kind (`scope_mismatch`), so a
+   * source cannot present its consent as another source's.
+   */
+  readonly consentScopeKind: PresenceConsentScopeKind;
   /**
    * §52 ceiling for this source. The store folds it into every claim, so a
    * source cannot ask for more than its class allows even by mistake.
@@ -121,6 +206,7 @@ export const PRESENCE_SOURCE_CONTRACTS: Readonly<Record<PresenceSourceId, Presen
     circle_presence: Object.freeze({
       id: "circle_presence",
       presenceClass: "social",
+      consentScopeKind: "circle",
       ceiling: "venue",
       backing: [
         "src/migrations/0108_circle_schema_tracked.sql:147 — one row per (user, context)",
@@ -138,6 +224,7 @@ export const PRESENCE_SOURCE_CONTRACTS: Readonly<Record<PresenceSourceId, Presen
     trip_crew_location_sessions: Object.freeze({
       id: "trip_crew_location_sessions",
       presenceClass: "trip_crew",
+      consentScopeKind: "trip_crew",
       ceiling: FEATURE_PRECISION_CEILING.crew,
       backing: [
         "src/migrations/0041_trip_crew_location.sql",
@@ -157,6 +244,7 @@ export const PRESENCE_SOURCE_CONTRACTS: Readonly<Record<PresenceSourceId, Presen
     locate_friends_session: Object.freeze({
       id: "locate_friends_session",
       presenceClass: "social",
+      consentScopeKind: "locate_session",
       ceiling: FEATURE_PRECISION_CEILING.crew,
       backing: [
         "src/migrations/2219_locate_friends_sessions.sql — sessions, members, positions",
@@ -168,6 +256,7 @@ export const PRESENCE_SOURCE_CONTRACTS: Readonly<Record<PresenceSourceId, Presen
     map_social_presence: Object.freeze({
       id: "map_social_presence",
       presenceClass: "public_discovery",
+      consentScopeKind: "map_public",
       ceiling: FEATURE_PRECISION_CEILING.crew,
       backing: [
         "src/lib/mapProjection.ts:130 projectTraveler — social_zone",
@@ -195,6 +284,15 @@ export type MapPresenceKind = (typeof MAP_PRESENCE_KINDS)[number];
 
 export function isMapPresenceKind(v: unknown): v is MapPresenceKind {
   return typeof v === "string" && (MAP_PRESENCE_KINDS as readonly string[]).includes(v);
+}
+
+/**
+ * The consent scope a map presence rendering is admitted under: one per kind,
+ * because each kind is its own disclosure decision by the subject (a traveler's
+ * discovery setting, a buddy's chosen meetup base, a crew member's pin).
+ */
+export function mapPublicScope(kind: MapPresenceKind): PresenceConsentScope {
+  return { kind: "map_public", id: kind };
 }
 
 /**

@@ -41,7 +41,39 @@ import {
   type FusedPresenceEstimate,
   type PresenceClaim,
 } from "../presence/fusion/store.js";
+import { circleConsentScope } from "../presence/fusion/sources.js";
 import { precisionRank, type LocationPrecision } from "../presence/domain/types.js";
+
+/**
+ * The Circle context a presence row belongs to — 0117's `(context_type,
+ * context_id)` pair. It is the claim's CONSENT SCOPE (owner decision A): a
+ * member published this row to the accepted members of THIS trip or event, and
+ * a fused read reaches the estimate only by holding that context's scope.
+ */
+export interface CircleContextRef {
+  type: string;
+  id: string;
+}
+
+/**
+ * ── REVOCATION — the store's half of "stop sharing" ─────────────────────────
+ * Each returns how many retained estimates were dropped. The routes call these
+ * at the exact points a member's consent to a context ends: pausing one
+ * context, pausing all, the session-end pause, the sweep of a context whose
+ * trip or event has ended, an admin disabling a context, the kill switch.
+ */
+export function revokeCirclePresence(userId: string, contextType: string, contextId: string): number {
+  return presenceFusion.revokeSubjectInScope(userId, circleConsentScope(contextType, contextId));
+}
+export function revokeCircleContext(contextType: string, contextId: string): number {
+  return presenceFusion.revokeScope(circleConsentScope(contextType, contextId));
+}
+export function revokeAllCirclePresence(userId: string): number {
+  return presenceFusion.revokeSubject(userId, "circle");
+}
+export function revokeEveryCirclePresence(): number {
+  return presenceFusion.revokeScopeKind("circle");
+}
 
 export interface CircleProfileSnippet {
   userId: string;
@@ -152,18 +184,19 @@ function observedAtMsOf(presenceRow: Record<string, any>): number | null {
  * decision from the one this lane is making.
  *
  * The subject is the Portava ACCOUNT, so a circle estimate is account-scoped
- * and `PresenceFusionStore.resolve` may fuse it with the other three models;
- * the store re-mints under the asking source's ceiling, so that can only ever
- * narrow. The circle CONTEXT is not part of the key, for the reason
- * `lib/locateFriendsSession.ts` gives about session ids: the latest assertion
- * about a person is the latest assertion about that person, and keying per
- * context would put the same human in the store once per trip.
+ * and `PresenceFusionStore.resolve` may fuse it with the other same-class
+ * models; the store re-mints under the asking source's ceiling and the
+ * viewer's audience, so that can only ever narrow. The circle CONTEXT is the
+ * claim's consent scope (owner decision A): the row was published to the
+ * accepted members of one trip or event, and only a viewer holding that
+ * context's scope can reach the estimate through a fused read.
  */
 export function circlePresenceEstimate(
   profile: CircleProfileSnippet,
   presenceRow: Record<string, any> | null,
   visibilityMode: string,
   isStale: boolean,
+  context: CircleContextRef,
 ): FusedPresenceEstimate | null {
   // No row is not a refusal — there is simply nothing to assert about this
   // member, and minting an estimate for it would invent a presence.
@@ -173,6 +206,7 @@ export function circlePresenceEstimate(
   const claim: PresenceClaim = {
     subjectKey: profile.userId,
     linkage: "account_scoped",
+    scope: circleConsentScope(context.type, context.id),
     // The most this model can ever ask for. The bounds below do the narrowing,
     // and the store folds its own source ceiling over the result, so this can
     // never widen anything — §52 has exactly one direction.
@@ -217,6 +251,7 @@ export function shapePresence(
   presenceRow: Record<string, any> | null,
   visibilityMode: string,
   isStale: boolean,
+  context: CircleContextRef,
 ): ShapedPresence {
   if (!presenceRow) {
     return {
@@ -250,7 +285,7 @@ export function shapePresence(
   // that rung (see VISIBILITY_MODE_CEILING); a refusal — no subject, an
   // unknown mode, a fold that landed on `none` — leaves `estimate` null and
   // publishes no location at all.
-  const estimate = circlePresenceEstimate(profile, presenceRow, visibilityMode, isStale);
+  const estimate = circlePresenceEstimate(profile, presenceRow, visibilityMode, isStale, context);
   const mayPublishLabel =
     estimate !== null && precisionRank(estimate.precision) >= precisionRank(CIRCLE_LABEL_RUNG);
 

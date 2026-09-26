@@ -566,7 +566,7 @@ import {
  * onto the declaration it names, which retired one more dead target. Same rule
  * as above: the guard printed "176 < 177 — LOWER THE CEILING", and a ceiling
  * left above the measured count re-admits the rot just removed. */
-export const MAX_DEAD_TARGETS = 169;
+export const MAX_DEAD_TARGETS = 166;
 
 /** Pinned to a commit by its own declaration; its lines must not track HEAD. */
 const PINNED_DOCS = new Set(['docs/architecture/mobile-reachability-ledger.md']);

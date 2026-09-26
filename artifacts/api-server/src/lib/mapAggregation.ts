@@ -60,6 +60,7 @@ import {
   MAP_PRESENCE_KIND_CEILING,
   MAP_PRESENCE_KIND_CLASS_CEILING,
   isMapPresenceKind,
+  mapPublicScope,
   type MapPresenceKind,
 } from "../presence/fusion/sources.js";
 import {
@@ -553,6 +554,11 @@ export function gatePresenceObject(
     // estimate from the crew or circle models. The default is "do not link", so
     // linking would take a deliberate declaration rather than an oversight.
     linkage: "source_scoped",
+    // Owner decision A: every claim names its consent scope. The map's is its
+    // public-discovery rendering, one scope per kind; a source-scoped subject
+    // is never fused, so this scope makes the claim well-formed and revocable
+    // rather than unlocking a cross-source read.
+    scope: mapPublicScope(kind),
     requestedPrecision: PRIVACY_CLASS_AS_PRESENCE_PRECISION[obj.privacyClass] ?? "none",
     ceilings: [MAP_PRESENCE_KIND_CEILING[kind]],
     observedAtMs,

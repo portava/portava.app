@@ -77,7 +77,15 @@ import {
   PRESENCE_WRITE_CAPABILITIES,
   presenceFusion,
   type PresenceClaim,
+  type PresenceAudience,
 } from "../presence/fusion/store.js";
+import {
+  circleConsentScope,
+  type PresenceConsentScope,
+  type PresenceSourceId,
+} from "../presence/fusion/sources.js";
+import { canViewCirclePresenceBatch, type CircleAccessResult, type ContextType } from "./circleAccessGuard.js";
+import { circlePresenceEstimate, type CircleContextRef } from "./circleResponseShaper.js";
 import {
   classifyAgainstProtected,
   type ProtectedZone,
@@ -768,6 +776,14 @@ export interface MemberView {
   checkpointLabel: string | null;
   /** Age of the answering observation, seconds. Null when nothing answered. */
   ageSeconds: number | null;
+  /**
+   * The OTHER presence source that answered through the fusion store, when
+   * one did (owner decision A, §16.5): `circle_presence` when the member has
+   * no position in this session but the Circle context the session is
+   * attached to — which the viewer is a verified member of — says where they
+   * are. Null when this session's own position answered, or nothing did.
+   */
+  fusedFrom: PresenceSourceId | null;
 }
 
 /** The shape for "this member is in the session but has nothing to show". */
@@ -786,6 +802,7 @@ export function notSharing(memberId: string): MemberView {
     proximityBucket: null,
     checkpointLabel: null,
     ageSeconds: null,
+    fusedFrom: null,
   };
 }
 
@@ -797,10 +814,17 @@ export function mayRenderIdentity(precision: LocationPrecision): boolean {
 export interface ProjectMemberInput {
   memberId: string;
   displayName: string | null;
+  /** The session the position was published to — the claim's consent scope. */
+  sessionId: string;
   position: PositionRow | null;
   sessionCeiling: LocationPrecision;
   zones: readonly ProtectedZone[] | null;
   nowMs: number;
+}
+
+/** The consent scope of one Locate session, spelled the one way the store keys it. */
+export function locateSessionScope(sessionId: string): PresenceConsentScope {
+  return { kind: "locate_session", id: sessionId };
 }
 
 /**
@@ -836,7 +860,7 @@ export interface ProjectMemberInput {
  * to the same `notSharing` shape rather than to four different silences.
  */
 export function projectMember(input: ProjectMemberInput): MemberView {
-  const { memberId, position, sessionCeiling, zones, nowMs } = input;
+  const { memberId, sessionId, position, sessionCeiling, zones, nowMs } = input;
   if (!position || !isLocateSignalRung(position.rung)) return notSharing(memberId);
 
   const observedMs = toMs(position.observed_at);
@@ -881,12 +905,15 @@ export function projectMember(input: ProjectMemberInput): MemberView {
 
   const claim: PresenceClaim = {
     // The subject is the Portava account, so an estimate from this source can
-    // be fused with the other three by `PresenceFusionStore.resolve`. The
-    // session id is NOT part of the key: the latest observation of a person is
-    // the latest observation of that person, whichever session carried it, and
-    // keying per session would put the same human in the store twice.
+    // be fused with the other same-class models by `PresenceFusionStore.resolve`.
+    // The SESSION is the claim's consent scope (owner decision A): the member
+    // opted in to being seen by THIS session's members, and a fused read
+    // reaches the estimate only by holding this session's scope. Retention is
+    // keyed by it, so the same human seen by two sessions is two estimates
+    // with two audiences — which is what two consents are.
     subjectKey: memberId,
     linkage: "account_scoped",
+    scope: locateSessionScope(sessionId),
     requestedPrecision: isLocationPrecision(position.precision) ? position.precision : "none",
     ceilings: [
       sessionCeiling,
@@ -935,6 +962,159 @@ export function projectMember(input: ProjectMemberInput): MemberView {
     checkpointLabel:
       precisionRank(precision) >= precisionRank("venue") ? position.checkpoint_label ?? null : null,
     ageSeconds: Math.max(0, Math.round(elapsed / 1000)),
+    fusedFrom: null,
+  };
+}
+
+// ── The fused read (census-sensing §16.5, owner decision A) ──────────────────
+
+/**
+ * What a viewer's read may reach through the fusion store, and how it is
+ * proved rather than assumed.
+ *
+ * The viewer's audience always holds THIS session's scope — `readSessionForViewer`
+ * has already verified a live membership before this is built. It holds the
+ * Circle scope of the context the session is attached to, PER MEMBER, only
+ * when all of the following hold:
+ *
+ *   1. the session is attached to a trip or an event — the two Circle context
+ *      types; a `circle` or `plan` scope has no Circle context to inherit;
+ *   2. Circle's OWN access guard (`canViewCirclePresenceBatch`) allows THIS
+ *      viewer to see THAT member's presence in THAT context, at THIS read.
+ *      That is the kill switch, the viewer's membership, the member's
+ *      membership, bans, blocks, global and per-context pause, consent
+ *      version, and the member's visibility mode — the same gate the Circle
+ *      surface itself answers through, so the fused read can never show more
+ *      than the Circle screen would;
+ *   3. the presence row the guard just read admits through
+ *      `circlePresenceEstimate` — which REFRESHES the fusion store under the
+ *      context's scope from the current row.
+ *
+ * (2) and (3) are what make the read correct in a MULTI-PROCESS deployment:
+ * the fusion store is process-local, so a pause handled by another instance
+ * has revoked THAT instance's copy and not this one's. Re-deriving from the
+ * row and the guard on every read means a retained copy is never the source
+ * of truth — it is a derivation cache with a competition rule and a ceiling
+ * fold, and the in-store `revoke*` calls are defence in depth for the
+ * instance that handled the revocation. An unreadable guard (it throws, or
+ * answers `unavailable`) grants nothing: an unverifiable consent is not one.
+ *
+ * The audience ceiling is the SESSION's ceiling: what this group agreed to is
+ * the most any member of it may see of another through this surface, and the
+ * Circle estimate's own bounds (its `venue` ceiling, the member's visibility
+ * mode) are folded into the estimate at admission. Both only tighten.
+ *
+ * Injectable for tests; the default is the real guard.
+ */
+export interface FusedReadDeps {
+  circlePresenceBatch: (
+    db: Db,
+    viewerId: string,
+    targetUserIds: string[],
+    contextType: ContextType,
+    contextId: string,
+  ) => Promise<Map<string, CircleAccessResult>>;
+}
+
+export const DEFAULT_FUSED_READ_DEPS: FusedReadDeps = Object.freeze({
+  circlePresenceBatch: canViewCirclePresenceBatch,
+});
+
+function isCircleContextType(v: unknown): v is ContextType {
+  return v === "trip" || v === "event";
+}
+
+/** The Circle context a session is attached to, or null when it has none. */
+export function circleContextOf(session: SessionRow): (CircleContextRef & { type: ContextType }) | null {
+  const kind = session.group_scope_kind;
+  const contextId = typeof session.group_scope_id === "string" ? session.group_scope_id.trim() : "";
+  if (!isCircleContextType(kind) || contextId === "") return null;
+  return { type: kind, id: contextId };
+}
+
+/**
+ * The Circle half of a member's audience for one read: the scope is granted
+ * only on an `allowed` guard result whose row admits NOW. Returns the scope,
+ * or null. The profile snippet carries only the subject id — the store keys on
+ * it and reads nothing else from the snippet.
+ */
+export function circleScopeFor(
+  memberId: string,
+  circle: CircleContextRef,
+  access: CircleAccessResult | null | undefined,
+): PresenceConsentScope | null {
+  if (!access || !access.allowed) return null;
+  // Not supported in V1; the members route skips it too, and the store's
+  // ceiling table would refuse it — stated here so the two agree by reading.
+  if (access.visibilityMode === "precise_live") return null;
+  const fresh = circlePresenceEstimate(
+    { userId: memberId, avatarUrl: null, displayName: "", username: "" },
+    access.presenceRow ?? null,
+    access.visibilityMode ?? "status_only",
+    access.isStale ?? false,
+    circle,
+  );
+  return fresh === null ? null : circleConsentScope(circle.type, circle.id);
+}
+
+/**
+ * The fused answer for one member, given what THIS session's own position
+ * already projected to.
+ *
+ *   - The session's own source is answered by `own`, never by the store's
+ *     retained copy. The audience holds only this session's Locate scope, so a
+ *     `locate_friends_session` winner IS this session's entry — and `own` is
+ *     the authoritative projection of it against the CURRENT row, the current
+ *     §24 policy read and the current clock. If the current projection refused
+ *     (policy unreadable, position suppressed, expired), a retained copy that
+ *     an earlier read admitted must not resurrect it.
+ *   - A winner from another source (today: `circle_presence`, reachable only
+ *     through a verified context membership) is rendered from the estimate:
+ *     its rung, its §10 state, its age. It carries no coordinate (the Circle
+ *     ceiling is `venue`) and no identity below `approximate`, exactly as a
+ *     session position at that rung would not.
+ *   - Nothing eligible: `own`, which is then `notSharing`.
+ */
+export function fuseMemberView(
+  own: MemberView,
+  memberId: string,
+  sessionId: string,
+  audience: PresenceAudience,
+  nowMs: number,
+): MemberView {
+  const fused = presenceFusion.resolve(memberId, "locate_friends_session", audience, nowMs);
+  if (fused === null) return own;
+  if (fused.source === "locate_friends_session") {
+    // Only this session's scope is in the audience, so this is this session's
+    // entry; `own` is the current projection of it. Belt and braces: a scope
+    // that is somehow not this session's is not served either way.
+    void sessionId;
+    return own;
+  }
+  const precision = fused.precision;
+  if (precision === "none") return own;
+  const observedMs = fused.observedAtMs;
+  const elapsed = observedMs === null ? null : Math.max(0, nowMs - observedMs);
+  return {
+    memberId,
+    // §23: an identity may be attached only from `approximate` up, and a
+    // Circle estimate never reaches it. Stated through the same predicate so
+    // the two paths cannot drift.
+    displayName: mayRenderIdentity(precision) ? own.displayName : null,
+    precision,
+    estimateState: fused.state,
+    decayStage: elapsed === null ? "expired" : decayStageAt(elapsed),
+    rung: null,
+    degraded: true,
+    live: fused.live(nowMs),
+    // A `venue` rung carries no geometry; the store retains a point only at
+    // `precise`, which this source's ceiling makes unreachable.
+    position: precision === "precise" ? fused.position : null,
+    ring: null,
+    proximityBucket: null,
+    checkpointLabel: null,
+    ageSeconds: elapsed === null ? null : Math.max(0, Math.round(elapsed / 1000)),
+    fusedFrom: fused.source,
   };
 }
 
@@ -1205,6 +1385,7 @@ export async function readSessionForViewer(
   sessionId: string,
   viewerId: string,
   nowMs: number,
+  deps: FusedReadDeps = DEFAULT_FUSED_READ_DEPS,
 ): Promise<ReadResult> {
   const { row: session, unreadable } = await loadSession(db, sessionId);
   if (unreadable) return { ...EMPTY_READ, status: "unreadable" };
@@ -1267,16 +1448,39 @@ export async function readSessionForViewer(
     ? session.ceiling
     : "none";
 
-  const members = otherIds.map((id) =>
-    projectMember({
+  // (7) THE FUSED READ (§16.5, owner decision A). Gate (5) still governs: with
+  // the §24 policy unreadable, `projectMember` refuses everyone and the fused
+  // step is skipped outright, so a retained estimate cannot answer for a
+  // member the current policy read could not vouch for. Otherwise Circle's own
+  // guard is asked, once for the batch, whether THIS viewer may see EACH
+  // member's presence in the context the session is attached to; a guard that
+  // throws is a guard that answered nobody.
+  const circle = zones === null ? null : circleContextOf(session);
+  let circleAccess: Map<string, CircleAccessResult> | null = null;
+  if (circle !== null) {
+    try {
+      circleAccess = await deps.circlePresenceBatch(db, viewerId, otherIds, circle.type, circle.id);
+    } catch {
+      circleAccess = null;
+    }
+  }
+
+  const members = otherIds.map((id) => {
+    const own = projectMember({
       memberId: id,
       displayName: names.get(id) ?? null,
+      sessionId,
       position: positions.get(id) ?? null,
       sessionCeiling,
       zones,
       nowMs,
-    }),
-  );
+    });
+    if (zones === null) return own;
+    const scopes: PresenceConsentScope[] = [locateSessionScope(sessionId)];
+    const circleScope = circle === null ? null : circleScopeFor(id, circle, circleAccess?.get(id));
+    if (circleScope !== null) scopes.push(circleScope);
+    return fuseMemberView(own, id, sessionId, { ceiling: sessionCeiling, scopes }, nowMs);
+  });
 
   return { status: "ok", session: summarize(session, nowMs), members };
 }
@@ -1320,10 +1524,19 @@ export async function leaveSession(
   sessionId: string,
   userId: string,
   nowMs: number,
-): Promise<{ outcome: LeaveOutcome; positionDeleteError?: unknown }> {
+): Promise<{ outcome: LeaveOutcome; positionDeleteError?: unknown; revokedEstimates: number }> {
+  // 0. REVOKE THE FUSION STORE'S COPY, before anything is read or written
+  //    (owner decision A). The store retains this member's last admitted
+  //    estimate under this session's scope for up to its TTL; a leave is the
+  //    consent withdrawal that scope exists to honour. It happens first and
+  //    unconditionally — even when the membership row turns out unreadable —
+  //    because the member asked to stop being visible, and an in-memory drop
+  //    cannot fail.
+  const revokedEstimates = presenceFusion.revokeSubjectInScope(userId, locateSessionScope(sessionId));
+
   const { row, unreadable } = await loadMembership(db, sessionId, userId);
-  if (unreadable) return { outcome: "error" };
-  if (!row) return { outcome: "not_member" };
+  if (unreadable) return { outcome: "error", revokedEstimates };
+  if (!row) return { outcome: "not_member", revokedEstimates };
 
   const { error: delError } = await db
     .from("locate_friends_positions")
@@ -1337,6 +1550,6 @@ export async function leaveSession(
     .eq("session_id", sessionId)
     .eq("user_id", userId);
 
-  if (updError) return { outcome: "error", positionDeleteError: delError ?? undefined };
-  return { outcome: "left", positionDeleteError: delError ?? undefined };
+  if (updError) return { outcome: "error", positionDeleteError: delError ?? undefined, revokedEstimates };
+  return { outcome: "left", positionDeleteError: delError ?? undefined, revokedEstimates };
 }

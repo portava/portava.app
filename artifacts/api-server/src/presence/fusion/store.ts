@@ -51,6 +51,20 @@
  * estimate, which is derived and short-lived by construction (§18.2's
  * observed_at / expires_at / freshness are the whole retention policy here).
  *
+ * ── CONSENT SCOPES (OWNER DECISION A, 2026-09-26) ───────────────────────────
+ * census-sensing §24.3 measured the fused read three times and found that a
+ * class boundary is not an audience: two `social` sources may be consented to
+ * two different sets of people. So every claim now names the CONSENT SCOPE it
+ * was given to (`sources.PresenceConsentScope` — one session, one circle
+ * context, one trip's crew, one map kind), retention is keyed by
+ * (source, scope, subject), and every read names the scopes the VIEWER
+ * verifiably holds. An estimate is reachable only through a scope in both
+ * lists. Revocation is a first-class operation (`revokeScope`,
+ * `revokeSubjectInScope`, `revokeSubject`, `revokeScopeKind`), wired at the
+ * sources' own revocation points, and the competition between eligible
+ * estimates of different quality and freshness is one exported rule
+ * (`competePresence`) rather than "newest wins".
+ *
  * ── PURITY AND CLOCKS ────────────────────────────────────────────────────────
  * No `Date.now()` anywhere in this file. `nowMs` is always injected and may be
  * `null`, which means "the caller has no clock", NOT "now". An untimed claim
@@ -71,6 +85,12 @@ import {
   PRESENCE_CLASSES,
   PRESENCE_SOURCES,
   PRESENCE_SOURCE_CONTRACTS,
+  consentScopeKey,
+  isPresenceConsentScope,
+  isPresenceConsentScopeKind,
+  sameConsentScope,
+  type PresenceConsentScope,
+  type PresenceConsentScopeKind,
   type PresenceSourceId,
 } from "./sources.js";
 
@@ -125,6 +145,15 @@ export interface PresenceClaim {
   /** Source-scoped or account-scoped subject id. Must be non-empty. */
   subjectKey: string;
   linkage: SubjectLinkage;
+  /**
+   * §17/§19 — OWNER DECISION A. The audience this observation was consented
+   * to: one session, one circle context, one trip's crew, or one map kind.
+   * REQUIRED. A claim without one is refused (`no_scope`); one whose kind is
+   * not the kind the source's contract declares is refused (`scope_mismatch`).
+   * Retention is keyed by it, and a read reaches an estimate only through a
+   * scope the viewer holds — see `PresenceAudience`.
+   */
+  scope: PresenceConsentScope;
   /** What the source would like. The store may only narrow it. */
   requestedPrecision: LocationPrecision;
   /**
@@ -152,6 +181,10 @@ export type PresenceRefusal =
   | "unknown_source"
   /** Empty or non-string subject key. */
   | "no_subject"
+  /** No readable consent scope on the claim. Consent to nobody is not consent. */
+  | "no_scope"
+  /** The scope's kind is not the one this source's contract declares. */
+  | "scope_mismatch"
   /** A non-finite observedAt or nowMs. We do not guess a clock. */
   | "bad_clock"
   /** Older than PRESENCE_ESTIMATE_TTL_MS. Not an estimate any more. */
@@ -164,6 +197,57 @@ export type PresenceRefusal =
 export type PresenceAdmission =
   | { readonly ok: true; readonly estimate: FusedPresenceEstimate }
   | { readonly ok: false; readonly refusal: PresenceRefusal };
+
+// ── The audience (what a viewer may be shown) ────────────────────────────────
+
+/**
+ * Who is asking, stated as the two things the store checks at egress.
+ *
+ * `ceiling`  the §52 rung THIS viewer holds over THIS subject — the live-share
+ *            grant, the session ceiling, the circle visibility mode. Folded
+ *            with the retained estimate's own bound; both only tighten.
+ * `scopes`   the consent scopes the viewer VERIFIABLY holds: the session they
+ *            are a live member of, the circle contexts they are an accepted
+ *            member of, the trip whose crew they are on. An estimate is
+ *            reachable ONLY through a scope in this list equal to the scope it
+ *            was admitted under. The caller proves membership; the store does
+ *            not guess it, and an empty, malformed or unreadable list unlocks
+ *            nothing.
+ *
+ * Why the scope is not folded into the ceiling: a ceiling narrows WHAT is
+ * shown, a scope decides WHETHER anything is. A viewer holding a `precise`
+ * grant in session A holds no rung at all over the subject's session-B
+ * position, and the only rung that expresses "no rung at all" is `none` —
+ * which is what a missing scope produces, per candidate, before any rung is
+ * consulted.
+ */
+export interface PresenceAudience {
+  readonly ceiling: LocationPrecision;
+  readonly scopes: readonly PresenceConsentScope[];
+}
+
+/**
+ * The well-formed scopes of one kind an audience holds, de-duplicated. A
+ * malformed entry is dropped rather than matched loosely — an unreadable
+ * grant is not a grant.
+ */
+function audienceScopes(
+  audience: PresenceAudience | null | undefined,
+  kind: PresenceConsentScopeKind,
+): PresenceConsentScope[] {
+  const raw = audience?.scopes;
+  if (!Array.isArray(raw)) return [];
+  const seen = new Set<string>();
+  const out: PresenceConsentScope[] = [];
+  for (const sc of raw) {
+    if (!isPresenceConsentScope(sc) || sc.kind !== kind) continue;
+    const k = consentScopeKey(sc);
+    if (seen.has(k)) continue;
+    seen.add(k);
+    out.push({ kind: sc.kind, id: sc.id.trim() });
+  }
+  return out;
+}
 
 /** Thrown for a forged capability or a forged estimate. Never for data. */
 export class PresenceFusionViolation extends Error {
@@ -239,6 +323,7 @@ interface FusedInit {
   source: PresenceSourceId;
   subjectKey: string;
   linkage: SubjectLinkage;
+  scope: PresenceConsentScope;
   observedAtMs: number | null;
   expiresAtMs: number | null;
   position: GeoPoint | null;
@@ -278,6 +363,8 @@ export class FusedPresenceEstimate {
   readonly source: PresenceSourceId;
   readonly subjectKey: string;
   readonly linkage: SubjectLinkage;
+  /** The consent scope this estimate was admitted under. Frozen copy. */
+  readonly scope: PresenceConsentScope;
   readonly observedAt: Date | null;
   readonly expiresAt: Date | null;
   readonly position: GeoPoint | null;
@@ -299,6 +386,7 @@ export class FusedPresenceEstimate {
     this.source = init.source;
     this.subjectKey = init.subjectKey;
     this.linkage = init.linkage;
+    this.scope = Object.freeze({ kind: init.scope.kind, id: init.scope.id });
     this.observedAt = init.observedAtMs === null ? null : new Date(init.observedAtMs);
     this.expiresAt = init.expiresAtMs === null ? null : new Date(init.expiresAtMs);
     this.position = init.position;
@@ -445,7 +533,77 @@ function isEstimateState(v: unknown): v is PresenceEstimateState {
   return typeof v === "string" && (ESTIMATE_STATES as readonly string[]).includes(v);
 }
 
+// ── Competition (§16.5 — how observations of different quality compete) ──────
+
+/**
+ * How two eligible estimates for the same subject compete for one answer,
+ * ordered from the property that matters most to the one that matters least:
+ *
+ *   1. LIVE beats not-live. An estimate inside the 5-minute window with a live
+ *      §10 state is a current position; everything else is history or a guess,
+ *      and §20 says history may not outrank the present however fresh.
+ *   2. STATE STRENGTH. Among two live or two non-live estimates, the stronger
+ *      §10 state wins: an observed position (`precise` > `nearby` > `relayed`)
+ *      over an aged one (`recent`) over the source's own admission that it is
+ *      stale (`last_known`) over a guess (`inferred`, `predicted`, `unknown`).
+ *      This is deliberately ABOVE recency: a `recent` observation four minutes
+ *      old outranks a `last_known` assertion one minute old, because the
+ *      second source is telling us it does not know where the subject is now.
+ *   3. NEWEST OBSERVATION. Same strength: the later `observedAt` wins. An
+ *      untimed estimate ranks below every timed one.
+ *   4. CONFIDENCE. Same clock: the more confident evidence wins.
+ *   5. REGISTER ORDER, then scope key — a total order, so the answer is a
+ *      function of the retained set and not of insertion order.
+ *
+ * Exported so the rule can be tested as a rule, not inferred from `resolve`.
+ * Negative when `a` should win, positive when `b` should, 0 only for the same
+ * (source, scope) — which the store never holds twice for one subject.
+ */
+export const PRESENCE_STATE_STRENGTH: Readonly<Record<PresenceEstimateState, number>> =
+  Object.freeze({
+    precise: 6,
+    nearby: 5,
+    relayed: 4,
+    recent: 3,
+    last_known: 2,
+    inferred: 1,
+    predicted: 1,
+    unknown: 0,
+  });
+
+export function competePresence(
+  a: FusedPresenceEstimate,
+  b: FusedPresenceEstimate,
+  nowMs: number | null,
+): number {
+  const liveA = a.live(nowMs) ? 1 : 0;
+  const liveB = b.live(nowMs) ? 1 : 0;
+  if (liveA !== liveB) return liveB - liveA;
+  const sa = PRESENCE_STATE_STRENGTH[a.state] ?? 0;
+  const sb = PRESENCE_STATE_STRENGTH[b.state] ?? 0;
+  if (sa !== sb) return sb - sa;
+  const ta = a.observedAtMs ?? Number.NEGATIVE_INFINITY;
+  const tb = b.observedAtMs ?? Number.NEGATIVE_INFINITY;
+  if (ta !== tb) return ta > tb ? -1 : 1;
+  if (a.confidence !== b.confidence) return b.confidence - a.confidence;
+  const oa = PRESENCE_SOURCES.indexOf(a.source);
+  const ob = PRESENCE_SOURCES.indexOf(b.source);
+  if (oa !== ob) return oa - ob;
+  const ka = consentScopeKey(a.scope);
+  const kb = consentScopeKey(b.scope);
+  return ka < kb ? -1 : ka > kb ? 1 : 0;
+}
+
 const RETENTION_KEY_SEP = "\u0000";
+
+/** (source, scope, subject) — the unit of retention and of revocation. */
+function retentionKey(
+  source: PresenceSourceId,
+  scope: PresenceConsentScope,
+  subjectKey: string,
+): string {
+  return `${source}${RETENTION_KEY_SEP}${consentScopeKey(scope)}${RETENTION_KEY_SEP}${subjectKey}`;
+}
 
 export interface PresenceFusionStoreOptions {
   /**
@@ -490,6 +648,15 @@ export class PresenceFusionStore {
 
     const subjectKey = typeof claim?.subjectKey === "string" ? claim.subjectKey.trim() : "";
     if (subjectKey === "") return { ok: false, refusal: "no_subject" };
+
+    // OWNER DECISION A: no scope, no admission. Consent given to nobody in
+    // particular is not consent the store can honour at a read, and a scope of
+    // the wrong kind is another source's consent wearing this one's name.
+    if (!isPresenceConsentScope(claim.scope)) return { ok: false, refusal: "no_scope" };
+    if (claim.scope.kind !== contract.consentScopeKind) {
+      return { ok: false, refusal: "scope_mismatch" };
+    }
+    const scope: PresenceConsentScope = { kind: claim.scope.kind, id: claim.scope.id.trim() };
 
     const observedAtMs = claim.observedAtMs;
     if (observedAtMs !== null && !Number.isFinite(observedAtMs)) {
@@ -539,6 +706,7 @@ export class PresenceFusionStore {
       source: capability.source,
       subjectKey,
       linkage: claim.linkage === "account_scoped" ? "account_scoped" : "source_scoped",
+      scope,
       observedAtMs,
       expiresAtMs,
       position: point,
@@ -558,45 +726,71 @@ export class PresenceFusionStore {
   }
 
   /**
-   * Latest retained estimate for one source's subject, NARROWED TO THE AUDIENCE
-   * THAT IS ASKING — or null when expired, absent, or withheld from that
-   * audience.
+   * The best retained estimate for one source's subject THAT THE AUDIENCE MAY
+   * REACH, narrowed to that audience — or null when expired, absent, or
+   * withheld from that audience.
    *
-   * `audienceCeiling` is REQUIRED, and it is the caller's own §52 rung for THIS
+   * `audience` is REQUIRED. Its `ceiling` is the caller's own §52 rung for THIS
    * viewer and THIS subject — the live-share grant, the session ceiling, the
-   * circle visibility mode. It is NOT the source's static contract ceiling,
-   * which is a property of the model rather than of who is looking. `#forAudience`
-   * states what a read without it would serve.
+   * circle visibility mode — never the source's static contract ceiling, which
+   * is a property of the model rather than of who is looking. Its `scopes` are
+   * the consents the viewer verifiably holds; only entries admitted under one
+   * of them are candidates at all, and among those `competePresence` decides.
+   * `#forAudience` states what a read without the ceiling would serve; a read
+   * without the scopes serves nothing, by construction.
    */
   read(
     source: PresenceSourceId,
     subjectKey: string,
-    audienceCeiling: LocationPrecision,
+    audience: PresenceAudience,
     nowMs: number | null,
   ): FusedPresenceEstimate | null {
-    const hit = this.#entries.get(`${source}${RETENTION_KEY_SEP}${subjectKey}`);
-    if (!hit) return null;
-    if (hit.expiredAt(nowMs)) return null;
-    return this.#forAudience(hit, source, audienceCeiling);
+    const contract = PRESENCE_SOURCE_CONTRACTS[source];
+    if (!contract) return null;
+    const key = typeof subjectKey === "string" ? subjectKey.trim() : "";
+    if (key === "") return null;
+
+    let best: FusedPresenceEstimate | null = null;
+    for (const scope of audienceScopes(audience, contract.consentScopeKind)) {
+      const hit = this.#entries.get(retentionKey(source, scope, key));
+      if (!hit) continue;
+      if (hit.expiredAt(nowMs)) continue;
+      if (best === null || competePresence(hit, best, nowMs) < 0) best = hit;
+    }
+    if (best === null) return null;
+    return this.#forAudience(best, source, audience.ceiling);
   }
 
   /**
    * FUSION ACROSS SOURCES — one subject, many models, one answer.
    *
-   * Takes every live ACCOUNT-SCOPED estimate for `subjectKey`, picks the most
-   * recent observation, and re-mints it under BOTH the asking source's ceiling
-   * and `audienceCeiling` — the rung THIS viewer holds over THIS subject — so a
+   * Takes every unexpired ACCOUNT-SCOPED estimate for `subjectKey` that the
+   * audience's scopes can reach, lets them compete under `competePresence`,
+   * and re-mints the winner under BOTH the asking source's ceiling and the
+   * audience's ceiling — the rung THIS viewer holds over THIS subject — so a
    * feature can never see more through the fusion layer than its own §52 rung
    * allows, and one viewer can never see another viewer's. The source ceiling
    * alone is not enough, and `#forAudience` states why in full.
-   * `source_scoped` estimates are skipped entirely: §20 forbids
-   * reverse-linking anonymous world intelligence to an account, and the way to
-   * honour that is to have no code path that does it.
+   *
+   * THREE FILTERS RUN AT SELECTION, not at egress, and the order of the three
+   * is not load-bearing because each is a pure predicate on the candidate:
+   *
+   *   - SCOPE (owner decision A): only entries admitted under a scope the
+   *     viewer holds are looked up at all. A member of session A never has
+   *     the subject's session-B position in the candidate set.
+   *   - LINKAGE (§20): `source_scoped` estimates are skipped entirely — the
+   *     way to honour "anonymous intelligence may not be reverse-linked to an
+   *     account" is to have no code path that does it.
+   *   - CLASS (§17, owner decision 2026-09-26): a cross-class estimate is not
+   *     a candidate. If it were allowed to win `best` and were then refused
+   *     at egress, the answer would be `null` where an eligible same-class
+   *     estimate existed — the rule would destroy correct answers instead of
+   *     narrowing them.
    */
   resolve(
     subjectKey: string,
     forSource: PresenceSourceId,
-    audienceCeiling: LocationPrecision,
+    audience: PresenceAudience,
     nowMs: number | null,
   ): FusedPresenceEstimate | null {
     const asking = PRESENCE_SOURCE_CONTRACTS[forSource];
@@ -606,30 +800,27 @@ export class PresenceFusionStore {
 
     let best: FusedPresenceEstimate | null = null;
     for (const source of PRESENCE_SOURCES) {
-      const hit = this.#entries.get(`${source}${RETENTION_KEY_SEP}${key}`);
-      if (!hit) continue;
-      if (hit.linkage !== "account_scoped") continue;
-      // §17 CLASS BOUNDARY, applied during SELECTION and not only at egress.
-      // If a cross-class estimate were allowed to win `best` here and were then
-      // refused below, the answer would be `null` where an eligible same-class
-      // estimate existed — the rule would silently destroy correct answers
-      // instead of narrowing them. Filtering here means the newest estimate
-      // WITHIN the asking class wins, which is what fusion means once classes
-      // may not cross.
-      if (!sameConsentClass(hit.source, forSource)) continue;
-      if (hit.expiredAt(nowMs)) continue;
-      if (hit.observedAtMs === null) continue;
-      if (best === null || (hit.observedAtMs as number) > (best.observedAtMs as number)) best = hit;
+      if (!sameConsentClass(source, forSource)) continue;
+      const contract = PRESENCE_SOURCE_CONTRACTS[source];
+      for (const scope of audienceScopes(audience, contract.consentScopeKind)) {
+        const hit = this.#entries.get(retentionKey(source, scope, key));
+        if (!hit) continue;
+        if (hit.linkage !== "account_scoped") continue;
+        if (hit.expiredAt(nowMs)) continue;
+        if (hit.observedAtMs === null) continue;
+        if (best === null || competePresence(hit, best, nowMs) < 0) best = hit;
+      }
     }
     if (best === null) return null;
 
-    return this.#forAudience(best, forSource, audienceCeiling);
+    return this.#forAudience(best, forSource, audience.ceiling);
   }
 
   /**
    * ── WHY EVERY READ PATH TAKES AN AUDIENCE CEILING ────────────────────────
    *
-   * Retention is keyed `(source, subject)` and deliberately carries no viewer:
+   * Retention is keyed `(source, scope, subject)` and deliberately carries no
+   * viewer:
    * `locateFriendsSession.ts` says so in as many words — "the latest observation
    * of a person is the latest observation of that person, whichever session
    * carried it". That is right about the OBSERVATION and wrong about the
@@ -696,6 +887,7 @@ export class PresenceFusionStore {
       source: best.source,
       subjectKey: best.subjectKey,
       linkage: best.linkage,
+      scope: best.scope,
       observedAtMs: best.observedAtMs,
       expiresAtMs: best.expiresAt === null ? null : best.expiresAt.getTime(),
       position: precision === "precise" ? best.position : null,
@@ -727,12 +919,61 @@ export class PresenceFusionStore {
     this.#entries.clear();
   }
 
+  // ── Revocation (owner decision A: "verify revocation produces the effect") ──
+  //
+  // Each returns how many retained estimates were dropped. These are the
+  // store's half of a consent withdrawal; the source's own rows are the
+  // caller's to delete or close, and the two halves are wired together at the
+  // sources' revocation points — leaving a Locate session, pausing or
+  // sweeping a Circle context, stopping a crew live share, the Circle kill
+  // switch. A malformed scope or subject matches nothing and drops nothing:
+  // there is nothing to fail closed TOWARDS when the request itself is
+  // unreadable, and reporting 0 is the honest count.
+
+  /** Every estimate admitted under `scope` — all subjects, all sources. */
+  revokeScope(scope: PresenceConsentScope): number {
+    if (!isPresenceConsentScope(scope)) return 0;
+    return this.#dropWhere((e) => sameConsentScope(e.scope, scope));
+  }
+
+  /** One subject's estimates admitted under `scope`. */
+  revokeSubjectInScope(subjectKey: string, scope: PresenceConsentScope): number {
+    const key = typeof subjectKey === "string" ? subjectKey.trim() : "";
+    if (key === "" || !isPresenceConsentScope(scope)) return 0;
+    return this.#dropWhere((e) => e.subjectKey === key && sameConsentScope(e.scope, scope));
+  }
+
+  /** One subject's estimates in every scope, or only in scopes of `kind`. */
+  revokeSubject(subjectKey: string, kind: PresenceConsentScopeKind | null = null): number {
+    const key = typeof subjectKey === "string" ? subjectKey.trim() : "";
+    if (key === "") return 0;
+    if (kind !== null && !isPresenceConsentScopeKind(kind)) return 0;
+    return this.#dropWhere((e) => e.subjectKey === key && (kind === null || e.scope.kind === kind));
+  }
+
+  /** Every estimate of one scope kind — the kill-switch shape. */
+  revokeScopeKind(kind: PresenceConsentScopeKind): number {
+    if (!isPresenceConsentScopeKind(kind)) return 0;
+    return this.#dropWhere((e) => e.scope.kind === kind);
+  }
+
+  #dropWhere(pred: (e: FusedPresenceEstimate) => boolean): number {
+    let dropped = 0;
+    for (const [k, v] of this.#entries) {
+      if (pred(v)) {
+        this.#entries.delete(k);
+        dropped += 1;
+      }
+    }
+    return dropped;
+  }
+
   get size(): number {
     return this.#entries.size;
   }
 
   #retain(estimate: FusedPresenceEstimate, nowMs: number | null): void {
-    const key = `${estimate.source}${RETENTION_KEY_SEP}${estimate.subjectKey}`;
+    const key = retentionKey(estimate.source, estimate.scope, estimate.subjectKey);
     const existing = this.#entries.get(key);
     const replace =
       !existing ||

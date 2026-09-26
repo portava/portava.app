@@ -144,14 +144,17 @@ export interface CrewPresenceAdmission {
  * the defect that parameter closed.
  *
  * The subject is the Portava ACCOUNT (account-scoped), so a crew estimate can
- * be fused with the other three models by `PresenceFusionStore.resolve`; the
- * trip is not part of the key, because the latest observation of a person is
- * the latest observation of that person whichever trip carried it.
+ * be fused with the other same-class models by `PresenceFusionStore.resolve`.
+ * The TRIP is the claim's consent scope (owner decision A): a member shared
+ * their position with THIS trip's crew, and a reader reaches the estimate only
+ * by holding that trip's scope. `stopLiveShare` revokes it from the store the
+ * moment the member stops sharing.
  */
 export function admitCrewPresence(
   card: CrewMemberCard,
   raw: RawMemberLocation,
   nowMs: number,
+  tripId: string,
 ): CrewPresenceAdmission {
   // (1) §6.1. A member the presence predicate refused discloses NOTHING, so the
   //     honest rung is `none` and the store suppresses them outright — no
@@ -177,6 +180,7 @@ export function admitCrewPresence(
   const claim: PresenceClaim = {
     subjectKey: raw.userId,
     linkage: "account_scoped",
+    scope: { kind: "trip_crew", id: tripId },
     // The most a crew pin can ever be. The three bounds and the source ceiling
     // do the narrowing; §52 has one direction and asking cannot reverse it.
     requestedPrecision: "precise",
@@ -516,7 +520,7 @@ export async function getCrewMap(
     //
     // Then through the presence fusion layer, at that same instant: the card's
     // coordinate is the one the store admitted, or none. See admitCrewPresence.
-    return admitCrewPresence(buildCrewCard(raw, nowMs), raw, nowMs).card;
+    return admitCrewPresence(buildCrewCard(raw, nowMs), raw, nowMs, tripId).card;
   });
 
   return { members: cards, totalCount: cards.length, checkInsUnreadable };

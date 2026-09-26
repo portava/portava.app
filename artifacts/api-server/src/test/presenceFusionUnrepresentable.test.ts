@@ -117,6 +117,7 @@ import {
 const claim: PresenceClaim = {
   subjectKey: "user-1",
   linkage: "account_scoped",
+  scope: { kind: "locate_session", id: "session-1" },
   requestedPrecision: "precise",
   observedAtMs: 1_000,
   state: "precise",
@@ -201,6 +202,7 @@ export const cap = new PresenceWriteCapability("locate_friends_session" as any);
 import { PresenceFusionStore, type PresenceClaim } from "./store.js";
 const claim: PresenceClaim = {
   subjectKey: "user-1", linkage: "account_scoped", requestedPrecision: "precise",
+  scope: { kind: "locate_session", id: "session-1" },
   observedAtMs: 1_000, state: "precise", confidence: 1, evidence: ["gps"],
 };
 export const r = new PresenceFusionStore().admit({ source: "locate_friends_session" }, claim, 1_000);
@@ -213,6 +215,7 @@ export const r = new PresenceFusionStore().admit({ source: "locate_friends_sessi
 import { PRESENCE_WRITE_CAPABILITIES, PresenceFusionStore, type PresenceClaim } from "./store.js";
 const claim: PresenceClaim = {
   subjectKey: "user-1", linkage: "account_scoped", requestedPrecision: "precise",
+  scope: { kind: "locate_session", id: "session-1" },
   observedAtMs: 1_000, state: "precise", confidence: 1, evidence: ["gps"],
 };
 export const r = new PresenceFusionStore().admit(
@@ -229,6 +232,7 @@ export const r = new PresenceFusionStore().admit(
 import { type PresenceClaim } from "./store.js";
 export const claim: PresenceClaim = {
   subjectKey: "user-1", linkage: "account_scoped", requestedPrecision: "zone",
+  scope: { kind: "locate_session", id: "session-1" },
   precision: "precise",
   observedAtMs: 1_000, state: "precise", confidence: 1, evidence: ["gps"],
 };
@@ -282,6 +286,7 @@ describe("presence fusion — a second write path is unrepresentable (compile ti
 const CLAIM: PresenceClaim = {
   subjectKey: "user-1",
   linkage: "account_scoped",
+  scope: { kind: "locate_session", id: "session-1" },
   requestedPrecision: "precise",
   observedAtMs: 1_000,
   state: "precise",

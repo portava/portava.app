@@ -5743,7 +5743,7 @@ test that reads the counter back. Both do.
    still open**: T31 (nothing in Telegraph calls `applyProtection`; the only other
    importer of that module takes `haversineMeters` and nothing else), T35 (all
    four legacy producers still write bespoke JSON — `circle_status_card` at
-   `artifacts/api-server/src/routes/circle.ts:365#msg_type:  "circle_status_card",`,
+   `artifacts/api-server/src/routes/circle.ts:372#msg_type:  "circle_status_card",`,
    plus `discovery_card`, `post_card` and `compass_card` on the client), T123
    (eleven client modules still import the static tokens), T157 (`envelopeVersion`
    exists for §6.2's kinds and for coordination and for nothing else), T220, T295,
@@ -7177,7 +7177,7 @@ every one of them; the value here is that it is now a claim made after looking.
 | **ID** | **was** | **now** | why |
 | --- | --- | --- | --- |
 | T11 | W | W | Still open. The ACTION Confirm control still refuses rather than executing: `travel-buddy-standalone/src/features/telegraph/kinds/TypedMessageRenderer.tsx` renders "Confirmation is not available on this screen". §13.12 item 5 called this smaller than a fix and larger than nothing; it is unchanged. |
-| T35 | W | W | Still open, and the named producer is still the named producer: `artifacts/api-server/src/routes/circle.ts:365#msg_type:  "circle_status_card",` still hand-rolls the payload. `discovery_card`, `post_card` and `compass_card` are still written client-side. Another lane's file. |
+| T35 | W | W | Still open, and the named producer is still the named producer: `artifacts/api-server/src/routes/circle.ts:372#msg_type:  "circle_status_card",` still hand-rolls the payload. `discovery_card`, `post_card` and `compass_card` are still written client-side. Another lane's file. |
 | T123 | W | W | Still open, and LARGER than §17.8 recorded. §13.4 said "three surfaces"; §17.8 corrected it to eleven client modules. Counted today: **12** client modules under `travel-buddy-standalone/src` still reference the static `TG` tokens. |
 | T157 | W | W | Still open. `envelopeVersion` appears in exactly four non-test files — `services/telegraph/coordination.ts`, `services/telegraph/messageKinds.ts` and two client kind modules — i.e. §6.2's kinds and coordination and nothing else, which is the row's own statement. |
 | T166 | W | W | Still open. `routes/telegraphCommands.ts` exposes four action kinds — `add_to_plan`, `ask_followup`, `create_meetup`, `open_poll`. `CREATE_DECISION` is not among them. |

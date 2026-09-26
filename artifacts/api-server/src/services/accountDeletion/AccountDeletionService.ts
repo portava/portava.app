@@ -126,6 +126,7 @@
  */
 import { logger as rootLogger } from "../../lib/logger.js";
 import { enumerateSensingRevocationReach } from "./sensingRevocationReach.js";
+import { presenceFusion } from "../../presence/fusion/store.js";
 import { resolveStoragePath } from "../../lib/storagePath.js";
 import { ownerFromPath } from "../../lib/mediaAccess.js";
 import { requestProviderDeletionForUser } from "../identityVerification/providerErasure.js";
@@ -1298,6 +1299,20 @@ export async function executeAccountDeletion(
     );
   });
   if (!missionOk) warnings.push("intel_mission_candidates.accepted_by may still name the deleted user");
+
+  // ── Process-local presence estimates (owner decision A) ────────────────────
+  // presence/fusion/store retains the account's last admitted presence
+  // estimates — every source, every consent scope — for up to their TTL, in
+  // THIS process's memory and nowhere else. The row deletions above do not
+  // reach it, so it is told directly. Not a `step`: it touches no table and
+  // cannot fail. NOT recorded in the receipt's counts either: those are
+  // durable deletions, and this is one process's cache — another instance's
+  // copy ages out on its own TTL, and every fused read re-derives from the
+  // rows this run deletes. Logged, so the run still says what it dropped.
+  logger.info(
+    { userId, revokedPresenceEstimates: presenceFusion.revokeSubject(userId) },
+    "executeAccountDeletion: process-local presence estimates revoked",
+  );
 
   // ── Derived memory (FATAL on failure) ─────────────────────────────────────
   // memory_projections / memory_events / memory_feedback hold derived facts about

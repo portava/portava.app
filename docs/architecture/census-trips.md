@@ -4088,7 +4088,7 @@ forwarded them.
   coordinates AND the attempt is counted —
   `stale_presence_render_attempt_total` (`:260#stale_presence_render_attempt_total`)
   — so TR399's regression is measurable where it is refused.
-  `domain/trips/services/TripCrewLocationService.ts:343#last_known_at`
+  `domain/trips/services/TripCrewLocationService.ts:347#last_known_at`
   forwards the three columns (`:297#lastKnownAt`). The legacy
   `freshness` bucket stays on the card, computed on the same instant.
 - **Tests.** `src/test/tripPresenceFreshnessClass.test.ts` (8): the classes at
@@ -4332,7 +4332,7 @@ order: 217 files, 35 database tests, 0 skipped.
   `plan_scope = 'subgroup'` must name a subgroup (`:93#trip_plan_items_subgroup_scope_named`)
   and the kernel requires an ACTIVE one the actor is in; a live-share scoped
   to a subgroup (`:100#subgroup_id`) reaches its current members only
-  (`domain/trips/services/TripCrewLocationService.ts:424#subgroupScoped`,
+  (`domain/trips/services/TripCrewLocationService.ts:428#subgroupScoped`,
   `:277#subgroup_id`); `DISSOLVE_SUBGROUP` (`:267#DISSOLVE_SUBGROUP`) is the
   creator's or a host's and stops those shares; a named member who is not
   crew is `TRIP_SUBGROUP_MEMBER_NOT_CREW` (`:220#TRIP_SUBGROUP_MEMBER_NOT_CREW`).
@@ -8646,7 +8646,7 @@ had answered.**
    — "These user IDs are not accepted trip members: …"**, naming real crew members,
    out of a query that never answered, on a request that should have been retried.
 4. **`TripCrewLiveShareService.getActiveLiveShares`.**
-   `artifacts/api-server/src/domain/trips/services/TripCrewLiveShareService.ts:195#if (error) throw new CrewMapUnavailableError`.
+   `artifacts/api-server/src/domain/trips/services/TripCrewLiveShareService.ts:206#if (error) throw new CrewMapUnavailableError`.
    An unreadable sessions table answered `200 { liveShares: [] }` — *"nobody on
    this trip is sharing their location"* — which is a statement about the crew that
    a member acts on by not looking for anyone. It now refuses with the crew map's
