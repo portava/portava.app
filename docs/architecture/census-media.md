@@ -4890,3 +4890,246 @@ Both ledger rows now say the original condition no longer holds. What remains
 the owner's is whether to turn the canonical writer back on, which 3321
 requires before it will run on production. No executable line changed, and no
 verdict moves.
+
+## 25. Lane F — World items explain themselves from the terms that ranked them (§47) — 2026-09-26
+
+Lane F of the Media pass owns one row, **MD428**. The work is on branch
+`worktree-agent-a8c9a2ac918e3010e`, cut from `b1903565b`, the head of
+`claude/sensing-completion-20260925` with lanes A–D merged. **MD428 moves
+`W → C`** on built, tested and mutated work. No other row moves.
+
+As in §21, every statement here is an IMPLEMENTATION claim. §25.8 gives the
+production state, and it is dark. This lane wrote no migration, enabled or
+seeded no flag, and read or wrote no database.
+
+§23 says a later lane's section goes above it. This section is at the end
+because the lane brief said to put it there. The integrator may move it; no
+citation in it depends on where it sits.
+
+### 25.1 The row's text is out of date on one point
+
+§19's MD428 row states its falsifier as "a §47 explanation on World items built
+from the five named reasons, two of which (MD184, MD185) are not ranking inputs
+today". That was true at §14 but is not true now:
+- §21 moved **MD184** `N → C`: a live-qualified claim is now a ranking input (V05).
+- **MD185** (Freshness) has been `C` since the first census, and freshness is also a term of the §24 World ranker.
+
+So each of §47's five reasons now has a ranker term:
+
+| §47 bullet (verbatim) | §24 input | Ranker term | Weight |
+| --- | --- | --- | --- |
+| "Nightlife matches your current intent" | Viewer intent | `artifacts/api-server/src/lib/mediaRankingSignals.ts:299#export function intentTerm(` | 0.12 |
+| "7 minutes away" | Current location | `artifacts/api-server/src/lib/mediaRankingSignals.ts:349#export function locationTerm(` | 0.04 |
+| "Fresh perspectives from the last 10 minutes" | Freshness | `artifacts/api-server/src/lib/mediaRankingSignals.ts:431#export function freshnessTerm(` | 0.07 |
+| "Area activity is increasing" | Live state, minus "− Low-confidence Live Claims" | `artifacts/api-server/src/lib/mediaRankingSignals.ts:415#export function liveTerm(` minus `artifacts/api-server/src/lib/mediaRankingSignals.ts:425#export function lowConfidenceLiveTerm(` | 0.06 − 0.08 |
+| "You've saved nearby places" | Discovery behavior | `artifacts/api-server/src/lib/mediaRankingSignals.ts:409#export function discoveryTerm(` | 0.04 |
+
+The mapping is at
+`artifacts/api-server/src/services/media/MediaExplanationService.ts:117#export const SECTION_47_REASONS`.
+The test reads the five bullets from the spec text and each §24 input from
+`SPEC_24_COVERAGE`, so a reason cannot be mapped to a term that does not
+implement it.
+
+The row's statements about the CLIENT still hold, and the client code was not
+changed:
+- The card offers "Why this?" only when a reason is served: `travel-buddy-standalone/src/features/media/components/ChangingNowCard.tsx:76#{item.whyThis && onWhyThis ? (`.
+- The shell opens the sheet with exactly that reason: `travel-buddy-standalone/src/features/media/screens/MediaWorldShell.tsx:139#if (item.whyThis) setWhy({ visible: true, explanation: item.whyThis });`.
+- The changing-now mapper already reads the field: `travel-buddy-standalone/src/features/media/services/mediaProjection.ts:448#whyThis: asString(raw.whyThis),`.
+
+The missing piece was on the server: nothing sent a reason.
+
+### 25.2 What was built
+
+**The ranker returns the scores it ordered by.** `rankMediaCandidates` and
+`rankCandidatesForViewer` now take an optional `scoresOut` map. It is filled
+with the same `MediaRankingScore` object each row was ranked on:
+`artifacts/api-server/src/services/media/MediaRankingService.ts:224#for (const e of scored) scoresOut?.set(String(e.row.id), e.score);`
+and `artifacts/api-server/src/services/media/MediaRankingService.ts:300#}, scoresOut);`.
+The change is additive: the order and the set of rows are unchanged, and a test
+checks both. The World builder creates the map at
+`artifacts/api-server/src/services/media/MediaProjectionService.ts:800#const scores = new Map<string, MediaRankingScore>();`
+and passes it through at
+`artifacts/api-server/src/services/media/MediaProjectionService.ts:661#}, scoresOut),`.
+
+**The explanation reads only those scores.** Three functions do the work:
+- `artifacts/api-server/src/services/media/MediaExplanationService.ts:142#export function reasonLift(` computes each reason's lift from the ranker's score.
+- `artifacts/api-server/src/services/media/MediaExplanationService.ts:243#export function explainWorldZone(` turns the material reasons of a zone's perspectives into §47 bullets.
+- `artifacts/api-server/src/services/media/MediaExplanationService.ts:270#export async function explainWorldZones(` writes the bullets onto the World zones. It is called once per page at `artifacts/api-server/src/services/media/MediaProjectionService.ts:836#await explainWorldZones(`.
+
+**The served shape.** `WorldZone` gains two fields: `whyThis` (the bullets,
+strongest first, one per line) and `whyThisReasons` (the same reasons as codes).
+They are declared at
+`artifacts/api-server/src/services/media/MediaProjectionService.ts:1740#export interface WorldZone {`,
+at the end of the file, so no cited line above it moved. `changingNow` is a
+filter over the same zone objects, so each changing-now card carries its zone's
+explanation. A zone with no reason has no `whyThis` key at all
+(`artifacts/api-server/src/services/media/MediaExplanationService.ts:255#if (best.size === 0) return null;`),
+and nothing on the path falls back to a generic sentence.
+
+**What counts as a World item here.** `GET /media/world` serves two kinds of
+entry:
+- **Zones**: `cityVisualState`, and `changingNow` drawn from it. The zone is the item the client offers "Why this?" on.
+- **Per-category counters**: `forYouNow`, for example "Food · 3 fresh". These are counts rather than items. They carry no explanation, and the client shows no "Why this?" on them.
+
+### 25.3 What "materially contributed" means, and how it is tested
+
+A reason's LIFT is how much its term added to the score beyond what the ranker
+gives an item it knows nothing about. That baseline is the ranker's own score
+for a bare row
+(`artifacts/api-server/src/services/media/MediaExplanationService.ts:136#export function neutralRankingScore(): MediaRankingScore {`),
+so the neutral value for freshness is the ranker's own 0.5.
+
+    lift = w × (t − t_neutral)          (area activity also subtracts w_penalty × p)
+
+A reason is MATERIAL when its lift is at least **0.03**, a quarter of the
+largest single weight. The threshold is defined at
+`artifacts/api-server/src/services/media/MediaExplanationService.ts:126#export const MATERIAL_LIFT =`
+and applied at
+`artifacts/api-server/src/services/media/MediaExplanationService.ts:159#if (lift >= MATERIAL_LIFT) out.push({ reason: r.reason, lift });`.
+Reasons are listed strongest lift first. An exact tie keeps §47's order.
+
+| Reason | Admitted | Not admitted, although the term is non-zero |
+| --- | --- | --- |
+| intent | wanted item 0.12, wanted place 0.096, wanted category 0.06 | — |
+| distance | a trip active today in the media's city, 0.04 | the viewer's home country, 0.012 |
+| freshness | posted within about 12.4 hours (at 12 hours: 0.0302) | at 13 hours: 0.0298; at one day: 0.0257 |
+| area activity | a live-qualified claim, 0.06 | the same claim with a material conflict, 0.06 − 0.08 < 0 |
+| prior saves | a place the viewer saved, 0.04 | — |
+
+### 25.4 What each reason says, and where it differs from §47's example
+
+Each sentence states what its term measured, at the level of detail the term
+measured:
+
+| Reason | Served sentence | Why it differs from the example's words |
+| --- | --- | --- |
+| intent | "You marked a perspective here as one you want", "You want to go to {place}", or "{Category} matches what you want" | The sentence follows the level the term matched: item, place or category. |
+| distance | "In {city}, where you're travelling now" | The ranker never reads the viewer's position (`artifacts/api-server/src/lib/mediaRankingSignals.ts:345#Current location (§24). Media never carries the viewer's GPS`), so no term computes minutes. |
+| freshness | "A fresh perspective, posted in the last 10 minutes" (then 30 minutes, an hour, then whole hours) | The term reads how long ago the post was published, so the sentence says "posted". |
+| area activity | "Live reports of what's happening here right now" | The term reads whether a live-qualified claim EXISTS, not a trend. "Is increasing" would claim a direction the ranking never used. |
+| prior saves | "You saved this place" | The term fires for media AT a saved place, not near one. |
+
+**This leaves one decision for the owner.** MD428's requirement is an
+explanation "naming intent match, distance, perspective freshness, area
+activity and prior saves". This section grades it `C` because each of those
+reasons is named, from the term that ranked the item.
+
+If the owner reads §47's bullets as literal copy (minutes of travel, a rising
+trend), the row goes back to `W`. Each of those two would first need a new
+RANKER term:
+- **A distance term from the viewer's position.** This is a privacy decision. The ranker refuses the viewer's GPS by design, and the sheet's own footnote promises "We never use your exact location to rank content".
+- **A trend term over the gated `crowd.trajectory` claim.**
+
+Adding either term is outside this lane. Until one exists, the explanation must
+not say anything the ranking did not use.
+
+### 25.5 Privacy: the explanation discloses nothing the viewer is not already served
+
+- **Only the viewer's own signals and what is already served.** Three of the five reasons come from the viewer's own wants, trips and saves. Freshness is the age of a perspective the viewer is already served. Activity comes from the zone's own served live claims. Other people's follows, saves, visits and crews are not §47 reasons, and none of them is read here.
+- **Only zones keyed by a canonical place, and only from perspectives served AT that place.** A zone with no place is never explained: `artifacts/api-server/src/services/media/MediaExplanationService.ts:244#if (!zone.placeId) return null;`. A perspective contributes only when the zone's place is on both its served projection and its row: `artifacts/api-server/src/services/media/MediaExplanationService.ts:247#if (item.projection.placeId !== zone.placeId || item.row.canonical_place_id !== zone.placeId) continue;`. When the owner or a hosting Hidden Gem withholds a perspective's place, that perspective is not in a place zone, so the viewer's own save or want of the place cannot surface through it.
+- **The circle-override filter runs on the inputs.** The route's payload filter removes media objects, but it cannot see inside a zone. The explanation therefore filters the items first: `artifacts/api-server/src/services/media/MediaExplanationService.ts:283#visible = (await filterMediaProjectionVisibility(sc, viewerId, all))` and `artifacts/api-server/src/services/media/MediaExplanationService.ts:296#if (!visibleIds.has(projection.id)) continue;`. If the filter cannot decide, no zone is explained: `artifacts/api-server/src/services/media/MediaExplanationService.ts:287#if (!Array.isArray(visible)) {`.
+- **A reason is dropped when the projection withholds what it rests on.**
+  - The city sentence needs the served city: `artifacts/api-server/src/services/media/MediaExplanationService.ts:222#if (!city || norm(city) !== norm(row.location_city)) return null;`.
+  - The category sentence needs the served category: `artifacts/api-server/src/services/media/MediaExplanationService.ts:217#if (!cat || cat !== norm(row.category)) return null;`.
+  - The activity sentence needs the zone's served claims: `artifacts/api-server/src/services/media/MediaExplanationService.ts:231#return zone.liveClaims.length > 0`.
+- **The k-floor.** §21's gem outcome shows no number below `OUTCOME_MIN_REPORTERS = 3` distinct reporters, because each number is a fact about people the viewer cannot see. The explanation here contains no count of perspectives or people and no total over anyone else, so there is nothing for that floor to apply to. Any later reason that does emit a count must apply the floor, and the module header says so.
+
+### 25.6 Tests, and the mutations that turned them red
+
+**Server tests.** 25 cases were added to the already-registered
+`src/test/mediaRankingObjectives.test.ts`, in five blocks:
+- `artifacts/api-server/src/test/mediaRankingObjectives.test.ts:708#describe("MD428 — §47's five reasons`: the spec mapping, the definition of MATERIAL, and the returned scores.
+- `artifacts/api-server/src/test/mediaRankingObjectives.test.ts:748#describe("MD428 — one case per §47 reason`: one case per reason and level, plus the ordering.
+- `artifacts/api-server/src/test/mediaRankingObjectives.test.ts:817#describe("MD428 — 'materially contributed' is a threshold`: the threshold cases.
+- `artifacts/api-server/src/test/mediaRankingObjectives.test.ts:854#describe("MD428 privacy`: the privacy cases.
+- `artifacts/api-server/src/test/mediaRankingObjectives.test.ts:893#describe("MD428 — GET /media/world serves`: runs the real loader, ranker and World builder over a fake database. One case goes over HTTP: `GET /api/media/world` with the router mounted.
+
+**Client test.** One case,
+`travel-buddy-standalone/src/features/media/__tests__/MediaWorldShell.component.test.tsx:282#it('NOW: "Why this?" opens the §47 reasons the SERVER derived`.
+A zone in the served shape shows its reasons word for word in the sheet. A zone
+served without one offers no "Why this?".
+
+**Mutations.** Each mutation was applied to the tree, the suite run, and the
+file restored.
+
+| Mutation | What was changed | What turned red |
+| --- | --- | --- |
+| F1 | the intent_match and prior_saves term mappings swapped | "intent — the wanted item itself", "intent — a wanted place", "intent — a wanted category, §47's own example", "prior saves — a place the viewer saved", "each reason is the §24 input SPEC_24_COVERAGE says its term implements", and the World-builder and HTTP cases (10) |
+| F1b | the distance and fresh_perspective term mappings swapped | "distance — …", "freshness — a perspective posted minutes ago", the day-old threshold case, two privacy cases, and the World-builder, override and HTTP cases (10) |
+| F2 | the materiality filter removed | 20 cases, including every per-reason case and "the viewer's home country scores 0.3 on location and is NOT 'distance'" |
+| F2b | "material" weakened to any positive lift | 18 cases, including the home-country, day-old and conflicted-claim cases |
+| F3 | a fallback sentence emitted when no reason applies | 11 cases, including "perspectives lifted only by terms §47 does not name get NO explanation — not a generic one" and "a zone's reasons are the ranker's material terms for its perspectives; a zone with none has no whyThis key" |
+| F4 | the explanation recomputes scores itself instead of reading the ranker's | the World-builder case, the withheld-place case, the undecidable-filter case and the HTTP case |
+| F5 | the ranker stops filling `scoresOut` | "rankMediaCandidates hands back, per row, the very score it ordered by — and passing the map changes nothing", and the World-builder, override, withheld-place and HTTP cases |
+| F6 | the circle-override filter skipped | "a perspective hidden from this viewer by a circle override cannot speak for its zone" |
+| F7 | a perspective not served at the zone's place accepted | "a perspective not served AT the zone's place contributes nothing, and a zone with no place is never explained" |
+| F8 | the raw city stated whether or not it is served | "the city sentence needs the SERVED city, the category sentence the SERVED category" |
+| F9 | activity stated without the zone's served claims | "the activity sentence needs the zone's own served live claims" |
+| F10 | the low-confidence penalty removed from area activity | "a live claim the ranker penalised as materially conflicted is NOT 'activity'" |
+| F11 | explain anyway when the filter cannot decide | **survived its first form** (see below); then red: "when the circle-override filter cannot decide, no zone is explained — and there is no fallback sentence" |
+| F12 | lift measured from zero instead of from the ranker's neutral item | 19 cases: freshness' neutral value is 0.5, so every item read as fresh |
+| F13 | the World builder never explains | the World-builder, override, withheld-place and HTTP cases |
+| F14 | reasons listed in §47 order rather than by lift | "several reasons: strongest lift first, an exact tie in §47's order" |
+| F15 | a zone keyed by no place explained | **survived at first** (see below); then red: "a perspective not served AT the zone's place contributes nothing, and a zone with no place is never explained" |
+| F16 | the category stated whether or not it is served | "the city sentence needs the SERVED city, the category sentence the SERVED category" |
+| mC1 | the shell opens the sheet without the served reason, so the generic sentence shows | client: the MD428 shell case |
+| mC2 | the changing-now mapper drops `whyThis` | the same case |
+| mC3 | the card offers "Why this?" with no served reason | the same case |
+
+**Two mutations did not turn anything red on their first form. Both are reported here:**
+- **F11.** The first form set the fallback but left the `return` beneath it, so it changed nothing. Rewritten to fall through with every item, it turns red.
+- **F15.** No test put a perspective with no place into a zone with no place. Every placeless zone the tests built held only items that the per-item place check already refused. The case now includes such a perspective: its distance term is material, and the reason is still not stated. F15 then turns red.
+
+**Checks, from `artifacts/api-server` unless noted.**
+- `tsc --noEmit`: clean.
+- `typecheck:tests`: at baseline, 863 diagnostics across 115 files.
+- `check:doc-citations`: clean.
+- `check:citation-targets`: 165 / 165.
+- `check:census-scope-coverage`: passed.
+- `check:census-integrity`: the rows now count C 399 / W 37 / N 12 / X 2, which is this row's move. The check exits non-zero with exactly one error: §23.6's stated headline (C 398 / W 38) no longer matches those rows. The lane brief reserves restating the headline for the integrator, so this section does not restate it.
+- No new server test file was added, so `check:test-registration` is unchanged.
+- eslint on the changed server files: 0 errors.
+- Client (`travel-buddy-standalone`):
+  - `tsc --noEmit`: clean.
+  - `typecheck:tests`: at baseline, 173 across 60.
+  - eslint on the changed test: 0 errors.
+  - The shell component suite: 11 / 11.
+  - `mediaProjection` and `worldState`: 45 / 45, run with `--import tsx`, the Node 22 local equivalent that `scripts/run-node-tests.mjs` selects.
+
+### 25.7 Row move
+
+| ID | Was | Now | Evidence |
+| --- | --- | --- | --- |
+| MD428 | **W** | **C** | Every zone `GET /media/world` serves carries a §47 explanation built only from the five reasons. Each reason comes from the ranker term that implements it, read from the score the ranker ordered by, and appears only where that term materially lifted a perspective served at the zone's place (§25.2, §25.3). Where no reason applies there is no explanation and no fallback. Privacy as in §25.5. The client shows the served reason word for word. Server mutations F1–F16 and client mutations mC1–mC3 turned red (§25.6). The grade reads §47's bullets as example copy; a literal reading is the owner's decision (§25.4). |
+
+### 25.8 Branch versus production
+
+**Nothing here is deployed.** The work is built on this lane's branch and is
+neither merged nor deployed.
+
+The World shell that renders the sheet is dark. `MEDIA_WORLD_SHELL_ENABLED` is
+seeded
+(`artifacts/api-server/src/migrations/2300_phantom_feature_flag_rows.sql:115#'MEDIA_WORLD_SHELL_ENABLED',`)
+as
+`artifacts/api-server/src/migrations/2300_phantom_feature_flag_rows.sql:116#false,`,
+and it is OFF in production (§14 F1). This lane did not re-read production (no
+database was queried) and enabled nothing.
+
+`GET /media/world` has no flag of its own. Once this code ships, the field is
+sent to any signed-in caller of that endpoint, while no reachable screen shows
+it. Two of the reasons also depend on production state this lane did not
+change:
+- Area activity needs the gated live path. That path is fail-closed and serves nothing while live is off.
+- Intent needs rows in `media_intent_signals`.
+
+Realising MD428 in production takes three steps: merge, deploy, and the
+integration owner's flag decision in §14 F1.
+
+### 25.9 Found outside this row: recorded, not fixed
+
+1. **`/media/world`'s zone and bucket totals count a perspective the viewer is not allowed to see.**
+   - **Measured on this lane's fixture.** An author's trip post was hidden from the viewer by a `hide_me_from` circle override. The place's zone still served `perspectiveCount` 2, `freshness` "fresh" (coming from the hidden post) and `totalPerspectives` 2. The Food bucket served `freshPerspectives` 1.
+   - **Why the filter misses them.** The route's filter, `filterMediaProjectionVisibility`, removes media OBJECTS. Zones and buckets carry no media objects, so the filter cannot reach their counts. `buildWorldProjection` computes them before the filter runs.
+   - **Effect on this row.** The explanation built here applies the filter to its own inputs, so it does not widen the leak. The counts, however, already disclose the recency that the explanation withholds.
+   - **Owner:** the World builder, together with the §33 visibility owner (`lib/mediaVisibility`). It is not part of MD428.
+2. **The sheet's footnote describes a different ranker.** The footnote reads `travel-buddy-standalone/src/components/media/WhyThisSheet.tsx:81#Your feed is shaped by your travel interests, the places you've explored, and creators you engage with.` The World ranker reads no engagement by design; it reads the follow graph. The sheet is shared with Watch and Gems, whose ranker does read engagement. The copy is static and belongs to the client lane, and this section does not grade it.
