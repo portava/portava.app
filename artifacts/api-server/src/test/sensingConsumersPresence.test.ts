@@ -226,21 +226,32 @@ describe("S39 — it is inert, and decision #9 is why", () => {
     assert.deepEqual(buildSensingPresenceLines([state as unknown as ConsumablePresenceState], off), []);
   });
 
-  it("THE ROW IS BLOCKED: no route builds a presence state, because nothing may read the store", () => {
-    // Decision #9 — "Publishing any aggregate to a user-visible surface" — has
-    // not been taken, and the structural consequence is that nothing can hand
-    // this consumer a state. If this assertion ever fails, a producer has
-    // appeared and S39 should be re-derived rather than this test relaxed.
-    // Comments are stripped first: this module EXPLAINS at length why it does
-    // not import those things, and naming them in prose is the opposite of
-    // importing them.
-    const code = readFileSync(join(SRC, "compass", "CompassSensingPresence.ts"), "utf8")
-      .replace(/\/\*[\s\S]*?\*\//g, "")
-      .replace(/(^|[^:])\/\/.*$/gm, "$1");
+  it("THE ROW'S SHAPE NOW: the formatter still reads no store; the route reaches it ONLY through the producer, whose scope gate precedes its flag read", () => {
+    // Decision #9's producer exists and IS wired (census-sensing §26): the
+    // route hands the producer the device's own zone refs and pushes whatever
+    // it renders. What keeps this consent-safe is structural and is asserted
+    // here rather than assumed: (1) this formatter still imports no store and
+    // builds no state — it can only render what a producer hands it; (2) the
+    // route imports the producer, not the stores, and calls no reader of its
+    // own; (3) in the producer's source the `surface` scope check comes BEFORE
+    // the flag read, so a flipped flag cannot surface anything the policy
+    // does not permit. Comments are stripped before matching.
+    const strip = (src: string) => src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
+    const code = strip(readFileSync(join(SRC, "compass", "CompassSensingPresence.ts"), "utf8"));
     assert.doesNotMatch(code, /sensingAnonStore|sensingCoverageAggregate|buildSensingPresenceState/);
-    // And no route calls the consumer at all yet.
-    const routes = readFileSync(join(SRC, "routes", "compass.ts"), "utf8");
-    assert.doesNotMatch(routes, /readSensingPresenceContext/);
+
+    const routes = strip(readFileSync(join(SRC, "routes", "compass.ts"), "utf8"));
+    assert.match(routes, /from "\.\.\/compass\/CompassSensingPresenceProducer\.js"/, "the route reaches presence through the producer");
+    assert.match(routes, /buildSensingPresenceContext\(/);
+    assert.doesNotMatch(routes, /sensingAnonStore|sensingCoverageAggregate|readLastPublishedAggregate|readSensingPresenceGate/, "the route reads no sensing store and no gate of its own");
+
+    const producer = strip(readFileSync(join(SRC, "compass", "CompassSensingPresenceProducer.ts"), "utf8"));
+    const fnStart = producer.indexOf("export async function buildSensingPresenceContext(");
+    assert.ok(fnStart > 0);
+    const body = producer.slice(fnStart);
+    const scopeAt = body.indexOf("sensingSurfaceScopeGranted(");
+    const flagAt = body.indexOf("readSensingPresenceGate(");
+    assert.ok(scopeAt > 0 && flagAt > 0 && scopeAt < flagAt, "the scope is decided before the flag is read");
   });
 
   it("an empty or unusable input renders nothing rather than an empty header", () => {

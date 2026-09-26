@@ -151,7 +151,42 @@ void _sensingSessionsTableTie;
  * one free-text field and lib/sensingContributionPolicy refuses a
  * coordinate-shaped one.
  */
-const contributionSchema = z
+/**
+ * The device's reduced features (3312), spelled as the wire contract spells
+ * them — docs/contracts/sensing-contribution-wire-v1.json, which
+ * sensingIngestWireContract.test.ts holds this schema to. Bands are the
+ * store's (lib/sensingAnonStore.normalizeSensingFeatures re-checks them and
+ * 3312's CHECKs make anything outside them unrepresentable). `.strict()` at
+ * both levels: a key this schema does not name is refused, so a coordinate
+ * cannot ride in under a new name.
+ */
+const acousticFeaturesSchema = z
+  .object({
+    energyBucket: z.number().int().min(0).max(4),
+    rhythmBucket: z.enum(["none", "irregular", "steady", "strong"]),
+    confidenceCenti: z.number().int().min(0).max(100),
+  })
+  .strict();
+
+export const contributionFeaturesSchema = z
+  .object({
+    zonePrecision: z.number().int().min(1).max(12),
+    placeCandidate: z.string().min(1).max(128).nullable(),
+    movementState: z.enum(["stationary", "pedestrian", "vehicular", "unknown"]),
+    motionEnergyCenti: z.number().int().min(0).max(100).nullable(),
+    periodicityCenti: z.number().int().min(0).max(100).nullable(),
+    dwellBucket: z.number().int().min(0).max(4).nullable(),
+    transition: z.enum(["arrival", "departure", "none", "unknown"]),
+    transportMode: z.enum(["stationary", "pedestrian", "cycling", "vehicular"]).nullable(),
+    transportModeCenti: z.number().int().min(0).max(100).nullable(),
+    density: z.enum(["unknown", "sparse", "moderate", "busy", "packed"]),
+    boundedMovement: z.boolean().nullable(),
+    sensorHealthCenti: z.number().int().min(0).max(100),
+    acoustic: acousticFeaturesSchema.optional(),
+  })
+  .strict();
+
+export const contributionSchema = z
   .object({
     commitment: z.string().min(16).max(128),
     rotationEpoch: z.number().int().nonnegative(),
@@ -162,6 +197,7 @@ const contributionSchema = z
     ttlSeconds: z.number().int().positive().max(SENSING_MAX_TTL_SECONDS).optional(),
     reductionVersion: z.number().int().positive().optional(),
     purposeScopes: z.array(z.string()).max(8).optional(),
+    features: contributionFeaturesSchema.optional(),
   })
   .strict();
 
@@ -339,6 +375,7 @@ router.post(
         signalBucket: body.signalBucket,
         ttlSeconds: body.ttlSeconds,
         reductionVersion: body.reductionVersion,
+        features: body.features ?? null,
       },
       { client: db, nowMs },
     );

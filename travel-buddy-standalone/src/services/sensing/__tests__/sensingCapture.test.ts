@@ -43,6 +43,9 @@ import {
   SENSING_CREDENTIAL_HEADER,
   createSensingTransport,
 } from '../sensingTransport.ts';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import path from 'node:path';
 
 // ── Sentinels the fake hardware emits ────────────────────────────────────────
 
@@ -220,6 +223,23 @@ describe('S28 — the running loop produces the nine features', () => {
   });
 });
 
+describe('S39 — the handle names the zone of its LAST REDUCED window, and nothing finer', () => {
+  test('null before the first window closes; the submitted zone after; null again after stop()', async () => {
+    const h = harness();
+    assert.equal(h.handle.currentZone(), null);
+    h.motion.emit(200);
+    h.location.emit(5);
+    await h.handle.flush();
+    assert.equal(h.submitted.length, 1);
+    assert.equal(h.handle.currentZone(), h.submitted[0].zone_id);
+    assert.equal(typeof h.handle.currentZone(), 'string');
+    // A zone label, not a coordinate: no digit-dot-digit, no sign, no comma pair.
+    assert.doesNotMatch(String(h.handle.currentZone()), /-?\d+\.\d+/);
+    h.handle.stop();
+    assert.equal(h.handle.currentZone(), null);
+  });
+});
+
 describe('S21 — what `submit` receives is buckets, and the raw buffer is emptied', () => {
   test('no sentinel coordinate or accelerometer axis reaches `submit`', async () => {
     const h = harness();
@@ -339,7 +359,7 @@ describe('§3 — eligibility carries the identity; ingest carries the credentia
           status: 200,
           json: async () => ({
             credential: 'opaque-abc',
-            rotationEpoch: 7,
+            rotationEpoch: CONTRACT.identity.rotationEpoch,
             expiresAt: new Date(T_START + 3_600_000).toISOString(),
           }),
         } as any;
@@ -350,13 +370,23 @@ describe('§3 — eligibility carries the identity; ingest carries the credentia
     const transport = createSensingTransport({
       baseUrl: 'https://api.example.test',
       getEligibilityToken: async () => 'account-token-xyz',
+      commitmentFor: async () => CONTRACT.identity.commitment,
       fetchImpl,
       now: () => T_START,
     });
     return { calls, transport };
   }
 
-  const payload = { zone_id: 'dr5ru7', signal_bucket: 2 } as unknown as SensingContributionPayload;
+  // The contract fixture both repositories test against. Its identity's
+  // epoch is what the fake session below returns, so the body must equal
+  // the fixture's body exactly.
+  const CONTRACT = JSON.parse(
+    readFileSync(
+      path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../../../docs/contracts/sensing-contribution-wire-v1.json'),
+      'utf8',
+    ),
+  ) as { payload: SensingContributionPayload; identity: { commitment: string; rotationEpoch: number }; body: Record<string, unknown> };
+  const payload = CONTRACT.payload;
 
   test('the ingest request carries the opaque credential and NO Authorization header', async () => {
     const { calls, transport } = transportHarness();
@@ -376,6 +406,35 @@ describe('§3 — eligibility carries the identity; ingest carries the credentia
     );
     assert.equal(ingest.headers[SENSING_CREDENTIAL_HEADER], 'opaque-abc');
     assert.ok(!ingest.body.includes('account-token-xyz'));
+  });
+
+  test("the ingest BODY is the wire contract's body — what the server's strict schema accepts", async () => {
+    const { calls, transport } = transportHarness();
+    await transport.submit(payload);
+    const ingest = calls.find((c) => c.url.endsWith('/contributions'));
+    assert.ok(ingest);
+    assert.deepEqual(JSON.parse(ingest.body), CONTRACT.body);
+    // Nothing snake_case rides out: the old spread would have failed `.strict()`.
+    for (const stale of ['zone_id', 'signal_bucket', 'observed_at_ms', 'time_bucket', 'reduction_version']) {
+      assert.ok(!ingest.body.includes(`"${stale}"`), `${stale} is not a wire key`);
+    }
+  });
+
+  test('no commitment means no request at all, and a NAMED refusal', async () => {
+    const calls: Call[] = [];
+    const transport = createSensingTransport({
+      baseUrl: 'https://api.example.test',
+      getEligibilityToken: async () => 'tok',
+      commitmentFor: async () => null,
+      fetchImpl: (async (url: any, init: any) => {
+        calls.push({ url: String(url), headers: { ...(init?.headers ?? {}) }, body: String(init?.body ?? '') });
+        return { ok: true, status: 200, json: async () => ({ credential: 'c', rotationEpoch: 1, expiresAt: new Date(T_START + 1000).toISOString() }) } as any;
+      }) as unknown as typeof fetch,
+      now: () => T_START,
+    });
+    const out = await transport.submit(payload);
+    assert.equal(out.ok === false && out.reason, 'no_commitment');
+    assert.equal(calls.filter((c) => c.url.endsWith('/contributions')).length, 0, 'a body the server would refuse is never sent');
   });
 
   test('the credential is minted once and reused while it is fresh', async () => {
@@ -403,6 +462,7 @@ describe('§3 — eligibility carries the identity; ingest carries the credentia
     const transport = createSensingTransport({
       baseUrl: 'https://api.example.test',
       getEligibilityToken: async () => 'tok',
+      commitmentFor: async () => CONTRACT.identity.commitment,
       fetchImpl,
       now: () => T_START,
     });
@@ -415,6 +475,7 @@ describe('§3 — eligibility carries the identity; ingest carries the credentia
     const transport = createSensingTransport({
       baseUrl: 'https://api.example.test',
       getEligibilityToken: async () => null,
+      commitmentFor: async () => CONTRACT.identity.commitment,
       fetchImpl: (async () => {
         throw new Error('the transport must not reach the network without eligibility');
       }) as unknown as typeof fetch,

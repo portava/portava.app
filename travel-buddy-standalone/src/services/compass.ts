@@ -5,6 +5,7 @@
  */
 import { supabase, isSupabaseConfigured } from '../lib/supabase.ts';
 import { freshToken as freshApiToken } from './apiToken.ts';
+import { withSensingZone } from './sensing/sensingZoneHint.ts';
 
 type AsyncStorageStub = {
   setItem(k: string, v: string): Promise<void>;
@@ -689,6 +690,9 @@ export interface CompassAskResponse {
  */
 export type CompassAskRecommendation = CompassAskResponse;
 
+// S39: both ask paths spread `withSensingZone(opts)` (services/sensing/
+// sensingZoneHint) so the device's own coarse zone rides on the turn while
+// capture runs. The rule lives in that module so it is testable under node.
 export async function postCompassAsk(
   prompt:  string,
   opts: {
@@ -699,6 +703,9 @@ export async function postCompassAsk(
     stream?:          boolean;
     /** Optional media context (§32): the server hydrates it via CompassMediaContext. */
     mediaId?:         string;
+    /** S39: this device's own current coarse sensing zone(s). Defaults to the
+     *  live capture's zone hint; absent whenever capture is not running. */
+    sensingZoneIds?:  string[];
   } = {},
 ): Promise<{ ok: boolean; data?: CompassAskResponse; error?: string }> {
   if (!isSupabaseConfigured || !apiBase()) return notConfigured();
@@ -706,7 +713,7 @@ export async function postCompassAsk(
   try {
     const r = await authedFetch('/api/compass/ask', {
       method: 'POST',
-      body:   JSON.stringify({ prompt, ...opts, tzOffsetMinutes: deviceTzOffsetMinutes() }),
+      body:   JSON.stringify({ prompt, ...withSensingZone(opts), tzOffsetMinutes: deviceTzOffsetMinutes() }),
       signal,
     });
     if (!r.ok) return { ok: false, error: `http_${r.status}` };
@@ -835,7 +842,7 @@ export interface CompassAskStreamHandlers {
  */
 export async function postCompassAskStream(
   prompt: string,
-  opts: { city?: string; conversationId?: string; mediaId?: string } = {},
+  opts: { city?: string; conversationId?: string; mediaId?: string; sensingZoneIds?: string[] } = {},
   handlers: CompassAskStreamHandlers = {},
 ): Promise<{ ok: boolean; data?: CompassAskResponse; error?: string; streamed?: boolean }> {
   if (!isSupabaseConfigured || !apiBase()) return notConfigured();
@@ -851,7 +858,7 @@ export async function postCompassAskStream(
         Accept: 'text/event-stream',
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
       },
-      body: JSON.stringify({ prompt, ...opts, stream: true, tzOffsetMinutes: deviceTzOffsetMinutes() }),
+      body: JSON.stringify({ prompt, ...withSensingZone(opts), stream: true, tzOffsetMinutes: deviceTzOffsetMinutes() }),
       signal,
     });
     if (!r.ok) return { ok: false, error: `http_${r.status}`, streamed: false };

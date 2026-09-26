@@ -62,6 +62,8 @@ import {
   type PublicationStore,
 } from "../lib/sensingDifferencingGate.js";
 import { buildSensingPresenceState } from "../lib/sensingPresenceState.js";
+import { PRIVACY_THRESHOLD_V1 } from "../lib/intelContracts.js";
+import { sensingCohortKey, sensingTimeBucket, SENSING_REDUCTION_VERSION } from "../lib/sensingAnonStore.js";
 import {
   buildSensingPresenceLines,
   readSensingPresenceGate,
@@ -193,7 +195,7 @@ export async function buildSensingPresenceContext(
         buildSensingPresenceState({
           zoneId: cohort.zoneId,
           timeBucket: cohort.timeBucket,
-          aggregate: { publishable: false, reason: "read_failed", distinctActors: 0, distinctGroups: 0, maxGroupShare: 0, contributions: 0, observedAt: null, medianSignalBucket: null },
+          aggregate: { publishable: false, reason: "read_failed", distinctActors: 0, distinctGroups: 0, maxGroupShare: 0, contributions: 0, observedAt: null, medianSignalBucket: null, features: null },
           nowMs,
           reductionVersion: cohort.reductionVersion,
         }),
@@ -207,7 +209,7 @@ export async function buildSensingPresenceContext(
         buildSensingPresenceState({
           zoneId: cohort.zoneId,
           timeBucket: cohort.timeBucket,
-          aggregate: { publishable: false, reason: "no_live_publication", distinctActors: 0, distinctGroups: 0, maxGroupShare: 0, contributions: 0, observedAt: null, medianSignalBucket: null },
+          aggregate: { publishable: false, reason: "no_live_publication", distinctActors: 0, distinctGroups: 0, maxGroupShare: 0, contributions: 0, observedAt: null, medianSignalBucket: null, features: null },
           nowMs,
           reductionVersion: cohort.reductionVersion,
         }),
@@ -232,4 +234,52 @@ export async function buildSensingPresenceContext(
   }
 
   return { lines: buildSensingPresenceLines(states, permission), states, refusals };
+}
+
+/**
+ * ── §21.4 blocker #3: a zone identity for the turn ──────────────────────────
+ * A Compass turn carries a city, not a sensing zone. The zone a turn may ask
+ * about is the caller's OWN current coarse zone — the same spatial bucket its
+ * capture module labels its contributions with (travel-buddy-standalone/src/lib/
+ * sensing/spatialBucket.ts, ~1.2 km × 0.6 km cells) — sent by the device on
+ * the ask and never derived server-side from a coordinate. The route turns
+ * each zone into the cohort refs of the CURRENT and the PREVIOUS privacy
+ * bucket, because a bucket's publication lands after the publication delay.
+ *
+ * PURE, and it reads nothing: the cohort key is a deterministic function of
+ * (zone, bucket, reduction version) shared with the writer, so this does not
+ * name the contribution store — it names the KEY the publisher recorded.
+ * Bounded by the zone cap on the number of READS, as the header requires.
+ */
+export function sensingCohortRefsForZones(
+  zoneIds: readonly string[] | null | undefined,
+  nowMs: number,
+  options: { bucketsBack?: number; reductionVersion?: number } = {},
+): SensingPresenceCohortRef[] {
+  if (!Array.isArray(zoneIds) || !Number.isFinite(nowMs)) return [];
+  const bucketsBack = Number.isInteger(options.bucketsBack) && (options.bucketsBack as number) >= 0
+    ? (options.bucketsBack as number)
+    : 1;
+  const reductionVersion = Number.isInteger(options.reductionVersion) && (options.reductionVersion as number) >= 1
+    ? (options.reductionVersion as number)
+    : SENSING_REDUCTION_VERSION;
+  const perZone = bucketsBack + 1;
+  const zoneCap = Math.max(1, Math.floor(SENSING_PRESENCE_ZONE_CAP / perZone));
+  const zones: string[] = [];
+  for (const raw of zoneIds) {
+    if (typeof raw !== "string") continue;
+    const z = raw.trim();
+    if (z === "" || z.length > 64 || zones.includes(z)) continue;
+    zones.push(z);
+    if (zones.length >= zoneCap) break;
+  }
+  const widthMs = PRIVACY_THRESHOLD_V1.timeBucketMinutes * 60_000;
+  const refs: SensingPresenceCohortRef[] = [];
+  for (const zoneId of zones) {
+    for (let b = 0; b <= bucketsBack; b++) {
+      const timeBucket = sensingTimeBucket(nowMs - b * widthMs);
+      refs.push({ zoneId, timeBucket, cohortKey: sensingCohortKey(zoneId, timeBucket, reductionVersion), reductionVersion });
+    }
+  }
+  return refs;
 }

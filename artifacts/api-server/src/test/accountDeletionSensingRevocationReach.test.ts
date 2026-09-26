@@ -36,6 +36,8 @@ const NOW = Date.parse("2026-09-26T07:00:00.000Z");
 type Row = Record<string, any>;
 
 interface FakeOpts {
+  /** Simulate a database without 3311: the overlap read on the provenance column fails. */
+  pre3311?: boolean;
   rows?: Record<string, Row[]>;
   /** table -> error message, injected on select. */
   failSelect?: Record<string, string>;
@@ -70,6 +72,7 @@ function makeFake(opts: FakeOpts = {}) {
       not(c: string, op: string, v: any) { q._filters.push(["not", c, op, v]); return q; },
       lte(c: string, v: any) { q._filters.push(["lte", c, v]); return q; },
       in(c: string, v: any[]) { q._filters.push(["in", c, v]); return q; },
+      overlaps(c: string, v: any[]) { q._filters.push(["overlaps", c, v]); return q; },
       is(c: string, v: any) { q._filters.push(["is", c, v]); return q; },
       or(expr: string) { q._filters.push(["or", expr]); return q; },
       order() { return q; },
@@ -82,11 +85,16 @@ function makeFake(opts: FakeOpts = {}) {
         if (q._op === "select" && opts.failSelect?.[table]) {
           return Promise.resolve({ data: null, error: { message: opts.failSelect[table], code: "08006" } });
         }
+        // A pre-3311 database: PostgREST does not know the provenance column.
+        if (q._op === "select" && opts.pre3311 && q._filters.some((f: any[]) => f[0] === "overlaps" && f[1] === "input_observation_ids")) {
+          return Promise.resolve({ data: null, error: { code: "42703", message: "column intel_state_snapshots.input_observation_ids does not exist" } });
+        }
         let data: Row[] = rows[table] ?? [];
         if (q._op === "select") {
           for (const f of q._filters) {
             if (f[0] === "eq") data = data.filter((r) => r[f[1]] === f[2]);
             if (f[0] === "in") data = data.filter((r) => (f[2] as any[]).includes(r[f[1]]));
+            if (f[0] === "overlaps") data = data.filter((r) => Array.isArray(r[f[1]]) && (r[f[1]] as any[]).some((x) => (f[2] as any[]).includes(x)));
           }
           if (q._range) data = data.slice(q._range[0], q._range[1] + 1);
           else if (q._limit) data = data.slice(0, q._limit);
@@ -153,6 +161,8 @@ const SID_HIT = "77777777-7777-4777-8777-777777777771";
 const SID_MISS = "77777777-7777-4777-8777-777777777772";
 const SID_OWN = "77777777-7777-4777-8777-777777777773";
 const SID_Q = "77777777-7777-4777-8777-777777777774";
+const SID_P3 = "77777777-7777-4777-8777-777777777775";
+const SNAP_P3 = "88888888-8888-4888-8888-888888888883";
 
 function fixtureRows(): Record<string, Row[]> {
   return {
@@ -163,9 +173,12 @@ function fixtureRows(): Record<string, Row[]> {
       { id: "obs-9", actor_id: OTHER, subject_id: PLACE_Q }, // somebody else's
     ],
     intel_state_snapshots: [
-      { id: SNAP_P1, subject_id: PLACE_P },
-      { id: SNAP_P2, subject_id: PLACE_P },
-      { id: SNAP_Q1, subject_id: PLACE_Q },
+      // 3311 provenance: which observations each snapshot rested on.
+      { id: SNAP_P1, subject_id: PLACE_P, zone_id: "", claim_type: "crowd.level", input_observation_ids: ["obs-1"] },
+      { id: SNAP_P2, subject_id: PLACE_P, zone_id: "", claim_type: "queue.wait", input_observation_ids: ["obs-2", "obs-9"] },
+      // Of P, but resting on OTHER's evidence only — the subject fallback reaches it; exact provenance does not.
+      { id: SNAP_P3, subject_id: PLACE_P, zone_id: "z1", claim_type: "crowd.level", input_observation_ids: ["obs-9"] },
+      { id: SNAP_Q1, subject_id: PLACE_Q, zone_id: "", claim_type: "crowd.level", input_observation_ids: ["obs-9"] },
     ],
     canonical_events: [
       // OTHER's session on P, resting on SNAP_P2 — reached.
@@ -176,6 +189,8 @@ function fixtureRows(): Record<string, Row[]> {
       ...sessionEvent(USER, PLACE_P, SID_OWN, [SNAP_P1], true),
       // OTHER's session on Q — never read (USER did not observe Q).
       ...sessionEvent(OTHER, PLACE_Q, SID_Q, [SNAP_Q1], true),
+      // OTHER's session on P resting ONLY on P3 — reached under the subject fallback, not under exact provenance.
+      ...sessionEvent(OTHER, PLACE_P, SID_P3, [SNAP_P3], true),
     ],
   };
 }
@@ -190,9 +205,18 @@ describe("S112 — the reach is enumerated at subject granularity, before the er
     assert.equal(out.identities, 2, "the account id plus one live-epoch token");
     assert.equal(out.observations, 3, "USER's rows under the token, including the subjectless one");
     assert.equal(out.subjects, 1, "a null subject feeds no snapshot");
-    assert.equal(out.snapshots, 2, "every snapshot of P — over-inclusive by design");
-    assert.equal(out.sessionsConsidered, 2, "SID_HIT and SID_MISS; SID_OWN excluded; SID_Q never read");
-    assert.equal(out.sessionsReached, 1);
+    assert.equal(out.snapshots, 3, "every snapshot of P — the over-inclusive set, still counted");
+    assert.equal(out.provenance, "exact", "3311's provenance was readable");
+    assert.equal(out.snapshotsExact, 2, "P1 and P2 rest on USER's observations; P3 rests on OTHER's only");
+    assert.deepEqual(out.observationIds, ["obs-1", "obs-2", "obs-3"], "the evidence the erase is about to remove");
+    assert.deepEqual(
+      out.affected.map((a) => a.id).sort(),
+      [SNAP_P1, SNAP_P2].sort(),
+      "the recompute acts on the exact set",
+    );
+    assert.deepEqual(out.affected.find((a) => a.id === SNAP_P2), { id: SNAP_P2, subjectId: PLACE_P, zoneId: "", claimType: "queue.wait" });
+    assert.equal(out.sessionsConsidered, 3, "SID_HIT, SID_MISS and SID_P3; SID_OWN excluded; SID_Q never read");
+    assert.equal(out.sessionsReached, 1, "SID_HIT rests on P2; SID_P3 rests on P3, which USER's evidence never fed");
     assert.equal(out.ownSessionsExcluded, 2, "USER's open and close events for SID_OWN");
     assert.deepEqual(out.stagesReached, ["raw", "aggregate", "inference", "session"]);
     assert.equal(out.memoryStore, "none_persisted");
@@ -205,9 +229,24 @@ describe("S112 — the reach is enumerated at subject granularity, before the er
     assert.equal(out.memoryStore, "none_persisted");
   });
 
+  it("a pre-3311 database falls back to SUBJECT granularity — over-inclusive, never 'rested on nothing'", async () => {
+    const sc = makeFake({ rows: fixtureRows(), pre3311: true });
+    const out = await enumerateSensingRevocationReach(sc, USER, readAll);
+    assert.equal(out.provenance, "subject");
+    assert.equal(out.snapshotsExact, 3, "equals the subject set under fallback");
+    assert.deepEqual(out.affected.map((a) => a.id).sort(), [SNAP_P1, SNAP_P2, SNAP_P3].sort());
+    assert.equal(out.sessionsReached, 2, "SID_P3 is reached too — the fallback over-includes rather than under-includes");
+  });
+
+  it("any OTHER failure of the provenance read still throws — only the missing column is a fallback", async () => {
+    const sc = makeFake({ rows: fixtureRows(), failSelect: { intel_state_snapshots: "server closed the connection unexpectedly" } });
+    await assert.rejects(() => enumerateSensingRevocationReach(sc, USER, readAll), /server closed the connection unexpectedly/);
+  });
+
   it("a pre-3002 store derives identities from the account id alone", async () => {
     const rows = fixtureRows();
-    rows.intel_observations = [{ id: "obs-1", actor_id: USER, subject_id: PLACE_P }];
+    // obs-2 is what SNAP_P2 (and so SID_HIT) rests on under 3311's provenance.
+    rows.intel_observations = [{ id: "obs-2", actor_id: USER, subject_id: PLACE_P }];
     const sc = makeFake({ rows, shape: "account" });
     const out = await enumerateSensingRevocationReach(sc, USER, readAll);
     assert.equal(out.via, "account_id");
@@ -248,12 +287,33 @@ describe("S112 — the account-deletion run is the production caller", () => {
     const step = out.steps.find((s) => s.step === "sensing_revocation_reach");
     assert.ok(step, `no sensing_revocation_reach step: ${out.steps.map((s) => s.step).join(", ")}`);
     assert.equal(step!.ok, true, step!.error);
-    assert.equal(step!.count, 1, "one other-account session rested on the erased subject's snapshots");
+    assert.equal(step!.count, 1, "one other-account session rested on the erased evidence");
     const reachAt = sc._ops.findIndex((o) => o.table === "intel_observations" && o.op === "select");
     const eraseAt = sc._ops.findIndex((o) => o.table === "rpc:erase_intel_for_actor");
     assert.ok(reachAt >= 0 && eraseAt >= 0, "both the reach read and the erase must have run");
     assert.ok(reachAt < eraseAt, `the reach (${reachAt}) must precede the erase (${eraseAt})`);
     assert.ok(!out.warnings.some((w) => w.includes("sensing lineage reach")), out.warnings.join(" | "));
+  });
+
+  it("AFTER the erase, the affected snapshots are recomputed, and those still resting on erased evidence are RETRACTED", async () => {
+    const sc = makeFake({ rows: { posts: [], ...fixtureRows() } });
+    const out = await executeAccountDeletion(sc as any, USER, { actorId: null } as any);
+    const step = out.steps.find((s) => s.step === "recompute_intel_snapshots_after_erase");
+    assert.ok(step, `no recompute step: ${out.steps.map((s) => s.step).join(", ")}`);
+    assert.equal(step!.ok, true, step!.error);
+    const eraseAt = sc._ops.findIndex((o) => o.table === "rpc:erase_intel_for_actor");
+    const claimsAt = sc._ops.findIndex((o) => o.table === "intel_claims" && o.op === "select");
+    assert.ok(claimsAt > eraseAt, `the recompute (${claimsAt}) must FOLLOW the erase (${eraseAt})`);
+    // This fake neither projects (no flag row) nor forgets: the rows still name
+    // obs-1 / obs-2 after the recompute, so both exact-set snapshots are retracted.
+    const retractions = sc._ops.filter((o) => o.table === "intel_state_snapshots" && o.op === "update");
+    assert.deepEqual(
+      retractions.map((o) => o.filters.find((f: any[]) => f[0] === "eq" && f[1] === "id")?.[2]).sort(),
+      [SNAP_P1, SNAP_P2].sort(),
+      "exactly the snapshots that rested on the erased evidence — P3 is untouched",
+    );
+    assert.equal(sc._ops.filter((o) => o.table === "intel_state_snapshot_versions" && o.op === "insert").length, 2, "one retraction version per retracted row");
+    assert.equal(step!.count, 2);
   });
 
   it("an unreadable precondition fails the step and warns, and the erase still runs", async () => {

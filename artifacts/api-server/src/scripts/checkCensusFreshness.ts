@@ -2326,6 +2326,32 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     // is what changed the row's measurement, so it must age this census too.
     "artifacts/api-server/src/services/accountDeletion/sensingRevocationReach.ts",
     "artifacts/api-server/src/test/accountDeletionSensingRevocationReach.test.ts",
+    // WIDENED 2026-09-26 (census-sensing §26): S112's provenance and erasure
+    // recompute, the 3312 feature path, the S39/S24 publisher and zone
+    // identity, and the client build the six client rows now rest on.
+    "artifacts/api-server/src/services/accountDeletion/sensingErasureRecompute.ts",
+    "artifacts/api-server/src/test/sensingErasureRecompute.test.ts",
+    "artifacts/api-server/src/test/intelProjection.test.ts",
+    "artifacts/api-server/src/migrations/3311_intel_snapshot_input_provenance.sql",
+    "artifacts/api-server/src/migrations/3312_sensing_anon_contribution_features.sql",
+    "artifacts/api-server/src/migrations/3313_sensing_publication_flag.sql",
+    "db/rollback/2026-09-26-3311-intel-snapshot-input-provenance-rollback.sql",
+    "db/rollback/2026-09-26-3312-sensing-anon-contribution-features-rollback.sql",
+    "db/rollback/2026-09-26-3313-sensing-publication-flag-rollback.sql",
+    "artifacts/api-server/src/routes/sensingIngest.ts",
+    "artifacts/api-server/src/lib/sensingWindowAggregate.ts",
+    "artifacts/api-server/src/lib/sensingPublicationScheduler.ts",
+    "artifacts/api-server/src/test/sensingPublicationScheduler.test.ts",
+    "artifacts/api-server/src/test/sensingReducedFeatures.test.ts",
+    "artifacts/api-server/src/test/sensingIngestRoute.test.ts",
+    "artifacts/api-server/src/test/sensingConsumersPresence.test.ts",
+    "docs/contracts/sensing-contribution-wire-v1.json",
+    "docs/ops/sensing-cutover-runbook.md",
+    "travel-buddy-standalone/src/lib/sensing/",
+    "travel-buddy-standalone/src/services/sensing/",
+    "travel-buddy-standalone/src/services/compass.ts",
+    "travel-buddy-standalone/src/services/__tests__/compass.sensingZone.test.ts",
+    "travel-buddy-standalone/app/_layout.tsx",
     // WIDENED 2026-09-26 (census-sensing §25, owner decision A): the consent-
     // scope proof and the files it grades. S3/S106 moved on this evidence, so
     // every file that carries it must age this census.

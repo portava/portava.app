@@ -77,6 +77,9 @@ function aggregate(over: Partial<SensingCohortAggregate> = {}): SensingCohortAgg
     contributions: 20,
     observedAt: "2026-09-25T12:10:00.000Z",
     medianSignalBucket: 3,
+    // A publication row carries no 3312 feature statistics, so an aggregate
+    // that round-trips through one reads back with `features: null`.
+    features: null,
     ...over,
   };
 }

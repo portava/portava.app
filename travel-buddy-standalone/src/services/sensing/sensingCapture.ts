@@ -92,6 +92,15 @@ export interface SensingCaptureHandle {
   /** Close the window now, reduce, submit, and start the next one. */
   flush(): Promise<void>;
   stop(): void;
+  /**
+   * The coarse zone label of the LAST REDUCED window — the same spatial bucket
+   * stamped on the contribution that window produced — or null before the
+   * first window closes or after stop(). Never a coordinate: it is the output
+   * of `encodeSpatialBucket` at the capped precision and nothing finer exists
+   * to return. Read by the Compass ask so a turn can name the zone its own
+   * device is in (census-sensing §21.4 blocker #3).
+   */
+  currentZone(): string | null;
   /** TEST SEAM. How many raw samples are currently held. Never their values. */
   _rawBufferSizes(): { motion: number; location: number; acoustic: number };
 }
@@ -186,6 +195,7 @@ export function startSensingCapture(deps: SensingCaptureDeps): SensingCaptureHan
   }, windowMs);
 
   return {
+    currentZone: () => (stopped ? null : previousZone),
     flush: closeWindow,
     stop() {
       stopped = true;

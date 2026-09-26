@@ -41,10 +41,19 @@
  * the rates are NULL — never 0. §2's rule is the one being honoured: no
  * coverage ≠ quiet, and "we could not look" is not "nobody arrived".
  *
- * ── THE FOUR FEATURES THIS PRODUCER REFUSES TO INVENT ────────────────────────
- * `VibeFeatureInput` has ten fields. This producer fills the ones the anonymous
- * store can actually support and leaves four NULL, deliberately, because a null
- * means "unknown" to the engine and a fabricated number would not:
+ * ── THE FOUR FEATURES, AND WHERE THEY NOW COME FROM (3312) ──────────────────
+ * `VibeFeatureInput` has ten fields. Four of them — motionEnergy, periodicity,
+ * density, acousticEnergy — this producer used to leave NULL because the store
+ * carried nothing they could honestly be read from. The device now reduces
+ * them on the handset and the store holds them as bucketed columns (3312,
+ * `SensingContributionFeatures`); `aggregateSensingCohort` folds them per
+ * contributor under the SAME k-anonymity gate as the count, and this window
+ * takes the lower median across its publishable buckets (`reducedFeatures`).
+ * A cohort whose contributors sent none still yields null — a null means
+ * "unknown" to the engine and a fabricated number would not. Note that
+ * motionEnergy is read from the explicit `motion_energy_centi`, NOT from
+ * `signal_bucket`: the ordinal's meaning is still the owner's to pin, and this
+ * producer still does not pin it by arithmetic. As it stood before 3312:
  *
  *   motionEnergy   The store carries `signal_bucket`, an ordinal 0..4 whose
  *                  MEANING is pinned by `reduction_version` in code and is an
@@ -88,6 +97,7 @@ import {
   aggregateSensingCohort,
   type SensingAggregateOptions,
   type SensingCohortAggregate,
+  type SensingCohortFeatures,
 } from "./sensingCoverageAggregate.js";
 import {
   isSensingContributionExpired,
@@ -96,6 +106,7 @@ import {
   type SensingContributionRow,
   type SensingReadResult,
 } from "./sensingAnonStore.js";
+import type { SensingDensityBucket } from "./sensingAnonStore.js";
 import { sourceCountBucket } from "./liveClaimRead.js";
 import { PRIVACY_THRESHOLD_V1 } from "./intelContracts.js";
 import type { CoverageBucket } from "./truthClass.js";
@@ -171,11 +182,51 @@ export interface SensingWindowFeatures {
   medianSignalBucket: number | null;
   /** Freshest counted arrival across publishable buckets; null when none. */
   observedAt: string | null;
+  /** The 3312 device-reduced features, folded across the publishable buckets. */
+  reducedFeatures: SensingWindowReducedFeatures;
   /** Per-bucket decisions, for observability. Carries no contributor anything. */
   buckets: readonly SensingCohortAggregate[];
   /** Null when features were produced. */
   reason: SensingWindowReason | null;
 }
+
+/**
+ * What the device features become at window level, in the ENGINE's units:
+ * centis to 0..1, the 0..4 acoustic bucket to 0..1, the device density bucket
+ * to the engine's CoverageBucket vocabulary (sparse→few, moderate→several,
+ * busy and packed→many; `unknown` and absent→null). Each is the lower median
+ * across the publishable buckets that carried it.
+ */
+export interface SensingWindowReducedFeatures {
+  motionEnergy: number | null;
+  periodicity: number | null;
+  density: CoverageBucket | null;
+  /** The devices' own dwell estimate; the window's persistence dwell takes precedence when present. */
+  reducedDwellBucket: number | null;
+  acousticEnergy: number | null;
+  /** True when at least one publishable bucket had contributors holding the separate acoustic permission. */
+  acousticPermissionGranted: boolean;
+  /** Publishable buckets whose cohort carried the feature half. */
+  bucketsWithFeatures: number;
+}
+
+const NO_REDUCED_FEATURES: SensingWindowReducedFeatures = Object.freeze({
+  motionEnergy: null,
+  periodicity: null,
+  density: null,
+  reducedDwellBucket: null,
+  acousticEnergy: null,
+  acousticPermissionGranted: false,
+  bucketsWithFeatures: 0,
+});
+
+const DENSITY_TO_COVERAGE: Readonly<Record<SensingDensityBucket, CoverageBucket | null>> = Object.freeze({
+  unknown: null,
+  sparse: "few",
+  moderate: "several",
+  busy: "many",
+  packed: "many",
+});
 
 export interface SensingWindowOptions extends SensingAggregateOptions {
   /** Bucket width, which must be the width the rows were written with. */
@@ -193,9 +244,38 @@ const EMPTY = (reason: SensingWindowReason, supplied: number): SensingWindowFeat
   boundedMovement: null,
   medianSignalBucket: null,
   observedAt: null,
+  reducedFeatures: NO_REDUCED_FEATURES,
   buckets: [],
   reason,
 });
+
+/** Fold the publishable buckets' cohort features into the window's device features. */
+function foldReducedFeatures(features: readonly SensingCohortFeatures[]): SensingWindowReducedFeatures {
+  const carrying = features.filter((f) => f.contributorsWithFeatures > 0);
+  if (carrying.length === 0) return NO_REDUCED_FEATURES;
+  const nums = (pick: (f: SensingCohortFeatures) => number | null): number[] =>
+    carrying.map(pick).filter((v): v is number => typeof v === "number" && Number.isFinite(v));
+  const votes = new Map<SensingDensityBucket, number>();
+  for (const f of carrying) if (f.densityBucket && f.densityBucket !== "unknown") votes.set(f.densityBucket, (votes.get(f.densityBucket) ?? 0) + 1);
+  let density: SensingDensityBucket | null = null;
+  let best = 0;
+  for (const d of ["sparse", "moderate", "busy", "packed"] as const) {
+    const n = votes.get(d) ?? 0;
+    if (n > best) { best = n; density = d; }
+  }
+  const motion = lowerMedian(nums((f) => f.motionEnergyCenti));
+  const periodicity = lowerMedian(nums((f) => f.periodicityCenti));
+  const acoustic = lowerMedian(nums((f) => f.acousticEnergyBucket));
+  return {
+    motionEnergy: motion === null ? null : motion / 100,
+    periodicity: periodicity === null ? null : periodicity / 100,
+    density: density === null ? null : DENSITY_TO_COVERAGE[density],
+    reducedDwellBucket: lowerMedian(nums((f) => f.reducedDwellBucket)),
+    acousticEnergy: acoustic === null ? null : acoustic / 4,
+    acousticPermissionGranted: carrying.some((f) => f.acousticContributors > 0),
+    bucketsWithFeatures: carrying.length,
+  };
+}
 
 /** Lower median of a non-empty list; null for an empty one. */
 function lowerMedian(values: number[]): number | null {
@@ -252,6 +332,7 @@ export function aggregateSensingWindow(
   const decisions: SensingCohortAggregate[] = [];
   const tokenSets: Array<Set<string> | null> = [];
   const medians: number[] = [];
+  const bucketFeatures: SensingCohortFeatures[] = [];
   let latestMs = Number.NEGATIVE_INFINITY;
   let publishable = 0;
 
@@ -264,6 +345,7 @@ export function aggregateSensingWindow(
     }
     publishable += 1;
     if (decision.medianSignalBucket !== null) medians.push(decision.medianSignalBucket);
+    if (decision.features) bucketFeatures.push(decision.features);
     if (decision.observedAt) {
       const ms = new Date(decision.observedAt).getTime();
       if (Number.isFinite(ms) && ms > latestMs) latestMs = ms;
@@ -324,6 +406,7 @@ export function aggregateSensingWindow(
     boundedMovement: dwellBucket === null ? null : dwellBucket >= 1 ? true : null,
     medianSignalBucket: lowerMedian(medians),
     observedAt: Number.isFinite(latestMs) ? new Date(latestMs).toISOString() : null,
+    reducedFeatures: foldReducedFeatures(bucketFeatures),
     buckets: decisions,
     reason: null,
   };
@@ -341,20 +424,22 @@ export function windowToVibeFeatures(
   venueContext: VenueContext | null,
 ): VibeFeatureInput {
   return {
-    // Supported by the anonymous store:
+    // Derived by the store from contributor persistence:
     arrivalVelocity: window.arrivalVelocity,
     departureVelocity: window.departureVelocity,
-    dwellBucket: window.dwellBucket,
+    // The cohort-persistence dwell first; the devices' own estimate when the
+    // window is too short to have measured persistence.
+    dwellBucket: window.dwellBucket ?? window.reducedFeatures.reducedDwellBucket,
     boundedMovement: window.boundedMovement,
     coverage: window.coverage,
     observedAt: window.observedAt,
     venueContext: asVenueContext(venueContext),
-    // NOT supported by it. See the header for each.
-    motionEnergy: null,
-    periodicity: null,
-    density: null,
-    acousticEnergy: null,
-    acousticPermissionGranted: false,
+    // Reduced on the device, carried by 3312, folded under the k-gate (header).
+    motionEnergy: window.reducedFeatures.motionEnergy,
+    periodicity: window.reducedFeatures.periodicity,
+    density: window.reducedFeatures.density,
+    acousticEnergy: window.reducedFeatures.acousticEnergy,
+    acousticPermissionGranted: window.reducedFeatures.acousticPermissionGranted,
   };
 }
 

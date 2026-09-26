@@ -10,7 +10,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { describe, it, beforeEach } from "node:test";
 import assert from "node:assert/strict";
-import { projectClaim, projectAndStore, PROJECTION_ALGORITHM_VERSION } from "../lib/intelProjection.js";
+import { projectClaim, projectAndStore, PROJECTION_ALGORITHM_VERSION, uniqueUuids, _resetProvenanceFallbackLog } from "../lib/intelProjection.js";
 import { SEED_FRESHNESS_POLICIES, invalidateFreshnessPolicyCache, FRESHNESS_CURVE_VERSION } from "../lib/freshnessPolicy.js";
 import { PRIVACY_THRESHOLD_V1, CLAIM_TYPES } from "../lib/intelContracts.js";
 
@@ -23,9 +23,13 @@ const POLICY_ROWS = [
   ...CLAIM_TYPES.map((c) => ({ claim_type: c.claimType, ttl_seconds: c.ttlSeconds, note: c.note })),
 ];
 
-function client(opts: { flag?: boolean; upsertError?: boolean; versionError?: boolean } = {}) {
+function client(opts: { flag?: boolean; upsertError?: boolean; versionError?: boolean; pre3311?: boolean } = {}) {
   const upserts: any[] = [];
   const versions: any[] = [];
+  // A database without 3311: PostgREST refuses any row naming the provenance column.
+  const unknownColumn = (table: string) => ({
+    error: { code: "PGRST204", message: `Could not find the 'input_observation_ids' column of '${table}' in the schema cache` },
+  });
   return {
     upserts,
     versions,
@@ -36,15 +40,22 @@ function client(opts: { flag?: boolean; upsertError?: boolean; versionError?: bo
           data: opts.flag === undefined ? null : { enabled: opts.flag }, error: null }) }) }) };
       }
       if (table === "intel_state_snapshots") {
-        return { upsert: async (row: any) => { upserts.push(row); return opts.upsertError ? { error: { message: "boom" } } : { error: null }; } };
+        return { upsert: async (row: any) => {
+          if (opts.pre3311 && "input_observation_ids" in row) return unknownColumn(table);
+          upserts.push(row); return opts.upsertError ? { error: { message: "boom" } } : { error: null }; } };
       }
       if (table === "intel_state_snapshot_versions") {
-        return { insert: async (row: any) => { if (opts.versionError) return { error: { message: "version boom" } }; versions.push(row); return { error: null }; } };
+        return { insert: async (row: any) => {
+          if (opts.pre3311 && "input_observation_ids" in row) return unknownColumn(table);
+          if (opts.versionError) return { error: { message: "version boom" } }; versions.push(row); return { error: null }; } };
       }
       throw new Error(`unexpected table ${table}`);
     },
   } as unknown as SupabaseClient & { upserts: typeof upserts; versions: typeof versions };
 }
+
+const OBS_A = "0a0a0a0a-0a0a-4a0a-8a0a-0a0a0a0a0a0a";
+const OBS_B = "0b0b0b0b-0b0b-4b0b-8b0b-0b0b0b0b0b0b";
 
 /** Enough distinct actors/groups to clear the privacy gate. */
 const passing = {
@@ -167,6 +178,41 @@ describe("intelProjection — projectAndStore", () => {
     assert.equal(t.suppressed, 1);
     assert.equal(c.upserts.length, 2, "the suppressed row is still persisted, for audit");
     assert.equal(c.upserts[1].privacy_eligible, false);
+  });
+
+  it("3311: the observation ids the input was assembled from reach BOTH snapshot tables, de-duplicated, uuids only", async () => {
+    const c = client({ flag: true });
+    const t = await projectAndStore(c, "place-1", [{ ...passing, inputObservationIds: [OBS_A, OBS_B, OBS_A, "obs-not-a-uuid", OBS_B.toUpperCase()] }], { now: NOW });
+    assert.equal(t.written, 1);
+    assert.deepEqual(c.versions[0].input_observation_ids, [OBS_A, OBS_B]);
+    assert.deepEqual(c.upserts[0].input_observation_ids, [OBS_A, OBS_B]);
+    assert.deepEqual(uniqueUuids(undefined), []);
+    assert.deepEqual(uniqueUuids(["x", 3, null]), []);
+  });
+
+  it("3311: an input with no provenance writes an EMPTY array — 'unrecorded', never null", async () => {
+    const c = client({ flag: true });
+    await projectAndStore(c, "place-1", [passing], { now: NOW });
+    assert.deepEqual(c.versions[0].input_observation_ids, []);
+    assert.deepEqual(c.upserts[0].input_observation_ids, []);
+  });
+
+  it("3311 NOT applied: the writer falls back to writing WITHOUT the column rather than stopping the spine", async () => {
+    _resetProvenanceFallbackLog();
+    const c = client({ flag: true, pre3311: true });
+    const t = await projectAndStore(c, "place-1", [{ ...passing, inputObservationIds: [OBS_A] }], { now: NOW });
+    assert.equal(t.written, 1, "the projection still lands");
+    assert.equal(c.versions.length, 1);
+    assert.equal("input_observation_ids" in c.versions[0], false, "the retry carries no provenance column");
+    assert.equal("input_observation_ids" in c.upserts[0], false);
+  });
+
+  it("any OTHER write failure is NOT retried — the fallback is for the missing column only", async () => {
+    const c = client({ flag: true, versionError: true });
+    const t = await projectAndStore(c, "place-1", [{ ...passing, inputObservationIds: [OBS_A] }], { now: NOW });
+    assert.equal(t.skipped, 1);
+    assert.equal(c.versions.length, 0);
+    assert.equal(c.upserts.length, 0, "a failed version append still withholds the current row");
   });
 
   it("an upsert failure skips that claim without aborting the rest", async () => {

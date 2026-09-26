@@ -177,6 +177,23 @@ describe("§9.1 — the sensing contribution stack is imported by its own siblin
         "attack the gate exists to stop. Its FIRST gate is the `surface` purpose scope, which " +
         "SENSING_ANON_POLICY_V1 does not grant, so it renders nothing today whatever the flag says.",
     ],
+    // ── ADDED 2026-09-26 (census-sensing §26): the PUBLISHER ────────────────
+    // §21.4 blocker #2 — "publishThroughDifferencingGate has no caller outside
+    // tests" — closed. This is not an ingest: it reads the contribution store
+    // under the SAME k-gate the aggregate has always applied and records into
+    // 3110's publication store; nothing enters the anonymous store through it.
+    // Its first gate is the `surface` scope, ungranted, checked before it
+    // obtains a client; its second is sensing_publication_enabled (3313,
+    // seeded FALSE); so on every deployment it refuses on the first.
+    [
+      join("lib", "sensingPublicationScheduler.ts"),
+      "the publisher: per live cohort, readSensingCohort → aggregateSensingCohort (k, groups, share, " +
+        "publication delay) → publishThroughDifferencingGate, on its own clock so no request chooses when a " +
+        "cohort is published. Writes ONLY sensing_published_aggregates, and only a PUBLISHABLE aggregate; " +
+        "a withheld cohort never reaches the gate. Refuses unless the contribution policy grants `surface` " +
+        "(an owner consent act; SENSING_ANON_POLICY_V1 does not) and then unless sensing_publication_enabled " +
+        "is true (3313, seeded FALSE). census-sensing §26 re-derives S39/S24 against it.",
+    ],
     [
       join("routes", "mapObservations.ts"),
       "the §22 zone-contribution route. It acquired this import when resolveZoneAnchorSubject was DELETED — " +

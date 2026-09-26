@@ -282,7 +282,7 @@ export async function recordAnonSensingContribution(
   // The store's named validation errors (commitment_required, ttl_exceeds_
   // maximum, epoch_does_not_match_observation, ...) are refusals of the INPUT;
   // anything else came back from the database.
-  const isValidation = VALIDATION_ERRORS.has(result.error);
+  const isValidation = VALIDATION_ERRORS.has(result.error) || result.error.startsWith("features_invalid");
   if (!isValidation) logger.warn({ error: result.error }, "sensing contribution insert failed");
   return { ok: false, reason: isValidation ? "invalid_input" : "error", error: result.error };
 }

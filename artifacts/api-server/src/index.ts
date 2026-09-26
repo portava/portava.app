@@ -46,6 +46,7 @@ import { startStoryRetentionScheduler } from "./lib/storyRetentionScheduler.js";
 import { startLocationSnapshotPurgeScheduler } from "./lib/locationSnapshotPurgeScheduler.js";
 import { startIntelRetentionScheduler } from "./lib/intelRetentionScheduler.js";
 import { startSensingRetentionScheduler } from "./lib/sensingRetentionScheduler.js";
+import { startSensingPublicationScheduler } from "./lib/sensingPublicationScheduler.js";
 import { startLayoverCrewExpiryScheduler } from "./lib/layoverCrewExpiryScheduler.js"; import { startLayoverExternalEventScheduler } from "./lib/layoverExternalEventScheduler.js";
 import { startIntelProjectionScheduler } from "./lib/intelProjectionScheduler.js";
 import { startTelegraphLifecycleScheduler } from "./server/telegraph/lifecycleScheduler.js";
@@ -151,6 +152,14 @@ app.listen(port, (err) => {
   // table and never calls the RPC where 2315 is not applied, which today means
   // production, where this is an inert heartbeat.
   startSensingRetentionScheduler();
+  // The publisher census-sensing §21.4 named as S39/S24's blocker #2: the one
+  // caller of publishThroughDifferencingGate outside tests. Three gates, in
+  // order, and it refuses on the first today: the contribution policy must
+  // grant `surface` (an owner consent act, not a flag), then
+  // sensing_publication_enabled (3313, seeded FALSE), then 2315's table must
+  // exist. Runs on its own clock so no request can choose when a cohort is
+  // published. Inert on every database until the owner acts.
+  startSensingPublicationScheduler();
   // Layover crew expiry (L196). Placed here, beside the other schema-gated
   // retention sweep, because it behaves the same way: it probes for 2984's
   // tables and issues no DELETE where they are absent, so on a database

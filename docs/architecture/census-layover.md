@@ -7092,7 +7092,7 @@ member table.
 **The expiration job now exists and IS scheduled.**
 `artifacts/api-server/src/lib/layoverCrewExpiryScheduler.ts` sweeps crews whose
 `expires_at` has passed, in bounded batches, with an injected clock, and it is
-started from `artifacts/api-server/src/index.ts:160#startLayoverCrewExpiryScheduler();`
+started from `artifacts/api-server/src/index.ts:169#startLayoverCrewExpiryScheduler();`
 — beside the other schema-gated retention sweep. Before this it was an exported
 function nothing called, which is the state `schedulerRegistration.test.ts`
 exists to refuse, and that test was red until the call was added.

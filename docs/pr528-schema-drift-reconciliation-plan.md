@@ -554,3 +554,17 @@ The facts this document's earlier sections predicted and that held:
 read-only). No feature was enabled. No scope was granted. `certify:migrations`'s
 STAGE 1 still cannot pass on this branch for the reason the 2998 entry records,
 which is unrelated to these nine.
+
+### 10.1 Addendum, later the same day — 3311 and 3312, same ruling, same method
+
+Two more files were applied to `portava-ci` under the same decision A after
+the api-server suites that back them were green: `3311_intel_snapshot_input_provenance.sql`
+(09:36:48 UTC) and `3312_sensing_anon_contribution_features.sql` (09:37:49 UTC).
+Both classified `bare` by the runner's `classifyMigration` (postconditions
+inside the transaction), both recorded with `applied_by='manual'` and the
+file's sha256, both verified from the catalog and, for 3312, by five negative
+controls that rolled back. The ledger stands at 601. Production holds neither,
+and the write path behind each degrades rather than breaks in its absence
+(`docs/ops/sensing-cutover-runbook.md` §1). `3313_sensing_publication_flag.sql`
+is on the branch and applied nowhere. The full record is the second 2026-09-26
+entry at the end of `docs/migrations.md`.

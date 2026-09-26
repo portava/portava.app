@@ -174,6 +174,10 @@ import {
   buildLiveClaimContext,
   type LiveClaimSubject,
 } from "../compass/CompassLiveClaimContext.js";
+import {
+  buildSensingPresenceContext,
+  sensingCohortRefsForZones,
+} from "../compass/CompassSensingPresenceProducer.js";
 import { buildCompassContext as buildLocationCompassContext } from "../services/location/CompassLocationContext.js";
 import { buildCompassMediaContext, formatMediaContextLines } from "../compass/CompassMediaContext.js";
 import { resolveViewer as resolveMediaViewer } from "../services/media/MediaProjectionService.js";
@@ -1116,6 +1120,12 @@ const askBodySchema = z.object({
    *  CompassMediaContext and appended to the context block — never a raw string.
    *  Additive: absent ⇒ chat is unchanged. */
   mediaId:             z.string().uuid().optional(),
+  /** S39: the caller's OWN current coarse sensing zone(s) — the spatial-bucket
+   *  label its capture module stamps on its contributions, never a coordinate.
+   *  Present only while on-device capture is running. The route asks the
+   *  publication store for these zones' k-gated presence aggregate behind the
+   *  `surface` scope and `sensing_presence_context_enabled`; absent ⇒ no read. */
+  sensingZoneIds:      z.array(z.string().min(1).max(64)).max(5).optional(),
   stream:              z.boolean().default(false),
 });
 
@@ -1447,7 +1457,7 @@ router.post("/compass/ask", async (req, res) => {
     sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid request");
     return;
   }
-  const { prompt, city, conversationId: incomingConvId, tripId, circleOwnerId, mediaId, stream, intentMode } = parsed.data;
+  const { prompt, city, conversationId: incomingConvId, tripId, circleOwnerId, mediaId, stream, intentMode, sensingZoneIds } = parsed.data;
 
   // ── Conversation resolve ──────────────────────────────────────────────────
   let conversationId: string;
@@ -1777,6 +1787,32 @@ router.post("/compass/ask", async (req, res) => {
     if (live.lines.length > 0) ctxLines.push(...live.lines);
     liveClaimEvidence = live.evidence;
   } catch { /* non-fatal — proceed without live claims, and with no band */ }
+
+  // ── S39: zone presence — the k-gated sensing aggregate, read-only ─────────
+  // census-sensing §21.4's blocker #3 was that a turn carries a city and no
+  // sensing zone. The zone now arrives WITH the ask: the caller's own current
+  // coarse spatial bucket, stamped by its capture module, present only while
+  // on-device capture runs. The producer is a pure READER of what the
+  // publisher (lib/sensingPublicationScheduler) already decided to serve —
+  // asking a question cannot cause a publication — and it refuses, in this
+  // order, unless the contribution policy grants `surface` (an owner consent
+  // act, ungranted today; checked before any read) and
+  // sensing_presence_context_enabled is true (3004, seeded FALSE). So on every
+  // deployment this block adds no line; what it adds when the owner acts is an
+  // observed/unknown zone state with an unlabelled activity ordinal — no
+  // person, no count. Placed before the S83/opportunity family because CX-11
+  // attributes everything after the opportunity header to that projection.
+  // Never fatal.
+  try {
+    if (Array.isArray(sensingZoneIds) && sensingZoneIds.length > 0) {
+      const presence = await buildSensingPresenceContext(
+        sc,
+        sensingCohortRefsForZones(sensingZoneIds, turnNowMs),
+        { nowMs: turnNowMs },
+      );
+      if (presence.lines.length > 0) ctxLines.push(...presence.lines);
+    }
+  } catch { /* non-fatal — proceed without zone presence */ }
 
   // (c) CX-11 — downstream of the Opportunity Engine (lib/opportunityEngine),
   //     which answers only behind its pilot flag (migration 2840, seeded

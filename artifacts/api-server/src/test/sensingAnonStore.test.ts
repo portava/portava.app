@@ -416,6 +416,26 @@ const PERMITTED_REFERRERS = new Map<string, string>([
       "the existing eligibility/session/budget ladder rather than around it, and it reads no " +
       "aggregate — surface and share are scopes SENSING_ANON_POLICY_V1 does not grant.",
   ],
+  [
+    // ADDED 2026-09-26 (census-sensing §26.3): the PUBLISHER, §21.4's blocker #2.
+    join("lib", "sensingPublicationScheduler.ts"),
+    'the one production reader of "cohort/coverage aggregation" that RECORDS: on its own clock, per ' +
+      "live cohort, readSensingCohort → aggregateSensingCohort → publishThroughDifferencingGate into " +
+      "3110's publication store. It refuses FIRST on the `surface` purpose scope (ungranted; checked " +
+      "before it obtains a client), then on sensing_publication_enabled (3313, seeded FALSE), then " +
+      "on the schema. A cohort the k-gate withholds never reaches the gate or the store; counts only " +
+      "in logs. Not a transport: nothing enters the store through it.",
+  ],
+  [
+    // ADDED 2026-09-26 (census-sensing §26.3): the CONSUMER now imports the store's PURE key
+    // functions, and nothing else from it.
+    join("compass", "CompassSensingPresenceProducer.ts"),
+    "decision #9's consumer. It imports sensingCohortKey / sensingTimeBucket / SENSING_REDUCTION_VERSION " +
+      "— pure functions of (zone, bucket, version), shared with the writer so the turn's zone refs " +
+      "name the KEY the publisher recorded — and reads ONLY the publication store (3110), never the " +
+      "contribution table; sensingPublicationScheduler.test.ts asserts the contribution store is " +
+      "untouched by it. Its first gate is the `surface` scope, which SENSING_ANON_POLICY_V1 does not grant.",
+  ],
 ]);
 
 /**
@@ -536,13 +556,51 @@ describe("the store is reachable only from the callers the ruling names", () => 
     }
   });
 
-  it("no feature flag was invented for this store", () => {
-    // 2315 seeds none, and seeding one is an owner decision (sensing-input-gap
-    // §3.2). The TTL sweep is gated on the table existing instead.
+  it("no feature flag governs the STORE, and any flag a reader hangs from is seeded OFF by a migration in this tree", () => {
+    // THIS TRIPWIRE FIRED ON 2026-09-26 AND WAS RE-AIMED, NOT RELAXED. It used
+    // to assert that NO allowlisted caller read a flag at all, with the note
+    // "2315 seeds none, and seeding one is an owner decision". The ruling it
+    // cites says something narrower and more useful (sensing-input-gap §3.1,
+    // the note under the table): the four items inside the ruling are "gated
+    // on process, not on the ruling", and "any flag they hang from would be a
+    // NEW SEEDED-OFF ROW" — the standing shape everywhere in this tree, where
+    // seeding OFF is implementation and FLIPPING is the owner's act (§3.2's
+    // last row; 3004's own header for decision #9). The publisher
+    // (lib/sensingPublicationScheduler, census-sensing §26.3) is exactly that
+    // shape: it hangs from sensing_publication_enabled, which 3313 seeds
+    // FALSE and refuses to seed ON, and it checks the `surface` purpose scope
+    // BEFORE it reads the flag, so the flag cannot substitute for consent.
+    //
+    // What this case still refuses, and must: (1) the store's own contract
+    // module, its service and its TTL sweep reading ANY flag — the sweep is
+    // gated on the table existing instead, so a flag can only add a way to
+    // retain expired personal data; (2) a reader hanging from a flag that no
+    // migration in this tree seeds — a phantom that "cannot be turned on
+    // without shipping a migration first" (3004's words); (3) a seed whose
+    // value is not FALSE.
     assert.doesNotMatch(CODE, /feature_flags/i);
+    const FLAG_FREE = [join("lib", "sensingAnonService.ts"), join("lib", "sensingRetentionScheduler.ts")];
+    for (const f of FLAG_FREE) {
+      assert.ok(!/isFlagEnabled|feature_flags/.test(readFileSync(join(SRC, f), "utf8")), `${f} must not read a flag: the store's own path is gated on schema, never on a switch`);
+    }
+    const seededOff = new Set<string>();
+    for (const m of readdirSync(join(SRC, "migrations"))) {
+      if (!m.endsWith(".sql")) continue;
+      const sql = readFileSync(join(SRC, "migrations", m), "utf8");
+      for (const hit of sql.matchAll(/\(\s*'([a-z0-9_]+)'\s*,\s*(true|false)\b/gi)) {
+        if (hit[2].toLowerCase() === "false") seededOff.add(hit[1]);
+      }
+    }
     for (const f of PERMITTED_REFERRERS.keys()) {
       const text = readFileSync(join(SRC, f), "utf8");
-      assert.ok(!/isFlagEnabled|feature_flags/.test(text), `${f} reads a feature flag that nothing seeds`);
+      const reads = [...text.matchAll(/isFlagEnabled\([^,]+,\s*([A-Z_]+|"[a-z0-9_]+")\s*\)/g)].map((m) => m[1]);
+      for (const r of reads) {
+        const name = r.startsWith('"')
+          ? r.slice(1, -1)
+          : (text.match(new RegExp(`export const ${r}\\s*=\\s*"([a-z0-9_]+)"`)) ?? [])[1];
+        assert.ok(name, `${f} reads a flag through ${r}, which this case cannot resolve to a literal name`);
+        assert.ok(seededOff.has(name), `${f} reads ${name}, which no migration in this tree seeds FALSE — a phantom flag`);
+      }
     }
   });
 

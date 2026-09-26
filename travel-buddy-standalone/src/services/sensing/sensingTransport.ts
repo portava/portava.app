@@ -30,16 +30,24 @@
  * whole request shape is assertable in a unit test. `installSensingCapture.ts`
  * supplies the real ones.
  *
- * ── THE ROUTE IS NOT THIS LANE'S ─────────────────────────────────────────────
- * The server half (an ingest route that accepts these features without reading
- * `location_snapshots` by `actor_id`) is a separate change. Until it exists
- * every submission gets a 404 and `submit` reports `route_unavailable` — a
- * named refusal, never a silent success, per §20 "Ingest must fail explicitly …
- * never return a plausible empty world". The paths are overridable through
- * EXPO_PUBLIC_SENSING_SESSION_PATH / EXPO_PUBLIC_SENSING_INGEST_PATH so the
- * client can be pointed at the route the server lane actually lands.
+ * ── THE WIRE IS A CONTRACT, NOT A SPREAD ─────────────────────────────────────
+ * The server's ingest route (`artifacts/api-server/src/routes/sensingIngest.ts`)
+ * validates a `.strict()` camelCase body that REQUIRES a per-epoch
+ * `commitment`. This transport used to spread the reduced payload straight
+ * into the body, which that schema refused on every field — census-sensing
+ * §26 measured it. The body is now built by `toWireContribution`, whose
+ * output is pinned to `docs/contracts/sensing-contribution-wire-v1.json`, the
+ * same fixture the server's own test accepts; and the commitment comes from
+ * the injected `commitmentFor`, which the installer backs with the device
+ * secret (`commitment.ts`). No commitment, no request: a body the server
+ * would refuse is not sent, and the refusal is named (`no_commitment`).
+ * A missing route still reports `route_unavailable` — a named refusal, never
+ * a silent success, per §20 "Ingest must fail explicitly … never return a
+ * plausible empty world". The paths stay overridable through
+ * EXPO_PUBLIC_SENSING_SESSION_PATH / EXPO_PUBLIC_SENSING_INGEST_PATH.
  */
 import type { SensingContributionPayload } from '../../lib/sensing/contributionPayload.ts';
+import { toWireContribution } from '../../lib/sensing/wireContribution.ts';
 
 export const DEFAULT_SENSING_SESSION_PATH = '/api/v1/sensing/session';
 export const DEFAULT_SENSING_INGEST_PATH = '/api/v1/sensing/contributions';
@@ -62,6 +70,8 @@ export type SubmitOutcome =
         | 'not_configured'
         | 'no_eligibility'
         | 'no_credential'
+        | 'no_commitment'
+        | 'invalid_payload'
         | 'route_unavailable'
         | 'rejected'
         | 'network_error';
@@ -72,6 +82,13 @@ export interface SensingTransportDeps {
   baseUrl: string;
   /** The account token, used ONLY to prove eligibility. */
   getEligibilityToken: () => Promise<string | null>;
+  /**
+   * The device's hash commitment for a rotation epoch — `deviceCommitment` in
+   * lib/sensing/commitment.ts over a secret that never leaves the handset.
+   * Null means the device cannot commit (no secure randomness), and then
+   * nothing is sent.
+   */
+  commitmentFor: (rotationEpoch: number) => Promise<string | null>;
   fetchImpl: typeof fetch;
   now: () => number;
   sessionPath?: string;
@@ -131,6 +148,14 @@ export function createSensingTransport(deps: SensingTransportDeps): SensingTrans
       if (!deps.baseUrl) return { ok: false, reason: 'not_configured' };
       const cred = await credential();
       if (!cred) return { ok: false, reason: 'no_credential' };
+      const commitment = await deps.commitmentFor(cred.rotationEpoch);
+      if (!commitment) return { ok: false, reason: 'no_commitment' };
+      let body: string;
+      try {
+        body = JSON.stringify(toWireContribution(payload, { commitment, rotationEpoch: cred.rotationEpoch }));
+      } catch {
+        return { ok: false, reason: 'invalid_payload' };
+      }
       try {
         const res = await deps.fetchImpl(`${deps.baseUrl}${ingestPath}`, {
           method: 'POST',
@@ -138,7 +163,7 @@ export function createSensingTransport(deps: SensingTransportDeps): SensingTrans
             'Content-Type': 'application/json',
             [SENSING_CREDENTIAL_HEADER]: cred.credential,
           },
-          body: JSON.stringify({ rotationEpoch: cred.rotationEpoch, ...payload }),
+          body,
         });
         if (res.ok) return { ok: true };
         if (res.status === 404) {

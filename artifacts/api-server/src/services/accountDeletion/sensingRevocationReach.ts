@@ -17,14 +17,21 @@
  * deletion run, and it must run BEFORE the erase — afterwards the observations
  * that name the subjects are gone and the question can no longer be asked.
  *
- * ── THE INPUT THE REACH MODULE WANTS DOES NOT EXIST, AND WHAT IS DONE ABOUT IT
+ * ── THE INPUT THE REACH MODULE WANTS: EXACT SINCE 3311, SUBJECT-LEVEL BEFORE
  * `revocationReach(sessions, memories, revokedClaimRefs)` wants the snapshot
- * ids the erased observations fed. `intel_state_snapshots` (2130) records
- * `source_count` and `distinct_actors` and NO input provenance — there is no
- * observation→snapshot link anywhere in the schema, and adding one would be a
- * standing reverse path from a snapshot back towards its contributors, which
- * §20 / spec §17 forbid for the anonymous store. So exact provenance is not
- * available and is not fabricated. The enumeration runs at SUBJECT granularity:
+ * ids the erased observations fed. Since 3311, `intel_state_snapshots` carries
+ * `input_observation_ids` — FORWARD provenance written by the projection
+ * (opaque ids naming no contributor; the reverse path towards a person still
+ * runs through intel_observations, whose actor_id is a rotating token, and
+ * the rows themselves are gone after the erase). The enumeration reads it
+ * with an overlap query and reports `provenance: "exact"`. On a database
+ * without 3311 the read fails on the unknown column, and the enumeration
+ * falls back to SUBJECT granularity (`provenance: "subject"`) — over-
+ * inclusive, never "rested on nothing". Both sets are reported; the exact one
+ * is what the erasure recompute acts on when it exists.
+ *
+ * The anonymous store (2315) keeps no per-row provenance by design (§20) and
+ * is not read here. Subject granularity, as it always was:
  *
  *   identities  every value `actor_id` may hold for this account — the account
  *               id (pre-3002 rows) plus one contributor token per live epoch
@@ -68,6 +75,7 @@ import { readOwnContributorIdentities } from "../../lib/intelConsent.js";
 import { SESSION_EVENTS_TABLE, SESSION_VERBS } from "../../lib/experienceSessionStore.js";
 import { isExperienceSessionEnvelope, type ExperienceSessionEnvelope } from "../../lib/experienceSession.js";
 import { revocationReach, type SensingLineageStage } from "../memoryProjections/sessionRevocationReach.js";
+import type { AffectedSnapshot } from "./sensingErasureRecompute.js";
 
 /**
  * The service's paged reader, typed structurally so this module can be tested
@@ -88,8 +96,16 @@ export interface SensingRevocationReachOutcome {
   observations: number;
   /** Distinct subjects those observations named. */
   subjects: number;
-  /** Snapshot ids of those subjects, treated as the revoked claim refs. */
+  /** Snapshot ids of those subjects — the over-inclusive set. */
   snapshots: number;
+  /** Snapshots whose 3311 provenance names one of the account's observations; equals `snapshots` under subject fallback. */
+  snapshotsExact: number;
+  /** How the revoked claim refs were derived: 3311's provenance, or the pre-3311 subject fallback. */
+  provenance: "exact" | "subject";
+  /** The account's own observation ids (the erased evidence). Handed to the recompute; never logged. */
+  observationIds: string[];
+  /** The snapshots the erasure must recompute or retract, keyed for the recompute. */
+  affected: AffectedSnapshot[];
   /** Other accounts' sessions on those subjects, one per session id. */
   sessionsConsidered: number;
   /** Of those, the ones whose claim_refs intersect the snapshot set. */
@@ -126,9 +142,11 @@ export async function enumerateSensingRevocationReach(
     throw new Error(`sensing revocation reach: contributor identities unreadable (${ids.reason}): ${ids.detail}`);
   }
 
-  // 2. The subjects this account observed. One query per identity (the account
-  //    id plus at most one token per live epoch), each paged.
+  // 2. The subjects this account observed, and the observation ids themselves
+  //    (the evidence the erase is about to remove). One query per identity
+  //    (the account id plus at most one token per live epoch), each paged.
   const subjects = new Set<string>();
+  const observationIds = new Set<string>();
   let observations = 0;
   for (const identity of ids.identities) {
     observations += await readAll(
@@ -140,6 +158,7 @@ export async function enumerateSensingRevocationReach(
           .order("id", { ascending: true }),
       (rows) => {
         for (const r of rows) {
+          if (typeof r?.id === "string" && r.id !== "") observationIds.add(r.id);
           // Post-3002 `subject_id` is nullable (`unknown`, `temporary_world_object`
           // — S111). A subjectless observation feeds no snapshot and reaches
           // nothing through this thread.
@@ -150,23 +169,61 @@ export async function enumerateSensingRevocationReach(
     );
   }
   const subjectList = [...subjects].sort();
+  const observationList = [...observationIds].sort();
 
-  // 3. Every snapshot of those subjects — the over-inclusive revoked set.
-  const snapshotIds = new Set<string>();
+  // 3a. Every snapshot of those subjects — the over-inclusive set, always
+  //     enumerated so the count is comparable across databases.
+  const subjectSnapshots = new Map<string, AffectedSnapshot>();
   for (const part of chunk(subjectList, REACH_IN_LIST_CHUNK)) {
     await readAll(
       () =>
         sc
           .from("intel_state_snapshots")
-          .select("id, subject_id")
+          .select("id, subject_id, zone_id, claim_type")
           .in("subject_id", part)
           .order("id", { ascending: true }),
       (rows) => {
-        for (const r of rows) if (typeof r?.id === "string" && r.id !== "") snapshotIds.add(r.id);
+        for (const r of rows) {
+          if (typeof r?.id !== "string" || r.id === "") continue;
+          subjectSnapshots.set(r.id, { id: r.id, subjectId: String(r.subject_id ?? ""), zoneId: String(r.zone_id ?? ""), claimType: String(r.claim_type ?? "") });
+        }
         return rows.length;
       },
     );
   }
+
+  // 3b. The EXACT set: snapshots whose 3311 provenance names one of the
+  //     account's observations. On a pre-3311 database the read fails on the
+  //     unknown column; that one failure — and only that one — is the signal
+  //     to fall back to the subject set. Any other read failure still throws.
+  const exactSnapshots = new Map<string, AffectedSnapshot>();
+  let provenance: "exact" | "subject" = "exact";
+  try {
+    for (const part of chunk(observationList, REACH_IN_LIST_CHUNK)) {
+      await readAll(
+        () =>
+          sc
+            .from("intel_state_snapshots")
+            .select("id, subject_id, zone_id, claim_type")
+            .overlaps("input_observation_ids", part)
+            .order("id", { ascending: true }),
+        (rows) => {
+          for (const r of rows) {
+            if (typeof r?.id !== "string" || r.id === "") continue;
+            exactSnapshots.set(r.id, { id: r.id, subjectId: String(r.subject_id ?? ""), zoneId: String(r.zone_id ?? ""), claimType: String(r.claim_type ?? "") });
+          }
+          return rows.length;
+        },
+      );
+    }
+  } catch (err) {
+    const message = String((err as Error)?.message ?? err);
+    if (!/input_observation_ids/.test(message)) throw err;
+    provenance = "subject";
+  }
+
+  const affected = provenance === "exact" ? [...exactSnapshots.values()] : [...subjectSnapshots.values()];
+  const snapshotIds = new Set(affected.map((a) => a.id));
 
   // 4. Other accounts' sessions on those subjects. Oldest first, so a closed
   //    envelope overwrites the opened one for the same session id.
@@ -207,7 +264,11 @@ export async function enumerateSensingRevocationReach(
     identities: ids.identities.length,
     observations,
     subjects: subjects.size,
-    snapshots: snapshotIds.size,
+    snapshots: subjectSnapshots.size,
+    snapshotsExact: provenance === "exact" ? exactSnapshots.size : subjectSnapshots.size,
+    provenance,
+    observationIds: observationList,
+    affected,
     sessionsConsidered: latestBySession.size,
     sessionsReached: report.sessions.filter((s) => s.verdict === "reached").length,
     ownSessionsExcluded,

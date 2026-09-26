@@ -125,7 +125,8 @@
  * file — a worse outcome than the orphan being fixed.
  */
 import { logger as rootLogger } from "../../lib/logger.js";
-import { enumerateSensingRevocationReach } from "./sensingRevocationReach.js";
+import { enumerateSensingRevocationReach, type SensingRevocationReachOutcome } from "./sensingRevocationReach.js";
+import { recomputeSnapshotsAfterErasure } from "./sensingErasureRecompute.js";
 import { presenceFusion } from "../../presence/fusion/store.js";
 import { resolveStoragePath } from "../../lib/storagePath.js";
 import { ownerFromPath } from "../../lib/mediaAccess.js";
@@ -1209,12 +1210,14 @@ export async function executeAccountDeletion(
   // because nothing persists `claim_refs` — see sensingRevocationReach.ts.
   // Fail-closed: an unreadable precondition fails the step and warns, per
   // failOpenAccountDeletionReads. Non-fatal: the erase still runs.
+  let sensingReach: SensingRevocationReachOutcome | null = null;
   await pagedRowStep(
     steps,
     warnings,
     { name: "sensing_revocation_reach", subject: "sensing lineage reach — sessions resting on the erased evidence" },
     async (readAll) => {
       const reach = await enumerateSensingRevocationReach(sc, userId, readAll);
+      sensingReach = reach;
       logger.info(
         {
           userId,
@@ -1223,6 +1226,8 @@ export async function executeAccountDeletion(
           observations: reach.observations,
           subjects: reach.subjects,
           snapshots: reach.snapshots,
+          snapshotsExact: reach.snapshotsExact,
+          provenance: reach.provenance,
           sessionsConsidered: reach.sessionsConsidered,
           sessionsReached: reach.sessionsReached,
           ownSessionsExcluded: reach.ownSessionsExcluded,
@@ -1273,6 +1278,28 @@ export async function executeAccountDeletion(
       must(await d.run(), d.name);
     });
     if (!ok) warnings.push(`${d.name.replace(/^delete_/, "")} rows may remain`);
+  }
+
+  // ── The EFFECT of the erase on derived state (S112, census-sensing §26) ────
+  // erase_intel_for_actor removed the observations; the snapshots that rested
+  // on them still serve until this runs. Recompute every affected (subject,
+  // zone) from the evidence that remains, then retract any snapshot that still
+  // names an erased observation. Runs ONLY after a successful erase (a failed
+  // erase leaves the evidence in place, so the state is still true) and only
+  // when the reach found something to act on. Non-fatal: the deletion proceeds,
+  // and the receipt carries the count; a retraction that could not be written
+  // is warned about by name.
+  const eraseStep = steps.find((s) => s.step === "erase_intel_contributions");
+  // Assigned inside the step's closure, which TypeScript's flow analysis cannot see.
+  const reachForRecompute = sensingReach as SensingRevocationReachOutcome | null;
+  if (eraseStep?.ok && reachForRecompute && reachForRecompute.affected.length > 0) {
+    const recomputeOk = await step(steps, "recompute_intel_snapshots_after_erase", async () => {
+      const r = await recomputeSnapshotsAfterErasure(sc, reachForRecompute.affected, reachForRecompute.observationIds, new Date());
+      logger.info({ userId, ...r, affected: reachForRecompute.affected.length, provenance: reachForRecompute.provenance }, "executeAccountDeletion: derived intel state recomputed after erase_intel_for_actor");
+      if (r.retractionFailures > 0) throw new Error(`${r.retractionFailures} retraction(s) could not be written`);
+      return r.retracted;
+    });
+    if (!recomputeOk) warnings.push("derived intel snapshots may still rest on erased observations");
   }
 
   // ── IG mission-candidate acceptance (migration 2167) ──────────────────────

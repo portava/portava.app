@@ -44,6 +44,15 @@ import {
   type SensingContributionSessionRow,
 } from "../lib/sensingContributionSession.js";
 import type { SensingIssuanceClass } from "../lib/sensingAuthPosture.js";
+import { readFileSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { SENSING_FEATURE_COLUMNS } from "../lib/sensingAnonStore.js";
+
+/** The wire contract the client's transport is pinned to (see sensingReducedFeatures.test.ts). */
+const WIRE_CONTRACT = JSON.parse(
+  readFileSync(path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../../docs/contracts/sensing-contribution-wire-v1.json"), "utf8"),
+) as { body: { features: Record<string, unknown> } };
 
 const GOOD_PEPPER = "p".repeat(SENSING_PEPPER_MIN_LENGTH);
 const DEVICE_SECRET = "a-device-secret-that-never-leaves-the-device";
@@ -478,6 +487,40 @@ describe("the write — sensing_anon_contributions finally has a writer", () => 
     assert.equal(expected.has("actor_id"), false);
     assert.equal(sensingCohortKey("zone-alpha", bucket, SENSING_REDUCTION_VERSION).includes("zone-alpha"), true);
     assert.ok(Number.isInteger(epoch));
+  });
+
+  it("the wire contract's `features` are accepted end to end and land as 3312's columns", async () => {
+    const credential = generateSensingCredential();
+    const now = Date.now();
+    const c = client({ session: session(credential, now) });
+    _setTestServiceClient(c as any);
+    const r = await post(app(), contribution(now, { features: WIRE_CONTRACT.body.features }), { authorization: `Bearer ${credential}` });
+    assert.equal(r.status, 202, JSON.stringify(r.body));
+    const row = c.state.inserts[0]!;
+    for (const col of SENSING_FEATURE_COLUMNS) assert.ok(col in row, `${col} did not reach the insert`);
+    assert.equal(row.movement_class, "pedestrian");
+    assert.equal(row.motion_energy_centi, 35);
+    assert.equal(row.acoustic_energy_bucket, 2);
+    assert.equal(row.acoustic_rhythm, "steady");
+    assert.equal("features" in row, false, "the wire object itself is not stored — its columns are");
+    for (const forbidden of ["lat", "lng", "latitude", "longitude", "samples", "actor_id", "commitment"]) {
+      assert.equal(forbidden in row, false, `${forbidden} reached the anonymous store`);
+    }
+  });
+
+  it("a `features` object with one extra key is refused as invalid_payload — nothing rides in under a new name", async () => {
+    const credential = generateSensingCredential();
+    const now = Date.now();
+    const c = client({ session: session(credential, now) });
+    _setTestServiceClient(c as any);
+    const r = await post(
+      app(),
+      contribution(now, { features: { ...WIRE_CONTRACT.body.features, latitude: 51.5 } }),
+      { authorization: `Bearer ${credential}` },
+    );
+    assert.equal(r.status, 400);
+    assert.match(JSON.stringify(r.body), /invalid_payload/);
+    assert.equal(c.state.inserts.length, 0);
   });
 
   it("the row that reaches the insert carries no identity key and no raw commitment", async () => {

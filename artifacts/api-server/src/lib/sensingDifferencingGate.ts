@@ -229,6 +229,10 @@ export function aggregateFromPublicationRow(row: SensingPublishedAggregateRow): 
     contributions: row.contribution_count,
     observedAt: row.observed_at,
     medianSignalBucket: row.median_signal_bucket,
+    // 3110's publication row carries no 3312 feature statistics (S39's
+    // publisher would decide what to publish); a stored publication therefore
+    // re-reads as "features unknown", never as invented ones.
+    features: null,
   };
 }
 

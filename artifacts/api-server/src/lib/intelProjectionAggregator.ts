@@ -674,6 +674,9 @@ export async function assembleClaimInput(sc: SupabaseClient, claim: ClaimRow, no
     // Replay inputs + lineage (I1).
     freshness: { ageSeconds, ttlSeconds: ttl },
     inputClaimVersions,
+    // 3311 forward provenance: the fresh, CONSENTED observations this input was
+    // assembled from — the same `obsIds` the independence read was keyed on.
+    inputObservationIds: obsIds,
     candidateLineage,
     // §10 conflict state, persisted on the snapshot (intel_state_snapshots.
     // conflict_state, migration 2275) so the read path can suppress the strong

@@ -3256,3 +3256,102 @@ stands:
              WHERE table_schema='public' AND table_name='trust_profiles' AND column_name='overall_score');
     -- portava-ci: layover_time_budgets, memory_relations, YES   |   production: NULL, NULL, NO
 
+
+## 2026-09-26 — 3311 and 3312 applied to `portava-ci` under owner decision A; NOT to production
+
+The second batch under the same ruling as the nine above (*"option A for
+portava-ci only"*), applied after the api-server suites these two files back
+were green locally (sensingErasureRecompute 11/11, sensingReducedFeatures
+16/16, ingest route 31/31, revocation reach 10/10, intelProjection 21/21).
+Both files were written on branch `claude/sensing-completion-20260925` and are
+part of PR #528; the blob ids below identify the exact bytes independently of
+any later commit.
+
+| | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
+|---|---|---|
+| `3311_intel_snapshot_input_provenance.sql` (blob `519a76b21b…`) | **applied** 09:36:48 UTC | not applied |
+| `3312_sensing_anon_contribution_features.sql` (blob `eec1b648a3…`) | **applied** 09:37:49 UTC | not applied |
+
+Ledger rows: both `applied_by='manual'`, checksum = sha256 of the file bytes
+(`63fe3ddd23…` and `f5096e928d…`), written inside the same transaction as the
+DDL. `notes` carries the blob id, the branch and
+`owner-decision=A-2026-09-26`. The ledger went from 599 rows to 601. The 2481
+row was not touched.
+
+### How they were applied — runner-identical, different transport
+
+Same method as the nine: the runner's own exported functions from
+`scripts/src/apply-migrations.ts` did the deciding. `classifyMigration`
+classified both **`bare`** (no top-level transaction control; every
+postcondition `DO` block sits inside the body, so it runs INSIDE the
+`BEGIN … COMMIT` that `buildApplyStatement` wraps around it — the only
+outcomes were `applied` or a full rollback with no ledger row).
+`checksumOf` produced the digest and `buildApplyStatement` the statement.
+That statement — comments intact this time, unlike the 3002/3003/3310
+rehearsal whose ledger notes record the stripping — was sent byte-for-byte
+through the Management-API query endpoint. `body === file` was asserted in
+the build script before anything was sent.
+
+### Verified from the catalog after each commit, not from the apply reporting on itself
+
+**3311.** Both `intel_state_snapshots.input_observation_ids` and
+`intel_state_snapshot_versions.input_observation_ids` read `_uuid`, `NOT
+NULL`, default `'{}'::uuid[]`; both GIN indexes present by name; both column
+comments present. `sensing_anon_contributions` still has **zero** columns
+whose name contains `observation` — the anonymous store stays
+provenance-free, which is 3311's own last postcondition and also §20's rule.
+
+**3312.** All fifteen feature columns present and nullable (`int2`, `text`,
+`bool` as the file declares); the three CHECKs
+`sensing_anon_features_ranges`, `_enums`, `_acoustic_pair` present beside
+2315's ten; **0 foreign keys**. The 2315 name checks (no account/device
+handle, no lifecycle column) re-ran inside the transaction and held.
+
+**Negative controls, because a block that raises nothing is indistinguishable
+from a block that ran nothing.** Five inserts inside `DO` sub-blocks on
+`portava-ci`, every one rolled back, row count 0 before and after:
+
+| probe | outcome |
+|---|---|
+| `motion_energy_centi = 101` | refused: `violates check constraint "sensing_anon_features_ranges"` |
+| `density_bucket = 'crowded'` | refused: `violates check constraint "sensing_anon_features_enums"` |
+| `acoustic_energy_bucket` set, `acoustic_rhythm` NULL | refused: `violates check constraint "sensing_anon_features_acoustic_pair"` |
+| legacy shape (no feature column at all) | **accepted**, then rolled back — a pre-3312 client still inserts |
+| the full wire-contract shape (all fifteen) | **accepted**, then rolled back |
+
+**Flags after the apply**, read rather than assumed:
+`discovery_candidate_projection_enabled`, `intel_claim_projection_crowd`,
+`media_evidence_enabled`, `memory_projection`,
+`sensing_presence_context_enabled` all `false`. Neither file seeds or touches
+a flag. No scope was granted.
+
+### Production
+
+Not applied, and not applied as a side effect. Neither file is in
+production's ledger; `input_observation_ids` and the fifteen feature columns
+are absent there. The writer behind 3311 (`lib/intelProjection`) falls back
+to writing WITHOUT provenance on the schema-cache error and logs
+`intel.projection.provenance_unavailable`; the reach then enumerates at
+subject granularity. So deploying this branch's code ahead of 3311 degrades
+provenance, it does not break projection. The ingest behind 3312 accepts a
+contribution without `features` (every column is nullable), so a client ahead
+of the server, or the server ahead of 3312, still inserts. Order for
+production: `docs/ops/sensing-cutover-runbook.md`.
+
+### Rollback
+
+    -- 3312: db/rollback/2026-09-26-3312-sensing-anon-contribution-features-rollback.sql
+    -- 3311: db/rollback/2026-09-26-3311-intel-snapshot-input-provenance-rollback.sql
+    -- and for each: DELETE FROM public.schema_migration_ledger WHERE filename = '<file>';
+    -- Every table either touches was at 0 rows on portava-ci before and after.
+
+### Re-establish independently
+
+    SELECT filename, applied_by, applied_at, length(checksum)
+      FROM public.schema_migration_ledger
+     WHERE filename IN ('3311_intel_snapshot_input_provenance.sql','3312_sensing_anon_contribution_features.sql');
+    -- portava-ci: 2 rows, manual, 64   |   production: 0 rows
+
+    SELECT (SELECT count(*) FROM information_schema.columns WHERE table_schema='public' AND column_name='input_observation_ids') AS provenance_cols,
+           (SELECT count(*) FROM pg_constraint WHERE conname LIKE 'sensing_anon_features_%') AS feature_checks;
+    -- portava-ci: 2, 3   |   production: 0, 0
