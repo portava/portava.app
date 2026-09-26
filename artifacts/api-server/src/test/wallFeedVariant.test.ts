@@ -16,15 +16,23 @@
  *      trimmed; NULL, blank or absent projects null (the migration's contract:
  *      null means "none stored — use another variant", never an inference).
  *   3. A video row projects no feed variant; its still is the poster.
- *   4. The media lane (Media v2's projection) projects `feedUrl: null`: its
- *      post_media embed does not select `feed_url` and `media_assets` has none.
+ *   4. The media lane carries it too. Media v2's candidate read embeds post_media
+ *      WITHOUT `feed_url` and its projection has no field for one, so the Wall
+ *      reads `id, feed_url` itself, in one batched read, and joins on the
+ *      original the projection drew. A failed read costs no candidate.
+ *      NOT exercised here: a canonical `media_assets` original (the canonical
+ *      read is flag-gated). `media_assets` stores no feed variant, so such an
+ *      original gets one only when its URL is a post_media original's URL, i.e.
+ *      the same stored object; otherwise it stays null. That is argued from the
+ *      join, not measured.
  *
  * The fake below PROJECTS each post_media row to the columns the loader
  * selected, the way PostgREST does, so a select that drops `feed_url` loses the
  * value instead of being handed it by a permissive fake.
  *
- * WATCHED IT FAIL: (a) with `feed_url` removed from the select literal in
- * services/wall/WallCandidateLoaders.ts, claims 1 and 2 go red.
+ * WATCHED IT FAIL (census-wall §16): (a) with `feed_url` removed from the
+ * postcard lane's select literal, claims 1 and 2 go red; (f) with it removed
+ * from the media lane's feed-variant read, claims 1 and 4 go red.
  */
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
@@ -117,14 +125,15 @@ describe("the Wall's post_media read selects feed_url (W151, claim 1)", () => {
     assert.ok(selectedColumns(reads[0]).includes("feed_url"), `feed_url selected: ${reads[0]}`);
   });
 
-  it("the select is a static literal the offline column extractor resolves, and 0208 declares the column", () => {
+  it("each select is a static literal the offline column extractor resolves, and 0208 declares the column", () => {
     const { sites, skipped } = extractSchemaReferences(API_ROOT, [resolve(API_ROOT, "src/services/wall")]);
     const pm = sites.filter(
       (s) => s.file.endsWith("services/wall/WallCandidateLoaders.ts") && s.table === "post_media" && s.method === "select",
     );
     const withFeed = pm.filter((s) => s.columns.includes("feed_url"));
-    assert.equal(withFeed.length, 1, `one post_media select names feed_url (saw ${JSON.stringify(pm)})`);
-    assert.equal(withFeed[0].unresolved, false, "fully resolvable — no runtime-probed suffix");
+    // The postcard lane's media read, and the media lane's feed-variant read.
+    assert.equal(withFeed.length, 2, `two post_media selects name feed_url (saw ${JSON.stringify(pm)})`);
+    for (const s of withFeed) assert.equal(s.unresolved, false, `line ${s.line}: fully resolvable — no runtime-probed suffix`);
     assert.deepEqual(
       skipped.filter((s) => s.file.endsWith("services/wall/WallCandidateLoaders.ts")),
       [],
@@ -161,24 +170,61 @@ describe("feed_url is projected as DisplayMedia.feedUrl (W151, claims 2 and 3)",
   });
 });
 
-describe("the media lane has no feed variant to carry (W151, claim 4)", () => {
-  it("loadVideoMediaCandidates projects feedUrl: null", async () => {
-    const author = { id: "author-1", username: "aya", display_name: "Aya", name: "Aya", avatar_url: null, verified: false, is_official: false, account_status: "active" };
-    const { client } = projectingClient({
-      profiles: [{ id: VIEWER, location_country: "VN", date_of_birth: null, account_status: "active" }],
-      user_follows: [{ following_id: "author-1" }],
-      posts: [{
-        id: "img-1", author_id: "author-1", trip_id: null, content: "coffee", visibility: "public", status: "active",
-        post_status: "published", created_at: "2026-09-01T09:00:00Z", category: "food", location_name: null,
-        location_city: "Da Nang", location_country: "VN", canonical_place_id: null, media_urls: [],
-        post_media: [row("m-i", 0, { post_id: "img-1", feed_url: "post-media/author-1/m-i.feed.jpg" })],
-        profiles: [author],
-      }],
-    });
+describe("the media lane carries the feed variant Media v2 does not (W151, claim 4)", () => {
+  const author = { id: "author-1", username: "aya", display_name: "Aya", name: "Aya", avatar_url: null, verified: false, is_official: false, account_status: "active" };
+  // The embed as Media v2 selects it: MEDIA_PROJECTION_POST_MEDIA_COLUMNS has no feed_url.
+  const embedded = (id: string, over: Record<string, any> = {}) => {
+    const { feed_url: _omit, post_id: _pid, ...rest } = row(id, 0, over) as Record<string, any>;
+    return rest;
+  };
+  const post = (id: string, media: any[], created: string) => ({
+    id, author_id: "author-1", trip_id: null, content: id, visibility: "public", status: "active",
+    post_status: "published", created_at: created, category: "food", location_name: null,
+    location_city: "Da Nang", location_country: "VN", canonical_place_id: null, media_urls: [],
+    post_media: media, profiles: [author],
+  });
+  const POSTS = [
+    post("img-1", [embedded("m-i")], "2026-09-01T09:00:00Z"),
+    post("img-2", [embedded("m-j")], "2026-09-01T08:00:00Z"),
+    post("vid-1", [embedded("m-v", { media_type: "video", public_url: "post-media/author-1/clip.mp4", thumbnail_url: "post-media/author-1/clip.jpg", duration_seconds: 4 })], "2026-09-01T07:00:00Z"),
+  ];
+  // The table the Wall's own feed-variant read hits.
+  const FEED_ROWS = [
+    { id: "m-i", feed_url: "post-media/author-1/m-i.feed.jpg" },
+    { id: "m-j", feed_url: null },
+    { id: "m-v", feed_url: "post-media/author-1/clip.feed.jpg" },
+  ];
+  const tables = (over: Record<string, any[]> = {}) => ({
+    profiles: [{ id: VIEWER, location_country: "VN", date_of_birth: null, account_status: "active" }],
+    user_follows: [{ following_id: "author-1" }],
+    posts: POSTS,
+    post_media: FEED_ROWS,
+    ...over,
+  });
+
+  it("an image whose post_media row stores a feed variant carries it; one that stores none carries null", async () => {
+    const { client, selects } = projectingClient(tables());
     const loaded = await loadVideoMediaCandidates(client, VIEWER);
-    const img = loaded.candidates.find((c) => c.canonicalObjectId === "img-1");
-    assert.ok(img, "the media lane projects the image post");
-    assert.equal(img.media?.[0].kind, "image");
-    assert.equal(img.media?.[0].feedUrl, null);
+    const byId = new Map(loaded.candidates.map((c) => [c.canonicalObjectId, c]));
+    assert.equal(byId.get("img-1")?.media?.[0].feedUrl, "post-media/author-1/m-i.feed.jpg");
+    assert.equal(byId.get("img-2")?.media?.[0].feedUrl, null);
+    assert.equal(byId.get("vid-1")?.media?.[0].feedUrl, null, "a video carries no feed variant");
+    const reads = selects.post_media ?? [];
+    assert.equal(reads.length, 1, "ONE batched read for the whole page");
+    assert.ok(selectedColumns(reads[0]).includes("feed_url"), `feed_url selected: ${reads[0]}`);
+  });
+
+  it("a failed feed-variant read costs no candidate: every feedUrl is null and the page still projects", async () => {
+    const { client } = projectingClient(tables());
+    const failing = {
+      from: (t: string) => {
+        if (t !== "post_media") return client.from(t);
+        const b: any = { select: () => b, in: () => b, then: (onF: any, onR: any) => Promise.resolve({ data: null, error: { message: "boom" } }).then(onF, onR) };
+        return b;
+      },
+    };
+    const loaded = await loadVideoMediaCandidates(failing, VIEWER);
+    assert.equal(loaded.candidates.length, 3, "all three media posts still project");
+    for (const c of loaded.candidates) assert.equal(c.media?.[0].feedUrl, null);
   });
 });

@@ -557,7 +557,7 @@ export async function loadVideoMediaCandidates(
       : fetched;
     if (rows.length === 0) return emptyLoaded();
 
-    const nowMs = Date.now();
+    const nowMs = Date.now(); const feedVariantsP = mediaLaneFeedVariants(sc, rows); // read beside the projection below; never rejects
     // Through the SAME location/gem choke point the World shell uses: the Wall's
     // PublicPlaceRef below is built from the projection's venue label and
     // canonical place id, so it must honour the owner's location_privacy_mode
@@ -566,7 +566,7 @@ export async function loadVideoMediaCandidates(
     const projections = new Map(
       (await projectCandidatesProtected(sc, resolved, rows, nowMs)).map((p) => [p.id, p]),
     );
-    const out = emptyLoaded();
+    const out = emptyLoaded(); const feedByUrl = await feedVariantsP;
     for (const row of rows) {
       const proj = projections.get(String(row.id));
       if (!proj) continue; // only media-bearing posts belong to this loader
@@ -579,7 +579,7 @@ export async function loadVideoMediaCandidates(
         mediaId: proj.id,
         kind: proj.mediaType,
         url: proj.url,
-        thumbnailUrl: proj.thumbnailUrl, feedUrl: null, // Media v2's projection carries no feed variant: its post_media embed does not select feed_url, and media_assets has none
+        thumbnailUrl: proj.thumbnailUrl, feedUrl: proj.mediaType === "image" ? feedByUrl.get(proj.url) ?? null : null, // Media v2's projection carries no feed variant, so it is read beside it (mediaLaneFeedVariants) and joined on the drawn original's URL
         width: proj.width,
         height: proj.height,
         durationMs: proj.durationSeconds != null ? Math.round(proj.durationSeconds * 1000) : null,
@@ -1422,4 +1422,48 @@ export async function loadQuickMediaRow(
 function feedVariantOf(m: any): string | null {
   if (!m || m.media_type === "video") return null;
   return typeof m.feed_url === "string" && m.feed_url.trim().length > 0 ? m.feed_url.trim() : null;
+}
+
+/**
+ * The media lane's feed variants, keyed by the ORIGINAL's stored URL.
+ *
+ * Media v2's candidate read embeds `post_media` with
+ * MEDIA_PROJECTION_POST_MEDIA_COLUMNS, which does not include `feed_url`, and its
+ * projection has no field for one; `media_assets` (the canonical branch) stores
+ * no feed variant at all. So the Wall reads `id, feed_url` for the image rows the
+ * embed already returned, in ONE batched read that runs beside the projection,
+ * and joins on the URL the projection chose to draw. A canonical or external
+ * original matches no post_media URL and keeps feedUrl null.
+ *
+ * Fail-soft and never rejects: a failed read leaves every feedUrl null, and the
+ * client draws another stored variant. It enriches rows the Media v2 gate has
+ * already cleared; it admits nothing.
+ */
+async function mediaLaneFeedVariants(sc: any, rows: any[]): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  try {
+    const urlById = new Map<string, string>();
+    for (const r of rows ?? []) {
+      for (const m of Array.isArray(r?.post_media) ? r.post_media : []) {
+        if (!m || m.id == null || m.media_type === "video") continue;
+        if (typeof m.public_url !== "string" || m.public_url.trim().length === 0) continue;
+        urlById.set(String(m.id), m.public_url.trim());
+      }
+    }
+    if (urlById.size === 0) return out;
+    const got = rowsOrThrow(
+      await sc
+        .from("post_media")
+        .select("id, feed_url")
+        .in("id", [...urlById.keys()].slice(0, 500)),
+    );
+    for (const g of got) {
+      const url = urlById.get(String(g?.id));
+      const feed = feedVariantOf({ media_type: "image", feed_url: g?.feed_url });
+      if (url && feed) out.set(url, feed);
+    }
+  } catch (err) {
+    logger.warn({ err }, "media lane: feed-variant read failed — images fall back to their other stored variants");
+  }
+  return out;
 }

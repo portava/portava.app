@@ -251,7 +251,7 @@ export async function clearFirstPageCache(
 /** Pull the still-image URLs worth warming from one projection. */
 function imageRefsOf(item: WallProjection, targetPx: number = currentWallImageTargetPx()): string[] {
   const out: string[] = [];
-  for (const m of (item.media ?? []).slice(0, 1)) { // every Wall renderer draws media[0] only; warm nothing it will not draw
+  for (const m of [drawnWallMediaOf(item)]) { // the one media item the Wall draws (media[0] of an image-drawing type); warm nothing it will not draw
     if (!m || m.processing) continue;
     // Video: warm the still poster only, never the payload (§11/§31).
     const ref = pickWallImageRef(m, targetPx); // THE renderer's pick (WallImage), same target: warm exactly what will be drawn
@@ -334,4 +334,4 @@ function currentWallImageTargetPx(): number {
 
 // Imported at the TAIL so no cited line above moves; ESM hoists them.
 import { Dimensions } from 'react-native';
-import { pickWallImageRef, wallImageTargetPx } from './wallImageVariant.ts';
+import { drawnWallMediaOf, pickWallImageRef, wallImageTargetPx } from './wallImageVariant.ts';

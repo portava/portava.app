@@ -13,6 +13,9 @@
  *   4. The target is window width × scale, and a nonsense window yields 0.
  *   5. The client's two caps are the server's: THUMBNAIL_DIM and FEED_DIM in
  *      artifacts/api-server/src/lib/mediaProcessing.ts.
+ *   6. The Wall draws media[0] of the five image-drawing object types and
+ *      nothing of the other two (the component test pins this set against the
+ *      real renderers).
  *
  * WATCHED IT FAIL: with the picker returning `thumbnailUrl ?? url` whatever the
  * target (mutation d), "a full-width 3× frame draws the feed variant" and
@@ -27,10 +30,11 @@ import { fileURLToPath } from 'node:url';
 import {
   WALL_FEED_DIM,
   WALL_THUMBNAIL_DIM,
+  drawnWallMediaOf,
   pickWallImageRef,
   wallImageTargetPx,
 } from '../wallImageVariant.ts';
-import type { DisplayMedia } from '../../types/wallProjection.ts';
+import type { DisplayMedia, WallObjectType, WallProjection } from '../../types/wallProjection.ts';
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), '../../../../../..');
 
@@ -107,6 +111,28 @@ describe('pickWallImageRef — video, processing, absent', () => {
     assert.equal(pickWallImageRef(image({ processing: true }), 1170), null);
     assert.equal(pickWallImageRef(undefined, 1170), null);
     assert.equal(pickWallImageRef(null, 1170), null);
+  });
+});
+
+describe('drawnWallMediaOf — the one media item the Wall draws', () => {
+  const second: DisplayMedia = { mediaId: 'm2', kind: 'image', url: 'post-media/u1/q.jpg' };
+  const proj = (objectType: WallObjectType, media?: DisplayMedia[]) =>
+    ({ projectionId: 'p', canonicalObjectId: 'c', objectType, publishedAt: '2026-09-26T00:00:00Z', visibility: 'public', actions: [], media }) as WallProjection;
+
+  test('media[0] of the five image-drawing types, never media[1]', () => {
+    for (const t of ['social_post', 'video', 'postcard', 'shared_moment', 'discovery'] as WallObjectType[]) {
+      assert.equal(drawnWallMediaOf(proj(t, [image(), second]))?.mediaId, 'm1', t);
+    }
+  });
+
+  test('nothing for a social update or a contextual opportunity, even when they carry media', () => {
+    assert.equal(drawnWallMediaOf(proj('social_update', [image()])), undefined);
+    assert.equal(drawnWallMediaOf(proj('contextual_opportunity', [image()])), undefined);
+  });
+
+  test('nothing when there is no media', () => {
+    assert.equal(drawnWallMediaOf(proj('social_post')), undefined);
+    assert.equal(drawnWallMediaOf(proj('social_post', [])), undefined);
   });
 });
 

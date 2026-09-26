@@ -9,15 +9,21 @@
  *     whatever the frame's size, and not the original;
  *   • with no feed variant stored it draws the original, never an upscaled
  *     thumbnail;
- *   • for every object type that draws an image, at four device widths, the set
- *     `prefetchWallMedia` warms is EXACTLY the one object the renderer drew. The
- *     old code broke this: the renderer drew `thumbnailUrl ?? url`, the prefetch
- *     warmed `url ?? thumbnailUrl`, and a multi-media post warmed media it never
- *     drew.
+ *   • for every object type the renderer dispatches, at four device widths, the
+ *     set `prefetchWallMedia` warms is EXACTLY the set the renderer drew: one
+ *     object for the five image-drawing types, none for a social update or a
+ *     contextual opportunity. The old code broke this three ways: the renderer
+ *     drew `thumbnailUrl ?? url` while the prefetch warmed `url ?? thumbnailUrl`;
+ *     a multi-media post warmed media no renderer draws; and a Buddy
+ *     opportunity's cover photo was warmed though its renderer draws no media.
  *
- * WATCHED IT FAIL: (b) with WallImage back on `thumbnailUrl ?? url`, the 3× test
- * and every image row of the agreement table go red; (c) with the prefetch back
- * on `url ?? thumbnailUrl`, the agreement table goes red.
+ * WATCHED IT FAIL (census-wall §16): (b) with WallImage ignoring `feedUrl`, the
+ * 3× test and the 780 px and 1170 px image rows go red; (c) with the prefetch
+ * back on `url ?? thumbnailUrl`, the image rows at 360, 780 and 1170 px go red;
+ * (d) with the picker starting at the thumbnail whatever the target, the 3×
+ * test, the no-feed test and the image rows above 400 px go red; (e) with the
+ * prefetch warming every media item of every type again, every row that
+ * carries more media than it draws goes red.
  */
 
 import React from 'react';
@@ -116,12 +122,20 @@ const base = (id: string) => ({
   actions: [],
 });
 
+// Every object type the renderer dispatches. The last two draw no media even
+// when the projection carries some — a Buddy opportunity carries the Buddy's
+// cover photo — so the prefetch must warm nothing for them.
 const PROJECTIONS: Array<[string, WallProjection]> = [
   ['social_post', { ...base('p1'), objectType: 'social_post', text: 'post', media: [IMAGE, SECOND] }],
   ['postcard', { ...base('c1'), objectType: 'postcard', storyPresentation: true, media: [IMAGE, SECOND] }],
   ['shared_moment', { ...base('s1'), objectType: 'shared_moment', media: [IMAGE, SECOND] }],
   ['discovery', { ...base('d1'), objectType: 'discovery', discoveryReason: 'nearby', media: [IMAGE, SECOND] }],
   ['video', { ...base('v1'), objectType: 'video', inlinePlayback: true, media: [VIDEO] }],
+  ['social_update', { ...base('u1'), objectType: 'social_update', text: 'update', media: [IMAGE] }],
+  [
+    'contextual_opportunity',
+    { ...base('o1'), objectType: 'contextual_opportunity', opportunityKind: 'buddy_around', text: 'Buddy', media: [IMAGE] },
+  ],
 ];
 
 const DEVICES: Array<[string, number, number, string]> = [
@@ -131,13 +145,20 @@ const DEVICES: Array<[string, number, number, string]> = [
   ['1024 dp 2× (2048 px)', 1024, 2, ORIG],
 ];
 
+function expectedDraw(type: string, expectedImage: string): string | null {
+  if (type === 'video') return 'post-media/u1/clip.jpg';
+  if (type === 'social_update' || type === 'contextual_opportunity') return null;
+  return expectedImage;
+}
+
 describe('the prefetch warms exactly what the renderer draws (§31 × §33)', () => {
   describe.each(DEVICES)('on a %s device', (_label, width, scale, expectedImage) => {
     it.each(PROJECTIONS)('%s', async (type, projection) => {
       device(width, scale);
       await render(<WallObjectRenderer projection={projection} />);
-      const rendered = drawn();
-      expect(rendered).toBe(type === 'video' ? 'post-media/u1/clip.jpg' : expectedImage);
+      const frames = screen.queryAllByTestId('drawn-uri').map((n) => n.props.children as string);
+      const want = expectedDraw(type, expectedImage);
+      expect(frames).toEqual(want ? [want] : []);
 
       const hydrate = jest.fn(async (refs: string[]) =>
         Object.fromEntries(refs.map((r) => [r, `https://signed/${r}`])),
@@ -145,9 +166,11 @@ describe('the prefetch warms exactly what the renderer draws (§31 × §33)', ()
       const prefetch = jest.fn(async () => true);
       await prefetchWallMedia([projection], { count: 4, hydrate, prefetch });
 
-      expect(hydrate).toHaveBeenCalledTimes(1);
-      expect(hydrate.mock.calls[0][0]).toEqual([rendered]);
-      expect(prefetch).toHaveBeenCalledWith([`https://signed/${rendered}`]);
+      // The warmed set IS the drawn set — the same object, and nothing else.
+      const warmed = hydrate.mock.calls.flatMap((c) => c[0] as string[]);
+      expect(warmed).toEqual(frames);
+      if (frames.length > 0) expect(prefetch).toHaveBeenCalledWith(frames.map((f) => `https://signed/${f}`));
+      else expect(prefetch).not.toHaveBeenCalled();
     });
   });
 });

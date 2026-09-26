@@ -28,7 +28,7 @@
  * cap. Pure: no React Native import, so node:test can run it directly.
  */
 
-import type { DisplayMedia } from '../types/wallProjection.ts';
+import type { DisplayMedia, WallObjectType, WallProjection } from '../types/wallProjection.ts';
 
 /** Server `THUMBNAIL_DIM` (artifacts/api-server/src/lib/mediaProcessing.ts). Pinned equal by test. */
 export const WALL_THUMBNAIL_DIM = 400;
@@ -83,4 +83,25 @@ export function pickWallImageRef(
     if (tiers[i].ref) return tiers[i].ref;
   }
   return null;
+}
+
+/**
+ * The object types whose renderer draws an image frame (`WallImage`, fed
+ * `projection.media?.[0]`): Post, video (its poster), Postcard, Shared Moment
+ * and Discovery. A social update and a contextual opportunity draw no media,
+ * even when the projection carries some (a Buddy opportunity carries the Buddy's
+ * cover photo). Pinned against the real renderers by
+ * components/objects/__tests__/WallImage.variant.component.test.tsx.
+ */
+export const WALL_IMAGE_OBJECT_TYPES: ReadonlySet<WallObjectType> = new Set<WallObjectType>([
+  'social_post',
+  'video',
+  'postcard',
+  'shared_moment',
+  'discovery',
+]);
+
+/** The one media item the Wall draws for a projection, or undefined when it draws none. */
+export function drawnWallMediaOf(projection: WallProjection): DisplayMedia | undefined {
+  return WALL_IMAGE_OBJECT_TYPES.has(projection.objectType) ? projection.media?.[0] : undefined;
 }
