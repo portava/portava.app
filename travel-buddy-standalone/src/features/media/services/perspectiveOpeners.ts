@@ -60,3 +60,15 @@ export async function openClusterPerspectives(cluster: MediaMapCluster): Promise
   if (!res.ok || !res.data) return false;
   return stageAndOpen(mapClusterHandoff(cluster, res.data));
 }
+
+/**
+ * §14 Place, from a card that carries only the place's id — NOW's "Changing
+ * now" cards. The place's current view is read through the same gated
+ * `GET /media/places/:id` every Place open uses and staged as a Place entry
+ * context, opened on the card's hero. An unreadable place opens NOTHING.
+ */
+export async function openPlaceByIdPerspectives(placeId: string, tapped?: MediaProjection | null): Promise<boolean> {
+  const res = await fetchPlaceView(placeId);
+  if (!res.ok || !res.data) return false;
+  return stageAndOpen(placeHandoff(res.data, tapped?.id ?? null));
+}

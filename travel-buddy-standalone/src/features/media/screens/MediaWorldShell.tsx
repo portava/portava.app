@@ -23,7 +23,7 @@ import { router } from 'expo-router';
 import { color } from '../../../theme/tokens.ts';
 import { HiddenGemsMediaScreen } from './HiddenGemsMediaScreen.tsx';
 import { WhyThisSheet } from '../../../components/media/WhyThisSheet.tsx';
-import { openClusterPerspectives, openExperiencePerspectives, openPersonPerspectives } from '../services/perspectiveOpeners.ts';
+import { openClusterPerspectives, openExperiencePerspectives, openPersonPerspectives, openPlaceByIdPerspectives } from '../services/perspectiveOpeners.ts';
 import { lensNavReducer, INITIAL_LENS_NAV, modesForLens, isLens, defaultModeForLens } from '../state/lens.ts';
 import { cachedAsOfLabel } from '../state/freshness.ts';
 import type { MediaLens, PresentationMode, CityVisualZone } from '../types/mediaContext.ts';
@@ -55,7 +55,7 @@ export interface MediaWorldShellProps {
   experienceIds?: string[];
 }
 
-/** A generic viewer open — used only where no §14 entry context applies (Now's changing cards). */
+/** A generic viewer open — only for a changing-now card that names no canonical place. */
 function openMediaViewer(media: MediaProjection) {
   if (!media.id) return;
   router.push(`/media-viewer/${encodeURIComponent(media.id)}` as never);
@@ -127,7 +127,9 @@ function MediaWorldShellInner({ cityId, cityName: cityNameProp = null, lat, lng,
             onSelectZone={() => selectLens('places')}
             onOpenChanging={(item) => {
               const hero = item.heroMedia?.[0];
-              if (hero) openMediaViewer(hero);
+              // §14: a changing-now card IS a place — open that place's perspectives.
+              if (item.placeId) void openPlaceByIdPerspectives(item.placeId, hero ?? null);
+              else if (hero) openMediaViewer(hero);
             }}
             // §47: offer "Why this?" only where the server supplied a reason. The
             // sheet's generic fallback sentence is an invented explanation, and a

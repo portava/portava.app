@@ -35,6 +35,8 @@ const EVENT = '44444444-4444-4444-4444-444444444444';
 
 const mockFetchGems = jest.fn();
 const mockFetchExperience = jest.fn();
+const mockFetchPlaceView = jest.fn();
+let mockChangingNow: unknown[] = [];
 jest.mock('../services/mediaProjection.ts', () => {
   const actual = jest.requireActual('../services/mediaProjection.ts');
   return {
@@ -45,10 +47,10 @@ jest.mock('../services/mediaProjection.ts', () => {
         city: 'Da Nang',
         cityVisualState: [{ placeId: '66666666-6666-6666-6666-666666666666', label: 'An Thuong', perspectiveCount: 3, freshness: 'fresh' }],
         forYouNow: [],
-        changingNow: [],
+        changingNow: mockChangingNow,
       }),
     }),
-    fetchPlaceView: async () => ({ ok: true, data: null }),
+    fetchPlaceView: (...a: unknown[]) => mockFetchPlaceView(...a),
     fetchGems: (...a: unknown[]) => mockFetchGems(...a),
     // The lens calls fetchExperiencesByIds; route each id through the one mock so
     // the test controls every experience the lens resolves.
@@ -124,6 +126,9 @@ function experienceBody(id: string, kind: 'event' | 'trip', title: string) {
 beforeEach(() => {
   mockPush.mockReset();
   clearPerspectiveViewerContext();
+  mockChangingNow = [];
+  mockFetchPlaceView.mockReset();
+  mockFetchPlaceView.mockResolvedValue({ ok: true, data: null });
   mockFetchGems.mockResolvedValue({
     ok: true,
     data: jest.requireActual('../state/gemLens.ts').mapGemLensProjection({
@@ -157,6 +162,39 @@ describe('MediaWorldShell', () => {
     await fireEvent.press(screen.getByLabelText('Map'));
     // Gems-only Media Map (the gateway is off in this fixture, so it says so).
     await waitFor(() => expect(screen.getByText('No hidden gems on the map yet')).toBeTruthy());
+  });
+
+  it('NOW: a "Changing now" card opens that PLACE\'s perspectives (§14 Place), not the generic single-item viewer', async () => {
+    const PLACE = '66666666-6666-6666-6666-666666666666';
+    mockChangingNow = [
+      { id: 'ch1', placeId: PLACE, title: 'Filling up on An Thuong', freshness: 'fresh', heroMedia: [{ id: 'h2', mediaType: 'image', thumbnailUrl: 't', observationClass: 'observed' }] },
+    ];
+    const { mapPlaceCurrentView } = jest.requireActual('../services/mediaProjection.ts');
+    mockFetchPlaceView.mockResolvedValue({
+      ok: true,
+      data: mapPlaceCurrentView({
+        place: { id: PLACE, name: 'An Thuong' },
+        perspectives: {
+          totalPerspectives: 2,
+          groups: [{ key: 'nightlife', label: 'Nightlife', perspectiveCount: 2, media: [
+            { id: 'h1', mediaType: 'image', observationClass: 'observed', placeId: PLACE, capturedAt: '2026-09-26T10:00:00Z' },
+            { id: 'h2', mediaType: 'image', observationClass: 'observed', placeId: PLACE, capturedAt: '2026-09-26T09:00:00Z' },
+          ] }],
+        },
+      }),
+    });
+    await render(<Shell cityName="Da Nang" lat={16.05} lng={108.22} />);
+    await waitFor(() => expect(screen.getByLabelText('Filling up on An Thuong')).toBeTruthy());
+    await fireEvent.press(screen.getByLabelText('Filling up on An Thuong'));
+    await waitFor(() => expect(mockPush).toHaveBeenCalled());
+    expect(mockFetchPlaceView).toHaveBeenCalledWith(PLACE);
+    const staged = getPerspectiveViewerContext();
+    expect(staged?.input.kind).toBe('place');
+    expect(staged?.input.entityId).toBe(PLACE);
+    expect(staged?.initialMediaId).toBe('h2'); // opened on the card's own hero
+    expect(staged?.input.media.map((m) => m.id).sort()).toEqual(['h1', 'h2']);
+    expect(mockPush).toHaveBeenCalledWith('/media-perspective/h2');
+    expect(mockPush).not.toHaveBeenCalledWith(expect.stringMatching(/^\/media-viewer\//));
   });
 
   it('NOW → Map is the one Media Map and NOW → Time is the Media Timeline screen', async () => {
