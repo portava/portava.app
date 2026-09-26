@@ -246,6 +246,34 @@ which the catalog confirms. Eight of the nine ARE applied:
 One false apply in nine. That is a rate, not a one-off, and the eight true ones
 are why the header text cannot be used as the signal.
 
+### 7.3b A wider sweep, and exactly how far it reaches
+
+Since the header is not the signal, the catalog is: every migration on disk was
+parsed for the tables it CREATEs (394 file/table pairs across 192 files, comments
+stripped so a table named only in prose does not count), and every pair whose
+file carries a proof-of-apply ledger row in portava-ci was checked against the
+live relation list.
+
+**84 pairs checked. 84 tables present. Zero absent.** No second false apply of
+this shape exists.
+
+That is a floor, not a clearance, and the two reasons are worth stating because
+both of them are how 2481 would have escaped:
+
+* **310 of the 394 pairs were skipped**, because their file has no
+  proof-of-apply row — applied before the ledger existed, or carrying one of
+  2254's seed rows whose checksum is the literal `backfill`, which
+  `isProofOfApply` correctly refuses to count. The sweep says nothing about
+  those.
+* **A migration that creates no table is invisible to it.** 2481 adds a column,
+  two constraints and a function; this sweep would have passed it. Columns,
+  constraints, indexes, policies and functions are all uncovered here, and they
+  are most of what the 2100–2999 band does.
+
+So: no other false apply of the one shape I could check cheaply. The shape 2481
+actually has remains unswept, and `certify:migrations -- --all-ledger` is the
+thing that sweeps it.
+
 ### 7.4 Which direction the danger runs
 
 The outcome is the safe one and the evidence is the unsafe one, and they must
