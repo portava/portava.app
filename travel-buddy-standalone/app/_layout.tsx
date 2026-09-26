@@ -399,6 +399,7 @@ export default function RootLayout() {
                       <InputTelemetrySetup />
                       <GeographicFieldsSetup />
                       <SensingCaptureSetup />
+                      <MediaUploadResumeSetup />
                       <CompassFrontloadSetup />
                       <WallAnalyticsSetup />
                       <StatusBar style="dark" />
@@ -443,3 +444,18 @@ export default function RootLayout() {
     </GestureHandlerRootView>
   );
 }
+
+/**
+ * Media §37 — resume the app-level postcard upload queue at launch and on every
+ * return to the foreground, so an upload interrupted by a closed screen, a
+ * backgrounded app or a killed process continues from what the server already
+ * holds. A no-op while src/services/media/uploadTransportFlag.ts is off (it
+ * ships off): production keeps the composer's own single upload until a device
+ * run has proven the queue. Defined and imported at the TAIL so no line above
+ * moves — census documents cite this file by line.
+ */
+function MediaUploadResumeSetup() {
+  useEffect(() => installPostcardUploadResume(AppState), []);
+  return null;
+}
+import { installPostcardUploadResume } from '../src/services/media/postcardUploadDevice';

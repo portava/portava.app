@@ -8,7 +8,7 @@
  *   'pick'     — media picker + preview + caption/location/visibility form
  *   'uploading' — progress bar, cancel button
  */
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   View, Text, Modal, Pressable, StyleSheet,
   ActivityIndicator, Alert, Image, ScrollView, PanResponder,
@@ -30,6 +30,9 @@ import {
   type UploadCancelRef,
 } from '../services/postcards.ts';
 import { validateMedia } from '../services/media.ts';
+import { uploadVideoPoster } from '../services/media/uploadHttp.ts';
+import { normalizePickedAsset } from '../services/media/mediaProcessing.ts';
+import { isResumableMediaUploadEnabled } from '../services/media/uploadTransportFlag.ts';
 import { color, space, radius, type as t, shadow, avatar } from '../theme/tokens.ts';
 import { KeyboardSafeView } from './ui/KeyboardSafeView.tsx';
 import { useMediaPicker } from '../hooks/useMediaPicker.ts';
@@ -99,6 +102,12 @@ export function PostcardComposer({ visible, onClose, onSuccess }: Props) {
   const [error, setError] = useState<string | null>(null);
   const cancelRef = useRef<UploadCancelRef>({});
   const abortedRef = useRef(false);
+  // §37 background upload (uploadTransportFlag; ships OFF): the job id this
+  // composer is watching, and its queue subscription. Closing the composer
+  // unsubscribes — it does NOT cancel: the queue owns the upload.
+  const queuedJobRef = useRef<string | null>(null);
+  const queueUnsubRef = useRef<(() => void) | null>(null);
+  useEffect(() => () => queueUnsubRef.current?.(), []);
   const { pickMedia } = useMediaPicker();
 
   async function pickPostcardMedia() {
@@ -176,6 +185,14 @@ export function PostcardComposer({ visible, onClose, onSuccess }: Props) {
   }
 
   function handleClose() {
+    if (phase === 'uploading' && queuedJobRef.current) {
+      const jobId = queuedJobRef.current;
+      Alert.alert('Upload in progress', 'Your postcard keeps uploading if you close this.', [
+        { text: 'Continue in background', style: 'cancel', onPress: () => { stopWatchingQueue(); reset(); onClose(); } },
+        { text: 'Cancel upload', style: 'destructive', onPress: () => { void cancelQueuedJob(jobId); reset(); onClose(); } },
+      ]);
+      return;
+    }
     if (phase === 'uploading') {
       Alert.alert('Cancel upload?', 'Your upload is in progress. Cancel it?', [
         { text: 'Keep uploading', style: 'cancel' },
@@ -261,6 +278,11 @@ export function PostcardComposer({ visible, onClose, onSuccess }: Props) {
     setProgress(0);
     abortedRef.current = false;
 
+    if (isResumableMediaUploadEnabled()) {
+      await postThroughQueue();
+      return;
+    }
+
     // Structured canonical location via the shared Place → payload mapping
     // (same one the Memory composer uses): city/country strings for display
     // and stamps, place-level coordinates, placeId for the provider
@@ -321,12 +343,22 @@ export function PostcardComposer({ visible, onClose, onSuccess }: Props) {
       return;
     }
 
+    // §37 "Thumbnail generation": a video postcard gets a real poster frame,
+    // extracted on this device and stored by the server beside the video (the
+    // server has no decoder). Fail-soft — a video without one still posts.
+    const thumbnailPath = asset.isVideo ? await uploadVideoPoster(postId, mediaId, asset.uri) : null;
+    if (abortedRef.current) {
+      void discardPostcardShell(postId);
+      return;
+    }
+
     const completeRes = await completeUpload(postId, mediaId, {
       mimeType: asset.mimeType,
       fileSizeBytes: asset.fileSizeBytes > 0 ? asset.fileSizeBytes : 1,
       durationSeconds: asset.durationSeconds,
       width: asset.width,
       height: asset.height,
+      thumbnailPath: thumbnailPath ?? undefined,
       stampOverlay:
         stampOverlay && !asset.isVideo ? completePayloadFromDraft(stampOverlay) : undefined,
     });
@@ -352,6 +384,71 @@ export function PostcardComposer({ visible, onClose, onSuccess }: Props) {
     if (overlayWarning) {
       Alert.alert('Posted without stamp', overlayWarning);
     }
+  }
+
+  function stopWatchingQueue() {
+    queueUnsubRef.current?.();
+    queueUnsubRef.current = null;
+    queuedJobRef.current = null;
+  }
+
+  async function cancelQueuedJob(jobId: string) {
+    stopWatchingQueue();
+    const { getPostcardUploadQueue } = await import('../services/media/postcardUploadQueue.ts');
+    (await getPostcardUploadQueue()).cancel(jobId);
+  }
+
+  /**
+   * §37 background upload: the upload is handed to the app-level queue, which
+   * persists it before the first request and resumes it after a closed screen,
+   * a backgrounded app or a relaunch. This composer only WATCHES the job.
+   */
+  async function postThroughQueue() {
+    if (!asset) return;
+    const { getPostcardUploadQueue } = await import('../services/media/postcardUploadQueue.ts');
+    const queue = await getPostcardUploadQueue();
+    const job = await queue.enqueue({
+      asset: normalizePickedAsset({
+        uri: asset.uri,
+        mimeType: asset.mimeType,
+        fileName: asset.fileName,
+        fileSize: asset.fileSizeBytes > 0 ? asset.fileSizeBytes : null,
+        width: asset.width ?? null,
+        height: asset.height ?? null,
+        type: asset.isVideo ? 'video' : 'image',
+        duration: asset.durationSeconds != null ? asset.durationSeconds * 1000 : null,
+      }),
+      caption: caption.trim() || undefined,
+      visibility,
+      location: { ...placeToLocationFields(place) },
+      addToPassport: true,
+      stampOverlay: stampOverlay && !asset.isVideo ? completePayloadFromDraft(stampOverlay) : undefined,
+    });
+    if (!job) {
+      setError('Please sign in to continue');
+      setPhase('pick');
+      return;
+    }
+    queuedJobRef.current = job.id;
+    queueUnsubRef.current?.();
+    queueUnsubRef.current = queue.subscribe((e) => {
+      if (e.job.id !== job.id) return;
+      if (typeof e.progress === 'number') setProgress(e.progress);
+      if (e.job.stage === 'done') {
+        stopWatchingQueue();
+        const warning =
+          e.job.result?.stampOverlayApplied === false ? stampOverlayErrorMessage(e.job.result.stampOverlayError) : null;
+        reset();
+        onSuccess();
+        if (warning) Alert.alert('Posted without stamp', warning);
+      } else if (e.job.stage === 'failed') {
+        stopWatchingQueue();
+        setError(e.job.lastError ?? 'Upload failed');
+        setPhase('pick');
+      } else if (e.job.retryable) {
+        setError('Waiting for a connection — your upload will continue.');
+      }
+    });
   }
 
   const visLabel = VISIBILITIES.find((v) => v.key === visibility)?.label ?? 'Public';
@@ -629,6 +726,7 @@ export function PostcardComposer({ visible, onClose, onSuccess }: Props) {
               onPress={() => {
                 abortedRef.current = true;
                 cancelRef.current.cancel?.();
+                if (queuedJobRef.current) void cancelQueuedJob(queuedJobRef.current);
                 reset();
               }}
             >
