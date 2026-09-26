@@ -84,6 +84,12 @@ test('§38 "Show my Bangkok rooftop photos" is q + city + scope=me — the route
   assert.equal(toSearchQueryString(f), 'q=rooftop&city=Bangkok&scope=me');
 });
 
+test('§38 "What does An Thuong look like right now?" is the term + freshOnly — and "Right now" survives a new term', () => {
+  let f = mediaFilterReducer(INITIAL_MEDIA_FILTERS, { type: 'toggle_fresh' });
+  f = mediaFilterReducer(f, { type: 'set_query', q: 'An Thuong' });
+  assert.equal(toSearchQueryString(f), 'q=An+Thuong&freshOnly=true');
+});
+
 test('category toggles, "right now" is freshOnly, a media id asks "where was this taken"', () => {
   let f = mediaFilterReducer(INITIAL_MEDIA_FILTERS, { type: 'toggle_category', category: 'nightlife' });
   f = mediaFilterReducer(f, { type: 'toggle_fresh' });

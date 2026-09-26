@@ -1684,3 +1684,52 @@ describe("MD294 — §38 finds EVENTS and TRIPS by what they are, through their 
     assert.equal(canonicalTitleTerm(null), null);
   });
 });
+
+describe("MD287 · MD292 — §38 'right now' and 'from my trip' are real narrowings, and every gate still binds", () => {
+  const TRIP_VN = "dddddddd-dddd-dddd-dddd-dddddddddddd";
+
+  it("'Show festival media from my Vietnam Trip' returns ONLY that trip's matching media", async () => {
+    const sc = makeSc(
+      baseData({
+        posts: [
+          makePost({ id: "vn-fest", content: "festival lanterns", tripId: TRIP_VN }),
+          makePost({ id: "vn-beach", content: "beach day", tripId: TRIP_VN }),
+          makePost({ id: "other-fest", content: "festival crowd", tripId: null }),
+        ],
+      }),
+    );
+    const viewer = await resolveViewer(sc, VIEWER, { needFollows: false });
+    const r = await searchMedia(sc, viewer, { q: "festival", scope: "trip", tripId: TRIP_VN }, Date.now());
+    assert.deepEqual(r.media.map((m) => m.id), ["vn-fest"]);
+    assert.ok(r.criteriaUsed.includes("tripId"));
+  });
+
+  it("a trip scope does not open a gate: a private account's post in that trip still never appears", async () => {
+    const sc = makeSc(
+      baseData({
+        posts: [
+          makePost({ id: "vn-open", content: "festival", tripId: TRIP_VN }),
+          makePost({ id: "vn-private", author_id: AUTHOR_B, content: "festival", tripId: TRIP_VN, authorIsPrivate: true }),
+        ],
+      }),
+    );
+    const viewer = await resolveViewer(sc, VIEWER, { needFollows: false });
+    const r = await searchMedia(sc, viewer, { q: "festival", scope: "trip", tripId: TRIP_VN }, Date.now());
+    assert.deepEqual(r.media.map((m) => m.id), ["vn-open"]);
+  });
+
+  it("'What does An Thuong look like right now?' is the term inside the FRESH window only", async () => {
+    const sc = makeSc(
+      baseData({
+        posts: [
+          makePost({ id: "now", locationName: "An Thuong Bar", createdAt: isoAgo(5 * 60 * 1000) }),
+          makePost({ id: "last-night", locationName: "An Thuong Bar", createdAt: isoAgo(10 * 60 * 60 * 1000) }),
+          makePost({ id: "elsewhere-now", locationName: "My Khe Beach", createdAt: isoAgo(5 * 60 * 1000) }),
+        ],
+      }),
+    );
+    const viewer = await resolveViewer(sc, VIEWER, { needFollows: false });
+    const r = await searchMedia(sc, viewer, { q: "an thuong", freshOnly: true }, Date.now());
+    assert.deepEqual(r.media.map((m) => m.id), ["now"]);
+  });
+});
