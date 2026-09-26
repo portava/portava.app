@@ -29,6 +29,10 @@ import type {
   MediaIntentKind,
   ExperiencePlanProposal,
   ExperiencePlanStop,
+  CompiledExperiencePlan,
+  CompiledPlanStop,
+  RouteStopRef,
+  LinkableEventRef,
 } from '../types/mediaActions.ts';
 
 // ── Token seam (mirrors services/mediaProjection.ts) ──────────────────────────
@@ -82,6 +86,16 @@ export const MEDIA_ACTION_IDS: readonly MediaActionId[] = [
   'i_want_this',
   'share_telegraph',
   'report',
+  'directions',
+  'view_event',
+  'view_passport',
+  'find_quieter',
+  'find_cheaper',
+  'contribute_gem',
+  'invite_people',
+  'follow_this_night',
+  'save_route',
+  'link_event',
 ];
 
 export const MEDIA_INTENT_KINDS: readonly MediaIntentKind[] = [
@@ -101,6 +115,7 @@ const ACTION_OUTCOMES: readonly MediaActionOutcome[] = [
   'share',
   'moderate',
   'discover',
+  'contribute',
 ];
 const HTTP_METHODS = ['GET', 'POST', 'DELETE'] as const;
 
@@ -223,6 +238,14 @@ export type MediaActionExecution =
   | { kind: 'plan_picker'; source: PlanPickerSourceLite }
   | { kind: 'save' }
   | { kind: 'report' }
+  // census-media §21
+  | { kind: 'directions'; placeId: string }
+  | { kind: 'telegraph_share'; objectType: 'POST'; objectId: string }
+  | { kind: 'compiled_plan'; experienceId: string; source: 'experience' | 'trail' }
+  | { kind: 'save_route'; title: string; stops: RouteStopRef[]; mediaId: string | null }
+  | { kind: 'invite'; momentId: string; mediaId: string | null }
+  | { kind: 'contribute_gem'; gemId: string; mediaId: string | null }
+  | { kind: 'link_event'; mediaId: string; candidates: LinkableEventRef[] }
   | { kind: 'unsupported' };
 
 /** Default prompts seeded into Compass when opened from the media context (§32). */
@@ -299,6 +322,13 @@ export function resolveMediaActionExecution(
     }
 
     case 'do_this_experience': {
+      // §15.2 — a server that compiles (census-media §21) says so with
+      // `compile: true`; the plan it serves is the executable, timed one.
+      if (action.target.params?.compile === true) {
+        const id = paramStr(action, 'experienceId') ?? paramStr(action, 'sourceExperienceId');
+        const source = paramStr(action, 'source') === 'trail' ? 'trail' : 'experience';
+        return id ? { kind: 'compiled_plan', experienceId: id, source } : { kind: 'unsupported' };
+      }
       const experienceId = paramStr(action, 'sourceExperienceId') ?? refId(entityRefs, 'trip');
       return experienceId ? { kind: 'experience_plan', experienceId } : { kind: 'unsupported' };
     }
@@ -313,8 +343,84 @@ export function resolveMediaActionExecution(
     case 'meet_here':
       return { kind: 'navigate', route: '/meetups' };
 
-    case 'share_telegraph':
+    case 'share_telegraph': {
+      // Telegraph §5's own share contract: a revocable REFERENCE to the post,
+      // written into a thread the user picks. An older server that sends no
+      // object reference keeps the old hand-off.
+      const objectId = paramStr(action, 'objectId');
+      if (paramStr(action, 'objectType') === 'POST' && objectId) {
+        return { kind: 'telegraph_share', objectType: 'POST', objectId };
+      }
       return { kind: 'navigate', route: '/telegraph/new' };
+    }
+
+    // ── census-media §21 ────────────────────────────────────────────────────
+    case 'directions': {
+      const placeId = paramStr(action, 'placeId') ?? refId(entityRefs, 'place');
+      return placeId ? { kind: 'directions', placeId } : { kind: 'unsupported' };
+    }
+    case 'view_event': {
+      const eventId = paramStr(action, 'experienceId');
+      return eventId ? { kind: 'navigate', route: `/event/${encodeURIComponent(eventId)}` } : { kind: 'unsupported' };
+    }
+    case 'view_passport': {
+      // §29: the Passport view of a media item IS its Postcard.
+      const postId = paramStr(action, 'id') ?? refId(entityRefs, 'media');
+      return postId ? { kind: 'navigate', route: `/postcard/${encodeURIComponent(postId)}` } : { kind: 'unsupported' };
+    }
+    case 'find_quieter':
+    case 'find_cheaper': {
+      const mediaId = paramStr(action, 'mediaId') ?? refId(entityRefs, 'media');
+      const prompt = paramStr(action, 'prompt');
+      return mediaId && prompt ? { kind: 'compass', mediaId, prompt } : { kind: 'unsupported' };
+    }
+    case 'follow_this_night': {
+      const experienceId = paramStr(action, 'experienceId');
+      return experienceId
+        ? { kind: 'navigate', route: `/trip/${encodeURIComponent(experienceId)}` }
+        : { kind: 'unsupported' };
+    }
+    case 'save_route': {
+      const stops = asArray(action.target.params?.stops)
+        .map((raw): RouteStopRef | null => {
+          if (!isObj(raw)) return null;
+          const sourceId = asString(raw.sourceId);
+          if (!sourceId || raw.sourceType !== 'place') return null;
+          return { sourceType: 'place', sourceId, title: asString(raw.title) ?? 'Stop' };
+        })
+        .filter((x): x is RouteStopRef => x !== null);
+      // The route endpoint requires two stops; a rail row that cannot succeed is hidden.
+      if (stops.length < 2) return { kind: 'unsupported' };
+      return {
+        kind: 'save_route',
+        title: paramStr(action, 'title') ?? 'Saved route',
+        stops,
+        mediaId: refId(entityRefs, 'media'),
+      };
+    }
+    case 'invite_people': {
+      const momentId = paramStr(action, 'id');
+      return momentId ? { kind: 'invite', momentId, mediaId: refId(entityRefs, 'media') } : { kind: 'unsupported' };
+    }
+    case 'link_event': {
+      // The author's own post → an event they took part in. Only the events the
+      // server offered (its predicate is the endpoint's); none → no row.
+      const mediaId = paramStr(action, 'id') ?? refId(entityRefs, 'media');
+      const candidates = asArray(action.target.params?.candidates)
+        .map((raw): LinkableEventRef | null => {
+          if (!isObj(raw)) return null;
+          const eventId = asString(raw.eventId);
+          return eventId ? { eventId, title: asString(raw.title), startsAt: asString(raw.startsAt) } : null;
+        })
+        .filter((x): x is LinkableEventRef => x !== null);
+      return mediaId && candidates.length > 0 ? { kind: 'link_event', mediaId, candidates } : { kind: 'unsupported' };
+    }
+    case 'contribute_gem': {
+      const gemId = paramStr(action, 'id');
+      return gemId
+        ? { kind: 'contribute_gem', gemId, mediaId: paramStr(action, 'originMediaId') ?? refId(entityRefs, 'media') }
+        : { kind: 'unsupported' };
+    }
 
     default:
       // An unrecognised (future) server action — hidden, never rendered dead.
@@ -469,6 +575,259 @@ export async function deleteMediaIntent(mediaId: string): Promise<IntentMutation
       headers: { Authorization: `Bearer ${token}` },
     });
     if (res.status === 401 || res.status === 403) return { ok: false, errorKind: 'auth' };
+    if (!res.ok) return { ok: false, errorKind: 'server' };
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, errorKind: classifyFetchError(err) };
+  }
+}
+
+// ── census-media §21 — Go There, the executable plan, Save Route ─────────────
+
+export interface DirectionsUrls {
+  appleMaps: string;
+  googleMaps: string;
+  waze: string;
+}
+
+/**
+ * The Places page's `directionsUrl` for this platform: Apple Maps on iOS,
+ * Google Maps elsewhere. Null when the place has no directions (no coordinates
+ * on its canonical record) — the rail then says so instead of opening nothing.
+ */
+export function pickDirectionsUrl(urls: DirectionsUrls | null | undefined, platform: string): string | null {
+  if (!urls) return null;
+  const url = platform === 'ios' ? urls.appleMaps : urls.googleMaps;
+  return typeof url === 'string' && url.length > 0 ? url : null;
+}
+
+export type DirectionsOutcome = 'opened' | 'no_directions' | 'failed';
+
+/**
+ * Go There (§15, MD94). Reads the place's directions through the Places page,
+ * opens the maps app, and ONLY THEN calls `onOpened` — which is where the rail
+ * records Directions started (§44) and Media → Route (§45). A place without
+ * directions, a failed read, or a maps app that refused to open records
+ * nothing: a tap is not a start. Never throws.
+ */
+export async function openDirectionsForPlace(
+  placeId: string,
+  deps: {
+    platform: string;
+    loadDirections: (placeId: string) => Promise<DirectionsUrls | null | undefined>;
+    openUrl: (url: string) => Promise<unknown>;
+    onOpened: () => void;
+  },
+): Promise<DirectionsOutcome> {
+  let urls: DirectionsUrls | null | undefined;
+  try {
+    urls = await deps.loadDirections(placeId);
+  } catch {
+    return 'failed';
+  }
+  const url = pickDirectionsUrl(urls, deps.platform);
+  if (!url) return 'no_directions';
+  try {
+    await deps.openUrl(url);
+  } catch {
+    return 'failed';
+  }
+  try {
+    deps.onOpened();
+  } catch {
+    // telemetry never breaks the action
+  }
+  return 'opened';
+}
+
+function mapCompiledStop(raw: unknown): CompiledPlanStop | null {
+  const base = mapStop(raw);
+  if (!base || !isObj(raw)) return null;
+  const startsAt = asString(raw.startsAt);
+  const endsAt = asString(raw.endsAt);
+  if (!startsAt || !endsAt) return null;
+  const num = (v: unknown, d: number) => (typeof v === 'number' && Number.isFinite(v) ? v : d);
+  return {
+    ...base,
+    order: num(raw.order, 0),
+    startsAt,
+    endsAt,
+    dwellMinutes: num(raw.dwellMinutes, 0),
+    transitMinutesBefore: num(raw.transitMinutesBefore, 0),
+    transitBasis: raw.transitBasis === 'default' ? 'default' : 'none',
+  };
+}
+
+/** Map `{ compiled }` from GET /media/experiences/:id/plan?compile=1. Null on garbage. */
+export function mapCompiledPlan(raw: unknown): CompiledExperiencePlan | null {
+  const o = isObj(raw) && isObj(raw.compiled) ? raw.compiled : raw;
+  if (!isObj(o) || !isObj(o.source)) return null;
+  const id = asString(o.source.id);
+  const day = asString(o.day);
+  if (!id || !day) return null;
+  const stops = asArray(o.stops).map(mapCompiledStop).filter((x): x is CompiledPlanStop => x !== null);
+  if (stops.length === 0) return null;
+  return {
+    source: { kind: o.source.kind === 'trail' ? 'trail' : 'experience', id, title: asString(o.source.title) },
+    day,
+    startsAt: asString(o.startsAt) ?? stops[0].startsAt,
+    stops,
+    eligibleTripIds: asArray(o.eligibleTripIds).map(asString).filter((x): x is string => x !== null),
+    feasibility: asString(o.feasibility) ?? 'not_verified',
+  };
+}
+
+/** GET /media/experiences/:id/plan?compile=1 — the executable plan. 404 ⇒ no plan. Never throws. */
+export async function fetchCompiledExperiencePlan(
+  experienceId: string,
+  opts: { source: 'experience' | 'trail'; day?: string; signal?: AbortSignal },
+): Promise<ProjectionResult<CompiledExperiencePlan | null>> {
+  const q = `compile=1&source=${opts.source}${opts.day ? `&day=${encodeURIComponent(opts.day)}` : ''}`;
+  const r = await getJson(
+    `/api/media/experiences/${encodeURIComponent(experienceId)}/plan?${q}`,
+    mapCompiledPlan,
+    { signal: opts.signal },
+  );
+  if (!r.ok && r.errorKind === 'empty') return { ok: true, data: null };
+  return r;
+}
+
+/** One plan item as POST /trips/:tripId/plan/items takes it (tripPlan.CreatePlanItemPayload). */
+export interface PlanItemDraft {
+  title: string;
+  category: 'activity';
+  status: 'tentative';
+  sourceType: 'place' | 'manual';
+  sourceId?: string;
+  dayDate: string;
+  startsAt: string;
+  endsAt: string;
+  sortOrder: number;
+  lockType: 'flexible';
+}
+
+/**
+ * The compiled plan as the trip-plan endpoint takes it: one TENTATIVE item per
+ * stop, in order, with the compiled times — a proposal the crew can move, not a
+ * booking. Place stops keep their canonical id; anything else is 'manual'.
+ */
+export function planItemsFromCompiledPlan(plan: CompiledExperiencePlan): PlanItemDraft[] {
+  return [...plan.stops]
+    .sort((a, b) => a.order - b.order)
+    .map((s, i): PlanItemDraft => ({
+      title: s.title,
+      category: 'activity',
+      status: 'tentative',
+      sourceType: s.sourceType === 'place' ? 'place' : 'manual',
+      ...(s.sourceType === 'place' ? { sourceId: s.sourceId } : {}),
+      dayDate: plan.day,
+      startsAt: s.startsAt,
+      endsAt: s.endsAt,
+      sortOrder: i,
+      lockType: 'flexible',
+    }));
+}
+
+/**
+ * Write the compiled plan into ONE trip the user chose, stop by stop through
+ * the existing plan-item endpoint (injected, so this stays testable). Only a
+ * trip the server named as eligible; a duplicate or failed stop does not abort
+ * the rest, and the counts say what landed.
+ */
+export async function applyCompiledPlan(
+  plan: CompiledExperiencePlan,
+  tripId: string,
+  createItem: (tripId: string, item: PlanItemDraft) => Promise<unknown>,
+): Promise<{ created: number; failed: number }> {
+  if (!plan.eligibleTripIds.includes(tripId)) return { created: 0, failed: plan.stops.length };
+  let created = 0;
+  let failed = 0;
+  for (const item of planItemsFromCompiledPlan(plan)) {
+    try {
+      await createItem(tripId, item);
+      created += 1;
+    } catch {
+      failed += 1;
+    }
+  }
+  return { created, failed };
+}
+
+export type SaveMediaRouteResult =
+  | { ok: true; routeId: string }
+  | { ok: false; reason: 'too_few_stops' | 'unresolved_stops' | 'create_failed' };
+
+export interface MediaRouteStopPayload {
+  title: string;
+  lat: number;
+  lng: number;
+  sourceType: 'place';
+  sourceId: string;
+}
+
+/**
+ * §23.1 Save Route. The rail is coordinate-free by construction, so each stop
+ * is completed through the canonical place record (injected resolver) before
+ * POST /route-plans, which requires lat/lng and at least two stops. A stop that
+ * cannot be resolved is dropped; fewer than two resolvable stops is a refusal,
+ * never a one-stop "route". `originMediaId` lets the server record Media →
+ * Route keyed by the plan id.
+ */
+export async function saveMediaRoute(
+  input: { title: string; stops: RouteStopRef[]; mediaId: string | null },
+  deps: {
+    resolveCoords: (placeId: string) => Promise<{ lat: number; lng: number } | null>;
+    createRoute: (payload: {
+      title: string;
+      routeStyle: 'custom';
+      stops: MediaRouteStopPayload[];
+      originMediaId?: string;
+    }) => Promise<{ plan?: { id?: string } | null } | null>;
+  },
+): Promise<SaveMediaRouteResult> {
+  if (input.stops.length < 2) return { ok: false, reason: 'too_few_stops' };
+  const resolved: MediaRouteStopPayload[] = [];
+  for (const st of input.stops.slice(0, 20)) {
+    const c = await deps.resolveCoords(st.sourceId).catch(() => null);
+    if (c && Number.isFinite(c.lat) && Number.isFinite(c.lng)) {
+      resolved.push({ title: st.title, lat: c.lat, lng: c.lng, sourceType: 'place', sourceId: st.sourceId });
+    }
+  }
+  if (resolved.length < 2) return { ok: false, reason: 'unresolved_stops' };
+  try {
+    const full = await deps.createRoute({
+      title: input.title,
+      routeStyle: 'custom',
+      stops: resolved,
+      ...(input.mediaId ? { originMediaId: input.mediaId } : {}),
+    });
+    // POST /route-plans answers { plan, stops, legs } (routePlan.FullRoutePlan).
+    const id = full?.plan?.id;
+    return typeof id === 'string' && id.length > 0 ? { ok: true, routeId: id } : { ok: false, reason: 'create_failed' };
+  } catch {
+    return { ok: false, reason: 'create_failed' };
+  }
+}
+
+/**
+ * POST /media/:id/event-link — the author links their own post to an event
+ * (census-media §21, MD103). The server re-checks the same predicate that
+ * offered the action; a refusal is reported, never swallowed. Never throws.
+ */
+export async function linkMediaToEvent(
+  mediaId: string,
+  eventId: string,
+): Promise<{ ok: true } | { ok: false; errorKind: 'auth' | 'refused' | 'server' | ProjectionErrorKind }> {
+  const token = await freshToken();
+  if (!token) return { ok: false, errorKind: 'auth' };
+  try {
+    const res = await fetch(`${apiBase()}/api/media/${encodeURIComponent(mediaId)}/event-link`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ eventId }),
+    });
+    if (res.status === 401) return { ok: false, errorKind: 'auth' };
+    if (res.status === 403 || res.status === 404) return { ok: false, errorKind: 'refused' };
     if (!res.ok) return { ok: false, errorKind: 'server' };
     return { ok: true };
   } catch (err) {

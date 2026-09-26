@@ -63,7 +63,7 @@ import {
   type PerspectiveSummary,
 } from "./MediaPerspectiveService.js";
 import { buildMyWorldMemory, type MyWorldMemory } from "./MyWorldMemoryService.js";
-import { rankMediaCandidates } from "./MediaRankingService.js";
+import { rankCandidatesForViewer } from "./MediaRankingService.js";
 import { buildVisualConsensus, type VisualConsensus } from "./MediaConsensusService.js"; import { attachCanonicalMedia } from "../../lib/media/mediaCanonicalRead.js"; import { mayViewUnderOverride } from "../../lib/mediaVisibility.js";
 
 const DEFAULT_CANDIDATE_LIMIT = 200;
@@ -653,7 +653,7 @@ async function rankAndProject(
   return projectCandidatesProtected(
     sc,
     viewer,
-    rankMediaCandidates(candidates, {
+    await rankCandidatesForViewer(sc, viewer, candidates, {
       viewerId: viewer.viewerId,
       viewerTripIds: viewer.viewerTripIds,
       intentMediaIds: viewer.intentMediaIds,
@@ -1184,7 +1184,7 @@ export async function buildPeopleProjection(
   for (const [cid, items] of byContributor) {
     const relation = relationOf(cid);
     if (!relation) continue;
-    const sorted = items.sort(
+    const sorted = [...items].sort(
       (a, b) => new Date(b.capturedAt).getTime() - new Date(a.capturedAt).getTime(),
     );
     people.push({
@@ -1192,7 +1192,7 @@ export async function buildPeopleProjection(
       relation,
       perspectiveCount: sorted.length,
       freshness: aggregateFreshness(sorted.map((m) => m.capturedAt), nowMs),
-      media: sorted.slice(0, 12),
+      media: items.slice(0, 12).sort((a, b) => new Date(b.capturedAt).getTime() - new Date(a.capturedAt).getTime()),
     });
   }
   // §27's declared order first, the count only inside a population.

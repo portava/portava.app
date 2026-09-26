@@ -41,3 +41,62 @@ export function normalizeGuideProfile(g: any): GuideProfile | null {
     verifiedAt:        g.verified_at ?? g.verifiedAt ?? null,
   };
 }
+
+// ── §16.1 OUTCOME (census-media §21) ─────────────────────────────────────────
+
+/**
+ * What verified visitors reported about the gem after they went — the server's
+ * floored summary (HiddenGemOutcomeService). `determined: false` means there is
+ * no number to show: too few reports to show any without pointing at a person,
+ * or the reports could not be read. Never a zero standing in for either.
+ */
+export type GemVisitOutcomes =
+  | {
+      determined: true;
+      verifiedVisitors: number;
+      reportingVisitors: number;
+      confirmed: number;
+      degraded: number;
+      noted: number;
+      lastOutcomeDay: string | null;
+    }
+  | { determined: false; reason: 'below_threshold' | 'unreadable' };
+
+export function normalizeGemVisitOutcomes(raw: unknown): GemVisitOutcomes | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const o = raw as Record<string, unknown>;
+  if (o.determined === false) {
+    return { determined: false, reason: o.reason === 'unreadable' ? 'unreadable' : 'below_threshold' };
+  }
+  if (o.determined !== true) return null;
+  const n = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? Math.floor(v) : null);
+  const verifiedVisitors = n(o.verifiedVisitors);
+  const reportingVisitors = n(o.reportingVisitors);
+  const confirmed = n(o.confirmed);
+  const degraded = n(o.degraded);
+  const noted = n(o.noted);
+  if (verifiedVisitors === null || reportingVisitors === null || confirmed === null || degraded === null || noted === null) return null;
+  return {
+    determined: true,
+    verifiedVisitors,
+    reportingVisitors,
+    confirmed,
+    degraded,
+    noted,
+    lastOutcomeDay: typeof o.lastOutcomeDay === 'string' ? o.lastOutcomeDay : null,
+  };
+}
+
+/**
+ * The one sentence the gem page shows, or null when there is nothing honest to
+ * say. Calm, count-based, no popularity language (§46.1): it reports what
+ * visitors found, not how many people like it.
+ */
+export function gemVisitOutcomeSentence(o: GemVisitOutcomes | null | undefined): string | null {
+  if (!o || !o.determined || o.reportingVisitors === 0) return null;
+  const parts: string[] = [];
+  if (o.confirmed > 0) parts.push(`${o.confirmed} found it still worth it`);
+  if (o.degraded > 0) parts.push(`${o.degraded} found it changed or gone`);
+  if (parts.length === 0) parts.push(`${o.noted} shared an update`);
+  return `Of ${o.reportingVisitors} verified visitors who reported back, ${parts.join(' and ')}.`;
+}

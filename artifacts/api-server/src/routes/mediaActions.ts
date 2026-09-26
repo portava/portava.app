@@ -37,7 +37,7 @@ import { checkRateLimit } from "../lib/rateLimit.js";
 import { resolveViewer } from "../services/media/MediaProjectionService.js";
 import {
   resolveMediaActions,
-  buildDoThisExperiencePlan,
+  buildDoThisExperiencePlan, compileExperiencePlan,
   recordMediaIntent,
   loadEligibleMediaRow,
   resolveMediaEntities,
@@ -463,6 +463,33 @@ router.get(
       return;
     }
     const viewer = await resolveViewer(sc, auth.user.id, { needFollows: true });
+
+    // §15.2 "into an EXECUTABLE Compass plan" (census-media §21, MD107). With
+    // `compile`, the answer is compileExperiencePlan's — the Compass plan
+    // compiler (census-compass CM-02): ordered stops WITH times, for the day the
+    // client names (today when it names none), from an event / trip experience
+    // or from a published Trail. It writes nothing; the stops are what the
+    // client proposes into a trip through the existing plan-item endpoint.
+    const compile = req.query.compile === "1" || req.query.compile === "true";
+    if (compile) {
+      const source = req.query.source === "trail" ? "trail" : "experience";
+      const dayRaw = typeof req.query.day === "string" ? req.query.day : "";
+      const day = /^\d{4}-\d{2}-\d{2}$/.test(dayRaw) ? dayRaw : new Date(nowMs).toISOString().slice(0, 10);
+      const compiled = await compileExperiencePlan(sc, viewer, { kind: source, id: experienceId }, { day, nowMs });
+      if (!compiled.ok) {
+        if (compiled.reason === "source_unreadable") {
+          sendError(res, "db_error", "The experience could not be read");
+        } else if (compiled.reason === "source_unavailable") {
+          sendError(res, "feature_disabled", "Trails are not available");
+        } else {
+          sendError(res, "not_found", "Experience not available");
+        }
+        return;
+      }
+      res.json({ compiled: compiled.plan, generatedAt: new Date(nowMs).toISOString() });
+      return;
+    }
+
     const proposal = await buildDoThisExperiencePlan(sc, viewer, experienceId, nowMs);
     if (!proposal) {
       // Experience not visible to this viewer (private / blocked / missing).
@@ -470,6 +497,80 @@ router.get(
       return;
     }
     res.json({ ...proposal, generatedAt: new Date(nowMs).toISOString() });
+  }),
+);
+
+// ── POST / DELETE /media/:id/event-link  (census-media §21, MD103) ────────────
+// The author links their own post to an event they took part in — the only
+// writer post_event_links has. Dark behind the rail's own flag, like the rail
+// that offers it; the eligibility predicate is lib/mediaEventLinks's, the same
+// one the resolver offers the action with (§47).
+const eventLinkBodySchema = z.object({ eventId: z.string().regex(UUID_RE) });
+
+async function eventLinkPreamble(req: any, res: any): Promise<{ sc: any; userId: string; postId: string } | null> {
+  const auth = await requireUser(req, res);
+  if (!auth) return null;
+  const sc = getServiceClient();
+  if (!sc) {
+    sendError(res, "server_not_configured");
+    return null;
+  }
+  const { isFlagEnabled } = await import("../lib/featureFlags.js");
+  if (!(await isFlagEnabled(sc, "MEDIA_WORLD_SHELL_ENABLED").catch(() => false))) {
+    sendError(res, "feature_disabled");
+    return null;
+  }
+  const postId = String(req.params.id ?? "");
+  if (!UUID_RE.test(postId)) {
+    sendError(res, "invalid_payload", "Invalid media id");
+    return null;
+  }
+  const rl = checkRateLimit("media_event_link", auth.user.id, 30, 60_000);
+  if (!rl.allowed) {
+    res.setHeader("Retry-After", Math.ceil(rl.retryAfterMs / 1000).toString());
+    sendError(res, "rate_limited", "Too many requests. Please wait.");
+    return null;
+  }
+  return { sc, userId: auth.user.id, postId };
+}
+
+function sendEventLinkResult(res: any, r: { ok: true; eventId: string } | { ok: false; error: string }): void {
+  if (r.ok) {
+    res.json({ ok: true, eventId: r.eventId });
+    return;
+  }
+  if (r.error === "not_found") sendError(res, "not_found", "Media item not found");
+  else if (r.error === "not_linkable") sendError(res, "forbidden", "This post cannot be linked to that event");
+  else sendError(res, "db_error", "Could not update the event link");
+}
+
+router.post(
+  "/media/:id/event-link",
+  asyncHandler(async (req, res) => {
+    const pre = await eventLinkPreamble(req, res);
+    if (!pre) return;
+    const parsed = eventLinkBodySchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      sendError(res, "invalid_payload", "eventId must be a uuid");
+      return;
+    }
+    const { linkPostToEvent } = await import("../lib/mediaEventLinks.js");
+    sendEventLinkResult(res, await linkPostToEvent(pre.sc, pre.userId, pre.postId, parsed.data.eventId));
+  }),
+);
+
+router.delete(
+  "/media/:id/event-link/:eventId",
+  asyncHandler(async (req, res) => {
+    const pre = await eventLinkPreamble(req, res);
+    if (!pre) return;
+    const eventId = String(req.params.eventId ?? "");
+    if (!UUID_RE.test(eventId)) {
+      sendError(res, "invalid_payload", "Invalid event id");
+      return;
+    }
+    const { unlinkPostFromEvent } = await import("../lib/mediaEventLinks.js");
+    sendEventLinkResult(res, await unlinkPostFromEvent(pre.sc, pre.userId, pre.postId, eventId));
   }),
 );
 

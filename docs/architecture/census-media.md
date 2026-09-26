@@ -3289,8 +3289,8 @@ the document's `head_commit`, because it re-reads fifty-odd rows, not 450.
 | MD28 · MD316 | §4 Media Contribution: a current perspective of ONE canonical place through the app's existing `uploadMedia` → `createPost` (no second ingest path); the post is bound to the VENUE's public name and coordinates, the device fix travels only as the private verification pair; precision maps onto `locationPrivacyMode` incl. §34 "after I leave"; a failed SAVE retries the save, never the upload; a held-back post says so | `travel-buddy-standalone/src/features/media/screens/MediaContributionScreen.tsx:53#export function MediaContributionScreen(` · `travel-buddy-standalone/src/features/media/components/MediaContributionSheet.tsx:40#export function MediaContributionSheet(` · `travel-buddy-standalone/src/features/media/state/mediaContribution.ts:143#locationLat: place.coordinates.lat,` · `travel-buddy-standalone/src/features/media/state/mediaContribution.ts:148#locationPrivacyMode: PRECISION_TO_PRIVACY_MODE[d.precision],` · entry `travel-buddy-standalone/src/features/media/screens/MediaPlacesScreen.tsx:198#{onContribute && UUID_RE.test(placeId) ? (` |
 | MD314 | §7 context sheet on the viewer's `•••`: only the edges the server resolved (the §28 Shared Moment edge included), each linking home; "Where was this taken?" | `travel-buddy-standalone/src/features/media/components/MediaContextSheet.tsx:44#export function MediaContextSheet(` · `travel-buddy-standalone/src/features/media/state/mediaContextGraph.ts:99#export function buildContextGraph(` · `travel-buddy-standalone/src/features/media/state/mediaContextGraph.ts:165#export function whereTakenHref(` · `travel-buddy-standalone/src/features/media/screens/MediaPerspectiveViewerScreen.tsx:255#testID="perspective-viewer-context"` |
 | MD89 · MD90 · MD91 · MD92 | The four missing §14 entry-context producers, as pure builders + openers: Event and Trip (kind from the projection, never guessed), People (that contributor only), Map (the cluster's canonical place, read through the gated place view, staged with kind `map`); the viewer's collection filter honours the new kinds | `travel-buddy-standalone/src/features/media/state/entryContextHandoffs.ts:97#export function experienceHandoff(` · `travel-buddy-standalone/src/features/media/state/entryContextHandoffs.ts:123#export function personHandoff(` · `travel-buddy-standalone/src/features/media/state/entryContextHandoffs.ts:58#export function mapClusterHandoff(` · `travel-buddy-standalone/src/features/media/services/perspectiveOpeners.ts:58#export async function openClusterPerspectives(` · `travel-buddy-standalone/src/features/media/state/perspectiveViewer.ts:100#if (kind === 'people') {` |
-| MD14 (finding) · MD89 · MD91 | The EXPERIENCES lens is handed real ids: deep-linked first, then the viewer's own events and trips, then nearby events; UUIDs only, capped | `travel-buddy-standalone/src/features/media/state/experienceSources.ts:32#export function experienceIdsFrom(` · `travel-buddy-standalone/src/features/media/screens/MediaWorldShell.tsx:170#experienceIds={experienceIds}` |
-| MD87 (shell half only) | A NOW "Changing now" card opens that PLACE's perspectives (§14 Place) instead of the generic single-item viewer | `travel-buddy-standalone/src/features/media/screens/MediaWorldShell.tsx:131#if (item.placeId) void openPlaceByIdPerspectives(item.placeId, hero ?? null);` · `travel-buddy-standalone/src/features/media/services/perspectiveOpeners.ts:70#export async function openPlaceByIdPerspectives(` |
+| MD14 (finding) · MD89 · MD91 | The EXPERIENCES lens is handed real ids: deep-linked first, then the viewer's own events and trips, then nearby events; UUIDs only, capped | `travel-buddy-standalone/src/features/media/state/experienceSources.ts:32#export function experienceIdsFrom(` · `travel-buddy-standalone/src/features/media/screens/MediaWorldShell.tsx:171#experienceIds={experienceIds}` |
+| MD87 (shell half only) | A NOW "Changing now" card opens that PLACE's perspectives (§14 Place) instead of the generic single-item viewer | `travel-buddy-standalone/src/features/media/screens/MediaWorldShell.tsx:132#if (item.placeId) void openPlaceByIdPerspectives(item.placeId, hero ?? null);` · `travel-buddy-standalone/src/features/media/services/perspectiveOpeners.ts:70#export async function openPlaceByIdPerspectives(` |
 | MD12 (finding) | The World request sends the coarse `city` LABEL the route parses | `travel-buddy-standalone/src/features/media/services/mediaProjection.ts:1090#if (params.city) qs.set('city', params.city);` |
 
 **Tests, all in the tree.** Client node (`src/**/*.test.ts`, run by
@@ -3351,7 +3351,7 @@ under the letter is now true; before this pass, in each case, it was not.
 | Row | Was | Now | What was wrong, and what backs it now |
 | --- | --- | --- | --- |
 | MD12 | **C** | **C** | The NOW lens was never city-scoped. The client sent `cityId`; `GET /media/world` parses `city` — so every request fell through to the unscoped path. Now `travel-buddy-standalone/src/features/media/services/mediaProjection.ts:1090#if (params.city) qs.set('city', params.city);`. TESTED: `searchAndStores.test.ts` "fetchGems / fetchMediaMap / fetchWorld send the coarse `city` LABEL the routes actually parse". RED: C3. |
-| MD14 | **C** | **C** | The EXPERIENCES lens was handed a constant empty id list by the shell, so on every open it could only render its empty state; the `C` rested on a screen that could not show an experience. Now `travel-buddy-standalone/src/features/media/screens/MediaWorldShell.tsx:170#experienceIds={experienceIds}` from the viewer's own events and trips. TESTED and RED as MD89 (C20). |
+| MD14 | **C** | **C** | The EXPERIENCES lens was handed a constant empty id list by the shell, so on every open it could only render its empty state; the `C` rested on a screen that could not show an experience. Now `travel-buddy-standalone/src/features/media/screens/MediaWorldShell.tsx:171#experienceIds={experienceIds}` from the viewer's own events and trips. TESTED and RED as MD89 (C20). |
 | MD30 | **C** | **C** | NOW's Map mode was a placeholder paragraph (*"The Media Map … arrives in a later phase"*) when this was graded `C`. Now `travel-buddy-standalone/src/features/media/screens/MediaWorldScreen.tsx:79#<MediaMapScreen`. TESTED: `MediaWorldShell.component.test.tsx` "NOW → Map is the one Media Map and NOW → Time is the Media Timeline screen". RED: C39. |
 | MD31 | **C** | **C** | PLACES' Map mode was a placeholder (*"…arrive with the Media Map phase"*). Now `travel-buddy-standalone/src/features/media/screens/MediaPlacesScreen.tsx:91#<MediaMapScreen`. TESTED: "PLACES → Map and EXPERIENCES → Map are the one Media Map…". RED: C49. |
 | MD32 | **C** | **C** | EXPERIENCES' Map mode was a placeholder (*"Geographic experience clusters arrive with the Media Map phase."*). Now `travel-buddy-standalone/src/features/media/screens/MediaExperiencesScreen.tsx:64#return <ExperiencesMap placeKey={placeKey}`. RED: C50. |
@@ -3436,7 +3436,7 @@ and each says which.
 | MD424 | **W** | F2 — Stamp is the first and largest control on the default surface. | The Stamp/count rail is not the primary overlay. | Owner decision + client lane. |
 | MD425 | **W** | F2 — advancing the feed is the play control (`travel-buddy-standalone/src/components/media/WatchVideoCell.tsx:158#shouldPlay={isActive}`). | Autoplay-on-viewability is not the primary navigation of the default surface. | Owner decision + client lane. |
 | MD427 | **W** | F2 — opening the tab lands in the full-screen feed. | The tab opens on a context-first surface. | Integration owner + owner decision. |
-| MD428 | **W** | The sheet is right and its content is not §47's. `GET /media/world` emits no `whyThis` at all, so the shell now offers "Why this?" ONLY where the server supplied a reason (`travel-buddy-standalone/src/features/media/screens/MediaWorldShell.tsx:138#if (item.whyThis) setWhy({ visible: true, explanation: item.whyThis });`) — the sheet's generic fallback sentence was an invented explanation. | A §47 explanation on World items built from the five named reasons, two of which (MD184, MD185) are not ranking inputs today. The client already renders it the moment it is served. | Lane C (ranking + explanation), then nothing further here. |
+| MD428 | **W** | The sheet is right and its content is not §47's. `GET /media/world` emits no `whyThis` at all, so the shell now offers "Why this?" ONLY where the server supplied a reason (`travel-buddy-standalone/src/features/media/screens/MediaWorldShell.tsx:139#if (item.whyThis) setWhy({ visible: true, explanation: item.whyThis });`) — the sheet's generic fallback sentence was an invented explanation. | A §47 explanation on World items built from the five named reasons, two of which (MD184, MD185) are not ranking inputs today. The client already renders it the moment it is served. | Lane C (ranking + explanation), then nothing further here. |
 | MD82–MD85 | **N** ×4 | No column stores a vantage (`artifacts/api-server/src/services/media/MediaPerspectiveService.ts:6#There is no perspective COLUMN in the schema today`). The contribution sheet built here offers NO vantage on purpose (`travel-buddy-standalone/src/features/media/state/mediaContribution.ts:16#What it deliberately does NOT offer: the §12 physical VANTAGES`) — a choice with nowhere to be stored would be dropped on the floor. | A migration adds a vantage column with a CHECK over the §12 vocabularies, the post write accepts it, `MediaPerspectiveService` groups by it, and the sheet offers it. | Owner (schema), Lane B (grouping), the posts-route owner (write), then this lane (picker). |
 | MD444 | **W** | Phase 4's perspective GROUPS are MD82–MD85. | As MD82–MD85. | As MD82–MD85. |
 | MD288 | **W** | Askable (city + term + the gem kind), but "near" is city-coarse by design (`artifacts/api-server/src/services/media/MediaSearchService.ts:71#search is city-coarse; the canonical Map owns proximity`), and the Map that owns proximity is dark in production. | Search accepts a radius resolved through the canonical Map, OR the owner rules that city-coarse satisfies "near". | Owner decision; else the server search owner + Map lane. |
@@ -3777,6 +3777,397 @@ which is production's state.
 
 ---
 
+## 21. Media actions, the §24 ranker, the outcome signals and the gem outcome — 2026-09-26
+
+Lane C of the four-lane Media pass (branch `claude/media-lane-c-20260926`, from
+`bae9ea2d4`). Forty-six rows were assigned: §15 actions, §16.1 duplicate check
+and outcome, §22 crowd flow, §23 chains, §24 inputs and objectives, §25 Trip
+Expertise, §26 impact metrics, §44 telemetry, §45 north-star transitions, §48
+ownership and §49 phase 6. **36 move to `C`, 2 move `N → W`, 8 stay open**, each
+open row with a falsifier and a named owner below. No other non-`C` row in §15–§17,
+§20, §22–§26, §31–§32, §44–§45 or §49 phase 6 was found unowned; the census body
+was re-parsed with last-statement-wins to establish that, rather than read.
+
+Two statuses are kept apart throughout, because the owner's rule requires it:
+**IMPLEMENTATION** (built on this branch, tested, and the test seen red under a
+mutation) and **PRODUCTION** (what a user of the deployed app would see today).
+Every row moved here is an implementation claim. §21.5 states the production
+state of each, and for most of them it is *dark*: built on branch is not merged,
+merged is not deployed, deployed is not flag-enabled, flag-enabled is not realised.
+
+No migration was written. No flag was enabled or seeded. No database was touched.
+
+### 21.1 What was built
+
+**A. The §42 Media Ranking stage, over every §24 input and objective.** The World
+shell had no ranking stage (MD356) and the only ranker multiplied by watch time
+(MD348). The stage is `artifacts/api-server/src/services/media/MediaRankingService.ts:281#export async function rankCandidatesForViewer(`, called from the projection pipeline at
+`artifacts/api-server/src/services/media/MediaProjectionService.ts:656#await rankCandidatesForViewer(sc, viewer, candidates, {` and from both branches of the experience resolver. Every §24 input and
+objective is mapped at `artifacts/api-server/src/services/media/MediaRankingService.ts:149#export const SPEC_24_COVERAGE`, and the test parses the seventeen inputs and
+eight objectives **out of the spec text itself**, so a mapping cannot quietly
+drop one. Weights are at `artifacts/api-server/src/services/media/MediaRankingService.ts:111#export const MEDIA_RANKING_WEIGHTS = {`: positive terms sum to 1, none exceeds
+0.12, and "− Low-confidence Live Claims" is subtracted at `artifacts/api-server/src/services/media/MediaRankingService.ts:210#score += key === "lowConfidenceLive" ? -w * t[key] : w * t[key];`. The terms
+are pure functions in `lib/mediaRankingSignals.ts`: provenance class
+`artifacts/api-server/src/lib/mediaRankingSignals.ts:190#export function provenanceClassOf(` and its score `artifacts/api-server/src/lib/mediaRankingSignals.ts:225#export function provenanceTerm(`; media quality from the FILE's own
+resolution, aspect and duration, never from watch fields, `artifacts/api-server/src/lib/mediaRankingSignals.ts:264#export function mediaQualityOf(`; viewer
+intent generalised from the wanted item to its place and category `artifacts/api-server/src/lib/mediaRankingSignals.ts:299#export function intentTerm(`;
+trip context `artifacts/api-server/src/lib/mediaRankingSignals.ts:324#export function tripContextTerm(`; live state `artifacts/api-server/src/lib/mediaRankingSignals.ts:415#export function liveTerm(` and its low-confidence penalty
+`artifacts/api-server/src/lib/mediaRankingSignals.ts:425#export function lowConfidenceLiveTerm(`; expected real-world utility as the media's own smoothed §45
+outcome rate `artifacts/api-server/src/lib/mediaRankingSignals.ts:480#export function utilityTerm(`; experience fit `artifacts/api-server/src/lib/mediaRankingSignals.ts:500#export function experienceFitTerm(`; useful social connection
+(trip crew / Shared Moment, not follow proximity) `artifacts/api-server/src/lib/mediaRankingSignals.ts:522#export function usefulSocialTerm(`; contribution value
+as marginal coverage `artifacts/api-server/src/lib/mediaRankingSignals.ts:543#export function contributionTerm(`; narrative value `artifacts/api-server/src/lib/mediaRankingSignals.ts:564#export function narrativeTerm(`. The signals are
+loaded once per page by `artifacts/api-server/src/services/ranking/MediaRankingSignalLoader.ts:115#export async function loadMediaRankingSignals(` — the viewer's own wants
+`artifacts/api-server/src/services/ranking/MediaRankingSignalLoader.ts:137#.from("media_intent_signals")`, the §45 outcome vocabulary `artifacts/api-server/src/services/ranking/MediaRankingSignalLoader.ts:70#export const UTILITY_OUTCOME_EVENTS` — and every read that
+fails settles to `null`, which the ranker treats as *undetermined* and never as
+*zero*. §2's "authentic outranks generated" is a PARTITION after scoring, not a
+weight a large enough score could beat: `artifacts/api-server/src/services/media/MediaRankingService.ts:262#const demoted = output.filter((e) => e.score.provenanceClass === "synthetic");`. The ranked order now
+reaches the client: the place view's per-group sample was the twelve NEWEST and is
+now the ranker's twelve, re-sorted for display only after selection,
+`artifacts/api-server/src/services/media/MediaPerspectiveService.ts:176#media: items.slice(0, samplePerGroup)`. Tests: `src/test/mediaRankingObjectives.test.ts` (37 cases),
+`src/test/mediaWorldProjection.test.ts`.
+
+**B. §25 Trip Expertise, a fourth reputation dimension.** `artifacts/api-server/src/lib/mediaContributorReputation.ts:139#export function tripExpertise(`, fed by
+`artifacts/api-server/src/services/media/MediaContributorReputationService.ts:164#export async function readJourneySignals(`, which counts only ENDED, non-cancelled trips the contributor owns or
+is an accepted member of AND whose owner made them public with the destination
+shown, `artifacts/api-server/src/services/media/MediaContributorReputationService.ts:196#if (t.visibility !== "public" || t.show_destination_city !== true) continue;`. A private or hidden-destination journey cannot raise a
+reputation, and a failed read lowers the dimension to zero rather than inflating
+it. Test: `src/test/mediaContributorTripExpertise.test.ts` (7 cases).
+
+**C. The §15 actions the rail was missing, each to an EXISTING endpoint and offered
+only when the viewer passes that endpoint's own question (§47).**
+Go There `artifacts/api-server/src/services/media/MediaActionResolver.ts:1036#id: "directions",` → the Places page's `directionsUrl`; View Event `artifacts/api-server/src/services/media/MediaActionResolver.ts:1093#id: "view_event",`,
+gated by the experience resolver returning an EVENT the viewer may see; View in
+Passport `artifacts/api-server/src/services/media/MediaActionResolver.ts:1158#id: "view_passport",` → the Postcard viewer, only for an active Postcard the
+Passport wall would show this viewer; Share through Telegraph now targets
+Telegraph's own §5 share contract `artifacts/api-server/src/services/media/MediaActionResolver.ts:461#endpoint: "/api/threads/:threadId/share"` instead of the media share recorder;
+Do This Experience is marked compilable `artifacts/api-server/src/services/media/MediaActionResolver.ts:621#compile: true, source: "experience"` (and from a published Trail
+`artifacts/api-server/src/services/media/MediaActionResolver.ts:1200#compile: true, source: "trail"`) and the plan route serves the timed, executable plan
+`artifacts/api-server/src/routes/mediaActions.ts:478#compileExperiencePlan(sc, viewer`; Find somewhere quieter / cheaper `artifacts/api-server/src/services/media/MediaActionResolver.ts:1049#id: "find_quieter",` → Compass with the
+comparator axis Compass grounds; Update this gem `artifacts/api-server/src/services/media/MediaActionResolver.ts:1069#id: "contribute_gem",` → the gem's own
+contribution endpoint with the media id. Server test:
+`src/test/mediaActionsSection21.test.ts` (20 cases, including an HTTP route test of
+the compiled plan).
+
+The CLIENT executes them — which the server half alone did not, because the rail
+renders only ids it knows and silently hid every other one (see §21.6):
+`travel-buddy-standalone/src/features/media/services/mediaActions.ts:613#export async function openDirectionsForPlace(` opens directions and calls back ONLY after the maps app opened, where the
+rail records Directions started and Media → Route `travel-buddy-standalone/src/features/media/components/MediaActionRail.tsx:205#void openRailDirections(exec.placeId, () => {`; the tap-time
+emission skips it `travel-buddy-standalone/src/features/media/components/MediaActionRail.tsx:134#if (emitsNorthStarOnTap(action.id)) emitMediaNorthStar(record, action.id, northStarCtx);`; `travel-buddy-standalone/src/features/media/telemetry/mediaTelemetry.ts:251#export const NORTH_STAR_ON_COMPLETION`. The Telegraph share goes through
+the existing share sheet as an object REFERENCE `travel-buddy-standalone/src/features/media/components/MediaActionRail.tsx:383#<TelegraphObjectShareSheet mediaId={mediaId} object={shareObject}`, `travel-buddy-standalone/src/components/ShareSheet.tsx:289#? await shareObjectIntoThread(selectedId`. Do This
+Experience shows the compiled plan and writes TENTATIVE items into one trip the
+user picks, only a trip the server named `travel-buddy-standalone/src/features/media/components/MediaActionPanels.tsx:114#export function TripChoicePanel({`, `travel-buddy-standalone/src/features/media/services/mediaActions.ts:714#export function planItemsFromCompiledPlan(`, `travel-buddy-standalone/src/features/media/services/mediaActions.ts:737#export async function applyCompiledPlan(`.
+Save Route completes each coordinate-free stop through the canonical place record,
+refuses a one-stop route, and sends `originMediaId` `travel-buddy-standalone/src/features/media/components/MediaActionRail.tsx:248#void saveRailRoute({ title: exec.title, stops: exec.stops, mediaId: exec.mediaId })`, `travel-buddy-standalone/src/features/media/services/mediaActions.ts:776#export async function saveMediaRoute(`.
+Invite people `travel-buddy-standalone/src/features/media/components/MediaActionPanels.tsx:241#const ok = await inviteToSharedMoment(momentId, userId, mediaId)` and Update this gem `travel-buddy-standalone/src/features/media/components/MediaActionPanels.tsx:332#<GemContributeSection gemId={gemId} isAuthed originMediaId={mediaId} />` carry the media
+id. Client test: `travel-buddy-standalone/src/features/media/__tests__/mediaActionsSection21.test.ts`
+(29 cases), plus the extended `mediaActions.test.ts`.
+
+**D. Producers for the §44/§45 names that had none.** Server-only outcome signals,
+deliberately NOT forwardable by the client batch `artifacts/api-server/src/lib/mediaAnalytics.ts:226#export const MEDIA_SERVER_OUTCOME_SIGNAL_TYPES`: Contribution
+submitted at the gem submission and observation routes `artifacts/api-server/src/routes/hiddenGems.ts:401#recordGemContributionSignal(sc` (and at
+`routes/hiddenGems.ts` line 1144), attributed Media → Contribution only when the
+media is AT the gem's place `artifacts/api-server/src/lib/mediaAnalytics.ts:316#export function recordGemContributionSignal(`; Contribution accepted, credited to the
+SUBMITTER `artifacts/api-server/src/lib/mediaAnalytics.ts:344#export function recordGemAcceptedSignal(`, at `artifacts/api-server/src/routes/hiddenGems.ts:1548#recordGemAcceptedSignal(sc`; Invite sent, only for a media item that is
+an approved contribution to that very Moment `artifacts/api-server/src/lib/mediaAnalytics.ts:370#export function recordMediaInviteIfAttributable(`, at `artifacts/api-server/src/routes/sharedMoments.ts:135#recordMediaInviteIfAttributable(`;
+Postcard created `artifacts/api-server/src/lib/mediaAnalytics.ts:396#export function recordPostcardCreatedSignal(`, at the Postcard write `artifacts/api-server/src/routes/postcards.ts:1125#recordPostcardCreatedSignal(sc, { userId: user.id, postId });`; Experience
+completed for a route saved from media `artifacts/api-server/src/lib/mediaAnalytics.ts:404#export function recordExperienceCompletionIfAttributable(`, at `artifacts/api-server/src/routes/routePlan.ts:567#recordExperienceCompletionIfAttributable(`. Arrival
+"where safely measurable" is a check-in the traveller made themselves — a route
+stop marked arrived `artifacts/api-server/src/routes/routePlan.ts:645#recordMediaArrivalIfAttributable(` or a GPS-verified, non-suspicious gem visit
+`artifacts/api-server/src/routes/hiddenGems.ts:960#recordGemArrivalIfAttributable(sc` — recorded only when the traveller's OWN media-originated action
+explains it `artifacts/api-server/src/lib/mediaAnalytics.ts:290#export function recordMediaArrivalIfAttributable(`, `artifacts/api-server/src/lib/mediaAnalytics.ts:258#export async function findMediaOrigin(`. Media → Route is recorded when a route is
+saved from media `artifacts/api-server/src/routes/routePlan.ts:300#recordMediaEvent("media_route"`. The two client signals are allow-listed by spreading
+`artifacts/api-server/src/lib/mediaAnalytics.ts:214#export const MEDIA_CLIENT_OUTCOME_SIGNAL_TYPES` into the batch at `artifacts/api-server/src/routes/mediaAnalyticsBatch.ts:47#...MEDIA_CLIENT_OUTCOME_SIGNAL_TYPES,`. On the client, each §44 signal is
+emitted where the viewer did the thing, through `travel-buddy-standalone/src/features/media/telemetry/mediaTelemetry.ts:318#export function emitMediaSignal(` (forbidden-key
+guard included) and a non-hook sender `travel-buddy-standalone/src/services/mediaInteractions.ts:156#export async function recordMediaSignal(`: Comment only on a comment the
+server ACCEPTED, and only from the media comment sheet `travel-buddy-standalone/src/components/media/MediaCommentSheet.tsx:38#onCommentPosted={() => emitMediaSignal(mediaSignalRecorder, 'comment'`; Profile open
+`travel-buddy-standalone/src/components/media/WatchItemOverlay.tsx:220#'profile_open'` and Place open `travel-buddy-standalone/src/components/media/WatchItemOverlay.tsx:227#'place_open'` from the Watch overlay;
+Hidden Gem opened `travel-buddy-standalone/src/components/media/GemsFeed.tsx:203#'gem_open'`; Visual opportunity opened from the NOW lens's
+three card kinds `travel-buddy-standalone/src/features/media/screens/MediaWorldShell.tsx:127#'visual_opportunity_open', { surface: 'now_zone' }`. Tests: `src/test/mediaOutcomeSignals.test.ts`
+(15 cases, route-level where the route could be mounted) and the client suite.
+
+**E. §16.1 DUPLICATE CHECK and OUTCOME.** The duplicate scan was real — `artifacts/api-server/src/lib/inputAssistance/creation.ts:316#await scanDuplicateGems(`
+— and ran as a gem was named on `/gems/submit` `travel-buddy-standalone/app/gems/submit.tsx:243#context: 'hidden_gem_name',`; the Media add-gem
+form submitted without it. It now runs the same scan with the same pick-existing
+step `travel-buddy-standalone/src/components/media/AddGemForm.tsx:135#context: 'hidden_gem_name',`, and a guard ENUMERATES every caller of `submitGem` and requires
+both, so a third surface cannot skip it. The OUTCOME stage is a derived read model
+over the two tables that already record VISIT and report: a verified visit is
+linked to what the same visitor reported within 72 hours `artifacts/api-server/src/services/hiddenGems/HiddenGemOutcomeService.ts:83#export function linkVisitOutcomes(`, classed by the
+gem state's own polarity sets, and summarised `artifacts/api-server/src/services/hiddenGems/HiddenGemOutcomeService.ts:133#export function summarizeGemOutcomes(` behind a privacy floor —
+below `artifacts/api-server/src/services/hiddenGems/HiddenGemOutcomeService.ts:43#export const OUTCOME_MIN_REPORTERS = 3;` reporting visitors NO number is shown, not even the visitor
+count. The gem detail carries it `artifacts/api-server/src/routes/hiddenGems.ts:786#(safe as any).visitOutcomes = await import(`; the gem page states it in one
+sentence only when there is a number `travel-buddy-standalone/app/gems/[id].tsx:559#gemVisitOutcomeSentence(gem.visitOutcomes) ?`, `travel-buddy-standalone/src/services/hiddenGemsMappers.ts:95#export function gemVisitOutcomeSentence(`. Tests:
+`src/test/hiddenGemOutcome.test.ts` (11 cases, route-level included) and the
+client suite.
+
+**F. `post_event_links` gets its writer.** The table is the canonical Media → Event
+link and had four readers — View Event, the §24 availability term
+`artifacts/api-server/src/lib/mediaRankingSignals.ts:378#export function availabilityTerm(`, the event experience's hero media, Discovery's "Live from events" —
+and NO writer anywhere (`check:writerless-reads` carried it as a dead lane). The
+author of an active post can now link it to a PUBLIC, open event they host,
+co-host or are going to, near the post's own time — one predicate
+`artifacts/api-server/src/lib/mediaEventLinks.ts:72#export async function listLinkableEvents(` both OFFERS the action `artifacts/api-server/src/services/media/MediaActionResolver.ts:1122#id: "link_event",` and ACCEPTS the write
+`artifacts/api-server/src/routes/mediaActions.ts:548#"/media/:id/event-link",`, `artifacts/api-server/src/lib/mediaEventLinks.ts:140#.upsert({ post_id: postId, event_id: eventId }`. Dark behind `MEDIA_WORLD_SHELL_ENABLED`, like the rail
+that offers it. The ratchet entry is struck (the entry that followed it is now at
+`artifacts/api-server/src/scripts/checkWriterlessReads.ts:141#compass_user_profiles: {`). Client: `travel-buddy-standalone/src/features/media/services/mediaActions.ts:817#export async function linkMediaToEvent(`, `travel-buddy-standalone/src/features/media/components/MediaActionPanels.tsx:393#const r = await linkMediaToEvent(mediaId, eventId);`. Test:
+`src/test/mediaEventLink.test.ts` (12 cases, route-level included).
+
+### 21.2 Mutations, every one run on the final tree, and what each turned red
+
+Every mutation below was applied to the committed tree, the named suite run, and
+the file restored. The proving runs made while building (the R-, T-, A- and
+S-series, 66 mutations) are not repeated here; this is the re-run the citations
+above point at. **Three did not redden on their first form, and each is reported**:
+
+1. **V24 survived** — removing `if (!origin) return;` from the completion producer
+   left the suite green. The mutation, not the test, was defective: with no origin
+   the next line dereferences `null`, the fire-and-forget `.catch` swallows it,
+   and nothing is recorded, which is exactly what the test asserts. V24b records
+   the completion with a null origin instead, and reddens.
+2. **G7 survived, by design** — dropping `.eq("is_suspicious", false)` from the
+   outcome read left the suite green, because the pure linker refuses suspicious
+   visits itself (G1 proves that half). The query filter is a bound on rows read,
+   not the privacy guarantee.
+3. **Q2 survived at first** — dropping `mediaId` from the Quieter ask left the
+   server suite green; the client would have fallen back to the entity ref. The
+   test now asserts the ask carries the media item Compass grounds the comparator
+   on, and Q2 reddens (commit `0a3abc2be`).
+
+| Mutation | Row | What was changed | What turned red |
+| --- | --- | --- | --- |
+| V01 | MD8 | synthetic partition removed from the ranker | mediaRankingObjectives: "a generated asset that wins on every other term still ranks after an authentic one", "a camera capture with a generative edit is §35-altered" |
+| V02 | MD188 | provenance term made constant | "orders the provenance classes authentic > third_party > unknown > non_observation > synthetic", "an OFFICIAL author does not make an asset's provenance authentic" |
+| V03 | MD177 | wanted-place generalisation removed | "wanted item 1.0 > wanted place 0.8 > wanted category 0.5", "another perspective of a WANTED PLACE outranks an otherwise-identical one" |
+| V04 | MD179 | trip destination city ignored | "media ON a viewer trip 1.0; in an upcoming trip's city 0.8 …" |
+| V05 | MD184 | live term zeroed | "live place > no claim > low-confidence place" |
+| V06 | MD201 | low-confidence live ADDED instead of subtracted | "live place > no claim > low-confidence place" |
+| V07 | MD187 | resolution ignored | "resolution orders 4K > 720p > 360p", "quality reaches the SCORE" |
+| V08 | MD194 | utility made constant | "a media that led to real-world action outranks one that was only watched", and the MD356 loader-only case |
+| V09 | MD195 | an ended experience still fits | "the same event ENDED does not (0)" |
+| V10 | MD196 | trip crew not a useful connection | "trip crew 1.0; followed AND in the viewer's trip city 0.6; followed elsewhere 0" |
+| V11 | MD198 | a Postcard carries no narrative | "postcard 1.0 > event/trip experience 0.7 > substantial caption 0.4 > nothing 0" |
+| V12 | MD348 | one objective unmapped | "maps every one of them, and nothing else" |
+| V13 | MD356 | place sample reverts to the twelve newest | "the twelve perspectives sampled for a group are the ranker's, not the twelve newest", "a signal only the stage's LOADER reads decides the sample" |
+| V14 | MD197 | coverage gap flattened | "a fresh perspective at an UNCOVERED place is worth more than the fourth at a covered one" |
+| V15 | MD207 | trip expertise zeroed | mediaContributorTripExpertise: four cases |
+| V16 | MD207 | private / hidden-destination journeys counted | "private, buddies, hidden-destination, cancelled and future trips do not count" |
+| V17 | MD94 | directions offered with no disclosed place | mediaActionsSection21: "is NOT offered when the owner kept the exact place private", "is NOT offered for media bound to no place" |
+| V18 | MD103 | View Event without the experience gate | "View Event is NOT offered for a private event the viewer does not attend — not its id either" |
+| V19 | MD103 | View in Passport without the passport gate | "View Passport is NOT offered when the author's passport is private" |
+| V20 | MD104 | share target reverted to the media share recorder | "targets POST /api/threads/:threadId/share with a POST reference" |
+| V21 | MD107 | plan route never compiles | "returns timed stops for a trail, and 404 for a draft one" |
+| V22 | MD107 | trip experience not marked compilable | "a trip experience targets the compiled-plan endpoint" |
+| V23 | MD214 · MD399 | another viewer's media action explains an arrival | mediaOutcomeSignals: "another viewer's action, an old action, and a non-origin event attribute nothing" |
+| V24 | MD382 | origin check removed (null dereference) | **survived** — see above |
+| V24b | MD382 | completion recorded with a null origin | "records experience_complete for a route saved from media, not for any other route" |
+| V25 | MD383 | acceptance recorded as a submission | "an accepted gem is credited to its SUBMITTER, not the approving admin" |
+| V26 | MD400 | media elsewhere credited with the gem contribution | "media_contribution only for media AT the gem's place" |
+| V27 | MD381 | unapproved media credited with the invite | "records invite_sent only when the media is an APPROVED contribution to the Moment" |
+| V28 | MD385 | the Postcard writer records nothing | "the Postcard writer calls it where the passport_postcards row is written" |
+| V29 | MD374 · MD376 | batch drops the client outcome signals | "accepts visual_opportunity_open and gem_open; drops every server-only outcome name" |
+| V30 | MD396 | a media-saved route records the wrong transition | "the other committed-outcome producers sit on the success path of their routes" |
+| C1 | MD94 | client resolves directions to nothing | client §21: "MD94 directions → the place …" |
+| C2 | MD213 | onOpened fires before the maps app opened | "openDirectionsForPlace: onOpened fires ONLY after the maps app opened" |
+| C3 | MD213 | directions north-star on the tap | "directions is the one rail action whose north-star waits for the outcome" |
+| C4 | MD213 | rail drops the tap-time guard | "Go There records media_route + directions_tap inside the opened callback only" |
+| C5 | MD396 | rail never records media_route on open | same case |
+| C6 | MD103 | Passport routes to the post, not the Postcard | "view_passport → the Postcard viewer" |
+| C7 | MD253 | Quieter offered with no prompt | "find_quieter / find_cheaper → Compass with the server-written prompt" |
+| C8 | MD104 | client ignores the object reference | "share_telegraph with an object reference → telegraph_share" |
+| C9 | MD107 | client ignores the compile flag | "do_this_experience with compile:true → compiled_plan" |
+| C10 | MD173 | one-stop route offered | "save_route: place stops only, two or more" |
+| C11 | MD173 | route created from one resolved stop | "saveMediaRoute refuses a one-stop route" |
+| C12 | MD396 | route loses its origin media | "saveMediaRoute … sends originMediaId" |
+| C13 | MD107 | plan written into any trip | "applyCompiledPlan writes only into a trip the server named" |
+| C14 | MD107 | items CONFIRMED, not tentative | "planItemsFromCompiledPlan: ordered, TENTATIVE" |
+| C15 | MD104 | one share-sheet path sends a snapshot | "Telegraph share sends an object reference …" |
+| C16 | MD381 | invite sent without origin | "services forward originMediaId" |
+| C17 · C18 | MD400 | contribution sent without origin (service; gem section) | same case |
+| C19 | MD387 | comment signal on a REFUSED comment | "MD387 comment: … only on a comment the server accepted" |
+| C20 | MD387 | media comment sheet emits nothing | same case |
+| C21 | MD393 | profile open emits nothing | "profile_open / place_open … gem_open … visual_opportunity_open are emitted where the viewer opens them" |
+| C22 | MD376 | gem open emits nothing | same case |
+| C23 | MD374 | for-you card emits nothing | same case |
+| C24 | MD376 | the SERVER stops accepting gem_open | "every name is one the batch endpoint accepts" |
+| C25 | MD209 · MD393 | a signal payload key the server drops | "payload keys are all on the server payload allow-list" |
+| C26 · C27 | MD107 | compile not requested; untimed stops accepted | "fetchCompiledExperiencePlan asks for compile=1"; mapper cases |
+| C28 | MD94 | iOS handed Google Maps | "pickDirectionsUrl", "openDirectionsForPlace" |
+| C29 | MD381 | invite loses the media ref | "invite_people / contribute_gem carry the media id" |
+| C30 | MD209 | a place opened from the overlay records nothing | the emitters case |
+| D1 · D2 | MD112 | Media add-gem renders no pick-existing step; scans another context | "every gem submission surface runs the §16.1 duplicate check" |
+| D3 | MD112 | `/gems/submit` loses its scan | same case — the guard enumerates, it does not name |
+| D4 | MD112 | server stops scanning `hidden_gems` for a gem name | inputAssistanceCreation: 7 cases |
+| G1–G6, G8–G11 | MD120 | suspicious visit counted; report before visit / after window / by someone else linked; floor removed; floor leaks the visitor count; unreadable read as zero; detail omits it; negative observations downgraded; reports counted per report | hiddenGemOutcome: the named case each time |
+| G7 | MD120 | query-level suspicious filter dropped | **survived by design** — see above |
+| H1–H4 | MD120 | sentence below the floor; page renders nothing; mapping drops it; garbage counts accepted | client §21: "the gem page states what verified visitors found" |
+| E1–E12 | MD103 | private / cancelled / far-off event linkable; any post linkable; write skips the predicate; refused write reads as linked; offer ignores authorship / the flag / an existing link; endpoint ignores the flag; any RSVP counts; unreadable participation reads as none | mediaEventLink or mediaActionsSection21: the named case each time |
+| E13 · E14 | MD103 | client link row with no candidates; rail does not re-read after linking | client §21 link cases |
+| Q1 | MD253 | Compass grounds "quieter" on the price claim | compassCensusClosure: B2, B4 and one more |
+| Q2 | MD253 | the Quieter ask loses its media id | **survived at first**; red after the test was strengthened |
+| Q3 | MD253 | Quieter / Cheaper offered with Compass off | "absent when Compass is off, and absent with no anchor place" |
+
+Q1 was run against the Compass lane's own suite and the file restored; no file
+that lane owns was edited.
+
+### 21.3 Row moves
+
+| Row | Was | Now | Why — built, cited above, tested, and the mutation that turned it red |
+| --- | --- | --- | --- |
+| MD8 | **N** | **C** | Generated and generatively-altered media are partitioned after every authentic item, whatever they score — §21.1 A. V01. |
+| MD94 | **W** | **C** | Go There is a `directions` action to the Places page's own `directionsUrl`, executed by the client — §21.1 C. V17, C1, C28. |
+| MD103 | **W** | **C** | View Event (gated on an event the viewer may see, now reachable because `post_event_links` has a writer) and View in Passport (the Postcard) — §21.1 C, F. V18, V19, C6, E1–E14. |
+| MD104 | **W** | **C** | Share through Telegraph targets Telegraph's §5 share contract and the client sends a revocable object reference into a picked thread — §21.1 C. V20, C8, C15. |
+| MD107 | **W** | **C** | Do This Experience compiles a trip, event or published Trail into a timed plan and writes tentative items into one eligible trip — §21.1 C. V21, V22, C9, C13, C14, C26, C27. |
+| MD112 | **W** | **C** | The §16.1 duplicate check runs on every gem submission surface, before the submit, with a merge-or-create step — §21.1 E. D1–D4. |
+| MD120 | **N** | **C** | A verified visit is linked to the visitor's report and served, floored, on the gem — §21.1 E. G1–G6, G8–G11, H1–H4. |
+| MD173 | **W** | **C** | The client call site the row named: each chain stop is completed through the canonical place record before `POST /route-plans` — §21.1 C. C10–C12. |
+| MD177 | **N** | **C** | `media_intent_signals` is a ranking input, generalised to the wanted place and category — §21.1 A. V03. |
+| MD179 | **N** | **C** | Trip context scores the viewer's own trip and the destination of a trip not yet over — §21.1 A. V04. |
+| MD184 | **N** | **C** | A live-qualified claim, read through the gated fail-closed read, is a ranking input — §21.1 A. V05. |
+| MD187 | **W** | **C** | Quality is the file's resolution, aspect and duration fit; watch fields cannot move it — §21.1 A. V07. |
+| MD188 | **W** | **C** | Asset provenance is scored separately from author trust — §21.1 A. V02. |
+| MD194 | **W** | **C** | Expected utility is the media's own smoothed §45 outcome rate, not a per-kind constant — §21.1 A. V08. |
+| MD195 | **N** | **C** | Experience fit: an over experience scores 0; one where the viewer is going or wants to go, 1 — §21.1 A. V09. |
+| MD196 | **N** | **C** | Useful connection is trip crew / Shared Moment, then followed-and-where-you-are-going; not follow proximity — §21.1 A. V10. |
+| MD198 | **N** | **C** | Narrative value: Postcard > experience > substantial caption — §21.1 A. V11. |
+| MD201 | **N** | **C** | A low-confidence or materially conflicted live claim is SUBTRACTED — §21.1 A. V06. |
+| MD207 | **N** | **C** | Trip Expertise is a fourth dimension, from public completed journeys only — §21.1 B. V15, V16. |
+| MD209 | **W** | **C** | Both producers the falsifier named now exist: `save` (server, §11.4) and `place_open` (the Watch overlay, where a place is opened from media). The save event carries the media id; the place is its canonical place. C30. |
+| MD213 | **W** | **C** | Directions started is recorded when the maps app OPENED, never on the tap — §21.1 C, D. C2–C5. |
+| MD214 | **N** | **C** | Arrival where safely measurable: a check-in the traveller made, explained by their own media action — §21.1 D. V23. |
+| MD253 | **N** | **C** | THE RE-READ §9 AND §14 NAMED AND DID NOT PERFORM. "Find a quieter or cheaper version": Compass grounds both axes `artifacts/api-server/src/compass/CompassMediaContext.ts:81#export const COMPARATOR_AXIS_CLAIM` (census-compass CM-03), and the rail now ASKS it from the media item, carrying the media id and the axis — §21.1 C. Q1–Q3, C7. |
+| MD348 | **W** | **C** | The World-shell ranker is §24's: every input and objective mapped, read from the spec text, every named weight live — §21.1 A. V12. |
+| MD356 | **N** | **C** | A ranking stage sits between projection and client, and its order survives to the client — §21.1 A. V13. |
+| MD374 | **N** | **C** | Visual opportunity opened is a name the batch accepts and the NOW lens emits — §21.1 D. V29, C23. |
+| MD376 | **N** | **C** | Hidden Gem opened, the same — §21.1 D. V29, C22, C24. |
+| MD378 | **W** | **C** | Directions started — as MD213. C2–C5. |
+| MD381 | **N** | **C** | Invite sent, recorded by the invite route for an invite sent from the Moment's own media, and the client can now send one — §21.1 C, D. V27, C16, C29. |
+| MD382 | **N** | **C** | Experience completed: a route saved from media, completed — §21.1 D. V24b. |
+| MD383 | **W** | **C** | Contribution submitted (gem submission and observation) and accepted (credited to the submitter) — §21.1 D. V25. |
+| MD387 | **W** | **C** | Comment, emitted from the media comment sheet only, only for an accepted comment; the generic post surfaces do not emit it (§11.6's objection) — §21.1 D. C19, C20. |
+| MD393 | **W** | **C** | Profile open, from the Watch overlay, carrying the contributor's pseudonymous id on a key the server keeps — §21.1 D. C21, C25. |
+| MD396 | **N** | **C** | Media → Route: directions opened from the rail, and a route saved from media — §21.1 C, D. V30, C5, C12. |
+| MD399 | **N** | **C** | Media → Real-World Arrival — as MD214. V23. |
+| MD400 | **N** | **C** | Media → Contribution, only for media AT the gem's place, from an action the rail offers — §21.1 C, D. V26, C17 · C18. |
+| MD197 | **N** | **W** | Contribution Value is built as MARGINAL COVERAGE `artifacts/api-server/src/lib/mediaRankingSignals.ts:543#export function contributionTerm(` (V14), which is what the objective scores. §14.4's falsifier named a reputation call site in the ranker, and that is NOT built, deliberately: see §21.4. The row is half-met, not met. |
+| MD385 | **N** | **W** | Postcard created has a producer (V28). Memory created has none, and cannot have one honestly: see §21.4. |
+
+**Totals, re-derived by `check:census-integrity` rather than asserted:** 36 rows to
+`C` (20 from `N`, 16 from `W`), 2 rows `N → W`.
+
+### 21.4 Rows that stay open — what would turn each red, and who
+
+| Row | Verdict | RED WHEN | WHO |
+| --- | --- | --- | --- |
+| MD11 | **W** | The reachable Media surface is the one that measures outcomes: `MEDIA_WORLD_SHELL_ENABLED` seeded true AND the Media tab's default no longer `'watch'` (F1). The outcome producers and the outcome-ranked stage now exist (§21.1 A, D); the surface users reach still ranks by watch time. | Integration owner (flag) + client lane (default) — F1. |
+| MD101 | **W** | A `busier` comparator axis in `artifacts/api-server/src/compass/CompassMediaContext.ts:81#export const COMPARATOR_AXIS_CLAIM` and a Find Busier rail action. Three of the four now exist (Similar, Quieter, Cheaper). §15 names Busier; §32, the Compass contract, names only "a quieter or cheaper version". | **Owner**: resolve §15 against §32. The axis file and the test that pins it at two axes belong to the Compass lane; this lane did not edit them. |
+| MD162 | **N** | The NOW lens renders the gateway's `crowd_flow` objects, each endpoint NAMED and paired with that zone's recent perspectives. Two things stand in the way and neither is Media's to build: (a) a flow names its zones by `geo_zones` id only, and Media perspectives carry canonical place ids with no coordinates, so pairing them needs a place→zone association the §19 gateway does not publish (and `gatewayBypassGuard` forbids Media from deriving one server-side, rightly); (b) no flow is publishable in production: `map_crowd_flow_enabled` and `map_projection_enabled` are off, and the producer refuses below `MIN_SIGNAL_FAMILIES`. | **Owner** (whether Map publishes zone names and a place→zone association to consumers) + **production data** (a publishable flow). |
+| MD175 | **N** | A defined Remix of an experience chain. The spec gives the word only (§23.1 "Actions: Follow This Night, Save Route, Add to Trip, Remix, Ask Compass"); an editable copy of the chain and a Compass-generated variation are two different products. | **Owner**: define Remix. |
+| MD197 | **W** | A contributor-reputation term in the ranker, which is what §14.4 named. Not built because, since migration 3002, a contributor's intel rows are keyed by rotating tokens, and ranking a feed would resolve OTHER accounts' tokens for every author on every page — a use of the 3310 bridge it was not built for. | **Owner**: may the ranker resolve contributor tokens for authors it ranks? |
+| MD215 | **W** | The counts stop dominating: the Watch ranker's watch multipliers retired or replaced by the §24 stage, and the Stamp/comment/save count rail no longer the primary overlay (F2). The §24 stage reads no social count. | Integration owner + client lane — F1/F2; the ranker half is MD435's decision. |
+| MD385 | **W** | A Memory created FROM a media item records the signal. Today a Memory item stores a `media_url` and no media reference, and no §15 action makes a Memory from media, so a "memory created" event could not name the media it came from. | **Owner** (Memory lane schema): should a Memory item carry a media reference? |
+| MD402 | **W** | As MD11: the surface users reach no longer optimises minutes watched, scroll depth or autoplay completion (F1/F2). | Integration owner + client lane. |
+| MD435 | **W** | Media ceasing to own a second ranker, or §48 conceding it. This pass made the World-shell stage §24-complete; it did not retire the legacy Watch ranker. §42 draws a "Media Ranking" stage and §48 gives opportunity ranking to Discovery — that is a design conflict, not a bug. | **Owner**: §42 against §48. |
+| MD446 | **W** | "Show Me Now" exists under some name. Go There is now built (MD94), so five of six. The spec gives the phrase only; the NOW lens's for-you strip is the nearest candidate and this pass does not decide that it is the thing. | **Owner**: define Show Me Now. |
+
+### 21.5 Implementation against production, per family
+
+| Family | Implementation | Production today |
+| --- | --- | --- |
+| §24 ranking stage (MD8, 177, 179, 184, 187, 188, 194–196, 198, 201, 348, 356) | built, tested, mutated | **Dark**: the World shell is behind `MEDIA_WORLD_SHELL_ENABLED` (seeded false). Where it were on: provenance reads `canonical_media`, absent on every projected row (F5), so every item is `unknown` and MD8's partition is inert; live claims are gated and the intel spine is empty, so MD184/MD201 are inert; `media_events` is empty while `MEDIA_ANALYTICS_ENABLED` is false, so utility sits at its prior; `media_intent_signals` is absent from the 2026-08-31 production column snapshot, so intent reads `null`. Each degrades to neutral, never to a fabricated order. |
+| §15 actions (MD94, 103, 104, 107, 173, 253, 381, 400) | built, tested, mutated | **Dark**: the rail is mounted only with the World shell. Compass actions also need `COMPASS_ENABLED`; the gem action `hidden_gems_enabled`; the event link `MEDIA_WORLD_SHELL_ENABLED`. `trails` and `content_trails` are absent from the 08-31 snapshot, so the Trail branch reads nothing. |
+| §44/§45 producers (MD209, 213, 214, 374, 376, 378, 381–383, 385, 387, 393, 396, 399, 400) | built, tested, mutated | **Recorded nowhere**: every producer goes through `recordMediaEvent`, which writes nothing while `MEDIA_ANALYTICS_ENABLED` is false. The client emitters on the Watch overlay, comment sheet and gems feed ARE on reachable surfaces; their events are dropped server-side by that gate. |
+| MD112 duplicate check | built, tested, mutated | **Reachable once deployed**: the input-assistance endpoint has no flag, and both submission screens are routed. |
+| MD120 gem outcome | built, tested, mutated | Behind `hidden_gems_enabled`; needs visits, which need `hidden_gem_verification_enabled`; and shows nothing below three reporting visitors. `hidden_gem_contributions` was absent from the 08-31 snapshot (§16 records it in the 09-22 production list). |
+| MD207 Trip Expertise | built, tested, mutated | Served wherever reputation is served (`routes/mediaViewRequest.ts`); no journey counts until an owner publishes a trip with its destination shown. |
+
+### 21.6 Findings outside this lane — reported, not fixed
+
+1. **MD100 and MD172 were `C` on the server alone.** The client rail renders only
+   ids in its own `MEDIA_ACTION_IDS` and hides the rest — the "no dead actions"
+   rule. `invite_people`, `follow_this_night` and `save_route` were not in it, so
+   Invite People, Follow This Night and Save Route were served and never shown,
+   and `inviteToSharedMoment` had no caller anywhere in the client. This pass
+   added all three to the rail (the invite panel is new); the rows are Lane A's /
+   §14's to re-grade, and until the shell flag is on they remain unreachable.
+2. **MD104's evidence sentence was false in the other direction.** "No Telegraph
+   thread, message or intent is created on any branch" — the Watch overlay's share
+   sheet has always sent a `post_card` SNAPSHOT into a chosen thread and recorded
+   `target: 'telegraph'`. What was missing was Telegraph's §5 reference contract,
+   which is what this pass built.
+3. **`post_event_links` was a dead lane feeding Discovery.** Discovery's "Live from
+   events" Path A and the event hero-media rail read it and could never return a
+   row. They now can, once an author links a post (dark behind the shell flag).
+   census-discovery rows resting on Path A being empty should be re-read by that
+   lane.
+4. **Three tables this lane reads are absent from the 2026-08-31 production
+   snapshot** (`src/test/generated/liveColumns.json`): `media_intent_signals`,
+   `trails`, `content_trails` (and `hidden_gem_contributions`, since shown present
+   on 09-22). Every read is fail-soft to `null`; none is a write.
+
+### 21.7 Files changed
+
+Server — new: `lib/mediaRankingSignals.ts`, `lib/mediaEventLinks.ts`,
+`services/ranking/MediaRankingSignalLoader.ts`,
+`services/hiddenGems/HiddenGemOutcomeService.ts`, and the tests
+`mediaRankingObjectives`, `mediaContributorTripExpertise`, `mediaActionsSection21`,
+`mediaOutcomeSignals`, `hiddenGemOutcome`, `mediaEventLink` (all registered in the
+curated `test` script). Modified: `services/media/MediaRankingService.ts`,
+`MediaProjectionService.ts`, `MediaExperienceResolver.ts`,
+`MediaPerspectiveService.ts`, `MediaActionResolver.ts`,
+`MediaContributorReputationService.ts`, `lib/mediaContributorReputation.ts`,
+`lib/mediaAnalytics.ts`, `routes/mediaActions.ts`, `routes/mediaAnalyticsBatch.ts`,
+`routes/routePlan.ts`, `routes/hiddenGems.ts`, `routes/sharedMoments.ts`,
+`routes/postcards.ts`, `scripts/checkWriterlessReads.ts` (one ratchet entry
+struck), `package.json`, `src/test/mediaWorldProjection.test.ts`. Guard
+machinery, each edit the one its guard asked for: `scripts/check-flag-polarity.mjs`
+classifies `MEDIA_WORLD_SHELL_ENABLED` as a CAPABILITY now that the API reads it,
+and drops its app-tree-only entry, whose history moved into the reason;
+`src/scripts/checkCensusFreshness.ts` widens this census's scope by the twenty
+paths §21 cites and grades, which `check:census-scope-coverage` required (87% →
+98% against a 96% floor).
+
+**Watched by census-sensing, and kept to same-line, additive edits:**
+`routes/hiddenGems.ts` (six same-line edits and one five-line insertion in the
+admin verify handler; no anchored citation into the file moved, per
+`check:doc-citations`) and
+`services/media/MediaProjectionService.ts` (the ranker call, line-neutral).
+
+Client — new: `features/media/components/MediaActionPanels.tsx`,
+`features/media/__tests__/mediaActionsSection21.test.ts`. Modified:
+`features/media/components/MediaActionRail.tsx` (line-neutral above the §11.3.3
+anchor), `features/media/services/mediaActions.ts`,
+`features/media/types/mediaActions.ts`, `features/media/telemetry/mediaTelemetry.ts`,
+`features/media/screens/MediaWorldShell.tsx`, `features/media/__tests__/mediaActions.test.ts`,
+`hooks/useMediaAnalytics.ts` (line-neutral), `services/mediaInteractions.ts`,
+`services/hiddenGems.ts` (line-neutral above its anchored line),
+`services/hiddenGemsMappers.ts`, `services/sharedMoments.ts`,
+`services/routePlan.ts`, `components/ShareSheet.tsx`,
+`components/CommentsSheet.tsx`, `components/gems/GemContributeSection.tsx`,
+`components/media/AddGemForm.tsx`, `components/media/GemsFeed.tsx`,
+`components/media/MediaCommentSheet.tsx`, `components/media/WatchItemOverlay.tsx`,
+`app/gems/[id].tsx`.
+
+`check:census-freshness` names the counted files this changes for eight censuses
+(media, discovery, highlights-memories, input-intelligence, layover, passport,
+sensing, trust). `CENSUS_STALENESS_ACKNOWLEDGED.json` was deliberately NOT
+edited; this section is the re-measurement for census-media, and the others are
+their lanes' to acknowledge or re-measure. The widest single cause is
+`routes/hiddenGems.ts`, counted by eight censuses: its changes are the import, the optional `originMediaId` on the
+contribution schema, the four signal calls of §21.1 D and the one outcome line of
+§21.1 E, none of which alters a status code, a gate or a query, and whose only
+response change is the added `visitOutcomes` field.
+
+### 21.8 The headline is not restated here, and the integrity check says so
+
+This lane was instructed not to restate the headline: four lanes move rows in
+parallel, and one restatement from the merged result is the only one that can be
+right. So `check:census-integrity` reports, correctly, that the stated headline
+(C 301 / W 81 / N 66 / X 2) no longer describes the rows, which after §21 count
+**C 337 / W 67 / N 44 / X 2** of 450 — exactly the 36 moves to `C` and 2 moves
+`N → W` above. Until the integrator restates it, that check and
+`src/test/censusIntegrityQualifiedVerdicts.test.ts`, which asserts the tool
+exits 0, are red on this branch for that one reason and no other.
+
 ## 23. Integration — the media lanes merged into `claude/sensing-completion-20260925`, and the headline restated from the rows
 
 The integration owner merges each lane after reading its diff, not its
@@ -3858,17 +4249,85 @@ MD38 (a lost race refused) and MD41 (a tenth entity type refused) are now
 **observed on portava-ci's real schema**, not only on local PostgreSQL. They
 remain unrealised in production.
 
-### 23.3 Restated headline
+### 23.3 Lane C (§21), merged 2026-09-26
 
-> | Measure | Was, §20.10 | Now |
+**Reviewed before merging, because it adds a write path and three privacy
+surfaces.**
+
+- **The `post_event_links` writer** (`POST`/`DELETE /media/:id/event-link`)
+  has no inference: the author links by hand. It links only the caller's own
+  active post, only to a PUBLIC event that is not cancelled or archived and
+  that the caller hosts, co-hosts or RSVP'd going to, and only within the
+  event's time window. One predicate both offers the action and accepts the
+  write, and an unreadable read refuses rather than guessing. The routes
+  require a signed-in user, are rate-limited, and are dark behind
+  `MEDIA_WORLD_SHELL_ENABLED`, like the rail that shows them.
+- **The gem visit outcome** on `GET /hidden-gems/:id` gives counts of distinct
+  verified visitors only, with the last report at day precision and no ids or
+  coordinates. It is withheld entirely below 3 reporting visitors, and is added
+  after the route has already decided the viewer may see the gem. **Residual,
+  recorded and not built:** a bare k-floor does not stop differencing. Someone
+  who knows a person just visited can compare consecutive readings and learn
+  that person's class. Nothing here gates that the way
+  `publishThroughDifferencingGate` gates sensing.
+- **The §44/§45 producers** keep client and server apart. Only the
+  client-safe outcome types are open to the batch endpoint. The outcomes a
+  server commits (invite written, contribution recorded or accepted, Postcard
+  created, experience completed) stay server-only, so a client cannot claim
+  one. Attribution reads only the viewer's own events, and every producer is
+  dark while `MEDIA_ANALYTICS_ENABLED` is off.
+- **The ranking loader** reads the viewer's own intent, trips, follows, saved
+  places and interests. For the page's candidates it reads only public events
+  and public, active postcards. **Trip Expertise** counts only trips that are
+  public and set to show their destination city.
+- **Two guard edits**, each justified by the code. `MEDIA_WORLD_SHELL_ENABLED`
+  moved from the app-tree-only list to `CLASSIFIED`, because the API now reads
+  it. The `post_event_links` dead-lane entry was struck, because it now has a
+  writer.
+
+**Conflicts, and how they were resolved.**
+
+- **The projection service:** lane C's `rankCandidatesForViewer` is the only
+  ranker its merged body calls. It sits beside lane B's canonical-read and
+  override imports.
+- **The World shell:** lane A's behaviour is kept, and lane C's signals are
+  added only when something actually opens.
+  - A changing-now card opens its place's perspectives.
+  - "Why this?" opens only when the server gave a reason.
+  - The three `visual_opportunity_open` emits are kept, which lane C's source
+    test counts.
+  - Lane C's `gem_open` emit lived in `GemsFeed`, which lane A had already
+    replaced in the shell with `HiddenGemsMediaScreen`, so the World lens
+    would have lost it. It is carried onto that screen's `onOpenGem`, with
+    surface `world_gems`.
+- **No moved row is shared** between §19, §20 and §21, so their order cannot
+  change a verdict.
+
+**Found by lane C and not fixed here** (§21.6):
+- MD100 and MD172 were C on the server only, because the rail hid their
+  actions. It now renders them, behind the shell flag.
+- MD104's old evidence sentence was false.
+- `post_event_links` now has a writer, so census-discovery's rows that rest on
+  "Live from events" returning nothing need re-reading.
+
+**None of lane C's 38 moves is realised in production.** The shell and the
+analytics flag are off, `canonical_media` is absent from every row, and the
+gem outcome also needs the hidden-gem flags and at least three reporters.
+MD112, the duplicate check on every gem submission surface, is the one move
+that is live on deploy.
+
+### 23.4 Restated headline
+
+> | Measure | After lanes B and A (§23.1) | Now, after lane C |
 > | --- | --- | --- |
 > | Denominator (testable requirements) | 450 | **450** |
-> | BUILT-AND-CORRECT | 319 | **347** |
-> | BUILT-BUT-WRONG | 67 | **55** |
-> | NOT-BUILT | 62 | **46** |
+> | BUILT-AND-CORRECT | 347 | **383** |
+> | BUILT-BUT-WRONG | 55 | **41** |
+> | NOT-BUILT | 46 | **24** |
 > | CANNOT-VERIFY | 2 | **2** |
-> | **CONSTRUCTED%** = (C+W)/450 | 85.8 % | **402 / 450 = 89.3 %** |
-> | **CORRECT%** (raw) = C/450 | 70.9 % | **347 / 450 = 77.1 %** |
+> | **CONSTRUCTED%** = (C+W)/450 | 89.3 % | **424 / 450 = 94.2 %** |
+> | **CORRECT%** (raw) = C/450 | 77.1 % | **383 / 450 = 85.1 %** |
 >
-> Restated from `check:census-integrity` after lanes B and A. Lanes C and D
-> are not yet merged.
+> Restated from `check:census-integrity` after lanes B, A and C. Lane D is not
+> yet merged. These are construction verdicts: none of the moves in §19–§21 is
+> realised in production (§20.5, §21.5, §23.3).

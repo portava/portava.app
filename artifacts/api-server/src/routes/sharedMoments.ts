@@ -7,7 +7,7 @@ import { fetchBlockedSet } from "../lib/blocks.js";
 import { excludePrivateAuthorPosts } from "../lib/privacyFilter.js";
 import { isLivePlacesCapabilityEnabled } from "../lib/featureFlags.js";
 import { appendMomentAudit, areSharedMomentsEnabled, momentRole } from "../lib/places/sharedMoments.js";
-import { recordMediaAttachment } from "../lib/mediaAssets.js";
+import { recordMediaAttachment } from "../lib/mediaAssets.js"; import { recordMediaInviteIfAttributable } from "../lib/mediaAnalytics.js";
 
 const router = Router();
 const uuid = z.string().uuid();
@@ -18,7 +18,7 @@ const createSchema = z.object({
   placeDayId: uuid.optional(), placeId: uuid.optional(), tripId: uuid.optional(),
   joinPolicy: z.enum(["invite_only", "approval_required"]).default("invite_only"),
 }).refine((v) => Boolean(v.placeDayId || v.placeId || v.tripId), "A Place Day, place, or trip is required");
-const inviteSchema = z.object({ userId: uuid });
+const inviteSchema = z.object({ userId: uuid, originMediaId: uuid.optional() });
 const responseSchema = z.object({ response: z.enum(["accept", "decline"]) });
 const contributionSchema = z.object({ postId: uuid.optional(), mediaAssetId: uuid.optional(), caption: z.string().trim().min(1).max(1000).optional() })
   .refine((v) => Boolean(v.postId || v.mediaAssetId || v.caption), "A source or caption is required");
@@ -132,7 +132,7 @@ router.post("/shared-moments/:id/invites", asyncHandler(async (req, res) => {
   }, { onConflict: "moment_id,user_id" });
   if (error) { sendError(res, "db_error", error.message); return; }
   await appendMomentAudit(ctx.sc, params.data.id, ctx.userId, "invited", { userId: parsed.data.userId });
-  res.status(201).json({ ok: true });
+  res.status(201).json({ ok: true }); recordMediaInviteIfAttributable(ctx.sc, { inviterId: ctx.userId, momentId: params.data.id, originMediaId: parsed.data.originMediaId ?? null });
 }));
 
 router.post("/shared-moments/:id/request", asyncHandler(async (req, res) => {

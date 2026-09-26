@@ -57,6 +57,7 @@ import type { ThreadSummary } from '../services/messaging.ts';
 import { getPostById } from '../services/posts.ts';
 import { searchUsers } from '../services/follows.ts';
 import type { TravelerSearchResult } from '../services/follows.ts';
+import { shareObjectIntoThread } from '../features/telegraph/sharing/shareApi.ts';
 
 export type ShareTarget = 'external' | 'copy_link' | 'dm' | 'group_chat' | 'trip_crew' | 'circle';
 
@@ -65,6 +66,14 @@ interface Props {
   postId: string;
   onClose: () => void;
   onShareSuccess?: (target: ShareTarget) => void;
+  /**
+   * When set (the media action rail's Share through Telegraph, census-media
+   * §21), the in-app send writes a Telegraph §5 object REFERENCE into the
+   * chosen thread via POST /threads/:id/share — the server resolves the post
+   * for each reader at read time, so a later privacy change or deletion is
+   * honoured — instead of the post_card snapshot. Unset: unchanged behaviour.
+   */
+  telegraphObject?: { objectType: 'POST'; objectId: string } | null;
 }
 
 interface PostPreview {
@@ -89,7 +98,7 @@ function targetForThread(threadType: ThreadSummary['threadType']): ShareTarget {
   return 'dm';
 }
 
-export function ShareSheet({ visible, postId, onClose, onShareSuccess }: Props) {
+export function ShareSheet({ visible, postId, onClose, onShareSuccess, telegraphObject }: Props) {
   const [mode, setMode] = useState<'menu' | 'picker'>('menu');
   const [threads, setThreads] = useState<ThreadSummary[]>([]);
   const [loadingThreads, setLoadingThreads] = useState(false);
@@ -206,10 +215,12 @@ export function ShareSheet({ visible, postId, onClose, onShareSuccess }: Props) 
         commentCount: preview?.commentCount,
         caption: caption.trim() || undefined,
       };
-      const msgRes = await sendMessage(threadId, JSON.stringify(payload), {
-        msgType: 'system',
-        subtype: 'post_card',
-      });
+      const msgRes = telegraphObject
+        ? await shareObjectIntoThread(threadId, telegraphObject.objectType, telegraphObject.objectId, caption.trim() || null)
+        : await sendMessage(threadId, JSON.stringify(payload), {
+            msgType: 'system',
+            subtype: 'post_card',
+          });
       if (msgRes.ok) {
         onShareSuccess?.('dm');
         onClose();
@@ -222,7 +233,7 @@ export function ShareSheet({ visible, postId, onClose, onShareSuccess }: Props) 
     } finally {
       setSending(false);
     }
-  }, [postId, preview, caption, onClose, onShareSuccess]);
+  }, [postId, preview, caption, onClose, onShareSuccess, telegraphObject]);
 
   const handleNativeShare = useCallback(async () => {
     onClose();
@@ -274,10 +285,12 @@ export function ShareSheet({ visible, postId, onClose, onShareSuccess }: Props) 
         commentCount: preview?.commentCount,
         caption: caption.trim() || undefined,
       };
-      const res = await sendMessage(selectedId, JSON.stringify(payload), {
-        msgType: 'system',
-        subtype: 'post_card',
-      });
+      const res = telegraphObject
+        ? await shareObjectIntoThread(selectedId, telegraphObject.objectType, telegraphObject.objectId, caption.trim() || null)
+        : await sendMessage(selectedId, JSON.stringify(payload), {
+            msgType: 'system',
+            subtype: 'post_card',
+          });
       if (res.ok) {
         onShareSuccess?.(targetForThread(thread.threadType));
         onClose();
@@ -290,7 +303,7 @@ export function ShareSheet({ visible, postId, onClose, onShareSuccess }: Props) 
     } finally {
       setSending(false);
     }
-  }, [selectedId, threads, postId, preview, caption, onClose, onShareSuccess]);
+  }, [selectedId, threads, postId, preview, caption, onClose, onShareSuccess, telegraphObject]);
 
   return (
     <PortavaSheet

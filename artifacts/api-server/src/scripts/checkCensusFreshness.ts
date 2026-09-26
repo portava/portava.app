@@ -1602,6 +1602,32 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     // the census above its floor for the right reason.
     "travel-buddy-standalone/src/navigation/portavaRoutes.ts",
     "artifacts/api-server/src/services/telegraph/shareables.ts",
+    // WIDENED 2026-09-26 by census-media §21 (Lane C). §21 moves 36 rows on
+    // what these files do and what these suites assert, and cited them, which
+    // took check:census-scope-coverage to 87% against its 96% floor. Each is
+    // named because a silent edit to it can falsify a §21 verdict: the §24
+    // term library and the §44/§45 producers (lib/mediaAnalytics.ts had been
+    // cited since §11 and watched by nothing), the post_event_links writer,
+    // the client halves the actions and signals run through, and the six
+    // proof suites. Named one by one for the reason the 2026-09-15 entry gives.
+    "artifacts/api-server/src/lib/mediaRankingSignals.ts",
+    "artifacts/api-server/src/lib/mediaAnalytics.ts",
+    "artifacts/api-server/src/lib/mediaEventLinks.ts",
+    "artifacts/api-server/src/test/mediaRankingObjectives.test.ts",
+    "artifacts/api-server/src/test/mediaContributorTripExpertise.test.ts",
+    "artifacts/api-server/src/test/mediaActionsSection21.test.ts",
+    "artifacts/api-server/src/test/mediaOutcomeSignals.test.ts",
+    "artifacts/api-server/src/test/hiddenGemOutcome.test.ts",
+    "artifacts/api-server/src/test/mediaEventLink.test.ts",
+    "travel-buddy-standalone/src/hooks/useMediaAnalytics.ts",
+    "travel-buddy-standalone/src/services/mediaInteractions.ts",
+    "travel-buddy-standalone/src/services/hiddenGems.ts",
+    "travel-buddy-standalone/src/services/hiddenGemsMappers.ts",
+    "travel-buddy-standalone/src/services/sharedMoments.ts",
+    "travel-buddy-standalone/src/services/routePlan.ts",
+    "travel-buddy-standalone/src/components/ShareSheet.tsx",
+    "travel-buddy-standalone/src/components/CommentsSheet.tsx",
+    "travel-buddy-standalone/src/components/gems/GemContributeSection.tsx",
   ],
   // census-telegraph.md — declared 2026-09-11 on the same basis as Media above:
   // 451 requirements out of CANNOT BE CHECKED, a clock started rather than a

@@ -107,6 +107,8 @@ interface Props {
   postId: string;
   onClose: () => void;
   onCountChange: (n: number) => void;
+  /** Called once per comment or reply the server accepted (never on a refusal). */
+  onCommentPosted?: () => void;
 }
 
 // ── Utility ───────────────────────────────────────────────────────────────────
@@ -924,7 +926,7 @@ export function CommentsSection({ postId, onCountChange, onInputFocus }: Section
 
 // ── CommentsSheet — peek-to-full animated bottom sheet ────────────────────────
 
-export function CommentsSheet({ visible, postId, onClose, onCountChange }: Props) {
+export function CommentsSheet({ visible, postId, onClose, onCountChange, onCommentPosted }: Props) {
   const { height: SCREEN_H, width: SCREEN_W } = useWindowDimensions();
   const insets = useSafeAreaInsets();
 
@@ -1162,6 +1164,7 @@ export function CommentsSheet({ visible, postId, onClose, onCountChange }: Props
             }));
             setRepliesLoaded((prev) => new Set(prev).add(parentId));
             setRepliesOpen((prev) => new Set(prev).add(parentId));
+            onCommentPosted?.();
           } else if (result && 'error' in result) {
             if (result.error === 'comments_disabled') {
               setCommentsDisabled(true);
@@ -1176,6 +1179,7 @@ export function CommentsSheet({ visible, postId, onClose, onCountChange }: Props
           const result = await addComment(postId, t);
           if (result && 'comment' in result) {
             setText('');
+            onCommentPosted?.();
             // Mark that a successful submit has raced any in-flight load so
             // load()'s setComments won't overwrite the optimistic state.
             submittedSinceLoadRef.current = true;
@@ -1196,7 +1200,7 @@ export function CommentsSheet({ visible, postId, onClose, onCountChange }: Props
     } finally {
       setSubmitting(false);
     }
-  }, [text, postId, replyingTo, onCountChange]);
+  }, [text, postId, replyingTo, onCountChange, onCommentPosted]);
 
   const handleDelete = useCallback(
     async (commentId: string) => {

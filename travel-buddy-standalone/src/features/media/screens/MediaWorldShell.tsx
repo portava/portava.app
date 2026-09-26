@@ -24,7 +24,7 @@ import { color } from '../../../theme/tokens.ts';
 import { HiddenGemsMediaScreen } from './HiddenGemsMediaScreen.tsx';
 import { WhyThisSheet } from '../../../components/media/WhyThisSheet.tsx';
 import { openClusterPerspectives, openExperiencePerspectives, openPersonPerspectives, openPlaceByIdPerspectives } from '../services/perspectiveOpeners.ts';
-import { lensNavReducer, INITIAL_LENS_NAV, modesForLens, isLens, defaultModeForLens } from '../state/lens.ts';
+import { lensNavReducer, INITIAL_LENS_NAV, modesForLens, isLens, defaultModeForLens } from '../state/lens.ts'; import { mediaSignalRecorder } from '../../../services/mediaInteractions.ts'; import { emitMediaSignal } from '../telemetry/mediaTelemetry.ts';
 import { cachedAsOfLabel } from '../state/freshness.ts';
 import type { MediaLens, PresentationMode, CityVisualZone } from '../types/mediaContext.ts';
 import type { MediaProjection } from '../types/media.ts';
@@ -124,10 +124,11 @@ function MediaWorldShellInner({ cityId, cityName: cityNameProp = null, lat, lng,
             state={worldState}
             mode={nav.mode}
             onReload={reload}
-            onSelectZone={() => selectLens('places')}
+            onSelectZone={() => { emitMediaSignal(mediaSignalRecorder, 'visual_opportunity_open', { surface: 'now_zone' }); selectLens('places'); }}
             onOpenChanging={(item) => {
               const hero = item.heroMedia?.[0];
               // §14: a changing-now card IS a place — open that place's perspectives.
+              if (item.placeId || hero) emitMediaSignal(mediaSignalRecorder, 'visual_opportunity_open', { mediaId: hero?.id ?? null, placeId: item.placeId ?? null, surface: 'now_changing' });
               if (item.placeId) void openPlaceByIdPerspectives(item.placeId, hero ?? null);
               else if (hero) openMediaViewer(hero);
             }}
@@ -137,7 +138,7 @@ function MediaWorldShellInner({ cityId, cityName: cityNameProp = null, lat, lng,
             onWhyThis={(item) => {
               if (item.whyThis) setWhy({ visible: true, explanation: item.whyThis });
             }}
-            onSelectForYou={(item) => selectLens(item.lens ?? 'now')}
+            onSelectForYou={(item) => { emitMediaSignal(mediaSignalRecorder, 'visual_opportunity_open', { surface: 'now_for_you' }); selectLens(item.lens ?? 'now'); }}
             city={cityName}
             center={center}
             onOpenCluster={(c) => void openClusterPerspectives(c)}
@@ -180,7 +181,7 @@ function MediaWorldShellInner({ cityId, cityName: cityNameProp = null, lat, lng,
             mode={nav.mode}
             city={cityName}
             center={center}
-            onOpenGem={(gemId) => router.push(`/gems/${encodeURIComponent(gemId)}` as never)}
+            onOpenGem={(gemId) => { emitMediaSignal(mediaSignalRecorder, 'gem_open', { gemId, surface: 'world_gems' }); router.push(`/gems/${encodeURIComponent(gemId)}` as never); }}
           />
         )}
 

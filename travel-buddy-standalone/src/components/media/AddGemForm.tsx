@@ -43,6 +43,9 @@ import { GlobalPlacePicker } from '../selectors/GlobalPlacePicker.tsx';
 import { submitGem, type GemCategory } from '../../services/hiddenGems.ts';
 import { listMyTrips, type TripRow } from '../../services/trips.ts';
 import type { Place } from '../../lib/location/placeTypes.ts';
+// §16.1 DUPLICATE CHECK (census-media §21) — the same inline merge-or-create step /gems/submit runs.
+import { useCreationAssistance } from '../../hooks/useCreationAssistance.ts';
+import { CreationAssist, CREATION_FIELD_IDS, type DuplicateCandidate } from '../../platform/input-assistance/index.ts';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -125,6 +128,18 @@ export function AddGemForm({ onSuccess, onClose }: AddGemFormProps) {
 
   // ── Required fields ─────────────────────────────────────────────────────────
   const [placeName, setPlaceName] = useState('');
+  // §16.1 DUPLICATE CHECK — as the gem is named, likely-existing gems surface and
+  // the user can open that gem (and update it there) instead of minting a
+  // duplicate. Advisory, never blocking: publishing stays their choice.
+  const gemAssist = useCreationAssistance({
+    context: 'hidden_gem_name',
+    fieldId: CREATION_FIELD_IDS.gemName,
+    text: placeName,
+    sessionContext: { surface: 'gem_create' },
+  });
+  const pickExistingGem = useCallback((c: DuplicateCandidate) => {
+    if (c.route) router.push(c.route as any);
+  }, []);
   const [category, setCategory] = useState<GemCategory>('other');
   const [cityArea, setCityArea] = useState('');
   const [caption, setCaption] = useState('');
@@ -551,6 +566,11 @@ export function AddGemForm({ onSuccess, onClose }: AddGemFormProps) {
           {errors.placeName && (
             <Text style={styles.fieldError}>{errors.placeName}</Text>
           )}
+          <CreationAssist
+            duplicates={gemAssist.duplicates}
+            validation={gemAssist.validation}
+            onPickExisting={pickExistingGem}
+          />
         </View>
 
         {/* Category */}

@@ -28,7 +28,19 @@ export type MediaActionId =
   | 'meet_here'
   | 'i_want_this'
   | 'share_telegraph'
-  | 'report';
+  | 'report'
+  // census-media §21 — the §15 / §15.2 / §16.3 / §23.1 actions the server now
+  // offers (and three it offered that this client used to hide).
+  | 'directions'
+  | 'view_event'
+  | 'view_passport'
+  | 'find_quieter'
+  | 'find_cheaper'
+  | 'contribute_gem'
+  | 'invite_people'
+  | 'follow_this_night'
+  | 'save_route'
+  | 'link_event';
 
 /** Outcome-oriented category (§26) — what real-world value the action drives. */
 export type MediaActionOutcome =
@@ -40,7 +52,8 @@ export type MediaActionOutcome =
   | 'want'
   | 'share'
   | 'moderate'
-  | 'discover';
+  | 'discover'
+  | 'contribute';
 
 export type MediaEntityKind = 'media' | 'place' | 'trip' | 'gem';
 
@@ -99,4 +112,47 @@ export interface ExperiencePlanProposal {
   /** Trips the viewer may write the plan into (the target's own gate). */
   eligibleTripIds: string[];
   generatedAt: string | null;
+}
+
+// ── "Do This Experience" as an EXECUTABLE plan (§15.2, census-media §21) ─────
+
+/** A compiled stop: ordered, timed, keyed to a canonical entity — never a coordinate. */
+export interface CompiledPlanStop extends ExperiencePlanStop {
+  order: number;
+  startsAt: string;
+  endsAt: string;
+  dwellMinutes: number;
+  transitMinutesBefore: number;
+  /** 'default' — no route was measured; the plan says so rather than pretending. */
+  transitBasis: 'none' | 'default';
+}
+
+/** GET /media/experiences/:id/plan?compile=1 — compileExperiencePlan's answer. */
+export interface CompiledExperiencePlan {
+  source: { kind: 'experience' | 'trail'; id: string; title: string | null };
+  /** YYYY-MM-DD the plan is compiled onto. */
+  day: string;
+  startsAt: string;
+  stops: CompiledPlanStop[];
+  eligibleTripIds: string[];
+  /** Always 'not_verified' today — feasibility is the Trips lane's, and off. */
+  feasibility: string;
+}
+
+// ── Save Route (§23.1) ───────────────────────────────────────────────────────
+
+/** One chain stop as the rail hands it over: a canonical place id and a title. */
+export interface RouteStopRef {
+  sourceType: 'place';
+  sourceId: string;
+  title: string;
+}
+
+// ── Link to an event (census-media §21, MD103) ───────────────────────────────
+
+/** An event the author may link their post to — offered by the server, never guessed. */
+export interface LinkableEventRef {
+  eventId: string;
+  title: string | null;
+  startsAt: string | null;
 }

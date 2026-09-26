@@ -34,7 +34,7 @@ import {
   Dimensions,
 } from 'react-native';
 import { Avatar } from '../ui/Avatar.tsx';
-import { recordMediaShare } from '../../services/mediaInteractions.ts';
+import { recordMediaShare, mediaSignalRecorder } from '../../services/mediaInteractions.ts'; import { emitMediaSignal, emitMediaNorthStar } from '../../features/media/telemetry/mediaTelemetry.ts';
 import { ShareSheet } from '../ShareSheet.tsx';
 import { formatCompactCount } from '../../lib/counterFormat.ts';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -217,15 +217,15 @@ export function WatchItemOverlay({
   const goProfile = useCallback(() => {
     // Profile route is username-based: /u/[username]
     if (!item.creator.username) return;
-    router.push(`/u/${item.creator.username}` as any);
-  }, [item.creator.username]);
+    router.push(`/u/${item.creator.username}` as any); emitMediaSignal(mediaSignalRecorder, 'profile_open', { mediaId: item.id, creatorId: item.creator.id, surface: 'watch_overlay' });
+  }, [item.creator.username, item.creator.id, item.id]);
 
   const goPlace = useCallback(() => {
     // Only navigate when a canonical place ID is available; location-label-only
     // items (no structured place record) are shown as non-tappable text.
     if (!item.place?.id) return;
-    router.push(`/place/${item.place.id}` as any);
-  }, [item.place]);
+    router.push(`/place/${item.place.id}` as any); emitMediaSignal(mediaSignalRecorder, 'place_open', { mediaId: item.id, placeId: item.place.id, surface: 'watch_overlay' }); emitMediaNorthStar(mediaSignalRecorder, 'show_on_map', { mediaId: item.id, placeId: item.place.id, entityKind: 'place', surface: 'watch_overlay' });
+  }, [item.place, item.id]);
 
   const goEntity = useCallback(() => {
     if (!item.linkedEntity) return;

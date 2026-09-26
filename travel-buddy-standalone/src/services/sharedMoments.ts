@@ -44,8 +44,9 @@ export function getSharedMoment(id: string): Promise<SharedMomentDetail | null> 
 export function createSharedMoment(input: { title: string; description?: string; placeDayId?: string; placeId?: string; tripId?: string; joinPolicy?: 'invite_only' | 'approval_required' }): Promise<{ moment: SharedMoment } | null> {
   return request('/api/shared-moments', { method: 'POST', body: JSON.stringify(input) });
 }
-export function inviteToSharedMoment(id: string, userId: string): Promise<boolean> {
-  return request<{ ok: boolean }>(`/api/shared-moments/${encodeURIComponent(id)}/invites`, { method: 'POST', body: JSON.stringify({ userId }) }).then((v) => v?.ok === true);
+export function inviteToSharedMoment(id: string, userId: string, originMediaId?: string | null): Promise<boolean> {
+  // originMediaId: the media item the invite was sent from (§44 Invite sent); the server attributes it only when the invite lands.
+  return request<{ ok: boolean }>(`/api/shared-moments/${encodeURIComponent(id)}/invites`, { method: 'POST', body: JSON.stringify(originMediaId ? { userId, originMediaId } : { userId }) }).then((v) => v?.ok === true);
 }
 export function respondToSharedMomentInvite(id: string, response: 'accept' | 'decline'): Promise<boolean> {
   return request<{ ok: boolean }>(`/api/shared-moments/${encodeURIComponent(id)}/respond`, { method: 'POST', body: JSON.stringify({ response }) }).then((v) => v?.ok === true);

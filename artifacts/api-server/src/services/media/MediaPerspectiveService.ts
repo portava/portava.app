@@ -173,7 +173,7 @@ export function buildPerspectiveSummary(
       freshCount: countFresh(capturedAts, nowMs),
       freshness: aggregateFreshness(capturedAts, nowMs),
       contributorCount: contributors.size,
-      media: sorted.slice(0, samplePerGroup),
+      media: items.slice(0, samplePerGroup).sort((a, b) => new Date(b.capturedAt).getTime() - new Date(a.capturedAt).getTime()),
     });
   }
 
