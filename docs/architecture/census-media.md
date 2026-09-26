@@ -5063,7 +5063,7 @@ file restored.
 - `check:doc-citations`: clean.
 - `check:citation-targets`: 165 / 165.
 - `check:census-scope-coverage`: passed.
-- `check:census-integrity`: re-derives this row's move.
+- `check:census-integrity`: the rows now count C 399 / W 37 / N 12 / X 2, which is this row's move. The check exits non-zero with exactly one error: §23.6's stated headline (C 398 / W 38) no longer matches those rows. The lane brief reserves restating the headline for the integrator, so this section does not restate it.
 - No new server test file was added, so `check:test-registration` is unchanged.
 - eslint on the changed server files: 0 errors.
 - Client (`travel-buddy-standalone`):
