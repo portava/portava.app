@@ -6240,6 +6240,42 @@ Lane H counted seven; MD42 carries two of them. For MD40, lane H read "starts
 one line late"; the table itself also ends at 55, not 58, which is the entity
 index.
 
+### 28.12 CI on `0f0ecde26`: the §28.7 test hung on a stale keep-alive socket, and the harness is fixed
+
+**What failed.** The CI node:test suite on `0f0ecde26` passed 26,502 of
+26,503 tests. The one failure was §28.7's
+`artifacts/api-server/src/test/mediaUploadHardening.test.ts:280#it("authenticates BEFORE reading the body`,
+which got no answer within 3 s. It had never run to completion in CI before,
+because the run on `f31d94812` was cancelled by the next push. It passes
+locally on Node 22 and Node 24, with CI's environment variables, and under
+CPU contention: no local run reproduced it.
+
+**The cause, as far as it can be shown.** It is the one request in the file
+issued straight after a request the server destroys: the 101 MB
+oversized-video case, which the bounded collector cuts off. Locally, that case
+always ends in a reset before any answer, so its socket is never pooled. On a
+faster CI loopback it can read its 400 first. The global agent keeps sockets
+alive by default since Node 19, so it can then hand that socket to the next
+request before the server's destroy arrives. That is the documented
+keep-alive race: `reusedSocket` exists for it. The test ignored
+`ECONNRESET` / `EPIPE`, so a stale socket became a silent 3 s hang rather than
+an error.
+
+**The fix is to the harness, not the route.**
+- Every raw request in the file now opens a fresh connection (`agent: false`),
+  so no request can inherit a socket the server has already destroyed.
+- The two "refuse before the body" cases no longer swallow a reset. A
+  connection error before any answer now fails the case at once, and names
+  its code and whether the socket was reused.
+- No assertion changed. Every edit is on an existing line.
+
+**Still red when it should be.** Under Node 24 with CI's environment:
+- the §28.7 order (authenticate after the read) turns this case red;
+- U-M1 (§28.10's decisions after the read) turns both §28.10 refusal cases
+  red.
+
+The file passes 24/24 on Node 22 and Node 24.
+
 ## 29. Lane I — the Media Map draws its covers from the cache, and Search asks 'near' — 2026-09-26
 
 §24 built the server and client-service halves of MD300 and MD288, and left

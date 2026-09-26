@@ -33,7 +33,7 @@ function rawReq(method: string, path: string, body: Buffer | null, contentType: 
     const url = new URL(path, base);
     const headers: Record<string, string> = { authorization: `Bearer ${TOKEN}`, "content-type": contentType };
     if (body) headers["content-length"] = String(body.length);
-    const r = http.request({ hostname: url.hostname, port: Number(url.port), path: url.pathname, method, headers }, (res) => {
+    const r = http.request({ hostname: url.hostname, port: Number(url.port), path: url.pathname, method, headers, agent: false }, (res) => { // agent:false — never a pooled keep-alive socket the server has already destroyed (census-media §28.12)
       let raw = ""; res.on("data", (c) => (raw += c));
       res.on("end", () => { let p: any; try { p = JSON.parse(raw); } catch { p = raw; } resolve({ status: res.statusCode ?? 0, body: p }); });
     });
@@ -285,14 +285,14 @@ describe("POST /api/media/upload — hardening", () => {
     setClients(client);
     const url = new URL("/api/media/upload", base);
     const res = await new Promise<{ status: number; body: any }>((resolve, reject) => {
-      const r = http.request({
+      const r = http.request({ agent: false, // census-media §28.12: a fresh connection, never a stale pooled one
         hostname: url.hostname, port: Number(url.port), path: url.pathname, method: "POST",
         headers: { "content-type": "image/jpeg", "content-length": String(200 * 1024 * 1024) },
       }, (resp) => {
         let raw = ""; resp.on("data", (c) => (raw += c));
         resp.on("end", () => { let b: any; try { b = JSON.parse(raw); } catch { b = raw; } resolve({ status: resp.statusCode ?? 0, body: b }); });
       });
-      r.on("error", (e: any) => (e?.code === "ECONNRESET" || e?.code === "EPIPE" ? undefined : reject(e)));
+      r.on("error", (e: any) => reject(new Error(`connection error before any answer: ${e?.code ?? e} (reusedSocket=${(r as any).reusedSocket}) — census-media §28.12`)));
       r.write(Buffer.alloc(16, 1));
       setTimeout(() => { r.destroy(); reject(new Error("no answer within 3 s — the route waited for the body before authenticating")); }, 3000).unref();
     });
@@ -797,14 +797,14 @@ describe("a story signed URL cannot outlive the story", () => {
 function refusedBeforeBody(contentType: string): Promise<{ status: number; body: any }> {
   const url = new URL("/api/media/upload", base);
   return new Promise((resolve, reject) => {
-    const r = http.request({
+    const r = http.request({ agent: false, // census-media §28.12: a fresh connection, never a stale pooled one
       hostname: url.hostname, port: Number(url.port), path: url.pathname, method: "POST",
       headers: { authorization: `Bearer ${TOKEN}`, "content-type": contentType, "content-length": String(200 * 1024 * 1024) },
     }, (resp) => {
       let raw = ""; resp.on("data", (c) => (raw += c));
       resp.on("end", () => { let b: any; try { b = JSON.parse(raw); } catch { b = raw; } resolve({ status: resp.statusCode ?? 0, body: b }); });
     });
-    r.on("error", (e: any) => (e?.code === "ECONNRESET" || e?.code === "EPIPE" ? undefined : reject(e)));
+    r.on("error", (e: any) => reject(new Error(`connection error before any answer: ${e?.code ?? e} (reusedSocket=${(r as any).reusedSocket}) — census-media §28.12`)));
     r.write(Buffer.alloc(16, 1));
     setTimeout(() => { r.destroy(); reject(new Error("no answer within 3 s — the route waited for the body before refusing")); }, 3000).unref();
   });
