@@ -19,8 +19,8 @@ import { ChevronRight } from 'lucide-react-native';
 import { color, radius, space } from '../../../theme/tokens.ts';
 import type { PresentationMode } from '../types/mediaContext.ts';
 import type { MediaExperienceProjection, ExperienceChain } from '../types/mediaExperience.ts';
-import { buildExperienceChain, fetchMediaMap } from '../services/mediaProjection.ts';
-import { experiencesOffline } from '../../../services/media/mediaOffline.ts'; // §39 offline trip/event media
+import { buildExperienceChain } from '../services/mediaProjection.ts';
+import { experiencesOffline, mediaMapOffline } from '../../../services/media/mediaOffline.ts'; // §39 offline trip/event media; the map's clusters + covers (census-media §29)
 import { ExperienceMosaic } from '../components/ExperienceMosaic.tsx';
 import { FreshnessBadge } from '../components/FreshnessBadge.tsx';
 import { LensStateView } from '../components/LensStateView.tsx';
@@ -143,8 +143,8 @@ function ExperiencesMap({
   const loadClusters = useMemo(() => {
     const allowed = new Set(placeKey ? placeKey.split(',') : []);
     return (opts: { signal: AbortSignal }) =>
-      fetchMediaMap({ city, signal: opts.signal }).then((r) =>
-        r.ok ? { ok: true as const, data: r.data.clusters.filter((c) => allowed.has(c.placeId)) } : r,
+      mediaMapOffline({ city, signal: opts.signal }).then((r) => // §39 "Map thumbnails" (census-media §29, MD300)
+        r.ok ? { ok: true as const, data: r.data.clusters.filter((c) => allowed.has(c.placeId)), offline: r.offline } : r,
       );
   }, [placeKey, city]);
   return (

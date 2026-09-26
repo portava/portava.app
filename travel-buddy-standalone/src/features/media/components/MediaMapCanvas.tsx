@@ -18,7 +18,7 @@ import { View, Text, Pressable, StyleSheet } from 'react-native';
 const _ml: any = (() => { try { return require('@maplibre/maplibre-react-native'); } catch { return {}; } })();
 // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
 const { Map: MLMap, Camera, Marker, GeoJSONSource, Layer } = _ml as typeof import('@maplibre/maplibre-react-native');
-import { color, icon, space } from '../../../theme/tokens.ts';
+import { avatar, color, icon, space } from '../../../theme/tokens.ts';
 import type { StyleSpecification } from '@maplibre/maplibre-gl-style-spec';
 import {
   FALLBACK_MAP_STYLE_URL,
@@ -110,6 +110,10 @@ export function MediaMapCanvas({
 
         {clusters.map((c) => {
           const selected = c.placeId === selectedPlaceId;
+          // §39 "Map thumbnails" (census-media §29): the ONE cover the server chose
+          // for this cluster, drawn through the signing image component. No cover
+          // ⇒ the count bubble, exactly as before covers existed.
+          const cover = clusterCoverImage(c);
           return (
             <Marker key={`cluster-${c.placeId}`} lngLat={[c.lng, c.lat]}>
               <Pressable
@@ -117,9 +121,24 @@ export function MediaMapCanvas({
                 onPress={() => onSelectCluster?.(c.placeId)}
                 accessibilityRole="button"
                 accessibilityLabel={`${c.label}: ${c.perspectiveCount} ${c.perspectiveCount === 1 ? 'perspective' : 'perspectives'}`}
-                style={[styles.bubble, selected && styles.bubbleSelected]}
+                style={cover ? [styles.coverBubble, selected && styles.coverBubbleSelected] : [styles.bubble, selected && styles.bubbleSelected]}
               >
-                <Text style={styles.bubbleText}>{c.perspectiveCount}</Text>
+                {cover ? (
+                  <>
+                    <CachedImage
+                      source={{ uri: cover }}
+                      style={styles.coverImg}
+                      resizeMode="cover"
+                      fallbackLabel=""
+                      testID={`media-map-cover-${c.placeId}`}
+                    />
+                    <View style={styles.coverCount}>
+                      <Text style={styles.coverCountText}>{c.perspectiveCount}</Text>
+                    </View>
+                  </>
+                ) : (
+                  <Text style={styles.bubbleText}>{c.perspectiveCount}</Text>
+                )}
               </Pressable>
             </Marker>
           );
@@ -149,6 +168,33 @@ const styles = StyleSheet.create({
   },
   bubbleSelected: { backgroundColor: color.onInk },
   bubbleText: { color: color.onInk, fontSize: 12, fontWeight: '800' },
+  // A cluster with a cover: the image in a ringed circle, its count as a badge.
+  coverBubble: {
+    width: avatar.s40,
+    height: avatar.s40,
+    borderRadius: avatar.s40 / 2,
+    borderWidth: 2,
+    borderColor: color.onInk,
+    backgroundColor: '#22221E',
+  },
+  // Selected: larger and heavier-ringed. Not the gem accent — green means a gem here.
+  coverBubbleSelected: { borderWidth: 3, transform: [{ scale: 1.15 }] },
+  coverImg: { width: '100%', height: '100%', borderRadius: avatar.s40 / 2 - 2 },
+  coverCount: {
+    position: 'absolute',
+    right: -6,
+    bottom: -6,
+    minWidth: 20,
+    height: 20,
+    paddingHorizontal: 5,
+    borderRadius: 10,
+    backgroundColor: 'rgba(17,17,15,0.92)',
+    borderWidth: 1,
+    borderColor: color.onInk,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  coverCountText: { color: color.onInk, fontSize: 11, fontWeight: '800' },
   // §46.1 contoured gem marker: a geometric discovery marker with an edge glow.
   gemMarker: {
     width: icon.s26,
@@ -171,3 +217,9 @@ const styles = StyleSheet.create({
     backgroundColor: GEM_ACCENT,
   },
 });
+
+// census-media §29 (MD300): each cluster's cover, drawn through the signing image
+// component. Imported at the TAIL so the line census-media cites above
+// (`<GeoJSONSource id="media-gem-zones"`) does not move; ESM hoists it.
+import { CachedImage } from '../../../components/CachedImage.tsx';
+import { clusterCoverImage } from '../state/mediaMapCover.ts';

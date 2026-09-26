@@ -3,7 +3,7 @@
  *
  * ADDITIVE: reached from the World shell header's Search affordance, from the
  * contextual viewer's "Where was this taken?" (a `mediaId` deep link), and by
- * deep link. Params: `q`, `scope` (all | me | trip), `tripId`, `mediaId`.
+ * deep link. Params: `q`, `scope` (all | me | trip), `tripId`, `mediaId`, and `nearPlaceId` (+ `nearPlaceName`) for a search opened from a place.
  * The viewer's coarse city is OFFERED as a "Near <city>" filter, never applied
  * silently.
  */
@@ -24,7 +24,7 @@ function one(v: string | string[] | undefined): string | null {
 }
 
 export default function MediaSearchRoute() {
-  const params = useLocalSearchParams<{ q?: string; scope?: string; tripId?: string; mediaId?: string }>();
+  const params = useLocalSearchParams<{ q?: string; scope?: string; tripId?: string; mediaId?: string; nearPlaceId?: string; nearPlaceName?: string }>();
   const { locationState } = useActiveLocation();
   const scopeParam = one(params.scope);
   const scope: MediaSearchScope = scopeParam === 'me' || scopeParam === 'trip' ? scopeParam : 'all';
@@ -39,6 +39,11 @@ export default function MediaSearchRoute() {
           mediaId={one(params.mediaId)}
           initialQuery={one(params.q) ?? ''}
           nearCity={locationState.place?.city ?? null}
+          // §38 "near X" (census-media §29): the SAME viewer point /media-world hands the
+          // World shell and its Media Map — this route's existing useActiveLocation, only
+          // when its state is ok. No new location read, no permission. Offered as "Near me".
+          viewerPoint={locationState.ok && locationState.coords ? { lat: locationState.coords.lat, lng: locationState.coords.lng } : null}
+          nearPlace={nearPlaceFrom(params)}
           onOpenMedia={(m) => router.push(`/media-viewer/${encodeURIComponent(m.id)}` as never)}
           onOpenPlace={(placeId) => router.push(`/place/${encodeURIComponent(placeId)}` as never)}
           onOpenGem={(gemId) => router.push(`/gems/${encodeURIComponent(gemId)}` as never)}
@@ -58,3 +63,9 @@ const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: color.ink },
   body: { flex: 1 },
 });
+
+/** A search opened from a place (census-media §29): its canonical id, and its name for the chip. */
+function nearPlaceFrom(params: { nearPlaceId?: string | string[]; nearPlaceName?: string | string[] }): { id: string; label: string | null } | null {
+  const id = one(params.nearPlaceId);
+  return id ? { id, label: one(params.nearPlaceName) } : null;
+}

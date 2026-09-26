@@ -29,14 +29,14 @@ import { View, Text, TextInput, Pressable, ScrollView, StyleSheet } from 'react-
 import { Search, MapPin, Calendar, Plane, Users } from 'lucide-react-native';
 import { color, radius, space } from '../../../theme/tokens.ts';
 import type { MediaProjection } from '../types/media.ts';
-import type { MediaSearchResultsView, SearchCanonicalResult } from '../types/mediaSearchResults.ts';
-import { fetchMediaSearch, isMediaSearchEmpty } from '../services/mediaProjection.ts';
+import type { SearchCanonicalResult } from '../types/mediaSearchResults.ts';
+import { fetchMediaSearch, isMediaSearchEmpty, type MediaSearchResultsWithNear } from '../services/mediaProjection.ts';
 import { useLensProjection } from '../hooks/useLensProjection.ts';
 import {
   INITIAL_MEDIA_FILTERS,
   SEARCH_CATEGORIES,
   mediaFilterReducer,
-  toSearchQueryString,
+  toSearchQueryString, searchNearCenter, toSearchNear, nearChipLabel, nearRefusalCopy, type MediaSearchFilters, type MediaSearchNearCenter,
   type MediaSearchScope,
 } from '../state/mediaFilterStore.ts';
 import { PerspectiveMosaic } from '../components/PerspectiveMosaic.tsx';
@@ -70,7 +70,7 @@ const UNDETERMINED_LABEL: Record<string, string> = {
 export function MediaSearchScreen({
   initialScope = 'all',
   tripId = null,
-  nearCity = null,
+  nearCity = null, viewerPoint = null, nearPlace = null,
   mediaId = null,
   initialQuery = '',
   fixedScope = false,
@@ -96,13 +96,13 @@ export function MediaSearchScreen({
   const [scopedTrip, setScopedTrip] = useState<{ id: string; title: string | null } | null>(
     tripId ? { id: tripId, title: null } : null,
   );
-  const queryString = useMemo(() => toSearchQueryString(filters), [filters]);
+  const queryString = useMemo(() => toSearchQueryString(filters), [filters]); const near = useSearchNear(filters, nearPlace, viewerPoint); // §38 "near X" (census-media §29, MD288)
 
   const fetcher = useCallback(
-    (opts: { signal: AbortSignal }) => fetchMediaSearch(queryString, opts),
-    [queryString],
+    (o: { signal: AbortSignal }) => { const opts = { signal: o.signal, near: near.param }; return fetchMediaSearch(queryString, opts); },
+    [queryString, near.param],
   );
-  const { state, reload } = useLensProjection<MediaSearchResultsView>(fetcher, isMediaSearchEmpty, [queryString]);
+  const { state, reload } = useLensProjection<MediaSearchResultsWithNear>(fetcher, isMediaSearchEmpty, [queryString, near.key]);
   const results = state.data;
 
   const submit = useCallback(() => {
@@ -179,7 +179,7 @@ export function MediaSearchScreen({
             testID="media-search-near-city"
             onPress={() => dispatch({ type: 'set_city', city: filters.city === nearCity ? null : nearCity })}
           />
-        ) : null}
+        ) : null}{near.center ? <Chip label={nearChipLabel(near.center)} active={filters.near} testID="media-search-near" onPress={() => dispatch({ type: 'toggle_near' })} /> : null}
         <Chip
           label="Right now"
           active={filters.freshOnly}
@@ -197,13 +197,13 @@ export function MediaSearchScreen({
         ))}
       </ScrollView>
 
-      {queryString == null ? (
+      {queryString == null && !near.param ? (
         <LensStateView
           status="empty"
           title={filters.scope === 'me' ? 'Search your own world' : 'Search the world by what it looks like'}
           message="Try a place, a kind of night, or a moment — “rooftop”, “festival”, “beach at sunset”."
         />
-      ) : state.status !== 'ready' || !results ? (
+      ) : state.status === 'empty' && results?.near?.refusal === 'center_unpositioned' ? <NearRefused center={near.center} onDrop={() => dispatch({ type: 'toggle_near' })} /> : state.status !== 'ready' || !results ? (
         <LensStateView
           status={state.status === 'idle' ? 'loading' : state.status}
           title={state.status === 'error' ? 'Search could not run' : 'Nothing matched'}
@@ -454,4 +454,72 @@ const styles = StyleSheet.create({
   gemMark: { width: 10, height: 10, transform: [{ rotate: '45deg' }], backgroundColor: '#10B981' },
   undetermined: { color: color.warn, fontSize: 12, lineHeight: 17, paddingHorizontal: space.lg },
   unsupported: { color: color.faint, fontSize: 11, lineHeight: 16, paddingHorizontal: space.lg },
+});
+
+// ── census-media §29 (MD288): §38 "near X" as a center and a bounded radius ────
+// Appended at the TAIL so no line census-media cites above moves.
+//
+// ONE chip, offered and never applied silently, like the city chip beside it:
+//   • "Near <place> · 1.5 km" when the search was opened from a canonical place;
+//   • otherwise "Near me · 1.5 km", centred on the viewer's point — the same
+//     one the World shell hands the Media Map, passed in by the route. Search
+//     reads no location of its own and asks for no permission;
+//   • no chip at all when there is neither.
+// "Near <city>" is untouched: it is still the coarse city criterion.
+
+// Declaration-merged into the props interface above.
+export interface MediaSearchScreenProps {
+  /** The viewer's point — the one the World shell hands the Media Map. Offered as "Near me". */
+  viewerPoint?: { lat: number; lng: number } | null;
+  /** The canonical place the search was opened from. "Near" is centred on it, not on the viewer. */
+  nearPlace?: { id: string; label?: string | null } | null;
+}
+
+/** What "near" is centred on here, what is sent for it, and a stable key for reloads. */
+function useSearchNear(
+  filters: MediaSearchFilters,
+  nearPlace: MediaSearchScreenProps['nearPlace'],
+  viewerPoint: MediaSearchScreenProps['viewerPoint'],
+): { center: MediaSearchNearCenter | null; param: ReturnType<typeof toSearchNear>; key: string } {
+  const placeId = nearPlace?.id ?? null;
+  const placeLabel = nearPlace?.label ?? null;
+  const lat = viewerPoint?.lat ?? null;
+  const lng = viewerPoint?.lng ?? null;
+  const center = useMemo(
+    () =>
+      searchNearCenter({
+        place: placeId ? { id: placeId, label: placeLabel } : null,
+        viewerPoint: lat != null && lng != null ? { lat, lng } : null,
+      }),
+    [placeId, placeLabel, lat, lng],
+  );
+  const on = filters.near;
+  const param = useMemo(() => toSearchNear({ near: on }, center), [on, center]);
+  return { center, param, key: param ? JSON.stringify(param) : '' };
+}
+
+/**
+ * The server answered `near.refusal: 'center_unpositioned'`: the canonical Map
+ * would not place the center, so nothing was searched. Said as that, and never
+ * as "Nothing matched", which would claim the area was searched and was empty.
+ */
+function NearRefused({ center, onDrop }: { center: MediaSearchNearCenter | null; onDrop: () => void }) {
+  const copy = nearRefusalCopy(center);
+  return (
+    <View style={styles.wrap} testID="media-search-near-refused">
+      <LensStateView status="empty" title={copy.title} message={copy.message} />
+      <Pressable
+        style={[styles.within, nearStyles.drop]}
+        onPress={onDrop}
+        accessibilityRole="button"
+        testID="media-search-near-drop"
+      >
+        <Text style={styles.withinText}>Search without “near”</Text>
+      </Pressable>
+    </View>
+  );
+}
+
+const nearStyles = StyleSheet.create({
+  drop: { alignSelf: 'center', marginBottom: space.xxxl },
 });
