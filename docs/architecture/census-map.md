@@ -350,7 +350,7 @@ client paths to `travel-buddy-standalone/` unless stated.
 | M4 | Live Place | C | `src/components/map/LivePlaceSheet.tsx`; model `src/features/map/place/livePlaceModel.ts:2`. |
 | M5 | Crowd Flow | **W** | Producer (`lib/crowdFlowProducer.ts`), gateway lane and client renderer all exist. The mode gate is `src/stores/mapStore.tsx:100#CROWD_FLOW:` — `CROWD_FLOW: inputs.crowdFlowObjectCount > 0` — and the gateway serves zero objects in production. TWO independent blockers, not one: `route_flow_contribution_consent` is absent (M67) **and** `geo_zones` holds no curated rows, which the gateway refuses on separately at `routes/mapProjection.ts:895#no_zone_model`. *(Re-read 2026-09-14: the old citation, line 98, was the §11 TRIP comment two lines above the gate, and the CORRECTION HEADER's line 836 for `no_zone_model` was 62 lines short. Both repointed and anchored; verdict unchanged.)* **Turns red when:** a production `GET /api/map/projection` response over a backfilled viewport carries at least one `objects[].kind === "crowd_flow"`. That needs an ops backfill of `geo_zones` (ops, not a migration) *and* 2218 + 2224 applied (integration owner). Either one alone leaves it W. |
 | M6 | Trip Map | C | `src/features/trips/map/tripMapSources.ts`, `tripMapModel.ts`; capability hard-true at `src/stores/mapStore.tsx:96`. |
-| M7 | Locate My Friends | **W** | Complete server (`lib/locateFriendsSession.ts`, 48 KB) and client (`src/services/locateFriends.ts`, `src/components/map/LocateFriendsPanel.tsx`). **All four storage tables are absent from production**: none of `locate_friends_sessions`, `_members`, `_positions`, `_audit` appears in `artifacts/api-server/baseline/20260907_production_tables.txt` (431 names), and all four are created by `` `artifacts/api-server/src/migrations/2219_locate_friends_sessions.sql:74#CREATE TABLE IF NOT EXISTS public.locate_friends_sessions (` ``. *(Re-read 2026-09-14: the old citation — `checkProductionDrift.ts`, lines 176-179 — was wrong twice over — those lines are `wall_telemetry_events` / `passport_telemetry_events`, and **that file does not track any `locate_friends_*` table at all**, so the ratchet is silent about this lane. The baseline table list is the artifact that actually carries the fact.)* **Turns red when:** a refreshed `baseline/*_production_tables.txt` contains the four names. Supplied by the operator with production read access, after the integration owner applies 2219. A CI-only apply does not move it — the baseline is production's. |
+| M7 | Locate My Friends | **W** | Complete server (`lib/locateFriendsSession.ts`, 48 KB) and client (`src/services/locateFriends.ts`, `src/components/map/LocateFriendsPanel.tsx`). **SUPERSEDED 2026-09-26 BY §44 — measured live, all four are now PRESENT on production (0 rows each); the blocker is now the flag `locate_friends_enabled=false`, not the schema. Kept as the record of what was true at the 2026-09-07 baseline.** All four storage tables were absent from production: none of `locate_friends_sessions`, `_members`, `_positions`, `_audit` appears in `artifacts/api-server/baseline/20260907_production_tables.txt` (431 names), and all four are created by `` `artifacts/api-server/src/migrations/2219_locate_friends_sessions.sql:74#CREATE TABLE IF NOT EXISTS public.locate_friends_sessions (` ``. *(Re-read 2026-09-14: the old citation — `checkProductionDrift.ts`, lines 176-179 — was wrong twice over — those lines are `wall_telemetry_events` / `passport_telemetry_events`, and **that file does not track any `locate_friends_*` table at all**, so the ratchet is silent about this lane. The baseline table list is the artifact that actually carries the fact.)* **Turns red when:** a refreshed `baseline/*_production_tables.txt` contains the four names. Supplied by the operator with production read access, after the integration owner applies 2219. A CI-only apply does not move it — the baseline is production's. |
 | M8 | Intent Mode | C | `src/components/map/IntentSheet.tsx:2`; opened at `app/map/index.tsx:2691`. |
 | M9 | Compass Map Recommendations | C | `src/features/map/compass/compassMapModel.ts`; capability hard-true, `src/stores/mapStore.tsx:94`. |
 | M10 | Time Machine | **W** | Producer `lib/temporalProjection.ts`, route `routes/mapProjectionTemporal.ts`, control `src/components/map/TimeMachineControl.tsx`. The capability requires the producer be reachable (`src/stores/mapStore.tsx:108#TIME_MACHINE:`), and the temporal route rides `map_projection_enabled` (`routes/mapProjectionTemporal.ts:429#map_projection_enabled`) and dies on the same `protected_zones` branch (`:575#loadProtectedZones`, answering `:583#protection_unreadable`). *(Re-read 2026-09-14: lines 105-107 were the comment above the gate and 574 a blank line; both repointed and anchored. Verdict unchanged.)* **Turns red when:** 2217 is applied to production *and* `map_projection_enabled` is TRUE there, and `GET /api/map/projection/temporal?offset=+60m` answers `enabled: true` with a non-null `forecast`. Both are integration-owner/ops acts; neither is code. |
@@ -1854,3 +1854,78 @@ It re-establishes the state of the 56 not-correct rows and nothing else. No othe
 row was re-audited, no verdict letter moves, and the tally below is unchanged from
 §42.6 — deliberately. Re-measuring a blocker is not the same as passing an
 acceptance criterion, and this section is the former.
+
+---
+
+## §44 — 2026-09-26: M7's blocker CHANGED CLASS, and the row still does not move
+
+**Re-measured live against production (`ajrurzioarfkagpuxfnb`, read-only), not
+acknowledged.** `check:census-freshness` named five counted files changed since
+`1fe72289b` and not covered: `lib/crowdFlowProducer.ts`,
+`lib/intelEvidenceCapture.ts`, `lib/locateFriendsSession.ts` (+108),
+`lib/mapAggregation.ts` (+215) and `routes/mapObservations.ts` (+288/−155).
+
+**NO VERDICT MOVES.** One row's stated evidence is now false and is replaced.
+
+### §44.1 M7 — the four tables are NO LONGER absent from production
+
+M7 reads: *"**All four storage tables are absent from production**: none of
+`locate_friends_sessions`, `_members`, `_positions`, `_audit` appears in
+`baseline/20260907_production_tables.txt`"*. That baseline is dated 2026-09-07.
+Measured against the live database today:
+
+| Object | 2026-09-26, production |
+|---|---|
+| `locate_friends_sessions` | **present**, 0 rows |
+| `locate_friends_members` | **present**, 0 rows |
+| `locate_friends_positions` | **present**, 0 rows |
+| `locate_friends_audit` | **present**, 0 rows |
+| `locate_friends_enabled` | **present, FALSE** |
+
+**2219 has been applied to production since that baseline was taken.** The
+schema blocker M7 rests on is gone.
+
+**M7 stays `W`** — and for a blocker of a different kind: the feature is
+flag-gated and the flag is off. That distinction is the whole point of
+re-measuring rather than acknowledging. "The tables do not exist" and "the
+switch is off" are the same verdict and completely different work: the first
+needs a migration applied and sanctioned, the second is one owner decision away.
+A plan built on the old sentence would have budgeted for the wrong thing.
+
+Note also that the row's evidence is a **baseline text file**, which ages
+silently — nothing fails when production moves past it. §43 read the production
+blockers live for exactly this reason; this section extends that to M7.
+
+### §44.2 M5, M65, M67 — re-executed, all three hold
+
+| Row | Test | Result today |
+|---|---|---|
+| M5 | `geo_zones` holds no curated rows | table **present**, **0 rows** — holds |
+| M5 / M67 | `route_flow_contribution_consent` absent from production | **absent** — holds |
+| M65 | `WIRED_SIGNAL_SOURCES` is two of seven | still exactly `next_stop_contribution`, `accepted_plan` — holds |
+
+M5, M65 and M67 all stay `W`, on conditions re-measured today rather than
+carried forward.
+
+`crowdFlowProducer.ts`'s own header remains the honest statement and was
+re-read: *"RUNTIME EFFECT TODAY: STILL NONE IN PRACTICE"*, with four
+independent blockers, none of them in that file. Two observed families now meet
+`MIN_SIGNAL_FAMILIES`, so the producer *could* emit — which changes nothing a
+user can see, and the file says so itself.
+
+### §44.3 What the other diffs are
+
+`mapAggregation.ts` (+215) gains the presence gate —
+`PRIVACY_CLASS_AS_PRESENCE_PRECISION`, `presenceClassUnder`,
+`gatePresenceObject`. That is the Sensing lane's §52 work landing in a file this
+census counts; it is graded in census-sensing, not here.
+`intelEvidenceCapture.ts` (+30) resolves contributor identities through 3310's
+bridge, the same post-3002 correction census-media §18.3 records.
+`routes/mapObservations.ts` is the §22 zone route taking its subject from the
+resolver.
+
+### §44.4 MOVES NOTHING
+
+Totals unchanged. Four rows re-tested against the live database; three hold on
+their original evidence, one holds on replaced evidence and a blocker that has
+changed class.
