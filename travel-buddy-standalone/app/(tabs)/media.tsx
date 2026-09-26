@@ -276,7 +276,7 @@ const styles = StyleSheet.create({
   },
   fabGems: {
     // Gem-mode FAB uses the gem green accent instead of signal red.
-    backgroundColor: '#10B981',
+    backgroundColor: '#0C875E', // census-media §31.12: #10B981 x 0.73; the white gem icon on it clears 3:1 (on #10B981, 2.54)
   },
   // World shell entry pill — top-left, subtle; additive (flag-gated).
   worldEntryBtn: {
@@ -288,7 +288,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 7,
     borderRadius: 999,
-    backgroundColor: 'rgba(17,17,15,0.45)',
+    backgroundColor: 'rgba(17,17,15,0.58)', // census-media §31.12: the least alpha at which "World" clears 4.5:1 over a white frame; was 0.45
     zIndex: 20,
   },
   worldEntryBtnLight: {

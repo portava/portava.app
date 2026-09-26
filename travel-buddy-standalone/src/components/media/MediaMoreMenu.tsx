@@ -458,7 +458,7 @@ const s = StyleSheet.create({
     flex: 1,
   },
   rowLabelDestructive: {
-    color: color.signal,
+    color: '#C43B23', // census-media §31.12: `signal` x 0.77, 4.99:1 on paper (`signal` is 3.14); the same shade as the World rail's ACTIVE_ON_PAPER
   },
   separator: {
     height: 1,

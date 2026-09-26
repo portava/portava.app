@@ -121,7 +121,7 @@ const styles = StyleSheet.create({
     borderRadius: radius.pill,
     paddingHorizontal: space.sm,
     paddingVertical: 3,
-    backgroundColor: 'rgba(17,17,15,0.55)',
+    backgroundColor: 'rgba(17,17,15,0.88)', // census-media §31: the least alpha at which every zone colour clears 4.5:1 over a white photo; was backgroundColor: 'rgba(17,17,15,0.55)',
   },
   stateChipText: { fontSize: 11, fontWeight: '800', letterSpacing: 0.2 },
   holdDot: { width: dot.s6, height: dot.s6, borderRadius: dot.s6 / 2 },

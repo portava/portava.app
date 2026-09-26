@@ -350,7 +350,7 @@ const styles = StyleSheet.create({
     top: 100,
     left: space.lg,
     right: 80, // clear of right action column
-    backgroundColor: 'rgba(0,0,0,0.55)',
+    backgroundColor: 'rgba(0,0,0,0.83)', // census-media §31.12: the least alpha at which the `warn` notice clears 4.5:1 over a white image; was 0.55
     borderRadius: radius.sm,
     paddingHorizontal: space.sm,
     paddingVertical: space.xs,
@@ -369,7 +369,7 @@ const styles = StyleSheet.create({
     right: space.md,
     bottom: BOTTOM_SAFE + 120,
     alignItems: 'center',
-    gap: space.lg,
+    gap: space.lg, paddingVertical: space.sm, paddingHorizontal: space.xs, borderRadius: 999, backgroundColor: 'rgba(0,0,0,0.89)', // census-media §31.12: a backing under the action column; 0.89 is set by the shared StampButton's idle `mute` icon
   },
   stampBtnWrapper: {
     minHeight: 44,
@@ -427,7 +427,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: space.lg,
     paddingBottom: BOTTOM_SAFE + space.md,
     paddingRight: 80, // clear of right action column
-    gap: space.sm,
+    gap: space.sm, paddingTop: space.md, backgroundColor: 'rgba(0,0,0,0.81)', // census-media §31.12: a backing under the place block and creator row, the least alpha at which each line clears AA over a white image
   },
   placeBlock: {
     gap: space.xs,
@@ -448,7 +448,7 @@ const styles = StyleSheet.create({
   },
   verifiedDot: {
     ...t.stamp,
-    color: color.success,
+    color: '#B6D2C6', // census-media §31.12: `success` tinted 0.65 toward white, the least tint at 4.5:1 on the type badge over the backing (`success` is 1.48 there)
   },
   placeName: {
     ...t.title,

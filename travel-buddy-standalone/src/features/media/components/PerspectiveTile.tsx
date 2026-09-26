@@ -42,7 +42,7 @@ export function PerspectiveTile({ media, perspectiveLabel, height = 180, onOpen 
       )}
 
       {/* accent edge marks the evidence class (observed vs inferred vs …) */}
-      <View style={[styles.edge, { backgroundColor: accent }]} />
+      <View style={tailStyles.edgeCasing} /><View style={[styles.edge, { backgroundColor: accent }]} />
 
       {media.mediaType === 'video' ? (
         <View style={styles.playBadge}>
@@ -86,8 +86,18 @@ const styles = StyleSheet.create({
     right: 0,
     bottom: 0,
     padding: space.sm,
-    backgroundColor: 'rgba(17,17,15,0.55)',
+    backgroundColor: 'rgba(17,17,15,0.71)', // census-media §31: the least alpha at which the age line (onInkMute) clears 4.5:1 over a white photo; was 0.55
   },
   perspective: { color: color.onInk, fontSize: 13, fontWeight: '800', letterSpacing: -0.2 },
   age: { color: color.onInkMute, fontSize: 11, fontWeight: '600', marginTop: 1 },
+});
+
+// ── census-media §31.12 — appended at the TAIL so no line cited above moves ────
+// The evidence-class edge is a 3 px bar in the observation colour, and it is the
+// tile's only mark of the class. Drawn straight on the photo it had no floor:
+// 1.00:1 over a photo of its own colour. It now sits on a 5 px ink casing, so a
+// 2 px ink strip always separates it from the photo. 0.80 is the least alpha at
+// which all five classes clear 3:1 over any photo (`generated` is the tightest).
+const tailStyles = StyleSheet.create({
+  edgeCasing: { position: 'absolute', left: 0, top: 0, bottom: 0, width: 5, backgroundColor: 'rgba(17,17,15,0.80)' },
 });

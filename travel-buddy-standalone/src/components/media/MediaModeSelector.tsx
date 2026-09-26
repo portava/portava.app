@@ -125,7 +125,7 @@ const styles = StyleSheet.create({
     marginHorizontal: space.xl,
   },
   rowImmersive: {
-    backgroundColor: 'rgba(0,0,0,0.30)',
+    backgroundColor: 'rgba(0,0,0,0.66)', // census-media §31.12: the least alpha at which the inactive label clears 4.5:1 over a white frame; was 0.30
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.18)',
   },
@@ -142,11 +142,11 @@ const styles = StyleSheet.create({
     minHeight: 44,
   },
   itemActiveImmersive: {
-    backgroundColor: 'rgba(255,255,255,0.20)',
+    backgroundColor: color.onInk, // census-media §31.12: selected is an opaque onInk pill under ink text; the 0.20 light wash had no floor
     borderRadius: 999,
   },
   itemActiveSolid: {
-    backgroundColor: color.paperRaised,
+    backgroundColor: color.ink, // census-media §31.12: selected is an ink pill (15.03:1 on haze); paperRaised on haze was 1.26:1
     borderRadius: 999,
   },
   itemPressed: {
@@ -160,14 +160,14 @@ const styles = StyleSheet.create({
     color: color.onInkMute,
   },
   labelSolid: {
-    color: color.mute,
+    color: '#696660', // census-media §31.12: `mute` x 0.98, the lightest same-hue grey at 4.5:1 on haze (`mute` is 4.41)
   },
   labelActiveImmersive: {
-    color: color.onInk,
+    color: color.ink,
     fontWeight: '700',
   },
   labelActiveSolid: {
-    color: color.ink,
+    color: color.onInk,
     fontWeight: '700',
   },
 });

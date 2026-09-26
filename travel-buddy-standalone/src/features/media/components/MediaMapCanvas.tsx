@@ -89,7 +89,7 @@ export function MediaMapCanvas({
             <Layer
               id="media-gem-zone-contour"
               type="line"
-              paint={{ 'line-color': GEM_ACCENT, 'line-width': 1.5, 'line-opacity': 0.7, 'line-blur': 1.5 }}
+              paint={{ 'line-color': GEM_ACCENT, 'line-width': 1.5, 'line-opacity': 1, 'line-blur': 1.5 }} // census-media §31: at 0.7 it fell to 2.65:1 over road casings; at 1 its floor over the dark map is 3.87:1
             />
           </GeoJSONSource>
         ) : null}

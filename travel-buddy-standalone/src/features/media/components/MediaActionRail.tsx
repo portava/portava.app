@@ -359,9 +359,9 @@ export function MediaActionRail({ mediaId, visible, onClose }: MediaActionRailPr
                   <View style={[s.rowIcon, active && s.rowIconActive]}>
                     <Icon
                       size={iconToken.s20}
-                      color={active ? color.signal : color.ink}
+                      color={active ? ACTIVE_ON_PAPER : color.ink}
                       strokeWidth={1.8}
-                      fill={active ? color.signal : 'transparent'}
+                      fill={active ? ACTIVE_ON_PAPER : 'transparent'}
                     />
                   </View>
                   <Text style={[s.rowLabel, active && s.rowLabelActive]} numberOfLines={1}>
@@ -395,7 +395,7 @@ type RailPanel =
 
 // ── Styles ────────────────────────────────────────────────────────────────────
 
-const SHEET_RADIUS = 20;
+const SHEET_RADIUS = 20; const ACTIVE_ON_PAPER = '#C43B23'; // census-media §31: `signal` (#FF4D2E) scaled to 0.77, the lightest same-hue shade that reads 4.5:1 on the active row's tint (`signal` is 2.85:1 there); on this line so nothing below moves
 
 const s = StyleSheet.create({
   backdrop: {
@@ -491,7 +491,7 @@ const s = StyleSheet.create({
     flex: 1,
   },
   rowLabelActive: {
-    color: color.signal,
+    color: ACTIVE_ON_PAPER,
     fontWeight: '700',
   },
 });
