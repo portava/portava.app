@@ -3616,3 +3616,76 @@ The four states stay separate, and after this pass they finally differ in the ri
 `compass_decision_enabled`, `trip_kernel_enabled` and `trip_operational_projections_enabled` are
 **FALSE on every deployment**; and **nothing here was exercised against the deployed build**, which
 this environment cannot reach.
+
+
+---
+
+## §28 — 2026-09-26: nothing moves, and the re-measurement's own first answer was wrong
+
+**Re-measured, not acknowledged.** `check:census-freshness` named six counted
+files changed since `1fe72289b` and not covered:
+`compass/CompassLiveClaimContext.ts` (**new**, +331),
+`compass/CompassTripContext.ts` (**new**, +352),
+`compass/CompassSensingPresence.ts`,
+`compass/CompassSensingPresenceProducer.ts` (new),
+`test/compassCensusCorrectness.test.ts` and `test/discoveryCandidate.test.ts`.
+
+**NO VERDICT MOVES.** No evidence clause is corrected either — this census had
+already restated the row that mattered, and the restatement still holds.
+
+### §28.1 CT-02 was already `W`, and it still is
+
+The table row at the top of this census (the `N` one) says *"`TripCompassProjection`:
+zero occurrences … Trips' to publish; not closable from Compass"*. **That is not
+this census's last statement about CT-02.** A later section restates it `N → W`
+on the grounds that Trips published the projection and Compass consumes it.
+
+That restatement was re-verified today, not taken on trust:
+
+| Claim | Checked |
+|---|---|
+| `buildTripCompassProjection` imported by Compass | `compass/CompassTools.ts:48#import` — holds |
+| Compass calls it | `compass/CompassTools.ts:911#const built` inside `projectCurrentTrip` — holds |
+| Not behind the operational gate | the call sits in the tool path, ungated — holds |
+| `W` not `C`, because duplication remains | `compass/CompassTripContext.ts:162#.from("trip_plan_items")` and `compass/CompassTripContext.ts:488#.from(` still read raw tables — holds |
+
+**CT-02 stays `W`.** The two new files do not change it: `CompassTripContext.ts`
+is one of the modules still doing the raw reads that keep the row off `C`, which
+is the condition the restatement already named.
+
+### §28.2 The re-measurement's own error, recorded because it is instructive
+
+This section's first draft concluded that CT-02 should stay `N` and that its
+OWNER had changed from Trips to Compass. **Both were wrong**, and the two
+mistakes compounded:
+
+1. **I read the first statement of a LAST-STATEMENT-WINS document.** The `N` row
+   at the top is superseded by the restatement below it. Re-deriving from the
+   table alone reproduces a verdict the census had already retired.
+2. **A truncated grep produced a false negative.** `grep -rn TripCompassProjection
+   src --include=*.ts | head -5` returned five hits, all from
+   `server/trips/readRoutes/tripProjections.ts` and its test. The
+   `compass/CompassTools.ts` hits — the ones that decide the row — were below
+   the cut. The output looked like a complete answer and was a page of one.
+
+Neither is a defect in the code and both would have put a false claim in this
+census. They are recorded here because the same two habits — trusting the first
+statement, trusting a truncated search — are how a census acquires a wrong row
+in the first place.
+
+### §28.3 CG-03, and the two sensing files
+
+**CG-03 stays `C`.** It cites `CompassTripContext.ts` for Trip context being
+attached server-side on every ask; the file is new at this tree, the citation
+resolves and the `routes/compass.ts` call site stands.
+
+`CompassSensingPresence.ts` and `CompassSensingPresenceProducer.ts` are cited by
+**zero rows in this census** (grep: 0). They entered this scope because
+census-sensing §21 registered them, which is right — they are Compass-surface
+modules — but decision #9 is graded in census-sensing S39, which holds it at `W`
+over an ungranted `surface` consent scope. Nothing here ratifies that.
+
+### §28.4 MOVES NOTHING
+
+Totals unchanged. Six counted files read, two rows re-tested against the tree,
+both holding on statements this census had already made correctly.
