@@ -11,8 +11,11 @@
  *      TrustAdminService.getPendingEvents had no route.
  *   3. applyEventCaps keys on the EMITTED location vocabulary
  *      (`gps_coordinate_jump`), not the constant's name.
- *   4. The maintenance pass lifts time-limited restrictions that have run out,
- *      and expireOldRestrictions reads its error instead of returning 0.
+ *   4. The maintenance pass lifts time-limited restrictions that have run out;
+ *      the sweep is BOUNDED per pass, reads its error on both halves, and
+ *      reports {expired, truncated, failed} so the caller can tell a FAILED
+ *      sweep from a TRUNCATED one from an IDLE successful one. Repeated passes
+ *      drain the backlog rather than starving the oldest rows.
  *   5. PUT /admin/trust/settings/:key rejects values the engine cannot compute
  *      with (a zero half-life, a weight above 1, a fraction in an INTEGER).
  *   6. A recalculation publishes how much evidence stands behind the scores
@@ -39,7 +42,11 @@ import trustAdminRouter, { trustSettingRejection } from "../routes/trust-admin.j
 import { recordTrustEvent } from "../services/trust/TrustEventService.js";
 import { confirmEvent } from "../services/trust/TrustAdminService.js";
 import { applyEventCaps } from "../services/trust/TrustCapService.js";
-import { expireOldRestrictions, trustRestrictionLogger } from "../services/trust/TrustRestrictionService.js";
+import {
+  expireOldRestrictions,
+  trustRestrictionLogger,
+  RESTRICTION_EXPIRY_BATCH,
+} from "../services/trust/TrustRestrictionService.js";
 import { recalculateTrustScore, getTrustProfile, measureEvidence } from "../services/trust/TrustScoreService.js";
 import { runTrustMaintenance } from "../lib/trustMaintenanceScheduler.js";
 
@@ -157,6 +164,37 @@ function failing(base: any, table: string, op: "insert" | "update") {
         },
       });
       return new Proxy(real, { get: (o, k) => (k === op ? () => dead : (o as any)[k]) });
+    },
+  };
+}
+
+/**
+ * A client that lets a CONCURRENT pass land between a sweep's due-set read and
+ * its write: the first `update()` on `trust_restrictions` stamps `id` with
+ * `at` before the real update is issued. That window is the only place the
+ * write's `.is("lifted_at", null)` re-assert does any work — the due-set read
+ * has already excluded every row that was lifted BEFORE the sweep started.
+ */
+function racedLift(base: any, t: Store, id: string, at: string) {
+  let raced = false;
+  return {
+    ...base,
+    from: (name: string) => {
+      const real = base.from(name);
+      if (name !== "trust_restrictions") return real;
+      return new Proxy(real, {
+        get: (o: any, k: any) => {
+          if (k === "update" && !raced) {
+            return (patch: any) => {
+              raced = true;
+              const row = (t["trust_restrictions"] ?? []).find((r) => r.id === id);
+              if (row) row.lifted_at = at;
+              return o.update(patch);
+            };
+          }
+          return o[k];
+        },
+      });
     },
   };
 }
@@ -318,7 +356,18 @@ describe("applyEventCaps keys on the emitted location vocabulary", () => {
   });
 });
 
-// ══ 4. Restriction expiry runs, and reports its failures ═════════════════════
+// ══ 4. Restriction expiry runs, bounded, and reports its outcome ════════════
+//
+// THE THREE OUTCOMES. `expireOldRestrictions` used to return a bare number, and
+// on any database error it returned 0 — the same 0 a clean sweep with nothing
+// due returns. A broken restriction lift and an idle one were, at the call
+// site, the same observation forever. It was also UNBOUNDED: one statement
+// against a table that only grows.
+//
+// It now returns {expired, truncated, failed} and the maintenance pass carries
+// all three out to its caller. The tests below pin each outcome AT THE CALLER
+// (runTrustMaintenance), not only at the service, because the call site is
+// where the collapse used to happen.
 
 describe("maintenance lifts restrictions that have run out", () => {
   it("marks an expired restriction lifted and leaves a live one alone", async () => {
@@ -343,9 +392,9 @@ describe("maintenance lifts restrictions that have run out", () => {
     const orig = trustRestrictionLogger.warn;
     (trustRestrictionLogger as any).warn = (...args: any[]) => { seen.push(args); };
     try {
-      // A restriction must actually BE due. The sweep now reads the due set
-      // first and returns early when there is nothing to lift, so an empty
-      // table would never reach the refused update and this test would assert
+      // A restriction must actually BE due. The sweep reads the due set first
+      // and returns early when there is nothing to lift, so against an empty
+      // table the refused update is never reached and this test would assert
       // nothing. The seeded row is what makes the refusal reachable.
       const t = tables({
         trust_restrictions: [
@@ -365,6 +414,170 @@ describe("maintenance lifts restrictions that have run out", () => {
     } finally {
       (trustRestrictionLogger as any).warn = orig;
     }
+  });
+
+  it("a concurrent lift between the read and the write is NOT overwritten", async () => {
+    // The write re-asserts `lifted_at IS NULL`. Remove it and this sweep
+    // overwrites the instant the other pass recorded with its own, later one —
+    // silently moving the moment a sanction is recorded as having ended.
+    const ORIGINAL = "2026-01-01T00:00:00.000Z";
+    const t = tables({
+      trust_restrictions: [
+        { id: "r-raced", user_id: USER, restriction_type: "hosting", reason: "x", expires_at: daysAgo(3), lifted_at: null },
+      ],
+    });
+    const r = await expireOldRestrictions(racedLift(makeClient(t), t, "r-raced", ORIGINAL));
+    assert.equal(r.failed, false, "losing a race is not an error");
+    assert.equal(r.expired, 0, "this pass lifted nothing — the other pass got there first");
+    assert.equal(
+      t.trust_restrictions[0].lifted_at, ORIGINAL,
+      "the FIRST lift's instant must survive; re-lifting would move it later",
+    );
+  });
+
+  it("does not re-stamp a restriction another pass already lifted", async () => {
+    // The write re-asserts `lifted_at IS NULL`. Without it, a second pass
+    // racing the first would overwrite the original lifted_at with a later
+    // instant — silently moving the recorded moment a sanction ended.
+    const ORIGINAL = "2026-01-01T00:00:00.000Z";
+    const t = tables({
+      trust_restrictions: [
+        { id: "r-already", user_id: USER, restriction_type: "hosting", reason: "x", expires_at: daysAgo(3), lifted_at: ORIGINAL },
+      ],
+    });
+    const r = await expireOldRestrictions(makeClient(t));
+    assert.equal(r.expired, 0);
+    assert.equal(r.failed, false, "an already-lifted row is not a failure");
+    assert.equal(
+      t.trust_restrictions[0].lifted_at, ORIGINAL,
+      "the first lift's instant must survive a later pass",
+    );
+  });
+});
+
+// ── 4b. The three outcomes, told apart at the CALLER ───────────────────────
+
+describe("runTrustMaintenance distinguishes failure, truncation and an idle sweep", () => {
+  it("IDLE SUCCESS — nothing was due, and the pass says so without claiming failure", async () => {
+    const t = tables({
+      trust_restrictions: [
+        { id: "r-live", user_id: USER, restriction_type: "messaging", reason: "y", expires_at: daysAhead(5), lifted_at: null },
+      ],
+    });
+    const r = await runTrustMaintenance(makeClient(t));
+    assert.equal(r.restrictionsExpired, 0);
+    assert.equal(r.restrictionSweepFailed, false, "zero lifted is not a failure when the sweep worked");
+    assert.equal(r.restrictionSweepTruncated, false, "and it covered everything due — which was nothing");
+  });
+
+  it("FAILURE — zero lifted, but the pass reports it could not tell", async () => {
+    const t = tables({
+      trust_restrictions: [
+        { id: "r-expired", user_id: USER, restriction_type: "hosting", reason: "x", expires_at: daysAgo(1), lifted_at: null },
+      ],
+    });
+    const r = await runTrustMaintenance(failing(makeClient(t), "trust_restrictions", "update"));
+    assert.equal(r.restrictionsExpired, 0, "same count as the idle pass above");
+    assert.equal(
+      r.restrictionSweepFailed, true,
+      "and THAT is the difference the old Promise<number> could not express",
+    );
+    assert.equal(t.trust_restrictions[0].lifted_at, null, "the lapsed row is still listed as active");
+  });
+
+  it("TRUNCATED — a partial sweep never reads as full coverage", async () => {
+    const t = tables({
+      trust_restrictions: Array.from({ length: RESTRICTION_EXPIRY_BATCH + 1 }, (_, i) => ({
+        id: `r-${i}`, user_id: USER, restriction_type: "hosting", reason: "x",
+        expires_at: new Date(Date.now() - (RESTRICTION_EXPIRY_BATCH + 1 - i) * 60_000).toISOString(),
+        lifted_at: null,
+      })),
+    });
+    const r = await runTrustMaintenance(makeClient(t));
+    assert.equal(r.restrictionsExpired, RESTRICTION_EXPIRY_BATCH, "one full batch, no more");
+    assert.equal(r.restrictionSweepTruncated, true, "and the pass says there may be more");
+    assert.equal(r.restrictionSweepFailed, false, "a bounded sweep is not a broken one");
+  });
+
+  it("STARVATION — repeated passes drain the whole backlog; the remainder is not dropped", async () => {
+    // The bound is only safe if what it leaves behind is picked up. Seed one
+    // more than a full batch, run passes until the sweep stops reporting
+    // truncation, and require that EVERY eligible row ended up lifted.
+    const total = RESTRICTION_EXPIRY_BATCH + 1;
+    const t = tables({
+      trust_restrictions: Array.from({ length: total }, (_, i) => ({
+        id: `r-${i}`, user_id: USER, restriction_type: "hosting", reason: "x",
+        expires_at: new Date(Date.now() - (total - i) * 60_000).toISOString(),
+        lifted_at: null,
+      })),
+    });
+    const db = makeClient(t);
+
+    let passes = 0;
+    let lifted = 0;
+    for (;;) {
+      const r = await runTrustMaintenance(db);
+      passes += 1;
+      lifted += r.restrictionsExpired;
+      assert.equal(r.restrictionSweepFailed, false, `pass ${passes} must not fail`);
+      if (!r.restrictionSweepTruncated) break;
+      assert.ok(passes < 10, "must converge, not loop forever");
+    }
+
+    assert.equal(passes, 2, "one full batch, then the single remainder");
+    assert.equal(lifted, total, "every eligible restriction was lifted across the passes");
+    assert.equal(
+      t.trust_restrictions.filter((x) => x.lifted_at == null).length, 0,
+      "nothing was silently dropped by the bound",
+    );
+  });
+
+  it("STARVATION — the oldest-overdue rows go first, so a newcomer cannot overtake them", async () => {
+    // Ordering is what turns "bounded" into "eventually complete". If the due
+    // set were unordered, a table that keeps gaining rows could leave the same
+    // old ones behind on every pass.
+    const t = tables({
+      trust_restrictions: Array.from({ length: 7 }, (_, i) => ({
+        id: `r-${i}`, user_id: USER, restriction_type: "hosting", reason: "x",
+        expires_at: daysAgo(10 - i), lifted_at: null,   // r-0 is the most overdue
+      })),
+    });
+    const db = makeClient(t);
+    const liftedIds = () => t.trust_restrictions.filter((x) => x.lifted_at != null).map((x) => x.id).sort();
+
+    const p1 = await expireOldRestrictions(db, 3);
+    assert.equal(p1.expired, 3);
+    assert.equal(p1.truncated, true);
+    assert.deepEqual(liftedIds(), ["r-0", "r-1", "r-2"], "the three most overdue");
+
+    // A brand-new lapsed restriction arrives mid-backlog. It is due, but it is
+    // the YOUNGEST due row — it must not jump the queue.
+    t.trust_restrictions.push({
+      id: "r-newcomer", user_id: USER_2, restriction_type: "messaging", reason: "n",
+      expires_at: daysAgo(0.1), lifted_at: null,
+    } as any);
+
+    const p2 = await expireOldRestrictions(db, 3);
+    assert.equal(p2.expired, 3);
+    assert.deepEqual(
+      liftedIds(), ["r-0", "r-1", "r-2", "r-3", "r-4", "r-5"],
+      "the next three oldest — the newcomer did not overtake r-3..r-5",
+    );
+
+    const p3 = await expireOldRestrictions(db, 3);
+    assert.equal(p3.expired, 2, "the last original row plus the newcomer");
+    assert.equal(p3.truncated, false, "under the cap — the backlog is drained");
+    assert.equal(
+      t.trust_restrictions.filter((x) => x.lifted_at == null).length, 0,
+      "every eligible restriction, including the one that arrived mid-drain",
+    );
+
+    const p4 = await expireOldRestrictions(db, 3);
+    assert.deepEqual(
+      { expired: p4.expired, truncated: p4.truncated, failed: p4.failed },
+      { expired: 0, truncated: false, failed: false },
+      "and a further pass is a clean idle sweep, not a failure",
+    );
   });
 });
 
@@ -432,7 +645,17 @@ describe("recalculation publishes the evidence behind the scores", () => {
     const t = tables();
     const db = makeClient(t);
     const r = await recalculateTrustScore(db, USER);
-    assert.equal(r.overall_score, 50, "the neutral baseline");
+    // Q1, owner decision 2026-09-22: the score line used to read
+    // `assert.equal(r.overall_score, 50, "the neutral baseline")`. That baseline
+    // was the fabricated neutral the decision removes, so with no events the
+    // score is now NULL = not scored.
+    //
+    // THE SUBJECT OF THIS TEST IS UNCHANGED and is the two lines below it: the
+    // EVIDENCE columns say 0 — "measured, and there was nothing there" — which
+    // is a different answer from the `null` a pre-2371 row gives ("never
+    // measured"). Q1 makes the SCORE carry that same distinction; it does not
+    // disturb the evidence one, and the assertion is kept to prove that.
+    assert.equal(r.overall_score, null, "no events means no score — not a neutral baseline");
     assert.equal(r.evidenceWeight, 0);
     assert.equal(r.evidenceCount, 0);
 

@@ -111,14 +111,14 @@ Paths are relative to `artifacts/api-server/` unless prefixed `travel-buddy-stan
 | Measure | Value |
 |---|---|
 | **Denominator — testable requirements** | **127** |
-| BUILT-AND-CORRECT | **103** |
-| BUILT-BUT-WRONG | **21** |
-| NOT-BUILT | **2** |
+| BUILT-AND-CORRECT | **113** |
+| BUILT-BUT-WRONG | **13** |
+| NOT-BUILT | **0** |
 | CANNOT-VERIFY | **1** |
-| **CONSTRUCTED%** = (C+W)/127 | **124 / 127 = 97.6 %** |
-| **CORRECT%** (raw) = C/127 | **103 / 127 = 81.1 %** |
+| **CONSTRUCTED%** = (C+W)/127 | **126 / 127 = 99.2 %** |
+| **CORRECT%** (raw) = C/127 | **113 / 127 = 89.0 %** |
 
-> **HEADLINE RESTATED 2026-09-16 FROM THE ROWS, not the other way round.** It read
+> **RE-AUDITED 2026-09-26, §27: every non-C row checked against its acceptance criterion; none moves, so the figures above stand.** **HEADLINE RESTATED 2026-09-26 (§26: S21, S28, S29, S42, S51 and S52 moved to C on the client build and 3312 — C 113 / W 13 / N 0 / X 1, CORRECT% 89.0 %; every C added this pass is deployment-capped and says so), earlier the same day (§25: S3 and S106 W→C; C 107 / W 17 / N 2 / X 1, CORRECT% 84.3 %) AND 2026-09-16 FROM THE ROWS, not the other way round.** Before §25 it read C 105 / W 19 from §24; before §24, C 103 / W 21 from §11. Earlier, it read
 > C 98 / W 26 until §11 moved S20, S25, S30, S33 and S35 from W to BC on the owner's
 > Option B posture decision. `check:census-integrity` caught the drift the moment it
 > appeared — *"a headline that stopped describing the table underneath it"* — which is
@@ -397,7 +397,7 @@ Legend: **BC** BUILT-AND-CORRECT · **BW** BUILT-BUT-WRONG · **NB** NOT-BUILT �
 | S10 | Inference ≠ observation | **BC** | `crowdFlowProducer.ts:57-70`: `event_context` is rejected at intake (`cause_is_not_observation`); a `CauseHypothesis` has *"no `actorId`, no `groupKey` and no count field"*; cause confidence capped at the observation's own band. Mirrored in types at `presence/domain/types.ts:5-12` (`PresenceObservation` vs `PresenceEstimate`). |
 | S11 | Prediction ≠ current truth | **BC** | `mapProjection.ts:697-701` — freshness is gated on source class, not timestamp: a `portava_prediction` two minutes old is capped at `recent`, never `live`. `mapObjects.ts:113` `FORECAST_KINDS`. `worldPulseProducer.ts:54-59` refuses `prediction` as pulse input. |
 | S12 | No coverage ≠ quiet | **BC** | `mapProjection.ts:682` — `if (!claims || claims.length === 0) return obj;`. An unobserved place carries no activity level at all, rather than `very_quiet`. |
-| S13 | One device ≠ a crowd | **BC** | `src/lib/privacyGate.ts:80-128` with `PRIVACY_THRESHOLD_V1` (`intelContracts.ts:732-739`): ≥15 distinct actors, ≥5 independent groups, ≤20 % single-group share, 10-minute publication delay. A missing group count is a refusal, not an exemption (`privacyGate.ts:101-106`). *(CORRECTED 2026-09-22 by the S2 safety-publication lane — verdict UNCHANGED, evidence extended rather than repointed; the measurement is §12.)* The gate module and its four numbers are untouched and its default is still this threshold (`artifacts/api-server/src/lib/privacyGate.ts:82#PRIVACY_THRESHOLD_V1,`). What moved is the CALLER. `projectClaim` no longer asks the gate with one threshold: for a `crowd.level` claim whose value is `unsafe_density` it routes through the safety policy first (`artifacts/api-server/src/lib/intelProjection.ts:387#isSafetyAssertion(input.claimType,`), and an assertion carrying a recorded `admin_review` decision is gated on `SAFETY_REVIEWED_THRESHOLD` — 1 actor, 1 group, share 1, no publication delay (`artifacts/api-server/src/lib/safetyPolicy.ts:156#SAFETY_REVIEWED_THRESHOLD`) — with the cohort numbers floored to 1 for that ask alone (`artifacts/api-server/src/lib/intelProjection.ts:422#reviewerBackstop`). So the sentence above, *"a missing group count is a refusal, not an exemption"*, is still TRUE of the gate and is now FALSE of the reviewed safety lane, which supplies the missing 1. THE VERDICT HOLDS because one device still cannot make a crowd: the lane is reachable by exactly one value of one claim type (`artifacts/api-server/src/lib/intelContracts.ts:257#SPECIALIST_ONLY_CROWD_LEVELS` is a one-element array), only from status `active` (`artifacts/api-server/src/lib/safetyPolicy.ts:197#SAFETY_SERVABLE_CLAIM_STATUSES`), only against a canonical place, and only on an authority read from the `intel_claim_reviews` audit trail and from nothing else (`artifacts/api-server/src/lib/intelProjectionAggregator.ts:625#safetyAuthority`) — a table whose only writer re-checks the reviewer capability. A contributor cannot set it, and the no-reviewer lane is `SAFETY_COMMUNITY_THRESHOLD`, which is STRICTER than `PRIVACY_THRESHOLD_V1` on independent groups, never weaker on any dimension (`artifacts/api-server/src/lib/safetyPolicy.ts:173#SAFETY_COMMUNITY_THRESHOLD`). The reviewer is the principal, not a device, and the snapshot still records the honest observation count. |
+| S13 | One device ≠ a crowd | **BC** | `src/lib/privacyGate.ts:80-128` with `PRIVACY_THRESHOLD_V1` (`intelContracts.ts:732-739`): ≥15 distinct actors, ≥5 independent groups, ≤20 % single-group share, 10-minute publication delay. A missing group count is a refusal, not an exemption (`privacyGate.ts:101-106`). *(CORRECTED 2026-09-22 by the S2 safety-publication lane — verdict UNCHANGED, evidence extended rather than repointed; the measurement is §12.)* The gate module and its four numbers are untouched and its default is still this threshold (`artifacts/api-server/src/lib/privacyGate.ts:82#PRIVACY_THRESHOLD_V1,`). What moved is the CALLER. `projectClaim` no longer asks the gate with one threshold: for a `crowd.level` claim whose value is `unsafe_density` it routes through the safety policy first (`artifacts/api-server/src/lib/intelProjection.ts:399#isSafetyAssertion(input.claimType,`), and an assertion carrying a recorded `admin_review` decision is gated on `SAFETY_REVIEWED_THRESHOLD` — 1 actor, 1 group, share 1, no publication delay (`artifacts/api-server/src/lib/safetyPolicy.ts:156#SAFETY_REVIEWED_THRESHOLD`) — with the cohort numbers floored to 1 for that ask alone (`artifacts/api-server/src/lib/intelProjection.ts:428#reviewerBackstop`). So the sentence above, *"a missing group count is a refusal, not an exemption"*, is still TRUE of the gate and is now FALSE of the reviewed safety lane, which supplies the missing 1. THE VERDICT HOLDS because one device still cannot make a crowd: the lane is reachable by exactly one value of one claim type (`artifacts/api-server/src/lib/intelContracts.ts:257#SPECIALIST_ONLY_CROWD_LEVELS` is a one-element array), only from status `active` (`artifacts/api-server/src/lib/safetyPolicy.ts:197#SAFETY_SERVABLE_CLAIM_STATUSES`), only against a canonical place, and only on an authority read from the `intel_claim_reviews` audit trail and from nothing else (`artifacts/api-server/src/lib/intelProjectionAggregator.ts:639#safetyAuthority`) — a table whose only writer re-checks the reviewer capability. A contributor cannot set it, and the no-reviewer lane is `SAFETY_COMMUNITY_THRESHOLD`, which is STRICTER than `PRIVACY_THRESHOLD_V1` on independent groups, never weaker on any dimension (`artifacts/api-server/src/lib/safetyPolicy.ts:173#SAFETY_COMMUNITY_THRESHOLD`). The reviewer is the principal, not a device, and the snapshot still records the honest observation count. |
 | S14 | Promotional claim ≠ observed reality | **BC** | `intelContracts.ts:44-56` separates `sponsored` / `official_signed` / `imported_owned` from firsthand classes; `:74` `NON_OBSERVATION_SOURCE_CLASSES`; `2130:157` `commercial_disclosure` CHECK (`none…paid`). |
 | S15 | World anomaly ≠ safety incident | **BC** | `mapProducers/safetyNoticeProducer.ts:22-32` refuses the allowed fallback of projecting `protected_zones` as safety notices, and reads only the specialist-reviewed `unsafe_density` claim. There is no anomaly→notice path. |
 | S16 | User dislike ≠ bad venue | **BC** | The only writer of `intel_claims`/`intel_state_snapshots` is `intelProjection.ts:3-8`, whose inputs are observations, not personal feedback. Compass feedback lands in `compass_*` tables via `CompassFeedbackEngine`; no path reaches a claim. |
@@ -439,7 +439,7 @@ Legend: **BC** BUILT-AND-CORRECT · **BW** BUILT-BUT-WRONG · **NB** NOT-BUILT �
 | id | Requirement | V | Evidence / divergence |
 |---|---|---|---|
 | S39 | Presence engine → `PresenceObservation` + coverage; must not claim public person identity | **BW** | The *types* exist and are careful (`presence/domain/types.ts:88,114`); there is no engine. What actually feeds aggregates is human observation counts. No per-zone `PresenceObservation` is ever produced. |
-| S40 | Crowd engine → `CrowdState` (density, momentum, arrival-departure balance); must not claim safety or quality | **BW** | The vocabulary is there — `CROWD_LEVELS`, `TRAJECTORIES`, `CROWD_DIRECTIONS` (`intelContracts.ts:246,259,286`), `activityForCohort` (`mapAggregation.ts:534`) — and the must-not-claim half is enforced (S8). But there is no `CrowdState` object: density is a claim value, momentum is a trend label, and arrival/departure balance is a human tap, not a computed balance. |
+| S40 | Crowd engine → `CrowdState` (density, momentum, arrival-departure balance); must not claim safety or quality | **BW** | The vocabulary is there — `CROWD_LEVELS`, `TRAJECTORIES`, `CROWD_DIRECTIONS` (`intelContracts.ts:246,259,286`), `activityForCohort` (`mapAggregation.ts:535#const kind: MapPresenceKind = obj.kind;`) — and the must-not-claim half is enforced (S8). But there is no `CrowdState` object: density is a claim value, momentum is a trend label, and arrival/departure balance is a human tap, not a computed balance. |
 | S41 | Flow engine → `FlowState`/edges; must not claim individual trajectory | **BC** | The strongest item in the census. `crowdFlowProducer.ts:14-30` — *"There is no per-actor path type, anywhere. The input unit is ONE HOP … so a path cannot be assembled even internally"*; actor ids enter a `Set` and never leave it; `src/test/crowdFlowProducer.test.ts` walks the serialized output for sentinel ids. `deriveCrowdFlow` (`mapAggregation.ts:1115`) applies four gates; geometry is a `LineString` between zone centroids (`:1192,1236-1237`). |
 | S42 | Vibe engine → `VibeState`; must not claim literal behaviour without sufficient evidence | **BW** | `vibe.state` exists as a five-value human claim (`intelContracts.ts:303`) with a live-label ruling (`:587`). There is no inference engine and no `VibeState`. |
 | S43 | Experience engine → `ExperienceState`; must not treat personal preference as world truth | **NB** | No `ExperienceState` under that or any equivalent name. `grep -ri experience_state\|ExperienceState src/` → nothing. |
@@ -461,7 +461,7 @@ Legend: **BC** BUILT-AND-CORRECT · **BW** BUILT-BUT-WRONG · **NB** NOT-BUILT �
 |---|---|---|---|
 | S55 | Context Kernel assembling canonical entities + world/experience state + user/trip/social + safety/policy, with the nine §18.1 contexts | **BW** | `src/compass/CompassContextEngine.ts:1-19` is an 11-state context machine (safety/booking/arrival/trip/night/private/creator/budget/planning/exploring/normal). It is Compass-local, is not consumed by Map, Wall or Discovery, and has no World, Experience or Attention context. |
 | S56 | Opportunity Engine downstream of the kernel, feeding feature-specific projections | **NB** | No such stage; each surface builds candidates directly. |
-| S57 | Feature clients and React components must not independently calculate crowd, vibe, safety, opportunity, experience value or world-change state | **BC** | The client mirrors the server vocabulary as **data** and computes none of it: `travel-buddy-standalone/src/types/mapObjects.ts` re-declares the kind/priority/source-class tables; per the input-intelligence certification, `components/freshnessDisplay.ts` *"never synthesizes a label the server did not send (mutation-proofed)"*. The only client-side derivation found is `hooks/useActiveLocation.ts:112` `computeFreshness`, which is the viewer's own location, not world state. |
+| S57 | Feature clients and React components must not independently calculate crowd, vibe, safety, opportunity, experience value or world-change state | **BC** | The client mirrors the server vocabulary as **data** and computes none of it: `travel-buddy-standalone/src/types/mapObjects.ts` re-declares the kind/priority/source-class tables; per the input-intelligence certification, `components/freshnessDisplay.ts` *"never synthesizes a label the server did not send (mutation-proofed)"*. The only client-side derivation found is `hooks/useActiveLocation.ts:113#function computeFreshness`, which is the viewer's own location, not world state. |
 
 ### §7 Required tweaks: Map
 
@@ -471,7 +471,7 @@ Legend: **BC** BUILT-AND-CORRECT · **BW** BUILT-BUT-WRONG · **NB** NOT-BUILT �
 | S59 | Add server-built `ExperienceState` to place/event projections rather than separate overlapping vibe pins | **BW** | The **shape** is right and the payload is wrong: `mapProjection.applyLiveClaims` (`:676-701`) folds live claims onto the place object instead of emitting parallel vibe pins — exactly what the spec asks — but what it folds on is individual claims, not an ExperienceState. |
 | S60 | Promote `world_pulse` into transient world-change projections: heating up, forming, moving, clearing, unexpected activity, event spillover, traveler surge | **BW** | `world_pulse` exists and is well built (`worldPulseProducer.ts`), but it is an **activity-concentration cell** with `payload.basis = 'observed_aggregates'` — a *level*, not a *change*. None of the seven named change types exists. `TREND_STATES` (`mapObjects.ts:233`) attach to places, not to world objects. |
 | S61 | Render crowd_flow / traveler_flow as privacy-safe directional geometry, not ordinary pins | **BC** | `mapAggregation.ts:1192,1236-1237` — a `LineString` between two zone centroids, with `:982` recording *"deliberately NO per-person field and no route geometry"*. `travelerFlowProducer.ts:277` runs its own privacy gate. |
-| S62 | `TemporaryWorldObject` only if no canonical contract exists; no fake permanent Place rows for transient clusters | **BC** | Transient clusters are emitted as synthetic map objects with cell/edge geometry and no `places` row: `mapAggregation.ts:675` (`cellPolygon`), `:1236` (flow edge), `meetingPointProducer`. No code inserts a `places` row from activity — the only writer is the manual `scripts/backfill-canonical-places.ts`. |
+| S62 | `TemporaryWorldObject` only if no canonical contract exists; no fake permanent Place rows for transient clusters | **BC** | Transient clusters are emitted as synthetic map objects with cell/edge geometry and no `places` row: `mapAggregation.ts:675` (`cellPolygon`), `lib/mapAggregation.ts:1457#geometry: {` (flow edge), `meetingPointProducer`. No code inserts a `places` row from activity — the only writer is the manual `scripts/backfill-canonical-places.ts`. |
 | S63 | Semantic zoom: city→neighborhood/world dynamics; district→hotspots/flows; place→vibe/crowd/queue | **BC** | `mapAggregation.ts:202-244` — five bands with explicit content ladders, `AGGREGATING_BANDS = ['world','city']`, fail-closed to `world` on a bad zoom. Enforced, not just documented: `worldPulseProducer.ts:280` returns nothing when `!bandCarriesWorldIntelligence(band)`. |
 | S64 | Truth/freshness/coverage metadata, and predicted visually distinguished from observed | **BW** | Freshness, confidence, source class, provenance and the predicted/observed split are all present and mirrored on the client. **Coverage is absent from `MapObject`** (`mapObjects.ts:362-398`). |
 | S65 | Display resolver / clutter budget so safety, mode, zoom, user intent and relevance decide what renders | **BW** | What exists is a priority sort plus a page cap: `rankObjects` (`mapProjection.ts:1166`), `compareByRenderingPriority` (`mapObjects.ts:420`), `paginate` with `Math.min(200, …)` (`mapProjection.ts:1226`), `filterKinds`. Zoom decides aggregation. **Mode, user intent and relevance decide nothing**, and no budget is allocated across classes. |
@@ -823,7 +823,7 @@ portava-ci and never on production.
   aggregate is `observed` with an unlabelled ordinal and `few` coverage at k
   and `unknown` on every axis below it, and nothing the database returned
   appears in it (`test/db/sensingAnonStore.db.test.ts:260#privacy`;
-  `lib/sensingCoverageAggregate.ts:154#aggregateSensingCohort(`;
+  `lib/sensingCoverageAggregate.ts:240#aggregateSensingCohort(`;
   `lib/sensingPresenceState.ts:133#buildSensingPresenceState(`); one more
   contributor is not a new publication and the previous value is served
   (`test/db/sensingAnonStore.db.test.ts:316#evaluateDifferencing(agg,`); the
@@ -869,12 +869,15 @@ portava-ci and never on production.
 **(a) The anonymous path — built end to end, proven on the database, reached by nothing until the owner decides.**
 `lib/sensingAuthPosture.ts:45#undecided` is the owner's switch (it read `undecided` when this was written; **it reads `anonymous_capable` since 2026-09-16 — see §17**) and
 `lib/sensingAuthPosture.ts:118#sensingEligibility(` refuses every caller while
-it reads that; `test/sensingAnonStore.test.ts:501#route` asserts no route
-touches the store. So: **S18** (rotating identifiers, N → W): the derivation
+it reads that; `test/sensingAnonStore.test.ts:626#route` asserts no route
+touches the store — **superseded 2026-09-25**: that assertion is now a preserved
+QUOTATION in the file's own header, and what the suite asserts in its place is the
+stronger property that EXACTLY ONE route reaches the store and it is the registered
+ingest route (`test/sensingAnonStore.test.ts:688#exactly`; §27.3 re-aimed it when the session issuer became the one other route importing a store module, for pure helpers only — the case now asserts exactly one route WRITES), which zero also fails. So: **S18** (rotating identifiers, N → W): the derivation
 exists at two layers and is executed on the database; no writer is registered.
 **S20** (eligibility separated from ingest; opaque credential, N → W): the
 separation is code — eligibility in one module, the credential in another
-(`lib/sensingContributionSession.ts:98#buildSensingSessionRow(`), the row
+(`lib/sensingContributionSession.ts:105#buildSensingSessionRow(`), the row
 shape in 2480 with no identity column — and it admits nobody. **S30**
 (`IntelligenceContributionSession`, N → W): all eight §4.2 properties are
 bound to the primitive that owns each
@@ -889,8 +892,8 @@ both now keyed on the credential, not the account — the replay index and the
 session budget, both executed — and the ingest they guard is the owner's.
 **S35** (impossible timestamps, malformed precision, invalid scopes, stale
 credentials, W → W): all four rejections exist and three are executed on the
-database (`lib/sensingAnonStore.ts:376#observed_at_in_future`;
-`lib/sensingContributionSession.ts:141#validateSensingSession(`); the row's
+database (`lib/sensingAnonStore.ts:524#observed_at_in_future`;
+`lib/sensingContributionSession.ts:153#validateSensingSession(`); the row's
 "two of the four are unimplementable" no longer holds, and the ingest does
 not. **S39** (Presence engine → aggregate + coverage, W → W): the engine
 builds an observed / unknown state from the real gate's decision, names no
@@ -904,11 +907,11 @@ outcomes, W → W): all four are representable and proximity is never ownership
 `lib/sensingSubjectReconciliation.ts:104#temporary_world_object`); the
 canonical `subject_id NOT NULL` stands and the resolver has no caller.
 **S112** (revocation lineage, W → W): defined per stage as data
-(`lib/sensingRevocationLineage.ts:56#SENSING_REVOCATION_EFFECT`), executable,
+(`lib/sensingRevocationLineage.ts:60#SENSING_REVOCATION_EFFECT`), executable,
 and proven to match the SQL on a real cohort; the stages past aggregate exist
 now and the session and memory stages are "prevented" because S54 does not
 exist. **S42 / S51 / S52** (the Vibe engine, its signals, its state): the
-engine is guarded and pinned (`lib/vibeInference.ts:144#inferVibe(`), its
+engine is guarded and pinned (`lib/vibeInference.ts:179#inferVibe(`), its
 output carries every §5.2 field, and **not one of its seven candidate signals
 has a producer** — client capture is decision #6 — so S42 stays W, and S51
 and S52 move N → W: a state nothing can populate is built, not correct.
@@ -916,7 +919,7 @@ and S52 move N → W: a state nothing can populate is built, not correct.
 **(b) The prohibition the engine enforces.** **S9** (rapid movement ≠
 dancing, N → **C** `⌀`): high energy with arrhythmic or unbounded motion cannot
 raise dance likelihood and unknown periodicity yields null
-(`lib/vibeInference.ts:236#VIBE_MIN_PERIODICITY_FOR_DANCE`;
+(`lib/vibeInference.ts:293#VIBE_MIN_PERIODICITY_FOR_DANCE`;
 `test/vibeInference.test.ts:51#arrhythmic`), the artifact this document's own
 rule for prohibitions asks for. Vacuous in the sense S22 is: the engine it
 guards is called by nothing.
@@ -938,14 +941,14 @@ W → W): the shared envelope carries all six and enforces `predicted_for` iff
 of six are served, up from four of six declared. **S49** (every consumed
 state carries all four fields, W → W): Wall yes, Map yes behind the flag,
 Discovery's candidate carries truth class, confidence and freshness and **no
-coverage** (`lib/discoveryCandidate.ts:146#DiscoveryCandidate`), Compass's
+coverage** (`lib/discoveryCandidate.ts:150#DiscoveryCandidate`), Compass's
 states carry none of the four.
 
 **(d) The Map behind migration 2350 — three flags seeded FALSE, wired, route-tested.**
 `migrations/2350_map_sensing_projection_flags.sql:74#INSERT` seeds
 `map_experience_state_enabled`, `map_world_moments_enabled` and
 `map_display_resolver_enabled` FALSE and refuses to commit them ON;
-`routes/mapProjection.ts:563#map_experience_state_enabled` reads all three
+`routes/mapProjection.ts:539#map_experience_state_enabled` reads all three
 fail-closed, and `test/mapSensingProjectionGates.test.ts:131#ABSENT` proves
 that with every flag absent — production's state — not one new field reaches
 the wire while the live claims still flow. **S43** (Experience engine, N →
@@ -956,7 +959,7 @@ from one claim type and every leaf without a producer null, never a default
 (`test/mapExperienceState.test.ts:147#null`); the fold reads no personal
 preference (§1.1's pin); it is served on `payload.experienceState` behind the
 flag (`lib/mapProjection.ts:781#experienceState`;
-`routes/mapProjection.ts:1031#experienceState:`;
+`routes/mapProjection.ts:1007#experienceState:`;
 `test/mapSensingProjectionGates.test.ts:165#map_experience_state_enabled`).
 **S59** (ExperienceState on the place object, not separate pins, W → **C**):
 the same fold, onto the same object, and no new kind. **S64** (truth /
@@ -976,14 +979,14 @@ never observed (`lib/mapProducers/worldMomentProducer.ts:109#WORLD_CHANGE_TRUTH`
 (`test/mapWorldMoments.test.ts:183#unexpected`); hotspots are the pulse and
 rhythm is `city_model` (`lib/mapProducers/cityModelProducer.ts`); a sub-floor
 cell and a quiet cell serialize identically; wired at
-`routes/mapProjection.ts:1318#attachWorldMoments(pulses,` and served with
+`routes/mapProjection.ts:1294#attachWorldMoments(pulses,` and served with
 `moment: null` when nothing changed
 (`test/mapSensingProjectionGates.test.ts:272#map_world_moments_enabled`).
 **S65** (display resolver — safety, mode, zoom, intent, relevance, W → **C**):
 `lib/mapDisplayResolver.ts:268#resolveDisplay(` runs between ranking and
 paging, the band sets the budget, the mode allocates it across classes, the
 intent reorders within a tier, safety notices are never budgeted, and every
-drop is counted by kind (`routes/mapProjection.ts:1340#resolveDisplay(ranked,`;
+drop is counted by kind (`routes/mapProjection.ts:1316#resolveDisplay(ranked,`;
 `test/mapSensingProjectionGates.test.ts:195#map_display_resolver_enabled`).
 **S38** (coverage tracked separately from activity, W → **C**): the Map
 object now carries `coverage` beside `activity` (`lib/mapObjects.ts:455#coverage?:`),
@@ -1004,8 +1007,8 @@ class but no calibration attached.
 **(e) Discovery behind 2361.** **S70** (DiscoveryCandidate with why-now,
 why-for-user, confidence, freshness, truth class, W → W): built and wired
 into `GET /discovery` behind `discovery_candidate_projection_enabled`
-(`lib/discoveryCandidate.ts:135#DISCOVERY_CANDIDATE_PROJECTION_FLAG`), and
-`whyNow` is always null (`lib/discoveryCandidate.ts:154#whyNow:`) because no
+(`lib/discoveryCandidate.ts:139#DISCOVERY_CANDIDATE_PROJECTION_FLAG`), and
+`whyNow` is always null (`lib/discoveryCandidate.ts:158#whyNow:`) because no
 live producer exists for a place on that surface — the module says so itself.
 Built, wrong on the one field the row is named for.
 *(Re-anchored 2026-09-12 by §7: both line numbers drifted when §7 gave the
@@ -1074,7 +1077,7 @@ the undecided decision. **S21**, **S28**, **S29** and **S32** stay as they
 are: on-device reduction, the nine device features, acoustic capture and the
 signal ingest are decisions #1, #2 and #6, and this lane does not take them.
 **S26** stays W: the anonymous half is closed (72 h structural, the sweep
-registered at `src/index.ts:150#startSensingRetentionScheduler();`) and the
+registered at `src/index.ts:154#startSensingRetentionScheduler();`) and the
 intel raw purge is behind `intel_contribution_retention_enabled`, FALSE in
 production, at 180 days. **S3** and **S106** stay W: `src/presence/domain/`
 is unchanged since Phase 0 — types and a transport interface, no store, no
@@ -1186,7 +1189,7 @@ before its commit; the mutations are listed in §2.3.
   reads the candidate and the current experience through
   `readLiveClaimEnvelopes`, and answers the decision with its reasons,
   grounding, interception and switching-cost report; it writes nothing and
-  computes no truth of its own. Registered at the tail of `routes/index.ts:368#compassDecisionRouter`, so no line the other censuses cite in that file moved.
+  computes no truth of its own. Registered at the tail of `routes/index.ts:370#compassDecisionRouter`, so no line the other censuses cite in that file moved.
   2800 seeds the flag FALSE and refuses to commit a TRUE row
   (`migrations/2800_compass_decision_flag.sql:34#INSERT`;
   `migrations/2800_compass_decision_flag.sql:47#reads`); the rollback refuses
@@ -1396,7 +1399,7 @@ in §3.3.
   treated as the budget spent. It answers newest change first with a report
   per subject that tells "no moments" from "could not look" and "no versions
   to compare". It writes nothing and sends nothing. Registered at the tail
-  of `routes/index.ts:373#wallMomentsRouter`. 2801 seeds the flag FALSE and
+  of `routes/index.ts:375#wallMomentsRouter`. 2801 seeds the flag FALSE and
   refuses to commit a TRUE row (`migrations/2801_wall_moments_flag.sql:41#INSERT`;
   `migrations/2801_wall_moments_flag.sql:54#reads`); the rollback refuses
   over a TRUE row (`db/rollback/2026-09-12-2801-wall-moments-flag-rollback.sql:23#DELETE`)
@@ -1604,7 +1607,7 @@ listed in §4.3.
   `test/telegraphLiveReferencesRoute.test.ts:386#null`). The wire carries
   the current claims only through that gate; nothing person-shaped is on it
   (`test/telegraphLiveReferencesRoute.test.ts:282#forbidden`). Registered at
-  the tail of `routes/index.ts:378#telegraphLiveReferencesRouter`.
+  the tail of `routes/index.ts:380#telegraphLiveReferencesRouter`.
 
 - **2802 and its rollback** — `migrations/2802_telegraph_live_references_flag.sql:47#INSERT`
   seeds `telegraph_live_references_enabled` FALSE, one row, `ON CONFLICT DO
@@ -1805,34 +1808,34 @@ mutations are listed in §5.3.
   `test/adminSafetyCandidatesRoute.test.ts:250#not filed again`;
   `test/adminSafetyCandidatesRoute.test.ts:265#DISMISSED`).
 
-- **the routes** — `routes/adminSafetyCandidates.ts:60#router.post(` is
+- **the routes** — `routes/adminSafetyCandidates.ts:94#router.post(` is
   `POST /api/admin/intel/safety-candidates/scan`: requireAdmin
-  (`routes/adminSafetyCandidates.ts:63#requireAdmin(`), the flag read
-  fail-closed (`routes/adminSafetyCandidates.ts:70#isFlagEnabled`), live
+  (`routes/adminSafetyCandidates.ts:97#requireAdmin(`), the flag read
+  fail-closed (`routes/adminSafetyCandidates.ts:104#isFlagEnabled`), live
   intelligence servable or a refusal before anything is read
-  (`routes/adminSafetyCandidates.ts:81#liveLabelsServable`;
+  (`routes/adminSafetyCandidates.ts:115#liveLabelsServable`;
   `test/adminSafetyCandidatesRoute.test.ts:304#not servable`); the subjects
   the caller names (≤ 50) or, absent, the bounded sweep of every place
   whose current `crowd.level` is served as `packed` — privacy-eligible and
   unexpired, the safety notice read's own two per-row gates, choosing only
-  WHERE to look (`routes/adminSafetyCandidates.ts:88#listSweepSubjects(`;
+  WHERE to look (`routes/adminSafetyCandidates.ts:122#listSweepSubjects(`;
   `lib/safetyCandidateStore.ts:41#listSweepSubjects(`;
   `lib/safetyCandidateStore.ts:50#packed`;
   `test/adminSafetyCandidatesRoute.test.ts:294#sweep`); per subject the
   current envelopes through the gate and the previous readings from the
-  record (`routes/adminSafetyCandidates.ts:101#readLiveClaimEnvelopes`;
-  `routes/adminSafetyCandidates.ts:103#readPreviousReadings`), a history
+  record (`routes/adminSafetyCandidates.ts:135#readLiveClaimEnvelopes`;
+  `routes/adminSafetyCandidates.ts:137#readPreviousReadings`), a history
   that cannot be read a per-subject REFUSAL and never "no candidate"
-  (`routes/adminSafetyCandidates.ts:105#refusal`;
+  (`routes/adminSafetyCandidates.ts:139#refusal`;
   `test/adminSafetyCandidatesRoute.test.ts:317#REFUSAL`), detection
-  (`routes/adminSafetyCandidates.ts:108#detectSafetyCandidates(`), the
-  dedupe against the queue (`routes/adminSafetyCandidates.ts:117#open.reasons`)
+  (`routes/adminSafetyCandidates.ts:142#detectSafetyCandidates(`), the
+  dedupe against the queue (`routes/adminSafetyCandidates.ts:151#open.reasons`)
   and the filing, a refused write named on the answer
-  (`routes/adminSafetyCandidates.ts:123#queue_write_failed`;
+  (`routes/adminSafetyCandidates.ts:157#queue_write_failed`;
   `test/adminSafetyCandidatesRoute.test.ts:332#refuses the write`). One row
   per new candidate and nothing else on the wire
   (`test/adminSafetyCandidatesRoute.test.ts:216#ONE report`).
-  `routes/adminSafetyCandidates.ts:140#router.get(` is
+  `routes/adminSafetyCandidates.ts:174#router.get(` is
   `GET /api/admin/intel/safety-candidates`: the detector's own rows still
   open or reviewing, newest first, parsed — a person's report is not among
   them (`lib/safetyCandidateStore.ts:112#listOpenCandidates(`;
@@ -1840,7 +1843,7 @@ mutations are listed in §5.3.
   `test/adminSafetyCandidatesRoute.test.ts:341#not a person`). A non-admin
   is refused before the flag is read
   (`test/adminSafetyCandidatesRoute.test.ts:205#non-admin`). Registered at
-  the tail of `routes/index.ts:383#adminSafetyCandidatesRouter`;
+  the tail of `routes/index.ts:385#adminSafetyCandidatesRouter`;
   `routes/admin.ts` and `routes/moderation.ts` are untouched.
 
 - **2803 and its rollback** — `migrations/2803_intel_safety_candidates_flag.sql:70#INSERT`
@@ -2299,11 +2302,11 @@ did **not** build.
   and the coordinate names — is refused at any depth, at build time and again
   on the wire (`lib/experienceSession.ts:181#export const SESSION_FORBIDDEN_KEYS`;
   `lib/experienceSession.ts:203#export function sessionForbiddenKeys(`;
-  `routes/experienceSessions.ts:224#const trail = sessionForbiddenKeys`;
+  `routes/experienceSessions.ts:225#const trail = sessionForbiddenKeys`;
   `test/experienceSession.test.ts:83#cannot be given a trail`; B7-M5 red).
   ONE OPEN SESSION: a second while one is open is refused, so sessions cannot
   accumulate into a parallel trail
-  (`routes/experienceSessions.ts:202#already_open`;
+  (`routes/experienceSessions.ts:203#already_open`;
   `test/experienceSessionsRoute.test.ts:156#a SECOND session`; B7-M9 red).
   NO HISTORY READ: the store exports exactly three functions — the open
   session, one session by id, and an append — and the suite asserts that set
@@ -2320,7 +2323,7 @@ did **not** build.
   late outcome: an outcome reported after the window is not evidence about that
   window, and feeding it to the calibration report would be a lie
   (`test/experienceSession.test.ts:141#an EXPIRED session`;
-  `test/experienceSessionsRoute.test.ts:314#an EXPIRED session`; B7-M1 red).
+  `test/experienceSessionsRoute.test.ts:347#an EXPIRED session`; B7-M1 red).
   The state itself is folded, never a stored status somebody could set
   (`lib/experienceSession.ts:460#export function sessionState(`).
 - **A failed read is a refusal, never "you have no session"** —
@@ -2335,7 +2338,7 @@ did **not** build.
   `experience_session_enabled` (2841, seeded FALSE), read fail-closed: with the
   flag absent — production's state — all three answer `feature_disabled` and
   neither read nor write, asserted by counting the rows the double stored
-  (`routes/experienceSessions.ts:161#experience_session_enabled`;
+  (`routes/experienceSessions.ts:162#experience_session_enabled`;
   `test/experienceSessionsRoute.test.ts:109#the flag ABSENT`; B7-M10 red).
   Every read and write is keyed on the caller's own id, so another person's
   session simply does not resolve
@@ -2437,7 +2440,7 @@ could be closed honestly — by going through the path that already exists.
   `intel` rather than inside it, so the shared I4a/I4b contract is still
   exactly its six keys (`lib/intelOutcomes.ts:178#experienceSession?: Record<string, unknown>;`;
   `lib/intelOutcomes.ts:204#if (input.experienceSession)`;
-  `routes/experienceSessions.ts:406#if (q.snapshotId && q.claimId && q.servedAt)`).
+  `routes/experienceSessions.ts:407#if (q.snapshotId && q.claimId && q.servedAt)`).
   Through the real route the single written event carries `payload.intel`
   byte-exact — snapshot, claim, subject, outcome, the 1..5 rating and
   `served_at` — and `payload.experience_session` naming the session it closed,
@@ -2450,7 +2453,7 @@ could be closed honestly — by going through the path that already exists.
   claim-belongs-to-this-snapshot check and the per-(actor, snapshot) dedup all
   stay in `recordIntelOutcome`; this route adds none of them. A close naming a
   snapshot the viewer was never served is refused with that path's own reason
-  and writes nothing (`test/experienceSessionsRoute.test.ts:296#NOT served`).
+  and writes nothing (`test/experienceSessionsRoute.test.ts:329#NOT served`).
 - **And when nothing permitted it** — §5.4 says MEMORY / CALIBRATION *"when
   permitted"*. A close that names no snapshot is recorded as the session's own
   event with `calibrated: false`, invisible to the calibration report and
@@ -2574,7 +2577,7 @@ refuses to commit over a TRUE row (`:46`).
 
 **(b) `whyNow` has a producer.** §1 recorded S70 as built and wrong on exactly
 one field: `whyNow` was always null because no live producer existed for a place
-on that surface. It exists now. `lib/discoveryCandidate.ts:283#whyNowOf` copies
+on that surface. It exists now. `lib/discoveryCandidate.ts:324#whyNowOf` copies
 the grounded reasons the rank engine produced — `crowd_busy`,
 `trajectory_building`, `walk_in_refused`, `queue_45m`, `reported_vibe_going_off`
 — in the claims' own vocabulary, and answers **null**, never `[]`, whenever no
@@ -2631,7 +2634,7 @@ satisfy a foreign key.** S97 was BUILT-AND-CORRECT on the strength of a grep:
 *"No nearest-place snapping exists (`grep -riE "nearest place|nearestPlace|snap
 to place"` → nothing)."* That grep now returns `routes/mapObservations.ts`, and
 what it returns is not a comment about the prohibition — it is the thing itself.
-`resolveZoneAnchorSubject` (`routes/mapObservations.ts:656#resolveZoneAnchorSubject`)
+`resolveZoneAnchorSubject` (**deleted 2026-09-25**; the file now records its own removal at `routes/mapObservations.ts:42#WHAT`)
 reads the `geo_zones` row a §22 zone contribution names, finds the **nearest**
 active place inside it (`:648#NEAREST`), and stores the observation against that
 place as `subject_id` (`:802`), recording the zone beside it. Its own header
@@ -2647,7 +2650,7 @@ observation to a place 8 km away would attribute it to somewhere the contributor
 never was"* — the module knows the hazard and bounds it. But a 3 km bound on a
 mis-attribution is a smaller mis-attribution, not an absent one, and §14's
 sentence has no radius in it. The path is reachable: the router is mounted
-(`src/routes/index.ts:319#mapObservationsRouter`) behind
+(`src/routes/index.ts:321#mapObservationsRouter`) behind
 `map_contributions_enabled` (`routes/mapObservations.ts:741`).
 
 Why this lane does not fix it: the only two fixes are to refuse §22's zone
@@ -2709,7 +2712,7 @@ not the only resolver in the tree, and the row is about the tree.
 - **THE ROUTE-MOUNTING CHECK, applied to §2–§5's C rows rather than assumed.**
   A surface graded BUILT that no router mounts is not built, and this census
   has four new routes from the earlier batches. All four are mounted:
-  `src/routes/index.ts:368#compassDecisionRouter` (S78, S79, S80, S86),
+  `src/routes/index.ts:370#compassDecisionRouter` (S78, S79, S80, S86),
   `:339#wallMomentsRouter` (S73, S74, S76, S102),
   `:344#telegraphLiveReferencesRouter` (S87, S88, S89) and
   `:349#adminSafetyCandidatesRouter` (S103). Nothing moves; the check is
@@ -2721,10 +2724,10 @@ not the only resolver in the tree, and the row is about the tree.
 | --- | --- | --- | --- |
 | S68 Rank using live ExperienceState, forecast, travel time, friction, compatibility, freshness, safety and Opportunity value | N | **C** | All eight inputs are axes of one pure engine (`lib/discoveryLiveRank.ts:371#gradeLiveRow`) over the one gated live read, reusing Compass's own `summariseLiveState` / `experienceValue` rather than restating them; wired into the REAL `GET /discovery` at both serve points and before the page slice (`routes/discovery.ts:1880#withDiscoveryLiveRank`, `:2291#withDiscoveryLiveRank`) behind 2850's FALSE flag; influence bounded in positions, absence never scored, "could not look" distinguishable from "saw nothing". Mutations B7-M1 to B7-M10 and B7-R1 to B7-R5 each red. |
 | S66 Safety constraints outrank opportunity/vibe; a dangerous place is never simultaneously promoted as "best move now" | W | **W** | **Built on three more surfaces and still W, deliberately.** The gap the row named is closed in CODE: Discovery's ranker reads safety state now — a Live-qualified `unsafe_density` demotes behind every other row before any score is compared (`lib/discoveryLiveRank.ts:462`), asserted over all eight modes and from first position — and on the layover surface the same reading removes the card (`lib/layoverLiveIntersection.ts:179`). It does not move because of **this census's own stricter rule for prohibitions** (see *"The rule for prohibitions"*): a "must never" is C when an artifact makes the violation unrepresentable or refuses it, and on a DEFAULT deployment nothing refuses it. Discovery's demotion is behind 2850, seeded FALSE; the layover drop is behind 2851, seeded FALSE; Compass's exclusion is behind an env constant whose own comment reads *"Default OFF"* (`src/compass/CompassLiveConstraints.ts:79#liveConstraintsEnabled`). Only the Map's unconditional priority sort (`lib/mapObjects.ts:335#safety`) holds everywhere, and §1's promotion-stripping addition to it is itself behind 2350. Four surfaces can refuse; one does. B7-M1 and B7-L3 red. |
-| S70 Server-built DiscoveryCandidate with why-now, why-for-user, confidence, freshness and truth class | W | **C** | The one field the row is named for has a producer: `whyNow` carries grounded reasons in the claims' own vocabulary (`lib/discoveryCandidate.ts:312#whyNowOf`) and is null — never `[]` — when no grade was computed or no reading was found (`:283#whyNowOf`); route-tested with the candidate projection on, both arms. The other four fields were already carried. B7-R5 red. |
+| S70 Server-built DiscoveryCandidate with why-now, why-for-user, confidence, freshness and truth class | W | **C** | The one field the row is named for has a producer: `whyNow` carries grounded reasons in the claims' own vocabulary (`lib/discoveryCandidate.ts:430#whyNowOf`) and is null — never `[]` — when no grade was computed or no reading was found (`:324#whyNowOf`); route-tested with the candidate projection on, both arms. The other four fields were already carried. B7-R5 red. |
 | S72 Intent modes — Right Now, Tonight, Explore, Quiet, Social, High Energy, Nearby, Trip — on the same shared intelligence | W | **C** | The spec's eight, verbatim and in order (`lib/discoveryLiveRank.ts:103#DISCOVERY_INTENT_MODES`), each a weight vector over the SAME axes of the SAME engine (`:154#INTENT_MODE_PROFILES`) — the suite asserts no mode has an axis of its own — and the crowd preference they declare is Compass's `experienceValue`, so "the same shared intelligence" is literal. Reachable as `GET /discovery?intentMode=…`; an unknown string is not honoured as a mode (B7-R4 red). |
 | S85 Layover Temporal Freedom Engine intersects feasibility with live Experience value, forecast, friction and safe-return | W | **C** | The row's finding was `grep -rn liveClaimRead services/airport/` → nothing. It reads it now, and intersects rather than competing: a live queue becomes minutes the EXISTING `LayoverSafetyEngine` rates against the certified deadline (`services/airport/LayoverRecommendationService.ts:496`, `lib/layoverLiveIntersection.ts:195`), a live `unsafe_density` or refused walk-in removes the card, a decaying window demotes and never drops, and a card with no reading is untouched. Driven through the real `generateRecommendations` (90 → 180 minutes under a 90-minute queue). B7-L1 to B7-L4 red. |
-| S97 Temporary activity must not be forced onto the nearest place ID when ownership is unknown; never assign to the nearest place merely to satisfy a foreign key | C | **W** | **The C rested on a grep that is now false.** `resolveZoneAnchorSubject` (`routes/mapObservations.ts:656#resolveZoneAnchorSubject`) resolves a §22 zone contribution by finding the **nearest** active place in the zone (`:648#NEAREST`) and storing the observation against it (`:802`); its own header gives the motive as the FK — *"`intel_observations.subject_id` FKs `public.places`, and a zone is not a place"*. Mounted (`src/routes/index.ts:319#mapObservationsRouter`) behind `map_contributions_enabled` (`routes/mapObservations.ts:741`). The 3 km ceiling and the recorded `zone_id` bound the mis-attribution; they do not make it absent, and §14's sentence carries no radius. Not fixable in this lane: the alternatives are deleting a §22 Map feature or removing `subject_id NOT NULL REFERENCES places(id)` (`src/migrations/2130_intel_storage.sql:142`), both owner decisions. |
+| S97 Temporary activity must not be forced onto the nearest place ID when ownership is unknown; never assign to the nearest place merely to satisfy a foreign key | C | **W** | **The C rested on a grep that is now false.** `resolveZoneAnchorSubject` (**deleted 2026-09-25**; the file now records its own removal at `routes/mapObservations.ts:42#WHAT`) resolved a §22 zone contribution by finding the **nearest** active place in the zone and storing the observation against it; **that resolver, its haversine, its bbox pre-filter and its 3 km ceiling were all DELETED on 2026-09-25**, and what stores the subject now is `:802#subjectKind` reading lib/sensingSubjectReconciliation, which answers `unknown` unless there is an ownership signal. The sentences below are kept as the record of what this row measured on the day it was written; its own header gives the motive as the FK — *"`intel_observations.subject_id` FKs `public.places`, and a zone is not a place"*. Mounted (`src/routes/index.ts:321#mapObservationsRouter`) behind `map_contributions_enabled` (`routes/mapObservations.ts:741`). The 3 km ceiling and the recorded `zone_id` bound the mis-attribution; they do not make it absent, and §14's sentence carries no radius. Not fixable in this lane: the alternatives are deleting a §22 Map feature or removing `subject_id NOT NULL REFERENCES places(id)` (`src/migrations/2130_intel_storage.sql:142`), both owner decisions. |
 
 **Held, with the reason.** **S3** and **S106** stay W, unchanged from §1: the
 single presence architecture would have to be a store and a fusion layer that
@@ -2934,7 +2937,7 @@ four. `MapObject` carries `freshness`, `confidence`, `sourceClass` and
 **The row stays W for a different reason, one nobody had written down.** The one
 server-built state Discovery consumes, `DiscoveryCandidate`, carries truth class,
 confidence and freshness and **no coverage**
-(`` `artifacts/api-server/src/lib/discoveryCandidate.ts:146#export interface DiscoveryCandidate {` ``)
+(`` `artifacts/api-server/src/lib/discoveryCandidate.ts:150#export interface DiscoveryCandidate {` ``)
 — even though the grade it is built from already carries a full `TruthMetadata`
 including coverage
 (`` `artifacts/api-server/src/lib/discoveryLiveRank.ts:212#TruthMetadata` ``).
@@ -3029,7 +3032,7 @@ with no `head -N` applied to any search asserted here as an absence):
 - **`sensing_anon_contributions` has no writer in production code.** The only
   non-test, non-migration module that names the table besides the store itself
   is the retention sweep
-  (`` `artifacts/api-server/src/lib/sensingRetentionScheduler.ts:156#gate: "sensing_anon_contributions must exist in this database",` ``),
+  (`` `artifacts/api-server/src/lib/sensingRetentionScheduler.ts:185#gate: "sensing_anon_contributions must exist in this database",` ``),
   which deletes. `src/index.ts` starts that scheduler and imports nothing else
   from the stack.
 
@@ -3061,7 +3064,7 @@ re-executed here rather than taken:
   `` `artifacts/api-server/src/lib/protectedLocations.ts:748#delete out.coverage;` ``,
   under a comment reading *"`coverage` restates the cohort that `count` was
   deleted for."*
-- Discovery does not run it. `` `artifacts/api-server/src/lib/discoveryCandidate.ts:146#export interface DiscoveryCandidate {` ``,
+- Discovery does not run it. `` `artifacts/api-server/src/lib/discoveryCandidate.ts:150#export interface DiscoveryCandidate {` ``,
   `lib/discoveryLiveRank.ts` and the `routes/discovery*.ts` handlers contain
   **zero** references to `protectedLocations`, `protected_zones` or
   `protectedZone`.
@@ -3288,7 +3291,7 @@ anonymous contribution policy takes its precision ceiling from the same ladder
 (`` `artifacts/api-server/src/lib/sensingContributionPolicy.ts:49#import { FEATURE_PRECISION_CEILING, type LocationPrecision } from "../presence/domain/types.js";` ``)
 — and S51's *"the inference over exactly those signals"*, which overstates by
 one: §5.2's candidate list names **density**, and
-`` `artifacts/api-server/src/lib/vibeInference.ts:69#export interface VibeFeatureInput {` ``
+`` `artifacts/api-server/src/lib/vibeInference.ts:77#export interface VibeFeatureInput {` ``
 carries `coverage` (how much evidence stands behind the features) and no
 density (how crowded the place is). Those are different quantities and the
 module's own comment says so. Neither changes a verdict; both change what a
@@ -3322,14 +3325,14 @@ decision no diff can substitute for.
 
 | id | was | now | why — and what settles it |
 | --- | --- | --- | --- |
-| S3 | W | **W** | Four presence models still coexist and `presence/domain` still has *"no store, no fusion layer"* (`` `artifacts/api-server/src/lib/crowdFlowProducer.ts:388#      "src/presence/domain/** — Phase-0 types and a transport selector; no store, no fusion layer",` ``). **RED WHEN** one `PresenceEstimate` store and fusion layer exists behind the ladder and all four of `circle_presence`, `trip_crew_location_sessions`, `locateFriendsSession` and the map's `social_zone`/`buddy_zone`/`crew_member` kinds read through it — proven by a test that a second presence write path is unrepresentable, not by the store's existence. **WHO**: a commissioned build across `src/presence/**`, `lib/crowdFlowProducer.ts`, `services/tripCrew/` and `lib/mapAggregation.ts`; the crew half is in trees this lane may not enter. |
+| S3 | W | **W** | **Evidence line corrected 2026-09-25 — see §15. The verdict does not move, and §14.2 is this document's current reading of S3.** As written, this cell quoted `crowdFlowProducer`'s own blocker evidence saying `presence/domain` had *"no store, no fusion layer"*. **That sentence no longer exists in any tree**: a lane on `sensing100-integration` built the store and REWROTE that evidence slot, which now reads `` `artifacts/api-server/src/lib/crowdFlowProducer.ts:389#      "src/presence/fusion/store.ts — a PresenceFusionStore now exists and is the ONLY minter of a PresenceEstimate` ``. Read that line before assuming it closes the row — it argues the blocker is **confirmed**, not closed, because a `PresenceEstimate` carries no from-zone and the store deliberately does not hold one. **RED WHEN** one `PresenceEstimate` store and fusion layer exists behind the ladder and all four of `circle_presence`, `trip_crew_location_sessions`, `locateFriendsSession` and the map's `social_zone`/`buddy_zone`/`crew_member` kinds read through it — proven by a test that a second presence write path is unrepresentable, not by the store's existence. **WHO**: a commissioned build across `src/presence/**`, `lib/crowdFlowProducer.ts`, `services/tripCrew/` and `lib/mapAggregation.ts`; the crew half is in trees this lane may not enter. |
 | S17 | X | **X** | Half is code-answerable and already built (helmet/HSTS in `app.ts`; the store's at-rest control is application-level — peppered HMAC tokens, the device secret never stored). The other half is not in any tree. **RED WHEN** the operator supplies two artifacts: the served response headers of the deployed origin showing TLS termination and an HSTS `max-age`, and Supabase's at-rest encryption attestation for the production project. Neither is a diff. **WHO**: the operator. An honest X until then; no code change can move it. |
 | S18 | W | **W** | Two-layer rotation built, executed, mutation-proven (M1/M1b); `sensing_anon_contributions` has no writer. **RED WHEN** `SENSING_AUTH_POSTURE` leaves `undecided` (`` `artifacts/api-server/src/lib/sensingAuthPosture.ts:82#export const SENSING_AUTH_POSTURE: SensingAuthPosture = "anonymous_capable";` ``) **and** a writer is registered. Note the second gate is not only the posture: `src/test/sensingAnonStore.test.ts` asserts *"no route touches the store — a transport is an owner decision, not an implementation detail"*, so a lane that wired one today would turn that test red by design. **WHO**: the owner, then a lane. |
 | S19 | W | **W** | `` `artifacts/api-server/src/migrations/2130_intel_storage.sql:142#  actor_id           uuid NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,` `` stands, and so do its two siblings — **repointed**: `` `artifacts/api-server/src/migrations/2130_intel_storage.sql:244#  actor_id       uuid NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,` `` on `intel_evidence` and `` `artifacts/api-server/src/migrations/2130_intel_storage.sql:266#  actor_id   uuid NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,` `` on `intel_confirmations` (the row said 236 and 265; both were in range and wrong). **RED WHEN** a reviewed migration drops or nulls the FK on the table that has a writer. **WHO**: the owner rules, the integration owner numbers the migration. **NOT** by reclassifying `intel_observations` as a non-anonymous store — that shrinks the population and §5 forbids it. |
 | S20 | W | **W** | Eligibility, credential and session are three modules and a table with no identity column; eligibility refuses everyone. **RED WHEN** the posture is decided **and** an ingest exists that receives only the opaque credential — the separation is only observable when something crosses it. **WHO**: the owner, then a lane. |
 | S21 | W | **W** | The store is right; the boundary is narrow and coordinate-free and still entered **by profile id** from the personal-location branch (§10.4). **RED WHEN** `travel-buddy-standalone/` reduces on device — bucketed features, no coordinate leaving the handset — **and** a server path accepts them without reading `location_snapshots` by `actor_id`. Half of that is a client capture change this lane cannot make; half is `services/intel/PresenceVerifier.ts`, which it can. **WHO**: a client build, then this lane. |
 | S24 | W | **W** | The gate holds over two real reads (M4 red) and rare-path suppression stands; nothing publishes an aggregate for it to guard. **RED WHEN** a real publisher hands `` `artifacts/api-server/src/lib/sensingDifferencingGate.ts:46#export function evaluateDifferencing(` `` a previous and a current aggregate. Its own header says *"the caller keeps the last published aggregate and hands it back in"*, so that caller needs DURABLE state for the previous publication. **This lane examined its one aggregate-publishing surface, `GET /v1/neighborhoods/:id/pulse`, and declined, having first checked the obvious shortcut and found it closed**: the intuition is that the previous publication is recoverable from snapshot history, and it is not — `` `artifacts/api-server/src/migrations/2130_intel_storage.sql:310#CREATE UNIQUE INDEX IF NOT EXISTS intel_state_snapshots_subject_claim` `` makes `intel_state_snapshots` one row per (subject, zone, claim), upserted in place, so the value the gate needs to compare against has already been overwritten by the time anything could read it. That leaves process memory, and a differencing control that does not hold across replicas is a control in name. The gate needs a new durable last-published store, which is a migration. **WHO**: the integration owner (a table), then decision #9 (the owner), then a lane. |
-| S25 | W | **W** | The seven verbs are distinct on the anonymous path (`` `artifacts/api-server/src/lib/sensingContributionPolicy.ts:66#export const CONTRIBUTION_PURPOSE_SCOPES = [` ``, with infer/personalize/surface/share NOT granted) and the human-claim path is still one boolean (`` `artifacts/api-server/src/lib/intelConsent.ts:51#    return data.enabled === true &&` ``). **RED WHEN** `intel_contribution_consent` carries a scope set and a capture refuses a verb it was not granted. That is a migration plus `lib/intelConsent.ts` — neither this lane's file. **WHO**: the integration owner and whoever owns `intelConsent`. |
+| S25 | W | **W** | The seven verbs are distinct on the anonymous path (`` `artifacts/api-server/src/lib/sensingContributionPolicy.ts:66#export const CONTRIBUTION_PURPOSE_SCOPES = [` ``, with infer/personalize/surface/share NOT granted) and the human-claim path is still one boolean (`` `artifacts/api-server/src/lib/intelConsent.ts:65#    return data.enabled === true &&` ``). **RED WHEN** `intel_contribution_consent` carries a scope set and a capture refuses a verb it was not granted. That is a migration plus `lib/intelConsent.ts` — neither this lane's file. **WHO**: the integration owner and whoever owns `intelConsent`. |
 | S26 | W | **W** | **Evidence replaced: the statement this row carried was a PR-comparison row about unmerged work (§10.2a), not a statement about HEAD.** At HEAD: 2315 IS in the tree and its 72-hour bound is structural (`` `artifacts/api-server/src/migrations/2315_sensing_anon_contributions.sql:172#    CHECK (expires_at > created_at AND expires_at <= created_at + interval '72 hours'),` ``), and it is applied to no database and has no writer; `intel_observations` still keeps 180 days of actor-linked raw contributions behind `intel_contribution_retention_enabled`, which is FALSE in production. **RED WHEN** either half becomes true of a database: 2173 applied with the flag on and 180 days ruled or shortened to "short", or 2315 applied and written to. **WHO**: the owner (what "short" means for identifiable rows), then ops. |
 | S28 | N | **N** | Re-executed: no `expo-sensors`, `DeviceMotion`, `Accelerometer`, `Gyroscope` or `Pedometer` anywhere in `travel-buddy-standalone/` — source or `package.json`. **RED WHEN** a client capture module produces the nine named features. **WHO**: a client build nobody has commissioned; no lane in this wave owns that tree. Everything downstream (S42, S51, S52) is waiting on exactly this. |
 | S29 | N | **N** | Re-executed and narrowed: `expo-av` IS present, for video **playback** only; there is no `Audio.Recording`, no microphone permission in `app.json`, and no acoustic feature anywhere. The census's *"no acoustic capture"* is right; *"no permission scaffold"* is right for capture and would be easy to misread as "no audio dependency". **RED WHEN** a separate, explicit microphone permission exists and gates a coarse energy/rhythm extractor — separate being the requirement, so reusing a video permission would not close it. **WHO**: a client build. |
@@ -3339,17 +3342,17 @@ decision no diff can substitute for.
 | S35 | W | **W** | All four rejections exist and three are executed against the database (M3, M10, M11 red); there is no ingest to reject anything. **RED WHEN** S32 does. **WHO**: as S32. |
 | S39 | W | **W** | `` `artifacts/api-server/src/lib/sensingPresenceState.ts:69#  presence: "observed"` `` — two values, no `absent`, no zero, no person named (M8 red, executed on k and k − 1 real contributors); no surface consumes it. **RED WHEN** decision #9 is taken and a surface reads `buildSensingPresenceState`. Note this lane's read-model routes cannot be that surface while the anon-store tripwire stands. **WHO**: the owner (decision #9), then a lane. |
 | S42 | W | **W** | The engine and its guards are pinned (M5 red); not one input has a producer. **RED WHEN** S28 exists. **WHO**: a client build. |
-| S49 | W | **W** | **Part closed this pass (§10.1): the §19 read model now carries all four §5.1 fields, per claim and composed, through the one shared derivation.** The gap §8 named is untouched — `` `artifacts/api-server/src/lib/discoveryCandidate.ts:146#export interface DiscoveryCandidate {` `` still carries truth class, confidence and freshness and no coverage, and `lib/discoveryLiveRank.ts` computes the value in the same function. **RED WHEN** the owner rules the §24 question — either route `DiscoveryCandidate` through `protectedLocations`, or rule that a four-value bucket over an already k-gated state is not protected-zone sensitive — and Discovery adds the field. §10.1's argument that the bucket was already served does **not** transfer: `DiscoveryCandidate` carries no cohort signal today, so adding one there is a first disclosure. **WHO**: the owner, then the Discovery lane. |
+| S49 | W | **W** | **Part closed this pass (§10.1): the §19 read model now carries all four §5.1 fields, per claim and composed, through the one shared derivation.** The gap §8 named is untouched — `` `artifacts/api-server/src/lib/discoveryCandidate.ts:150#export interface DiscoveryCandidate {` `` still carries truth class, confidence and freshness and no coverage, and `lib/discoveryLiveRank.ts` computes the value in the same function. **RED WHEN** the owner rules the §24 question — either route `DiscoveryCandidate` through `protectedLocations`, or rule that a four-value bucket over an already k-gated state is not protected-zone sensitive — and Discovery adds the field. §10.1's argument that the bucket was already served does **not** transfer: `DiscoveryCandidate` carries no cohort signal today, so adding one there is a first disclosure. **WHO**: the owner, then the Discovery lane. |
 | S51 | W | **W** | The inference exists and is guarded; not one signal is produced anywhere. **Narrowed**: §5.2's candidate list names `density` and the input carries `coverage` instead (§10.4), so this row needs one more signal than the census said. **RED WHEN** S28 exists AND a density input joins `VibeFeatureInput`. **WHO**: a client build, then whoever owns `lib/vibeInference.ts`. |
-| S52 | W | **W** | Checked field-for-field against the SPEC's §5.2 list rather than the module's own: energy, sociality, dance_likelihood, volatility, momentum, scene/context tags, confidence, coverage, freshness, provenance — all ten present on `` `artifacts/api-server/src/lib/vibeInference.ts:93#export interface SensingVibeState {` ``. **Evidence corrected 2026-09-14 (§10.9)**: the earlier sentence *"truth class always `inferred`"* restated the module's own header, which is false about its own code — the no-coverage branch returns `unknown`, deliberately (*"Nothing is inferred from nothing"*), and `unknown` is one of §5.1's seven. So the state carries `inferred` where there is coverage and `unknown` where there is none, and the band is structurally below the live floor in both. That is the spec behaving correctly, not a defect, and it moves no verdict. **RED WHEN** something can populate it, i.e. S28. **WHO**: a client build. |
+| S52 | W | **W** | Checked field-for-field against the SPEC's §5.2 list rather than the module's own: energy, sociality, dance_likelihood, volatility, momentum, scene/context tags, confidence, coverage, freshness, provenance — all ten present on `` `artifacts/api-server/src/lib/vibeInference.ts:128#export interface SensingVibeState {` ``. **Evidence corrected 2026-09-14 (§10.9)**: the earlier sentence *"truth class always `inferred`"* restated the module's own header, which is false about its own code — the no-coverage branch returns `unknown`, deliberately (*"Nothing is inferred from nothing"*), and `unknown` is one of §5.1's seven. So the state carries `inferred` where there is coverage and `unknown` where there is none, and the band is structurally below the live floor in both. That is the spec behaving correctly, not a defect, and it moves no verdict. **RED WHEN** something can populate it, i.e. S28. **WHO**: a client build. |
 | S66 | W | **W** | Re-executed at both surfaces: Discovery demotes a Live-qualified `unsafe_density` behind every other row before any score is compared (`` `artifacts/api-server/src/lib/discoveryLiveRank.ts:464#    if (a.grade.safety.demoted !== b.grade.safety.demoted) return a.grade.safety.demoted ? 1 : -1;` ``) and the layover surface removes the card (`` `artifacts/api-server/src/lib/layoverLiveIntersection.ts:199#  if (state.unsafe) { drop = true; dropReason = "unsafe_density"; }` ``). **RED WHEN** a dangerous place is actually refused rather than refusable — the flags these paths ride are ON in a database and real `unsafe_density` state reaches them. **WHO**: nobody, deliberately: this is the census working, and it is recorded so the count of "W rows a lane should move" is not inflated by it. |
 | S79 | W | **W** | Re-executed as an absence, by opening the three modules rather than by a grep that stops: `routes/compass.ts`, `compass/CompassStructuredContext.ts` and `routes/telegraph.ts` contain **zero** references to `liveClaimRead`, `readLiveClaimEnvelopes`, `resolvePlaceIntelState` or `truthOfEnvelope`. The decision surface is grounded by construction; the conversational path has no structured truth in its context to be grounded against. **RED WHEN** live claims are carried into `/compass/ask`'s context and a grounding checker constrains the generated language to the band of its inputs — in that order, because a checker over an empty context is vacuous. **WHO**: the Compass lane. |
 | S83 | W | **W** | `compass/CompassTripContext.ts` still exports exactly one function, `buildTripContextLines`, and it is trip grounding — no world state, no opportunities, no disruptions, no sessions. **RED WHEN** S54 (`ExperienceSession`) exists and a `TripWorldContext` projection carries the five named parts. **WHO**: the Compass lane, after a commissioned `ExperienceSession`. |
 | S92 | W | **W** | Eligibility and decay exist; the bridge is a graph-edge projection and `grep` over `lib/memoryProjectionScheduler.ts` and `services/memoryProjections/` finds no `ExperienceSession` of any spelling. **RED WHEN** S54 exists and memory eligibility is computed from a session's outcome rather than from a graph edge. **WHO**: the Highlights & Memories lane, after a commissioned `ExperienceSession`. |
-| S97 | W | **W** | Re-executed and the §7 ruling stands. `` `artifacts/api-server/src/routes/mapObservations.ts:656#export async function resolveZoneAnchorSubject(` `` resolves a §22 zone contribution to the *nearest* active place (`` `artifacts/api-server/src/routes/mapObservations.ts:648# * NEAREST active place within the zone's radius, and returns that place as the` ``) and the caller stores the observation against it (`` `artifacts/api-server/src/routes/mapObservations.ts:802#    subjectId = anchored.subjectId;` ``), with the FK given as the motive in its own header. **RED WHEN** the proximity resolution is removed, which needs either the Map's zone-contribution feature deleted or `subject_id NOT NULL REFERENCES places(id)` dropped. **WHO**: the owner. Both alternatives are rulings, not diffs. |
+| S97 | W | **W** | Re-executed and the §7 ruling stood when this table was written: `resolveZoneAnchorSubject` resolved a §22 zone contribution to the *nearest* active place and the caller stored the observation against it, with the FK given as the motive in its own header. **THE RED WHEN BELOW HAS SINCE FIRED, and that is a statement about the TREE, not yet about a database.** On 2026-09-25 the resolver was deleted outright — the file records its own removal at `` `artifacts/api-server/src/routes/mapObservations.ts:42#WHAT` `` — and the subject is now stored from lib/sensingSubjectReconciliation (`` `artifacts/api-server/src/routes/mapObservations.ts:802#subjectKind` ``), which answers `unknown` unless an ownership signal says otherwise. The second alternative this row named is what made that possible: `3002_intel_contribution_identity.sql` drops `subject_id NOT NULL`. **3002 IS IN THE TREE AND APPLIED TO NO DATABASE**, and production still has `subject_id NOT NULL REFERENCES places(id)` (measured 2026-09-25), so shipping this code ahead of that migration would make a zone contribution fail its NOT NULL rather than store `unknown`. The verdict is therefore NOT moved here; §14 re-derives it against what is applied. **RED WHEN** the proximity resolution is removed, which needs either the Map's zone-contribution feature deleted or `subject_id NOT NULL REFERENCES places(id)` dropped. **WHO**: the owner. Both alternatives are rulings, not diffs. |
 | S106 | W | **W** | The ladder is still right and still has no store and no fusion layer. **Corrected**: *"only `locateFriends` consumes it"* is no longer true — the anonymous contribution policy takes its precision ceiling from the same ladder (§10.4), which is a second consumer and is the shape the row asks for. It changes no verdict: two type consumers are not a fusion layer. **RED WHEN** S3 does. **WHO**: as S3. |
 | S111 | W | **W** | All four §18.3 outcomes are representable and proximity never resolves ownership (M6 red) — `` `artifacts/api-server/src/lib/sensingSubjectReconciliation.ts:69#export type SensingSubjectRef =` ``. The resolver has no caller, and that is **now machine-checked** (§10.3, M18 red). **RED WHEN** `intel_observations.subject_id NOT NULL REFERENCES places(id)` is dropped so that `unknown` and `temporary_world_object` can be STORED. Giving the resolver a caller does not close it — the two outcomes that matter have nowhere to go. **WHO**: the owner, the same ruling as S19 and S97. |
-| S112 | W | **W** | Five stages are defined and executable (`` `artifacts/api-server/src/lib/sensingRevocationLineage.ts:50#export const SENSING_LINEAGE_STAGES = ["raw", "aggregate", "inference", "session", "memory"] as const;` ``) and proven against the SQL on a real cohort (M14 red). The session and memory stages are prevented only because nothing bridges to them. **RED WHEN** a session exists (S30) and a memory bridge exists (S54/S92) for a revocation to reach. **WHO**: the owner for the first, a commissioned build for the second. |
+| S112 | W | **W** | Five stages are defined and executable (`` `artifacts/api-server/src/lib/sensingRevocationLineage.ts:54#export const SENSING_LINEAGE_STAGES = ["raw", "aggregate", "inference", "session", "memory"] as const;` ``) and proven against the SQL on a real cohort (M14 red). The session and memory stages are prevented only because nothing bridges to them. **RED WHEN** a session exists (S30) and a memory bridge exists (S54/S92) for a revocation to reach. **WHO**: the owner for the first, a commissioned build for the second. |
 | S118 | W | **W** | The published side is right — k-gated, no contributor id. The stored side fails outright and for the same one line as S19. **RED WHEN** S19 does, and only then: k-gating the publication cannot repair a store that resolves a contribution to an account by design. **WHO**: the owner. |
 
 ### §10.6 What this section could not settle, and two things the integrator must do
@@ -3570,7 +3573,7 @@ no change.
 ten: motion_energy, movement periodicity, bounded spatial movement, dwell,
 arrival velocity, departure velocity, density, event/venue context, *optional*
 user observations, and *optional* explicitly-permitted acoustic energy.
-`` `artifacts/api-server/src/lib/vibeInference.ts:69#export interface VibeFeatureInput {` ``
+`` `artifacts/api-server/src/lib/vibeInference.ts:77#export interface VibeFeatureInput {` ``
 carries eight of the ten — `motionEnergy`, `periodicity`, `boundedMovement`,
 `dwellBucket`, `arrivalVelocity`, `departureVelocity`, `venueContext`, and the
 acoustic pair behind `acousticPermissionGranted`. **Two are absent and they are
@@ -3584,7 +3587,7 @@ have been convenient to overlook.
 
 **S52 — the ten `VibeState` fields, and one sentence that was wrong.** All ten
 of §5.2's outputs are on
-`` `artifacts/api-server/src/lib/vibeInference.ts:93#export interface SensingVibeState {` ``:
+`` `artifacts/api-server/src/lib/vibeInference.ts:128#export interface SensingVibeState {` ``:
 `energy`, `sociality`, `danceLikelihood`, `volatility`, `momentum`,
 `contextTags` (the spec's "scene/context tags where legitimately sourced"), and
 confidence / coverage / freshness / provenance carried together on `truth`.
@@ -3630,7 +3633,7 @@ members of `TRUTH_CLASSES` — checked against `lib/truthClass.ts`, never agains
 M31 is left in the table on purpose. A mutation that fails to redden is either a
 test that cannot fail or a guard that is stronger than the mutation, and the two
 are told apart by finding the guard — which here is
-`` `artifacts/api-server/src/lib/vibeInference.ts:140#  return bands.indexOf(band) < bands.indexOf(MIN_BAND_FOR_LIVE_STATE) ? band : "unverified";` ``.
+`` `artifacts/api-server/src/lib/vibeInference.ts:175#  return bands.indexOf(band) < bands.indexOf(MIN_BAND_FOR_LIVE_STATE) ? band : "unverified";` ``.
 M31b removes it and the case goes red, so the case can fail and the band
 guarantee has two independent defences rather than one. Recording only M31b
 would have made a weaker system look like a stronger test.
@@ -3763,13 +3766,13 @@ registration. Only the first is in this census's scope.
 Before: `projectClaim` asked `evaluatePrivacy` about every claim with one threshold,
 by taking the function's default. After: it selects. For anything that is not a
 safety assertion it passes `PRIVACY_THRESHOLD_V1` explicitly
-(`artifacts/api-server/src/lib/intelProjection.ts:431#safetyThreshold`), which is the
+(`artifacts/api-server/src/lib/intelProjection.ts:443#safetyThreshold`), which is the
 same value the gate defaults to
 (`artifacts/api-server/src/lib/privacyGate.ts:82#PRIVACY_THRESHOLD_V1,`) — so **every
 ordinary claim is byte-for-byte unchanged**, and that was checked by reading the
 default rather than assumed from the diff being small. For a safety assertion it
 routes through `evaluateSafetyPublication` first, which either refuses the snapshot
-entirely (`artifacts/api-server/src/lib/intelProjection.ts:402#skippedReason:`) or
+entirely (`artifacts/api-server/src/lib/intelProjection.ts:414#skippedReason:`) or
 returns the threshold to gate on.
 
 ### §12.2 The reviewed lane, measured rather than described
@@ -3783,7 +3786,7 @@ condition, not by reading the PR:
 | value is the safety assertion | `artifacts/api-server/src/lib/intelContracts.ts:257#SPECIALIST_ONLY_CROWD_LEVELS` | one element, `unsafe_density` |
 | status is servable | `artifacts/api-server/src/lib/safetyPolicy.ts:197#SAFETY_SERVABLE_CLAIM_STATUSES` | `active` alone — a `conflicting` hazard is now refused at the WRITER, where it previously got a snapshot |
 | anchored to a canonical place | `artifacts/api-server/src/lib/safetyPolicy.ts:245#evaluateSafetyPublication` | refuses `no_canonical_place` |
-| authority is a review | `artifacts/api-server/src/lib/intelProjectionAggregator.ts:625#safetyAuthority` | `admin_review` only, and only from the latest `intel_claim_reviews` row whose `new_status` matches the claim's current status |
+| authority is a review | `artifacts/api-server/src/lib/intelProjectionAggregator.ts:639#safetyAuthority` | `admin_review` only, and only from the latest `intel_claim_reviews` row whose `new_status` matches the claim's current status |
 | the other three authorities | `artifacts/api-server/src/lib/safetyPolicy.ts:121#available:` | `authenticated_official` refused (lane unavailable), `ai_classification` refused by name, `community_corroboration` gated on `SAFETY_COMMUNITY_THRESHOLD`, which is STRICTER than `PRIVACY_THRESHOLD_V1` on independent groups and weaker on none |
 
 So the sub-15 threshold is reachable by one value of one claim type, in one status,
@@ -3795,7 +3798,7 @@ that writer re-checks the reviewer capability before it writes.
 
 | id | was | now | why |
 | --- | --- | --- | --- |
-| S13 One device ≠ a crowd | BC | **BC** | Verdict unchanged, evidence EXTENDED in the row itself. The gate module, its four numbers and its default are untouched, so §8's *"Holds, value for value, at the cited lines"* is still literally true. But the row's second sentence — *"a missing group count is a refusal, not an exemption"* — is now false of the reviewed safety lane, which floors the missing count to 1 before asking (`artifacts/api-server/src/lib/intelProjection.ts:422#reviewerBackstop`). The verdict holds on the measurement in §12.2: the lane is an authorized principal's judgement about a public venue, not an aggregate of devices, and no device can enter it. |
+| S13 One device ≠ a crowd | BC | **BC** | Verdict unchanged, evidence EXTENDED in the row itself. The gate module, its four numbers and its default are untouched, so §8's *"Holds, value for value, at the cited lines"* is still literally true. But the row's second sentence — *"a missing group count is a refusal, not an exemption"* — is now false of the reviewed safety lane, which floors the missing count to 1 before asking (`artifacts/api-server/src/lib/intelProjection.ts:428#reviewerBackstop`). The verdict holds on the measurement in §12.2: the lane is an authorized principal's judgement about a public venue, not an aggregate of devices, and no device can enter it. |
 
 ### §12.4 The rows re-executed and NOT moved, with what each was measured against
 
@@ -3804,7 +3807,7 @@ that writer re-checks the reviewer capability before it writes.
 | S8 Crowded ≠ unsafe | the specialist-only carve-out and no contributor path to `unsafe_density` | **Holds.** `intelContracts.ts`, `quickSignal.ts` and `mapProjection.ts` are not in the diff, and the new lane reads the carve-out rather than widening it — `SAFETY_CLAIM_VALUES` is sourced from `SPECIALIST_ONLY_CROWD_LEVELS`, so the two cannot drift. |
 | S15 World anomaly ≠ safety incident | `safetyNoticeProducer` refusing the `protected_zones` fallback; no anomaly→notice path | **Holds.** `lib/mapProducers/safetyNoticeProducer.ts` is deliberately NOT in this PR's diff, and nothing added here detects an anomaly: the authority is read from an audit trail, never inferred from a value or a trajectory. |
 | S16 User dislike ≠ bad venue | no path from personal feedback reaches a claim | **Holds.** The two new `ProjectionInput` fields are a lifecycle status and a review-derived authority. No feedback table is read by either half, and `intelProjection.ts` still writes only `intel_state_snapshots`. |
-| S67 Map is a projection consumer, never an owner | `intelProjection.ts` is the sole writer of `intel_state_snapshots` | **Holds, re-measured.** The new read half performs no write of any kind — the only database call it adds is a `SELECT` on `intel_claim_reviews` (`artifacts/api-server/src/lib/intelProjectionAggregator.ts:604#intel_claim_reviews`) — and no map producer changed. |
+| S67 Map is a projection consumer, never an owner | `intelProjection.ts` is the sole writer of `intel_state_snapshots` | **Holds, re-measured.** The new read half performs no write of any kind — the only database call it adds is a `SELECT` on `intel_claim_reviews` (`artifacts/api-server/src/lib/intelProjectionAggregator.ts:618#intel_claim_reviews`) — and no map producer changed. |
 | S23 Cohort thresholds and minimum independence | the gate's arithmetic and the merge that can only REDUCE the group count | **Holds.** `privacyGate.ts` and `intelIndependence.ts` are not in the diff and the merge semantics are untouched. The reviewed lane's floor is applied in the CALLER, to the question asked, and is a declared threshold rather than a relaxed one. |
 | S103 Evidence/anomaly → candidate → review → assertion | the candidate stage and the filing path | **Holds at C.** `lib/safetyCandidate.ts`, `lib/safetyCandidateStore.ts`, `routes/adminSafetyCandidates.ts` and 2803 are none of them in the diff. This PR repairs the LAST stage, which the row already recorded as existing; it adds no candidate stage and removes none. |
 | S117 No surface may fabricate world state | the four cited surfaces manufacturing no label | **Holds.** None of the four files is in the diff. The floor changes what the GATE is asked and not what the snapshot RECORDS: `distinct_actors` stays the honest observation count. |
@@ -3829,3 +3832,2241 @@ whether #457's own behaviour is correct — that is the PR's mutation evidence, 
 census's business. `head_commit` is unchanged, so CONSTRUCTED% and CORRECT% are
 unchanged, and this document is still a measurement of `1fe72289b` plus the sections
 that name their own commits.
+---
+
+## §13 S103's evidence line, corrected — the verdict does not move
+
+*(Numbered §13 at merge time: this section and main's §12 were written
+independently and both claimed §12. Main's keeps the number it merged with;
+this one moves. Both are kept in full — neither is a restatement of the
+other, and they AGREE that S103 holds at `C`. This section is placed last so
+its correction to S103's evidence line is the document's final word on that
+row.)*
+
+Re-read on 2026-09-22 as a READING, not a regrade. **S103 stays `C`** and so does
+its cross-listed partner `TRV2-03` in census-trust. No headline table is restated
+here, deliberately: `check:census-integrity` reads the LAST such block as the
+document's claim, and §11's numbers are still exactly right.
+
+**What the row gets wrong.** §10's S103 entry says the pipeline sits *"behind
+2803's FALSE flag and requireAdmin"*. The `requireAdmin` half is right. The flag
+half is right about portava-ci and **wrong about production**, probed directly
+rather than read out of a ledger — the rule §4 exists to enforce:
+
+| project | `intel_safety_candidates_enabled` |
+|---|---|
+| portava-ci `hwokxgbmezheskbzskfr` | `false` — 2803 applied |
+| production `ajrurzioarfkagpuxfnb` | **no row at all** — 2803 not applied |
+
+2803's only statement is one `INSERT` into `feature_flags`, so an absent row is
+the whole of its absence; there are no other objects that could disagree.
+
+**Why the verdict does not move on that.** `isFlagEnabled` answers false for an
+absent row and for a `FALSE` row alike, so `POST /api/admin/intel/safety-candidates/scan`
+returns `feature_disabled` in both environments. The behaviour S103 grades is
+identical. What changes is the sentence: *"seeded FALSE"* describes a deliberate
+off-switch that production does not have, and an owner planning the enablement
+would go looking for a flag to flip and find nothing to flip.
+
+**What the re-read confirmed rather than changed.** The two stages S103's earlier
+`BW` said were missing are real and reachable, checked by reading the tree and not
+by trusting the row: `lib/safetyCandidate.ts` exists, `routes/adminSafetyCandidates.ts`
+declares the scan, and the router **is** mounted — `routes/index.ts` imports it and
+`router.use`s it. So this is not the T212 shape (a module with no production
+importer). The handler's gate order is `requireAdmin` → service client → flag →
+payload → `liveLabelsServable`, each failing closed.
+
+**And the limit, said here rather than left to be inferred.** Nothing in the tree
+calls the scan or `listSweepSubjects` except the route itself — no scheduler, no
+cron, no job. The only way anything enters this pipeline is an admin pressing it,
+and in production nothing ever has, because 2803 has not been applied there. S103's
+`C` is a verdict about the code being complete and connected, which it is. It is
+not a claim that a single safety candidate has ever been filed. That distinction is
+the same one this corpus applied to T240/T242 (a field in a migration no database
+has run) and the one Q5's ruling states as a rule: a service with no production
+caller is not completion.
+
+
+## §14 — 2026-09-25: the twenty-four non-C rows re-derived against what is APPLIED
+
+| | |
+|---|---|
+| **Measured at** | `sensing100-integration`, after the S42/S52 producer, the S118 identity bridges, the S49 zone pass and the S39 flag. Production read directly (`ajrurzioarfkagpuxfnb`) on the same day. |
+| **Why it exists** | §10.5 re-derived the non-C rows against the TREE. Five lanes have since built into that tree, and three of §10.5's RED WHEN conditions have fired there. This section asks the second question, which §10.5 did not: **is any of it applied?** |
+
+### §14.0 The reconciliation that had to come first
+
+A handoff claimed sixteen rows built. It said **thirteen** and listed **fourteen**.
+Recounted from §10.5's table rather than from the handoff:
+
+| | |
+|---|---|
+| The 21 W rows | S3 S18 S19 S21 S24 S26 S32 S39 S42 S49 S51 S52 S66 S79 S83 S92 S97 S106 S111 S112 S118 |
+| Claimed by a lane | **14** W — S3 S18 S19 S21 S32 S51 S79 S83 S92 S97 S106 S111 S112 S118 — plus the 2 N rows S28 S29. Fourteen, not thirteen. |
+| Claimed by nobody | **7** — S24 S26 S39 S42 S49 S52 S66 |
+| Denominator | **127**, unchanged. It is not shrunk here and no row is excluded. |
+| S17 | The single **X**, and correctly OUTSIDE the 21: non-C = 24 = 21 W + 2 N + 1 X. A reconciliation that folded it into the W list would have inflated the "buildable" set by one. |
+
+`of-built` — C/(C+W) — is the metric this section moves. At 103 C it reads
+**103 / 124 = 83.1 %**, and the 16.9 % gap is 21/124: 11.3 points claimed-built,
+1.6 S42/S52, 2.4 S24/S39/S49, 1.6 S26/S66.
+
+**Against `origin/main`: zero verdict differences.** All 122 id-keyed rows grade
+identically there and here; the only diffs are §13 and citation line numbers. So
+nothing below is a disagreement with main — it is new work measured against it.
+
+### §14.1 THE RULE THIS SECTION IS WRITTEN UNDER
+
+**A RED WHEN that fired in the tree moves a row to C only if the row's claim is
+about the tree.** Where the claim is about a database, the apply is the evidence
+and the tree is not. That distinction is the whole of §14, and it is why most of
+what follows does NOT move.
+
+Production, measured 2026-09-25 rather than inferred:
+
+* `2315`, `2340`, `2480`, `2998` applied (ledger, `applied_by` manual). `2481` absent, correctly.
+* **`3002`, `3003`, `3004`, `3110`, `3310` applied to NO database.**
+* All five intel tables still carry `actor_id -> profiles(id)`. `intel_observations.subject_id` is still `NOT NULL REFERENCES places(id)`.
+* `intel_contribution_retention_enabled` FALSE · `intel_capture_quick_signal` TRUE · `layover_safety_engine_enabled` TRUE · no `intel_safety_candidates_enabled` row · no `sensing_presence_context_enabled` row.
+* Every sensing and intel table holds **zero rows**, and `.agents/memory/production-has-no-real-users.md` records why: all 58 profiles are owner-created test accounts. A count of 0 is the expected state, not a defect.
+
+### §14.2 Rows whose RED WHEN fired in the TREE and NOT in a database
+
+| Row | §14 verdict | What fired, and what is still missing |
+|---|---|---|
+| S19 | **W** | 3002 drops the `actor_id -> profiles` FK on all three contribution tables by catalogue lookup, and 3003 does the same for the bridge tables. Neither is applied; production's five FKs were read today and all five stand. The row's own RED WHEN says *"a reviewed migration drops … the FK"* — the migration exists and is reviewed, and the FK is still there. |
+| S118 | **W** | Depends on S19, and on something §10.5 did not know. Post-3002 the reverse-link does not close: `intel_presence_verifications` holds `observation_id NOT NULL` beside an account `actor_id`, so one join resolves a tokenised observation to its author. 3003 tokenises it and two siblings, and RULES `intel_reward_ledger` unchanged — you cannot pay a token, and it is safe only because it names no contribution, which 3003 guards with a postcondition. Unapplied. |
+| S97 | **W** | **FIRED in the tree**: `resolveZoneAnchorSubject`, its haversine, its bbox pre-filter and its 3 km ceiling are deleted, and the subject now comes from `lib/sensingSubjectReconciliation`, which answers `unknown` without an ownership signal. It does NOT move, and the reason is a deployment hazard rather than a technicality: production still has `subject_id NOT NULL`, so this code ahead of 3002 makes a zone contribution fail its NOT NULL instead of storing `unknown`. See §14.8 — the ordering constraint runs BOTH ways and they are not compatible with applying 3002 on its own. |
+| S111 | **W** | 3002 drops `subject_id NOT NULL` and adds a CHECK admitting all four §18.3 outcomes; the resolver has acquired two callers (`routes/mapObservations.ts`, `services/intel/IntelCaptureService.ts`), which §10.5 recorded as machine-checked absent. Unapplied, so `temporary_world_object` and `unknown` still have nowhere to be stored. |
+| S42 · S52 | **W** | **THE PRODUCER NOW EXISTS.** Measured before it was built: `lib/vibeInference` had no production caller at all. `lib/sensingWindowAggregate` joins adjacent k-gated cohorts into per-window arrival/departure rates, coverage and dwell and calls it. They stay W because the inputs are still absent: the window reads `sensing_anon_contributions`, which holds zero rows, and four features are left NULL on purpose — `motionEnergy` (the ordinal's meaning is unpinned and is an owner decision), `periodicity` and `acousticEnergy` (S28/S29), and `density`, because in this store the only population signal IS the contributor count and bucketing it twice would render "we have a lot of data" as "a lot of people are here". |
+| S49 | **W** | **FIRED, twice over, and still not C.** The conservative §24 arm was already built — a bucket is published only where a protected-zone pass cleared the row. It had never run: no caller supplied the zones or the positions, so every served `coverage` read `unknown` on every path. Both wrappers now run the pass through the one shared `lib/protectedZoneStore`. It stays W because `discovery_candidate_projection_enabled` is seeded FALSE and absent from production, so nothing serves a `DiscoveryCandidate` at all. |
+| S3 · S106 | **W** | One `FusedPresenceEstimate` store exists with a private constructor and a capability brand, and all four sources (`circle_presence`, `trip_crew_location_sessions`, `locateFriendsSession`, the map's zone kinds) declare a non-null `readsThrough`. The rows ask for more than the store existing: *"proven by a test that a second presence write path is unrepresentable"*. That proof is a compile-time claim about a type, and it has not been re-derived here against the four real call sites. Held W rather than moved on a lane's report. |
+| S18 · S32 | **W** | `POST /v1/sensing/contributions` exists and is mounted, and the anon-store tripwire was correctly upgraded from "no route" to "exactly ONE route, and it is the registered ingest". Both stay W for an operator fact, not a code one: no `SENSING_CONTRIBUTOR_PEPPER` is configured in production, and the route's FIRST statement refuses without it. A writer that refuses every caller is not a registered writer. |
+| S21 · S28 · S29 | **W / N / N** | The client half. Not re-derived here: no measurement of `travel-buddy-standalone` was taken in this pass, and §10.5's stands until one is. |
+| S79 · S83 · S92 · S112 | **W** | Compass grounding, `TripWorldContext`, memory eligibility and the revocation's session/memory stages. Each has a lane claim and none was verified in this pass beyond its wiring existing. **They are held W deliberately: an unverified claim is not evidence, and the directive this section was written under says the bookkeeping may not be called before the evidence establishes it.** |
+
+### §14.3 The three product rulings, and what became of them
+
+| Ruling | Outcome |
+|---|---|
+| **§24 (S49)** | **TAKEN, conservatively.** The census named two arms; the first — route the bucket through `protectedLocations` — is built and now actually runs. The second arm, ruling a four-value bucket non-sensitive, was NOT taken and is not needed. |
+| **decision #9 (S39, and S24 with it)** | **NOT TAKEN, and it cannot be taken here.** `sensing-input-gap.md` §3.2 offers no option to choose between — it states that publishing an aggregate to a user-visible surface IS a product change. What shipped is the integration owner's documented third of it: `3004` seeds `sensing_presence_context_enabled` FALSE, so there is a switch to flip, and `readSensingPresenceGate` makes the flag structural — `buildSensingPresenceLines` requires a branded gate only a flag read can produce. Flipping it alone still renders nothing, because no producer is wired and wiring one IS the decision. |
+| **S24 surface scope** | **The migration half is closed and the ruling half is decision #9 again.** `3110` gives the differencing gate the durable last-published store §10.5 said it needed, and `publishThroughDifferencingGate` fails closed on `previous_unreadable`. There is still no publisher, and there cannot be one until #9 — so S24 and S39 reduce to ONE question, not two. |
+
+### §14.4 S17, moved as far as evidence allows, and no further
+
+Three of the four artifacts are now in hand, and the fourth is not obtainable from
+this environment:
+
+| Half | Evidence |
+|---|---|
+| TLS to the database | **Measured on production**: `ssl = on`, `ssl_min_protocol_version = TLSv1.2`. |
+| At rest | **Provider statement**: Supabase's own documentation — *"Supabase projects are encrypted at rest by default which likely is sufficient for your compliance needs e.g. SOC2 & HIPAA"*. A vendor default, not a signed attestation naming this project. |
+| HSTS, as the server sets it | `helmet()` at `artifacts/api-server/src/app.ts:28`, whose default includes `Strict-Transport-Security`. |
+| HSTS, as the origin SERVES it | **NOT OBTAINED.** The environment's network policy refuses `portava.app:443` (the agent proxy answers 403 on CONNECT). This is the operator's artifact and only the operator can produce it. |
+
+**S17 stays X.** Three of four is not four, and the row asks for the served
+headers specifically. Recording what WAS obtained is the point: the remaining ask
+is now one curl and one dashboard export, not an open-ended question.
+
+### §14.5 S26 and S66 — relabelled, not moved
+
+Both were graded against production emptiness. `.agents/memory/production-has-no-real-users.md`
+establishes that production is **pre-launch**: every profile is an owner-created
+test account and nothing has ever contributed. So these two are
+**pre-launch-capped**, which is a different fact from deployment-capped:
+
+* **S26** needs 2315 written to, or 2173 applied with the retention flag on. 2315 is applied and has no writer that can run; the flag is FALSE. No amount of building moves it.
+* **S66** was re-executed at both surfaces and both refuse a dangerous place correctly. Its RED WHEN wants *"real `unsafe_density` state"* reaching flags that are ON. `layover_safety_engine_enabled` IS on in production — so one of its two surfaces is live — and there is no state to reach it because there are no contributions. **The row is right and the world is empty.**
+
+Neither is a gap a lane can close, and neither should be counted as one.
+
+### §14.6 What this section MOVES
+
+**Nothing.** Not one verdict changes.
+
+That is the finding, and it is deliberate. Five lanes built real work; three RED
+WHEN conditions genuinely fired; one product ruling was genuinely taken. And the
+rows still read as they did, because every one of them turns on something that is
+applied to no database, enabled by no flag, or verified by nobody. Moving them on
+the strength of a merged branch would be the exact failure this corpus was built
+to catch — **built on branch is not merged, merged is not deployed, deployed is
+not flag enabled, flag enabled is not production realized** — and it would have
+been easy, because the code is genuinely there.
+
+### §14 headline — restated from the rows, unchanged
+
+| | |
+|---|---|
+| **Denominator — testable requirements** | **127** |
+| BUILT-AND-CORRECT | **103** |
+| BUILT-BUT-WRONG | **21** |
+| NOT-BUILT | **2** |
+| CANNOT-VERIFY | **1** |
+| **CONSTRUCTED%** = (C+W)/127 | **124 / 127 = 97.6 %** |
+| **CORRECT%** (raw) = C/127 | **103 / 127 = 81.1 %** |
+| **of-built** = C/(C+W) | **103 / 124 = 83.1 %** |
+
+### §14.7 The shortest path to the next real move, in order
+
+1. **Apply `3002` → `3003` → `3110` → `3310`** to production, in that order, each with its postconditions, **in the same cutover as the code deploy** — see §14.8, which is the reason this is not "apply the migration first". Production holds zero intel rows, so the one-way relabelling converts nothing. That is four rows' worth: S19, S97, S111, S118.
+2. **Configure `SENSING_CONTRIBUTOR_PEPPER`.** Two rows: S18, S32.
+3. **Answer decision #9.** Two rows: S39, S24.
+4. **Produce the two S17 artifacts.** One row.
+5. The rest wait on a client build (S21, S28, S29) or on launch (S26, S66, S42, S52).
+
+Nine of the twenty-four are reachable without writing another line of application
+code. That is the honest state of Sensing on 2026-09-25.
+
+### §14.8 3002 IS A COUPLED CUTOVER, AND THE FIRST DRAFT OF §14.7 HAD IT WRONG
+
+An earlier sentence in this section said *"3002 must be applied before this code
+ships"*. That is half the constraint, and stating half of it is worse than
+stating none, so here is the whole of it — found by checking what `origin/main`
+actually contains rather than by reasoning about the migration alone.
+
+**The constraint in one direction.** `routes/mapObservations.ts` on this branch
+has deleted the nearest-place resolver and stores `subject_id` NULL for an
+unowned cluster. Production still has `subject_id NOT NULL REFERENCES places(id)`.
+So THIS CODE AHEAD OF 3002 fails the NOT NULL on every zone contribution.
+
+**The constraint in the other direction, which is the one that was missed.**
+3002 installs a BEFORE INSERT trigger that replaces the submitted account id
+with a contributor token. The only code that has to know about that swap is
+`IntelCaptureService`'s idempotent-replay lookup, which reads a row back by
+contributor identity — and the version written for BOTH schemas is **on this
+branch and not on `origin/main`**, measured: `origin/main`'s copy of that file
+contains ZERO references to `intel_contributor_token`, this branch's contains
+two. Production runs main.
+
+So 3002 AHEAD OF THE DEPLOY means: the trigger writes tokens, main's replay
+lookup filters on the account id, it matches nothing, and every capture reads as
+a first write. `intel_capture_quick_signal` is **TRUE** in production, so that
+path is live. Within one weekly epoch the `(actor_id, idempotency_key)` unique
+index still catches a duplicate — as a 23505 the service was not expecting there
+— and ACROSS an epoch boundary the token changes, so it stops catching it at all.
+
+**Therefore neither may go first.** 3002 and this branch's application code are a
+single cutover, and the migration is not independently appliable. Saying so is
+the point of this subsection:
+
+* The two constraints are in different files, owned by different lanes, and each
+  is individually correct. Only the pair is a problem.
+* Nothing breaks today if they are applied out of order, because production has
+  zero intel rows and no real users — which is precisely why this would not be
+  noticed until it mattered.
+
+`3110`, `3310` and `3004` carry no such coupling: they add a table, two functions
+and one FALSE flag row that nothing reads. `3003` depends only on 3002 and goes
+in the same cutover with it.
+
+
+
+## §15 — 2026-09-25: S3's evidence line, corrected — the verdict does not move
+
+Same shape as §13 and for the same reason: a citation stopped being true, the
+correction is recorded where a reader of the row will find it, and **no verdict
+moves**. §14's headline is still the document's claim and is not restated here.
+
+### §15.1 What went wrong with S3's citation
+
+§12's S3 cell quoted `lib/crowdFlowProducer.ts`'s own blocker evidence:
+
+> `presence/domain` still has *"no store, no fusion layer"*
+
+That sentence **no longer exists in any tree**. A lane on
+`sensing100-integration` built the store and REWROTE the evidence slot it lived
+in. `check:doc-citations` caught it as the one class it can catch without
+reading the claim — *"the WHOLE anchor appears NOWHERE in the file — the anchor
+text itself is wrong"* — and it is worth separating that from the ordinary case:
+
+| | |
+|---|---|
+| A **displacement** | the anchor still exists, at a different line. Repointing is mechanical and safe. |
+| **This** | the anchor was DELETED. There is no line to repoint to, and the tempting move — aim it at whatever replaced it — would have left the cell quoting text that says the OPPOSITE of the claim it was cited for. |
+
+So the cell now says the anchor was deleted, cites the line that replaced it,
+and warns the reader what that line actually argues.
+
+### §15.2 What the replacing line says, which is not what it looks like
+
+`artifacts/api-server/src/lib/crowdFlowProducer.ts:389#      "src/presence/fusion/store.ts — a PresenceFusionStore now exists and is the ONLY minter of a PresenceEstimate`
+is still an entry in `no_declared_origin`'s **blocker evidence**, and it says
+so: a `PresenceEstimate` is a subject at a place — position, zone, floor — and
+carries no from-zone anywhere on it. *"A fusion layer does not close this
+blocker, it confirms it."*
+
+A reader skimming for "a fusion store exists now" would take this for S3 turning
+green. It is the opposite: the store is where an origin WOULD have to appear and
+deliberately does not hold one, because a from-zone derived by sequencing two
+estimates is the per-actor trajectory that module exists to be incapable of
+building.
+
+### §15.3 Why S3 does not move on it
+
+Unchanged from §14.2, restated so this section is readable alone. S3 and S106 do
+not ask whether a store EXISTS. They ask for *"a test that a second presence
+write path is unrepresentable"* — a compile-time claim about a type, re-derived
+against the four real call sites. That was not done in this pass, and an
+unverified lane claim is not evidence. **S3 stays `W`. S106 stays `W`.**
+
+### §15.4 Two other citation classes, fixed the same way
+
+Both were red on this branch and neither is a defect in a checker. Each was a
+pointer that was CORRECT on `origin/main` and was displaced by work this branch
+merged, and each was found by building the same guard's output from an
+`origin/main` worktree and diffing the offender sets — never by arithmetic.
+
+* **`check:citation-symbols` 38 → 34** (its ceiling). Four symbol citations went
+  out of tolerance. A fifth, `telegraph_outbox`, looked like the same class and
+  is not: it was ALREADY misplaced on main, so it belongs to the ceiling and was
+  left alone.
+* **`check:citation-targets` 189 → 174**, under a ceiling of 176. The reason it
+  was red is worth recording because the raw number is BETTER than main's: main
+  measures 198 against a ceiling of 204, and a lane on this branch ratcheted the
+  ceiling to 176 from a measurement taken before the other lanes merged in. The
+  branch improved the count and tightened the ceiling past its own tree. Fifteen
+  citations were repointed by finding where each line's OWN TEXT went. One —
+  `crowdFlowProducer.ts:1015`, a consent-read warning — has no successor line at
+  all and was left dead rather than aimed at something that is not it.
+
+### §15.5 Freshness: this census is current, and seven others are not
+
+Sixteen counted files changed in census-sensing's scope. The acknowledgement in
+`CENSUS_STALENESS_ACKNOWLEDGED.json` now names all sixteen with a per-file
+argument, and `since` stays `1fe72289b` rather than being re-declared at a branch
+commit — §1's trap: this branch will be squash-merged, so a commit on it is an
+ancestor of nothing. **census-sensing reads FRESH.**
+
+`census-compass`, `census-discovery`, `census-highlights-memories`,
+`census-input-intelligence`, `census-map`, `census-media` and `census-trust` are
+**STILL STALE, deliberately.** An acknowledgement asserts that a change moved no
+verdict in THAT census, and this pass re-measured only Sensing. More pointedly,
+several of those files are NEW — `CompassLiveClaimContext.ts` (+331),
+`CompassTripContext.ts` (+352), `experienceSessionBridge.ts` (+243),
+`sessionRevocationReach.ts` (+205) — and a new module in a counted scope is
+exactly the thing that CAN move a row, usually upward. Silencing them would hide
+work that has been done, not just debt. They need re-measurement by their own
+owners; the entry names them so the debt is visible rather than absent.
+
+### §15.6 MOVES NOTHING
+
+**C 103 · W 21 · N 2 · X 1 — unchanged.** §14's headline stands.
+
+
+## §16 — 2026-09-25: S3 and S106 re-derived against the four REAL call sites — a shared GATE, not shared STATE
+
+§14.2 held these two at `W` for a stated gap rather than a measured one:
+
+> *"That proof is a compile-time claim about a type, and it has not been
+> re-derived here against the four real call sites. Held W rather than moved on
+> a lane's report."*
+
+This section closes that gap by executing the measurement. **Neither row moves**,
+and the reason is no longer "not re-derived": it is a fact about the tree that a
+count settles and that nobody had run.
+
+### §16.1 S3's RED WHEN has three conjuncts, and they are not equally satisfied
+
+Quoted from §12 rather than paraphrased — *"one `PresenceEstimate` store and
+fusion layer exists behind the ladder **and** all four of `circle_presence`,
+`trip_crew_location_sessions`, `locateFriendsSession` and the map's
+`social_zone`/`buddy_zone`/`crew_member` kinds **read through it** — proven by a
+test that a second presence write path is unrepresentable"*:
+
+| Conjunct | Measured |
+|---|---|
+| (a) one store and fusion layer, behind the ladder | **HOLDS.** `artifacts/api-server/src/presence/fusion/store.ts:619#export class PresenceFusionStore` imports the precision ladder from `../domain/types.js` and exposes `admit` / `read` / `resolve` / `sweep`. |
+| (b) all four **read** through it | **PARTLY, and not in the sense the row means.** See §16.2. |
+| (c) unrepresentability proven by a test | **HOLDS as written.** `src/test/presenceFusionUnrepresentable.test.ts` type-checks six negative fixtures against the real store with a real `ts.Program`, plus a SANCTIONED seventh that must produce no diagnostic — which is what stops the file passing vacuously — and repeats every attempt at run time behind `as any`, because *"a compile-time-only lock is a lock with a cast-shaped key"*. |
+
+Conjunct (b) decides the row, and it is the one that does not hold.
+
+### §16.2 THE MEASUREMENT: four writers, zero cross-source readers
+
+Counted across `src/**` with tests excluded, on this tree:
+
+| Method | What it is | Production callers |
+|---|---|---|
+| `presenceFusion.admit` | mint one source's estimate | **4** — `lib/circleResponseShaper.ts:199`, `domain/trips/services/TripCrewLocationService.ts:194`, `lib/locateFriendsSession.ts:904`, `lib/mapAggregation.ts:568` |
+| `presenceFusion.read` | look up a retained estimate | **0** |
+| `presenceFusion.resolve` | **fuse across sources** | **0** |
+| `presenceFusion.sweep` | expire | **0 directly** (reached from `admit`; see §16.4) |
+| `presenceFusion.clear` | drop all | **0** |
+
+All four sources write through the store, and each then consumes **its own**
+admission synchronously — `return admission.ok ? admission.estimate : null`.
+None of them ever asks the store a question about another source. The only
+mentions of `resolve` outside the store and its own tests are four COMMENTS, one
+per call site, each saying that `PresenceFusionStore.resolve` *may* fuse the
+claim with the other three models. It is a sentence describing something that
+does not happen.
+
+**So the store is a shared GATE, not shared STATE.** What it genuinely delivers
+is a single write discipline: one minter, a forgeable-capability check, the
+precision ladder applied on the way in, and a point dropped when the ceiling
+says `venue`. That is real and it is worth having. What S3 asks for is the next
+thing — that the four models become ONE model — and four models minted by one
+gate and never fused are still four models. The row grades the fusion, because
+the fusion is what makes them one.
+
+### §16.3 This is the THIRD instance of one defect class in this census
+
+Worth naming as a class rather than as three coincidences, because it is what
+the next lane should look for first:
+
+| Row | The module | The defect |
+|---|---|---|
+| S42 · S52 | `lib/vibeInference` | Existed, correct, **no production caller at all**, until `lib/sensingWindowAggregate` was written this pass. |
+| S49 | the §24 protected-zone pass | Built, reachable, fail-closed — and **inert on every path**, because no caller supplied the zones or the positions. |
+| **S3 · S106** | `presence/fusion/store` | Four writers, **no cross-source reader**: the fusion entry point has no caller. |
+
+In all three the code is genuinely there, genuinely correct, and genuinely does
+not do the thing the row is about. A census that graded *"is it built"* would
+read all three green.
+
+### §16.4 A correction made in the course of writing this, kept rather than hidden
+
+The first draft of this section said the one-hour `PRESENCE_ESTIMATE_TTL_MS` was
+*"not enforced by anything today"*, reasoning that `sweep` has no external caller
+and is invoked only from inside the store. **That was wrong, and reading the
+object rather than the sentence about it is what caught it.** `store.ts:988#    if (nowMs !== null) this.sweep(nowMs);`
+sits inside the private `#retain`, which `admit` calls at `store.ts:724#    this.#retain(estimate, nowMs);` — on the WRITE
+path, not the read path. So the store does expire, on every admit that is given
+a clock.
+
+One real asymmetry survives that correction, stated as an observation and not as
+a defect: `circleResponseShaper` passes `null` for `nowMs`, so its admissions
+retain without sweeping. That is coherent with what a circle row is — a standing
+self-assertion rather than a sighting, with no coordinate columns behind it — and
+the other three sources pass a real clock, so the map is swept on their traffic.
+A lane wiring the first reader should confirm that still holds rather than assume
+it.
+
+### §16.5 What would move these rows, stated so it is one step
+
+**RED WHEN** — restated narrower and checkable, making §12's conjunct (b)
+precise rather than replacing it: a production consumer calls
+`presenceFusion.resolve` for at least one surface, that surface's output is
+derived from the fused estimate rather than from one source's own admission, and
+a test asserts the resolver is reached from the surface rather than from a test.
+The write discipline and the unrepresentability proof are already in hand; only
+the fused read is missing.
+
+**WHO**: a lane. This needs no owner decision, no migration and no deployment —
+which distinguishes it from every other `W` in §14, and makes it the cheapest
+remaining move in this census.
+
+### §16.6 MOVES NOTHING
+
+**C 103 · W 21 · N 2 · X 1 — unchanged.** §14's headline stands. S3 and S106
+stay `W`, now on evidence rather than on an unverified lane report.
+
+
+## §17 — 2026-09-25: §14.7's step 1 was incomplete, and CI proved it on two databases
+
+§14.7 listed the shortest path and put *"Apply `3002` → `3003` → `3110` → `3310`
+… in the same cutover as the code deploy"* first. That ordering is **necessary
+and not sufficient**, and the missing part was found the way the rest of this
+census was: by running it, not by reading it.
+
+### §17.1 What ran, and on what
+
+Two databases, neither of them production, both reached through the project's
+own harnesses rather than by hand:
+
+| | |
+|---|---|
+| A local PostgreSQL 16 | `scripts/local-db/up.sh` restores the 2026-08-19 baseline and replays the canonical chain. Stopped before 3002, then each new migration applied on its own so each answer is the database's, not a prediction. |
+| `portava-ci` (`hwokxgbmezheskbzskfr`) | CI's `audit:schema` job, which compares every migration's claimed objects against the live schema. Read-only; the apply step is a dry run that writes nothing. |
+
+### §17.2 The local replay, one file at a time
+
+| Migration | Result |
+|---|---|
+| `3002` | `PRECONDITION FAILED: 2277/2278 tables missing — the erasure rebuild below would silently drop their deletes.` |
+| `3003` | `3003 requires 3002: public.intel_assign_contributor_token() does not exist.` |
+| `3310` | `PRECONDITION FAILED: public.intel_contributor_pepper does not exist.` |
+| `3004` | **APPLIED CLEAN** |
+| `3110` | **APPLIED CLEAN** |
+
+3003 and 3310 are consequential: their preconditions are doing exactly what they
+were written to do, on a database where 3002 could not run. **3002's is not
+consequential — it is the root**, and it is the one §14.7 did not account for.
+
+### §17.3 THE CORRECTION: 2277 → 2278 is a PREREQUISITE, not an aside
+
+§14.1 measured that `2277`/`2278` are applied to **no** database, production
+included. §14.2's S118 row already knew what that costs — *"2277 and 2278 are
+unapplied in production, so two of the three tables do not exist there. A
+migration that assumed they did would abort the whole apply on a database that
+is otherwise correct"* — and **3003 was written to survive it**, skipping an
+absent table with a NOTICE. Its test pins exactly that.
+
+**3002 was not.** Its erasure rebuild issues an unconditional
+`DELETE FROM public.intel_scoped_trust` and `DELETE FROM public.intel_attributions`,
+so it guards with a hard `RAISE`. That guard is *correct* — building an erasure
+function whose body would throw at call time is worse than refusing — but its
+consequence had not been written down:
+
+> **`3002` cannot be applied to production as it stands.** The cutover is
+> `2277 → 2278 → 3002 → 3003`, not `3002 → 3003`, and the first two are
+> themselves a schema change nobody has sanctioned.
+
+§14.8 established that 3002 and this branch's application code are a single
+coupled cutover. §17 adds that the cutover has two more migrations in front of
+it than the shortest path said.
+
+### §17.4 What CI added that the local replay could not
+
+`audit:schema` on `portava-ci` reports **58 missing objects across 9 files**, and
+for the sensing four it names them rather than summarising:
+
+* `3002` — `intel_contributor_pepper`, `intel_contributor_token_for_pepper`, `intel_contributor_token`, `intel_assign_contributor_token`, `intel_self_contributor_tokens`, `intel_observations_unowned_zone_claim_observed`
+* `3003` — the `intel_presence_verifications_contributor_token` trigger
+* `3110` — `sensing_published_aggregates`, `purge_expired_sensing_publications`, two indexes, the service policy
+* `3310` — `intel_consented_contributor_tokens`, `intel_contributor_tokens_for_actor`
+
+That is the same fact §14.1 states — none of it is applied anywhere — now
+**itemised by a tool that reads the live database**, which is a stronger form of
+the same evidence than a ledger row. The other five files belong to the layover,
+highlights and memory lanes and are not this pass's to apply.
+
+### §17.5 The one thing this LOOSENS, stated because it is a real gain
+
+`3004` and `3110` **applied clean on a real PostgreSQL**, in a chain, with their
+own postconditions passing. They are therefore *independently* appliable: they
+do not need 2277/2278, they do not need 3002, and §14.8's coupling does not
+reach them — as §14.8 itself said, they *"add a table, two functions and one
+FALSE flag row that nothing reads"*, and that is now executed rather than
+asserted.
+
+So the ordered path is finer-grained than §14.7 had it:
+
+1. `3004` and `3110` — appliable now, no prerequisites, no coupling. Applying
+   them enables nothing on their own: 3004's flag is FALSE and nothing reads it,
+   and 3110's store has no publisher until decision #9.
+2. `2277 → 2278` — an owner-sanctioned schema change, and the gate on everything
+   below it.
+3. `3002 → 3003 → 3310`, in the same cutover as this branch's code (§14.8).
+
+### §17.6 MOVES NOTHING
+
+**C 103 · W 21 · N 2 · X 1 — unchanged.** Nothing here is applied to any
+database by this pass: the local replay is a throwaway cluster and the CI read
+is read-only. A migration proven appliable is still not an applied one.
+
+
+## §18 — 2026-09-25: §16.5's "one step" would have shipped a coordinate leak
+
+§16.5 named the fused read as the cheapest remaining move in this census — "no
+owner decision, no migration and no deployment". That is still true about the
+COST. It was wrong about the STEP, and the difference is a served coordinate.
+
+This section is what P24 asks for out loud: *what exactly would turn this
+green claim red?* The answer was one measurement away, and it was not taken in
+§16 because §16 asked who CALLS the fusion layer and never asked what the
+fusion layer would HAND BACK.
+
+### §18.1 The measurement, run rather than reasoned
+
+Two viewers of one subject, through `locate_friends_session`. Viewer W holds a
+live-share grant, viewer V does not. Both fold their own §52 rung into the
+claim, and both admissions are CORRECT:
+
+| | admitted precision | admitted position |
+|---|---|---|
+| W (granted) | `precise` | the coordinate |
+| V (ungranted) | `venue` | null |
+
+**The write path was never the defect.** But the retained entry, and what a
+reader would have been handed, were these:
+
+| | precision | position |
+|---|---|---|
+| `read("locate_friends_session", subject, now)` | `precise` | **the coordinate** |
+| `resolve(subject, "locate_friends_session", now)` | `precise` | **the coordinate** |
+
+So the first production consumer wired on V's path would have served V a
+subject's exact GPS fix that V is not entitled to. §16.5, followed literally,
+was an instruction to build that consumer.
+
+### §18.2 Why, stated as two facts one object was carrying
+
+Retention is keyed `(source, subject)`. `locateFriendsSession.ts:907#    // The subject is the Portava account, so an estimate from this source can`
+argues for that key in as many words — *"the latest observation of a person is
+the latest observation of that person, whichever session carried it, and keying
+per session would put the same human in the store twice."*
+
+That reasoning is **right about the OBSERVATION and wrong about the
+DISCLOSURE**, because one `PresenceEstimate` carries both. `observedAtMs`,
+`state` and `evidenceTypes` are facts about the subject. `precision`, `ceiling`
+and `position` are folded from bounds that are facts about the VIEWER:
+
+| Source | The audience-dependent bound | Scope |
+|---|---|---|
+| `trip_crew_location_sessions` | `grantBound`, from `card.liveShareActive` | per viewer — `allowed_member_ids.includes(viewerId)` |
+| `locate_friends_session` | `sessionCeiling` | per session |
+| `circle_presence` | `VISIBILITY_MODE_CEILING[visibilityMode]` | per circle |
+| `map_social_presence` | none — its bounds are object-derived | n/a, and it is `source_scoped` besides |
+
+One slot, many viewers, and the surviving entry is whichever viewer's the
+retention rule kept.
+
+### §18.3 The retention rule makes the COMMON case the bad one
+
+`#retain` replaces only on a STRICTLY newer observation. Two viewers looking at
+the same sighting tie on `observedAtMs` — it is the subject's clock, not the
+request's — so the narrower admission does not displace the wider, and the
+wider survives. This is not a race or a corner: it is one person observed once
+and looked at by two people.
+
+And `resolve` then re-minted under `PRESENCE_SOURCE_CONTRACTS[forSource].ceiling`
+— the SOURCE's static rung, `precise` for both the crew and locate models — so
+the narrowing that was supposed to protect V applied nothing to V.
+
+### §18.4 The fix: policy at EGRESS, not a viewer in the key
+
+A viewer in the retention key was the obvious repair and is the wrong one: it
+stores the same sighting once per viewer and makes "the latest observation of a
+person" false — the very thing `locateFriendsSession.ts` was right to avoid.
+
+So the store keeps retaining the FACT, and every read states the rung the asker
+holds. `read` and `resolve` both take a REQUIRED `audienceCeiling`, folded
+through one private `#forAudience` with `foldCeilings`, which means:
+
+* both ladders apply — the source contract bounds the model, the audience
+  bounds the viewer — and both only tighten;
+* a bound the ladder does not contain becomes `none` rather than being ignored;
+* a `none` audience is returned `null`, so a viewer who may not know the subject
+  is present learns nothing by asking — the existence leak closes with the
+  precision leak;
+* a generous audience CANNOT widen a narrowly retained estimate (§52 keeps its
+  one direction);
+* a reader that forgets the audience is a **compile error**, not a leak. That is
+  the same lock the module already uses for the write path, applied to the read
+  path it had left open.
+
+### §18.5 Verified by watching it fail
+
+Eight cases in `presenceFusionStore.test.ts`, and three mutations, each reverted:
+
+| Mutation | Cases that went red |
+|---|---|
+| fold the source ceiling only (the original defect) | 5 of 8 |
+| fold without `foldCeilings`' sanitizer | exactly the unrecognised-ceiling case |
+| `read` returns the retained entry unnarrowed | exactly the three read-path cases |
+
+The cases that SURVIVED each mutation are the evidence the tests are aimed
+right: the write-path case, the retention case and the no-widening case survive
+all three, because no mutation touches what they assert — and narrowing less can
+never widen anything.
+
+**529/529 across the 26 presence-touching suites, 0 skipped.** The test-typecheck
+gate reads 863 diagnostics across 115 files against a baseline of 863 across
+115 — no file above its baseline, so this added none.
+
+### §18.6 MOVES NOTHING — and the reason matters
+
+**C 103 · W 21 · N 2 · X 1 — unchanged.**
+
+No row moves DOWN, and the temptation to move one is worth naming. Nothing was
+ever served through the defective path: `read` and `resolve` had **zero
+production callers**, which §16.2 measured and this pass re-confirmed — the only
+call sites in the tree are in `presenceFusionStore.test.ts`, which is why
+changing their arity touched no production file. A latent hazard in a path with
+no consumers is not a served defect, and grading it as one would be as wrong as
+grading the reverse.
+
+No row moves UP either. S3 and S106 stay `W` for exactly the reason §16 gave:
+still four writers, still no cross-source reader. **This pass did not take
+§16.5's step — it made the step safe to take.**
+
+§16.5's RED WHEN stands, with one conjunct added: the production consumer must
+pass its own audience rung, and a test must show an ungranted viewer served
+nothing through the fused read. A lane taking it should start from §18.1's
+two-viewer case rather than from a single-viewer one, because a single-viewer
+test passes against the defect.
+
+### §18.7 The fourth instance of §16.3's class, and a different shape
+
+§16.3 named three cases of *code that is there, correct, and does not do the
+thing the row is about*. This is the fourth, and it inverts them: `vibeInference`,
+the §24 pass and the fusion resolver were all HARMLESS while unwired. This one
+was harmless only while unwired, and wiring it was the recommended next action.
+
+The class to look for next is therefore not "what is built and inert" but
+**"what is inert, and what happens on the day someone wires it"** — the answer
+being obvious for the first three and a coordinate leak for this one.
+
+### §18.8 The same question asked of the other shared store, and answered NO
+
+§18.7's class is only useful if it is actually swept, so the one other
+process-wide store this pass introduced was checked rather than assumed:
+`lib/protectedZoneStore`, the §24 cache behind S49.
+
+It caches one `zones` array process-wide for 30 seconds with no viewer in the
+key — structurally the same shape as the defect above. It is **not** the same
+defect, for a reason that had to be read rather than guessed: its query filters
+on `active` alone, with no viewer predicate, and both call sites hand it a
+SERVICE-ROLE client — `routes/mapProjection.ts:456#getServiceClient` and the four
+`withDiscoveryCandidates(getServiceClient(), …)` sites in `routes/discovery.ts`.
+A service-role read bypasses RLS, so every request sees the identical row set
+and the cached object carries no viewer's entitlement.
+
+The distinction is the one that matters for the class, and it is worth stating
+as a rule rather than as a result: **a process-wide cache is safe exactly when
+what it holds is a property of the WORLD, and unsafe when it is a property of
+the VIEWER.** Protected zones are policy — the same for everyone. A presence
+estimate's `precision` is not. Had either call site passed a user-scoped client,
+`protectedZoneStore` would be the same finding, and a lane changing that client
+should read this paragraph first.
+
+
+## §19 — 2026-09-25: `resolve` does not consult the privacy CLASS its own contract declares
+
+§18 made §16.5's step safe against the VIEWER. This section asks the same
+question about the SOURCE, and the answer is not one a lane may settle alone.
+
+### §19.1 The measurement
+
+`presenceClass` is a field on every source contract, and its doc line is
+unambiguous: `sources.ts:153#  /** §17 class. Distinct classes may not be fused into one another. */`
+
+**`presenceClass` appears ZERO times in `store.ts`.** `resolve` — the only
+function in the program that fuses across sources — filters on linkage, expiry
+and clock (`store.ts:808#      if (hit.linkage !== "account_scoped") continue;` and the two
+lines after it) and never on class. `#forAudience` folds `asking.ceiling` and
+the audience rung; neither is a class.
+
+The three ACCOUNT-SCOPED sources — the only ones `resolve` considers — do not
+share a class:
+
+| Source | `presenceClass` |
+|---|---|
+| `circle_presence` | `social` |
+| `locate_friends_session` | `social` |
+| `trip_crew_location_sessions` | **`trip_crew`** |
+
+So a Trip Crew surface asking `resolve` can be handed an estimate minted by a
+`social` source, and a social surface can be handed the crew's. Sharing your
+position with a trip crew is not consent to appear in a circle's presence view,
+and §17 is explicit that the shared architecture may reuse "low-level
+sensor/proximity infrastructure where possible, **NOT consent/policy
+semantics**".
+
+### §19.2 Why this is NOT recorded as a defect and fixed here
+
+**SUPERSEDED BY §20 — the owner ruled, and reading (A) governs. The paragraph
+below is kept as the record of why a lane did not settle it alone; the test it
+describes has since been re-aimed and the tense corrected here so the document
+does not assert something untrue of the tree.**
+
+Because an existing test asserted the opposite, deliberately:
+`presenceFusionStore.test.ts:219#  // RE-AIMED 2026-09-26. This case previously admitted through`
+— it admitted through `locate_friends_session` and `trip_crew_location_sessions`,
+resolved AS `locate_friends_session`, and required the crew estimate to win on
+recency. That was cross-class fusion, asserted on purpose by the lane that wrote
+the store.
+
+Two readings of the contract line survive that, and they are not
+distinguishable from the tree:
+
+1. **Classes must not fuse.** Then `resolve` is wrong, and the test encodes the
+   defect. The fix is one predicate in the loop.
+2. **"Fused" means the classes do not MERGE.** The returned estimate keeps
+   `source: best.source`, so a class never silently becomes another; the
+   consumer can still read which source answered and apply its own policy. Then
+   `resolve` is right and the contract line is about identity, not routing.
+
+Reading 2 is not a stretch — the estimate genuinely does carry its source
+through. Reading 1 is what a privacy reviewer assumes on first reading. **A lane
+does not get to pick**, because the two produce different data on a user-visible
+surface, and §18 is this pass's own demonstration of what happens when a lane
+resolves an ambiguity in the permissive direction on an unwired path.
+
+So nothing is changed: not the store, and NOT the lane's test, which would be
+the same overreach in reverse.
+
+### §19.3 The consequence for §16.5, stated as a third conjunct
+
+§16.5's RED WHEN, already amended by §18.6 with the audience rung, needs one
+more: **the first production consumer must state its class policy** — either it
+asks only within its own class, or it accepts cross-class estimates and the
+contract line at `sources.ts:153#/** §17 class. Distinct classes may not be fused` is rewritten to say so. Wiring a fused read
+without answering this is how a crew position reaches a circle view.
+
+This is now the SECOND conjunct §16.5 was missing. That is itself the finding
+worth carrying forward: the step §16.5 called "one step" has needed two
+corrections in one day, both found by asking what the code would hand back
+rather than who calls it.
+
+### §19.4 MOVES NOTHING
+
+**C 103 · W 21 · N 2 · X 1 — unchanged.** `resolve` still has zero production
+callers, so no surface has ever fused anything, across classes or within one.
+S3 and S106 stay `W`. Nothing here is a served defect; all of it is a condition
+on a step nobody has taken.
+
+
+## §20 — 2026-09-26: the owner settled §19. Distinct privacy classes may not fuse.
+
+§19 put two readings of `sources.ts:153#/** §17 class. Distinct classes may not be fused`'s "Distinct classes may not be fused
+into one another" and declined to pick, because an existing test asserted one
+of them and the choice changes what a user-visible surface serves. **The owner
+has now ruled, and this section is the settled record. It is not to be
+relitigated from the code.**
+
+### §20.1 The ruling, as given
+
+> Approve A: no cross-class fusion. Enforce this centrally in `resolve()`, using
+> trusted source configuration and refusing missing or unknown classes.
+> Preserve source-specific consent, audience, expiry, and revocation checks even
+> within a class. Make the rule mandatory for every caller and cover it with
+> regression tests.
+
+So reading (A) governs. Reading (B) — that classes merely may not MERGE
+identity, since the returned estimate keeps its `source` — is refused. §19.2's
+framing stands as the record of a genuine ambiguity; §19.3's third conjunct on
+§16.5's RED WHEN is hereby **satisfied for the class question**, and a lane
+taking that step no longer has to ask it.
+
+### §20.2 What the rule is, precisely
+
+`sameConsentClass(a, b)` reads BOTH classes from `PRESENCE_SOURCE_CONTRACTS` —
+the trusted register — and never from the estimate, so a stale or forged object
+cannot nominate its own class. A source the register does not contain, or a
+class outside the closed `PRESENCE_CLASSES` union, is **refused**, not treated
+as compatible: an unreadable class is not a matching class, the same fail-closed
+direction `foldCeilings` takes for an unreadable bound.
+
+Same-class fusion stays PERMITTED, and that is what makes this a boundary
+rather than a ban: `circle_presence` and `locate_friends_session` are both
+`social` and still fuse with each other. What can no longer happen is a
+`trip_crew` position answering a `social` ask, or the reverse.
+
+Every other check is unchanged and still applies WITHIN a class, as the ruling
+requires: linkage (`account_scoped` only), expiry, the observation clock, the
+source-contract ceiling and §18's audience rung.
+
+### §20.3 The filter runs at SELECTION, and that is not a detail
+
+The obvious implementation — check the class at egress — is wrong, and the test
+that catches it is in the suite:
+
+> a newer CROSS-class estimate would win `best` in `resolve`'s loop and then be
+> refused at egress, returning `null` where an eligible SAME-class estimate
+> existed.
+
+That would make the privacy rule destroy correct answers rather than narrow
+them. The filter therefore runs inside the candidate loop, so the newest
+estimate *within the asking class* wins.
+
+### §20.4 Mutation testing, including the two mutations that did NOT bite
+
+Three mutations. **Only one reds the suite, and saying so is the point.**
+
+| Mutation | Result |
+|---|---|
+| drop the SELECTION-time filter in `resolve` | **REDS** the same-class-still-answers case |
+| drop the CENTRAL check in `#forAudience` | **no test reds** |
+| treat a missing/unknown class as compatible | **no test reds** |
+
+The last two are not gaps in the tests; they are **unreachable code on every
+path that exists today**, and the mutations are what established that rather
+than inspection. `read` looks an entry up BY `source` and passes that same
+`source` as the asking source, so `hit.source === forSource` holds by
+construction and the classes always match. An unknown source is already refused
+by the `asking` guard before the class check is consulted.
+
+So the honest statement is: **the selection-time filter is the enforcement; the
+central check is defence in depth against a caller that does not yet exist.**
+It is kept because the invariant making it redundant belongs to `read`, not to
+the store — the day a caller asks on behalf of a source other than the one it
+addressed, which is precisely what §16.5's fused read builds, that line is what
+refuses it. The code says this in place rather than letting the guard read as
+proven.
+
+### §20.5 MOVES NOTHING
+
+**C 103 · W 21 · N 2 · X 1 — unchanged.** `resolve` still has no production
+caller, so no surface fused anything before this ruling and none does after it.
+S3 and S106 stay `W`. What changed is that the last SEMANTIC unknown blocking
+§16.5's step is now answered; what remains for those rows is the wiring itself.
+
+---
+
+## §21 — 2026-09-26: the owner took decision #9, and `surface` is still not granted
+
+**LAST-STATEMENT-WINS. This section supersedes §14.2's and S39's reading of what
+blocks the row. It MOVES NO VERDICT.**
+
+### §21.1 What the owner authorised, and what that turned out to require
+
+The owner authorised implementing decision #9 *"narrowly: publish eligible
+sensing aggregates into Compass presence context only, subject to the existing
+privacy, coverage, and authorization requirements."*
+
+`3004_sensing_presence_context_flag.sql` had already enumerated what #9 takes:
+a migration seeding the flag FALSE (shipped, and applied to portava-ci on
+2026-09-25), the owner flipping it, and **a lane wiring a producer to
+`buildSensingPresenceLines`**. The third is this section's work.
+
+Building it surfaced a requirement none of the three named, and it is the
+reason the row does not move.
+
+### §21.2 The blocker is a CONSENT SCOPE, not a flag and not wiring
+
+`lib/sensingContributionPolicy.SENSING_ANON_GRANTED_SCOPES` is exactly
+`["collect", "retain", "aggregate"]`. Its own comment states the rest:
+*"infer / personalize / surface / share are owner decisions and read as NOT
+granted."*
+
+Rendering a cohort aggregate into a conversation **is** the `surface` scope.
+Every row that could ever reach `sensing_published_aggregates` was contributed
+under a policy that permits aggregating it and does not permit showing it.
+
+So decision #9's flag and the `surface` scope are **two different owner acts**,
+and the flag is the weaker one. A capability flag is an operational switch; a
+purpose scope is what the contributor agreed to. Treating the flag as though it
+also granted the scope would be the exact move this census exists to catch — an
+engineering switch dressed up as a consent decision, in the direction of more
+exposure.
+
+**This lane did not grant the scope.** The authorisation that permitted #9 also
+said, in terms, that it *"does not authorize exposing individual contributions,
+weakening protections."* Adding `"surface"` to a frozen policy constant is a
+protection change, and it is the owner's to make, separately and visibly.
+
+### §21.3 What WAS built, and why it is not a stub
+
+`compass/CompassSensingPresenceProducer.ts` — the consumer, with two gates in a
+deliberate order:
+
+1. **The `surface` scope**, checked FIRST, before the flag and **before any
+   database read**. An ungranted scope refuses whatever the flag says. A
+   mutation that merely reorders the two gates turns the suite red.
+2. **`sensing_presence_context_enabled`**, through the formatter's branded gate,
+   which no caller can forge.
+
+It is **read-only over already-published aggregates**, and that is a privacy
+property rather than a convenience. Had rendering context run the
+anti-differencing gate, then *asking Compass a question would have been a way to
+drive publications* — and an attacker who chooses when a cohort is published
+chooses the moments to compare, which re-opens the differencing attack one layer
+above the gate built to stop it. The publish decision stays with a publisher;
+a conversation is a pure reader.
+
+Two smaller results, both measured:
+
+- A failed publication read and a genuinely empty one produce **different
+  operator diagnostics and byte-identical surface output**. The surface must not
+  be able to tell "we could not look" from "there is nothing".
+  `SensingAggregateReason` gained `"no_live_publication"` for that distinction —
+  a fourth non-suppression reason beside `read_failed` and `read_incomplete`,
+  not a new way to publish anything.
+- The five-zone cap bounds the **reads**, not merely the rendering, so one turn
+  cannot drive N lookups of the publication store.
+
+### §21.4 Three independent blockers, none of which is wiring
+
+Written out because "no surface consumes it" had become a single phrase covering
+three unrelated facts:
+
+| # | Blocker | Owner |
+|---|---|---|
+| 1 | `surface` is not in `SENSING_ANON_GRANTED_SCOPES` | THE OWNER — a separate act from #9's flag |
+| 2 | Nothing publishes. `publishThroughDifferencingGate` has **no caller outside tests**, so `sensing_published_aggregates` is empty on both databases (measured 2026-09-26: 0 rows on portava-ci) | a lane, after #1 |
+| 3 | A Compass turn carries a **city**, not a sensing `zone_id`. There is no zone identity in a conversation to ask about, because zones arrive with contributions and the ingest refuses every caller in production | a lane, after an ingest exists |
+
+`routes/compass.ts` is therefore **deliberately not wired** to the producer. A
+call site passing an empty cohort list on every turn would be theatre: it would
+make the importer graph look finished while nothing could ever flow through it.
+That is the shape this census grades as W, and adding it would have made the
+row harder to read, not closer to true.
+
+### §21.5 MOVES NOTHING
+
+**C 103 · W 21 · N 2 · X 1 — unchanged.**
+
+**S39 stays `W`.** Its RED WHEN is *"decision #9 is taken AND a surface reads
+`buildSensingPresenceState`"*. The first half has now fired: the decision is
+taken and the flag exists, seeded FALSE, on portava-ci. The second has not. A
+module that reads `buildSensingPresenceState` exists and is correct, and no
+request can reach it; were one to, the ungranted `surface` scope would refuse it
+before the flag was even consulted.
+
+The RED WHEN is restated for the next reader, because the old one is now
+satisfiable by something that would still be false:
+
+> **S39 RED WHEN** — `surface` appears in `SENSING_ANON_GRANTED_SCOPES`, AND a
+> request-reachable caller hands `buildSensingPresenceContext` a non-empty
+> cohort list, AND `sensing_published_aggregates` is non-empty on the database
+> being measured. All three, together. **WHO**: the owner (scope), then a lane
+> (publisher, zone identity).
+
+The seven rows "claimed by nobody" are unchanged at **7** — S24 S26 S39 S42 S49
+S52 S66. #9 being taken removed a decision from S39's path and revealed two
+build blockers behind it; the row is no closer to `C` and this section does not
+pretend otherwise.
+
+---
+
+## §22 — 2026-09-26: S92 and S112 are both `W` on evidence that has gone false
+
+**LAST-STATEMENT-WINS. MOVES NOTHING.** Found while re-measuring
+census-highlights-memories, whose scope counts
+`services/memoryProjections/` — the directory both of these rows grep. Its §Z
+records the measurement; the corrections belong here.
+
+**`C 103 · W 21 · N 2 · X 1` — unchanged, and confirmed by
+`check:census-integrity` today (127 rows).**
+
+### §22.1 S92 — the grep it rests on now finds the thing
+
+S92 reads: *"the bridge is a graph-edge projection and `grep` over
+`lib/memoryProjectionScheduler.ts` and `services/memoryProjections/` finds no
+`ExperienceSession` of any spelling."*
+
+**That grep now finds it in both places.** `services/memoryProjections/experienceSessionBridge.ts`
+exists (+243) and its own first line calls itself *"S92's arrow, built from the
+session's OUTCOME"*. It is imported at
+`artifacts/api-server/src/lib/memoryProjectionScheduler.ts:52#}`, and the
+scheduler is started from `artifacts/api-server/src/index.ts:58#import`.
+
+The row's RED WHEN — *S54 exists AND memory eligibility is computed from a
+session's OUTCOME rather than from a graph edge* — has **fired on the code**.
+
+**S92 stays `W`, on deployment rather than absence.** The scheduler answers
+`disabled` at
+`artifacts/api-server/src/lib/memoryProjectionScheduler.ts:124#if` unless
+`memory_projection` is on, and that flag is **false on production and false on
+portava-ci**, both read on 2026-09-24 through 2026-09-26. Nothing computes
+eligibility from an outcome in any deployment.
+
+This is the third row in this corpus with that shape, after A03 (census-discovery)
+and M7 (census-map): built, wired, and serving nothing. The distinction worth
+keeping is that S92's blocker is now **one flag**, where the row still describes
+it as a missing module.
+
+### §22.2 S112 — something bridges to them now, and still nothing calls it
+
+S112 reads that the session and memory stages *"are prevented only because
+nothing bridges to them. RED WHEN a session exists (S30) and a memory bridge
+exists (S54/S92) for a revocation to reach."*
+
+`services/memoryProjections/sessionRevocationReach.ts` exists (+205) and calls
+itself *"S112's last two stages, made reachable"*. So the clause is false: a
+bridge exists.
+
+**S112 stays `W` for a reason it does not record.** Searched without
+truncation, the module's **only importer is
+`artifacts/api-server/src/test/sensingConsumersRevocationReach.test.ts`**;
+`lib/sensingRevocationLineage.ts` names it in a comment and imports nothing. So
+the correct statement is not *"nothing bridges to them"* but **"the reach is
+built and no production caller invokes it"** — a different defect, and one a
+lane can close without an owner decision.
+
+### §22.3 Restated RED WHENs
+
+> **S92 RED WHEN** — `memory_projection` is enabled on the database being
+> measured, so `memoryProjectionScheduler` stops answering `disabled` and the
+> bridge actually computes eligibility from a session outcome. The code half is
+> done. **WHO**: whoever flips the flag.
+
+> **S112 RED WHEN** — a production (non-test) caller invokes
+> `sessionRevocationReach`, AND the `memory_projection` path it depends on is
+> enabled. **WHO**: a lane for the caller, then the flag.
+
+### §22.4 MOVES NOTHING
+
+No verdict moves. Two evidence clauses are replaced, two RED WHENs are restated
+against what actually blocks them, and the totals are unchanged. Both rows were
+`W` before this section and are `W` after it — but a reader planning work now
+knows that S92 needs a flag and S112 needs a caller, where the census previously
+said both needed a module that already exists.
+
+## §23 Operational evidence for S26, S66 and S17, measured 2026-09-26 — and the nine non-sensing migrations that went to portava-ci
+
+Written after the owner's decision A landed nine other lanes' migrations on
+`portava-ci` (none of them sensing; the record is `docs/migrations.md`,
+2026-09-26 batch entry). This section is about the three rows that were being
+held "honestly unverified" and what evidence now exists for them. Verdicts are
+re-derived under the rules above; none is moved on a claim.
+
+### §23.1 S26 — the 72-hour cap is live on BOTH databases, and it bites
+
+The §14/§21 statement for S26 read "2315 IS in the tree … and it is applied
+to no database and has no writer". Half of that is now false and was checked
+rather than inherited:
+
+* **2315 is applied to portava-ci AND production.** Both ledgers carry
+  `2315_sensing_anon_contributions.sql / manual`. §14.1's production line
+  already said so; the S26 row's own prose did not, and the two disagreed.
+* **The structural cap is in the live catalog on both**, as
+  `sensing_anon_contributions_ttl_check`: `CHECK (expires_at > created_at AND
+  expires_at <= created_at + '72:00:00'::interval)` — the constraint the row
+  cites at `` `artifacts/api-server/src/migrations/2315_sensing_anon_contributions.sql:172#    CHECK (expires_at > created_at AND expires_at <= created_at + interval '72 hours'),` ``.
+  (A first query for it found nothing because it matched the source spelling
+  `'72 hours'`; Postgres renders the interval as `'72:00:00'`. Recorded so the
+  next reader does not repeat it.)
+* **Controlled test, portava-ci only, labelled as such.** One `DO` block
+  attempted two inserts and then raised on every path so nothing could
+  persist: a row with `expires_at = created_at + 72h` was **ACCEPTED** (the
+  positive control — without it a rejection proves nothing about *this*
+  constraint), and a row at `+ 73h` was **REJECTED 23514 … violates check
+  constraint "sensing_anon_contributions_ttl_check"**. Row count before and
+  after: 0. No user activity was invented; the probe never committed.
+* **No writer has written.** 0 rows on both databases. The route exists
+  (`` `artifacts/api-server/src/routes/sensingIngest.ts` ``) and its first
+  statement refuses without `SENSING_CONTRIBUTOR_PEPPER`, which §14.2 records
+  as unconfigured in production.
+
+**Verdict: W, unchanged — but for a different and narrower reason.** The RED
+WHEN's second half ("2315 applied and written to") is now half-true: applied,
+yes, on both; written to, no. The anon store's short-retention property is no
+longer a claim about a migration file; it is a measured constraint that
+refuses a 73-hour row on a real database. What still keeps this W is the
+first half of the RED WHEN — `intel_observations` keeps 180 days behind
+`intel_contribution_retention_enabled`, measured `false` on both databases —
+and that "short" for identifiable rows is an owner ruling nobody has made.
+
+### §23.2 S66 — refusable on every surface, refusing on none, measured on both databases
+
+The rule for prohibitions stands: a "must never" is C only when something
+refuses it on a DEFAULT deployment. §22 said the flags these paths ride are
+seeded FALSE. Now measured rather than read from seed files:
+
+| gate | portava-ci | production |
+|---|---|---|
+| `discovery_live_rank_enabled` (2850) | `false` | no row → false |
+| `layover_live_intersection_enabled` (2851) | `false` | no row → false |
+| `map_sensing_projection_enabled` (2350) | no row → false | no row → false |
+| `intel_contribution_retention_enabled` | `false` | `false` |
+
+And the input side: `sensing_anon_contributions` holds 0 rows on both, so no
+real `unsafe_density` state exists to reach any of the four paths even if a
+gate were on.
+
+**Verdict: W, unchanged, and now with the operational half measured.** The
+code paths are asserted by tests and the demotion logic is unchanged since
+§22. What cannot be manufactured here is the RED WHEN itself — a flag ON in a
+database *and* real unsafe state reaching it — because turning a gate on is
+an owner act this pass was told not to take, and the state would have to come
+from contributions nobody has made. This is the census working, not a lane
+falling short; it is recorded so the count of "W a lane should move" is not
+inflated by it.
+
+### §23.3 S17 — the deployed origin's last publish FAILED, and the served headers remain unobservable from here
+
+S17 asks for two operator artifacts: the served response headers of the
+deployed origin (TLS termination, an HSTS `max-age`) and Supabase's at-rest
+attestation. Neither is a diff. What an authorized environment could establish
+today, and what it could not:
+
+* **The origin exists and is configured as an autoscale deployment.** The
+  Replit workspace's `.replit` declares `deploymentTarget = "autoscale"`, run
+  command `pnpm --filter @workspace/api-server run start`, and
+  `ALLOWED_ORIGINS = "https://portava.replit.app"` for production. Its own
+  comment warns that settings in the Replit UI override this file.
+* **The most recent publish of `https://portava.replit.app` is `failed`.**
+  Read from Replit's publish status (`deploymentId 86067815-…`). Whether an
+  earlier successful deployment is still serving, or nothing is, could not be
+  determined: the Replit agent timed out twice on the question and the CI
+  proxy refuses the host outright (`CONNECT tunnel failed, 403`). **This is a
+  new fact and it bears on every "deployed" claim in this corpus, not only on
+  S17.**
+* **HSTS is configured, not observed.** `` `artifacts/api-server/src/app.ts:28#app.use(helmet());` ``
+  with no options; helmet 8.3.0 applies its default
+  `Strict-Transport-Security`. What the origin actually sends cannot be read
+  from here, and a configured header on an origin whose last publish failed is
+  a statement about a file.
+* **The at-rest attestation** is a Supabase artifact this environment has no
+  path to.
+
+**Verdict: X, unchanged.** No code change can move it, and the one piece of
+evidence gathered points the other way. **Owner question, the single one this
+pass raises:** is `https://portava.replit.app` currently serving, and if so
+from which deployment? A `curl -sI https://portava.replit.app/` from any
+machine outside this proxy answers the header half in one line.
+
+### §23.4 Stale prose that §11/§14 already out-graded
+
+Three sentences in earlier sections read as facts and are not, though the
+verdicts they sit under were already restated later in this document (last
+statement wins). They are named so nobody re-derives from them:
+
+* §11's S30 row text, "2480 is applied to no database" — 2480 is applied to
+  both (`portava-ci` by `ci` 2026-09-09; production by `manual`). S30 is
+  already **BC** at §12.
+* §14.1's "`2481` absent, correctly" — true of the objects on both databases,
+  and the `portava-ci` **ledger row** for 2481 is present on purpose and
+  load-bearing (`auditMigrationsVsLive.ts`, "THE PART THAT SURPRISES PEOPLE").
+  A pass through this branch misread that row as a false apply and retracted
+  the claim in `8fdf94ba9`; it is recorded here so the same misreading is not
+  made a third time.
+* §21's S26 prose, "applied to no database" — see §23.1.
+
+### §23.5 MOVES NOTHING
+
+S26 W→W, S66 W→W, S17 X→X. The headline is unchanged. What changed is that
+two of the three now rest on measurements of both databases and one
+controlled test, and the third has acquired a fact that argues *against*
+readiness rather than for it.
+
+---
+
+## §24 — 2026-09-26: the final head verified; S79 and S83 re-derived and MOVED; §16.5's step measured a third time; S112 acquired its caller; the completion checklist by blocker class
+
+**LAST-STATEMENT-WINS.** This section supersedes §14.2's reading of S79 and
+S83, §22.3's RED WHEN for S112, and §16.5/§18.6/§20.5's reading of what the
+next step for S3/S106 is. It moves TWO verdicts and it says exactly why every
+other non-C row does not move.
+
+### §24.0 What CI established on `d7358e8f7`, measured rather than summarised
+
+The head carrying §23 and the nine-migration record. Every run was read at the
+job level, and cancelled / skipped / passed are kept distinct:
+
+| Run | Outcome |
+|---|---|
+| CI (pull_request) | **success.** `api-server · node:test suite`: `suites=6220 tests=26030 pass=26030 fail=0 skipped=0 cancelled=0`. typecheck, typecheck:tests, schema-references, enum-literals, writerless-reads, doc-citations, citation-targets, citation-symbols, test-registration (floor 392; 1458 registered) all passed. |
+| CI (live DB) (pull_request) | **success.** `schema drift · apply migrations, certify, then audit vs live`: dry run passed, **apply and certify SKIPPED** (nothing pending — the nine went to `portava-ci` by hand under decision A, §23), `audit:schema` **passed**. `live DB · RLS + role/is_official write boundaries`: **RAN**, 28/28 boundary suites passed — on every earlier head of this branch this job was SKIPPED behind the schema-drift failure. `post-media revocation · before-proof, apply, after-proof`: **RAN**, all three proofs passed — likewise previously skipped. `api-server · check:all (7 checks incl. the live_pulse gate)` and `check:security` passed. |
+| Unwired checks (probation) | success, on both the push and the pull_request event. |
+
+What this does not say: nothing here reached production (`ajrurzioarfkagpuxfnb`,
+still read-only, ledger 469, none of the nine); every feature gate this census
+names still reads false or absent on both databases (§23.2).
+
+### §24.1 S79 — live claims are carried into `/compass/ask` and the checker constrains the answer to their band. W → C.
+
+§14.2 held S79 W *"deliberately: an unverified claim is not evidence"*. This
+pass verified it, in the order the RED WHEN demands — claims into the context
+FIRST, checker over that context SECOND, *"because a checker over an empty
+context is vacuous"*:
+
+* The context half. `` `artifacts/api-server/src/routes/compass.ts:1788#liveClaimEvidence = live.evidence;` ``
+  — `buildLiveClaimContext` pushes its lines onto the prompt and keeps the
+  per-subject band it derived, on the request path, before any answer exists.
+* The checker half, on BOTH branches so streamed and non-streamed answers
+  cannot drift: `` `artifacts/api-server/src/routes/compass.ts:1955#const _grounded    = groundCompassAnswer(_rawMessage, toolLog, liveClaimEvidence);` ``
+  and `` `artifacts/api-server/src/routes/compass.ts:1955#const _grounded    = groundCompassAnswer(_rawMessage, toolLog, liveClaimEvidence);` ``.
+  `groundCompassAnswer` merges the tool-log evidence with the context band
+  and hands the union to `enforceCompassGroundingEnvelope`.
+* The proof is a REGISTERED suite, not a reading: `` `artifacts/api-server/src/test/compassGroundingLiveClaims.test.ts:99#describe("S79 part 1` ``
+  (the claim, its §5.1 band and the name the model will write reach the
+  context; no contributor, coordinate or cohort count does; an unreadable
+  database says UNKNOWN and never widens the band) and
+  `` `artifacts/api-server/src/test/compassGroundingLiveClaims.test.ts:174#describe("S79 part 2` ``
+  (a flat state over a predicted pattern is REFUSED — *"and this used to
+  publish"*; a state about a subject the context knows nothing about is
+  refused; a low-confidence pattern cannot become a verified-live sentence),
+  plus part 3 (honest hedged prose passes) and the fail-weak fold (context can
+  only tighten the checker). Run on this head: 27/27 across this file and
+  S83's, and inside CI's 26030.
+
+**What C does not mean here.** The read is gated:
+`` `artifacts/api-server/src/lib/liveClaimRead.ts:312#if (!(await isFlagEnabled(sc, "intel_live_label_crowd"))) return false;` ``
+and three sibling flags. Where they are off — every deployment — the context
+says *no current evidence* and the checker refuses every state claim, which is
+the safe direction and is what the tests pin. The row's claim is about the
+tree and the tree satisfies it; production REALISATION of a grounded live
+answer waits on those flags and on data, and is not what this verdict says.
+
+### §24.2 S83 — `TripWorldContext` carries the five named parts. W → C.
+
+The row was scored W because `CompassTripContext` was *"trip grounding only:
+no world state, no opportunities, no disruptions, no sessions"*. Re-derived:
+
+* The five parts are a closed list the module exports and the test pins by
+  value: `` `artifacts/api-server/src/compass/CompassTripContext.ts:286#export const TRIP_WORLD_PARTS = ["world_state", "opportunities", "disruptions", "sessions", "crew"] as const;` ``.
+* The projection is built from their EXISTING owners and computes nothing of
+  its own: `` `artifacts/api-server/src/compass/CompassTripContext.ts:382#export async function buildTripWorldContext(` ``
+  takes the kernel this turn already assembled and the opportunity projection
+  the ranker was handed, and reads disruptions, the viewer's open
+  `ExperienceSession` and the crew on the trip itself.
+* It is on the request path, handed the same kernel and the same admitted
+  opportunities the prompt gets, so the trip world cannot show a different
+  world from the ranker: `` `artifacts/api-server/src/routes/compass.ts:1870#const tripWorld = await buildTripWorldContext(sc, user.id, {` ``.
+* The suite: `` `artifacts/api-server/src/test/sensingConsumersTripWorld.test.ts:88#describe("S83 — the projection carries all five named parts"` ``
+  — builds all five from a stub client that FILTERS per table, asserts a
+  closed session is not an open one, that the disruption claim types are the
+  ones that say a planned thing may not happen and exclude `crowd.level`, and
+  (second describe) that an unreadable source is reported UNAVAILABLE rather
+  than as an empty part.
+
+S54 (`ExperienceSession`) is BC since §6.6, so both conjuncts of the RED WHEN
+hold. **Read the limit:** the five-part proof runs against a stub client; what
+it proves is the projection's SHAPE and its honesty rule, and the route read
+proves the wiring. No live-database run of `/compass/ask` was taken here.
+
+### §24.3 S3 · S106 — §16.5's step, measured a THIRD time: the audience is a MEMBERSHIP, not only a rung. MOVES NOTHING.
+
+§16.5 named the fused read as *"the cheapest remaining move in this census"*.
+§18 measured it once and found a coordinate leak; §20 settled the class
+question. This pass started to take the step — a production consumer calling
+`presenceFusion.resolve` with its own audience rung — and asked P24's question
+first. The answer is that the step is STILL unsafe, for a reason neither §18
+nor §20 examined, and it would also be wrong on the merits.
+
+**The measurement.** Retention is keyed `(source, subject)` and carries no
+scope: `` `${RETENTION_KEY_SEP}${estimate.subjectKey}` `` (line 735 of `store.ts` as it stood at `2387bc306`; §25 changed it).
+The subject is the ACCOUNT for all three fusable sources —
+`` `artifacts/api-server/src/lib/locateFriendsSession.ts:914#subjectKey: memberId,` ``,
+`` `artifacts/api-server/src/domain/trips/services/TripCrewLocationService.ts:181#subjectKey: raw.userId,` ``,
+and `circlePresenceEstimate` uses `profile.userId` — across every session,
+trip and circle that person is in. `resolve` selects on linkage
+(`` `artifacts/api-server/src/presence/fusion/store.ts:808#if (hit.linkage !== "account_scoped") continue;` ``),
+class (`` `if (!sameConsentClass(hit.source, forSource)) continue;` `` (line 619 of `store.ts` at `2387bc306`; §25 moved it)),
+expiry, and then NEWEST WINS
+(`` `if (best === null || (hit.observedAtMs as number) > (best.observedAtMs as number)) best = hit;` `` (line 622 of `store.ts` at `2387bc306`; §25 replaced it)).
+Nothing in that loop, and nothing a consumer can pass, says whether the asking
+viewer is inside the OTHER source's audience for this subject. §18.4's
+`audienceCeiling` is a PRECISION — the rung the viewer holds — and a rung
+bounds how much of a fact is served, not whether the viewer was ever in the
+room where the fact was shared.
+
+**Both directions, on the only same-class pair that exists** (`circle_presence`
+and `locate_friends_session` are `social`; the trip crew is alone in its class
+and the map is `source_scoped`):
+
+| Direction | What the fused read would hand over | Whose consent that is under |
+|---|---|---|
+| circle → locate surface | The circle's `state` (`recent` / `last_known`), its freshness, and its `evidenceTypes` — `` `artifacts/api-server/src/lib/circleResponseShaper.ts:226#evidence: [checkedIn ? "user_checkin" : "server_sync"],` `` — re-minted at the session viewer's rung; `#forAudience` carries evidence through untouched (`` `artifacts/api-server/src/presence/fusion/store.ts:899#evidenceTypes: best.evidenceTypes,` ``). | The circle's visibility mode, granted to CIRCLE MEMBERS. A locate-session member is not necessarily one. "A checked in somewhere 20 s ago" is feature-usage metadata the subject gave the circle. |
+| locate → circle surface | A `live` state with a seconds-old `observedAt` (a circle claim is never live), position nulled below `precise`. | The session's grant, given to SESSION MEMBERS. A circle member not in the session learns the subject is actively sharing location right now. |
+
+Neither is a coordinate. Both are disclosures the subject scoped to one
+audience, served to another, and §20.1's ruling — *"Preserve source-specific
+consent, audience, expiry, and revocation checks even within a class"* — names
+audience explicitly. The rung is one of the checks; it is not the audience.
+
+**And the step would be wrong on the merits even if it were safe.** A circle
+row is a STANDING self-assertion whose `observedAt` moves whenever the person
+touches it; it carries no point (`circleResponseShaper` admits `point: null`).
+Under newest-wins a circle assertion refreshed 20 s ago outranks a live
+sighting 40 s old, so a wired locate surface would DOWNGRADE a live, precise
+position to a coordinate-less `recent` for as long as the circle row stays
+fresher. The newest observation is not the best observation once sources carry
+different evidence classes, and `resolve` does not know that.
+
+**So the step is not taken, and this is the fifth instance of §18.7's class** —
+*"what is inert, and what happens on the day someone wires it."* The four
+writers still admit through the store (§16.2 stands); zero cross-source
+readers, still, and now with the reason stated in full.
+
+**RED WHEN, restated with the missing conjunct.** §16.5's three conjuncts and
+§18.6's audience conjunct stand, AND the fused read must be limited to
+estimates whose source-audience for that subject the asking viewer
+demonstrably holds — either (A) because the admitted estimate carries its
+CONSENT SCOPE (`{ kind: "locate_session" | "circle" | "trip_crew", id }`) and
+`read` / `resolve` take the viewer's scopes and select only within them, with
+retention then per (source, subject, scope) and a ranking that prefers a live
+sighting to a standing assertion; or (B) because the owner rules that for S3
+and S106 *"reads through it"* is satisfied by each surface reading its own
+source back through the store at the viewer's rung, and that CROSS-SOURCE
+fusion is refused by design rather than wired. **WHO**: the owner, for A or B.
+A changes the store's contract (§18.4 as recorded, and the ruling §20 built on
+it); B narrows the census's own §16 reading of the spec, and this section
+does not do that on its own authority. The store, the tests and the four
+admitting surfaces are untouched by this pass.
+
+**One owner decision, prepared:** A or B above. Cost of A: a claim field, two
+read signatures, a ranking rule, retention keyed by scope (which is what
+`locateFriendsSession.ts:883` argued against and would now be argued for on
+consent grounds), and the four admit sites supplying their scope — a lane's
+day, no migration. Cost of B: no code; S3/S106 become a `read`-based wiring
+per surface and move on a lane's report plus a test that an ungranted viewer
+is served nothing. Neither is chosen here.
+
+### §24.4 S112 — the caller exists; the row stays W on the flag and on a provenance fact measured here
+
+§22.3: *"S112 RED WHEN — a production (non-test) caller invokes
+sessionRevocationReach, AND the memory_projection path it depends on is
+enabled. WHO: a lane for the caller, then the flag."* The lane's half is done.
+
+**Where the caller had to be.** There is one production revocation of
+canonical intel evidence — account deletion, through `erase_intel_for_actor`
+— and the anonymous path's `purge_sensing_contributions_for_token()` has no
+route and no caller. So the reach runs inside the deletion, BEFORE the erase
+removes the observations the question is keyed on:
+`` `artifacts/api-server/src/services/accountDeletion/AccountDeletionService.ts:1217#{ name: "sensing_revocation_reach", subject: "sensing lineage reach — sessions resting on the erased evidence" },` ``,
+through the service's one pager, calling
+`` `artifacts/api-server/src/services/accountDeletion/sensingRevocationReach.ts:141#export async function enumerateSensingRevocationReach(` ``,
+which is now `sessionRevocationReach`'s first non-test importer.
+
+**What the caller honestly cannot know, and says.** The reach module wants the
+snapshot ids the erased observations fed. `intel_state_snapshots` records
+`` `artifacts/api-server/src/migrations/2130_intel_storage.sql:296#source_count    integer NOT NULL DEFAULT 0,` ``
+and `distinct_actors` and NO input provenance; adding an observation→snapshot
+link would be a standing reverse path towards contributors, which §20 and spec
+§17 forbid for the anonymous store. So the enumeration is at SUBJECT
+granularity and over-inclusive by construction: the account's contributor
+identities (account id plus one token per live epoch, via 3310's
+`intel_contributor_tokens_for_actor`, the way the evidence-ownership gate
+reads them) → the subjects its observations name → every snapshot of those
+subjects, treated as the revoked claim refs → every OTHER account's
+`ExperienceSession` on those subjects, one envelope per session id. The
+departing account's own sessions are excluded and counted, because the
+deletion handles them and counting them would inflate the figure. When in
+doubt, reach: a recomputation owner told "may rest on erased evidence" can
+recompute; one told "unaffected" wrongly cannot recover.
+
+**The memory half is empty for a reason that is a fact about the tree.** The
+only record carrying `provenance_json.claim_refs` is the S92 bridge's
+`NormalizedEvidence`, and it is never persisted:
+`` `artifacts/api-server/src/lib/memoryProjectionScheduler.ts:101#const verdict = sessionMemoryEligibility(ownerId, read.session.envelope, nowMs);` ``
+returns a verdict, and the projection pass goes through
+`` `artifacts/api-server/src/lib/memoryProjectionScheduler.ts:132#const { data: projData, error: projErr } = await db.rpc("project_all_memory", { p_enforce_flag: true });` ``,
+which reads no claim_refs. There is no store to enumerate, so the outcome says
+`memoryStore: "none_persisted"` rather than reporting an empty list as
+"nothing reached". *(Superseded by §27.1: the store now exists, and the
+outcome says `persisted` or `column_absent` —
+`` `artifacts/api-server/src/services/accountDeletion/sensingRevocationReach.ts:274#  let memoryStore: "persisted" | "column_absent" = "persisted";` ``.)*
+
+**Fail-closed, and shown to be.** Any unreadable precondition throws, the
+deletion STEP fails and warns, and the erase still runs. Seven cases in
+`` `artifacts/api-server/src/test/accountDeletionSensingRevocationReach.test.ts:236#describe("S112 — the reach is enumerated at subject granularity, before the erase"` ``
+and `` `artifacts/api-server/src/test/accountDeletionSensingRevocationReach.test.ts:339#describe("S112 — the account-deletion run is the production caller"` ``,
+registered and run; three mutations, each reverted: moving the step after the
+erase reds 1 of 7; no longer excluding the account's own sessions reds 3;
+answering "reached nothing" on a failed read reds 2. The nine deletion suites
+that already existed (86 cases, including the fail-open guard and the §9.1
+import tripwire) pass unchanged.
+
+**S112 stays W.** RED WHEN, restated: `memory_projection` is enabled on the
+database being measured (the owner), AND the bridge's `provenance_json` is
+persisted somewhere the reach can read (a lane, behind the flag — until then
+the memory stage cannot be enumerated even with the flag on, and the caller
+says so). **WHO**: the owner, then a lane.
+
+### §24.5 The completion checklist — twenty-two non-C rows, each with the one thing that moves it and who holds it
+
+Denominator 127, unchanged. 105 C · 19 W · 2 N · 1 X. Every non-C row is
+listed; none is excluded, deferred or folded into another.
+
+| Class | Rows | Exactly what moves the row | Who |
+|---|---|---|---|
+| OWNER RULING — the 3002 cutover to production | S19 · S97 · S111 · S118 | `3002 → 3003 → 3110 → 3310` applied to production **in the same cutover as this branch's `IntelCaptureService`** (§14.8: neither may go first). All four are applied and certified on `portava-ci`; production holds none. | the owner (production apply), with the integration owner |
+| OWNER RULING — consent scope | S39 · S24 | `surface` added to `SENSING_ANON_GRANTED_SCOPES` (§21.2, a separate act from #9's flag), THEN a lane wires a publisher through `publishThroughDifferencingGate` and a zone identity into the conversation (§21.4). | the owner, then a lane |
+| OWNER RULING — a flag | S49 | `discovery_candidate_projection_enabled` flipped where it is measured; the §24 pass and the store are built and run (§14.2). | the owner |
+| OWNER RULING — a flag | S92 | `memory_projection` enabled where it is measured (§22.3). | the owner |
+| OWNER RULING — a flag, then a lane | S112 | §24.4: the flag, then the bridge's provenance persisted. | the owner, then a lane |
+| OWNER RULING — a design | S3 · S106 | §24.3: option A (consent scope in the estimate) or B (single-source read-back is "reads through"). | the owner, then a lane |
+| OPERATOR ARTIFACT | S18 · S32 | `SENSING_CONTRIBUTOR_PEPPER` configured in production; the route's first statement refuses without it (§14.2). | ops |
+| OPERATOR ARTIFACT | S17 | The served headers of `https://portava.replit.app` (whose last publish reads `failed`, §23.3) and Supabase's at-rest attestation. One `curl -sI` from outside this proxy answers the header half. | the operator |
+| CLIENT BUILD | S28 · S29 (N) · S21 · S42 · S51 · S52 | A `travel-buddy-standalone` capture module producing the nine features under a separate microphone permission (S28/S29); S21's on-device reduction; S42/S51/S52 are waiting on exactly that input, and S42's `motionEnergy` ordinal meaning is additionally an owner decision (§14.2). No lane in this wave owns that tree. | a commissioned client build |
+| LAUNCH-CAPPED — the census working | S26 · S66 | Real contributions reaching a live database with the relevant gate ON (§23.1, §23.2). Both are refusable on every surface and refusing on none, and there is nothing to refuse. | nobody, deliberately |
+
+Nine of the twenty-two need no application code at all (S19 S97 S111 S118
+S18 S32 S49 S92 S17). Six are a client build. Two are the world being empty.
+Five are an owner design or consent act with a lane behind it.
+
+### §24.6 Headline — restated from the rows
+
+| | |
+|---|---|
+| **Denominator — testable requirements** | **127** |
+| BUILT-AND-CORRECT | **105** |
+| BUILT-BUT-WRONG | **19** |
+| NOT-BUILT | **2** |
+| CANNOT-VERIFY | **1** |
+| **CONSTRUCTED%** = (C+W)/127 | **124 / 127 = 97.6 %** |
+| **CORRECT%** (raw) = C/127 | **105 / 127 = 82.7 %** |
+| **of-built** = C/(C+W) | **105 / 124 = 84.7 %** |
+
+### Rows that move
+
+| Row | Was | Now | Why |
+|---|---|---|---|
+| S79 live-claim grounding on /compass/ask | W | **C** | §24.1 — claims into the context first, the checker over that band second, on both answer branches; 27 registered cases, in CI's 26030. Gated by four `intel_*` flags in production; the gate's off-state is the safe one and is what the tests pin. |
+| S83 TripWorldContext carries the five named parts | W | **C** | §24.2 — `TRIP_WORLD_PARTS` closed and pinned; built from existing owners on the request path with the same kernel and admitted opportunities the ranker gets; unavailable is never reported as empty. Shape proven against a stub client; wiring proven by the route. |
+
+### Rows that explicitly DO NOT move
+
+S3 S106 (§24.3 — the step is consent-unsafe as specified and needs a ruling),
+S112 (§24.4 — the flag, then persisted provenance), and the nineteen others
+§24.5 places by class. `check:census-integrity` over this document reads
+C=105 W=19 N=2 X=1, which is what the top headline now states.
+
+## §25 — 2026-09-26: OWNER DECISION A taken — consent scopes carried through fusion and reads; the competition rule defined; revocation wired and proven; S3 and S106 re-derived and MOVED
+
+The owner ruled on §24.3's question: *"pursue option A: preserve and enforce
+source-specific consent and audience restrictions throughout fusion and reads.
+Define how observations of different quality and freshness compete. Test
+cross-audience denial and revocation. Do not choose single-source read-back
+merely to count the requirement complete."* This section records what was
+built, cites the line for each claim, states what turned each proof red, and
+re-derives the two rows against the RED WHEN §24.3 restated — not against a
+weaker one.
+
+### §25.0 The mechanism — a scope on every claim, a scope on every read
+
+| §24.3 named this | Now | Where |
+|---|---|---|
+| "the admitted estimate carries its CONSENT SCOPE (`{ kind, id }`)" | Four kinds, closed: `locate_session`, `circle`, `trip_crew`, `map_public`. Each source's contract declares the ONE kind its claims may carry. | `` `artifacts/api-server/src/presence/fusion/sources.ts:107#export const PRESENCE_CONSENT_SCOPE_KINDS = [` ``; `` `artifacts/api-server/src/presence/fusion/sources.ts:160#readonly consentScopeKind: PresenceConsentScopeKind;` `` |
+| a claim without a scope | Refused `no_scope`; a scope of another source's kind refused `scope_mismatch` — a session position cannot be relabelled a circle one. | `` `artifacts/api-server/src/presence/fusion/store.ts:655#if (!isPresenceConsentScope(claim.scope)) return { ok: false, refusal: "no_scope" };` ``; `` `artifacts/api-server/src/presence/fusion/store.ts:657#return { ok: false, refusal: "scope_mismatch" };` `` |
+| "retention then per (source, subject, scope)" | The retention key is (source, scope key, subject); the same human seen by two sessions is two estimates with two audiences. The estimate carries its scope, frozen. | `` `artifacts/api-server/src/presence/fusion/store.ts:600#function retentionKey(` ``; `` `artifacts/api-server/src/presence/fusion/store.ts:389#this.scope = Object.freeze({ kind: init.scope.kind, id: init.scope.id });` `` |
+| "`read` / `resolve` take the viewer's scopes and select only within them" | `PresenceAudience { ceiling, scopes }` replaces the bare ceiling on both reads; candidates are looked up ONLY through the audience's scopes of each source's kind, then ranked. A missing, malformed or unreadable scope unlocks nothing. | `` `artifacts/api-server/src/presence/fusion/store.ts:224#export interface PresenceAudience {` ``; `` `artifacts/api-server/src/presence/fusion/store.ts:754#for (const scope of audienceScopes(audience, contract.consentScopeKind)) {` ``; `` `artifacts/api-server/src/presence/fusion/store.ts:805#for (const scope of audienceScopes(audience, contract.consentScopeKind)) {` `` |
+| "a ranking that prefers a live sighting to a standing assertion" | `competePresence` — §25.3. | `` `artifacts/api-server/src/presence/fusion/store.ts:574#export function competePresence(` `` |
+| revocation | `revokeScope`, `revokeSubjectInScope`, `revokeSubject`, `revokeScopeKind`, each returning what it dropped — §25.4. | `` `artifacts/api-server/src/presence/fusion/store.ts:934#revokeScope(scope: PresenceConsentScope): number {` ``; `` `artifacts/api-server/src/presence/fusion/store.ts:940#revokeSubjectInScope(subjectKey: string, scope: PresenceConsentScope): number {` ``; `` `artifacts/api-server/src/presence/fusion/store.ts:955#revokeScopeKind(kind: PresenceConsentScopeKind): number {` `` |
+
+### §25.1 The four admit sites name their scope
+
+| Source | Scope | Line |
+|---|---|---|
+| `locate_friends_session` | `{ locate_session, sessionId }` — `ProjectMemberInput` gains `sessionId`; the session IS the consent. | `` `artifacts/api-server/src/lib/locateFriendsSession.ts:916#scope: locateSessionScope(sessionId),` `` |
+| `circle_presence` | `{ circle, "trip:<id>" \| "event:<id>" }` — `circlePresenceEstimate` and `shapePresence` take the context; both route call sites pass the one they already had. | `` `artifacts/api-server/src/lib/circleResponseShaper.ts:209#scope: circleConsentScope(context.type, context.id),` ``; `` `artifacts/api-server/src/presence/fusion/sources.ts:147#export function circleConsentScope(` `` |
+| `trip_crew_location_sessions` | `{ trip_crew, tripId }` — `admitCrewPresence` takes the trip; `getCrewMap` passes it. The per-viewer `allowed_member_ids` grant stays a CEILING, folded at admit. | `` `artifacts/api-server/src/domain/trips/services/TripCrewLocationService.ts:183#scope: { kind: "trip_crew", id: tripId },` `` |
+| `map_social_presence` | `{ map_public, kind }` — one per map kind. Source-scoped subjects are never fused, so this scope makes the claim well-formed and revocable rather than unlocking a cross-source read. | `` `artifacts/api-server/src/lib/mapAggregation.ts:561#scope: mapPublicScope(kind),` ``; `` `artifacts/api-server/src/presence/fusion/sources.ts:294#export function mapPublicScope(` `` |
+
+§16.2's count stands: four writers, all through `admit`, and a fifth admit
+site cannot name a scope kind the register does not contain — the union is
+closed and the contract field is typed to it.
+
+### §25.2 The fused production consumer — §16.5's three conjuncts, met
+
+§16.5: *"a production consumer calls `presenceFusion.resolve` for at least one
+surface, that surface's output is derived from the fused estimate rather than
+from one source's own admission, and a test asserts the resolver is reached
+from the surface rather than from a test."* Plus §18.6's audience conjunct and
+§24.3's membership conjunct.
+
+| Conjunct | Met by |
+|---|---|
+| a production consumer calls `resolve` | `fuseMemberView`, called by `readSessionForViewer` for every member of a Locate session: `` `artifacts/api-server/src/lib/locateFriendsSession.ts:1085#const fused = presenceFusion.resolve(memberId, "locate_friends_session", audience, nowMs);` ``; `` `artifacts/api-server/src/lib/locateFriendsSession.ts:1482#return fuseMemberView(own, id, sessionId, { ceiling: sessionCeiling, scopes }, nowMs);` `` |
+| the surface's output is derived from the fused estimate | When the winner is another source, the `MemberView` is rendered FROM it — rung, §10 state, age, `live`, and a new `fusedFrom` field naming the source: `` `artifacts/api-server/src/lib/locateFriendsSession.ts:1117#fusedFrom: fused.source,` ``. When the winner is this session's own entry, the current projection answers, never the store's retained copy: `` `artifacts/api-server/src/lib/locateFriendsSession.ts:1087#if (fused.source === "locate_friends_session") {` ``. |
+| a test asserts the resolver is reached from the surface | `` `artifacts/api-server/src/test/presenceFusionConsent.test.ts:667#describe("E. readSessionForViewer fuses a Circle estimate only through Circle's own guard, per member"` `` — the first case reads through the real `readSessionForViewer` with a fake database and a fake guard and asserts `fusedFrom: "circle_presence"`; deleting the `fuseMemberView` call reds two cases (§25.4). |
+| §18.6 — the viewer's rung | The audience ceiling is the SESSION's ceiling, folded with the estimate's own bound; both only tighten. |
+| §24.3 — the viewer's MEMBERSHIP in the other source's audience | The circle scope is granted PER MEMBER, PER READ, only when Circle's own `canViewCirclePresenceBatch` allows THIS viewer to see THAT member in THAT context — kill switch, both memberships, bans, blocks, global and per-context pause, consent version, visibility mode — AND the row it read admits through `circlePresenceEstimate` now: `` `artifacts/api-server/src/lib/locateFriendsSession.ts:1020#circlePresenceBatch: canViewCirclePresenceBatch,` ``; `` `artifacts/api-server/src/lib/locateFriendsSession.ts:1057#return fresh === null ? null : circleConsentScope(circle.type, circle.id);` ``. A guard that throws or answers `unavailable` grants nobody anything: `` `artifacts/api-server/src/lib/locateFriendsSession.ts:1462#circleAccess = await deps.circlePresenceBatch(db, viewerId, otherIds, circle.type, circle.id);` ``. Gate (5) still governs: with the §24 policy unreadable the fused step is not taken at all: `` `artifacts/api-server/src/lib/locateFriendsSession.ts:1458#const circle = zones === null ? null : circleContextOf(session);` ``. |
+
+**What that guard-driven design buys, stated because it is the P24 answer to
+the obvious objection.** The fusion store is process-local (§18.2's design
+decision, unchanged). A pause handled by another server instance revokes THAT
+instance's copy and not this one's, and a copy lives up to 60 minutes. So the
+fused read does not trust a retained circle estimate: it re-derives from the
+row Circle's guard just read and admits it fresh under the scope, and a
+retained copy with no current row behind it is NOT served — `` `artifacts/api-server/src/test/presenceFusionConsent.test.ts:728#test("MULTI-PROCESS: a retained copy with no current row behind it is NOT served` ``.
+The in-store `revoke*` calls are defence in depth for the instance that
+handled the revocation. This is what makes the read correct across instances,
+and it is why "the store was revoked" is not the whole of §25.4's proof.
+
+**What is deliberately NOT wired, and why it does not bear on the rows.** The
+only legal same-class pairing is `circle_presence` ↔ `locate_friends_session`
+(§20: the crew is alone in `trip_crew`; the map is `source_scoped` and never
+fuses). The Locate surface now fuses the circle's assertion; the Circle surface
+does not fuse a Locate position. It could, consent-safely, under the same
+scope rule — but a circle card has a `venue` ceiling, so all a session position
+could add to it is a `live` state with no coordinate, for a viewer who is in
+the session and can already see the position there. The rows ask for one
+model and one derivation that every surface reads through, not for every
+pairing to be wired in both directions.
+
+### §25.3 Competition — how observations of different quality and freshness compete
+
+§24.3 measured the previous rule — newest `observedAt` wins — as wrong on the
+merits: a circle assertion refreshed 20 s ago outranked a live sighting 40 s
+old and would have DOWNGRADED a live precise position to a coordinate-less
+`recent`. The rule is now one exported function, ordered:
+
+| # | Criterion | Why in this position | Line |
+|---|---|---|---|
+| 1 | LIVE beats not-live | A current position is not history however fresh the history is (§20). | `` `artifacts/api-server/src/presence/fusion/store.ts:581#if (liveA !== liveB) return liveB - liveA;` `` |
+| 2 | §10 state strength: `precise` > `nearby` > `relayed` > `recent` > `last_known` > `inferred` = `predicted` > `unknown` | Above recency on purpose: a `recent` observation four minutes old outranks a `last_known` assertion one minute old, because the second source is saying it does not know. | `` `artifacts/api-server/src/presence/fusion/store.ts:562#export const PRESENCE_STATE_STRENGTH` ``; `` `artifacts/api-server/src/presence/fusion/store.ts:584#if (sa !== sb) return sb - sa;` `` |
+| 3 | newest `observedAt`; untimed loses to any timed | Same strength: recency decides. | — |
+| 4 | higher confidence | Same clock: the better evidence. | — |
+| 5 | register order, then scope key | A total order — the answer is a function of the retained set, not of insertion order. | — |
+
+The §24.3 scenario now resolves to the live sighting — `` `artifacts/api-server/src/test/presenceFusionStore.test.ts:231#test("one subject seen by two SAME-CLASS sources resolves to the CURRENT position` `` — and
+the case that ISOLATES rule 1 from rule 2 (a live `nearby` beating a stale
+`precise`, and losing to it while both are live) is `` `artifacts/api-server/src/test/presenceFusionConsent.test.ts:483#describe("D. how observations of different quality and freshness compete"` ``. Both were seen
+red: deleting rule 1 reds 2 cases, deleting rule 2 reds 3.
+
+### §25.4 Cross-audience denial and revocation — the proofs, and what turned them red
+
+**Denial** (`` `artifacts/api-server/src/test/presenceFusionConsent.test.ts:181#describe("B. a viewer reaches an estimate only through the scope it was admitted under"` ``): session B's member does not see session A's precise
+position and gets B's `zone` entry instead; no scopes serves nothing (existence
+withheld, not just the point); a scope with the right id and the wrong kind, or
+the right kind and the wrong id, or no id at all, unlocks nothing; a circle
+scope for trip Y does not reach trip X's estimate; holding only the circle
+scope reaches the circle estimate and NOT the session positions; the audience
+ceiling still narrows what a scope unlocks. **Admission** (`` `artifacts/api-server/src/test/presenceFusionConsent.test.ts:114#describe("A. a claim without a consent scope is not admitted"` ``): no
+scope, empty scope, malformed scope → `no_scope`; every source × every other
+kind → `scope_mismatch`, measured over the register rather than listed.
+
+**Revocation** (`` `artifacts/api-server/src/test/presenceFusionConsent.test.ts:291#describe("C. revocation drops exactly what was consented, and reports it"` ``, `` `artifacts/api-server/src/test/presenceFusionConsent.test.ts:415#describe("C. the production revocation points reach the store"` ``): each of the four store operations drops
+exactly what it names and reports the count; a second revoke reports 0; a
+malformed request drops nothing; re-admission after revocation is admitted (a
+revoke is not a ban). The production points:
+
+| Consent ends when | Store half | Line |
+|---|---|---|
+| a member leaves a Locate session | `revokeSubjectInScope(user, {locate_session, session})` FIRST — before any row is read or written, even when the membership row is unreadable — and the count is returned. | `` `artifacts/api-server/src/lib/locateFriendsSession.ts:1535#const revokedEstimates = presenceFusion.revokeSubjectInScope(userId, locateSessionScope(sessionId));` `` |
+| a member stops a crew live share | `revokeSubjectInScope(user, {trip_crew, trip})` before the row is closed; count returned. | `` `artifacts/api-server/src/domain/trips/services/TripCrewLiveShareService.ts:158#const revokedEstimates = presenceFusion.revokeSubjectInScope(userId, { kind: "trip_crew", id: tripId });` `` |
+| a member pauses one Circle context / pauses all / the session-end pause | `revokeCirclePresence` / `revokeAllCirclePresence` — helpers on the shaper, one line per handler. | `` `artifacts/api-server/src/routes/circle.ts:1345#revokeCirclePresence(user.id, type, id);` ``; `` `artifacts/api-server/src/lib/circleResponseShaper.ts:65#export function revokeCirclePresence(` `` |
+| the sweep deletes an expired row, or a trip or event ends | per row / `revokeCircleContext` per ended context | `` `artifacts/api-server/src/routes/circle.ts:2275#for (const tid of endedTripIds) revokeCircleContext("trip", tid);` `` |
+| an admin disables a context, or engages the kill switch | `revokeCircleContext` / `revokeEveryCirclePresence` | `` `artifacts/api-server/src/routes/circle.ts:2186#if (enabled) revokeEveryCirclePresence();` `` |
+| an account is deleted | `revokeSubject(user)` — every source, every scope; logged, deliberately NOT a receipt count (one process's cache is not a durable deletion). | `` `artifacts/api-server/src/services/accountDeletion/AccountDeletionService.ts:1356#{ userId, revokedPresenceEstimates: presenceFusion.revokeSubject(userId) },` `` |
+
+**Mutation results, measured on the suite of 45** (each mutation applied,
+run, and reverted; the file was diffed clean afterwards):
+
+| Mutation | Red cases |
+|---|---|
+| `admit` skips the `scope_mismatch` check | 1 |
+| `resolve` ignores the scope key (finds by source + subject) | 5 |
+| `revokeSubjectInScope` is a no-op returning 1 | 6 |
+| `competePresence` drops live-first | 2 |
+| `competePresence` drops state strength | 3 |
+| `leaveSession` does not revoke | 2 |
+| `stopLiveShare` does not revoke | 1 |
+| `circleScopeFor` ignores `allowed` | 2 |
+| `circleScopeFor` grants without a fresh admission | 2 |
+| the guard's throw is not caught | 1 |
+| `readSessionForViewer` never fuses | 2 |
+| the fused read ignores an unreadable §24 policy | 1 |
+| `fuseMemberView` serves the store's copy of the session's own source | 2 |
+| `audienceScopes` stops filtering by kind | **0** — equivalent: the retention key already carries the kind, so a wrong-kind scope builds a key nothing holds. The filter stays as the stated intent; the property is proven by the "wrong kind, right id" case above, which the scope-key mutation reds. |
+| the explicit `precise_live` skip in `circleScopeFor` is deleted | **0** — equivalent: `VISIBILITY_MODE_CEILING` has no such rung and the fold lands on `none`, so the store refuses. The skip stays so the route and the fused read agree by reading. |
+
+Two equivalent mutants are reported rather than hidden; neither is a gap in
+the property, both are a second line saying what a first line already enforces.
+
+### §25.5 S3 and S106 re-derived. W → C.
+
+**S3 RED WHEN** (§14.2, §15.3, unchanged): *"one `PresenceEstimate` store and
+fusion layer exists behind the ladder and all four of `circle_presence`,
+`trip_crew_location_sessions`, `locateFriendsSession` and the map's
+`social_zone`/`buddy_zone`/`crew_member` kinds read through it — proven by a
+test that a second presence write path is unrepresentable, not by the store's
+existence."* §16 established the store, the four writers and the
+unrepresentability proof, and held the row on the one missing thing: *"four
+writers, no cross-source reader."* §16.5 made that one step; §18 and §24.3
+found the step unsafe as specified and restated it with the audience and
+membership conjuncts. Every conjunct is now met by a cited line and a test
+that has been seen red: the scope on every claim (§25.0, §25.1), the read that
+selects within the viewer's scopes (§25.0), the competition rule (§25.3), the
+one production consumer deriving its output from the fused estimate through
+the other source's own consent guard (§25.2), and revocation that produces
+the effect at every point consent ends (§25.4). **S3 → C.**
+
+**S106 RED WHEN S3 does**, with the class distinction §17 asks for: §20's
+ruling (distinct classes may not fuse) is enforced at selection, and §25 adds
+the audience distinction WITHIN a class that §20.1 asked to be preserved.
+**S106 → C.**
+
+**P24 — exactly what turns these red, and the two ways they are capped.**
+(1) A fifth presence source, or a reader that reaches the map without the
+audience's scopes: the union and the read signatures are closed types, and the
+scope-key mutation reds five cases. (2) DEPLOYMENT-CAPPED, like S79 and S83:
+the fused consumer sits behind `locate_friends_enabled` (census-map M7: FALSE
+in production) and Circle's kill switch; on this branch it is implemented and
+CI-verified, and it is not production-realised until the branch is merged,
+deployed and that flag is on. (3) Another server instance's retained copy
+outlives a revoke by up to the 60-minute TTL — bounded for the fused read by
+the guard-and-row re-derivation (§25.2), and stated as the store's contract
+for any FUTURE `read()` caller that skips it: today no production caller does.
+
+### §25.6 The completion checklist — twenty non-C rows
+
+Denominator 127, unchanged. 107 C · 17 W · 2 N · 1 X. Every non-C row is
+listed; none is excluded, deferred or folded into another.
+
+| Class | Rows | Exactly what moves the row | Who |
+|---|---|---|---|
+| OWNER RULING — the 3002 cutover to production | S19 · S97 · S111 · S118 | `3002 → 3003 → 3110 → 3310` applied to production **in the same cutover as this branch's `IntelCaptureService`** (§14.8: neither may go first). All four are applied and certified on `portava-ci`; production holds none. | the owner (production apply), with the integration owner |
+| OWNER RULING — consent scope | S39 · S24 | `surface` added to `SENSING_ANON_GRANTED_SCOPES` (§21.2, a separate act from #9's flag), THEN a lane wires a publisher through `publishThroughDifferencingGate` and a zone identity into the conversation (§21.4). | the owner, then a lane |
+| OWNER RULING — a flag | S49 | `discovery_candidate_projection_enabled` flipped where it is measured; the §24 pass and the store are built and run (§14.2). | the owner |
+| OWNER RULING — a flag | S92 | `memory_projection` enabled where it is measured (§22.3). | the owner |
+| OWNER RULING — a flag, then a lane | S112 | §24.4: the flag, then the bridge's provenance persisted. | the owner, then a lane |
+| OPERATOR ARTIFACT | S18 · S32 | `SENSING_CONTRIBUTOR_PEPPER` configured in production; the route's first statement refuses without it (§14.2). | ops |
+| OPERATOR ARTIFACT | S17 | The served headers of `https://portava.replit.app` (whose last publish reads `failed`, §23.3) and Supabase's at-rest attestation. One `curl -sI` from outside this proxy answers the header half. | the operator |
+| CLIENT BUILD | S28 · S29 (N) · S21 · S42 · S51 · S52 | A `travel-buddy-standalone` capture module producing the nine features under a separate microphone permission (S28/S29); S21's on-device reduction; S42/S51/S52 are waiting on exactly that input, and S42's `motionEnergy` ordinal meaning is additionally an owner decision (§14.2). No lane in this wave owns that tree. | a commissioned client build |
+| LAUNCH-CAPPED — the census working | S26 · S66 | Real contributions reaching a live database with the relevant gate ON (§23.1, §23.2). Both are refusable on every surface and refusing on none, and there is nothing to refuse. | nobody, deliberately |
+
+Nine of the twenty need no application code at all (S19 S97 S111 S118 S18
+S32 S49 S92 S17). Six are a client build. Two are the world being empty.
+Three are an owner consent act or flag with a lane behind it.
+
+### §25.7 Headline — restated from the rows
+
+| | |
+|---|---|
+| **Denominator — testable requirements** | **127** |
+| BUILT-AND-CORRECT | **107** |
+| BUILT-BUT-WRONG | **17** |
+| NOT-BUILT | **2** |
+| CANNOT-VERIFY | **1** |
+| **CONSTRUCTED%** = (C+W)/127 | **124 / 127 = 97.6 %** |
+| **CORRECT%** (raw) = C/127 | **107 / 127 = 84.3 %** |
+| **of-built** = C/(C+W) | **107 / 124 = 86.3 %** |
+
+### Rows that move
+
+| Row | Was | Now | Why |
+|---|---|---|---|
+| S3 No second social presence model | W | **C** | §25 — one store, four writers through `admit`, one fused production reader that selects within the viewer's consent scopes and derives its output from the winner; the competition rule replaces newest-wins; revocation produces the effect at every point consent ends; every proof seen red. Deployment-capped behind `locate_friends_enabled`, whose off-state is the safe one. |
+| S106 Shared platform Presence architecture keeping private device / aggregate intelligence / social / trip crew / buddy / public discovery classes distinct | W | **C** | §25 — §20's class boundary at selection plus §25's audience boundary within a class: two consents of the same kind, given to different people, are two estimates with two audiences and never one answer. Capped as S3. |
+
+### Rows that explicitly DO NOT move
+
+The twenty rows §25.6 places by class. `check:census-integrity` over this
+document reads C=107 W=17 N=2 X=1, which is what the top headline now states.
+
+---
+
+## §26 — 2026-09-26: the provenance S112 lacked, the client build the six client rows waited on, the publisher and the turn's zone S39/S24 waited on; what moves and what is held, each with its cap stated
+
+Written under the owner's instruction of this date: *"Work through all 22
+remaining requirements. Separate implementation work from activation
+approvals: an off flag does not prevent you from completing and testing the
+code behind it. … Report implementation completion and production
+verification separately."* Every claim below cites the line, names what
+turned its proof red, and says which of the three states it is in:
+**implemented and CI-verified on this branch**, **applied and verified on
+`portava-ci`**, or **realised in production** — the last of which nothing in
+this section is. The denominator is 127 and no row is excluded.
+
+### §26.0 What changed on the databases — portava-ci only, under decision A
+
+Two migrations were applied to `portava-ci` and none to production, the
+runner's way (its own `classifyMigration` / `checksumOf` /
+`buildApplyStatement`, byte-exact statement, comments intact, `body === file`
+asserted before sending; the second 2026-09-26 entry of `docs/migrations.md`):
+
+| File | portava-ci | production | Verified from the catalog |
+|---|---|---|---|
+| `` `artifacts/api-server/src/migrations/3311_intel_snapshot_input_provenance.sql:52#  ADD COLUMN IF NOT EXISTS input_observation_ids uuid[] NOT NULL DEFAULT '{}'::uuid[];` `` | applied 09:36:48 | absent | `_uuid NOT NULL DEFAULT '{}'` on both snapshot tables, both GIN indexes, both comments; the anonymous store still has **zero** `%observation%` columns |
+| `` `artifacts/api-server/src/migrations/3312_sensing_anon_contribution_features.sql:44#  ADD COLUMN IF NOT EXISTS motion_energy_centi   smallint,` `` | applied 09:37:49 | absent | fifteen nullable feature columns, three CHECKs, 0 foreign keys; five negative controls refused (`_ranges`, `_enums`, `` `artifacts/api-server/src/migrations/3312_sensing_anon_contribution_features.sql:85#    ALTER TABLE public.sensing_anon_contributions ADD CONSTRAINT sensing_anon_features_acoustic_pair CHECK (` ``), a legacy-shape row and a full-contract row accepted — every probe rolled back, 0 rows before and after |
+| `` `artifacts/api-server/src/migrations/3313_sensing_publication_flag.sql:43#    'sensing_publication_enabled',` `` | **not applied** | absent | — (seeds FALSE; its reader is §26.3's publisher, which never reaches the flag while the scope is ungranted) |
+
+Flags after the apply, read rather than assumed: `discovery_candidate_projection_enabled`,
+`intel_claim_projection_crowd`, `media_evidence_enabled`, `memory_projection`,
+`sensing_presence_context_enabled` all `false`; `sensing_publication_enabled`
+absent. Nothing was enabled. No scope was granted. The 2481 row was not touched.
+
+### §26.1 S112 — the missing provenance, designed, built, and its EFFECT verified
+
+§24.4 measured the defect exactly: *"`intel_state_snapshots` records
+`source_count` and `distinct_actors` and NO input provenance … so the
+enumeration is at SUBJECT granularity and over-inclusive by construction."*
+The owner's bar: *"Verify that revocation actually produces the required
+effect; a read-only reach calculation alone is not completion."*
+
+**The design, and why it keeps §20 and spec §17.** Provenance is recorded
+FORWARD only — on the derived row, as the opaque `intel_observations.id`
+values the projection read — never as a column on an observation or a
+contribution pointing at what it fed. An observation id names no contributor
+(since 3002, `actor_id` is a rotating token; after an erasure the referenced
+rows do not exist at all, so the ids dangle, which is the intended trace).
+The column is never selected by the read path (`lib/liveClaimRead` names its
+columns), and the ANONYMOUS store is untouched: 3311's own last postcondition
+refuses any `%observation%` column on `sensing_anon_contributions`.
+
+**The implementation, by line.**
+
+| Step | Where |
+|---|---|
+| The aggregator carries the cohort's observation ids into the projection input | `` `artifacts/api-server/src/lib/intelProjectionAggregator.ts:679#    inputObservationIds: obsIds,` `` |
+| The writer records them on the version row and the current row | `` `artifacts/api-server/src/lib/intelProjection.ts:471#      input_observation_ids: uniqueUuids(input.inputObservationIds),` `` |
+| Without 3311 (production today) the writer retries WITHOUT the column and logs it once — provenance degrades to "unrecorded", projection does not stop | `` `artifacts/api-server/src/lib/intelProjection.ts:520#async function writeWithProvenanceFallback<T extends Record<string, unknown>>(` ``; `` `artifacts/api-server/src/lib/intelProjection.ts:531#      { event: "intel.projection.provenance_unavailable", what, err: firstError },` `` |
+| The reach finds EXACTLY the snapshots resting on the erased ids, and reports which granularity it used | `` `artifacts/api-server/src/services/accountDeletion/sensingRevocationReach.ts:218#            .overlaps("input_observation_ids", part)` ``; `` `artifacts/api-server/src/services/accountDeletion/sensingRevocationReach.ts:106#  provenance: "exact" | "subject";` `` |
+| After the erase, every affected (subject, zone) is RE-PROJECTED from the evidence that remains, through the real aggregator and writer; any row that still names an erased id is RETRACTED in place and a retraction version is appended saying why | `` `artifacts/api-server/src/services/accountDeletion/sensingErasureRecompute.ts:118#export async function recomputeSnapshotsAfterErasure(` ``; `` `artifacts/api-server/src/services/accountDeletion/sensingErasureRecompute.ts:189#      .update({ privacy_eligible: false, expires_at: nowIso, input_observation_ids: [] })` ``; `` `artifacts/api-server/src/services/accountDeletion/sensingErasureRecompute.ts:210#      privacy_reason: "input_erased",` `` |
+| The deletion runs it as its own step, after the erase, and warns if any retraction failed | `` `artifacts/api-server/src/services/accountDeletion/AccountDeletionService.ts:1299#    const recomputeOk = await step(steps, "recompute_intel_snapshots_after_erase", async () => {` `` |
+
+**The effect, verified end to end rather than counted.** The last describe of
+`` `artifacts/api-server/src/test/sensingErasureRecompute.test.ts:216#describe("END TO END — the real aggregator and writer, a real erasure, a verified effect", () => {` ``
+runs the REAL `assembleClaimInput` and `projectAndStore` against an in-memory
+database that mutates: a snapshot rests on sixteen observations, one of them
+the departing account's; that observation is erased; the recompute rewrites
+the row from the fifteen that remain and its provenance no longer names the
+erased id (`` `artifacts/api-server/src/test/sensingErasureRecompute.test.ts:238#  it("the snapshot is REWRITTEN from the evidence that remains, and its provenance no longer names the erased observation", async () => {` ``);
+when the erasure leaves too few contributors the rewrite is SUPPRESSED and
+still carries no erased id; with the projection flag OFF the writer writes
+nothing, so the recompute RETRACTS instead of trusting the stale row
+(`` `artifacts/api-server/src/test/sensingErasureRecompute.test.ts:279#  it("with the projection flag OFF the writer writes nothing — so the recompute RETRACTS instead of trusting the stale row", async () => {` ``).
+Eight unit cases pin each branch of recompute-or-retract, including the
+fail-closed ones (an unreadable claim set, an unreadable post-state, a
+retraction whose write fails, a projection that throws). A fixture lesson,
+recorded: the first end-to-end run wrote nothing because sixteen identical
+values reported in the same second are ONE coordinated cluster to
+`lib/intelIndependence` — the gate was right and the fixture was wrong, and
+it now staggers reports a minute apart.
+
+**Seen red.** Making the writer drop `input_observation_ids` reds the
+rewritten case; making the recompute stop retracting reds six.
+
+**What remains, and why the row is held at W.** (1) 3311 is applied to
+`portava-ci` and not to production, so in production the reach falls back to
+subject granularity — the effect is still produced (every snapshot of every
+subject the account observed is recomputed or retracted), over-inclusively.
+(2) The MEMORY stage: §24.4 stands — the S92 bridge's `provenance_json.claim_refs`
+is never persisted, because `project_all_memory` (SQL) writes
+`memory_projections` and reads no claim refs; so with `memory_projection` ON
+a revocation still cannot be enumerated into memory. The design for that
+half, stated so the remaining decision is concrete: a `claim_refs uuid[]`
+column on `memory_projections` written by the SQL projection from the
+session's normalised evidence, read by the reach with the same `overlaps`
+query 3311 uses, retracted the same way. That is a memory-domain migration
+and function change behind the owner's `memory_projection` flag, outside this
+lane's tree. **S112 → W (unchanged).** RED WHEN restated: the memory
+projection persists its claim refs AND `memory_projection` is on where it is
+measured; then, and only then, the five stages are each reachable.
+
+### §26.2 The client build — S21, S28, S29, and the three engine rows that waited on it
+
+§25.6 recorded these six under *"a commissioned client build … No lane in
+this wave owns that tree."* The owner's instruction found the tree accessible
+in this workspace, and it was built there. Everything below is IMPLEMENTED
+AND CI-VERIFIED (client: 6,747 node cases passing, 31 jest cases on the
+secure store; server: the suites named) and NOT REALISED IN PRODUCTION: the
+client build is not shipped, 3312 is on `portava-ci` only, and the ingest
+refuses every caller in production without its pepper (S18/S32).
+
+**On the device.** The capture loop
+`` `travel-buddy-standalone/src/services/sensing/sensingCapture.ts:123#export function startSensingCapture(deps: SensingCaptureDeps): SensingCaptureHandle {` ``
+holds raw motion and location samples in a closure nothing outside can read,
+closes a window, reduces it on the device
+(`` `travel-buddy-standalone/src/lib/sensing/normalizedFeatures.ts:445#export function reduceSensingWindow(` ``)
+to the nine named features — spatial bucket
+(`` `travel-buddy-standalone/src/lib/sensing/spatialBucket.ts:55#export function encodeSpatialBucket(` ``,
+capped at ~1.2 km × 0.6 km cells), temporal bucket, movement class, motion
+energy, periodicity, dwell bucket, transition, transport-mode likelihood and
+sensor health — and empties the raw buffers the moment the window closes.
+`` `travel-buddy-standalone/src/services/sensing/__tests__/sensingCapture.test.ts:244#  test('no sentinel coordinate or accelerometer axis reaches `submit`', async () => {` ``
+pins that no coordinate and no axis reaches the transport; the nine features
+are pinned at `` `travel-buddy-standalone/src/services/sensing/__tests__/sensingCapture.test.ts:164#  test('a window of real samples is submitted as the nine named features', async () => {` ``.
+The loop is mounted for the app in `` `travel-buddy-standalone/app/_layout.tsx:266#    const handle = installSensingCapture();` ``,
+which starts nothing without an API base and valid consent and re-checks
+consent on every foreground.
+
+**The acoustic pair, under a SEPARATE permission.** No mobile OS offers a
+second microphone switch, and Portava's existing one was granted for calls
+and video. So the separate permission is its own purpose scope with its own
+storage key, usage string and opt-in screen
+(`` `travel-buddy-standalone/src/lib/sensing/acousticPermission.ts:135#export async function grantAcousticPermission(` ``,
+requested from `app/settings/intel-prompts.tsx`), the OS permission is
+required IN ADDITION and never instead, and the extractor
+`` `travel-buddy-standalone/src/lib/sensing/acousticFeatures.ts:108#export function extractAcousticFeatures(` ``
+produces a coarse energy bucket and a rhythm class — never a recording. The
+permission is re-read PER WINDOW, so a revocation between windows drops the
+pair from the very next one
+(`` `travel-buddy-standalone/src/services/sensing/__tests__/sensingCapture.test.ts:311#  test('a revocation between windows drops the acoustic pair from the very next one', async () => {` ``),
+and 3312's `_acoustic_pair` CHECK makes a half-record unrepresentable in the store.
+
+**The commitment, so the device can withdraw.** The device mints a 32-byte
+CSPRNG secret into SecureStore
+(`` `travel-buddy-standalone/src/services/sensing/installSensingCapture.ts:72#export async function sensingDeviceSecret(): Promise<string | null> {` ``;
+refuses without a CSPRNG rather than degrade to a guessable one), derives the
+epoch secret and the commitment exactly as the server does
+(`` `travel-buddy-standalone/src/lib/sensing/commitment.ts:151#export function deviceCommitment(deviceSecret: string, epoch: number): string {` ``;
+mirrored against `node:crypto` and the server's own derivations in
+`` `travel-buddy-standalone/src/lib/sensing/__tests__/commitment.test.ts:47#describe("the server's derivations, mirrored", () => {` ``),
+and sends the wire shape `docs/contracts/sensing-contribution-wire-v1.json`
+carries — one fixture, read by the client's mapper
+(`` `travel-buddy-standalone/src/lib/sensing/wireContribution.ts:103#export function toWireContribution(` ``)
+and by the server's route test, so the two ends cannot drift apart silently.
+
+**On the server.** The ingest accepts the contract's `features`
+(`` `artifacts/api-server/src/routes/sensingIngest.ts:200#    features: contributionFeaturesSchema.optional(),` ``;
+`` `artifacts/api-server/src/test/sensingReducedFeatures.test.ts:101#describe("the wire contract: the server accepts exactly what the client sends", () => {` ``;
+`` `artifacts/api-server/src/test/sensingIngestRoute.test.ts:53#const WIRE_CONTRACT = JSON.parse(` `` — the route test reads the same fixture, 31 cases), normalises them into 3312's columns with every value an ordinal,
+a centi, a boolean or a closed enum
+(`` `artifacts/api-server/src/lib/sensingAnonStore.ts:360#export function normalizeSensingFeatures(` ``;
+a contribution WITHOUT features carries none of the columns —
+`` `artifacts/api-server/src/lib/sensingAnonStore.ts:363#  if (f === null || f === undefined) return { ok: true, columns: {} };` `` —
+so a pre-3312 database still inserts the legacy shape), reads nothing keyed
+by an actor (the ingest takes the DEVICE'S zone and features; it never
+touches `location_snapshots`), folds the features per contributor under the
+SAME k-gate that protects the count
+(`` `artifacts/api-server/src/lib/sensingCoverageAggregate.ts:145#export function cohortFeatures(latestRows: readonly SensingContributionFeatureColumns[]): SensingCohortFeatures {` ``;
+`features` is null unless the cohort is publishable), and the window now
+hands the engine the four inputs it used to leave null
+(`` `artifacts/api-server/src/lib/sensingWindowAggregate.ts:422#export function windowToVibeFeatures(` ``,
+16 cases in `src/test/sensingReducedFeatures.test.ts`). `density` reaches the
+engine through a mapping from the device's bucket, not from the contributor
+count (`` `artifacts/api-server/src/lib/sensingWindowAggregate.ts:223#const DENSITY_TO_COVERAGE: Readonly<Record<SensingDensityBucket, CoverageBucket | null>> = Object.freeze({` ``),
+which is the §14.2 objection ("bucketing the count twice") answered rather
+than waved away. `motionEnergy` is read from an explicit centi whose meaning
+is the device reducer's at `reduction_version` 1 — the unpinned `signal_bucket`
+ordinal §14.2 named is no longer what the engine reads for it.
+
+**Re-derived, each against its own RED WHEN as last restated:**
+
+- **S21** — *"RED WHEN `travel-buddy-standalone/` reduces on device — bucketed
+  features, no coordinate leaving the handset — AND a server path accepts
+  them without reading `location_snapshots` by `actor_id`."* Both conjuncts
+  fired on the lines above. The human-claim path's own attestation still
+  reduces inside the server boundary keyed by profile id (§10.4); the row
+  admits either boundary ("on-device OR in a narrow trusted boundary") and
+  the anonymous path is now coordinate-free end to end. **W → C**, capped.
+- **S28** — *"RED WHEN a client capture module produces the nine named
+  features."* Fired. **N → C**, capped.
+- **S29** — *"RED WHEN a separate, explicit microphone permission exists and
+  gates a coarse energy/rhythm extractor — separate being the requirement."*
+  Fired, with the OS permission required in addition. **N → C**, capped.
+- **S42** — *"RED WHEN S28 exists."* Fired; the engine's guards are unchanged
+  and pinned (M5 red), and its inputs now have a producer. **W → C**, capped.
+- **S51** — *"RED WHEN S28 exists AND a density input joins `VibeFeatureInput`."*
+  Both fired: every signal the row names — motion energy, periodicity, bounded
+  movement, dwell, arrival/departure velocity, density, venue context — is on
+  the input the window builds. **W → C**, capped.
+- **S52** — *"RED WHEN something can populate it, i.e. S28."* Fired; the
+  ten fields and the two truth classes are as §10.9 measured. **W → C**, capped.
+
+**The cap, stated once for all six:** built and CI-verified on this branch;
+3312 on `portava-ci` only; the client not shipped; zero contributions in any
+database; the production ingest refusing without its pepper. What turns them
+red: a shipped client that sends a coordinate (the `submit` tripwire), a
+server that reads `location_snapshots` by actor for a sensing contribution
+(the ingest's schema has no such field), or a feature column that admits an
+unbucketed value (3312's CHECKs, seen refusing).
+
+### §26.3 S39 and S24 — implementation complete; activation is the owner's consent act
+
+§21.4 named three blockers. Two were code and are closed; the first is the
+owner's and is not.
+
+| # | §21.4 blocker | Now |
+|---|---|---|
+| 2 | *"Nothing publishes. `publishThroughDifferencingGate` has no caller outside tests."* | `lib/sensingPublicationScheduler` is that caller: on its own clock, per live cohort of the current and previous privacy bucket, `readSensingCohort` → `aggregateSensingCohort` → `` `artifacts/api-server/src/lib/sensingPublicationScheduler.ts:225#    const decision = await publishThroughDifferencingGate(` ``. A cohort the k-gate withholds never reaches the gate or the store (`` `artifacts/api-server/src/lib/sensingPublicationScheduler.ts:219#    if (aggregate.publishable !== true) {` ``). Started at boot: `` `artifacts/api-server/src/index.ts:162#  startSensingPublicationScheduler();` ``. |
+| 3 | *"A Compass turn carries a city, not a sensing `zone_id`."* | The turn now carries the device's OWN coarse zone — the spatial bucket its capture stamps on its contributions, present only while capture runs (`` `travel-buddy-standalone/src/services/sensing/sensingCapture.ts:103#  currentZone(): string | null;` ``, registered by `` `travel-buddy-standalone/src/services/sensing/installSensingCapture.ts:145#    registerSensingZoneSource(() => running.currentZone());` ``, sent on both ask paths per `` `travel-buddy-standalone/src/services/__tests__/compass.sensingZone.test.ts:68#describe('the wiring, by source: both ask paths apply the rule to the body they send', () => {` ``). The route accepts it (`` `artifacts/api-server/src/routes/compass.ts:1128#  sensingZoneIds:      z.array(z.string().min(1).max(64)).max(5).optional(),` ``), turns it into the cohort refs of the current and previous bucket (`` `artifacts/api-server/src/compass/CompassSensingPresenceProducer.ts:254#export function sensingCohortRefsForZones(` ``, pure, bounded by the zone cap on the READS) and hands them to the producer (`` `artifacts/api-server/src/routes/compass.ts:1810#        sensingCohortRefsForZones(sensingZoneIds, turnNowMs),` ``). |
+| 1 | *"`surface` is not in `SENSING_ANON_GRANTED_SCOPES`"* | **Unchanged, deliberately.** Both the publisher and the producer test the scope BEFORE reading their flag and before any read: `` `artifacts/api-server/src/lib/sensingPublicationScheduler.ts:153#  if (!sensingPublicationScopeGranted(opts.policy ?? SENSING_ANON_POLICY_V1)) {` `` precedes `` `artifacts/api-server/src/lib/sensingPublicationScheduler.ts:161#  if (!(await isFlagEnabled(db, SENSING_PUBLICATION_FLAG))) return SKIPPED("capability_off");` ``. The frozen constant was not edited. |
+
+**Proven with the scope INJECTED through the seam, never granted.**
+`` `artifacts/api-server/src/test/sensingPublicationScheduler.test.ts:297#describe("END TO END — publisher to conversation, with the scope injected through the seam", () => {` ``:
+twenty contributors in independent groups → the publisher records ONE row
+with no contributor column → the route's zone refs → the producer renders
+OBSERVED for the zone with no person and no count, having touched only the
+publication store; the SAME world under the policy in force writes nothing
+and renders nothing, both refusing on the scope; a withheld cohort leaves the
+conversation saying NOT KNOWN with the inverse reading forbidden. S24's
+floor is exercised on the durable store: a second pass +2 contributors is not
+recorded, +5 is (`` `artifacts/api-server/src/test/sensingPublicationScheduler.test.ts:135#describe("the publisher's gates, in order", () => {` `` and the cases after it; 18 in all).
+
+**Seen red:** reading the flag before the scope reds 1; letting a withheld
+cohort reach the gate reds 2; counting a below-floor change as published reds
+1. Three tripwires that pinned the OLD state fired and were re-aimed rather
+than relaxed: §9.1's importer allowlist names the scheduler with its reason;
+the "no route calls the consumer" case now asserts the route reaches presence
+ONLY through the producer, whose scope check precedes its flag read; and the
+anonymous store's own caller allowlist (`src/test/sensingAnonStore.test.ts`)
+names the publisher and the producer with their reasons, while its "no
+feature flag was invented for this store" case is re-aimed at the rule the
+ruling actually states (sensing-input-gap §3.1: a flag a reader hangs from is
+a new seeded-OFF row) — the store, its service and its sweep must still read
+no flag, and any flag an allowlisted reader hangs from must be seeded FALSE by
+a migration in the tree, which 3313 is. The full suite is what surfaced the
+third; it was fixed and the suite re-run.
+
+**S39 → W (unchanged); S24 → W (unchanged).** RED WHEN, restated to exactly
+what is left: the owner adds `surface` to `SENSING_ANON_GRANTED_SCOPES`
+(a one-line, reviewed change — §21.2's consent act), then flips
+`sensing_publication_enabled` (3313) and `sensing_presence_context_enabled`
+(3004). No code is left to write for either row; both suites would render and
+publish the moment the policy permits, and both refuse until it does. Holding
+them at W is the census's own rule (§21.2): a capability flag is an
+operational switch and a purpose scope is what the contributor agreed to, and
+this lane may not confuse the second with the first by grading it done.
+
+### §26.4 Controlled tests for the launch-capped and flag-capped rows — labelled as such
+
+*"Use controlled tests for launch-capped behavior and clearly distinguish
+those from real-world verification."* Each row below has a controlled form
+that runs; none has a real-world form, and the reason is stated.
+
+| Row | Controlled test (runs) | Real-world verification (does not exist) |
+|---|---|---|
+| S26 | 2315's 72-hour CHECK refused a 73-hour row and accepted a 72-hour one on `portava-ci` (§23.1); 3312's three CHECKs refused out-of-range, off-enum and half-acoustic rows on `portava-ci` today (§26.0), every probe rolled back | no contribution has ever been written to either database; the identifiable `intel_observations` retention is still an owner ruling |
+| S66 | with `discovery_live_rank_enabled` ON in a fake database, a Live `unsafe_density` place is demoted to last whatever its cached position — `src/test/discoveryLiveRankRoute.test.ts` ("ON: a Live unsafe_density place is demoted to last") | the flags are `false` on both databases and no `unsafe_density` state exists to reach them |
+| S49 | with `discovery_candidate_projection_enabled` ON in a fake, the projection serves a candidate (`src/test/discoveryCacheBEligibility.test.ts`) and OFF is the control (`src/test/mapDiscoveryCandidateConsumer.test.ts`) | the flag is `false` on both databases — an owner act |
+| S92 | with `memory_projection` ON in a fake, the scheduler projects and sweeps (`src/test/memoryProjectionScheduler.test.ts`) | the flag is `false` on both databases — an owner act; and S112's memory stage (§26.1) still cannot be reached even then |
+| S17 | — | the Replit publish re-read today through the deployment tool still reads **`failed`**; `curl -sI https://portava.replit.app` from this container returns the proxy's own `403` with an empty body, not the origin's headers. The one action that answers the header half is the same `curl -sI` from outside this proxy, after a successful republish. **X (unchanged).** |
+
+**S26, S66, S49, S92 → W (unchanged)**, on the grounds their rows already
+state. The controlled forms are cited so no reader mistakes "the gate has
+never refused in production" for "the gate cannot refuse".
+
+### §26.5 The completion checklist — fourteen non-C rows, each with the one thing that moves it
+
+Denominator 127. 113 C · 13 W · 0 N · 1 X. Every non-C row is listed.
+
+| Class | Rows | Exactly what moves the row | Who |
+|---|---|---|---|
+| OWNER RULING — the production cutover | S19 · S97 · S111 · S118 | `2277 → 2278 → 3002 → 3003 → 3310 → 3311 → 3312 (→ 3313)` applied to production in the same window as this branch's code, per `docs/ops/sensing-cutover-runbook.md` (dependencies, verification queries, recovery, rehearsal evidence — everything except execution). | the owner |
+| OWNER RULING — consent scope, then two flags | S39 · S24 | `surface` added to `SENSING_ANON_GRANTED_SCOPES`; then `sensing_publication_enabled` and `sensing_presence_context_enabled`. No code remains (§26.3). | the owner |
+| OWNER RULING — a flag | S49 | `discovery_candidate_projection_enabled` flipped. | the owner |
+| OWNER RULING — a flag | S92 | `memory_projection` enabled. | the owner |
+| OWNER RULING — a flag, then a memory-domain lane | S112 | `memory_projection` enabled AND the memory projection persists its claim refs (design in §26.1). The snapshot stage is done. | the owner, then a lane |
+| OPERATOR ARTIFACT | S18 · S32 | `SENSING_CONTRIBUTOR_PEPPER` configured in production. | ops |
+| OPERATOR ARTIFACT | S17 | a successful republish, then the served headers from outside this proxy, and Supabase's at-rest attestation. | the operator |
+| LAUNCH-CAPPED — the census working | S26 · S66 | real contributions reaching a live database with the relevant gate ON. | nobody, deliberately |
+
+Twelve of the fourteen need no application code at all. One (S112) needs a
+change in another domain's tree behind an owner flag. One (S17) needs an
+operator outside every tool this environment has.
+
+### §26.6 Headline — restated from the rows
+
+| | |
+|---|---|
+| **Denominator — testable requirements** | **127** |
+| BUILT-AND-CORRECT | **113** |
+| BUILT-BUT-WRONG | **13** |
+| NOT-BUILT | **0** |
+| CANNOT-VERIFY | **1** |
+| **CONSTRUCTED%** = (C+W)/127 | **126 / 127 = 99.2 %** |
+| **CORRECT%** (raw) = C/127 | **113 / 127 = 89.0 %** |
+| **of-built** = C/(C+W) | **113 / 126 = 89.7 %** |
+
+**Implementation completion and production verification, separately, as
+instructed.** Implementation: of the 22 rows the instruction named, 6 moved
+to C in this section and 2 in §25; 14 remain, and for 12 of them no
+application code is left to write. Production verification: **none** of the
+eight rows moved today is realised in production, and this section says so
+in each row's cap; `portava-ci` holds the schema they need and production
+holds none of it.
+
+### Rows that move
+
+| Row | Was | Now | Why |
+|---|---|---|---|
+| S21 Raw precise location reduced on-device or in a narrow trusted boundary as early as practical | W | **C** | §26.2 — the device reduces every window to buckets and empties its raw buffers; no coordinate reaches the transport (tripwire); the ingest accepts the device's zone and features and reads nothing keyed by an actor. Deployment-capped: client unshipped, 3312 on portava-ci only, production ingest refusing without its pepper. |
+| S28 On-device feature extraction: spatial/temporal bucket, movement_state, motion_energy, periodicity, dwell_bucket, transitions, transport-mode, sensor health | N | **C** | §26.2 — the nine named features are produced on the device from raw motion and location samples, sent under the wire contract, stored as 3312's bucketed columns and folded under the k-gate. Capped as S21. |
+| S29 Coarse acoustic energy/rhythm only under separate explicit permission | N | **C** | §26.2 — a separate purpose-scope permission with its own opt-in, the OS microphone permission required in addition, a coarse energy/rhythm extractor re-gated per window, and a store CHECK that refuses a half-record. Capped as S21. |
+| S42 Vibe engine → `VibeState`; must not claim literal behaviour without sufficient evidence | W | **C** | §26.2 — the engine and its guards are unchanged and pinned; every input now has a producer: the window reads the device's explicit centi and buckets, not the unpinned legacy ordinal. Capped as S21; zero contributions exist anywhere. |
+| S51 Vibe inferred from motion energy, periodicity, bounded movement, dwell, arrival/departure velocity, density, venue context | W | **C** | §26.2 — all seven named signals are on the input the window builds; density comes from the device's bucket, not the contributor count. Capped as S21. |
+| S52 `VibeState` carries energy, sociality, dance_likelihood, volatility, momentum + confidence/coverage/freshness/provenance | W | **C** | §26.2 — the ten fields and the two truth classes as §10.9 measured; the state can now be populated from a real cohort. Capped as S21. |
+
+### Rows that explicitly DO NOT move
+
+| Row | Was | Now | Why |
+|---|---|---|---|
+| S112 | W | **W** | §26.1 — the snapshot stage's provenance and effect are built, applied on portava-ci and verified end to end; the memory stage's claim refs are still not persisted, behind the owner's flag. |
+| S39 | W | **W** | §26.3 — publisher, zone identity and route wiring complete and proven with the scope injected; the scope itself is the owner's consent act and is ungranted. |
+| S24 | W | **W** | §26.3 — the anti-differencing gate now has its production caller and is exercised on the durable store; nothing may publish until `surface` is granted. |
+| S26 · S66 · S49 · S92 | W | **W** | §26.4 — controlled forms cited; the real-world form is a flag or a launch the owner holds. |
+| S19 · S97 · S111 · S118 · S18 · S32 | W | **W** | §26.5 — the production cutover and its operator artifact, fully prepared in `docs/ops/sensing-cutover-runbook.md`, not executed. |
+| S17 | X | **X** | §26.4 — still unobservable from here; the publish still reads `failed`. |
+
+`check:census-integrity` over this document reads C=113 W=13 N=0 X=1, which is
+what the top headline now states.
+
+## §27 — 2026-09-26: the memory stage persisted, consent carried per contribution, the session issuer built, the runbook reconciled; the fourteen non-C rows audited against their acceptance criteria. MOVES NOTHING.
+
+Written under the owner's instruction of this date: *"Complete the persisted
+claim references and connect them to revocation, recomputation, and erasure.
+… Audit all 14 remaining non-C requirements against their acceptance
+criteria. … Keep implementation completion separate from deployment and
+operational verification. … Explain what user consent permits the proposed
+surface disclosure; changing a policy constant alone does not establish
+consent."* The denominator is 127 and no row is excluded. Every claim below
+says which state it is in: **implemented and tested on this branch**,
+**applied and verified on `portava-ci`**, or **realised in production**. No
+claim in this section is in the third state.
+
+### §27.0 What changed on the databases — portava-ci only, under decision A
+
+Three files were applied to `portava-ci` and none to production, the runner's
+way; the third 2026-09-26 entry of `docs/migrations.md` records each apply,
+its catalog read-back and its controls.
+
+| File | portava-ci | production | Verified from the catalog, with controls |
+|---|---|---|---|
+| `` `artifacts/api-server/src/migrations/3313_sensing_publication_flag.sql:43#    'sensing_publication_enabled',` `` | applied 16:50:23 | absent | row present, `false`; turned on inside a rolled-back block, the file's postcondition refused it |
+| `` `artifacts/api-server/src/migrations/3315_sensing_anon_surface_consent.sql:53#  ADD COLUMN IF NOT EXISTS surface_permitted boolean NOT NULL DEFAULT false;` `` | applied 16:51:14 | absent | `boolean NOT NULL DEFAULT false`, 0 FKs; a legacy-shape insert read `false`, `NULL` refused, `true` accepted; all rolled back |
+| `` `artifacts/api-server/src/migrations/3314_memory_projection_claim_refs.sql:77#  ADD COLUMN IF NOT EXISTS claim_refs uuid[] NOT NULL DEFAULT '{}'::uuid[];` `` | applied 16:52:39 | absent | `_uuid NOT NULL`, GIN index, service_role-only function; live function body md5 equals the file's; overlap found the memory by its ref, the watermark kept the session memory and retracted a stale city row, `NULL` and a text array refused; all rolled back |
+
+Before 3314 replaced `project_user_memory_with_retraction`, the live body was
+read on BOTH databases: each is 2195's body, differing from the file only in
+whitespace. So 3314's one change, on either database, is its added predicate.
+
+### §27.1 S112 — the memory stage, persisted and connected to reach, recompute and erasure
+
+§26.1 held S112 at W on two conjuncts: the memory stage's claim refs were not
+persisted, and `memory_projection` is off where it is measured. The first is
+now built. The second is an owner flag and is unchanged.
+
+**Where the refs are persisted, and why not where §26.1 proposed.** §26.1
+proposed writing them from the SQL projector. That cannot work: the SQL
+projector never sees a session, because S54's store offers no enumeration of
+closed sessions on purpose, so nothing SQL-side could ever read a session's
+claim refs. The refs are instead written by the one path that holds the
+session: closing it.
+
+| Step | Where |
+|---|---|
+| Closing a session runs the S92 gate and, when it admits, writes the memory WITH its refs, in the same request | `` `artifacts/api-server/src/routes/experienceSessions.ts:444#    const memory = await persistSessionMemory(g.sc, g.userId, built.envelope, now);` `` (and the calibrated branch at `` `artifacts/api-server/src/routes/experienceSessions.ts:425#      const memory = await persistSessionMemory(g.sc, g.userId, built.envelope, now);` ``) |
+| The writer refuses rather than drop the lineage: a non-uuid ref refuses the whole write, and a database without 3314 answers `claim_refs_unavailable` with no retry | `` `artifacts/api-server/src/services/memoryProjections/sessionMemoryStore.ts:105#export async function persistSessionMemory(` `` |
+| The column, NOT NULL, GIN-indexed; and the projector's watermark no longer retracts a session memory it never wrote | `` `artifacts/api-server/src/migrations/3314_memory_projection_claim_refs.sql:113#      AND subject_type IS DISTINCT FROM 'experience_session'` `` |
+| The deletion reach enumerates other people's memories resting on the account's evidence, by overlap, and says when the column is absent | `` `artifacts/api-server/src/services/accountDeletion/sensingRevocationReach.ts:283#            .overlaps("claim_refs", part)` ``; `` `artifacts/api-server/src/services/accountDeletion/sensingRevocationReach.ts:128#  memoryStore: "persisted" | "column_absent";` `` |
+| After the snapshot recompute, each reached memory is RETAINED and its refs to withdrawn snapshots are removed, with the change recorded in its provenance | `` `artifacts/api-server/src/services/accountDeletion/sensingErasureRecompute.ts:261#export async function pruneMemoryLineageAfterErasure(` `` |
+| The deletion runs it as its own step, after the recompute, and fails the step on any failure | `` `artifacts/api-server/src/services/accountDeletion/AccountDeletionService.ts:1312#    const lineageOk = await step(steps, "prune_memory_lineage_after_erase", async () => {` `` |
+
+**The effect, verified rather than counted.**
+`` `artifacts/api-server/src/test/accountDeletionSensingRevocationReach.test.ts:377#  it("AFTER the recompute, the reached memory is RETAINED and its references to WITHDRAWN snapshots are removed — its reference to a standing one is kept", async () => {` ``
+drives reach, recompute and prune over one mutating database;
+`` `artifacts/api-server/src/test/sensingErasureRecompute.test.ts:311#  it("a memory resting on a snapshot the recompute RETRACTED loses that reference, keeps the others, and records that its lineage changed", async () => {` ``
+does it through the real aggregator and writer. Against real PostgreSQL, with
+3314 applied by the harness,
+`` `artifacts/api-server/src/test/db/sessionMemoryLineage.db.test.ts:103#  it("the projector's watermark still retracts a stale projector row, and does NOT retract the session memory", () => {` ``
+and four sibling cases pass, including the rollback refusing while a session
+memory exists and `erase_memory_for_user` removing the owner's own. The same
+behaviour was then read on `portava-ci` (§27.0).
+
+**Seen red, each restored:** removing 3314's predicate reds the watermark
+case; a prune that keeps withdrawn refs reds the retained-memory case; a
+writer that drops `claim_refs` reds the writer suite; a reach that counts the
+departing owner's own memories reds the reach suite; a pre-3314 error that is
+not named reds `column_absent`.
+
+**S112 → W (unchanged).** Implementation is complete: all five stages are
+built and reachable in code — raw erase, snapshot recompute, memory lineage,
+the published store (identity-free, 24-hour TTL), and the anonymous store
+(unlinkable by construction). The RED WHEN §26.1 restated still has one
+unmet conjunct, and it is not code: *"`memory_projection` is on where it is
+measured"*. It is `false` on both databases. Not weakened here.
+
+### §27.2 Consent — what a person agreed to, carried to every contribution
+
+**Finding.** Every consent recorded today is stamped `intel_contributions_v1`
+(`` `artifacts/api-server/src/lib/intelConsent.ts:26#export const INTEL_CONSENT_DISCLOSURE_VERSION = "intel_contributions_v1";` ``).
+Its words, shown by the Quick Signal gate, describe **Quick Signals**:
+explicit taps combined with other reports. They say nothing about the phone
+sensing in the background, and nothing about showing anyone's passive
+contributions to other people. So v1 covers no scope of the anonymous store,
+and granting `surface` in the policy would have surfaced contributions under
+words nobody saw. `SENSING_ANON_GRANTED_SCOPES` is the owner's POLICY; it is
+not CONSENT, and it was not edited.
+
+**What was built, so that a policy change alone surfaces nothing.**
+
+| Layer | Where |
+|---|---|
+| What each recorded disclosure covers; v1 covers nothing; unknown covers nothing | `` `artifacts/api-server/src/lib/sensingConsentScopes.ts:59#  [SENSING_CONSENT_V1]: Object.freeze([]) as readonly ContributionPurposeScope[],` `` |
+| A session carries consent ∩ policy, never either alone | `` `artifacts/api-server/src/lib/sensingConsentScopes.ts:78#export function sensingScopesForConsent(` `` |
+| Each contribution records whether ITS contributor's session carried `surface`; the ladder already refuses a scope outside the session | `` `artifacts/api-server/src/routes/sensingIngest.ts:382#        surfacePermitted: (body.purposeScopes ?? session.row?.purpose_scopes ?? []).includes("surface"),` `` |
+| The publisher counts only those rows, so the k-gate counts only consenting people | `` `artifacts/api-server/src/lib/sensingPublicationScheduler.ts:217#    const read = await readSensingCohort(db, ref.cohort_key, nowIso, undefined, { surfaceOnly: true });` ``; `` `artifacts/api-server/src/lib/sensingAnonStore.ts:678#    if (opts.surfaceOnly === true) query = query.eq("surface_permitted", true);` `` |
+| A grant is recorded only against the words the client displayed; a grant with no version is evidence of v1 only | `` `artifacts/api-server/src/lib/intelConsent.ts:38#export function displayedDisclosureMatches(seen: string | undefined, stamped: string): boolean {` `` |
+| The client renders the words of the version the server will stamp, sends that version, and offers no grant for a version it has no words for | `` `travel-buddy-standalone/src/components/intel/IntelConsentGate.tsx:40#    const state = await setIntelConsent(true, disclosure.version);` `` |
+| The capture loop starts only when the recorded version's words cover passive sensing | `` `travel-buddy-standalone/src/services/sensing/installSensingCapture.ts:122#    if (!consentCoversPassiveSensing(await getIntelConsent())) return;` `` |
+
+The v2 words are written and are not in force:
+`docs/contracts/sensing-consent-disclosure-v2.md` holds them verbatim, what
+`surface` means under them (a zone-level "people are here" or "not known",
+never a count, never a person), what turning consent off does and does not do
+(a live session can run out its life, at most 24 hours, because it holds no
+identity), and the owner decisions that activating them takes.
+
+**Seen red, each restored:** v1 mapped to collection reds the v1 cases on
+both sides; dropping the policy intersection reds "a policy is not consent";
+letting a device widen its request reds the ingest; a publisher that counts
+non-consenting rows reds both 3315 cases; an ingest that marks every row
+surfaceable reds its 3315 describe; client-side, v1 covering passive sensing,
+a one-character edit to the v1 words (pinned by hash), and an installer that
+checks only "consent is on" each go red.
+
+### §27.3 The session issuer — the ingest had no way in
+
+**Finding.** The device asks a session path for a short-lived credential and
+presents it to the ingest, which authenticates nothing else. No route issued
+one. 2480's table, the session contract and the eligibility ladder existed;
+nothing called them. So the ingest could not receive a contribution in any
+environment, pepper or no pepper.
+
+**Built:** `POST /v1/sensing/session`
+(`` `artifacts/api-server/src/routes/sensingSession.ts:98#    const covered = sensingScopesForConsent(consent.state, SENSING_ANON_POLICY_V1);` ``,
+mounted at `` `artifacts/api-server/src/routes/index.ts:424#router.use(sensingSessionRouter);` ``).
+It checks, in order: the pepper, the auth posture, the account, eligibility,
+a per-profile daily budget held nowhere durable, and consent. It then writes
+a row holding the credential's HMAC and the scopes, and no identity. Fourteen
+cases in `src/test/sensingSessionRoute.test.ts` pin the ladder, including
+that a v1 consenter, the only kind that exists, is refused.
+
+**What this changes for S18 and S32.** Their implementation is now complete
+end to end. Their operation needs TWO facts that are not code: the pepper
+configured in production, AND a consent in force whose words cover passive
+sensing. Until v2 is approved and shipped, the issuer refuses every account,
+by design.
+
+### §27.4 The runbook, reconciled — 3110 and 3313
+
+§26.5 wrote the chain as `2277 → 2278 → 3002 → 3003 → 3310 → 3311 → 3312
+(→ 3313)`. That sentence omitted 3110 and 3004. The runbook never did: both
+sit at its §3 step 5. Read on both databases today, not assumed:
+
+| | portava-ci | production |
+|---|---|---|
+| 3004 in the ledger; `sensing_presence_context_enabled` row | yes (2026-09-25 20:41); row `false` | no; no row |
+| 3110 in the ledger; `sensing_published_aggregates` exists | yes (2026-09-25 20:43); table present | no; `to_regclass` NULL |
+
+So 3110 is **satisfied on portava-ci, missing on production, and superseded
+by nothing**: no later file creates the published store, and S24's gate
+cannot keep its last published value without it. The authoritative order is
+the runbook's, now including 3314 and 3315 (`docs/ops/sensing-cutover-runbook.md`
+§0a, §1, §3 steps 5 to 7).
+
+**3313's CI status, resolved.** Until 16:50 today 3313 was applied nowhere,
+while PR #528's CI, including the live-DB job over portava-ci's real schema,
+was green. That is the proof that the schema checks cannot see a flag seed:
+they read tables and columns, and 3313 creates neither. At runtime an absent
+row and a `false` row also read the same. The only proof is the
+`feature_flags` row plus its ledger row, both now read on portava-ci and both
+absent on production.
+
+### §27.5 The fourteen non-C rows, audited against their acceptance criteria
+
+"Implementation" means code, integration, migration preparation and
+controlled tests. "Operation" means what a person must do in an environment.
+
+| Row | Acceptance criterion (the latest RED WHEN) | Implementation | Operation outstanding | Verdict |
+|---|---|---|---|---|
+| S112 | the memory projection persists its claim refs AND `memory_projection` is on where measured | **complete** (§27.1); 3311 and 3314 on portava-ci | `memory_projection` ON; 3311 and 3314 in production; 2841 in production and `experience_session_enabled` ON, since a session memory needs a session (2841 is absent on production, read today) | **W** |
+| S39 | `surface` granted, then 3313's and 3004's flags | **complete** (§26.3); per-contribution consent added (§27.2) | consent v2 approved and shipped; people granting it; then the policy change and two flags | **W** |
+| S24 | as S39; the gate has its production caller | **complete** (§26.3, §27.2) | as S39 | **W** |
+| S18 | contribution identifiers rotate and nothing stable is stored, in production | **complete**; the issuer now exists (§27.3) | the pepper configured; consent v2 in force | **W** |
+| S32 | a signal ingest with schema validation that a device can reach | **complete**; reachable only through the issuer (§27.3) | as S18 | **W** |
+| S19 | no contribution record carries a permanent profile FK, in production | **complete**; 3002/3003/3310 rehearsed on portava-ci | the identity cutover applied to production | **W** |
+| S97 | temporary activity keyed without a forced place FK, in production | **complete**; same chain | as S19 | **W** |
+| S111 | an unknown-owner cluster storable, in production | **complete**; same chain | as S19 | **W** |
+| S118 | the stored side cannot be reverse-linked to an account, in production | **complete**; same chain | as S19 | **W** |
+| S49 | a served candidate carries coverage | **complete**; controlled ON form runs (§26.4) | `discovery_candidate_projection_enabled` ON | **W** |
+| S92 | the bridge judges closed sessions where memory is on | **complete**; the close path now calls it (§27.1) | 2841 in production, `experience_session_enabled` ON, `memory_projection` ON | **W** |
+| S26 | short raw retention enforced on real contributions | **complete**; the 72-hour CHECK refused on both databases (§23.1) | real contributions exist; the identified-retention ruling | **W** |
+| S66 | safety outranks opportunity on every surface, observed live | **complete**; controlled ON form runs (§26.4) | flags ON and a real `unsafe_density` state | **W** |
+| S17 | served TLS/HSTS headers and at-rest attestation | nothing observable from here | a successful republish, headers from outside this proxy, Supabase's attestation | **X** |
+
+No application code remains to be written for any of the fourteen. Every
+remaining step is an owner decision, an operator action, or real use.
+
+### §27.6 Headline — unchanged, restated from the rows
+
+| | |
+|---|---|
+| **Denominator — testable requirements** | **127** |
+| BUILT-AND-CORRECT | **113** |
+| BUILT-BUT-WRONG | **13** |
+| NOT-BUILT | **0** |
+| CANNOT-VERIFY | **1** |
+| **CONSTRUCTED%** = (C+W)/127 | **126 / 127 = 99.2 %** |
+| **CORRECT%** (raw) = C/127 | **113 / 127 = 89.0 %** |
+
+**Implementation completion:** 14 of 14 remaining rows have no code left, and
+the one CANNOT-VERIFY row has none that code could supply. **Production
+verification:** none of the 127 rows is realised in production by anything in
+§26 or §27. The branch is not merged, nothing is deployed, and every flag and
+the consent version are unchanged.
+
+### Rows that move
+
+None.
+
+### Rows that explicitly DO NOT move
+
+| Row | Was | Now | Why |
+|---|---|---|---|
+| S112 | W | **W** | §27.1 — the memory stage is persisted and connected to reach, recompute and erasure, and verified on a real database and on portava-ci; `memory_projection` is off where it is measured. |
+| S39 · S24 | W | **W** | §27.2 — per-contribution consent is carried and the publisher counts only consenting people; no person holds a consent whose words cover `surface`. |
+| S18 · S32 | W | **W** | §27.3 — the issuer is built; production lacks the pepper and any consent the issuer accepts. |
+| S19 · S97 · S111 · S118 | W | **W** | §27.4 — the cutover is prepared and reconciled, and is not executed. |
+| S49 · S92 · S26 · S66 | W | **W** | §27.5 — controlled forms run; each real-world form is a flag, a launch or a ruling. |
+| S17 | X | **X** | §27.5 — unobservable from this environment. |

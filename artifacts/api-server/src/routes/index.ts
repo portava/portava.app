@@ -29,6 +29,7 @@ import telegraphKindsRouter from "./telegraphKinds";
 import telegraphVoiceRouter from "./telegraphVoice";
 import telegraphCoordinationRouter from "./telegraphCoordination";
 import telegraphMemoryRouter from "./telegraphMemory";
+import savedMessagesRouter from "./savedMessages";
 import telegraphLifecycleRouter from "./telegraphLifecycle";
 import messagingRouter from "./messaging";
 import requestsRouter from "./requests";
@@ -70,7 +71,7 @@ import phoneVerificationRouter from "./phoneVerification";
 import passportStampsRouter from "./passportStamps";
 import hiddenGemsRouter from "./hiddenGems";
 import notificationsRouter from "./notifications";
-import airportRouter from "./airport";
+import airportRouter from "./airport";import layoverEventsRouter from "./layoverEvents"; // eslint-disable-line -- same-line to keep this file line-count-stable; 27 doc citations anchor on line numbers here
 import featureFlagsRouter from "./featureFlags";
 import tagsRouter from "./tags";
 import hashtagsRouter from "./hashtags";
@@ -192,6 +193,7 @@ router.use(telegraphKindsRouter);
 router.use(telegraphVoiceRouter);
 router.use(telegraphCoordinationRouter);
 router.use(telegraphMemoryRouter);
+router.use(savedMessagesRouter);
 router.use(telegraphLifecycleRouter);
 router.use(telegraphFeedbackRouter);
 // The kernel command router and telegraphCommandsRouter BOTH register
@@ -235,7 +237,7 @@ router.use(trustAdminRouter);
 router.use(phoneVerificationRouter);
 router.use(hiddenGemsRouter);
 router.use(notificationsRouter);
-router.use(airportRouter);
+router.use(airportRouter); router.use(layoverEventsRouter); // §11 producer ingest, separate router — see routes/layoverEvents.ts
 router.use(featureFlagsRouter);
 router.use(tagsRouter);
 router.use(hashtagsRouter);
@@ -393,5 +395,32 @@ router.use(opportunitiesRouter);
 // for the same reason.
 import experienceSessionsRouter from "./experienceSessions.js";
 router.use(experienceSessionsRouter);
+
+// ── Telegraph §4 / §30A.2: Nearby & Available, as a server-built projection ──
+// Its own file behind nearby_reachable_enabled (no feature_flags row exists, so
+// it is OFF everywhere); no existing location, map or availability route is
+// touched. Registered at the tail, and the import with it, so no line above
+// moves — census-trips.md and sensing-surface-inventory.md cite this file by
+// line.
+import nearbyReachableRouter from "./nearbyReachable.js";
+router.use(nearbyReachableRouter);
+
+// ── Sensing §4.3: the anonymous signal ingest ────────────────────────────
+// Its own file. It is the FIRST transport the anonymous sensing store has ever
+// had, and it deliberately carries no user session: it authenticates the opaque
+// contribution credential (2480) and nothing else, reads and writes no
+// actor_id, and never touches location_snapshots. routes/intel.ts — the
+// requireUser-bound human-claim capture — is untouched and shares no path with
+// it. Registered at the tail, and the import with it, so no line above moves:
+// census-sensing.md and sensing-surface-inventory.md cite this file by line.
+import sensingIngestRouter from "./sensingIngest.js";
+router.use(sensingIngestRouter);
+
+// ── Sensing §3: ELIGIBILITY — the credential the ingest above authenticates ──
+// The one sensing request that carries an account, and the place consent is
+// read: the session carries only the scopes the person's recorded disclosure
+// covers (lib/sensingConsentScopes). Tail-registered for the same reason.
+import sensingSessionRouter from "./sensingSession.js";
+router.use(sensingSessionRouter);
 
 export default router;

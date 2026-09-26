@@ -124,8 +124,10 @@
  * media" is not a guarantee, and a mismatched remove() destroys a third party's
  * file — a worse outcome than the orphan being fixed.
  */
-
 import { logger as rootLogger } from "../../lib/logger.js";
+import { enumerateSensingRevocationReach, type SensingRevocationReachOutcome } from "./sensingRevocationReach.js";
+import { pruneMemoryLineageAfterErasure, recomputeSnapshotsAfterErasure } from "./sensingErasureRecompute.js";
+import { presenceFusion } from "../../presence/fusion/store.js";
 import { resolveStoragePath } from "../../lib/storagePath.js";
 import { ownerFromPath } from "../../lib/mediaAccess.js";
 import { requestProviderDeletionForUser } from "../identityVerification/providerErasure.js";
@@ -1196,6 +1198,51 @@ export async function executeAccountDeletion(
   });
   if (!devOk) warnings.push("devices rows may remain");
 
+  // ── Sensing revocation lineage reach (census-sensing S112) — READ-ONLY ─────
+  // `erase_intel_contributions` below is the one production revocation of
+  // canonical intel evidence. §18.4's lineage says a revocation reaches the
+  // session and memory stages, and `sessionRevocationReach` answers WHICH
+  // records rest on the erased evidence — but nothing ever asked it in
+  // production. This step asks, BEFORE the erase removes the observations the
+  // question is keyed on. It deletes nothing and never serves another
+  // account's ids; it hands the deletion record counts and the stages touched.
+  // Subject-level and over-inclusive on purpose, and the memory half is empty
+  // because nothing persists `claim_refs` — see sensingRevocationReach.ts.
+  // Fail-closed: an unreadable precondition fails the step and warns, per
+  // failOpenAccountDeletionReads. Non-fatal: the erase still runs.
+  let sensingReach: SensingRevocationReachOutcome | null = null;
+  await pagedRowStep(
+    steps,
+    warnings,
+    { name: "sensing_revocation_reach", subject: "sensing lineage reach — sessions resting on the erased evidence" },
+    async (readAll) => {
+      const reach = await enumerateSensingRevocationReach(sc, userId, readAll);
+      sensingReach = reach;
+      logger.info(
+        {
+          userId,
+          via: reach.via,
+          identities: reach.identities,
+          observations: reach.observations,
+          subjects: reach.subjects,
+          snapshots: reach.snapshots,
+          snapshotsExact: reach.snapshotsExact,
+          provenance: reach.provenance,
+          sessionsConsidered: reach.sessionsConsidered,
+          sessionsReached: reach.sessionsReached,
+          ownSessionsExcluded: reach.ownSessionsExcluded,
+          memoriesConsidered: reach.memoriesConsidered,
+          memoriesReached: reach.memoriesReached,
+          ownMemoriesExcluded: reach.ownMemoriesExcluded,
+          stagesReached: reach.stagesReached,
+          memoryStore: reach.memoryStore,
+        },
+        "executeAccountDeletion: sensing revocation reach enumerated before erase_intel_for_actor",
+      );
+      return reach.sessionsReached;
+    },
+  );
+
   // Notifications received AND ones naming the user as actor, plus push
   // registration rows; then search history.
   const tailDeletes: Array<{ name: string; run: () => PromiseLike<{ error?: any }> }> = [
@@ -1236,6 +1283,41 @@ export async function executeAccountDeletion(
     if (!ok) warnings.push(`${d.name.replace(/^delete_/, "")} rows may remain`);
   }
 
+  // ── The EFFECT of the erase on derived state (S112, census-sensing §26) ────
+  // erase_intel_for_actor removed the observations; the snapshots that rested
+  // on them still serve until this runs. Recompute every affected (subject,
+  // zone) from the evidence that remains, then retract any snapshot that still
+  // names an erased observation. Runs ONLY after a successful erase (a failed
+  // erase leaves the evidence in place, so the state is still true) and only
+  // when the reach found something to act on. Non-fatal: the deletion proceeds,
+  // and the receipt carries the count; a retraction that could not be written
+  // is warned about by name.
+  const eraseStep = steps.find((s) => s.step === "erase_intel_contributions");
+  // Assigned inside the step's closure, which TypeScript's flow analysis cannot see.
+  const reachForRecompute = sensingReach as SensingRevocationReachOutcome | null;
+  if (eraseStep?.ok && reachForRecompute && reachForRecompute.affected.length > 0) {
+    const recomputeOk = await step(steps, "recompute_intel_snapshots_after_erase", async () => {
+      const r = await recomputeSnapshotsAfterErasure(sc, reachForRecompute.affected, reachForRecompute.observationIds, new Date());
+      logger.info({ userId, ...r, affected: reachForRecompute.affected.length, provenance: reachForRecompute.provenance }, "executeAccountDeletion: derived intel state recomputed after erase_intel_for_actor");
+      if (r.retractionFailures > 0) throw new Error(`${r.retractionFailures} retraction(s) could not be written`);
+      return r.retracted;
+    });
+    if (!recomputeOk) warnings.push("derived intel snapshots may still rest on erased observations");
+  }
+  // The memory stage (3314), after the snapshots: other accounts' memories are
+  // RETAINED, and every reference they hold to a snapshot this erasure withdrew
+  // is removed and the removal recorded. Runs after the recompute so a snapshot
+  // that was REWRITTEN (and still stands) keeps its references.
+  if (eraseStep?.ok && reachForRecompute && reachForRecompute.affectedMemories.length > 0) {
+    const lineageOk = await step(steps, "prune_memory_lineage_after_erase", async () => {
+      const m = await pruneMemoryLineageAfterErasure(sc, reachForRecompute.affectedMemories, reachForRecompute.observationIds, new Date());
+      logger.info({ userId, ...m }, "executeAccountDeletion: memory lineage pruned after erase_intel_for_actor");
+      if (m.failures > 0) throw new Error(`${m.failures} memory lineage update(s) failed or still name withdrawn evidence`);
+      return m.refsRemoved;
+    });
+    if (!lineageOk) warnings.push("derived memories may still reference withdrawn evidence");
+  }
+
   // ── IG mission-candidate acceptance (migration 2167) ──────────────────────
   // intel_mission_candidates.accepted_by names the contributor who accepted a
   // dispatched mission. The column is `uuid REFERENCES profiles(id) ON DELETE
@@ -1260,6 +1342,20 @@ export async function executeAccountDeletion(
     );
   });
   if (!missionOk) warnings.push("intel_mission_candidates.accepted_by may still name the deleted user");
+
+  // ── Process-local presence estimates (owner decision A) ────────────────────
+  // presence/fusion/store retains the account's last admitted presence
+  // estimates — every source, every consent scope — for up to their TTL, in
+  // THIS process's memory and nowhere else. The row deletions above do not
+  // reach it, so it is told directly. Not a `step`: it touches no table and
+  // cannot fail. NOT recorded in the receipt's counts either: those are
+  // durable deletions, and this is one process's cache — another instance's
+  // copy ages out on its own TTL, and every fused read re-derives from the
+  // rows this run deletes. Logged, so the run still says what it dropped.
+  logger.info(
+    { userId, revokedPresenceEstimates: presenceFusion.revokeSubject(userId) },
+    "executeAccountDeletion: process-local presence estimates revoked",
+  );
 
   // ── Derived memory (FATAL on failure) ─────────────────────────────────────
   // memory_projections / memory_events / memory_feedback hold derived facts about

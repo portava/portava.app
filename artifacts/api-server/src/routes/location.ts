@@ -15,6 +15,15 @@ import { readCircleLocations } from "../lib/circleLocationsRead.js";
 import { nameVisibilitySet } from "../lib/publicIdentity.js";
 import { isKillSwitchEngaged, killSwitchStateUnknown, KILL_SWITCH_UNKNOWN_MESSAGE } from '../lib/featureFlags.js';
 import { coarsenPosition, effectiveDiscoveryVisibility } from "../lib/mapTravelers.js";
+import { coarsePointFor } from "../lib/proximityBuckets.js";
+import {
+  activeBinding,
+  bindPreciseShare,
+  clearPreciseShare,
+  precisionForDevice,
+  presentedDeviceId,
+  verifyDeviceForUser,
+} from "../lib/preciseLocationDevice.js";
 import { fetchBlockedSet } from "../lib/blocks.js";
 import { reverseGeocode } from "../services/geocodingService";
 import { checkAndRecordSnapshot, getUserTrustLevel, checkIpCityMismatch } from "../services/location/LocationSafetyService";
@@ -73,14 +82,58 @@ router.get("/me/location-state", async (req, res) => {
     return;
   }
 
+  // §17.8 / §30A.7 (T235, T400): the ACTIVE PRECISE position is served only to
+  // the device that published it. A newly authenticated device presents a
+  // different device id (or none at all), so `precisionForDevice` answers
+  // `approximate` and this handler returns a grid-snapped point instead of the
+  // fix — the share does not transfer, and it does not transfer SILENTLY
+  // either: `coordsPrecision` and `coordsPrecisionReason` say so on the wire.
+  //
+  // The device id is resolved against `devices` with the SERVICE client on
+  // purpose. Under RLS a user-scoped read of someone's own device rows can come
+  // back EMPTY rather than errored, and "empty" would read as "not your device"
+  // for a reason that has nothing to do with the device.
+  const deviceSc = getServiceClient();
+  const deviceId = presentedDeviceId(req.headers as unknown as Record<string, unknown>);
+  const deviceState = deviceSc
+    ? await verifyDeviceForUser(deviceSc, user.id, deviceId)
+    : "unreadable";
+  const decision = precisionForDevice({
+    binding: activeBinding(user.id, Date.now()),
+    presentedDeviceId: deviceId,
+    deviceState,
+  });
+
+  let coords: { lat: number; lng: number; accuracyMeters: number | null } | null = null;
+  let coarseCellKm: number | null = null;
+  if (data.lat != null && data.lng != null) {
+    if (decision.precision === "precise") {
+      coords = {
+        lat: Number(data.lat),
+        lng: Number(data.lng),
+        accuracyMeters: data.accuracy_meters != null ? Number(data.accuracy_meters) : null,
+      };
+    } else {
+      // The neighbourhood rung, not the person's discovery visibility: this is
+      // their OWN state, so the question is precision, not audience.
+      const point = coarsePointFor(user.id, Number(data.lat), Number(data.lng), "neighborhood");
+      // accuracyMeters is deliberately dropped: it describes the accuracy of a
+      // coordinate that is not being returned, and beside a coarse point it
+      // reads as a claim of precision the point does not carry.
+      coords = point ? { lat: point.lat, lng: point.lng, accuracyMeters: null } : null;
+      coarseCellKm = point ? point.cellKm : null;
+    }
+  }
+
   res.status(200).json({
     ok: true,
     locationState: {
       permissionStatus: data.permission_status ?? null,
       source: data.source ?? null,
-      coords: data.lat != null && data.lng != null
-        ? { lat: Number(data.lat), lng: Number(data.lng), accuracyMeters: data.accuracy_meters != null ? Number(data.accuracy_meters) : null }
-        : null,
+      coords,
+      coordsPrecision: coords ? decision.precision : null,
+      coordsPrecisionReason: coords ? decision.reason : null,
+      coordsCellKm: coarseCellKm,
       place: {
         city: data.city ?? null,
         district: data.district ?? null,
@@ -147,7 +200,14 @@ router.post("/me/location-state", async (req, res) => {
   const countryCode = sanitizeText(place.countryCode, 8);
   const formatted = sanitizeText(place.formatted, 256);
 
-  const now = new Date().toISOString();
+  // ONE clock read for this handler. `now` stamps the location row and `nowMs`
+  // opens the precise-share binding's TTL; taking them from two separate reads
+  // let the two straddle a tick, so a binding could be stamped a millisecond
+  // before or after the row it binds — and the binding's expiry is judged
+  // against that stamp. `check:splitClockGuard` exists for exactly this and
+  // caught it here; see pushRetryQueue.ts for the pattern.
+  const nowMs = Date.now();
+  const now = new Date(nowMs).toISOString();
   const patch: Record<string, unknown> = {
     user_id: user.id,
     updated_at: now,
@@ -208,6 +268,39 @@ router.post("/me/location-state", async (req, res) => {
     return;
   }
 
+  // §17.8 / §30A.7 (T235, T400): the binding always names the device that
+  // published the fix the row now holds — or nothing at all.
+  //
+  //   a fix written by a VERIFIED device binds precision to that device;
+  //   a fix written by anything else CLEARS the binding.
+  //
+  // The second half is not tidiness. Without it, phone A binds, phone B then
+  // overwrites the row with its own position, and A would keep being served
+  // precise coordinates that are now B's. Clearing makes the stored fix coarse
+  // for everyone until the device that published it asks for it by name.
+  //
+  // A stale observation was not written, so it does not re-bind: the row still
+  // holds the other device's fix and the other device is still the one that
+  // published it.
+  let preciseDeviceBound = false;
+  let preciseDeviceReason = "no_fix";
+  if (!staleObservation && lat != null) {
+    const bindingDeviceId = presentedDeviceId(req.headers as unknown as Record<string, unknown>);
+    const bindingState = flagSc
+      ? await verifyDeviceForUser(flagSc, user.id, bindingDeviceId)
+      : "unreadable";
+    if (bindingState === "registered" && bindingDeviceId) {
+      bindPreciseShare(user.id, bindingDeviceId, nowMs);
+      preciseDeviceBound = true;
+      preciseDeviceReason = "bound_device";
+    } else {
+      clearPreciseShare(user.id);
+      preciseDeviceReason = bindingDeviceId
+        ? (bindingState === "unreadable" ? "device_registry_unreadable" : "device_not_registered")
+        : "no_device_presented";
+    }
+  }
+
   // Compass Home reads currentCity from user_location_state — a city change
   // (onboarding, manual pick, or GPS move) must be visible on the very next
   // Home open, not up to the cache TTL later.
@@ -246,7 +339,11 @@ router.post("/me/location-state", async (req, res) => {
     });
     return;
   }
-  res.status(200).json({ ok: true, observation: lat != null ? "written" : "no_fix" });
+  res.status(200).json({
+    ok: true,
+    observation: lat != null ? "written" : "no_fix",
+    preciseShare: { deviceBound: preciseDeviceBound, reason: preciseDeviceReason },
+  });
 });
 
 // ── POST /api/location/reverse-geocode ───────────────────────────────────────

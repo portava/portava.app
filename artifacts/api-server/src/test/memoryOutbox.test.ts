@@ -48,8 +48,9 @@ import {
   eventPayloadIsPrivacyFiltered,
   isMemoryEventType,
   readUnpublishedOutbox,
+  HIGHLIGHT_DOMAIN_EVENT_TYPES,
 } from "../lib/memoryOutbox.js";
-import { COMMAND_EVENT, MEMORY_COMMAND_TYPES, executeMemoryCommand } from "../lib/memoryCommandBus.js";
+import { COMMAND_EVENT, COMMAND_SUBJECT, MEMORY_COMMAND_TYPES, executeMemoryCommand } from "../lib/memoryCommandBus.js";
 import { makeKernelRpc, _resetKernelIds, type KernelState, type KernelWriteTarget } from "./memoryCommandKernelFake.js";
 
 const OWNER = "10000000-0000-4000-8000-00000000d001";
@@ -103,10 +104,52 @@ describe("§17 domain events — the vocabulary is the spec's, complete and exac
     }
   });
 
-  it("the memory.* subset is what this lane can emit; highlight.* is another lane's", () => {
+  /**
+   * WAS: "the memory.* subset is what this lane can emit; highlight.* is
+   * another lane's", asserting that EVERY emitted event started with
+   * "memory.". That assertion went red the moment PIN/UNPIN/HIDE_HIGHLIGHT
+   * were declared, and it should have: it encoded an ownership boundary as a
+   * fact about the vocabulary.
+   *
+   * WHAT REPLACES IT IS STRICTER, not looser. A command's event prefix must
+   * MATCH ITS SUBJECT — a Memory command may not emit a `highlight.*` event
+   * and a Highlight command may not emit a `memory.*` one. The old assertion
+   * permitted the second of those two mistakes (a Highlight command emitting
+   * memory.corrected would have passed it); this one does not.
+   */
+  it("every command's event prefix matches its subject — no command emits into the other aggregate's stream", () => {
     assert.ok(MEMORY_DOMAIN_EVENT_TYPES.every((t) => t.startsWith("memory.")));
+    assert.ok(HIGHLIGHT_DOMAIN_EVENT_TYPES.every((t) => t.startsWith("highlight.")));
+    assert.equal(
+      MEMORY_DOMAIN_EVENT_TYPES.length + HIGHLIGHT_DOMAIN_EVENT_TYPES.length,
+      MEMORY_EVENT_TYPES.length,
+      "every §17 event name belongs to exactly one subject",
+    );
+    for (const t of MEMORY_COMMAND_TYPES) {
+      const expected = COMMAND_SUBJECT[t] === "highlight" ? "highlight." : "memory.";
+      assert.ok(
+        COMMAND_EVENT[t].startsWith(expected),
+        `${t} has subject ${COMMAND_SUBJECT[t]} but emits ${COMMAND_EVENT[t]}`,
+      );
+    }
+  });
+
+  /**
+   * The gap, asserted rather than described. Three of the five `highlight.*`
+   * names have no command and therefore no writer. Before migration 2993 all
+   * FIVE were worse than unwritten — they were UNWRITEABLE, because
+   * memory_domain_events.memory_id was NOT NULL and referenced
+   * public.memories, which no Highlight has a row in. This test fails if a
+   * fourth acquires a writer without the census row moving, and fails if one
+   * of the two that now have writers loses it.
+   */
+  it("two of the five highlight.* names have a writer; three are still unwritten", () => {
     const emitted = new Set(MEMORY_COMMAND_TYPES.map((t) => COMMAND_EVENT[t]));
-    for (const e of emitted) assert.ok(e.startsWith("memory."), `${e} is not a memory-domain event`);
+    const withWriter = HIGHLIGHT_DOMAIN_EVENT_TYPES.filter((t) => emitted.has(t));
+    assert.deepEqual([...withWriter].sort(), ["highlight.hidden", "highlight.pinned"]);
+    const without = HIGHLIGHT_DOMAIN_EVENT_TYPES.filter((t) => !emitted.has(t));
+    assert.deepEqual([...without].sort(),
+      ["highlight.created", "highlight.expired", "highlight.published"]);
   });
 });
 
@@ -299,6 +342,11 @@ describe("no emit outside the kernel transaction", () => {
     "../lib/memoryOutbox.ts",
     "../services/memory/MemoryDomainService.ts",
     "../routes/memories.ts",
+    // ADDED when the Highlight commands crossed the boundary. This file now
+    // issues commands, so it is exactly the place a "just insert the outbox
+    // row here" line would appear, and the scan has to cover it or the rule
+    // holds only where nobody was tempted to break it.
+    "../routes/highlights.ts",
   ];
 
   /**

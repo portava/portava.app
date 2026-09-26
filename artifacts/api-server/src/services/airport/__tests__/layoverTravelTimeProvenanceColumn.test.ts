@@ -245,23 +245,55 @@ describe("getRecommendations — the persisted read path carries the column, not
 // ── 2. The provider seam is unchanged, and ready ─────────────────────────────
 
 describe("the provider seam stays exactly where LayoverTravelTime put it", () => {
-  it("LAYOVER_TRAVEL_TIME_PROVIDER is still noRoutedProvider and still answers nothing", async () => {
-    assert.equal(LAYOVER_TRAVEL_TIME_PROVIDER.id, "none-configured");
-    // NOT asserted: `.routed`. `noRoutedProvider` declares itself routed and
-    // then answers `unknown` for everything — the port's own choice, so that a
-    // real adapter later changes one line and no branch. What matters is the
-    // ANSWER, asked for with two real coordinates and a real departure time.
+  /**
+   * UPDATED WHEN THE SEAM WAS FILLED, AND DELIBERATELY NOT RELAXED.
+   *
+   * This pair used to pin `noRoutedProvider` and the literal source line
+   * `= noRoutedProvider;`. Both are now false: the constant is a ROUTED
+   * corridor adapter. The tripwire's JOB was to make that change impossible to
+   * land silently, and it did — so it is repointed at the new truth rather than
+   * deleted, and the claim it protects is UNCHANGED and now stronger:
+   *
+   *   • the ANSWER a traveller meets has not moved one field;
+   *   • the seam is still a module constant and still not an environment
+   *     lookup — and this file must not even NAME the variables that would
+   *     enable spending, because naming one here is how a default appears.
+   */
+  it("LAYOVER_TRAVEL_TIME_PROVIDER is a ROUTED corridor adapter and still answers nothing", async () => {
+    assert.match(
+      LAYOVER_TRAVEL_TIME_PROVIDER.id,
+      /^corridor:/,
+      "the seam is no longer the corridor adapter",
+    );
+    // `.routed` IS asserted now, and it matters: `landsideLeg` refuses an
+    // unrouted provider before its number exists, so a seam that lost this flag
+    // would refuse for the wrong reason and hide a real regression behind a
+    // right-looking answer.
+    assert.equal(LAYOVER_TRAVEL_TIME_PROVIDER.routed, true);
+    // What matters most is the ANSWER, asked for with two real coordinates and
+    // a real departure time. Byte for byte what `noRoutedProvider` produced.
     const leg = await landsideLeg({ lat: 25.07, lng: 121.23 }, { lat: 25.01, lng: 121.30 }, new Date());
     assert.equal(leg.minutes, null);
     assert.equal(leg.source, "unmeasured");
     assert.equal(leg.reason, "NO_ROUTED_PROVIDER");
+    // The refusal beneath it is the SPEND GATE, not a missing credential: no
+    // deployment has opted in, and the gate is asked first so an operator is
+    // never sent to fix a secret that is already fine.
+    assert.match(String(leg.detail), /^PROVIDER_NOT_ENABLED/);
   });
 
-  it("the module constant is assigned noRoutedProvider in the source, not read from the environment", () => {
+  it("the module constant is assigned in the source, not read from the environment", () => {
     const src = readFileSync(join(HERE, "..", "LayoverTravelTime.ts"), "utf8");
-    assert.match(src, /export const LAYOVER_TRAVEL_TIME_PROVIDER: TravelTimeProvider = noRoutedProvider;/);
+    assert.match(
+      src,
+      /export const LAYOVER_TRAVEL_TIME_PROVIDER: TravelTimeProvider = corridorTravelTimeProvider\(googleRoutesCorridorProvider\);/,
+    );
     const code = src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
     assert.equal(/process\.env/.test(code), false, "the seam became an environment lookup");
+    // Neither gate may be spelled in executable code here. A default for either
+    // one is the whole failure mode this constant exists to prevent.
+    assert.equal(/LAYOVER_ROUTED_CORRIDOR_ENABLED/.test(code), false);
+    assert.equal(/GOOGLE_MAPS_API_KEY/.test(code), false);
   });
 
   it("a provenance is written to the row ONLY when the row's own facts cannot express it", async () => {

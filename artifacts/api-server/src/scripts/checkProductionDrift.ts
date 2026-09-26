@@ -75,7 +75,7 @@ const BASELINE_DIR = join(API_SERVER_ROOT, "baseline");
  * stale silently on the next refresh, which is how two cases in
  * productionDriftExtraction.test.ts came to assert the opposite of the truth.
  */
-export const PRODUCTION_SNAPSHOT = "20260921_production_tables.txt";
+export const PRODUCTION_SNAPSHOT = "20260922_production_tables.txt";
 
 /**
  * `unmerged-pr` HAS NO MEMBERS AS OF 2026-09-15, AND IS KEPT — ruling, with the
@@ -195,6 +195,52 @@ export const KNOWN_PRODUCTION_GAPS: Record<string, Gap> = {
   // This ratchet fails in BOTH directions, so leaving six entries claiming a
   // table is absent when it is present would fail the check — correctly. An
   // entry nobody prunes stops being read.
+
+  // ── ADDED 2026-09-22: six tables from the wave integrated this session ────
+  //
+  // All six are "unapplied" in the strict sense the classification requires:
+  // declared in the tree, present on NO database, and each MUST reach zero by
+  // being applied rather than by being tolerated. They arrived together because
+  // two lanes landed two migrations in one integration, and the drift check
+  // caught them on the first run after the merge — which is the check working,
+  // not the check being noisy.
+
+  layover_constraints: {
+    classification: "unapplied",
+    note:
+      "§20's decision record (2992). Applied to NO database — not production, " +
+      "not portava-ci. 2992 CANNOT be applied on its own: its own precondition " +
+      "refuses by name unless 2700_layover_certified_feasibility has run first, " +
+      "because it COMPLETES public.layover_certified_computations rather than " +
+      "forking it, and 2700 is itself absent from " +
+      "production-applied-migrations.json. So the production chain is 2700 then " +
+      "2992, and neither step has been taken. Until then persistDecision takes " +
+      "its refusal branch and GET /airport/sessions/:id/safety answers " +
+      "persisted: { state: 'not_stored' }, which is why census-layover L1 is not " +
+      "graded closed on the merged code. Strike this off in the same change that " +
+      "applies the chain and refreshes both production snapshots.",
+  },
+  layover_time_budgets:  { classification: "unapplied", note: "2992, same chain and same 2700 prerequisite as layover_constraints. See that entry for the full reason; it is not repeated here so that one statement stays the one to maintain." },
+  layover_return_plans:  { classification: "unapplied", note: "2992, same chain and same 2700 prerequisite as layover_constraints." },
+  layover_checkpoints:   { classification: "unapplied", note: "2992, same chain and same 2700 prerequisite as layover_constraints." },
+  layover_outcomes:      { classification: "unapplied", note: "2992, same chain and same 2700 prerequisite as layover_constraints." },
+
+  memory_relations: {
+    classification: "unapplied",
+    note:
+      "§3.4's Memory-to-Memory graph edges (2994). Applied to NO database. " +
+      "2994 was rehearsed against a throwaway PostgreSQL — the full chain " +
+      "replayed, applied twice for idempotency, and ten behavioural probes run " +
+      "and rolled back — and deliberately not applied anywhere real. Its " +
+      "prerequisites ARE met, unlike 2992's: 2710 and 2711 are both recorded in " +
+      "production-applied-migrations.json and all four tables 2710 creates are " +
+      "present in production. What is not met is a reason to apply it yet: " +
+      "memory_kernel_enabled reads FALSE on production, so the kernel never " +
+      "runs, no outbox row has ever been written, and the table would arrive " +
+      "with no writer. census-highlights-memories H27 is held at NOT-BUILT on " +
+      "exactly this ground. Strike this off in the same change that applies 2994 " +
+      "and refreshes the two production snapshots.",
+  },
 
   // ── Trips §23, the one Trips table that is genuinely NOT in production ─────
   trip_commitment_recurrences: {
@@ -733,6 +779,70 @@ export const KNOWN_PRODUCTION_GAPS: Record<string, Gap> = {
       "stops being set, and one that drops the archive disjunct and confirms a " +
       "capped row is missed). Strike this off in the same change that applies " +
       "2998 to PRODUCTION and refreshes the two production snapshots.",
+  },
+
+  // ── The anti-differencing gate's durable memory (3110): declared, unapplied ─
+  sensing_published_aggregates: {
+    classification: "unapplied",
+    note:
+      "Migration 3110_sensing_published_aggregates.sql, which this tree " +
+      "declares. Applied to NO database — not production, not portava-ci — " +
+      "because the owner runs all SQL and this lane applies nothing. Not " +
+      "'unmerged-pr': that classification is for a table whose migration is on " +
+      "some OTHER branch, and this check can see the file. " +
+      "WHAT IT IS: the durable last-published store lib/sensingDifferencingGate " +
+      "needs. That module's own header says 'the caller keeps the last " +
+      "published aggregate and hands it back in', and until 3110 there was " +
+      "nowhere to keep it — a previous value held in process memory resets on " +
+      "every deploy and replica, and a reset reads as no_previous, which " +
+      "PUBLISHES. intel_state_snapshots cannot serve: it is upserted in place, " +
+      "so the value the gate must compare against is already overwritten by the " +
+      "value it is being compared with. census-sensing S24 states both halves. " +
+      "WHAT ITS ABSENCE COSTS TODAY: nothing that any user can see. " +
+      "publishThroughDifferencingGate is the only caller of this table and it " +
+      "has no caller of its own — no route, no scheduler and no publisher " +
+      "reads a sensing aggregate, because `surface` and `share` are scopes " +
+      "SENSING_ANON_POLICY_V1 does not grant. Without the table its read fails " +
+      "and the gate answers previous_unreadable, which REFUSES rather than " +
+      "publishes; that is the fail-closed direction and it is asserted in " +
+      "src/test/sensingIngestDurableGate.test.ts. So this entry is a gap that " +
+      "must close BEFORE any publisher exists, not after. " +
+      "Strike it off in the same change that applies 3110 to PRODUCTION and " +
+      "refreshes the two production snapshots.",
+  },
+
+  // ── The contributor token's pepper (3002): declared, unapplied ─────────────
+  intel_contributor_pepper: {
+    classification: "unapplied",
+    note:
+      "Migration 3002_intel_contribution_identity.sql, which this tree " +
+      "declares. Applied to NO database — not production, not portava-ci — " +
+      "because the owner runs all SQL and this lane applies nothing. Not " +
+      "'unmerged-pr': the file is in this tree and this check can see it. " +
+      "WHAT IT IS: one row per weekly epoch holding the HMAC pepper that " +
+      "derives a contributor token from an account id. It carries ZERO grants " +
+      "to every application role on purpose — the one-way property of the " +
+      "token is exactly 'no role outside the SECURITY DEFINER functions can " +
+      "read this table'. census-sensing S19/S118 turn on it. " +
+      "WHAT ITS ABSENCE COSTS TODAY: nothing a user can see, and the reason is " +
+      "worth stating because it is not 'the feature is off'. Every consumer of " +
+      "the token is written for BOTH schemas and PROBES rather than assumes: " +
+      "lib/intelConsent.resolveContributorIdentityShape asks the database " +
+      "which shape it has and answers `account` when 3002's functions are " +
+      "absent, so intel_observations.actor_id is read as what it currently is " +
+      "— a profiles id. The paths that would otherwise silently mismatch " +
+      "(lib/intelProjectionAggregator's consent join, lib/intelRewardScheduler's " +
+      "payee resolution) go through that probe and WITHHOLD rather than " +
+      "publish or pay on an unreadable answer. " +
+      "THE ORDER THIS IMPOSES, because it is the part that bites: 3002 must be " +
+      "applied BEFORE the code that assumes a nullable subject ships. " +
+      "routes/mapObservations.ts has already deleted its nearest-place " +
+      "resolver, and production still has " +
+      "intel_observations.subject_id NOT NULL REFERENCES places(id), so a zone " +
+      "contribution on that code against an un-migrated database fails its NOT " +
+      "NULL instead of storing `unknown`. " +
+      "Strike it off in the same change that applies 3002 to PRODUCTION and " +
+      "refreshes the two production snapshots.",
   },
 };
 

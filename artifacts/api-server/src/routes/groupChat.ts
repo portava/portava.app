@@ -29,6 +29,12 @@ import { nameVisibilitySet } from '../lib/publicIdentity';
 import { asyncHandler } from '../lib/asyncHandler';
 // Telegraph §13.2 message.deleted — census T182 measured the delete as silent.
 import { publishToThread } from '../lib/telegraphEvents';
+import {
+  applyHistoryWindow,
+  historyBoundEnabled,
+  visibleFromOf,
+  withinWindow,
+} from '../services/groupChatHistoryBound.js';
 
 const router = Router();
 
@@ -79,17 +85,45 @@ async function isActiveThreadMember(
   sc: any,
   threadId: string,
   userId: string,
-): Promise<{ active: boolean; left: boolean; unreadable: boolean }> {
-  const { data, error } = await sc
-    .from('message_thread_members')
-    .select('user_id, left_at')
+): Promise<{ active: boolean; left: boolean; unreadable: boolean; visibleFrom: string | null }> {
+  // §14.3. The membership read is where the caller's history bound lives, so it
+  // is read here rather than a second time inside the message read.
+  //
+  // WHY THIS FILE IS BOUND AT ALL, given that both of its chat reads are
+  // currently SHADOWED: routes/index.ts registers messagingRouter (line 201)
+  // before groupChatRouter (line 204), and routes/messaging.ts serves both
+  // `GET /trips/:tripId/chat` (:3630) and `GET /circles/:circleOwnerId/chat`
+  // (:3699), so Express never reaches the handlers below for those two paths.
+  // A full-history read of message BODIES that is unreachable only because of
+  // a mount ORDER is one router registration away from being reachable, and
+  // §14.3 is not a rule this file should be exempt from for a reason that is
+  // not written down anywhere near it. The bound costs one column and one
+  // filter and makes the exemption unnecessary.
+  //
+  // FALSE ON ERROR for the flag (lib/featureFlags.isFlagEnabled), refuse on an
+  // unreadable membership: unchanged from before, each in its own direction.
+  const boundOn = await historyBoundEnabled(sc);
+  // TWO LITERAL SELECT LISTS, NOT ONE COMPUTED ONE. The flag gate is unchanged —
+  // a database without 2400 is still never asked for `visible_from_at` — but the
+  // column list is now a string LITERAL on each branch instead of a call result.
+  // `check:write-path-columns` resolves select lists statically and counted the
+  // computed form as an UNRESOLVABLE SITE, i.e. a blind spot where it could no
+  // longer verify these columns against the live schema. The remedy the check
+  // itself prefers is to make the site resolvable rather than to widen its
+  // allowlist, and that is what this is. `membershipSelect` still exists and is
+  // still the single definition of what the bound adds; it is exercised by its
+  // own unit tests and by the callers whose select lists are already static.
+  const membershipQuery = boundOn
+    ? sc.from('message_thread_members').select('user_id, left_at, visible_from_at')
+    : sc.from('message_thread_members').select('user_id, left_at');
+  const { data, error } = await membershipQuery
     .eq('thread_id', threadId)
     .eq('user_id', userId)
     .maybeSingle();
-  if (error) return { active: false, left: false, unreadable: true };
-  if (!data) return { active: false, left: false, unreadable: false };
+  if (error) return { active: false, left: false, unreadable: true, visibleFrom: null };
+  if (!data) return { active: false, left: false, unreadable: false, visibleFrom: null };
   const left = (data as any).left_at !== null;
-  return { active: !left, left, unreadable: false };
+  return { active: !left, left, unreadable: false, visibleFrom: visibleFromOf(data as any, boundOn) };
 }
 
 /** The one refusal both unreadable outcomes send, so the five call sites cannot drift apart. */
@@ -120,17 +154,37 @@ async function fetchMessagesForThread(
   sc: any,
   threadId: string,
   userId: string,
+  visibleFrom: string | null,
 ): Promise<ThreadMessagesRead> {
-  const { data, error: msgsErr } = await sc
+  let q = sc
     .from('messages')
     .select(`id, thread_id, sender_id, body, deleted_at, created_at, edited_at, original_language, profile:profiles!messages_sender_id_fkey(${PROFILE_PUBLIC})`)
     .eq('thread_id', threadId)
     .order('created_at', { ascending: false })
     .limit(INITIAL_MSG_LIMIT);
+  // §14.3. In the QUERY as well as in the filter below: `INITIAL_MSG_LIMIT`
+  // takes the NEWEST rows, so a caller whose window opens late would otherwise
+  // spend their whole page budget on rows the filter then removes and be shown
+  // a short conversation. Bounding the query spends the budget on rows they may
+  // see. `visibleFrom` is null (a no-op) while the flag is off.
+  // Q6 belongs in the QUERY here for the very reason this comment already
+  // gives: `INITIAL_MSG_LIMIT` takes the NEWEST rows. Bounding with a plain
+  // `.gte` would spend the page budget correctly but would also drop the
+  // caller's own earlier messages before JavaScript could admit them, so the
+  // relaxed clause — `created_at >= bound OR sender_id = caller` — goes here.
+  q = applyHistoryWindow(q, visibleFrom, userId);
+
+  const { data, error: msgsErr } = await q;
 
   if (msgsErr) return { ok: false, error: msgsErr };
 
-  const rows = (data ?? []) as any[];
+  // The second layer, and it is not redundant with the `gte` above: the two
+  // values are ISO-8601 from either Postgres (`+00:00`) or Node (`Z`), and
+  // `withinWindow` compares INSTANTS where PostgREST compares timestamps — this
+  // is the one place both spellings of the boundary instant are guaranteed to
+  // agree, and it is also what holds if a future edit drops the `gte`.
+  const rows = ((data ?? []) as any[]).filter((m) =>
+    withinWindow(m.created_at, visibleFrom, { senderId: m.sender_id, viewerId: userId }));
 
   const incomingIds = rows
     .filter((m) => m.sender_id !== userId && !m.deleted_at)
@@ -268,7 +322,7 @@ router.get('/trips/:tripId/chat', asyncHandler(async (req, res) => {
   const threadId = await syncTripChatMembers(tripId, sc);
   if (!threadId) { sendError(res, 'db_error', 'Failed to resolve trip chat thread', { exposeDetail: true }); return; }
 
-  const { active, left, unreadable } = await isActiveThreadMember(sc, threadId, user.id);
+  const { active, left, unreadable, visibleFrom } = await isActiveThreadMember(sc, threadId, user.id);
   if (unreadable) {
     refuseUnreadable(req, res, 'message_thread_members', { threadId, userId: user.id });
     return;
@@ -301,7 +355,7 @@ router.get('/trips/:tripId/chat', asyncHandler(async (req, res) => {
   }
 
   const read = active
-    ? await fetchMessagesForThread(sc, threadId, user.id)
+    ? await fetchMessagesForThread(sc, threadId, user.id, visibleFrom)
     : ({ ok: true, messages: [] } as const);
   if (!read.ok) {
     req.log.error({ err: (read as any).error, threadId, tripId },
@@ -372,7 +426,7 @@ router.get('/circles/:circleId/chat', asyncHandler(async (req, res) => {
   const threadId = await syncCircleChatMembers(circleOwnerId, sc);
   if (!threadId) { sendError(res, 'db_error', 'Failed to resolve circle chat thread', { exposeDetail: true }); return; }
 
-  const { active, left, unreadable } = await isActiveThreadMember(sc, threadId, user.id);
+  const { active, left, unreadable, visibleFrom } = await isActiveThreadMember(sc, threadId, user.id);
   if (unreadable) {
     refuseUnreadable(req, res, 'message_thread_members', { threadId, userId: user.id });
     return;
@@ -394,7 +448,7 @@ router.get('/circles/:circleId/chat', asyncHandler(async (req, res) => {
   }
 
   const read = active
-    ? await fetchMessagesForThread(sc, threadId, user.id)
+    ? await fetchMessagesForThread(sc, threadId, user.id, visibleFrom)
     : ({ ok: true, messages: [] } as const);
   if (!read.ok) {
     req.log.error({ err: (read as any).error, threadId, circleOwnerId },

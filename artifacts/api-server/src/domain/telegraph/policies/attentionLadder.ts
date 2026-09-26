@@ -59,6 +59,8 @@
  * notification template, so adding one is a failing test rather than a push.
  */
 
+import { dispatchTable, hasEntry, lookup } from "../contracts/dispatchTable.js";
+
 /** §19's six bands, in §19's order. */
 export const ATTENTION_BANDS = [
   "P0_SAFETY",
@@ -85,7 +87,7 @@ export interface BandPolicy {
   persisted: boolean;
 }
 
-export const BAND_POLICY: Readonly<Record<AttentionBand, BandPolicy>> = {
+export const BAND_POLICY: Readonly<Record<AttentionBand, BandPolicy>> = dispatchTable({
   P0_SAFETY: {
     band: "P0_SAFETY",
     behaviour: "Interruptive; bypass ordinary batching where policy requires.",
@@ -139,7 +141,7 @@ export const BAND_POLICY: Readonly<Record<AttentionBand, BandPolicy>> = {
     digestible: true,
     persisted: true,
   },
-};
+});
 
 /**
  * Which notification event type belongs to which band.
@@ -161,7 +163,7 @@ export const BAND_POLICY: Readonly<Record<AttentionBand, BandPolicy>> = {
  * the Sensing surface, whose own cadence rules govern it), and why the many
  * `low`-priority events are absent: unclaimed is the safe answer.
  */
-export const EVENT_BAND: Readonly<Record<string, AttentionBand>> = {
+export const EVENT_BAND: Readonly<Record<string, AttentionBand>> = dispatchTable({
   // P0 — safety. Every one of these already carries `urgent` and already
   // overrides quiet hours in NotificationPreferenceService; what the ladder
   // adds is that they are never SUPPRESSED as duplicates of each other.
@@ -212,12 +214,29 @@ export const EVENT_BAND: Readonly<Record<string, AttentionBand>> = {
   // longest persisted window is what that means when delivery may not change.
   "telegraph.ai_suggestion": "P5_AI",  // :233
   "compass.recommendation": "P5_AI",   // :363
-};
+});
 
-/** The band an event type belongs to, or null when the ladder does not claim it. */
+/**
+ * The band an event type belongs to, or null when the ladder does not claim it.
+ *
+ * `lookup` rather than `EVENT_BAND[eventType] ?? null`. `EVENT_BAND` is built by
+ * `dispatchTable` and therefore has no prototype, so the plain index would be
+ * correct today — but this function's answer is consumed by
+ * `dedupeWindowFor`, which indexes `BAND_POLICY` with it, and a lookup that can
+ * return a non-band makes that second index throw. The extra membership test
+ * below is what makes `BAND_POLICY[band]` TOTAL rather than merely true in
+ * practice: nothing leaves here that is not one of §19's declared bands.
+ *
+ * Before `dispatchTable`, `EVENT_BAND["constructor"]` was the `Object` function
+ * — truthy, so `?? null` never fired — and `dedupeWindowFor("constructor")`
+ * threw a TypeError out of the notification dedupe path. See
+ * `src/test/telegraphDispatchTablePrototypeKeys.test.ts`.
+ */
 export function bandFor(eventType: string | null | undefined): AttentionBand | null {
   if (!eventType) return null;
-  return EVENT_BAND[eventType] ?? null;
+  const band = lookup(EVENT_BAND, eventType);
+  if (band === null) return null;
+  return (ATTENTION_BANDS as readonly string[]).includes(band) ? band : null;
 }
 
 /**
@@ -231,14 +250,14 @@ export function bandFor(eventType: string | null | undefined): AttentionBand | n
  */
 export function dedupeWindowFor(eventType: string | null | undefined): number | null | undefined {
   const band = bandFor(eventType);
-  if (band === null) return undefined;
+  if (band === null || !hasEntry(BAND_POLICY, band)) return undefined;
   return BAND_POLICY[band].dedupeWindowMs;
 }
 
 /** May this event type ever be delivered only inside a daily digest? */
 export function isDigestible(eventType: string | null | undefined): boolean | undefined {
   const band = bandFor(eventType);
-  if (band === null) return undefined;
+  if (band === null || !hasEntry(BAND_POLICY, band)) return undefined;
   return BAND_POLICY[band].digestible;
 }
 

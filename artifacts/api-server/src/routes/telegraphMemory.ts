@@ -35,6 +35,7 @@ import {
   type RecapRow,
 } from "../services/telegraph/memoryNotes.js";
 import {
+  applyHistoryWindow,
   historyBoundEnabled,
   membershipSelect,
   visibleFromOf,
@@ -117,7 +118,11 @@ router.post(
       return;
     }
     const visibleFrom = visibleFromOf(membership as any, boundOn);
-    if (!withinWindow(m.created_at, visibleFrom)) {
+    // Q6, on Memory's DIRECT RETRIEVAL of one message. Saving the caller's own
+    // earlier message to Memory discloses the caller's own words back to them.
+    // ACTIVE membership is checked immediately above and still refuses first —
+    // a departed member cannot reach this line for any message, own or not.
+    if (!withinWindow(m.created_at, visibleFrom, { senderId: m.sender_id, viewerId: user.id })) {
       sendError(res, "forbidden", "That message is outside your history window");
       return;
     }
@@ -263,14 +268,19 @@ router.get(
       .is("deleted_at", null)
       .order("created_at", { ascending: false })
       .limit(RECAP_SCAN_LIMIT);
-    if (visibleFrom) q = q.gte("created_at", visibleFrom);
+    // Q6 in the QUERY: `RECAP_SCAN_LIMIT` caps this read. A recap assembled
+    // for a rejoined member should contain what they themselves contributed
+    // before the rejoin; it must NOT contain another member's pre-window
+    // messages, and the relaxed clause admits only `sender_id = caller`.
+    q = applyHistoryWindow(q, visibleFrom, user.id);
     const { data: rows, error: rowErr } = await q;
     if (rowErr) {
       sendError(res, "db_error", "Could not read this conversation");
       return;
     }
 
-    const windowed = ((rows as any[]) ?? []).filter((r) => withinWindow(r.created_at, visibleFrom));
+    const windowed = ((rows as any[]) ?? []).filter((r) =>
+      withinWindow(r.created_at, visibleFrom, { senderId: r.sender_id, viewerId: user.id }));
 
     const recap = buildRecap({
       threadId,

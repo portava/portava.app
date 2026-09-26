@@ -116,7 +116,11 @@ export const MAX_ABSENT_SYMBOLS = 0;
  *  would have let them add up to seven misplaced symbol citations invisibly.
  *  If one of them pushes this red, that is the ratchet working and the finding
  *  is real — not noise to be absorbed by a ceiling nobody chose. */
-export const MAX_MISPLACED_SYMBOLS = 38;
+/* RATCHETED 2026-09-22 35 -> 34, for the same reason and on the same quiet
+ * tree as MAX_DEAD_TARGETS above: the guard printed "34 < 35 — LOWER
+ * MAX_MISPLACED_SYMBOLS to 34", and a ceiling above the measured count keeps
+ * nothing. Tightening, never loosening. */
+export const MAX_MISPLACED_SYMBOLS = 34;
 
 /** How far from the cited line the symbol may be and still count as "there". */
 const WINDOW = 2;

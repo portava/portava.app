@@ -279,6 +279,16 @@ export const INTERNAL_COLUMNS: readonly string[] = [
   "last_attribution_id",
   "last_attribution_at",
   "last_updated_at",
+  // 3311 forward provenance on intel_state_snapshots (and _versions): the
+  // intel_observations.id values a projection READ — a pointer array into the
+  // pipeline exactly like input_claim_versions above. Never an API field:
+  // lib/liveClaimRead names its columns and does not name this one. Read only
+  // by services/accountDeletion/sensingRevocationReach (which snapshots rest
+  // on erased evidence) and the erasure recompute that rewrites or retracts
+  // them. An id names no contributor (actor_id is a rotating token since 3002
+  // and the row is gone after an erasure), and it is still not redistributed:
+  // possession of a pointer is not a right to hand it out.
+  "input_observation_ids",
 ];
 
 /** The intel tables this registry covers. */

@@ -293,6 +293,39 @@ describe("Sensing §5.4 — the ExperienceSession routes", () => {
     assert.equal(stored.rows[1]!.payload.intel, undefined, "no snapshot id was fabricated to be counted");
   });
 
+  it("S112: with memory_projection ON, the close writes the memory WITH the session's claim refs; OFF, it writes none and says why", async () => {
+    const SNAP_REF = "66666666-ffff-4fff-8fff-666666666666";
+    for (const memoryOn of [true, false]) {
+      const stored: Stored = { rows: [] };
+      const flags = [ON, { flag: "memory_projection", enabled: memoryOn }];
+      await start(world(flags), stored);
+      const opened = await post("/intel/experience-sessions", { subjectId: PLACE_ID, opportunityKind: "go_now", claimRefs: [SNAP_REF] });
+      assert.equal(opened.status, 201, JSON.stringify(opened.body));
+      await start(world(flags, { canonical_events: stored.rows }), stored);
+      // Capture the memory write the fake would otherwise refuse.
+      const memoryWrites: Array<Record<string, any>> = [];
+      const base = app!.client.from.bind(app!.client);
+      app!.client.from = (table: string) =>
+        table === "memory_projections"
+          ? { upsert: async (row: Record<string, any>) => { memoryWrites.push(row); return { data: null, error: null }; } }
+          : base(table);
+      const closed = await post(`/intel/experience-sessions/${opened.body.session!.session_id}/close`, { outcome: "better" });
+      assert.equal(closed.status, 200, JSON.stringify(closed.body));
+      const memory = (closed.body as Record<string, any>).memory;
+      if (memoryOn) {
+        assert.deepEqual(memory, { recorded: true, claimRefs: 1 });
+        assert.equal(memoryWrites.length, 1);
+        assert.deepEqual(memoryWrites[0]!.claim_refs, [SNAP_REF]);
+        assert.equal(memoryWrites[0]!.user_id, VIEWER);
+        assert.equal(memoryWrites[0]!.subject_id, opened.body.session!.session_id);
+      } else {
+        assert.deepEqual(memory, { recorded: false, refusal: "memory_projection_off" });
+        assert.equal(memoryWrites.length, 0);
+      }
+      assert.equal((closed.body as Record<string, unknown>).state, "closed", "the close stands either way");
+    }
+  });
+
   it("ON: a close naming a snapshot the viewer was NOT served is refused, and nothing is written", async () => {
     const stored: Stored = { rows: [] };
     const SNAP = "44444444-dddd-4ddd-8ddd-444444444444";

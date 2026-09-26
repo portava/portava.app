@@ -93,9 +93,9 @@
  * corroboration floor at once.
  *
  * ── STORAGE ──────────────────────────────────────────────────────────────────
- * `airport_fact_observations`, created by migration 2860 (written, NOT applied
- * as of this file — see the route's comment and docs/BUILD-BACKLOG.md), plus
- * the `submission_token` idempotency key added by migration 2982.
+ * `airport_fact_observations`, created by migration 2860 — APPLIED to production
+ * (corrected 2026-09-22; this header said "written, NOT applied" and that is
+ * false), plus the `submission_token` idempotency key added by 2982, also applied.
  *
  * Writes go through the SERVICE ROLE only. 2860 grants `authenticated` SELECT
  * and nothing else, with no INSERT policy of any kind, deliberately: a client

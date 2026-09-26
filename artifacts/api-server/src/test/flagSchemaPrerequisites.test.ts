@@ -347,20 +347,42 @@ describe("the script", () => {
     // latter (trip_subgroups does not exist in production at all). Both shapes are
     // "the migration has not landed", so both are usable, and creating the table is
     // what landing it would do.
-    let subject: { flag: string; table: string; column: string } | null = null;
+    // THREE OBJECT SHAPES, and the third is why this block was rewritten.
+    // A KNOWN entry names `table`, `table.column` OR `some_function()`, and a
+    // function does not live in `snap.tables` at all — it is a bare name in
+    // `snap.functions`. The earlier version split every object on "." and fell
+    // through to the bare-table branch for a function, so it "landed"
+    // `intel_contributor_token()` by inventing a TABLE of that name: the
+    // function stayed absent, the script stayed green, and this case failed
+    // while the rule it guards was working correctly. Landing a function means
+    // adding it to `snap.functions`, which is what the apply actually does.
+    type Subject =
+      | { flag: string; kind: "table"; table: string; column: string; names: string }
+      | { flag: string; kind: "function"; fn: string; names: string };
+    let subject: Subject | null = null;
+    const fns = new Set<string>(Array.isArray(snap.functions) ? snap.functions : []);
     for (const [flag, entry] of Object.entries(KNOWN)) {
       for (const obj of entry.objects ?? []) {
-        const [table, column] = String(obj).split(".");
+        const raw = String(obj);
+        if (raw.endsWith("()")) {
+          const fn = raw.slice(0, -2);
+          if (!fns.has(fn)) {
+            subject = { flag, kind: "function", fn, names: fn };
+            break;
+          }
+          continue;
+        }
+        const [table, column] = raw.split(".");
         if (!table) continue;
         const cols = snap.tables?.[table];
         if (column) {
           if (!Array.isArray(cols) || !cols.includes(column)) {
-            subject = { flag, table, column };
+            subject = { flag, kind: "table", table, column, names: column };
             break;
           }
         } else if (!Array.isArray(cols)) {
           // A bare table name: landing it means the table exists with an id.
-          subject = { flag, table, column: "id" };
+          subject = { flag, kind: "table", table, column: "id", names: "id" };
           break;
         }
       }
@@ -389,15 +411,21 @@ describe("the script", () => {
       return;
     }
 
-    if (!Array.isArray(snap.tables[subject!.table])) snap.tables[subject!.table] = [];
-    if (!snap.tables[subject!.table].includes(subject!.column)) {
-      snap.tables[subject!.table].push(subject!.column);
+    // Simulate the apply, in whichever place the object actually lives.
+    if (subject.kind === "function") {
+      if (!Array.isArray(snap.functions)) snap.functions = [];
+      if (!snap.functions.includes(subject.fn)) snap.functions.push(subject.fn);
+    } else {
+      if (!Array.isArray(snap.tables[subject.table])) snap.tables[subject.table] = [];
+      if (!snap.tables[subject.table].includes(subject.column)) {
+        snap.tables[subject.table].push(subject.column);
+      }
     }
     const p = join(fixture, "applied-snapshot.json");
     writeFileSync(p, JSON.stringify(snap));
     const r = run({ FLAG_SCHEMA_SNAPSHOT: p });
     assert.equal(r.status, 1, r.stdout);
-    assert.match(r.stdout, new RegExp(`STALE: KNOWN\\.${subject!.flag}`));
-    assert.ok(r.stdout.includes(subject!.column), `the report must name ${subject!.column}`);
+    assert.match(r.stdout, new RegExp(`STALE: KNOWN\\.${subject.flag}`));
+    assert.ok(r.stdout.includes(subject.names), `the report must name ${subject.names}`);
   });
 });

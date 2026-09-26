@@ -71,8 +71,37 @@
  * below gives: a capture describes one instant, a new instant gets a new file,
  * and this constant moves. That is the whole refresh.
  */
+/**
+ * REFRESH OF 2026-09-22 16:07 UTC, the current one, taken after 2971 seeded the
+ * feature_flags row `layover_discovery_mode_enabled` FALSE on production. The
+ * delta from the 09-21 capture is THREE objects and one flag row, and it covers
+ * more than 2971: 2400 and 2966 had been applied to production at 05:42:29 that
+ * morning and 2970 at some point before this capture, and none of the three was
+ * recorded in production-applied-migrations.json. So the capture had to account
+ * for `message_thread_members.visible_from_at` and
+ * `public.telegraph_member_visibility_window` (2400/2966) and
+ * `stamp_definitions.evidences_presence` (2970) as well as the flag row.
+ *
+ * The delta was PROVEN complete, not assumed. The tables digest did not match
+ * after the message_thread_members change alone, so rather than guess at the
+ * remainder the formula itself was validated first — it reproduced the 09-21
+ * snapshot's own recorded digest from the 09-21 snapshot's own data, exactly —
+ * which established that the formula was right and the delta was short. Table
+ * NAMES were then digested and matched, ruling out any add, remove or rename,
+ * and per-table COLUMN COUNTS were diffed, which named stamp_definitions as the
+ * one remaining difference. All three digests then matched production's own.
+ *
+ * The flag is seeded OFF and this refresh does not turn it on. 2971 exists to
+ * make the gate REACHABLE through the audited toggle path; enabling it narrows
+ * what a traveller is shown and is an owner decision with a deployed consumer to
+ * verify first.
+ *
+ * The 09-21 capture was NOT overwritten, for the reason the notes below give: a
+ * capture describes one instant, a new instant gets a new file, and this
+ * constant moves. That is the whole refresh.
+ */
 /** The capture every reader should grade against. Change this on a refresh. */
-export const PRODUCTION_SNAPSHOT_FILENAME = "20260921-production-schema.json";
+export const PRODUCTION_SNAPSHOT_FILENAME = "20260922-production-schema.json";
 
 /** Resolved against this directory, which is where the captures live. */
 export const PRODUCTION_SNAPSHOT_URL = new URL(

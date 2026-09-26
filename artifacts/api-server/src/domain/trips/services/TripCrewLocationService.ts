@@ -21,6 +21,18 @@ import { logger as rootLogger } from "../../../lib/logger.js";
 import { nameVisibilitySet, presentedName } from "../../../lib/publicIdentity.js";
 import { fetchBlockedSet } from "../../../lib/blocks.js";
 import { tripOperationalProjectionsGate } from "../policies/tripOperationalProjections.js";
+import {
+  PRESENCE_WRITE_CAPABILITIES,
+  presenceFusion,
+  type FusedPresenceEstimate,
+  type PresenceClaim,
+  type PresenceRefusal,
+} from "../../../presence/fusion/store.js";
+import type {
+  LocationPrecision,
+  PresenceEstimateState,
+  PresenceEvidenceType,
+} from "../../../presence/domain/types.js";
 
 const logger = rootLogger.child({ service: "TripCrewLocationService" });
 
@@ -66,6 +78,148 @@ export interface CrewMapResult {
   checkInsUnreadable?: boolean;
   members: CrewMemberCard[];
   totalCount: number;
+}
+
+// ── The presence fusion gate (census-sensing S3) ──────────────────────────────
+
+/**
+ * §10 state for the §10.2 freshness class. A crew position is a real device
+ * observation, so a LIVE one may claim a live state — and the store, whose
+ * live window is 5 minutes against this module's 15, will downgrade it to
+ * `recent` when it is older than that. Two ladders, and the narrower one wins;
+ * that is what handing the claim to the store buys.
+ */
+const CREW_CLAIM_STATE: Readonly<Record<string, PresenceEstimateState>> = Object.freeze({
+  LIVE: "precise",
+  RECENT: "recent",
+  LAST_KNOWN: "last_known",
+  OFFLINE: "unknown",
+});
+
+/** §8 evidence, from `user_location_state.source` (free text, default 'gps'). */
+function crewEvidence(source: string | null): PresenceEvidenceType {
+  if (source === "gps") return "gps";
+  if (source === "manual" || source === "checkin") return "user_checkin";
+  if (source === "wifi") return "wifi_context";
+  // Anything else reached us through the API rather than a radio we can name.
+  return "server_sync";
+}
+
+/** §10.1 confidence band → the store's 0..1. Unknown accuracy is not high. */
+const CREW_CONFIDENCE: Readonly<Record<string, number>> = Object.freeze({
+  HIGH: 0.9, MEDIUM: 0.6, LOW: 0.3, INSUFFICIENT: 0,
+});
+
+export interface CrewPresenceAdmission {
+  /** The card as it may be served: its coordinate comes off the estimate. */
+  card: CrewMemberCard;
+  /** Null when the store refused — see `refusal`. */
+  estimate: FusedPresenceEstimate | null;
+  refusal: PresenceRefusal | null;
+}
+
+/**
+ * Put ONE crew card through the presence fusion layer.
+ *
+ * ── WHY THE CREW MAP GOES THROUGH A PRESENCE STORE AT ALL ────────────────────
+ * census-sensing S3 names four coexisting presence models and
+ * `trip_crew_location_sessions` is one of them. Until now the disclosure
+ * decision for a crew member lived entirely in `buildCrewCard` — which is the
+ * finding, not the bug: four models, each folding its own ceilings, each
+ * minting its own idea of how revealing a person's position may be.
+ *
+ * The ARITHMETIC is unchanged. The three bounds below are the three conditions
+ * `buildCrewCard` already applies to `exactCoords` — an active, time-boxed
+ * grant (§6.1 `canSeePresence`), the member's hotel/home blur, and §10.2's
+ * "never draw a stale location as if it were current" — restated as §52 rungs
+ * so the ONE store can fold them. What changed is that the coordinate a viewer
+ * receives is now `estimate.position`: a point the fusion store retained
+ * because the fold landed on `precise`, and which it would have dropped at any
+ * other rung. A producer that stamped a coordinate on a card with no grant
+ * behind it is NARROWED here rather than served.
+ *
+ * `nowMs` is the same instant the live-share window and every card's freshness
+ * were read at — the whole point of `getCrewMap`'s clock parameter is that
+ * there is one, and a second clock inside this gate would reintroduce exactly
+ * the defect that parameter closed.
+ *
+ * The subject is the Portava ACCOUNT (account-scoped), so a crew estimate can
+ * be fused with the other same-class models by `PresenceFusionStore.resolve`.
+ * The TRIP is the claim's consent scope (owner decision A): a member shared
+ * their position with THIS trip's crew, and a reader reaches the estimate only
+ * by holding that trip's scope. `stopLiveShare` revokes it from the store the
+ * moment the member stops sharing.
+ */
+export function admitCrewPresence(
+  card: CrewMemberCard,
+  raw: RawMemberLocation,
+  nowMs: number,
+  tripId: string,
+): CrewPresenceAdmission {
+  // (1) §6.1. A member the presence predicate refused discloses NOTHING, so the
+  //     honest rung is `none` and the store suppresses them outright — no
+  //     estimate for a ghost is stronger than an estimate nobody may read.
+  //     Otherwise: a coordinate needs an active, time-boxed grant; without one
+  //     the crew map serves an area LABEL and nothing finer.
+  const grantBound: LocationPrecision =
+    card.presenceReason !== null ? "none" : card.liveShareActive ? "precise" : "zone";
+
+  // (2) The member's own hotel/home blur. `raw.hotelBlurEnabled` is already
+  //     fail-closed in getCrewMap: an unreadable location_preferences sets it
+  //     for everybody, so "we could not check" narrows here exactly as "they
+  //     said no" does.
+  const blurBound: LocationPrecision = raw.hotelBlurEnabled ? "zone" : "precise";
+
+  // (3) §10.2, judged on the position's own clock by `classifyPresence` and
+  //     carried on the card. A position we cannot vouch for as current may
+  //     still support an area label; it may never support a pin.
+  const drawableAsCurrent = card.freshnessClass === "LIVE" || card.freshnessClass === "RECENT";
+  const currencyBound: LocationPrecision = drawableAsCurrent ? "precise" : "venue";
+
+  const observedAtMs = card.observedAt === null ? null : Date.parse(card.observedAt);
+  const claim: PresenceClaim = {
+    subjectKey: raw.userId,
+    linkage: "account_scoped",
+    scope: { kind: "trip_crew", id: tripId },
+    // The most a crew pin can ever be. The three bounds and the source ceiling
+    // do the narrowing; §52 has one direction and asking cannot reverse it.
+    requestedPrecision: "precise",
+    ceilings: [grantBound, blurBound, currencyBound],
+    observedAtMs: Number.isFinite(observedAtMs as number) ? (observedAtMs as number) : null,
+    state: CREW_CLAIM_STATE[card.freshnessClass] ?? "unknown",
+    confidence: CREW_CONFIDENCE[card.confidence] ?? 0,
+    evidence: [crewEvidence(card.source)],
+    point:
+      typeof raw.locationState?.lat === "number" && typeof raw.locationState?.lng === "number"
+        ? { lat: raw.locationState.lat, lng: raw.locationState.lng }
+        : null,
+  };
+
+  const admission = presenceFusion.admit(
+    PRESENCE_WRITE_CAPABILITIES.trip_crew_location_sessions,
+    claim,
+    nowMs,
+  );
+
+  // A refusal withholds the coordinate and nothing else. `suppressed` (the
+  // member discloses nothing), `expired` (older than the store will serve) and
+  // an unreadable clock must all look the same to a viewer, and they look like
+  // the crew map has always looked for a member with no live share: a card,
+  // with an area label if they permit one, and no pin.
+  if (!admission.ok) {
+    return {
+      card: card.exactCoords == null ? card : { ...card, exactCoords: null },
+      estimate: null,
+      refusal: admission.refusal,
+    };
+  }
+
+  const served = admission.estimate.position;
+  return {
+    card: { ...card, exactCoords: served },
+    estimate: admission.estimate,
+    refusal: null,
+  };
 }
 
 /**
@@ -363,7 +517,10 @@ export async function getCrewMap(
     // The same instant the live-share window above was read at. Two clock reads
     // in one map is how a card came back LIVE under a grant this function had
     // already called expired.
-    return buildCrewCard(raw, nowMs);
+    //
+    // Then through the presence fusion layer, at that same instant: the card's
+    // coordinate is the one the store admitted, or none. See admitCrewPresence.
+    return admitCrewPresence(buildCrewCard(raw, nowMs), raw, nowMs, tripId).card;
   });
 
   return { members: cards, totalCount: cards.length, checkInsUnreadable };

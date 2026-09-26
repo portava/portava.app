@@ -464,7 +464,7 @@ testable structure by §3 and §4.1. Narrative.
 | MD65 | OBSERVATION | **W** | Media never becomes an observation. `mediaEvidenceLink` produces a *link* row; `:1-13` states it *"never writes `intel_observations`/`intel_claims`/`intel_state_snapshots`"*. The stage is deliberately not wired, which is right for safety and wrong against §9. |
 | MD66 | CLAIM SYSTEM | **W** | The claim system exists (`lib/intelProjection`, `2130_intel_storage.sql`) and has no media input by construction (MD65). |
 | MD67 | LIVE INTELLIGENCE | **C** | `lib/liveClaimRead.readLiveClaimEnvelopes`, consumed at `MediaProjectionService.ts:719#export async function readCurrentState(`; fail-closed to `[]`. |
-| MD68 | MEDIA / DISCOVERY / MAP / COMPASS outputs | **C** | `routes/mediaWorld.ts` (media), `MediaProjectionService.ts:1625#export async function buildMediaMapProjection(` map clusters, `compass/CompassMediaContext.ts:232` consumed at `routes/compass.ts:1600#const mediaCtx = await buildCompassMediaContext(sc, mediaViewer, mediaId, turnNowMs);`. |
+| MD68 | MEDIA / DISCOVERY / MAP / COMPASS outputs | **C** | `routes/mediaWorld.ts` (media), `MediaProjectionService.ts:1625#export async function buildMediaMapProjection(` map clusters, `compass/CompassMediaContext.ts:232` consumed at `routes/compass.ts:1654#const mediaCtx = await buildCompassMediaContext(sc, mediaViewer, mediaId, turnNowMs);`. |
 
 ### §10 IntelligenceEligibility
 
@@ -511,7 +511,7 @@ testable structure by §3 and §4.1. Narrative.
 | id | Requirement | V | Evidence |
 | --- | --- | --- | --- |
 | MD94 | Go There / Show on Map / Directions | **W** | `MediaActionResolver.ts:381-387` emits `show_on_map`, targeting `/api/media/places/:placeId` — a projection, deliberately coordinate-free. There is **no directions action**: no `directions` id in the resolver's thirteen (`:335,343,351,361,381,388,399,416,424,439,461,482,498`), and `directions_tap` exists only as a telemetry name (`routes/mediaAnalyticsBatch.ts:41`) with no emitter. "Go There" and "Directions" are unbuilt; "Show on Map" is built and correct. |
-| MD95 | Ask Compass | **C** | `MediaActionResolver.ts:19-20` (Compass-gated) → `compass/CompassMediaContext.ts:232` `buildCompassMediaContext`, consumed at `routes/compass.ts:1600#const mediaCtx = await buildCompassMediaContext(sc, mediaViewer, mediaId, turnNowMs);`. |
+| MD95 | Ask Compass | **C** | `MediaActionResolver.ts:19-20` (Compass-gated) → `compass/CompassMediaContext.ts:232` `buildCompassMediaContext`, consumed at `routes/compass.ts:1654#const mediaCtx = await buildCompassMediaContext(sc, mediaViewer, mediaId, turnNowMs);`. |
 | MD96 | Save Place | **C** | Resolved to the existing saved-places endpoint and served at `routes/mediaActions.ts:43,82`. |
 | MD97 | Add to Trip | **C** | `MediaActionResolver.ts:16-18` — offered only when `canEditPlan` passes, which is the exact gate the trip-plan-item endpoint enforces, so the rail can never grant access the endpoint would deny. |
 | MD98 | Create Plan | **C** | Same resolver, Compass-gated (`:19-20`). |
@@ -642,7 +642,7 @@ all — `MediaProjectionService.ts:864-866` sorts by `capturedAt` and `:472-475`
 | --- | --- | --- | --- |
 | MD202 | Creator Popularity — audience reach / social popularity | **C** | `services/ranking/CreatorActivityScoreService.ts`; `portavaRank.ts:194` `socialProof`. |
 | MD203 | Creator Engagement — stamps, comments, shares, saves | **C** | `routes/mediaFeed.ts:2099-2305`; `media_events` event vocabulary (`2039_media_events.sql:10`). |
-| MD204 | Contributor Reliability — usefulness and historical acceptance of structured observations | **C** | `services/media/MediaContributorReputationService.ts:20` `ACCEPTED_STATES`, reading `intel_observations` acceptance. |
+| MD204 | Contributor Reliability — usefulness and historical acceptance of structured observations | **C** | `services/media/MediaContributorReputationService.ts:27` `ACCEPTED_STATES`, reading `intel_observations` acceptance. |
 | MD205 | Place Expertise — evidence-backed experience in a place/category | **C** | `MediaContributorReputationService.ts:24-27` `ReputationScope.subjectId` — *"Optional place/subject for the Place-Expertise dimension."* |
 | MD206 | Live Accuracy — how often current observations are corroborated | **C** | `MediaContributorReputationService.ts:1-12` reads `intel_state_snapshots` for independent corroboration. |
 | MD207 | Trip Expertise — relevant journey history | **N** | Not a dimension: `lib/mediaContributorReputation.computeContributorReputation` computes **three** dimensions and nothing reads trip history. |
@@ -712,17 +712,17 @@ here. (MD238's rank reads `hidden_gem_contributions`, absent from production —
 
 | id | Requirement | V | Evidence |
 | --- | --- | --- | --- |
-| MD242 | The `CompassMediaContext` contract | **C** | `compass/CompassMediaContext.ts:232` `buildCompassMediaContext`, wired into the real ask path at `routes/compass.ts:1600#const mediaCtx = await buildCompassMediaContext(sc, mediaViewer, mediaId, turnNowMs);`. |
+| MD242 | The `CompassMediaContext` contract | **C** | `compass/CompassMediaContext.ts:232` `buildCompassMediaContext`, wired into the real ask path at `routes/compass.ts:1654#const mediaCtx = await buildCompassMediaContext(sc, mediaViewer, mediaId, turnNowMs);`. |
 | MD243 | `entityRefs` — coarse, opaque, viewer-permitted | **C** | `CompassMediaContext.ts:26-53` — refs come from `resolveMediaEntities`, which runs the location/gem choke point, so a hidden venue, a gem-ceilinged place, and a protected gem's **name** are all withheld before anything is rendered into the prompt. |
 | MD244 | `viewerContext` | **C** | `CompassMediaContext.ts:69-74` — `viewerCountry` and `subjectCity` only, *"never a coordinate"*. |
 | MD245 | `permittedIntelligenceRefs` | **C** | `CompassMediaContext.ts:19-25` — filtered **twice**: the intel comes only from the gated fail-closed live-claim read, then is filtered to refs whose place the viewer is eligible to see. |
-| MD246 | Question: "Is this worth going to now?" | **C** | `CompassMediaContext.ts:9-12` names it as the driving case; the context lines are appended to the ask at `routes/compass.ts:1600#const mediaCtx = await buildCompassMediaContext(sc, mediaViewer, mediaId, turnNowMs);`. |
+| MD246 | Question: "Is this worth going to now?" | **C** | `CompassMediaContext.ts:9-12` names it as the driving case; the context lines are appended to the ask at `routes/compass.ts:1654#const mediaCtx = await buildCompassMediaContext(sc, mediaViewer, mediaId, turnNowMs);`. |
 | MD247 | Question: "Find somewhere like this." | **C** | Same; `find_similar` action at `MediaActionResolver.ts:399`. |
 | MD248 | Question: "Is this still busy?" | **C** | Answerable from `permittedIntelligenceRefs` (gated live claims); returns nothing rather than guessing when live is off. |
 | MD249 | Question: "Where is this?" | **C** | `entityRefs` carry the coarse place label subject to the owner's tier and any gem ceiling. |
 | MD250 | Question: "Build a plan around this." | **C** | `create_plan` action (`MediaActionResolver.ts:426`), Compass-gated. |
 | MD251 | Question: "What's nearby?" | **C** | `see_nearby` (`MediaActionResolver.ts:390`) + the map projection. |
-| MD252 | Question: "Where should we go after this?" | **N** | No sequencing concept in the media→Compass context: no next-stop, no chain (MD171), no time-of-evening term. *(STATED ABSENCE FALSIFIED 2026-09-13, and **this verdict is owed a re-read this note does not perform**. `fa5d7c25d` added a sequencing concept to exactly the context this row says has none: `artifacts/api-server/src/compass/CompassMediaContext.ts:225#export function buildSequencingAnchor` carries the canonical place the media resolved to, the coarse city, and a `chainable` flag that is FALSE — with the prompt saying the question cannot be answered — when the location/gem choke point withheld the place, and the block is rendered into the real ask at `routes/compass.ts:1600#const mediaCtx = await buildCompassMediaContext(sc, mediaViewer, mediaId, turnNowMs);`. census-compass §12.1 records the build as CM-03 `W → C` and cites this row by name. The letter is left at `N` because moving a row onto `C` is a media re-measure with mutations, not an integrator's note; the debt is recorded here and in this census's entry in `artifacts/api-server/src/scripts/CENSUS_STALENESS_ACKNOWLEDGED.json` rather than silenced.)* |
+| MD252 | Question: "Where should we go after this?" | **N** | No sequencing concept in the media→Compass context: no next-stop, no chain (MD171), no time-of-evening term. *(STATED ABSENCE FALSIFIED 2026-09-13, and **this verdict is owed a re-read this note does not perform**. `fa5d7c25d` added a sequencing concept to exactly the context this row says has none: `artifacts/api-server/src/compass/CompassMediaContext.ts:225#export function buildSequencingAnchor` carries the canonical place the media resolved to, the coarse city, and a `chainable` flag that is FALSE — with the prompt saying the question cannot be answered — when the location/gem choke point withheld the place, and the block is rendered into the real ask at `routes/compass.ts:1654#const mediaCtx = await buildCompassMediaContext(sc, mediaViewer, mediaId, turnNowMs);`. census-compass §12.1 records the build as CM-03 `W → C` and cites this row by name. The letter is left at `N` because moving a row onto `C` is a media re-measure with mutations, not an integrator's note; the debt is recorded here and in this census's entry in `artifacts/api-server/src/scripts/CENSUS_STALENESS_ACKNOWLEDGED.json` rather than silenced.)* |
 | MD253 | Question: "Find a quieter or cheaper version." | **N** | See MD101 — no comparative modifier exists anywhere in the media path. *(STATED ABSENCE FALSIFIED 2026-09-13, and **this verdict is owed a re-read this note does not perform** — see MD101, whose correction above states what is now true and what still is not. The comparator this row says exists nowhere exists in the Compass media context as of `fa5d7c25d`, for two of its three words, and reaches the ask; census-compass §12.1's CM-03 records the build. The letter is left at `N` for MD252's reason, and the debt is recorded rather than silenced.)* |
 | MD254 | Question: "Add this to my Trip." | **C** | `add_to_trip` (`MediaActionResolver.ts:594#id: "add_to_trip"`), gated by `canEditPlan`. |
 
@@ -2297,7 +2297,7 @@ by offset, because this section's code displaced them:
 `loadPlaceNeighborhoods` 323→338, `[ctx, neighborhoods]` 433→448,
 `loadTaggedPostIds` 902→1106, `loadTaggedMedia` 949→1153 in this document, and
 the Hidden Gems bucket 861→1065 in `census-highlights-memories.md`.
-`census-telegraph.md` cites the same file twice at `:978`, now `:1182`, and both
+`census-telegraph.md` cites the same file twice at `:978`, now `:1164`, and both
 were repointed — the third time in four sections that an anchored citation has
 caught its own decay, and the reason this paragraph can say the repoint is right
 rather than hope so.
@@ -2470,7 +2470,7 @@ weak test.
 
 | Row | Finding |
 | --- | --- |
-| MD162 | **Mis-cited.** It cites `lib/mapProducers/crowdFlowProducer.ts`; no such file exists. The producer is `artifacts/api-server/src/lib/crowdFlowProducer.ts:264#export const CROWD_FLOW_FLAG = "map_crowd_flow_enabled";`, which is where MD163 correctly points. The verdict is unaffected — Media still does not consume it — but the row is one of the 18 citations §0 says name no file in the tree, and this is which file it should have named. |
+| MD162 | **Mis-cited.** It cites `lib/mapProducers/crowdFlowProducer.ts`; no such file exists. The producer is `artifacts/api-server/src/lib/crowdFlowProducer.ts:265#export const CROWD_FLOW_FLAG = "map_crowd_flow_enabled";`, which is where MD163 correctly points. The verdict is unaffected — Media still does not consume it — but the row is one of the 18 citations §0 says name no file in the tree, and this is which file it should have named. |
 | MD152 | **Partly overstated, in the direction that flatters the gap.** "No uncertainty state on `PlaceProjection` or `WorldZone`" was true at the OBJECT level and false at the field level: the per-claim `conflictState` was already riding inside `currentState.claims[]` / `liveClaims[]`, so a client that knew to look could already find it. What was genuinely absent was any place-level or zone-level state and any copy. The row is now C on both. |
 | MD287–MD293 | **Re-graded N ×7 → W ×7.** See the row. |
 | MD228 · MD294 · MD173 | **Re-graded N → W.** Each says in its own cell which part closed and which did not. |
@@ -2505,7 +2505,7 @@ weak test.
    - `docs/architecture/census-highlights-memories.md:469` cites the My World
      "gems" bucket at line 1091 of MediaProjectionService; it is now at
      `artifacts/api-server/src/services/media/MediaProjectionService.ts:1378#key: "gems"`.
-   - `docs/architecture/census-telegraph.md:301` and `docs/architecture/census-telegraph.md:1119`
+   - `docs/architecture/census-telegraph.md:346` and `docs/architecture/census-telegraph.md:1164`
      both cite the owner-scoped table read at line 1214; it is now at
      `artifacts/api-server/src/services/media/MediaProjectionService.ts:1502#.from(table)`.
    - `docs/architecture/census-trust.md:738` cites the viewer profile select at
@@ -2631,7 +2631,7 @@ each passing its own entry-context kind. Rows: MD89, MD90, MD91, MD92.
 | MD188 | A `source_type`/provenance term (with MD8). Author trust is not asset provenance. |
 | MD194 | A predicted real-world action, not a per-candidate-kind constant. `actionability 0.9` is a genuine partial and is a property of the kind. |
 | MD195 · MD196 · MD198 | An experience-fit term, a connection-usefulness term, a narrative-value term. None exists under any name. |
-| MD197 | A call site for `MediaContributorReputationService` inside `services/ranking/`. The scorer exists and nothing reads it. |
+| MD197 | A call site for `MediaContributorReputationService` inside `services/ranking/`. **CORRECTED 2026-09-26 by §18:** "nothing reads it" was true when written and is now FALSE — `routes/mediaViewRequest.ts:26#import` reads `readContributorReputation`. The row still does not move, because the RED WHEN is a RANKING call site and there is still none under `services/ranking/`; what changed is that the scorer is no longer unread, only unranked. |
 | MD207 | A fourth reputation dimension reading journey history. `computeContributorReputation` computes three. |
 | MD348 · MD356 | A ranking stage between projection and client in the World-shell pipeline. `buildWorldProjection` sorts zones by item count and `buildTimelineProjection` by capture time; neither is a ranker. |
 | MD435 | Media ceasing to own a second ranker, or §48 conceding it. The ownership line is crossed in the direction §48 forbids, and that is a design decision, not a bug. |
@@ -3159,3 +3159,74 @@ landed on a bare `}`), which is what `check:citation-targets` counts; all five w
 repointed by reading the claim and anchored so `check:doc-citations` holds them from
 here. The file is named in
 `artifacts/api-server/src/scripts/CENSUS_STALENESS_ACKNOWLEDGED.json` with this argument.
+
+---
+
+## 18. Re-measured 2026-09-26 — two `N` rows hold, and one of them stopped being unread
+
+**Re-measured, not acknowledged.** `check:census-freshness` named two counted
+files changed since `1fe72289b` and not covered:
+`lib/crowdFlowProducer.ts` (+62 / −26 net) and
+`services/media/MediaContributorReputationService.ts` (+60).
+
+**NO VERDICT MOVES.** Both rows that name those files were re-executed against
+the tree rather than reasoned about.
+
+### 18.1 MD162 — still `N`, and the producer moved away from Media, not toward it
+
+The row's test is whether anything in `services/media/` or `lib/media/`
+references the crowd flow. Re-run today:
+
+```
+grep -rniE "crowdflow|crowd_flow" src/services/media/ src/lib/media/   →  no match
+```
+
+Still `N`. The diff to `crowdFlowProducer.ts` adds `NextStopFamilyRefusal`
+(`"read_failed" | "consent_unreadable"`) — a refusal vocabulary for the
+next-stop signal family. That is the producer getting stricter about when it
+may report, which if anything makes MD162's RED WHEN harder to reach, not
+easier: §14.2 already records that Media perspectives cannot themselves become
+a signal family, because a photograph declares no origin zone.
+
+### 18.2 MD197 — still `N` on the RED WHEN, and its evidence clause had gone false
+
+The RED WHEN is *a call site inside `services/ranking/`*. Re-run today:
+
+```
+grep -rn "MediaContributorReputation" src/services/ranking/   →  no match
+```
+
+Still `N`. But §14's follow-up clause said *"The scorer exists and nothing
+reads it"*, and that is no longer true: `routes/mediaViewRequest.ts:26#import`
+imports `readContributorReputation`. The scorer is **unranked, not unread**,
+and the row is corrected in place to say so. The verdict is untouched — a view
+request is not a ranking input — but a reader checking MD197 by asking "does
+anything read this?" would have got the wrong answer from the census.
+
+### 18.3 What the reputation diff actually is, and the silent wrong answer it prevents
+
+It is not media work. It is 3002 fallout, and worth recording here because this
+census owns the file.
+
+Since 3002 a contributor's own rows are keyed by a **rotating token** written by
+a `BEFORE INSERT` trigger, not by their account id. So
+`.eq("actor_id", contributorId)` matches nothing once 3002 lands — and because
+an empty filter is not an error, this service's `Promise.allSettled` fail-open
+would have turned that into **"this contributor has never contributed", for
+everyone**, silently. A wrong answer, not a failure.
+
+The service now resolves the contributor's own token set first, through
+`lib/intelConsent.readOwnContributorIdentities`, which runs account → tokens —
+the safe direction — over 3310's `intel_contributor_tokens_for_actor`. An
+identity that cannot be resolved yields the EMPTY reputation, logged at warn,
+never an inflated one, and no account id is received or derived.
+
+Two consequences worth stating: this is a **real production consumer of the
+3310 bridge** (the other is `lib/intelEvidenceCapture`), so 3310 is wired rather
+than declared; and this hazard is a member of the class the cutover runbook
+exists for — old code against new schema failing *quietly* rather than loudly.
+
+### 18.4 MOVES NOTHING
+
+Totals unchanged. MD162 and MD197 both stay `N`, on tests re-executed today
+rather than carried forward.

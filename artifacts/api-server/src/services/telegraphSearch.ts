@@ -46,7 +46,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { logger as rootLogger } from "../lib/logger.js";
-import { historyBoundEnabled, membershipSelect, visibleFromOf } from "./groupChatHistoryBound.js";
+import { applyHistoryWindow, historyBoundEnabled, membershipSelect, visibleFromOf, withinWindow } from "./groupChatHistoryBound.js";
 // §21's unsent exclusion, which needs migration 2810's column and must not name
 // it on a database that has not run it.
 import { applyLifecycleExclusion, messageKernelEnabled } from "./telegraphMessageKernel.js";
@@ -107,9 +107,14 @@ export async function authorizedConversationScope(
   conversationId?: string | null,
 ): Promise<AuthorizedScope> {
   const boundOn = await historyBoundEnabled(sc);
-  let q = sc
-    .from("message_thread_members")
-    .select(membershipSelect("thread_id", boundOn))
+  // Two LITERAL select lists rather than one computed list. The flag gate is
+  // unchanged: a database without 2400 is still never asked for the column.
+  // What changes is that `check:write-path-columns` can resolve both branches
+  // and verify them against the live schema, so this site no longer needs the
+  // UNRESOLVED_ALLOWLIST entry it used to carry.
+  let q = (boundOn
+    ? sc.from("message_thread_members").select("thread_id, visible_from_at")
+    : sc.from("message_thread_members").select("thread_id"))
     .eq("user_id", viewerId)
     .is("left_at", null);
   if (conversationId) q = q.eq("thread_id", conversationId);
@@ -155,6 +160,7 @@ async function runQuery(
   threadIds: string[],
   visibleFrom: string | null,
   kernelOn: boolean,
+  viewerId: string,
 ): Promise<{ rows: any[]; failed: boolean }> {
   if (threadIds.length === 0) return { rows: [], failed: false };
   let q = sc
@@ -169,13 +175,27 @@ async function runQuery(
   // (census T276). Off by default and, when off, the query does not NAME
   // unsent_at — so a database without 2810 is never asked for it.
   q = applyLifecycleExclusion(q, kernelOn);
-  if (visibleFrom) q = q.gte("created_at", visibleFrom);
+  // Q6, AND THE REASON THIS SITE IS THE PROOF THAT THE SQL HALF MATTERS: until
+  // this change §21 search called `withinWindow` ZERO times, anywhere in the
+  // file. This `.gte` was the whole bound. A carve-out written only in the
+  // predicate would have left search byte-for-byte unchanged — a rejoined
+  // member would still have been unable to find their own earlier messages. `deleted_at IS NULL`, the §21 unsent exclusion
+  // and the thread scope stay AND-ed outside the relaxed clause.
+  q = applyHistoryWindow(q, visibleFrom, viewerId);
   const { data, error } = await q;
   if (error) {
     log.warn({ err: error, threads: threadIds.length }, "search query failed for a scope slice");
     return { rows: [], failed: true };
   }
-  return { rows: (data as any[]) ?? [], failed: false };
+  // THE SECOND LAYER, which §21 search did not have because a single-clause
+  // `created_at >= bound` already excluded a row with no timestamp. The relaxed
+  // clause's `sender_id.eq.<caller>` half does not, so the predicate — which
+  // refuses an absent or unparseable `created_at` BEFORE it consults the Q6
+  // exception — is applied here too. It also reconciles the two ISO spellings
+  // at the boundary instant, exactly as every other windowed read does.
+  const rows = ((data as any[]) ?? []).filter((r) =>
+    withinWindow(r.created_at, visibleFrom, { senderId: r.sender_id, viewerId }));
+  return { rows, failed: false };
 }
 
 /**
@@ -201,8 +221,8 @@ export async function searchConversations(
 
   const kernelOn = await messageKernelEnabled(sc);
   const slices: Array<Promise<{ rows: any[]; failed: boolean }>> = [
-    runQuery(sc, term, scope.unbounded, null, kernelOn),
-    ...scope.bounded.map((b) => runQuery(sc, term, [b.threadId], b.visibleFrom, kernelOn)),
+    runQuery(sc, term, scope.unbounded, null, kernelOn, viewerId),
+    ...scope.bounded.map((b) => runQuery(sc, term, [b.threadId], b.visibleFrom, kernelOn, viewerId)),
   ];
   const settled = await Promise.all(slices);
   const rows: any[] = [];

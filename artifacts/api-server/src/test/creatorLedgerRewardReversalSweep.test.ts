@@ -72,12 +72,20 @@ function makeDb(seed: Seed, opts: { hideReversalsFromReads?: boolean } = {}) {
     const eqs: [string, any][] = [];
     const gts: [string, any][] = [];
     const ins: [string, any[]][] = [];
+    // `.is(col, null)` — PostgREST's IS NULL. Needed since the reward pass began
+    // resolving payees through lib/intelConsent, which asks the consent table
+    // for `withdrawn_at IS NULL` rather than filtering afterwards. Without it
+    // the builder threw, the payee map came back empty, and NOTHING was booked —
+    // so every case here failed at its own setup assertion rather than on the
+    // reversal behaviour it exists to test.
+    const iss: [string, any][] = [];
 
     function readRows() {
       let rows = tables[table] ?? [];
       for (const [c, v] of eqs) rows = rows.filter((r) => r[c] === v);
       for (const [c, v] of gts) rows = rows.filter((r) => r[c] > v);
       for (const [c, vals] of ins) rows = rows.filter((r) => vals.includes(r[c]));
+      for (const [c, v] of iss) rows = rows.filter((r) => (v === null ? r[c] == null : r[c] === v));
       return rows;
     }
 
@@ -121,6 +129,7 @@ function makeDb(seed: Seed, opts: { hideReversalsFromReads?: boolean } = {}) {
       eq(c: string, v: any) { eqs.push([c, v]); return b; },
       gt(c: string, v: any) { gts.push([c, v]); return b; },
       in(c: string, vals: any[]) { ins.push([c, vals]); return b; },
+      is(c: string, v: any) { iss.push([c, v]); return b; },
       limit() { return b; },
       maybeSingle() { single = true; return Promise.resolve(run()); },
       single() { single = true; return Promise.resolve(run()); },

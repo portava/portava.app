@@ -248,9 +248,16 @@ describe("RLS-03 — new member reads pre-membership history → DENY (flag_gate
     assert.equal(r.status, 200);
     const ids = (r.body.messages as any[]).map((m) => m.id);
     assert.deepEqual(ids.sort(), [M_NEW], "only the in-window message");
+    // The bound is still IN the query — the page limit takes the NEWEST rows,
+    // so a filter alone would spend the budget on rows the caller may not see.
+    // Its SPELLING changed with owner decision Q6: the window now rides in a
+    // two-clause `or=` group, so asserting on a plain `.gte` would silently
+    // stop checking anything. Asserted WHOLE, which is stricter: the only
+    // thing ORed in beside the bound is `sender_id = <this caller>`.
     assert.ok(
-      c._observed.gte.some((g) => g.table === "messages" && g.col === "created_at" && g.val === BOUND),
-      "the window is applied IN the query, so pagination cannot walk past it",
+      c._observed.or.some((o) => o.table === "messages"
+        && o.expr === `created_at.gte.${BOUND},sender_id.eq.${BOB}`),
+      `the window is applied IN the query — observed ${JSON.stringify(c._observed.or)}`,
     );
   });
 

@@ -65,8 +65,19 @@ export const SAFETY_REVIEW_POLICY_REF = "safetyPolicy.v1";
  */
 export type ReviewerRole = string | null | undefined;
 
+/**
+ * The roles the safety capability admits, named once.
+ *
+ * The route that carries a review into production (routes/adminSafetyCandidates
+ * .ts, POST /api/admin/intel/safety-review) passes THIS array to requireAdmin,
+ * so the door and the service cannot drift apart: widening or narrowing the
+ * capability is one edit here, and the service still re-checks it below rather
+ * than trusting that the door did.
+ */
+export const SAFETY_REVIEWER_ROLES = ["admin", "owner"] as const;
+
 export function canReviewSafety(role: ReviewerRole): boolean {
-  return role === "admin" || role === "owner";
+  return typeof role === "string" && (SAFETY_REVIEWER_ROLES as readonly string[]).includes(role);
 }
 
 export type SafetyReviewAction = "approve" | "reject" | "retract" | "reconfirm" | "supersede";

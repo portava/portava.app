@@ -1,0 +1,593 @@
+# Production public-schema table snapshot
+# project ref : ajrurzioarfkagpuxfnb (travel-buddy, PRODUCTION)
+# captured    : 2026-09-22 17:17 UTC, read-only, via the Supabase MCP execute_sql channel
+# count       : 484 BASE TABLEs in schema public
+#
+# RE-CAPTURED, AND ZERO TABLES CHANGED. This is not a rename of the 09-21 file.
+# Production was read again and the base-table list came back IDENTICAL: 484
+# names, and md5(string_agg(table_name, E'\n' ORDER BY table_name COLLATE "C"))
+# = 3e5b18305e575f6e65582a725c6106aa computed BY PRODUCTION, matching the same
+# digest computed over the 09-21 file's own names. The date moves; the data does
+# not.
+#
+# WHY IT HAD TO MOVE, because a capture nobody needed would not be worth a file.
+# productionDriftExtraction.test.ts asserts an invariant over appliedAfterSnapshot:
+# an excuse exists exactly when the ledger records the declaring migration with a
+# version AFTER this file's capture date. Three applies were recorded on 09-22 --
+# 2400 and 2966 at 20260922054229, 2971 at 20260922155706 -- so with a 09-21
+# capture date three recorded applies postdated the snapshot while the excuse set
+# was empty, and the test failed exactly as it should have:
+#
+#   the excuse set is 0 but 3 recorded applies postdate the 20260921 capture --
+#   an empty excuse set is only honest when nothing was applied after the snapshot
+#
+# THE SECOND PLACE THAT NAMES A SNAPSHOT. snapshots/current.ts exists precisely so
+# a refresh is ONE edit, and its header records the 2026-09-16 incident where a
+# second reader was left on an older capture. This file is governed by a DIFFERENT
+# constant -- PRODUCTION_SNAPSHOT in src/scripts/checkProductionDrift.ts -- which
+# current.ts does not reach. Moving one did not move the other, and the same class
+# of defect recurred in the one place current.ts was never given authority over.
+#
+# WHY NO TABLE MOVED even though three migrations were applied: 2971 seeds a
+# feature_flags ROW and creates nothing; 2400/2966 add a COLUMN to
+# message_thread_members and create public.telegraph_member_visibility_window,
+# which is a VIEW and so is outside this file's BASE TABLE filter. The
+# schema-capability snapshot counts views and records all three; this one counts
+# base tables and correctly records none of them.
+#
+# The 09-21 header follows, kept verbatim because its findings are historical
+# statements about the captures that produced them.
+#
+# Production public-schema table snapshot
+# project ref : ajrurzioarfkagpuxfnb (travel-buddy, PRODUCTION)
+# captured    : 2026-09-21 12:12 UTC, read-only, via the Supabase MCP execute_sql channel
+# count       : 484 BASE TABLEs in schema public
+#
+# REFRESHED for 2963 and 2964, applied to production 2026-09-21 07:42-07:43 UTC
+# from merged main fd0b3a6f4, both already applied and certified on portava-ci
+# by the merge of PR #511. SEVEN tables are new since the 2026-09-17 capture and
+# only ONE of them is that apply, which is the finding this refresh turned up:
+#
+#   ONE IS THIS CHANGE: map_telemetry_disabled_discards (2964) — the hourly,
+#   identity-free counter that replaced the viewer-linked map_telemetry_drops
+#   row routes/mapTelemetry.ts wrote while map_telemetry_enabled was FALSE.
+#   2963 added NO table: it repoints the memory projector's PLACE lane at the
+#   union of the two tables saves actually land in, which is a function body and
+#   invisible to a table census. A table list is not a migration record, and
+#   this one does not pretend to be.
+#
+#   SIX ARE SOMEONE ELSE'S APPLY, four days unrecorded: trails, content_trails,
+#   trail_edges, trail_follows, trail_health_snapshots and trail_reports — the
+#   2910 Discovery Trails block, applied to production on 2026-09-20 19:56 UTC
+#   and never written into src/lib/capability/production-applied-migrations.json.
+#   All six sat on KNOWN_PRODUCTION_GAPS in src/scripts/checkProductionDrift.ts
+#   as "unapplied ... only because this branch is unmerged", which had stopped
+#   being true. They are struck off in the same change as this capture, because
+#   that ratchet fails in BOTH directions and an entry nobody prunes stops being
+#   read.
+#
+#   HOW THE SIX WERE FOUND, since it was not by any check: by diffing this
+#   capture against the 2026-09-17 one. The staleness tripwire in
+#   checkFlagSchemaPrerequisites only fires when production-applied-migrations.json
+#   is AHEAD of the snapshot watermark, so a record that LAGS reality is exactly
+#   the case it cannot see. That is a real gap in the tripwire, not a slip by
+#   whoever applied 2910, and it is written here rather than quietly patched.
+#
+# trip_commitment_recurrences (2797) is still NOT here: it is rehearsed on
+# portava-ci and has NOT been applied to production. It stays on the ratchet.
+#
+# REFRESHED AGAIN 2026-09-21 10:55 UTC, in the same change that applied 2220,
+# 2221 and 2258 to production. ONE table is new since the 07:55 capture and it
+# is this change: input_selection_history (2258, the §35 selection-memory
+# table). The other two migrations add no table at all -- 2220 adds a GENERATED
+# column to canonical_locations and a function, 2221 adds one feature_flags
+# row -- which is again the point the 07:42 refresh made: a table list is not a
+# migration record and does not pretend to be. The companion snapshot
+# src/lib/capability/snapshots/20260921-production-schema.json moved in the
+# same change and carries the column- and function-level delta this file
+# cannot see; its three digests were verified against production's own.
+#
+# Two migrations applied by other sessions between the two captures --
+# 2965 (08:52) and 2976 (10:11) -- add NO table and are invisible here. Both
+# were missing from production-applied-migrations.json and are added there in
+# this change; that omission, not their content, is why the staleness tripwire
+# had not already fired.
+#
+# AND ONCE MORE at 11:10 UTC, for 2217_protected_locations.sql: one table,
+# protected_zones. It SHIPS EMPTY -- 0 rows, RLS on with ZERO policies, every
+# grant revoked from anon and authenticated, only service_role -- so nothing on
+# the map changes. It is here because five map flags name it as their
+# prerequisite in check:flag-schema-prerequisites, and because
+# 10_Database_Architecture.md section 8 cites 2217 as THE canonical
+# deny-by-default RLS + grant pattern that this database had no instance of.
+#
+# AND AT 12:12 UTC, for 2950_input_assistance_telemetry_events.sql: the section-44
+# serve log. It ships EMPTY and carries NO account id -- every section-57 metric
+# over it is a rate or a quantile -- with RLS on, zero policies, anon and
+# authenticated holding nothing, and 8 CHECK constraints of which one refuses
+# thirteen raw-text prop keys outright. All thirteen were probed and refused
+# after the apply, independently of the migration's own postconditions.
+activity_events
+admin_access_log
+age_limit_audit_log
+airport_fact_observations
+airport_profiles
+appeals
+availability_nudges
+availability_windows
+blocks
+buddy_availability_exceptions
+buddy_booking_change_requests
+buddy_booking_events
+buddy_services
+call_moderation_actions
+call_participants
+call_preferences
+call_sessions
+canonical_events
+canonical_locations
+circle_age_settings
+circle_audit_events
+circle_checkins
+circle_context_settings
+circle_invites
+circle_meeting_points
+circle_member_visibility_overrides
+circle_memberships
+circle_presence
+circle_visibility_settings
+circles
+city_country_geocode_cache
+city_timezones
+close_friends
+collection_items
+collections
+comment_likes
+compass_abuse_flags
+compass_active_user_badges
+compass_active_user_events
+compass_active_user_scores
+compass_admin_actions
+compass_admin_weight_sets
+compass_algorithm_versions
+compass_analytics
+compass_analytics_events
+compass_cache_invalidations
+compass_category_reputation
+compass_city_confidence
+compass_city_models
+compass_city_reputation
+compass_content_freshness
+compass_conversation_messages
+compass_conversations
+compass_eligibility_logs
+compass_explanation_reasons
+compass_feed_cache
+compass_feed_sections
+compass_feedback
+compass_feedback_events
+compass_frontload_rules
+compass_graph_edges
+compass_graph_nodes
+compass_intent_modes
+compass_live_sessions
+compass_media_preload_manifest
+compass_memories
+compass_notification_decisions
+compass_outcome_events
+compass_preload_events
+compass_preload_queue
+compass_privacy_guard_logs
+compass_recent_context
+compass_recommendation_scores
+compass_rollbacks
+compass_safety_filter_logs
+compass_sense_nudges
+compass_sense_settings
+compass_served_recommendations
+compass_settings
+compass_suspension_requests
+compass_testing_scenarios
+compass_user_context_snapshots
+compass_user_navigation_patterns
+compass_user_preferences
+compass_user_profiles
+compass_visibility_boosts
+compass_visibility_cooldowns
+content_distribution_stats
+content_stamps
+content_trails
+content_translations
+country_essentials
+country_metadata
+creator_activity_scores
+daily_briefs
+delayed_post_location_events
+destination_identities
+devices
+discovery_cache
+discovery_geocode_cache
+discovery_place_photos
+discovery_place_reports
+discovery_place_saves
+discovery_places
+discovery_shadow_serves
+entry_requirements
+event_activity_log
+event_agenda_items
+event_attendee_states
+event_attendees
+event_cohosts
+event_drafts
+event_invites
+event_join_requests
+event_media
+event_posts
+event_reminders
+event_reports
+event_reviews
+event_roles
+event_rsvps
+event_saves
+event_share_links
+event_updates
+event_waitlist
+events
+external_place_references
+feature_flag_audit_log
+feature_flags
+freshness_policies
+friend_requests
+fsq_city_ingests
+fsq_places
+fx_rates
+generated_visuals
+geo_zones
+geofence_admin_settings
+hashtag_reports
+hashtag_usage
+hashtags
+hidden_gem_contributions
+hidden_gem_reports
+hidden_gem_saves
+hidden_gem_verifications
+hidden_gem_visits
+hidden_gems
+highlight_likes
+highlight_projection_policies
+highlight_replies
+highlight_reports
+highlight_resurfacing_preferences
+highlight_revocation_log
+highlight_sources
+highlight_views
+highlights
+identity_verifications
+input_assistance_telemetry_events
+input_selection_history
+intel_claims
+intel_confirmations
+intel_contribution_consent
+intel_coverage_snapshots
+intel_evidence
+intel_live_promoted_scopes
+intel_mission_candidates
+intel_observations
+intel_presence_verifications
+intel_reward_ledger
+intel_sensing_credentials
+intel_sensing_device_eligibility
+intel_state_snapshot_versions
+intel_state_snapshots
+job_health
+journey_observations
+journey_retention_health
+journey_revocation_jobs
+journey_segment_revisions
+journey_shadow_cohort_assignments
+journey_shadow_ground_truth
+journey_shadow_qa_reports
+journey_shadow_session_issuances
+journey_shadow_stages
+key_packages
+layover_crew_members
+layover_crews
+layover_events
+layover_external_events
+layover_plan_stops
+layover_recommendations
+layover_sessions
+live_place_recap_chapters
+live_place_recap_snapshots
+live_place_recap_sources
+live_place_recap_versions
+live_place_recaps
+local_guide_contributions
+local_guide_profiles
+locate_friends_audit
+locate_friends_members
+locate_friends_positions
+locate_friends_sessions
+location_preferences
+location_sessions
+location_snapshots
+location_trust_events
+map_pins
+map_telemetry_disabled_discards
+map_telemetry_drops
+map_telemetry_events
+media_asset_lifecycle_events
+media_assets
+media_attachments
+media_dedup_groups
+media_dedup_memberships
+media_events
+media_intent_signals
+media_processing_attempts
+media_ranking_snapshots
+media_stamp_reactions
+meetup_invites
+meetup_time_options
+meetup_time_votes
+meetups
+memories
+memory_command_audit
+memory_command_receipts
+memory_derivative_registry
+memory_domain_events
+memory_event_outbox
+memory_events
+memory_feedback
+memory_items
+memory_likes
+memory_policy
+memory_projections
+memory_saves
+memory_tags
+message_reports
+message_requests
+message_thread_members
+message_threads
+message_translations
+messages
+moderation_actions
+moderation_reports
+neighborhood_areas
+notification_category_preferences
+notification_delivery_attempts
+notification_devices
+notification_preferences
+notifications
+passport_contribution_events
+passport_memories
+passport_postcards
+passport_stamps
+passport_stamps_gps
+passport_travel_dna_prefs
+passport_visibility_preferences
+phone_verification_challenges
+place_ai_summaries
+place_best_of
+place_cache_invalidation_queue
+place_coverage_buckets
+place_days
+place_image_reports
+place_living_cache
+place_merge_log
+place_mismatch_reports
+place_profiles
+place_top_contributors
+place_votes
+places
+plan_attendance_events
+plan_checkins
+plan_editors
+plan_geofences
+portava_featured
+post_bucket_ledger
+post_edits
+post_event_links
+post_hides
+post_impressions
+post_media
+post_media_moderation_ledger
+post_reactions
+post_saves
+post_shares
+posts
+posts_comments
+posts_likes
+price_baselines
+profile_emergency_contacts
+profile_privacy_settings
+profile_views
+profiles
+protected_zones
+pulse_geo_tags
+push_retry_queue
+quick_availability_status
+rank_events
+ranking_config
+ranking_config_audit_log
+ranking_debug_samples
+rent_buddy_addons
+rent_buddy_admin_access_logs
+rent_buddy_admin_actions
+rent_buddy_admin_response_templates
+rent_buddy_applications
+rent_buddy_availability
+rent_buddy_beta_access
+rent_buddy_booking_addons
+rent_buddy_booking_extensions
+rent_buddy_bookings
+rent_buddy_city_restrictions
+rent_buddy_city_rollouts
+rent_buddy_disputes
+rent_buddy_earnings_ledger
+rent_buddy_emergency_contacts_snapshot
+rent_buddy_fee_rules
+rent_buddy_global_controls
+rent_buddy_launch_audit_logs
+rent_buddy_launch_checklists
+rent_buddy_launch_controls
+rent_buddy_marketplace_analytics_events
+rent_buddy_match_preferences
+rent_buddy_match_scores
+rent_buddy_offers
+rent_buddy_package_stops
+rent_buddy_packages
+rent_buddy_payouts
+rent_buddy_policy_flags
+rent_buddy_pricing_rules
+rent_buddy_profiles
+rent_buddy_requests
+rent_buddy_review_notes
+rent_buddy_reviews
+rent_buddy_route_change_requests
+rent_buddy_route_stops
+rent_buddy_safety_checkins
+rent_buddy_safety_events
+rent_buddy_saved
+rent_buddy_search_events
+rent_buddy_support_reports
+rent_buddy_tag_consents
+rent_buddy_tips
+rent_buddy_training_checklist
+rent_buddy_user_limits
+rent_buddy_waitlist
+report_evidence
+reports
+reviews
+route_legs
+route_plan_members
+route_plans
+route_stops
+safe_return_contacts
+safe_return_events
+safe_return_live_shares
+safe_return_sessions
+saved_messages
+saved_places
+schema_migration_ledger
+search_history
+sensing_anon_contributions
+sensing_contribution_sessions
+shared_moment_audit_events
+shared_moment_contributions
+shared_moment_memberships
+shared_moment_suggestions
+shared_moments
+spatial_ref_sys
+stamp_admin_audit_log
+stamp_admires
+stamp_artwork_definitions
+stamp_artwork_versions
+stamp_award_events
+stamp_campaigns
+stamp_collection_items
+stamp_collections
+stamp_definitions
+stamp_generation_queue
+stamp_milestones
+stamp_progress
+stamp_reconciliation_log
+stories
+story_reactions
+story_replies
+story_views
+tags
+telegraph_chat_suggestions
+thread_reports
+trail_edges
+trail_follows
+trail_health_snapshots
+trail_reports
+trails
+traveler_passports
+trip_activity_log
+trip_area_preferences
+trip_autopilot_proposals
+trip_autopilot_settings
+trip_availability
+trip_budget
+trip_checklist_items
+trip_checklists
+trip_command_receipts
+trip_commitments
+trip_crew_location_events
+trip_crew_location_preferences
+trip_crew_location_sessions
+trip_decision_tasks
+trip_decisions
+trip_destinations
+trip_disruptions
+trip_documents
+trip_events
+trip_goals
+trip_invite_link_attempts
+trip_invite_links
+trip_join_requests
+trip_legs
+trip_map_projection_applied
+trip_map_projections
+trip_meeting_checkpoint_participants
+trip_meeting_checkpoints
+trip_members
+trip_notes
+trip_outbox
+trip_outcomes
+trip_plan_items
+trip_plan_participants
+trip_presence
+trip_proposal_votes
+trip_proposals
+trip_readiness_items
+trip_readiness_snapshots
+trip_reminders
+trip_reservation_events
+trip_reservations
+trip_risks
+trip_saved_places
+trip_snapshots
+trip_stages
+trip_subgroup_members
+trip_subgroups
+trip_transport_policies
+trip_transport_segments
+trip_traveler_passports
+trips
+trust_admin_actions
+trust_caps
+trust_events
+trust_profiles
+trust_restrictions
+trust_reviews
+trust_settings
+universal_stamp_catalog
+user_account_states
+user_availability
+user_deletion_requests
+user_follows
+user_friendships
+user_hashtag_follows
+user_interaction_cooldowns
+user_location_preferences
+user_location_privacy
+user_location_state
+user_locations
+user_message_settings
+user_mutes
+user_preference_events
+user_preference_profiles
+user_privacy_settings
+user_recent_places
+user_restrictions
+user_saves
+user_stamp_showcase
+user_stamps
+user_suggestion_seen
+user_trust_scores
+viewer_creator_fatigue
+wall_session_intents
+weather_cache
+wishlist_places

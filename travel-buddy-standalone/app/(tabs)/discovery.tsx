@@ -102,7 +102,12 @@ function DiscoveryHubScreen() {
   const { isAuthed } = useSession();
   const { open: openPlanPicker } = usePlanPicker();
   const { locationState, requestLocation, showCityPicker, openCityPicker, closeCityPicker, setManualCity } = useLocationContext();
-  const { users: highlightUsers, sessionViewedIds, markSessionViewed } = useFollowingHighlights();
+  const {
+    users: highlightUsers, sessionViewedIds, markSessionViewed,
+    // §28.11: the server refuses this feed rather than reporting it empty, and
+    // the tray says so rather than vanishing. See FollowingHighlightsStrip.
+    unreadable: highlightsUnreadable, refresh: refreshHighlights,
+  } = useFollowingHighlights();
   const currentCity = locationState.place.city ?? null;
 
   const [trendingHashtags, setTrendingHashtags] = useState<TrendingHashtag[]>([]);
@@ -1017,6 +1022,8 @@ function DiscoveryHubScreen() {
                 users={highlightUsers}
                 sessionViewedIds={sessionViewedIds}
                 onMarkViewed={markSessionViewed}
+                unreadable={highlightsUnreadable}
+                onRetry={refreshHighlights}
               />
             </View>
           )}

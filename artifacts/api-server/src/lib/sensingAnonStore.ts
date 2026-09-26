@@ -20,10 +20,10 @@
  * product is still made by intel_observations -> intel_claims ->
  * intel_state_snapshots, which this file does not import, read or write.
  *
- * ── INERT ────────────────────────────────────────────────────────────────────
- * Nothing outside this module's tests imports it. There is no route, scheduler,
- * job or feature flag behind it. It is a contract, waiting for a decision to use
- * it.
+ * ── NO LONGER INERT ─────────────────────────────────────────────────────────
+ * This said "there is no route ... a contract, waiting for a decision to use it".
+ * The decision was taken (SENSING_AUTH_POSTURE, 2026-09-16) and the store now
+ * has exactly one HTTP writer. See "── Writer ──" below for what changed.
  *
  * ══════════════════════════════════════════════════════════════════════════════
  * THE ROTATING ID, AND HOW REVOCATION WORKS WITHOUT AN IDENTITY
@@ -286,10 +286,131 @@ export function sensingCohortKey(
 
 // ── Row and input shapes ─────────────────────────────────────────────────────
 
+// ── The device's reduced features (3312; census-sensing S21/S28/S42/S51/S52) ──
+
+export const SENSING_MOVEMENT_STATES = ["stationary", "pedestrian", "vehicular", "unknown"] as const;
+export const SENSING_TRANSITIONS = ["arrival", "departure", "none", "unknown"] as const;
+export const SENSING_TRANSPORT_MODES = ["stationary", "pedestrian", "cycling", "vehicular"] as const;
+export const SENSING_DENSITY_BUCKETS = ["unknown", "sparse", "moderate", "busy", "packed"] as const;
+export const SENSING_ACOUSTIC_RHYTHMS = ["none", "irregular", "steady", "strong"] as const;
+
+export type SensingMovementState = (typeof SENSING_MOVEMENT_STATES)[number];
+export type SensingTransition = (typeof SENSING_TRANSITIONS)[number];
+export type SensingTransportMode = (typeof SENSING_TRANSPORT_MODES)[number];
+export type SensingDensityBucket = (typeof SENSING_DENSITY_BUCKETS)[number];
+export type SensingAcousticRhythm = (typeof SENSING_ACOUSTIC_RHYTHMS)[number];
+
+/**
+ * What the device's on-device reduction produced for one window, in the wire
+ * contract's spelling (docs/contracts/sensing-contribution-wire-v1.json).
+ * Every number is an integer ordinal or a centi (0..100); every string is a
+ * closed enum; nothing here can hold a coordinate, a sample or an instant.
+ * The acoustic pair is present ONLY when the device held the separate
+ * permission — the client refuses to attach it otherwise, and the store
+ * keeps energy and rhythm together (3312's pair CHECK).
+ */
+export interface SensingContributionFeatures {
+  zonePrecision: number;
+  placeCandidate: string | null;
+  movementState: SensingMovementState;
+  motionEnergyCenti: number | null;
+  periodicityCenti: number | null;
+  dwellBucket: number | null;
+  transition: SensingTransition;
+  transportMode: SensingTransportMode | null;
+  transportModeCenti: number | null;
+  density: SensingDensityBucket;
+  boundedMovement: boolean | null;
+  sensorHealthCenti: number;
+  acoustic?: {
+    energyBucket: number;
+    rhythmBucket: SensingAcousticRhythm;
+    confidenceCenti: number;
+  };
+}
+
+/** The 3312 columns, in the order the migration adds them. Exported for the tests and the select. */
+export const SENSING_FEATURE_COLUMNS = [
+  "zone_precision", "place_candidate", "movement_class", "motion_energy_centi", "periodicity_centi",
+  "dwell_bucket", "transition_kind", "transport_mode", "transport_mode_centi", "density_bucket",
+  "bounded_movement", "sensor_health_centi", "acoustic_energy_bucket", "acoustic_rhythm", "acoustic_health_centi",
+] as const;
+
+/** The row's feature half (3312). All optional: a legacy-shape contribution carries none. */
+export type SensingContributionFeatureColumns = Pick<
+  SensingContributionRow,
+  (typeof SENSING_FEATURE_COLUMNS)[number]
+>;
+
+function intIn(v: unknown, lo: number, hi: number): v is number {
+  return typeof v === "number" && Number.isInteger(v) && v >= lo && v <= hi;
+}
+function nullOr<T>(v: unknown, ok: (x: unknown) => x is T): v is T | null {
+  return v === null || v === undefined || ok(v);
+}
+function oneOf<T extends string>(list: readonly T[]): (x: unknown) => x is T {
+  return (x: unknown): x is T => typeof x === "string" && (list as readonly string[]).includes(x);
+}
+
+/**
+ * Validate the device's features and spell them as 3312's columns. PURE.
+ * Refuses (named) rather than coerces: a value outside its band is a client
+ * defect or a forgery, and a store that "fixed" it would hide either.
+ */
+export function normalizeSensingFeatures(
+  f: SensingContributionFeatures | null | undefined,
+): { ok: true; columns: SensingContributionFeatureColumns } | { ok: false; error: string } {
+  if (f === null || f === undefined) return { ok: true, columns: {} };
+  if (typeof f !== "object") return { ok: false, error: "features_invalid" };
+  const bad = (what: string) => ({ ok: false as const, error: `features_invalid:${what}` });
+  if (!intIn(f.zonePrecision, 1, 12)) return bad("zonePrecision");
+  if (!(f.placeCandidate === null || (typeof f.placeCandidate === "string" && f.placeCandidate.length >= 1 && f.placeCandidate.length <= 128))) return bad("placeCandidate");
+  if (!oneOf(SENSING_MOVEMENT_STATES)(f.movementState)) return bad("movementState");
+  if (!nullOr(f.motionEnergyCenti, (x): x is number => intIn(x, 0, 100))) return bad("motionEnergyCenti");
+  if (!nullOr(f.periodicityCenti, (x): x is number => intIn(x, 0, 100))) return bad("periodicityCenti");
+  if (!nullOr(f.dwellBucket, (x): x is number => intIn(x, 0, 4))) return bad("dwellBucket");
+  if (!oneOf(SENSING_TRANSITIONS)(f.transition)) return bad("transition");
+  if (!nullOr(f.transportMode, oneOf(SENSING_TRANSPORT_MODES))) return bad("transportMode");
+  if (!nullOr(f.transportModeCenti, (x): x is number => intIn(x, 0, 100))) return bad("transportModeCenti");
+  if (!oneOf(SENSING_DENSITY_BUCKETS)(f.density)) return bad("density");
+  if (!(f.boundedMovement === null || typeof f.boundedMovement === "boolean")) return bad("boundedMovement");
+  if (!intIn(f.sensorHealthCenti, 0, 100)) return bad("sensorHealthCenti");
+  const columns: SensingContributionFeatureColumns = {
+    zone_precision: f.zonePrecision,
+    place_candidate: f.placeCandidate,
+    movement_class: f.movementState,
+    motion_energy_centi: f.motionEnergyCenti ?? null,
+    periodicity_centi: f.periodicityCenti ?? null,
+    dwell_bucket: f.dwellBucket ?? null,
+    transition_kind: f.transition,
+    transport_mode: f.transportMode ?? null,
+    transport_mode_centi: f.transportModeCenti ?? null,
+    density_bucket: f.density,
+    bounded_movement: f.boundedMovement ?? null,
+    sensor_health_centi: f.sensorHealthCenti,
+    acoustic_energy_bucket: null,
+    acoustic_rhythm: null,
+    acoustic_health_centi: null,
+  };
+  if (f.acoustic !== undefined) {
+    const a = f.acoustic;
+    if (!a || typeof a !== "object") return bad("acoustic");
+    if (!intIn(a.energyBucket, 0, 4)) return bad("acoustic.energyBucket");
+    if (!oneOf(SENSING_ACOUSTIC_RHYTHMS)(a.rhythmBucket)) return bad("acoustic.rhythmBucket");
+    if (!intIn(a.confidenceCenti, 0, 100)) return bad("acoustic.confidenceCenti");
+    columns.acoustic_energy_bucket = a.energyBucket;
+    columns.acoustic_rhythm = a.rhythmBucket;
+    columns.acoustic_health_centi = a.confidenceCenti;
+  }
+  return { ok: true, columns };
+}
+
 /**
  * One stored contribution. Note what is ABSENT and cannot be added without
  * failing 2315's postconditions: any account or device handle, and any of
  * status / claim_type / value / confidence / conflict / snapshot / review.
+ * The feature half (3312) is optional throughout — see
+ * SensingContributionFeatureColumns.
  */
 export interface SensingContributionRow {
   contributor_token: string;
@@ -302,6 +423,24 @@ export interface SensingContributionRow {
   reduction_version: number;
   created_at: string;
   expires_at: string;
+  // ── 3312: the device's reduced features, all optional ──────────────────────
+  zone_precision?: number | null;
+  place_candidate?: string | null;
+  movement_class?: SensingMovementState | null;
+  motion_energy_centi?: number | null;
+  periodicity_centi?: number | null;
+  dwell_bucket?: number | null;
+  transition_kind?: SensingTransition | null;
+  transport_mode?: SensingTransportMode | null;
+  transport_mode_centi?: number | null;
+  density_bucket?: SensingDensityBucket | null;
+  bounded_movement?: boolean | null;
+  sensor_health_centi?: number | null;
+  acoustic_energy_bucket?: number | null;
+  acoustic_rhythm?: SensingAcousticRhythm | null;
+  acoustic_health_centi?: number | null;
+  // ── 3315: this contribution's own consent to be shown to others ────────────
+  surface_permitted?: boolean;
 }
 
 /**
@@ -324,6 +463,15 @@ export interface SensingContributionInput {
   signalBucket: number;
   ttlSeconds?: number;
   reductionVersion?: number;
+  /** The device's nine features + density + acoustic pair (3312). Optional. */
+  features?: SensingContributionFeatures | null;
+  /**
+   * 3315 — true only when the contribution was ADMITTED with the `surface`
+   * scope, i.e. its contributor's recorded consent AND the policy in force both
+   * cover it (routes/sensingSession → routes/sensingIngest). Never a device's
+   * claim: the ingest derives it from the admitted scopes.
+   */
+  surfacePermitted?: boolean;
 }
 
 export type SensingBuildResult =
@@ -384,9 +532,16 @@ export function buildSensingContributionRow(
   }
   const zoneId = canon(input.zoneId);
 
+  const features = normalizeSensingFeatures(input.features);
+  if (!features.ok) return { ok: false, error: features.error };
+
   return {
     ok: true,
     row: {
+      ...features.columns,
+      // Omitted when false, so a legacy-shape insert (and a pre-3315 database)
+      // is unchanged; the column's own default is false.
+      ...(input.surfacePermitted === true ? { surface_permitted: true } : {}),
       contributor_token: deriveContributorToken(input.rotationEpoch, input.commitment),
       rotation_epoch: input.rotationEpoch,
       group_token: deriveGroupToken(input.rotationEpoch, input.groupTag ?? null),
@@ -410,6 +565,34 @@ export function isSensingContributionExpired(row: SensingContributionRow, nowMs:
 }
 
 // ── Writer ───────────────────────────────────────────────────────────────────
+//
+// THIS MODULE'S HEADER USED TO SAY THE STORE WAS INERT, and it was:
+//
+//     "Nothing outside this module's tests imports it. There is no route,
+//      scheduler, job or feature flag behind it. It is a contract, waiting for
+//      a decision to use it."
+//
+// The decision it was waiting for was SENSING_AUTH_POSTURE, and it was taken on
+// 2026-09-16 — `anonymous_capable`, Option B STAGED (lib/sensingAuthPosture.ts).
+// 2315, 2340 and 2480 were applied to production the same day
+// (src/lib/capability/production-applied-migrations.json, version
+// 20260916174227; the table with 2315's exact columns is visible in
+// src/lib/capability/snapshots/20260922-production-schema.json).
+//
+// So this store now has exactly ONE writer reachable over HTTP:
+// routes/sensingIngest.ts, which authenticates an opaque contribution
+// credential and no user session, reads and writes no actor_id, and never
+// touches location_snapshots. src/test/sensingAnonStore.test.ts holds the
+// allowlist and asserts the count is exactly one — not zero, which would mean
+// the writer was removed without the list moving, and not two.
+//
+// Unchanged: the TTL sweep (lib/sensingRetentionScheduler), the three
+// service-role bindings (lib/sensingAnonService), and the absence of any
+// feature flag — 2315 seeds none and seeding one is still an owner decision.
+//
+// This section is placed HERE rather than in the header on purpose: census
+// -sensing.md cites three lines above by number, and moving them would break
+// citations the repository's own guard (src/test/docCitations.test.ts) checks.
 
 /**
  * `duplicate: true` means the store already held this contributor's reading for
@@ -475,19 +658,25 @@ export async function readSensingCohort(
   cohortKey: string,
   nowIso: string,
   limit: number = SENSING_READ_LIMIT,
+  opts: { surfaceOnly?: boolean } = {},
 ): Promise<SensingReadResult> {
   if (!cohortKey) return { ok: false, complete: false, rows: [], error: "cohort_key_required", reportedCount: null };
   if (!nowIso) return { ok: false, complete: false, rows: [], error: "now_required", reportedCount: null };
   try {
-    const { data, error, count } = await db
+    let query = db
       .from(SENSING_TABLE)
       .select(
-        "contributor_token, rotation_epoch, group_token, zone_id, time_bucket, cohort_key, signal_bucket, reduction_version, created_at, expires_at",
+        "contributor_token, rotation_epoch, group_token, zone_id, time_bucket, cohort_key, signal_bucket, reduction_version, created_at, expires_at, zone_precision, place_candidate, movement_class, motion_energy_centi, periodicity_centi, dwell_bucket, transition_kind, transport_mode, transport_mode_centi, density_bucket, bounded_movement, sensor_health_centi, acoustic_energy_bucket, acoustic_rhythm, acoustic_health_centi",
         { count: "exact" },
       )
       .eq("cohort_key", cohortKey)
-      .gt("expires_at", nowIso)
-      .limit(limit);
+      .gt("expires_at", nowIso);
+    // 3315: a SURFACE read counts only contributions whose own contributor
+    // consented to being shown. Every other read is unchanged (so it works on a
+    // pre-3315 database). On a pre-3315 database this filter fails and the read
+    // reports failure — the aggregate then withholds, never widens.
+    if (opts.surfaceOnly === true) query = query.eq("surface_permitted", true);
+    const { data, error, count } = await query.limit(limit);
     if (error) {
       return {
         ok: false,

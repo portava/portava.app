@@ -96,6 +96,14 @@ export const SECURE_KEYS = {
    * silently, and with no way to recover the thread afterwards.
    */
   MLS_PENDING_KEY_PACKAGE: 'portava:mls_group:pending_keypackage',
+
+  /**
+   * Sensing: the 32-byte device secret behind the anonymous contribution
+   * commitment (lib/sensing/commitment.ts). Per device, never per account;
+   * it is the one thing that lets THIS device withdraw its own contributions
+   * later, and it is not an identifier the server ever sees.
+   */
+  SENSING_DEVICE_SECRET: 'portava:sensing_device_secret_v1',
 } as const;
 
 export type SecureKey = typeof SECURE_KEYS[keyof typeof SECURE_KEYS];

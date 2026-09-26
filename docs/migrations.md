@@ -34,6 +34,94 @@ The root tree partially overlaps with both the canonical and legacy chains and c
 
 The frozen-dir guard (run in CI via `check:frozen-dir` and at startup of `audit:schema`) ensures no one silently adds new files to the root tree.
 
+## An applied migration file is a historical artifact: do not annotate it
+
+**The rule, learned the expensive way on 2026-09-22.** Once a migration has been
+applied anywhere, its bytes are frozen. `apply-migrations` records the SHA-256 of
+the file's exact bytes in the ledger, and on every later run it re-hashes the file
+on disk and refuses if the two differ:
+
+> the ledger records these files as applied, but their contents on disk no longer
+> match the recorded checksum. The SQL that ran and the SQL in this commit are not
+> the same text, so the live schema cannot be derived from the tree. Re-applying is
+> NOT a safe repair (a migration is not necessarily re-runnable). Reconcile by hand.
+
+**That check does not know what a comment is, and it must not.** The digest is over
+bytes. Adding a comment block to an applied file produces exactly the same failure
+as rewriting its DDL, because a checksum that tolerated "harmless" edits would be
+no checksum at all. The script says so itself: a backfill that used a different
+digest looks identical to real drift, so it fails closed on both.
+
+This was learned by breaking it. `2950_input_assistance_telemetry_events.sql`
+carried a header reading "⚠ NOT APPLIED ANYWHERE YET", written on a detached HEAD
+before the file was applied. It was applied to production on 2026-09-21 at
+12:11:18 UTC and to `portava-ci`, and the banner then read as current state to a
+later reader — it contributed directly to production being reported as unmigrated.
+The correction was written **into the file**, as 32 lines of comment with no SQL
+changed. CI went red on the next run: ledger `42072bcd…`, disk `8e8d24ae…`. The
+file has since been restored to the exact bytes that ran (verified: it re-hashes
+to `42072bcd…`), and the correction lives here instead.
+
+**So when an applied migration's header turns out to be wrong, correct it HERE,
+keyed by filename — never in the file.** The ledger stays meaningful and the
+correction still reaches the reader, because this is the document a reader
+checking "was it applied?" is sent to anyway. Reconciling the other direction —
+editing the recorded checksum to match a new file — is not the default: it mutates
+a record of what actually ran, in every database that holds one, and should happen
+only when the recorded digest is itself known to be wrong.
+
+### Correction: 2950_input_assistance_telemetry_events.sql
+
+The file's header banner is **superseded**. Its "NOT APPLIED ANYWHERE YET" was
+true when written and false from 12:11 UTC on 2026-09-21.
+
+2950 is applied to production (`ajrurzioarfkagpuxfnb`) and to `portava-ci`
+(`hwokxgbmezheskbzskfr`). Verified by object probe rather than by a ledger row
+alone: the table exists and all nine constraints are present in production,
+including `iate_event_name_known`, whose CHECK was read back from `pg_constraint`
+carrying all fourteen event names in the file's `ARRAY`. `public.schema_migration_ledger`
+also carries the row.
+
+The rest of that header stands as written, including its point that before the
+apply, every write this lane's code issued against the table failed at PostgREST
+and was answered as a **retryable refusal** — never as a successful empty result
+(`src/lib/inputAssistance/telemetry.ts`).
+
+### Why that confusion arose, written down so it does not recur
+
+**There are TWO ledgers in this project and their columns are disjoint:**
+
+| Table | Identifies a migration by | Does NOT have |
+|---|---|---|
+| `public.schema_migration_ledger` | `filename` | `version` |
+| `supabase_migrations.schema_migrations` | `version` (serial lives in `name`) | `filename` |
+
+A query written for one and run against the other answers zero and still looks
+authoritative.
+
+**The CLI table's `version` is TEXT holding two formats at once** — bare serials
+(`'2272'`) and 14-digit timestamps (`'20260921101005'`). Under `en_US.UTF-8`, a
+14-digit timestamp sorts **below** the four-digit cutoff — `'20260915123045' <
+'2890'` is TRUE — because the THIRD character decides it, `'0'` against `'9'`,
+and the remaining ten digits are never read. So `version >= '2890'` excludes
+EVERY post-cutover row no matter what is applied, and `MAX(version)` returns a
+pre-cutover serial.
+
+*(Corrected 2026-09-22. An earlier form of this paragraph wrote the ordering as
+`'289' < '20260915123045' < '2950'`. The first half is FALSE — `'289' >
+'20260915123045'`, verified in Postgres — and the error mattered because it
+described the trap as timestamps sorting AMONG the serials, when what actually
+happens is that they sort beneath the whole band. The conclusion was right for
+the wrong reason.)* This is what produced the withdrawn claim that there were
+"zero ledger rows at or above 2890".
+
+**Ledger absence is not evidence of non-application.** Probed on the same day,
+`2890`, `2900` and `2958` were all live in production with no hand-ledger row;
+`2958` had no row in *either* ledger and its column existed. Only an object probe
+settles whether a migration ran — and even then it settles that the *objects* are
+there, not that every statement in the file executed. Migration `2298` is the
+precedent for the inverse: a ledger row whose effects were absent.
+
 ## The migration ledger
 
 `public.schema_migration_ledger` (created by
@@ -1915,8 +2003,15 @@ what was wrong.
 
 ### Still open
 
-- **Production is untouched.** Zero ledger rows at or above 2890 there. 2972 has
-  been applied to **portava-ci only**.
+- **Production is untouched.** 2972 has been applied to **portava-ci only**;
+  `public.schema_migration_ledger` on `ajrurzioarfkagpuxfnb` holds **no row whose
+  filename begins `2972`** (measured 2026-09-22 05:29 UTC).
+  *(Corrected 2026-09-22. This bullet previously justified itself with "Zero
+  ledger rows at or above 2890 there", which is FALSE — the correct band query,
+  `filename ~ '^[0-9]{4}_' AND substring(filename from '^[0-9]{4}')::int >= 2890`,
+  answers **20**. The zero is what the CLI ledger's TEXT comparison returns, for
+  the collation reason above. The conclusion survives; the evidence for it is now
+  the absence of 2972's own row rather than a broken count.)*
 - The `authz`-vs-`public` name-keying notes `audit:schema` prints on every run
   (9 function claims resolving in `authz`; `is_accepted_trip_member` existing in
   both) remain as stated — pre-existing, unrelated to this apply.
@@ -2753,6 +2848,97 @@ a *local* PostgreSQL 16 is itself the check that the capture is faithful.
 
 ---
 
+## 2991 APPLIED TO portava-ci, AND WHY A PR CAN NEED THAT AT ALL
+
+`audit:schema` went red on PR 521 with two missing columns:
+
+    ✖ 2991_message_translations_confidence.sql
+        missing column message_translations.confidence
+        missing column message_translations.provider_version
+
+**The failure was real and the code was fine.** The `schema drift` job runs
+`db:apply-migrations:dry-run` — which writes nothing, by design, because a PR
+must not mutate the shared CI database as a side effect of being opened — and
+then runs `audit:schema`, which measures the *live* schema. So a PR that adds a
+migration file fails its own audit until somebody applies it. The dry run says
+so in the same log, one step earlier:
+
+    Would apply 2 migration(s), IN THIS ORDER:
+        1. 2991_message_translations_confidence.sql   [shape=unwrapped]
+        2. 2998_nearby_reachable_flag.sql             [shape=unwrapped]
+
+> **The file quoted above has since been renumbered to
+> `2990_nearby_reachable_flag.sql`** (2026-09-23, at the integration of PR 525 /
+> PR 524, which brought a `2998_story_retention.sql` onto `main` and made 2998 a
+> collision). The transcript is left EXACTLY as the dry run printed it, because
+> it is a record of what a tool said on a date, not a description of the tree —
+> rewriting a log to match a later rename is how a record stops being evidence.
+> The renumbered file's content is byte-identical apart from its own header
+> line, it is applied to no database, so no ledger row and no checksum moves,
+> and the order shown above is the only thing the rename changes: 2990 now sorts
+> BEFORE 2991. That is harmless here and was checked rather than assumed — the
+> file inserts one `public.feature_flags` row and reads nothing 2991 creates.
+
+Only 2991 was reported missing: 2998's claimed objects already exist on CI, so
+it is pending in the LEDGER sense and satisfied in the OBJECT sense — the exact
+distinction the inventory work exists to keep apart, and the reason "pending"
+and "missing" are two different counts in that log.
+
+**What was done.** 2991 applied to **portava-ci (`hwokxgbmezheskbzskfr`) only**,
+via the Supabase MCP, and ledgered with `applied_by='manual'` and a note that
+records the discrepancy between the executed text and the committed file: the
+outer `BEGIN`/`COMMIT` were dropped because the MCP call supplies its own
+transaction, and the header comment block was not re-sent. The checksum in the
+ledger is of the committed file, which is the convention 2966 and 2976 set.
+Both the `$pre$` and `$post$` blocks ran inside that transaction and passed, and
+the result was re-verified independently afterwards rather than taken from the
+migration's own say-so.
+
+**Production was not touched.** `ajrurzioarfkagpuxfnb` does not have these two
+columns and does not need them yet: nothing deployed writes a confidence reading,
+and `upsertTranslation` retries once without both columns on the undefined-column
+refusal, so an unapplied 2991 degrades T242 to "treat every translation as
+not-certain" rather than breaking translation. That is the migration's own stated
+design, not a concession made here — and it is why T240 and T242 stay `W`.
+
+### Re-establish independently
+
+    -- against portava-ci
+    SELECT column_name, is_nullable, column_default
+      FROM information_schema.columns
+     WHERE table_schema='public' AND table_name='message_translations'
+       AND column_name IN ('confidence','provider_version');
+    -- expect two rows, both is_nullable='YES', both column_default NULL
+
+    SELECT pg_get_constraintdef(c.oid)
+      FROM pg_constraint c JOIN pg_class t ON t.oid=c.conrelid
+      JOIN pg_namespace n ON n.oid=t.relnamespace
+     WHERE n.nspname='public' AND t.relname='message_translations'
+       AND c.conname='message_translations_confidence_check';
+    -- expect CHECK (((confidence IS NULL) OR (confidence = ANY (ARRAY['high'::text, 'low'::text]))))
+
+    SELECT filename, applied_by, left(checksum, 12)
+      FROM public.schema_migration_ledger
+     WHERE filename = '2991_message_translations_confidence.sql';
+    -- expect applied_by='manual', checksum 5af2de56c5da
+
+**The postcondition that forbids a DEFAULT is not boilerplate.** The table held
+0 rows on CI when this was applied, so nothing was backfilled and nothing could
+be invalidated — but the same apply against a populated database leaves every
+historical row NULL, which is the one true statement available about a reading
+nobody took. A default would have asserted, of every one of those rows, that
+somebody measured it.
+
+> **Both sections below were appended independently on 2026-09-23** — this one
+> by the branch that applied 2991, the next by PR #526 for 2998. They document
+> DIFFERENT migrations to the same database and neither supersedes the other,
+> so the merge keeps both rather than choosing. Read together they also close a
+> loop: #526's section records that `certify:migrations` failed at STAGE 1 on
+> ledger parity, naming `2966` and `2991` as rows whose files are not on `main`.
+> Those two files are THIS branch's, and that stage-1 failure clears when it
+> merges — which is the same fact this section's own paragraph states from the
+> other end.
+
 ## `2998_story_retention.sql` — applied to `portava-ci` 2026-09-23, NOT to production
 
 The owner-archive retention unit: `stories.deleted_at` with the trigger that
@@ -2854,3 +3040,456 @@ to apply — not because reversal is anticipated.
            (SELECT count(*) FROM information_schema.columns
              WHERE table_schema='public' AND table_name='story_purge_queue');
     -- portava-ci: story_purge_queue, 14   |   production: NULL, 0
+
+## `3001_highlight_kernel_admits_unhide.sql` — REHEARSED on a throwaway database; applied to `portava-ci` 2026-09-26 (see the batch entry below), NOT to production
+
+Recorded here because a migration that exists and has been executed somewhere
+should be findable from this document, and because census-highlights-memories
+§Y's staleness entry points at this file for the rehearsal. It is **not** an
+application record: there is nothing to record on either database.
+
+**What it is.** A `CREATE OR REPLACE` of `public.highlight_kernel_execute(jsonb)`
+that makes the §17 applier admit `UNHIDE_HIGHLIGHT`. The body is 2993's, derived
+mechanically from that file rather than retyped, with exactly two edits: the
+accepted-type list gains the command name, and a new branch clears
+`archived_at`, emits `highlight.hidden`, and recomputes `to_state` as `EXPIRED`
+when the Highlight's own expiry has passed and `ACTIVE` otherwise.
+
+**Why a new file rather than an edit to 2993.** 2993 travels on PR #523 with
+2992 and 2994 as a byte-identical rehearsed set; editing it would invalidate
+that rehearsal and mean re-rehearsing a pull request instead of adding a file.
+3001 leaves it untouched.
+
+**Why the number is 3001.** 2100-2999 was full — `main` held prefixes to 2997
+and both 2998 and 2999 were claimed by unmerged branches. PR #527 extended
+`NEW_NUMERIC_PREFIX_RE` to admit 3000-3999 hours earlier, for unrelated reasons;
+3000 is #527's own, and 3001 is the first slot above 2993 that has ever been
+legal. The band rule is in
+`artifacts/api-server/src/scripts/migrationPrefixRules.ts:58#NEW_NUMERIC_PREFIX_RE`
+and is written up in `docs/architecture/10_Database_Architecture.md`.
+
+### The rehearsal
+
+Replayed against a real PostgreSQL 16 carrying the baseline plus the canonical
+chain, using `artifacts/api-server/scripts/local-db/up.sh` on an isolated
+database — executed, not read:
+
+| probe | result |
+| --- | --- |
+| `UNHIDE_HIGHLIGHT` on a hidden Highlight | `ok=true`, `archived_at` **cleared** |
+| the event it wrote | ONE row, `type='highlight.hidden'`, `command_type='UNHIDE_HIGHLIGHT'` |
+| outbox | one row |
+| `to_state` on an unexpired Highlight | `ACTIVE` |
+| `to_state` on an **expired** Highlight | `EXPIRED` — expiry survives un-hiding |
+| the same idempotency key twice | second answers `duplicate=true` |
+| `PUBLISH_HIGHLIGHT` (negative control) | still `MEMORY_COMMAND_UNKNOWN_TYPE` |
+
+The rehearsal refused the file twice before accepting it, both times for a
+defect in the file rather than in the database, and both are worth carrying
+forward:
+
+1. The postconditions created a probe Highlight. `highlights.media_url` is
+   `NOT NULL` and `owner_id` references `profiles`, which references
+   `auth.users` — a "simple" fixture is a three-table chain. They were rewritten
+   in 2993's own idiom, which probes REJECTION paths and the catalog and creates
+   no rows at all.
+2. A postcondition asserting that `highlight.unhidden` appears nowhere in the
+   installed function **failed on its own explanatory comment**, because
+   `pg_get_functiondef` returns comments. It now matches the assignment
+   (`v_event_type := '…'`) rather than the bare name.
+
+### Rollback
+
+    -- 3001 REPLACES a function; it creates and drops nothing else. The rollback
+    -- is to re-run 2993, which restores the previous definition verbatim.
+    \i artifacts/api-server/src/migrations/2993_highlight_command_boundary.sql
+    DELETE FROM public.schema_migration_ledger
+     WHERE filename = '3001_highlight_kernel_admits_unhide.sql';
+
+Nothing here destroys user data: `CREATE OR REPLACE` on a function touches no
+row, and the only `UPDATE` in the new branch is the one that clears
+`archived_at` for the Highlight a caller named.
+
+### Re-establish this independently
+
+    SELECT filename FROM public.schema_migration_ledger
+     WHERE filename IN ('2993_highlight_command_boundary.sql',
+                        '3001_highlight_kernel_admits_unhide.sql');
+    -- portava-ci: 0 rows   |   production: 0 rows
+
+**SUPERSEDED 2026-09-26 — both are now applied to `portava-ci`; neither to
+production.** The statement above was true when written (2026-09-23) and the
+re-establish query then returned 0 rows on both databases. It now returns
+`2993` and `3001` on `portava-ci` (both `applied_by='manual'`, real sha256) and
+still 0 rows on production. The ordering claim stands and was exercised: 2993
+went at 06:07:25 UTC and 3001 at 06:11:15 UTC, and 3001's own precondition was
+what would have refused the reverse. The full record is the batch entry below.
+
+## 2026-09-26 — nine migrations applied to `portava-ci` under owner decision A; NOT to production
+
+Owner decision, quoted: *"Choose option A for portava-ci only, conditional on
+the running node:test suite passing."* The condition was met first —
+`api-server · node:test suite` on `8679f5cc9` concluded **success** — and then
+the nine were applied in dependency order, one transaction each, stopping at
+the first failure. There was no failure.
+
+| | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
+|---|---|---|
+| `2977_layover_maturity_gate_flag.sql` | **applied** 05:57:19 UTC | not applied |
+| `2981_layover_event_ingest_flag.sql` | **applied** 05:59:41 UTC | not applied |
+| `2986_layover_sessions_fanout_indexes.sql` | **applied** 06:02:02 UTC | not applied |
+| `2990_nearby_reachable_flag.sql` | **applied** 06:03:57 UTC | not applied |
+| `2992_layover_decision_record_and_operational_tables.sql` | **applied** 06:05:51 UTC | not applied |
+| `2993_highlight_command_boundary.sql` | **applied** 06:07:25 UTC | not applied |
+| `2994_memory_relations_and_outbox_consumer.sql` | **applied** 06:08:54 UTC | not applied |
+| `2999_trust_profiles_nullable_scores.sql` | **applied** 06:10:00 UTC | not applied |
+| `3001_highlight_kernel_admits_unhide.sql` | **applied** 06:11:15 UTC | not applied |
+
+Ledger rows: all nine `applied_by='manual'`, a real 64-character sha256 of the
+file bytes, written inside the same transaction as the migration. `notes`
+carries `sha=2efbd91ec…`, the tree the files were read from, and
+`owner-decision=A-2026-09-26`. The ledger went from 590 rows to 599. The 2481
+row (`applied_by='ci'`, 2026-09-09) was not touched; it is deliberate and
+load-bearing, as `auditMigrationsVsLive.ts` records.
+
+### How they were applied, and the one way it differs from `db:apply-migrations`
+
+The Management-API token the runner needs is not available from the
+environment that did this, so the runner binary did not execute. Everything
+the runner *decides* was done by the runner's own exported functions —
+`classifyMigration` (all nine classified `unwrapped`, 2999 `bare`; no
+refusals), `checksumOf`, and `buildApplyStatement`, which wraps body + ledger
+row in one `BEGIN … COMMIT` — and the byte-exact statements those produced were
+sent to the same endpoint the runner targets,
+`api.supabase.com/v1/projects/<ref>/database/query`, through a different
+client. The transport is the only difference. Nothing was hand-edited.
+
+Every one of the nine carries its postconditions **inside** the transaction
+(the runner classified no post-COMMIT tail), so the only outcomes possible
+were `applied` or a full rollback with no ledger row. `postcondition-failed`
+could not occur.
+
+### What was verified after each file, and after all nine
+
+**Per file, read from the catalog immediately after the commit** — not from
+the apply reporting on itself: 2977/2981/2990 each one flag row, `false`; 2986
+both partial indexes; 2992 five tables, five columns on
+`layover_certified_computations`, the immutability function, eight indexes,
+three triggers, the gate row `false`; 2993 `highlight_id` on all four kernel
+tables, `highlight_kernel_execute`, the owner policy, the audit index, all
+four constraints, `memory_id` nullable on `memory_domain_events`, and **zero**
+probe audit rows left behind; 2994 `memory_relations` with RLS on, all four
+functions, `locked_until`, four indexes, the owner policy, the owner-match
+trigger, and zero leased outbox rows; 2999 ten columns nullable **and**
+default-less, `public_level` still `NOT NULL`, `trust_profiles` still 0 rows
+(the NULL-insert probe rolled itself back); 3001 the installed function has a
+`WHEN 'UNHIDE_HIGHLIGHT'` branch.
+
+**Certification, the two halves `certify:migrations` would have run.** Its
+STAGE 1 (ledger parity) it cannot pass on this branch for reasons unrelated to
+these nine (see the 2998 entry above), so the two stages that matter were run
+by hand against `portava-ci`:
+
+* **STAGE 2 equivalent — objects.** Every object `audit:schema` named on
+  `8679f5cc9` was queried by name: 6 tables, 10 columns, 15 indexes, 6
+  functions, 2 policies, 4 triggers = **43 of 43 present**. (`audit:schema`'s
+  "44" counts `highlight_kernel_execute` once for 2993 and once for 3001.)
+* **STAGE 4 equivalent — postconditions re-run after commit.** 2992's block
+  (catalog-only by design, the largest of the nine) was executed standalone
+  and all ten assertions held.
+* **Negative control**, because a block that raises nothing is
+  indistinguishable from a block that ran nothing: 2999's postcondition 4 was
+  copied with its sense inverted (demanding `public_level` be nullable) and
+  run the same way. It failed loudly — `P0001: NEGATIVE CONTROL BIT:
+  public_level is NOT NULL (true)`. The silent passes above are therefore
+  passes.
+
+**Flags after the apply**, read rather than assumed: `layover_maturity_gate_enabled`,
+`layover_event_ingest_enabled`, `nearby_reachable_enabled`,
+`layover_decision_persistence_enabled`, `memory_kernel_enabled` all `false`;
+`trust_engine_enabled` has no row, which `isFlagEnabled` reads as false. Nothing
+was enabled. No scope was granted.
+
+### Production
+
+Not applied, and not applied as a side effect. Read 2026-09-26 06:12 UTC:
+0 of the nine in the ledger, `layover_time_budgets` and `memory_relations`
+absent, `trust_profiles.overall_score` still `NOT NULL`, 0 of the four new
+flag rows, ledger total 469.
+
+**2999 and production, stated plainly because the order is load-bearing:** this
+branch's `TrustScoreService.computeCategoryScore` returns `null` where `main`
+returns `50`. Against production's schema that write raises 23502. It does not
+raise today only because `trust_engine_enabled` has no row there. 2999 must
+reach production before anything enables that engine.
+
+### Rollback
+
+Each file's own section, in reverse order; every table any of them touches was
+at **0 rows** before and after, so none of these destroys data as the database
+stands:
+
+    -- 3001: re-run 2993's function body (a second CREATE OR REPLACE)
+    -- 2999: for each of the ten columns —
+    --   ALTER TABLE public.trust_profiles ALTER COLUMN <col> SET DEFAULT 50.00, ALTER COLUMN <col> SET NOT NULL;
+    --   (fails if any NULL has been written by then; that failure is the point)
+    -- 2994: DROP TABLE public.memory_relations; DROP FUNCTION memory_outbox_claim/_ack/_fail, memory_relations_owner_matches_source;
+    --       ALTER TABLE public.memory_event_outbox DROP COLUMN locked_until;
+    -- 2993: its REVERSIBLE BY block, in the order it gives
+    -- 2992: UPDATE feature_flags SET enabled=false WHERE flag='layover_decision_persistence_enabled'  (already false)
+    --       then DROP TABLE layover_outcomes, layover_checkpoints, layover_return_plans, layover_time_budgets, layover_constraints;
+    --       ALTER TABLE layover_certified_computations DROP COLUMN snapshot_id, input_facts, source_refs, rules_applied, ledger_version;
+    -- 2986: DROP INDEX IF EXISTS layover_sessions_airport_active_idx, layover_sessions_manual_iata_active_idx;
+    -- 2977/2981/2990: DELETE FROM public.feature_flags WHERE flag IN (...)  -- rows this apply created, all false
+    -- and for each: DELETE FROM public.schema_migration_ledger WHERE filename = '<file>';
+
+### Re-establish any of this independently
+
+    SELECT filename, applied_by, applied_at, length(checksum)
+      FROM public.schema_migration_ledger
+     WHERE notes LIKE '%owner-decision=A-2026-09-26%'
+     ORDER BY filename;
+    -- portava-ci: 9 rows, all manual, 64   |   production: 0 rows
+
+    SELECT to_regclass('public.layover_time_budgets'), to_regclass('public.memory_relations'),
+           (SELECT is_nullable FROM information_schema.columns
+             WHERE table_schema='public' AND table_name='trust_profiles' AND column_name='overall_score');
+    -- portava-ci: layover_time_budgets, memory_relations, YES   |   production: NULL, NULL, NO
+
+
+## 2026-09-26 — 3311 and 3312 applied to `portava-ci` under owner decision A; NOT to production
+
+The second batch under the same ruling as the nine above (*"option A for
+portava-ci only"*), applied after the api-server suites these two files back
+were green locally (sensingErasureRecompute 11/11, sensingReducedFeatures
+16/16, ingest route 31/31, revocation reach 10/10, intelProjection 21/21).
+Both files were written on branch `claude/sensing-completion-20260925` and are
+part of PR #528; the blob ids below identify the exact bytes independently of
+any later commit.
+
+| | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
+|---|---|---|
+| `3311_intel_snapshot_input_provenance.sql` (blob `519a76b21b…`) | **applied** 09:36:48 UTC | not applied |
+| `3312_sensing_anon_contribution_features.sql` (blob `eec1b648a3…`) | **applied** 09:37:49 UTC | not applied |
+
+Ledger rows: both `applied_by='manual'`, checksum = sha256 of the file bytes
+(`63fe3ddd23…` and `f5096e928d…`), written inside the same transaction as the
+DDL. `notes` carries the blob id, the branch and
+`owner-decision=A-2026-09-26`. The ledger went from 599 rows to 601. The 2481
+row was not touched.
+
+### How they were applied — runner-identical, different transport
+
+Same method as the nine: the runner's own exported functions from
+`scripts/src/apply-migrations.ts` did the deciding. `classifyMigration`
+classified both **`bare`** (no top-level transaction control; every
+postcondition `DO` block sits inside the body, so it runs INSIDE the
+`BEGIN … COMMIT` that `buildApplyStatement` wraps around it — the only
+outcomes were `applied` or a full rollback with no ledger row).
+`checksumOf` produced the digest and `buildApplyStatement` the statement.
+That statement — comments intact this time, unlike the 3002/3003/3310
+rehearsal whose ledger notes record the stripping — was sent byte-for-byte
+through the Management-API query endpoint. `body === file` was asserted in
+the build script before anything was sent.
+
+### Verified from the catalog after each commit, not from the apply reporting on itself
+
+**3311.** Both `intel_state_snapshots.input_observation_ids` and
+`intel_state_snapshot_versions.input_observation_ids` read `_uuid`, `NOT
+NULL`, default `'{}'::uuid[]`; both GIN indexes present by name; both column
+comments present. `sensing_anon_contributions` still has **zero** columns
+whose name contains `observation` — the anonymous store stays
+provenance-free, which is 3311's own last postcondition and also §20's rule.
+
+**3312.** All fifteen feature columns present and nullable (`int2`, `text`,
+`bool` as the file declares); the three CHECKs
+`sensing_anon_features_ranges`, `_enums`, `_acoustic_pair` present beside
+2315's ten; **0 foreign keys**. The 2315 name checks (no account/device
+handle, no lifecycle column) re-ran inside the transaction and held.
+
+**Negative controls, because a block that raises nothing is indistinguishable
+from a block that ran nothing.** Five inserts inside `DO` sub-blocks on
+`portava-ci`, every one rolled back, row count 0 before and after:
+
+| probe | outcome |
+|---|---|
+| `motion_energy_centi = 101` | refused: `violates check constraint "sensing_anon_features_ranges"` |
+| `density_bucket = 'crowded'` | refused: `violates check constraint "sensing_anon_features_enums"` |
+| `acoustic_energy_bucket` set, `acoustic_rhythm` NULL | refused: `violates check constraint "sensing_anon_features_acoustic_pair"` |
+| legacy shape (no feature column at all) | **accepted**, then rolled back — a pre-3312 client still inserts |
+| the full wire-contract shape (all fifteen) | **accepted**, then rolled back |
+
+**Flags after the apply**, read rather than assumed:
+`discovery_candidate_projection_enabled`, `intel_claim_projection_crowd`,
+`media_evidence_enabled`, `memory_projection`,
+`sensing_presence_context_enabled` all `false`. Neither file seeds or touches
+a flag. No scope was granted.
+
+### Production
+
+Not applied, and not applied as a side effect. Neither file is in
+production's ledger; `input_observation_ids` and the fifteen feature columns
+are absent there. The writer behind 3311 (`lib/intelProjection`) falls back
+to writing WITHOUT provenance on the schema-cache error and logs
+`intel.projection.provenance_unavailable`; the reach then enumerates at
+subject granularity. So deploying this branch's code ahead of 3311 degrades
+provenance, it does not break projection. The ingest behind 3312 accepts a
+contribution without `features` (every column is nullable), so a client ahead
+of the server, or the server ahead of 3312, still inserts. Order for
+production: `docs/ops/sensing-cutover-runbook.md`.
+
+### Rollback
+
+    -- 3312: db/rollback/2026-09-26-3312-sensing-anon-contribution-features-rollback.sql
+    -- 3311: db/rollback/2026-09-26-3311-intel-snapshot-input-provenance-rollback.sql
+    -- and for each: DELETE FROM public.schema_migration_ledger WHERE filename = '<file>';
+    -- Every table either touches was at 0 rows on portava-ci before and after.
+
+### Re-establish independently
+
+    SELECT filename, applied_by, applied_at, length(checksum)
+      FROM public.schema_migration_ledger
+     WHERE filename IN ('3311_intel_snapshot_input_provenance.sql','3312_sensing_anon_contribution_features.sql');
+    -- portava-ci: 2 rows, manual, 64   |   production: 0 rows
+
+    SELECT (SELECT count(*) FROM information_schema.columns WHERE table_schema='public' AND column_name='input_observation_ids') AS provenance_cols,
+           (SELECT count(*) FROM pg_constraint WHERE conname LIKE 'sensing_anon_features_%') AS feature_checks;
+    -- portava-ci: 2, 3   |   production: 0, 0
+
+## 2026-09-26 — 3313, 3314 and 3315 applied to `portava-ci` under owner decision A; NOT to production
+
+The third batch under the same ruling (*"option A for portava-ci only"*). All
+three files were written on branch `claude/sensing-completion-20260925`
+(PR #528). The blob ids identify the exact bytes independently of any later
+commit.
+
+| | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
+|---|---|---|
+| `3313_sensing_publication_flag.sql` (blob `1d5b51f2f5…`) | **applied** 16:50:23 UTC | not applied |
+| `3315_sensing_anon_surface_consent.sql` (blob `ace36c056c…`) | **applied** 16:51:14 UTC | not applied |
+| `3314_memory_projection_claim_refs.sql` (blob `16563d02db…`) | **applied** 16:52:39 UTC | not applied |
+
+Ledger rows: all `applied_by='manual'`, checksum = sha256 of the file bytes
+(`4b6d3a231e…`, `648132eeea…`, `59f7a20c78…`), written inside the same
+transaction as the DDL. `notes` carries the blob id, the branch and
+`owner-decision=A-2026-09-26`. The ledger went from 601 rows to 604. The 2481
+row was not touched (read back: `2481_sensing_sessions_option_a_issuer.sql`,
+`ci`, `56c1244782e8…`).
+
+### How they were applied
+
+Same method as the two batches above: `classifyMigration`, `checksumOf` and
+`buildApplyStatement` from `scripts/src/apply-migrations.ts` built each
+statement, which was sent unchanged through the Management-API query endpoint.
+
+- **3314 and 3315** classified **`bare`**. The statement is the whole file,
+  comments intact, wrapped in `BEGIN … COMMIT` with the ledger insert inside;
+  `body === file` was asserted before sending.
+- **3313** classified **`unwrapped`**: the file carries its own `BEGIN;` and
+  `COMMIT;`, so the runner takes the text between them and re-wraps it with the
+  ledger insert. The header comments above the file's `BEGIN` are therefore
+  not in the statement. Its postcondition `DO` block sits between the file's
+  `BEGIN` and `COMMIT`, so it ran inside the wrapping transaction. The ledger
+  note for 3313 says exactly this rather than "comments intact".
+
+### Before 3314: the function it replaces was read from both databases
+
+3314 replaces `project_user_memory_with_retraction`, last defined in the tree
+by 2195. Replacing a function from a file is only safe if the live body is the
+body the file starts from, so it was read first:
+
+- portava-ci's live `prosrc` and production's live `prosrc` are both 2195's
+  body (same declarations, flag check, `project_user_memory` +
+  `project_inferred_preferences`, same retraction predicate), differing from
+  the file only in whitespace. No later migration redefines the function
+  (2200, 2963 and 2965 mention it; none replace it).
+- After the apply, portava-ci's live `prosrc` md5 is `c12a0ff3cf71a233…`,
+  length 1062, which equals the md5 of the text between `$fn$ … $fn$` in the
+  3314 file. The deployed body is byte-for-byte the file's.
+
+### Verified from the catalog after each commit
+
+**3313.** `sensing_publication_enabled` present, `enabled = false`. Negative
+control: inside a rolled-back sub-block the row was set to `true` and the
+file's postcondition re-run; it raised `POSTCONDITION FAILED:
+sensing_publication_enabled seeded ON …`. The row read `false` afterwards.
+
+**3315.** `sensing_anon_contributions.surface_permitted` is `boolean`,
+`NOT NULL`, default `false`, commented; still **0** foreign keys; 0 rows before
+and after. Controls, each rolled back:
+
+| probe | outcome |
+|---|---|
+| legacy shape, column not named | **accepted**; `surface_permitted` read `false` |
+| `surface_permitted = NULL` | refused: `violates not-null constraint` |
+| `surface_permitted = true` | **accepted**; read `true` |
+
+**3314.** `memory_projections.claim_refs` is `_uuid`, `NOT NULL`, default
+`'{}'::uuid[]`; `memory_projections_claim_refs_gin` present; the function is
+executable by `service_role` only (anon and authenticated `false`);
+`memory_events` has no `claim_refs`. The 16 existing memory rows all read an
+empty `claim_refs`. Controls, all inside one rolled-back block against one
+existing CI user:
+
+| probe | outcome |
+|---|---|
+| a session memory carrying one ref; overlap query on that ref | finds **1** memory |
+| the watermark pass (`project_user_memory_with_retraction(u, false)`) over a stale session memory and a stale city memory | session memory stays **active**; city memory **retracted** |
+| `claim_refs = NULL` | refused: `violates not-null constraint` |
+| `claim_refs = ARRAY['not-a-uuid']` | refused: `is of type uuid[] but expression is of type text[]` |
+
+The watermark pass in that block reported 2 retracted: the probe's city row and
+one existing row of that CI user that the projector did not re-affirm. The
+second is 2195's pre-existing behaviour, unchanged by 3314. The block rolled
+back; afterwards 16 rows, 0 retracted.
+
+### 3313's status, and what green schema checks do not prove
+
+Before this entry, 3313 had been applied **nowhere**, and PR #528's CI was
+fully green on `bae9ea2d4`, including the live-DB job that reads portava-ci's
+real schema. That is the evidence that the schema checks cannot see a flag
+seed. `audit:schema` and `check:write-path-columns` read tables and columns;
+3313 creates neither, only a `feature_flags` row. At runtime an absent row and
+a `false` row also read the same, because `isFlagEnabled` fails closed. So
+neither CI nor behaviour distinguishes "3313 applied" from "3313 never run".
+
+The only proof that a flag-seed migration was applied is reading both:
+
+    SELECT flag, enabled FROM public.feature_flags WHERE flag = 'sensing_publication_enabled';
+    SELECT filename, applied_by, checksum FROM public.schema_migration_ledger
+     WHERE filename = '3313_sensing_publication_flag.sql';
+    -- portava-ci now: (sensing_publication_enabled, false) and (…, manual, 4b6d3a231e…)
+    -- production:     0 rows and 0 rows
+
+### Production
+
+Not applied, and not applied as a side effect. None of the three files is in
+production's ledger; `sensing_publication_enabled` has no row there;
+`memory_projections.claim_refs` and `sensing_anon_contributions.surface_permitted`
+are absent. Without 3314, the session memory writer refuses
+(`claim_refs_unavailable`) rather than writing a memory without its lineage,
+and the reach reports `memoryStore: "column_absent"`. Without 3315, the ingest
+omits the column when a session lacks `surface`, which is every session under
+today's consent, so it inserts unchanged; the publisher's cohort read filters
+on the column and fails closed, publishing nothing. Order for production:
+`docs/ops/sensing-cutover-runbook.md`.
+
+### Rollback
+
+    -- 3314: db/rollback/2026-09-26-3314-memory-projection-claim-refs-rollback.sql
+    --       (refuses while any subject_type = 'experience_session' row exists)
+    -- 3315: db/rollback/2026-09-26-3315-sensing-anon-surface-consent-rollback.sql
+    --       (refuses while any row reads surface_permitted = true)
+    -- 3313: db/rollback/2026-09-26-3313-sensing-publication-flag-rollback.sql
+    -- and for each: DELETE FROM public.schema_migration_ledger WHERE filename = '<file>';
+
+### Re-establish independently
+
+    SELECT filename, applied_by, length(checksum) FROM public.schema_migration_ledger
+     WHERE filename ~ '^331[345]_' ORDER BY filename;
+    -- portava-ci: 3 rows, manual, 64   |   production: 0 rows
+
+    SELECT (SELECT udt_name FROM information_schema.columns WHERE table_schema='public' AND table_name='memory_projections' AND column_name='claim_refs') AS claim_refs,
+           (SELECT data_type FROM information_schema.columns WHERE table_schema='public' AND table_name='sensing_anon_contributions' AND column_name='surface_permitted') AS surface_permitted,
+           (SELECT enabled FROM public.feature_flags WHERE flag='sensing_publication_enabled') AS publication_flag;
+    -- portava-ci: _uuid, boolean, false   |   production: NULL, NULL, NULL

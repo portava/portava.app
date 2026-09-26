@@ -15,14 +15,19 @@
  *   2. A POLICY. Which features a rung is allowed to offer, and what a surface
  *      must disclose at it.
  *
- * ── AND THE ONE THING IT IS NOT ──────────────────────────────────────────────
- * IT IS NOT WIRED. Nothing consults `featureAllowedAt` before generating a
- * landside recommendation — that decision lives in
- * `LayoverRecommendationService.ts`, which this work does not own. So this
- * module states the policy; the product still diverges from it, and
- * `src/test/layoverMaturityModel.test.ts` pins that divergence as a live,
- * failing product expectation rather than as a paragraph. Publishing the policy
- * without saying so would be worse than not publishing it.
+ * ── AND THE ONE THING IT WAS NOT, UNTIL 2026-09-22 ───────────────────────────
+ * THIS BLOCK USED TO READ "IT IS NOT WIRED. Nothing consults `featureAllowedAt`
+ * before generating a landside recommendation — that decision lives in
+ * `LayoverRecommendationService.ts`, which this work does not own." That is no
+ * longer true. `services/airport/layoverMaturityGate.ts` is the consumer, and
+ * `generateRecommendations` applies its answer to both landside gates.
+ *
+ * IT IS STILL OFF. The gate sits behind `layover_maturity_gate_enabled`, which
+ * `2977_layover_maturity_gate_flag.sql` seeds FALSE and which no database has
+ * ever had on — so the policy below is stated, consulted, and not yet enforced
+ * anywhere. Turning it on withdraws landside cards from every airport that has
+ * not reached L1, which is all 3,206 production rows; that is spec §22 L243's
+ * own default and it is an owner decision, not a deployment step.
  *
  * ── WHY THE LADDER DOES NOT SKIP ─────────────────────────────────────────────
  * A rung is reached only when every rung below it is. "Reliable live signals"
@@ -171,22 +176,34 @@ export const MATURITY_LEVEL_REACHABILITY: Record<
       "and `airport_profiles` has no feed reference column.",
   },
   L3_PORTAVA_OBSERVED: {
-    reachable: false,
-    blockedBy:
-      "no observation ingest writer: `LayoverAirportTruth.screenObservations` can screen them but no route " +
-      "accepts one and no table stores one (census L82, L276).",
+    // CORRECTED 2026-09-22. This entry used to read `reachable: false`, blocked
+    // by "no observation ingest writer … no route accepts one and no table
+    // stores one". Both clauses are FALSE at this commit:
+    // `POST /airport/sessions/:id/observations` accepts one (its only gate is
+    // `airport_mode_enabled`, TRUE in production), `airport_fact_observations`
+    // stores it, and migrations 2860 and 2982 are BOTH APPLIED to production.
+    // The signal reaches this ladder through
+    // `LayoverObservationAggregate.maturityObservationCount`.
+    //
+    // Reachable does NOT mean reached. The ladder does not skip, so no airport
+    // gets here until it is L2 — and L2 is still blocked below.
+    reachable: true,
+    blockedBy: null,
   },
   L4_CALIBRATED: {
     reachable: false,
     blockedBy:
-      "nothing measures its own error: `LayoverAirportTruth.measureCalibration` exists with no corpus to " +
-      "measure, because no prediction and no outcome are stored together (census L217, L247).",
+      "nothing measures its own error: `LayoverAirportTruth.measureCalibration` exists and now HAS a " +
+      "corpus (2860/2982 are applied and travellers can report), but no OUTCOME is stored beside a " +
+      "prediction, so there is still nothing to measure against (census L217, L247).",
   },
   L5_DENSE_LIVE: {
     reachable: false,
     blockedBy:
-      "requires every rung below it; the nearest blocker is the same one that blocks L3 — no route accepts " +
-      "an observation and no table stores one, so `LayoverAirportTruth.screenObservations` has no producer.",
+      "requires every rung below it. CORRECTED 2026-09-22: the nearest blocker is no longer L3 (a route " +
+      "accepts observations and an applied table stores them) — it is L2, whose own entry names " +
+      "`LayoverAirportTruth.liveConditionsFrom` as the producer no feed on this tree calls, and then L4, " +
+      "whose entry names `LayoverAirportTruth.measureCalibration` with no stored outcome to measure.",
   },
 };
 
@@ -201,11 +218,12 @@ export interface MaturityFeature {
  *
  * THE LINE THAT MATTERS IS `landside_recommendations` AT L1. Spec §22 L243
  * says L0 Generic is "airport-side guidance only by default", and the census
- * records the divergence: today a generic-fallback airport issues landside
- * cards and a "yes, you can leave" verdict off constants that are not about
- * that airport. Putting the boundary here does not fix that — nothing consults
- * this table — but it states where the boundary is, in one place, in terms a
- * caller can check.
+ * records the divergence: a generic-fallback airport issues landside cards and
+ * a "yes, you can leave" verdict off constants that are not about that airport.
+ * `layoverMaturityGate.ts` now consults this table on every generation — the
+ * sentence that used to stand here, "nothing consults this table", is false as
+ * of 2026-09-22 — but the gate is seeded FALSE, so the divergence is closable
+ * rather than closed.
  */
 export const MATURITY_FEATURES: readonly MaturityFeature[] = [
   {

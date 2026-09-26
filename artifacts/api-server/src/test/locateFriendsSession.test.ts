@@ -412,6 +412,7 @@ describe("(b) an expired session serves nothing, with no sweep anywhere", () => 
 
   it("§23 decay expires a POSITION inside a live session, again with no sweep", () => {
     const view = projectMember({
+      sessionId: SESSION,
       memberId: BOB,
       displayName: "Bob",
       // 61 minutes old: past the last_known horizon.
@@ -523,6 +524,7 @@ describe("(c) precision can only tighten — never widen, at any step", () => {
     const stored = position(BOB, { precision: "precise" }) as PositionRow;
     const at = (ageMs: number) =>
       projectMember({
+      sessionId: SESSION,
         memberId: BOB,
         displayName: "Bob",
         position: { ...stored, observed_at: iso(NOW - ageMs) },
@@ -582,6 +584,7 @@ describe("(c) precision can only tighten — never widen, at any step", () => {
       },
     ] as any[];
     const inside = projectMember({
+      sessionId: SESSION,
       memberId: BOB,
       displayName: "Bob",
       position: position(BOB) as PositionRow,
@@ -590,6 +593,7 @@ describe("(c) precision can only tighten — never widen, at any step", () => {
       nowMs: NOW,
     });
     const outside = projectMember({
+      sessionId: SESSION,
       memberId: BOB,
       displayName: "Bob",
       position: position(BOB) as PositionRow,
@@ -606,6 +610,7 @@ describe("(c) precision can only tighten — never widen, at any step", () => {
 
   it("an UNREADABLE §24 policy is not an absent policy — it serves nothing", () => {
     const view = projectMember({
+      sessionId: SESSION,
       memberId: BOB,
       displayName: "Bob",
       position: position(BOB) as PositionRow,
@@ -712,6 +717,7 @@ describe("the wire shape matches the rung — a ring, never a rounded point", ()
     assert.equal(row.lng, null);
 
     const view = projectMember({
+      sessionId: SESSION,
       memberId: ALICE,
       displayName: "Alice",
       position: row,
@@ -748,6 +754,7 @@ describe("the wire shape matches the rung — a ring, never a rounded point", ()
   it("an identity is attached only from `approximate` up (§23)", () => {
     const at = (sessionCeiling: LocationPrecision) =>
       projectMember({
+      sessionId: SESSION,
         memberId: BOB,
         displayName: "Bob",
         position: position(BOB) as PositionRow,

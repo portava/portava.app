@@ -129,14 +129,30 @@ export const MEMORY_EVENT_TYPES = [
 export type MemoryEventType = (typeof MEMORY_EVENT_TYPES)[number];
 
 /**
- * The eight Memory-domain events this lane's kernel can emit. The five
- * `highlight.*` names are declared in the vocabulary above because §17 lists
- * them and a consumer must be able to switch on the complete set, but
- * routes/highlights.ts and routes/stories.ts belong to another lane and nothing
- * here emits them. Two of the eight (`memory.merged`, `memory.split`) have no
- * command either — see MEMORY_COMMAND_TYPES_NOT_DECLARED.
+ * The eight events whose subject is a MEMORY. Two of the eight
+ * (`memory.merged`, `memory.split`) still have no command — see
+ * MEMORY_COMMAND_TYPES_NOT_DECLARED.
+ *
+ * WHAT CHANGED, AND WHAT DID NOT. Until migration 2993 no `highlight.*` row
+ * could physically be written: memory_domain_events.memory_id was
+ * `uuid NOT NULL REFERENCES public.memories(id)`, and `public.highlights` has
+ * no memory_id and shares no id with `memories`. Five names were in 2710's
+ * type CHECK and in the vocabulary above, and all five were UNREACHABLE. 2993
+ * adds `highlight_id` beside `memory_id` under a CHECK that exactly one is
+ * present, so the shape now exists.
+ *
+ * Of the five, TWO have a writer: `highlight.pinned` and `highlight.hidden`,
+ * emitted by public.highlight_kernel_execute for PIN/UNPIN/HIDE_HIGHLIGHT.
+ * `highlight.created`, `highlight.published` and `highlight.expired` are
+ * writeable and UNWRITTEN — creation and expiry do not cross the command
+ * boundary, and PUBLISH_HIGHLIGHT has no storable state to move to
+ * (lib/memoryCommandBus.ts records the measurement). That is a smaller gap
+ * than "unreachable" and it is still a gap.
  */
 export const MEMORY_DOMAIN_EVENT_TYPES = MEMORY_EVENT_TYPES.filter((t) => t.startsWith("memory."));
+
+/** The events whose subject is a HIGHLIGHT (§17). */
+export const HIGHLIGHT_DOMAIN_EVENT_TYPES = MEMORY_EVENT_TYPES.filter((t) => t.startsWith("highlight."));
 
 export function isMemoryEventType(v: unknown): v is MemoryEventType {
   return typeof v === "string" && (MEMORY_EVENT_TYPES as readonly string[]).includes(v);
@@ -208,8 +224,15 @@ export function eventPayloadIsPrivacyFiltered(payload: unknown): boolean {
 
 export interface MemoryOutboxRow {
   id: number;
-  event_id: string;
-  memory_id: string;
+  /**
+   * The subject. EXACTLY ONE of these two is non-null — migration 2993's
+   * `memory_event_outbox_one_subject` CHECK, restated as a type a consumer
+   * compiles against. Typing `memory_id` as `string` after 2993 would describe
+   * a row shape the table no longer produces, and a consumer that believed it
+   * would call `.eq("id", null)` on `memories` for every Highlight event.
+   */
+  memory_id: string | null;
+  highlight_id: string | null;
   type: MemoryEventType;
   created_at: string;
   published_at: string | null;
@@ -242,7 +265,7 @@ export async function readUnpublishedOutbox(
 ): Promise<OutboxReadResult> {
   const { data, error } = await sc
     .from(MEMORY_OUTBOX_TABLE)
-    .select("id, event_id, memory_id, type, created_at, published_at, attempts")
+    .select("id, event_id, memory_id, highlight_id, type, created_at, published_at, attempts")
     .is("published_at", null)
     .order("id", { ascending: true })
     .limit(limit);

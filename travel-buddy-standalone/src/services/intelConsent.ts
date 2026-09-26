@@ -3,9 +3,12 @@
  * consent endpoint.
  *
  * The server owns the truth: it stamps the consent VERSION and the consent/
- * withdrawal timestamps. The client only READS its state and sends the boolean
- * intent (Allow & Share / turn off). It never sends a version or a timestamp — it
- * cannot forge consent. With the API unconfigured every call is a no-op.
+ * withdrawal timestamps. The client READS its state and sends the boolean
+ * intent (Allow & Share / turn off), plus — on a grant — the disclosure version
+ * whose words it DISPLAYED, which the server checks against the version it
+ * stamps and refuses on mismatch. The client never supplies the RECORDED version
+ * or a timestamp — it cannot forge consent. With the API unconfigured every call
+ * is a no-op.
  */
 import { isSupabaseConfigured } from '../lib/supabase.ts';
 import { freshToken as freshApiToken } from './apiToken.ts';
@@ -48,15 +51,20 @@ export async function getIntelConsent(): Promise<IntelConsentState | null> {
 
 /**
  * Grant (enabled=true, an explicit "Allow & Share") or withdraw (false) consent.
- * Only the boolean is sent; the server records the version + timestamps. Returns
- * the authoritative post-write state, or null on failure.
+ * The server records the version + timestamps; the client never supplies the
+ * version that is RECORDED. On a grant the client sends the disclosure version
+ * it DISPLAYED, and the server refuses (409) unless that is the version it
+ * stamps — so a record can never name words the person did not see. Returns the
+ * authoritative post-write state, or null on failure (including that refusal).
  */
-export async function setIntelConsent(enabled: boolean): Promise<IntelConsentState | null> {
+export async function setIntelConsent(enabled: boolean, displayedDisclosureVersion?: string): Promise<IntelConsentState | null> {
   if (!isSupabaseConfigured || !apiBase()) return null;
   try {
     const res = await authedFetch(`${INTEL_BASE}/consent`, {
       method: 'PUT',
-      body: JSON.stringify({ enabled }),
+      body: JSON.stringify(
+        enabled && displayedDisclosureVersion ? { enabled, disclosureVersion: displayedDisclosureVersion } : { enabled },
+      ),
     });
     if (!res.ok) return null;
     return (await res.json()) as IntelConsentState;

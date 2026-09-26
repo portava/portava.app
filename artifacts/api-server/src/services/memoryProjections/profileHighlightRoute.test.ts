@@ -175,7 +175,7 @@ describe("GET /users/:userId/memories/highlights — §18 ProfileHighlightProjec
       const { status, body } = await get(app.baseUrl, PROFILE, "owner-tok");
       assert.equal(status, 200);
       assert.equal(body.profileHighlights.projectionId, "ProfileHighlightProjection");
-      assert.equal(body.profileHighlights.builderVersion, "profile-highlight@1");
+      assert.equal(body.profileHighlights.builderVersion, "profile-highlight@2");
       assert.equal(body.profileHighlights.destination, "profile.highlights");
       assert.deepEqual(ids(body), ["circle", "cust", "hid", "priv", "pub"]);
       assert.ok(body.profileHighlights.rows.every((r: any) => r.audience === "OWNER"));

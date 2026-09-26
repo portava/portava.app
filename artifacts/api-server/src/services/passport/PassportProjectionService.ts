@@ -1190,22 +1190,50 @@ function mean(...xs: number[]): number {
  * zero" — avoided the alarming zero by making a claim instead. "Not yet rated"
  * avoids both. See `wordForBasis`.
  */
-function buildDomainTrust(
+/*
+ * EXPORTED so its tests exercise the SHIPPED projection rather than a copy of
+ * it — the same reason `domainTrustBasis` and `trustConfidenceBasis` are
+ * exported. A test that reimplements the rule it is checking passes whatever
+ * the rule does, and the Q1 null-coercion hazard is precisely the kind of
+ * defect a reimplementation would reproduce rather than catch.
+ */
+export function buildDomainTrust(
   overallScore: number,
-  categories: Record<string, number> | null | undefined,
+  /** A category value may be `null` = NOT SCORED (Q1). See `measuredValue`. */
+  categories: Record<string, number | null> | null | undefined,
   isBuddy: boolean,
   state: TrustProfileRead["state"],
   overallMeasured: boolean,
 ): DomainTrust[] {
-  const c = (k: string): number => {
-    const v = Number((categories as Record<string, number> | undefined)?.[k]);
-    return Number.isFinite(v) ? v : 50;
+  /**
+   * Q1, owner decision 2026-09-22: a category may now be `null` = NOT SCORED,
+   * and `null` MUST NOT reach `Number()` before it is tested.
+   *
+   * `Number(null)` is 0 and `Number.isFinite(0)` is true. So the previous
+   * one-liner would have classified every unscored category as a MEASURED ZERO
+   * — reporting `basis: "measured"` and wording it "New" — which is the single
+   * worst outcome available: the harshest possible rating, presented as a
+   * measurement, about a person nobody measured. (`undefined` was safe by
+   * accident, because `Number(undefined)` is NaN; `null` is not.)
+   *
+   * An unscored category therefore takes exactly the path an ABSENT one always
+   * took: `isMeasured` is false, `c()` yields the neutral substitute, the basis
+   * comes out `substituted` or `partial`, and Q3's `wordForBasis` presents
+   * "Not yet rated" rather than a rating word. That is deliberate reuse — the
+   * null case flows into the vocabulary that already exists for it rather than
+   * introducing a second one.
+   */
+  const measuredValue = (k: string): number | null => {
+    const raw = (categories as Record<string, number | null> | undefined)?.[k];
+    if (raw === null || raw === undefined) return null;
+    const v = Number(raw);
+    return Number.isFinite(v) ? v : null;
   };
+  const c = (k: string): number => measuredValue(k) ?? 50;
   // The SAME test `c` applies, asked separately so the answer does not depend on
   // the order the domains happen to read their categories in — `respect_safety`
   // feeds three domains and must report identically to each.
-  const isMeasured = (k: string): boolean =>
-    Number.isFinite(Number((categories as Record<string, number> | undefined)?.[k]));
+  const isMeasured = (k: string): boolean => measuredValue(k) !== null;
   const basisOf = (...keys: string[]): DomainTrustBasis =>
     domainTrustBasis(state, keys.filter(isMeasured).length, keys.length);
 
@@ -1319,14 +1347,25 @@ async function buildTrust(
   // `travel_proxy`, whose name now means "the engine recorded no evidence"),
   // and `degraded` says so again at the section level.
   const confidence = passportTrustConfidence(profileRead.state, evidenceWeight);
-  const overallMeasured = !!profile && Number.isFinite(Number(profile.overall_score));
-  const overallForDomains = overallMeasured ? Number(profile!.overall_score) : 50;
-  // Explainability at the level the words are SHOWN. A substituted domain keeps
-  // its FLAG (`applicable` still means only "this domain applies to this
-  // person") but no longer keeps a rating WORD — see `wordForBasis`.
+  // Q1: `overall_score` is now nullable (= NOT SCORED). The null test comes
+  // FIRST and separately, because `Number(null)` is 0 and `Number.isFinite(0)`
+  // is true — so the finite check alone would call an unscored profile
+  // "measured" and hand `buildDomainTrust` a hard 0, publishing the Overall
+  // domain as a measured "New". With the null caught here, `overallMeasured` is
+  // false, the basis is `substituted`, and Q3's `wordForBasis` prints
+  // "Not yet rated" — the same vocabulary the category domains use.
+  const overallRaw = profile?.overall_score;
+  const overallMeasured =
+    !!profile && overallRaw !== null && overallRaw !== undefined && Number.isFinite(Number(overallRaw));
+  const overallForDomains = overallMeasured ? Number(overallRaw) : 50;
+  // Explainability at the level the words are SHOWN. `presentation` is
+  // unchanged on every branch — see `DomainTrust.applicable` for why the
+  // substituted domains keep both their word and their flag.
   const domains = buildDomainTrust(
     overallForDomains,
-    profile?.categories as Record<string, number> | undefined,
+    // Widened for Q1: the cast used to say `number`, which would have hidden
+    // every NULL from the compiler at exactly the seam that has to notice them.
+    profile?.categories as Record<string, number | null> | undefined,
     isBuddy,
     profileRead.state,
     overallMeasured,

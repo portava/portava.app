@@ -15,7 +15,7 @@ import { router, useLocalSearchParams, useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   ArrowLeft, Trash2, Globe, Users, Lock, Eye,
-  MoreHorizontal, Plus, CalendarDays, MapPin,
+  MoreHorizontal, Plus, CalendarDays, MapPin, Search,
 } from 'lucide-react-native';
 import { color, space, radius, type as t } from '../../src/theme/tokens';
 import {
@@ -228,6 +228,25 @@ export default function MemoryDetailScreen() {
         <Text style={s.headerTitle} numberOfLines={1}>
           {memory.title ?? 'Memory'}
         </Text>
+        {/* §15 retrieval, reachable.
+          *
+          * `/memory/search` was mounted and registered and navigated to by
+          * NOTHING, so `POST /api/memories/search` had a complete client and no
+          * person could open it. It lives here rather than on the Passport
+          * Memories tab on purpose: that tab renders `passport_memories`, a
+          * different table with different ids, and a search box there would
+          * return hits the tab cannot show. This screen reads `GET
+          * /api/memories/:id` — the same corpus the search searches, and the
+          * screen the search's own results navigate into. */}
+        <Pressable
+          onPress={() => router.push('/memory/search' as any)}
+          hitSlop={8}
+          testID="memory-search-entry"
+          accessibilityRole="button"
+          accessibilityLabel="Search your memories"
+        >
+          <Search size={20} color={color.ink} />
+        </Pressable>
         {isOwner ? (
           <Pressable onPress={handleOwnerMenu} hitSlop={8}>
             <MoreHorizontal size={22} color={color.ink} />

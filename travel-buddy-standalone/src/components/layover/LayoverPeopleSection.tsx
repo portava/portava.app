@@ -8,15 +8,36 @@ import { Avatar } from '../ui/Avatar.tsx';
 import { CachedImage } from '../CachedImage.tsx';
 import { Users, Star, BadgeCheck } from 'lucide-react-native';
 import { color, space, radius, type as t } from '../../theme/tokens.ts';
-import type { LayoverBuddy, PresenceTraveler } from '../../services/layover.ts';
+import type { LayoverBuddy, LayoverPresenceAnswer } from '../../services/layover.ts';
 import { primaryIdentityText } from '../../lib/displayIdentity.ts';
 
+/**
+ * census-layover L127 / L128 / L294 — the presence ANSWER, not just its count.
+ *
+ * `GET /api/airport/sessions/:id/presence` returns `disclosePresence`'s whole
+ * result (`artifacts/api-server/src/services/airport/LayoverPrivacyGuard.ts:468`).
+ * This card used to take `presenceCount` alone, so three different situations
+ * arrived here as the integer 0 and left as one sentence — "No other shared
+ * layovers here right now — you're the first.":
+ *
+ *   a measured zero                    TRUE, and worth saying
+ *   a read that fell closed            `degraded: true`
+ *   the traveller's own switch         `withheld: ['ghost_mode', …]`
+ *
+ * The server publishes the discriminator; the card now reads it. Nothing here
+ * re-derives WHICH kind of zero it is — `degraded` and `withheld` are the
+ * server's own fields and the only two this card branches on.
+ *
+ * The shape is `services/layover.ts`'s `LayoverPresenceAnswer` and NOT a copy.
+ * A second presence vocabulary on the client is the failure mode this tree has
+ * already paid for twice; one type, named after the server's own response, is
+ * the whole point.
+ */
 interface Props {
   city: string | null;
   shareEnabled: boolean;
   shareBusy: boolean;
-  presenceCount: number;
-  travelers: PresenceTraveler[];
+  presence: LayoverPresenceAnswer;
   buddies: LayoverBuddy[];
   canEdit: boolean;
   onToggleShare: (enabled: boolean) => void;
@@ -30,9 +51,36 @@ function initials(name: string | null, handle: string | null): string {
 }
 
 export function LayoverPeopleSection({
-  city, shareEnabled, shareBusy, presenceCount, travelers, buddies,
+  city, shareEnabled, shareBusy, presence, buddies,
   canEdit, onToggleShare, onOpenBuddy,
 }: Props) {
+  const { count: presenceCount, travelers } = presence;
+  // ORDER MATTERS AND IS THE SERVER'S. `preferences_unreadable` and
+  // `ghost_mode_unreadable` appear in `withheld` AND set `degraded`, because
+  // the gate fell closed rather than read a choice. Checking `degraded` first
+  // means a traveller is never told their own setting hid them when nobody
+  // managed to read that setting.
+  const unmeasured = presence.degraded;
+  const withheldByChoice = !unmeasured && (presence.withheld?.length ?? 0) > 0;
+  /**
+   * census L128 — THE RUNG IS THE SERVER'S STATEMENT, NOT THE ARRAY'S LENGTH.
+   *
+   * `level` is `disclosePresence`'s own answer about WHICH §14 rung it served
+   * (LayoverPrivacyGuard.ts:468). `L0_AGGREGATE` means the count was the whole
+   * disclosure, so identities are not shown here however many happen to be in
+   * `travelers` — the array is not the authority on what was disclosed.
+   *
+   * ABSENT `level` is NOT treated as L0. A server that predates the privacy
+   * guard states no rung at all, and inventing one for it would be this client
+   * making the §14 decision rather than reading it.
+   *
+   * IMPLEMENTED, NOT IN FORCE. Aggregate-first is gated server-side on
+   * `layover_presence_ladder_enabled` (migration 2740, seeded FALSE and
+   * unapplied), so every response today is `L2_DISCOVERY` and this branch is
+   * dark in production. It exists so that enabling the flag is a server
+   * decision that needs no client change — not because the rung is live.
+   */
+  const aggregateOnly = presence.level === 'L0_AGGREGATE';
   return (
     <View style={styles.card}>
       <View style={styles.headRow}>
@@ -58,19 +106,36 @@ export function LayoverPeopleSection({
 
       {shareEnabled && (
         <View style={styles.presenceBox}>
-          {presenceCount > 0 ? (
+          {presenceCount > 0 && !unmeasured && !withheldByChoice ? (
             <>
-              <View style={styles.avatarRow}>
-                {travelers.slice(0, 6).map((p) => (
-                  <View key={p.id} style={styles.avatarWrap}>
-                    <Avatar uri={p.avatarUrl} name={p.name ?? p.handle} size={32} style={styles.avatarRing} />
-                  </View>
-                ))}
-              </View>
+              {!aggregateOnly && (
+                <View style={styles.avatarRow} testID="layover-presence-travelers">
+                  {travelers.slice(0, 6).map((p) => (
+                    <View key={p.id} style={styles.avatarWrap}>
+                      <Avatar uri={p.avatarUrl} name={p.name ?? p.handle} size={32} style={styles.avatarRing} />
+                    </View>
+                  ))}
+                </View>
+              )}
               <Text style={styles.presenceText}>
                 {presenceCount} {presenceCount === 1 ? 'traveler is' : 'travelers are'} also on a layover here
               </Text>
+              {aggregateOnly && (
+                <Text style={styles.presenceUnknown} testID="layover-presence-aggregate-only">
+                  Only the number is shared here — not who they are.
+                </Text>
+              )}
             </>
+          ) : unmeasured ? (
+            <Text style={styles.presenceUnknown} testID="layover-presence-unmeasured">
+              We couldn't check who else is here right now. This isn't a count of
+              zero — it's an answer we didn't get.
+            </Text>
+          ) : withheldByChoice ? (
+            <Text style={styles.presenceUnknown} testID="layover-presence-withheld">
+              Your sharing settings are keeping you hidden here, so you're not
+              seeing other travelers either.
+            </Text>
           ) : (
             <Text style={styles.presenceText}>No other shared layovers here right now — you're the first.</Text>
           )}
@@ -132,6 +197,9 @@ const styles = StyleSheet.create({
   // Sizing/shape come from <Avatar size>; this is the separation ring only.
   avatarRing: { borderWidth: 2, borderColor: color.paperRaised },
   presenceText: { ...t.small, color: color.mute },
+  // Deliberately NOT the warning colour: neither state is an error the
+  // traveller caused, and neither is a safety signal.
+  presenceUnknown: { ...t.small, color: color.faint },
 
   buddyHead: { ...t.bodyStrong, color: color.ink, marginTop: space.sm },
   buddySub:  { ...t.small, color: color.faint, marginTop: -4 },

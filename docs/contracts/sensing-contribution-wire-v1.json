@@ -1,0 +1,50 @@
+{
+  "$comment": "THE WIRE CONTRACT for POST /api/v1/sensing/contributions, version 1. Two test suites read this file: travel-buddy-standalone/src/lib/sensing/__tests__/wireContribution.test.ts asserts the client's mapper produces exactly `body` from `payload`; artifacts/api-server/src/test/sensingIngestWireContract.test.ts asserts the server's schema accepts `body` verbatim and refuses a body with any extra key. Change this file and one side turns red until the other follows. The credential travels in the X-Sensing-Credential header, never in the body. There is no account, device, installation or session identifier anywhere below, and no coordinate.",
+  "version": 1,
+  "payload": {
+    "reduction_version": 1,
+    "zone_id": "dr5ru7",
+    "zone_precision": 6,
+    "canonical_place_candidate": "place-9f2a",
+    "time_bucket": "2026-09-26T12:00:00.000Z",
+    "movement_state": "pedestrian",
+    "motion_energy": 0.3471,
+    "periodicity": 0.6129,
+    "dwell_bucket": 2,
+    "transition": "arrival",
+    "transport_mode_likelihood": { "stationary": 0.1, "pedestrian": 0.8, "cycling": 0.05, "vehicular": 0.05 },
+    "sensor_health": { "confidence": 0.8, "motion_sample_count": 300, "location_sample_count": 10, "degraded": [] },
+    "density": "moderate",
+    "bounded_movement": true,
+    "signal_bucket": 1,
+    "observed_at_ms": 1790424000000,
+    "acoustic": { "scope": "sensing.acoustic.energy", "energy_bucket": 2, "rhythm_bucket": "steady", "confidence": 0.7 }
+  },
+  "identity": {
+    "commitment": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    "rotationEpoch": 497340
+  },
+  "body": {
+    "commitment": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    "rotationEpoch": 497340,
+    "zoneId": "dr5ru7",
+    "observedAtMs": 1790424000000,
+    "signalBucket": 1,
+    "reductionVersion": 1,
+    "features": {
+      "zonePrecision": 6,
+      "placeCandidate": "place-9f2a",
+      "movementState": "pedestrian",
+      "motionEnergyCenti": 35,
+      "periodicityCenti": 61,
+      "dwellBucket": 2,
+      "transition": "arrival",
+      "transportMode": "pedestrian",
+      "transportModeCenti": 80,
+      "density": "moderate",
+      "boundedMovement": true,
+      "sensorHealthCenti": 80,
+      "acoustic": { "energyBucket": 2, "rhythmBucket": "steady", "confidenceCenti": 70 }
+    }
+  }
+}
