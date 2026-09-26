@@ -9,6 +9,8 @@
  *     whatever the frame's size, and not the original;
  *   • with no feed variant stored it draws the original, never an upscaled
  *     thumbnail;
+ *   • the choice is aspect-aware: a 9:16 portrait's feed variant is only 844 px
+ *     wide, so the same 1170 px frame draws its original;
  *   • for every object type the renderer dispatches, at four device widths, the
  *     set `prefetchWallMedia` warms is EXACTLY the set the renderer drew: one
  *     object for the five image-drawing types, none for a social update or a
@@ -17,13 +19,14 @@
  *     a multi-media post warmed media no renderer draws; and a Buddy
  *     opportunity's cover photo was warmed though its renderer draws no media.
  *
- * WATCHED IT FAIL (census-wall §16): (b) with WallImage ignoring `feedUrl`, the
- * 3× test and the 780 px and 1170 px image rows go red; (c) with the prefetch
- * back on `url ?? thumbnailUrl`, the image rows at 360, 780 and 1170 px go red;
- * (d) with the picker starting at the thumbnail whatever the target, the 3×
- * test, the no-feed test and the image rows above 400 px go red; (e) with the
- * prefetch warming every media item of every type again, every row that
- * carries more media than it draws goes red.
+ * WATCHED IT FAIL: census-wall §16.8 lists, for each mutation, which of these
+ * cases go red. The mutations are:
+ *   (b) WallImage ignores `feedUrl`;
+ *   (c) the prefetch goes back to `url ?? thumbnailUrl`;
+ *   (d) the picker starts at the thumbnail whatever the target;
+ *   (e) the prefetch warms every media item of every type again;
+ *   (g) the picker goes back to the longest-edge rule when dimensions are
+ *       known.
  */
 
 import React from 'react';
@@ -74,6 +77,17 @@ const SECOND: DisplayMedia = {
   thumbnailUrl: 'post-media/u1/q.thumb.jpg',
   feedUrl: 'post-media/u1/q.feed.jpg',
 };
+// A 9:16 portrait with known dimensions: its feed variant is 1152 × 1500 / 2048
+// = 844 px wide, so a 1170 px frame needs the original.
+const PORTRAIT: DisplayMedia = {
+  mediaId: 'mp',
+  kind: 'image',
+  url: 'post-media/u1/tall.jpg',
+  thumbnailUrl: 'post-media/u1/tall.thumb.jpg',
+  feedUrl: 'post-media/u1/tall.feed.jpg',
+  width: 1152,
+  height: 2048,
+};
 const VIDEO: DisplayMedia = {
   mediaId: 'mv',
   kind: 'video',
@@ -107,6 +121,11 @@ describe('WallImage draws the variant its frame needs (§33)', () => {
     expect(drawn()).toBe(ORIG);
   });
 
+  it('a 9:16 portrait on the same 1170 px frame draws the original: its feed variant is only 844 px wide', async () => {
+    await render(<WallImage media={PORTRAIT} />);
+    expect(drawn()).toBe('post-media/u1/tall.jpg');
+  });
+
   it('a video frame draws its poster, never the payload', async () => {
     await render(<WallImage media={VIDEO} ratio={16 / 9} rounded={false} />);
     expect(drawn()).toBe('post-media/u1/clip.jpg');
@@ -127,6 +146,7 @@ const base = (id: string) => ({
 // cover photo — so the prefetch must warm nothing for them.
 const PROJECTIONS: Array<[string, WallProjection]> = [
   ['social_post', { ...base('p1'), objectType: 'social_post', text: 'post', media: [IMAGE, SECOND] }],
+  ['social_post (9:16 portrait)', { ...base('p2'), objectType: 'social_post', text: 'tall', media: [PORTRAIT, SECOND] }],
   ['postcard', { ...base('c1'), objectType: 'postcard', storyPresentation: true, media: [IMAGE, SECOND] }],
   ['shared_moment', { ...base('s1'), objectType: 'shared_moment', media: [IMAGE, SECOND] }],
   ['discovery', { ...base('d1'), objectType: 'discovery', discoveryReason: 'nearby', media: [IMAGE, SECOND] }],
@@ -138,26 +158,28 @@ const PROJECTIONS: Array<[string, WallProjection]> = [
   ],
 ];
 
-const DEVICES: Array<[string, number, number, string]> = [
-  ['180 dp 2× (360 px)', 180, 2, THUMB],
-  ['390 dp 2× (780 px)', 390, 2, FEED],
-  ['390 dp 3× (1170 px)', 390, 3, FEED],
-  ['1024 dp 2× (2048 px)', 1024, 2, ORIG],
+// [label, dp, scale, what an image of unknown shape draws, what the 9:16 portrait draws]
+const DEVICES: Array<[string, number, number, string, string]> = [
+  ['180 dp 2× (360 px)', 180, 2, THUMB, 'post-media/u1/tall.feed.jpg'], // portrait thumbnail is 225 px wide
+  ['390 dp 2× (780 px)', 390, 2, FEED, 'post-media/u1/tall.feed.jpg'],
+  ['390 dp 3× (1170 px)', 390, 3, FEED, 'post-media/u1/tall.jpg'],
+  ['1024 dp 2× (2048 px)', 1024, 2, ORIG, 'post-media/u1/tall.jpg'],
 ];
 
-function expectedDraw(type: string, expectedImage: string): string | null {
+function expectedDraw(type: string, expectedImage: string, expectedPortrait: string): string | null {
   if (type === 'video') return 'post-media/u1/clip.jpg';
   if (type === 'social_update' || type === 'contextual_opportunity') return null;
+  if (type.includes('portrait')) return expectedPortrait;
   return expectedImage;
 }
 
 describe('the prefetch warms exactly what the renderer draws (§31 × §33)', () => {
-  describe.each(DEVICES)('on a %s device', (_label, width, scale, expectedImage) => {
+  describe.each(DEVICES)('on a %s device', (_label, width, scale, expectedImage, expectedPortrait) => {
     it.each(PROJECTIONS)('%s', async (type, projection) => {
       device(width, scale);
       await render(<WallObjectRenderer projection={projection} />);
       const frames = screen.queryAllByTestId('drawn-uri').map((n) => n.props.children as string);
-      const want = expectedDraw(type, expectedImage);
+      const want = expectedDraw(type, expectedImage, expectedPortrait);
       expect(frames).toEqual(want ? [want] : []);
 
       const hydrate = jest.fn(async (refs: string[]) =>

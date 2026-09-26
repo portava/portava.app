@@ -3,9 +3,17 @@
  * (Wall spec §33 "Images: responsive variants + CDN/cache"; census-wall W151).
  *
  * ── THE CLAIMS ───────────────────────────────────────────────────────────────
- *   1. The picker takes the SMALLEST stored variant that covers the target:
- *      thumbnail up to 400 px, the feed variant up to 1500 px, the original
- *      above that.
+ *   0. ASPECT-AWARE when the original's width and height are known. A variant
+ *      capped at DIM on its longest edge is `w × min(1, DIM / max(w, h))` wide.
+ *      The picker takes the narrowest stored variant whose WIDTH covers the
+ *      target:
+ *        - a 9:16 portrait's 844 px feed variant does not cover a 1170 px frame,
+ *          so the original is drawn;
+ *        - a landscape image's 1500 px feed variant does cover it.
+ *   1. With either dimension unknown it keeps the longest-edge rule, where the
+ *      cap stands in for the width: the smallest stored variant that covers the
+ *      target is the thumbnail up to 400 px, the feed variant up to 1500 px,
+ *      and the original above that.
  *   2. An absent variant falls to the next LARGER one that is present, and only
  *      when nothing at or above the target is present, to the largest smaller.
  *   3. A video yields its poster only, never the payload; processing media and
@@ -17,9 +25,11 @@
  *      nothing of the other two (the component test pins this set against the
  *      real renderers).
  *
- * WATCHED IT FAIL: with the picker returning `thumbnailUrl ?? url` whatever the
- * target (mutation d), "a full-width 3× frame draws the feed variant" and
- * "above FEED_DIM it draws the original" go red.
+ * WATCHED IT FAIL (census-wall §16):
+ *   (d) with the picker starting at the thumbnail whatever the target, the
+ *       covering and fallback cases go red;
+ *   (g) with the picker back on the longest-edge rule when dimensions ARE
+ *       known, the aspect-aware cases go red.
  */
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -33,6 +43,7 @@ import {
   drawnWallMediaOf,
   pickWallImageRef,
   wallImageTargetPx,
+  wallVariantWidth,
 } from '../wallImageVariant.ts';
 import type { DisplayMedia, WallObjectType, WallProjection } from '../../types/wallProjection.ts';
 
@@ -46,7 +57,57 @@ function image(over: Partial<DisplayMedia> = {}): DisplayMedia {
   return { mediaId: 'm1', kind: 'image', url: ORIG, thumbnailUrl: THUMB, feedUrl: FEED, ...over };
 }
 
-describe('pickWallImageRef — the smallest stored variant that covers the target', () => {
+describe('pickWallImageRef — aspect-aware when the original\'s dimensions are known', () => {
+  const FRAME = wallImageTargetPx({ width: 390, scale: 3 }); // 1170 px
+
+  test('a variant capped on its longest edge is w × min(1, DIM / max(w, h)) wide', () => {
+    assert.equal(wallVariantWidth(WALL_FEED_DIM, 1152, 2048), 843.75); // 9:16 portrait
+    assert.equal(wallVariantWidth(WALL_FEED_DIM, 1536, 2048), 1125); // 3:4 portrait
+    assert.equal(wallVariantWidth(WALL_FEED_DIM, 2048, 1365), 1500); // 3:2 landscape
+    assert.equal(wallVariantWidth(WALL_THUMBNAIL_DIM, 2048, 1365), 400);
+    assert.equal(wallVariantWidth(WALL_FEED_DIM, 800, 600), 800, 'never wider than the original');
+    assert.equal(wallVariantWidth(Number.POSITIVE_INFINITY, 1152, 2048), 1152, 'the original is its own width');
+  });
+
+  test('a 9:16 portrait on a 1170 px frame draws the original: its feed variant is only 844 px wide', () => {
+    assert.equal(pickWallImageRef(image({ width: 1152, height: 2048 }), FRAME), ORIG);
+  });
+
+  test('a 3:4 portrait draws the original at 1170 px (feed is 1125 wide) and the feed variant at 1100 px', () => {
+    assert.equal(pickWallImageRef(image({ width: 1536, height: 2048 }), FRAME), ORIG);
+    assert.equal(pickWallImageRef(image({ width: 1536, height: 2048 }), 1100), FEED);
+  });
+
+  test('a portrait whose original is absent takes the widest stored variant', () => {
+    assert.equal(pickWallImageRef(image({ width: 1152, height: 2048, url: null }), FRAME), FEED);
+  });
+
+  test('a landscape image still draws the feed variant on a 1170 px frame', () => {
+    assert.equal(pickWallImageRef(image({ width: 2048, height: 1365 }), FRAME), FEED);
+  });
+
+  test('a portrait thumbnail is narrower than 400 px, so a 350 px frame takes the feed variant', () => {
+    // 9:16 thumbnail = 1152 × 400 / 2048 = 225 px wide.
+    assert.equal(pickWallImageRef(image({ width: 1152, height: 2048 }), 350), FEED);
+    assert.equal(pickWallImageRef(image({ width: 1152, height: 2048 }), 225), THUMB);
+  });
+
+  test('an original narrower than the frame: nothing covers, so the widest; on a tie the smaller variant', () => {
+    // 800 × 600: the feed variant is 800 wide, the same as the original.
+    assert.equal(pickWallImageRef(image({ width: 800, height: 600 }), FRAME), FEED);
+    assert.equal(pickWallImageRef(image({ width: 800, height: 600, feedUrl: null }), FRAME), ORIG);
+  });
+
+  test('unknown dimensions keep the longest-edge rule', () => {
+    for (const dims of [{}, { width: null, height: null }, { width: 1152 }, { height: 2048 }, { width: 0, height: 2048 }]) {
+      assert.equal(pickWallImageRef(image(dims as Partial<DisplayMedia>), FRAME), FEED, JSON.stringify(dims));
+      assert.equal(pickWallImageRef(image(dims as Partial<DisplayMedia>), 300), THUMB, JSON.stringify(dims));
+      assert.equal(pickWallImageRef(image(dims as Partial<DisplayMedia>), 2000), ORIG, JSON.stringify(dims));
+    }
+  });
+});
+
+describe('pickWallImageRef — the smallest stored variant that covers the target (dimensions unknown)', () => {
   test('up to 400 px it draws the thumbnail', () => {
     assert.equal(pickWallImageRef(image(), 1), THUMB);
     assert.equal(pickWallImageRef(image(), 400), THUMB);
