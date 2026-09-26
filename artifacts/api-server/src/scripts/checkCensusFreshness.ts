@@ -2512,6 +2512,15 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     // resolves whichever it reads.
     "artifacts/api-server/src/test/inputAssistanceCompatibility.test.ts",
     "artifacts/api-server/src/lib/circleResponseShaper.ts",
+    // ── ADDED 2026-09-26 by §33 ──────────────────────────────────────────
+    // G136 names these two to EXCLUDE them: every approximate_area site in
+    // the tree is the Circles visibility mode, not a Hidden Gem producer.
+    // They are watched because that exclusion is EVIDENCE — if a Hidden Gem
+    // approximate_area producer ever appeared in either file, G136's W would
+    // be wrong and the row should age. NOT_GRADED was not used: it is for
+    // machinery, and a service and a route are product code.
+    "artifacts/api-server/src/compass/CompassSocialEngine.ts",
+    "artifacts/api-server/src/routes/circle.ts",
     "artifacts/api-server/src/lib/locationPurposes.ts",
     "app/_layout.tsx",
     // ── ADDED 2026-09-21 by the INTEGRATING LANE, for the §44/§57 lane ───────

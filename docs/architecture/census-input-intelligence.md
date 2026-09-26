@@ -5145,3 +5145,34 @@ The sentence is corrected in place rather than moved, per LAST-STATEMENT-WINS.
 Verdict totals unchanged. This section exists because a file this census counts
 changed, and the honest response to that is to re-read the row it touches and
 say what was found — which here is one intact verdict and one stale sentence.
+
+### §33.5 The scope widening §33.3 required, and what it cost
+
+`check:census-scope-coverage` went red on CI after §33 — **not locally, because
+I did not re-run that particular guard after adding the section.** Naming two
+new files in G136's corrected enumeration made this census cite 190 files while
+watching 188, which is 98.9% against a floor of 98%… before the fix, 186/190 =
+97.9%, just under it.
+
+**The two paths are now in `CENSUS_SCOPE`, not excluded.** That is the fix the
+guard asks for and the one this case deserves: G136's exclusion is EVIDENCE. If
+a Hidden Gem `approximate_area` producer ever appeared in
+`compass/CompassSocialEngine.ts` or `routes/circle.ts`, G136's `W` would be
+wrong and the row *should* age. A file whose change could falsify a verdict is
+exactly what CENSUS_SCOPE is for.
+
+`NOT_GRADED` was considered and rejected: its own header restricts it to
+machinery and says *"a census citing its own SUBJECT can never qualify, because
+subjects are routes, services, projections, migrations and tests"*. A service
+and a route are product code. That list is also global, so an entry made for
+one census silently stops thirteen from watching the path.
+
+Writing the filenames unspelled was also rejected, on the same list's authority:
+it records the Map lane doing exactly that and calls it *"the wrong fix made by
+the only lane that could not make the right one."*
+
+**The cost, stated rather than hidden:** widening scope made
+`compass/CompassSocialEngine.ts` a counted file that had changed (+327 / −53)
+since `a97bfdac0`, so this census went stale again and the file is now named in
+the acknowledgement with a per-file argument. That is the correct price of the
+fix, and the same price census-compass §42 paid for the same reason.
