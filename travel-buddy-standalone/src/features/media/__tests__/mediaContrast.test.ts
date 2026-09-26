@@ -1291,7 +1291,7 @@ add({ id: 'routeIt.close', fg: color.ink, on: 'paperRaised', kind: 'ui', at: [[F
 // AddGemForm — the add-gem route's paper sheet.
 const ADD_GEM_SHEET: Needle = [FT.addGemRoute, /sheet: \{\s*backgroundColor: color\.paper,/];
 const VERMILION = '#C43B23';
-const ADD_GEM_TEXT: ReadonlyArray<readonly [id: string, fg: string, on: SurfaceId, needle: Needle]> = [
+const ADD_GEM_TEXT: ReadonlyArray<readonly [id: string, fg: string, on: SurfaceId, needle: Needle, surface?: Needle]> = [
   ['stepTitle', color.ink, 'paper', [FT.addGem, /stepTitle: \{\s*\.\.\.t\.heading,\s*color: color\.ink,/]],
   ['stepSubtitle', color.mute, 'paper', [FT.addGem, /stepSubtitle: \{\s*\.\.\.t\.small,\s*color: color\.mute,/]],
   ['back', VERMILION, 'paper', [FT.addGem, /backBtnText: \{\s*\.\.\.t\.small,\s*color: '#C43B23',/]],
@@ -1306,18 +1306,18 @@ const ADD_GEM_TEXT: ReadonlyArray<readonly [id: string, fg: string, on: SurfaceI
   ['placeButton', color.ink, 'paperRaised', [FT.addGem, /placeBtnText: \{[^}]*color: color\.ink,/]],
   ['placeButtonPlaceholder', color.mute, 'paperRaised', [FT.addGem, /placeBtnPlaceholder: \{\s*color: color\.mute,/]],
   ['chip', color.ink, 'paperRaised', [FT.addGem, /chipText: \{\s*\.\.\.t\.small,\s*color: color\.ink,/]],
-  ['chipActive', WHITE, 'gemGreen', [FT.addGem, /chipTextActive: \{\s*color: '#fff',/]],
+  ['chipActive', WHITE, 'gemGreen', [FT.addGem, /chipTextActive: \{\s*color: '#fff',/], [FT.addGem, /chipActive: \{\s*backgroundColor: '#0C875E',/]],
   ['confirm', color.ink, 'paperRaised', [FT.addGem, /checkboxText: \{\s*\.\.\.t\.body,\s*color: color\.ink,/]],
-  ['confirmError', VERMILION, 'errorTint', [FT.addGem, /checkboxTextError: \{\s*color: '#C43B23',/]],
+  ['confirmError', VERMILION, 'errorTint', [FT.addGem, /checkboxTextError: \{\s*color: '#C43B23',/], [FT.addGem, /checkboxRowError: \{[^}]*backgroundColor: '#FEF2F2',/]],
   ['optionalSection', color.mute, 'paper', [FT.addGem, /optionalSection: \{\s*\.\.\.t\.small,\s*color: color\.mute,/]],
   ['optionalBadge', color.mute, 'paper', [FT.addGem, /optionalBadge: \{\s*\.\.\.t\.small,\s*color: color\.mute,/]],
-  ['error', VERMILION, 'errorTint', [FT.addGem, /errorText: \{\s*\.\.\.t\.small,\s*color: '#C43B23',/]],
-  ['primaryButton', WHITE, 'gemGreen', [FT.addGem, /primaryBtnText: \{\s*\.\.\.t\.bodyStrong,\s*color: '#fff',/]],
+  ['error', VERMILION, 'errorTint', [FT.addGem, /errorText: \{\s*\.\.\.t\.small,\s*color: '#C43B23',/], [FT.addGem, /errorBox: \{\s*backgroundColor: '#FEF2F2',/]],
+  ['primaryButton', WHITE, 'gemGreen', [FT.addGem, /primaryBtnText: \{\s*\.\.\.t\.bodyStrong,\s*color: '#fff',/], [FT.addGem, /primaryBtn: \{\s*backgroundColor: '#0C875E',/]],
   ['centeredTitle', color.ink, 'paper', [FT.addGem, /centeredTitle: \{\s*\.\.\.t\.heading,\s*color: color\.ink,/]],
   ['centeredBody', color.mute, 'paper', [FT.addGem, /centeredBody: \{\s*\.\.\.t\.body,\s*color: color\.mute,/]],
   ['closeText', VERMILION, 'paper', [FT.addGem, /closeTextBtnLabel: \{\s*\.\.\.t\.bodyStrong,\s*color: '#C43B23',/]],
 ];
-for (const [id, fg, on, needle] of ADD_GEM_TEXT) add({ id: `addGem.${id}`, fg, on, kind: 'text', at: [ADD_GEM_SHEET, needle] });
+for (const [id, fg, on, needle, surface] of ADD_GEM_TEXT) add({ id: `addGem.${id}`, fg, on, kind: 'text', at: surface ? [ADD_GEM_SHEET, needle, surface] : [ADD_GEM_SHEET, needle] });
 add({ id: 'addGem.chipSelectedFill', fg: '#0C875E', on: 'paper', kind: 'ui', at: [ADD_GEM_SHEET, [FT.addGem, /chipActive: \{\s*backgroundColor: '#0C875E',/]] });
 add({ id: 'addGem.confirmChecked', fg: '#0C875E', on: 'paperRaised', kind: 'ui', at: [[FT.addGem, '<CheckSquare size={20} color="#0C875E" strokeWidth={2} />'], [FT.addGem, /checkboxRow: \{[^}]*backgroundColor: color\.paperRaised,/]] });
 add({ id: 'addGem.confirmUnchecked', fg: color.mute, on: 'paperRaised', kind: 'ui', at: [[FT.addGem, '<Square size={20} color={errors.confirms ? color.signal : color.mute} strokeWidth={1.8} />']] });
