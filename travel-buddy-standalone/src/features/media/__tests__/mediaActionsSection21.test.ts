@@ -13,7 +13,7 @@
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -372,6 +372,32 @@ test('MD387 comment: emitted from the MEDIA comment sheet, only on a comment the
   assert.equal((sheetBody.match(/onCommentPosted\?\.\(\)/g) ?? []).length, 2, 'never on a refusal');
   // The generic post surfaces (Wall, Pulse) do not pass it — §11.6.
   assert.doesNotMatch(read('components/PostEngagementBar.tsx'), /onCommentPosted/);
+});
+
+test('MD112 every gem submission surface runs the §16.1 duplicate check (merge-or-create) before it submits', () => {
+  // Enumerate, don't name: any file that calls submitGem( is a submission
+  // surface, and each must run the hidden_gem_name duplicate scan and render
+  // the pick-existing step. A new surface without it fails here.
+  const walk = (dir: string, out: string[] = []): string[] => {
+    for (const e of readdirSync(dir, { withFileTypes: true })) {
+      if (e.name === 'node_modules' || e.name === '__tests__' || e.name.startsWith('.')) continue;
+      const full = join(dir, e.name);
+      if (e.isDirectory()) walk(full, out);
+      else if (/\.(ts|tsx)$/.test(e.name) && !/\.test\./.test(e.name)) out.push(full);
+    }
+    return out;
+  };
+  const APP = join(SRC, '..', 'app');
+  const surfaces = [...walk(SRC), ...walk(APP)].filter((f) => {
+    const text = readFileSync(f, 'utf8');
+    return /\bawait submitGem\(/.test(text);
+  });
+  assert.ok(surfaces.length >= 2, `found ${surfaces.length} gem submission surfaces`);
+  for (const f of surfaces) {
+    const text = readFileSync(f, 'utf8');
+    assert.match(text, /useCreationAssistance\(\{\s*context: 'hidden_gem_name'/, `${f} scans for duplicates`);
+    assert.match(text, /<CreationAssist[\s\S]*?duplicates=\{[^}]+\.duplicates\}[\s\S]*?onPickExisting=\{/, `${f} offers the existing gem`);
+  }
 });
 
 test('MD393 profile_open / place_open, MD376 gem_open, MD374 visual_opportunity_open are emitted where the viewer opens them', () => {
