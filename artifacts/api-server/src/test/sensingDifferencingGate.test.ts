@@ -28,6 +28,8 @@ const agg = (distinctActors: number, over: Partial<SensingCohortAggregate> = {})
   contributions: distinctActors,
   observedAt: "2026-09-07T21:40:00.000Z",
   medianSignalBucket: 2,
+  // 3312: the aggregate carries reduced-feature statistics, null unless publishable; this gate never reads them.
+  features: null,
   ...over,
 });
 

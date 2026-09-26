@@ -36,6 +36,8 @@ function agg(over: Partial<SensingCohortAggregate> = {}): SensingCohortAggregate
     contributions: 20,
     observedAt: new Date(NOW - 12 * 60_000).toISOString(),
     medianSignalBucket: 3,
+    // 3312: the aggregate carries reduced-feature statistics; the presence state never reads them.
+    features: null,
     ...over,
   };
 }
