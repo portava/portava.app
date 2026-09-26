@@ -2146,6 +2146,11 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     // and rollbacks, and the suites the C verdicts rest on. Everything here
     // existed unchanged at 42aeac38 except src/test/sensingAnonStore.test.ts,
     // which is acknowledged in the ledger.
+    // ── S39's CONSUMER SIDE, registered 2026-09-26 with decision #9 ────────
+    // The formatter was never in this scope, so an edit to the one module
+    // S39 is graded on did not age this census. The producer joins it.
+    "artifacts/api-server/src/compass/CompassSensingPresence.ts",
+    "artifacts/api-server/src/compass/CompassSensingPresenceProducer.ts",
     "artifacts/api-server/src/lib/sensingAnonService.ts",
     "artifacts/api-server/src/lib/sensingAuthPosture.ts",
     "artifacts/api-server/src/lib/sensingContributionPolicy.ts",
@@ -2180,6 +2185,7 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/test/sensingAnonStore.test.ts",
     "artifacts/api-server/src/test/sensingAnonService.test.ts",
     "artifacts/api-server/src/test/sensingAuthPosture.test.ts",
+    "artifacts/api-server/src/test/compassSensingPresenceProducer.test.ts",
     "artifacts/api-server/src/test/sensingContributionPolicy.test.ts",
     "artifacts/api-server/src/test/sensingContributionSession.test.ts",
     "artifacts/api-server/src/test/sensingDifferencingGate.test.ts",

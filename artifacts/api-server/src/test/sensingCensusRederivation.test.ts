@@ -162,6 +162,21 @@ describe("§9.1 — the sensing contribution stack is imported by its own siblin
         "§18.3's four outcomes a cluster is, which is the resolver's purpose. census-sensing §14.2 re-derives " +
         "S111 against it and holds it at W: 3002 makes the two unowned outcomes STORABLE and is applied nowhere.",
     ],
+    // ── ADDED 2026-09-26, WHEN THE OWNER TOOK DECISION #9 ───────────────────
+    // The first importer that is a CONSUMER rather than a sibling, and the
+    // reason it is not the ingest this tripwire watches for: it reads the
+    // DURABLE PUBLICATION STORE (3110), never the contribution store, and it
+    // cannot cause a publication. census-sensing §21 re-derives S39 against it
+    // and does NOT move it, because `surface` is still ungranted.
+    [
+      join("compass", "CompassSensingPresenceProducer.ts"),
+      "decision #9's consumer: renders an ALREADY-published, unexpired, k-gated cohort aggregate into " +
+        "Compass presence context. Imports the presence state builder, the publication reader and the " +
+        "contribution policy; imports no store and writes nothing, so it cannot publish — if rendering " +
+        "context could publish, asking Compass a question would be a way to drive the differencing " +
+        "attack the gate exists to stop. Its FIRST gate is the `surface` purpose scope, which " +
+        "SENSING_ANON_POLICY_V1 does not grant, so it renders nothing today whatever the flag says.",
+    ],
     [
       join("routes", "mapObservations.ts"),
       "the §22 zone-contribution route. It acquired this import when resolveZoneAnchorSubject was DELETED — " +

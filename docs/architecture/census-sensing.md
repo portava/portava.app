@@ -823,7 +823,7 @@ portava-ci and never on production.
   aggregate is `observed` with an unlabelled ordinal and `few` coverage at k
   and `unknown` on every axis below it, and nothing the database returned
   appears in it (`test/db/sensingAnonStore.db.test.ts:260#privacy`;
-  `lib/sensingCoverageAggregate.ts:154#aggregateSensingCohort(`;
+  `lib/sensingCoverageAggregate.ts:165#aggregateSensingCohort(`;
   `lib/sensingPresenceState.ts:133#buildSensingPresenceState(`); one more
   contributor is not a new publication and the previous value is served
   (`test/db/sensingAnonStore.db.test.ts:316#evaluateDifferencing(agg,`); the
@@ -4693,3 +4693,119 @@ proven.
 caller, so no surface fused anything before this ruling and none does after it.
 S3 and S106 stay `W`. What changed is that the last SEMANTIC unknown blocking
 §16.5's step is now answered; what remains for those rows is the wiring itself.
+
+---
+
+## §21 — 2026-09-26: the owner took decision #9, and `surface` is still not granted
+
+**LAST-STATEMENT-WINS. This section supersedes §14.2's and S39's reading of what
+blocks the row. It MOVES NO VERDICT.**
+
+### §21.1 What the owner authorised, and what that turned out to require
+
+The owner authorised implementing decision #9 *"narrowly: publish eligible
+sensing aggregates into Compass presence context only, subject to the existing
+privacy, coverage, and authorization requirements."*
+
+`3004_sensing_presence_context_flag.sql` had already enumerated what #9 takes:
+a migration seeding the flag FALSE (shipped, and applied to portava-ci on
+2026-09-25), the owner flipping it, and **a lane wiring a producer to
+`buildSensingPresenceLines`**. The third is this section's work.
+
+Building it surfaced a requirement none of the three named, and it is the
+reason the row does not move.
+
+### §21.2 The blocker is a CONSENT SCOPE, not a flag and not wiring
+
+`lib/sensingContributionPolicy.SENSING_ANON_GRANTED_SCOPES` is exactly
+`["collect", "retain", "aggregate"]`. Its own comment states the rest:
+*"infer / personalize / surface / share are owner decisions and read as NOT
+granted."*
+
+Rendering a cohort aggregate into a conversation **is** the `surface` scope.
+Every row that could ever reach `sensing_published_aggregates` was contributed
+under a policy that permits aggregating it and does not permit showing it.
+
+So decision #9's flag and the `surface` scope are **two different owner acts**,
+and the flag is the weaker one. A capability flag is an operational switch; a
+purpose scope is what the contributor agreed to. Treating the flag as though it
+also granted the scope would be the exact move this census exists to catch — an
+engineering switch dressed up as a consent decision, in the direction of more
+exposure.
+
+**This lane did not grant the scope.** The authorisation that permitted #9 also
+said, in terms, that it *"does not authorize exposing individual contributions,
+weakening protections."* Adding `"surface"` to a frozen policy constant is a
+protection change, and it is the owner's to make, separately and visibly.
+
+### §21.3 What WAS built, and why it is not a stub
+
+`compass/CompassSensingPresenceProducer.ts` — the consumer, with two gates in a
+deliberate order:
+
+1. **The `surface` scope**, checked FIRST, before the flag and **before any
+   database read**. An ungranted scope refuses whatever the flag says. A
+   mutation that merely reorders the two gates turns the suite red.
+2. **`sensing_presence_context_enabled`**, through the formatter's branded gate,
+   which no caller can forge.
+
+It is **read-only over already-published aggregates**, and that is a privacy
+property rather than a convenience. Had rendering context run the
+anti-differencing gate, then *asking Compass a question would have been a way to
+drive publications* — and an attacker who chooses when a cohort is published
+chooses the moments to compare, which re-opens the differencing attack one layer
+above the gate built to stop it. The publish decision stays with a publisher;
+a conversation is a pure reader.
+
+Two smaller results, both measured:
+
+- A failed publication read and a genuinely empty one produce **different
+  operator diagnostics and byte-identical surface output**. The surface must not
+  be able to tell "we could not look" from "there is nothing".
+  `SensingAggregateReason` gained `"no_live_publication"` for that distinction —
+  a fourth non-suppression reason beside `read_failed` and `read_incomplete`,
+  not a new way to publish anything.
+- The five-zone cap bounds the **reads**, not merely the rendering, so one turn
+  cannot drive N lookups of the publication store.
+
+### §21.4 Three independent blockers, none of which is wiring
+
+Written out because "no surface consumes it" had become a single phrase covering
+three unrelated facts:
+
+| # | Blocker | Owner |
+|---|---|---|
+| 1 | `surface` is not in `SENSING_ANON_GRANTED_SCOPES` | THE OWNER — a separate act from #9's flag |
+| 2 | Nothing publishes. `publishThroughDifferencingGate` has **no caller outside tests**, so `sensing_published_aggregates` is empty on both databases (measured 2026-09-26: 0 rows on portava-ci) | a lane, after #1 |
+| 3 | A Compass turn carries a **city**, not a sensing `zone_id`. There is no zone identity in a conversation to ask about, because zones arrive with contributions and the ingest refuses every caller in production | a lane, after an ingest exists |
+
+`routes/compass.ts` is therefore **deliberately not wired** to the producer. A
+call site passing an empty cohort list on every turn would be theatre: it would
+make the importer graph look finished while nothing could ever flow through it.
+That is the shape this census grades as W, and adding it would have made the
+row harder to read, not closer to true.
+
+### §21.5 MOVES NOTHING
+
+**C 103 · W 21 · N 2 · X 1 — unchanged.**
+
+**S39 stays `W`.** Its RED WHEN is *"decision #9 is taken AND a surface reads
+`buildSensingPresenceState`"*. The first half has now fired: the decision is
+taken and the flag exists, seeded FALSE, on portava-ci. The second has not. A
+module that reads `buildSensingPresenceState` exists and is correct, and no
+request can reach it; were one to, the ungranted `surface` scope would refuse it
+before the flag was even consulted.
+
+The RED WHEN is restated for the next reader, because the old one is now
+satisfiable by something that would still be false:
+
+> **S39 RED WHEN** — `surface` appears in `SENSING_ANON_GRANTED_SCOPES`, AND a
+> request-reachable caller hands `buildSensingPresenceContext` a non-empty
+> cohort list, AND `sensing_published_aggregates` is non-empty on the database
+> being measured. All three, together. **WHO**: the owner (scope), then a lane
+> (publisher, zone identity).
+
+The seven rows "claimed by nobody" are unchanged at **7** — S24 S26 S39 S42 S49
+S52 S66. #9 being taken removed a decision from S39's path and revealed two
+build blockers behind it; the row is no closer to `C` and this section does not
+pretend otherwise.

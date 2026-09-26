@@ -87,7 +87,18 @@ import {
  * different fact from "we looked and there were too few people", and collapsing
  * them would hide an outage behind a privacy suppression.
  */
-export type SensingAggregateReason = SuppressionReason | "read_failed" | "read_incomplete";
+export type SensingAggregateReason =
+  | SuppressionReason
+  | "read_failed"
+  | "read_incomplete"
+  // Not a suppression and not a failed read: the cohort was looked up in the
+  // DURABLE publication store (3110) and has no unexpired publication. Kept
+  // distinct from `read_failed` for the reason that file keeps every other
+  // refusal distinct — "we looked and there is nothing" and "we could not
+  // look" are different operator facts, and collapsing them would hide a
+  // broken read behind a legitimately empty one. Both still render the SAME
+  // unknown state; only the diagnostic differs.
+  | "no_live_publication";
 
 export interface SensingCohortAggregate {
   publishable: boolean;
