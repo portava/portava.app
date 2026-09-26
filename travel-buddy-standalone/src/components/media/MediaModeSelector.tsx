@@ -146,7 +146,7 @@ const styles = StyleSheet.create({
     borderRadius: 999,
   },
   itemActiveSolid: {
-    backgroundColor: color.ink, // census-media §31.12: selected is an ink pill (15.03:1 on haze); paperRaised on haze was 1.27:1
+    backgroundColor: color.ink, // census-media §31.12: selected is an ink pill (15.03:1 on haze); paperRaised on haze was 1.26:1
     borderRadius: 999,
   },
   itemPressed: {

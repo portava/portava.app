@@ -448,7 +448,7 @@ const styles = StyleSheet.create({
   },
   verifiedDot: {
     ...t.stamp,
-    color: '#B6D2C6', // census-media §31.12: `success` tinted 0.65 toward white, the least tint at 4.5:1 on the type badge over the backing (`success` is 2.72 there)
+    color: '#B6D2C6', // census-media §31.12: `success` tinted 0.65 toward white, the least tint at 4.5:1 on the type badge over the backing (`success` is 1.48 there)
   },
   placeName: {
     ...t.title,

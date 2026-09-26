@@ -1147,7 +1147,7 @@ const styles = StyleSheet.create({
     borderTopColor: color.haze,
   },
   primaryBtn: {
-    backgroundColor: '#0C875E', // census-media §31.12: #10B981 x 0.73 (white on it, 4.53:1)
+    backgroundColor: '#0C875E', // census-media §31.12: #10B981 x 0.73 (white on it, 4.52:1)
     borderRadius: radius.md,
     paddingVertical: 14,
     alignItems: 'center',
