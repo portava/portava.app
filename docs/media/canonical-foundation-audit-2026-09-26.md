@@ -330,6 +330,8 @@ The census records the C grade with this condition attached (census-media §27).
 
 ## Findings that hold at this commit — recorded, not fixed
 
+*(Addendum, 2026-09-26, later the same day. F1 and F3 were fixed on the branch after this audit: census-media §28.7 and §28.8. The citations below describe the audited SHA and are left as they were.)*
+
 - **F1. `/media/upload` buffers the whole body before it authenticates, with no
   ceiling.**
   - Every chunk is kept: `artifacts/api-server/src/routes/posts.ts:87#req.on("data", (c: Buffer) => chunks.push(c));`.

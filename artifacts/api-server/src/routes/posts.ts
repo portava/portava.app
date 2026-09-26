@@ -82,14 +82,14 @@ const STORAGE_BUCKET = "post-media";
  */
 router.post(
   "/media/upload",
-  (req, res, next) => {
-    const chunks: Buffer[] = [];
-    req.on("data", (c: Buffer) => chunks.push(c));
-    req.on("end", () => { (req as any).rawBody = Buffer.concat(chunks); next(); });
-    req.on("error", next);
-  },
+  // Authenticate BEFORE the body is read, then read it BOUNDED (census-media §28.7): an
+  // unauthenticated caller could stream an unbounded body into memory before either.
+  async (req, res, next) => { const auth = await requireUser(req, res); if (!auth) return; (req as any).uploadAuth = auth; next(); },
+  collectBody(Math.max(...Object.values(MEDIA_SIZE_LIMITS))), // the largest per-kind ceiling; verifyUploadedBytes applies the real kind's below
+  // (collectBody answers 400 and destroys the stream the moment the ceiling is passed)
+  // The handler reuses the identity established above; it does not authenticate twice.
   async (req, res) => {
-    const auth = await requireUser(req, res);
+    const auth = (req as any).uploadAuth as Awaited<ReturnType<typeof requireUser>>;
     if (!auth) return;
     const { user } = auth;
 
@@ -3657,3 +3657,8 @@ export default router;
 // §37 (census-media §22): the canonical row's duration_ms is the probed one. Imported at the
 // TAIL so no line above moves (census-wall cites this file by line); ESM hoists imports.
 import { recordMeasuredDuration } from "../lib/mediaVideoPoster.js";
+
+
+// Imported at the TAIL so no cited line above moves (census-media §28.7); ESM hoists imports.
+import { collectBody } from "./postcardMediaTransport.js";
+import { MEDIA_SIZE_LIMITS } from "../lib/mediaPipeline.js";

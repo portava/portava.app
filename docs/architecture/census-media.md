@@ -5834,8 +5834,8 @@ deliverable as the audit, and states no ordering between phases.
    - MD153's C does not rest on the false sentence, so no row is re-graded.
 2. **`/media/upload` buffers the whole body before it authenticates, and sets
    no ceiling while it reads.**
-   - Every chunk is kept: `artifacts/api-server/src/routes/posts.ts:87#req.on("data", (c: Buffer) => chunks.push(c));`.
-   - Authentication runs only after the stream ends: `artifacts/api-server/src/routes/posts.ts:92#const auth = await requireUser(req, res);`.
+   - Every chunk was kept, and authentication ran only after the stream ended. **Fixed in §28.7:** the caller is authenticated first (`artifacts/api-server/src/routes/posts.ts:87#async (req, res, next) => { const auth = await requireUser(req, res); if (!auth) return;`),
+     then the body is read bounded (`artifacts/api-server/src/routes/posts.ts:88#collectBody(Math.max(...Object.values(MEDIA_SIZE_LIMITS))),`).
    - A bounded collector already exists, and the poster routes use it: `artifacts/api-server/src/routes/postcardMediaTransport.ts:136#export function collectBody(limitBytes: number) {`.
 3. **An owner's retry parks an asset in `queued`, and nothing claims queued
    work.**
@@ -5846,7 +5846,7 @@ deliverable as the audit, and states no ordering between phases.
      caller.
    - §20.4's MD338 cites "lifecycle (MediaLifecycleService)" among its
      responsibilities. MD338 is not re-graded here.
-4. **The event/trip header mask fails open on a read error:**
+4. **The event/trip header mask fails open on a read error** (**fixed in §28.8**; the comment keeps the old words):
    `artifacts/api-server/src/routes/mediaFile.ts:44#Fail-OPEN: any DB error`.
 5. **The eligibility module's rationale points 36 lines above the code it
    names.**
@@ -6043,3 +6043,76 @@ columns against the live schema.
   place, as §24.7 item 3 recorded.
 
 No row moves.
+
+### 28.6 Lane H (§27) merged: lane G's new surfaces measured, one fails and is fixed
+
+Lane H's contrast test was written against a tree without lane G, so the
+merge extended it. Lane G added two things it had not measured:
+- an `ink` tone for the §19 prompt, for the Media World shell's dark surface;
+- "Mixed reports" lines on three zone surfaces.
+
+All of them are now measured under the same rules: WCAG AA, and no large-text
+relief. One pair failed. The ink-tone sent-confirmation was `success` green on
+`ink` at 3.78:1. It is now `onInk`, because the sentence's own words carry the
+outcome:
+`travel-buddy-standalone/src/features/media/components/RequestAViewPrompt.tsx:263#resultOk: { ...t.small, color: color.onInk },`.
+
+With the old colour back, the contrast test goes red. Lane H's `Eye`-icon
+needle was updated to lane G's line.
+
+**The headline after H** counts **C 399 · W 39 · N 12 · X 0**, restated in
+§28.9. The two moves are MD403 ? → W and MD441 ? → C.
+
+### 28.7 `/media/upload` authenticated after reading an unbounded body (found by lane H, §27.5 item 2)
+
+**The defect.** The route buffered every chunk of the request before it
+authenticated, and it set no ceiling while it read. An unauthenticated caller
+could therefore make the server hold an arbitrarily large body in memory.
+
+**The fix.**
+- The caller is now authenticated before a byte is read:
+  `artifacts/api-server/src/routes/posts.ts:87#async (req, res, next) => { const auth = await requireUser(req, res); if (!auth) return;`.
+- The body is then read through the bounded collector the poster routes
+  already use, capped at the largest per-kind ceiling:
+  `artifacts/api-server/src/routes/posts.ts:88#collectBody(Math.max(...Object.values(MEDIA_SIZE_LIMITS))),`.
+- `verifyUploadedBytes` still applies the real kind's own ceiling after that.
+- The edits are line-neutral, and the new imports sit at the file's tail.
+
+**Test and mutation.**
+- `artifacts/api-server/src/test/mediaUploadHardening.test.ts:280#it("authenticates BEFORE reading the body`
+  declares a 200 MB body, sends 16 bytes and never ends the body. It gets a
+  401 at once. Against the old route it gets no answer and fails ("no answer
+  within 3 s").
+- The existing oversized-video case is rewritten, not weakened. The server now
+  stops reading, so the client may see its socket reset. A 400 or a reset
+  both count as a refusal, and an upload is never allowed.
+- All 21 cases pass.
+
+**What remains.** The kill switch and the per-user upload budget still run
+after the body is read. The body is now bounded and authenticated, so this is
+a smaller cost, recorded rather than moved.
+
+### 28.8 The event/trip header mask failed open (found by lane H, §27.5 item 4)
+
+**The defect.** `routes/mediaFile.ts` replaces an event or trip's generated
+header with a generic cover when its owner set `show_header_publicly = false`.
+The read of that setting failed open: a database error served the real
+header. The membership reads beside it already failed closed.
+
+**The fix.** A read error, and a thrown read, now mask
+(`artifacts/api-server/src/routes/mediaFile.ts:69#if (error) return true; if (!data) return false;`,
+and the same rule for trips). A missing row still means "not a header of
+anything".
+
+Masking blocks nothing: the viewer still gets an image, just not the one its
+owner hid. Read-only, production has `show_header_publicly` on both `events`
+and `trips`, so the change masks only on a genuine error.
+
+**Test and mutation.**
+`artifacts/api-server/src/test/mediaAccess.test.ts:1770#describe("census-media §28.8`
+has two cases:
+- a control, with both settings;
+- a failing setting read with the byte gate's own read healthy, which must
+  serve the generic cover.
+
+With the old code, the second case goes red. All 91 byte-gate cases pass.

@@ -1664,6 +1664,10 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     // on this migration being applied (it is what 3321's precondition reads), so
     // a change to it must age the census. routes/index.ts stays out, as above.
     "artifacts/api-server/src/migrations/2470_media_asset_canonical_columns_flag_agnostic.sql",
+    // WIDENED 2026-09-26 by census-media §28.8: the byte-gate route that signs
+    // (or masks) every Media object; §28.8 grades its header mask and §23.7 its
+    // variant path through lib/mediaAccess, so a change to it must age the census.
+    "artifacts/api-server/src/routes/mediaFile.ts",
   ],
   // census-telegraph.md — declared 2026-09-11 on the same basis as Media above:
   // 451 requirements out of CANNOT BE CHECKED, a clock started rather than a

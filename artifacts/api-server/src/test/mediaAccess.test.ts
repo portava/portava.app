@@ -58,7 +58,7 @@ interface FakeState {
    */
   tableErrors?: Record<string, { code?: string; message: string }>;
   /** An error for a query that filters on ONE column (`table.column`), leaving the table's other reads healthy. */
-  columnErrors?: Record<string, { code?: string; message: string }>;
+  columnErrors?: Record<string, { code?: string; message: string }>; /** An error for a read with exactly this select list (`table|cols`) — one read failed, the rest healthy. */ selectErrors?: Record<string, { code?: string; message: string }>;
 }
 
 /**
@@ -156,7 +156,7 @@ function makeClient(state: FakeState = {}) {
       );
     };
     const b: any = {
-      select(cols?: string) {
+      select(cols?: string) { columnError ??= (typeof cols === "string" ? state.selectErrors?.[`${table}|${cols}`] : undefined) ?? null;
         if (typeof cols === "string" && cols !== "*") {
           const named = cols.split(",").map((c) => c.trim()).filter(Boolean);
           if (table === "profiles") profileCols = named;
@@ -1757,5 +1757,58 @@ describe("a message video's derived poster is shown to exactly its thread (censu
       assert.equal(refused.status, 403);
       assert.equal(refused.body.error, "forbidden");
     });
+  });
+});
+
+// ── census-media §28.8: the header mask fails CLOSED ─────────────────────────
+// `routes/mediaFile.ts` masks an event/trip's generated header with a generic
+// cover when its owner set show_header_publicly = false. The setting read used
+// to fail OPEN (a read error served the real header); the membership reads
+// beside it already failed closed. Masking blocks nothing — the viewer still
+// gets an image, just not the one its owner hid — so an unreadable setting now
+// masks. A missing row still means "not a header of anything".
+describe("census-media §28.8 — an unreadable header setting masks with the generic cover", () => {
+  before(() => {
+    const app = express();
+    app.use(express.json());
+    app.use((r: any, _res: any, next: any) => { r.log = { error() {}, info() {}, warn() {}, debug() {} }; next(); });
+    app.use("/api", mediaFileRouter);
+    return new Promise<void>((resolve) => { server = app.listen(0, "127.0.0.1", () => { base = `http://127.0.0.1:${(server.address() as any).port}`; resolve(); }); });
+  });
+  after(() => new Promise<void>((r) => server.close(() => r())));
+
+  const EVENT = "d1000000-0000-4000-a000-000000000281";
+  const VIS = "e1000000-0000-4000-a000-000000000281";
+  const hero = `generated-visuals/event/${EVENT}/${VIS}/hero.webp`;
+  const state = (extras: Partial<FakeState> = {}): FakeState => ({
+    generatedVisuals: [{ hero_path: hero, entity_type: "event", entity_id: EVENT, owner_user_id: OWNER, status: "ready" }],
+    events: [{ id: EVENT, host_id: OWNER, visibility: "public", state: "live", show_header_publicly: false }],
+    ...extras,
+  });
+
+  it("control: a readable setting that hides the header serves the generic cover; one that shows it serves the real header", async () => {
+    _clearMediaAccessCache();
+    setClients(makeClient(state()));
+    const hidden = await req("GET", `/api/media/file/post-media/${hero}`);
+    assert.equal(hidden.status, 302);
+    assert.ok(hidden.location?.includes("generic"), `expected generic cover, got: ${hidden.location}`);
+    _clearMediaAccessCache();
+    setClients(makeClient(state({ events: [{ id: EVENT, host_id: OWNER, visibility: "public", state: "live", show_header_publicly: true }] })));
+    const shown = await req("GET", `/api/media/file/post-media/${hero}`);
+    assert.equal(shown.status, 302);
+    assert.ok(shown.location?.includes("token=signed"), `expected the real header, got: ${shown.location}`);
+  });
+
+  it("the mask's own setting read fails → the generic cover, not the real header", async () => {
+    _clearMediaAccessCache();
+    // Only the mask's read errors; the byte gate's own event read stays healthy,
+    // so the viewer IS authorized to an image — the question is which one.
+    setClients(makeClient(state({
+      events: [{ id: EVENT, host_id: OWNER, visibility: "public", state: "live", show_header_publicly: true }],
+      selectErrors: { "events|show_header_publicly, host_id": { code: "57P01", message: "terminating connection" } },
+    })));
+    const r = await req("GET", `/api/media/file/post-media/${hero}`);
+    assert.equal(r.status, 302);
+    assert.ok(r.location?.includes("generic"), `an unreadable setting must mask, got: ${r.location}`);
   });
 });

@@ -268,8 +268,35 @@ describe("POST /api/media/upload — hardening", () => {
       Buffer.from([0, 0, 0, 24]), Buffer.from("ftypisom"),
       Buffer.alloc(101 * 1024 * 1024, 1),
     ]);
-    const r = await rawReq("POST", "/api/media/upload", bigVideo, "video/mp4");
-    assert.equal(r.body.error, "invalid_payload");
+    // census-media §28.7: the body is now read BOUNDED — the server answers 400
+    // and stops reading the moment the largest per-kind ceiling is passed, so a
+    // client still writing may see the socket reset before it reads the answer.
+    // Either outcome is a refusal; what must never happen is an upload.
+    const r = await rawReq("POST", "/api/media/upload", bigVideo, "video/mp4").catch((e: any) => ({ status: 0, body: { error: e?.code } }));
+    assert.ok(r.body.error === "invalid_payload" || r.body.error === "ECONNRESET" || r.body.error === "EPIPE", `refused, got ${JSON.stringify(r.body)}`);
+    assert.equal(client._uploads.length, 0);
+  });
+
+  it("authenticates BEFORE reading the body: an unauthenticated caller is refused without the server waiting for its bytes", async () => {
+    // Declares 200 MB, sends 16 bytes and never ends the body. Before §28.7 the
+    // route buffered until 'end' (which never comes) and only then authenticated,
+    // so this request hung; now the 401 comes back at once.
+    const client = makeClient();
+    setClients(client);
+    const url = new URL("/api/media/upload", base);
+    const res = await new Promise<{ status: number; body: any }>((resolve, reject) => {
+      const r = http.request({
+        hostname: url.hostname, port: Number(url.port), path: url.pathname, method: "POST",
+        headers: { "content-type": "image/jpeg", "content-length": String(200 * 1024 * 1024) },
+      }, (resp) => {
+        let raw = ""; resp.on("data", (c) => (raw += c));
+        resp.on("end", () => { let b: any; try { b = JSON.parse(raw); } catch { b = raw; } resolve({ status: resp.statusCode ?? 0, body: b }); });
+      });
+      r.on("error", (e: any) => (e?.code === "ECONNRESET" || e?.code === "EPIPE" ? undefined : reject(e)));
+      r.write(Buffer.alloc(16, 1));
+      setTimeout(() => { r.destroy(); reject(new Error("no answer within 3 s — the route waited for the body before authenticating")); }, 3000).unref();
+    });
+    assert.equal(res.status, 401);
     assert.equal(client._uploads.length, 0);
   });
 
