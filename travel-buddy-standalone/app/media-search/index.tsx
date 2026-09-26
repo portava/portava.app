@@ -38,12 +38,7 @@ export default function MediaSearchRoute() {
           tripId={one(params.tripId)}
           mediaId={one(params.mediaId)}
           initialQuery={one(params.q) ?? ''}
-          nearCity={locationState.place?.city ?? null}
-          // §38 "near X" (census-media §29): the SAME viewer point /media-world hands the
-          // World shell and its Media Map — this route's existing useActiveLocation, only
-          // when its state is ok. No new location read, no permission. Offered as "Near me".
-          viewerPoint={locationState.ok && locationState.coords ? { lat: locationState.coords.lat, lng: locationState.coords.lng } : null}
-          nearPlace={nearPlaceFrom(params)}
+          nearCity={locationState.place?.city ?? null} viewerPoint={viewerPointFrom(locationState)} nearPlace={nearPlaceFrom(params)}
           onOpenMedia={(m) => router.push(`/media-viewer/${encodeURIComponent(m.id)}` as never)}
           onOpenPlace={(placeId) => router.push(`/place/${encodeURIComponent(placeId)}` as never)}
           onOpenGem={(gemId) => router.push(`/gems/${encodeURIComponent(gemId)}` as never)}
@@ -64,7 +59,20 @@ const styles = StyleSheet.create({
   body: { flex: 1 },
 });
 
-/** A search opened from a place (census-media §29): its canonical id, and its name for the chip. */
+// ── census-media §29 (MD288) — appended at the TAIL so no line cited above moves ──
+
+/**
+ * §38 "near X": the viewer's point for "Near me". It is the SAME point
+ * /media-world hands the World shell and its Media Map (that route's
+ * `locationState.ok ? locationState.coords : null`), read from this route's
+ * existing useActiveLocation call. No new location read, no permission, and the
+ * point is never put in a URL.
+ */
+function viewerPointFrom(locationState: ReturnType<typeof useActiveLocation>['locationState']): { lat: number; lng: number } | null {
+  return locationState.ok && locationState.coords ? { lat: locationState.coords.lat, lng: locationState.coords.lng } : null;
+}
+
+/** A search opened from a place: its canonical id, and its name for the chip. */
 function nearPlaceFrom(params: { nearPlaceId?: string | string[]; nearPlaceName?: string | string[] }): { id: string; label: string | null } | null {
   const id = one(params.nearPlaceId);
   return id ? { id, label: one(params.nearPlaceName) } : null;

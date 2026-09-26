@@ -127,15 +127,7 @@ export function MediaMapScreen({
             {state.totalPerspectives} {state.totalPerspectives === 1 ? 'perspective' : 'perspectives'}
           </Text>
         ) : null}
-      </View>
-
-      {cachedLabel ? (
-        // §39: what the map shows came from the offline cache. Its age is said,
-        // and nothing on it is presented as live.
-        <Text style={styles.cached} accessibilityRole="text" testID="media-map-cached">
-          {cachedLabel}
-        </Text>
-      ) : null}
+      </View>{cachedLabel ? <Text style={tailStyles.cached} accessibilityRole="text" testID="media-map-cached">{cachedLabel}</Text> : null}
 
       {canDraw && center ? (
         <MediaMapCanvas
@@ -180,7 +172,6 @@ export function MediaMapScreen({
       <View style={styles.list}>
         {listed.map((c, i) => {
           const firstUnpositioned = i === model.positioned.length && model.unpositioned.length > 0 && canDraw;
-          const cover = clusterCoverImage(c);
           return (
             <React.Fragment key={c.placeId}>
               {firstUnpositioned ? <Text style={styles.subhead}>Not on this map view</Text> : null}
@@ -191,17 +182,7 @@ export function MediaMapScreen({
                 accessibilityLabel={`${c.label}, ${c.perspectiveCount} ${c.perspectiveCount === 1 ? 'perspective' : 'perspectives'}`}
                 testID={`media-map-row-${c.placeId}`}
               >
-                {cover ? (
-                  <CachedImage
-                    source={{ uri: cover }}
-                    style={styles.rowCover}
-                    resizeMode="cover"
-                    fallbackLabel=""
-                    testID={`media-map-row-cover-${c.placeId}`}
-                  />
-                ) : (
-                  <MapPin size={16} color={color.onInkMute} strokeWidth={2} />
-                )}
+                <ClusterRowMark placeId={c.placeId} cover={clusterCoverImage(c)} />
                 <Text style={styles.rowLabel} numberOfLines={1}>
                   {c.label}
                 </Text>
@@ -279,15 +260,13 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(250,249,246,0.05)',
   },
   rowSelected: { backgroundColor: 'rgba(250,249,246,0.12)' },
-  rowCover: { width: 32, height: 32, borderRadius: radius.sm, backgroundColor: '#22221E' },
-  cached: { color: color.onInkMute, fontSize: 12, fontWeight: '700', paddingHorizontal: space.lg },
   rowLabel: { flex: 1, color: color.onInk, fontSize: 15, fontWeight: '700' },
   rowCount: { color: color.onInkMute, fontSize: 12, fontWeight: '700' },
   gemDot: { width: 10, height: 10, transform: [{ rotate: '45deg' }], backgroundColor: '#10B981' },
 });
 
-// ── census-media §29 (MD300): the Media Map reads through the §39 cache ────────
-// Appended at the TAIL so no line census-media cites above moves.
+// ── census-media §29 (MD300) — appended at the TAIL so no line cited above moves ──
+// (census-media cites :65 and :70; lane H's §27 cites :262.)
 
 type ClusterLoader = (opts: { signal: AbortSignal }) => Promise<OfflineResult<MediaMapCluster[]>>;
 
@@ -296,7 +275,8 @@ type ClusterLoader = (opts: { signal: AbortSignal }) => Promise<OfflineResult<Me
  * came from the offline cache, and say so: `cachedLabel` is the "Cached ·
  * updated 2h ago" of that answer, and null the moment a live answer replaces it
  * (the rule `useOfflineLens` keeps for the other lenses). A source that never
- * reads the cache (My World's own media) never sets it.
+ * reads the cache (My World's own media) never sets it. §39: what the map shows
+ * from the cache says its age, and nothing on it is presented as live.
  */
 function useCachedLabel(base: ClusterLoader): { loader: ClusterLoader; cachedLabel: string | null } {
   const [cachedLabel, setCachedLabel] = useState<string | null>(null);
@@ -310,3 +290,25 @@ function useCachedLabel(base: ClusterLoader): { loader: ClusterLoader; cachedLab
   );
   return { loader, cachedLabel };
 }
+
+/**
+ * The mark at the head of a cluster's list row: its server-chosen cover through
+ * the signing image component, or, with no cover, the pin it always had.
+ */
+function ClusterRowMark({ placeId, cover }: { placeId: string; cover: string | null }) {
+  if (!cover) return <MapPin size={16} color={color.onInkMute} strokeWidth={2} />;
+  return (
+    <CachedImage
+      source={{ uri: cover }}
+      style={tailStyles.rowCover}
+      resizeMode="cover"
+      fallbackLabel=""
+      testID={`media-map-row-cover-${placeId}`}
+    />
+  );
+}
+
+const tailStyles = StyleSheet.create({
+  rowCover: { width: 32, height: 32, borderRadius: radius.sm, backgroundColor: '#22221E' },
+  cached: { color: color.onInkMute, fontSize: 12, fontWeight: '700', paddingHorizontal: space.lg },
+});

@@ -109,11 +109,7 @@ export function MediaMapCanvas({
         ))}
 
         {clusters.map((c) => {
-          const selected = c.placeId === selectedPlaceId;
-          // §39 "Map thumbnails" (census-media §29): the ONE cover the server chose
-          // for this cluster, drawn through the signing image component. No cover
-          // ⇒ the count bubble, exactly as before covers existed.
-          const cover = clusterCoverImage(c);
+          const selected = c.placeId === selectedPlaceId; const cover = clusterCoverImage(c); // §39 "Map thumbnails": the server-chosen cover, or none (census-media §29)
           return (
             <Marker key={`cluster-${c.placeId}`} lngLat={[c.lng, c.lat]}>
               <Pressable
@@ -121,24 +117,9 @@ export function MediaMapCanvas({
                 onPress={() => onSelectCluster?.(c.placeId)}
                 accessibilityRole="button"
                 accessibilityLabel={`${c.label}: ${c.perspectiveCount} ${c.perspectiveCount === 1 ? 'perspective' : 'perspectives'}`}
-                style={cover ? [styles.coverBubble, selected && styles.coverBubbleSelected] : [styles.bubble, selected && styles.bubbleSelected]}
+                style={cover ? [tailStyles.coverBubble, selected && tailStyles.coverBubbleSelected] : [styles.bubble, selected && styles.bubbleSelected]}
               >
-                {cover ? (
-                  <>
-                    <CachedImage
-                      source={{ uri: cover }}
-                      style={styles.coverImg}
-                      resizeMode="cover"
-                      fallbackLabel=""
-                      testID={`media-map-cover-${c.placeId}`}
-                    />
-                    <View style={styles.coverCount}>
-                      <Text style={styles.coverCountText}>{c.perspectiveCount}</Text>
-                    </View>
-                  </>
-                ) : (
-                  <Text style={styles.bubbleText}>{c.perspectiveCount}</Text>
-                )}
+                <ClusterBubbleFace placeId={c.placeId} cover={cover} count={c.perspectiveCount} selected={selected} />
               </Pressable>
             </Marker>
           );
@@ -168,6 +149,81 @@ const styles = StyleSheet.create({
   },
   bubbleSelected: { backgroundColor: color.onInk },
   bubbleText: { color: color.onInk, fontSize: 12, fontWeight: '800' },
+  // §46.1 contoured gem marker: a geometric discovery marker with an edge glow.
+  gemMarker: {
+    width: icon.s26,
+    height: icon.s26,
+    borderRadius: icon.s26 / 2,
+    borderWidth: 1.5,
+    borderColor: GEM_ACCENT,
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: GEM_ACCENT,
+    shadowOpacity: 0.5,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 0 },
+    backgroundColor: 'rgba(16,185,129,0.12)',
+  },
+  gemCore: {
+    width: 9,
+    height: 9,
+    transform: [{ rotate: '45deg' }],
+    backgroundColor: GEM_ACCENT,
+  },
+});
+
+// ── census-media §29 — appended at the TAIL so no line cited above moves ──────
+// (census-media cites :80 and :92; lane H's §27 cites :150 and :151.)
+
+/**
+ * What a cluster bubble shows.
+ *   • With a cover (§39 "Map thumbnails", MD300): the ONE image the server chose
+ *     for the cluster, drawn through the signing image component, with the
+ *     count as a badge.
+ *   • Without one: the count, exactly as before covers existed.
+ *
+ * A SELECTED bubble is filled `color.onInk` (`styles.bubbleSelected`), and its
+ * count used to stay `color.onInk` too: 1.00:1, invisible (found by lane H,
+ * census-media §27). Selected, the count is now `color.ink`, the same pair the
+ * Media Map's own "See these perspectives" button uses.
+ */
+function ClusterBubbleFace({
+  placeId,
+  cover,
+  count,
+  selected,
+}: {
+  placeId: string;
+  cover: string | null;
+  count: number;
+  selected: boolean;
+}) {
+  if (!cover) {
+    return (
+      <Text style={[styles.bubbleText, selected && tailStyles.bubbleTextSelected]} testID={`media-map-cluster-count-${placeId}`}>
+        {count}
+      </Text>
+    );
+  }
+  return (
+    <>
+      <CachedImage
+        source={{ uri: cover }}
+        style={tailStyles.coverImg}
+        resizeMode="cover"
+        fallbackLabel=""
+        testID={`media-map-cover-${placeId}`}
+      />
+      <View style={tailStyles.coverCount}>
+        <Text style={tailStyles.coverCountText}>{count}</Text>
+      </View>
+    </>
+  );
+}
+
+const tailStyles = StyleSheet.create({
+  // Selected bubble: ink on the onInk fill (lane H, census-media §27).
+  bubbleTextSelected: { color: color.ink },
   // A cluster with a cover: the image in a ringed circle, its count as a badge.
   coverBubble: {
     width: avatar.s40,
@@ -195,31 +251,8 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   coverCountText: { color: color.onInk, fontSize: 11, fontWeight: '800' },
-  // §46.1 contoured gem marker: a geometric discovery marker with an edge glow.
-  gemMarker: {
-    width: icon.s26,
-    height: icon.s26,
-    borderRadius: icon.s26 / 2,
-    borderWidth: 1.5,
-    borderColor: GEM_ACCENT,
-    alignItems: 'center',
-    justifyContent: 'center',
-    shadowColor: GEM_ACCENT,
-    shadowOpacity: 0.5,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 0 },
-    backgroundColor: 'rgba(16,185,129,0.12)',
-  },
-  gemCore: {
-    width: 9,
-    height: 9,
-    transform: [{ rotate: '45deg' }],
-    backgroundColor: GEM_ACCENT,
-  },
 });
 
-// census-media §29 (MD300): each cluster's cover, drawn through the signing image
-// component. Imported at the TAIL so the line census-media cites above
-// (`<GeoJSONSource id="media-gem-zones"`) does not move; ESM hoists it.
+// Imported at the TAIL so no cited line above moves; ESM hoists them.
 import { CachedImage } from '../../../components/CachedImage.tsx';
 import { clusterCoverImage } from '../state/mediaMapCover.ts';

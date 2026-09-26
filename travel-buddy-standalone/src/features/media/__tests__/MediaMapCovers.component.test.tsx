@@ -21,6 +21,8 @@ import { MediaMapScreen } from '../screens/MediaMapScreen.tsx';
 import { MediaPlacesScreen } from '../screens/MediaPlacesScreen.tsx';
 import { MediaExperiencesScreen } from '../screens/MediaExperiencesScreen.tsx';
 import { MediaCache, _setMediaCache, type CacheEnv } from '../../../services/media/mediaCache.ts';
+import { StyleSheet } from 'react-native';
+import { color } from '../../../theme/tokens.ts';
 
 const mockFetchMediaMap = jest.fn();
 const mockFetchMapProjection = jest.fn();
@@ -95,6 +97,22 @@ function placed(ids: string[]) {
       })),
     },
   };
+}
+
+/** WCAG 2.x contrast of two solid `#rrggbb` colours. */
+function contrastRatio(a: string, b: string): number {
+  const lum = (hex: string) => {
+    const m = /^#([0-9a-f]{6})$/i.exec(hex);
+    if (!m) throw new Error(`not a solid #rrggbb colour: ${hex}`);
+    const n = parseInt(m[1]!, 16);
+    const [r, g, bl] = [(n >> 16) & 255, (n >> 8) & 255, n & 255].map((v) => {
+      const c = v / 255;
+      return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+    });
+    return 0.2126 * r! + 0.7152 * g! + 0.0722 * bl!;
+  };
+  const [hi, lo] = [lum(a), lum(b)].sort((x, y) => y - x);
+  return (hi! + 0.05) / (lo! + 0.05);
 }
 
 let clock = 1_000_000;
@@ -188,6 +206,20 @@ describe('census-media §29 (MD300) — the Media Map draws covers, and reads th
     expect(screen.getByText('Cached · updated 2h ago')).toBeTruthy();
     expect(screen.getByTestId(`media-map-cover-${P1}`)).toBeTruthy();
     expect(screen.queryByTestId(`media-map-row-${P2}`)).toBeNull(); // only this place
+  });
+
+  it('a SELECTED count bubble keeps its count readable — ink on the onInk fill (found by lane H, census-media §27)', async () => {
+    await render(<MediaMapScreen city="Da Nang" center={CENTER} />);
+    await waitFor(() => expect(screen.getByTestId(`media-map-cluster-${P2}`)).toBeTruthy());
+    const unselected = StyleSheet.flatten(screen.getByTestId(`media-map-cluster-count-${P2}`).props.style);
+    await fireEvent.press(screen.getByTestId(`media-map-cluster-${P2}`));
+    await waitFor(() => expect(screen.getByTestId('media-map-selected')).toBeTruthy());
+    const fill = StyleSheet.flatten(screen.getByTestId(`media-map-cluster-${P2}`).props.style).backgroundColor as string;
+    const text = StyleSheet.flatten(screen.getByTestId(`media-map-cluster-count-${P2}`).props.style).color as string;
+    expect(fill).toBe(color.onInk); // the selected fill this fix does not touch
+    expect(text).not.toBe(fill);
+    expect(contrastRatio(text, fill)).toBeGreaterThanOrEqual(4.5); // WCAG AA for 12 px text; 3:1 is the floor asked for
+    expect(unselected.color).toBe(color.onInk); // unselected is unchanged
   });
 
   it('EXPERIENCES lens: its Map reads through the same cache — offline it draws the trip\'s place, with its cover, labelled', async () => {
