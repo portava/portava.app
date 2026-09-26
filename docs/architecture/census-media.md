@@ -2631,7 +2631,7 @@ each passing its own entry-context kind. Rows: MD89, MD90, MD91, MD92.
 | MD188 | A `source_type`/provenance term (with MD8). Author trust is not asset provenance. |
 | MD194 | A predicted real-world action, not a per-candidate-kind constant. `actionability 0.9` is a genuine partial and is a property of the kind. |
 | MD195 · MD196 · MD198 | An experience-fit term, a connection-usefulness term, a narrative-value term. None exists under any name. |
-| MD197 | A call site for `MediaContributorReputationService` inside `services/ranking/`. The scorer exists and nothing reads it. |
+| MD197 | A call site for `MediaContributorReputationService` inside `services/ranking/`. **CORRECTED 2026-09-26 by §18:** "nothing reads it" was true when written and is now FALSE — `routes/mediaViewRequest.ts:26#import` reads `readContributorReputation`. The row still does not move, because the RED WHEN is a RANKING call site and there is still none under `services/ranking/`; what changed is that the scorer is no longer unread, only unranked. |
 | MD207 | A fourth reputation dimension reading journey history. `computeContributorReputation` computes three. |
 | MD348 · MD356 | A ranking stage between projection and client in the World-shell pipeline. `buildWorldProjection` sorts zones by item count and `buildTimelineProjection` by capture time; neither is a ranker. |
 | MD435 | Media ceasing to own a second ranker, or §48 conceding it. The ownership line is crossed in the direction §48 forbids, and that is a design decision, not a bug. |
@@ -3159,3 +3159,74 @@ landed on a bare `}`), which is what `check:citation-targets` counts; all five w
 repointed by reading the claim and anchored so `check:doc-citations` holds them from
 here. The file is named in
 `artifacts/api-server/src/scripts/CENSUS_STALENESS_ACKNOWLEDGED.json` with this argument.
+
+---
+
+## 18. Re-measured 2026-09-26 — two `N` rows hold, and one of them stopped being unread
+
+**Re-measured, not acknowledged.** `check:census-freshness` named two counted
+files changed since `1fe72289b` and not covered:
+`lib/crowdFlowProducer.ts` (+62 / −26 net) and
+`services/media/MediaContributorReputationService.ts` (+60).
+
+**NO VERDICT MOVES.** Both rows that name those files were re-executed against
+the tree rather than reasoned about.
+
+### 18.1 MD162 — still `N`, and the producer moved away from Media, not toward it
+
+The row's test is whether anything in `services/media/` or `lib/media/`
+references the crowd flow. Re-run today:
+
+```
+grep -rniE "crowdflow|crowd_flow" src/services/media/ src/lib/media/   →  no match
+```
+
+Still `N`. The diff to `crowdFlowProducer.ts` adds `NextStopFamilyRefusal`
+(`"read_failed" | "consent_unreadable"`) — a refusal vocabulary for the
+next-stop signal family. That is the producer getting stricter about when it
+may report, which if anything makes MD162's RED WHEN harder to reach, not
+easier: §14.2 already records that Media perspectives cannot themselves become
+a signal family, because a photograph declares no origin zone.
+
+### 18.2 MD197 — still `N` on the RED WHEN, and its evidence clause had gone false
+
+The RED WHEN is *a call site inside `services/ranking/`*. Re-run today:
+
+```
+grep -rn "MediaContributorReputation" src/services/ranking/   →  no match
+```
+
+Still `N`. But §14's follow-up clause said *"The scorer exists and nothing
+reads it"*, and that is no longer true: `routes/mediaViewRequest.ts:26#import`
+imports `readContributorReputation`. The scorer is **unranked, not unread**,
+and the row is corrected in place to say so. The verdict is untouched — a view
+request is not a ranking input — but a reader checking MD197 by asking "does
+anything read this?" would have got the wrong answer from the census.
+
+### 18.3 What the reputation diff actually is, and the silent wrong answer it prevents
+
+It is not media work. It is 3002 fallout, and worth recording here because this
+census owns the file.
+
+Since 3002 a contributor's own rows are keyed by a **rotating token** written by
+a `BEFORE INSERT` trigger, not by their account id. So
+`.eq("actor_id", contributorId)` matches nothing once 3002 lands — and because
+an empty filter is not an error, this service's `Promise.allSettled` fail-open
+would have turned that into **"this contributor has never contributed", for
+everyone**, silently. A wrong answer, not a failure.
+
+The service now resolves the contributor's own token set first, through
+`lib/intelConsent.readOwnContributorIdentities`, which runs account → tokens —
+the safe direction — over 3310's `intel_contributor_tokens_for_actor`. An
+identity that cannot be resolved yields the EMPTY reputation, logged at warn,
+never an inflated one, and no account id is received or derived.
+
+Two consequences worth stating: this is a **real production consumer of the
+3310 bridge** (the other is `lib/intelEvidenceCapture`), so 3310 is wired rather
+than declared; and this hazard is a member of the class the cutover runbook
+exists for — old code against new schema failing *quietly* rather than loudly.
+
+### 18.4 MOVES NOTHING
+
+Totals unchanged. MD162 and MD197 both stay `N`, on tests re-executed today
+rather than carried forward.

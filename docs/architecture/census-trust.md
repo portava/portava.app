@@ -2795,3 +2795,67 @@ and the verdict column of that row is byte-identical.
 > this one's boundedness), and that is the census working rather than a mess:
 > **keep both, renumber one, say so**, the rule the census-sensing `§12`
 > collision was settled under.
+
+---
+
+## 18. Re-measured 2026-09-26 — the sensing files stayed out, and §16.7's own tripwire fired
+
+**Re-measured, not acknowledged.** `check:census-freshness` named three counted
+files changed since `a97bfdac0` and not covered: `lib/crowdFlowProducer.ts`,
+`lib/sensingAnonStore.ts` and `lib/sensingCoverageAggregate.ts`.
+
+**NO VERDICT MOVES on account of those files.** One thing this section DID find
+is that a tripwire §16.7 wrote against itself has fired, for a benign reason.
+
+### 18.1 The testable RED WHEN, executed
+
+§16.7 lists: *"`sensingAnonStore.ts` or `sensingCoverageAggregate.ts` gaining a
+`trust` reference — TRV2-01's and TRV2-02's substance falls"*. Both files
+changed, so the test was run rather than assumed:
+
+```
+grep -ci trust src/lib/sensingAnonStore.ts        →  0
+grep -ci trust src/lib/sensingCoverageAggregate.ts →  0
+```
+
+**Zero, case-insensitive, in both.** TRV2-01 and TRV2-02 stand. The anonymous
+contribution store still carries no trust reference and there is still no
+reverse lookup of anonymous contributors from a trust surface.
+
+What the two diffs actually are: `sensingAnonStore.ts` (+36) rewrites its header
+to stop claiming the store is inert, because the auth-posture decision was taken
+on 2026-09-16 and it now has exactly one HTTP writer — a correction to prose
+about reachability, not a new coupling. `sensingCoverageAggregate.ts` (+13) adds
+one value, `"no_live_publication"`, to a refusal union. `crowdFlowProducer.ts`
+adds a refusal type and is cited by no row in this census.
+
+### 18.2 The tripwire that DID fire, and why it is not a defect
+
+§16.7 also lists: *"`check:census-integrity` reading anything but 108 rows /
+`C=82 W=17 N=7 X=2` for trust."* Run today:
+
+```
+trust   108   86   15   5   2
+```
+
+**The row count is unchanged at 108. The distribution is not:** `C=86 W=15 N=5
+X=2`, so four rows moved into `C` since §16 wrote that line.
+
+This is census progress, not corruption, and at least §17 is one source of it —
+its own opening says *"Two rows move."* This section does not attribute all
+four; the integrity tool also reports *"31 row(s) revised by a later recount;
+last statement taken"*, which is the mechanism by which a distribution drifts
+from any earlier snapshot.
+
+**The tripwire is too brittle as worded**, and that is the finding worth
+keeping. Pinning an exact distribution makes the trigger fire on every
+legitimate later move, so it cannot distinguish "someone corrupted the census"
+from "the census did its job". The durable invariant is the one that held: **108
+rows**. A future section restating §16's claims should pin the denominator and
+the specific rows §16 rests on, not the whole distribution.
+
+### 18.3 MOVES NOTHING
+
+No verdict moves here. The three counted files were read, the one RED WHEN they
+could trigger was executed and did not fire, and the distribution change is
+attributed to later sections rather than to them.
