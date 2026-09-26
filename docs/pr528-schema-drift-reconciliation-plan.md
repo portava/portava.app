@@ -351,14 +351,178 @@ Pick one:
   (an unapplied 2999 makes every trust-score persist raise 23502 the moment
   anything enables `trust_engine_enabled`, which is currently absent, hence
   false) and leaves three flag rows missing.
-* **C — strip the nine from this branch.** Also clears all three checks, since
-  the obligation follows the tree. Keeps lane ownership intact and shrinks a
-  483-file PR. Costs whatever branch surgery the dependent TypeScript needs —
-  `LayoverDecisionStore.ts` and the highlights/memory kernel code would go too.
+* **C — strip the nine from this branch.** Clears `audit:schema`, and **§9
+  measures what it costs**: removing the files alone breaks
+  `check:schema-references`, a currently-green static check that runs on every
+  PR, with 7 new dead references from `LayoverDecisionStore.ts` against a
+  ratchet at zero. So C means removing the dependent code as well — seven files
+  that do not exist on main, plus reverting the `TrustScoreService` change. It
+  is branch surgery across four lanes, not a cleanup.
 
 **Recommendation: A**, with C as the fallback if the lanes should certify their
 own DDL. A is the only option that ends with the branch green *and* intact, and
 the all-zero-rows state makes the rollback risk as low as it will ever be.
+§8 strengthens this: every one of the nine has a reader that is new or changed
+on this branch, so B's leftovers are not cosmetic either — an unapplied 2999 is
+the schema half of a `TrustScoreService` change this PR already contains.
 
 **Not doing:** applying 2977/2981/2990/2999 alone (§7.1 — moves zero objects),
 and applying anything at all before this is answered.
+
+---
+
+## 8. Why each of the nine is required, and by what
+
+§2 said these are "four other lanes' work, not sensing work" and that they are
+"not required by the sensing code… required *because* the branch carries the
+files". Both halves are true and together they mislead, because they invite the
+reading that the nine are severable paperwork. **They are not.** Every one of
+the nine has a code reader that is new or changed on this branch. The lane
+question is about *who wrote them*; the requirement question is about *what
+this branch's code does without them*, and those are different questions.
+
+Measured by asking `origin/main` whether each reader exists there:
+
+| Migration | Reader | On main? | Without the migration, this branch's code… |
+|---|---|---|---|
+| 2977 | `services/airport/layoverMaturityGate.ts` | **NEW** | runs, gate open (see §8.1) |
+| 2981 | `services/layover/LayoverExternalEventService.ts`, `routes/layoverEvents.ts` | **NEW** | runs, route refuses (see §8.1) |
+| 2986 | fan-out reads on `layover_sessions` | — | runs, unindexed |
+| 2990 | `routes/nearbyReachable.ts` | **NEW** | runs, disabled envelope (see §8.1) |
+| 2992 | `services/layover/LayoverDecisionStore.ts` | **NEW** | **breaks** — writes tables and columns that do not exist |
+| 2993 | `services/memoryProjections/outboxConsumer.ts`, `highlightEventReplay.ts` | **NEW** | **breaks** — `highlight_kernel_execute` absent |
+| 2994 | `services/memoryProjections/outboxConsumer.ts` | **NEW** | **breaks** — `memory_outbox_claim`/`ack`/`fail` absent |
+| 2999 | `services/trust/TrustScoreService.ts` | on main, **+187/−35 here** | **breaks** — see §8.2 |
+| 3001 | `lib/memoryCommandBus.ts` (on main) + `highlightEventReplay.ts` (NEW) | — | answers `MEMORY_COMMAND_UNKNOWN_TYPE` |
+
+So: **none of the nine is unrelated work that happens to be in the tree.** What
+is true is narrower — none of them is *sensing* work, and the sensing code
+reads nothing any of them creates.
+
+### 8.1 The three feature-flag rows: the value is FALSE and the point is not the value
+
+All three insert exactly one row, `enabled = FALSE`:
+
+| Migration | Flag | Seeded value | What ON would do |
+|---|---|---|---|
+| 2977 | `layover_maturity_gate_enabled` | `false` | classify the session airport on the six-rung maturity ladder and gate `landside_recommendations` at `L1_MAPPED`. Its own description records that **no production airport reaches L1 today (0 of 3,206 rows, 0 with `terminal_info`)**, so turning it ON *withdraws every landside card everywhere* until an airport is curated. Airside guidance, the certified window and the return deadline sit at L0 and are untouched. |
+| 2981 | `layover_event_ingest_enabled` | `false` | `POST /api/layover/events` accepts a canonical envelope from an authenticated producer and writes `layover_external_events` for the replanner. Its description flags the risk in its own words: **"ENABLING THIS OPENS A WRITE PATH THAT MOVES SAFETY INPUTS"** — an external event can shorten a usable window or move a return deadline. It names two prerequisites: a producer secret provisioned outside this repository, and a scheduled consumer. |
+| 2990 | `nearby_reachable_enabled` | `false` | `GET /api/nearby/reachable` serves a `ReachablePersonProjection` over circle members and accepted trip crew. Proximity is a 5 km bucket and never a coordinate; availability only where opted in; a person in invisible mode is absent. |
+
+**The row does not change behaviour, and that is the whole point.** `isFlagEnabled`
+is fail-closed: a missing row yields `data = null` and reads **false**, the same
+as a row set false. So on portava-ci today all three features are already off,
+and applying these three migrations leaves them off.
+
+What the row changes is **who can turn it on, and whether that is recorded.**
+The audited toggle path — `PATCH /api/admin/feature-flags` via
+`toggle_feature_flag_with_audit` — operates on a row. Without a row the only
+way to enable the feature is a direct `UPDATE`, which 2981's description names
+exactly: *"before this the only way to enable it was a direct UPDATE that
+writes no audit row."* Seeding the row converts an unaudited enable into an
+audited one.
+
+That is a real requirement and it is a governance one, not a functional one. It
+is also why these three are worth applying even though §7.1 proves they move
+`audit:schema` by zero objects — the two facts are not in tension.
+
+### 8.2 2999: ten columns, and the one where the branch's code is already ahead of the schema
+
+Ten columns on `public.trust_profiles`, each declared
+`numeric(5,2) DEFAULT 50.00 NOT NULL` in the baseline, each getting
+`DROP NOT NULL` **and** `DROP DEFAULT`:
+
+`overall_score`, `plan_attendance`, `host_quality`, `communication`,
+`respect_safety`, `location_honesty`, `content_quality`, `community_value`,
+`guide_accuracy`, `passport_authenticity`.
+
+**Intended effect:** make "not scored" representable. The file implements a
+named owner decision (Q1, 2026-09-22): *"Approve nullable trust scores… NULL
+meaning not scored. Remove fabricated neutral defaults… Unmeasured categories
+must not contribute an invented 50."* The defect it closes is concrete and the
+file states it: a user with **zero** trust events currently scores exactly
+50.00 overall and is promoted to `reliable_traveler` (`level_reliable = 50`),
+and a user with one negative event is dragged back toward 50 by eight
+fabricated neutrals.
+
+**It converts no data, deliberately.** There is no `UPDATE` in the file and its
+header forbids adding one, because a measured 50.00 and a substituted 50.00 are
+byte-identical in a `numeric(5,2)` and nothing on the row distinguishes them —
+`evidence_count` (2371) is per-profile, not per-category. Every existing row
+keeps the value it held. Only rows written after the migration carry the
+distinction.
+
+**Why the DEFAULT goes too and not just the NOT NULL:** with `DEFAULT 50.00`
+still in place, an insert that omits the column silently gets 50 again, so
+dropping only the constraint would leave the fabrication intact by another
+route.
+
+**This is the one where the branch's code has already moved.**
+`TrustScoreService.ts` is on main but is changed here by +187/−35, and the
+change is exactly this:
+
+* `origin/main` — `if (relevant.length === 0) return 50; // neutral default`
+* this branch — `if (relevant.length === 0) return null; // NOT SCORED`
+
+So this branch's engine writes `null` into columns that are still
+`NOT NULL DEFAULT 50.00` on portava-ci **and on production**. Every category
+persist would raise 23502 and PostgREST would reject the whole upsert. The only
+reason it is not failing today is that `trust_engine_enabled` has no row and
+therefore reads false. **2999 is not a tidy-up; it is the schema half of a code
+change this PR already contains**, and the order is fixed: 2999 must be applied
+before anything enables the trust engine.
+
+---
+
+## 9. Option C, measured rather than estimated
+
+§6 offered "remove the nine files and let each lane land its own", and asserted
+it costs "whatever branch surgery the dependent code needs". That was a guess.
+It has now been run.
+
+**The experiment:** all nine migration files moved out of
+`src/migrations/`, `check:schema-references` run, files restored, working tree
+verified clean. Nothing was committed and no database was touched.
+
+**The result — it does not merely leave a check red, it turns a currently-green
+one red:**
+
+```
+Canonical schema: 512 tables from baseline + 661 migrations   [was 518 / 670]
+
+✗ Schema-reference ratchet broken:
+  src/services/layover/LayoverDecisionStore.ts: 7 NEW dead reference(s)
+        layover_certified_computations.input_facts       :453 (insert)
+        layover_certified_computations.ledger_version    :453 (insert)
+        layover_certified_computations.rules_applied     :453 (insert)
+        layover_certified_computations.snapshot_id       :453 (insert), :581, :604 (select)
+        layover_certified_computations.source_refs       :453 (insert)
+```
+
+`check:schema-references` is the **static** twin of the live check: it diffs
+against the canonical schema (baseline + migrations) and therefore runs on
+**every** PR, in the `api-server · typecheck + static checks` job, with no
+database and no slot to be starved of. Its ratchet is at **zero** known dead
+references. Removing the migrations while keeping the code that reads them
+takes it from green to red — trading a live-lane failure for a static-lane
+failure, and adding a *new* one.
+
+**So option C is not "delete nine SQL files."** It is: delete the nine files
+**and** the branch code that reads them — `LayoverDecisionStore.ts` at minimum,
+and by §8's table also `layoverMaturityGate.ts`, `LayoverExternalEventService.ts`,
+`routes/layoverEvents.ts`, `routes/nearbyReachable.ts`,
+`outboxConsumer.ts`, `highlightEventReplay.ts`, and the
+`TrustScoreService.ts` change back to returning `50`. Seven of those files do
+not exist on main at all, so "removing" them means removing the lanes' work
+from this branch, not tidying it.
+
+That is a legitimate choice — it is what "let each lane land and apply its own"
+actually means — but it is branch surgery across four lanes, not a cleanup, and
+the seven dead references above are the machine-checked proof that the SQL and
+the TypeScript cannot be separated silently.
+
+**What option C is NOT available for:** removing the migrations to make
+`audit:schema` stop complaining while keeping the code. The tree would still
+contain writers for objects no migration declares, `check:schema-references`
+would say so on every PR, and the only thing achieved would be moving the
+evidence from a lane that runs sometimes to a lane that runs always.
