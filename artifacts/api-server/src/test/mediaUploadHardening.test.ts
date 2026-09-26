@@ -790,3 +790,57 @@ describe("a story signed URL cannot outlive the story", () => {
     );
   });
 });
+
+// census-media §28.10 — a refused upload is refused BEFORE its body is read. Each request
+// declares 200 MB, sends 16 bytes and never ends the body, so an answer can only come from a
+// route that decided without waiting for the bytes (the same shape as the §28.7 case).
+function refusedBeforeBody(contentType: string): Promise<{ status: number; body: any }> {
+  const url = new URL("/api/media/upload", base);
+  return new Promise((resolve, reject) => {
+    const r = http.request({
+      hostname: url.hostname, port: Number(url.port), path: url.pathname, method: "POST",
+      headers: { authorization: `Bearer ${TOKEN}`, "content-type": contentType, "content-length": String(200 * 1024 * 1024) },
+    }, (resp) => {
+      let raw = ""; resp.on("data", (c) => (raw += c));
+      resp.on("end", () => { let b: any; try { b = JSON.parse(raw); } catch { b = raw; } resolve({ status: resp.statusCode ?? 0, body: b }); });
+    });
+    r.on("error", (e: any) => (e?.code === "ECONNRESET" || e?.code === "EPIPE" ? undefined : reject(e)));
+    r.write(Buffer.alloc(16, 1));
+    setTimeout(() => { r.destroy(); reject(new Error("no answer within 3 s — the route waited for the body before refusing")); }, 3000).unref();
+  });
+}
+
+describe("census-media §28.10 — /media/upload refuses before reading the body", () => {
+  it("the kill switch answers feature_disabled without waiting for the bytes", async () => {
+    const client = makeClient({ flags: { disable_media_uploads: true } });
+    setClients(client);
+    const r = await refusedBeforeBody("image/jpeg");
+    assert.equal(r.body.error, "feature_disabled");
+    assert.equal(client._uploads.length, 0);
+  });
+
+  it("an unsupported declared type is refused without waiting for the bytes", async () => {
+    const client = makeClient();
+    setClients(client);
+    const r = await refusedBeforeBody("application/x-msdownload");
+    assert.equal(r.status, 400);
+    assert.equal(r.body.error, "invalid_payload");
+    assert.equal(client._uploads.length, 0);
+  });
+
+  it("CONTROL: an admitted upload still stores, and the budget is charged once, not twice", async () => {
+    setClients(makeClient());
+    _resetRateLimit("media_upload", USER_ID);
+    const jpeg = await sharp({ create: { width: 8, height: 8, channels: 3, background: "#222" } }).jpeg().toBuffer();
+    const r = await rawReq("POST", "/api/media/upload", jpeg, "image/jpeg");
+    assert.equal(r.status, 201, JSON.stringify(r.body));
+    // One upload must leave the bucket at 1: a probe with limit 2 is then still allowed.
+    // Charged twice (before AND after the read), the bucket is at 2 and the probe is refused.
+    assert.equal(checkRateLimit("media_upload", USER_ID, 2, UPLOAD_RATE_WINDOW_MS).allowed, true, "the upload budget was charged more than once");
+    _resetRateLimit("media_upload", USER_ID);
+  });
+});
+
+// Imported at the TAIL so no cited line above moves (census-media §28.10); ESM hoists imports.
+import { checkRateLimit, _resetRateLimit } from "../lib/rateLimit.js";
+import { UPLOAD_RATE_WINDOW_MS } from "../lib/mediaPipeline.js";

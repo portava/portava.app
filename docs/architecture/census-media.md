@@ -418,13 +418,13 @@ testable structure by §3 and §4.1. Narrative.
 | id | Requirement | V | Evidence |
 | --- | --- | --- | --- |
 | MD36 | `MediaAsset` canonical contract (id, owner/uploader, type, storage, dimensions, size, timestamps, statuses, visibility, provenance, eligibility, version) | **W** | The table is complete and matches the spec: `0191_media_assets.sql:12-40` plus `2250_media_asset_canonical_model.sql:70-86` adding `captured_at`, `location_visibility`, `provenance`, `intelligence_eligibility`. **But it is not the canonical asset.** `lib/mediaAssets.ts:118` returns `null` before writing whenever `media_canonical_enabled` is off, and it is off; the two call sites are `routes/posts.ts:256` and `mediaAssets.ts:495`. Meanwhile `lib/media/mediaProjection.ts:130-173` reads `post_media` first and falls back to `posts.media_urls` — **it never reads `media_assets` at all.** Three stores, and the canonical one is on no read path. |
-| MD37 | `sourceType` is the eight-value set camera/library/provider/official/community/generated/screenshot/derivative | **W** | `2250:98-108` adds the CHECK — as a **superset including the legacy `'user'`**, documented as such (*"legacy default (0191); kept, not rewritten"*). `0191:31` still defaults `source_type` to `'user'`, so every row written on the dark path lands outside the §6 vocabulary. |
+| MD37 | `sourceType` is the eight-value set camera/library/provider/official/community/generated/screenshot/derivative | **W** | `2250:98-108` adds the CHECK — as a **superset including the legacy `'user'`**, documented as such (*"legacy default (0191); kept, not rewritten"*). `0191:28` still defaults `source_type` to `'user'`, so every row written on the dark path lands outside the §6 vocabulary. *(pointer corrected 2026-09-26, §28.11)* |
 | MD38 | `version` — the asset is a versioned aggregate | **W** | `0191:36` `version INTEGER NOT NULL DEFAULT 1` exists; no writer increments it and no reader compares it. A column, not a concurrency contract. |
 | MD39 | `capturedAt` is distinct from `uploadedAt` | **C** | `lib/mediaAssets.ts:26-50` is an unusually candid header: the column, the type and every consumer existed but *"NO production caller ever supplied a non-null value"*. `capturedAtFromImageBytes` (`:69-84`) now reads EXIF from the raw buffer **before** `processImage` strips it, and rejects anything outside `[1990-01-01, now+24h]` — an implausible capture time stays `null` rather than becoming a lie. |
-| MD40 | `MediaAttachment` contract (asset↔entity link) | **C** | `0191:46-58`, with `UNIQUE (media_asset_id, entity_type, entity_id)`. Read on a live path at `services/wall/WallCandidateLoaders.ts:243#.select("entity_id, is_cover, position, media_assets(captured_at)")`. *(POINTER REFRESH 2026-09-22 (§17): the Wall lane moved this read 31 lines and the old pointer landed on a bare `}`. Re-read at this head — the same table, the same four projected columns, the same `entity_type`/`entity_id` predicate. The only edit inside the block wraps the envelope in `rowsOrThrow`, which raises a PostgREST `{ error }` into the catch that already stood there; that catch returns the same empty map the swallowed error produced, so the contract this row grades is untouched.)* |
-| MD41 | `entityType` covers post/postcard/memory/trip/place/event/hidden_gem/shared_moment/observation | **W** | `0191:49` is bare `TEXT` with **no CHECK** — nine required values, zero enforced. `2250:47-51` explicitly asserts only position/is_cover/visibility_override. Writers exist for `memory` (`PassportMemoryService.ts:133`) and `hidden_gem` (`HiddenGemService.ts:150`); `shared_moment` and `observation` have none. |
-| MD42 | `position` / `isCover` ordering and cover selection | **C** | `0191:51-52` plus the partial cover index `:60-61`; read at `services/wall/WallCandidateLoaders.ts:243#.select("entity_id, is_cover, position, media_assets(captured_at)")` and applied at `services/wall/WallCandidateLoaders.ts:260#if (!cur || (cover && !cur.cover) || (cover === cur.cover && position < cur.position)) {` — cover wins, then lowest `position`. *(POINTER REFRESH 2026-09-22 (§17): repointed after the Wall lane's edits; the selection expression is byte-identical.)* |
-| MD43 | `visibilityOverride` on the attachment | **W** | `0191:53` `visibility_override TEXT` exists and **nothing reads it**: no non-test reference outside `database.types.ts`. A stored override that no serving path consults is not an override. |
+| MD40 | `MediaAttachment` contract (asset↔entity link) | **C** | `0191:45-55` *(pointer corrected 2026-09-26, §28.11)*, with `UNIQUE (media_asset_id, entity_type, entity_id)`. Read on a live path at `services/wall/WallCandidateLoaders.ts:243#.select("entity_id, is_cover, position, media_assets(captured_at)")`. *(POINTER REFRESH 2026-09-22 (§17): the Wall lane moved this read 31 lines and the old pointer landed on a bare `}`. Re-read at this head — the same table, the same four projected columns, the same `entity_type`/`entity_id` predicate. The only edit inside the block wraps the envelope in `rowsOrThrow`, which raises a PostgREST `{ error }` into the catch that already stood there; that catch returns the same empty map the swallowed error produced, so the contract this row grades is untouched.)* |
+| MD41 | `entityType` covers post/postcard/memory/trip/place/event/hidden_gem/shared_moment/observation | **W** | `0191:48` *(pointer corrected 2026-09-26, §28.11)* is bare `TEXT` with **no CHECK** — nine required values, zero enforced. `2250:47-51` explicitly asserts only position/is_cover/visibility_override. Writers exist for `memory` (`PassportMemoryService.ts:133`) and `hidden_gem` (`HiddenGemService.ts:150`); `shared_moment` and `observation` have none. |
+| MD42 | `position` / `isCover` ordering and cover selection | **C** | `0191:50-51` plus the partial cover index `:59-60` *(pointer corrected 2026-09-26, §28.11)*; read at `services/wall/WallCandidateLoaders.ts:243#.select("entity_id, is_cover, position, media_assets(captured_at)")` and applied at `services/wall/WallCandidateLoaders.ts:260#if (!cur || (cover && !cur.cover) || (cover === cur.cover && position < cur.position)) {` — cover wins, then lowest `position`. *(POINTER REFRESH 2026-09-22 (§17): repointed after the Wall lane's edits; the selection expression is byte-identical.)* |
+| MD43 | `visibilityOverride` on the attachment | **W** | `0191:52` *(pointer corrected 2026-09-26, §28.11)* `visibility_override TEXT` exists and **nothing reads it**: no non-test reference outside `database.types.ts`. A stored override that no serving path consults is not an override. |
 | MD44 | A single asset participates in multiple product objects without duplicating the underlying file | **W** | The *schema* makes it possible (`UNIQUE (media_asset_id, entity_type, entity_id)` allows fan-out from one asset). The *product* does the opposite: `.agents/memory/posts-media-urls-vs-post-media.md` records that `posts.media_urls` and `post_media` are *"separate stores that are not kept in sync"*, that `routes/posts.ts` creation *"writes `media_urls` and inserts no `post_media` row in the same handler"*, and that `lib/mediaAccess.ts` authorises by `.contains("media_urls",[publicUrl])` as a **distinct branch** from its `post_media` branch. The file's identity is duplicated across two stores that can disagree, and the canonical third is dark. |
 
 ### §7 Context Graph
@@ -762,7 +762,7 @@ predate Media v2 and the spec inherited them.
 | MD266 | Upload | **C** | `lib/mediaPipeline.ts:1-40` — one policy for both transports. |
 | MD267 | File validation | **C** | `lib/mediaProcessing.ts:34-60` `sniffMedia` — magic bytes decide, the client's Content-Type is untrusted. |
 | MD268 | Processing | **C** | `mediaProcessing.processImage` (re-encode, auto-orient, cap longest edge, strip all EXIF) + `makeThumbnail`. |
-| MD269 | Safety moderation | **C** | `media_assets.moderation_status` (`0191:32-34`), `routes/adminMedia.ts`, `post_media_moderation_ledger` (in production), `lib/moderationAudit.ts`. |
+| MD269 | Safety moderation | **C** | `media_assets.moderation_status` (`0191:29-30` *(pointer corrected 2026-09-26, §28.11)*), `routes/adminMedia.ts`, `post_media_moderation_ledger` (in production), `lib/moderationAudit.ts`. |
 | MD270 | Privacy validation | **C** | `lib/mediaLocationVisibility` choke point + `lib/protectedLocations` + the boundary scrub. |
 | MD271 | Context qualification | **C** | `resolveMediaEntities` + `lib/mediaEligibility.filterEligibleMediaCandidates`. |
 | MD272 | Intelligence eligibility | **C** | `mediaEvidenceEligibility.computeIntelligenceEligibility`, called at `lib/mediaAssets.ts:129`. |
@@ -5849,11 +5849,11 @@ deliverable as the audit, and states no ordering between phases.
 4. **The event/trip header mask fails open on a read error** (**fixed in §28.8**; the comment keeps the old words):
    `artifacts/api-server/src/routes/mediaFile.ts:44#Fail-OPEN: any DB error`.
 5. **The eligibility module's rationale points 36 lines above the code it
-   names.**
+   names.** (**Fixed in §28.11.**)
    - The rationale is `artifacts/api-server/src/lib/mediaEligibility.ts:66#already blocks four of these on`.
    - The set it names is at `artifacts/api-server/src/services/wall/WallCandidateLoaders.ts:1156#const QUICK_MEDIA_BLOCKED_MODERATION`.
 6. **Seven prose pointers into 0191 in this census's §5 rows name the wrong
-   line.** They carry no file extension, so no checker reads them.
+   line.** (**Fixed in §28.11.**) They carry no file extension, so no checker reads them.
    - MD37's pointer to line 31 (source) belongs on
      `artifacts/api-server/src/migrations/0191_media_assets.sql:28#source_type`.
    - MD269's pointer to lines 32-34 (moderation) belongs on
@@ -6088,7 +6088,7 @@ could therefore make the server hold an arbitrarily large body in memory.
   both count as a refusal, and an upload is never allowed.
 - All 21 cases pass.
 
-**What remains.** The kill switch and the per-user upload budget still run
+**What remains** (moved before the read in §28.10)**.** The kill switch and the per-user upload budget still run
 after the body is read. The body is now bounded and authenticated, so this is
 a smaller cost, recorded rather than moved.
 
@@ -6176,6 +6176,69 @@ where it was graded.
   MD37, MD79, MD101, MD197, MD255, MD262, MD289, MD385, MD435, MD446 (10 W).
 - **Branch work, started at this head**: MD338 (above) and MD403's three
   remaining failure groups, which sit inside Media's own files (§30).
+
+### 28.10 `/media/upload` refuses before it reads (the remainder of §28.7)
+
+**The defect.** §28.7 left the kill switch, the per-user upload budget and the
+declared-type check running after the body was read. So a refused upload still
+cost the server up to the largest per-kind ceiling in bytes: while uploads were
+switched off, when the caller was over budget, or when the declared type was
+one the route never accepts.
+
+**The fix.**
+- All three are now decided after authentication and before the first byte is
+  read:
+  `artifacts/api-server/src/routes/posts.ts:87#if (!(await admitUploadBeforeBody(req, res, auth.user.id))) return;`,
+  through the helper at the tail
+  (`artifacts/api-server/src/routes/posts.ts:3669#async function admitUploadBeforeBody(req: any, res: any, userId: string): Promise<boolean> {`).
+- The budget is charged once. The handler reads the stored result
+  (`artifacts/api-server/src/routes/posts.ts:102#(req as any).uploadGuard;`);
+  it does not call `guardUploadRequest` a second time. The old call is kept in
+  a comment at the end of that same line, so the §49 audit's citation of it
+  still reads.
+- The edits are line-neutral.
+
+**One behaviour changes.** An over-ceiling upload is now charged against the
+budget, because the budget is decided before the size is known. Before, it
+was refused by the bounded collector without being charged.
+
+**Tests and mutations.** The tests are
+`artifacts/api-server/src/test/mediaUploadHardening.test.ts:813#describe("census-media §28.10 — /media/upload refuses before reading the body"`.
+Each refusal case declares 200 MB, sends 16 bytes and never ends the body, so
+only a route that decides without the bytes can answer it.
+
+| # | Mutation | Red |
+| --- | --- | --- |
+| U-M1 | the old order: all three decided after the read | the kill-switch case and the declared-type case, each "no answer within 3 s" |
+| U-M2 | the handler charges the budget again | the CONTROL: one upload must leave the bucket at 1 |
+| U-M3 | the declared type checked only after the read | the declared-type case |
+
+`posts.ts` was byte-identical after each run. All 24 cases pass.
+
+### 28.11 Two kinds of stale pointer corrected (lane H's §27.5 items 5 and 6)
+
+**The eligibility module's rationale.** It named a line in
+`WallCandidateLoaders.ts` that had moved 36 lines. The line number is dropped
+and the symbol, which the next line already names, is kept
+(`artifacts/api-server/src/lib/mediaEligibility.ts:66#services/wall/WallCandidateLoaders.ts already blocks four of these on`).
+The edit is comment-only and line-neutral.
+
+**Six prose pointers into 0191 in §5's rows.** Each was re-read against the
+file and corrected in place. Each carries the note "pointer corrected
+2026-09-26, §28.11". No verdict changes.
+
+| Row | Was | Now | What is there |
+| --- | --- | --- | --- |
+| MD37 | `0191:31` | `0191:28` | `source_type ... DEFAULT 'user'` |
+| MD40 | `0191:46-58` | `0191:45-55` | the `media_attachments` table, `CREATE` to `);`, `UNIQUE` included |
+| MD41 | `0191:49` | `0191:48` | `entity_type TEXT NOT NULL` |
+| MD42 | `0191:51-52`, `:60-61` | `0191:50-51`, `:59-60` | `position`, `is_cover`; the partial cover index |
+| MD43 | `0191:53` | `0191:52` | `visibility_override TEXT` |
+| MD269 | `0191:32-34` | `0191:29-30` | `moderation_status` and its CHECK (32–34 is the processing CHECK) |
+
+Lane H counted seven; MD42 carries two of them. For MD40, lane H read "starts
+one line late"; the table itself also ends at 55, not 58, which is the entity
+index.
 
 ## 29. Lane I — the Media Map draws its covers from the cache, and Search asks 'near' — 2026-09-26
 

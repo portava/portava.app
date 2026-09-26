@@ -84,7 +84,7 @@ router.post(
   "/media/upload",
   // Authenticate BEFORE the body is read, then read it BOUNDED (census-media §28.7): an
   // unauthenticated caller could stream an unbounded body into memory before either.
-  async (req, res, next) => { const auth = await requireUser(req, res); if (!auth) return; (req as any).uploadAuth = auth; next(); },
+  async (req, res, next) => { const auth = await requireUser(req, res); if (!auth) return; if (!(await admitUploadBeforeBody(req, res, auth.user.id))) return; (req as any).uploadAuth = auth; next(); },
   collectBody(Math.max(...Object.values(MEDIA_SIZE_LIMITS))), // the largest per-kind ceiling; verifyUploadedBytes applies the real kind's below
   // (collectBody answers 400 and destroys the stream the moment the ceiling is passed)
   // The handler reuses the identity established above; it does not authenticate twice.
@@ -99,7 +99,7 @@ router.post(
     // Kill switch + per-user upload budget, from lib/mediaPipeline so this
     // transport and the postcard signed-URL transport share one policy and one
     // rate-limit bucket — switching endpoint does not buy a fresh allowance.
-    const guard = await guardUploadRequest(sc, user.id);
+    const guard: Awaited<ReturnType<typeof guardUploadRequest>> = (req as any).uploadGuard; // §28.10: decided BEFORE the body was read, once (was: const guard = await guardUploadRequest(sc, user.id);)
     if (!guard.ok) {
       if (guard.failure.code === "rate_limited") {
         res.setHeader("Retry-After", Math.ceil(guard.failure.retryAfterMs / 1000).toString());
@@ -3662,3 +3662,26 @@ import { recordMeasuredDuration } from "../lib/mediaVideoPoster.js";
 // Imported at the TAIL so no cited line above moves (census-media §28.7); ESM hoists imports.
 import { collectBody } from "./postcardMediaTransport.js";
 import { MEDIA_SIZE_LIMITS } from "../lib/mediaPipeline.js";
+
+// census-media §28.10: the kill switch, the per-user upload budget and the declared type are
+// decided BEFORE the body is read, so a refused upload costs the server none of its bytes. It
+// runs once; the handler reads the stored result instead of charging the budget a second time.
+async function admitUploadBeforeBody(req: any, res: any, userId: string): Promise<boolean> {
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Storage not configured"); return false; }
+  const guard = await guardUploadRequest(sc, userId);
+  if (!guard.ok) {
+    if (guard.failure.code === "rate_limited") {
+      res.setHeader("Retry-After", Math.ceil(guard.failure.retryAfterMs / 1000).toString());
+    }
+    sendError(res, guard.failure.code, guard.failure.message);
+    return false;
+  }
+  const declaredMime = String(req.headers["content-type"] ?? "").split(";")[0].trim();
+  if (!ALLOWED_MEDIA_MIME[declaredMime]) {
+    sendError(res, "invalid_payload", `Unsupported media type: ${declaredMime}`);
+    return false;
+  }
+  req.uploadGuard = guard;
+  return true;
+}

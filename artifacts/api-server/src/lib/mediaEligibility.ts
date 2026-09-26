@@ -63,7 +63,7 @@ export const DISTRIBUTABLE_MODERATION_STATES: ReadonlySet<string> = new Set(["ap
  * — a restricted item, a taken-down item and an owner-deleted item — all read as
  * distributable to the gate this file calls fail-closed.
  *
- * services/wall/WallCandidateLoaders.ts:1120 already blocks four of these on
+ * services/wall/WallCandidateLoaders.ts already blocks four of these on
  * `media_assets` (QUICK_MEDIA_BLOCKED_MODERATION), so the repository held two
  * different answers to the same question in two files. This is the union, and
  * it includes `limited` because `limited` IS the canonical spelling of
