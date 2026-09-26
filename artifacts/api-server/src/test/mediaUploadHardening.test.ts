@@ -279,9 +279,9 @@ describe("POST /api/media/upload — hardening", () => {
   // to storage and returns metadata for the client to use when writing its own
   // post_media row.  For IMAGES the server always measures dimensions
   // (processImage() — reject on failure), so width/height are never null when
-  // this route succeeds.  For VIDEOS there is no server-side transcode tier, so
-  // the route returns width=null, height=null — the client must obtain
-  // dimensions itself before writing a 'ready' row.
+  // this route succeeds.  For VIDEOS they are READ from the container (§37,
+  // lib/videoProbe.ts — see mediaVideoTransport.test.ts); a container that
+  // states no video track, like the stub below, still yields width=null.
   //
   // The authoritative enforcement is the DB-level CHECK constraint added by
   // migration 2088 (post_media_ready_has_dimensions): ANY post_media INSERT or
@@ -290,7 +290,7 @@ describe("POST /api/media/upload — hardening", () => {
   // any future path that might use this route's storage URL directly.  This
   // test confirms the route's null-dimension contract so the constraint stays
   // as the only guard needed.
-  it("video upload: route returns null width/height — dimensions not server-measured (DB constraint is the backstop)", async () => {
+  it("video upload: a container stating no video track returns null width/height (DB constraint is the backstop)", async () => {
     const client = makeClient();
     setClients(client);
     // Minimal valid ftyp box recognised by sniffMedia() as video/mp4.
@@ -304,8 +304,8 @@ describe("POST /api/media/upload — hardening", () => {
     const r = await rawReq("POST", "/api/media/upload", mp4Stub, "video/mp4");
     assert.equal(r.status, 201, `expected 201, got ${r.status}: ${JSON.stringify(r.body)}`);
     assert.equal(r.body.processed, false, "videos must not report processed=true");
-    assert.equal(r.body.width,  null, "video width must be null — no server-side measurement");
-    assert.equal(r.body.height, null, "video height must be null — no server-side measurement");
+    assert.equal(r.body.width,  null, "no video track → nothing to measure → null, never a guess");
+    assert.equal(r.body.height, null, "no video track → nothing to measure → null, never a guess");
     // One storage upload (the video bytes); no thumbnail or feed variant for videos.
     assert.equal(client._uploads.length, 1, "only the raw video should be stored");
   });

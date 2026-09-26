@@ -19,8 +19,8 @@ import { ChevronRight } from 'lucide-react-native';
 import { color, radius, space } from '../../../theme/tokens.ts';
 import type { PresentationMode } from '../types/mediaContext.ts';
 import type { MediaExperienceProjection, ExperienceChain } from '../types/mediaExperience.ts';
-import { fetchExperiencesByIds, buildExperienceChain, fetchMediaMap } from '../services/mediaProjection.ts';
-import { useLensProjection } from '../hooks/useLensProjection.ts';
+import { buildExperienceChain, fetchMediaMap } from '../services/mediaProjection.ts';
+import { experiencesOffline } from '../../../services/media/mediaOffline.ts'; // §39 offline trip/event media
 import { ExperienceMosaic } from '../components/ExperienceMosaic.tsx';
 import { FreshnessBadge } from '../components/FreshnessBadge.tsx';
 import { LensStateView } from '../components/LensStateView.tsx';
@@ -49,11 +49,11 @@ export function MediaExperiencesScreen({
   const ids = experienceIds ?? EMPTY_IDS;
   const idsKey = ids.join(',');
   const fetcher = useCallback(
-    (opts: { signal: AbortSignal }) => fetchExperiencesByIds(ids, { signal: opts.signal }),
+    (opts: { signal: AbortSignal }) => experiencesOffline(ids, { signal: opts.signal }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [idsKey],
   );
-  const { state, reload } = useLensProjection<MediaExperienceProjection[]>(
+  const { state, reload, cachedLabel } = useOfflineLens<MediaExperienceProjection[]>(
     fetcher,
     (data) => data.length === 0,
     [idsKey],
@@ -82,6 +82,7 @@ export function MediaExperiencesScreen({
 
   return (
     <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+      {cachedLabel ? <Text style={styles.intro}>{cachedLabel}</Text> : null}
       <Text style={styles.intro}>Happening around you — grouped by experience, not by creator.</Text>
       <ExperienceMosaic experiences={experiences} onOpen={onOpenExperience} />
 
@@ -182,3 +183,7 @@ const styles = StyleSheet.create({
   chainStep: { color: color.onInkMute, fontSize: 13, fontWeight: '700' },
   chainFooter: { flexDirection: 'row', marginTop: 2 },
 });
+
+// §39 (census-media §22): the lens reads through the offline cache and shows its
+// "Cached · updated …" label. Imported at the TAIL so no cited line moves.
+import { useOfflineLens } from '../../../services/media/useOfflineLens.ts';

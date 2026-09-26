@@ -35,6 +35,8 @@ import { createComposerDismissHandlers, createSubmitLock, createOnceGuard, handl
 import { createFilterDismissHandlers } from './PulseFilterSheet.machine';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { loadLastCategory, saveLastCategory, clearLastCategory } from './pulseCreateCategoryStorage.ts';
+// §33/§34: what each location choice actually does comes from the client privacy module, not from copy here.
+import { LOCATION_CHOICES, locationPrivacyHint, locationRequestFields } from '../services/media/mediaPrivacy.ts';
 
 /* ── Types ── */
 
@@ -427,8 +429,7 @@ export function UnifiedPostComposer({
         ...locationFields,
         filterId,
         filterIntensity,
-        locationPrivacyMode: locationPrivacyMode === 'none' ? undefined : locationPrivacyMode,
-        publishAfterTime: locationPrivacyMode === 'delayed_until_time' ? (scheduledTime?.toISOString() ?? null) : null,
+        ...locationRequestFields(locationPrivacyMode, scheduledTime),
         category: resolveCreateCategory(selectedCategory),
       });
 
@@ -696,14 +697,7 @@ export function UnifiedPostComposer({
                   <View style={uc.field}>
                     <Text style={uc.fieldLabel}>Share location</Text>
                     <View style={uc.chipRowWrap}>
-                      {([
-                        { mode: 'delayed_until_exit' as LocationPrivacyMode, label: 'After I leave' },
-                        { mode: 'delayed_until_time' as LocationPrivacyMode, label: 'At a time' },
-                        { mode: 'city_only' as LocationPrivacyMode, label: 'City only' },
-                        { mode: 'none' as LocationPrivacyMode, label: 'Now' },
-                        { mode: 'hidden' as LocationPrivacyMode, label: 'Hidden' },
-                        { mode: 'trusted_circle_only' as LocationPrivacyMode, label: 'Trusted circle' },
-                      ] satisfies { mode: LocationPrivacyMode; label: string }[]).map(({ mode, label }) => (
+                      {LOCATION_CHOICES.map(({ mode, label }) => (
                         <Pressable
                           key={mode}
                           style={[uc.visChip, locationPrivacyMode === mode && uc.visChipOn]}
@@ -715,18 +709,11 @@ export function UnifiedPostComposer({
                         </Pressable>
                       ))}
                     </View>
-                    {locationPrivacyMode === 'delayed_until_exit' && (
-                      <Text style={uc.privacyHint}>
-                        Location will appear after you've left this spot.
-                      </Text>
-                    )}
+                    <Text style={uc.privacyHint}>
+                      {locationPrivacyHint(locationPrivacyMode, { hasPlace: true, scheduledTime })}
+                    </Text>
                     {locationPrivacyMode === 'delayed_until_time' && (
                       <>
-                        <Text style={uc.privacyHint}>
-                          {scheduledTime
-                            ? `Publishing at ${scheduledTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
-                            : 'Pick a time to publish your location'}
-                        </Text>
                         <DateTimePicker
                           value={scheduledTime ?? new Date(Date.now() + 60 * 60 * 1_000)}
                           mode="time"
@@ -736,17 +723,6 @@ export function UnifiedPostComposer({
                           style={{ height: 100 }}
                         />
                       </>
-                    )}
-                    {locationPrivacyMode === 'city_only' && (
-                      <Text style={uc.privacyHint}>Only the city name will be shared.</Text>
-                    )}
-                    {locationPrivacyMode === 'hidden' && (
-                      <Text style={uc.privacyHint}>Location stays completely hidden.</Text>
-                    )}
-                    {locationPrivacyMode === 'trusted_circle_only' && (
-                      <Text style={uc.privacyHint}>
-                        Only people in your Trusted Circle can see where you are.
-                      </Text>
                     )}
                   </View>
                 )}

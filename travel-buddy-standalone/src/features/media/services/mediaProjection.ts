@@ -552,10 +552,13 @@ export function mapPlaceCurrentView(raw: unknown, nowMs: number = Date.now()): P
       .flatMap((g) => g.media)
       .sort((a, b) => Date.parse(b.capturedAt ?? '') - Date.parse(a.capturedAt ?? ''));
 
-    const sourceCount = asNumber(perspectivesObj.independentSourceCount) ?? 0;
+    const allAgesSources = asNumber(perspectivesObj.independentSourceCount) ?? 0;
     const updatedAt = newestCapturedAt(heroMedia);
+    // §18: the CURRENT picture is what fresh independent witnesses say (services/media/mediaIntelligence.ts).
+    const consensus = mapVisualConsensus(o.consensus);
+    const { strength, sourceCount } = currentPictureFromConsensus(consensus, { strength: strengthFromSources(allAgesSources), sourceCount: allAgesSources });
     const currentPicture: CurrentPicture = {
-      strength: strengthFromSources(sourceCount),
+      strength,
       updatedAt,
       ageMinutes: ageMinutesFromIso(updatedAt, nowMs),
       perspectiveCount: asNumber(perspectivesObj.totalPerspectives) ?? heroMedia.length,
@@ -574,6 +577,7 @@ export function mapPlaceCurrentView(raw: unknown, nowMs: number = Date.now()): P
       areaName:
         (placeObj ? asString(placeObj.neighborhood) ?? asString(placeObj.city) : null) ??
         asString(o.areaName),
+      consensus,
     };
   }
 
@@ -1394,3 +1398,6 @@ export function fetchMediaContextRefs(
 ): Promise<ProjectionResult<ContextRef[]>> {
   return getJson(`/api/media/${encodeURIComponent(mediaId)}/actions`, mapContextRefs, opts);
 }
+// §18 (census-media §22, MD323): the client's reading of the server's Visual
+// Consensus. Imported at the TAIL so no line above moves; ESM hoists it.
+import { mapVisualConsensus, currentPictureFromConsensus } from '../../../services/media/mediaIntelligence.ts';

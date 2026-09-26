@@ -1182,6 +1182,13 @@ const EXEMPT = [
     // nowhere, and every fetch it issues is to 127.0.0.1 on a port it opened
     // itself. It is in the `test` script, so the loopback pin below covers it.
     'src/test/verifyAuthzVoiceMediaOwnership.test.ts',
+    // ADDED 2026-09-26 with the Media §37 video lane. Same shape, checked: it
+    // names SUPABASE_URL only to save and restore the string around its own
+    // express server, injects a fake through `_setTestClient`, calls
+    // `createClient` nowhere, and answers the one Storage read /complete makes
+    // (a `https://storage.test/` signed URL) from an in-memory map. It is in the
+    // `test` script, so the loopback pin below covers it.
+    'src/test/mediaVideoTransport.test.ts',
   ].map((file) => ({
     file,
     pinnedTestEnv: true,

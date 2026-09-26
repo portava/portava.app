@@ -233,6 +233,7 @@ export async function batchSignUrls(
       for (const url of batch) {
         const cacheKey = url + transformSuffix;
         const signedUrl = body.signed?.[url] ?? null;
+        noteSignOutcome(url, signedUrl ? 'signed' : 'denied');
         if (signedUrl) {
           _cacheSet(cacheKey, { url: signedUrl, expiresAt });
           result.set(url, signedUrl);
@@ -246,9 +247,35 @@ export async function batchSignUrls(
       // On 429 the caller already has the cached value; new URLs fall back.
       for (const url of batch) {
         if (!result.has(url)) result.set(url, url);
+        noteSignOutcome(url, 'unreachable');
       }
     }
   }
 
   return result;
+}
+
+// ── Why the last sign attempt did not produce a URL (Media §39) ──────────────
+//
+// batchSignUrls hands back the ORIGINAL url both when the server refused it and
+// when the server could not be reached, and every existing caller treats the two
+// alike. The offline media cache must not: a copy cached on this device may be
+// shown while the sign endpoint is UNREACHABLE, and must be deleted the moment
+// the server DENIES it. This records which of the two the last attempt was.
+// Appended at the tail so no line above moves.
+const _lastOutcome = new Map<string, 'signed' | 'denied' | 'unreachable'>();
+const MAX_OUTCOMES = 2000;
+
+function noteSignOutcome(url: string, outcome: 'signed' | 'denied' | 'unreachable'): void {
+  _lastOutcome.delete(url);
+  if (_lastOutcome.size >= MAX_OUTCOMES) {
+    const oldest = _lastOutcome.keys().next().value;
+    if (oldest !== undefined) _lastOutcome.delete(oldest);
+  }
+  _lastOutcome.set(url, outcome);
+}
+
+/** The outcome of the last sign attempt for `url`, or null if it was never attempted (or was served from cache). */
+export function lastSignOutcome(url: string): 'signed' | 'denied' | 'unreachable' | null {
+  return _lastOutcome.get(url) ?? null;
 }

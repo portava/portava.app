@@ -423,4 +423,16 @@ router.use(sensingIngestRouter);
 import sensingSessionRouter from "./sensingSession.js";
 router.use(sensingSessionRouter);
 
+// ── Media §37: the video poster and the resumable byte path for a postcard ───
+// slot. Its own file; routes/postcards.ts keeps the reservation and /complete,
+// which still verify and scrub whatever these routes put in the slot. No path
+// here is shared with postcards.ts. Registered at the tail, and the import with
+// it, so no line above moves — several censuses cite this file by line.
+import postcardMediaTransportRouter from "./postcardMediaTransport.js";
+router.use(postcardMediaTransportRouter);
+
+// ── Media §37: the poster for a video uploaded through POST /media/upload ─────
+import mediaVideoPosterRouter from "./mediaVideoPoster.js";
+router.use(mediaVideoPosterRouter);
+
 export default router;

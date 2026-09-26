@@ -26,8 +26,8 @@ import { color, space } from '../../../theme/tokens.ts';
 import type { PresentationMode } from '../types/mediaContext.ts';
 import type { HiddenGemLensItem, HiddenGemLensProjection } from '../types/hiddenGemMedia.ts';
 import type { ProjectionResult } from '../types/media.ts';
-import { fetchGems } from '../services/mediaProjection.ts';
-import { useLensProjection } from '../hooks/useLensProjection.ts';
+import { gemsOffline } from '../../../services/media/mediaOffline.ts'; // §39: the lens served from cache on an outage (census-media §23.5, MD297)
+import { useOfflineLens } from '../../../services/media/useOfflineLens.ts';
 import { gemLensReadState, isGemLensEmpty, sectionGemLens } from '../state/gemLens.ts';
 import type { MediaMapCluster } from '../state/mediaMapStore.ts';
 import { HiddenGemCard } from '../components/HiddenGemCard.tsx';
@@ -49,10 +49,10 @@ const NO_CLUSTERS = (): Promise<ProjectionResult<MediaMapCluster[]>> =>
 
 export function HiddenGemsMediaScreen({ mode, city = null, center = null, onOpenGem }: HiddenGemsMediaScreenProps) {
   const fetcher = useCallback(
-    (opts: { signal: AbortSignal }) => fetchGems({ city, signal: opts.signal }),
+    (opts: { signal: AbortSignal }) => gemsOffline({ city, signal: opts.signal }),
     [city],
   );
-  const { state, reload } = useLensProjection<HiddenGemLensProjection>(fetcher, isGemLensEmpty, [city]);
+  const { state, reload, cachedLabel } = useOfflineLens<HiddenGemLensProjection>(fetcher, isGemLensEmpty, [city]);
   const lens = state.data;
   const readState = gemLensReadState(lens);
   const gemIds = useMemo(() => new Set((lens?.gems ?? []).map((g) => g.gemId)), [lens]);
@@ -125,7 +125,7 @@ export function HiddenGemsMediaScreen({ mode, city = null, center = null, onOpen
   const sections = sectionGemLens(lens.gems);
   return (
     <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false} testID="gem-lens-overview">
-      <Text style={styles.intro}>Protected discovery — shown by current condition, never by popularity.</Text>
+      <Text style={styles.intro}>Protected discovery — shown by current condition, never by popularity.</Text>{cachedLabel ? <Text style={styles.partial} testID="gem-lens-cached">{cachedLabel}</Text> : null}
       {partial}
       {sections.map((section) => (
         <View key={section.key} style={styles.section} testID={`gem-section-${section.key}`}>

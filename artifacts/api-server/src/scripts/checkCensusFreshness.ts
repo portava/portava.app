@@ -1628,6 +1628,37 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "travel-buddy-standalone/src/components/ShareSheet.tsx",
     "travel-buddy-standalone/src/components/CommentsSheet.tsx",
     "travel-buddy-standalone/src/components/gems/GemContributeSection.tsx",
+    // WIDENED 2026-09-26 by census-media §22, because check:census-scope-coverage
+    // required it: §22 grades MD275/276/281/284/295–301/320/321/323/325 on these
+    // files and their tests, and a census that grades a file must go stale when
+    // it moves. The client §40 modules live under services/media/ (a directory,
+    // tests included); the server video transport is named file by file. The
+    // two mount points §22 cites (routes/index.ts, app/_layout.tsx) are NOT
+    // added — they change for every feature, and nothing in them is graded.
+    "travel-buddy-standalone/src/services/media/",
+    "travel-buddy-standalone/src/services/media.ts",
+    "travel-buddy-standalone/src/services/mediaUrl.ts",
+    "travel-buddy-standalone/src/services/stories.ts",
+    "travel-buddy-standalone/src/services/memories.ts",
+    "travel-buddy-standalone/src/components/PostcardComposer.tsx",
+    "travel-buddy-standalone/src/components/PulseCreate.tsx",
+    "travel-buddy-standalone/src/components/__tests__/PostcardComposer.videoPoster.component.test.tsx",
+    "travel-buddy-standalone/src/components/__tests__/PulseCreate.locationPrivacy.component.test.tsx",
+    "artifacts/api-server/src/lib/videoProbe.ts",
+    "artifacts/api-server/src/lib/mediaPosterPath.ts",
+    "artifacts/api-server/src/lib/mediaVideoPoster.ts",
+    "artifacts/api-server/src/lib/postcardMediaTransport.ts",
+    "artifacts/api-server/src/lib/postSchemas.ts",
+    "artifacts/api-server/src/routes/postcardMediaTransport.ts",
+    "artifacts/api-server/src/routes/mediaVideoPoster.ts",
+    "artifacts/api-server/src/test/mediaVideoTransport.test.ts",
+    "artifacts/api-server/src/test/mediaVideoPosterGeneral.test.ts",
+    "artifacts/api-server/src/test/mediaPrivacyClientParity.test.ts",
+    // WIDENED 2026-09-26 by the integration owner at the lane D merge (census-
+    // media §22, §23.4): the root layout is where §22 mounts the upload resume
+    // (MD284) and the offline warm-up (MD295–MD301), and §22 cites both mounts.
+    // Watching it kept the census above its 96% floor after the four lanes met.
+    "travel-buddy-standalone/app/_layout.tsx",
   ],
   // census-telegraph.md — declared 2026-09-11 on the same basis as Media above:
   // 451 requirements out of CANNOT BE CHECKED, a clock started rather than a

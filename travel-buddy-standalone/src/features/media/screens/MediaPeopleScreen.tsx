@@ -19,8 +19,8 @@ import { avatar, color, radius, space } from '../../../theme/tokens.ts';
 import { CachedImage } from '../../../components/CachedImage.tsx';
 import type { MediaProjection } from '../types/media.ts';
 import type { PeopleLensGroup, PeopleLensProjection } from '../types/peopleLens.ts';
-import { fetchPeople } from '../services/mediaProjection.ts';
-import { useLensProjection } from '../hooks/useLensProjection.ts';
+import { peopleOffline } from '../../../services/media/mediaOffline.ts'; // §39: offline, the Trip Crew perspectives cached
+import { useOfflineLens } from '../../../services/media/useOfflineLens.ts';
 import { PerspectiveMosaic } from '../components/PerspectiveMosaic.tsx';
 import { FreshnessBadge } from '../components/FreshnessBadge.tsx';
 import { LensStateView } from '../components/LensStateView.tsx';
@@ -30,8 +30,8 @@ export interface MediaPeopleScreenProps {
 }
 
 export function MediaPeopleScreen({ onOpenMedia, onOpenPerson }: MediaPeopleScreenProps) {
-  const fetcher = useCallback((opts: { signal: AbortSignal }) => fetchPeople({ signal: opts.signal }), []);
-  const { state, reload } = useLensProjection<PeopleLensProjection>(
+  const fetcher = useCallback((opts: { signal: AbortSignal }) => peopleOffline({ signal: opts.signal }), []);
+  const { state, reload, cachedLabel } = useOfflineLens<PeopleLensProjection>(
     fetcher,
     (data) => data.people.length === 0,
     [],
@@ -50,6 +50,7 @@ export function MediaPeopleScreen({ onOpenMedia, onOpenPerson }: MediaPeopleScre
 
   return (
     <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+      {cachedLabel ? <Text style={styles.intro}>{cachedLabel} — your Trip Crew only</Text> : null}
       <Text style={styles.intro}>
         From people you follow and your Trip Crew. Sharing a photo never reveals someone&apos;s precise
         live location.

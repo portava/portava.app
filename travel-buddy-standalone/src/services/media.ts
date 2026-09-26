@@ -246,7 +246,7 @@ export async function uploadMedia(media: PickedMedia, validateOpts?: ValidateMed
   // the post gets a real poster, same as photos get server-side.
   let thumbnailUrl: string | null = (body as any)?.thumbnailUrl ?? null;
   if (!thumbnailUrl && media.type === 'video') {
-    thumbnailUrl = await extractAndUploadVideoThumbnail(media.uri, token);
+    thumbnailUrl = await extractAndUploadVideoThumbnail(media.uri, token, (body as any)?.path ?? null);
   }
 
   return {
@@ -261,28 +261,23 @@ export async function uploadMedia(media: PickedMedia, validateOpts?: ValidateMed
 }
 
 /**
- * Best-effort: grab a frame near the start of a local video file and upload
- * it through the same /api/media/upload endpoint (as a JPEG) so the post has
- * a real poster image instead of the grey grid-tile fallback. Never throws —
- * a failed extraction just leaves thumbnailUrl null, same as before this fix.
+ * Best-effort: grab a frame near the start of a local video file and hand it to
+ * the server as THIS video's poster (§37, services/media/generalVideoPoster.ts):
+ * stored at the video's derived poster path and recorded on its canonical row.
+ * Against an API that predates that route it falls back to what this did
+ * before — upload the frame as a plain image through /api/media/upload. Never
+ * throws — a failed extraction just leaves thumbnailUrl null.
  */
-async function extractAndUploadVideoThumbnail(videoUri: string, token: string): Promise<string | null> {
-  try {
-    const { uri: thumbUri } = await VideoThumbnails.getThumbnailAsync(videoUri, { time: 300 });
-    const resp = await fetch(thumbUri);
-    const blob = await resp.blob();
-    const base = apiBase();
-    const apiRes = await fetch(`${base}/api/media/upload`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'image/jpeg', Authorization: `Bearer ${token}` },
-      body: blob,
-    });
-    if (!apiRes.ok) return null;
-    const body = await apiRes.json().catch(() => ({}));
-    return (body as any)?.url ?? null;
-  } catch {
-    return null;
-  }
+async function extractAndUploadVideoThumbnail(videoUri: string, token: string, videoPath: string | null): Promise<string | null> {
+  const extract = async (uri: string): Promise<string | null> => {
+    try {
+      return (await VideoThumbnails.getThumbnailAsync(uri, { time: 300 })).uri;
+    } catch {
+      return null;
+    }
+  };
+  const outcome = await attachVideoPoster(videoPath, videoUri, deviceGeneralPosterDeps(apiBase(), token, extract));
+  return outcome.thumbnailUrl;
 }
 
 /** Best-effort cleanup: remove an uploaded object if post creation later fails. */
@@ -304,3 +299,7 @@ export async function deleteUploadedMedia(publicUrl: string): Promise<void> {
     // best-effort; ignore
   }
 }
+
+// §37 (census-media §22): the general-upload video poster. Imported at the TAIL
+// so no line above moves (census-media cites this file by line); ESM hoists it.
+import { attachVideoPoster, deviceGeneralPosterDeps } from './media/generalVideoPoster.ts';

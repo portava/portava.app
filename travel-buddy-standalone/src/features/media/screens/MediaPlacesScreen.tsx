@@ -18,8 +18,8 @@ import { color, radius, space } from '../../../theme/tokens.ts';
 import type { PresentationMode, CityVisualZone } from '../types/mediaContext.ts';
 import type { PlaceCurrentView } from '../types/perspective.ts';
 import type { MediaProjection } from '../types/media.ts';
-import { fetchPlaceView, isPlaceViewEmpty, fetchMediaMap } from '../services/mediaProjection.ts';
-import { useLensProjection } from '../hooks/useLensProjection.ts';
+import { isPlaceViewEmpty, fetchMediaMap } from '../services/mediaProjection.ts';
+import { placeViewOffline } from '../../../services/media/mediaOffline.ts'; // §39 offline place view
 import { CurrentPictureBadge } from '../components/CurrentPictureBadge.tsx';
 import { IntelligenceStrip } from '../components/IntelligenceStrip.tsx';
 import { PerspectiveMosaic } from '../components/PerspectiveMosaic.tsx';
@@ -172,13 +172,13 @@ function PlaceDetail({
       if (!UUID_RE.test(placeId)) {
         return Promise.resolve({ ok: true as const, data: null });
       }
-      return fetchPlaceView(placeId, { signal: opts.signal });
+      return placeViewOffline(placeId, { signal: opts.signal });
     },
     [placeId],
   );
   // Empty when the projection is absent OR carries zero perspectives — a real
   // place with no media yet renders the honest "No current picture" state.
-  const { state, reload } = useLensProjection<PlaceCurrentView | null>(
+  const { state, reload, cachedLabel } = useOfflineLens<PlaceCurrentView | null>(
     fetcher,
     isPlaceViewEmpty,
     [placeId],
@@ -246,7 +246,7 @@ function PlaceDetail({
       ) : (
         <ScrollView contentContainerStyle={styles.detailContent} showsVerticalScrollIndicator={false}>
           <View style={styles.pictureBlock}>
-            {view.stateLabel ? <Text style={styles.stateLabel}>{view.stateLabel}</Text> : null}
+            {view.stateLabel ? <Text style={styles.stateLabel}>{view.stateLabel}</Text> : null}<PictureCaveats cachedLabel={cachedLabel} consensus={view.consensus ?? null} />
             {view.areaName ? <Text style={styles.areaLabel}>{view.areaName}</Text> : null}
             <CurrentPictureBadge
               strength={view.currentPicture.strength}
@@ -333,3 +333,23 @@ const styles = StyleSheet.create({
   coverage: { color: color.onInkMute, fontSize: 13, fontWeight: '600' },
   heroStripBlock: { paddingHorizontal: space.lg },
 });
+
+/**
+ * Under the place's state: the §39 "Cached · updated …" label whenever the view
+ * came from the offline cache, and the §18 uncertainty line exactly when the
+ * server says the reports disagree (services/media/mediaIntelligence.ts).
+ * Defined, with its imports, at the TAIL so no line above moves — census-media
+ * cites this file by line (census-media §22).
+ */
+function PictureCaveats({ cachedLabel, consensus }: { cachedLabel: string | null; consensus: VisualConsensusView | null }) {
+  const banner = uncertaintyBanner(consensus);
+  return (
+    <>
+      {cachedLabel ? <Text style={styles.areaLabel} accessibilityRole="text">{cachedLabel}</Text> : null}
+      {banner ? <Text style={styles.areaLabel} accessibilityRole="alert">{banner}</Text> : null}
+    </>
+  );
+}
+
+import { useOfflineLens } from '../../../services/media/useOfflineLens.ts';
+import { uncertaintyBanner, type VisualConsensusView } from '../../../services/media/mediaIntelligence.ts';

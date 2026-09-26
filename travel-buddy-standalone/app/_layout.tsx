@@ -399,6 +399,8 @@ export default function RootLayout() {
                       <InputTelemetrySetup />
                       <GeographicFieldsSetup />
                       <SensingCaptureSetup />
+                      <MediaUploadResumeSetup />
+                      <MediaOfflineWarmupSetup />
                       <CompassFrontloadSetup />
                       <WallAnalyticsSetup />
                       <StatusBar style="dark" />
@@ -443,3 +445,34 @@ export default function RootLayout() {
     </GestureHandlerRootView>
   );
 }
+
+/**
+ * Media §37 — resume the app-level postcard upload queue at launch and on every
+ * return to the foreground, so an upload interrupted by a closed screen, a
+ * backgrounded app or a killed process continues from what the server already
+ * holds. A no-op while src/services/media/uploadTransportFlag.ts is off (it
+ * ships off): production keeps the composer's own single upload until a device
+ * run has proven the queue. Defined and imported at the TAIL so no line above
+ * moves — census documents cite this file by line.
+ */
+function MediaUploadResumeSetup() {
+  useEffect(() => installPostcardUploadResume(AppState), []);
+  return null;
+}
+import { installPostcardUploadResume } from '../src/services/media/postcardUploadDevice';
+
+/**
+ * Media §39 — pre-cache the signed-in user's saved places and current trips
+ * for offline use, on launch and on each foreground (throttled). Installed only
+ * while MEDIA_WORLD_SHELL_ENABLED is on: the offline surfaces are the World
+ * lenses, and no request or storage is spent for a surface nobody can open.
+ * Defined at the tail with its imports, for the same reason as the setup above.
+ */
+function MediaOfflineWarmupSetup() {
+  const { isEnabled } = useFeatureFlags();
+  const shellOn = isEnabled('MEDIA_WORLD_SHELL_ENABLED');
+  useEffect(() => (shellOn ? installMediaOfflineWarmup(AppState) : undefined), [shellOn]);
+  return null;
+}
+import { useFeatureFlags } from '../src/context/FeatureFlagsContext';
+import { installMediaOfflineWarmup } from '../src/services/media/mediaOfflineDevice';
