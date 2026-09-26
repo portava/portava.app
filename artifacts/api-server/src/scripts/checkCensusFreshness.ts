@@ -1659,6 +1659,11 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     // (MD284) and the offline warm-up (MD295–MD301), and §22 cites both mounts.
     // Watching it kept the census above its 96% floor after the four lanes met.
     "travel-buddy-standalone/app/_layout.tsx",
+    // WIDENED 2026-09-26 by census-media §23.8, because check:census-scope-coverage
+    // required it: §20.5 (P1), §23.2 and §23.8 grade production's canonical state
+    // on this migration being applied (it is what 3321's precondition reads), so
+    // a change to it must age the census. routes/index.ts stays out, as above.
+    "artifacts/api-server/src/migrations/2470_media_asset_canonical_columns_flag_agnostic.sql",
   ],
   // census-telegraph.md — declared 2026-09-11 on the same basis as Media above:
   // 451 requirements out of CANNOT BE CHECKED, a clock started rather than a
