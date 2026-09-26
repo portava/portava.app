@@ -6414,3 +6414,315 @@ With the selected style removed (I-M9) it goes red. Lane H's
 `mediaContrast.test.ts` pins this pair as a known failure and is not on this
 branch. The integrator reconciles that pinned value when both lanes are merged.
 No row moves: MD403 is lane H's row.
+
+## 31. Lane K — Media's remaining contrast failures fixed in Media's own files — 2026-09-26
+
+Lane K owns one row, **MD403**. The work is on branch `lane-k`, cut from
+`f31d94812`, the head of `claude/sensing-completion-20260925`.
+
+Lane H's contrast test (§27.1) pinned 33 pairs below WCAG AA. §28.9 left
+three failure groups as branch work, all inside Media's own files:
+- text and state colour over photographs;
+- `faint` and `signal` on light sheets;
+- the §46.1 gem-zone contour over road casings.
+
+All 33 pairs are fixed and asserted as passing, and the test ends with no
+pinned finding. **MD403 stays W**, because this lane found two state
+indicators over photographs that the test does not measure and that have no
+floor (§31.7).
+
+This lane wrote no migration, read or wrote no database, and enabled no flag.
+It edited no server file and no theme token. The headline is not restated
+here.
+
+### 31.1 Row table
+
+| ID | Was | Now | Evidence |
+| --- | --- | --- | --- |
+| MD403 | **W** | **W** | §27 states no RED WHEN for MD403. Its row names four failure groups, and §28.9 names the three that remained after §29.8. All are fixed in Media's own files (§31.2), and every pinned pair is now asserted as a pass: `travel-buddy-standalone/src/features/media/__tests__/mediaContrast.test.ts:835#test('every solid-ground and fallback pair meets WCAG AA` holds over all 312 asserted pairs, and `travel-buddy-standalone/src/features/media/__tests__/mediaContrast.test.ts:841#test('pinned findings are still below threshold` finds none pinned. The row is not C, because two §46 state indicators over photographs are outside the test and floor at 1.00:1. One is the perspective tile's evidence-class edge (`travel-buddy-standalone/src/features/media/components/PerspectiveTile.tsx:45#<View style={[styles.edge, { backgroundColor: accent }]} />`). The other is the viewer's captions toggle when it is on (`travel-buddy-standalone/src/features/media/screens/MediaPerspectiveViewerScreen.tsx:651#controlButtonActive: { backgroundColor: 'rgba(250,249,246,0.32)' },`). **RED WHEN** both are measured by the test and pass, AND one of two things holds: the shipped Media tab's overlays (`src/components/media`, outside the test's scope and measured by no lane) are measured and pass, or the owner rules that MD403 grades the World shell only. **Blocker:** branch work, plus that owner ruling on scope. |
+
+### 31.2 What was fixed, and how each value was chosen
+
+**Scrims over photographs (group 1).** Each keeps the existing ink,
+`rgba(17,17,15,a)`, at the least alpha on a 0.01 grid at which every pair
+painted on it clears its threshold at the FLOOR. The FLOOR is the test's
+minimum over its 16-level-per-channel underlay grid, and for every pair here
+the worst underlay is white.
+- The scan used the test's own formulas in a scratch script, which is not
+  committed.
+- The test then measured the chosen values independently (§31.3).
+
+| Surface | Line | Was | Now | Tightest pair at the new value |
+| --- | --- | --- | --- | --- |
+| NOW card zone-state chip | `travel-buddy-standalone/src/features/media/components/ChangingNowCard.tsx:124#backgroundColor: 'rgba(17,17,15,0.88)',` | 0.55 | 0.88 | the `quiet` label, 4.61 |
+| Perspective tile overlay | `travel-buddy-standalone/src/features/media/components/PerspectiveTile.tsx:89#backgroundColor: 'rgba(17,17,15,0.71)',` | 0.55 | 0.71 | the age line (`onInkMute`), 4.55 |
+| Viewer bottom overlay | `travel-buddy-standalone/src/features/media/screens/MediaPerspectiveViewerScreen.tsx:694#backgroundColor: 'rgba(17,17,15,0.96)',` | 0.62 | 0.96 | the related-chip count (`faint` on its 0.10 wash), 4.55 |
+| Viewer play / retry badge | `travel-buddy-standalone/src/features/media/screens/MediaPerspectiveViewerScreen.tsx:632#backgroundColor: 'rgba(17,17,15,0.59)',` | 0.5 | 0.59 | "Retry", 4.54 |
+| Viewer top title | `travel-buddy-standalone/src/features/media/screens/MediaPerspectiveViewerScreen.tsx:249#<View style={tailStyles.topTitleSlot}><Text style={[styles.topTitle, tailStyles.topTitleScrim]} numberOfLines={1}>`, styled at `travel-buddy-standalone/src/features/media/screens/MediaPerspectiveViewerScreen.tsx:781#topTitleScrim: { flex: 0, flexShrink: 1, backgroundColor: 'rgba(17,17,15,0.59)',` | no scrim | its own badge, 0.59 | the title, 4.54 |
+| Viewer buffering label | `travel-buddy-standalone/src/features/media/screens/MediaPerspectiveViewerScreen.tsx:451#{isBuffering ? <Text style={[styles.bufferingLabel, tailStyles.bufferingScrim]}>Loading video…</Text> : null}`, styled at `travel-buddy-standalone/src/features/media/screens/MediaPerspectiveViewerScreen.tsx:782#bufferingScrim: { backgroundColor: 'rgba(17,17,15,0.71)',` | no scrim | its own badge, 0.71 | the label (`onInkMute`), 4.55 |
+| Viewer progress track | `travel-buddy-standalone/src/features/media/screens/MediaPerspectiveViewerScreen.tsx:659#backgroundColor: 'rgba(17,17,15,0.80)',` | a 0.26 light wash | an ink track, 0.80 | the `signal` fill, 3.11 |
+
+Notes on three of these:
+- **The viewer overlay.** Taken alone, its other pairs need less: the
+  `generated` class label 0.91, the `historical` freshness dot 0.88, the
+  `onInkMute` lines 0.71 to 0.79, and the pills 0.68. The chip count sets 0.96.
+- **The progress track.** Over the old light track the fill floors at 1.00:1.
+  With that 0.26 wash kept on top of a dark track, no alpha clears.
+- **The badges.** The top title and the buffering label were bare on the
+  photo. Each is now wrapped in a pill badge added as a tail style. The
+  title's badge hugs the text, and its slot keeps `flex: 1`, so the overflow
+  button stays right-aligned.
+
+**Light sheets (group 2).** The theme is not edited: a diff of
+`travel-buddy-standalone/src/theme` against `f31d94812` is empty. The Media
+components now use other colours:
+
+| Pair | Line | Was | Now |
+| --- | --- | --- | --- |
+| Trust chips' description | `travel-buddy-standalone/src/features/media/components/ContributorTrustChips.tsx:103#desc: { fontSize: 11, lineHeight: 14, color: color.mute },` | `faint`, 2.73 | `mute`, 5.27 |
+| Trust chips' caption | `travel-buddy-standalone/src/features/media/components/ContributorTrustChips.tsx:114#caption: { fontSize: 11, lineHeight: 14, color: color.mute, fontStyle: 'italic' },` | `faint`, 2.73 | `mute`, 5.27 |
+| Action rail's active label | `travel-buddy-standalone/src/features/media/components/MediaActionRail.tsx:494#color: ACTIVE_ON_PAPER,` | `signal`, 2.85 | `#C43B23`, 4.54 |
+| Action rail's active icon (stroke and fill) | `travel-buddy-standalone/src/features/media/components/MediaActionRail.tsx:362#color={active ? ACTIVE_ON_PAPER : color.ink}` | `signal`, 2.85 | `#C43B23`, 4.54 |
+
+- **`mute`** is the app's existing secondary-text token. The description and
+  caption keep their hierarchy under the label through their smaller size and
+  weight.
+- **`#C43B23`** is `signal`'s channels scaled by 0.77, so it keeps the hue. It
+  is the lightest such shade that clears 4.5:1 on the active row's signal tint
+  (0.78 does not), and it reads 4.99:1 on plain paper. It is declared once, on
+  an existing line so that nothing below moves:
+  `travel-buddy-standalone/src/features/media/components/MediaActionRail.tsx:398#const ACTIVE_ON_PAPER = '#C43B23';`.
+
+**The gem-zone contour (group 3).** The contour is now drawn at
+`'line-opacity': 1`, up from 0.7:
+`travel-buddy-standalone/src/features/media/components/MediaMapCanvas.tsx:92#paint={{ 'line-color': GEM_ACCENT, 'line-width': 1.5, 'line-opacity': 1, 'line-blur': 1.5 }}`.
+- Its floor over the dark map moves from 2.65 to 3.87, over the road casing,
+  which is still its lowest paint.
+- The least opacity that clears is 0.80 (3.02). Opacity 1 was chosen for
+  margin, because the test does not model the layer's `'line-blur': 1.5`,
+  which softens the drawn edge.
+
+### 31.3 Each pinned pair, before and after
+
+"Before" is the test's own table on `f31d94812`, and "After" is the same test
+on this branch (`MEDIA_CONTRAST_TABLE=1`). Every pair is a FLOOR over any
+photograph unless its surface says otherwise.
+
+| Pair | Threshold | Before | After |
+| --- | --- | --- | --- |
+| `changing.stateChip.starting.photoFloor` | 4.5 | 1.81 | 5.92 |
+| `changing.stateChip.building.photoFloor` | 4.5 | 2.31 | 7.57 |
+| `changing.stateChip.peak.photoFloor` | 4.5 | 2.02 | 6.61 |
+| `changing.stateChip.moderate.photoFloor` | 4.5 | 1.66 | 5.45 |
+| `changing.stateChip.quiet.photoFloor` | 4.5 | 1.40 | 4.61 |
+| `changing.stateChip.winding_down.photoFloor` | 4.5 | 1.45 | 4.76 |
+| `intel.class.observed.viewerPhotoFloor` | 4.5 | 2.93 | 9.59 |
+| `intel.class.inferred.viewerPhotoFloor` | 4.5 | 2.11 | 6.90 |
+| `intel.class.user_claimed.viewerPhotoFloor` | 4.5 | 1.84 | 6.03 |
+| `intel.class.predicted.viewerPhotoFloor` | 4.5 | 2.56 | 8.37 |
+| `intel.class.generated.viewerPhotoFloor` | 4.5 | 1.58 | 5.18 |
+| `tile.perspective.photoFloor` | 4.5 | 3.96 | 6.98 |
+| `tile.age.photoFloor` | 4.5 | 2.87 | 4.55 |
+| `viewer.topTitle.photoFloor` | 4.5 | 1.00 | 4.54 |
+| `viewer.trustLabel.photoFloor` | 4.5 | 3.48 | 9.00 |
+| `viewer.relatedHeading.photoFloor` | 4.5 | 3.48 | 9.00 |
+| `viewer.intelPerspective.photoFloor` | 4.5 | 3.48 | 9.00 |
+| `viewer.relatedChip.photoFloor` | 4.5 | 2.95 | 7.26 |
+| `viewer.relatedChipCount.photoFloor` | 4.5 | 1.50 | 4.55 |
+| `viewer.freshnessText.photoFloor` | 4.5 | 2.95 | 7.26 |
+| `viewer.freshnessDot.live.photoFloor` | 3 | 2.39 | 7.23 |
+| `viewer.freshnessDot.fresh.photoFloor` | 3 | 1.69 | 5.12 |
+| `viewer.freshnessDot.recent.photoFloor` | 3 | 1.45 | 4.40 |
+| `viewer.freshnessDot.historical.photoFloor` | 3 | 1.29 | 3.90 |
+| `viewer.pill.photoFloor` | 4.5 | 3.79 | 10.88 |
+| `viewer.retryLabel.photoFloor` | 4.5 | 3.37 | 4.54 |
+| `viewer.buffering.photoFloor` | 4.5 | 1.00 | 4.55 |
+| `viewer.progressFill.photoFloor` | 3 | 1.00 | 3.11 |
+| `trust.description` (on paper) | 4.5 | 2.73 | 5.27 |
+| `trust.caption` (on paper) | 4.5 | 2.73 | 5.27 |
+| `rail.rowLabel.active` (on the signal tint) | 4.5 | 2.85 | 4.54 |
+| `rail.rowIcon.active` (on the signal tint) | 3 | 2.85 | 4.54 |
+| `mapCanvas.gemZoneContour.mapFloor` (over the dark map) | 3 | 2.65 | 3.87 |
+
+The first 28 rows are the 28 photo floors. Every pair that sits on a changed
+scrim moved with it and still passes, including the fallbacks and the
+headline, name and note lines. For example, `viewer.headline.photoFloor`
+moved from 5.04 to 16.47, and `viewer.playIcons.photoFloor` from 3.37 to 4.54.
+
+### 31.4 Pair counts
+
+| | Pairs | Asserted | Pass | Pinned | Decorative | Floors (photo + map) |
+| --- | --- | --- | --- | --- | --- | --- |
+| Before, `f31d94812` | 321 | 312 | 279 | 33 | 9 | 41 (36 + 5) |
+| After, this branch | 321 | 312 | 312 | 0 | 9 | 41 (36 + 5) |
+
+- **Where 321 comes from.** It is §27.1's 312, plus lane G's 9 added at the
+  §28.6 merge.
+- **Nothing was dropped.** The pair ids were compared one by one, and the two
+  sets are identical. No threshold, pair or file was dropped, and no
+  large-text relief was added.
+- **Surfaces.** Only the stacks that changed were edited:
+  - The two "bare photo" surfaces became `viewerTitle…` and `viewerBuffering…`,
+    each with its badge.
+  - The others keep their names, with the new alphas.
+- **Needles.**
+  - Every needle that named an old value now names the new one.
+  - Eight viewer photo-floor pairs whose floor depends on the overlay now also
+    carry the overlay's needle.
+  - The rail pairs carry a needle on the constant.
+- **Comments.** Each converted pair's line says
+  `// FIXED by lane K (census-media §31)`. The three lane-H finding tables were
+  replaced, line for line, by comments recording the pinned values.
+
+### 31.5 Mutations, each run on the final tree and restored
+
+The test holds each colour as a literal and ties it to its component by a
+needle. So reverting a fix removes a needle, and
+`travel-buddy-standalone/src/features/media/__tests__/mediaContrast.test.ts:808#test('every pair is anchored in the source`
+fails, naming every pair that rests on it. What the old value measures is the
+"Before" column of §31.3. After each run, the file was restored and
+`git diff --quiet` exited 0.
+
+| # | Group | Fix reverted in place | Red: pairs whose needle is gone |
+| --- | --- | --- | --- |
+| K-M1 | 1 | NOW chip scrim 0.88 → 0.55 | 12 (the six zone-state chips, fallback and floor) |
+| K-M2 | 1 | tile overlay 0.71 → 0.55 | 4 |
+| K-M3 | 1 | viewer overlay 0.96 → 0.62 | 30 |
+| K-M4 | 1 | top title back to a bare `Text` (badge unapplied) | 2 |
+| K-M5 | 1 | buffering label badge unapplied | 2 |
+| K-M6 | 1 | play / retry badge 0.59 → 0.5 | 2, on the re-run; see below |
+| K-M7 | 1 | progress track back to the 0.26 light wash | 1 |
+| K-M8 | 2 | trust description and caption back to `faint` | 2 |
+| K-M9 | 2 | rail active label and icon back to `signal`, constant removed | 3 |
+| K-M10 | 3 | contour `'line-opacity'` 1 → 0.7 | 1 |
+
+**K-M6 survived its first run.** The badge's needle was the bare string
+`backgroundColor: 'rgba(17,17,15,0.59)'`, and the new title badge paints the
+same alpha, so the needle still matched.
+- Both pairs on the badge now match a pattern that only the badge's own style
+  block satisfies (commit `762e83f57`).
+- All ten mutations were then re-run on the final tree, and each was red.
+
+### 31.6 Citations
+
+No existing citation was repointed, and no line above this section was edited.
+
+Three lines that §27.1 cites changed their text. Each keeps the cited text in
+a trailing comment, so its §27 citation still resolves. That citation now
+resolves to a comment that records the old value, and this section cites the
+new one.
+- 0.55 → 0.88: `travel-buddy-standalone/src/features/media/components/ChangingNowCard.tsx:124#was backgroundColor: 'rgba(17,17,15,0.55)',`.
+- 0.62 → 0.96: `travel-buddy-standalone/src/features/media/screens/MediaPerspectiveViewerScreen.tsx:694#was backgroundColor: 'rgba(17,17,15,0.62)',`.
+- `faint` → `mute`: `travel-buddy-standalone/src/features/media/components/ContributorTrustChips.tsx:103#was desc: { fontSize: 11, lineHeight: 14, color: color.faint },`.
+
+These cited lines keep their anchor text unchanged:
+- `travel-buddy-standalone/src/features/media/components/MediaMapCanvas.tsx:92#paint={{ 'line-color': GEM_ACCENT,`;
+- `travel-buddy-standalone/src/features/media/components/MediaActionRail.tsx:493#rowLabelActive: {`;
+- `travel-buddy-standalone/src/features/media/screens/MediaPerspectiveViewerScreen.tsx:605#topTitle: {`.
+
+Every edit above a file's tail is line-neutral. The test file's cited lines,
+197, 808, 835, 841, 856 and 903, did not move.
+
+### 31.7 Found while doing it — recorded, not fixed
+
+This lane listed every colour-bearing line in the test's 41 files that no
+needle touches. Most are covered by a sibling pair painted in the same
+colour, or are decorative or backdrops. Three are not, and a fourth gap lies
+outside those files:
+
+1. **The perspective tile's evidence-class edge has no floor.** The edge is a
+   3 px bar in the observation colour, drawn straight on the photo:
+   `travel-buddy-standalone/src/features/media/components/PerspectiveTile.tsx:45#<View style={[styles.edge, { backgroundColor: accent }]} />`.
+   - It is the tile's only mark of the evidence class.
+   - It floors at 1.00:1 for all five classes, and measures 4.77 to 8.83 on
+     the no-image fill.
+2. **The captions toggle, when on, has no floor.** Its `onInk` icon
+   (`travel-buddy-standalone/src/features/media/screens/MediaPerspectiveViewerScreen.tsx:434#<Captions size={16} color={color.onInk} />`)
+   sits on a 0.32 light wash that replaces the button's 0.7 ink when selected
+   (`travel-buddy-standalone/src/features/media/screens/MediaPerspectiveViewerScreen.tsx:651#controlButtonActive: { backgroundColor: 'rgba(250,249,246,0.32)' },`).
+   It floors at 1.00:1.
+3. **Lane I's cover-count badge is not in the test, but passes.** The badge
+   is `travel-buddy-standalone/src/features/media/components/MediaMapCanvas.tsx:247#backgroundColor: 'rgba(17,17,15,0.92)',`,
+   and its count is `travel-buddy-standalone/src/features/media/components/MediaMapCanvas.tsx:253#coverCountText: { color: color.onInk, fontSize: 11, fontWeight: '800' },`.
+   It computes 14.76:1 over any photo and 17.36:1 over the map.
+4. **The shipped Media tab is outside the test's scope.** That is
+   `src/components/media`: Watch's overlay with its gradient scrim, the grid
+   tiles and the gem overlays. No lane has measured it, although this census
+   grades MD408 and MD424 on that surface.
+
+Items 1–3 were measured with the test's formulas in a scratch script. None is
+in the test: adding 1 or 2 would need a pinned finding, and this lane was to
+end with none. Items 1 and 2 are why MD403 stays W.
+
+Two more findings:
+- `check:census-freshness` reports census-media STALE. `ContributorTrustChips.tsx`
+  and `PerspectiveTile.tsx` changed here, and the census-media acknowledgement
+  does not name them. This lane does not edit the acknowledgement.
+- The test's header says it measures every state indicator. Items 1 and 2
+  show that it does not.
+
+### 31.8 Design choices the owner may want to revisit
+
+- **The viewer overlay is now nearly opaque (0.96).** Each option below trades
+  that against a different change:
+  - With the related-chip count in `onInkMute` instead of `faint`, it would
+    need 0.91.
+  - With opaque chips under the class label, the freshness badge and the
+    related chips, it could stay translucent.
+- **The progress track is dark**, where it was a light translucent wash.
+- **Margins are thin by construction**, because each value is the least one
+  that clears. Examples are 4.54 and 4.55. A later change that lowers one of
+  these ratios by a few hundredths turns the test red, which is intended.
+
+### 31.9 Production — nothing here is deployed
+
+Nothing in §31 is merged to main, pushed or deployed, so none of it is in any
+build a user has. The change is client-only, in the Media feature directory.
+No flag, seed or migration was touched, and no database was read.
+- Per §29.6, the World shell, and with it every viewer surface above, is
+  behind `MEDIA_WORLD_SHELL_ENABLED`, which is off in production.
+- The trust chips gate on `media_request_a_view_enabled`, as their header
+  says.
+- This lane did not re-read production.
+
+### 31.10 Checks
+
+- **Contrast test.** `mediaContrast.test.ts` passes 9 / 9, with 321 pairs, 0
+  failing and 0 pinned.
+- **Media node tests.** The node:test files under `src/features/media` and
+  `src/components/media` pass: 19 files, 276 / 276. They were selected as
+  `scripts/run-node-tests.mjs` selects them, and run on Node 22 with
+  `--import tsx`.
+- **Jest.**
+  - The `features/media` component suites pass: 11 suites, 79 / 79.
+  - The `components/media` component suites pass: 6 suites, 37 / 37.
+- **Client.**
+  - `tsc --noEmit -p .` is clean.
+  - eslint on the seven changed files gives 0 errors. It gives 4 warnings, all
+    on lines this lane did not touch.
+  - `lint:imports`, `lint:bare-image`, `lint:avatar-icon-sizing`, `lint:mocks`
+    and `lint:orphan-tests` pass.
+- **Census.**
+  - `check:doc-citations` passes, with 0 unresolved and 0 moved anchors.
+    Anchored citations rose from 7,026 to 7,057, and unanchored ones stayed at
+    6,355.
+  - `check:citation-targets` stays at 165 / 165.
+  - `check:census-scope-coverage` passes. Media is at 221 of 229 watched
+    (96.5 %), against a floor of 96 %. `PerspectiveTile.tsx` is newly cited
+    and is watched through `src/features/media/`, so the scope was not widened.
+  - `check:census-integrity` passes. MD403 is restated at W, so media still
+    counts C 400 · W 38 · N 12 · X 0.
+  - `check:census-freshness` fails, as §31.7 says.
+
+### 31.11 Files changed
+
+| File | Change |
+| --- | --- |
+| `travel-buddy-standalone/src/features/media/components/ChangingNowCard.tsx` | one alpha, in place |
+| `travel-buddy-standalone/src/features/media/components/PerspectiveTile.tsx` | one alpha, in place |
+| `travel-buddy-standalone/src/features/media/screens/MediaPerspectiveViewerScreen.tsx` | three background colours and two `style` props, in place; a `tailStyles` block appended |
+| `travel-buddy-standalone/src/features/media/components/ContributorTrustChips.tsx` | two colours, in place |
+| `travel-buddy-standalone/src/features/media/components/MediaActionRail.tsx` | one constant on an existing line; three uses, in place |
+| `travel-buddy-standalone/src/features/media/components/MediaMapCanvas.tsx` | one opacity, in place |
+| `travel-buddy-standalone/src/features/media/__tests__/mediaContrast.test.ts` | 33 pairs converted; surfaces and needles updated; line-neutral |
+| `docs/architecture/census-media.md` | this section, appended |
