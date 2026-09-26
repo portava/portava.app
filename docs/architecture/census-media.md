@@ -5357,3 +5357,29 @@ changed, as a re-measurement. The five other censuses that count
 unchanged from §23.6 because the two moves cancel. `check:census-integrity`
 reads it from the rows. Lanes E (§24) and H (§27) are not yet merged, and the
 headline is restated again when they are.
+
+### 28.3 The "Why this?" footnote on World items described a different ranker (found by lane F, §25)
+
+**The defect.** The shared sheet's footnote is Watch's copy: "creators you
+engage with". That copy was shown under World explanations, but the World §24
+ranker reads no engagement. What it reads:
+- what the viewer said they want;
+- their trips;
+- their saved places;
+- who they follow;
+- how fresh and useful a perspective is.
+
+Its "location" is an active trip's destination, never GPS
+(`artifacts/api-server/src/lib/mediaRankingSignals.ts:349#export function locationTerm(`).
+
+**The fix.** The sheet takes an optional `footnote`. The default is
+unchanged, so Watch and Gems read as before. The World shell passes the
+footnote that is true of its list
+(`travel-buddy-standalone/src/features/media/screens/MediaWorldShell.tsx:207#footnote={WORLD_WHY_FOOTNOTE}`).
+Every edit is line-neutral, and §25's citation of the default text
+(`WhyThisSheet.tsx:81`) still resolves.
+
+**Test and mutation.** The World shell's MD428 test now also asserts that
+the World footnote is shown and that "creators you engage with" is absent.
+With the prop removed, it goes red. No row moves; this is copy under MD428,
+which is already C.

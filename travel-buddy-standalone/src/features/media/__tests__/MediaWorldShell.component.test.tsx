@@ -296,5 +296,9 @@ describe('MediaWorldShell', () => {
     const exact = { normalizer: getDefaultNormalizer({ trim: false, collapseWhitespace: false }) };
     await waitFor(() => expect(screen.getByText(SERVED, exact)).toBeTruthy());
     expect(screen.queryByText(/matches your travel preferences and recent activity/)).toBeNull();
+    // census-media §28.3: the footnote describes THIS ranker, which reads no
+    // engagement and places the viewer by their trip, never GPS.
+    expect(screen.getByText(/people you follow, and how fresh and useful a perspective is/)).toBeTruthy();
+    expect(screen.queryByText(/creators you engage with/)).toBeNull();
   });
 });

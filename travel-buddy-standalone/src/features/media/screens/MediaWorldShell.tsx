@@ -204,7 +204,7 @@ function MediaWorldShellInner({ cityId, cityName: cityNameProp = null, lat, lng,
       </View>
 
       <WhyThisSheet
-        visible={why.visible}
+        visible={why.visible} footnote={WORLD_WHY_FOOTNOTE}
         explanation={why.explanation}
         onClose={() => setWhy({ visible: false, explanation: null })}
       />
@@ -233,3 +233,14 @@ const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: color.ink },
   content: { flex: 1 },
 });
+
+/**
+ * The "Why this?" footnote on World items (census-media §28.3). The shared
+ * sheet's default describes the Watch ranker ("creators you engage with"). The
+ * World's §24 ranker reads no engagement: it reads what the viewer said they
+ * want, their trips, their saved places, who they follow, and how fresh and
+ * useful a perspective is. Its "location" is an active trip's destination,
+ * never GPS (api-server lib/mediaRankingSignals.ts `locationTerm`).
+ */
+const WORLD_WHY_FOOTNOTE =
+  "World picks are shaped by what you've said you want, the trips you're on, places you've saved, people you follow, and how fresh and useful a perspective is. Where you are means your trip's destination — never your exact location.";
