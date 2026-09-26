@@ -1594,6 +1594,14 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/test/generated/liveColumns.json",
     "artifacts/api-server/baseline/20260819_baseline_structure.sql",
     "migrations/0043_tags_hashtags.sql",
+    // WIDENED 2026-09-26 by the integration owner (census-media §19, §20,
+    // §23): two files the merged pass GRADES, not merely mentions. The route
+    // registry is where §19's five new screens become reachable at all, so
+    // MD25–MD28's reachability rests on it; the Telegraph share loader's media
+    // gate is the one §20 changed to accept §36's `active`. Watching them keeps
+    // the census above its floor for the right reason.
+    "travel-buddy-standalone/src/navigation/portavaRoutes.ts",
+    "artifacts/api-server/src/services/telegraph/shareables.ts",
   ],
   // census-telegraph.md — declared 2026-09-11 on the same basis as Media above:
   // 451 requirements out of CANNOT BE CHECKED, a clock started rather than a
