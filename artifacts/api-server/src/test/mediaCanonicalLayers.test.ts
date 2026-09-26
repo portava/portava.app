@@ -16,6 +16,7 @@
  *   MD75  expiresAt ........................ "MD75 — the operational lifetime"
  *   MD76 / MD78  MediaTemporalState ........ "MD76 — MediaTemporalState"
  *   MD339 / MD429  canonical read path ..... "MD339 — the canonical asset on the read path"
+ *   MD369 POST /media/:id/attachments ...... "MD369 — POST /media/:id/attachments, over HTTP"
  */
 import { describe, it, beforeEach } from "node:test";
 import assert from "node:assert/strict";
@@ -56,6 +57,10 @@ import {
   type ViewerResolved,
 } from "../services/media/MediaProjectionService.js";
 import type { MediaPlaceDisclosure } from "../lib/mediaLocationVisibility.js";
+import { createServer } from "node:http";
+import express from "express";
+import { _setTestClient } from "../lib/http.js";
+import mediaActionsRouter from "../routes/mediaActions.js";
 
 // ── A recording fake. Every answer is the handler's; nothing is implied. ─────
 
@@ -727,5 +732,94 @@ describe("MD44 — recordPostMediaAttachments: the post joins its file's ONE ass
     });
     assert.deepEqual(r, { assetId: null, attachmentId: null });
     assert.equal(calls.some((c) => c.op === "upsert"), false);
+  });
+});
+
+// ── MD369 ────────────────────────────────────────────────────────────────────
+
+describe("MD369 — POST /media/:id/attachments, over HTTP", () => {
+  const ASSET = "66666666-6666-4666-8666-666666666666";
+  let close: (() => Promise<void>) | null = null;
+  beforeEach(async () => { await close?.(); close = null; });
+
+  async function call(
+    opts: { flag: boolean; assetOwner: string | null; postAuthor: string | null; auth?: boolean },
+    body: unknown,
+  ) {
+    const { client, calls } = makeDb((c) => {
+      if (c.table === "profiles") return { data: { account_status: "active" }, error: null };
+      if (c.table === "feature_flags") {
+        return { data: opts.flag && eqOf(c, "flag") === "media_canonical_enabled" ? { enabled: true } : null, error: null };
+      }
+      if (c.table === "media_assets") {
+        return { data: opts.assetOwner ? { id: ASSET, owner_user_id: opts.assetOwner } : null, error: null };
+      }
+      if (c.table === "posts") {
+        return { data: opts.postAuthor ? { id: POST, author_id: opts.postAuthor } : null, error: null };
+      }
+      if (c.table === "media_attachments" && c.op === "upsert") return { data: { id: "att-1" }, error: null };
+      return { data: null, error: null };
+    });
+    client.auth = { getUser: async (t: string) => (t === "tok" ? { data: { user: { id: OWNER } }, error: null } : { data: { user: null }, error: { message: "bad" } }) };
+    _setTestClient(client, true);
+    const app = express();
+    app.use(express.json());
+    app.use((r: any, _res: any, next: any) => { r.log = { error() {}, info() {}, warn() {}, debug() {} }; next(); });
+    app.use("/", mediaActionsRouter);
+    const srv = createServer(app);
+    await new Promise<void>((res) => srv.listen(0, "127.0.0.1", () => res()));
+    srv.unref();
+    close = () => new Promise<void>((res) => { srv.closeAllConnections?.(); srv.close(() => res()); });
+    const { port } = srv.address() as { port: number };
+    const r = await fetch(`http://127.0.0.1:${port}/media/${ASSET}/attachments`, {
+      method: "POST",
+      headers: { ...(opts.auth === false ? {} : { Authorization: "Bearer tok" }), "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const writes = calls.filter((c) => c.table === "media_attachments" && c.op === "upsert");
+    return { status: r.status, body: (await r.json()) as any, writes };
+  }
+
+  const BODY = { entity_type: "post", entity_id: POST, position: 1, is_cover: true, visibility_override: "followers" };
+
+  it("links an owned asset to an owned entity, carrying the §6.1 fields", async () => {
+    const r = await call({ flag: true, assetOwner: OWNER, postAuthor: OWNER }, BODY);
+    assert.equal(r.status, 200);
+    assert.deepEqual(r.body, { id: "att-1", mediaAssetId: ASSET, entityType: "post", entityId: POST });
+    assert.equal(r.writes.length, 1);
+    assert.deepEqual(
+      [r.writes[0]!.payload.entity_type, r.writes[0]!.payload.position, r.writes[0]!.payload.is_cover, r.writes[0]!.payload.visibility_override],
+      ["post", 1, true, "followers"],
+    );
+  });
+
+  it("refuses without authentication", async () => {
+    const r = await call({ flag: true, assetOwner: OWNER, postAuthor: OWNER, auth: false }, BODY);
+    assert.equal(r.status, 401);
+    assert.equal(r.writes.length, 0);
+  });
+
+  it("someone else's asset, or someone else's entity, is one probe-safe not_found — and writes nothing", async () => {
+    const notMyAsset = await call({ flag: true, assetOwner: VIEWER, postAuthor: OWNER }, BODY);
+    assert.equal(notMyAsset.status, 404);
+    assert.equal(notMyAsset.writes.length, 0);
+    const notMyPost = await call({ flag: true, assetOwner: OWNER, postAuthor: VIEWER }, BODY);
+    assert.equal(notMyPost.status, 404);
+    assert.equal(notMyPost.writes.length, 0);
+    assert.deepEqual(notMyAsset.body, notMyPost.body, "neither half leaks which one failed");
+  });
+
+  it("with the canonical layer off it reports not_found, never a success it did not write", async () => {
+    const r = await call({ flag: false, assetOwner: OWNER, postAuthor: OWNER }, BODY);
+    assert.equal(r.status, 404);
+    assert.equal(r.writes.length, 0);
+  });
+
+  it("refuses an audience outside inherit + §33, and an unknown entity type", async () => {
+    const badAudience = await call({ flag: true, assetOwner: OWNER, postAuthor: OWNER }, { ...BODY, visibility_override: "friends_only" });
+    assert.equal(badAudience.status, 400);
+    const badEntity = await call({ flag: true, assetOwner: OWNER, postAuthor: OWNER }, { ...BODY, entity_type: "story" });
+    assert.equal(badEntity.status, 400);
+    assert.equal(badAudience.writes.length + badEntity.writes.length, 0);
   });
 });
