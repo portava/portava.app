@@ -297,7 +297,7 @@ function readyMediaToDisplay(rows: any[]): DisplayMedia[] {
       mediaId: String(m.id),
       kind: m.media_type === "video" ? ("video" as const) : ("image" as const),
       url: String(m.public_url).trim(),
-      thumbnailUrl: typeof m.thumbnail_url === "string" ? m.thumbnail_url : null,
+      thumbnailUrl: typeof m.thumbnail_url === "string" ? m.thumbnail_url : null, feedUrl: feedVariantOf(m),
       width: typeof m.width === "number" ? m.width : null,
       height: typeof m.height === "number" ? m.height : null,
       durationMs: typeof m.duration_seconds === "number" ? Math.round(m.duration_seconds * 1000) : null,
@@ -451,7 +451,7 @@ export async function loadPostcardCandidates(
         await sc
           .from("post_media")
           .select(
-            "id, post_id, media_type, public_url, thumbnail_url, width, height, duration_seconds, sort_order, processing_status, moderation_status",
+            "id, post_id, media_type, public_url, thumbnail_url, feed_url, width, height, duration_seconds, sort_order, processing_status, moderation_status",
           )
           .in("post_id", postIds.slice(0, 500)),
       );
@@ -579,7 +579,7 @@ export async function loadVideoMediaCandidates(
         mediaId: proj.id,
         kind: proj.mediaType,
         url: proj.url,
-        thumbnailUrl: proj.thumbnailUrl,
+        thumbnailUrl: proj.thumbnailUrl, feedUrl: proj.mediaType === "image" ? proj.feedUrl ?? null : null, // Media v2 carries a post_media row's feed variant (lib/media/mediaProjection postMediaFeedVariant); media_assets and media_urls have none
         width: proj.width,
         height: proj.height,
         durationMs: proj.durationSeconds != null ? Math.round(proj.durationSeconds * 1000) : null,
@@ -1290,7 +1290,7 @@ export async function loadQuickMediaRow(
   // 4. Resolve the publishing post for each asset: canonical attachment first,
   //    then the legacy post_media row at the same storage path.
   const assetIds = assets.map((a) => String(a.id));
-  const postIdByAsset = new Map<string, string>();
+  const postIdByAsset = new Map<string, string>(); const postcardLinks: Array<{ aid: string; postcardId: string }> = []; // census-wall §17
   try {
     const attachments = rowsOrThrow(
       await sc
@@ -1301,12 +1301,12 @@ export async function loadQuickMediaRow(
     );
     for (const att of attachments) {
       const aid = String(att.media_asset_id);
-      if (!postIdByAsset.has(aid) && att.entity_id) postIdByAsset.set(aid, String(att.entity_id));
+      if (att.entity_type === "postcard") { if (att.entity_id) postcardLinks.push({ aid, postcardId: String(att.entity_id) }); } else if (!postIdByAsset.has(aid) && att.entity_id) postIdByAsset.set(aid, String(att.entity_id)); // census-wall §17: a postcard link names a passport_postcards id, not a post (was: if (!postIdByAsset.has(aid) && att.entity_id) postIdByAsset.set(aid, String(att.entity_id));)
     }
   } catch (err) {
     logger.warn({ err }, "quick media: attachment read failed — falling back to post_media paths");
   }
-  const unresolved = assets.filter((a) => !postIdByAsset.has(String(a.id)));
+  await resolvePostcardLinksToPosts(sc, postcardLinks, postIdByAsset); const unresolved = assets.filter((a) => !postIdByAsset.has(String(a.id)));
   if (unresolved.length > 0) {
     try {
       const paths = [...new Set(unresolved.map((a) => String(a.storage_path)))];
@@ -1410,4 +1410,49 @@ export async function loadQuickMediaRow(
     if (out.length >= limit) break;
   }
   return { items: out, failed: false };
+}
+
+/**
+ * The stored feed variant of one `post_media` IMAGE row (longest edge <= FEED_DIM
+ * = 1500, built by /media/upload; migration 0208), or null when none is stored.
+ * NULL is the contract, never an inference: the client falls back to another
+ * stored variant (travel-buddy-standalone features/wall/services/wallImageVariant).
+ * Videos get no feed variant; their still is the poster.
+ */
+function feedVariantOf(m: any): string | null {
+  if (!m || m.media_type === "video") return null;
+  return typeof m.feed_url === "string" && m.feed_url.trim().length > 0 ? m.feed_url.trim() : null;
+}
+
+/**
+ * census-wall §17 — a `postcard` attachment names a `passport_postcards` id, not a
+ * post id (routes/postcards.ts records it with the passport postcard's own id). Quick
+ * Media used to treat it as a post id: the post lookup then found nothing and the
+ * asset was dropped, even when the same asset also carried a readable `post` link,
+ * because whichever link was read first won. This resolves each postcard link to the
+ * post that published it, through passport_postcards.post_id, and never overrides a
+ * direct `post` link. A failed read resolves nothing, and those assets fall through
+ * to the post_media path, as before.
+ */
+async function resolvePostcardLinksToPosts(
+  sc: any,
+  links: Array<{ aid: string; postcardId: string }>,
+  postIdByAsset: Map<string, string>,
+): Promise<void> {
+  const pending = links.filter((l) => !postIdByAsset.has(l.aid));
+  if (pending.length === 0) return;
+  try {
+    const ids = [...new Set(pending.map((l) => l.postcardId))];
+    const rows = rowsOrThrow(
+      await sc.from("passport_postcards").select("id, post_id").in("id", ids.slice(0, 500)),
+    );
+    const postByPostcard = new Map<string, string>();
+    for (const r of rows) if (r?.id && r?.post_id) postByPostcard.set(String(r.id), String(r.post_id));
+    for (const l of pending) {
+      const pid = postByPostcard.get(l.postcardId);
+      if (pid && !postIdByAsset.has(l.aid)) postIdByAsset.set(l.aid, pid);
+    }
+  } catch (err) {
+    logger.warn({ err }, "quick media: passport_postcards read failed — postcard-linked assets fall back to post_media paths");
+  }
 }

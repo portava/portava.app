@@ -86,7 +86,7 @@ export interface DisplayMedia {
   mediaId: string;
   kind: "image" | "video";
   url?: string | null;
-  thumbnailUrl?: string | null;
+  thumbnailUrl?: string | null; /** Image only: the stored feed variant, longest edge ≤ FEED_DIM (1500) — post_media.feed_url (0208). Null/absent = none stored; the client draws another. */ feedUrl?: string | null;
   width?: number | null;
   height?: number | null;
   durationMs?: number | null;

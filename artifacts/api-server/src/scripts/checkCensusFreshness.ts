@@ -1438,6 +1438,20 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/test/wallOpportunityLoader.test.ts",
     "artifacts/api-server/src/test/wallOpportunityRoute.test.ts",
     "artifacts/api-server/src/test/wallPromotionDisclosure.test.ts",
+    "artifacts/api-server/src/test/wallFeedVariant.test.ts",
+    "artifacts/api-server/src/lib/media/mediaProjection.ts",
+    // WIDENED 2026-09-26 by census-wall §16 (W151 re-read and rebuilt): its
+    // citations took census-wall to 86 watched of 91 cited, under the 95% floor.
+    // The two files above are what W151's C now rests on.
+    //   - wallFeedVariant.test.ts is the row's server proof.
+    //   - lib/media/mediaProjection.ts holds the Media v2 post_media embed
+    //     (MEDIA_PROJECTION_POST_MEDIA_COLUMNS) and the mapping that carries
+    //     feed_url to the Wall's media lane. An edit there can break W151 with
+    //     no Wall file changing.
+    // Left unwatched on purpose, because they are cited but not graded:
+    //   - services/media/MediaProjectionService.ts, cited only for the
+    //     extractor's blind spot;
+    //   - the app config, cited for the supported-device range.
   ],
   // Discovery has NO SPEC. Its 67 rows are 25 inbound obligations from other
   // surfaces' specs, 9 rows shared with the Global Input Intelligence census,
@@ -1674,6 +1688,33 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     // to either can falsify it. Lane I measured media at 215/225 without them.
     "travel-buddy-standalone/app/media-search/index.tsx",
     "travel-buddy-standalone/app/media-world/index.tsx",
+    // WIDENED 2026-09-26 by census-media §30 (Lane J), because
+    // check:census-scope-coverage required it (93% against the 96% floor).
+    // MD338's C rests on the boot call that starts the processing worker
+    // (src/index.ts), on the flag seed that gates it and the retry (3338), on
+    // the suite that proves both and the double and fixtures that suite trusts
+    // (§30.8), on the GPS parser the worker refuses a stored still with and
+    // the test that measured sharp's GPS gap, on the two repo guards §30.3
+    // says now cover the worker, and on the lifecycle test §30.11 item 4 finds
+    // vacuous. A change to any of them can falsify §30, so each ages the census.
+    "artifacts/api-server/src/index.ts",
+    "artifacts/api-server/src/migrations/3338_media_processing_worker_flag.sql",
+    "artifacts/api-server/src/test/mediaProcessingWorker.test.ts",
+    "artifacts/api-server/src/test/helpers/postgrestOracle.ts",
+    "artifacts/api-server/src/test/videoProbeFixtures.ts",
+    "artifacts/api-server/src/lib/exifFacts.ts",
+    "artifacts/api-server/src/test/exifFacts.test.ts",
+    "artifacts/api-server/src/test/schedulerRegistration.test.ts",
+    "artifacts/api-server/src/test/backgroundWorkerWiring.test.ts",
+    "artifacts/api-server/src/test/mediaAssetsRecord.test.ts",
+    // WIDENED 2026-09-26 by census-media §32 (Lane M), because
+    // check:census-scope-coverage required it (95% against the 96% floor).
+    // §32.4 grades the backfill script as staging its rows with the signature
+    // the dimension sweep finishes (mediaCanonicalRead's B3), and §32.6's
+    // privacy case drives the byte gate through a copy of mediaAccess.test.ts's
+    // query double. A change to either can falsify §32, so each ages the census.
+    "artifacts/api-server/src/scripts/backfill-media-assets.ts",
+    "artifacts/api-server/src/test/mediaAccess.test.ts",
     // WIDENED 2026-09-26 by census-media §31.13 (lane K), because
     // check:census-scope-coverage required it (228/239, 95%, against the 96%
     // floor). MD403's §31.13 evidence rests on three shared components'

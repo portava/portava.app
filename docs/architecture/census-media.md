@@ -418,13 +418,13 @@ testable structure by §3 and §4.1. Narrative.
 | id | Requirement | V | Evidence |
 | --- | --- | --- | --- |
 | MD36 | `MediaAsset` canonical contract (id, owner/uploader, type, storage, dimensions, size, timestamps, statuses, visibility, provenance, eligibility, version) | **W** | The table is complete and matches the spec: `0191_media_assets.sql:12-40` plus `2250_media_asset_canonical_model.sql:70-86` adding `captured_at`, `location_visibility`, `provenance`, `intelligence_eligibility`. **But it is not the canonical asset.** `lib/mediaAssets.ts:118` returns `null` before writing whenever `media_canonical_enabled` is off, and it is off; the two call sites are `routes/posts.ts:256` and `mediaAssets.ts:495`. Meanwhile `lib/media/mediaProjection.ts:130-173` reads `post_media` first and falls back to `posts.media_urls` — **it never reads `media_assets` at all.** Three stores, and the canonical one is on no read path. |
-| MD37 | `sourceType` is the eight-value set camera/library/provider/official/community/generated/screenshot/derivative | **W** | `2250:98-108` adds the CHECK — as a **superset including the legacy `'user'`**, documented as such (*"legacy default (0191); kept, not rewritten"*). `0191:31` still defaults `source_type` to `'user'`, so every row written on the dark path lands outside the §6 vocabulary. |
+| MD37 | `sourceType` is the eight-value set camera/library/provider/official/community/generated/screenshot/derivative | **W** | `2250:98-108` adds the CHECK — as a **superset including the legacy `'user'`**, documented as such (*"legacy default (0191); kept, not rewritten"*). `0191:28` still defaults `source_type` to `'user'`, so every row written on the dark path lands outside the §6 vocabulary. *(pointer corrected 2026-09-26, §28.11)* |
 | MD38 | `version` — the asset is a versioned aggregate | **W** | `0191:36` `version INTEGER NOT NULL DEFAULT 1` exists; no writer increments it and no reader compares it. A column, not a concurrency contract. |
 | MD39 | `capturedAt` is distinct from `uploadedAt` | **C** | `lib/mediaAssets.ts:26-50` is an unusually candid header: the column, the type and every consumer existed but *"NO production caller ever supplied a non-null value"*. `capturedAtFromImageBytes` (`:69-84`) now reads EXIF from the raw buffer **before** `processImage` strips it, and rejects anything outside `[1990-01-01, now+24h]` — an implausible capture time stays `null` rather than becoming a lie. |
-| MD40 | `MediaAttachment` contract (asset↔entity link) | **C** | `0191:46-58`, with `UNIQUE (media_asset_id, entity_type, entity_id)`. Read on a live path at `services/wall/WallCandidateLoaders.ts:243#.select("entity_id, is_cover, position, media_assets(captured_at)")`. *(POINTER REFRESH 2026-09-22 (§17): the Wall lane moved this read 31 lines and the old pointer landed on a bare `}`. Re-read at this head — the same table, the same four projected columns, the same `entity_type`/`entity_id` predicate. The only edit inside the block wraps the envelope in `rowsOrThrow`, which raises a PostgREST `{ error }` into the catch that already stood there; that catch returns the same empty map the swallowed error produced, so the contract this row grades is untouched.)* |
-| MD41 | `entityType` covers post/postcard/memory/trip/place/event/hidden_gem/shared_moment/observation | **W** | `0191:49` is bare `TEXT` with **no CHECK** — nine required values, zero enforced. `2250:47-51` explicitly asserts only position/is_cover/visibility_override. Writers exist for `memory` (`PassportMemoryService.ts:133`) and `hidden_gem` (`HiddenGemService.ts:150`); `shared_moment` and `observation` have none. |
-| MD42 | `position` / `isCover` ordering and cover selection | **C** | `0191:51-52` plus the partial cover index `:60-61`; read at `services/wall/WallCandidateLoaders.ts:243#.select("entity_id, is_cover, position, media_assets(captured_at)")` and applied at `services/wall/WallCandidateLoaders.ts:260#if (!cur || (cover && !cur.cover) || (cover === cur.cover && position < cur.position)) {` — cover wins, then lowest `position`. *(POINTER REFRESH 2026-09-22 (§17): repointed after the Wall lane's edits; the selection expression is byte-identical.)* |
-| MD43 | `visibilityOverride` on the attachment | **W** | `0191:53` `visibility_override TEXT` exists and **nothing reads it**: no non-test reference outside `database.types.ts`. A stored override that no serving path consults is not an override. |
+| MD40 | `MediaAttachment` contract (asset↔entity link) | **C** | `0191:45-55` *(pointer corrected 2026-09-26, §28.11)*, with `UNIQUE (media_asset_id, entity_type, entity_id)`. Read on a live path at `services/wall/WallCandidateLoaders.ts:243#.select("entity_id, is_cover, position, media_assets(captured_at)")`. *(POINTER REFRESH 2026-09-22 (§17): the Wall lane moved this read 31 lines and the old pointer landed on a bare `}`. Re-read at this head — the same table, the same four projected columns, the same `entity_type`/`entity_id` predicate. The only edit inside the block wraps the envelope in `rowsOrThrow`, which raises a PostgREST `{ error }` into the catch that already stood there; that catch returns the same empty map the swallowed error produced, so the contract this row grades is untouched.)* |
+| MD41 | `entityType` covers post/postcard/memory/trip/place/event/hidden_gem/shared_moment/observation | **W** | `0191:48` *(pointer corrected 2026-09-26, §28.11)* is bare `TEXT` with **no CHECK** — nine required values, zero enforced. `2250:47-51` explicitly asserts only position/is_cover/visibility_override. Writers exist for `memory` (`PassportMemoryService.ts:133`) and `hidden_gem` (`HiddenGemService.ts:150`); `shared_moment` and `observation` have none. |
+| MD42 | `position` / `isCover` ordering and cover selection | **C** | `0191:50-51` plus the partial cover index `:59-60` *(pointer corrected 2026-09-26, §28.11)*; read at `services/wall/WallCandidateLoaders.ts:243#.select("entity_id, is_cover, position, media_assets(captured_at)")` and applied at `services/wall/WallCandidateLoaders.ts:260#if (!cur || (cover && !cur.cover) || (cover === cur.cover && position < cur.position)) {` — cover wins, then lowest `position`. *(POINTER REFRESH 2026-09-22 (§17): repointed after the Wall lane's edits; the selection expression is byte-identical.)* |
+| MD43 | `visibilityOverride` on the attachment | **W** | `0191:52` *(pointer corrected 2026-09-26, §28.11)* `visibility_override TEXT` exists and **nothing reads it**: no non-test reference outside `database.types.ts`. A stored override that no serving path consults is not an override. |
 | MD44 | A single asset participates in multiple product objects without duplicating the underlying file | **W** | The *schema* makes it possible (`UNIQUE (media_asset_id, entity_type, entity_id)` allows fan-out from one asset). The *product* does the opposite: `.agents/memory/posts-media-urls-vs-post-media.md` records that `posts.media_urls` and `post_media` are *"separate stores that are not kept in sync"*, that `routes/posts.ts` creation *"writes `media_urls` and inserts no `post_media` row in the same handler"*, and that `lib/mediaAccess.ts` authorises by `.contains("media_urls",[publicUrl])` as a **distinct branch** from its `post_media` branch. The file's identity is duplicated across two stores that can disagree, and the canonical third is dark. |
 
 ### §7 Context Graph
@@ -762,7 +762,7 @@ predate Media v2 and the spec inherited them.
 | MD266 | Upload | **C** | `lib/mediaPipeline.ts:1-40` — one policy for both transports. |
 | MD267 | File validation | **C** | `lib/mediaProcessing.ts:34-60` `sniffMedia` — magic bytes decide, the client's Content-Type is untrusted. |
 | MD268 | Processing | **C** | `mediaProcessing.processImage` (re-encode, auto-orient, cap longest edge, strip all EXIF) + `makeThumbnail`. |
-| MD269 | Safety moderation | **C** | `media_assets.moderation_status` (`0191:32-34`), `routes/adminMedia.ts`, `post_media_moderation_ledger` (in production), `lib/moderationAudit.ts`. |
+| MD269 | Safety moderation | **C** | `media_assets.moderation_status` (`0191:29-30` *(pointer corrected 2026-09-26, §28.11)*), `routes/adminMedia.ts`, `post_media_moderation_ledger` (in production), `lib/moderationAudit.ts`. |
 | MD270 | Privacy validation | **C** | `lib/mediaLocationVisibility` choke point + `lib/protectedLocations` + the boundary scrub. |
 | MD271 | Context qualification | **C** | `resolveMediaEntities` + `lib/mediaEligibility.filterEligibleMediaCandidates`. |
 | MD272 | Intelligence eligibility | **C** | `mediaEvidenceEligibility.computeIntelligenceEligibility`, called at `lib/mediaAssets.ts:129`. |
@@ -5849,11 +5849,11 @@ deliverable as the audit, and states no ordering between phases.
 4. **The event/trip header mask fails open on a read error** (**fixed in §28.8**; the comment keeps the old words):
    `artifacts/api-server/src/routes/mediaFile.ts:44#Fail-OPEN: any DB error`.
 5. **The eligibility module's rationale points 36 lines above the code it
-   names.**
+   names.** (**Fixed in §28.11.**)
    - The rationale is `artifacts/api-server/src/lib/mediaEligibility.ts:66#already blocks four of these on`.
    - The set it names is at `artifacts/api-server/src/services/wall/WallCandidateLoaders.ts:1156#const QUICK_MEDIA_BLOCKED_MODERATION`.
 6. **Seven prose pointers into 0191 in this census's §5 rows name the wrong
-   line.** They carry no file extension, so no checker reads them.
+   line.** (**Fixed in §28.11.**) They carry no file extension, so no checker reads them.
    - MD37's pointer to line 31 (source) belongs on
      `artifacts/api-server/src/migrations/0191_media_assets.sql:28#source_type`.
    - MD269's pointer to lines 32-34 (moderation) belongs on
@@ -6088,7 +6088,7 @@ could therefore make the server hold an arbitrarily large body in memory.
   both count as a refusal, and an upload is never allowed.
 - All 21 cases pass.
 
-**What remains.** The kill switch and the per-user upload budget still run
+**What remains** (moved before the read in §28.10)**.** The kill switch and the per-user upload budget still run
 after the body is read. The body is now bounded and authenticated, so this is
 a smaller cost, recorded rather than moved.
 
@@ -6175,7 +6175,137 @@ where it was graded.
 - **An owner definition or product rule**: MD77, MD162, MD175, MD293 (4 N);
   MD37, MD79, MD101, MD197, MD255, MD262, MD289, MD385, MD435, MD446 (10 W).
 - **Branch work, started at this head**: MD338 (above) and MD403's three
-  remaining failure groups, which sit inside Media's own files (§30).
+  remaining failure groups, which sit inside Media's own files (§30 for
+  MD338, §31 for MD403).
+
+### 28.10 `/media/upload` refuses before it reads (the remainder of §28.7)
+
+**The defect.** §28.7 left the kill switch, the per-user upload budget and the
+declared-type check running after the body was read. So a refused upload still
+cost the server up to the largest per-kind ceiling in bytes: while uploads were
+switched off, when the caller was over budget, or when the declared type was
+one the route never accepts.
+
+**The fix.**
+- All three are now decided after authentication and before the first byte is
+  read:
+  `artifacts/api-server/src/routes/posts.ts:87#if (!(await admitUploadBeforeBody(req, res, auth.user.id))) return;`,
+  through the helper at the tail
+  (`artifacts/api-server/src/routes/posts.ts:3669#async function admitUploadBeforeBody(req: any, res: any, userId: string): Promise<boolean> {`).
+- The budget is charged once. The handler reads the stored result
+  (`artifacts/api-server/src/routes/posts.ts:102#(req as any).uploadGuard;`);
+  it does not call `guardUploadRequest` a second time. The old call is kept in
+  a comment at the end of that same line, so the §49 audit's citation of it
+  still reads.
+- The edits are line-neutral.
+
+**One behaviour changes.** An over-ceiling upload is now charged against the
+budget, because the budget is decided before the size is known. Before, it
+was refused by the bounded collector without being charged.
+
+**Tests and mutations.** The tests are
+`artifacts/api-server/src/test/mediaUploadHardening.test.ts:813#describe("census-media §28.10 — /media/upload refuses before reading the body"`.
+Each refusal case declares 200 MB, sends 16 bytes and never ends the body, so
+only a route that decides without the bytes can answer it.
+
+| # | Mutation | Red |
+| --- | --- | --- |
+| U-M1 | the old order: all three decided after the read | the kill-switch case and the declared-type case, each "no answer within 3 s" |
+| U-M2 | the handler charges the budget again | the CONTROL: one upload must leave the bucket at 1 |
+| U-M3 | the declared type checked only after the read | the declared-type case |
+
+`posts.ts` was byte-identical after each run. All 24 cases pass.
+
+### 28.11 Two kinds of stale pointer corrected (lane H's §27.5 items 5 and 6)
+
+**The eligibility module's rationale.** It named a line in
+`WallCandidateLoaders.ts` that had moved 36 lines. The line number is dropped
+and the symbol, which the next line already names, is kept
+(`artifacts/api-server/src/lib/mediaEligibility.ts:66#services/wall/WallCandidateLoaders.ts already blocks four of these on`).
+The edit is comment-only and line-neutral.
+
+**Six prose pointers into 0191 in §5's rows.** Each was re-read against the
+file and corrected in place. Each carries the note "pointer corrected
+2026-09-26, §28.11". No verdict changes.
+
+| Row | Was | Now | What is there |
+| --- | --- | --- | --- |
+| MD37 | `0191:31` | `0191:28` | `source_type ... DEFAULT 'user'` |
+| MD40 | `0191:46-58` | `0191:45-55` | the `media_attachments` table, `CREATE` to `);`, `UNIQUE` included |
+| MD41 | `0191:49` | `0191:48` | `entity_type TEXT NOT NULL` |
+| MD42 | `0191:51-52`, `:60-61` | `0191:50-51`, `:59-60` | `position`, `is_cover`; the partial cover index |
+| MD43 | `0191:53` | `0191:52` | `visibility_override TEXT` |
+| MD269 | `0191:32-34` | `0191:29-30` | `moderation_status` and its CHECK (32–34 is the processing CHECK) |
+
+Lane H counted seven; MD42 carries two of them. For MD40, lane H read "starts
+one line late"; the table itself also ends at 55, not 58, which is the entity
+index.
+
+### 28.12 CI on `0f0ecde26`: the §28.7 test hung on a stale keep-alive socket, and the harness is fixed
+
+**What failed.** The CI node:test suite on `0f0ecde26` passed 26,502 of
+26,503 tests. The one failure was §28.7's
+`artifacts/api-server/src/test/mediaUploadHardening.test.ts:280#it("authenticates BEFORE reading the body`,
+which got no answer within 3 s. It had never run to completion in CI before,
+because the run on `f31d94812` was cancelled by the next push. It passes
+locally on Node 22 and Node 24, with CI's environment variables, and under
+CPU contention: no local run reproduced it.
+
+**The cause, as far as it can be shown.** It is the one request in the file
+issued straight after a request the server destroys: the 101 MB
+oversized-video case, which the bounded collector cuts off. Locally, that case
+always ends in a reset before any answer, so its socket is never pooled. On a
+faster CI loopback it can read its 400 first. The global agent keeps sockets
+alive by default since Node 19, so it can then hand that socket to the next
+request before the server's destroy arrives. That is the documented
+keep-alive race: `reusedSocket` exists for it. The test ignored
+`ECONNRESET` / `EPIPE`, so a stale socket became a silent 3 s hang rather than
+an error.
+
+**The fix is to the harness, not the route.**
+- Every raw request in the file now opens a fresh connection (`agent: false`),
+  so no request can inherit a socket the server has already destroyed.
+- The two "refuse before the body" cases no longer swallow a reset. A
+  connection error before any answer now fails the case at once, and names
+  its code and whether the socket was reused.
+- No assertion changed. Every edit is on an existing line.
+
+**Still red when it should be.** Under Node 24 with CI's environment:
+- the §28.7 order (authenticate after the read) turns this case red;
+- U-M1 (§28.10's decisions after the read) turns both §28.10 refusal cases
+  red.
+
+The file passes 24/24 on Node 22 and Node 24.
+
+### 28.13 `DELETE /media/:id` told a stranger which ids exist (found by lane J, §30.11 item 5)
+
+**The defect.** The legacy owner delete answered a non-owner **403**
+("Only the owner can delete this post", or "… this item" for a Hidden Gem),
+and a missing id **404**. So any signed-in caller could learn which post and
+Hidden Gem ids exist, including those of private posts. The byte gate and the
+§30 retry already give a stranger the same answer as a missing id.
+
+**The fix.** A non-owner now gets exactly the missing-id answer, `not_found`,
+for a post
+(`artifacts/api-server/src/routes/mediaFeed.ts:2582#if ((postRow as any).author_id !== user.id) { sendError(res, "not_found", "Media item not found"); return; }`)
+and for a Hidden Gem (line 2597). Both edits are in place, and the old answer
+survives in a trailing comment, so §30.11's citation still reads. The only
+client caller (`MediaMoreMenu`) reads `result.ok` and is offered to owners
+only, so nothing it shows changes.
+
+**Tests and mutations.** No test covered this route before. The new tests are
+at `artifacts/api-server/src/test/mediaFeed.test.ts` §28.13:
+- a stranger's delete of someone else's post returns the same status and body
+  as a missing id, and writes nothing;
+- the same for a Hidden Gem;
+- a CONTROL: the owner still deletes.
+
+| # | Mutation | Red |
+| --- | --- | --- |
+| D-M1 | the post branch answers `forbidden` again | the post case |
+| D-M2 | the gem branch answers `forbidden` again | the gem case |
+
+All 86 cases in the file pass.
 
 ## 29. Lane I — the Media Map draws its covers from the cache, and Search asks 'near' — 2026-09-26
 
@@ -6414,6 +6544,454 @@ With the selected style removed (I-M9) it goes red. Lane H's
 `mediaContrast.test.ts` pins this pair as a known failure and is not on this
 branch. The integrator reconciles that pinned value when both lanes are merged.
 No row moves: MD403 is lane H's row.
+
+## 30. Lane J — the media processing lifecycle has a worker, and retry cannot hide a ready asset — 2026-09-26
+
+§28.9 moved MD338 back to **W** and gave it a RED WHEN: *a production caller
+claims queued assets and completes or fails each one, and a retry cannot take a
+`ready` asset off a read path.* This lane built against that falsifier. It adds
+one migration file, seeded OFF and applied nowhere; it reads and writes no
+database and turns on no flag.
+
+Worked from `claude/sensing-completion-20260925` at `f31d94812`, on branch
+`lane-j`. The code, the migration and the tests are in `99a4eea31`; this
+section is in the commit after it. Every edit to a file this census cites by
+line was made in place, on the cited line or at the file's end, so no cited
+line moved; `check:doc-citations` is clean.
+
+### 30.1 Row table
+
+| ID | Was | Now | Evidence |
+| --- | --- | --- | --- |
+| MD338 | **W** | **C** | §28.9's RED WHEN is false on this branch, on both halves. **(1) A production caller claims queued work and completes or fails each item.** `lib/media/mediaProcessingWorker` is started at boot (`artifacts/api-server/src/index.ts:302#startMediaProcessingWorker();`, imported at `artifacts/api-server/src/index.ts:41#import { startMediaProcessingWorker } from "./lib/media/mediaProcessingWorker.js";`). Each pass first recovers lapsed leases (`artifacts/api-server/src/lib/media/mediaProcessingWorker.ts:235#out.recovered = await recoverStaleMediaProcessing(db, { now, limit });`), then reads `queued` and non-terminal `failed` work (`artifacts/api-server/src/lib/media/mediaProcessingWorker.ts:240#.in("processing_status", ["queued", "failed"])`) and claims each item (`artifacts/api-server/src/lib/media/mediaProcessingWorker.ts:261#const claim = await claimMediaProcessing(db, row.id, { now });`). It re-runs the upload pipeline over the stored object (§30.4), then completes the item with its lease token (`artifacts/api-server/src/lib/media/mediaProcessingWorker.ts:280#done = await completeMediaProcessing(db, claim, {`) or fails it (`artifacts/api-server/src/lib/media/mediaProcessingWorker.ts:301#const failure = await failMediaProcessing(`). **(2) A retry cannot take a `ready` asset off a read path.** Only `failed` is re-queued (`artifacts/api-server/src/services/media/MediaLifecycleService.ts:434#if (processingStatus !== "failed") return { ok: false, alreadyQueued: false, notRetryable: true };`, called from `artifacts/api-server/src/services/media/MediaLifecycleService.ts:380#const refusal = await retryRefusal(sc, asset.processing_status); if (refusal) return refusal;`). The re-queue itself is conditional on `failed` and reads its row back, so a lost race cannot re-queue an asset that has since become ready (`artifacts/api-server/src/services/media/MediaLifecycleService.ts:389#.eq("processing_status", "failed").select("id, processing_status").maybeSingle();`). While the worker is off, the retry refuses and writes nothing, so it cannot park work that nothing will claim (`artifacts/api-server/src/services/media/MediaLifecycleService.ts:435#if (!(await isMediaProcessingWorkerEnabled(sc))) return { ok: false, alreadyQueued: false, workerDisabled: true };`). Tests: `artifacts/api-server/src/test/mediaProcessingWorker.test.ts:216#describe("census-media §30 (MD338) — retryMediaProcessing re-queues only a FAILED run"`, `artifacts/api-server/src/test/mediaProcessingWorker.test.ts:294#describe("census-media §30 (MD338) — POST /api/media/:id/retry"`, `artifacts/api-server/src/test/mediaProcessingWorker.test.ts:370#describe("census-media §30 (MD338) — runMediaProcessingPass"` and `artifacts/api-server/src/test/mediaProcessingWorker.test.ts:591#describe("census-media §30 (MD338) — the worker is started at boot"`: 26 cases, and every behaviour was seen red (§30.8). **Owner deletion is not graded here.** §28.9 lists `softDeleteMediaAsset`'s missing caller as evidence, but its RED WHEN does not name deletion. It is still not wired; §30.7 gives the reason and cites the spec. **RED WHEN** the boot call or the worker's claim, complete, fail or recover step is removed; or a retry writes to an asset whose `processing_status` is not `failed`; or a retry re-queues while `media_processing_worker_enabled` is off. |
+
+### 30.2 The retry refuses what is not retryable
+
+**Which states are retryable.** One: `failed`. It is the only value
+MediaLifecycleService writes for a run that did not produce a ready asset.
+`failMediaProcessing` writes it, terminal or not, and so does
+`recoverStaleMediaProcessing` when a lease lapses.
+
+The other states are refused:
+- `ready` has nothing to retry.
+- `removed` is an owner deletion.
+- `rejected` and `expired` are not processing outcomes an owner can undo.
+- The rest of the 0191 vocabulary (`local`, `uploading`, `uploaded`,
+  `scanning`, `moderating`) are in-flight states. They are refused rather than
+  guessed at.
+
+`queued` and `processing` are unchanged: they are still answered as
+`alreadyQueued`, with no write
+(`artifacts/api-server/src/services/media/MediaLifecycleService.ts:378#if (asset.processing_status === "queued" || asset.processing_status === "processing") {`).
+
+**The HTTP answers**, from the repo's `sendError` vocabulary. Both are
+given only to the asset's owner.
+- **409 `invalid_state_transition`**: the asset is the owner's, but its
+  processing did not fail
+  (`artifacts/api-server/src/routes/mediaActions.ts:593#sendError(res, "invalid_state_transition", "Only media whose processing failed can be retried");`).
+- **404 `feature_disabled`**: the processing failed, but the worker is off
+  (`artifacts/api-server/src/routes/mediaActions.ts:597#sendError(res, "feature_disabled", "Media processing is not available");`).
+  This is the same code `/media/:id/event-link` gives when its flag is off.
+
+The route checks both refusals on the existing call line
+(`artifacts/api-server/src/routes/mediaActions.ts:213#if (sendRetryRefusal(res, result)) return;`).
+
+**Id probing is still blocked.** A missing asset and one owned by somebody
+else still return the service's plain `{ ok: false }`. They still share the
+route's one `not_found`
+(`artifacts/api-server/src/routes/mediaActions.ts:215#sendError(res, "not_found", "Media item not found");`).
+So a stranger gets `not_found` for another owner's ready asset, never 409. The
+test "no probing: a stranger's retry of a READY asset and a missing id both get
+not_found" pins this.
+
+**The race.** The old UPDATE matched on `id` and `owner_user_id` only. A
+retry that read `failed`, while a worker completed the asset in between, would
+have re-queued a READY asset. The test "does not re-queue an asset that became
+READY between its read and its write" drives exactly that interleaving. It
+uses the retry's own flag read as the point where the concurrent write lands.
+
+### 30.3 The worker, a production caller
+
+The worker follows the house pattern for a flag-gated interval worker (the
+event-start scheduler and the Trips outbox worker):
+- It is started unconditionally from `src/index.ts`.
+- Its timer reschedules itself only after a pass ends, so two passes never
+  overlap in one process. The startup delay is 3 minutes and the interval is
+  1 minute.
+- The flag is read at the top of every pass
+  (`artifacts/api-server/src/lib/media/mediaProcessingWorker.ts:227#if (!(await isMediaProcessingWorkerEnabled(db))) return { ...EMPTY, reason: "disabled" };`).
+
+Across instances, the service's conditional claim makes a duplicate worker
+harmless: only one lease token can land.
+
+Each pass handles at most 10 assets. They are read earliest-retry first, and
+`claimMediaProcessing` stays the authority on whether an asset is due and
+unleased. The two repository guards that exist for this defect class now cover
+the worker too:
+- `src/test/schedulerRegistration.test.ts` checks that every `start*Worker`
+  in `src/lib` is called from `src/index.ts`;
+- `src/test/backgroundWorkerWiring.test.ts` checks that every imported
+  starter is called.
+
+Both went red when the boot call was removed (§30.8, J19).
+
+A failure is **retryable** when another attempt could change it: the object
+could not be read, the claimed row could not be re-read, or something threw.
+It then follows the service's own clock: 5 attempts, backoff from 30 s.
+
+A failure is **terminal at once** when the stored bytes decide it
+(`artifacts/api-server/src/lib/media/mediaProcessingWorker.ts:305#outcome.permanent ? { now, maxAttempts: claim.attemptNumber } : { now },`).
+That covers bytes that do not verify, bytes that carry location, bytes that do
+not decode, and a container that states no size. The object will not change
+between attempts, so retrying would only re-download it (up to 100 MB).
+
+MediaLifecycleService's header names a "shared background-work tracker". It
+does not exist as a module (§30.11 item 3), so there was none for the worker
+to register with.
+
+### 30.4 What "processing" means for a stored asset, and the limits
+
+The upload route processes bytes it is **holding**:
+- `verifyUploadedBytes` (`artifacts/api-server/src/routes/posts.ts:125#const verified = verifyUploadedBytes(rawBody, declaredInfo.mediaType);`);
+- for a still, `processImage`, which auto-orients, caps, re-encodes (dropping
+  all EXIF) and measures (`artifacts/api-server/src/routes/posts.ts:151#const img = await processImage(rawBody, sniffed);`);
+- for a video, the fail-closed location scrub (`artifacts/api-server/src/routes/posts.ts:198#const scrub = stripVideoLocationMetadata(rawBody, sniffed);`)
+  and the container probe (`artifacts/api-server/src/routes/posts.ts:146#probeVideoContainer(rawBody)`).
+
+A row with both dimensions is written `ready`, and a row without them
+`processing`
+(`artifacts/api-server/src/lib/mediaAssets.ts:397#input.width != null && input.height != null ? "ready" : "processing"`).
+
+**The pipeline cannot be re-run as it stands for a queued asset.** Its input
+is the request body, and that is gone. What exists is the stored object. So
+the worker downloads the stored object and runs the **same functions** over
+it. It adds one check the upload does not need, the GPS check in step 2,
+because the upload strips EXIF from bytes it holds and the worker can only
+inspect bytes already stored:
+
+1. **Verify the bytes and the kind.** The upload's own verifier checks that the
+   object is non-empty, recognisable, within its real kind's ceiling, and the
+   kind the row says it is
+   (`artifacts/api-server/src/lib/media/mediaProcessingWorker.ts:164#const verified = verifyUploadedBytes(bytes, kind);`).
+2. **A still: no GPS, then decode and measure.** At upload `processImage`
+   strips all EXIF on the way into storage, so a stored still that carries a GPS
+   IFD did not come out of the pipeline. It is refused, not published
+   (`artifacts/api-server/src/lib/media/mediaProcessingWorker.ts:172#if (exifFactsFrom(bytes)?.hasGpsIfd) {`).
+   The check uses `lib/exifFacts`, the `audit:storage-exif` parser, which never
+   reads a coordinate. `processImage` then decodes the still and measures it,
+   exactly as at upload
+   (`artifacts/api-server/src/lib/media/mediaProcessingWorker.ts:176#const img = await processImage(bytes, sniffed, MEASURE_MAX_DIM);`).
+   The only difference is the cap. It is 16384 rather than 4096, so a stored
+   object is measured as it is, not as a capped copy. A pipeline output is
+   never resampled either way.
+3. **A video: probe, then prove no location.** The container is probed
+   (`artifacts/api-server/src/lib/media/mediaProcessingWorker.ts:184#const probe = probeVideoContainer(bytes);`).
+   The upload's scrub then runs
+   (`artifacts/api-server/src/lib/media/mediaProcessingWorker.ts:185#const scrub = stripVideoLocationMetadata(bytes, sniffed);`)
+   and must find **nothing** to strip
+   (`artifacts/api-server/src/lib/media/mediaProcessingWorker.ts:187#if (scrub.stripped.length > 0) {`).
+   A stored object that still carries location is refused, not repaired. The
+   probe must also state a display size.
+4. **Complete.** The asset is completed with the measured dimensions (and, for
+   a video, the probed duration). The row's own thumbnail is passed through
+   (`artifacts/api-server/src/lib/media/mediaProcessingWorker.ts:286#thumbnailPath: asset.thumbnail_path ?? null,`),
+   because `completeMediaProcessing` writes both thumbnail columns, and without
+   it completion would erase a poster or thumbnail the asset already had.
+
+**The limits, stated.**
+- **The worker never writes storage.** It does not re-store, re-encode,
+  thumbnail or transcode anything. The re-encoded buffer from step 2 is
+  discarded. The test double records every storage write, and the image case
+  asserts there are none. A stored object is either what the pipeline
+  produced, or it is refused.
+- **A video whose container states no display size cannot be completed.**
+  There is no decoder in this tier
+  (`artifacts/api-server/src/lib/mediaProcessing.ts:17#Videos are NOT transcoded here (no ffmpeg in this tier)`).
+  Such a video fails terminally, with that reason recorded in
+  `processing_error`.
+- **An owner retry of an asset at the attempt cap gets one more attempt.**
+  The retry keeps attempt history, so the next failure is terminal at once
+  (`artifacts/api-server/src/services/media/MediaLifecycleService.ts:192#const terminal = claim.attemptNumber >= (opts.maxAttempts ?? DEFAULT_PROCESSING_MAX_ATTEMPTS);`).
+  That behaviour predates this lane and is left as it was.
+
+### 30.5 Gating
+
+**New flag: `media_processing_worker_enabled`.** It is seeded FALSE by
+`artifacts/api-server/src/migrations/3338_media_processing_worker_flag.sql:54#media_processing_worker_enabled',`
+(`artifacts/api-server/src/migrations/3338_media_processing_worker_flag.sql:55#false,`),
+with a rollback at `db/rollback/2026-09-26-3338-media-processing-worker-flag-rollback.sql`.
+- **The number.** 3338 is unused and above 3321. It was chosen clear of 3322
+  onward, which parallel lanes are likeliest to take.
+- **The convention.** The file follows 3313's flag-seed convention:
+  preconditions, `ON CONFLICT DO NOTHING`, a postcondition that refuses a seed
+  finding the flag ON, and a NOTICE that counts what the first ON pass would
+  claim.
+- **Classification.** The lowercase `*_enabled` name makes it CAPABILITY by
+  convention. `check:flag-polarity` reconciles it both ways: 203 flags
+  classified, and 246 seeded with 202 read (each was one fewer before).
+
+**One reader** is shared by the worker and the retry
+(`artifacts/api-server/src/services/media/MediaLifecycleService.ts:421#export const MEDIA_PROCESSING_WORKER_FLAG = "media_processing_worker_enabled";`).
+So "the worker is on" and "a retry may queue work for it" cannot disagree. It
+is fail-closed: absent, FALSE and unreadable all read as off.
+
+**Off means:**
+- the worker makes one flag read a minute and nothing else (the test asserts
+  exactly one request, no download and no write);
+- the retry refuses a failed asset without writing.
+
+**Why a new flag rather than `media_canonical_enabled`.** That flag gates the
+canonical *writer*. Turning on processing changes which rows reach `ready`, and
+so which reach the canonical read paths. That is a separate decision, and it
+gets its own switch.
+
+### 30.6 What the worker does not claim: `processing` rows with no lease
+
+Two writers leave a `media_assets` row in `processing` with no lease:
+- the upload route, for a video whose container states no size;
+- `recordEntityMedia`, for every memory, hidden-gem and postcard file it
+  records. It is staged "so it is not served as ready until a dimension sweep
+  fills it in"
+  (`artifacts/api-server/src/lib/mediaAssets.ts:861#as ready until a dimension sweep fills it in.`).
+
+`claimMediaProcessing` would accept these rows, but the worker does not read
+them. `recoverStaleMediaProcessing` skips them too, because it matches only a
+lease that has lapsed, and these rows have none.
+
+Completing them would publish legacy entity media as `ready` on the canonical
+read paths. That dimension sweep is a separate decision and is not taken here.
+
+These rows cannot be retried by their owner either, because they are not
+`failed`. So they stay parked, as they were before this lane. Item 1 of §30.11
+records it.
+
+### 30.7 Owner deletion — not wired, and why
+
+**No owner-facing delete route exists for a canonical asset.**
+- The owner's delete routes take a post or a hidden-gem id and soft-delete that
+  row
+  (`artifacts/api-server/src/routes/mediaFeed.ts:2563#router.delete("/media/:id", asyncHandler(async (req, res) => {`,
+  `artifacts/api-server/src/routes/posts.ts:2375#router.delete("/posts/:postId", async (req, res) => {`).
+- `softDeleteMediaAsset` still has no non-test caller.
+
+**The spec does not require an asset-level delete.**
+- Its only owner-deletion content is a state:
+  `owner_deleted` in §36's moderation vocabulary
+  (`docs/specs/Portava_Media_Engineering_Architecture_and_Design_Spec.txt:319#type MediaModerationStatus`).
+  That vocabulary is MD274's and MD351's, and both are graded **C** on it.
+- §41 names MediaAssetService and defines no operations for it
+  (`docs/specs/Portava_Media_Engineering_Architecture_and_Design_Spec.txt:354#MediaAssetServiceMediaAttachmentService`).
+- §28.9's RED WHEN does not name deletion.
+
+**Wiring it would be destructive in a way the spec leaves undefined.**
+- `softDeleteMediaAsset` purges the object at `storage_path`
+  (`artifacts/api-server/src/services/media/MediaLifecycleService.ts:279#const paths = [...new Set([asset.storage_path, asset.thumbnail_path]`,
+  `artifacts/api-server/src/services/media/MediaLifecycleService.ts:281#const { error: storageError } = await sc.storage.from(asset.storage_bucket).remove(paths);`).
+- The upload stores ONE object. The canonical row records it
+  (`artifacts/api-server/src/routes/posts.ts:260#storagePath: path,`), and the
+  client is handed the same path to keep on the post
+  (`artifacts/api-server/src/routes/posts.ts:284#url: mediaRelayUrl, path,`).
+- `recordEntityMedia` records assets over the existing files of memories, gems
+  and postcards.
+- So an asset-level purge removes the bytes from under every legacy row and
+  every §6.1 attachment that points at them, while those rows are still served.
+  The existing post delete is soft and purges nothing.
+
+What deleting an asset should do to what it is attached to is a product
+decision for the owner. §30.11 item 2 records it.
+
+MD338 is graded on its RED WHEN. If the integrator reads deletion as part of
+the row, the row should stay **W**, with "an owner-facing canonical delete"
+named as the remaining gap.
+
+### 30.8 Mutations — each seen red, every file checked byte-identical after each run
+
+All were run against `99a4eea31`. Each was applied in place, the suite named
+was run, and the file was restored with `git checkout --`. `git diff --quiet`
+confirmed each file byte-identical to the commit. The suite was green, 26 of
+26, before the mutations and after them.
+
+| # | Mutation, applied in place | File | Went red (of `mediaProcessingWorker.test.ts` unless named) |
+| --- | --- | --- | --- |
+| J1 | The whole retry fix reverted: the refusal call removed, and the UPDATE back to `.eq("id").eq("owner_user_id")` with `{ ok: !error }` | `services/media/MediaLifecycleService.ts` | 6: "refuses a READY asset and writes nothing, with the worker ON"; "refuses every other non-failed state too, writing nothing"; "does not re-queue an asset that became READY between its read and its write"; both service and route "GATED OFF" cases; route "a READY asset: 409 invalid_state_transition…" |
+| J2 | Only the `!== "failed"` refusal line removed; the conditional UPDATE kept | same | 3: the two READY/non-failed service cases (the conditional UPDATE still matched nothing, but a PATCH was ISSUED), and the route's 409 |
+| J3 | Only `.eq("processing_status", "failed")` removed from the UPDATE | same | 1: "does not re-queue an asset that became READY between its read and its write" |
+| J4 | The retry's flag refusal removed | same | 3: both "GATED OFF" retry cases, and the race case (whose seam is that flag read) |
+| J5 | The route's `sendRetryRefusal` call removed | `routes/mediaActions.ts` | 2: "a READY asset: 409…"; "GATED OFF: a FAILED asset gets 404 feature_disabled…" |
+| J6 | The worker's flag gate removed | `lib/media/mediaProcessingWorker.ts` | 1: "GATED OFF: one flag read and nothing else…" |
+| J7 | The claim replaced by `null` (nothing claimed) | same | 10: every complete and fail case, the re-claim, the end-to-end retry-to-ready, and the boot "runs the REAL pass" case |
+| J8 | `completeMediaProcessing` replaced by a stub answering `false` | same | 6: image and video completion, the re-claim, the end-to-end retry-to-ready, the location case's CONTROL, and the boot real-pass case |
+| J9 | `failMediaProcessing` replaced by a stub (nothing failed) | same | 5: every FAILS case |
+| J10 | Permanent failures not made terminal (`{ now }` for both) | same | 4: the four "FAILS terminally…" cases |
+| J11 | `recoverStaleMediaProcessing` not called | same | 1: "RECOVERS a stale lease…" |
+| J12 | The GPS refusal disabled (`if (false && …)`) | same | 1: "…stored still carries a GPS IFD". Under it the still COMPLETED (`completed: 1`). |
+| J13 | The video strip check disabled (`if (false && …)`) | same | 1: "…stored video still carries a location atom (its size is readable)". Under it the video COMPLETED. |
+| J14 | `verifyUploadedBytes(bytes)`, without the row's kind | same | 1: "FAILS terminally when the bytes are not the kind the row says…" |
+| J15 | Thumbnail not passed through (`thumbnailPath: null`) | same | 1: "claims a QUEUED image… completes it READY with its measured size" |
+| J16 | Only `queued` read, not `failed` | same | 2: "re-claims a FAILED asset once its retry clock is due…"; "RECOVERS a stale lease…" (the recovered row was no longer seen as not-due) |
+| J17 | The timer not re-armed after a pass | same | 1: "arms once, runs the pass after the startup delay, re-arms after each pass, and stops" |
+| J18 | The no-argument start running a no-op instead of `runMediaProcessingPass` | same | 1: "with no arguments — exactly as src/index.ts calls it — runs the REAL pass against the service client" |
+| J19 | The boot call removed (`startMediaDedupWorker();` restored alone; import kept) | `src/index.ts` | 3: "src/index.ts imports startMediaProcessingWorker… and calls it"; `backgroundWorkerWiring.test.ts` "every start* imported into the entry point is also called there"; `schedulerRegistration.test.ts` "every background worker exported from src/lib is started from src/index.ts" |
+| J20 | 3338 seeded `true` | `migrations/3338_media_processing_worker_flag.sql` | 1: "seeds exactly the flag the service reads, FALSE…" |
+
+**How the tests were built.** The double is the real supabase-js client over
+`src/test/helpers/postgrestOracle.ts`, an injected `fetch` that emulates
+PostgREST over in-memory tables. This matters in three ways:
+- **A zero-row conditional UPDATE comes back as the client really returns
+  it.** J2 and J3 depend on that.
+- **The column lists are the migrations'.** `media_assets` gets 0191, 2250,
+  2951, 2952 and 2953; `media_processing_attempts` gets 2951. A misspelt
+  column is a 42703, not a silent `undefined`.
+- **The fixtures are real where it counts.** The video fixtures are real
+  ffmpeg output from `videoProbeFixtures.ts`. The location case adds a `©xyz`
+  atom to one and keeps a control that completes, so its refusal is shown to
+  be the atom's. The GPS still is hand-built, because sharp writes no GPS IFD
+  (`exifFacts.test.ts` measured that).
+
+### 30.9 Production — nothing here is deployed
+
+- **Nothing was applied anywhere.** Migration 3338 has not been applied to
+  portava-ci or to production. Where it is absent, the flag reads FALSE, and
+  that is the same as applied-and-off.
+- **Nothing has been deployed.** A server built from any tree before this
+  branch has no worker, and its retry re-queues a `ready` asset (§28.9's
+  defect). This lane did not look at what is deployed.
+- **What deploying with the flag off changes.** The one user-visible change is
+  the retry: it refuses `ready` with a 409, and a failed asset with a 404
+  `feature_disabled`, where it used to re-queue. The worker is one flag read a
+  minute.
+- **What turning the flag ON means** — an owner decision, not a rollout step.
+  On the first pass the worker claims every `queued` row (any owner retry since
+  the route shipped), and each non-terminal `failed` row once its clock is due.
+  Each one it completes becomes `ready` and joins the canonical read paths
+  under their own eligibility rules. 3338's NOTICE counts both groups on the
+  database it runs against.
+- **What production writes today.** Per §23.2, production's canonical writer
+  is off (`media_canonical_enabled` FALSE), so no new `media_assets` row is
+  written there for a worker to process.
+- **This section does not claim** that any production row is `queued` or
+  `failed`. It did not read one.
+
+### 30.10 Checks
+
+All were run from `artifacts/api-server` on the final tree.
+
+| Check | Result |
+| --- | --- |
+| `pnpm -s run typecheck` | exit 0 (after symlinking `lib/api-zod` and `lib/db` `node_modules` into the worktree; both are gitignored) |
+| `pnpm -s run typecheck:tests` | exit 0: 863 diagnostics across 115 files, the same as the baseline |
+| `node --import tsx/esm --test src/test/mediaProcessingWorker.test.ts` | 26 / 26 |
+| The existing suites: `mediaAssetsRecord`, `mediaActionsCompass`, `mediaActionsSection21`, `mediaEventLink`, `mediaAccess`, `mediaAccessFailClosed`, `mediaCanonicalLayers`, `mediaUploadHardening`, `mediaVideoTransport`, `mediaVideoPosterGeneral`, `backgroundWorkerWiring`, `schedulerRegistration`, `fakeConformanceRegistry`, `silentSchemaErrorCatches`, `uncheckedSupabaseReads`, `accountStatusFailOpenWrites` | 430 / 430 |
+| `check:doc-citations`, `check:citation-targets`, `check:citation-symbols` | clean; citation-targets at its ceiling, 165 / 165 |
+| `check:test-registration` | passes; the new file is registered in `test` (1478 registered) |
+| `check:census-scope-coverage` | passes after the widening in §30.12. census-media is at 241 cited and 232 watched, 96.3% against its 96% floor; before the widening it was at 93%. The floor is unchanged. |
+| `check:write-path-columns` | exits 2 here on "KNOWN_PROD_PROJECT_REF is empty", as expected. The offline extractor `extractSchemaReferences` over routes, services, domain, server and `lib/media` resolves every site in the three changed code files, with none skipped and none partly unresolved. |
+| `check:schema-references`, `check:enum-literals`, `check:flag-polarity`, `check:migration-prefixes`, `check:silent-supabase-writes`, `check:unissued-supabase-writes`, `check:async-handlers`, `check:route-auth-gate`, `check:guard-coverage`, `check:writerless-reads`, `check:not-null-writes`, `check:test-runner-flags`, `check:api-prefix`, `check:deletion-coverage`, `check:data-rights` | all exit 0 |
+| `check:census-row-move-labels`, `check:census-policy-citations` | exit 0 |
+| `check:census-integrity` | **fails, as expected.** The stated headline is C 400 / W 38; the rows now count C 401 / W 37, because MD338 moves W → C and this section does not restate the headline. The integrator restates it. |
+| `check:census-freshness` | **fails: census-media is STALE.** Eight counted files changed that its acknowledgement does not name: the three new files; `src/index.ts`; and four files under `src/test/` that this section newly brings into scope, which changed before this lane. The acknowledgement is not this lane's file, so the integrator names them or re-measures. |
+
+### 30.11 Found while doing it — recorded, not fixed
+
+1. **`processing` rows with no lease are never processed, and cannot be
+   retried.** §30.6 gives the detail. `recordEntityMedia`'s own comment
+   promises a "dimension sweep", and none exists. This is an owner decision,
+   because completing these rows publishes legacy entity media on the canonical
+   read paths.
+2. **No owner-facing canonical delete.** §30.7 gives the detail. An
+   asset-level purge would remove bytes that legacy rows still serve.
+3. **The "shared background-work tracker" does not exist.**
+   MediaLifecycleService's header says the purge runs "on the shared
+   background-work tracker"
+   (`artifacts/api-server/src/services/media/MediaLifecycleService.ts:21#removed on the shared background-work tracker`).
+   No such module is in the tree. The service returns the `purge` promise, and
+   callers await it or ignore it.
+4. **One existing test's retry half is now vacuous.**
+   `mediaAssetsRecord.test.ts` "uses only CHECK-legal status values when it
+   does transition" retries through a fake that answers every table with the
+   asset row
+   (`artifacts/api-server/src/test/mediaAssetsRecord.test.ts:625#await retryMediaProcessing(retryClient, ASSET, OWNER);`).
+   Its flag read therefore reads `enabled` as undefined, which is off. The retry
+   now refuses and writes nothing, so that half checks an empty list and passes.
+   The test is not this lane's file. The re-queue's values are asserted here,
+   against the migrations' columns, in "re-queues a FAILED asset (terminal or
+   not)…".
+5. **The legacy owner delete still distinguishes "exists" from "not yours".** (**Fixed in §28.13.**)
+   `DELETE /media/:id` answers a non-owner 403
+   (`artifacts/api-server/src/routes/mediaFeed.ts:2582#sendError(res, "forbidden", "Only the owner can delete this post"); return; }`)
+   and a missing id 404. That lets a caller tell which post ids exist. It is
+   outside MD338.
+6. **An already-queued asset still answers 202 `alreadyQueued: true` while the
+   worker is off.** That path writes nothing, so it parks nothing new. It is
+   left as it was, because an existing test pins that shape.
+
+### 30.12 Files changed, and the census that counts them
+
+| File | Change | Counted by census-media |
+| --- | --- | --- |
+| `artifacts/api-server/src/services/media/MediaLifecycleService.ts` | six lines changed in place (none moved); helpers appended | yes (directory) |
+| `artifacts/api-server/src/routes/mediaActions.ts` | one import and one call line extended; helper appended | yes |
+| `artifacts/api-server/src/lib/media/mediaProcessingWorker.ts` | new | yes (directory) |
+| `artifacts/api-server/src/index.ts` | two lines extended in place | added below |
+| `artifacts/api-server/src/test/mediaProcessingWorker.test.ts` | new | added below |
+| `artifacts/api-server/src/migrations/3338_media_processing_worker_flag.sql` | new | added below |
+| `artifacts/api-server/src/lib/exifFacts.ts` | unchanged; §30.4 grades the worker's use of it | added below |
+| `artifacts/api-server/src/test/helpers/postgrestOracle.ts`, `artifacts/api-server/src/test/videoProbeFixtures.ts`, `artifacts/api-server/src/test/exifFacts.test.ts` | unchanged; §30.8 rests on them | added below |
+| `artifacts/api-server/src/test/schedulerRegistration.test.ts`, `artifacts/api-server/src/test/backgroundWorkerWiring.test.ts` | unchanged; §30.3 and J19 rest on them | added below |
+| `artifacts/api-server/src/test/mediaAssetsRecord.test.ts` | unchanged; §30.11 item 4 is about it | added below |
+| `db/rollback/2026-09-26-3338-media-processing-worker-flag-rollback.sql` | new | no — a rollback is not graded |
+| `artifacts/api-server/package.json` | the test path appended to `test` | no (machinery) |
+| `artifacts/api-server/src/scripts/checkCensusFreshness.ts` | census-media's `CENSUS_SCOPE` widened, appended at its end | no (machinery) |
+| `docs/architecture/census-media.md` | this section, appended; no earlier line edited | — |
+
+This section does not edit `CENSUS_STALENESS_ACKNOWLEDGED.json`.
+
+### 30.13 Integration: lane J merged, one vacuous case repaired, and the headline
+
+**Lane J merged** from `lane-j` (`99a4eea31`, `9055552a8`). It was reviewed
+before merging:
+- The retry re-queues only a `failed` asset. The update is conditional on
+  `failed` and reads its row back. Every refusal writes nothing, and a
+  stranger and a missing id still share one `not_found`.
+- The worker reads only through its lease token and never writes storage.
+- 3338 seeds the flag FALSE, and fails its own postcondition if the flag is
+  ON.
+
+**§30.11 item 4 is fixed here, not left vacuous.** The shared fake in
+`mediaAssetsRecord.test.ts` now answers a `feature_flags` read with the flag
+ON. The case also asserts that the retry wrote something
+(`artifacts/api-server/src/test/mediaAssetsRecord.test.ts:625#await retryMediaProcessing(retryClient, ASSET, OWNER); assert.ok(retryClient.writes.some(`).
+With the flag read as off again, that case goes red. Both edits are on
+existing lines.
+
+**3338 is applied to no database.** CI's `audit:schema` diffs only the schema
+objects a migration creates (tables, columns, functions, indexes, policies,
+enums, triggers and views). A flag-seed INSERT creates none of these, so a
+green drift job says nothing about whether 3338 was applied. The flag reads
+FALSE wherever it is absent, which is the seeded state.
+
+**Freshness.** The census-media acknowledgement names the eight counted files
+the merge made visible.
+- Four are lane J's own, and §30 grades them: `mediaProcessingWorker.ts`,
+  its test, 3338, and `index.ts`'s start call.
+- Four are older tests that joined the scope because §30 now cites them:
+  `backgroundWorkerWiring.test.ts`, `schedulerRegistration.test.ts`,
+  `mediaAssetsRecord.test.ts` and `videoProbeFixtures.ts`.
+
+**The headline after lane J**, restated from `check:census-integrity`:
+
+> | Measure | §28.9 | Now, after lane J |
+> | --- | --- | --- |
+> | Denominator (testable requirements) | 450 | **450** |
+> | BUILT-AND-CORRECT | 400 | **401** |
+> | BUILT-BUT-WRONG | 38 | **37** |
+> | NOT-BUILT | 12 | **12** |
+> | CANNOT-VERIFY | 0 | **0** |
+> | **CONSTRUCTED%** = (C+W)/450 | 97.3 % | **438 / 450 = 97.3 %** |
+> | **CORRECT%** (raw) = C/450 | 88.9 % | **401 / 450 = 89.1 %** |
+>
+> The one move is MD338 W → C (§30). It is a construction verdict: the worker
+> is seeded off, and nothing here is deployed.
 
 ## 31. Lane K — Media's remaining contrast failures fixed in Media's own files — 2026-09-26
 
@@ -7590,3 +8168,479 @@ in the freshness check (§31.13.13).
 **New tests:** StampButton.tone, AppHeader.overlayTint, EmptyState.fill and
 CachedImage.fallbackBg, under `src/components/stamps/__tests__/`,
 `src/components/ui/__tests__/` and `src/components/__tests__/`.
+
+## 32. Lane M — the dimension sweep: entity media leaves 'processing' — 2026-09-26
+
+§30.6 and §30.11 item 1 recorded a gap and left it open. `recordEntityMedia`
+writes each memory, hidden-gem, postcard and post-link file it has to create
+as `processing`, with a size of 0 and no dimensions. Its comment says this is
+"so it is not served as ready until a dimension sweep fills it in". No sweep
+existed. Lane J's worker claims `queued` and `failed` work only, and the
+stale-lease recovery needs a lease these rows never had. So the rows stayed
+`processing` for good, and every canonical reader serves `ready` only.
+
+This lane built that sweep, inside lane J's worker and behind lane J's flag. It
+adds no migration and no flag. It read and wrote no database and turned on no
+flag.
+
+Worked from `claude/sensing-completion-20260925` at `63730fdbb`, on branch
+`lane-m`. The code and the tests are in `48f898181`; this section is in the
+commit after it. Every edit to a cited line was made in place, and the sweep is
+appended at the tail of its file, so no cited line moved.
+`check:doc-citations` is clean.
+
+### 32.1 Measured first: what would serve these rows once they are ready
+
+**Who writes them.** `recordEntityMedia` creates a row only when no asset
+exists at that storage key yet. It writes an honest zero and stages the row
+(`artifacts/api-server/src/lib/mediaAssets.ts:862#sizeBytes: 0,`,
+`artifacts/api-server/src/lib/mediaAssets.ts:864#processingStatus: "processing",`).
+It is called for four entity types, not three:
+- a Passport memory (`artifacts/api-server/src/services/passport/PassportMemoryService.ts:140#entityType: "memory",`),
+  which is private unless its owner picks otherwise
+  (`artifacts/api-server/src/services/passport/PassportMemoryService.ts:111#visibility: input.visibility ?? "private",`);
+- a hidden gem (`artifacts/api-server/src/services/hiddenGems/HiddenGemService.ts:194#entityType: "hidden_gem",`);
+- a postcard (`artifacts/api-server/src/routes/postcards.ts:1125#entityType: 'postcard',`);
+- a post, through `recordPostMediaAttachments`
+  (`artifacts/api-server/src/lib/mediaAssets.ts:1086#entityType: "post",`).
+
+**Who serves a `ready` row to someone other than its owner.** Five readers can
+hand over a `media_assets` row or its bytes. None of them serves an asset
+because a memory, a gem or a postcard links it.
+
+1. **The projection's canonical branch** (`attachCanonicalMedia`, run by
+   `prepareCanonicalRows`). It is gated by `media_canonical_read_enabled`,
+   which is off in CI and absent in production. It reads the attachments of
+   one entity type, `post` unless a caller names another
+   (`artifacts/api-server/src/lib/media/mediaCanonicalRead.ts:208#const entityType = opts.entityType ?? "post";`),
+   and its one caller names none
+   (`artifacts/api-server/src/services/media/MediaProjectionService.ts:1688#await attachCanonicalMedia(sc, rows);`).
+   The rows it attaches to are posts, it serves only `ready`
+   (`artifacts/api-server/src/lib/media/mediaProjection.ts:208#m.processing_status === "ready" &&`),
+   and every projection is then cut to what the viewer may see
+   (`artifacts/api-server/src/services/media/MediaProjectionService.ts:698#return visibleToViewerOrRefuse(sc, viewer.viewerId, out);`).
+2. **The Wall's Quick Media** (`loadQuickMediaRow`). It reads ready assets
+   (`artifacts/api-server/src/services/wall/WallCandidateLoaders.ts:1277#.eq("processing_status", "ready")`),
+   never a `private` one
+   (`artifacts/api-server/src/services/wall/WallCandidateLoaders.ts:1171#if (row.visibility === "private") return false;`).
+   Each must be published through a `post` or `postcard` link
+   (`artifacts/api-server/src/services/wall/WallCandidateLoaders.ts:1300#.in("entity_type", ["post", "postcard"]),`)
+   or a `post_media` row at its path. That post must be readable by the viewer
+   (`artifacts/api-server/src/services/wall/WallCandidateLoaders.ts:1359#readableByPost.set(pid, active && published && decidePostReadable(p, viewerId, tripMember).readable);`)
+   and written by the asset's owner
+   (`artifacts/api-server/src/services/wall/WallCandidateLoaders.ts:1374#if (String(post.author_id) !== ownerId) continue;`).
+   A memory or gem link is never read. A postcard link is read, but its id
+   names a `passport_postcards` row, so no post is found and the asset is
+   dropped (§32.10 item 2).
+3. **Telegraph's MEDIA share** (`loadMedia`). A non-owner needs `public`
+   (`artifacts/api-server/src/services/telegraph/shareables.ts:940#if (r.visibility !== "public") return { state: UNAVAILABLE("private"), projection: null };`).
+   `recordMediaAsset` never sends `visibility`, so 0191's default holds
+   (`artifacts/api-server/src/migrations/0191_media_assets.sql:35#NOT NULL DEFAULT 'inherit',`),
+   and `inherit` is private to a non-owner here.
+4. **PresenceVerifier's receipt.** The actor must own the asset
+   (`artifacts/api-server/src/services/intel/PresenceVerifier.ts:424#if ((asset as any).owner_user_id !== req.actorId) return refuse("not_owner");`).
+5. **The byte gate** (`lib/mediaAccess`, `decide`). It never reads
+   `processing_status`. It reads the canonical row once, for owner attribution
+   (`artifacts/api-server/src/lib/mediaAccess.ts:390#.select("id, owner_user_id")`).
+   No branch names a memory, a gem or a postcard, and an object nothing
+   publishes is denied
+   (`artifacts/api-server/src/lib/mediaAccess.ts:874#4. Nothing references it`).
+
+Four more readers touch these rows without looking at `processing_status`, so
+the sweep cannot change them: the Wall's `experienceAt` loader (`captured_at`
+through the link), My World's Uploads count (the owner's own rows), the §35
+evidence link (provenance only), and the attachment-override check in
+`lib/mediaVisibility`.
+
+**So** a swept asset reaches someone other than its owner only through a post
+its owner wrote, and only when that viewer may read that post.
+
+### 32.2 Which graded rows rest on these rows being served
+
+Grepped across census-media, census-wall, census-highlights-memories and
+census-passport for each path above and for the writer.
+
+| Row | Grade | Affected? | Why |
+| --- | --- | --- | --- |
+| MD338 MediaAssetService | C (§30) | **Yes** | §32.3. |
+| MD36 `MediaAsset` contract | C (§20) | No | Its C rests on the contract being read on the projection's path. That path reads `post` links only, and a staged row there was never served; the item fell back to `post_media`. |
+| MD339 MediaAttachmentService | C (§20) | No | "Read by the canonical read, the Wall and the byte path" is true of `post` and `postcard` links. It does not claim a memory or gem link is read. §32.10 item 1 records that none is. |
+| MD44 one asset, many objects | C (§20) | No | Graded on not duplicating the file. Readiness is not part of it. |
+| MD114 §16.1 MEDIA / PROVENANCE | C | No | Graded on the gem path recording the asset and its link, which happens at write time. |
+| MD276 duration metadata | C (§22) | No | Scoped to general uploads. §22.6 item 5 recorded that the entity rows had no duration or size; the sweep now writes both (duration only when the container states it). |
+| census-wall W66 `experienceAt` | C | No | Reads `captured_at` through the link, whatever the status. |
+| census-wall W72 Quick Media | C | No | Graded on the route and the loader's gates. A swept row joins its source only through an owner's post the viewer may read. |
+| census-highlights-memories H25, H181 | BBW | No | Not C. Both concern the `memories` album's `memory_items`, which writes no `media_assets` row. |
+| census-passport | — | No | No row cites a canonical media path. |
+
+### 32.3 Row table
+
+| ID | Was | Now | Evidence |
+| --- | --- | --- | --- |
+| MD338 | **C** | **C** | **The C was wrong for one class of row, and the sweep fixes it.** §30 graded MD338 on §28.9's RED WHEN, and on that wording it held. But §20.4 grades the row by responsibility, lifecycle included, and the module's own writer `recordEntityMedia` staged rows in `processing` that nothing ever finished. That is §28.9's defect, rows parked for good off every canonical read, in another state; §30.6 recorded it and kept the C. Now the pass reads those rows after its claimable work (`artifacts/api-server/src/lib/media/mediaProcessingWorker.ts:251#const rows = [...claimable, ...(await readEntityMediaSweep(db, out, claimable, { now, limit }))];`), claims each through the same `claimMediaProcessing` (`artifacts/api-server/src/lib/media/mediaProcessingWorker.ts:261#const claim = await claimMediaProcessing(db, row.id, { now });`), re-runs the same pipeline, writes the measured size under the lease (`artifacts/api-server/src/lib/media/mediaProcessingWorker.ts:276#if (outcome.ok && asset) outcome = await withMeasuredSize(db, claim, asset, outcome);`), then completes the row (`artifacts/api-server/src/lib/media/mediaProcessingWorker.ts:280#done = await completeMediaProcessing(db, claim, {`) or fails it (`artifacts/api-server/src/lib/media/mediaProcessingWorker.ts:301#const failure = await failMediaProcessing(`). Tests: `artifacts/api-server/src/test/mediaProcessingWorker.test.ts:761#describe("census-media §32 — the dimension sweep finishes recordEntityMedia's staged rows"` and `artifacts/api-server/src/test/mediaProcessingWorker.test.ts:1055#describe("census-media §32 — PRIVACY: a swept entity asset reaches nobody its entity would not be shown to"`: 11 cases, each behaviour seen red (§32.7). **RED WHEN** §30's RED WHEN holds, or the sweep is removed from the pass, or it claims a row whose size is recorded, or it completes a row `ready` with a size of 0, or it writes any column other than the lifecycle, dimension and size columns. |
+
+The headline is not restated here: MD338 stays **C**, so no count moves.
+
+### 32.4 How the sweep recognises its rows
+
+The sweep reads rows with exactly `recordEntityMedia`'s signature, then
+re-checks each one in memory (`isEntityMediaSweepRow`):
+
+- **`processing_status = 'processing'`**: staged, never finished.
+- **`processing_lease_token IS NULL`**
+  (`artifacts/api-server/src/lib/media/mediaProcessingWorker.ts:463#.is("processing_lease_token", null)`).
+  A held lease belongs to the claim, and a lapsed one to the recovery.
+- **`size_bytes = 0`**
+  (`artifacts/api-server/src/lib/media/mediaProcessingWorker.ts:464#.eq("size_bytes", 0)`).
+  This is what keeps the upload route's rows out. The upload route records the
+  stored buffer's length
+  (`artifacts/api-server/src/routes/posts.ts:264#sizeBytes: uploadBuf.length,`),
+  and its verifier refuses an empty body
+  (`artifacts/api-server/src/lib/mediaPipeline.ts:188#if (!buf || buf.length === 0) {`).
+  So the upload route's dimensionless videos, which this tier has no decoder
+  to measure (§30.4), are never read.
+- **`width IS NULL AND height IS NULL`**
+  (`artifacts/api-server/src/lib/media/mediaProcessingWorker.ts:465#.is("width", null)`),
+  and not terminal.
+- **At least one `media_attachments` row**
+  (`artifacts/api-server/src/lib/media/mediaProcessingWorker.ts:484#.in("media_asset_id", staged.map((r) => r.id));`).
+  `recordEntityMedia` writes the asset first and the link second, so an asset
+  with no link is either in flight or orphaned. It is left alone and counted
+  (`artifacts/api-server/src/lib/media/mediaProcessingWorker.ts:496#if (!attached.has(row.id)) { out.unattached += 1; continue; }`).
+
+Two other candidates were checked, and neither tells the writers apart:
+- **`source_type`.** Both writers default it to `user`, so it is not part of
+  the signature.
+- **The link.** `recordPostMediaAttachments` links upload-route rows to their
+  post too. The link is still required, because a row with no link is not yet
+  entity media. The size is what keeps the upload route out.
+
+`scripts/backfill-media-assets.ts` stages its rows with the same signature
+(`artifacts/api-server/src/scripts/backfill-media-assets.ts:48#size_bytes: 0, // unknown for legacy rows`)
+and links them. So if that backfill is ever run, the sweep finishes its rows
+too, which is `mediaCanonicalRead`'s precondition B3. The backfill has not
+been run.
+
+### 32.5 What the sweep does to a row
+
+1. **Gate.** The pass reads `media_processing_worker_enabled` first
+   (`artifacts/api-server/src/lib/media/mediaProcessingWorker.ts:227#if (!(await isMediaProcessingWorkerEnabled(db))) return { ...EMPTY, reason: "disabled" };`).
+   Off, absent or unreadable means one flag read and nothing else. There is no
+   second flag: the sweep changes which rows reach `ready`, and 3338's flag
+   already exists for that decision (§30.5).
+2. **Budget.** A pass still claims at most `limit` assets (§30.3). The sweep
+   takes what the due claimable work leaves
+   (`artifacts/api-server/src/lib/media/mediaProcessingWorker.ts:456#const budget = opts.limit - due;`),
+   oldest first, so an owner's retry never waits behind a backlog.
+3. **Claim and process.** Each row is claimed by `claimMediaProcessing`, which
+   accepts `processing`, and re-run through `processStoredMediaAsset`: the
+   bytes and their kind are verified, a still must carry no GPS IFD, a video
+   must carry no location atom and must state its display size. The worker
+   never writes storage.
+4. **Size.** `completeMediaProcessing` writes the dimensions, the duration and
+   the thumbnails, but not `size_bytes`
+   (`artifacts/api-server/src/services/media/MediaLifecycleService.ts:158#processing_status: "ready",`
+   opens the one UPDATE; it has no `size_bytes`). So the worker writes the
+   stored object's length first, while it holds the lease, through the lifecycle service (§32.13)
+   (`artifacts/api-server/src/services/media/MediaLifecycleService.ts:462#.update({ size_bytes: sizeBytes })`).
+   The write is conditional on the lease and on the zero
+   (`artifacts/api-server/src/services/media/MediaLifecycleService.ts:463#.eq("size_bytes", 0)`),
+   so a recorded size is never overwritten. If the write fails, the attempt
+   fails retryably; a row is never `ready` with a size of 0. The same step runs
+   on the claimable path, so a staged row that failed once and is retried
+   still gets its size.
+5. **Complete or fail.** A still completes with its measured width and
+   height. A video completes with the container's display size and, only when
+   the container states one, its duration. Bytes that do not verify, a GPS
+   IFD, a location atom or a container with no display size fail the row
+   terminally at once, as in §30.3.
+
+**The dimension CHECK.** 2089 applies to `media_assets` and forbids `ready`
+without both dimensions
+(`artifacts/api-server/src/migrations/2089_media_assets_ready_requires_dimensions.sql:29#OR (width IS NOT NULL AND height IS NOT NULL)`).
+`completeMediaProcessing` writes `ready` and both dimensions in one UPDATE, and
+throws before writing on anything but two positive integers. The size write
+leaves the status `processing`. A test checks every UPDATE body the sweep
+sends: each one that sets `ready` carries both dimensions.
+
+### 32.6 Privacy — the proof
+
+The question: can the sweep put a memory's, gem's or postcard's file in front
+of someone that object would not be shown to? It cannot, for three reasons.
+
+1. **The sweep changes no column any reader uses to decide an audience.** It
+   writes the lifecycle columns, the dimensions, the duration, the thumbnail
+   pass-through and the size. It never writes `visibility`, the owner, the
+   uploader, `moderation_status`, a storage key, `public_url`, `provenance` or
+   an attachment. A test checks every UPDATE body against that list, and
+   checks that those columns are unchanged after the pass.
+2. **The byte gate is blind to `ready`.** `decide()` reads the canonical row
+   for its owner only (§32.1, reader 5), so its answer for every viewer and
+   every object is the same before and after the sweep. A test runs the real
+   `authorizeMediaAccess` over the rows exactly as the sweep leaves them:
+   - a private Passport memory's photo, a hidden gem's photo, and a postcard
+     photo whose post is private are refused to a stranger and to a follower,
+     both before and after the sweep, and served to the owner;
+   - the control, a file a public post publishes, is served to both, so the
+     double can say yes;
+   - every decision after the sweep equals the one before it.
+3. **Every reader that serves a `ready` row to a non-owner goes through a
+   post** (§32.1). The projection reads `post` links only. Quick Media needs
+   an owner's post the viewer may read. Telegraph needs `public`, which no
+   entity row has. A test pins each of these premises in the source, so a
+   change that lets a reader serve a memory, gem or postcard link goes red and
+   forces this proof to be redone.
+
+One route puts an entity's file into a post: the owner attaching their own
+asset to their own post through `POST /media/:id/attachments`, which requires
+the caller to own both halves
+(`artifacts/api-server/src/routes/mediaActions.ts:266#asset.owner_user_id !== auth.user.id ||`,
+`artifacts/api-server/src/routes/mediaActions.ts:267#!(await ownsAttachmentEntity(sc, auth.user.id, body.entity_type, body.entity_id))`).
+That is the owner publishing the file, and the link's §6.1 override can
+narrow it. It is not the sweep's doing, and a staged row could already be
+linked that way before.
+
+Passport memories are private by default, and a memory is exactly the case the
+test drives. **So no swept row is completed where it would reach a viewer its
+entity would not reach.** The rows are safe to complete, and the sweep does.
+
+The test's byte-gate double is a copy of `makeClient`'s query builder in
+`mediaAccess.test.ts`, with the same filter semantics and the same live-column
+enforcement. It is copied because that file does not export it and is not
+this lane's (§32.10 item 7).
+
+### 32.7 Mutations — each seen red, every file checked byte-identical after each run
+
+All were run against `48f898181`. Each was applied in place, the worker suite
+was run, and the file was restored with `git checkout --`; `git diff --quiet`
+then confirmed it byte-identical. The suite was 37 / 37 before the mutations
+and after them.
+
+| # | Mutation, applied in place | File | Went red (of `mediaProcessingWorker.test.ts`) |
+| --- | --- | --- | --- |
+| M1 | The sweep removed from the pass (line 251 back to lane J's `const rows = …`) | `lib/media/mediaProcessingWorker.ts` | 8: six of the eight sweep cases (all but GATED OFF and the signature unit), and the two privacy cases that run the sweep |
+| M2a | Only the SQL `.eq("size_bytes", 0)` removed | same | **None: survived.** The in-memory re-check still refuses the upload route's video. Recorded, not hidden. |
+| M2b | The size recognition removed from the SQL AND the re-check | same | 2: "never claims the upload route's dimensionless VIDEO…" (it was taken as staged); "isEntityMediaSweepRow is exactly recordEntityMedia's signature" |
+| M3 | The attachment requirement removed | same | 1: "never claims … or an unattached one…" (the orphan was swept) |
+| M4 | The size write removed (line 276 back to blank) | same | 3: the image and video sweep cases and the retried-row case (`size_bytes` stayed 0 on a `ready` row) |
+| M5 | The GPS refusal disabled (`if (false && …)`) | same | 3: lane J's GPS case, the sweep's GPS case, and the "writes only…" privacy case (a GPS still reached `ready`) |
+| M6 | The flag gate removed | same | 2: lane J's and the sweep's GATED OFF cases |
+| M7 | The budget ignores the due claimable work (`const budget = opts.limit;`) | same | 1: "keeps §30.3's per-pass bound…" |
+| M8 | The byte gate made to serve any `ready` canonical row (it also selects `processing_status`) | `lib/mediaAccess.ts` | 2: "a PRIVATE memory's photo…" (the stranger got asset 40 after the sweep) and "the proof's premises are in the tree…" |
+| M9 | The size write also sets `visibility: "public"` | `lib/media/mediaProcessingWorker.ts` | 2: "a PRIVATE memory's photo…" (the row no longer inherits) and "the sweep writes lifecycle, dimension and size columns only…" |
+| M10 | Only the re-check's size clause removed (the SQL filter kept) | same | 1: the signature unit |
+| M11 | The lease recognition removed from the SQL and the re-check | same | 2: "never claims … a live-leased staged row…" (taken as staged; the claim still refused it) and the signature unit |
+| M12 | The projection's one caller asks for `memory` links | `services/media/MediaProjectionService.ts` | 1: "the proof's premises are in the tree…" |
+| M13 | Quick Media also reads `memory` links | `services/wall/WallCandidateLoaders.ts` | 1: "the proof's premises are in the tree…" |
+
+A note on M9. The byte gate does not read `visibility`, so under M9 its
+decisions do not change. Telegraph's share does read it. The "writes only…"
+case is what guards that reader, and it went red.
+
+Not covered by a test: the size write's lease condition and its
+failure branch. A single-worker double cannot race a second lease, and a
+failure injected on `media_assets` writes would fail the claim first.
+
+### 32.8 Production — nothing here is deployed
+
+- **Nothing was applied or deployed.** No migration was added. The sweep is
+  inert until `media_processing_worker_enabled` is on, and 3338, which seeds it
+  FALSE, is applied to no database (§30.13). This lane did not look at what
+  is deployed.
+- **What turning the flag ON now means** — an owner decision, as in §30.9. On
+  top of §30.9's `queued` and `failed` work, the first passes finish every
+  staged entity row that has a link, `limit` at a time, oldest first. Each one
+  becomes `ready` with its measured size, or `failed` with the reason recorded.
+- **What production has to sweep.** Per §23.2, production's canonical writer
+  is off (`media_canonical_enabled` FALSE), so no new staged row is being
+  written there. This section does not claim any production row is staged. It
+  did not read one.
+- **The canonical read is off.** `media_canonical_read_enabled` is FALSE in CI
+  and absent in production, so reader 1 of §32.1 serves nothing either way.
+  Readers 2–4 do not depend on that flag.
+
+### 32.9 Checks
+
+All were run from `artifacts/api-server` on the final tree.
+
+| Check | Result |
+| --- | --- |
+| `pnpm -s run typecheck` | exit 0 |
+| `pnpm -s run typecheck:tests` | exit 0: 863 diagnostics across 115 files, the same as the baseline |
+| `mediaProcessingWorker`, `mediaAssetsRecord`, `mediaAccess`, `backgroundWorkerWiring`, `schedulerRegistration` | 156 / 156 (145 before; the 11 new cases are §32's) |
+| `mediaCanonicalLayers`, `mediaActionsCompass`, `mediaActionsSection21`, `mediaEventLink`, `mediaAccessFailClosed`, `mediaModerationCanonical`, `mediaUploadHardening`, `mediaVideoTransport`, `mediaVideoPosterGeneral`, `wallQuickMedia`, `fakeConformanceRegistry`, `schemaReferenceStatic`, `silentSchemaErrorCatches`, `uncheckedSupabaseReads`, `accountStatusFailOpenWrites` | 367 / 367 |
+| `check:doc-citations`, `check:citation-symbols` | clean |
+| `check:citation-targets` | at its ceiling, 165 / 165 |
+| `check:census-scope-coverage` | passes after the widening in §32.11: census-media at 243 cited and 234 watched, 96.3% against its 96% floor. Without it, 95%: this section newly cites the backfill script and `mediaAccess.test.ts`. The floor is unchanged. |
+| `check:test-registration` | passes; the suite was already registered, so the count is unchanged (1478) |
+| `check:flag-polarity` | passes; no flag added |
+| `check:census-integrity` | passes. MD338 is restated at **C**, so no count moves and the headline stands. |
+| `check:census-row-move-labels`, `check:census-policy-citations` | exit 0 |
+| `check:write-path-columns` | exits 2 here on "KNOWN_PROD_PROJECT_REF is empty", as expected. The offline `extractSchemaReferences` over routes, services, domain, server and lib resolves all six sites in the worker, with none skipped and none partly unresolved. `mediaAssets.ts` has one partly unresolved site, `casUpdateMediaAsset`'s spread patch, which predates this lane. |
+| `check:schema-references`, `check:enum-literals`, `check:silent-supabase-writes`, `check:unissued-supabase-writes`, `check:writerless-reads`, `check:not-null-writes`, `check:async-handlers`, `check:test-runner-flags` | all exit 0 |
+| `check:census-freshness` | **fails: census-media is STALE on one file**, `mediaAccess.test.ts`, which the §32.11 widening brings into scope and which changed before this lane. The three files this lane changed are already named by the acknowledgement. The acknowledgement is not this lane's file, so the integrator names it or re-measures. |
+
+### 32.10 Found while doing it — recorded, not fixed
+
+1. **Memory and hidden-gem links have no reader.** Apart from the sweep's own
+   existence check, every reader of `media_attachments` asks for `post`,
+   `postcard` or `shared_moment`. The memory and gem links that
+   `recordEntityMedia` writes are read by nothing else.
+   That is why the sweep is safe, and it is also a gap in MD339's "one asset,
+   many objects" reading. It is not graded here.
+2. (**Fixed in census-wall §17.**) **Quick Media reads a postcard link as if it named a post** (census-wall
+   W72's loader). The link's id is a `passport_postcards` id
+   (`artifacts/api-server/src/routes/postcards.ts:1126#entityId: (pcIns.data as any).id as string,`),
+   and the loader looks it up in `posts`
+   (`artifacts/api-server/src/services/wall/WallCandidateLoaders.ts:1304#if (!postIdByAsset.has(aid) && att.entity_id) postIdByAsset.set(aid, String(att.entity_id));`).
+   The post is never found, so the asset is dropped. It fails closed, so
+   nothing leaks, but when the postcard link comes back before the post link
+   for the same asset, a readable post's file is missing from the row. The
+   file is census-wall's, so this is reported rather than fixed.
+3. **A claim whose attempt row fails leaves a lease-less `processing` row.**
+   The release clears the lease and keeps the status
+   (`artifacts/api-server/src/services/media/MediaLifecycleService.ts:134#processing_error: "Could not persist processing attempt",`).
+   For an entity row the sweep picks it up again. For an upload-route row,
+   whose size is recorded, nothing does: it is neither `queued` nor `failed`
+   and has no lease to lapse.
+4. **The soft-delete rollback writes `ready` whatever the row was**
+   (`artifacts/api-server/src/services/media/MediaLifecycleService.ts:323#processing_status: "ready",`).
+   For a row without dimensions, 2089 refuses that write, so the rollback
+   fails and the row stays removed. That fails closed. `softDeleteMediaAsset`
+   still has no production caller (§30.7).
+5. **`recordEntityMedia` guesses the MIME type from the URL**
+   (`artifacts/api-server/src/lib/mediaAssets.ts:858#mimeType: mediaType === "video" ? "video/mp4" : "image/jpeg",`).
+   The sweep verifies the real kind, but leaves the guessed `mime_type` as it
+   is.
+6. **A swept row keeps the moderation state it was written with.** Where 3321
+   is applied that is `processing`, which MD269 records as distributable. The
+   sweep adds rows under that policy; it does not change the policy.
+7. **The privacy case copies `mediaAccess.test.ts`'s double.** The integrator
+   may prefer to move that case into `mediaAccess.test.ts`, whose `makeClient`
+   it copies, and delete the copy.
+
+### 32.11 Files changed
+
+| File | Change | Counted by census-media |
+| --- | --- | --- |
+| `artifacts/api-server/src/lib/media/mediaProcessingWorker.ts` | fifteen lines changed in place (six header lines, nine code lines; none moved); the sweep appended | yes (directory) |
+| `artifacts/api-server/src/lib/mediaAssets.ts` | one comment line extended in place, naming the sweep | yes |
+| `artifacts/api-server/src/test/mediaProcessingWorker.test.ts` | 11 cases appended; imports at the tail | yes |
+| `artifacts/api-server/src/scripts/checkCensusFreshness.ts` | census-media's `CENSUS_SCOPE` widened by two paths, appended at the end of its list | no (machinery) |
+| `docs/architecture/census-media.md` | this section, appended; no earlier line edited | — |
+
+This section does not edit `CENSUS_STALENESS_ACKNOWLEDGED.json` and does not
+restate the headline.
+
+### 32.12 Integration: lanes K, L and M merged
+
+**Lane K (§31)** merged at `5febe7ed7`. MD403 stays **W**: five pairs are
+pinned on shared components, and the full-screen viewer is unmeasured. Lane K
+is continuing on both. The Watch and Gems columns now sit on visible dark
+backings. That is a design change on the shipped surface, for the owner to
+review (§31.8).
+
+**Lane L (census-wall §16)** merged at `90f9b2a2d`. Media v2's `post_media`
+embed now selects `feed_url`, and a projection carries `feedUrl` only when a
+variant is stored, so every projection without one is byte-identical.
+`post_media.feed_url` exists on production and on `portava-ci` (read-only,
+2026-09-26). The embed is a known blind spot for `check:write-path-columns`,
+which cannot resolve its imported column constants. The column's presence was
+therefore checked directly rather than inferred from a green check.
+
+**Lane M (this section)** merged here. Its privacy case sets `SUPABASE_URL`
+to a fake origin, so `check:guard-coverage` counted the worker test as able
+to reach Supabase. It is added to that guard's EXEMPT list with
+`pinnedTestEnv`, on the same written grounds as `mediaAccessFailClosed.test.ts`:
+it sets the variable only to a hardcoded literal, restores it, and constructs
+no client. The exemption says in writing that it is void if the file ever
+constructs a client.
+
+**The headline is unchanged.** No row moved in K, L or M. It stays
+C 401 / W 37 / N 12 / X 0 of 450, as `check:census-integrity` reads it from
+the rows.
+
+### 32.13 The measured size moves into the lifecycle service, and its failure path gets tests
+
+**What failed.** CI on `0d3699aa6` failed one test out of 26,555:
+`src/test/projectionConsumers.test.ts`, "CONTROL — the real tree and the real
+registry pass". The message was: "UNREGISTERED PROJECTION: media_assets is
+written by lib/media/mediaProcessingWorker.ts". Lane M's `withMeasuredSize`
+wrote `media_assets.size_bytes` directly, and `check:projection-consumers`
+treats any writer whose basename contains "worker" as a projection producer.
+This failure was a gap in my local runs before pushing, not a flake:
+`projectionConsumers.test.ts` was not among the suites I ran.
+
+**Why it was not fixed by registering the table.** `media_assets` is
+canonical storage, not a projection, and it has no projection consumers to
+list. Registering it would have made the guard green by describing the table
+falsely. The write is a lease-conditioned lifecycle write, the same kind as
+every other write in `MediaLifecycleService`, so that is where it now lives:
+`recordMeasuredMediaSize`
+(`artifacts/api-server/src/services/media/MediaLifecycleService.ts:460#export async function recordMeasuredMediaSize(`),
+appended at that file's tail. It keeps the file's invariant 1:
+- It is conditional on the asset id, the lease token the caller holds, and
+  the zero it read
+  (`artifacts/api-server/src/services/media/MediaLifecycleService.ts:463#.eq("processing_lease_token", claim.leaseToken).eq("size_bytes", 0)`).
+- It reads the row back. It is true only when exactly this asset's row came
+  back carrying the size written.
+- It refuses anything that is not a positive whole byte count, and in that
+  case sends nothing.
+
+The worker calls it in place of the old write, in the same eight lines
+(`artifacts/api-server/src/lib/media/mediaProcessingWorker.ts:526#const recorded = await recordMeasuredMediaSize(db, claim, outcome.sizeBytes);`).
+A false result fails the attempt retryably. The worker now makes no
+`.update/.insert/.upsert/.delete` call of its own.
+
+**One behaviour changed, and it is stricter.** Before the move, a zero-row
+UPDATE counted as recorded. PostgREST answers one with `error: null`, and the
+old code checked only `error`. So if another writer recorded a size between
+the claim's read and this write, the worker completed the asset `ready` over
+a size it had not written. Now that attempt fails retryably
+(`retryable_failure`, not terminal), and the other writer's size stands.
+
+**What had no test before, and now has one.** §32 said a failed size write
+fails the attempt retryably. Nothing tested that. Five cases are appended to
+`artifacts/api-server/src/test/mediaProcessingWorker.test.ts`, over the real
+supabase-js client and the PostgREST oracle:
+- the lease, zero and read-back conditions;
+- sizes that are not positive whole byte counts;
+- a write error;
+- the worker, end to end, with a concurrent writer recording a size
+  mid-attempt;
+- a source check that the worker has no direct write.
+
+**Seen red.** Each of these mutations was run against the suite, and the
+file was restored after each one:
+
+| Mutation | Result |
+| --- | --- |
+| No read-back (`return !error`) | 2 fail |
+| No lease condition | 1 fails |
+| No zero condition | 2 fail |
+| Worker ignores the result | 1 fails |
+| No positive-integer guard | 1 fails |
+| The direct write put back in the worker | `projectionConsumers.test.ts` fails with the CI message above |
+
+With the tree restored: the worker suite passes 42/42 and
+`projectionConsumers.test.ts` passes 21/21.
+
+**Rows.** No row moves. §32 moved no row either, and this is a fix within
+§32's own claim. The headline stays C 401 / W 37 / N 12 / X 0 of 450.
+
+| File | Change | Counted by census-media |
+| --- | --- | --- |
+| `artifacts/api-server/src/services/media/MediaLifecycleService.ts` | `recordMeasuredMediaSize` appended; no earlier line edited | yes |
+| `artifacts/api-server/src/lib/media/mediaProcessingWorker.ts` | eight lines replaced by eight; one import line extended in place | yes (directory) |
+| `artifacts/api-server/src/test/mediaProcessingWorker.test.ts` | five cases appended; import at the tail | yes |
+| `artifacts/api-server/src/scripts/checkCensusScopeCoverage.ts` | `src/test/projectionConsumers.test.ts` added to `NOT_GRADED` | no (machinery) |
+| `docs/architecture/census-media.md` | §32 item 4: three lines edited in place to repoint two citations; this section appended | — |
+
+**Scope coverage.** Naming the guard's suite in this section took
+census-media from 242 of 252 watched files to 242 of 253. That is 95.65 %,
+under its 96 % floor, and `check:census-scope-coverage` failed.
+`projectionConsumers.test.ts` is the guard's own suite, and
+`check:projection-consumers` runs nowhere else. It grades no media behaviour.
+So it is added to `NOT_GRADED`, under the rule written there for
+`securityCheckSuite.test.ts` and `uncheckedSupabaseReads.test.ts`: naming the
+thing that measured you should not cost coverage. The floor is not lowered.

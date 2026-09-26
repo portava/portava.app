@@ -968,6 +968,19 @@ const EXEMPT = [
   },
 
   {
+    file: 'src/test/mediaProcessingWorker.test.ts',
+    pinnedTestEnv: true,
+    reason:
+      'Registered unit test for the media processing worker and its dimension sweep (census-media §30, §32). ' +
+      'Its privacy case runs the real byte gate over rows as the sweep leaves them, and names SUPABASE_URL only ' +
+      'to SET it to the hardcoded literal "http://sb.example.test" and to restore whatever was there afterwards, ' +
+      'exactly as src/test/mediaAccessFailClosed.test.ts does, because mediaAccess builds a storage URL out of ' +
+      'that variable. It constructs NO client: it calls createClient nowhere, and every Supabase call goes to ' +
+      'in-file fakes. pinnedTestEnv is set because CI invokes it through the test script. EXEMPTION MEANS ' +
+      'UNGUARDED, NOT SAFE — if this file is ever changed to construct a client, the exemption is void.',
+  },
+
+  {
     file: 'src/test/notificationPushTokenRegistryUnreadable.test.ts',
     pinnedTestEnv: true,
     reason:
