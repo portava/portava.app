@@ -480,7 +480,7 @@ async function decide(
     // The moderation carrier could not be read. Nothing later in this function
     // can answer the question it was asked, so deny rather than fall through.
     if (pmErr) return false;
-    const pmRows = ((pms as any[]) ?? []);
+    const pmRows = ((pms as any[]) ?? []); if (pmRows.length === 0) { const original = await originalOfRecordedVariant(sc, path, urlForms); if (original === "deny") return false; if (original !== null) return decide(sc, viewerId, bucket, original); } // §23.7: a recorded, server-derived variant IS its original
     if (pmRows.length > 0) {
       // A truncated page cannot support a deny-if-any scan: an unservable row
       // could be the one that did not fit. Deny instead of guessing.
@@ -963,3 +963,75 @@ export async function mediaAccessDeadline(
 // TAIL so no line above moves (census-highlights-memories cites this file by
 // line); ESM hoists imports, so evaluation order is unchanged.
 import { derivedPosterBase } from "./mediaPosterPath.js";
+
+// ── Server-derived image variants (census-media §23.7) ───────────────────────
+// `post_media` records the server-derived variants of its object: the feed-size
+// derivative (`feed_storage_path` / `feed_url`, 0208) and the thumbnail
+// (`thumbnail_storage_path` / `thumbnail_url`). Branch 3a matched
+// `storage_path` only, so a viewer entitled to the image was refused its
+// variant: no branch named it, and §4 denies. With `media_private_buckets_enabled`
+// on, that is every non-owner's feed image. The fix is lane D's poster rule
+// (§37), generalised: a variant IS its original, so the ONE line in 3a decides
+// the original instead — its moderation, its post's rules, its own attachment
+// override and its trip context all apply, and nothing wider can.
+//
+// What makes that safe is that the original is taken from a ROW, and only
+// believed when the variant is a server-derived NAME of it:
+//   `<original>.feed.jpg` / `<original>.thumb.jpg` (postcards), or
+//   `<original minus its extension>.feed.jpg` / `.thumb.jpg` (general posts).
+// A row that names someone else's object as its variant fails that test, and
+// is ignored. Nothing under a client-writable prefix is ever a variant.
+// Each lookup is its own `.eq` / `.in`, whose values the client encodes, and
+// never a string-built `.or()`, because `path` is chosen by the caller.
+// Appended at the tail so no cited line above moves.
+const DERIVED_VARIANT_SUFFIXES = [".feed.jpg", ".thumb.jpg"] as const;
+const VARIANT_CLIENT_WRITABLE_PREFIXES = ["memories/", "stories/"] as const;
+
+/** Pure: is `variant` a server-derived name of `original`? */
+export function isDerivedVariantOf(variant: string, original: string): boolean {
+  if (typeof variant !== "string" || typeof original !== "string") return false;
+  if (!variant || !original || variant === original) return false;
+  const stem = original.replace(/\.[^/.]+$/, "");
+  return DERIVED_VARIANT_SUFFIXES.some(
+    (suffix) => variant === `${original}${suffix}` || (stem !== original && variant === `${stem}${suffix}`),
+  );
+}
+
+/**
+ * The original a recorded variant was derived from. `null` when `path` is not
+ * a recorded variant (3a falls through exactly as before). `"deny"` when it
+ * cannot be decided: a lookup failed, a page was truncated, or two rows name
+ * different originals.
+ */
+async function originalOfRecordedVariant(
+  sc: SupabaseClient,
+  path: string,
+  urlForms: string[],
+): Promise<string | null | "deny"> {
+  if (!DERIVED_VARIANT_SUFFIXES.some((suffix) => path.endsWith(suffix))) return null;
+  if (VARIANT_CLIENT_WRITABLE_PREFIXES.some((prefix) => path.startsWith(prefix))) return null;
+  const rowsNaming = (col: "feed_storage_path" | "thumbnail_storage_path" | "feed_url" | "thumbnail_url") => {
+    const q = sc.from("post_media").select("storage_path");
+    return (col.endsWith("_url") ? q.in(col, urlForms) : q.eq(col, path)).limit(POST_MEDIA_ATTACHMENT_CAP);
+  };
+  const results = await Promise.all([
+    rowsNaming("feed_storage_path"),
+    rowsNaming("thumbnail_storage_path"),
+    rowsNaming("feed_url"),
+    rowsNaming("thumbnail_url"),
+  ]);
+  const originals = new Set<string>();
+  for (const { data, error } of results) {
+    noteLookupFailure("3a derived variant", error, { path });
+    if (error) return "deny";
+    const rows = (data as any[]) ?? [];
+    if (rows.length >= POST_MEDIA_ATTACHMENT_CAP) return "deny";
+    for (const row of rows) {
+      const original = typeof row?.storage_path === "string" ? row.storage_path : "";
+      if (isDerivedVariantOf(path, original)) originals.add(original);
+    }
+  }
+  if (originals.size === 0) return null;
+  if (originals.size > 1) return "deny";
+  return [...originals][0]!;
+}

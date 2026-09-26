@@ -3566,7 +3566,7 @@ a lane's to take.
 
 Each was checked against the object, not the sentence.
 
-- **MD43 "nothing reads it" is false at this head.** The byte path consults the override: `artifacts/api-server/src/lib/mediaAccess.ts:533#if (!(await authorizeMediaAttachment(` asks lib/mediaVisibility before any post-media object is signed, and `artifacts/api-server/src/test/mediaAccess.test.ts:794#it("a private attachment override denies a non-owner a public post's media"` proves it (mutation §20.MB1 below turns it red). It arrived with the Replit port (#508). What was still true: two of the seven values were resolved WRONG (§20.2, the MD43 row), and the projection a viewer is shown did not consult it at all.
+- **MD43 "nothing reads it" is false at this head.** The byte path consults the override: `artifacts/api-server/src/lib/mediaAccess.ts:533#if (!(await authorizeMediaAttachment(` asks lib/mediaVisibility before any post-media object is signed, and `artifacts/api-server/src/test/mediaAccess.test.ts:798#it("a private attachment override denies a non-owner a public post's media"` proves it (mutation §20.MB1 below turns it red). It arrived with the Replit port (#508). What was still true: two of the seven values were resolved WRONG (§20.2, the MD43 row), and the projection a viewer is shown did not consult it at all.
 - **MD369 "No attachment endpoint" is false.** `artifacts/api-server/src/routes/mediaActions.ts:224#"/media/:id/attachments",` has existed since #508. What was missing was any test that drives it: the suite only asserted the route is registered. §20.2 adds the HTTP-level proof.
 - **MD41 "shared_moment … [has] none" is false.** `artifacts/api-server/src/routes/sharedMoments.ts:262#entityType: "shared_moment",` writes it.
 - **MD255 "The real enum is three values" is stale.** Production's `post_visibility` carries a fourth, `followers_only` (`artifacts/api-server/baseline/20260819_baseline_structure.sql:365#'followers_only'`), and `artifacts/api-server/src/lib/postVisibility.ts:44#export const READABLE_VISIBILITIES` reads it. Four of §33's six audiences exist at post level; `following` and `shared_moment` do not. The row stays **W** on that narrower ground (§20.6).
@@ -4494,7 +4494,7 @@ can serve, and it was not previously true for video.
    exactly, and no later branch names the variant, so a non-owner's request for
    it ends in the §4 deny. The poster rule above is the shape of the fix:
    authorize a derived object as its base. It is not applied here because the
-   variant belongs to the image pipeline, not to this lane's rows.
+   variant belongs to the image pipeline, not to this lane's rows. **Fixed in §23.7.**
 5. **`RecordAssetInput` has no duration field.** This pass writes `duration_ms`
    through a follow-up update rather than widening a Lane B type. The postcard
    canonical row (`recordEntityMedia`) still has no duration or size.
@@ -4753,7 +4753,7 @@ assemble and abandon steps, and `POST /media/upload/poster`.
 - MD153's `RequestAViewPrompt` is mounted nowhere.
 - MD152 renders on the Places lens only.
 - Postcard feed variants (`<storage_path>.feed.jpg`) are denied to non-owner
-  viewers, because the byte gate matches `storage_path` exactly.
+  viewers, because the byte gate matches `storage_path` exactly. **Fixed in §23.7.**
 
 ### 23.5 Three rows the integration closes
 
@@ -4787,3 +4787,83 @@ shell, which is seeded off.
 > §19–§23 is realised in production** (§20.5, §21.5, §22, §23.2–§23.5). What
 > remains is owner decisions, vendor or native work, and production steps,
 > each named with a falsifier in §20.6, §21.4 and §22.
+
+### 23.7 Postcard feed variants were refused to every non-owner; now a recorded variant is decided as its original
+
+**The defect.** It was found by lane D (§22.7, item 4) and left open in §23.4.
+- `post_media` records server-derived variants of its object:
+  - the feed-size derivative, in `feed_storage_path` / `feed_url` (0208);
+  - the thumbnail, in `thumbnail_storage_path` / `thumbnail_url`.
+- The server writes them only under the uploader's own folder:
+  - `artifacts/api-server/src/routes/postcards.ts:776#const candidatePath =` (`<storage_path>.feed.jpg`)
+  - `artifacts/api-server/src/routes/posts.ts:225#thumbnailPath =` (`<uid>/<ms>.thumb.jpg`)
+  - `artifacts/api-server/src/routes/posts.ts:242#feedPath =` (`<uid>/<ms>.feed.jpg`)
+- Branch 3a of the byte gate matched `post_media.storage_path` exactly, and no later branch names a variant. A non-owner's request for one therefore ended in §4's deny.
+- The client asks for the variant first: `travel-buddy-standalone/src/components/PostcardTile.tsx:39#source={{ uri: post.media[0].feedUrl ?? post.media[0].url }}`. A refused sign is final for `CachedImage`: it renders its fallback and does not retry with `url`.
+- So every non-owner saw a placeholder where a postcard with a feed variant should have been.
+
+**Production, read-only, 2026-09-26.** This is not a branch-only defect; it is live.
+- `media_private_buckets_enabled` is `true`, last set 2026-07-24.
+- The `post-media` bucket has `public = false`.
+- `post_media` holds 6 rows. **1 has a feed variant** and 0 have a thumbnail.
+- In 0 rows is the recorded variant anything other than a derived name of its own `storage_path`. The rule below therefore accepts every variant production holds.
+
+**The fix, which is lane D's poster rule (§37) generalised: a variant IS its original.**
+- **Where the variant is resolved.** `artifacts/api-server/src/lib/mediaAccess.ts:483#const pmRows = ((pms as any[]) ?? []); if (pmRows.length === 0) { const original = await originalOfRecordedVariant(` runs only when no row claims the path as an original. It is the same line as before, so no cited line above it moved.
+- **The recursion.** If the path is a recorded variant, the gate decides the ORIGINAL. Its moderation, its post's rules, its own attachment override and its trip context all apply, and nothing wider can.
+- **The original comes from a row, and a row is believed only when the variant is a server-derived NAME of it.** That is `<original>.feed.jpg` / `.thumb.jpg` (postcards) or `<stem>.feed.jpg` / `.thumb.jpg` (general posts): `artifacts/api-server/src/lib/mediaAccess.ts:991#export function isDerivedVariantOf(`.
+  - A row that names someone else's object as its "variant" is ignored.
+  - This matters because a row's variant URL is data a post carries. Without the name test, any user could lend a victim's object their own post's audience.
+- **Fail-closed cases** (`artifacts/api-server/src/lib/mediaAccess.ts:1006#async function originalOfRecordedVariant(`), each of which denies:
+  - a lookup error, as 3a already denies on its own read error: `artifacts/api-server/src/lib/mediaAccess.ts:1026#if (error) return "deny";`;
+  - a full page of rows naming the variant, where a conflicting row could lie past the cap;
+  - two different originals, where picking one would decide by read order: `artifacts/api-server/src/lib/mediaAccess.ts:1035#if (originals.size > 1) return "deny";`.
+- **Client-writable prefixes.** Nothing under `memories/` or `stories/` is ever a variant, because the server derives none there: `artifacts/api-server/src/lib/mediaAccess.ts:1012#if (VARIANT_CLIENT_WRITABLE_PREFIXES.some((prefix) => path.startsWith(prefix))) return null;`.
+- **How the lookups are built.** Each is its own `.eq` / `.in`, never a string-built `.or()`, because the caller chooses `path`.
+- **What does not change.** A path that is not a recorded variant falls through exactly as before, including message thumbnails, which 3c decides. The added cost is four indexed-or-empty reads on a miss, and only for paths ending `.feed.jpg` / `.thumb.jpg`.
+
+**Tests.** They are in `artifacts/api-server/src/test/mediaAccess.test.ts:858#describe("derived variants (.feed.jpg / .thumb.jpg) are their original"`, ten cases:
+- a public postcard's variant is served;
+- a private post's variant and a rejected image's variant are denied;
+- an override on the original narrows the variant;
+- a general post's `<stem>.thumb.jpg` resolves through `thumbnail_url`;
+- a row naming another's object authorizes nothing;
+- a failed lookup denies;
+- a truncated page denies;
+- two originals deny;
+- a `stories/` variant is refused;
+- the pure name rule.
+
+Every test that asserts a denial carries an allowing control, so a deny could not pass for the wrong reason. In the failed-lookup test, falling through would reach a 3b row that serves the URL, which makes the deny arm the only way to red.
+
+**Mutations, each seen red and then restored** (the file was checked byte-identical against a saved copy after every run):
+
+| Mutation | Red |
+| --- | --- |
+| M1 the 3a line removed | 1, 4, 6, 7, 8 |
+| M2 the name rule accepts any row | 5, 7 |
+| M3 the recursion replaced by `return true` | 2, 3 |
+| M4 a lookup error falls through | 6 |
+| M5 the cap ignored | 7 |
+| M6 two originals allowed | 8 |
+| M7 the client-writable prefixes not excluded | 9 |
+| M8 the deny arm returns `true` | 6, 7, 8 |
+
+M4 survived the first version of test 6. That test had no later branch that would allow, so "deny on error" and "fall through" both ended in §4's deny. Test 6 was rewritten with a 3b row that serves the URL, and M4 then went red. M5, M6 and M7 survived the first seven tests; tests 7, 8 and 9 were written for them.
+
+**Checks run.**
+- The byte-gate suites: 14 files, 379 tests, 0 failures.
+- `tsc`, `typecheck:tests` (at baseline), and eslint (0 errors).
+- `check:doc-citations`: clean after one test citation, shifted by the fake's new `columnErrors` field, was repointed from 794 to 798.
+- `check:citation-targets` at 165 / 165.
+- `check:census-freshness`, `check:census-scope-coverage` and `check:census-integrity` all passed.
+
+**Rows.** No row in this census moves. The defect sat under no graded row, and the headline in §23.6 stands.
+
+**Recorded, not re-graded.** census-wall W151 ("responsive variants") is C on `routes/posts.ts` building a `feedUrl`. Two facts from this pass bear on it:
+- Until this fix, a non-owner could not fetch that variant.
+- The Wall's own renderers do not read `feed_url`; only the postcard surfaces do.
+
+W151 belongs to census-wall and is left for its owner to re-read.
+
+**Branch versus production.** This fix is built on the branch. It is not merged and not deployed. Production still refuses the one variant it holds to every non-owner until this code ships. No flag gates the fix, so deploying it is the whole production step.

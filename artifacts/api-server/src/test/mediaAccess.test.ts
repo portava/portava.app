@@ -8,7 +8,7 @@ import http from "node:http";
 import express from "express";
 import { _setTestClient } from "../lib/http.js";
 import { _setTestServiceClient } from "../lib/supabase.js";
-import { authorizeMediaAccess, ownerFromPath, _clearMediaAccessCache } from "../lib/mediaAccess.js";
+import { authorizeMediaAccess, ownerFromPath, _clearMediaAccessCache, isDerivedVariantOf } from "../lib/mediaAccess.js";
 import { authorizeMediaAttachment, authorizeMediaContext } from "../lib/mediaVisibility.js";
 import mediaFileRouter from "../routes/mediaFile.js";
 import { PUBLISHED_STORY_RETENTION } from "../services/stories/storyRetentionPolicy.js";
@@ -57,6 +57,8 @@ interface FakeState {
    * and the only way to test that decision is to make the read fail.
    */
   tableErrors?: Record<string, { code?: string; message: string }>;
+  /** An error for a query that filters on ONE column (`table.column`), leaving the table's other reads healthy. */
+  columnErrors?: Record<string, { code?: string; message: string }>;
 }
 
 /**
@@ -144,6 +146,8 @@ function makeClient(state: FakeState = {}) {
     let profileCols: string[] | null = null;
     /** Set when this query named a column the live table does not have. */
     let unknownColumn: string | null = null;
+    /** Set when this query filtered on a column `columnErrors` names. */
+    let columnError: { code?: string; message: string } | null = null;
     const rows = () => {
       const base = src().filter((r: any) => filters.every((f) => f(r)));
       if (table !== "profiles" || !profileCols) return base;
@@ -163,8 +167,8 @@ function makeClient(state: FakeState = {}) {
         }
         return b;
       },
-      eq(col: string, val: any) { filters.push((r) => r[col] === val); return b; },
-      in(col: string, vals: any[]) { filters.push((r) => vals.includes(r[col])); return b; },
+      eq(col: string, val: any) { columnError ??= state.columnErrors?.[`${table}.${col}`] ?? null; filters.push((r) => r[col] === val); return b; },
+      in(col: string, vals: any[]) { columnError ??= state.columnErrors?.[`${table}.${col}`] ?? null; filters.push((r) => vals.includes(r[col])); return b; },
       is(col: string, val: any) { filters.push((r) => val === null ? r[col] == null : r[col] === val); return b; },
       contains(col: string, vals: any[]) {
         filters.push((r) => Array.isArray(r[col]) && vals.every((v) => r[col].includes(v)));
@@ -209,13 +213,13 @@ function makeClient(state: FakeState = {}) {
       limit() { return b; }, not() { return b; }, order() { return b; },
       maybeSingle() {
         if (unknownColumn) return Promise.resolve(undefinedColumn(table, unknownColumn));
-        const injected = state.tableErrors?.[table];
+        const injected = state.tableErrors?.[table] ?? columnError;
         if (injected) return Promise.resolve({ data: null, error: injected });
         return Promise.resolve({ data: rows()[0] ?? null, error: null });
       },
       then(onF: any, onR: any) {
         if (unknownColumn) return Promise.resolve(undefinedColumn(table, unknownColumn)).then(onF, onR);
-        const injected = state.tableErrors?.[table];
+        const injected = state.tableErrors?.[table] ?? columnError;
         if (injected) return Promise.resolve({ data: null, error: injected }).then(onF, onR);
         return Promise.resolve({ data: rows(), error: null }).then(onF, onR);
       },
@@ -843,6 +847,169 @@ describe("authorizeMediaAccess — the matrix", () => {
     _clearMediaAccessCache();
     const rejected = { ...base, postMedia: [{ ...base.postMedia[0], moderation_status: "rejected" }] };
     assert.equal(await authorizeMediaAccess(makeClient(rejected), VIEWER, "post-media", path), false);
+  });
+
+  /**
+   * census-media §23.7 — a server-derived image variant is authorized as the
+   * original its post_media row records, and never wider. Before the fix a
+   * viewer entitled to a public postcard image was refused its feed variant:
+   * 3a matched `storage_path` only and §4 denied.
+   */
+  describe("derived variants (.feed.jpg / .thumb.jpg) are their original", () => {
+    const ASSET = "d2000000-0000-4000-a000-000000000077";
+    const postcard = (visibility: string, moderation = "approved", extra: Record<string, unknown> = {}) => {
+      const path = `${OWNER}/post77/m1.jpg`;
+      const feed = `${path}.feed.jpg`;
+      return {
+        path,
+        feed,
+        state: {
+          mediaAssets: [{ id: ASSET, owner_user_id: OWNER, storage_bucket: "post-media", storage_path: path }],
+          postMedia: [{
+            id: "pm77", storage_path: path, post_id: "post77", moderation_status: moderation, processing_status: "ready",
+            feed_storage_path: feed, feed_url: `post-media/${feed}`,
+          }],
+          posts: [{ id: "post77", author_id: OWNER, visibility, status: "active", post_status: "published", trip_id: null }],
+          ...extra,
+        } as FakeState,
+      };
+    };
+
+    beforeEach(() => _clearMediaAccessCache());
+
+    it("a public postcard's feed variant is served to a non-owner, exactly as its image is", async () => {
+      const { path, feed, state } = postcard("public");
+      assert.equal(await authorizeMediaAccess(makeClient(state), VIEWER, "post-media", path), true);
+      _clearMediaAccessCache();
+      assert.equal(await authorizeMediaAccess(makeClient(state), VIEWER, "post-media", feed), true);
+    });
+
+    it("a private post's variant is denied, and so is a moderated-away image's", async () => {
+      const priv = postcard("private");
+      assert.equal(await authorizeMediaAccess(makeClient(priv.state), VIEWER, "post-media", priv.feed), false);
+      _clearMediaAccessCache();
+      const rejected = postcard("public", "rejected");
+      assert.equal(await authorizeMediaAccess(makeClient(rejected.state), VIEWER, "post-media", rejected.feed), false);
+    });
+
+    it("an override that narrows the ORIGINAL narrows its variant (the variant has no asset of its own)", async () => {
+      const { feed, state } = postcard("public", "approved", {
+        attachments: [{ media_asset_id: ASSET, entity_type: "post", entity_id: "post77", visibility_override: "private" }],
+      });
+      assert.equal(await authorizeMediaAccess(makeClient(state), VIEWER, "post-media", feed), false);
+    });
+
+    it("a general post's thumbnail, recorded by URL as `<stem>.thumb.jpg`, is its original", async () => {
+      const path = `${OWNER}/1790000000000.jpg`;
+      const thumb = `${OWNER}/1790000000000.thumb.jpg`;
+      const state: FakeState = {
+        postMedia: [{ id: "pm78", storage_path: path, post_id: "post78", moderation_status: "approved", processing_status: "ready", thumbnail_url: `post-media/${thumb}` }],
+        posts: [{ id: "post78", author_id: OWNER, visibility: "public", status: "active", post_status: "published", trip_id: null }],
+      };
+      assert.equal(await authorizeMediaAccess(makeClient(state), VIEWER, "post-media", thumb), true);
+    });
+
+    it("a row naming SOMEONE ELSE'S object as its variant authorizes nothing", async () => {
+      // The attacker's own public post records the owner's private object as its
+      // "thumbnail". The object is not a derived name of the attacker's original,
+      // so the row is ignored and §4 still denies.
+      const ATTACKER = VIEWER;
+      const victimThumb = `${OWNER}/1790000000001.thumb.jpg`;
+      const state: FakeState = {
+        postMedia: [{
+          id: "pm79", storage_path: `${ATTACKER}/1790000000001.jpg`, post_id: "post79", moderation_status: "approved",
+          processing_status: "ready", thumbnail_url: `post-media/${victimThumb}`, thumbnail_storage_path: victimThumb,
+        }],
+        posts: [{ id: "post79", author_id: ATTACKER, visibility: "public", status: "active", post_status: "published", trip_id: null }],
+      };
+      const THIRD = "a1000000-0000-4000-a000-000000000009";
+      assert.equal(await authorizeMediaAccess(makeClient(state), THIRD, "post-media", victimThumb), false);
+    });
+
+    it("a failed variant lookup denies rather than falling through", async () => {
+      // The fixture carries a later branch that WOULD allow the variant: a
+      // public post by the owner listing the feed URL in `media_urls` (3b). So
+      // falling through on the error would serve the bytes, and only the deny
+      // arm makes this false. Without that row, fall-through and deny both end
+      // in §4's deny and the test could not tell them apart.
+      const { feed, state } = postcard("public", "approved", {
+        columnErrors: { "post_media.feed_storage_path": { code: "57P01", message: "terminating connection" } },
+      });
+      const fallThrough = { ...state, columnErrors: undefined, postMedia: [] };
+      const listed = { id: "post80", author_id: OWNER, visibility: "public", status: "active", post_status: "published", trip_id: null, media_urls: [`post-media/${feed}`] };
+      assert.equal(await authorizeMediaAccess(makeClient({ ...fallThrough, posts: [listed] }), VIEWER, "post-media", feed), true,
+        "control: with no variant row and no error, 3b serves the listed feed URL");
+      _clearMediaAccessCache();
+      assert.equal(await authorizeMediaAccess(makeClient({ ...state, posts: [...(state.posts ?? []), listed] }), VIEWER, "post-media", feed), false);
+    });
+
+    it("a truncated page of rows naming the variant denies (a conflicting row could lie past it)", async () => {
+      // One genuine row among 50 (the cap) that name the variant; the other 49
+      // name it as the "variant" of objects it is not derived from, so they are
+      // ignored. Without the cap the genuine row alone would decide and allow;
+      // with it, a full page is undecidable and the variant is refused.
+      const { feed, state } = postcard("public");
+      const noise = Array.from({ length: 49 }, (_, i) => ({
+        id: `pmN${i}`, storage_path: `${VIEWER}/noise${i}.jpg`, post_id: `postN${i}`, moderation_status: "approved",
+        processing_status: "ready", feed_storage_path: feed,
+      }));
+      const under = { ...state, postMedia: [...(state.postMedia ?? []), ...noise.slice(0, 48)] };
+      assert.equal(await authorizeMediaAccess(makeClient(under), VIEWER, "post-media", feed), true, "control: 49 rows, under the cap");
+      _clearMediaAccessCache();
+      const full = { ...state, postMedia: [...(state.postMedia ?? []), ...noise] };
+      assert.equal(await authorizeMediaAccess(makeClient(full), VIEWER, "post-media", feed), false);
+    });
+
+    it("two recorded originals for one variant name deny, whichever is read first", async () => {
+      // `<stem>.thumb.jpg` is a derived name of both `<stem>.jpg` and
+      // `<stem>.png`. The first row read is a public post's, the second a
+      // private post's: picking either would decide by read order.
+      const thumb = `${OWNER}/1790000000002.thumb.jpg`;
+      const row = (id: string, ext: string, post: string) => ({
+        id, storage_path: `${OWNER}/1790000000002.${ext}`, post_id: post, moderation_status: "approved",
+        processing_status: "ready", thumbnail_url: `post-media/${thumb}`,
+      });
+      const publicOnly: FakeState = {
+        postMedia: [row("pm81", "jpg", "post81")],
+        posts: [
+          { id: "post81", author_id: OWNER, visibility: "public", status: "active", post_status: "published", trip_id: null },
+          { id: "post82", author_id: OWNER, visibility: "private", status: "active", post_status: "published", trip_id: null },
+        ],
+      };
+      assert.equal(await authorizeMediaAccess(makeClient(publicOnly), VIEWER, "post-media", thumb), true, "control: one original, public");
+      _clearMediaAccessCache();
+      const both = { ...publicOnly, postMedia: [row("pm81", "jpg", "post81"), row("pm82", "png", "post82")] };
+      assert.equal(await authorizeMediaAccess(makeClient(both), VIEWER, "post-media", thumb), false);
+    });
+
+    it("nothing under a client-writable prefix is a variant: the server derives none there", async () => {
+      // routes/posts.ts and routes/postcards.ts derive variants under
+      // `<user id>/…` only. A `.feed.jpg` under `stories/` is a client upload,
+      // so a public post recording it as a feed variant does not lend it the
+      // post's audience; the story rules (none here) decide, and §4 denies.
+      const original = `stories/${OWNER}/s9.jpg`;
+      const feed = `${original}.feed.jpg`;
+      const state: FakeState = {
+        postMedia: [{
+          id: "pm83", storage_path: original, post_id: "post83", moderation_status: "approved", processing_status: "ready",
+          feed_storage_path: feed, feed_url: `post-media/${feed}`,
+        }],
+        posts: [{ id: "post83", author_id: OWNER, visibility: "public", status: "active", post_status: "published", trip_id: null }],
+      };
+      assert.equal(await authorizeMediaAccess(makeClient(state), VIEWER, "post-media", original), true, "control: the recorded original itself is served");
+      _clearMediaAccessCache();
+      assert.equal(await authorizeMediaAccess(makeClient(state), VIEWER, "post-media", feed), false);
+    });
+
+    it("the rule is a NAME rule: only `.feed.jpg` / `.thumb.jpg` of the recorded original", () => {
+      assert.equal(isDerivedVariantOf("u/p/m.jpg.feed.jpg", "u/p/m.jpg"), true);
+      assert.equal(isDerivedVariantOf("u/1790.thumb.jpg", "u/1790.jpg"), true);
+      assert.equal(isDerivedVariantOf("u/1790.feed.jpg", "u/1790.png"), true);
+      assert.equal(isDerivedVariantOf("v/1790.thumb.jpg", "u/1790.jpg"), false, "another owner's object");
+      assert.equal(isDerivedVariantOf("u/p/m.jpg.poster.jpg", "u/p/m.jpg"), false, "posters have their own rule");
+      assert.equal(isDerivedVariantOf("u/p/m.jpg", "u/p/m.jpg"), false);
+      assert.equal(isDerivedVariantOf("u/p/other.jpg.feed.jpg", "u/p/m.jpg"), false);
+    });
   });
 
   it("message media: thread member allowed, outsider denied", async () => {
