@@ -8974,6 +8974,1014 @@ census-wall each cite
 `artifacts/api-server/src/scripts/checkCensusFreshness.ts:1520#ADDED 2026-09-20 by census-wall §13`.
 The widened scope arrays above it moved it from line 1406.
 
+## 38. Lane E — six stale census statements and one lagging sentence, corrected in place — 2026-09-27
+
+The owner's instruction, verbatim: "Fix the six stale census statements against
+current evidence. Preserve the 100% coverage floors, and do not narrow
+requirements or change verdict definitions to reach 100%."
+
+§32.15 listed six statements under "Found, not fixed". Its P45 paragraph named a
+seventh sentence that lags its own row. This section corrects all seven where
+they stand. Each was read against the current file or JSON first, and each
+correction says what was found, with the line.
+
+**What did not change.**
+- No verdict letter, requirement wording or RED WHEN was touched, and no row
+  moved. The `CENSUS_INTEGRITY_DUMP=ALL` listing of all 3,518 verdict rows is
+  byte-identical before and after: same id, same letter, same line.
+- No headline is restated. No floor was lowered, no file was added to any
+  `CENSUS_SCOPE`, and the staleness ledger was not edited.
+- Every edit is line-neutral. Each corrected census has the same line count,
+  the old words and every old anchor are still on their lines, and each
+  correction is dated.
+- No correction needed a verdict to move, so this lane stopped on nothing.
+
+### 38.1 How to read the table
+
+Each correction is appended to the line it corrects, so a reader of the old
+sentence meets the correction on the same line. In the old-text and new-text
+columns a citation is written as "file line N", not in citation form, so this
+record is not a second copy of the citation it corrects. The evidence column
+carries the checkable anchors.
+
+### 38.2 The corrections
+
+| census | location | old text | new text (appended; the old words stay) | evidence |
+| --- | --- | --- | --- | --- |
+| census-trips | §68.1 fact 1, lines 7480 and 7485 | "Production carries 2420 and nothing after it in the kernel chain. … 2450, 2500 and 2590 are absent, which is why production's trip_kernel_execute is the plan-family-only one." Written 2026-09-15; true then. | Line 7480: "SUPERSEDED 2026-09-16, corrected 2026-09-27: true when measured; the same file now records 2450, 2500 and 2590 as applied (end of this fact)." Line 7485: the three are recorded as applied on 2026-09-16 (versions 20260916202751, 20260916203101 and 20260916203224), the same evening as 2760–2795, with the 2796 repair at 2026-09-17 03:10. "Plan-family-only" no longer follows from the file. The thirteen rows are still gated by trip_kernel_enabled, which fact 2 and §75.1 record as FALSE. | `artifacts/api-server/src/lib/capability/production-applied-migrations.json:291#2450_trip_kernel_trip_and_participant_families`, `:295#2500_trip_kernel_join_via_link_and_host`, `:299#2590_trip_kernel_add_plan_attachment_columns`. The file at a97bfdac0 holds none of the three; 8b0bb1f09 (2026-09-17) added them. |
+| census-trips | §69.1, lines 7778 and 7784 | "Of the 181, 168 are absent from [the ledger] and 13 are 2420 itself, which IS applied", and "anyone can re-derive the three numbers (181 / 168 / 13)". Measured 2026-09-15; true then. | Line 7778: the 168 are no longer absent. Re-run over the same 181 references, all 168 are recorded as applied. They name 24 migrations, 2760 to 2794, stamped 2026-09-16 between 20:14 and 21:01 UTC. The rows stay W on the two flags. Line 7784: "Re-run on 2026-09-27, the same loop yields 181 / 0 / 13." | Re-derived here from §68.2's table. Taking the distinct migration numbers in each row, range endpoints included, gives exactly 181 references and exactly 13 of 2420, so that is the rule §69.1 used. None of the other 168 is absent today. `artifacts/api-server/src/lib/capability/production-applied-migrations.json:307#2760_trip_stages` (version 20260916201420) to `:443#2794_trip_meeting_checkpoints` (20260916210038). |
+| census-trips | §73.1, line 8583 | "parsed in full it carries 34 migrations at or above 2410, and not one of 2760-2795 is among them. 2450, 2500 and 2590 are absent too". Written 2026-09-15; true then. | Today the file carries 101 migrations at or above 2410, including every one of 2760–2795, stamped 2026-09-16 between 20:14 and 21:01 UTC. 2450, 2500 and 2590 were applied the same evening, and the 2796 repair at 2026-09-17 03:10. The apply that the paragraph says the branch may not perform has been performed, and those rows now wait on the two flags. No verdict moves and no class is re-derived. | Counted: at d7bab3f6e, the commit that wrote the sentence, the file has 51 entries, 34 of them at or above 2410; at HEAD it has 129 and 101. `artifacts/api-server/src/lib/capability/production-applied-migrations.json:447#2795_trip_kernel_write_guards` (20260916210136), `:451#2796_trip_reservation_history_security_definer` (20260917031001). |
+| census-trips | §74.1, line 8836 | "not one of 2760-2795 appears in it". Written 2026-09-16 at a97bfdac0; true there. | "true at a97bfdac0: every one of 2760–2795 now appears in that file, stamped 2026-09-16 between 20:14 and 21:01 UTC, and 2796 at 2026-09-17 03:10 … the two flags, both FALSE …, are what the W rows wait on. No verdict moves." | The file at a97bfdac0 holds none of 2760–2796, and none of 2450, 2500 or 2590. At HEAD all 37 of 2760–2796 are present. |
+| census-input-intelligence | G359, line 1055, in §52's table. G359's last statement is line 3057 (W), which was not edited. | "the one new duplicate inside the platform is still there: compassPrompt.ts re-implements the Compass starter set client-side under the same name as the server's buildCompassStarters (projection.ts line 258), and app/(tabs)/ai.tsx line 399 calls the client one." | A dated correction after that sentence, in italics. The clause was true when first written, on 2026-09-09. It has been false since e0d858f28 (2026-09-20, census-compass CG-01), and was already false when 2c95647f1 re-verified it on 2026-09-21. The client module keeps only an adapter over the server's rows. The screen feeds CompassStarters from the gateway at ai.tsx line 413, and line 399 is a closing bracket. The server's builder is now at projection.ts line 346. The W never rested on the duplicate alone: the unmigrated engines G6 names and the missing ratchet both still hold. | `travel-buddy-standalone/src/platform/input-assistance/compass/compassPrompt.ts:33#export function startersFromSuggestions` is the module's first function, and the module has no builder; its own suite asserts that the source does not contain buildCompassStarters. The call site is `travel-buddy-standalone/app/(tabs)/ai.tsx:413#starters={startersFromSuggestions(starterAssist.suggestions)}`. At 42aeac38e, ai.tsx line 399 read starters={buildCompassStarters(…)}. For the W: useGooglePlacesAutocomplete, usePlaceSearch and MentionInput still exist outside the platform, and no check in the server's or the client's scripts fails on a new engine (the two input scripts there measure and report). |
+| census-sensing | §22.1 (S92), line 4835 | "the scheduler is started from [index.ts line 58, anchor 'import']". Right when written on 2026-09-26 at d7312709d. | The citation now reads index.ts line 59, anchored on startMemoryProjectionScheduler (its import), and adds the call at line 185. The old anchor stays in a "was" note, which says that dbf804b9f added a line above it the same day, and that line 58 is now registerScopedTrustApplier's import. | `artifacts/api-server/src/index.ts:59#startMemoryProjectionScheduler`, `:185#startMemoryProjectionScheduler();`. At d7312709d the import was at line 58; at dbf804b9f it is at 59. See §38.3 for why the anchor names the import. |
+| census-discovery | §37.1 (the travel term's provenance), lines 4908 and 4913 | "landsideLeg is the port; LAYOVER_TRAVEL_TIME_PROVIDER is noRoutedProvider, so every answer is { minutes: null, source: "unmeasured", reason: "NO_ROUTED_PROVIDER" } at zero I/O cost." Written 2026-09-15; true then. | Line 4908 marks the clause "true when written; corrected 2026-09-27 at the end of this paragraph". Line 4913: since 74890f906 (2026-09-22) the constant is corridorTravelTimeProvider(googleRoutesCorridorProvider). The corridor provider refuses before it builds any request unless LAYOVER_ROUTED_CORRIDOR_ENABLED is affirmative and GOOGLE_MAPS_API_KEY is present. The adapter reports that refusal as NO_ROUTED_PROVIDER, so with either switch unset every answer is still the unmeasured one, plus a detail field. This correction read the code, not any deployment's environment. | `artifacts/api-server/src/services/airport/LayoverTravelTime.ts:83#export const LAYOVER_TRAVEL_TIME_PROVIDER: TravelTimeProvider = corridorTravelTimeProvider(googleRoutesCorridorProvider);`. The two gates come in this order, before the request body: `artifacts/api-server/src/lib/providers/googleRoutesCorridorProvider.ts:259#const notEnabled` then `:261#noKey`. The refusal's mapping is at `artifacts/api-server/src/lib/providers/corridorTravelTimeAdapter.ts:128#PROVIDER_NOT_ENABLED: "NO_ROUTED_PROVIDER",`. landsideLeg passes the reason and detail through unchanged. |
+| census-discovery | A14 row, line 4966, A14's last statement (W) | "because LAYOVER_TRAVEL_TIME_PROVIDER is noRoutedProvider and no dwell source exists for a place nobody has planned." Written 2026-09-15; true then. | A dated correction after that sentence, in italics, verdict unmoved. Since 74890f906 the constant is the corridor adapter. It answers NO_ROUTED_PROVIDER unless both switches are set, so with either unset the admitted set is unchanged. And with no dwell source either way, a place nobody has planned still cannot be admitted. | `artifacts/api-server/src/services/airport/LayoverTravelTime.ts:83#export const LAYOVER_TRAVEL_TIME_PROVIDER`. The dwell half was re-checked: §37.1's grep for typicalDuration, visit_duration, dwell_minutes and expectedDuration still finds nothing under the server's src. The clause's conclusion, that unplanned places are not admitted, holds on the dwell source alone. |
+| census-passport | P87 row, line 348 | "app/(tabs)/ai.tsx lines 98-104 consumes prefillMessage and sends it." Right at 42aeac38e. | "(corrected 2026-09-27, verdict unmoved: 98–104 was right at 42aeac38e; e0d858f28 moved the effect 14 lines down, to [ai.tsx lines 112-118])" | `travel-buddy-standalone/app/(tabs)/ai.tsx:112-118#if (!prefillMessage`. Line 112 is the guard and line 118 is the send. At 42aeac38e the same two lines were 98 and 104. |
+| census-passport | P168 row, line 516 | "Compass (SharedContextScreen.tsx line 217 → app/(tabs)/ai.tsx line 104)" | "…, now [ai.tsx line 118] after e0d858f28 moved it 14 lines down; corrected 2026-09-27, verdict unmoved" | `travel-buddy-standalone/app/(tabs)/ai.tsx:118#send(prefillMessage,`. |
+| census-wall | W118 row, line 380 | "(imported 41-45)" | "; corrected 2026-09-27, verdict unmoved: the block is at [WallCandidateLoaders.ts lines 42-46] and closes at [line 46], where it already was at 42aeac38e, the earliest commit this row exists at" | `artifacts/api-server/src/services/wall/WallCandidateLoaders.ts:42-46#import {` and `artifacts/api-server/src/services/wall/WallCandidateLoaders.ts:46#} from "../media/MediaProjectionService.js";`. So 41–45 was one line off at every commit this row can be read at; it did not drift. loadVideoMediaCandidates (line 538) still calls resolveViewer, loadEligibleCandidates and projectCandidatesProtected, so the C holds. |
+| census-passport | §19.3, line 1887 | "Whether the ruling moves P45 from W is a re-measurement, and a re-measurement is not what a correction section may do." Wrong when written: §16.1 had recorded C since 2026-09-14. | "(Corrected 2026-09-27, no letter moved: this sentence lags its own census. P45's last statement is §16.1's row, which records C, moved W → C on 2026-09-14 and corrected in place on 2026-09-22 with the verdict unmoved, so the ruling had no W to move P45 from. It made P45's explainability clause stricter; P50 and P154 stay W on the band.)" | census-passport line 1406 is P45's last statement. The integrity dump reads it as C there, and reads P50 (line 1447) and P154 (line 1454) as W. §32.15's P45 paragraph says the same. The 2026-09-22 passport ledger note lags in the same way; the ledger was not edited. |
+
+### 38.3 Every new anchor, seen red
+
+Each new anchor was moved by one line and `check:doc-citations` was run. The
+file was then restored, and its sha256 was compared with the original; all
+matched.
+
+| mutation | result |
+| --- | --- |
+| the eight census-trips anchors into the JSON (three on line 7485, two on 7778, three on 8583), full and inherited, each +1 | **RED**, each |
+| compassPrompt.ts 33 → 34; projection.ts 346 → 347 | **RED**, each |
+| LayoverTravelTime.ts 83 → 84, on line 4913 and on line 4966 | **RED**, each |
+| WallCandidateLoaders.ts 42-46 → 43-46; 46 → 47 | **RED**, each |
+| WallCandidateLoaders.ts 42-46 → 41-46 | green: line 41 also holds "import {". The line-46 anchor is what pins the block. |
+| index.ts 59 → 60, first version | **green**. The anchor was first the whole import line. Its first word, "import", is on line 60 too, and the whole-anchor pass skips this path, because a snapshot copy under files/ ends in the same path. The anchor was changed to name the import. |
+| index.ts 59 → 60, final version; 185 → 186 | **RED**, each |
+| ai.tsx 413 → 414; 112-118 → 113-118; 118 → 119 | **green**, each. See §38.4 item 1. |
+
+### 38.4 Found while doing it — recorded, not fixed
+
+1. **The citation guards cannot see an Expo route-group path.** *(Closed in §38.7.)*
+   - The shared citation grammar (CITATION_RE in check-doc-citations.mjs,
+     which check:citation-targets and check:citation-symbols also use) allows
+     no parenthesis in a path segment. So a citation into (tabs) is matched by
+     no pass: it is not counted, not checked and not reported.
+   - Scope coverage does resolve it, because its CITE_RE admits parentheses.
+     But it checks an anchor only when there are several candidate files, and
+     a full standalone path has one.
+   - Before this lane, docs/architecture held 37 backticked citations of that
+     shape, 14 of them anchored. This lane adds six, all anchored. None of them
+     is verified by any check; the three green mutations above show it.
+   - The fix belongs to the owner of check-doc-citations.mjs: admit "(" and ")"
+     in a path segment, then re-measure the floors.
+2. **census-trips §69.1's TR128 bullet** *(corrected in §38.8)* says the TravelTimeProvider port has
+   "no second implementation". A Google Routes adapter for that port now exists
+   in the Trips contracts directory (GoogleRoutesTravelTimeProvider). Its own
+   header says "PREPARED, NOT WIRED", and the Trips seams still bind the
+   straight-line provider. The same header's list of seams also still says the
+   Layover constant is noRoutedProvider. The NEITHER class that §68.2 gives
+   TR128, TR267, TR341 and TR412 ("a subsystem nobody has written") may need
+   re-reading. No verdict is implied here.
+3. **census-discovery states the same stale fact in two more places.** *(Corrected in §38.8.)* §37.5
+   item 1 (line 4970) names the one line to change, and it has changed.
+   §39.6 (line 5290) says the constant is "unchanged and still the
+   no-routed-provider one". Both were right on 2026-09-15. Neither was on this
+   lane's list, so both stay byte-identical.
+4. **census-input-intelligence G359** *(corrected in §38.8)* also says "Four pre-existing engines
+   remain unmigrated and live (G6)". G6's own row now counts three that are
+   live and ungated; the fourth runs only as a gated fallback. Not edited.
+
+### 38.5 Checks
+
+Run from `artifacts/api-server` on this branch, after the edits:
+- `check:doc-citations`: RESULT clean.
+- `check:citation-targets`: 165 / 165, at the ceiling and not above it.
+- `check:census-integrity`: PASSED, every headline unchanged.
+- `check:census-scope-coverage`: PASSED, all thirteen at 100 %.
+- `check:census-freshness`: PASSED, 0 STALE; this lane changed no watched file.
+- `check:census-row-move-labels`: PASSED.
+
+### 38.6 Cited, not graded (check:census-scope-coverage)
+
+- NOT-GRADED: artifacts/api-server/src/lib/capability/production-applied-migrations.json — cited in §38.2 only as evidence for four corrections to census-trips' prose (§68.1, §69.1, §73.1, §74.1); census-trips watches it and grades on it, and no MD row rests on what production has applied for the Trips chain.
+- NOT-GRADED: travel-buddy-standalone/app/(tabs)/ai.tsx — the Compass screen, cited in §38.2 only as evidence for the line corrections to census-input-intelligence G359 and census-passport P87 and P168; those censuses watch it, and no MD row grades the Compass tab.
+- NOT-GRADED: travel-buddy-standalone/src/platform/input-assistance/compass/compassPrompt.ts — cited in §38.2 only to show that the client starter builder G359 described is gone; census-input-intelligence watches and grades it, and no MD row does.
+- NOT-GRADED: artifacts/api-server/src/services/airport/LayoverTravelTime.ts — the Layover travel-time constant, cited in §38.2 only as evidence for census-discovery's A14 and §37.1 corrections; census-discovery watches it, and no MD row grades landside travel time.
+- NOT-GRADED: artifacts/api-server/src/lib/providers/googleRoutesCorridorProvider.ts — cited in §38.2 only for the order of its two refusal gates, as evidence for the census-discovery correction; no MD row grades a routing provider.
+- NOT-GRADED: artifacts/api-server/src/lib/providers/corridorTravelTimeAdapter.ts — cited in §38.2 only for how a corridor refusal becomes NO_ROUTED_PROVIDER, as evidence for the census-discovery correction; no MD row grades a routing adapter.
+
+### 38.7 Follow-up (integrator's request): the route-group hole, closed
+
+§38.4 item 1 found it: the shared citation grammar could not read a path
+through an Expo Router route group. So a citation of app/(tabs)/ai.tsx, line 399, was not counted,
+not checked and not reported, by any of the three citation guards. The
+integrator asked for the grammar to be fixed, for tests, for every newly
+failing citation to be fixed, and for no ratchet to be loosened.
+
+**Measured first.**
+- A path segment already admitted `[` and `]`. So `[id]`, `[slug]` and
+  `[...slug]` were already read: 112 bracketed-path citations before the change
+  and 112 after.
+- The gap was parentheses only. The new grammar reads 44 direct citations the
+  old one did not, in 11 covered documents; 20 of them are anchored. It also
+  binds 9 bare `:NNN` continuations on the same lines that had been orphans
+  (the orphan count fell from 1604 to 1595).
+
+**The fix**, in check-doc-citations.mjs, the file the other two guards import
+their grammar from:
+- A directory segment is now either an ordinary run of segment characters or
+  a whole parenthesised group followed by `/`. This is
+  `artifacts/api-server/scripts/check-doc-citations.mjs:386#const SEG`, and the
+  three path patterns (direct, bare path, whole anchor) use it.
+- A parenthesis is **not** a segment character. If it were, prose that opens a
+  parenthesis right before a path, and a markdown link, would swallow that
+  parenthesis into the path. Mutation MG5 below shows that this breaks the real corpus.
+- The edit is line-neutral: one line is extended and three are changed in
+  place. The explanation is appended at the end of the file. A first draft
+  inserted the comment above the grammar. That moved the file's own lines, and
+  the four anchored citations of it in census-discovery (lines 6049, 6051) and
+  census-input-intelligence (lines 2798, 2800) went red. Those were the only
+  failures the change produced, and none of those four lines was edited.
+
+**Every guard, after the fix.**
+
+| guard | before (874b6fca9) | after | ratchet |
+| --- | --- | --- | --- |
+| check:doc-citations, citations | 13,729 | 13,782 | — |
+| check:doc-citations, anchored | 7,374 | 7,394 | floor 3,381, not changed |
+| check:doc-citations, whole-anchor checkable | 7,251 | 7,270 | floor 3,193, not changed |
+| check:doc-citations, unanchored | 6,355 | 6,388 | ceiling 6,434, not changed and not exceeded |
+| check:doc-citations, failures | 0 | 0 | — |
+| check:citation-targets, judged; land on nothing | 2,884; 165 | 2,888; 165 | ceiling 165, not changed |
+| check:citation-symbols, judged; absent; misplaced | 121; 0; 34 | 121; 0; 34 | ceilings 0 and 34, not changed |
+
+**Newly failing citations: none.**
+- Every one of the 53 newly read citations resolves.
+- Every anchor among them holds, and no anchor holds in two files.
+- None is a single-line citation that citation-targets finds landing on
+  nothing.
+So no census line had to be repointed for the grammar. The three ai.tsx
+anchors that §38.3 showed green under a one-line move now go **RED**
+(mutations M26–M28).
+
+**What the fix does not do.** 24 of the 53 use the short path, such as
+app/(tabs)/ai.tsx. The repo root holds small mock copies at those paths: a
+114-line ai.tsx, a 110-line _layout.tsx, a 151-line passport.tsx, and 46-line
+and 214-line (auth) screens. So those citations have two candidate files.
+- check:doc-citations checks such an unanchored citation for range against
+  either candidate.
+- check:citation-targets and check:citation-symbols skip it as ambiguous.
+
+That is the treatment every path with a twin gets, as app/messages/[id].tsx
+already did, and it is not special to groups. Read against the standalone
+file, these newly read citations land on something that is not their
+evidence. None of them fails a guard, so none was edited here:
+- census-compass lines 128 and 883, at ai.tsx line 399: `})}`.
+- census-compass lines 131 and 171, at ai.tsx 98–104. The range now opens on
+  `setRefreshing(true);`; the effect is at 112–118.
+- census-compass line 129 and census-input-intelligence line 1065, at ai.tsx
+  398–410 and 60. These are off by a few lines (the assist bar opens at 403,
+  and useAiWritingAssist is at 61).
+- census-media line 989, at media.tsx 26. That line is the expo-router import;
+  the Gem import is line 27.
+- passport-certification line 53, at passport.tsx 709, 642 and 824: `>`,
+  `</View>` and `</Text>`.
+- census-media line 8959 (§32.15) quotes the stale G359 clause, with its
+  ai.tsx 399.
+- Already corrected on their own lines in §38.2: census-input-intelligence
+  line 1055, and census-passport lines 348 and 516.
+
+The rest were not judged here. mobile-reachability-ledger's three are pinned to
+a commit by that document's own declaration, and they stay pinned.
+
+**Tests**: 16 cases, appended to the end of the doc-citations suite
+(docCitations.test.ts, 43 tests before, 59 after), in four blocks:
+1. **Read** (6 cases): an unanchored route-group citation; an anchored one; a
+   `[id]` and a `[...slug]` segment inside nested groups; unbackticked prose; a
+   following bare `:NNN` that inherits the group file rather than the file
+   before it; a bare backticked group path that names the file for a
+   continuation.
+2. **Never** (3 cases): a prose parenthesis stays outside an ordinary path; a
+   group inside a parenthesised aside is read without the aside's own
+   parenthesis; a markdown link is not swallowed.
+3. **Checked** (5 cases), over a synthetic tree that holds a standalone file
+   and its root mock: a moved anchor; a whole anchor that is stale while its
+   first word holds; a range past the end of the file; a short path decided by
+   its anchor. Each is reported.
+4. **The other two guards** (2 cases): check:citation-targets and
+   check:citation-symbols, run as the CLI over a throwaway tree. One finds a
+   route-group citation on `})}`; the other finds an absent symbol and exits 1.
+
+Neither of those two guards had a suite of its own, which is why they are
+driven from this one.
+
+| mutation of the grammar (file restored, sha256 compared) | suite result |
+| --- | --- |
+| MG1 — all three patterns back to the old grammar | **RED**: 14 fail, which is all 13 read, checked and other-guard cases plus the third "never" case |
+| MG2 — the direct pattern only | **RED**: 12 fail |
+| MG3 — the bare-path pattern only | **RED**: the continuation case fails |
+| MG4 — the whole-anchor pattern only | **RED**: the stale whole-anchor case fails |
+| MG5 — the wrong fix: `(` and `)` added as segment characters | **RED**: 5 fail, which is the 3 "never" cases, the older `[id]` markdown-link case, and the real-corpus test |
+
+### 38.8 Follow-up: the four further stale statements, corrected
+
+Each correction was measured first. Each is line-neutral and dated, and no
+verdict moved: the `CENSUS_INTEGRITY_DUMP=ALL` listing is byte-identical to
+§38's. Every new anchor was moved by one line and went **RED** (M21–M25).
+
+| census or file | location | old text | new text (appended) | evidence |
+| --- | --- | --- | --- | --- |
+| census-trips | §69.1, the TR128 / TR267 / TR341 / TR412 bullet, line 7803 | "There is no second implementation. Holds, and NEITHER is the right class — a routed provider is an external service, not a file." Written 2026-09-15; true then. | The port has two more routed implementations. The Google Routes adapter in the Trips contracts (6c785f074, 2026-09-17) is PREPARED, NOT WIRED. The corridor adapter (74890f906, 2026-09-22) is wired into the Layover seam only, behind two switches. Every Trips seam still binds the straight-line provider, so the four rows stay W. The NEITHER reason as written no longer holds; reclassifying is not done here. | The anchors on that line: GoogleRoutesTravelTimeProvider.ts line 151 (its factory) and tripFeasibility.ts line 111 (the straight-line binding). Only its own suite imports the adapter, and that suite asserts no Trips or Layover seam imports it. TripFreedomProjection.ts line 45 and TripRouteChainProjection.ts line 42 bind the straight-line provider too. |
+| GoogleRoutesTravelTimeProvider.ts (a comment; no behaviour change) | header, lines 9 and 11 | Line 11: "LayoverTravelTime.ts, line 83 … = noRoutedProvider;". Line 9: "TripFreedomProjection.ts, line 44". | Line 11 now shows the constant as it reads, and says it read `= noRoutedProvider` until 74890f906, which wired the lib/providers corridor adapter rather than this file. Line 9 says 45 (was 44). | The seam lines were read at HEAD. The file's own suite passes (15 of 15). |
+| census-discovery | §37.5 item 1, line 4971 (the item begins on 4970) | "One line at LAYOVER_TRAVEL_TIME_PROVIDER and zero lines in Discovery; travelSource already reports "routed_port" the moment it exists." Written 2026-09-15. | The one line has been written, with zero lines in Discovery. A port answer still becomes "routed_port". What item 1 needs now is an owner's spend decision on the two switches, not code. | The anchors on that line: LayoverTravelTime.ts line 83, and discoveryLayoverTiming.ts lines 377–379, where a port answer becomes "routed_port". |
+| census-discovery | §39.6, line 5294 (the sentence begins on 5290) | "that port's provider constant is unchanged and still the no-routed-provider one … there is still no routed provider and no dwell source." Written 2026-09-15. | The constant is the corridor adapter over a Google Routes corridor provider, not a straight-line stand-in. It still answers NO_ROUTED_PROVIDER wherever either switch is unset. The gap stays narrowed but not closed: it waits on a spend decision rather than code, and there is still no dwell source. | As for A14 in §38.2; the dwell grep still finds nothing. |
+| census-input-intelligence | G359, line 1055 | "Four pre-existing engines remain unmigrated and live (G6)". True on 2026-09-09. | Measured: four remain unmigrated, but only three are live and ungated. useGooglePlacesAutocomplete and usePlaceSearch run under GlobalPlacePicker, and MentionInput runs on six surfaces. useSearchSuggestions has run only as the gated fallback since 1fe72289b (2026-09-15), as G6 records. | The anchor on that line is useGlobalSearchSuggestions.ts line 150 (the legacyEnabled gate). Its only direct caller is at line 154. All four hooks still carry their own timer and abort controller. |
+
+**Stopped on nothing. One question is flagged and not answered.** TR128, TR267,
+TR341 and TR412 are W, and they stay W. Their §68.2 class is NEITHER ("a
+subsystem nobody has written"). That class was a reading of the blocker, not a
+verdict, and the blocker now reads as a wiring change plus an owner's spend
+decision, which is closer to BOTH. Moving four rows between classes changes
+§69.2's and §73.1's restated distribution, OWNER 102 · BOTH 20 · BRANCH 0 ·
+NEITHER 5. That is a reclassification for census-trips' next pass, and this
+lane did not make it.
+
+### 38.9 Checks, after the follow-up
+
+- check:doc-citations: RESULT clean. It reads 13,788 citations, 7,400 of them anchored and all
+  holding, and 6,388 unanchored (ceiling 6,434).
+- check:citation-targets: 165 / 165.
+- check:citation-symbols: PASSED (121 judged; 0 absent; 34 misplaced).
+- check:census-integrity: PASSED, with every headline unchanged. The
+  `CENSUS_INTEGRITY_DUMP=ALL` listing is byte-identical to the one taken
+  before §38.
+- check:census-scope-coverage: PASSED, all thirteen at 100 %.
+- check:census-freshness: PASSED, 0 STALE. The Trips adapter's header changed.
+  census-trips watches that file, and it is already named in census-trips'
+  acknowledgement.
+- check:census-row-move-labels: PASSED.
+- The doc-citations suite passes 59 of 59.
+
+### 38.10 Files changed by the follow-up
+
+| file | change |
+| --- | --- |
+| artifacts/api-server/scripts/check-doc-citations.mjs | the route-group grammar (line-neutral), and its explanation at the end of the file |
+| artifacts/api-server/src/test/docCitations.test.ts | 16 cases, appended |
+| artifacts/api-server/src/domain/trips/contracts/GoogleRoutesTravelTimeProvider.ts | header comment, lines 9 and 11 (line-neutral) |
+| docs/architecture/census-trips.md | line 7803 |
+| docs/architecture/census-discovery.md | lines 4971 and 5294 |
+| docs/architecture/census-input-intelligence.md | line 1055 (a second correction on the same row) |
+| docs/architecture/census-media.md | §38.4's four items marked closed or corrected (line-neutral), and §38.7 to §38.10 |
+
+## 35. Lane I — the media → intelligence boundary: what was unbuilt, what waits on a decision, and the questions that decide it — 2026-09-27
+
+**Scope.** Ten rows: MD37, MD53, MD58, MD65, MD66, MD71, MD162, MD197,
+MD370 and MD445. Branch `lane-i-intel`, cut from
+`claude/sensing-completion-20260925` at `e9e0b0404`.
+
+**The rule this lane worked under.** Most of these rows wait on MD65, which
+§20.6 records as an owner SAFETY decision. Building any part of that decision
+"behind a flag" would still fix its shape before the owner has chosen it. So
+this lane:
+- wrote no `intel_observations`, `intel_evidence` or claim row from media;
+- resolved no other account's rotating contributor token;
+- widened no disclosure of anyone's content;
+- applied nothing to any database, pressed no flag, and authored no migration.
+  Numbers 3345–3349 were assigned and are unused, for the reason in §35.3.
+
+**No row moves.** The ten are restated in §35.5 with the RED WHEN each still
+needs. Each is split into IMPLEMENTATION, DECISION and EXTERNAL VERIFICATION.
+
+### 35.1 Re-read before building — what the tree already says
+
+Four facts change the questions the owner is asked. Each was checked against
+the code, not the census sentence.
+
+1. **Media already reaches intelligence in two dark places outside Media. A
+   third place, Media's own, has no caller.** None of the three writes an
+   observation from media, so MD65's RED WHEN is not met.
+   - **The §22 map path.** It stores a photo as EVIDENCE bolted to an
+     observation the same person just made. The server's ruling is that
+     "a photo is evidence, not a claim"
+     (`artifacts/api-server/src/routes/mapObservations.ts:371#a photo is evidence, not a claim`).
+     The client now wires the prompt
+     (`travel-buddy-standalone/app/map/index.tsx:2905#onRequestMedia={requestContributionMedia}`).
+     Two flags gate it, `map_contributions_enabled` and
+     `intel_capture_quick_signal`, plus intel consent
+     (`artifacts/api-server/src/lib/intelEvidenceCapture.ts:210#if (!(await hasValidIntelConsent(sc, actorId))) return reject("consent_required");`).
+   - **The presence receipt (P3).** It reads a media asset the actor owns as
+     presence evidence for their observation. It holds only for a §35-eligible
+     asset
+     (`artifacts/api-server/src/services/intel/PresenceVerifier.ts:438#if (!isEvidenceEligible({ ...(asset as any), now: nowMs })) return refuse("ineligible");`),
+     behind `intel_presence_verification_enabled`.
+   - **Media's own seam.** `linkMediaEvidence` still has no caller
+     (`artifacts/api-server/src/lib/media/mediaEvidenceLink.ts:119#export async function linkMediaEvidence(`).
+     Its read half already feeds confidence when `media_evidence_enabled` is on
+     (`artifacts/api-server/src/lib/intelProjectionAggregator.ts:111#evidenceQuality: ev.hasEvidence ? 0.8 : 0.3,`).
+
+   So the MD65 decision is not a blank page. The Sensing and Map lanes have
+   already answered part of it for the map, and §35.4 asks whether Media
+   follows that answer.
+
+2. **The seam-state note is stale on three of its five gaps.**
+   `docs/map/media-evidence-seam-state-20260903.md:50#The §22 media prompt is not reachable in the UI.`
+   and its gaps 2 and 3 no longer hold:
+   - the prompt is mounted;
+   - the map uploads through `POST /media/upload`;
+   - the server accepts media evidence that carries an `observationId`.
+
+   Gaps 4 and 5 still hold: nothing writes a `media_attachments` row of type
+   `observation`, and no Moment, Highlight or Postcard surface produces an
+   observation. The note is outside this lane and was not edited.
+
+3. **The `'user'` in `media_assets.source_type` comes from the writer, not the
+   table.** §20.6's MD37 cell blames 0191's column default
+   (`artifacts/api-server/src/migrations/0191_media_assets.sql:28#DEFAULT 'user'`).
+   In fact the writer sent `'user'` itself, through its own `?? "user"`, and
+   no writer in this tree omits the column. The W stands; only the mechanism
+   in that cell was wrong.
+
+4. **Migration 2250 states an intention nothing carries out.** Its CHECK comment
+   says the legacy value "Maps to library/community"
+   (`artifacts/api-server/src/migrations/2250_media_asset_canonical_model.sql:105#Maps to library/community.`).
+   No code maps it. The §35 classifier treats `'user'` as NOT evidence-eligible,
+   and the ranker ranks it `unknown`. The owner question in §35.4 (MD37) has to
+   settle which of the two is right.
+
+### 35.2 What was built — the parts no decision governs
+
+**A. MD37: every `media_assets` writer now states its §6 source.**
+
+§6 lists eight names and settles, for no writer in this tree, which one an
+ordinary upload is. The upload route receives bytes and a Content-Type, never
+"camera" or "library". So nothing here chooses a value. What was built is the
+part that needs no choice:
+- **A named value for "not declared".** `MEDIA_SOURCE_UNDECLARED` is the
+  existing `'user'` under a name, so every writer that has not been told its
+  source says so where it writes
+  (`artifacts/api-server/src/lib/media/mediaEvidenceEligibility.ts:674#export const MEDIA_SOURCE_UNDECLARED = "user" as const satisfies MediaSourceType;`).
+  The eight are listed once, beside it
+  (`artifacts/api-server/src/lib/media/mediaEvidenceEligibility.ts:646#export const SPEC_MEDIA_SOURCE_TYPES = [`).
+- **The writer's fallback is that name, not a bare literal**
+  (`artifacts/api-server/src/lib/mediaAssets.ts:386#source_type: input.sourceType ?? MEDIA_SOURCE_UNDECLARED,`).
+  The input types narrow from `string` to the §6 union plus the legacy value,
+  so a misspelt source no longer compiles.
+- **Every writer states its source.** The table below lists each one. Every
+  edit is line-neutral: an existing line was extended, so no citation moved.
+
+| Writer | What it writes | Stated source |
+| --- | --- | --- |
+| upload route | the uploaded file | undeclared — `artifacts/api-server/src/routes/posts.ts:258#ownerUserId: user.id, sourceType: MEDIA_SOURCE_UNDECLARED,` |
+| postcard auto-create | the post's first ready file | undeclared — `artifacts/api-server/src/routes/postcards.ts:1127#isCover: true, sourceType: MEDIA_SOURCE_UNDECLARED,` |
+| memory create | the memory's photo | undeclared — `artifacts/api-server/src/services/passport/PassportMemoryService.ts:142#isCover: true, sourceType: MEDIA_SOURCE_UNDECLARED,` |
+| post attachments | each file of a new post | undeclared — `artifacts/api-server/src/lib/mediaAssets.ts:1089#isCover: i === 0, sourceType: MEDIA_SOURCE_UNDECLARED,` |
+| gem submit | the gem's photo | `community`, unchanged — `artifacts/api-server/src/services/hiddenGems/HiddenGemService.ts:197#sourceType: "community",` |
+| backfill script | twelve legacy sources undeclared; event media and gem photos `community` | the default parameter is removed, so every call states its source — `artifacts/api-server/src/scripts/backfill-media-assets.ts:33#async function upsertAsset(owner: string, publicUrl: string, sourceType: MediaSourceType)` |
+
+**No stored value changes.** Every writer stores exactly what it stored before.
+
+**The guard** is `artifacts/api-server/src/test/mediaAssetSourceDeclared.test.ts`
+(13 cases). It reads the TypeScript AST of `src/`, with tests excluded and
+scripts included. It fails when:
+- a canonical writer call omits `sourceType`, passes a bare `"user"`, or passes
+  a computed value;
+- a new code path INSERTs or UPSERTs a `media_assets` row;
+- anything UPDATEs `source_type`, including through the versioned patch;
+- the undeclared sites differ from the pinned inventory
+  (`artifacts/api-server/src/test/mediaAssetSourceDeclared.test.ts:213#const UNDECLARED_INVENTORY`).
+  That inventory is the owner's decision list: five sites, one of them twelve
+  backfill calls.
+- the sentinel stops being storable, becomes one of the eight, becomes
+  evidence-eligible, or ranks `authentic`
+  (`artifacts/api-server/src/test/mediaAssetSourceDeclared.test.ts:394#it("the sentinel is not one of the eight, is not evidence-eligible, and does not rank as authentic"`).
+
+It also pins the eight against the spec text and against 2250's CHECK. Each
+check has a control that fails if the scan found nothing.
+
+**B. MD197's boundary: the reputation route no longer resolves another
+account's rotating tokens.** This is a privacy fix, found while checking the
+boundary.
+
+What was wrong:
+- `GET /v1/media/contributors/:contributorId/reputation` took any account id
+  and any place id from the caller and returned that account's §25 reputation.
+- Computing it runs 3310's account-to-tokens bridge for the NAMED account
+  (`artifacts/api-server/src/services/media/MediaContributorReputationService.ts:63#const identities = await readOwnContributorIdentities(sc, scope.contributorId);`).
+- The bridge's contract is that the caller's authorization already
+  established the account id
+  (`artifacts/api-server/src/lib/intelConsent.ts:481#Runs in the safe direction only — the caller must already hold the account id,`).
+  The route established nothing.
+- `placeExpertise` is min(accepted observations at the place, 8) / 8
+  (`artifacts/api-server/src/lib/mediaContributorReputation.ts:115#export function placeExpertise(placeAccepted: number): number {`).
+- So any signed-in user could read how many accepted reports a named person
+  had made AT A NAMED PLACE: where that person has been.
+- The server route reads no flag. Only the client chip is gated, by
+  `media_request_a_view_enabled`.
+- This is the exact use of the bridge that MD197's blocker forbids the ranker.
+
+The fix: the route now answers only for the caller's own account
+(`artifacts/api-server/src/routes/mediaViewRequest.ts:176#if (contributorId.data !== auth.user.id) {`).
+It refuses before any identity RPC and before any contribution row is read.
+
+Proved over HTTP through the real router, `requireUser` and the real service
+(`artifacts/api-server/src/test/mediaContributorReputationSelfOnly.test.ts:154#it("another account's reputation is refused, and nothing about that account is resolved or read"`).
+A CONTROL shows the other account's count really is in the data
+(`artifacts/api-server/src/test/mediaContributorReputationSelfOnly.test.ts:148#it("CONTROL: the data the old route disclosed is really there`).
+
+What it changes for a person:
+- The perspective viewer's trust chips
+  (`travel-buddy-standalone/src/features/media/screens/MediaPerspectiveViewerScreen.tsx:529#<ContributorTrustChips contributorId={contributor.id} subjectId={placeId} />`)
+  now render nothing for anyone but the viewer. That is the component's own
+  degrade contract, and the chip is flag-dark today.
+- Whether others may see a contributor's §25 trust is §35.4's MD197 question.
+  One word from the owner, and the authorization they choose, reopens it.
+
+**For the integrator.** MD205, MD206, MD207 and MD450 are graded C on the §25
+dimensions being COMPUTED. They are not this lane's rows and are not restated.
+Read them against this change, because the dimensions are now served to their
+subject only.
+
+### 35.3 What was deliberately not built, and why each would decide something
+
+- **MD71 — a pure function for "live" freshness.** It cannot be defined
+  without a claim.
+  - The media side caps at `fresh`, on purpose
+    (`artifacts/api-server/src/lib/media/mediaFreshness.ts:4#It caps at 'fresh'`).
+  - §48 gives freshness to Live Intelligence, and §39 forbids presenting
+    anything cached as live.
+  - A `live` derived from age alone would manufacture a live label from a raw
+    photo. A `live` derived from "backs a live claim" needs the evidence link
+    MD65 decides, and choosing to label the PHOTO rather than the claim is
+    itself part of that decision.
+- **MD162 — the zone-naming join.** The gateway guard would not stop a read
+  of `geo_zones` names by id, because it guards reader functions, not tables.
+  But the join would still decide something:
+  - The zone model is the gateway's alone
+    (`artifacts/api-server/src/routes/mapProjection.ts:91#THE ZONE MODEL IS THIS ROUTE'S JOB, AND ONLY THIS ROUTE'S.`).
+  - The place-to-zone association the pairing needs already exists INSIDE the
+    gateway and is not published
+    (`artifacts/api-server/src/routes/mapProjection.ts:900#const model = buildFlowZoneModel(zones, indexPlaceZones(placeRows, zones));`).
+  - A flow carries zone ids only
+    (`artifacts/api-server/src/lib/mapAggregation.ts:1250#export interface CrowdFlowPayload {`).
+  - Names alone would not meet the RED WHEN, and a Media-side zone read is the
+    second zone model the gateway exists to prevent.
+- **MD53 and MD58 — an observation ref, an evidence role or corroboration on
+  a served item.** Each needs a READ of `intel_evidence`.
+  - The Map lane's module records that such a read path needs a moderation
+    decision first.
+  - Worse, serving "this photo backs observation O" tells every viewer that
+    the photo's owner made observation O. That re-identifies a contribution
+    3002 tokenised, and every other contribution under the same weekly token.
+- **MD370 — `POST /media/:id/contribution`.** What a media contribution
+  CREATES is MD65's question: a §19 mission answer, a §16.3 gem observation or
+  a place perspective. An endpoint writing any one of them picks the answer.
+- **No migration.** Dropping 0191's `DEFAULT 'user'` would change nothing,
+  because every writer sends the column (§35.1 fact 3). And WHICH value lands
+  is the MD37 decision itself.
+
+### 35.4 The questions the owner must answer
+
+Each option says:
+- what it makes the system do to a real person's photo;
+- the consent it needs;
+- what it would cost to build, and where.
+
+**MD65 — may a photo or video published in Media become an input to Live
+Intelligence?** This decides MD53, MD58, MD65, MD66, MD370, MD445 and one
+branch of MD71.
+
+*Question 1, whether and how.*
+
+| Option | What it does to a person's photo | Rows it settles | Cost and files |
+| --- | --- | --- | --- |
+| Option 0 — never, in Media | Nothing changes. Media photos never inform intelligence; the Map path stays the only evidence path. | Settled by a spec amendment conceding §9's OBSERVATION → CLAIM stages and §49 Phase 5's second half for Media. The rows are recorded as deliberately not built. | Docs only: the spec and this census. |
+| Option A — evidence only, attached to a proposition the SAME person states at the same moment | The Map ruling, extended to Media. The person taps a §19 answer (Quiet / Moderate / Busy) or a §16.3 gem observation, and may attach one of their own photos. The TAP is the observation; the photo is stored beside it as evidence, never shown to others, and deleted with the observation's retention (180 days) or the account. | MD65, MD66, MD370 and MD445 can be met; MD53 and MD58 still need Question 5. | A Media contribution route in artifacts/api-server/src/routes/mediaActions.ts that calls the EXISTING capture service (services/intel/IntelCaptureService.ts) and then the existing seam (lib/media/mediaEvidenceLink.ts). The identity-safe evidence store of Question 3. The consent text of Question 2. The client sheet (MD28). Its flag seeded off. Tests. |
+| Option B — the photo itself is the observation | A model reads the pixels and proposes a state ("busy"). That is VISUAL INFERENCE presented as an observation, which §9 forbids calling fact. | Needs MD63's vision provider first. | External: a vendor, a data-protection review, and a decode tier for video. |
+
+*Question 2, consent.* The consent today is `intel_contribution_consent`.
+- The only text in force describes Quick Signals, not photos
+  (`travel-buddy-standalone/src/lib/sensing/consentDisclosure.ts:60#Your Quick Signals can be combined with reports from other travelers to show what a place is like right now.`).
+- Option A therefore needs one of these:
+  - **(a)** A new disclosure version naming photos: kept as evidence, not shown
+    to others, retained up to 180 days, erased with the account. It is
+    owner-approved copy, shipped with the server constant in one release, as
+    `sensing_contributions_v2` was prepared.
+  - **(b)** A per-contribution confirmation on the sheet, on top of the
+    standing consent.
+- With neither, a person who agreed to "Quick Signals" would have their
+  photos kept. §35.7 item 2 records that the Map path already does this.
+
+*Question 3, contributor identity under 3002.* Any link from an evidence row
+to the photo re-identifies the contributor.
+- The canonical asset carries `owner_user_id`.
+- The storage key carries the account id in its first segment
+  (`artifacts/api-server/src/routes/posts.ts:210#const basePath =`).
+- So `intel_evidence.media_asset_id` or a storage-key `reference` turns a
+  tokenised observation back into an account. By extension it does the same
+  for every observation that account made under the same weekly token.
+
+The options:
+- **(i)** Accept it, and record it as a "verify" purpose alongside the tables
+  3002 already leaves account-linked
+  (`artifacts/api-server/src/migrations/3002_intel_contribution_identity.sql:103#c) Tables OUTSIDE this migration's scope still bridge an observation to an`).
+- **(ii)** Store an UNLINKABLE copy.
+  - How: re-encode the bytes into an evidence bucket under a random key with
+    no owner segment, and keep no `media_asset_id`.
+  - Erasure: `erase_intel_for_actor` already derives every live token for an
+    account, so it can find the copy by its token-keyed row.
+  - Cost: a migration (bucket and column), a copy step in the contribution
+    route, the erasure path, and tests.
+- **(iii)** Keep no bytes. Record only that a photo was attached. That is
+  useless for review or moderation.
+
+*Question 4, claim vocabulary.* Under Option A the photo backs only claim
+types that already exist
+(`artifacts/api-server/src/lib/intelContracts.ts:467#export const PHASE1_CLAIM_TYPES`):
+the §19 buttons map to `crowd.level`. §16.3's nine gem observations live in
+`hidden_gem_contributions`, which is keyed by account and is not the intel
+store, so a gem photo is attached to that store instead. The owner answers
+two things:
+- whether a photo may back `queue.wait`, `access.walk_in`, `vibe.state`,
+  `closure.state` or `event.status` too;
+- whether a media-only claim type such as "visual current" may ever exist. The
+  Sensing ruling says no, because a photo asserts no proposition.
+
+*Question 5, what linked evidence may DO.*
+- **Confidence.** With `media_evidence_enabled` on, a linked eligible photo
+  lifts evidence quality from 0.3 to 0.8. That is a one-tap confidence boost
+  for unmoderated media unless a moderation step exists first.
+- **Visibility.** May a viewer be told that a photo backs an observation
+  (MD53, MD58)? Doing so re-identifies the contribution (§35.3).
+
+The possible answers:
+- evidence counts toward confidence only after moderation;
+- evidence never counts, and is audit only;
+- evidence refs are shown only to the photo's owner.
+
+**MD197 — may Media resolve another account's contributor tokens, to rank
+their media (§24 Contribution Value) or to show their §25 trust?**
+- **Today:** neither happens. The ranker scores Contribution Value as marginal
+  coverage, and §35.2 B closed the display route.
+- **Real-person effect:** any "yes" computes, per viewer and per page, a
+  summary of where and how often a named person reported.
+
+| Option | What it does | Consent | Cost and files |
+| --- | --- | --- | --- |
+| Option 0 — no | Contribution Value stays marginal coverage (lib/mediaRankingSignals.ts), and §25 trust is shown to its subject only. MD197 is settled by conceding §14.4's reputation falsifier. | None. | Docs only. |
+| Option A — per request | The ranker and the display route resolve each author's tokens through 3310 on every request. | None exists that covers it. | About (authors per page × live epochs) sha256 calls per request. Files: services/media/MediaContributorReputationService.ts, the ranker stage, and the route. Recommended against: it is re-identification as a service. |
+| Option B — opt-in public trust band | A contributor chooses to show a coarse band (no per-place count). It is computed in THEIR OWN session (account → own tokens, the bridge's intended direction) and stored keyed by account, so the ranker and chips read it without touching a token. | A new explicit opt-in ("show my contribution trust to others"). | A migration (table plus flag, from this lane's range if assigned), the writer, a ranker term, the client toggle, and tests. |
+| Option C — k-gated band for consenting contributors | A job enumerates consenting accounts, as payee resolution already does, and publishes a band only when there are at least k contributions. | The intel consent text would have to say so. | As B, plus the job. |
+
+Whatever the answer, Place Expertise at a NAMED place should not be shown to
+others unless that person has already published media at that place to that
+viewer.
+
+**MD37 — which §6 source does an ordinary upload carry?** The five sites in
+§35.2 A are the list this answer changes.
+
+| Option | What it does to people's content | Cost and files |
+| --- | --- | --- |
+| Option 0 — a ninth value | §6 gains an "undeclared" member, and `'user'` is it. No photo changes eligibility or rank. MD37 is met by the amendment. | Spec and census; the sentinel keeps its value. |
+| Option A — declared at capture | The client says camera, library or screenshot, and the server records it. Camera and library photos become evidence-eligible (presence receipts can hold) and rank `authentic` (`artifacts/api-server/src/lib/mediaRankingSignals.ts:190#export function provenanceClassOf(row: MediaCandidateRow): ProvenanceClass {`). A client can lie, so the owner must also say whether a DECLARED camera is enough for evidence. | The client picker and upload (src/hooks/useMediaPicker.ts, services/media.ts), a form field on routes/posts.ts, and the five call sites. |
+| Option B — map `'user'` to library, as 2250's comment says | Every existing and future upload becomes evidence-eligible and `authentic` at once. That is a protection change across all content, and it also raises the ranker's provenance term from 0.5 to 1. | One constant. Its effect is not small. |
+| Option C — infer from EXIF | A heuristic: camera make present means camera. EXIF is spoofable and is stripped after reading. | `lib/exifFacts`, the upload route. |
+
+The owner is also asked to confirm two values already in the tree:
+- `community` for gem photos and event media. It is evidence-eligible, and
+  was chosen by an earlier lane, not by the spec.
+- The backfill leaves legacy rows `'user'`.
+
+**MD71 — may a photo be labelled `live`?**
+- **(a)** No. The spec concedes the cap at `fresh`, and MD71 is settled by
+  the amendment.
+- **(b)** Only when it backs a claim that is live now. This needs MD65 Option A
+  and Question 5's visibility answer, because the label discloses the link.
+- **(c)** By age alone. Recommended against: it contradicts §39.
+
+**MD162 — will the Map gateway publish, to consumers, the display name of
+each flow endpoint and the ids of the disclosed places inside each zone?**
+- **Yes:** Media pairs its perspectives with those place ids and renders §22.
+  The cost is the gateway's `crowd_flow` payload
+  (lib/mapAggregation.ts, routes/mapProjection.ts) plus a Media NOW-lens
+  consumer and its tests.
+- **No:** §22 is conceded.
+
+Either way the row also needs PRODUCTION DATA. A flow must clear
+`MIN_SIGNAL_FAMILIES` with `map_crowd_flow_enabled` on, and a photo can never
+be a signal family, because it declares no origin zone.
+
+### 35.5 Rows — restated, none moves
+
+| Row | Was | Now | IMPLEMENTATION | DECISION | EXTERNAL VERIFICATION |
+| --- | --- | --- | --- | --- | --- |
+| MD37 | **W** | **W** | Done on branch. Every writer states its source, and the guard pins them (`artifacts/api-server/src/test/mediaAssetSourceDeclared.test.ts:213#const UNDECLARED_INVENTORY`). Remaining: the value, at the five sites. | §35.4 MD37: which source an undeclared upload carries. RED WHEN unchanged: every write carries one of the eight. | None until the value is chosen. Then P1 (a production write reaching `media_assets`). |
+| MD53 | **W** | **W** | Nothing decision-free remains. The seam exists with no caller (`artifacts/api-server/src/lib/media/mediaEvidenceLink.ts:119#export async function linkMediaEvidence(`). | MD65 Options A, i/ii and 5. Serving the ref is a re-identification. | A production evidence row, once built and enabled. |
+| MD58 | **W** | **W** | Nothing decision-free remains. The served item's shape is `MediaProjection` (`artifacts/api-server/src/lib/media/mediaProjection.ts:100#export interface MediaProjection extends MediaProjectionLayers {`). | MD65 Question 5. | As MD53. |
+| MD65 | **W** | **W** | Nothing decision-free remains. The Map and presence paths are not Media's (§35.1). | MD65 Questions 1–4, a SAFETY decision. | The flag press and a production observation carrying media, after build. |
+| MD66 | **W** | **W** | Follows MD65. | MD65 Questions 4 and 5. | As MD65. |
+| MD71 | **W** | **W** | Deliberately not built (§35.3). | §35.4 MD71: (a) a spec concession, or (b) after MD65. | None for (a). |
+| MD162 | **N** | **N** | Deliberately not built (§35.3). The zone model stays the gateway's (`artifacts/api-server/src/routes/mapProjection.ts:91#THE ZONE MODEL IS THIS ROUTE'S JOB, AND ONLY THIS ROUTE'S.`). | §35.4 MD162: a Map-owner publishing decision. | A publishable flow in production: flags on and families above the floor. |
+| MD197 | **W** | **W** | The boundary is enforced on branch; the display route no longer resolves others' tokens (`artifacts/api-server/src/routes/mediaViewRequest.ts:176#if (contributorId.data !== auth.user.id) {`). The ranker term is deliberately not built. | §35.4 MD197. | None. |
+| MD370 | **W** | **W** | Deliberately not built (§35.3). | MD65 Question 1: what a contribution creates. | As MD65. |
+| MD445 | **W** | **W** | Follows MD65; qualification (its first half) is delivered. | MD65. | As MD65. |
+
+### 35.6 Mutations — each seen red, every file restored byte-identical (checked with `cmp`)
+
+| Mutation | File | What it did | Went red |
+| --- | --- | --- | --- |
+| mutation R1 | routes/mediaViewRequest.ts | self-only check disabled | another account's reputation refused |
+| mutation R2 | same | refuse only when a place is named | refused without a place too |
+| mutation R3 | same | resolve the account's tokens, then refuse | both refusal cases (an RPC was made) |
+| mutation S1 | routes/posts.ts | upload writer omits its source | explicit-source case and inventory |
+| mutation S2 | services/passport/PassportMemoryService.ts | bare `"user"` literal | explicit-source case and inventory |
+| mutation S3 | lib/media/mediaEvidenceEligibility.ts | sentinel becomes `"library"` | the eight-values case and sentinel case |
+| mutation S4 | scripts/backfill-media-assets.ts | default source parameter restored | backfill case |
+| mutation S5 | lib/mediaAssets.ts | writer fallback back to a bare literal | payload case |
+| mutation S6 | services/media/MediaModerationService.ts | versioned patch relabels `source_type` | no-relabel case |
+| mutation S7 | services/hiddenGems/HiddenGemService.ts | gem source `community` → `camera` | spec-valued inventory |
+| mutation S8 | lib/mediaVideoPoster.ts | a new direct INSERT on `media_assets` | only-two-inserters case |
+
+### 35.7 Found outside the rows — recorded, not fixed
+
+1. **The Map evidence path stores the account id beside a tokenised
+   observation.** It persists the storage key as `intel_evidence.reference`
+   (`artifacts/api-server/src/lib/intelEvidenceCapture.ts:183#return { ok: true, reference:`).
+   The key's first segment is the uploader's account id.
+   - 3002 tokenises `intel_evidence.actor_id`, but this column puts the account
+     back.
+   - Any observation with map media evidence resolves to its author, and so
+     does every observation under that author's weekly token.
+   - It is dark behind `map_contributions_enabled` and
+     `intel_capture_quick_signal`.
+   - Owner: the Sensing and Map lanes. It is the same identity question as
+     §35.4 MD65 Question 3.
+2. **The same path keeps a photo under a consent whose words name Quick
+   Signals only** (§35.4 MD65 Question 2). It accepts any valid intel consent,
+   and the only version in force is v1.
+3. **The seam-state note is stale** (§35.1 fact 2).
+4. **Client, after §35.2 B.** `ContributorTrustChips` still requests other
+   contributors' reputation. It now receives 403 and renders nothing, by
+   design. The client lane may stop asking, and should do so once MD197 is
+   answered either way.
+
+### 35.8 Production — nothing here is deployed
+
+BUILT ON BRANCH IS NOT MERGED. MERGED IS NOT DEPLOYED. No database was read or
+written, no flag was touched, and no migration was authored. The reputation
+route change takes effect only when this branch is merged and deployed. Whether
+the route is reachable in production today was not verified.
+
+### 35.9 Checks, and the stale files this lane leaves for the integrator
+
+All run on Node 24 at the lane's final tree.
+
+**Passing:**
+- typecheck: clean.
+- typecheck:tests: 863 diagnostics across 115 files, which is the baseline and
+  not above it.
+- check:doc-citations: clean. The UNANCHORED count is 6355, unchanged by this
+  section.
+- check:citation-targets: at the ceiling, 165 / 165.
+- check:census-integrity: passed. Media is 450 rows: C 401, W 37, N 12, all
+  unchanged.
+- check:census-scope-coverage: census-media is 343 / 343.
+- check:census-row-move-labels and check:test-registration: pass.
+- The touched and adjacent suites: 1168 / 1168.
+
+**Failing, as expected:**
+- check:all fails on the five live-DB checks.
+- check:census-freshness fails for the reason below.
+
+**Stale files.** check:census-freshness names these. The acknowledgement
+ledger is the integrator's, so each file is listed here with the one-line
+argument for why it cannot have moved a verdict.
+
+census-media, twelve files:
+- routes/mediaViewRequest.ts — §35.2 B. MD197 stays W. The dimensions MD205,
+  MD206, MD207 and MD450 grade are still computed, but are served to their
+  subject only; the integrator reads those four against it.
+- scripts/backfill-media-assets.ts — §35.2 A. Every call now states the source
+  it stored before; no stored value changes.
+- services/passport/PassportMemoryService.ts — the memory writer states the
+  source it stored before.
+- test/mediaAssetSourceDeclared.test.ts and
+  test/mediaContributorReputationSelfOnly.test.ts — new, the suites §35.5
+  cites.
+- lib/intelConsent.ts, lib/intelEvidenceCapture.ts,
+  lib/intelProjectionAggregator.ts, lib/mapAggregation.ts,
+  migrations/3002_intel_contribution_identity.sql, routes/mapObservations.ts
+  and the client's src/lib/sensing/consentDisclosure.ts — newly watched, not
+  edited here. Their changes before this lane were read against §35 when it
+  was written.
+
+census-passport and census-highlights-memories, one file:
+- services/passport/PassportMemoryService.ts — one line extended: the memory
+  photo's canonical fan-out now states its §6 source, the same `'user'` it
+  stored before. No memory, passport or visibility behaviour changes.
+
+### 35.10 Cited, not graded (check:census-scope-coverage)
+
+- NOT-GRADED: travel-buddy-standalone/app/map/index.tsx — the Map screen, cited once in §35.1 only to show that the §22 media prompt is now mounted, a Map-lane fact recorded as context for the owner's MD65 question; no MD row grades the Map screen, and the server path it reaches is watched here (routes/mapObservations.ts, lib/intelEvidenceCapture.ts).
+
+## 37. Lane V — the nine rows that wait on a vendor, a native build or a device — 2026-09-27
+
+Lane V of the 2026-09-27 pass, on branch `lane-v-vendor` from `e9e0b0404`. It
+owns the nine rows §28.9 filed under "a vendor, a native build or a device run":
+MD63, MD277, MD280, MD282 (N) and MD269, MD283, MD284 (W), plus MD289 and MD293,
+which §28.9 filed under "an owner definition" but which also need a vision
+provider. The owner's instruction for this pass was to complete every piece of
+accessible code, integration, native-build preparation and test, to attempt every
+available build and device run, and, where one is blocked, to name the exact
+missing access, vendor capability or device.
+
+**No verdict moves.** Each row now has its code finished up to one seam, and
+behind each seam is a capability this tree does not have: a vendor, a native
+module, a build, or a device. A seam whose default refuses is not the capability
+it waits for. So a row that was N stays N; §37.1 argues each row separately.
+**Nothing here is merged, deployed or flag-enabled. The four new flags are
+seeded FALSE and no database was touched.**
+
+### 37.1 The rows, restated — what is built, what flips it, what only the outside world can show
+
+| ID | Was | Now | Evidence and what remains |
+| --- | --- | --- | --- |
+| MD63 | N | **N** | IMPLEMENTATION, done up to the vendor. The EVIDENCE EXTRACTION stage now has an output type and exactly one constructor, `artifacts/api-server/src/lib/media/vendors/mediaVisionProvider.ts:169#export function deriveVisualEvidenceCandidates(`. It keeps a signal only for a media id the caller asked about, only in a closed vocabulary, and only with a confidence in [0, 1]. It stamps `verified: false` and `eligibleAsObservation: false` as literals, so no provider can promote an inference (`artifacts/api-server/src/lib/media/vendors/mediaVisionProvider.ts:155#verified: false;`). Its production caller is §38's "looks social" filter (MD289 below). The provider is the refusing default (`artifacts/api-server/src/lib/media/vendors/mediaVisionProvider.ts:117#export const REFUSING_VISION_PROVIDER`), and the table of implemented adapters is empty (`artifacts/api-server/src/lib/media/vendors/mediaVisionProvider.ts:126#export const IMPLEMENTED_VISION_PROVIDERS`). It stays N because no configuration of this tree reads a pixel for meaning: the seam is where an extractor goes, not an extractor. ACTIVATION: `media_vision_provider_enabled` (3355). EXTERNAL: a vision provider that returns a per-image scene or crowd estimate with a confidence, chosen and cleared by the owner (sending photographs to a model is a cost and data-protection decision); for video, a video-capable model or the stored poster frame. BLOCKER: no vision vendor chosen, so `MEDIA_VISION_PROVIDER` names nothing. |
+| MD269 | W | **W** | IMPLEMENTATION, mostly done. The §36 stage now has a decider, `artifacts/api-server/src/lib/media/vendors/mediaModerationClassifier.ts:164#export async function decidePreDistribution(`. With the stage on, every answer that is not a valid classifier verdict HOLDS the file: no classifier, an unsupported kind, a refusal, a throw, a timeout, or a malformed answer. The decider is wired at three points. **Postcard `/complete`:** `artifacts/api-server/src/routes/postcards.ts:978#await preDistributionPostMediaStatus(` — with the stage off it writes `approved` exactly as before, and a hold is `flagged`, never `pending`, because a READY `pending` row passes the post_media readers. **The canonical row of a `/media/upload`:** through MediaModerationService, from `artifacts/api-server/src/routes/posts.ts:273#await runMediaVendorIngest(sc,` into `artifacts/api-server/src/lib/media/vendors/mediaVendorStages.ts:116#export async function runMediaVendorIngest(`. There the row is HELD before the classifier is asked (`artifacts/api-server/src/lib/media/vendors/mediaVendorStages.ts:136#HOLD FIRST, then decide.`), so it is not distributable while a classifier decides. One residual window is left: lib/mediaAssets writes the row as `processing`, and the hold lands one round trip later. Closing it means the canonical writer choosing the initial state, a change for activation. **A general video's poster:** see MD283. With 3356 ON and no classifier, this IS the staffed hold the row offers as its operator alternative. New postcard files complete `flagged` and new canonical rows go `limited`, and the existing `POST /admin/media/:id/moderate` approve releases them. It stays W because two paths still distribute undecided. (a) A general (Pulse) post's legacy read path gates on `posts.post_status`, which an upload-time stage cannot reach. A hold there has to be composed with the delayed-publish states (`pending_location_exit`, `pending_delay`), and that needs an owner rule, not a guess. (b) `artifacts/api-server/src/routes/postcards.ts:196#.filter((r: any) => r.processing_status === 'ready')` counts a held file in `media_count` and can make it the passport cover URL (§37.6 item 1). ACTIVATION: 3356, the owner's decision that every new upload waits for a person until a classifier exists. EXTERNAL: a classifier vendor, or staffed review capacity. BLOCKER: (a) and (b), plus no classifier and no decision to staff a hold. |
+| MD277 | N | **N** | IMPLEMENTATION, done up to the vendor. The transcoder seam's refusing default is `artifacts/api-server/src/lib/media/vendors/mediaTranscoder.ts:81#export const REFUSING_TRANSCODER`. Each new video is submitted at ingestion (`artifacts/api-server/src/lib/media/vendors/mediaTranscoder.ts:134#export async function submitForTranscode(`). What "a ladder" must be before anything is served as adaptive is stated as code, `artifacts/api-server/src/lib/media/vendors/mediaTranscoder.ts:103#export function validateRenditionLadder(`: an https `.m3u8` or `.mpd` matching the claimed protocol, and at least two distinct rungs. NOT built, on purpose: the playback API and the player's source switch. How a private clip's manifest and segments are authorised is the vendor's model (signed per-viewer URLs, signed cookies, or segments proxied through mediaAccess), and a consumer built before its producer is the writerless-read pattern this repo's own ratchets forbid. The player half needs no ABR code: AVPlayer and ExoPlayer choose rungs from a master playlist. ACTIVATION: 3357. EXTERNAL: a transcoder (a hosted service, or an ffmpeg worker tier) whose playback authorisation keeps private video private; then a device run showing a rung switch under a throttled network. BLOCKER: no transcoder chosen or funded. |
+| MD280 | N | **N** | IMPLEMENTATION, done up to the source. The ASR seam's refusing default is `artifacts/api-server/src/lib/media/vendors/mediaCaptionSource.ts:163#export const REFUSING_CAPTION_SOURCE`. Its validated call is `artifacts/api-server/src/lib/media/vendors/mediaCaptionSource.ts:184#export async function captionTrackFor(`. Every track must pass `artifacts/api-server/src/lib/media/vendors/mediaCaptionSource.ts:91#export function parseWebVtt(` WHOLE, whether an ASR vendor produced it or a person typed it, and it is refused if it runs past the measured duration. A kept track is stored at a path derived from the video (`artifacts/api-server/src/lib/media/vendors/mediaCaptionSource.ts:145#export function captionTrackPathFor(`), with `upsert: false`. NOT built, on purpose: serving (lib/mediaAccess deciding `<path>.captions.vtt` as its video, the way posters are decided) and the player's cue renderer. Both are consumers of a track that no configuration can produce yet. §15.9 stands. ACTIVATION: 3358. EXTERNAL: an ASR vendor with a data-processing agreement covering users' speech, OR an owner decision for an authored-WebVTT flow. BLOCKER: the caption source is undecided. |
+| MD282 | N | **N** | IMPLEMENTATION, done up to the native module. The JS seam is `travel-buddy-standalone/src/services/media/videoCompression.ts:128#export async function compressVideoForUpload`. It looks for ONE module by name through `requireOptionalNativeModule` (`travel-buddy-standalone/src/services/media/videoCompression.ts:98#requireOptionalNativeModule(name)`), which returns null, not an error, when the binary lacks it. Absent, or switched off, the video passes through as the SAME object. It uses a copy only if the module returns a smaller file with its size and display dimensions. It is wired at all four client upload paths: the postcard composer (`travel-buddy-standalone/src/components/PostcardComposer.tsx:398#compressVideoForUpload(picked)`), `uploadMedia` (`travel-buddy-standalone/src/services/media.ts:184#videoUriForUpload(media.uri`), stories (`travel-buddy-standalone/src/services/stories.ts:103#videoUriForUpload(localUri`) and memories (`travel-buddy-standalone/src/services/memories.ts:300#videoUriForUpload(localUri`). The native contract the module must implement is written in the file's header. It stays N because no build that exists re-encodes a byte. ACTIVATION: `DEFAULT_ENABLED` (`travel-buddy-standalone/src/services/media/videoCompression.ts:61#const DEFAULT_ENABLED = false;`), flipped in the same build that adds the module, after a device run. EXTERNAL: a native encoder module implementing that contract (§37.4), a native build (§37.3), and a device run showing a smaller clip that uploads, keeps its orientation and duration, and plays. BLOCKER: no native module in the client package.json (an infra or owner decision), and no build access. |
+| MD283 | W | **W** | IMPLEMENTATION, done up to the vendor. Video has its own rules in the same decider. A video-capable classifier reads the whole clip and may approve it. A frame-only classifier may REJECT or HOLD a clip, never approve it: one poster is one instant of a clip that can be minutes long (`artifacts/api-server/src/lib/media/vendors/mediaModerationClassifier.ts:112#export const FRAME_ALLOW_CLEARS_VIDEO = false;`). A general video's frame arrives after its upload, so the poster route gives the classifier its look there, and that look can only tighten (`artifacts/api-server/src/routes/mediaVideoPoster.ts:115#void moderateVideoOnFrame(sc,`, `artifacts/api-server/src/lib/media/vendors/mediaVendorStages.ts:275#export async function moderateVideoOnFrame(`). Postcard `/complete` hands over the slot's own poster path. ACTIVATION: 3356. EXTERNAL: a classifier with async VIDEO moderation. With only an image classifier, every video waits for a person. BLOCKER: no classifier chosen; MD269's (a) and (b). |
+| MD284 | W | **W** | IMPLEMENTATION, JS half done. EVERY missing part is now handed to the OS at once. Every part's byte range is staged into its own cache file one at a time, to bound JS memory, and then every upload task is created and STARTED before any is awaited (`travel-buddy-standalone/src/services/media/backgroundTransfer.ts:175#export async function putPartsInBackground(`). The background transport offers the batch (`travel-buddy-standalone/src/services/media/backgroundTransfer.ts:85#putParts: (parts, contentType, onSent)`), and the resumable uploader uses it whenever it can (`travel-buddy-standalone/src/services/media/resumableUpload.ts:162#if (transport.putParts && pending.length > 1) {`). A part the batch did not deliver is never counted as sent: no answer, 408/425/429 or 5xx fall back to the one-at-a-time retries after one wait, and 400/401/403 get a fresh session. Still NOT shown: that iOS finishes the handed-over tasks while the app is suspended, and relaunches it to report them. expo-file-system registers the app-delegate hook for that, but only a device can show it happens. Android is unchanged: expo-file-system's legacy module uploads through OkHttp inside the app process and never reads the session type, so a backgrounded or killed Android process loses its parts until a foreground service keeps it alive, and that service needs a native module (§37.4). ACTIVATION: `DEFAULT_ENABLED` (`travel-buddy-standalone/src/services/media/uploadTransportFlag.ts:19#DEFAULT_ENABLED = false`), unchanged. EXTERNAL: an iOS device build and run (background → a multi-part upload completes → assemble); an Android foreground-service module plus `FOREGROUND_SERVICE_DATA_SYNC` in the manifest (absent from the prebuilt manifest, §37.3); a device matrix run (§37.3). BLOCKER: no macOS or EAS access for iOS; no Android SDK; no device; no foreground-service module. |
+| MD289 | W | **W** | IMPLEMENTATION, done up to the vendor and the owner's threshold. `looksSocial=true` is a real criterion (`artifacts/api-server/src/services/media/MediaSearchService.ts:946#export async function searchMediaVisual(`, reached from `artifacts/api-server/src/routes/mediaWorld.ts:331#searchMediaVisual(`). It is APPLIED through MD63's candidates or REFUSED BY NAME with an empty answer (`artifacts/api-server/src/services/media/MediaSearchService.ts:966#if (!stageOn) return refuse("stage_off", null);`). It is never dropped: before this, "Nightlife that looks social tonight" could only be asked as "nightlife tonight". An event found by name is not served beside it (`artifacts/api-server/src/routes/mediaWorld.ts:347#results.visual ? null : str(req.query.q)`). What counts as "looks social" is a stated owner value: `busy` or `social` at a confidence of at least 0.6 (`artifacts/api-server/src/lib/media/vendors/mediaVisionProvider.ts:71#export const LOOKS_SOCIAL_LEVELS`). ACTIVATION: 3355. EXTERNAL: a vision provider (MD63). OWNER: ratify or replace the threshold. BLOCKER: no vision provider; the threshold is unratified. |
+| MD293 | N | **N** | IMPLEMENTATION, done up to the vendor. `lookLike=<media id>` first puts the SEED through the same gate as "Where was this photo taken?", so a seed the viewer cannot see never reaches the index (`artifacts/api-server/src/services/media/MediaSearchService.ts:1016#if (!seedItem) return refuse("seed_not_visible", provider.name);`). Every id the index proposes then goes back through the shared candidate loader and projector: the index can propose media, never disclose it. The proposals themselves are validated (`artifacts/api-server/src/lib/media/vendors/mediaVisionProvider.ts:216#export function validateSimilarMedia(`). It stays N because there is still no cross-place visual index. `MEDIA_SEARCH_UNSUPPORTED` keeps saying so until an index answers. ACTIVATION: 3355. EXTERNAL: an image-embedding model and a vector index keyed by media id, with deletion when the media is deleted. BLOCKER: no visual index chosen. |
+
+These restatements move no count: the headline §28.9 restated is unchanged by
+this section.
+
+### 37.2 What was built, and where it is wired
+
+**Four vendor seams, one shape.** Each seam is a typed adapter interface, a
+refusing default, an empty `IMPLEMENTED_*` table and an env variable that selects
+from it. An env value that names nothing implemented selects the refusing
+default and reports the typo
+(`artifacts/api-server/src/lib/media/vendors/vendorCommon.ts:94#export function selectVendor<A>(`).
+Every vendor call is bounded and never throws: a throw, a slow call and an answer
+that is not a VendorAnswer are all "no answer"
+(`artifacts/api-server/src/lib/media/vendors/vendorCommon.ts:57#export async function callVendor<T>(`).
+Candidate vendors are named in each seam's header with the capability each must
+have. None is chosen.
+
+**The upload-path stages.** `runMediaVendorIngest` runs after the canonical row
+of every `/media/upload` is written, like the duration write before it. It reads
+four flags, each seeded FALSE: 3355 vision, 3356 moderation, 3357 transcode,
+3358 captions
+(`artifacts/api-server/src/lib/media/vendors/mediaVendorStages.ts:55#export const MEDIA_MODERATION_STAGE_FLAG`).
+With all four off it does nothing else, and a test counts the reads.
+
+**Search.** `GET /media/search` takes `looksSocial` and `lookLike`
+(`artifacts/api-server/src/services/media/MediaSearchService.ts:903#export function parseMediaSearchVisual(`).
+A `lookLike` that is present but is not a media id is a 400, not an ignored
+field. The response carries a `visual` report (`null` when no visual criterion
+was asked), so every other search is byte-for-byte `searchMedia`.
+
+**Migrations** 3355–3358, each seeded FALSE with a postcondition that refuses a
+seed that finds it ON, and each with a rollback that refuses to delete a row the
+owner has turned on:
+`artifacts/api-server/src/migrations/3355_media_vision_provider_flag.sql`,
+`artifacts/api-server/src/migrations/3356_media_moderation_classifier_flag.sql`,
+`artifacts/api-server/src/migrations/3357_media_transcoder_flag.sql`,
+`artifacts/api-server/src/migrations/3358_media_captions_flag.sql`.
+Their rollbacks:
+`db/rollback/2026-09-27-3355-media-vision-provider-flag-rollback.sql`,
+`db/rollback/2026-09-27-3356-media-moderation-classifier-flag-rollback.sql`,
+`db/rollback/2026-09-27-3357-media-transcoder-flag-rollback.sql`,
+`db/rollback/2026-09-27-3358-media-captions-flag-rollback.sql`.
+Applied to no database. 3359 is unused.
+
+### 37.3 Builds attempted, and exactly where each one stops
+
+Measured 2026-09-27 in this container: Linux x86_64, no `/dev/kvm`, no macOS, no
+attached device, no `EXPO_TOKEN`, Node 24, OpenJDK 21. The generated native
+directories were made in a scratch copy and are committed nowhere.
+
+| Command | Result | The exact blocking error, or the missing access |
+| --- | --- | --- |
+| `npx expo prebuild --platform android --no-install` (scratch copy) | **Succeeded.** `android/` generated. package.json unchanged. Every config plugin in `travel-buddy-standalone/app.json` ran. | None. What it shows for MD284: the manifest has `FOREGROUND_SERVICE` and `FOREGROUND_SERVICE_LOCATION`, but NOT `FOREGROUND_SERVICE_DATA_SYNC`, and there is no upload service. Nothing an upload needs in the background is declared, because the module that would declare it does not exist in the tree. |
+| `npx expo prebuild --platform ios --no-install` (scratch copy) | **Succeeded.** `ios/` generated; CocoaPods not run. | None at prebuild. `UIBackgroundModes` is `fetch` and `location`. A background URLSession needs no mode. expo-file-system's `FileSystemBackgroundSessionHandler` is registered as an app-delegate subscriber by autolinking. Whether it works is a device question. |
+| `./gradlew assembleDebug`, attempt 1 | **Failed** after 1 m 32 s. | `Cannot find a Java installation on your machine … matching: {languageVersion=17 …}. Some toolchain resolvers had internal failures: foojay (Unable to tunnel through proxy. Proxy returns "HTTP/1.1 403 Forbidden")`. The React Native Gradle plugin asks for a JDK 17 toolchain, only JDK 21 is installed, and `api.foojay.io` is denied. |
+| `./gradlew assembleDebug`, attempt 2 (JDK 17 unpacked from the Ubuntu security pool into the scratchpad and passed as `org.gradle.java.installations.paths`) | **Failed** in 14 s. | `Could not HEAD 'https://repo.maven.apache.org/…/kotlin-gradle-plugin-api-1.9.24-gradle82.jar'. Received status code 429`: Maven Central rate-limited a transitive download. Transient. |
+| `./gradlew assembleDebug`, attempt 3 (same) | **Failed** in 41 s, after compiling the RN and Expo settings plugins. | `Could not resolve com.android.tools.build:gradle:8.5.0 … Could not GET 'https://dl.google.com/dl/android/maven2/com/android/tools/build/gradle/8.5.0/gradle-8.5.0.pom'. Received status code 403 from server: Forbidden`. **"maven.google.com is reachable" is true only for its index page.** Every artifact request 301-redirects to `dl.google.com`, which the network policy denies. So the Android Gradle Plugin cannot be resolved, and the build stops before it would even look for the SDK. The SDK is also missing, since `dl.google.com/android/repository` is the same host. |
+| EAS (`eas build`) | **Not attempted.** | `expo.dev` and `api.expo.dev` answer the proxy's CONNECT with 403, and no `EXPO_TOKEN` exists in this environment. |
+| iOS build, device runs | **Not attempted.** | No macOS host or Xcode, no `/dev/kvm` for an emulator, and no physical device. |
+
+**What an owner, or CI with the access, runs** — secrets by NAME only:
+
+1. **EAS:** set `EXPO_TOKEN`. From `travel-buddy-standalone`, run
+   `eas build --profile development --platform ios` and
+   `eas build --profile development --platform android`. The profile is
+   `development` in `travel-buddy-standalone/eas.json`: `developmentClient: true`,
+   internal distribution, iOS `m-medium`. iOS signing needs the Apple team
+   credentials EAS manages (an App Store Connect API key: `EXPO_ASC_KEY_ID`,
+   `EXPO_ASC_ISSUER_ID` and `EXPO_ASC_API_KEY_PATH`, or an interactive Apple
+   login). Sentry source-map upload reads `SENTRY_AUTH_TOKEN`, `SENTRY_ORG` and
+   `SENTRY_PROJECT`; the prebuild warned that org and project are unset.
+2. **Local Android instead:** a host that can reach `dl.google.com`, with
+   Android SDK Platform 35 and build-tools, JDK 17, and `ANDROID_HOME`. Then
+   `npx expo prebuild --platform android` and `./gradlew assembleDebug`.
+3. **Before either build means anything for MD282 or MD284,** the owner or infra
+   adds the native modules §37.4 names. That is a package.json change this lane
+   may not make. Then flip the two client switches in that build.
+
+**Device matrix** — each cell is a run a person makes:
+
+| Row | iOS | Android | What it must show |
+| --- | --- | --- | --- |
+| MD284 | iPhone on iOS 17 and on iOS 18 (current), with Low Power Mode off and then on | Pixel-class device on Android 14 (the dataSync foreground-service rules) and Android 15 (its 6-hour dataSync limit); plus one vendor skin with aggressive process killing (Samsung One UI or Xiaomi HyperOS) | A 60–100 MB video posted, the app backgrounded within 2 s, then the screen locked. The upload completes without the app being reopened: the server's session lists every part, and the queue assembles on the next foreground. Then again with the app force-quit, where iOS must NOT continue, and on relaunch the upload resumes from the server's listing. |
+| MD282 | The same iPhones, with a 4K HEVC clip and a portrait clip | The same Android devices, with a 4K clip and a portrait clip | The uploaded file is smaller than the pick, at or under VIDEO_COMPRESSION_POLICY. The server probe reads the same duration within 0.1 s and the same display orientation. It plays in the Watch cell. |
+
+### 37.4 The native modules and vendors, named — none chosen
+
+- **MD284, Android foreground service.** Candidates:
+  `react-native-background-upload`, whose android-upload-service runs uploads
+  in a foreground service with a notification and whose iOS side uses a
+  background URLSession; `@notifee/react-native`, whose `asForegroundService`
+  hosts the existing JS queue; or a small local Expo module. The local module
+  would use either WorkManager with `setForeground`, or, on Android 14+, the
+  user-initiated data transfer job, which needs the `RUN_USER_INITIATED_JOBS`
+  permission.
+  Whichever is chosen must:
+  - declare `foregroundServiceType="dataSync"` and `FOREGROUND_SERVICE_DATA_SYNC`
+    (or use a user-initiated job);
+  - show a notification;
+  - survive the app moving to the background.
+  Google Play's foreground-service declaration then applies.
+- **MD282, device encoder.** Candidates: a local Expo module (like
+  `vendor/expo-openmls`) over AVAssetExportSession or AVAssetWriter on iOS and
+  androidx.media3 Transformer on Android; or an Expo-module wrapper over
+  `react-native-compressor`, which is not itself an Expo module and so is not
+  found by `requireOptionalNativeModule`. The module must implement the contract
+  in `travel-buddy-standalone/src/services/media/videoCompression.ts`: `PortavaVideoCompressor.compressAsync(uri, { maxBitrateBps, maxLongEdgePx })`
+  returning `{ uri, sizeBytes, width, height }`, as H.264/AAC MP4, with display
+  rotation kept. ffmpeg-kit is not a candidate: it was retired and its binaries
+  withdrawn.
+- **Vision (MD63, MD289, MD293), moderation (MD269, MD283), transcoding (MD277)
+  and captions (MD280).** The candidates are named, each with the capability it
+  must have and the env names its adapter would read, in the header of its seam
+  under `artifacts/api-server/src/lib/media/vendors/`.
+
+### 37.5 Tests and mutations — each seen red, every file restored byte-identical
+
+New: `artifacts/api-server/src/test/mediaVendorSeams.test.ts` (33 cases, registered)
+and `travel-buddy-standalone/src/services/media/__tests__/mediaVendorDevice.test.ts`
+(13 cases). Extended: `artifacts/api-server/src/test/mediaWorldProjection.test.ts`
+(+13 at its tail, including two over HTTP),
+`artifacts/api-server/src/test/mediaVideoTransport.test.ts` (+3 over HTTP),
+`artifacts/api-server/src/test/mediaVideoPosterGeneral.test.ts` (+3 over HTTP),
+`travel-buddy-standalone/src/components/__tests__/PostcardComposer.videoPoster.component.test.tsx` (+3),
+`travel-buddy-standalone/src/services/media/__tests__/uploadMediaPoster.component.test.tsx` (+2)
+and `travel-buddy-standalone/src/services/media/__tests__/storyMemoryPoster.component.test.tsx` (+4).
+Every adapter in them is a test double. They prove the seams, not a vendor.
+
+A harness applied one mutation, ran the named suite, and restored the file.
+After the whole run, the tree's diff hash and every new file's hash matched what
+they were before it. All 35 mutations went red on an assertion. The first run
+exposed two weak mutations (V8 and V24): each went red by crashing rather than
+on an assertion. Both were rewritten and went red on an assertion.
+
+| Id | Mutation | Red in |
+| --- | --- | --- |
+| V1 · V23 | no classifier, or a failed classifier call, APPROVES | seams "no classifier is a staffed hold", "a refusal, a throw…"; transport "/complete … HELD as 'flagged'" |
+| V2 | one frame's allow clears a video | seams "a FRAME-only classifier…" |
+| V3 | a hold is written `pending` | seams, transport |
+| V4 | the stage reads ON regardless of its flag | seams "flag off → 'approved'"; transport "flag off (the seed)" |
+| V5 · V6 | a provider injects an id it was not asked about / marks an inference verified | seams MD63; projection "an injected id is ignored" |
+| V7 | the seed counts as its own neighbour | seams MD293 |
+| V8 | the seed gate is bypassed | projection "a seed the viewer cannot see never reaches the index" |
+| V9 · V11 · V22 | stage off drops the criterion / the route drops `looksSocial` / events by name are served beside a refused visual criterion | projection (service and HTTP) |
+| V10 | `/complete` writes the literal `'approved'` again | transport |
+| V12 · V13 · V24 | a one-rung ladder accepted / a zero-length cue accepted / invalid VTT accepted | seams |
+| V14 | no timeout on a vendor call | seams "a slow call is `timeout`" |
+| V15 | a caption track may overwrite | seams |
+| V16 | vision runs with its flag off | seams "all four flags off" |
+| V17 · V18 | `/media/upload` or the poster route stops calling its stage | poster-general over HTTP |
+| V19 | the frame look applies a hold, not only a reject | seams "only TIGHTENS" |
+| V25 | the canonical row is not held while the classifier decides | seams "holds the row BEFORE the classifier is asked", "HOLDS the canonical row" |
+| V20 | an env value `toString` selects a prototype member | seams |
+| V21 | "looks social" keeps everything | projection |
+| D1 · D4 | the uploader or the background transport stops batching | device "ONE call"; "offers the batch" |
+| D2 | a part with no answer is counted as sent | device "retried ONE AT A TIME" |
+| D3 | tasks started one after another (serial) | device "all N tasks are running at once" |
+| D5 | a part that could not be staged is handed over anyway | device |
+| D6 · D7 · D8 | compression on by default / a bigger copy used / a copy without dimensions used | device MD282 |
+| D9 | the composer skips the seam | composer "the COMPRESSED file is reserved…" |
+| D10 | a refused signed PUT in a batch fails the run instead of re-signing | device "gets a fresh session" |
+
+### 37.6 Found while doing it — recorded, not fixed
+
+1. **A held postcard file still counts, and can become the passport cover.**
+   `refreshMediaCounts` selects `processing_status = 'ready'` and ignores
+   moderation (the MD269 row cites the line). So once 3356 is on, a `flagged`
+   file counts in `media_count` and can be copied into
+   `passport_postcards.media_url`. mediaAccess still denies its bytes, so the
+   cover is broken rather than leaked. Today the same is true of any file an
+   admin flagged or rejected. This is an activation prerequisite for 3356. It is
+   not fixed here, because it changes a live count for every admin-moderated
+   file.
+2. **Postcard `/complete` requires the client's width and height for a video**
+   before it downloads and probes the container. A new wire test found this: a
+   `/complete` without them is refused (`width and height are required…`), even
+   though the container, probed a few lines later, states both. The
+   pre-existing tests always send them. Outside these rows.
+3. **Staged part files after an app kill.** `putPartsInBackground` deletes its
+   staged files when the batch settles. If the process is killed first, they
+   stay in the cache directory, which the OS may purge. No sweep exists. That is
+   bounded by one video's size.
+4. **The environment facts, corrected.** "maven.google.com is reachable" is true
+   of its index and false for every artifact (§37.3). The first Gradle blocker
+   is the JDK 17 toolchain (`api.foojay.io` denied), before the SDK.
+5. **A jest warning, not a failure.** The supabase-js auth refresh timer logs
+   "Cannot log after tests are done" in the `uploadMedia` and story/memory
+   suites. It fires on elapsed time and comes from `lib/supabase`'s
+   auto-refresh, not from a line this lane touched.
+
+### 37.7 Files, scope and checks
+
+**Changed (counted by census-media):**
+- The four routes `artifacts/api-server/src/routes/posts.ts`,
+  `artifacts/api-server/src/routes/postcards.ts`,
+  `artifacts/api-server/src/routes/mediaWorld.ts` and
+  `artifacts/api-server/src/routes/mediaVideoPoster.ts`: line-neutral edits,
+  with imports at each file's tail. The `/complete` moderation line keeps its
+  old anchor (`moderation_status:      'approved',`, cited by §9.2) in a
+  trailing `(was: …)` comment.
+- `artifacts/api-server/src/services/media/MediaSearchService.ts`: appended at
+  the tail.
+- `travel-buddy-standalone/src/components/PostcardComposer.tsx`,
+  `travel-buddy-standalone/src/services/media.ts`,
+  `travel-buddy-standalone/src/services/stories.ts` and
+  `travel-buddy-standalone/src/services/memories.ts`: line-neutral, with tail
+  imports.
+- `travel-buddy-standalone/src/services/media/resumableUpload.ts`: the cited
+  line 109 is unmoved, and the batch path sits below it.
+- `travel-buddy-standalone/src/services/media/backgroundTransfer.ts`: the cited
+  line 142 is unmoved, and the batch sits at the tail.
+- The seven test files named in §37.5.
+
+**New:**
+- the six files under artifacts/api-server/src/lib/media/vendors/;
+- `travel-buddy-standalone/src/services/media/videoCompression.ts`;
+- the two new test files;
+- migrations 3355–3358 and their four rollbacks.
+
+**Scope.** `artifacts/api-server/src/scripts/checkCensusFreshness.ts` now
+watches the four migrations and the new server suite. The seams, the client
+files and the client suite sit under directories census-media already watches.
+Declared below, not graded: the four rollbacks, and the client's app.json and
+eas.json, which are cited only as build facts.
+
+**Freshness.** `check:census-freshness` reports census-media STALE on 13 files.
+Every one is a file this lane created: the six seams, the four migrations, the
+two new suites and videoCompression.ts. The argument is the same for each: it is
+new, it is exactly what §37.1 re-measured, and no verdict moved. The
+acknowledgement is the integrator's to write. The check does NOT list the
+modified files that an older acknowledgement already names, and they changed
+too (the §20.8 item 3 blind spot):
+- the four routes;
+- MediaSearchService.ts;
+- PostcardComposer.tsx, services/media.ts, stories.ts and memories.ts;
+- resumableUpload.ts and backgroundTransfer.ts;
+- the seven extended suites.
+Each edit is line-neutral or at the tail, and §37.1 is their re-measurement.
+
+- NOT-GRADED: db/rollback/2026-09-27-3355-media-vision-provider-flag-rollback.sql — the undo script for 3355's seed, named in §37.2 as the rollback path; the rows rest on 3355 applied (watched), never on its reversal, as with 3338's rollback in §30.12.
+- NOT-GRADED: db/rollback/2026-09-27-3356-media-moderation-classifier-flag-rollback.sql — the undo script for 3356's seed, named in §37.2 as the rollback path; MD269 and MD283 rest on 3356 and the decider, never on the flag row's removal.
+- NOT-GRADED: db/rollback/2026-09-27-3357-media-transcoder-flag-rollback.sql — the undo script for 3357's seed, named in §37.2 as the rollback path; MD277 rests on the seam and 3357, never on the flag row's removal.
+- NOT-GRADED: db/rollback/2026-09-27-3358-media-captions-flag-rollback.sql — the undo script for 3358's seed, named in §37.2 as the rollback path; MD280 rests on the seam and 3358, never on the flag row's removal.
+- NOT-GRADED: travel-buddy-standalone/app.json — cited in §37.3 only for what the scratch prebuild generated from it (its plugins and permission list); no row's verdict rests on its content, and MD284 rests on the transport files and on the absent native module.
+- NOT-GRADED: travel-buddy-standalone/eas.json — cited in §37.3 only for the build profile an owner or CI would use; a build recipe, not evidence for any row.
+
+Headline: not restated. No row moved.
+
 ## 33. Lane T — the shared sheets Media opens, fixed through the design system (H7) — 2026-09-27
 
 Lane T owns one row, **MD403**, for one owner ruling, **H7**. The work is on

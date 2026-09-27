@@ -1926,6 +1926,23 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     // WIDENED 2026-09-27 by the coverage-guard fix (census-media §32.14): MD338 (§30, §32) — the receipt reader §32.1's privacy argument rests on, and the byte gate's fail-closed suite §30 and §32.9 ran as regression evidence.
     "artifacts/api-server/src/services/intel/PresenceVerifier.ts",
     "artifacts/api-server/src/test/mediaAccessFailClosed.test.ts",
+    // WIDENED 2026-09-27 by lane I (census-media §35): the facts §35.5's MD65/MD53/MD58/MD197/MD162 statements and §35.4's owner questions rest on — the Map evidence path and its consent gate, the consent bridge's contract, the consent text in force, 3002's identity boundary, the aggregator's evidence lift and the crowd-flow payload's zone ids.
+    "artifacts/api-server/src/lib/intelEvidenceCapture.ts",
+    "artifacts/api-server/src/routes/mapObservations.ts",
+    "artifacts/api-server/src/lib/intelConsent.ts",
+    "travel-buddy-standalone/src/lib/sensing/consentDisclosure.ts",
+    "artifacts/api-server/src/migrations/3002_intel_contribution_identity.sql",
+    "artifacts/api-server/src/lib/intelProjectionAggregator.ts",
+    "artifacts/api-server/src/lib/mapAggregation.ts",
+    // WIDENED 2026-09-27 by lane I (census-media §35): the two suites §35.5's MD37 and MD197 statements rest on.
+    "artifacts/api-server/src/test/mediaAssetSourceDeclared.test.ts",
+    "artifacts/api-server/src/test/mediaContributorReputationSelfOnly.test.ts",
+    // WIDENED 2026-09-27 by lane V (census-media §37): MD63/MD269/MD277/MD280/MD283/MD289/MD293 rest on the vendor-stage flags 3355–3358 and the suite that tests the seams (the seams themselves sit under lib/media/, watched above).
+    "artifacts/api-server/src/migrations/3355_media_vision_provider_flag.sql",
+    "artifacts/api-server/src/migrations/3356_media_moderation_classifier_flag.sql",
+    "artifacts/api-server/src/migrations/3357_media_transcoder_flag.sql",
+    "artifacts/api-server/src/migrations/3358_media_captions_flag.sql",
+    "artifacts/api-server/src/test/mediaVendorSeams.test.ts",
     // WIDENED 2026-09-27 by census-media §33 (lane T, H7): MD403 now grades the shared sheets Media opens — the role tokens, the sheets and the components drawn inside them that §33 changed, the pairs fixture and the design-system regression guard, and the four nested sheets MD403's RED WHEN names as unmeasured.
     "travel-buddy-standalone/src/theme/tokens.ts",
     "travel-buddy-standalone/src/theme/__tests__/sharedSheetContrast.pairs.ts",

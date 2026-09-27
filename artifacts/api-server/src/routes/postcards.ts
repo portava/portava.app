@@ -28,7 +28,7 @@ import {
   verifyUploadedBytes,
   MEDIA_SIZE_LIMITS,
 } from '../lib/mediaPipeline.js';
-import { recordEntityMedia } from '../lib/mediaAssets.js'; import { recordPostcardCreatedSignal } from '../lib/mediaAnalytics.js';
+import { recordEntityMedia, MEDIA_SOURCE_UNDECLARED } from '../lib/mediaAssets.js'; import { recordPostcardCreatedSignal } from '../lib/mediaAnalytics.js';
 
 const router = Router();
 
@@ -975,7 +975,7 @@ router.post('/postcards/:id/media/:mediaId/complete', async (req, res) => {
   // Mark ready + store metadata
   const baseUpdate: Record<string, unknown> = {
     processing_status:      'ready',
-    moderation_status:      'approved',
+    moderation_status:      await preDistributionPostMediaStatus(sc, { mediaType: (mediaRow as any).media_type === 'video' ? 'video' : 'image', bucket: STORAGE_BUCKET, path: storagePath, framePath: poster.path }), // census-media §37 (MD269/MD283): 'approved' while media_moderation_classifier_enabled is off (3356, seeded FALSE) (was: moderation_status:      'approved',)
     public_url:             publicUrl,
     mime_type:              p.mimeType,
     file_size_bytes:        p.fileSizeBytes,
@@ -1124,7 +1124,7 @@ router.post('/postcards/:id/media/:mediaId/complete', async (req, res) => {
           publicUrl: counts.firstReadyUrl,
           entityType: 'postcard',
           entityId: (pcIns.data as any).id as string,
-          isCover: true,
+          isCover: true, sourceType: MEDIA_SOURCE_UNDECLARED, // the post's uploaded file: §6 source never declared (census-media §35, MD37)
         });
         // census-media §21 — §44 "Memory / Postcard created", at the one
         // moment the Postcard row is actually written.
@@ -1590,3 +1590,7 @@ export default router;
 import { probeVideoContainer, resolveStoredDuration, type VideoProbe } from '../lib/videoMetadata.js';
 import { admissiblePosterPath } from '../lib/mediaPosterPath.js';
 import { removeTransportArtifacts } from '../lib/postcardMediaTransport.js';
+
+// census-media §37 (MD269/MD283): the §36 safety-moderation stage decides the value /complete
+// writes. Off (the seed), it is 'approved', as before. Imported at the TAIL, like the block above.
+import { preDistributionPostMediaStatus } from '../lib/media/vendors/mediaVendorStages.js';

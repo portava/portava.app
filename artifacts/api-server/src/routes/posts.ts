@@ -57,7 +57,7 @@ import {
   verifyUploadedBytes,
   ALLOWED_MEDIA_MIME,
 } from "../lib/mediaPipeline.js";
-import { recordMediaAsset, capturedAtFromImageBytes, recordPostMediaAttachments } from "../lib/mediaAssets.js";
+import { recordMediaAsset, capturedAtFromImageBytes, recordPostMediaAttachments, MEDIA_SOURCE_UNDECLARED } from "../lib/mediaAssets.js";
 import { resolvePostPlace } from "../lib/places/placeResolve.js";
 import { classifyBuckets, incrementBucketCounts } from "../lib/places/bucketClassifier.js";
 import { ensurePlaceDay, isEligiblePlaceDayPost } from "../lib/places/placeDays.js";
@@ -255,7 +255,7 @@ router.post(
 
     // Canonical dual-write (flag-gated OFF; fail-soft — legacy flow unaffected).
     void recordMediaAsset(sc, {
-      ownerUserId: user.id,
+      ownerUserId: user.id, sourceType: MEDIA_SOURCE_UNDECLARED, // §6 source: this route receives bytes and a Content-Type, never camera vs library (census-media §35, MD37)
       storageBucket: STORAGE_BUCKET,
       storagePath: path,
       publicUrl: mediaRelayUrl,
@@ -270,7 +270,7 @@ router.post(
       // omitted the field, so media_assets.captured_at had no writer at all and
       // the Wall's §16 experienceAt could never differ from publishedAt.
       capturedAt,
-    }).then((assetId) => recordMeasuredDuration(sc, assetId, videoProbe)); // §37: the probed duration_ms, never the declared one
+    }).then(async (assetId) => { await recordMeasuredDuration(sc, assetId, videoProbe); await runMediaVendorIngest(sc, { assetId, bucket: STORAGE_BUCKET, path, mediaType: sniffed.kind, durationMs: videoProbe?.durationMs ?? null }); }); // §37: the probed duration_ms, never the declared one; then the four vendor stages, each behind its own flag seeded FALSE (census-media §37)
 
     // Response stays backward-compatible ({url, path}); new fields are additive.
     // `phash` is included so the client can persist it on the post_media row.
@@ -3685,3 +3685,8 @@ async function admitUploadBeforeBody(req: any, res: any, userId: string): Promis
   req.uploadGuard = guard;
   return true;
 }
+
+// census-media §37: the moderation, vision, transcode and caption stages after a /media/upload.
+// Every stage is behind its own flag, seeded FALSE (3355–3358). Imported at the TAIL so no cited
+// line above moves; ESM hoists imports.
+import { runMediaVendorIngest } from "../lib/media/vendors/mediaVendorStages.js";
