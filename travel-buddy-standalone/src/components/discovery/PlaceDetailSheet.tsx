@@ -23,6 +23,7 @@ import { categoryColor } from './PlaceCard.tsx';
 import { TripWishlistPicker } from './TripWishlistPicker.tsx';
 import { usePlainBottomInset } from '../../hooks/useBottomInset.ts';
 import { useRankOutcome, type RankSurface } from '../../hooks/useRankOutcome.ts';
+import { useDiscoveryDwell } from '../../hooks/useDiscoveryDwell.ts';
 import { DisplayMediaImage, MediaFallback } from '../ui/DisplayMediaImage.tsx';
 import { getPlaceCategoryFallback } from '../../utils/placeCategoryFallback.ts';
 import { useLocationContext } from '../../context/LocationContext.tsx';
@@ -53,7 +54,11 @@ export function PlaceDetailSheet({ place, visible, onClose, onAddToPlan, city, r
   // Directions / opening the full place page, save for a confirmed bookmark or
   // a trip-wishlist add; Plan is intent (opens a picker) and is not emitted.
   const { reportTap, reportSave } = useRankOutcome({ surface: rankSurface ?? null });
-  const [saved, setSaved]               = useState(false);
+  // `04` §7 dwell (census-discovery §55): active / passive-foreground / idle on
+  // this served place, bound to its exposure id. Inert unless the dwell flag
+  // (3395, seeded OFF) is on, the surface served it, and the viewer is signed in.
+  const dwell = useDiscoveryDwell({ surface: rankSurface ?? null, itemId: place?.id ?? null, recommendationId: place?.recommendationId ?? null, visible });
+  const [saved, setSaved]              = useState(false);
   const [pickerVisible, setPickerVisible] = useState(false);
   const [liveStatus, setLiveStatus]     = useState<PlaceLiveStatus | null>(null);
   const [generateSheetVisible, setGenerateSheetVisible] = useState(false);
@@ -252,7 +257,7 @@ export function PlaceDetailSheet({ place, visible, onClose, onAddToPlan, city, r
     >
       <Pressable style={styles.backdrop} onPress={onClose} />
 
-      <View style={styles.sheet}>
+      <View style={styles.sheet} onTouchStart={dwell.noteInteraction}>
         {/* Handle */}
         <View style={styles.handle} />
 
@@ -358,6 +363,7 @@ export function PlaceDetailSheet({ place, visible, onClose, onAddToPlan, city, r
           style={{ flex: 1 }}
           contentContainerStyle={[styles.content, { paddingBottom: plainInset }]}
           showsVerticalScrollIndicator={false}
+          onScrollBeginDrag={dwell.noteInteraction}
         >
           {/* Distance + travel time */}
           {distanceKm != null && (

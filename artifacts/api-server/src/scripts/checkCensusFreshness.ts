@@ -3855,6 +3855,29 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/test/db/trailsConstraints.db.test.ts",
     "artifacts/api-server/src/test/db/trailsService.db.test.ts",
     "artifacts/api-server/src/test/db/trailPostgrestBridge.ts",
+    // WIDENED 2026-09-27 by census-discovery §55 (P6 outcome measurement): DV-41 moved to W on the dwell writer, its
+    // vocabulary, the 3395 flag and rollback, the client emitter, its hook and the sheet that mounts it; DSV2-12 and DV-19
+    // moved to W on the two read-only reports, their read and scripts; and the suites whose red-before runs carry them.
+    "artifacts/api-server/src/lib/discoveryDwell.ts",
+    "artifacts/api-server/src/lib/discoveryDwellVocabulary.ts",
+    "artifacts/api-server/src/lib/discoveryTraceCoverage.ts",
+    "artifacts/api-server/src/lib/discoveryOutcomeReport.ts",
+    "artifacts/api-server/src/lib/discoveryTraceRead.ts",
+    "artifacts/api-server/src/scripts/reportDiscoveryTraceCoverage.ts",
+    "artifacts/api-server/src/scripts/reportDiscoveryOutcomes.ts",
+    "artifacts/api-server/src/migrations/3395_discovery_dwell_telemetry_flag.sql",
+    "db/rollback/2026-09-27-3395-discovery-dwell-telemetry-flag-rollback.sql",
+    "artifacts/api-server/src/test/discoveryDwell.test.ts",
+    "artifacts/api-server/src/test/discoveryTraceCoverage.test.ts",
+    "artifacts/api-server/src/test/discoveryOutcomeReport.test.ts",
+    "artifacts/api-server/src/test/discoveryTraceRead.test.ts",
+    "artifacts/api-server/src/test/db/discoveryOutcomeMeasurement.db.test.ts",
+    "travel-buddy-standalone/src/services/discoveryDwell.ts",
+    "travel-buddy-standalone/src/hooks/useDiscoveryDwell.ts",
+    "travel-buddy-standalone/src/components/discovery/PlaceDetailSheet.tsx",
+    "travel-buddy-standalone/src/services/__tests__/discoveryDwell.component.test.ts",
+    "travel-buddy-standalone/src/hooks/__tests__/useDiscoveryDwell.component.test.ts",
+    "travel-buddy-standalone/src/components/discovery/__tests__/PlaceDetailSheet.dwell.component.test.tsx",
   ],
   // ── ADDED 2026-09-15: census-passport joins the CHECKABLE set ──────────────
   //
