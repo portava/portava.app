@@ -212,7 +212,7 @@ function functionNamed(file: string, name: string): ts.FunctionDeclaration {
 // question replaces the sentinel at exactly these sites.
 const UNDECLARED_INVENTORY: Readonly<Record<string, number>> = {
   "lib/mediaAssets.ts · recordPostMediaAttachments · recordEntityMedia": 1,
-  "routes/postcards.ts · <module> · recordEntityMedia": 1,
+  "routes/postcards.ts · syncPostcardAfterMediaChange · recordEntityMedia": 1, // census-media §37.9: the /complete step became a named function IN PLACE (was: "routes/postcards.ts · <module> · recordEntityMedia": 1)
   "routes/posts.ts · <module> · recordMediaAsset": 1,
   "scripts/backfill-media-assets.ts · main · upsertAsset": 12,
   "services/passport/PassportMemoryService.ts · createMemory · recordEntityMedia": 1,
