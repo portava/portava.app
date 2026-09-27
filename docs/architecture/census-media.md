@@ -14436,6 +14436,81 @@ Then, over HTTP with the anon key only:
 - Only if that cannot wait, apply the rollback. It restores the prior grants,
   deletes the ledger row, and re-opens the defect.
 
+#### 44.15.1 The pre-flight for 3363, as read on production by the integrator — 2026-09-27
+
+**Who read it.** The integrator ran these reads, read-only, on production
+(`ajrurzioarfkagpuxfnb`) on 2026-09-27. This lane ran no SQL there. The results
+are the integrator's, as reported to this lane. Every §44.15 pre-flight
+condition holds.
+
+| # | Read | Production result | What it means |
+| --- | --- | --- | --- |
+| 1 | Table ACLs | **pulse_geo_tags:** anon and authenticated hold SELECT, INSERT, UPDATE and DELETE. They hold no TRUNCATE, REFERENCES, TRIGGER or MAINTAIN, because 2490 removed them. So this is *not* the baseline's GRANT ALL. **passport_postcards:** SELECT only. **post_media:** SELECT, INSERT and DELETE; no UPDATE. PUBLIC holds nothing on any of the three, and no privilege is grantable. | 3363's precondition holds on all three. 3363 touches only SELECT. The write shapes differ from the tree's; that matters for 3364 and 3365 (§44.18). |
+| 1 | Column ACLs | Only authenticated's INSERT and UPDATE on passport_postcards (2151/2152's columns). No client role has column SELECT. **post_media has no column ACL at all.** | 3363's precondition holds. The missing post_media column grants are the 2158 finding below. |
+| 2 | Columns | 17, 29 and 25; RLS on for all three; the names are exactly 3363's lists | 3363's classification holds. |
+| 3 | Policies on other tables that depend on columns of the three | none | As in the tree. |
+| 4 | Views; publications; functions | No views and no publications. Functions: `can_see_postcard(uuid)` (SECURITY DEFINER, boolean; anon and authenticated may execute it) and `post_media_path_is_owned(text,uuid)` (invoker; authenticated only). | As in the tree (§44.12). |
+| 5 | Storage policies naming the three | none | As in the tree. |
+| 6 | Ledger | 0036, 2151, 2152 and 2158 are all `backfill`. 3359, 3362 and 3363 are absent. | See the 2158 finding. |
+| 7 | Rows 3363 would withhold | Tag with a venue or district: 1. hotel_blur: 0. Postcard distances: 0. Media stamp_overlay: 0. Totals: 4 tags, 7 postcards, 6 media rows. | 3363 withholds one venue today. |
+| 8 | Geo tags whose user_id differs from the post's author | 0. post_media rows whose user_id differs from the author: also 0. | §44.16 item 1's forgery has not happened in production. |
+| 9 | Whose venues they are | The one geo-tag venue and the one postcard venue both belong to the same public, active post, published with mode `delayed_until_time`. | A released delayed post: a venue every reader serves by design. |
+
+**The gateway log.** The window was the last 24 hours, the longest the tool
+reads.
+- `/rest/v1/post_media` had 158 GETs and `/rest/v1/passport_postcards` had 20.
+  All used the `sb_secret_` key and all returned 200.
+- There were no requests of any method to `/rest/v1/pulse_geo_tags`.
+- There were no POST, PATCH or DELETE requests to any of the three.
+
+No client-key reader or writer appeared in 24 hours. A reader that runs less
+often than daily is not excluded; §44.15's recovery covers that case.
+
+**Finding: 2158 is ledgered but not in force.**
+- Production's ledger has 2158 (`artifacts/api-server/src/migrations/2158_post_media_write_boundary.sql`) as `backfill`,
+  but its grants are absent. anon and authenticated still hold table-level
+  INSERT and DELETE on post_media, with no column ACLs.
+- So the owner-insert policy is the only barrier. It pins
+  `moderation_status = 'pending'` and owned, unmoderated storage paths
+  (`artifacts/api-server/baseline/20260819_baseline_structure.sql:30178#CREATE POLICY post_media_owner_insert ON public.post_media`).
+  It does **not** pin `processing_status`, `canonical_place_id`, `stamp_overlay`,
+  `phash`, `dedup_processed`, `feed_storage_path` or `feed_url`.
+- `post_media_public_select` admits a row that is `ready` and still `pending`
+  moderation.
+- This lane reproduced the consequence on the harness, in production's shape.
+  The owner inserted a row as `ready`, with a `canonical_place_id` and a stamp
+  label, skipping processing, and another signed-in user read it:
+
+  ```
+  self-set ready insert: ADMITTED (processing=ready, place set=true, overlay=Forged Stamp)
+  ```
+
+- In the tree's shape (2158 in force), the same insert gets
+  `permission denied for table post_media`.
+
+**The ordering, measured rather than assumed (§44.18.3).** 2158 does not refuse
+after 3363.
+- On the harness, 2158 run after 3363 exits 0 and its postcondition passes. Its
+  `REVOKE ALL` plus table-level
+  `artifacts/api-server/src/migrations/2158_post_media_write_boundary.sql:28#GRANT SELECT ON TABLE public.post_media TO anon;`
+  silently undoes 3363 on post_media: anon can read 25 of 25 columns again,
+  `canonical_place_id` and `stamp_overlay` included.
+- 2158 also **widens** production: it grants authenticated UPDATE on 12
+  descriptor columns
+  (`artifacts/api-server/src/migrations/2158_post_media_write_boundary.sql:32#GRANT UPDATE (media_type`).
+  Production's clients hold no UPDATE on post_media, because 2098 revoked it
+  (`artifacts/api-server/baseline/20260819_baseline_structure.sql:30203#COMMENT ON POLICY post_media_owner_update ON public.post_media IS`).
+- **So 2158 must not be run on production in any order.** It stays frozen and
+  unedited, with its `backfill` row. The vehicle is 3365, a forward migration
+  that applies 2158's intent as a narrowing only (§44.18.3). The apply order
+  for all four migrations is in §44.18.5.
+
+**Also recorded, not fixed: 2160 (portava_featured).** Its ledger row is
+likewise `backfill` and its grants are not in force: anon and authenticated
+hold SELECT, INSERT, UPDATE and DELETE. But RLS is on with 0 policies, so a
+client role can reach no row, and the table has 0 rows. It is inert. It is
+recorded here and left alone.
+
 ### 44.16 Found, not fixed
 
 1. **pulse_geo_tags has no write boundary.** The baseline gives anon and
@@ -14517,6 +14592,444 @@ Then, over HTTP with the anon key only:
 - NOT-GRADED: travel-buddy-standalone/src/lib/stampOverlay.ts — cited in §44.11 for the stamp overlay's label, city and country fields, which classify post_media.stamp_overlay as a place column; client display math, no MD verdict rests on it.
 - NOT-GRADED: artifacts/api-server/src/test/postMediaModerationBoundary.test.ts — cited in §44.12 as the one client-role read-back of post_media in the tree's suites (a live-DB owner insert); the 2158 write-boundary suite, not a Media verdict.
 - NOT-GRADED: scripts/src/backfill-stamps.ts — cited in §44.12 as a script that reads passport_postcards' city and country with the service-role key, so not a client-role reader; a one-off stamp backfill, no MD verdict rests on it.
+
+### 44.18 The write boundaries: 3364 (pulse_geo_tags) and 3365 (post_media), and their approval step — 2026-09-27
+
+Branch `lane-g1-grants`. `wave8-integration` at `695de01c9` (which includes the
+§44.11–§44.17 follow-up) was merged into it first, as a merge commit; the merged
+tree is identical to `wave8-integration`'s. The coordinator asked for 3364. It
+also allowed the next free number for a 2158 equivalent, once §44.15.1's
+production read showed 2158 is not in force. That is 3365.
+
+BUILT ON BRANCH IS NOT MERGED. MERGED IS NOT DEPLOYED. Neither 3364 nor 3365 is
+applied to any shared database. Both were rehearsed only on this lane's own
+local PostgreSQL 16 cluster. No flag exists, and no row policy changed.
+
+#### 44.18.1 The premise, verified again before building
+
+This is §44.16 item 1: anyone signed in can write pulse_geo_tags. The questions
+were whether anything legitimately writes it as a client role, and whether
+anything writes it as the caller.
+
+| Place looked | What writes pulse_geo_tags | Role |
+| --- | --- | --- |
+| API | `services/location/PulseGeoTagService`, two INSERTs (the no_location stub, and the tag at `artifacts/api-server/src/services/location/PulseGeoTagService.ts:141#const { error: tagError } = await db.from("pulse_geo_tags").insert({`). Its one caller is POST /posts, with the service client (`artifacts/api-server/src/routes/posts.ts:854#const sc = getServiceClient();`). | service_role |
+| App (`travel-buddy-standalone`), legacy root app, `lib/`, `packages/` | none. Two comment lines name the table; there is no `.from()`, embed, RPC or channel, and `git log -G` over their history finds none. | — |
+| Scripts, including those holding the anon key; archived copies (`files/`, `passport-backend/`); `reconciliation-staging` | none. The only history hits are documentation, and one staged, unapplied convergence file (reconciliation-staging, 2117) that itself proposed making the table server-write-only. | — |
+| Edge functions | none; the tree has no `supabase/functions`. | — |
+| Database (harness catalog) | No function body or dependency names the table, in any security mode. No rule, view or trigger writes it; its triggers are only the internal RI ones. No client role may DELETE any of its three FK parents (`posts`, `auth.users`, `geo_zones`), so no client-caused cascade reaches it. RI actions run as the table owner in any case. | — |
+
+**Result: no client-role writer exists.** 3364 therefore revokes. The
+alternative the coordinator named — an author-only WITH CHECK
+(`posts.author_id = auth.uid()`), with UPDATE limited to the author — was not
+chosen. It would keep a write path that nothing uses. It would also still let
+an author rewrite what the API computed for them: the venue, the Pulse
+visibility and `hotel_blur_applied`.
+
+#### 44.18.2 3364: what was built
+
+**`artifacts/api-server/src/migrations/3364_pulse_geo_tags_write_boundary.sql`.**
+One BEGIN…COMMIT followed by a postcondition DO block. The real applier
+classifies it `unwrapped`, with its postconditions accepted.
+
+- **Preconditions.**
+  - The table exists, RLS is on, and the applying role owns it.
+  - The record is not already there.
+  - anon and authenticated each hold table-level INSERT, UPDATE and DELETE
+    (`artifacts/api-server/src/migrations/3364_pulse_geo_tags_write_boundary.sql:86#client roles do not hold the table-level write privileges`).
+    This accepts both the tree's GRANT ALL and production's
+    SELECT/INSERT/UPDATE/DELETE (§44.15.1).
+  - Every client write privilege was granted by the applying role, without
+    grant option.
+  - No column-level write grant exists.
+- **The change**
+  (`artifacts/api-server/src/migrations/3364_pulse_geo_tags_write_boundary.sql:121#REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER`)
+  is `… ON TABLE public.pulse_geo_tags FROM anon, authenticated, PUBLIC`.
+  - SELECT is not touched; neither are 3363's column grants.
+  - MAINTAIN (PostgreSQL 17) is not named: it writes no data, PostgreSQL 16
+    cannot parse it, and 2490 revokes it database-wide.
+  - pgt_insert_own, pgt_update_own and pgt_delete_own stay. They now grant
+    nothing to a role without the privilege.
+- **In-transaction assertions.** No column ACL changed, and no privilege outside
+  the client roles' writes changed.
+- **Postconditions.**
+  - No client role or PUBLIC can write a row, a column or the table
+    (`artifacts/api-server/src/migrations/3364_pulse_geo_tags_write_boundary.sql:184#a client role can still write columns of pulse_geo_tags`).
+  - service_role keeps SELECT, INSERT, UPDATE and DELETE.
+  - The client roles still read `post_id`.
+  - The record parses and holds authenticated's INSERT.
+
+**How the rollback restores the exact prior privileges, and why it cannot widen
+production.** What the client roles held before differs: GRANT ALL on the tree,
+SELECT/INSERT/UPDATE/DELETE on production. Of the coordinator's two options,
+this lane chose the second: 3364 records the table's whole ACL, as it was, at
+the end of the table's comment
+(`artifacts/api-server/src/migrations/3364_pulse_geo_tags_write_boundary.sql:162#'ACL before 3364, which its rollback restores: '`),
+and the rollback restores exactly that record.
+
+On production the record is SELECT/INSERT/UPDATE/DELETE, so none of TRUNCATE,
+REFERENCES, TRIGGER or MAINTAIN comes back. On the harness the record is GRANT
+ALL, so the rolled-back harness keeps the three 2490 privileges PostgreSQL 16
+can hold — as it did before 3364; MAINTAIN does not exist there.
+
+The rollback, `db/rollback/2026-09-27-3364-pulse-geo-tags-write-boundary-rollback.sql`:
+- refuses unless it finds 3364's state, and refuses if any privilege outside the
+  client roles' writes differs from the record;
+- re-grants the recorded client entries in order, and re-issues any later
+  non-owner entry (service_role) with exactly its recorded privileges, so that
+  entry lands after them again;
+- asserts the result equals the record as text
+  (`db/rollback/2026-09-27-3364-pulse-geo-tags-write-boundary-rollback.sql:141#-- Exact, or nothing.`);
+- restores the prior comment (none on the tree);
+- deletes 3364's ledger row
+  (`db/rollback/2026-09-27-3364-pulse-geo-tags-write-boundary-rollback.sql:150#DELETE FROM public.schema_migration_ledger`),
+  and its postcondition refuses if the row is still there;
+- says what it re-opens
+  (`db/rollback/2026-09-27-3364-pulse-geo-tags-write-boundary-rollback.sql:31#IT RE-OPENS THE DEFECT 3364 CLOSED`).
+
+The record is visible text in the table comment, which PostgREST publishes as
+the table's description. It names roles and privilege letters only.
+
+#### 44.18.3 The 2158 finding, measured, and 3365: what was built
+
+**What was measured on the harness** (§44.15.1 has the production read). This
+is the self-set `ready` probe and the post_media privileges, on three shapes.
+
+| Shape | Before 3365 | After 3365 |
+| --- | --- | --- |
+| tree: 2158 in force, 3363 applied | `ERROR:  permission denied for table post_media`; the plain descriptor insert is ADMITTED (pending/pending) | the same, byte-identical ACLs (a no-op) |
+| production (P1): 2158 not in force, 3363 not applied | `self-set ready insert: ADMITTED (processing=ready, place set=true, overlay=Forged Stamp)`; authenticated can insert 25 columns and update 0, and can DELETE | `ERROR:  permission denied for table post_media`; plain insert ADMITTED; authenticated inserts 14 columns, updates 0, cannot DELETE; anon still reads 25 of 25 (3363 not applied: SELECT untouched) |
+| production after 3363 (P2) | the same ADMITTED line; anon reads 23 of 25 | refused; plain insert ADMITTED; inserts 14, updates 0; anon reads 23 of 25 |
+
+**Why 2158 is not the vehicle.**
+- Run after 3363 on the tree, 2158 exits 0 and re-grants table-level SELECT, so
+  anon reads 25 of 25 again.
+- Run on P1 or P2, it also grants UPDATE on 12 columns that production does not
+  hold: authenticated goes from 0 updatable columns to 12.
+
+This lane measured both; §44.15.1 records them. 2158 is frozen and unedited.
+
+**`artifacts/api-server/src/migrations/3365_post_media_write_boundary.sql`** is
+2158's end state for writes, intersected with what is held. The real applier
+classifies it `unwrapped`, with its postconditions accepted.
+- It revokes INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES and TRIGGER from anon,
+  authenticated and PUBLIC
+  (`artifacts/api-server/src/migrations/3365_post_media_write_boundary.sql:143#REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER`).
+- It re-grants to authenticated column INSERT on 2158's 14 descriptor columns,
+  and column UPDATE on 2158's 12 — **only those it could already write**
+  (`artifacts/api-server/src/migrations/3365_post_media_write_boundary.sql:163#WHERE c = ANY (coalesce(had_upd`).
+  So nothing is granted that was not held. On production, UPDATE stays absent
+  and INSERT narrows from every column to the 14.
+- DELETE goes, as it did in 2158. No client code deletes post_media rows: the
+  app removes storage objects through the storage API.
+- SELECT is not touched at any level. An in-transaction assertion refuses if it
+  changed
+  (`artifacts/api-server/src/migrations/3365_post_media_write_boundary.sql:181#a SELECT privilege on post_media changed`).
+- The postconditions refuse if:
+  - anon can write anything;
+  - a client role holds DELETE, TRUNCATE or TRIGGER;
+  - authenticated can write a server-owned column
+    (`artifacts/api-server/src/migrations/3365_post_media_write_boundary.sql:224#authenticated can write server-owned`);
+  - service_role lost anything;
+  - the record is missing.
+- It records the table ACL, and authenticated's column write grants, in the
+  table comment, as 3364 does.
+
+It is order-independent with 3363. It never touches SELECT, so it can run
+before or after 3363 and leaves 3363's grants as they are.
+
+**The rollback,** `db/rollback/2026-09-27-3365-post-media-write-boundary-rollback.sql`:
+- restores the recorded table ACL, in order, and the recorded column write
+  grants;
+- asserts both equal to the record
+  (`db/rollback/2026-09-27-3365-post-media-write-boundary-rollback.sql:165#the restored ACL % is not the recorded %.`);
+- refuses if SELECT or another role's privileges changed since 3365;
+- restores the prior comment;
+- deletes its ledger row
+  (`db/rollback/2026-09-27-3365-post-media-write-boundary-rollback.sql:180#DELETE FROM public.schema_migration_ledger`),
+  checked by its postcondition.
+
+On production it re-opens the defect
+(`db/rollback/2026-09-27-3365-post-media-write-boundary-rollback.sql:32#ON PRODUCTION IT RE-OPENS THE DEFECT 3365 CLOSED`).
+
+#### 44.18.4 The rehearsal, the tests and the mutations
+
+**Where.** This lane's own cluster:
+`LOCAL_DB_DIR=/tmp/portava-local-db-laneg1 LOCAL_DB_PORT=54381 LOCAL_DB_WORK=/tmp/portava-local-db-work-laneg1`.
+- `up.sh` on the merged tree, through 3363: `331 applied in order, 12 known-unreplayable of 343`.
+- With 3364 and 3365: `chain from 2093: 333 applied in order, 12 known-unreplayable of 345, 2 of those applied on retry`.
+
+**3364: apply, second apply, rollback (with the ledger row the runner writes),
+second rollback, re-apply — on two shapes.** Actual output lines:
+
+```
+######## shape: tree
+relacl {postgres=arwdDxt/postgres,anon=awdDxt/postgres,authenticated=awdDxt/postgres,service_role=arwdDxt/postgres}
+client-writes anon=DELETE,INSERT,REFERENCES,TRIGGER,TRUNCATE,UPDATE
+== b. apply 3364
+BEGIN DO REVOKE DO COMMIT DO exit=0
+relacl {postgres=arwdDxt/postgres,service_role=arwdDxt/postgres}
+client-writes anon=-
+client-writes authenticated=-
+readable anon=4 of 17
+== d. apply 3364 a second time
+ERROR:  PRECONDITION FAILED (3364): pulse_geo_tags already carries 3364's record; 3364 is applied.
+== e. … then the rollback
+BEGIN DO DELETE 1 COMMIT DO exit=0
+== f'. diff pre vs rolled back (empty = identical)
+IDENTICAL
+== g. rollback a second time
+ERROR:  PRECONDITION FAILED (3364 rollback): pulse_geo_tags carries no 3364 ACL record; this is not the state 3364 left.
+re-applied state IDENTICAL to first apply
+######## shape: production
+relacl {postgres=arwdDxt/postgres,anon=arwd/postgres,authenticated=arwd/postgres,service_role=arwdDxt/postgres}
+client-writes anon=DELETE,INSERT,UPDATE
+== b. apply 3364
+BEGIN DO REVOKE DO COMMIT DO exit=0
+relacl {postgres=arwdDxt/postgres,anon=r/postgres,authenticated=r/postgres,service_role=arwdDxt/postgres}
+client-writes anon=-
+== e. … then the rollback
+BEGIN DO DELETE 1 COMMIT DO exit=0
+== f'. diff pre vs rolled back (empty = identical)
+IDENTICAL
+re-applied state IDENTICAL to first apply
+```
+
+In both shapes, the policy fingerprint (5 policies) and the column ACLs are the
+same in every state. The production-shape rollback restores `arwd`, not GRANT
+ALL.
+
+**3365, on the three shapes of §44.18.3.** Every shape shows the same four
+things:
+- `BEGIN DO REVOKE DO COMMIT DO exit=0`;
+- a second apply refused, with `PRECONDITION FAILED (3365): post_media already carries 3365's record`;
+- the rollback, `BEGIN DO REVOKE DO DELETE 1 COMMIT DO exit=0`, then `IDENTICAL`;
+- a second rollback refused, and `re-applied state IDENTICAL to first apply`.
+
+The before/after lines are in the §44.18.3 table.
+
+**The suites.** All are registered on the api-server `test` line, skip without
+a database, and run under `run-tests.sh`.
+- `artifacts/api-server/src/test/db/pulseGeoTagsWriteBoundary.db.test.ts`, 6 tests:
+  - `artifacts/api-server/src/test/db/pulseGeoTagsWriteBoundary.db.test.ts:144#it("G4-0` —
+    in force: no client role or PUBLIC write, and the record is there.
+  - `artifacts/api-server/src/test/db/pulseGeoTagsWriteBoundary.db.test.ts:153#it("G4-1` —
+    **the stranger's forged INSERT is refused**. With 3364 rolled back inside a
+    discarded transaction, the same INSERT is admitted (`forged=Forged Venue|by-stranger=true`),
+    so the test detects the defect.
+  - `artifacts/api-server/src/test/db/pulseGeoTagsWriteBoundary.db.test.ts:168#it("G4-2` —
+    **the author's direct INSERT, UPDATE and DELETE are refused**, as are anon's
+    INSERT and TRUNCATE for both roles.
+  - `artifacts/api-server/src/test/db/pulseGeoTagsWriteBoundary.db.test.ts:178#it("G4-3` —
+    **the service role still writes**: the writer's stub and tag INSERTs, an
+    UPDATE and a DELETE.
+  - `artifacts/api-server/src/test/db/pulseGeoTagsWriteBoundary.db.test.ts:193#it("G4-4` —
+    SELECT (3363's four columns), row visibility and the policies are unchanged.
+  - `artifacts/api-server/src/test/db/pulseGeoTagsWriteBoundary.db.test.ts:209#it("G4-5` —
+    **the rollback round-trips byte-identically** on the tree and on the
+    production shape, which is built inside the transaction. It restores
+    nothing the shape did not hold and deletes the ledger row. 3364 then
+    re-applies identically.
+- `artifacts/api-server/src/test/db/postMediaWriteBoundary.db.test.ts`, 6 tests:
+  - `artifacts/api-server/src/test/db/postMediaWriteBoundary.db.test.ts:138#it("G5-0` —
+    in force: anon writes nothing; authenticated writes exactly 2158's 14 and
+    12 columns and has no table-level write.
+  - `artifacts/api-server/src/test/db/postMediaWriteBoundary.db.test.ts:147#it("G5-1` —
+    **red before, green after**. On the production shape the self-set `ready`
+    insert is admitted and read by another user. After 3365 it is refused. A
+    plain descriptor insert still lands as `pending/pending`.
+  - `artifacts/api-server/src/test/db/postMediaWriteBoundary.db.test.ts:165#it("G5-2` —
+    no server-owned column is client-writable, and on the production shape
+    UPDATE stays absent (2158 would have granted 12).
+  - `artifacts/api-server/src/test/db/postMediaWriteBoundary.db.test.ts:181#it("G5-3` —
+    the service role writes post_media in full.
+  - `artifacts/api-server/src/test/db/postMediaWriteBoundary.db.test.ts:192#it("G5-4` —
+    SELECT (anon and authenticated each read 23 of 25) and the policies are
+    unchanged on both shapes.
+  - `artifacts/api-server/src/test/db/postMediaWriteBoundary.db.test.ts:204#it("G5-5` —
+    byte-identical round trip on both shapes, and the ledger row deleted. On
+    the tree, 3365 is a byte-identical no-op.
+- **G3-3 was updated on purpose.** It pinned pulse_geo_tags' GRANT ALL as
+  today's write gap. It now pins the client roles holding no write there
+  (`artifacts/api-server/src/test/db/placeCopiesClientColumnGrants.db.test.ts:296#UPDATED ON PURPOSE by 3364`).
+  The edit is line-neutral, so every G3 citation above still holds. Mutation N1
+  shows G3-3 red without 3364.
+
+**Mutations: 18, each seen red or killed by the file's own check.** For each
+one, the runner:
+1. mutated one file;
+2. created a fresh copy of the pre-3364 database;
+3. applied 3364 and then 3365. A file whose postconditions refused still
+   committed its body, since postconditions run after COMMIT; that is noted in
+   the table.
+4. ran the four G1 suites (24 tests);
+5. restored the file and compared its SHA-256.
+
+All four files were restored byte-identical: 3364 `cb4c51df701badc4…`, its
+rollback `a7a256dc5273b066…`, 3365 `fd267f7a7db68c2c…`, its rollback
+`93fac2b3acfbd535…`.
+
+| Mutation | The file's own checks | Tests red |
+| --- | --- | --- |
+| N1 3364 not applied | — | G3-3, G4-0 to G4-5 |
+| N2 3364's REVOKE omits INSERT | postcondition: "a client role can still write columns of pulse_geo_tags: anon:INSERT, authenticated:INSERT" | G3-3, G4-0 to G4-5 |
+| N3 3364's REVOKE omits authenticated | the same postcondition | G3-3, G4-0 to G4-5 |
+| N4 3364 also revokes SELECT | **killed**: the in-body assertion "a column-level privilege on pulse_geo_tags changed"; nothing applies | — |
+| N5 3364 also revokes service_role | **killed**: the in-body assertion "the REVOKE changed a privilege it should not have" | — |
+| N6 3364 also drops pgt_insert_own | not caught | G4-1, G4-4, G4-5 |
+| N7 3364 records nothing | postcondition: "the ACL record … is missing" | G4-0, G4-1, G4-4, G4-5 |
+| N8 3364's rollback does not re-order service_role | its in-body "Exact, or nothing" | G4-1, G4-4, G4-5 |
+| N9 3364's rollback skips authenticated | the same | G4-1, G4-4, G4-5 |
+| N10 3364's rollback keeps its ledger row | its postcondition | G4-5 |
+| N11 3364's rollback leaves the comment | its postcondition | G4-1, G4-4, G4-5 |
+| N12 3365 not applied | — | G5-0, G5-1, G5-2, G5-4, G5-5 |
+| N13 3365 lets `processing_status` be inserted | not caught on the tree (a no-op there) | G5-1, G5-2, G5-4, G5-5 |
+| N14 3365 grants the UPDATE production never held (2158's widening) | not caught on the tree | G5-2 |
+| N15 3365 keeps DELETE | not caught on the tree | G5-1, G5-2, G5-4, G5-5 |
+| N16 3365 re-grants table-level SELECT, as 2158 does | not caught (after the in-body check) | G3-0, G3-1, G3-2, G3-3, G3-5, G4-5, G5-1, G5-2, G5-4, G5-5 |
+| N17 3365's rollback forgets the column grants | its in-body assertion | G5-1, G5-2, G5-4, G5-5 |
+| N18 3365's rollback keeps its ledger row | its postcondition | G5-5 |
+
+N13–N15 change nothing on the tree, where 2158 is in force. They bite only on
+the production shape, and that is the shape G5-1 and G5-2 build.
+
+**The whole harness,** full chain with 3362–3365: `run-tests.sh` reported
+`local-db tests: pass=167 fail=0 skipped=0 (exit 0)` over 31 suites, the four G1
+suites included.
+
+#### 44.18.5 The production approval step for 3364 and 3365
+
+The integrator runs every query below, read-only. This lane ran none.
+
+**Order.**
+
+1. 3362
+2. 3363
+3. 3364
+4. 3365
+
+- Each file is applied alone, through the ledgered applier.
+- 3364 and 3365 are independent of each other and of 3363 (neither touches
+  SELECT). Any order works; this one is the natural one.
+- **2158 is never run** — not through `--apply-unproven`, not by hand. It
+  would re-grant post_media's table-level SELECT (undoing 3363) and grant 12
+  UPDATE columns production does not hold (§44.15.1). Its `backfill` row stays
+  as it is. 3365 is its replacement.
+
+**Pre-flight (read-only).**
+
+```sql
+-- 1. Owner, comment and client privileges (with grantor) on both tables. 3364/3365 need: the applying role owns the table;
+--    no existing 3364/3365 record in the comment; client writes granted plainly by that role; no grant option.
+SELECT c.relname, c.relowner::regrole::text AS owner, coalesce(left(obj_description(c.oid, 'pg_class'), 80), '<null>') AS comment,
+       CASE WHEN x.grantee = 0 THEN 'PUBLIC' ELSE x.grantee::regrole::text END AS grantee, x.privilege_type, x.grantor::regrole::text AS grantor, x.is_grantable
+  FROM pg_class c, LATERAL aclexplode(c.relacl) x
+ WHERE c.oid IN ('public.pulse_geo_tags'::regclass, 'public.post_media'::regclass)
+ ORDER BY 1, 4, 5;
+-- 2. Column-level privileges on both (expect none on pulse_geo_tags; on post_media none, or 3363's SELECT if applied first).
+SELECT c.relname, a.attname, x.grantee::regrole::text, x.privilege_type, x.grantor::regrole::text
+  FROM pg_class c JOIN pg_attribute a ON a.attrelid = c.oid, LATERAL aclexplode(a.attacl) x
+ WHERE c.oid IN ('public.pulse_geo_tags'::regclass, 'public.post_media'::regclass) AND a.attnum > 0 ORDER BY 1, 2, 3, 4;
+-- 3. Policies on both tables (expect pulse_geo_tags' five as read in §44.15.1; post_media's five).
+SELECT polrelid::regclass::text, polname, polcmd::text, polroles::regrole[]::text,
+       pg_get_expr(polqual, polrelid) AS using_expr, pg_get_expr(polwithcheck, polrelid) AS check_expr
+  FROM pg_policy WHERE polrelid IN ('public.pulse_geo_tags'::regclass, 'public.post_media'::regclass) ORDER BY 1, 2;
+-- 4. Anything in the database that writes either table as the caller (expect none).
+SELECT p.oid::regprocedure::text, p.prosecdef FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+ WHERE n.nspname NOT IN ('pg_catalog', 'information_schema') AND p.prosrc ~* '(insert|update|delete)[^;]*\m(pulse_geo_tags|post_media)\M';
+SELECT tgrelid::regclass::text, tgname FROM pg_trigger WHERE tgrelid IN ('public.pulse_geo_tags'::regclass, 'public.post_media'::regclass) AND NOT tgisinternal;
+-- 5. The applying role (expect the tables' owner).
+SELECT current_user;
+```
+
+**Gateway logs.** For `/rest/v1/pulse_geo_tags` and `/rest/v1/post_media`,
+POST, PATCH and DELETE requests grouped by key type (`sb_secret_`, publishable,
+user JWT), over the longest window the tool reads.
+- §44.15.1's 24 hours had none of any method on pulse_geo_tags, and no write on
+  post_media.
+- Any request not made with the `sb_secret_` key is a writer §44.18.1 could not
+  see. It must be named before applying.
+
+**Verify after apply (read-only).**
+
+```sql
+SELECT c.relname, r, p,
+       CASE WHEN p IN ('INSERT','UPDATE','REFERENCES') THEN has_any_column_privilege(r, c.oid, p) ELSE has_table_privilege(r, c.oid, p) END AS held
+  FROM pg_class c, unnest(ARRAY['anon','authenticated']) r, unnest(ARRAY['INSERT','UPDATE','DELETE','TRUNCATE','REFERENCES','TRIGGER']) p
+ WHERE c.oid IN ('public.pulse_geo_tags'::regclass, 'public.post_media'::regclass) ORDER BY 1, 2, 3;
+-- expect every row false, except post_media / authenticated / INSERT = true
+SELECT count(*) FILTER (WHERE has_column_privilege('authenticated', attrelid, attnum, 'INSERT')) AS ins,
+       count(*) FILTER (WHERE has_column_privilege('authenticated', attrelid, attnum, 'UPDATE')) AS upd
+  FROM pg_attribute WHERE attrelid = 'public.post_media'::regclass AND attnum > 0 AND NOT attisdropped;
+-- expect ins = 14, upd = 0 on production
+SELECT has_table_privilege('service_role', 'public.pulse_geo_tags', 'INSERT') AND has_table_privilege('service_role', 'public.post_media', 'INSERT') AS api_writes;
+-- expect true
+```
+
+**Over HTTP, with a signed-in user's JWT on the publishable key:**
+- `POST /rest/v1/pulse_geo_tags` should return 42501;
+- `POST /rest/v1/post_media` with `processing_status` in the body should
+  return 42501;
+- `DELETE /rest/v1/post_media?id=eq.<own media>` should return 42501.
+
+**Then through the app:** create a post with a location, and check that it
+gets its geo tag and its media. That confirms the service-role writers are
+unaffected.
+
+**Recovery.**
+- Name the writer from the gateway's `42501`s on the two paths.
+- A legitimate client writer is not expected; §44.18.1 found none. If one
+  appears, the narrow alternative for pulse_geo_tags is an author-only WITH
+  CHECK, which is a new migration.
+- Only if that cannot wait, apply the rollback, in reverse order: 3365's
+  before 3364's, and 3364's before 3363's.
+- Each rollback restores its recorded privileges exactly, never more, and
+  deletes its ledger row. Each re-opens its defect.
+
+#### 44.18.6 Rows, P24, freshness and files
+
+**Row line.** No MD row moves, and the headline is not restated. §44.17's
+restated §42.2 row now reads:
+
+| Reader | What it serves of a post's place | Honoured the mode before | Now |
+| --- | --- | --- | --- |
+| Direct PostgREST reads of `posts` | every column of every row the policies admit | no | **posts columns: fixed by 3362 (merged `f28da6f23`, not deployed). The place copies: fixed by 3363 (merged `695de01c9`, not deployed). The pulse_geo_tags write gap (§44.16, 1): fixed on branch by 3364, not merged, not deployed. post_media's missing 2158 write boundary (§44.15.1): fixed on branch by 3365, not merged, not deployed. Rows: not fixed (§44.7, 1).** |
+
+**What would turn this red (P24).**
+- **A write privilege granted back on either table.** Examples: a GRANT ALL; a
+  re-run of 2158; the rollback of an older write boundary that re-grants ALL.
+  G4-0 and G5-0 go red on the harness. In production only §44.18.5's
+  verification query shows it.
+- **A new client writer**, such as an app build that writes pulse_geo_tags or
+  post_media through PostgREST. It gets `42501`. None exists in the tree or its
+  history.
+- **A policy change on either table.** G4-4 and G5-4 go red.
+- **2158 run on production.** Nothing in this tree stops it except its
+  `backfill` row and §44.18.5's order. After it, G3-1 and G5-2's properties
+  would fail on production; §44.18.5's verification query shows it.
+- **The comment record edited by hand.** The rollbacks refuse a record that
+  does not parse, and refuse any ACL that does not match the parts 3364/3365
+  did not change.
+
+**Files.**
+- New:
+  - `artifacts/api-server/src/migrations/3364_pulse_geo_tags_write_boundary.sql`;
+  - `db/rollback/2026-09-27-3364-pulse-geo-tags-write-boundary-rollback.sql`;
+  - `artifacts/api-server/src/migrations/3365_post_media_write_boundary.sql`;
+  - `db/rollback/2026-09-27-3365-post-media-write-boundary-rollback.sql`;
+  - `artifacts/api-server/src/test/db/pulseGeoTagsWriteBoundary.db.test.ts`;
+  - `artifacts/api-server/src/test/db/postMediaWriteBoundary.db.test.ts`.
+- Changed:
+  - `artifacts/api-server/src/test/db/placeCopiesClientColumnGrants.db.test.ts`
+    (G3-3, line-neutral);
+  - `artifacts/api-server/package.json` (the `test` line);
+  - `artifacts/api-server/src/scripts/checkCensusFreshness.ts` (census-media's
+    scope, with a WIDENED comment);
+  - `docs/architecture/telegraph-phase0-inventory.md`, regenerated because the
+    migration count moved from 623 to 625;
+  - §44.15.1, inserted before §44.16;
+  - this section, appended after §44.17 and before §43, so §44 stays
+    contiguous.
 
 ## 43. Lane G2 — a post's location mode, honoured by the remaining server readers (§42.6, items 1–4, 7 and 8) — 2026-09-27
 
