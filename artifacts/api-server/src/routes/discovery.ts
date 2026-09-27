@@ -100,7 +100,7 @@ import { reasonCodesByIdFromProvenance } from "../lib/discoveryReasonCodes.js";
 // having read no claim — so the served order and JSON are byte-identical.
 import { parseIntentMode, withDiscoveryLiveRank } from "../lib/discoveryLiveRankRead.js";
 import {
-  blockFingerprint, authorizedContextKey, eligibleDbIdSet, withMutedAuthors,  // census-discovery §47 — the author policy (mutes, standing) and cache-B row revocation
+  blockFingerprint, authorizedContextKey, eligibleDbIdSet, withMutedAuthors, withCurrentRows,  // census-discovery §47 — the author policy (mutes, standing) and cache-B row revocation
   cacheBEntryUsable, inactiveSubmitterIds, submitterInGoodStanding, inactiveSubmittersFromEmbed, isAdultOnlyVenue,
   rankVersionKey,
   CACHE_B_TTL_MS,
@@ -2130,7 +2130,7 @@ router.get("/discovery", async (req, res) => {
             });
             const cCacheHit = cAcceptance.usable ? cStored : undefined;
             if (cCacheHit) {
-              const cFiltered = applyFilters(cCacheHit.places);
+              const cFiltered = applyFilters(cCacheHit.places && withCurrentRows(cCacheHit.places, dbPlaces));  // census-discovery §47: the stored ORDER, the CURRENT row content — a moderated image or blurb is not replayed from the stored copy
               const dismB = await dismissGatedPlaces(callerUserId, cFiltered, dbFailedSources);  // "Not interested" — serve path 2 of 4.
               const gateB = await layoverGatedPlaces(callerUserId, dismB.places, "GET /discovery"); if (!gateB.ok) { sendDiscoveryRefusal(res, emptyDiscoveryPlacesEnvelope(destination ?? null, ctxLabel ?? null), gateB.refusal); return; } const cSlice = gateB.places.slice(offset, offset + PAGE_SIZE).map(toPublic);  // A14 — see serve path 1.
               req.log.info({ destination, cacheLevel: "compass_candidate_hit" }, "discovery: compass candidate cache hit");

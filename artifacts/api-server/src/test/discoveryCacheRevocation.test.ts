@@ -253,6 +253,18 @@ describe("cache B — a row revoked inside the TTL is not replayed (§47)", () =
     assert.ok(!minor.ids.includes("db/p4"), `a replayed page served an adult venue to a minor: ${JSON.stringify(minor.ids)}`);
   });
 
+  it("R10 DEFECT: a row whose IMAGE a moderator replaced inside the TTL is served with the new image on the hit", async () => {
+    w.tables.discovery_places!.find((r) => r.id === "p2")!.image_url = "https://example.test/original.jpg";
+    await get(TOK_A);
+    w.tables.discovery_places!.find((r) => r.id === "p2")!.image_url = "https://example.test/replacement.jpg";
+    const hit = await get(TOK_A);
+    assert.equal(hit.path, "compass_hit", "precondition: the row is still eligible, so this is a replay");
+    const p2 = (hit.body.places as any[]).find((p) => p.id === "db/p2");
+    assert.equal(p2?.headerImageUrl, "https://example.test/replacement.jpg",
+      "a replayed page served the image a moderator had already replaced — the stored copy, not the row");
+    assert.deepEqual(hit.ids, (await get(TOK_A)).ids, "and the ORDER is still the stored order");
+  });
+
   it("R9 CONTROL: a row ADDED inside the TTL does not invalidate — revocation is about rows the page holds", async () => {
     await get(TOK_A);
     w.tables.discovery_places!.push(communityRow("p9"));
@@ -349,6 +361,8 @@ describe("where the rule is wired (source guards)", () => {
     const call = route.slice(at, route.indexOf("});", at));
     assert.match(call, /eligibleDbIds:\s*eligibleDbIdSet\(dbPlaces\)/,
       "the route no longer hands cacheBEntryUsable the current eligible set — row revocation is silently off");
+    assert.match(route, /const cFiltered = applyFilters\(cCacheHit\.places && withCurrentRows\(cCacheHit\.places, dbPlaces\)\)/,
+      "the cache-B hit no longer replays the CURRENT row content");
     assert.match(route, /const cBlockKey = authorizedContextKey\(viewerBlockedIds, dbFailedSources\)/,
       "the cache-B key no longer records unread sources — a page ranked during an outage would be replayed after it");
   });

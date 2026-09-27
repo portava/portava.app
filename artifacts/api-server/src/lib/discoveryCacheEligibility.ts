@@ -257,6 +257,28 @@ export function pageHasRevokedRow(
 }
 
 /**
+ * Replay the stored ORDER with the CURRENT row content.
+ *
+ * Cache B stores whole place objects. Revocation (above) removes a row that
+ * is no longer eligible, but a row that stays eligible while its CONTENT is
+ * moderated — an image rejected or replaced (routes/adminPlaceImages.ts), a
+ * blurb edited — was replayed from the stored copy for the rest of the TTL,
+ * while the very same request's cache-A path, which re-reads, showed the
+ * corrected row. This swaps each stored `db/` row for the object this request
+ * just read. The order is the stored order; nothing is re-ranked. A stored row
+ * the current read did not return is left as is, because `cacheBEntryUsable`
+ * has already refused any page that holds one.
+ */
+export function withCurrentRows<T extends { id: string }>(
+  page: readonly T[],
+  current: ReadonlyArray<T>,
+): T[] {
+  const byId = new Map<string, T>();
+  for (const p of current) if (p.id.startsWith(REVALIDATED_ROW_PREFIX)) byId.set(p.id, p);
+  return page.map((p) => (p.id.startsWith(REVALIDATED_ROW_PREFIX) ? (byId.get(p.id) ?? p) : p));
+}
+
+/**
  * The authorized context a cache-B page is stored under and must be replayed
  * under: the author-exclusion fingerprint (blocks both ways AND mutes — see
  * `withMutedAuthors`) plus the retrieval sources this request could NOT read.
