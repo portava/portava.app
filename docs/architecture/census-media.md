@@ -12180,3 +12180,51 @@ BUILT ON BRANCH IS NOT MERGED. MERGED IS NOT DEPLOYED.
 | `travel-buddy-standalone/app/media-viewer/[id].tsx:885#const PAGE_DOTS_SLOT` | The dots' slot. Line-neutral, with a constant and a helper appended. |
 | the three test suites in §40.3 | new |
 | `artifacts/api-server/src/scripts/checkCensusFreshness.ts` | census-media's scope widened by one file: the viewer's new suite, which the §40.3 table cites |
+
+## 39. Pointer: §35.7 items 1 and 2 are closed fail-safe on branch, recorded in census-map §45 (lane X) — 2026-09-27
+
+**Item 1, the reference.** The map evidence path stored
+`intel_evidence.reference` as a storage key whose first segment is the
+uploader's account id, beside a contributor id 3002 tokenises.
+
+- **Now:** the reference is sealed to its observation under a server key and
+  names no account in any encoding. It opens only through two readers: the
+  contributor's own reader (through the byte gate), and account deletion,
+  which now also reads under the account's 3002 tokens.
+- **Remediation** for any pre-seal row is prepared (3360, a script, 3361) and
+  applied to no database.
+
+**Item 2, photos under v1.** On the coordinator's request, a fail-closed gate
+was added: `consent_does_not_cover_photos`, HTTP 409.
+
+- A photo or video is kept only when the contributor's recorded
+  `consent_version` is in an explicit list of versions whose words name
+  photos, and that list is EMPTY.
+- v1 names Quick Signals only. v2 was read: it does not name photos, and it is
+  not approved, so it is left out.
+- Every media contribution is therefore refused before anything is read or
+  written.
+- The tap it would support is a separate request and is unaffected.
+- No consent word, version or granted scope changed.
+
+**RED WHEN** a contributor holding only v1 (or v2, or no recorded version) gets
+a photo or video kept, or a tap stops being recorded because of the gate.
+
+**The owner step it waits on.** Approve disclosure words that name photos and
+videos kept as evidence. Then ship, in ONE release:
+
+- that version as the server's `INTEL_CONSENT_DISCLOSURE_VERSION`;
+- its words on the client;
+- its string in the gate's list.
+
+The options and what each permits are in census-map §45.5.
+
+**For Media's rows:**
+
+- the seam writer, `lib/media/mediaEvidenceLink.ts`, no longer copies the
+  storage path into `reference`;
+- its `media_asset_id` still joins to an owner (§35.4 MD65 Question 3);
+- it has no consent check of any kind, and must pass the same gate if it is
+  ever wired.
+
+No MD row moves.
