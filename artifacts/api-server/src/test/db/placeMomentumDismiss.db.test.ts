@@ -1,18 +1,19 @@
 /**
  * placeMomentumDismiss.db.test.ts — census-discovery DV-25 (§61): a dismiss is
- * not interest. 2892's `rebuild_place_momentum` weighed `outcome = 'dismiss'`
- * like any other outcome (+2), so a place people dismissed GAINED momentum.
- * Migration 3417 gives a dismiss weight 0: the served row still counts as the
+ * not interest. `rebuild_place_momentum` (2892, and 3410's body, which owns it
+ * since census §58) weighed `outcome = 'dismiss'` like any other outcome (+2),
+ * so a place people dismissed GAINED momentum. Migration 3417 replaces 3410's
+ * body with a dismiss at weight 0: the served row still counts as the
  * impression it was, and the dismissal adds nothing. Zero is exclusion, not a
- * negative weight.
+ * negative weight. Every case runs on a chain that includes 3410 (asserted).
  *
  *   D1  a dismissed place's stored evidence equals the same place never acted
  *       on — in every window, with saves beside it, and for the trend state
  *   D2  parity: the SQL store equals lib/discoveryTrendState.computeTrendStates
- *       (2892's TypeScript mirror) over the same rows with a dismiss's outcome
+ *       (the SQL store's TypeScript mirror) over the same rows with a dismiss's outcome
  *       weight removed — the exclusion, stated in TypeScript's own kernel
  *   D3  parity on the RAW rows. computeTrendStates' own `weightFor` is lane P8's
- *       file and the same one-line exclusion is routed to the integrator (§61.13,
+ *       file and the same one-line exclusion is routed to the integrator (§61.11,
  *       hunk H1); until it lands this case is `todo`, and once it lands it runs
  *       as an ordinary case with no edit here.
  */
@@ -67,6 +68,8 @@ let pairs: Array<[string, string]> = [];
 before(() => {
   if (!HAVE_DB) return;
   assert.equal(scalar("SELECT to_regprocedure('public.rebuild_place_momentum(timestamptz)') IS NOT NULL;"), "t", "2892 must be applied");
+  assert.equal(scalar("SELECT position('surface = c_surface' IN pg_get_functiondef('public.rebuild_place_momentum(timestamptz)'::regprocedure)) > 0;"), "t",
+    "3410 must be in the chain: 3417 is 3410's body with one arm changed");
   viewer = seedUser(`${TAG}v`);
   pairs = [
     pair("recent", [1, 2, 3, 5, 8, 13], 0.5),                                       // a burst of dismisses in the last 48 h
@@ -117,7 +120,7 @@ describe("D — DV-25: a dismiss adds no momentum to the SQL store (3417)", { sk
     }
   });
 
-  // H1 (§61.13) is lib/discoveryTrendState.weightFor's own `dismiss → 0`. Detected, not assumed.
+  // H1 (§61.11) is lib/discoveryTrendState.weightFor's own `dismiss → 0`. Detected, not assumed.
   const h1 = HAVE_DB && computeTrendStates([{ item_id: "h1", outcome: "dismiss", served_at: iso(1), outcome_at: iso(0.5) }], NOW_MS).h1!.evidence.totalWeight === 1;
   test("D3. parity on the RAW rows: computeTrendStates and the SQL store agree about dismisses themselves",
     { todo: h1 ? false : "routed hunk H1 (lib/discoveryTrendState.weightFor, lane P8's file) is not applied yet" }, () => {

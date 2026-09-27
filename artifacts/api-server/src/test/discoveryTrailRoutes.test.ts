@@ -649,6 +649,35 @@ describe("DC-21 — trending by Trail, and `11` §4's 'never return internal raw
     assert.ok(Array.isArray(r.body.items));
     assert.ok(!JSON.stringify(r.body).includes("momentum"), "`11` §4: no internal raw score to a client");
   });
+
+  // H-P8-1 (census §58.4, applied in §61). The route reads `rank_events` twice:
+  // the Discovery-surface item read (the order and the provenance) and then the
+  // all-surfaces Trail read (the boolean). When ONLY the second fails, the
+  // answer is unknown — and it used to be served as `trending: false` beside a
+  // valid provenance, a failure reading as a measured "not trending".
+  it("H-P8-1: when only the all-surfaces read fails, `trending` is null (unknown), not false", async () => {
+    const seed = SEED();
+    seed.rank_events = [{ item_id: PLACE_A, outcome: "save", served_at: iso(3_600_000), outcome_at: iso(3_600_000) }];
+    const db = withDb(seed, [], "postgres", ["rank_events_second_read"]);
+    const realFrom = db.from;
+    let rankReads = 0;
+    db.from = (table: string) =>
+      table === "rank_events" && ++rankReads === 2 ? realFrom("rank_events_second_read") : realFrom(table);
+    const r = await call("GET", `/v1/discovery/trails/${T_DARK}/trending`, USER);
+    assert.equal(rankReads, 2, "both reads were issued");
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.equal(r.body.trending, null, "an unread Trail momentum is unknown, never a measured false");
+    assert.notEqual(r.body.readingProvenance, null, "the item read succeeded, so the order still has its provenance");
+  });
+
+  it("H-P8-1 control: both reads succeed over no events, so `trending` is a MEASURED false, not null", async () => {
+    const seed = SEED();
+    seed.rank_events = [];
+    withDb(seed);
+    const r = await call("GET", `/v1/discovery/trails/${T_DARK}/trending`, USER);
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.equal(r.body.trending, false, "a read that succeeded and found nothing is a measured zero");
+  });
 });
 
 // ── The refusal paths ───────────────────────────────────────────────────────

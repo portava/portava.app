@@ -337,7 +337,7 @@ router.get("/v1/discovery/trails/:id/trending", asyncHandler(async (req: Request
   // `readingProvenance` rather than `momentumProvenance`: see the note on the
   // modules route above — the `11` §4 tripwire forbids the WORD here.
   res.json({
-    trending: (r.momentum ?? 0) > 0,
+    trending: r.momentum === null ? null : r.momentum > 0, // H-P8-1 (§58.4, §61): a failed read is unknown (null), never a measured "not trending"
     items: r.items,
     readingProvenance: toPublicProvenance(r.momentumProvenance),
   });

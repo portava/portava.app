@@ -969,7 +969,7 @@ export async function trailTrending(
   let trailMomentum: number | null = null;
   const trailRead = await readMemberEvents(sc, m.members, nowMs, null);
   if (trailRead) {
-    trailMomentum = trailMomentumFromRankEvents(trailRead.rows, m.members, nowMs)[trailId] ?? null;
+    trailMomentum = trailMomentumFromRankEvents(trailRead.rows, m.members, nowMs)[trailId] ?? 0; // H-P8-1 (§58.4, §61): the read SUCCEEDED, so no entry is a measured 0; only a failed read leaves null
   } else {
     logger.warn({ trailId }, "trail trending event read failed");
   }
