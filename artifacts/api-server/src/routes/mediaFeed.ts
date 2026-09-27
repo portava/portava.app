@@ -56,7 +56,7 @@ import { nameVisibilitySet } from "../lib/publicIdentity.js";
 import {
   loadRestrictiveGems,
   gemCeilingForItem,
-  resolveMediaLocationWithGemProtection,
+  resolveMediaPlaceDisclosure, // was resolveMediaLocationWithGemProtection: the place-disclosure resolver runs that same gem step AND the owner mode (census-media §36)
   type RestrictiveGem,
 } from "../lib/mediaLocationVisibility.js";
 import {
@@ -76,8 +76,8 @@ import {
   buildPlaceAffinities,
   storeRankingSnapshots,
   type MediaFeedItem as RankingMediaFeedItem,
-  type MediaSessionState,
-} from "../services/ranking/MediaFeedRankingService.js";
+  type MediaSessionState, type MediaRankedItem,
+} from "../services/ranking/MediaFeedRankingService.js"; import { isWatchStage24RankingEnabled, orderWatchCandidatesByStage24 } from "../services/media/WatchStage24Ranking.js";
 import { recordMediaEvent } from "../lib/mediaAnalytics.js";
 import { resolveGemCoords, type GemCoordContext } from "../services/hiddenGems/HiddenGemPrivacyGuard.js";
 
@@ -127,7 +127,7 @@ const GRID_POST_COLUMNS =
   "location_name, location_city, location_country, location_verified, " +
   "location_lat, location_lng, " +
   "created_at, category, " +
-  "status, post_status, visibility";
+  "status, post_status, visibility, location_privacy_mode"; // the OWNER's §34 choice — the grid label honours it (census-media §36)
 
 /**
  * Grid-mode post_media columns — includes relay fields so posterUrl and
@@ -151,7 +151,7 @@ const GRID_MEDIA_COLUMNS =
 const FEED_POST_COLUMNS =
   "id, author_id, trip_id, content, visibility, status, post_status, " +
   "created_at, category, " +
-  "location_name, location_city, location_country, location_source, location_verified, " +
+  "location_name, location_city, location_country, location_source, location_verified, location_privacy_mode, " + // location_privacy_mode: census-media §36
   "location_lat, location_lng, " +
   "save_count, like_count, comment_count, " +
   "canonical_place_id, post_buckets";
@@ -215,7 +215,7 @@ function protectedMediaLocation(
   const ceiling = ctx.determined
     ? gemCeilingForItem(ctx.gems, { placeId, lat, lng })
     : null;
-  return resolveMediaLocationWithGemProtection(
+  return resolveMediaPlaceDisclosure( // census-media §36: the Watch feed, grid and single read now fold in the owner's location_privacy_mode, as every World read already did
     {
       name: (row as any).location_name ?? null,
       city: (row as any).location_city ?? null,
@@ -227,7 +227,7 @@ function protectedMediaLocation(
       // Legacy posts have no independent tier column → default 'place' (keep the
       // current place-level label). A real media_assets tier flows through here
       // unchanged once the canonical read path is enabled.
-      locationVisibility: (row as any).location_visibility ?? "place",
+      locationVisibility: (row as any).location_visibility ?? "place", locationPrivacyMode: (row as any).location_privacy_mode ?? null, postStatus: (row as any).post_status ?? null,
       isOwner: (row as any).author_id === viewerUserId,
       coarsenSeed: (row as any).id ?? null,
       emitCoarseCoords: false,
@@ -1442,7 +1442,7 @@ router.get("/media/feed", asyncHandler(async (req, res) => {
   } catch { /* non-fatal */ }
 
   // ── Load media ranking flags + signals ────────────────────────────────────
-  const [mediaFlags, mediaSignalsMap, creatorSignalsMap, placeAffinities] = await Promise.all([
+  const watchStage24Read = isWatchStage24RankingEnabled(sc); const [mediaFlags, mediaSignalsMap, creatorSignalsMap, placeAffinities] = await Promise.all([
     loadMediaRankingFlags(sc),
     loadMediaSignals(sc, eligible.map((c) => c.id)),
     loadCreatorSignals(sc, [...new Set(eligible.map((c) => c.author_id).filter(Boolean))]),
@@ -1552,7 +1552,7 @@ router.get("/media/feed", asyncHandler(async (req, res) => {
   const mediaSession: MediaSessionState = { creatorImpressions };
 
   // ── Rank via MediaFeedRankingService ───────────────────────────────────────
-  const rankedResults = rankMediaFeed({
+  const watchStage24 = await watchStage24Read; const stage24Features = new Map<string, Record<string, number>>(); const rankedResults: MediaRankedItem<RankingMediaFeedItem>[] = watchStage24 ? [] : rankMediaFeed({ // census-media §34 (F2): ON = the §24 stage orders the page below; OFF (the seed) = exactly today
     candidates: rankCandidates,
     viewer: {
       userId:       user.id,
@@ -1569,7 +1569,7 @@ router.get("/media/feed", asyncHandler(async (req, res) => {
 
   // Map ranked IDs back to candidate rows
   const candidateById = new Map(eligible.map((c) => [c.id, c]));
-  const capped = rankedResults
+  const capped = watchStage24 ? await orderWatchCandidatesByStage24(sc, { viewerId: user.id, viewerCountry, followedCreatorIds, viewerTripIds: watchViewerTripIds }, eligible, nowMs, stage24Features) : rankedResults
     .map((r) => candidateById.get(r.item.id))
     .filter((c): c is MediaCandidate => c !== undefined);
 
@@ -1745,7 +1745,7 @@ router.get("/media/feed", asyncHandler(async (req, res) => {
           item_id:    item.id,
           item_kind:  "post",
           position:   idx,
-          features:   rankedItem?.features ?? {},
+          features:   rankedItem?.features ?? stage24Features.get(item.id) ?? {},
           outcome:    "impression",
           served_at:  servedAt,
           surface:    "watch_feed",
@@ -1765,7 +1765,7 @@ router.get("/media/feed", asyncHandler(async (req, res) => {
       }
 
       // Store ranking snapshots for "Why This?" (fire-and-forget with warning on failure)
-      if (mediaFlags.rankingEnabled) {
+      if (mediaFlags.rankingEnabled && !watchStage24) {
         const pageRanked = page.map((c) => rankedById.get(c.id)).filter(
           (r): r is NonNullable<typeof r> => r !== undefined,
         );

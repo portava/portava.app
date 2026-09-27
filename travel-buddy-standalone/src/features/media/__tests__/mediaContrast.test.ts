@@ -1062,7 +1062,7 @@ const S_TAIL = {
   mvTopButtonPhoto: [PHOTO, 'rgba(17,17,15,0.55)'], mvLeftPhoto: [PHOTO, 'rgba(17,17,15,0.71)'], mvLeftChip: [PHOTO, 'rgba(17,17,15,0.71)', W_('0.12')], mvRightPhoto: [PHOTO, 'rgba(17,17,15,0.80)'], mvSpinnerPhoto: [PHOTO, 'rgba(17,17,15,0.47)'], mvDotsPhoto: [PHOTO, 'rgba(17,17,15,0.87)'], mvCloseOnInk: [color.ink, 'rgba(17,17,15,0.6)'], // §31.13: the Grid's full-screen viewer. Then shared components on a photograph.
   appHeaderOverlayPhoto: [PHOTO, 'rgba(17,17,15,0.58)'], // §31.13: the tab's overlayTint; the header's own default is 0.28 black
   burstPhoto: [PHOTO, 'rgba(255,60,60,0.12)'],
-  radialBackdropPhoto: [PHOTO, 'rgba(0,0,0,0.35)'],
+  radialBackdropPhoto: [PHOTO, 'rgba(0,0,0,0.35)'], ...SHEET_SURFACES, // census-media §33: the grounds of the shared sheets Media opens (imported at the tail)
 } as const satisfies Record<string, readonly string[]>;
 
 /** Layers for a surface id — the tail's surfaces as well as the ones above. Hoisted; S_TAIL is read only for tail ids. */
@@ -1384,10 +1384,10 @@ test('dynamic type (the shipped Media tab): no Text opts out of, or caps, OS fon
 //      the same rules, and fixes it in that file (backings and badges) and
 //      through StampButton's tone.
 //   3. Records the EmptyState icon as `decor` (the title beside it names it).
-// The shared sheets opened from Media (CommentsSheet, ShareSheet,
+// The shared sheets opened from Media (CommentsSheet, ShareSheet, — SUPERSEDED by census-media §33: the owner ruled H7 YES on 2026-09-27, and they are measured at the tail —
 // GlobalPlacePicker, CreationAssist, PlanPickerController) are not pairs here:
 // census-media §31.13 records their measurement and the ruling that §46 does
-// not govern them, with the spec text.
+// not govern them, with the spec text. (That was the case §31.13.6 put to the owner, not a ruling; the owner ruled the other way.)
 
 const MV = FT.mediaViewer;
 add({ id: 'gridFeed.emptyState.icon', fg: color.faint, on: 'paper', kind: 'decor', at: [...EMPTY_STATE, [FT.emptyState, '<Icon size={36} color={color.faint} strokeWidth={1.5} />']] });
@@ -1521,3 +1521,84 @@ test('census-media §31.13: no pair is pinned, and every StampButton on a Media 
   const unlisted = shipped.filter((f) => /<StampButton\b/.test(source(f)) && !callers.includes(f));
   assert.deepEqual(unlisted, [], 'a new StampButton on a Media surface must be measured and given the tone its ground needs');
 });
+
+// ═══ census-media §33 (lane T, H7) — appended at the TAIL so no line cited above moves ═══
+//
+// The owner ruled H7 YES on 2026-09-27: "Include comments, share, place picker,
+// and plan picker in Media's contrast requirement." The four shared sheets, and
+// the DisambiguationSheet that CreationAssist opens from the add-gem sheet, are
+// now MEASURED surfaces: every text and state pair they paint as they render
+// when opened from Media, including the shared components drawn inside their
+// own layouts, asserted like every pair above (same helpers, thresholds,
+// needles and `decor` rules; no large-text relief).
+//
+// The pairs live in src/theme/__tests__/sharedSheetContrast.pairs.ts, because
+// the design-system regression guard reads the same list: the fix is in the
+// design system (tokens.signalStrong and tokens.muteStrong, and the shared
+// components moved onto them or onto mute), not in Media's files, and that
+// guard measures every other consumer of each change before and after.
+// OS-drawn UI the sheets hand off to (Alert dialogs, the OS share sheet, the
+// native date and time picker) is not in the source and is not paired.
+import { MEDIA_SHEET_PAIRS, SF, SHEET_SURFACES } from '../../../theme/__tests__/sharedSheetContrast.pairs.ts';
+
+for (const p of MEDIA_SHEET_PAIRS) add({ id: `sheets.${p.id}`, fg: p.fg, on: p.on, kind: p.kind, at: p.at });
+
+// Measure every pair added since the last push.
+MEASURED.push(...PAIRS.slice(MEASURED.length).map(measurePair));
+
+/** The five sheets and every file they draw from, less the token module (read through `color`). */
+const SHEET_FILES: readonly string[] = Object.values(SF).filter((f) => f !== SF.tokens);
+
+test('census-media §33: the shared sheets Media opens are measured surfaces, and every file they draw from is cited', () => {
+  const sheet = MEASURED.filter((m) => m.pair.id.startsWith('sheets.'));
+  assert.equal(sheet.length, MEDIA_SHEET_PAIRS.length, 'every sheet pair is measured');
+  assert.ok(sheet.length >= 150, `expected >= 150 sheet pairs, got ${sheet.length}`);
+  // Each of the five is reached from a Media surface, and the needle says where.
+  for (const opener of ['src/components/media/MediaCommentSheet.tsx', 'src/components/media/AddGemForm.tsx', 'src/features/media/components/MediaActionRail.tsx', 'src/platform/input-assistance/creation/CreationAssist.tsx']) {
+    assert.ok(sheet.some((m) => m.pair.at.some(([file]) => file === opener)), `${opener}: no pair says the sheet is opened from here`);
+  }
+  assert.ok(source('src/components/media/WatchItemOverlay.tsx').includes('<ShareSheet'), 'Watch opens the ShareSheet');
+  assert.ok(source('src/features/media/components/MediaActionPanels.tsx').includes('<ShareSheet'), 'the World shell opens the ShareSheet');
+  const cited = new Set(sheet.flatMap((m) => m.pair.at.map(([file]) => file)));
+  for (const file of SHEET_FILES) assert.ok(cited.has(file), `${file} is listed but no pair cites it`);
+  // Asserted, not pinned: every non-decor sheet pair meets its bar (the AA test above covers them too).
+  assert.deepEqual(sheet.filter((m) => m.pair.finding !== undefined).map((m) => m.pair.id), []);
+  assert.deepEqual(sheet.filter((m) => m.threshold !== null && m.ratio < m.threshold).map((m) => `${m.pair.id}: ${m.ratio.toFixed(2)}`), []);
+});
+
+test('census-media §33: dynamic type — no Text in the shared sheets opts out of, or caps, OS font scaling', () => {
+  // Avatar's monogram opts out of scaling so it cannot overflow its disc: Avatar's own app-wide
+  // choice, recorded in §31.13.5 item 2; the name beside it scales. It is the only exception.
+  const files = SHEET_FILES.filter((f) => f !== SF.avatar);
+  let textElements = 0;
+  const offenders: string[] = [];
+  for (const file of files) {
+    const text = source(file);
+    textElements += (text.match(/<Text\b/g) ?? []).length;
+    if (/allowFontScaling\s*=\s*\{\s*false\s*\}/.test(text)) offenders.push(`${file}: allowFontScaling={false}`);
+    if (/maxFontSizeMultiplier/.test(text)) offenders.push(`${file}: maxFontSizeMultiplier`);
+  }
+  assert.ok(files.length >= 15, `scanned ${files.length} files`);
+  assert.ok(textElements >= 100, `found ${textElements} <Text elements`);
+  assert.deepEqual(offenders, []);
+});
+
+// ═══ census-media §34 — the flag-ON Watch surfaces (owner decision F2) ═══════
+// Appended at the TAIL so no line cited above moves. MEDIA_WATCH_CONTEXT_OVERLAY_ENABLED
+// (3341) and MEDIA_WATCH_TAP_TO_PLAY_ENABLED (3342) paint seven new things over a
+// frame; each is measured, under the same rules, on the backing it sits on. Both
+// flags are seeded OFF, so none of these is on a surface anyone sees until an
+// owner flips it — which is why they are measured now, before that decision.
+// The tap-to-play mark sits on a 0.71 ink badge over the frame: the same layers
+// as `videoFailurePhoto`, so that surface is reused rather than duplicated.
+const CTX_DISC: Needle = [FT.watchOverlay, "compassDisc: { width: avatar.s52, height: avatar.s52, borderRadius: avatar.s52 / 2, alignItems: 'center', justifyContent: 'center', backgroundColor: color.onInk },"];
+const TAP_BADGE: Needle = [FT.feedList, "paddingVertical: 12, borderRadius: radius.md, backgroundColor: 'rgba(17,17,15,0.71)' },"];
+add({ id: 'watch.context.compass.icon', fg: color.ink, on: 'selected', kind: 'ui', at: [CTX_DISC, [FT.watchOverlay, '<Compass size={26} color={color.ink} strokeWidth={2.2} />']] });
+add({ id: 'watch.context.compass.disc.photoFloor', fg: color.onInk, on: 'watchRailPhoto', kind: 'ui', at: [WATCH_RAIL, CTX_DISC] });
+add({ id: 'watch.context.compass.label.photoFloor', fg: color.onInk, on: 'watchRailPhoto', kind: 'text', at: [WATCH_RAIL, [FT.watchOverlay, "compassLabel: { ...t.stamp, color: color.onInk, fontWeight: '700' },"]] });
+add({ id: 'watch.context.placeName.photoFloor', fg: color.onInk, on: 'watchLeftPhoto', kind: 'text', at: [WATCH_LEFT, [FT.watchOverlay, 'placeName: { ...t.bodyStrong, color: color.onInk },']] });
+add({ id: 'watch.context.placeHint.photoFloor', fg: color.onInkMute, on: 'watchLeftPhoto', kind: 'text', at: [WATCH_LEFT, [FT.watchOverlay, 'placeHint: { ...t.stamp, color: color.onInkMute },']] });
+add({ id: 'watch.context.placePin', fg: color.onInk, on: 'watchLeftPhoto', kind: 'decor', at: [[FT.watchOverlay, '<MapPin size={14} color={color.onInk} />']] });
+add({ id: 'watch.tapToPlay.label.photoFloor', fg: WHITE, on: 'videoFailurePhoto', kind: 'text', at: [TAP_BADGE, [FT.feedList, "label: { fontSize: 13, fontWeight: '700', color: '#fff' },"]] });
+add({ id: 'watch.tapToPlay.icon.photoFloor', fg: WHITE, on: 'videoFailurePhoto', kind: 'ui', at: [TAP_BADGE, [FT.feedList, '<Play size={26} color="#fff" fill="#fff" />']] });
+MEASURED.push(...PAIRS.slice(MEASURED.length).map(measurePair));

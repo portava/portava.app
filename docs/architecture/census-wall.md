@@ -134,7 +134,7 @@ NOT-BUILT · **?** = CANNOT-VERIFY. Backend paths are relative to
 | id | Requirement | V | Evidence |
 | --- | --- | --- | --- |
 | W9 | Header (Portava, current city/context, notifications, Telegraph) → Stories → Live For You → Feed Mode → Social Feed | C | `components/WallScreen.tsx:117-141` in exactly that order; `WallHeader` takes `city`, `onOpenNotifications` (`:124`) and `onOpenTelegraph` (`:125`). |
-| W10 | Bottom navigation: Wall, Map, Create, Trips, Passport | C | `app/(tabs)/_layout.tsx:471-472` registers the `wall` tab with `href: wallEnabled ? '/wall' : null`, alongside the existing map/create/trips/passport tabs. |
+| W10 | Bottom navigation: Wall, Map, Create, Trips, Passport | C | `travel-buddy-standalone/app/(tabs)/_layout.tsx:471-472#name="wall"` registers the `wall` tab with `href: wallEnabled ? '/wall' : null`, alongside the existing map/create/trips/passport tabs. (Path spelled out 2026-09-27 so it cannot resolve to the repo-root mock; the lines were already right, and the verdict is unmoved.) |
 
 ### §4 Live For You
 

@@ -986,7 +986,7 @@ and this line dropped every one of them … the funnel simply read zero."*
 
 | id | Requirement | V | Evidence |
 | --- | --- | --- | --- |
-| MD414 | Gem icon or geometric discovery marker | **C** | `Gem` icon used in `app/(tabs)/media.tsx:26`; `components/media/GemsItemOverlay.tsx`. |
+| MD414 | Gem icon or geometric discovery marker | **C** | `Gem` icon used in `travel-buddy-standalone/app/(tabs)/media.tsx:178#<Gem size={22}` (corrected 2026-09-27, verdict unmoved: line 26 was the expo-router import at every recoverable commit; the icon is imported at 27 and rendered at 178); `components/media/GemsItemOverlay.tsx`. |
 | MD415 | Subtle edge glow or contour treatment | **N** | No glow/contour treatment in the gem components; `GemsItemOverlay.tsx` is a standard overlay. |
 | MD416 | Map discovery contour / approximate zone treatment | **N** | No map contour rendering. The *data* supports it — `mediaLocationVisibility.ts:98` yields a `neighborhood`-tier disclosure for approximate gems — and no client draws a zone. |
 | MD417 | Recently Confirmed / Worth the Detour / Still Hidden / Seasonal labels | **C** | `src/lib/gems/gemStateDisplay.ts` maps the ten `hiddenGemState` values (`lib/hiddenGemState.ts:37-50`) to display labels. |
@@ -9253,6 +9253,120 @@ lane did not make it.
 | docs/architecture/census-input-intelligence.md | line 1055 (a second correction on the same row) |
 | docs/architecture/census-media.md | §38.4's four items marked closed or corrected (line-neutral), and §38.7 to §38.10 |
 
+### 38.11 Second follow-up: the short route-group citations that pointed at the wrong line or the mock
+
+§38.7 left 24 newly read citations that use a short path such as
+app/(tabs)/ai.tsx. Each one also matches a small mock copy at the repo root, so
+the guards checked it only loosely. The integrator asked for each one to be:
+- spelled with the full travel-buddy-standalone path, so the guard resolves one
+  file and checks it;
+- pointed at the line that carries the claim today, with a whole anchor;
+- line-neutral, with every verdict unmoved.
+
+Each was read against the file first. In the table, a citation is written as
+"file line N". Each correction on its own line carries the anchor, and each
+anchor was moved by one line and went **RED**.
+
+| document | line (row) | old | new | why |
+| --- | --- | --- | --- | --- |
+| census-compass | 129 (CG-02, C) | ai.tsx 398–410 | ai.tsx 412–424, anchored on `<CompassStarters` | e0d858f28 moved the block 14 lines down (M30) |
+| census-compass | 131 (CG-04, C) | ai.tsx 98–104 | ai.tsx 112–118, anchored on the prefill guard | the same move (M31) |
+| census-compass | 171 (CP-04, C) | ai.tsx 98–104 | ai.tsx 112–118 | the same move (M32) |
+| census-input-intelligence | 1065 (G364, C) | ai.tsx 60 and 398–410 | ai.tsx 61 (`useAiWritingAssist`) and 412–424 | the same commit (M33, M34) |
+| census-input-intelligence | 635 (G147, C) | the short onboarding path, line 275 | the same line, path spelled out | the line was right; the path could name the mock (M35) |
+| census-media | 989 (MD414, C) | media.tsx 26 | media.tsx 178, where `<Gem size={22}` renders | 26 was the expo-router import at every recoverable commit; the icon is imported at 27 (M36) |
+| census-passport | 183 (P2, C) | passport.tsx 719, 52, 53 | 723 (`<PassportIdentityCard`); 52 and 53 kept and anchored | the identity card moved; the two imports did not (M37–M39) |
+| census-passport | 348 (P87) and 516 (P168) | the superseded ai.tsx pointers | now plain text | §38.2's anchored corrections already follow them on the same lines |
+| census-wall | 137 (W10, C) | the short layout path, 471–472 | the same lines, path spelled out, anchored on `name="wall"` | the lines were right; the path could name the mock (M40) |
+| passport-certification | 53 (row 1, PARTIAL) | passport.tsx 709, 727, 642, 730, 824 | 723, 742, 656, 746, 847, each anchored | right at 5f08c3b2a; the chip is now the §5 traveler-state chip (M41–M45) |
+| wall-certification | 328 and 561 | layout 423 | layout 471–472 | 423 held the hidden Wall tab at a739137a9; its `href` now follows `wall_enabled` (M46, M47) |
+
+**The scope, widened once.** census-wall had watched only the repo-root mock of
+the layout file, because the guard used to resolve W10's short path there. W10
+now names the standalone screen. So that file is appended to census-wall's
+`CENSUS_SCOPE` with a `WIDENED` comment, and no other scope changed. It has not
+changed since census-wall's baseline, so no census became stale.
+
+**Stopped on two lines, and left four, each with its reason.**
+- **census-compass lines 128 and 883 — STOPPED, not edited.** Both say the
+  client calls its own buildCompassStarters at ai.tsx line 399. That claim no
+  longer holds at all: e0d858f28 removed the client builder, and the screen now
+  feeds `CompassStarters` from the gateway at ai.tsx line 413.
+  - Line 128 is CG-01's original row, and line 883 is §12.2's re-execution of it.
+  - CG-01's last statement is line 3333, C (§26.13). So no verdict rests on
+    either line, and nothing needs regrading.
+  - Proposed, for the integrator: a dated note on each, as census-media 8959
+    allows.
+- census-input-intelligence 1055 and census-media 8959 quote the stale G359
+  clause as history. Line 1055 already carries §38.2's dated correction. Both
+  are left as they are.
+- mobile-reachability-ledger 207 is pinned to a commit by that document's own
+  declaration. Its lines must not track HEAD, so it is left.
+
+### 38.12 Second follow-up: TR128, TR267, TR341 and TR412 move from NEITHER to BOTH
+
+census-trips §76 records this in full. In short:
+- **The rule is the census's own (§68.1, applied again in §69.2 and §73.1).**
+  NEITHER means "a subsystem nobody has written". The routed provider is now
+  written and prepared, but not wired. Closing the four rows needs a branch
+  change (binding it at the Trips seams) and an owner step (enabling the Routes
+  API, setting the key and accepting the per-call spend). That is BOTH.
+- **The tie-break was asked, and does not keep them in NEITHER.** The rows'
+  blocker names only the routed provider.
+- **Every letter stays `W`.** This is a blocker class, not a verdict. Every id
+  and letter in the `CENSUS_INTEGRITY_DUMP=ALL` listing is unchanged.
+
+The recount comes from the rows, by a stated rule. It takes §68.2's class cell,
+applies §69.2's overrides, and counts only the rows whose last statement is `W`:
+
+| | OWNER | BOTH | BRANCH | NEITHER | unclassified | rows |
+| --- | --- | --- | --- | --- | --- | --- |
+| before | 102 | 20 | 0 | 5 | 1 | 128 |
+| after | **102** | **24** | **0** | **1** (TR427) | **1** (TR174) | **128** |
+
+The "before" row reproduces what §69.2 and §73.1 state. TR229 keeps its BOTH
+label: §70.5 argued BOTH → OWNER, but no section moved the label.
+
+census-trips states the distribution in ten places, and each is restated
+line-neutrally with its old numbers kept. The lines are 403, 7472, 7511, 7743,
+7822, 7946, 8525, 8583, 8944 and 9157. §68.2's four rows carry the new class and
+name the old one.
+
+### 38.13 Checks and files, second follow-up
+
+- A merge commit brought in `wave8-integration`; the merged tree is identical to
+  it.
+- check:doc-citations: RESULT clean.
+  - Citations 13,830 → 13,830. The anchored count rose from 7,442 to
+    7,461, and the unanchored count fell from 6,388 to 6,369
+    (ceiling 6,434).
+  - Every mutation M30–M49 went **RED** (M48 and M49 are §76's two anchors), and every file was restored and its
+    sha256 compared.
+- check:citation-targets: 165 / 165, with the judged count 2,888 → 2,887.
+- check:citation-symbols: PASSED.
+- check:census-integrity: PASSED, with output identical to before, headlines
+  included. In the `CENSUS_INTEGRITY_DUMP=ALL` listing every id and letter is
+  unchanged. The only difference is line numbers: §35's rows moved down 114
+  lines, because §38.11–§38.13 now sit above §35 as the integrator directed.
+- check:census-scope-coverage: PASSED, all thirteen at 100 %.
+- check:census-row-move-labels: PASSED.
+- The doc-citations suite passes.
+- check:census-freshness reports three censuses STALE. That was already true of
+  `wave8-integration` before this lane's changes, and none of the files is one
+  this lane touched:
+  - census-highlights-memories and census-passport, over
+    PassportMemoryService;
+  - census-media, over twelve files that other lanes changed on
+    `wave8-integration`.
+
+  The integrator writes those acknowledgements.
+
+Files: `artifacts/api-server/src/scripts/checkCensusFreshness.ts` (census-wall's
+scope, two lines appended) and seven documents. The documents are
+census-compass, census-input-intelligence, census-media, census-passport,
+census-wall and census-trips (§76 and the ten restatements), plus
+passport-certification and wall-certification.
+
 ## 35. Lane I — the media → intelligence boundary: what was unbuilt, what waits on a decision, and the questions that decide it — 2026-09-27
 
 **Scope.** Ten rows: MD37, MD53, MD58, MD65, MD66, MD71, MD162, MD197,
@@ -10258,3 +10372,1282 @@ The modified files an older acknowledgement already names (the §20.8 item 3
 blind spot) are the ones §37.8.9 lists as changed.
 
 Headline: not restated. No row moved.
+
+## 33. Lane T — the shared sheets Media opens, fixed through the design system (H7) — 2026-09-27
+
+Lane T owns one row, **MD403**, for one owner ruling, **H7**. The work is on
+branch `lane-t-h7`, cut from `e9e0b0404`, the head of
+`claude/sensing-completion-20260925`.
+
+This lane wrote no migration, read or wrote no database, and enabled no flag.
+It changed no server file and no existing token's value. It added two tokens
+and changed ten shared client components, all line-neutrally. It edited no
+Media-owned file except `mediaContrast.test.ts`. The headline is not
+restated here.
+
+**MD403 stays W.** Every pair the four sheets and DisambiguationSheet paint
+when opened from Media is now asserted and passes, and no pair of any other
+consumer got worse (§33.4, §33.6). Two things keep the row open, and each is
+named exactly in §33.8:
+- four modal sheets the comment sheet opens from inside itself are reachable
+  in the Media flow and are measured by no lane;
+- the owner said "Keep MD403 open until verified", and on-device review of
+  the visible changes (H8, extended by §33.5) has not happened.
+
+### 33.1 Row table
+
+| ID | Was | Now | Evidence |
+| --- | --- | --- | --- |
+| MD403 | **W** | **W** | **The owner ruled H7 YES on 2026-09-27** (§33.2), so the four shared sheets Media opens, and CreationAssist's "See all" DisambiguationSheet, are inside §46. **Re-measured, they failed on 43 pairs in 26 colour/ground groups**: 25 in the four sheets against the 19 §31.13.6 counted, and 1 in DisambiguationSheet. The difference is that the components drawn inside the sheets were measured too (§33.3). **Fixed through the design system:** two role tokens, `travel-buddy-standalone/src/theme/tokens.ts:13#signalStrong: '#C43B23'` and `travel-buddy-standalone/src/theme/tokens.ts:16#muteStrong: '#696660'`, and ten shared components moved onto them or onto `mute`; no existing token changed value (§33.4). **Asserted as Media's own pairs:** 170 sheet pairs, 127 asserted and all passing, 43 decorative, none pinned (`travel-buddy-standalone/src/features/media/__tests__/mediaContrast.test.ts:1552#test('census-media §33: the shared sheets Media opens are measured surfaces`); the whole file now holds 762 pairs, 689 asserted and passing, 0 pinned. **No other consumer regressed:** `travel-buddy-standalone/src/theme/__tests__/sharedSheetContrast.consumers.test.ts:308#test('no consumer pair got worse, and none that is asserted ends below WCAG AA'` measures 205 pairs on the grounds of 54 consumer files, before and after: 74 improved, 131 unchanged, 0 worse, 0 below AA (§33.6). Every change was seen red when reverted (§33.7). Readings (a)–(c) of §31.13.8 stand as stated. **RED WHEN** both hold: (1) the four modal sheets the comment sheet opens from inside itself — `travel-buddy-standalone/src/components/TagPreviewSheet.tsx`, `travel-buddy-standalone/src/components/ProfilePreviewCard.tsx`, `travel-buddy-standalone/src/components/EngagementUserListSheet.tsx` and `travel-buddy-standalone/src/components/ReportSheet.tsx` — are measured as asserted pairs and pass, or the owner rules that H7 stops at the sheets it names; and (2) the owner's "until verified" is met: the visible changes of §31.8, §31.13.15 and §33.5 are reviewed on a device (H8). **Blocker:** branch work for (1); two owner decisions for (1)'s alternative and for (2). |
+
+### 33.2 The ruling
+
+The owner's words, verbatim:
+
+> "H7: Yes. Include comments, share, place picker, and plan picker in Media's
+> contrast requirement. Shared ownership does not exclude a surface users
+> encounter in the Media flow. Fix the 19 failing pairs through the
+> appropriate design-system components or tokens, then check their other
+> consumers for regressions. Keep MD403 open until verified."
+
+- §31.13.6 put the case that §46 does not govern these sheets. The owner did
+  not accept it, so its "Not governed" line no longer holds.
+- The comment in the contrast test that said the sheets were "not pairs here"
+  is marked superseded in place
+  (`travel-buddy-standalone/src/features/media/__tests__/mediaContrast.test.ts:1387#SUPERSEDED by census-media §33`).
+- The ruling also reaches the DisambiguationSheet that CreationAssist opens
+  from the add-gem sheet, as §31.13.6 said it would.
+- "Keep MD403 open until verified" is why the row does not move here (§33.8).
+
+### 33.3 Re-measured: 43 failing pairs in 26 groups, not 19
+
+Each sheet was read as it renders when Media opens it, with every shared
+component drawn inside its own layout. The pairs, with the needles that tie
+each colour to its source line, are in
+`travel-buddy-standalone/src/theme/__tests__/sharedSheetContrast.pairs.ts:382#export const MEDIA_SHEET_PAIRS`.
+
+| Sheet (opened from) | Drawn inside it | Pairs | Asserted | Decor | Failing before | Groups | §31.13.6 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| CommentsSheet (Watch, Gems, the Grid viewer) | RichText, TranslationToggle, VerifiedStamp, StampIcon, MentionInput, MentionSuggestionList | 51 | 43 | 8 | 19 | 8 | 7 |
+| ShareSheet (Watch; the World shell's Telegraph share) | PortavaSheet, SectionHeader, Avatar | 44 | 31 | 13 | 10 | 7 | 7 |
+| GlobalPlacePicker (the add-gem sheet) | — | 28 | 19 | 9 | 5 | 5 | 2 |
+| PlanPickerController (the World action rail, Route It, the Watch list) | DatePickerField, LockTypeSelector | 38 | 27 | 11 | 8 | 5 | 3 |
+| DisambiguationSheet (CreationAssist's "See all") | EntitySuggestionRow | 9 | 7 | 2 | 1 | 1 | 1 |
+| **Total** | | **170** | **127** | **43** | **43** | **26** | **20** |
+
+A group is one colour on one ground at one threshold. What §31.13.6 missed:
+- **CommentsSheet:** the "Hashtag" chip in the mention suggestions, `signal`
+  on its own 0x15 tint (2.99).
+- **GlobalPlacePicker:** the "Use my current location" row, `signal` text on
+  the paper sheet (3.14); and the two loading spinners that replace the GPS
+  and custom-row icons, `signal` on their 0x20 and 0x15 tints (2.70, 2.85).
+  Each spinner is the only sign of the loading state, so it is a 3:1 mark.
+- **PlanPickerController:** the DatePickerField placeholder and the
+  LockTypeSelector hint, `faint` on paper (2.73); and LockTypeSelector's
+  inactive chip labels, `mute` on `haze` (4.41).
+
+Every failing pair, before and after:
+
+| Sheet | Colour on ground (bar) | Pairs | Before → after |
+| --- | --- | --- | --- |
+| CommentsSheet | `faint` text on paperRaised (4.5) | the empty state, a comment's time, "Edited", "Reply"/"Edit", the idle like count, "No replies yet." | 2.88 → 5.55 (`mute`) |
+| CommentsSheet | `faint` icons on paperRaised (3) | the idle like stamp, delete, a reply's edit pencil, the reply arrow | 2.88 → 5.55 (`mute`) |
+| CommentsSheet | `signal` text on paperRaised (4.5) | an @mention, the liked count, the hashtag-cap warning | 3.31 → 5.25 (`signalStrong`) |
+| CommentsSheet | onInk text on `signal` (4.5) | the inline edit's "Save" | 3.14 → 4.99 (fill `signalStrong`) |
+| CommentsSheet | `mute` text on `haze` (4.5) | "Comments have been turned off." | 4.41 → 4.55 (`muteStrong`) |
+| CommentsSheet | `faint` text on paper (4.5) | "Replying to …", the input's placeholder | 2.73 → 5.27 (`mute`) |
+| CommentsSheet | `faint` icon on paper (3) | the reply context's ✕ | 2.73 → 5.27 (`mute`) |
+| CommentsSheet | `signal` text on its 0x15 tint (4.5) | the "Hashtag" chip | 2.99 → 4.75 (`signalStrong`) |
+| ShareSheet | `faint` text on paperRaised (4.5) | the three options' subtitles | 2.88 → 5.55 (`mute`) |
+| ShareSheet | `signal` text on paperRaised (4.5) | "‹ Back" | 3.31 → 5.25 (`signalStrong`) |
+| ShareSheet | `faint` text on paper (4.5) | the note and search placeholders | 2.73 → 5.27 (`mute`) |
+| ShareSheet | `signal` text on its 0x07 tint (4.5) | "New Telegraph" | 3.20 → 5.08 (`signalStrong`) |
+| ShareSheet | `signal` text on its 0x0A tint (4.5) | the selected thread's name | 3.15 → 5.01 (`signalStrong`) |
+| ShareSheet | onInk text on `signal` (4.5) | the ✓ badge, a selected Avatar's initials, "Send" | 3.14 → 4.99 (fill `signalStrong`) |
+| ShareSheet | `signal` text on its 0x15 tint (4.5) | a person row's "Send" badge | 2.99 → 4.75 (`signalStrong`) |
+| GlobalPlacePicker | `faint` text on paperRaised (4.5) | the search placeholder | 2.88 → 5.55 (`mute`) |
+| GlobalPlacePicker | `signal` text on paperRaised (4.5) | "Retry" | 3.31 → 5.25 (`signalStrong`) |
+| GlobalPlacePicker | `signal` text on paper (4.5) | "Use my current location" | 3.14 → 4.99 (`signalStrong`) |
+| GlobalPlacePicker | `signal` spinner on its 0x20 tint (3) | the GPS row loading | 2.70 → 4.29 (`signalStrong`) |
+| GlobalPlacePicker | `signal` spinner on its 0x15 tint (3) | the custom row resolving | 2.85 → 4.52 (`signalStrong`) |
+| PlanPickerController | `signal` text on paper (4.5) | the error line, "Create new trip", the date picker's iOS "Done" | 3.14 → 4.99 (`signalStrong`) |
+| PlanPickerController | `signal` text on its 0x12 tint (4.5) | the selected trip chip | 2.89 → 4.59 (`signalStrong`) |
+| PlanPickerController | `faint` text on paper (4.5) | the date placeholder, the lock-type hint | 2.73 → 5.27 (`mute`) |
+| PlanPickerController | `mute` text on `haze` (4.5) | the inactive lock-type chips | 4.41 → 4.55 (`muteStrong`) |
+| PlanPickerController | onInk text on `signal` (4.5) | "Add to Plan" | 3.14 → 4.99 (fill `signalStrong`) |
+| DisambiguationSheet | `faint` text on paperRaised (4.5) | a candidate's reason | 2.88 → 5.55 (`mute`) |
+
+Nothing else in the five sheets failed. Their icon-only controls in `signal`
+(the send arrow's fill, the loading spinners on plain paper, the liked stamp)
+clear 3:1 on their grounds and keep the brand value.
+
+### 33.4 The fix, chosen by measurement
+
+**Option (a), a new value for an existing token, is ruled out for all three.**
+For `faint` and `signal` it was tried against the asserted pairs, and each
+result below was run on this tree and restored. For `mute`, what rules it out is what cannot be measured:
+
+- **`faint`**, documented as "tertiary text, placeholders", has 789 uses in
+  291 files. The lightest shade of it that clears 4.5:1 on paper is
+  `#75726B` (×0.75). At that value, 13 asserted Media pairs where `faint` is
+  text on Media's dark grounds fall below AA, from 4.55–6.57 to 2.72–3.94.
+  Examples: `time.neutral` goes 6.57 → 3.94, `mosaic.chipCount` 5.44 → 3.26,
+  and `viewer.relatedChipCount.photoFloor` 4.55 → 2.72. A darker `faint` does not
+  serve every consumer.
+- **`signal`**, the brand vermilion, has 1,917 uses in 420 files. The owner
+  ratified `#FF4D2E` by name (`docs/architecture/brand-palette-decision.md`).
+  At `#C43B23`, nine asserted Media pairs over photographs and dark backings fall below their bar:
+  the stamped icons, the saved bookmarks and the progress fills go 3.11 → 1.96;
+  the gems filter's selected fill 3.23 → 2.03 and its active label 5.72 → 3.60. Changing `signal` is a
+  visible brand change, and it would break the dark surfaces.
+- **`mute`**, documented as "secondary text", has 2,645 uses in 494 files. It
+  clears AA on paper (5.27) and paperRaised (5.55), and misses only on `haze`
+  (4.41). `haze` is documented as "dividers, card edges", not as a text
+  ground. A value 2% darker (`#696660`) clears 4.5:1 on `haze` and raises every pair on a light ground. But this lane
+  cannot measure 2,645 uses one by one, and any `mute` on a dark ground
+  (3.40:1 on ink) would get worse. So the change is confined to the two
+  components that put text on `haze`.
+
+**What was chosen:**
+
+1. **(b) `signalStrong: '#C43B23'`**
+   (`travel-buddy-standalone/src/theme/tokens.ts:13#signalStrong: '#C43B23'`).
+   - Used for vermilion text on a light ground or a signal tint, for a state
+     mark where `signal` misses 3:1, and for the fill under onInk text.
+   - Its value is `signal`'s channels ×0.77, which keeps the hue. That is the
+     lightest shade on a 0.01 grid that clears 4.5:1 on every ground it is
+     used on. The tightest is the plan picker's selected-trip chip at 4.59;
+     ×0.78 gives 4.47. The guard checks both.
+   - It is the value §31.2 chose locally for Media's action rail
+     (`ACTIVE_ON_PAPER`) and §31.13.2 chose for the Grid's retry fill. The
+     design system now names it.
+2. **(b) `muteStrong: '#696660'`**
+   (`travel-buddy-standalone/src/theme/tokens.ts:16#muteStrong: '#696660'`).
+   - Used for secondary text on a `haze` fill.
+   - Its value is `mute` ×0.98 at 4.55:1; ×0.99 gives 4.48. It is the value
+     Media's Grid filter chip already uses as a literal.
+   - Against `mute` it differs by 2%, which is not visible.
+3. **(c) `faint` text on a light ground takes the existing `mute`.**
+   - A new tertiary token was considered and rejected by measurement. On
+     paper, AA caps tertiary text at L* 48.5, and `mute` sits at L* 44.1.
+     `faint` itself is L* 62.9.
+   - The only band left for a distinct AA tertiary is 4.4 L* wide, so such a
+     token would be a near-duplicate of `mute`.
+   - Hierarchy is carried by size, weight and italics, as §31.2 did for the
+     trust chips.
+
+**The rule, recorded on the token lines themselves:**
+- `signal` stays the brand fill, mark and live pulse
+  (`travel-buddy-standalone/src/theme/tokens.ts:12#signal: '#FF4D2E', // vermilion — primary action + live pulse only`,
+  unchanged). Vermilion text on light grounds takes `signalStrong`.
+- Text on a `haze` fill takes `muteStrong`.
+- `faint` meets AA as text only on dark grounds
+  (`travel-buddy-standalone/src/theme/tokens.ts:17#faint: '#9C988F', // tertiary text, placeholders — as text it clears AA only on dark grounds`).
+
+**Brand implication.** `#FF4D2E` is unchanged everywhere and asserted
+unchanged. Inside the five sheets, vermilion text now reads as a deeper
+vermilion (`#C43B23`). Five fills under light text take it too: the comment edit's Save, the share sheet's Send and ✓ badge, the plan picker's Add to Plan, and a selected Avatar's disc
+(§33.5). Where the brand vermilion was a fill or a mark that already
+cleared its bar, it was left alone: the comment send button, the create-trip
+disc, the liked stamp, the spinners on plain paper, and every signal tint.
+
+### 33.5 What changed, and every visible change
+
+All edits are line-neutral: 52 lines changed in place across 11 files. They
+fall into three kinds:
+- `faint` → `mute` for text and 3:1 marks on light grounds;
+- `signal` → `signalStrong` for text, for the two tinted spinners, and for
+  fills under onInk text;
+- `mute` → `muteStrong` for text on `haze`.
+
+Lines, for the screenshot lane:
+
+| Component (file) | Element | Before → after | Where it is seen |
+| --- | --- | --- | --- |
+| CommentsSheet (`src/components/CommentsSheet.tsx`) | comment time, "Edited", "Reply"/"Edit", idle like count, "No comments yet…", "No replies yet.", "Replying to …", the "Add a comment…" placeholder | `#9C988F` → `#6B6862` | the comment sheet from Watch, Gems and the Grid viewer; every post's comment sheet (PostEngagementBar); the post screen's inline comments |
+| CommentsSheet | idle like stamp, delete, reply edit pencil, reply arrow, reply-context ✕ | `#9C988F` → `#6B6862` | same |
+| CommentsSheet | @mentions in comment and reply bodies | `#FF4D2E` → `#C43B23` | same |
+| CommentsSheet | the liked count | `#FF4D2E` → `#C43B23` | same |
+| CommentsSheet | inline edit "Save" fill and border | `#FF4D2E` → `#C43B23` | same, while editing your own comment |
+| CommentsSheet | "Comments have been turned off." | `#6B6862` → `#696660` (not visible) | same, when the author turned comments off |
+| MentionInput (`src/components/MentionInput.tsx`) | "Max N hashtags reached" | `#FF4D2E` → `#C43B23` | every composer with mentions: comments, Telegraph threads, group chat, Highlight, Postcard, Pulse create |
+| MentionSuggestionList (`src/components/MentionSuggestionList.tsx`) | the "Hashtag" chip label | `#FF4D2E` → `#C43B23` | the same composers, while suggesting |
+| ShareSheet (`src/components/ShareSheet.tsx`) | the three options' subtitles | `#9C988F` → `#6B6862` | Watch's send sheet; the World shell's Telegraph share; every post's share sheet |
+| ShareSheet | "‹ Back", "New Telegraph", a selected thread's name, a person row's "Send" badge label | `#FF4D2E` → `#C43B23` | same, in the chat picker |
+| ShareSheet | note and search placeholders | `#9C988F` → `#6B6862` | same |
+| ShareSheet | ✓ badge fill; "Send" button fill | `#FF4D2E` → `#C43B23` | same |
+| Avatar (`src/components/ui/Avatar.tsx`) | a selected thread's no-photo disc | `#FF4D2E` → `#C43B23` | ShareSheet and DiscoveryShareSheet chat pickers |
+| GlobalPlacePicker (`src/components/selectors/GlobalPlacePicker.tsx`) | search placeholder | `#9C988F` → `#6B6862` | the add-gem place field and the place pickers in 25 other files |
+| GlobalPlacePicker | "Use my current location"; "Retry" | `#FF4D2E` → `#C43B23` | same |
+| GlobalPlacePicker | the GPS and custom-row spinners | `#FF4D2E` → `#C43B23` | same, while locating or resolving |
+| PlanPickerController (`src/components/PlanPickerController.tsx`) | the error line, "Create new trip", the selected-trip chip label | `#FF4D2E` → `#C43B23` | "Add to Trip Plan" from the World action rail, Route It, the Watch list, and every other opener |
+| PlanPickerController | "Add to Plan" fill | `#FF4D2E` → `#C43B23` | same |
+| DatePickerField (`src/components/DateTimePickerField.tsx`) | the placeholder | `#9C988F` → `#6B6862` | the plan picker and the date/time fields in eight other files |
+| DatePickerField | iOS "Done" | `#FF4D2E` → `#C43B23` | same, iOS only, while the spinner is open |
+| LockTypeSelector (`src/components/itinerary/LockTypeSelector.tsx`) | inactive chip labels | `#6B6862` → `#696660` (not visible) | the plan picker, AddToPlanSheet, PlanItemSheet |
+| LockTypeSelector | the hint under the chips | `#9C988F` → `#6B6862` | same |
+| DisambiguationSheet (`src/platform/input-assistance/components/DisambiguationSheet.tsx`) | a candidate's reason line | `#9C988F` → `#6B6862` | "See all" from CreationAssist: the add-gem sheet, trip/new, gems/submit, events/create |
+
+All paths are under `travel-buddy-standalone/`.
+
+The fixes by site:
+- **CommentsSheet's mention colour** is passed through RichText's existing
+  `mentionColor` prop on both call sites, not by changing RichText's default.
+  RichText's other callers paint mentions on grounds this lane did not need
+  to touch (§33.6).
+- **DisambiguationSheet's reason colour** is passed through
+  EntitySuggestionRow's existing `reasonColor`. EntitySuggestionRow's
+  default, which §31.13.5's test pins, is unchanged.
+
+These visible changes join H8. They are on shared surfaces well beyond Media,
+so H8's device review should take them in (§33.8).
+
+### 33.6 Every other consumer: the regression guard
+
+`travel-buddy-standalone/src/theme/__tests__/sharedSheetContrast.consumers.test.ts`
+is new. It runs under node:test with the client's other suites, and it does
+four things.
+
+1. **No existing token changed value.** Every token at `e9e0b0404` is pinned,
+   and the only new keys are `signalStrong` and `muteStrong`
+   (`travel-buddy-standalone/src/theme/__tests__/sharedSheetContrast.consumers.test.ts:129#test('every token that existed before §33 keeps its value`).
+   So the 5,351 uses of `faint`, `signal` and `mute` keep their values, and only
+   the uses §33.5 lists moved off them.
+2. **Every consumer is found by a scan, not a list.** It scans all 1,510
+   source files under `app/` and `src/`, resolving each relative or `@/` import.
+   For each changed component, the files that import it and draw it must
+   equal the list in the test
+   (`travel-buddy-standalone/src/theme/__tests__/sharedSheetContrast.consumers.test.ts:187#test('every consumer of each changed component is enumerated`).
+   - For Avatar, only files that pass `selected` count, since only the
+     selected fill changed.
+   - For LockTypeSelector, only files that draw the selector count, not the
+     ones that import its `LOCK_STYLE` / `LOCK_LABEL`.
+   - Every use of a new token must sit in a measured component
+     (`travel-buddy-standalone/src/theme/__tests__/sharedSheetContrast.consumers.test.ts:198#test('every use of a new token is in a component this guard measures'`).
+3. **Every pair is measured before and after, on each consumer's own
+   ground.** It reads each sheet's 170 pairs. It re-grounds the comment rows
+   on the post screen's paper, for CommentsSection. It measures MentionInput's
+   warning on each of the five other composers' grounds, and
+   LockTypeSelector's hint on AddToPlanSheet's paper and PlanItemSheet's
+   white.
+4. **It fails on regressions and on moved counts.** It fails if any pair got
+   worse, or if an asserted pair ends below AA. It also fails if the recorded
+   counts move
+   (`travel-buddy-standalone/src/theme/__tests__/sharedSheetContrast.consumers.test.ts:337#assert.deepEqual(counts, { changedComponents: 10`).
+
+| Changed components | Consumer files | Pairs | Asserted | Improved | Unchanged | Worse | Failing before | Failing after |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 10 | 54 | 205 | 160 | 74 | 131 | **0** | 65 | **0** |
+
+The consumers, by changed component:
+
+| Component | Consumer files |
+| --- | --- |
+| CommentsSheet | 3 |
+| ShareSheet | 3 |
+| GlobalPlacePicker | 26 |
+| PlanPickerController | 12, the provider in `_layout` included |
+| DisambiguationSheet | 1, CreationAssist, which four creation screens draw |
+| MentionInput | 6 |
+| MentionSuggestionList | 6 |
+| DatePickerField | 9 |
+| LockTypeSelector | 3 |
+| Avatar, `selected` only | 2 |
+
+Most of these components paint their own ground (a modal sheet, a field, a
+chip, a fill), so a pair measures the same for every consumer. Where the
+ground is the consumer's, each consumer's ground is anchored by a needle in
+its own file. Beyond Media, the change improves:
+- the post screen's inline comments (15 of its 28 pairs improved);
+- the hashtag-cap warning on five composers;
+- the lock-type hint on two more sheets;
+- DiscoveryShareSheet's selected avatar;
+- every other GlobalPlacePicker, ShareSheet, plan picker and date field in
+  the app.
+
+**Left as they were: not worse, and outside the Media flow.** These were
+seen while enumerating and are recorded, not fixed:
+- RichText's default mention colour is still `signal`. Its Pulse, meetup,
+  hashtag-feed and Telegraph callers draw mentions in `signal` on light
+  grounds (3.31:1 on white, 3.14:1 on paper).
+- EntitySuggestionRow's default reason is still `faint`, in SmartInput's
+  suggestion overlay.
+- DiscoveryShareSheet's own ✓ badge and selected name are still `signal`.
+- LockTypeSelector's exported `LOCK_STYLE.flexible` badge is `mute` on
+  `haze`.
+- `faint` text remains on light grounds across screens this ruling does not
+  reach.
+
+The token rule in §33.4 is the fix for each, when its owner takes it up.
+
+### 33.7 Mutations, each seen red and restored
+
+Each mutation edits one file in place and runs both suites. The file is then
+restored byte for byte, and `git diff --quiet HEAD` on it exits 0. The runner
+is a scratch script, not committed.
+
+- **Every changed source line, reverted one at a time to its text at
+  `e9e0b0404` (49 mutations):**
+  - The guard went red on all 49.
+  - The Media contrast test went red on 46.
+  - The three the Media test does not see are CommentsSection's own lines
+    on the post screen: its reply-context ✕, its input placeholder and its
+    empty state. They are outside the Media flow, and the guard sees them.
+- **The first run found five mutations the guard missed.** Two call sites
+  shared one needle: CommentsSheet's two RichText calls, and CommentsSection's
+  copies of the sheet's ✕ and placeholder. Each site now has its own needle,
+  and the re-run is the one counted above.
+- **Named mutations (19), guard red on all 19:**
+
+| # | Mutation | Media test | Guard |
+| --- | --- | --- | --- |
+| W01–W11 | each changed file (tokens and the ten components) back to `e9e0b0404` whole | red on all 11 | red on all 11 |
+| T1 | `signalStrong` back to `#FF4D2E` | AA test red | lightest-shade, no-worse and counts red |
+| T2 | `muteStrong` back to `mute` | AA test red | same three red |
+| T3 | `signalStrong` one step too light (×0.82) | AA test red | same three red |
+| T4 | `signalStrong` darker than needed (×0.72) | green | lightest-shade test red |
+| T5 | an existing token moves: `mute` lightened to `#7A7770` | AA test red | token pin, lightest-shade, no-worse and counts red |
+| T6 | option (a) for `faint`: `#75726B` | AA test red on 13 Media dark-ground pairs | token pin, changed-for-a-reason and counts red |
+| G1 | `signalStrong` used in TranslationToggle, which the guard does not measure | needle red | new-token-use test red |
+| G2 | a new file that imports and draws ShareSheet | green | consumer-scan test red |
+
+### 33.8 What keeps MD403 at W, named exactly
+
+1. **Four nested modal sheets.** The comment sheet opens them from inside
+   itself, so a user reaches each one without leaving the Media flow. No
+   lane has measured any of them.
+   - TagPreviewSheet opens on tapping an @mention or #hashtag
+     (`travel-buddy-standalone/src/components/RichText.tsx:263#<TagPreviewSheet`).
+   - ProfilePreviewCard opens on tapping an author
+     (`travel-buddy-standalone/src/components/CommentsSheet.tsx:1435#<ProfilePreviewCard`).
+   - EngagementUserListSheet opens on tapping a like count
+     (`travel-buddy-standalone/src/components/CommentsSheet.tsx:363#<EngagementUserListSheet`).
+   - ReportSheet opens on long-pressing a comment and choosing Report
+     (`travel-buddy-standalone/src/components/CommentsSheet.tsx:1442#<ReportSheet`).
+   - **Why they are in reach.** The ruling names four sheets, but its reason
+     is "a surface users encounter in the Media flow", which reaches these.
+   - **What their style lines show.** A read of their style lines shows the
+     same token classes: `signal` text and fills, `faint` text, onInk on
+     `signal`. ReportSheet also draws MediaPickerButton and
+     MediaAttachmentTray for a safety report. That read is not a measurement,
+     and no number is given for it.
+   - **How to close it.** The fixture and guard here take them as more pairs
+     and more `CHANGED` entries, with no new machinery.
+   - Either they are measured and fixed as branch work, or the owner rules
+     that H7 stops at the sheets it names.
+2. **"Keep MD403 open until verified."**
+   - **Verified on this branch:** every pair of the four sheets and
+     DisambiguationSheet, as they render when opened from Media, is asserted
+     and passes (170 pairs, 127 asserted, none pinned). No pair of any other
+     consumer got worse (205 pairs, 54 consumers).
+   - **Not verified:** the result on a device; the owner's H8 decision on
+     lane K's visible changes (§31.8, §31.13.15), which is still pending; and
+     §33.5's visible changes, which H8's review should now include. If H8
+     revises a colour, `mediaContrast.test.ts` and the guard re-measure it
+     and name each pair it moves.
+3. **Not paired, as before:**
+   - Plain-View drag handles carry no state and name no control, as §31 did
+     not pair the Media sheets' own.
+   - The comment sheet's pressable handle is classed decorative
+     (`travel-buddy-standalone/src/theme/__tests__/sharedSheetContrast.pairs.ts:145#id: 'comments.handle'`).
+     It is hidden from assistive tech, the labelled ✕ closes the sheet, and
+     scrolling to the top collapses it. Like readings (a)–(c), it is the owner's to overrule.
+   - OS-drawn UI is not in the source: Alert dialogs, the OS share sheet
+     behind "Share Post", and the native date and time picker.
+   - Dynamic type: no Text in the five sheets or the components drawn inside
+     them opts out of, or caps, OS font scaling
+     (`travel-buddy-standalone/src/features/media/__tests__/mediaContrast.test.ts:1569#dynamic type — no Text in the shared sheets`).
+     The one exception is Avatar's monogram, which §31.13.5 already records.
+
+### 33.9 Pair counts (`mediaContrast.test.ts`)
+
+| | Pairs | Asserted | Pass | Pinned | Decorative | Floors |
+| --- | --- | --- | --- | --- | --- | --- |
+| At `e9e0b0404` (after §31.13 pass 4) | 592 | 562 | 562 | 0 | 30 | 166 |
+| After §33 | 762 | 689 | 689 | 0 | 73 | 166 |
+
+- All 592 earlier pairs are still measured and unchanged.
+- The 170 new pairs are all `sheets.*`.
+- The sheets are opaque light grounds, so none is a floor.
+- The new surfaces are spread into `S_TAIL` on one existing line
+  (`travel-buddy-standalone/src/features/media/__tests__/mediaContrast.test.ts:1065#...SHEET_SURFACES`).
+- The pairs are added at the tail
+  (`travel-buddy-standalone/src/features/media/__tests__/mediaContrast.test.ts:1544#for (const p of MEDIA_SHEET_PAIRS) add(`).
+
+### 33.10 Checks
+
+All run on this branch.
+
+- **Contrast test.** `mediaContrast.test.ts` passes 16 of 16, with 762
+  pairs, 0 pinned and 0 failing.
+- **The guard.** `sharedSheetContrast.consumers.test.ts` passes 9 of 9.
+- **Client node:test.** `npm test` runs 866 suites and 7,062 tests, all
+  passing.
+- **Jest.** `--findRelatedTests` on every changed file selects 522 component
+  suites, since tokens.ts is imported by nearly every component. All 522
+  pass, with 3,136 tests. The web config's 3 related suites pass 8 of 8.
+- **Client static checks.**
+  - `tsc --noEmit -p tsconfig.json` is clean.
+  - The test typecheck is at its baseline: 173 diagnostics across 60
+    files, none above baseline.
+  - eslint on every changed file gives 0 errors. Each changed component
+    has the same warning count as at `e9e0b0404`, and the new files have
+    none.
+  - All eight `lint:*` scripts pass.
+- **Census checks,** run in `artifacts/api-server`:
+  - `check:doc-citations` passes. Anchored citations stand at 7,363, up
+    from 7,339 with this section's; 0 anchors are off their cited lines;
+    unanchored citations stay at 6,355.
+  - `check:citation-targets` stays at 165 / 165.
+  - `check:census-integrity` passes. No row moves.
+  - `check:census-scope-coverage` passes after this section's widening:
+    census-media watches 349 of the 349 files it cites. No floor is lowered.
+  - `check:census-row-move-labels` and `check:test-registration` pass.
+  - `src/test/projectionConsumers.test.ts` and
+    `src/test/censusScopeCoverage.test.ts` pass 38 of 38.
+  - api-server `typecheck` is clean and `typecheck:tests` is at its baseline (863 across 115 files). `check:all` fails only on `check:census-freshness` (below) and the five live-DB checks the lane rules allow: write-path-columns, missing-live-columns, authorization-contract, media-objects and rank-events-surfaces. Each of those refuses to run without a sanctioned non-production database.
+  - `check:census-freshness` reports five censuses stale on this lane's
+    files. The acknowledgement ledger is not edited; the integrator writes
+    the acknowledgements. Each file changes colours only, or is §33's own
+    test code:
+    - **census-media**, 11 files: tokens.ts, the two new test files,
+      DateTimePickerField, MentionInput, MentionSuggestionList,
+      PlanPickerController, LockTypeSelector, GlobalPlacePicker, Avatar and
+      DisambiguationSheet. They are §33's own subject, and §33 re-measures
+      them. CommentsSheet, ShareSheet and `mediaContrast.test.ts` also
+      changed, and are already named by the ledger.
+    - **census-input-intelligence:** MentionInput, GlobalPlacePicker and
+      DisambiguationSheet. Each is colour-only. G167 cites
+      DisambiguationSheet's lines 56–75 for the scrim,
+      `accessibilityViewIsModal` and the "Search … instead" escape; line 65
+      now passes the rows a reason colour, and all three still hold.
+      ShareSheet also changed and is already named.
+    - **census-discovery:** MentionInput. A08 cites it as one of the input
+      engines Discovery does not own, and a colour cannot move that.
+    - **census-passport** and **census-wall:** tokens.ts. Their rows cite
+      `signal` and `deep` on lines 12 and 14, which are byte-identical. No
+      existing token changed value, and the guard asserts it.
+    - **census-trust:** CommentsSheet, already named by its ledger, so not
+      flagged. TV-3a grades that a comment's overflow opens ReportSheet,
+      and it still does.
+
+### 33.11 Files changed
+
+| File | Change |
+| --- | --- |
+| `travel-buddy-standalone/src/theme/tokens.ts` | `signalStrong` and `muteStrong` added; the rule recorded on the `faint` line (three lines, in place) |
+| `travel-buddy-standalone/src/components/CommentsSheet.tsx`, `ShareSheet.tsx`, `PlanPickerController.tsx`, `MentionInput.tsx`, `MentionSuggestionList.tsx`, `DateTimePickerField.tsx`, `selectors/GlobalPlacePicker.tsx`, `itinerary/LockTypeSelector.tsx`, `ui/Avatar.tsx`; `travel-buddy-standalone/src/platform/input-assistance/components/DisambiguationSheet.tsx` | colours moved as in §33.5 (in place) |
+| `travel-buddy-standalone/src/features/media/__tests__/mediaContrast.test.ts` | one surface line extended, the superseded comment marked, the §33 tail appended |
+| `travel-buddy-standalone/src/theme/__tests__/sharedSheetContrast.pairs.ts` | new: the sheets' pairs, grounds and needles |
+| `travel-buddy-standalone/src/theme/__tests__/sharedSheetContrast.consumers.test.ts` | new: the regression guard |
+| `artifacts/api-server/src/scripts/checkCensusFreshness.ts` | census-media's `CENSUS_SCOPE` widened for this section |
+| `docs/ops/sensing-production-approval-request.md` | the H7 row records the ruling and what was done (in place) |
+
+### 33.12 Production — nothing here is deployed
+
+- Nothing in §33 is merged to main, pushed or deployed, so it is in no build
+  a user has.
+- The change is client-only. No flag, seed, migration, database or server
+  file was touched.
+- `SENSING_ANON_GRANTED_SCOPES` and the 2481 ledger entry are untouched.
+
+## 34. Lane F — the owner's surface decisions F1 and F2, built as flags seeded to today — 2026-09-27
+
+Branch `lane-f-surface`, cut from `claude/sensing-completion-20260925` at
+`e9e0b0404`. The code is in `aa81e8eff`, and this section follows it.
+Migrations 3340–3343 are written and applied to no database. No
+flag was enabled anywhere. Built on the branch, not merged. Merged would still
+not be deployed, and deployed would still not be flag-enabled.
+
+### 34.1 What was asked, and the short answer
+
+This lane owns fifteen rows: MD1, MD3, MD11, MD29, MD87, MD215, MD286, MD402,
+MD408, MD412, MD419, MD424, MD425, MD427 and MD435. The first fourteen are the
+§28.9 F1/F2 list without MD2, which belongs to Lane C, the ranker lane. MD435
+is §28.9's owner-definition row; its ranker half was assigned here. F1 and F2
+are the two decisions §14.4 records:
+- **F1:** does the World shell, a context-first surface, become the Media
+  tab's default instead of Watch?
+- **F2:** do the Watch overlay's Stamp/count rail, full-screen autoplay paging
+  and the legacy Watch ranker stop being primary?
+
+This lane split each row into the code that was still missing and the decision
+that only an owner can take. It built all of the missing code. Each decision is
+now one flag, seeded FALSE, which is today's behaviour.
+
+**Nothing a user sees changes until an owner flips a row.** Every reader fails
+closed to today. With every flag off, the tab, the overlay, the feed and the
+ranking are exactly what ships now. That is proven for each flag in §34.3, and
+each proof went red under mutation (§34.4).
+
+**No row moves.** Every one of the fifteen RED WHENs asks for the shipped
+default surface or the shipped ordering to change. That change is now a flag
+flip, and a flip is not C. MD435 also carries an owner definition that no flag
+can settle. §34.5 rewrites each blocker as the exact activation it waits on.
+
+### 34.2 What was unbuilt, and is now built
+
+There are four flags: one for F1 and three for F2. The client reads the first
+three through one pure resolver,
+`travel-buddy-standalone/src/features/media/state/mediaSurfaceFlags.ts:64#worldDefault: isEnabled('MEDIA_WORLD_SHELL_ENABLED') && isEnabled('MEDIA_TAB_WORLD_DEFAULT_ENABLED'),`,
+which answers TODAY for an absent, unfetched, non-`true` or throwing read. The
+server reads the fourth through `isFlagEnabled`.
+
+**F1: `MEDIA_TAB_WORLD_DEFAULT_ENABLED` (3340).**
+- *Unbuilt before:* the tab's opening mode was hard-coded. The store default is
+  still `travel-buddy-standalone/src/stores/mediaStore.ts:104#selectedMode: 'watch',`
+  and the tab opened on the first of Watch · Grid · Gems. The World shell was
+  reachable only through a pill that pushed `/media-world`.
+- *Built:*
+  - `world` is a mode of the tab itself and is listed first:
+    `travel-buddy-standalone/app/(tabs)/media.tsx:54#const ALL_MODES: ModeItem[] = [{ key: 'world', label: 'World', flagKey: 'MEDIA_TAB_WORLD_DEFAULT_ENABLED' },`.
+    It appears only while `MEDIA_WORLD_SHELL_ENABLED` is on as well.
+  - The tab's opening mode is the first enabled mode, so the tab then opens on
+    the World shell,
+    `travel-buddy-standalone/app/(tabs)/media.tsx:109#{selectedMode === 'world' && <MediaWorldTabSurface`.
+    The shell is fed the same coarse location inputs as `/media-world`:
+    `travel-buddy-standalone/src/features/media/screens/MediaWorldTabSurface.tsx:39#headerAccessory={modeSwitcher}`.
+  - The tab's mode switcher is drawn under the World header, through a new
+    optional `headerAccessory` prop on the shell. Watch stays one tap away.
+  - The tab opens on World at every launch, even over a persisted Watch:
+    `travel-buddy-standalone/src/stores/mediaStore.ts:166#const candidate = openOnDefault ? defaultMode`
+    and `travel-buddy-standalone/app/(tabs)/media.tsx:242#openOnDefault={defaultMode === 'world'}`.
+    MD427 asks for no full-screen stranger video immediately on open, and a
+    restored Watch would be exactly that. With the flag off, the persisted mode
+    wins, as before.
+  - The World pill is dropped while World is a mode, because it would open the
+    same surface a second way.
+
+**F2 overlay: `MEDIA_WATCH_CONTEXT_OVERLAY_ENABLED` (3341).**
+- *Unbuilt before:* Watch had one overlay. Its Stamp is the first and largest
+  control and carries counts,
+  `travel-buddy-standalone/src/components/media/WatchItemOverlay.tsx:416#formatCompactCount(item.stampItCount!)`.
+  It had no Compass control.
+- *Built:* the flag is read once per overlay,
+  `travel-buddy-standalone/src/components/media/WatchItemOverlay.tsx:179#const contextFirst = useMediaSurfaceDecisions().contextOverlay;`.
+  When it is on:
+  - Ask Compass is the first rail control and the largest, a 52 pt onInk disc
+    with a label,
+    `travel-buddy-standalone/src/components/media/WatchItemOverlay.tsx:401#{contextFirst ? <ContextCompassButton item={item} /> : null}`.
+    It hands the media id and the §15 rail's prompt to Compass, exactly as the
+    rail does.
+  - Stamp, comment and save keep their controls and lose their counts,
+    `travel-buddy-standalone/src/components/media/WatchItemOverlay.tsx:407#count={contextFirst ? undefined : stampVisualCount}`.
+    The Stamp It count is not drawn:
+    `travel-buddy-standalone/src/components/media/WatchItemOverlay.tsx:413#{!contextFirst && (item.stampItCount ?? 0) > 0 ? (`.
+  - The left column opens on the place, ahead of the creator:
+    `travel-buddy-standalone/src/components/media/WatchItemOverlay.tsx:273#{contextFirst ? <ContextPlaceHeader item={item} /> : null}`.
+    Tapping it opens that place's perspectives through the §14 entry context,
+    on this perspective, falling back to the place screen when there is nothing
+    to stage:
+    `travel-buddy-standalone/src/components/media/WatchItemOverlay.tsx:710#void openPlaceByIdPerspectives(placeId,`.
+
+**F2 autoplay: `MEDIA_WATCH_TAP_TO_PLAY_ENABLED` (3342).**
+- *Unbuilt before:* two paths play a cell with no tap. Viewability makes a
+  cell active and the cell plays,
+  `travel-buddy-standalone/src/components/media/WatchVideoCell.tsx:158#shouldPlay={isActive}`.
+  Separately, the playback manager calls `playAsync` on whichever item becomes
+  active, on refocus, and on foreground.
+- *Built:*
+  - A cell that becomes the viewable one starts paused under a "Tap to play"
+    mark,
+    `travel-buddy-standalone/src/components/media/WatchFeedList.tsx:94#const [userPaused, setUserPaused] = useState(tapToPlay);`.
+    The single tap that pauses today is what starts it.
+  - The manager is told not to autoplay,
+    `travel-buddy-standalone/src/components/media/WatchFeedList.tsx:461#const tapToPlay = useMediaSurfaceDecisions().tapToPlay; const playback = useWatchPlayback({ autoplay: !tapToPlay });`,
+    and honours it:
+    `travel-buddy-standalone/src/hooks/useWatchPlayback.ts:126#if (id && focusedRef.current && autoplayRef.current) {`.
+  - Leaving the tab or the app returns a started cell to "Tap to play". With
+    autoplay off nothing resumes the cell, so the state shown must match the
+    player's state.
+  - A long press restores whatever state it found.
+  - Paging is unchanged. What is retired is autoplay as the navigation.
+
+**F2 ranker: `MEDIA_WATCH_STAGE24_RANKING_ENABLED` (3343).**
+- *Unbuilt before:* the Watch feed was ordered only by
+  `artifacts/api-server/src/services/ranking/MediaFeedRankingService.ts:635#export function rankMediaFeed<T extends MediaFeedItem>(`,
+  which multiplies by watch completion, qualified views and re-watches at
+  `artifacts/api-server/src/services/ranking/MediaFeedRankingService.ts:673#const completionMult  = watchCompletionMultiplier(item.watchCompletionRate);`.
+  It is Media's second ranker, and GET /media/feed is its only request path.
+- *Built:* with the flag on, the page the eligibility gate admitted is ordered
+  by the §42 stage the World shell already uses:
+  - `artifacts/api-server/src/routes/mediaFeed.ts:1572#const capped = watchStage24 ? await orderWatchCandidatesByStage24(`
+    calls
+    `artifacts/api-server/src/services/media/WatchStage24Ranking.ts:100#const ordered = await rankCandidatesForViewer(`.
+  - The legacy ranker is not called:
+    `artifacts/api-server/src/routes/mediaFeed.ts:1555#const rankedResults: MediaRankedItem<RankingMediaFeedItem>[] = watchStage24 ? [] : rankMediaFeed({`.
+  - Membership is untouched. The stage returns the same row objects, and
+    they are mapped back by id, so none is dropped, duplicated or invented.
+    The private-author guard, the limit, the cursor and hydration all run after
+    it, as they did after the legacy ranker.
+  - Impressions log the §24 terms the page was ordered by, prefixed `s24_`.
+    The legacy "Why This?" snapshot is not written for a page the legacy
+    ranker did not order.
+  - The flag is not gated by `MEDIA_RANKING_ENABLED`. That flag is the legacy
+    ranker's own master switch, and the stage has none in the World shell
+    either.
+  - While the flag is off, the one cost is an extra flag read per Watch page.
+    It is started beside the ranking loads, so it adds no round trip.
+
+**Reused existing flags.**
+- `MEDIA_WORLD_SHELL_ENABLED` is F1's prerequisite; `worldDefault` is false
+  without it.
+- `MEDIA_VIEW_MODE_FULLSCREEN_ENABLED`, seeded **true** (2037), already
+  removes Watch entirely when set false. No code was needed for the strict
+  reading of MD419; §34.6 lists it.
+- `MEDIA_ACTIVE_CREATOR_BOOST_ENABLED` takes effect only inside
+  `rankMediaFeed`. With the ranker flag on, it orders nothing. It was not
+  reused as the switch, because it is one boost and not the ranker. The same
+  flip bears on MD2, the per-creator boost, but MD2 is Lane C's row and is not
+  graded here.
+
+### 34.3 Both states, tested the way the repo tests flags
+
+Each OFF case asserts today's render or ordering exactly. Each ON case asserts
+the specified behaviour. The existing suites for every changed component still
+pass unchanged, with one deliberate exception, noted at the end of this list.
+
+- **Server (node:test, `artifacts/api-server/src/test/mediaWatchStage24Ranking.test.ts`, 17 cases, registered).**
+  These cases go through the real route over a fake PostgREST client:
+  - OFF, whether absent, FALSE or unreadable, keeps the DB order that
+    `MEDIA_RANKING_ENABLED` off produces. With the legacy switch on, the
+    legacy ranker still decides and still writes its snapshot:
+    `artifacts/api-server/src/test/mediaWatchStage24Ranking.test.ts:225#OFF by absence: today's order`.
+  - ON puts the post the viewer wants first, and moving the want moves the
+    order:
+    `artifacts/api-server/src/test/mediaWatchStage24Ranking.test.ts:242#ON: the §24 stage orders the page`.
+  - ON with 40 stamps on the other post and the legacy switch on changes
+    nothing: no legacy snapshot is written, and every impression carries the
+    `s24_*` terms and no legacy term:
+    `artifacts/api-server/src/test/mediaWatchStage24Ranking.test.ts:248#ON: the stamp count moves nothing`.
+  - Further cases check the helper's identity and each-once guarantee.
+  - Each migration seeds its flag FALSE, is a seed and not DDL, and refuses to
+    find its flag ON. Each rollback deletes only a FALSE row.
+- **Client, pure resolver (node:test,
+  `travel-buddy-standalone/src/features/media/__tests__/mediaSurfaceFlags.test.ts`, 6 cases).**
+  - The seed is TODAY.
+  - F1 needs both of its flags.
+  - Each F2 flag turns on only its own decision.
+  - Only a literal `true` counts, and a throwing reader reads as TODAY.
+  - Every name the resolver reads is seeded FALSE.
+- **Client, jest (native renderer).**
+  - F1: `media.worldDefault` (7 query cases) and `media.worldDefaultSwitch`
+    (one press). This renderer commits one press per file, so the press has its
+    own file.
+    - Off is Watch · Grid · Gems, opening on Watch, with no World surface.
+    - The shell flag alone still shows today's pill.
+    - F1 without the shell changes nothing.
+    - A persisted mode is restored.
+    - On, the tab opens on World with World first and no Watch feed mounted,
+      even over a persisted Watch. The switcher sits inside the World surface,
+      and Watch is one tap away.
+  - F2 overlay: `WatchItemOverlay.contextOverlay` (6 cases),
+    `WatchItemOverlay.contextPress` (Compass and place pressed) and
+    `WatchItemOverlay.contextPlaceOpened`.
+    - Off, Stamp leads with all four counts and there is no Compass control.
+    - On, Compass precedes Stamp, comment and save, and none of the four counts
+      is drawn.
+    - On, the place leads the left column, above the creator, and the chip is
+      not drawn twice.
+    - A label-only place is drawn but not tappable.
+    - Compass receives the media id and the prompt.
+    - The place opens the entry context, or the place screen when the entry
+      context stages nothing.
+  - F2 autoplay: `WatchFeedList.tapToPlay`, `WatchFeedList.tapToPlayLeave` and
+    `useWatchPlayback.autoplay`.
+    - Off, the cell is active at once and the manager autoplays.
+    - On, the cell is inactive under "Tap to play", the manager is told not to
+      autoplay, and the tap starts the cell.
+    - On, leaving the tab returns the cell to "Tap to play". Off, the cell does
+      not listen.
+    - The manager plays nothing when told not to, and still pauses the item it
+      leaves.
+  - The one deliberate edit to an existing suite is in
+    `media.watchChip.component.test.tsx`. Its flag mock answered **every**
+    flag true, and that now includes F1, under which the tab opens on World by
+    design rather than on the persisted Gems its scenario starts from. The mock
+    now answers every flag but F1, which is the surface that test was written
+    for. The edit is one line and line-neutral.
+- **Contrast.** Eight new pairs were measured under the §31 rules, appended to
+  `mediaContrast.test.ts`. The Compass glyph on its disc measures 17.95. The
+  place hint measures 4.55 at the photo floor, which clears 4.5 by the least
+  margin of any new pair. All eight pass, and none is pinned.
+
+### 34.4 Mutations, each seen red, each restored byte-identical
+
+Every file was checksummed before and after. Each mutation was applied alone,
+by an exact-string replacement.
+
+| Id | Mutation | Red |
+| --- | --- | --- |
+| mS1 | route ignores the flag | 2 ON cases |
+| mS2 | reader always true | 4 OFF cases |
+| mS3 | impressions lose the `s24_*` terms | 1 |
+| mS4 | stage order discarded | 3 |
+| mS5 | legacy ranker still runs when ON | 1 |
+| mS6 | flag name misspelled | 2 |
+| mC1 | root filter never lists World | 4 |
+| mC2 | chip filter never lists World | 3 |
+| mC3 | World mode renders nothing | 4 |
+| mC4 | persisted mode wins over the World default | 1 (MD427 case) |
+| mC5 | World default without the shell flag | 1 |
+| mC6 | World pill kept beside the World mode | 1 |
+| mC7 | World listed last instead of first | 4 |
+| mC8 | overlay flag ignored | 5 |
+| mC9 | overlay on regardless of flag | 1 |
+| mC10 | Stamp count still drawn | 1 |
+| mC11 | Stamp It count still drawn | 1 |
+| mC12 | Compass drawn after the social rail | 1 |
+| mC13 | place opens /place, not the entry context | 2 |
+| mC14 | no fallback when nothing is staged | 1 |
+| mC15 | Compass without the media id | 1 |
+| mC16 | place chip drawn twice | 2 |
+| mC17 | cell starts unpaused under tap-to-play | 3 |
+| mC18 | manager told to autoplay | 1 |
+| mC19 | manager ignores `autoplay: false` | 1 |
+| mC20 | leaving the tab does not rest the cell | 1 |
+| mC21 | "Tap to play" never drawn | 1 |
+| mC22 | tap-to-play on regardless of flag | 2 |
+| mC23 | the list does not pass tap-to-play to its cells | 3 |
+| mP1 | the client reads an unseeded overlay flag name | `check-flag-polarity` R9 |
+| mP2 | the tap-to-play seed loses its reader | `check-flag-polarity` R6 |
+| mP3 | the server flag loses its classification | `check-flag-polarity` R1 |
+
+Thirty-two mutations were applied, and all thirty-two turned red. The last
+three were aimed at the flag-polarity guard, to show that it sees the new
+names.
+**A redundant guard was found this way, not a hole.** Removing `&& !watchStage24`
+from the snapshot condition does not redden anything. With the stage on,
+`rankedResults` is empty, and the snapshot writer already returns on an empty
+list. The condition is kept as the stated intent. It is not counted as a proof.
+
+### 34.5 The fifteen rows: none moves, and each blocker is now an activation
+
+Every RED WHEN below asks for the shipped default surface, or the shipped
+ordering, to change. Each of those changes is a flag flip. A flag seeded FALSE
+is not the reached default, so each row stays **W**. The implementation half is
+done for every row, and MD435 keeps an owner definition that no flag settles.
+
+| ID | old | **new** | evidence |
+| --- | --- | --- | --- |
+| MD1 | W | **W** | IMPLEMENTATION done: the World shell as the tab's own first mode (§34.2 F1), and a place-first Watch overlay (F2). **ACTIVATION: `MEDIA_TAB_WORLD_DEFAULT_ENABLED` = true with `MEDIA_WORLD_SHELL_ENABLED` = true (and `MEDIA_TAB_ENABLED` = true for a Media tab to exist at all), owner decision F1.** RED WHEN unchanged, §19.6. |
+| MD3 | W | **W** | IMPLEMENTATION done: the tab can open on a surface with no infinite feed. **ACTIVATION: as MD1, owner decision F1.** |
+| MD11 | W | **W** | IMPLEMENTATION done: the reached surface can be the outcome-ranked shell (F1), and Watch itself can be ranked by the §24 stage, which reads no watch time (`artifacts/api-server/src/routes/mediaFeed.ts:1572#const capped = watchStage24 ? await orderWatchCandidatesByStage24(`). **ACTIVATION: `MEDIA_TAB_WORLD_DEFAULT_ENABLED` = true with `MEDIA_WORLD_SHELL_ENABLED` = true, owner decision F1; for the Watch half, `MEDIA_WATCH_STAGE24_RANKING_ENABLED` = true, owner decision F2.** |
+| MD29 | W | **W** | IMPLEMENTATION done: the dashboard is the tab's opening page when F1 is on (`travel-buddy-standalone/src/features/media/screens/MediaWorldTabSurface.tsx:39#headerAccessory={modeSwitcher}`). **ACTIVATION: as MD1, owner decision F1.** |
+| MD87 | W | **W** | IMPLEMENTATION done: under F1 every open is a §14 entry context; under the F2 overlay a Watch place open goes through the entry context (`travel-buddy-standalone/src/components/media/WatchItemOverlay.tsx:710#void openPlaceByIdPerspectives(placeId,`). **ACTIVATION: F1 flags as MD1, and `MEDIA_WATCH_CONTEXT_OVERLAY_ENABLED` = true, owner decisions F1 and F2.** The Grid tile's `/media-viewer/[id]` is untouched; it gains the §15 rail only with the shell flag (§19.6). |
+| MD215 | W | **W** | IMPLEMENTATION done: the watch multipliers are replaced by the §24 stage behind a flag, and the count rail is demoted behind a flag. **ACTIVATION: `MEDIA_WATCH_STAGE24_RANKING_ENABLED` = true AND `MEDIA_WATCH_CONTEXT_OVERLAY_ENABLED` = true, owner decision F2.** |
+| MD286 | W | **W** | IMPLEMENTATION done: the default can be not-Watch (F1). **ACTIVATION: `MEDIA_TAB_WORLD_DEFAULT_ENABLED` = true with `MEDIA_WORLD_SHELL_ENABLED` = true (owner decision F1), or `MEDIA_VIEW_MODE_FULLSCREEN_ENABLED` = false (owner decision F2).** The RED WHEN reads "that seed off or the default not 'watch'", and either satisfies it. |
+| MD402 | W | **W** | IMPLEMENTATION done: the reached surface can optimise neither minutes, scroll depth nor autoplay (F1), and Watch itself can drop all three (F2 ranker and autoplay flags). **ACTIVATION: F1 flags as MD1, owner decision F1; for Watch, `MEDIA_WATCH_STAGE24_RANKING_ENABLED` = true and `MEDIA_WATCH_TAP_TO_PLAY_ENABLED` = true, owner decision F2.** |
+| MD408 | W | **W** | IMPLEMENTATION done: an overlay with no Stamp, comment, save or Stamp It count (`travel-buddy-standalone/src/components/media/WatchItemOverlay.tsx:407#count={contextFirst ? undefined : stampVisualCount}`). **ACTIVATION: `MEDIA_WATCH_CONTEXT_OVERLAY_ENABLED` = true (owner decision F2), or the F1 flags.** |
+| MD412 | W | **W** | IMPLEMENTATION done: Compass is the first and largest Watch control (`travel-buddy-standalone/src/components/media/WatchItemOverlay.tsx:401#{contextFirst ? <ContextCompassButton item={item} /> : null}`). **ACTIVATION: `MEDIA_WATCH_CONTEXT_OVERLAY_ENABLED` = true (owner decision F2), or the F1 flags.** |
+| MD419 | W | **W** | IMPLEMENTATION done: the paging feed need not be the default mode. **ACTIVATION: F1 flags as MD1 (owner decision F1). Strict reading (no such feed at all): `MEDIA_VIEW_MODE_FULLSCREEN_ENABLED` = false, existing flag, no code, owner decision F2.** |
+| MD424 | W | **W** | IMPLEMENTATION done: Stamp is neither first nor largest, and carries no count, on the context overlay. **ACTIVATION: `MEDIA_WATCH_CONTEXT_OVERLAY_ENABLED` = true, owner decision F2.** |
+| MD425 | W | **W** | IMPLEMENTATION done: no cell plays without a tap (`travel-buddy-standalone/src/components/media/WatchFeedList.tsx:94#const [userPaused, setUserPaused] = useState(tapToPlay);`), and the default surface can be the shell, which has no autoplay. **ACTIVATION: `MEDIA_WATCH_TAP_TO_PLAY_ENABLED` = true (owner decision F2), or the F1 flags.** |
+| MD427 | W | **W** | IMPLEMENTATION done: the tab opens context-first on every launch, even over a persisted Watch (`travel-buddy-standalone/src/stores/mediaStore.ts:166#const candidate = openOnDefault ? defaultMode`). **ACTIVATION: F1 flags as MD1, owner decision F1.** EXTERNAL VERIFICATION: a device cold start straight into the tab while the flag fetch is in flight, §34.7. |
+| MD435 | W | **W** | IMPLEMENTATION done: with the flag on, `rankMediaFeed` has no request path (`artifacts/api-server/src/routes/mediaFeed.ts:1555#const rankedResults: MediaRankedItem<RankingMediaFeedItem>[] = watchStage24 ? [] : rankMediaFeed({`). Deleting it is a follow-up that belongs after activation, because the flag-off path must survive until the owner decides; `buildPlaceAffinities` in the same file has other callers. **ACTIVATION: `MEDIA_WATCH_STAGE24_RANKING_ENABLED` = true, owner decision F2. OWNER DEFINITION still open: §42 against §48, whether Media may own the §24 stage at all (§21.4).** |
+
+### 34.6 Activation — for the approval request
+
+These steps are drafted for the integrator to fold into the approval request.
+Nothing here was run against any database.
+
+**Prerequisites common to all four flags:**
+- the branch is merged and its migration applied;
+- for the three client flags, a client build or JS bundle containing the reader
+  is what users run, since an older binary ignores the row;
+- the app picks up a flag on its next fetch, at launch or on return to the
+  foreground.
+
+The 2026-09-22 production snapshot records
+`artifacts/api-server/src/lib/capability/snapshots/20260922-production-schema.json:6612#"MEDIA_TAB_ENABLED": false`
+and
+`artifacts/api-server/src/lib/capability/snapshots/20260922-production-schema.json:6608#"MEDIA_RANKING_ENABLED": false`,
+and lists no `MEDIA_WORLD_SHELL_ENABLED` row. Those are facts about that file.
+This lane read no database.
+
+| Flag | Value | Prerequisite | Verify | Recover |
+| --- | --- | --- | --- | --- |
+| `MEDIA_TAB_WORLD_DEFAULT_ENABLED` | true | 3340 applied; `MEDIA_WORLD_SHELL_ENABLED` = true (2300 applied), or this flag does nothing; `MEDIA_TAB_ENABLED` = true (2037), or no Media tab exists in the nav bar; client build with this branch; a `mobile-reachability-ledger` entry for the World shell as the tab's mode (the F1 settlement in §14.4 asks for one). | `GET /api/feature-flags` shows both flags true. On a device, the Media tab opens on the World header and lens bar, with World · Watch · Grid · Gems under the header and World selected. Kill and relaunch with Watch last selected: the tab still opens on World. Tapping Watch shows the feed. | Set it false. On the next fetch the tab lists Watch · Grid · Gems again and opens on the first, and the persisted mode is honoured again. Then run `db/rollback/2026-09-27-3340-media-tab-world-default-flag-rollback.sql` if the row itself must go; it refuses while the flag is true. |
+| `MEDIA_WATCH_CONTEXT_OVERLAY_ENABLED` | true | 3341 applied; client build with this branch. It is independent of the shell flag. | On Watch, the rail begins with the Compass disc and labels, and shows no numbers under Stamp, comment or save and no Stamp It count. The place name leads the left column. Tapping Compass opens Compass with the media's context. Tapping the place opens that place's perspectives, or the place screen when there are none. | Set it false: today's rail on the next fetch. The rollback file is the 3341 one. |
+| `MEDIA_WATCH_TAP_TO_PLAY_ENABLED` | true | 3342 applied; client build with this branch; a device QA pass of expo-av pause and resume (§34.7). | Scrolling Watch, each new cell shows "Tap to play" with no sound or motion until tapped. A tap plays and a second tap pauses. Switching tabs, or backgrounding and foregrounding, returns the cell to "Tap to play" with the player paused. | Set it false: autoplay on viewability returns on the next fetch. The rollback file is the 3342 one. |
+| `MEDIA_WATCH_STAGE24_RANKING_ENABLED` | true | 3343 applied; the API deployed with this branch. `MEDIA_RANKING_ENABLED` is not a prerequisite and is not consulted. With it off, as the snapshot records for production, Watch is chronological today and becomes §24-ranked on the flip. | Feed-level: new `rank_events` rows for `surface = 'watch_feed'` carry `s24_*` features and no legacy keys. No new `media_ranking_snapshots` rows are written for `watch_feed`. Operational: watch GET /media/feed latency, since the stage's loader adds its reads per page, each settling to neutral on error. | Set it false: the legacy ranker orders the next request. The rollback file is the 3343 one. |
+
+**Two decisions the flags cannot take.**
+- **MD419, strict reading.** `MEDIA_VIEW_MODE_FULLSCREEN_ENABLED` = false
+  removes Watch altogether. That is an existing flag, currently true, and
+  needs no code. It is only needed if F1's "not the default" is not enough.
+- **MD435.** §42 against §48 needs an owner ruling.
+
+### 34.7 Web render, and what needs a device
+
+**Web render: done, as a DOM render and not a screenshot.**
+`travel-buddy-standalone/src/features/media/__tests__/mediaSurfaceFlags.webrender.test.tsx`
+renders the flag-ON surfaces through react-dom, via jest-expo/web, the
+harness `WatchStamp.webrender` already uses. It reads the DOM in document
+order and checks four things:
+- Overlay off: today's labels and all four counts.
+- Overlay on: "Ask Compass about this" precedes "Stamp", no count appears in
+  the text, and "An Thuong · Da Nang" precedes "Jane Doe".
+- Tap-to-play on: "Tap to play" is painted over a cell whose `isActive` is
+  false.
+- F1: the World header's "MEDIA" precedes the World and Watch chips, and the
+  chips precede the lens bar.
+
+The four DOM dumps and their label orders were written to the lane's scratch
+directory. There is no headless browser in this environment, so no pixels
+exist. The other lane's screenshot harness can render the same four
+components.
+
+**What needs a device run, and why.** None of this can be reached from here.
+- **F1 layout.** The shell mounts inside a tab screen rather than a stack
+  route. Its `SafeAreaView` inset, the mode switcher under the header, and the
+  FAB over the lenses are native layout, and jsdom does not lay out.
+- **F1, MD427, the cold start.** The flag set is fetched at app start, and
+  while it is in flight the tab renders today's default, Watch, because
+  fail-closed means today. A deep link straight into the Media tab on a cold
+  start could show Watch for that fetch before switching to World. Only a
+  device shows how long that window is. A fix, such as a neutral placeholder
+  while loading, would change today's flag-off behaviour, and so was not made.
+- **F2 tap-to-play.** expo-av's pause, resume and seek on iOS and Android, the
+  AppState transitions, and the gesture layer's single tap are all native. The
+  tests stub each of them.
+- **F2 overlay.** Touch targets and the rail's layout with a 52 pt disc on
+  small screens.
+- **The ranker** needs no device, but needs production reads after the flip,
+  for the latency and `rank_events` checks in §34.6.
+
+### 34.8 What would turn this red
+
+- A seed found ON. Each migration's postcondition raises, and the suite
+  asserts it.
+- A reader that fails open. The resolver's cases, and the server's absent,
+  FALSE and unreadable cases, would redden.
+- Any OFF case diverging from today. Each is asserted directly, and the
+  existing suites for the changed components run unchanged, apart from the one
+  mock narrowed in §34.3.
+- An owner flipping a flag without the client build that reads it. Nothing
+  would happen, and nothing would say so. That is why each activation row
+  names the build as a prerequisite.
+
+### 34.9 Files
+
+- **Watched, appended to census-media's `CENSUS_SCOPE`:**
+  - migrations 3340–3343;
+  - `travel-buddy-standalone/src/hooks/useWatchPlayback.ts`;
+  - the server suite;
+  - the playback suite;
+  - the two tab suites.
+
+  Everything else this section cites is under an already-watched path:
+  `services/media/`, `services/ranking/`, `features/media/`,
+  `components/media/`, `routes/mediaFeed.ts`, `stores/mediaStore.ts` and
+  `app/(tabs)/media.tsx`.
+- NOT-GRADED: artifacts/api-server/src/lib/capability/snapshots/20260922-production-schema.json — the frozen production capture, quoted in §34.6 only for the current values of MEDIA_TAB_ENABLED and MEDIA_RANKING_ENABLED as activation prerequisites; no §34 verdict rests on it, and this lane read no database.
+- NOT-GRADED: db/rollback/2026-09-27-3340-media-tab-world-default-flag-rollback.sql — the undo script for migration 3340's flag seed, named in §34.6's Recover column as the way to remove the row once the flag is off again; the §34 rows rest on 3340 applied (watched) and on its reader, never on its reversal.
+
+## 36. Lane P — the rows that waited on a product definition: four built behind flags, six questions for the owner — 2026-09-27
+
+Branch `lane-p-product`, from `claude/sensing-completion-20260925` at
+`e9e0b0404`. Thirteen rows: MD77, MD79, MD82–MD85, MD444, MD101, MD175, MD255,
+MD262, MD385, MD446. §28.9 listed them under "an owner definition or product
+rule" (MD77, MD79, MD101, MD175, MD255, MD262, MD385, MD446) and "where a
+perspective's vantage is stored" (MD82–MD85, MD444).
+
+The owner's instruction was to tell unfinished implementation apart from
+activation and external verification, and to build everything reachable while
+existing production approval boundaries remain. So each row was read against
+the spec text first. **Where the spec defines enough to build, it was built,
+behind a flag seeded OFF.** Where it gives only a word, nothing was invented:
+§36.4 puts the question to the owner, and only plumbing that every option needs
+and that changes nothing anyone sees was built.
+
+BUILT ON BRANCH IS NOT MERGED. MERGED IS NOT DEPLOYED. DEPLOYED IS NOT FLAG
+ENABLED. FLAG ENABLED IS NOT PRODUCTION REALIZED. Migrations 3350, 3351 and 3352
+are applied to no database, and no flag is enabled anywhere. Every verdict below
+is a construction verdict, like every other in this census.
+
+### 36.1 Row moves
+
+| ID | Was | Now | Evidence |
+| --- | --- | --- | --- |
+| MD262 | **W** | **C** | §34 lists five choices, and "Show neighborhood only" is one of them (`docs/specs/Portava_Media_Engineering_Architecture_and_Design_Spec.txt:313#Show neighborhood only`). It is now a post location mode: migration 3350 adds the value (`artifacts/api-server/src/migrations/3350_media_neighborhood_only_location_mode.sql:54#ALTER TYPE public.post_location_privacy_mode ADD VALUE IF NOT EXISTS 'neighborhood_only';`). Its ceiling is §33 neighborhood (`artifacts/api-server/src/lib/mediaLocationVisibility.ts:416#if (mode === "neighborhood_only") return "neighborhood";`). **The RED WHEN's second half needed privacy fixes, and they are in.** The Watch feed, the grid and `GET /media/:id` never read the owner's mode. They now select it and resolve through the place-disclosure choke point (`artifacts/api-server/src/routes/mediaFeed.ts:154#location_verified, location_privacy_mode, " +`, `artifacts/api-server/src/routes/mediaFeed.ts:218#return resolveMediaPlaceDisclosure(`). A place page and a place-scoped timeline no longer list a post whose place the choke point withheld (`artifacts/api-server/src/services/media/MediaProjectionService.ts:933#const media = keepDisclosedAtPlace(await rankAndProject(sc, viewer, candidates, nowMs), placeId);`). mapPublicPost withholds the venue for this mode and for any mode it does not know (`artifacts/api-server/src/lib/postSchemas.ts:184#&& row.post_status === "published") return row;`). **The choice is gated:** both writes refuse it until `media_neighborhood_only_mode_enabled` (`artifacts/api-server/src/routes/posts.ts:576#neighborhoodOnlyModePermitted(flagSc, reqPrivacyMode)`, `artifacts/api-server/src/routes/posts.ts:2035#neighborhoodOnlyModePermitted(getServiceClient(), newMode)`). The composer offers it only then (`travel-buddy-standalone/src/components/PulseCreate.tsx:215#locationChoices({ neighborhoodOnly: isEnabled(NEIGHBORHOOD_ONLY_MODE_FLAG) })`), and so does the Media Contribution sheet (`travel-buddy-standalone/src/features/media/screens/MediaContributionScreen.tsx:155#neighborhoodOffered={isEnabled(NEIGHBORHOOD_ONLY_MODE_FLAG)}`). **TESTED:** `artifacts/api-server/src/test/mediaNeighborhoodOnlyMode.test.ts:230#describe("C. a non-owner sees no more than before` checks every mode × status × gem state. The other suites are D (the three Watch routes), E (place pages), F (the writes), plus the client composer and sheet suites. **RED WHEN** is met on the branch. Activation is §36.7. |
+| MD101 | **W** | **C** | §15 lists "Find Similar / Cheaper / Quieter / Busier" (`docs/specs/Portava_Media_Engineering_Architecture_and_Design_Spec.txt:170#Find Similar / Cheaper / Quieter / Busier`). §32's "Find a quieter or cheaper version." (`docs/specs/Portava_Media_Engineering_Architecture_and_Design_Spec.txt:303#Find a quieter or cheaper version.`) is one of nine example Compass questions, not a limit on §15's actions, so the two sections do not conflict. The busy-ness signal already existed: Quieter compares on `crowd.level`, and Busier is the other direction of that reading (`artifacts/api-server/src/compass/CompassMediaContext.ts:83#busier: "crowd.level",`). The Compass context reports the axis only while `media_find_busier_enabled` (`artifacts/api-server/src/compass/CompassMediaContext.ts:314#await comparatorAxesFor(sc)`). The rail offers Find Busier right after Find Cheaper, under Find Quieter's own conditions plus the flag (`artifacts/api-server/src/services/media/MediaActionResolver.ts:1246#if (!compassOn` — Compass on and a disclosable place). The client dispatches it to Compass (`travel-buddy-standalone/src/features/media/services/mediaActions.ts:372#case 'find_cheaper': case 'find_busier': {`). **TESTED:** `artifacts/api-server/src/test/mediaFindBusier.test.ts:145#describe("C. the rail offers Find Busier only with the flag, Compass, and a disclosable place"`. With the flag off, the context is exactly §32's two axes (`artifacts/api-server/src/test/mediaFindBusier.test.ts:132#describe("B. flag OFF: §32's two axes, exactly as before"`). **RED WHEN** ("a busier comparator axis in COMPARATOR_AXIS_CLAIM and a Find Busier rail action") is met on the branch. |
+| MD82–MD85 | **N** ×4 | **C** ×4 | §12 gives four vocabularies word for word (`docs/specs/Portava_Media_Engineering_Architecture_and_Design_Spec.txt:138#Entrance · Queue · Street · Main Room`, `docs/specs/Portava_Media_Engineering_Architecture_and_Design_Spec.txt:140#Main Gate · Stage A · Stage B`, `docs/specs/Portava_Media_Engineering_Architecture_and_Design_Spec.txt:142#Water · Crowd · Weather`, `docs/specs/Portava_Media_Engineering_Architecture_and_Design_Spec.txt:144#Exterior · Entrance · Seating`). A test reads them back out of the spec file (`artifacts/api-server/src/test/mediaPerspectiveVantage.test.ts:61#describe("A. the vocabularies are §12's own words"`). **Each part of the RED WHEN:** (1) a migration adds a column with a CHECK over their union (`artifacts/api-server/src/migrations/3352_media_perspective_vantage.sql:58#ALTER TABLE public.posts ADD CONSTRAINT posts_perspective_vantage_check CHECK (`); (2) the post write accepts it (`artifacts/api-server/src/routes/posts.ts:649#perspective_vantage: vantageDecision.write,`); (3) MediaPerspectiveService groups by it (`artifacts/api-server/src/services/media/MediaPerspectiveService.ts:156#const k = perspectiveGroupKey(m);`); (4) the sheet offers it (`travel-buddy-standalone/src/features/media/components/MediaContributionSheet.tsx:81#{contributionVantages(draft.category, { offered: vantageOffered }).length > 0 ? (`). All of it sits behind `media_perspective_vantage_enabled`, seeded OFF. A vantage rides the place: it is attached only when the choke point kept the place id (`artifacts/api-server/src/lib/media/perspectiveVantage.ts:188#if (!v`). **TESTED:** `artifacts/api-server/src/test/mediaPerspectiveVantage.test.ts:309#describe("D. a vantage rides the place"`. Three choices the spec does not make are in §36.3.3, for the owner to overrule. |
+| MD444 | **W** | **C** | Phase 4's fourth part, perspective GROUPS, is MD82–MD85 above. The other three were already delivered (mosaics, current picture, freshness). |
+
+**The headline is not restated here.** The integrator restates it once, from
+the merged rows.
+
+### 36.2 Rows that stay open
+
+| Row | V | RED WHEN (unchanged) | Built here | What remains |
+| --- | --- | --- | --- | --- |
+| MD77 | **N** | a §6.1 media item can carry a social expiry that takes it off social surfaces and keeps it for its owner | nothing; one option needs no plumbing (§36.4) | owner decision (§36.4) |
+| MD79 | **W** | a published item's location disclosure can END: a non-owner stops seeing the place after `locationDisclosureExpiresAt` | the cap every option needs, inert with no producer (`artifacts/api-server/src/lib/mediaLocationVisibility.ts:479#const withExpiry = locationDisclosureExpired(opts.locationDisclosureExpiresAt, opts.nowMs)`) and the §11 member's pass-through (`artifacts/api-server/src/lib/media/mediaTemporalState.ts:82#if (disclosureEnds) out.locationDisclosureExpiresAt = disclosureEnds;`) | owner decision, then a producer: one timestamp handed to the choke point |
+| MD175 | **N** | a defined Remix of an experience chain | nothing | owner decision (§36.4) |
+| MD255 | **W** | a user can publish media to `following` or `shared_moment` through the reachable composer | the Media following feed refuses an audience it does not know (`artifacts/api-server/src/lib/mediaEligibility.ts:421#if (!FOLLOWING_FEED_ADMITTED_VISIBILITIES.has(visibility)) return false;`). §20.6 named this as the first thing any option must close. | owner decision (§36.4), then the post-reader audit |
+| MD385 | **W** | a Memory created FROM a media item records the signal | nothing; one option needs no plumbing (§36.4) | owner decision (§36.4) |
+| MD446 | **W** | "Show Me Now" exists under some name | nothing | owner decision (§36.4) |
+
+### 36.3 What the spec defines, row by row, and what was built
+
+#### 36.3.1 MD262: §34 "Show neighborhood only"
+
+**The spec.** §34 lists exactly five choices: "Publish now", "Publish after I
+leave" (`docs/specs/Portava_Media_Engineering_Architecture_and_Design_Spec.txt:311#Publish after I leave`),
+"Hide exact place", "Show neighborhood only" and "Show city only". That is an
+enumeration, not a word. Four already had a value in
+`post_location_privacy_mode`; the fifth is `neighborhood_only`.
+
+**What it discloses.** To anyone but its author, no finer than §33
+`neighborhood`:
+- **No venue name.** mapPublicPost withholds it, as for city_only.
+- **A city/country public label, never the venue.** See
+  `artifacts/api-server/src/lib/postSchemas.ts:163#// census-media §36: neighborhood_only has no neighbourhood label at write time`.
+- **No canonical place id** (a place-level identifier).
+- **Not listed on the place's own page.**
+- **The neighbourhood's name where the World views know it** (`places.neighborhood`).
+  Everywhere else, the city.
+
+The mode is not delayed: it binds from creation, and the post is published at once.
+
+**The read side is not gated. The write side is.** Every reader holds a stored
+`neighborhood_only` post at neighborhood whether or not the flag is on, so turning
+the flag off never widens a post. Both writes refuse the value while the flag is off, absent or
+unreadable, which also keeps the label off a database 3350 has not reached
+(`artifacts/api-server/src/lib/media/neighborhoodOnlyMode.ts:38#export async function neighborhoodOnlyModePermitted(`).
+
+**The rollback, stated rather than implied.** PostgreSQL cannot drop an enum
+label. The rollback refuses while the flag is on or any post carries the value,
+then removes the flag. Code from before 3350 would have served such a post's
+venue (the mapPublicPost fall-through below).
+
+#### 36.3.2 MD101: §15 "Find … Busier"
+
+§15's list names the four comparators. §32 says only what Compass may be asked.
+Busier grounds on the same crowd reading as Quieter. It is provenance only
+(band, source class, time, conflict state), never a value, and "cannot compare"
+when nothing permitted is there.
+
+With the flag off (the seed), buildComparatorBaselines' default and the context
+are §32's two axes. The pinned test `compassCensusClosure.test.ts` B1 is
+untouched and still green.
+
+#### 36.3.3 MD82–MD85, MD444: §12 perspective groups
+
+**The spec.** "Perspective is a permitted visual contribution showing an aspect
+of a place or experience" (`docs/specs/Portava_Media_Engineering_Architecture_and_Design_Spec.txt:133#Perspective is a permitted visual contribution`),
+and four lists (Nightclub, Festival, Beach, Restaurant). The stored values are
+the union of those words. A word shared by two lists (Entrance, Queue, Food) is
+one value.
+
+**Three choices the spec does not make, taken here and open to the owner.**
+Each is the narrowest reading, and each is behind the flag.
+1. **The contributor names the vantage** when they contribute. §12 calls a
+   perspective a contribution, and §4 has a Media Contribution screen. No
+   classifier infers one: that would be MD63's vendor question, and a model's
+   guess at where a photo was taken is the "visual inference" §9 forbids
+   presenting as fact.
+2. **The category the contributor says the media shows picks the list:**
+   nightlife → Nightclub, festival → Festival, beach → Beach, food → Restaurant
+   (`artifacts/api-server/src/lib/media/perspectiveVantage.ts:91#export const VANTAGE_ENTITY_TYPE_BY_CATEGORY`).
+   The canonical place has no §12 entity type. Inventing a place-type
+   classifier to supply one would be a second product. Every other category
+   gets no vantage, and its perspectives stay in the category buckets.
+3. **One vantage per post,** stored on `posts`. A contribution is one photo or
+   clip at one place.
+
+**Where it shows.** Only the place page's groups, because the World's FOR YOU
+NOW buckets stay category-only, as §4.1 draws them. The Event experience page
+renders no perspective groups today, so Festival groups appear on a festival
+venue's place page and nowhere else.
+
+**Privacy.** A vantage is a sub-place detail, so it is served only where the
+viewer may be told the place (§36.1).
+
+#### 36.3.4 MD255: the plumbing every option needs
+
+Past the follow check, the Media following feed refused only `private`, and it
+admitted every other value to every follower (`artifacts/api-server/src/lib/mediaEligibility.ts:404#if (visibility === "private") return false;`).
+It now admits only the four audiences it knows.
+
+Every value `post_visibility` holds today is decided exactly as before. That is
+tested against the pre-change branch, restated in
+`artifacts/api-server/src/test/mediaProductDecisionPlumbing.test.ts:100#describe("A. MD255 — the following feed refuses an audience it does not know"`.
+
+#### 36.3.5 MD79: the plumbing every option needs
+
+`resolveMediaPlaceDisclosure` takes an optional expiry and a fallback tier. The
+fallback defaults to `hidden`, the more private tier. The cap never widens,
+never binds the owner, and treats an unreadable expiry as ended
+(`artifacts/api-server/src/lib/mediaLocationVisibility.ts:657#export function locationDisclosureExpired(`).
+
+No caller supplies an expiry. The suite restates the pre-cap resolver and
+proves the output is identical over every tier × mode × gem × viewer. A test
+fails the moment a producer appears
+(`artifacts/api-server/src/test/mediaProductDecisionPlumbing.test.ts:145#describe("B. MD79 — the §11 location-disclosure cap, inert until a producer exists"`).
+After §36.1, every Media read resolves through this one function (World views,
+action rail, Compass, and now the Watch feed). So a producer is one timestamp at
+two call sites, plus mapPublicPost for the Wall.
+
+### 36.4 Questions for the owner: the spec gives a word, and a word is not a product
+
+Each question names its options, what each does to a real person, and where it
+would be built. None was built. Plumbing was added only where every option needs
+it (MD79, MD255, §36.3).
+
+**MD77. Should media ever stop being shown socially?** §11 gives the field and
+no rule (`docs/specs/Portava_Media_Engineering_Architecture_and_Design_Spec.txt:129#interface MediaTemporalState`).
+Its one sentence is about the opposite case, social content outliving its
+intelligence value (`docs/specs/Portava_Media_Engineering_Architecture_and_Design_Spec.txt:130#A media item can remain social or memorial content`).
+- *(a) Disappearing posts the author chooses* ("show for 24 h / 7 days").
+  - **To a real person:** a new choice at post time. Afterwards, others stop
+    seeing the post in Media, the Wall, Pulse and search. The author keeps it in
+    My World.
+  - **Cost:** a `posts.social_expires_at` column behind a flag. The composer and
+    contribution-sheet control. An expiry gate in every post reader: Media has
+    one for stories in `lib/mediaEligibility.ts`, and 47 server files read
+    `posts` and name `visibility`. The §11 member.
+  - **Size:** medium–large.
+- *(b) A lifetime per surface* (for example, the NOW lens shows only the last N
+  hours).
+  - **To a real person:** everyone's old posts leave that surface. There is no
+    per-post choice.
+  - **Cost:** small, a filter in the projection. It overlaps §17 freshness,
+    which already exists.
+- *(c) No social expiry.* `socialExpiresAt` is optional in §11 and Portava
+  keeps posts until deleted.
+  - **To a real person:** nothing changes.
+  - **Cost:** none. The row then closes on the owner's ruling, not on a build.
+  - Because (c) needs nothing, **no plumbing was built** for MD77.
+
+**MD79. When does a post's place stop being shown, and what does it fall to?**
+§11 gives only `locationDisclosureExpiresAt?`.
+- *(a) The author chooses* ("show the place for 24 h, then the city").
+  - **To a real person:** a new composer choice. Others see the place for the
+    window, then less.
+  - **Cost:** a `posts.location_disclosure_expires_at` column (plus a fallback
+    column, or one fixed tier) behind a flag. The composer control. The two call
+    sites (`disclosureForRow`, the Watch feed's `protectedMediaLocation`),
+    mapPublicPost, and the §11 member.
+  - **Size:** small–medium. The cap is built.
+- *(b) A default window for everyone* (place shown 7 days, then city).
+  - **To a real person:** every existing post coarsens over time. That is more
+    private, but visible across every profile and history.
+  - **Cost:** no column (`published_at` + window), the same call sites.
+- *(c) Only for "Publish after I leave"*, N hours after release.
+  - **To a real person:** only delayed posts change.
+  - **Cost:** small.
+- **The fallback tier is a second choice:** city (today's "Hide exact place"),
+  neighbourhood, or hidden (the cap's default).
+
+**MD175. What is Remix?** §23.1 gives the word between two actions that already
+exist (`docs/specs/Portava_Media_Engineering_Architecture_and_Design_Spec.txt:228#Actions: Follow This Night, Save Route, Add to Trip, Remix, Ask Compass.`).
+Remix has to differ from Save Route (`artifacts/api-server/src/services/media/MediaActionResolver.ts:670#id: "save_route",`)
+and from Ask Compass.
+- *(a) An editable copy.*
+  - **To a real person:** the chain's stops open as the viewer's own draft route
+    (swap, reorder, drop), saved through the route plan. Nothing reaches the
+    author.
+  - **Cost:** medium, mostly client. Save Route plus an editor for the draft.
+- *(b) A Compass variation* ("a night like this, elsewhere").
+  - **To a real person:** proposed alternative stops.
+  - **How:** a Compass ask carrying the chain's place ids, built like Find
+    Quieter. Compass stays propose-only.
+  - **Cost:** small (one action, one prompt, the client dispatch).
+- *(c) Both:* copy, then "vary it with Compass".
+
+**MD255. Where does the audience live for `following` and `shared_moment`?**
+§33 lists six audiences (`docs/specs/Portava_Media_Engineering_Architecture_and_Design_Spec.txt:307#type MediaVisibility`).
+The post level has four; the §6.1 attachment override has all six (`docs/specs/Portava_Media_Engineering_Architecture_and_Design_Spec.txt:102#interface MediaAttachment`).
+- *(a) Extend `post_visibility` with both.*
+  - **To a real person:** a post and its caption, place and media reach only
+    the accounts the author follows, or the members of a Moment it was approved
+    into.
+  - **Cost, large:**
+    - The enum value is irreversible without a type swap.
+    - 47 server files read `posts` and name `visibility`, and each must refuse
+      or correctly admit the new values. The Media following feed now refuses
+      them (§36.3.4).
+    - `decidePostReadable`'s cases (`artifacts/api-server/src/lib/postVisibility.ts:44#export const READABLE_VISIBILITIES`)
+      and the posts RLS policies.
+    - The composer and types. For `shared_moment`, a composer route into the
+      Moment contribution flow.
+- *(b) Let the composer's picker set the attachment override.*
+  - **This widens disclosure.** An override only narrows its parent
+    (`artifacts/api-server/src/lib/mediaVisibility.ts:81#export async function mayViewUnderOverride(`).
+    To contain "people I follow", the post itself would have to be `public`.
+    Its caption and place would then reach everyone.
+  - **So (b) is only safe with a new rule** that post readers honour the
+    attachment. That is option (a)'s audit again.
+- *(c) Rule that the six are an attachment-level vocabulary.* The composer keeps
+  four, and the row closes on a re-reading of §33.
+
+**MD385. May a person make a Memory from a media item, and whose?** §44 names
+the signal (`docs/specs/Portava_Media_Engineering_Architecture_and_Design_Spec.txt:385#Memory / Postcard created`).
+§31 names a kind of Memory it could be (`docs/specs/Portava_Media_Engineering_Architecture_and_Design_Spec.txt:286#Saved visual inspiration`).
+No action makes one. A Memory item is added by URL (`travel-buddy-standalone/src/services/memories.ts:529#export async function addMemoryItemFromUrl(`).
+- *(a) From the viewer's own media.*
+  - **To a real person:** "Save to a Memory" on one's own posts.
+  - **Cost, medium:**
+    - `memory_items.source_post_id` (the Memory lane's table).
+    - `POST /memories/:id/items` verifying the viewer owns the source.
+    - The action, and the §44 producer (like
+      `artifacts/api-server/src/lib/mediaAnalytics.ts:396#export function recordPostcardCreatedSignal(`).
+- *(b) From any media the viewer can see.*
+  - **To a real person:** someone else's photo lives in your Memory.
+  - **This needs decisions first:** consent, credit, and what happens when the
+    author deletes the post or narrows its audience. It has to be a live
+    reference, not a copied URL.
+  - **Cost:** large, and it is a privacy decision.
+- *(c) Count only Postcards.* The Postcard half is built (§21, V28).
+  - This is a narrowing of §44, which is the owner's to make.
+  - Because (c) needs nothing, **no column was added** to the Memory lane's
+    table.
+
+**MD446. What is "Show Me Now"?** The Phase 6 list gives the phrase only
+(`docs/specs/Portava_Media_Engineering_Architecture_and_Design_Spec.txt:461#Show Me Now, Why This, Find Similar`).
+- *(a) The NOW lens itself,* its "FOR YOU NOW" strip.
+  - **To a real person:** nothing new.
+  - **Cost:** trivial. It waits on the World shell shipping (F1).
+- *(b) "Show me this place now":* a §19 Request a View to opted-in contributors
+  near a place (`docs/specs/Portava_Media_Engineering_Architecture_and_Design_Spec.txt:213#Future: Request a View`).
+  - **To a real person:** a contributor may be asked for a current photo.
+  - **Cost:** small. The mission and its throttling exist (`routes/mediaViewRequest.ts`).
+- *(c) "What is happening around me now":* the NOW lens at the viewer's live
+  position, through §38's radius search.
+  - **To a real person:** asks for location permission.
+  - **Cost:** medium.
+- *(d) Compass's "Is this worth going to now?"*
+  - **Cost:** small. It overlaps Ask Compass.
+
+### 36.4.1 Design choices the owner may want to revisit
+
+- **MD262.**
+  - The chip reads "Neighbourhood".
+  - The neighbourhood's name shows only on World views. Wall, Watch and Pulse
+    have no neighbourhood label, so they show the city: less, never more.
+  - The enum label cannot be rolled back.
+- **MD101.** Busier and Quieter share `crowd.level`. A distinct "busy" signal
+  would need a new claim type.
+- **MD82–MD85.** The three choices in §36.3.3.
+
+### 36.5 What changes on deploy WITHOUT a flag — each is a narrowing, and each is tested
+
+These are privacy fixes, not surfaces, so they are not flag-gated. Each takes
+the more private default. On deploy (which is the owner's call), a non-owner
+sees less than today in exactly these places:
+
+1. **The Watch feed, the grid and `GET /media/:id`** now honour the owner's
+   mode. A `city_only`, `hidden` or `trusted_circle_only` post's venue name had
+   been served there, contradicting what the composer tells the author ("Only
+   your city and country are shared, never the place").
+2. **mapPublicPost no longer serves the venue of a published row whose mode it
+   does not know.** It always did for any value outside its list, which became
+   reachable the moment the enum gained one.
+3. **The public label of a `trusted_circle_only` post is its city, not its
+   venue**, both at write (safeLocationLabel) and at read (mapPublicPost
+   rebuilds it). Before, a post with a venue name and no high-sensitivity match
+   stored the venue as its label. An admin `city_only` post with no city could
+   carry the venue too.
+4. **A place page and a place-scoped timeline** no longer list a post whose
+   place the choke point withheld (owner mode, gem ceiling, unreleased delayed
+   post). The World shell is dark in production (F1), so no production user
+   sees this change yet.
+5. **The Media following feed** refuses an audience it does not know (§36.3.4).
+   No value that exists today is affected.
+
+Proof that a non-owner sees no more than before: `mediaNeighborhoodOnlyMode.test.ts`
+C restates the Watch resolver and mapPublicPost from `e9e0b0404`. It asserts,
+for every mode × status × gem state, that each field is what it was or
+withheld, and that something does narrow. `mediaProductDecisionPlumbing.test.ts`
+A does the same for the following feed. Two existing tests changed with the
+behaviour, and both now assert the tighter outcome:
+- `mediaGemAndPrivacyDisclosure.test.ts` documented the mapPublicPost
+  fall-through as "actual behaviour".
+- `mediaProjectionGaps.test.ts` observed a gem-ceilinged item on its own place
+  page. It now observes the item at the choke point, and asserts the place page
+  drops it.
+
+### 36.6 Mutations: each seen red on the final tree, each file restored byte-identical
+
+Runner: a scratch script that applies one mutation, runs the named suite,
+records the exit, restores the file and compares SHA-256.
+
+| Set | Count | What each removed or broke |
+| --- | --- | --- |
+| Neighbourhood-only, server | 15, all red | the ceiling case; mapPublicPost's two-mode release; the rebuilt label; the mode column in the Watch and grid SELECTs; the mode passed to the resolver; the place-page and timeline filters; the filter itself; the create and PATCH gates; PATCH publishing the mode; the city label at write; the gate answering true; 3350 seeded on |
+| Neighbourhood-only, client | 8, all red | the choices ignoring the flag, both ways; the composer always and never offering it; the sheet always offering it; the precision mapping to city; the client table's tier and place-name claims (red in the server parity suite) |
+| Find Busier | 10 server + 4 client, all red | busier grounded on price; the default axes including busier; the context ignoring the flag; the rail ignoring the flag, the place, Compass; the rail not wired; appending at the end instead of after Find Cheaper (this one SURVIVED the first run, because the fixture's rail ended at Find Cheaper, so a unit case with actions after it was added and it went red); 3351 seeded on; the client id, dispatch, north-star and icon |
+| Following-feed and expiry plumbing | 7, all red | the allow-list removed; followers_only dropped from it; the cap always applied (SURVIVED the first run: the "no effect" case compared the function with itself, so it now compares with the pre-cap resolver restated, and it went red); the default fallback set to city; the cap able to widen; an unreadable expiry read as "forever"; the §11 member dropped |
+| Vantage | 13 server + 5 client, all red | a vantage without its place; the read ignoring the flag; the write ignoring the flag, the category; the insert dropping it; the refusal ignored; grouping ignoring it; the label not the spec's; the World buckets grouping by it; an invented vantage; the CHECK missing a value; 3352 seeded on; the client list drifting (red in the server parity case); the client offer ignoring the flag; the reducer keeping a mismatched vantage; the input dropping it; the screen always and the sheet never offering it |
+
+### 36.7 Per row: implementation, activation, external verification
+
+- **MD262: W → C.**
+  - IMPLEMENTATION: done (server, client, tests).
+  - ACTIVATION: migration 3350 applied, then `media_neighborhood_only_mode_enabled` ON (owner).
+  - EXTERNAL VERIFICATION: a device run of the composer and sheet; a production read after deploy.
+- **MD101: W → C.**
+  - IMPLEMENTATION: done.
+  - ACTIVATION: 3351 applied, then `media_find_busier_enabled` ON; Compass on in production.
+  - EXTERNAL VERIFICATION: the rail on a device; a permitted `crowd.level` claim in production for "busier" to be grounded rather than "cannot compare".
+- **MD82–MD85, MD444: N/W → C.**
+  - IMPLEMENTATION: done.
+  - ACTIVATION: 3352 applied, then `media_perspective_vantage_enabled` ON. The World shell ON (F1) for the place page to be reachable at all.
+  - EXTERNAL VERIFICATION: a device run of the sheet.
+- **MD79: W, unchanged.**
+  - IMPLEMENTATION: plumbing done; the producer waits on the decision.
+  - DECISION: §36.4.
+  - ACTIVATION / EXTERNAL VERIFICATION: none yet.
+- **MD255: W, unchanged.**
+  - IMPLEMENTATION: plumbing done; the audit and composer wait on the decision.
+  - DECISION: §36.4.
+- **MD77: N, MD175: N, MD385: W, MD446: W, all unchanged.**
+  - IMPLEMENTATION: none. Nothing can be built without inventing the product.
+  - DECISION: §36.4.
+
+### 36.8 Production: nothing here is deployed
+
+- No SQL was run against any database.
+- 3350, 3351 and 3352 are applied nowhere, and their three flags exist nowhere.
+- Absent reads as off, so the branch deployed as-is would refuse
+  `neighborhood_only` and a vantage, offer no Find Busier, and apply the §36.5
+  narrowings.
+
+### 36.9 Found while doing it: recorded, not fixed
+
+- **Pulse serves the venue whatever the owner chose**
+  (`artifacts/api-server/src/routes/pulse.ts:353#locationName:    row.location_name ?? null,`).
+  - Every venue-withholding mode is ignored there, including the new one.
+  - It is not a Media read, and it is Pulse's to fix.
+  - The fix: select `location_privacy_mode` and run the row through mapPublicPost.
+- **`lib/eventPostsDiscovery.ts`** uses a post's `location_name` as the venue
+  when the event has none. It does not read the mode. Not traced end to end.
+- **47 server files read `posts` and name `visibility`.** That is the size of
+  MD255's option (a) audit. It is counted here, not performed.
+
+### 36.10 Files, scope and checks
+
+- **New:**
+  - `lib/media/neighborhoodOnlyMode.ts`, `lib/media/perspectiveVantage.ts`.
+  - Migrations 3350–3352, with rollbacks under `db/rollback/2026-09-27-335{0,1,2}-…`.
+  - Four server suites: `mediaNeighborhoodOnlyMode`, `mediaFindBusier`,
+    `mediaProductDecisionPlumbing`, `mediaPerspectiveVantage`, all registered.
+  - Four client suites: the composer and two sheet component suites, and `mediaFindBusier`.
+- **Changed:**
+  - Server: `lib/mediaLocationVisibility.ts`, `lib/postSchemas.ts`,
+    `lib/mediaEligibility.ts`, `lib/media/mediaTemporalState.ts`,
+    `lib/media/mediaProjection.ts`, `routes/mediaFeed.ts`, `routes/posts.ts`,
+    `services/media/MediaProjectionService.ts`, `MediaPerspectiveService.ts`,
+    `MediaActionResolver.ts`, `compass/CompassMediaContext.ts`, and two
+    existing suites (§36.5).
+  - Client: `services/media/mediaPrivacy.ts`, `services/posts.ts`,
+    `components/PulseCreate.tsx`, and the Media contribution state, sheet and
+    screen, action types, panels, dispatch and telemetry.
+- **Every cited-line edit above a census citation is line-neutral.** New code
+  sits at the files' tails.
+
+**Cited, not graded (check:census-scope-coverage), declared for this section:**
+
+- NOT-GRADED: artifacts/api-server/src/lib/eventPostsDiscovery.ts — named once in §36.9 as a finding outside Media (a post reader that ignores the owner's location mode); no MD verdict rests on it, and it is Discovery's reader, not Media's.

@@ -31,7 +31,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-export type MediaMode = 'watch' | 'grid' | 'gems';
+export type MediaMode = 'watch' | 'grid' | 'gems' | 'world'; // 'world': census-media §34 (F1) — the World shell as the tab's own mode, listed only while its flags are on
 
 export type GeoAreaMode = 'near_me' | 'this_city' | 'my_trip' | 'all';
 
@@ -75,7 +75,7 @@ const DEFAULT_GEMS_STATE: GemsModeState = {
 interface AllModeState {
   watch: MediaModeState;
   grid: MediaModeState;
-  gems: GemsModeState;
+  gems: GemsModeState; world?: MediaModeState;
 }
 
 const makeAllModeState = (): AllModeState => ({
@@ -137,14 +137,14 @@ interface MediaStoreProviderProps {
    * its initial value and does not restore from AsyncStorage yet, so an
    * incomplete enabledModes cannot lock in a disabled mode.
    */
-  flagsLoading?: boolean;
+  flagsLoading?: boolean; /** census-media §34 (F1): open on `defaultMode` even when a mode was persisted — the tab then always opens context-first (MD427). Default false: the persisted mode wins, as before. */ openOnDefault?: boolean;
 }
 
 export function MediaStoreProvider({
   children,
   defaultMode = 'watch',
   enabledModes = ['watch', 'grid', 'gems'],
-  flagsLoading = false,
+  flagsLoading = false, openOnDefault = false,
 }: MediaStoreProviderProps) {
   // selectedMode and modeStates are kept in separate useState calls so
   // setModeState updates don't trigger re-renders of the mode selector.
@@ -163,7 +163,7 @@ export function MediaStoreProvider({
 
     AsyncStorage.getItem(STORAGE_KEY)
       .then((stored) => {
-        const candidate = (stored as MediaMode | null) ?? defaultMode;
+        const candidate = openOnDefault ? defaultMode : ((stored as MediaMode | null) ?? defaultMode);
         setSelectedMode((cur) => pickValidMode(candidate, enabledModes) || cur);
       })
       .catch(() => {

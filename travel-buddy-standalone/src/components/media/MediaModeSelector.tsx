@@ -44,7 +44,7 @@ interface MediaModeSelectorProps {
 // Watch and Gems overlay full-screen media → translucent pill.
 // Grid sits on a solid surface → opaque bar.
 
-const IMMERSIVE_MODES: MediaMode[] = ['watch', 'gems'];
+const IMMERSIVE_MODES: MediaMode[] = ['watch', 'gems', 'world']; // 'world' (census-media §34, F1): drawn under the World header, on ink
 
 function isImmersive(mode: MediaMode): boolean {
   return IMMERSIVE_MODES.includes(mode);
