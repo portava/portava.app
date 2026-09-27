@@ -304,3 +304,26 @@ export const listPostsQuerySchema = z.object({
   feed: z.enum(["global", "following"]).optional().default("global"),
 });
 export type ListPostsQuery = z.infer<typeof listPostsQuerySchema>;
+
+// ── census-media §42: mapPublicPost's decision, for post readers outside Media ─
+// Appended at the tail so no cited line above moves; function declarations hoist.
+/**
+ * Does mapPublicPost withhold this post's place from a viewer who is not its
+ * author? Derived FROM mapPublicPost, which hands back the very row it was given
+ * when, and only when, it redacts nothing, so this predicate and the redactor
+ * cannot drift apart: a mode mapPublicPost learns to withhold is withheld here.
+ *
+ * true ⇒ nothing finer than the post's city and country may reach a non-owner:
+ * not the venue (`posts.location_name`, or a copy of it such as
+ * `pulse_geo_tags.venue_name`), not a district, not the canonical place id, not
+ * coordinates, and not a listing chosen BECAUSE of the post's place.
+ * false for `none`, an absent mode and a RELEASED delayed post; true for an
+ * unreleased delayed post and for any mode mapPublicPost does not know.
+ *
+ * The caller applies the owner bypass: an author always sees their own post.
+ * The caller must SELECT `location_privacy_mode`: like mapPublicPost, a row
+ * without the key reads as `none`.
+ */
+export function postPlaceWithheld(row: { location_privacy_mode?: unknown; post_status?: unknown }): boolean {
+  return mapPublicPost(row) !== row;
+}
