@@ -808,14 +808,40 @@ export async function resolveInteractionPermissions(
   let canTag = false;
   let canTagPending = false;  // true when tag_permission='approval_required' → insert with status='pending'
   switch (whoCanTag) {
-    case "everyone":            canTag = true; break;
+    case "everyone":
+    case "anyone":              canTag = true; break;
     case "friends":
     case "friends_only":        canTag = isFriend; break;
     case "followers":           canTag = viewerFollowsTarget; break;
-    case "no_one":              canTag = false; break;
+    case "interacted":          canTag = isFriend || viewerFollowsTarget || targetFollowsViewer; break;
+    // census-discovery §62 cites this line as it read before §63: `default:                    canTag = true;` — an unknown value ALLOWED. It now fails closed, below.
+    case "no_one":
+    case "nobody":              canTag = false; break;
     case "approval_required":   canTagPending = true; canTag = false; break;
-    default:                    canTag = true;
+    default:                    canTag = false;
   }
+  // THE VOCABULARY (census-discovery §63, DV-76). `profiles.tag_permission` is
+  // the enum tag_permission_level {anyone, interacted, friends_only, nobody},
+  // NOT NULL DEFAULT 'anyone' — the only column anything writes (PATCH
+  // /me/tag-permission, PATCH /me/profile; both z.enum over those four).
+  // `user_privacy_settings.who_can_tag` is free text that no server or client
+  // path writes; its older labels (everyone, friends, followers, no_one,
+  // approval_required) are kept so a row that holds one keeps its meaning.
+  // Before §63 `anyone`, `interacted` and `nobody` all fell to
+  // `default: canTag = true`, so a user who chose 'nobody' could be tagged
+  // through POST /api/tags, approved. Now:
+  //   - `interacted` is a follow in EITHER direction — exactly the reading of
+  //     GET /api/tags/suggestions (the tagger's picker) and of telegraph's AI
+  //     @mention filter — or a friendship. The friendship arm keeps the scale
+  //     the settings UI presents in order (anyone ⊇ interacted ⊇ friends_only
+  //     ⊇ nobody): friends_only admits a friend, so the looser setting must
+  //     too, and accepting a friend request writes no follow (routes/friends.ts).
+  //     TaggingService's inline @mention also accepts a shared message thread;
+  //     that arm is not copied (it inspects only one of the author's threads,
+  //     and it is a read this engine does not make), so this path disagrees
+  //     with it only by REFUSING a pair whose sole interaction is a message.
+  //   - a value this switch does not know REFUSES. A label nobody mapped is not
+  //     consent; the old default made every future enum value an allow.
   // allow_tagging=false is a hard opt-out that overrides who_can_tag (PRIV-3).
   if (!allowTagging) { canTag = false; canTagPending = false; }
 
