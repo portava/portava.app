@@ -434,6 +434,5 @@ router.use(postcardMediaTransportRouter);
 // ── Media §37: the poster for a video uploaded through POST /media/upload ─────
 import mediaVideoPosterRouter from "./mediaVideoPoster.js";
 router.use(mediaVideoPosterRouter);
-
-import discoveryTrendingRouter from "./discoveryTrending.js"; router.use(discoveryTrendingRouter); // census-discovery §58 (DC-21): `11` §4 trend explanation, read-only, behind discovery_trending_api_enabled. Tail-registered on one line so no cited line above moves.
+import discoveryTrendingRouter from "./discoveryTrending.js"; router.use(discoveryTrendingRouter); // census-discovery §58 (DC-21): `11` §4 trend explanation, read-only, behind discovery_trending_api_enabled. Written over the blank line that stood here, so the file keeps its 439 lines and no cited line moves.
 export default router;
