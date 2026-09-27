@@ -2976,7 +2976,7 @@ router.get("/discovery/community", async (req, res) => {
         created_at,
         lat,
         lng,
-        profiles:submitted_by!left ( id, name, avatar_url, username, account_status )
+        profiles:submitted_by!left ( id, name, avatar_url, username, account_status, is_private, show_profile_picture_publicly )
       `)
       .ilike("city", city.trim())
       .eq("status", "active")
@@ -3067,7 +3067,7 @@ router.get("/discovery/community", async (req, res) => {
     // extra auth round trip when the block filter above already resolved it.
     // Guarded on rows.length to preserve the property documented above: a
     // request whose query came back empty still resolves no viewer.
-    const selfSubmitterId = rows.length > 0 ? await resolveCommunityViewer() : null;
+    const selfSubmitterId = rows.length > 0 ? await resolveCommunityViewer() : null; const followedSubmitters = await readBylineFollowEdges(sc, selfSubmitterId, rows.map(bylineProfileOf));  // census-discovery §53 — the avatar gate's follower term; read only when a private or opted-out byline needs it
 
     const items: CommunityDiscoveryItem[] = rows.map((row: any) => {
       const profile = Array.isArray(row.profiles) ? row.profiles[0] : row.profiles;
@@ -3094,7 +3094,7 @@ router.get("/discovery/community", async (req, res) => {
                   ? (profile.name ?? "Traveler")
                   : (profile.username ? `@${profile.username}` : "Traveler")) as string,
                 displayName: nameAllowed ? ((profile.name ?? null) as string | null) : null,
-                avatarUrl:   (profile.avatar_url ?? null) as string | null,
+                avatarUrl:   communityBylineAvatar(profile, selfSubmitterId, followedSubmitters),  // §53 — lib/mediaFeedItem.ts's avatar gate: own / follower / public-and-not-opted-out
                 handle:      (profile.username ?? null) as string | null,
               };
             })()
@@ -4285,3 +4285,8 @@ function resolveDiscoveryPaging(
  */
 
 export default router;
+
+// census-discovery §53 — the /community byline's avatar gate (lib/mediaFeedItem.ts's
+// semantics). Imported at the end so this file's anchored citations do not move;
+// ES imports are hoisted, so the position is a reading matter only.
+import { communityBylineAvatar, readBylineFollowEdges, bylineProfileOf } from "../lib/discoveryPeoplePrivacy.js";

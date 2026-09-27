@@ -163,6 +163,15 @@ function world(): Partial<KitState> {
           created_at: "2026-01-01T00:00:00Z", submitted_by: null, status: "active", saved_count: 0 },
       ],
       hashtags: [], stamp_definitions: [], canonical_locations: [], wishlist_places: [], discovery_place_saves: [],
+      // census-discovery §53 (B03): a buddy is suggested only with an eligible
+      // marketplace row (lib/discoveryPeopleBuddy.ts). Every cast member gets
+      // one, so each denial below stays attributable to the rule it names and
+      // not to a missing marketplace row.
+      rent_buddy_profiles: NAMES.map((n) => ({
+        id: `rbp-${n}`, user_id: CAST[n]!.id, categories: ["city"], category_approvals: {},
+        nightlife_admin_approved: false, status: "active", admin_status: "active", risk_hold: false,
+        risk_review_status: "normal", verification_status: "unverified", id_verified: false, phone_verified: false,
+      })),
     },
   };
 }
