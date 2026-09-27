@@ -7754,6 +7754,373 @@ The only moves since §50.10 are P7's `DV-20`, `DV-25` and `DC-02`, W → C. CON
 - NOT-GRADED: artifacts/api-server/scripts/check-guard-coverage.mjs — cited in §51.14 only as the file that received P7's routed exemption; no Discovery verdict rests on the guard.
 - NOT-GRADED: artifacts/api-server/src/test/helpers/postgrestOracle.ts — cited in §51.14 only as the precedent exemption the new one follows; it is test machinery for the supabase contract, not Discovery evidence.
 - NOT-GRADED: artifacts/api-server/src/test/db/localDb.ts — cited in §51.14 only as the shared psql door the Trails bridge uses; no verdict rests on it.
+
+## §55 — Outcome measurement (lane P6): dwell distinguished and gated OFF, the trace counted, the §12 instrument built, and convergence held
+
+*Written 2026-09-27 by the Discovery P6 lane (outcome measurement) on branch
+`disc-p6-outcomes`, cut from `a2772fb92` (the `wave8-integration` tip carrying
+§46–§51). The implementation is commit `29273c4bb`; this section is the commit
+after it. Every OLD verdict below was read from `CENSUS_INTEGRITY_DUMP=ALL`, not
+from prose. This section does not restate the headline. Nothing here is merged,
+deployed or flag-enabled: migration 3395 is applied to the local PostgreSQL 16
+harness and to nothing else, and its flag is FALSE there too. Nothing in this
+section changes what is served or in what order.*
+
+### 55.1 What is known about production, as given
+
+The integrating lane read these; this lane read no production.
+
+- 2890's `rank_events.dwell_ms` / `dwell_kind` and their three CHECKs are live
+  (`dwell_ms >= 0`; `dwell_kind` ∈ active · passive_foreground · idle; a kind
+  requires a duration). Until this lane nothing wrote them.
+- No `rank_events` row of any kind has been written on any surface since
+  2026-08-27; Discovery has 13 rows ever, all serve point 9 (§48.1).
+- `public.recommendations` (3376) is absent (§49.4), so the per-request
+  denominator and every anonymous serve are unobservable in production today.
+
+Every verdict below is therefore an implementation verdict on this branch.
+
+### 55.2 DV-41 — `04` §7 dwell quality, built and gated OFF
+
+`04` §7: *"Distinguish: active dwell, passive foreground dwell, idle dwell. Do not
+infer interest from a phone sitting untouched."*
+
+| piece | where |
+|---|---|
+| The classifier, from two facts the device reports: AppState `active` (foreground) and a touch or drag on the surface. Foreground and within the interaction window of the last touch is **active**; foreground past it is **passive_foreground**; anything else — background, screen off, iOS `inactive` — is **idle**. Opening the surface is a touch; returning to the foreground is not, and a trip away ends a touch's reach, so time after it is passive until the viewer touches again. | `travel-buddy-standalone/src/services/discoveryDwell.ts:89#export function classifyInterval(`, `travel-buddy-standalone/src/services/discoveryDwell.ts:150#noteBackground(atMs) {` |
+| The emitter on the place detail sheet: a touch anywhere on the sheet and a drag of its scroll view are interactions. It tracks only when the flag is on, the surface that served the place is `discovery`, and the place carries a well-formed served id. Backgrounding mid-view sends the foreground part AT ONCE (a backgrounded app may never run again); the idle part follows with the next emission. Signed out, nothing is sent. | `travel-buddy-standalone/src/components/discovery/PlaceDetailSheet.tsx:260#<View style={styles.sheet} onTouchStart={dwell.noteInteraction}>`, `travel-buddy-standalone/src/hooks/useDiscoveryDwell.ts:57#const tracking = enabled && surface === 'discovery' && !!itemId && !!rid && visible;`, `travel-buddy-standalone/src/hooks/useDiscoveryDwell.ts:79#flush(at);`, `travel-buddy-standalone/src/services/discoveryDwell.ts:232#if (!token) return 'skipped_signed_out';` |
+| Server acceptance at `POST /api/rank-events/dwell`, appended below `export default router` so no cited line of `routes/rankEvents.ts` moved (the first 1171 lines are byte-identical to `a2772fb92`). A sibling path, not a branch of `/rank-events/outcome`: a dwell is not a funnel rung, and the contract names no route for it. | `artifacts/api-server/src/routes/rankEvents.ts:1190#router.post("/rank-events/dwell", asyncHandler(async (req, res) => {`, `artifacts/api-server/src/lib/discoveryDwell.ts:271#export async function acceptDiscoveryDwell(` |
+| The owner's gate first: with `discovery_dwell_telemetry_enabled` off or absent the route answers 404 `feature_disabled` and reads and writes nothing else. Seeded FALSE by 3395, whose postcondition refuses a database where it is ON and whose rollback refuses to delete it while TRUE. | `artifacts/api-server/src/lib/discoveryDwell.ts:281#if (!(await isFlagEnabled(sc, DISCOVERY_DWELL_FLAG))) {`, `artifacts/api-server/src/migrations/3395_discovery_dwell_telemetry_flag.sql:57#'discovery_dwell_telemetry_enabled',`, `db/rollback/2026-09-27-3395-discovery-dwell-telemetry-flag-rollback.sql` |
+| Bound, never guessed: the emission names the served `recommendation_id` and is accepted only against an exposure of THIS signed-in caller for THIS item on `discovery`, the same (caller, id) rule `bindOutcomeToExposure` applies. There is no item-lookup fallback. | `artifacts/api-server/src/lib/discoveryDwell.ts:184#export function bindDwellToExposure(` |
+| One attention row per (emission, kind): `outcome = 'analytics'`, `event_type = 'place_dwell'`, 2890's `dwell_ms`/`dwell_kind`, P3's `schema_version` and `privacy_class`, `features.recommendationId` naming the exposure, `served_at` the exposure's instant. The exposure row is not touched, so no rule for combining episodes had to be invented (§48.6 recorded that gap). Retry-safe: each row's token is derived from (caller, client event id, kind, item), and a retry settles on 2891's arbiter as DO NOTHING. | `artifacts/api-server/src/lib/discoveryDwell.ts:142#export function dwellTokenFor(`, `artifacts/api-server/src/lib/discoveryDwell.ts:314#{ onConflict: RECOMMENDATION_ARBITER, ignoreDuplicates: true })` |
+| Interest: only `active` counts. `04` §4 lists `active_dwell` alone among attention events, and `01` §3 and `03` §5 name "active dwell". No reader consumes dwell as interest today. | `artifacts/api-server/src/lib/discoveryDwellVocabulary.ts:25#export function dwellCountsAsInterest(` |
+
+**The interaction window is UNRATIFIED.** No spec states how long after a touch
+a viewer is still "active". `DWELL_INTERACTION_WINDOW_MS` is 10 s, a named
+placeholder, not tuned
+(`travel-buddy-standalone/src/services/discoveryDwell.ts:70#export const DWELL_INTERACTION_WINDOW_MS = 10_000;`).
+
+**Not covered: the place CARD.** The Discovery list reports no viewability
+(which cards are on screen), so card dwell would need a list-viewability hook.
+It was not built.
+
+### 55.3 DSV2-12 — the coverage leg, and one version defect it found
+
+§48 built the chain: an id on every served item, an exposure row per signed-in
+item, one per-request row per serve (3376), outcomes bound to (caller, id), and
+versions on every row. §50 made the client echo the id. What remained was the
+count. `artifacts/api-server/src/lib/discoveryTraceCoverage.ts:270#export function buildTraceCoverageReport(`
+is a pure function over `rank_events` rows and 3376's per-request rows. Per
+surface and serve point it reports:
+
+- signed-in served items with and without an exposure row, matched per served
+  position, so a duplicate row cannot count twice;
+- the outcome on the exposure row, which is bound by construction;
+- outcome events (the analytics rows), bound or unbound, and why: no id, or an
+  exposure the read did not reach;
+- attention rows by kind, never as outcomes;
+- schema and model versions, with unknown ones named;
+- anonymous serves apart, marked never bindable.
+
+Where 3376 was not read, every figure that needs it is `observed: false`, never
+0. The exposures' own `serveId`/`servedCount` denominator is still reported, and
+it says it cannot see a request that landed no row.
+
+`report:discovery-trace-coverage` runs the report against a database it is
+given. There is no default. Each statement runs inside `BEGIN TRANSACTION READ
+ONLY` with `default_transaction_read_only=on`, so a write is refused by
+PostgreSQL itself (B4):
+`artifacts/api-server/src/lib/discoveryTraceRead.ts:83#export function runReadOnly(`.
+
+No synthetic visit or conversion is produced anywhere on the chain. `attended`
+has no client emitter, and the outcome route maps `trip_add` to Compass's
+`saved`, never `went`:
+`artifacts/api-server/src/routes/rankEvents.ts:388#if (outcome === "save" || outcome === TRIP_ADD) return "saved";`.
+
+**FINDING — the per-request record states the wrong model for a PDE page.** Every
+`public.recommendations` row takes the serve log's constant model version,
+including the row `rankLog` writes for a PDE-ordered page
+(`artifacts/api-server/src/lib/discoveryServeLog.ts:683#model_version:  DISCOVERY_MODEL_VERSION,`).
+The item rows are right. T4 pins the defect as it stands, and the three-line fix
+is routed (55.8).
+
+### 55.4 DV-19 — the outcome instrument
+
+`artifacts/api-server/src/lib/discoveryOutcomeReport.ts:263#export function buildOutcomeReport(`
+reports per ARM and per serve point. The arm is the serve row's own model
+version (`artifacts/api-server/src/lib/discoveryOutcomeReport.ts:86#export function armOf(`):
+the PDE ranker's version is `pde`, the serve log's is `legacy`, and an
+unrecorded or unknown version is never folded into either. The arms are
+observational, not randomised, and pages from different serve points are not
+like for like, so every figure is also given per serve point.
+
+`rank_events` keeps ONE mutable outcome per exposure, the furthest rung reached.
+An open and a save therefore cannot both be seen, and the report prints the
+funnel's lower and upper bounds rather than pick one. An arm with no exposures
+is `insufficient_sample` with null figures, never 0 %
+(`artifacts/api-server/src/lib/discoveryOutcomeReport.ts:243#cell.metrics[m.id] = { status: "insufficient_sample", n: 0, lower: null, upper: null };`).
+The report states no threshold and no verdict. `report:discovery-outcomes` runs
+it read-only.
+
+| `01` §12 item | status | input |
+|---|---|---|
+| useful saves | measured (bounds) | `save`; "useful" is not distinguishable from any save |
+| itinerary additions | measured (bounds) | `trip_add` (2894, the plan picker) |
+| place opens | measured (bounds) | `tap` |
+| completed visits | **unmeasured** | no visit-confirmation signal; `attended` is event attendance and has no emitter |
+| event attendance | **unmeasured** | no client emits `attended`; `rsvp` is emitted only on `events` and `live_pulse`, never on a Discovery exposure. A stray row is reported as a finding |
+| successful trip actions | **unmeasured** | not defined beyond `trip_add` |
+| low regret / hide / report | **dismiss rate only**, under its own name | the card's "Not interested". No spec calls it regret; `04` §4 does not define hide vs not_interested; Discovery has no `report` outcome |
+| creator diversity | **unmeasured** | the creator is not on any Discovery row, and cannot be: the storage screen refuses every unclassified key and no creator key is classified |
+| new-creator discovery | **unmeasured** | as above, and "new" is undefined |
+| Trail freshness | **unmeasured** | a property of Trail content (Trail health), not an outcome of a served exposure |
+| repeat traveler satisfaction | **unmeasured** | no input |
+
+The registry is `artifacts/api-server/src/lib/discoveryOutcomeReport.ts:127#export const OUTCOME_METRICS`.
+No figure joins `item_id` to a content table, so §51.2's two id spaces cannot
+double-count here.
+
+### 55.5 DV-34 — re-graded from code; not built, by the hold
+
+**No Discovery path computes convergence.** No trend, momentum or ranking
+module counts distinct travelers, circles or networks adopting a place. The
+trend classifier reads rates over three windows and nothing about who produced
+them (`artifacts/api-server/src/lib/discoveryTrendState.ts:153#export function classifyTrendState(`).
+
+**What `lib/intelIndependence.ts` clusters.** It clusters INTEL OBSERVATIONS
+into independence units by crew token, shared media, common source and
+synchronised timing
+(`artifacts/api-server/src/lib/intelIndependence.ts:58#export interface IndependenceObservation {`).
+Its one aggregation caller is the intel projection
+(`artifacts/api-server/src/lib/intelProjectionAggregator.ts:296#const independence = clusterByIndependence(independenceObs);`).
+Discovery sees its effect only INDIRECTLY: the flag-gated live-rank layer reads
+live-claim envelopes whose confidence that clustering shaped
+(`artifacts/api-server/src/lib/discoveryLiveRankRead.ts:34#import { liveLabelsServable, readLiveClaimEnvelopes, type LiveClaimEnvelope } from "./liveClaimRead.js";`).
+That is independent corroboration of a venue's CURRENT STATE. `03` §6 asks for
+something else: independent ADOPTION of a place by unrelated travelers and
+circles.
+
+**No Discovery path can consume it without new ranking machinery.** None of its
+inputs — crew token, media, source — is on a `rank_events` row. Mapping
+behavioural rows onto independence units would need a definition of
+"unrelated". Putting the result into trend confidence would feed
+`discoveryModifiers`, the held ranking-modifier term
+(`artifacts/api-server/src/lib/discoveryModifiers.ts:67#export const DISCOVERY_MODIFIERS_FLAG = "discovery_ranking_modifiers_enabled";`).
+Even a displayed "trend reason" goes through the same trend state, which is
+ranking machinery under the 2026-08-15 hold ("No optimising ranking machinery
+over an empty corpus"). It was not built. The owner question is 55.10 (5).
+
+### 55.6 Row moves
+
+| ID | was | now | evidence |
+|---|---|---|---|
+| DV-41 | N | **W** | `04` §7's three kinds are distinguished from real device signals and written. Client: `travel-buddy-standalone/src/services/discoveryDwell.ts:89#export function classifyInterval(`, mounted at `travel-buddy-standalone/src/components/discovery/PlaceDetailSheet.tsx:260#<View style={styles.sheet} onTouchStart={dwell.noteInteraction}>`. Server: `artifacts/api-server/src/lib/discoveryDwell.ts:271#export async function acceptDiscoveryDwell(` binds each emission to the caller's own exposure and writes one attention row per kind, idempotently. Idle is never interest (`artifacts/api-server/src/lib/discoveryDwellVocabulary.ts:25#export function dwellCountsAsInterest(`), and O7 fails if any reader added here counts dwell. The suites cover each kind at its boundary, backgrounding mid-dwell, retry, signed-out and flag-off. **W, not C:** collection sits behind `discovery_dwell_telemetry_enabled`, seeded FALSE and turned on nowhere, because new behavioural collection is the owner's decision. The interaction window is UNRATIFIED (`travel-buddy-standalone/src/services/discoveryDwell.ts:70#export const DWELL_INTERACTION_WINDOW_MS = 10_000;`). The place card is not measured. No production row exists. |
+| DSV2-12 | N | **W** | The row's stated ground (*"no `recommendation_id` exists on this surface"*) is stale since §48. The chain exists, the client echoes the id (§50), and the coverage leg is now counted: `artifacts/api-server/src/lib/discoveryTraceCoverage.ts:270#export function buildTraceCoverageReport(`, run read-only by `report:discovery-trace-coverage`. It reports served→exposure per serve point from 3376, outcomes bound and unbound, versions with unknown ones named, anonymous serves apart and never bindable, and absence as unobserved. It was tested on real-writer fixtures with partial chains, unknown versions and anonymous rows (T1–T7), and on PostgreSQL 16 (B3, B5). No synthetic visit or conversion is produced on the chain (55.3). **W, not C:** the version leg has one defect. The per-request record carries the serve log's constant model version for PDE-ordered pages too (`artifacts/api-server/src/lib/discoveryServeLog.ts:683#model_version:  DISCOVERY_MODEL_VERSION,`); the hunk is routed (55.8). Production can produce no coverage figure while nothing is written and 3376 is unapplied. |
+| DV-19 | N | **W** | An outcome instrument exists where the row said none did: `artifacts/api-server/src/lib/discoveryOutcomeReport.ts:263#export function buildOutcomeReport(`. It reports per arm (the row's own model version) and serve point, with the funnel's bounds for place opens, useful saves and itinerary additions, and the dismiss rate under its own name, each with its sample size. An empty arm is insufficient, never 0 %. There is no threshold and no verdict. **W, not C:** 7 of `01` §12's 11 items have no input in the tree and are named unmeasured (`artifacts/api-server/src/lib/discoveryOutcomeReport.ts:127#export const OUTCOME_METRICS`); low regret is represented only by a differently named dismiss rate; what counts as "improves" is the owner's to set; and production holds no row to measure. |
+
+### 55.7 Row re-read and left where it was
+
+| ID | verdict | why it stays |
+|---|---|---|
+| DV-34 | N | 55.5. No Discovery trend, momentum or ranking module computes convergence (`artifacts/api-server/src/lib/discoveryTrendState.ts:153#export function classifyTrendState(` reads rates, not who produced them). Sensing's independence clustering reaches Discovery only as live-claim confidence about a venue's current state. Consuming it for adoption convergence is ranking machinery under the 2026-08-15 hold. First blocker: HOLD-RANKER. |
+
+### 55.8 Findings routed, with the hunks
+
+1. **The per-request model version (DSV2-12's residual).** This is P3's writer,
+   and this lane did not edit it. The fix keeps every cited line in place.
+   - In `lib/discoveryServeLog.ts`, append ` modelVersion?: string;` to the
+     `route?:` line of `DiscoveryServeRequestParams`.
+   - On line 683, write `model_version:  p.modelVersion ?? DISCOVERY_MODEL_VERSION,`.
+   - In `lib/rankLog.ts` `logDiscoveryPdeServeRequest`, add
+     `modelVersion: DISCOVERY_PDE_MODEL_VERSION,` beside `route:`.
+   - T4's expectation then becomes `{ compass: 4, pde: 1 }`.
+   - The two §55 citations anchored on the old line 683 text must be
+     re-anchored in the same change; `check:doc-citations` will name them.
+2. **Compass's graph folds every analytics row into a person→place edge.**
+   `artifacts/api-server/src/compass/CompassGraphEngine.ts:811#.neq("outcome", "impression")`
+   reads `outcome <> 'impression'`, so it would also read dwell rows (idle
+   included) once collection is on. They would become `behavior:analytics`
+   edges, as every ranker analytics row already does. No reader of
+   `behavior:*` edges was found. Whoever adds one must exclude `analytics`.
+   Routed to the Compass graph owner.
+3. **The contract names no dwell hop.** If the integrator wants one, this is the
+   entry for `RECOMMENDATION_PROPAGATION_RULES`: `{ hop: 6, from: "client dwell
+   emission", to: "store", rule: "POST /rank-events/dwell behind
+   discovery_dwell_telemetry_enabled: bound by (signed-in caller,
+   recommendation_id) as hop 4; one attention row per kind (event_type
+   'place_dwell', outcome 'analytics', features.recommendationId = the
+   exposure's id) on a per-(emission, kind) token, ON CONFLICT DO NOTHING" }`.
+   The contract suite's hop test would need the count widened with it.
+
+### 55.9 Tests, and every one seen RED
+
+| suite | cases | runs on |
+|---|---:|---|
+| `discoveryDwell.test.ts` (D) | 11 | the real router + the enforcing telemetry fake; exposures from the real serve log |
+| `discoveryTraceCoverage.test.ts` (T) | 7 | a corpus written by the real writers and routes (`test/helpers/discoveryOutcomeCorpus.ts`) |
+| `discoveryOutcomeReport.test.ts` (O) | 8 | the same |
+| `discoveryTraceRead.test.ts` (R) | 5 | psql replaced by a recorder on PATH; both scripts spawned |
+| `db/discoveryOutcomeMeasurement.db.test.ts` (B) | 5 | local PostgreSQL 16 (port 54481) |
+| client `discoveryDwell.component.test.ts` (K) | 14 | jest |
+| client `useDiscoveryDwell.component.test.ts` (H) | 7 | jest, the real hook, a driven clock and AppState |
+| client `PlaceDetailSheet.dwell.component.test.tsx` | 3 | jest, the real sheet |
+
+**P24: 71 mutations, applied one at a time.** Each file was restored and
+sha256-checked byte-identical afterwards. Every new test went red under at
+least one of them.
+
+- 38 in server code;
+- 6 on the harness, in migration, rollback and read-path text;
+- 27 in client code.
+
+Two mutants survived at first:
+
+- **A touch while backgrounded counting as a touch.** This exposed a real gap:
+  after a short trip away, the old touch's window still ran. The tracker now
+  ends a touch's reach on leaving the foreground, and K4 asserts it.
+- **Tracking with the flag off.** The sender refused to send, so H1 stayed
+  green. H1 now asserts that nothing is even timed.
+
+Both mutants now go red. One harness case leaked state when its own mutant
+failed mid-case (it left the flag TRUE). The case now restores the flag in
+`finally`.
+
+### 55.10 Owner questions, verbatim
+
+1. **DV-41, collection.** "May Portava collect dwell on the Discovery place detail
+   sheet — active, passive-foreground and idle time per served place, per
+   signed-in viewer, written to rank_events and bound to that viewer's own
+   exposure — by turning `discovery_dwell_telemetry_enabled` on? It is new
+   behavioural collection; its rows are labelled `raw_recent` and nothing
+   enforces a retention horizon."
+2. **DV-41, the window.** "How long after a viewer's last touch does foreground
+   time still count as ACTIVE dwell? The code uses 10 seconds
+   (`DWELL_INTERACTION_WINDOW_MS`), an unratified placeholder; no spec states a
+   number."
+3. **DV-41, passive dwell.** "Is passive-foreground dwell (screen on, app in the
+   foreground, surface untouched past that window) ever an interest signal, or
+   only a recorded distinction like idle? The code treats only active dwell as
+   interest, because `04` §4 names `active_dwell` alone."
+4. **DV-41, the card.** "Should dwell also be measured on the place CARD in the
+   Discovery list? That needs list viewability, which the list does not report
+   today."
+5. **DV-34, convergence under the hold.** "Under the 2026-08-15 hold ('No
+   optimising ranking machinery over an empty corpus'), may a convergence term —
+   independent adoption of a place by unrelated travelers or circles, `03` §6 /
+   `05` §4 — be added to Discovery's trend confidence? If yes: what makes two
+   travelers 'unrelated' (no follow edge, no shared circle, a distinct crew
+   token, or a graph distance), and may that social relation be joined against
+   behavioural rows, given that lib/intelIndependence.ts deliberately refuses
+   identity joins?"
+6. **DV-19, success.** "For each `01` §12 item, what difference between the PDE
+   and legacy arms, over what sample, counts as 'improves'? And is 'new-creator
+   discovery' about creators new to the viewer or new to the platform?"
+7. **DV-19, regret.** "Is the card's 'Not interested' dismissal the §12 'regret'
+   or 'hide' signal, or must regret be measured separately (for example, a
+   dismissal after a save)?"
+
+### 55.11 Read-only production SQL that would turn each report into evidence
+
+The two scripts ARE read-only SQL. Run as
+`pnpm run report:discovery-trace-coverage -- --db-url <read-only URL> --days 30 --json`
+(and the same for `report:discovery-outcomes`). The aggregates below are their
+equivalents, for a SQL console.
+
+```sql
+-- DV-41: the flag (absent until 3395 is applied; must read false), and no dwell row while it is false
+SELECT flag, enabled FROM public.feature_flags WHERE flag = 'discovery_dwell_telemetry_enabled';
+SELECT count(*) FROM public.rank_events WHERE event_type = 'place_dwell';
+SELECT conname, pg_get_constraintdef(oid) FROM pg_constraint
+ WHERE conrelid = 'public.rank_events'::regclass AND conname LIKE 'rank_events_dwell%' ORDER BY 1;
+-- DV-41, once the owner turns it on: kinds, time and binding
+SELECT dwell_kind, count(*) AS rows, sum(dwell_ms) AS ms, count(*) FILTER (WHERE features ? 'recommendationId') AS bound
+  FROM public.rank_events WHERE surface = 'discovery' AND event_type = 'place_dwell'
+   AND served_at > now() - interval '7 days' GROUP BY 1 ORDER BY 1;
+-- DSV2-12: exposures per serve point, with ids, request ids and versions
+SELECT features->>'servePoint' AS sp, schema_version, features->>'modelVersion' AS model, count(*) AS exposures,
+       count(*) FILTER (WHERE recommendation_id IS NOT NULL OR features ? 'recommendationId') AS with_id,
+       count(*) FILTER (WHERE features ? 'serveId') AS with_serve_id,
+       count(*) FILTER (WHERE outcome <> 'impression') AS with_outcome
+  FROM public.rank_events
+ WHERE surface = 'discovery' AND event_type IS NULL AND served_at > now() - interval '30 days'
+ GROUP BY 1, 2, 3 ORDER BY 1;
+-- DSV2-12: outcome events bound / unbound
+SELECT a.event_type, count(*) AS events,
+       count(*) FILTER (WHERE a.recommendation_id IS NULL) AS no_id,
+       count(*) FILTER (WHERE a.recommendation_id IS NOT NULL AND NOT EXISTS (
+         SELECT 1 FROM public.rank_events e WHERE e.surface = 'discovery' AND e.event_type IS NULL
+            AND (e.recommendation_id = a.recommendation_id OR e.features->>'recommendationId' = a.recommendation_id))) AS exposure_not_found
+  FROM public.rank_events a
+ WHERE a.surface = 'discovery' AND a.outcome = 'analytics'
+   AND a.event_type IN ('ranking_item_opened', 'ranking_item_saved', 'ranking_item_hidden', 'ranking_item_reported')
+   AND a.served_at > now() - interval '30 days'
+ GROUP BY 1 ORDER BY 1;
+-- DSV2-12, once 3376 is applied: served items with an exposure row, per serve point and viewer class
+SELECT q.serve_point, q.viewer_class, count(*) AS requests, sum(q.served_count) AS items,
+       sum((SELECT count(DISTINCT e.position) FROM public.rank_events e
+             WHERE e.features->>'serveId' = q.id AND e.event_type IS NULL
+               AND e.position >= 0 AND e.position < q.served_count)) AS items_with_exposure
+  FROM public.recommendations q WHERE q.served_at > now() - interval '30 days'
+ GROUP BY 1, 2 ORDER BY 1, 2;
+-- DV-19: furthest outcome per arm and serve point (the report's input)
+SELECT CASE COALESCE(features->>'modelVersion', '(unrecorded)')
+         WHEN 'portava-rank-pde-2026-09' THEN 'pde' WHEN 'compass-discovery-2026-09' THEN 'legacy'
+         WHEN '(unrecorded)' THEN 'unrecorded' ELSE 'unknown' END AS arm,
+       features->>'servePoint' AS sp, outcome, count(*)
+  FROM public.rank_events
+ WHERE surface = 'discovery' AND event_type IS NULL AND served_at > now() - interval '30 days'
+ GROUP BY 1, 2, 3 ORDER BY 1, 2, 3;
+```
+
+### 55.12 Freshness: the counted files this section changed, argued
+
+`check:census-freshness` names 20 files for this census:
+
+- **`routes/rankEvents.ts` is NOT among them.** The existing acknowledgement
+  already names it. Only lines after 1171 were added. The rows citing it by
+  line (DV-37, DV-38, DV-46 in §48) point at text that did not move, and
+  `check:doc-citations` agrees.
+- **`travel-buddy-standalone/src/components/discovery/PlaceDetailSheet.tsx`.**
+  Widened into scope here. It gains one import, the hook call and two props,
+  and it is DV-41's client evidence.
+- **The new files this section adds to `CENSUS_SCOPE`:**
+  - the five libraries;
+  - the two scripts;
+  - 3395 and its rollback;
+  - the five server and three client suites;
+  - the client service and hook.
+
+**census-trips** counts the directory prefix `artifacts/api-server/src/test/db/`,
+so `discoveryOutcomeMeasurement.db.test.ts` ages it. That suite exercises
+Discovery's dwell rows, the report read and 3395. It is not Trips evidence, and
+no Trips verdict can move.
+
+`lib/discoveryServeLog.ts`, `lib/rankLog.ts`, `lib/discoveryTrendState.ts`,
+`lib/discoveryModifiers.ts` and `lib/discoveryLiveRankRead.ts` were read, not
+changed. The freshness ledger JSON is the integrator's to write.
+
+### 55.13 What would turn this red
+
+- **The flag turned on without the owner's answer to 55.10 (1) and (2).** The
+  migration refuses a database where it is ON, and the rollback refuses to hide
+  that it was.
+- **A reader that counts dwell as interest, or treats any `place_dwell` row as
+  an outcome.** O7 is written to fail on exactly that, for every reader added
+  here. The Compass graph edge in 55.8 (2) is the one existing place it could
+  leak.
+- **A new outcome token, a new model version, or a new serve point.**
+  - A new outcome token must enter `OUTCOME_METRICS` or be reported as stray
+    (O5).
+  - A new model version reads as `unknown`, outside both arms (O1).
+  - A new serve point reads as `unrecognised` (T4).
+- **3376 applied.** The coverage figures that read "unobserved" become numbers,
+  which is the point. The request-row model version must be fixed first
+  (55.8 (1)), or PDE pages will be reported under the serve log's version.
+
+- NOT-GRADED: artifacts/api-server/src/test/helpers/discoveryOutcomeCorpus.ts — test machinery that drives the real writers and routes to build the §55 fixtures; no verdict rests on the helper itself.
+- NOT-GRADED: artifacts/api-server/src/lib/intelIndependence.ts — cited in §55.5 for what it clusters (intel observations); DV-34 grades Discovery code, and no Discovery verdict rests on this Sensing module.
+- NOT-GRADED: artifacts/api-server/src/lib/intelProjectionAggregator.ts — cited in §55.5 as intelIndependence's one aggregation caller; Sensing's, not Discovery's.
+- NOT-GRADED: artifacts/api-server/src/compass/CompassGraphEngine.ts — cited in §55.8 as a routed finding for the Compass graph owner; no Discovery verdict rests on it.
 ## Cited, not graded (check:census-scope-coverage)
 
 - NOT-GRADED: artifacts/api-server/src/compass/CompassExplanationEngine.ts — §13.7 item 3 names Compass's HMAC recommendation-token signer as a refactor this lane declined to make in another lane's file. Discovery's recommendation id is minted by lib/discoveryRecommendationId.ts, and no Discovery verdict rests on the signer.
