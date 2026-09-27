@@ -296,9 +296,9 @@ async function servableMembers(
   sc: any, members: readonly MemberRow[], viewerId: string | null, nowMs: number = Date.now(),
 ): Promise<ServableMember[]> {
   const idsOf = (type: string) => [...new Set(members.filter((m) => m.source_type === type).map((m) => m.source_id))];
-  const readRows = async (table: string, cols: string, ids: string[]): Promise<Map<string, any> | null> => {
+  const readRows = async (table: string, read: (ids: string[]) => PromiseLike<{ data: any; error: any }>, ids: string[]): Promise<Map<string, any> | null> => {
     if (ids.length === 0) return new Map();
-    const { data, error } = await sc.from(table).select(cols).in("id", ids);
+    const { data, error } = await read(ids); // each caller spells its table and columns literally, so check:write-path-columns verifies them
     if (error || !Array.isArray(data)) {
       logger.warn({ table, code: error?.code, message: error?.message }, "trail member sources unread — withheld");
       return null;
@@ -307,10 +307,10 @@ async function servableMembers(
   };
 
   const [posts, events, routes, places] = await Promise.all([
-    readRows("posts", "id, author_id, visibility, status, post_status, deleted_at, tombstoned_at, publish_at, trip_id, canonical_place_id, location_place_id", idsOf("post")),
-    readRows("events", "id, host_id", idsOf("event")),
-    readRows("route_plans", "id, owner_user_id", idsOf("route")),
-    readRows("discovery_places", "id, submitted_by", idsOf("place")),
+    readRows("posts", (ids) => sc.from("posts").select("id, author_id, visibility, status, post_status, deleted_at, tombstoned_at, publish_at, trip_id, canonical_place_id, location_place_id").in("id", ids), idsOf("post")),
+    readRows("events", (ids) => sc.from("events").select("id, host_id").in("id", ids), idsOf("event")),
+    readRows("route_plans", (ids) => sc.from("route_plans").select("id, owner_user_id").in("id", ids), idsOf("route")),
+    readRows("discovery_places", (ids) => sc.from("discovery_places").select("id, submitted_by").in("id", ids), idsOf("place")),
   ]);
 
   const resolved: ServableMember[] = [];

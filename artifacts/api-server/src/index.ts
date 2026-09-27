@@ -32,7 +32,7 @@ import { startFxRefreshLoop } from "./lib/fxRefreshScheduler";
 import { startXXCatalogSweeper } from "./lib/stamps/xxCatalogRepair";
 import { startCorrectionSweep } from "./lib/stamps/countryGeocoder";
 import { runSchemaDriftCheck } from "./lib/schemaDriftCheck";
-import { startCreatorActivityScoreScheduler } from "./lib/creatorActivityScoreScheduler";
+import { startCreatorActivityScoreScheduler } from "./lib/creatorActivityScoreScheduler"; import { startCreatorAttributionScheduler } from "./lib/creatorAttributionScheduler"; // census-discovery §52 (DV-56)
 import { startRankingFatigueSweeper } from "./lib/rankingFatigueSweeper";
 import { startTrustMaintenanceScheduler } from "./lib/trustMaintenanceScheduler";
 import { startBuddyRequestSweeper } from "./lib/rentBuddyRequestSweeper";
@@ -290,7 +290,7 @@ app.listen(port, (err) => {
   // Creator Activity Score recalculation job — processes stale scores every
   // 4 hours in batches of 500, stale-first. Pure background work; never on
   // the hot path of a live feed request.
-  startCreatorActivityScoreScheduler();
+  startCreatorActivityScoreScheduler(); startCreatorAttributionScheduler(); // census-discovery §52 (DV-56): the travel_partner attribution producer, one flag read an hour until creator_attribution_enabled (2922, seeded FALSE)
   // Post → canonical place backfill: resolves existing posts that have a
   // canonical_location_id but no canonical_place_id to the venue-level
   // places table. Stops automatically when the backlog is exhausted.

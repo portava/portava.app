@@ -136,6 +136,20 @@ describe("creator ledger row mappers — the write-path blind spot, covered", ()
     );
   });
 
+  it("(5) recommendation_id — spread in at the call site only when a BOUND recommendation exists — is declared by 3386", () => {
+    // census-discovery §52. `recordCreatorAttribution` writes
+    // `{ ...toCreatorAttributionRow(…), recommendation_id }` only when it holds a
+    // bound recommendation, so a write without one still succeeds where 3386 is
+    // not applied. When it IS written, the column must exist, or PostgREST fails
+    // the whole insert (PGRST204) and the attribution is lost with its link.
+    const C3386 = declaredColumns("3386_creator_attribution_recommendation_link.sql");
+    assert.ok(C3386.has("recommendation_id"), "3386 declares no recommendation_id; a linked attribution could never be recorded");
+    const service = readFileSync(join(__dir, "..", "services", "creators", "CreatorAttributionService.ts"), "utf8");
+    assert.match(service, /recommendation_id: rec\.recommendationId/, "the call site that spreads the column in has moved; re-point this guard");
+    assert.ok(!ATTRIBUTION_KEYS.includes("recommendation_id"),
+      "the mapper now writes recommendation_id unconditionally — every attribution would fail where 3386 is absent");
+  });
+
   it("(4) supersedes_id — spread in at the call site, not produced by the mapper — is declared too", () => {
     // `holdAttribution`'s call site writes `{ ...toCreatorAttributionRow(…),
     // supersedes_id: originalRowId }`. Case (2) reads the mapper and would

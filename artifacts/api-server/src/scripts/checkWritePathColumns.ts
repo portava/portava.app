@@ -280,12 +280,13 @@ const UNRESOLVED_ALLOWLIST = new Map<string, number>([
   ["src/routes/telegraphMemory.ts|select|select list not statically resolvable", 2],
   // ── Creator ledger: the row MAPPERS (07 §2 / 09 §7.2) ────────────────────
   // `services/creators/CreatorAttributionService.ts` hands supabase a NAME at
-  // three sites, because both payloads come from mappers in
+  // two sites, because both payloads come from mappers in
   // `lib/creatorLedgerRows.ts`:
   //
-  //     const row  = toCreatorAttributionRow(model.attribution);
+  //     const row  = { ...toCreatorAttributionRow(model.attribution), idempotency_key, recommendation_id };
   //     const rows = built.entries.map((e) => toCreatorEarningEntryRow(e, id));
-  //     const row  = { ...toCreatorAttributionRow(held.attribution), supersedes_id };
+  //     (census-discovery §52 moved the third, the hold's `{ ...toCreatorAttributionRow(held), supersedes_id }`,
+  //     into 3387's audited creator_ledger_append; its "not statically resolvable" insert entry was trimmed.)
   //
   // Inlining the literal at each site duplicates an eighteen-column schema
   // three times instead of naming it once, and the third site would have to
@@ -302,7 +303,6 @@ const UNRESOLVED_ALLOWLIST = new Map<string, number>([
   // That test is a MIGRATION check, not a live-schema one — strictly weaker
   // than what this script does. `check:missing-live-columns` reads the live
   // schema from the other direction and is what closes the remaining half.
-  ["src/services/creators/CreatorAttributionService.ts|insert|payload not statically resolvable", 1],
   ["src/services/creators/CreatorAttributionService.ts|insert|payload partially resolvable", 1],
   ["src/services/creators/CreatorAttributionService.ts|upsert|payload not statically resolvable", 1],
   // ── Dynamic table names (adminGeocode — runtime table dispatch) ───────────

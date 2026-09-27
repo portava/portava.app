@@ -7754,6 +7754,378 @@ The only moves since §50.10 are P7's `DV-20`, `DV-25` and `DC-02`, W → C. CON
 - NOT-GRADED: artifacts/api-server/scripts/check-guard-coverage.mjs — cited in §51.14 only as the file that received P7's routed exemption; no Discovery verdict rests on the guard.
 - NOT-GRADED: artifacts/api-server/src/test/helpers/postgrestOracle.ts — cited in §51.14 only as the precedent exemption the new one follows; it is test machinery for the supabase contract, not Discovery evidence.
 - NOT-GRADED: artifacts/api-server/src/test/db/localDb.ts — cited in §51.14 only as the shared psql door the Trails bridge uses; no verdict rests on it.
+
+## §52 — Creator ledger and monetization boundary (P10/P11): the share sees the third ledger, attribution is bound to a served recommendation, holds and recomputations are audited and atomic, and nothing here is in production
+
+*Written 2026-09-27 by the Discovery P10/P11 lane (creator ledger and
+monetization boundary) on branch `disc-p10-ledger`, off `c32d5bd02` (the
+`wave8-integration` tip, carrying §46–§48). Every OLD verdict below was read
+from `CENSUS_INTEGRITY_DUMP=ALL`, not from §11's table (§40.4's rule). This
+section does not restate the headline; the integrating lane does.*
+
+### §52.1 The ceiling, stated first — implementation on the branch, NOT production
+
+The integrating lane read production (read-only, 2026-09-27) and recorded:
+`creator_attributions` and `creator_earning_entries` do not exist there;
+2920, 2921 and 2930 are not applied; the 2922 flag row is absent. `check:production-drift`
+additionally lists `rent_buddy_earnings_entries` (2901) as unapplied. So no
+row in this section is production-realized, and none can be from code: every
+verdict below is graded against the specification's words on the branch, with
+the migrations rehearsed on the local PostgreSQL 16 harness only (port 54450,
+throwaway, never a Supabase project). **Implementation-complete on the branch
+is this lane's ceiling, and every `W` below that says so means exactly that** —
+§17.3's four reasons (unapplied migrations, zero rows anywhere, a FALSE-seeded
+flag, an unmerged branch) all still hold, and §17.2's bar for `C` ("a call
+site on a route or scheduler, 2920 and 2921 applied to production …, and a row
+that was attributed by a request rather than by a fixture") now has its FIRST
+leg met and its other two not.
+
+No flag was turned on anywhere: the harness suites answer the
+`creator_attribution_enabled` read in memory, and a suite asserts the
+harness row still reads FALSE (§52.7, R1). No rule amount was seeded: the
+percentages the suites use are TEST-FIXTURE versions (`…/v901`, `…/v902`)
+inserted and deleted by the suites; 2920's six lineages keep their `{}`.
+
+### §52.2 Three defects found in the foundations, one of them by a failing test
+
+1. **DV-64 was self-defective.** 2930 made `creator_share_ledger` THE relation
+   the share is computed from and projected two ledgers into it; the third,
+   `creator_earning_entries` (2921), never reached it. Fixed by
+   `artifacts/api-server/src/migrations/3385_creator_share_ledger_includes_creator_entries.sql:182#FROM public.creator_earning_entries c;`
+   (a `CREATE OR REPLACE VIEW` with the same fourteen columns and a third
+   partition, account CASE total with no ELSE, 2930's postconditions re-derived
+   over three partitions). The reader's independent per-ledger read now reads
+   the third ledger too:
+   `artifacts/api-server/src/services/ledger/CanonicalShareReader.ts:173#const creatorEntries = await readAll<CreatorEarningEntryRowLike>(`.
+   The same reader paged the view ordered by `source_entry_id` alone, which is
+   NOT unique there (an `intel_reward_ledger` row projects twice): rows tied on
+   the sort key can be skipped or read twice across a page boundary. It now
+   orders by (source_ledger, source_entry_id, unit_kind):
+   `artifacts/api-server/src/services/ledger/CanonicalShareReader.ts:89#const keys = typeof orderBy === "string" ? [orderBy] : orderBy;`.
+2. **A hold held nothing.** `holdCreatorAttribution` inserted the hold row
+   directly with `supersedes_id` defaulting to NULL, so a hold that named no
+   row was a new, unlinked held row, and the attribution it meant to hold stayed
+   earnable; and no hold was audited. It now requires the persisted row, holds
+   the HEAD of that row's chain, and goes through the audited one-transaction
+   door: `artifacts/api-server/src/services/creators/CreatorAttributionService.ts:696#return fail("not_found", "a hold must name the persisted attribution it holds; a hold on no row holds nothing");`.
+   Independently, a held OR superseded attribution could still be earned
+   against, because only the TypeScript model refused — the database now
+   refuses too (3387, `cee_attribution_is_current`).
+3. **Account erasure was blocked for any creator with an earning — found by
+   the harness, not by reading.** Suite L15's profile DELETE failed with
+   `creator_earning_entries is append-only: UPDATE is not permitted`: 2921's
+   `beneficiary_user_id … ON DELETE SET NULL` is executed by PostgreSQL as an
+   UPDATE, which `cee_no_update` refuses; and its `attribution_id` FK has no
+   ON DELETE, so the cascade from `creator_attributions` stopped there too.
+   3387 makes both CASCADE (2921's own header says DELETE is granted "only so
+   the account-erasure cascade … can fire") and asserts no append-only creator
+   table keeps a SET NULL key:
+   `artifacts/api-server/src/migrations/3387_creator_ledger_integrity_and_audit.sql:171#ADD CONSTRAINT cee_beneficiary_fk FOREIGN KEY (beneficiary_user_id)`.
+   **CROSS-LANE, reported not fixed:** `rent_buddy_earnings_entries` (2901)
+   carries the identical pair — `beneficiary_user_id … ON DELETE SET NULL` under
+   an append-only trigger — measured on the harness (`pg_constraint`
+   `confdeltype = 'n'` on a table with an `intel_append_only` trigger). 2901 is
+   unapplied in production, so nothing is blocked today; applying it as written
+   makes every buddy with an earnings entry un-erasable. Whether erasure should
+   delete or retain those rows is §52.8's question 11.
+
+### §52.3 What was built
+
+| change | where |
+| --- | --- |
+| The view projects all three earnings ledgers; its twin projection in TypeScript | `artifacts/api-server/src/migrations/3385_creator_share_ledger_includes_creator_entries.sql:254#n_canon <> (2 * n_irl + n_rbee + n_cee)`, `artifacts/api-server/src/lib/creatorShareCanonical.ts:318#export function projectCreatorEarningEntryRow(` |
+| `creator_attributions.recommendation_id`, 2891's shape, and a trigger refusing an ORIGINAL row that names an exposure no `rank_events` row carries | `artifacts/api-server/src/migrations/3386_creator_attribution_recommendation_link.sql:92#ADD COLUMN IF NOT EXISTS recommendation_id text NULL;`, `artifacts/api-server/src/migrations/3386_creator_attribution_recommendation_link.sql:107#CREATE OR REPLACE FUNCTION public.creator_attribution_recommendation_is_served()` |
+| The binding: a claimed id credits only the CONVERTING viewer's own, earlier exposure of the named item; another viewer's, an unknown, a malformed and a later id bind nothing. P3's contract is consumed (`isRecommendationId`, `canonicalServedAt`), not changed | `artifacts/api-server/src/lib/creatorServedRecommendation.ts:115#export function bindServedRecommendation(`, `artifacts/api-server/src/services/creators/CreatorAttributionService.ts:305#export async function resolveServedRecommendation(` |
+| An attribution accepts a recommendation ONLY in the bound form, and a replay that claims a different recommendation (or beneficiary, or figures) is refused `conflicting_replay`, not reported as a replay | `artifacts/api-server/src/services/creators/CreatorAttributionService.ts:365#const row = rec ? { ...base, idempotency_key: key, recommendation_id: rec.recommendationId }`, `artifacts/api-server/src/services/creators/CreatorAttributionService.ts:380#const differs =` |
+| Figures come from a PUBLISHED version's params (ppm, floored, never above the gross); `{}` — every seeded version — refuses; a multi-party weight refuses | `artifacts/api-server/src/lib/creatorRuleEvaluation.ts:94#export function evaluateCreatorRule(`, `artifacts/api-server/src/services/creators/CreatorAttributionService.ts:461#export async function bookCreatorEarningUnderRule(` |
+| The database decides: a rule version must be published and effective, and an ORIGINAL row must use the one IN FORCE; a supersession is exactly a hold, a release or a recomputation and keeps identity; a booking only against the current, unheld head, under its own version, and never for a booking already in 2901; a reversal must be the exact negation; every transaction balances at COMMIT | `artifacts/api-server/src/migrations/3387_creator_ledger_integrity_and_audit.sql:222#stale_rule_version — a new % attribution must be computed`, `artifacts/api-server/src/migrations/3387_creator_ledger_integrity_and_audit.sql:240#CREATE OR REPLACE FUNCTION public.creator_attribution_supersession_is_lawful()`, `artifacts/api-server/src/migrations/3387_creator_ledger_integrity_and_audit.sql:317#CREATE OR REPLACE FUNCTION public.creator_earning_attribution_is_current()`, `artifacts/api-server/src/migrations/3387_creator_ledger_integrity_and_audit.sql:414#CREATE CONSTRAINT TRIGGER cee_transaction_balances` |
+| The audit record: one append-only row per hold, release, recomputation or reversal, with actor and reason — including WHY a hold was lifted, which 2920's `ca_hold_is_explained` gives the released row no column for | `artifacts/api-server/src/migrations/3387_creator_ledger_integrity_and_audit.sql:422#CREATE TABLE IF NOT EXISTS public.creator_ledger_audit_events (` |
+| The one-transaction door: attribution + entries + audit row in ONE call, or nothing; idempotent by key; a differing replay raises `CL409` | `artifacts/api-server/src/migrations/3387_creator_ledger_integrity_and_audit.sql:478#CREATE OR REPLACE FUNCTION public.creator_ledger_append(p jsonb)`, `artifacts/api-server/src/lib/creatorLedgerPlans.ts:340#export function planRecompute(` |
+| Hold, release, recompute, reverse, and the whole-trail read, each through the door | `artifacts/api-server/src/services/creators/CreatorLedgerOperations.ts:83#export async function placeCreatorHold(`, `artifacts/api-server/src/services/creators/CreatorLedgerOperations.ts:123#export async function recomputeCreatorAttribution(`, `artifacts/api-server/src/services/creators/CreatorLedgerOperations.ts:195#export async function readCreatorLedgerAuditTrail(` |
+| Admin routes on the shared `requireAdmin`, every write naming the admin as actor | `artifacts/api-server/src/routes/adminCreatorLedger.ts:97#router.post("/admin/creator-ledger/attributions/:id/hold"`, `artifacts/api-server/src/routes/adminCreatorLedger.ts:70#router.get("/admin/creator-ledger/attributions/:id/audit"` |
+| The creator's own reads, computed on the server; three of `11` §6's four | `artifacts/api-server/src/routes/creatorEconomy.ts:76#router.get("/creator-economy/me/earnings"`, `artifacts/api-server/src/services/creators/CreatorLedgerReader.ts:88#export async function readMyCreatorLedger(`, `artifacts/api-server/src/lib/creatorLedgerStatus.ts:283#export function summarizeCreatorEarnings(` |
+| The Travel Partner producer, on a scheduler, behind the 2922 flag: every traveller-confirmed (`completed`) booking gets one attribution; created or buddy-only-completed bookings do not | `artifacts/api-server/src/services/creators/CreatorAttributionProducers.ts:89#export async function attributeCompletedTravelPartnerBookings(`, `artifacts/api-server/src/lib/creatorAttributionScheduler.ts:60#export function startCreatorAttributionScheduler(`, `artifacts/api-server/src/index.ts:293#startCreatorActivityScoreScheduler(); startCreatorAttributionScheduler();` |
+| Routers registered and the import added ON EXISTING LINES, so no line-number citation into either file moved | `artifacts/api-server/src/routes/index.ts:247#router.use(creatorEconomyRouter); router.use(adminCreatorLedgerRouter);` |
+| The payout provider boundary: `09` §9's six operations as an interface; its ONLY implementation answers `payouts_disabled` and does no I/O; any other configured name is refused | `artifacts/api-server/src/services/creators/PayoutProvider.ts:88#export const NONE_PAYOUT_PROVIDER: PayoutProvider = Object.freeze({`, `artifacts/api-server/src/services/creators/PayoutProvider.ts:109#export function resolvePayoutProvider(` |
+
+**ONE EARNING, ONE LEDGER.** A view over three ledgers double-counts anything
+booked in two of them. The Travel Partner producer therefore records the
+ATTRIBUTION only (gross 0, share 0): the booking's money is already booked, as
+double-entry legs under the owner-configured fee schedule, in
+`rent_buddy_earnings_entries` by the booking routes, and the reader links the
+two by booking id. 3387 refuses a `creator_earning_entries` row for a booking
+that already has 2901 legs. The consequence is stated rather than hidden in the
+rows below: **`creator_earning_entries` has no production producer at all** —
+the two types with value-event producers already have their own ledgers, and
+the other four have no value event. Its first real writer is `11` §7's
+conversion ingestion, which needs a provider (§52.8, questions 6–7).
+
+**LOCAL EXPERT IS NOT WIRED, and why.** The reward pass
+(lib/intelRewardScheduler.ts, another lane's file and not graded here) earns on "a contributor's observation reached
+the served live state", which is not `07` §3's post-visit confirmation; it
+reads observations, not the `intel_claims` id the subject must name; its payee
+is a contributor token resolved per pass; and the intel stack (2277/2278/3002/3003)
+cannot be replayed on the harness, so a wiring could not be proved. §52.8,
+question 10.
+
+### §52.4 Row moves
+
+| id | was | now | evidence |
+| --- | --- | --- | --- |
+| DV-64 | W | W | **Self-defect closed; W on §52.1's ceiling alone.** `08` §7 asks that the share be computable "from the same ledger"; after 3385 the one relation carries all three earnings ledgers, and on the harness the canonical view equals the base ledger over live, reversed AND superseded rows, per creator, and `CanonicalShareReader` reconciles all three partitions both ways at a page size of 7 (`artifacts/api-server/src/test/db/creatorLedgerLifecycle.db.test.ts` L1). The share of a `creator_earning_entries` creator is `double_entry` with a ratio. **What turns it `C`:** 2920/2921/2930/3385 applied to production and one real row. |
+| DV-65 | N | W | **Implementation-complete on the branch.** The stale `N` rested only on §11.5's preamble (§28.3). Every entry names, by NOT NULL FK, an attribution that names its type, subject, value event, rule version, beneficiary and — when there is one — its bound recommendation; `artifacts/api-server/src/services/creators/CreatorLedgerOperations.ts:195#export async function readCreatorLedgerAuditTrail(` reconstructs one attribution entirely — chain, every entry, every audited act — from rows alone (lifecycle L7/L14, routes RT5). W on §52.1. |
+| DV-66 | N | W | **Implementation-complete on the branch.** No creator-ledger table stores a total (L14 asserts the schema); service_role has no UPDATE and a trigger refuses one; every figure is a fold (`artifacts/api-server/src/lib/creatorLedgerStatus.ts:283#export function summarizeCreatorEarnings(`), and a transaction that does not sum to zero cannot COMMIT (`artifacts/api-server/src/migrations/3387_creator_ledger_integrity_and_audit.sql:404#transaction_unbalanced — transaction % (%) sums to %`). W on §52.1. |
+| DV-67 | N | W | **Implementation-complete on the branch.** Entry → attribution by FK, carried onto the canonical view (3385 postcondition 6); Rent-a-Buddy legs → the Travel Partner attribution naming their booking (`artifacts/api-server/src/lib/creatorLedgerStatus.ts:193#export function attributionHeadForCanonicalRow(`); attribution → served recommendation, bound to the converting viewer's own exposure and refused otherwise (L2, `artifacts/api-server/src/lib/creatorServedRecommendation.ts:115#export function bindServedRecommendation(`). W on §52.1, and no production caller yet passes a recommendation (that needs `11` §7's ingestion). |
+| DV-68 | N | W | **Implementation-complete on the branch.** `09` §6 "Never mutate old ledger rows. Create reversing entries": `artifacts/api-server/src/services/creators/CreatorLedgerOperations.ts:156#export async function reverseCreatorTransaction(` appends the exact negation, audited, once; the database refuses a non-negating "reversal" (`artifacts/api-server/src/migrations/3387_creator_ledger_integrity_and_audit.sql:340#reversal_is_not_a_negation`) and a second reversal of one entry (2921's partial unique index). L12, L8, RT5. W on §52.1. |
+| DV-69 | N | W | **Built; W because nothing can call it yet.** `artifacts/api-server/src/services/creators/PayoutProvider.ts:63#export interface PayoutProvider {` is `09` §9's interface; its only implementation reaches no network primitive (fetch, http, https, net, tls, dns patched to throw — `artifacts/api-server/src/test/creatorPayoutProviderBoundary.test.ts` PV1); no ledger module imports it (PV3); rewriting every entry's `provider`/`external_ref` changes no fold, share or status (PV4). By §17.2's importer standard it is still `W`: its only importer is its test, because no payout path exists (DV-81 `C`), and the ledger it is independent of is unapplied. |
+| DV-63 | N | W | **Implementation-complete on the branch.** `08` §7 "attribution is auditable": the audit table and the door that writes it in the same transaction as the change (`artifacts/api-server/src/migrations/3387_creator_ledger_integrity_and_audit.sql:422#CREATE TABLE IF NOT EXISTS public.creator_ledger_audit_events (`), the full-trail read, and the three-partition reconciliation. W on §52.1; Local Expert attribution is not wired (§52.3). |
+| DV-26 | N | W | **4 of 5 of `02` §17's facts.** trail_id (`subject_kind = 'trail'`), recommendation_id (3386, bound), one row per content contributor, confidence — recorded and read back on the harness (L3). The fifth, "downstream revenue event", is `value_event_id`, which 2920's honesty constraint keeps NULL on a Trail row because no Trail value event has a producer (§40.5's narrower reason, now the only one). No production caller records a Trail attribution. |
+| DC-23 | N | W | **3 of 4 reads, and the prohibition is now meaningful.** Impact summaries (counts per `07` §3 outcome, never one score), attributed conversions (chain heads, state, no weight or confidence) and provisional earnings (per ledger and unit: provisional, held, reversed-net, lifetime, `available: 0` with the reason) at `artifacts/api-server/src/routes/creatorEconomy.ts:64#router.get("/creator-economy/me/impact"`; the creator id is the session's and no route takes one (RT1); flag off is `feature_disabled`, not an empty ledger (RT2); the response carries finished figures and no rate, percentage or params (RT6). **Payout eligibility FAILS**: `07` §4 is the owner's rule and was not invented. W on §52.1 as well. |
+| DV-56 | W | W | **§17.2's first leg is now met.** A scheduler call site: `artifacts/api-server/src/lib/creatorAttributionScheduler.ts:40#export async function runCreatorAttributionTick(`, started at API startup on the line `artifacts/api-server/src/test/creatorLedgerMigrationShape3385.test.ts` M6 pins, → the Travel Partner producer (L4; SC1 pins that with the flag off a tick reads ONE flag row and writes nothing). Still `W`: 2920 unapplied, flag FALSE, Local Expert not wired, four types are seams. |
+| DV-57 | W | W | Earnings are recorded under a published version, balanced, with no settlement (L5); a booking already in 2901 is refused a second ledger (L6). `W`: §52.1, and `creator_earning_entries` has no production producer (§52.3). |
+| DV-58 | W | W | Versions are now enforced by the database, not by a string prefix: unpublished refused, an ORIGINAL under an older version than the one in force refused (`stale_rule_version`), a booking under a version other than its attribution's refused (L5). `W`: §52.1, and no percentage is published (§52.8, question 1). |
+| DV-59 | W | W | A hold is recorded, explained, audited with its admin actor, blocks booking at the database, reads as HELD (never payable), and is lifted by an audited release with its own reason (L7, RT4, RT5); a hold racing a booking is serialised (L11). `W`: §52.1. |
+| DV-60 | W | W | Recomputation is one transaction — supersede, reverse every live leg exactly, rebook — and the old version's answer stays readable (L8); two racing recomputations of one head: one wins, the other is refused whole (L10); a payload that fails on its last row leaves nothing (L9). `W`: §52.1. |
+| DV-61 | N | N | Unchanged. `08` §1/§7 ask that Portava make money "when it creates measurable travel value"; that is a choice of revenue streams and of the outcome each must be tied to, not a code property. The one structural fact available — every `platform_revenue` leg in `creator_earning_entries` names an attribution that names a `07` §3 Traveler Impact outcome (2921's trigger) — covers a ledger with no production writer and none of `08` §2's other streams, so it is not graded as alignment. §52.8, question 9. |
+| DV-62 | N | N | Unchanged, on §11.5's own reasoning: no sponsored system exists to be distinct from organic, and a structural separation in the ranker would be in `lib/portavaRank.ts` / `lib/discoveryPde.ts`, which are not this lane's files; building a sponsored-provenance refusal against inventory that does not exist would grade an absence. §52.8, question 8. |
+| DV-74 | W | W | Two of `11` §8's six Discovery admin actions — creator fraud holds and ledger audit — now exist on the branch, audited in the same transaction as the change (§52.3); with drift diagnostics that is 3 of 6 built, 1 of 6 in production. Trail merge / archive (P7) and trend integrity review are not this lane's. |
+
+### §52.5 Rows examined and left exactly where they are
+
+- **DV-81 `C`.** Strengthened, not moved: the provider boundary makes "payouts
+  remain disabled" a property of the only implementation, pinned by PV1.
+- **DV-40 / DV-46 `W`.** This lane CONSUMES the served-recommendation contract
+  (`isRecommendationId`, `canonicalServedAt`, `servedRecommendationId` in the
+  suites) and edits nothing in `lib/discoveryRecommendationRecord.ts`.
+
+### §52.6 Negative paths, each on the real database
+
+Cross-creator and cross-viewer denial (L2, L13, RT1); revocation — held,
+released, superseded, reversed (L7, L8, L12, RT4, RT5); stale and unpublished
+rule versions (L5); idempotent replays and CONFLICTING replays (L2, L5, RT5);
+partial failure mid-write (L9); concurrent recalculation (L10) and a hold racing
+a booking (L11); account erasure through every chain, entry, reversal and audit
+row (L15); a view that predates 3385 makes the creator's read refuse
+`degraded_unavailable` rather than report a smaller balance (L16); flag off
+everywhere (L2, L4, L7, L13, RT2, SC1).
+
+### §52.7 Tests, and every one seen RED (P24)
+
+Six new suites, registered in `package.json`'s `test` line; three existing ones
+changed with the argument attached.
+
+| suite | tests | runs on |
+| --- | ---: | --- |
+| `creatorLedgerPure.test.ts` (B, E, S, P, V) | 25 | unit |
+| `creatorPayoutProviderBoundary.test.ts` (PV) | 5 | unit, network primitives trapped |
+| `creatorLedgerMigrationShape3385.test.ts` (M) | 6 | the migration and wiring text |
+| `creatorAttributionScheduler.test.ts` (SC) | 3 | unit |
+| `db/creatorLedgerLifecycle.db.test.ts` (L, R) | 17 | local PostgreSQL 16, real services over `db/creatorLedgerPsqlClient.ts` |
+| `db/creatorLedgerRoutes.db.test.ts` (RT) | 6 | the real routers, guards and PostgreSQL 16 |
+
+- **`creatorTypeService.test.ts` — the hold tests CHANGED**, because the thing
+  they pinned was the defect: they asserted a bare INSERT with no
+  `supersedes_id`. They now assert the door payload supersedes the held row and
+  carries its audit row, and a new test pins that a hold naming no row is
+  refused and writes nothing.
+- **`creatorLedgerRowSchemaDrift.test.ts` (5) ADDED**: `recommendation_id` is
+  spread in only when a bound recommendation exists and is declared by 3386.
+
+**P24.** Seventy-three mutations were applied ONE AT A TIME, each suite that
+could see it re-run, and every file restored and sha256-checked identical (73 of
+73). **All 73 went RED; none survived.** Every new or changed test above was
+turned red by at least one. Twelve ran against the database itself: 3387
+re-applied with one rule disabled (the in-force version, one-earning-one-ledger,
+current head, balance, advisory lock, exact negation), and six changes of
+database state (3385 rolled back, 3386's trigger dropped, the one-supersession
+index dropped, a stored-total column added, 2921's SET NULL restored, and the
+flag row DELETED — never set ON). Three tests were not killed by the first
+round and were not left that way: E5's input did not actually distinguish the
+float path from the exact one (replaced by a pair found by search, and the test
+now asserts the float path differs there), and P2 and the "no update, no
+delete" test had no mutation aimed at them; round two killed all three.
+
+| mutated | mutations | tests turned red |
+| --- | ---: | --- |
+| `artifacts/api-server/src/lib/creatorServedRecommendation.ts` | 6 | B1–B5, L2 |
+| `artifacts/api-server/src/lib/creatorRuleEvaluation.ts` | 5 | E1–E5, L5 |
+| `artifacts/api-server/src/lib/creatorLedgerStatus.ts` | 7 | S1–S6, L7, L8, L13, L15, RT4–RT6 |
+| `artifacts/api-server/src/lib/creatorLedgerPlans.ts` | 10 | P1–P6, L1, L7–L12, L15, RT4–RT6 |
+| `artifacts/api-server/src/lib/creatorShareCanonical.ts` | 3 | V1–V3, S3, S5, M1, L1, L7, L13, RT1, RT4, RT6 |
+| `artifacts/api-server/src/services/ledger/CanonicalShareReader.ts` | 1 | L1 |
+| `artifacts/api-server/src/services/creators/PayoutProvider.ts` | 4 | PV1–PV3 |
+| `artifacts/api-server/src/lib/creatorLedgerEntries.ts` (a fold made to read `provider`) | 1 | PV4 |
+| `artifacts/api-server/src/services/creators/CreatorLedgerOperations.ts` | 1 | PV3, PV5 |
+| `artifacts/api-server/src/services/creators/CreatorAttributionProducers.ts` | 3 | SC1, SC2, L4 |
+| `artifacts/api-server/src/lib/creatorAttributionScheduler.ts` | 1 | SC3 |
+| `artifacts/api-server/src/services/creators/CreatorAttributionService.ts` | 5 | L2, L3, the changed hold tests, the "no update" test, drift (5) |
+| `artifacts/api-server/src/services/creators/CreatorLedgerReader.ts` | 2 | L13, L16, RT1 |
+| `artifacts/api-server/src/routes/creatorEconomy.ts` | 4 | RT1–RT6 |
+| `artifacts/api-server/src/routes/adminCreatorLedger.ts` | 2 | RT4, RT5 |
+| 3385 / 3386 / 3387 text, 3386's rollback, the router registration | 6 | M1–M6 |
+| 3387 re-applied mutated | 6 | L5, L6, L7, L9, L11, L12, L14 |
+| database state | 6 | L1, L2, L7, L10, L13, L14, L15, R1 |
+
+### §52.8 Owner questions, verbatim — the rules this lane did not invent
+
+1. "What `creator_share_ppm` and `platform_fee_ppm` does each of the six
+   creator-rule lineages publish, and who may publish a new version?" (`07` §8;
+   2920 seeds `{}`, and `{}` refuses.)
+2. "When one conversion involves several parties (`07` §7: Trail builder,
+   original content creator, place page, later recommender, Portava ranking),
+   how is the gross divided among them?" (A weight below 1 refuses today.)
+3. "How long before a conversion may a served recommendation still be credited,
+   and does an impression (view-through) count or only a tap, save or trip-add
+   (click-through)?" (Only causality — served no later than the conversion — is
+   enforced.)
+4. "Is a Rent-a-Buddy booking a `07` §3 'verified booking' when the traveller
+   confirms completion, as the producer now treats it, or only once a payment
+   is captured?"
+5. "What makes a creator payout-eligible (`07` §4: account age, verification,
+   trust/safety, contribution history, fraud signals, payout compliance), and
+   in what order?" (DC-23's fourth read.)
+6. "Which payout provider, and what must a recipient prove before one is
+   created?" (`09` §9; only `none` resolves.)
+7. "Which revenue events are ingested (`11` §7: booking completed, marketplace
+   purchase, affiliate conversion, refund/reversal), from which system, under
+   which idempotency key?" (The first production writer of `creator_earning_entries`.)
+8. "Will Discovery carry sponsored placements; if so, how are they labelled,
+   what share of a page may they take (`08` §3 'not displace all organic
+   inventory'), and what is their selection rule?" (DV-62.)
+9. "Which of `08` §2's revenue streams are in scope, and which measurable
+   traveller-value outcome must each be tied to before revenue is booked?" (DV-61.)
+10. "Is the intel reward pass's earning event — a contribution reaching the
+    served live state — the Local Expert's `07` §3 value event, or must a
+    post-visit confirmation be recorded first?"
+11. "On account erasure, may a creator's earning records be deleted (the
+    cascade 3387 implements, following 2921's stated intent), or must financial
+    records be retained, anonymised, for a statutory period?" — the same
+    question decides 2901's SET NULL defect (§52.2 item 3).
+12. "Is flooring both figures, leaving the remainder undistributed, the
+    rounding the owner wants?"
+
+### §52.9 Read-only production SQL that would settle what code cannot
+
+```sql
+-- §52.1's facts, re-read (every one expected NULL / 0 today):
+SELECT to_regclass('public.creator_attributions'), to_regclass('public.creator_earning_entries'),
+       to_regclass('public.creator_share_ledger'), to_regclass('public.creator_ledger_audit_events'),
+       to_regclass('public.rent_buddy_earnings_entries'),
+       to_regprocedure('public.creator_ledger_append(jsonb)');
+SELECT flag, enabled FROM public.feature_flags WHERE flag IN ('creator_attribution_enabled', 'creator_attribution');
+-- 3386's precondition (2891, expected present since 2026-09-14):
+SELECT column_name, data_type FROM information_schema.columns
+ WHERE table_schema = 'public' AND table_name = 'rank_events' AND column_name = 'recommendation_id';
+-- The Travel Partner producer's backlog on the day the flag is turned on:
+SELECT status, count(*) FROM public.rent_buddy_bookings
+ WHERE status IN ('completed', 'completed_pending_traveler_confirmation') GROUP BY 1;
+-- 2921/2930 on the ledger, if they were ever applied out of band:
+SELECT filename, applied_by, applied_at FROM public.schema_migration_ledger
+ WHERE filename ~ '^(2901|2920|2921|2922|2930|3385|3386|3387)_' ORDER BY 1;
+```
+
+### §52.10 Files, and what this section does NOT claim
+
+Migrations 3385, 3386, 3387 and their rollbacks under `db/rollback/` —
+applied to the harness only (apply, idempotent re-apply, rollback, re-apply;
+3386's rollback refuses while 3387 is applied, 3387's while its audit table
+holds rows). Code: `artifacts/api-server/src/lib/creatorShareCanonical.ts`,
+`artifacts/api-server/src/lib/creatorServedRecommendation.ts`,
+`artifacts/api-server/src/lib/creatorRuleEvaluation.ts`,
+`artifacts/api-server/src/lib/creatorLedgerStatus.ts`,
+`artifacts/api-server/src/lib/creatorLedgerPlans.ts`,
+`artifacts/api-server/src/lib/creatorAttributionScheduler.ts`,
+`artifacts/api-server/src/services/creators/CreatorAttributionService.ts`,
+`artifacts/api-server/src/services/creators/CreatorLedgerOperations.ts`,
+`artifacts/api-server/src/services/creators/CreatorLedgerReader.ts`,
+`artifacts/api-server/src/services/creators/CreatorAttributionProducers.ts`,
+`artifacts/api-server/src/services/creators/PayoutProvider.ts`,
+`artifacts/api-server/src/services/ledger/CanonicalShareReader.ts` (the DV-64
+reader; read side only), `artifacts/api-server/src/routes/creatorEconomy.ts`,
+`artifacts/api-server/src/routes/adminCreatorLedger.ts`; one appended entry in
+`artifacts/api-server/src/scripts/checkProductionDrift.ts`
+(`creator_ledger_audit_events`, `unapplied`); line-neutral registrations in
+`artifacts/api-server/src/routes/index.ts` and `artifacts/api-server/src/index.ts`.
+
+It does NOT claim: that any row is in production; that the flag should be
+turned on; any percentage, split, window, eligibility rule or provider; that
+DV-61 or DV-62 moved; that a Local Expert value event is attributed.
+
+**Live-schema checks.** `check:write-path-columns` and `check:missing-live-columns`
+cannot run from this worktree (the non-production guard refuses without CI
+credentials). Run against a database without 3386/3387 they will report
+`creator_attributions.recommendation_id` and `creator_ledger_audit_events` as
+not live; that is red by design for an unmerged object-creating migration, and
+no allowlist entry was added.
+
+### §52.11 What would turn this red
+
+- **2920–2922, 2930 or 3385–3387 reaching a production database, or the flag
+  going ON.** Every `W` above then becomes a live question rather than a
+  deferred one.
+- **A second writer of `creator_earning_entries` that bypasses the service.**
+  The database still refuses what 3387 refuses, but the recommendation's
+  ownership rule lives in the service; a writer that sets `recommendation_id`
+  without `resolveServedRecommendation` is bound only by existence.
+- **A booking's earning booked in `creator_earning_entries` before 2901's legs
+  exist.** 3387's one-earning rule looks for 2901 legs at insert time; the
+  reverse order is not refused by a trigger on 2901 (not this lane's table).
+- **Applying 2901 as written** (§52.2 item 3).
+
+- NOT-GRADED: artifacts/api-server/src/index.ts — cited for the one line that starts the §52 attribution scheduler; that line is pinned by creatorLedgerMigrationShape3385.test.ts M6, which this census watches, so watching the whole startup file would age this census on every unrelated scheduler.
+- NOT-GRADED: artifacts/api-server/src/routes/index.ts — cited for the two appended registrations of the §52 routers; pinned by the same M6, for the same reason.
+- NOT-GRADED: artifacts/api-server/src/lib/creatorLedgerEntries.ts — named in §52.7 only as the target of mutation pp-ledger-reads-provider; this section changed nothing in it and grades nothing on it.
+
+### §52.12 Integrator: P10/P11 merged, three column-check blind spots closed, headline restated
+
+*Integrator addendum, 2026-09-27, at the merge of `disc-p10-ledger` (`2a2807f93`, based on `c32d5bd02`).* Conflicts were unions only (the `test` script line, `CENSUS_SCOPE`, this census with §52 after §51.14, and the telegraph inventory regenerated). `routes/index.ts`, `index.ts` and `checkProductionDrift.ts` merged without conflict and were read.
+
+**Found at integration, and fixed rather than allowlisted.** `check:write-path-columns` runs only in CI with credentials, so the integrator reproduced its unresolvable-site ledger offline (the same extractor, scan directories and `file|method|reason` keys) against the merged tree. It found three things that would have failed CI:
+
+1. `artifacts/api-server/src/services/trails/TrailService.ts` `servableMembers` (merged with P7 at `a2772fb92`) read its four member sources through a table-name parameter: a new `select|dynamic table name` site. Each call now spells `sc.from("<table>").select("<columns>")` at the call site. The tables, columns, filter and fail-closed handling are unchanged, and the edit is line-neutral.
+2. `artifacts/api-server/src/services/creators/CreatorLedgerReader.ts` `readAllFor` did the same for its three paged reads. The relation is now literal at each call: `creator_attributions`, `creator_share_ledger` and `creator_earning_entries`. The view is on `portava-ci` (2930, §17.3), so the literal read resolves there.
+3. P10 moved the hold's insert into 3387's audited `creator_ledger_append`. That dropped `CreatorAttributionService.ts|insert|payload not statically resolvable` from 1 site to 0, and the checker fails on a stale ledger entry. The entry is trimmed in `artifacts/api-server/src/scripts/checkWritePathColumns.ts` (this narrows the allowlist; it widens nothing), line-neutrally, with the reason in its comment.
+
+**Verification of the fixes:**
+
+- Offline, the reproduced ledger matches the allowlist exactly: 61 keys, none new and none stale.
+- The Trails and creator unit suites pass 646/646.
+- Every harness suite passes 255/255 on the merged tree (local cluster, port 54490).
+- Two mutations turned the harness suites red, and each file was restored byte-identical:
+  - swapping the posts member read for `events` fails 4 tests in `trailsService.db`;
+  - pointing the view read at another creator fails 5 tests in the ledger suites.
+
+**What this does not fix: the live-DB checks.** On `portava-ci`, 3386's `creator_attributions.recommendation_id` and 3387's `creator_ledger_audit_events` are absent. `check:missing-live-columns` and `check:write-path-columns` will name them, as they already name the objects from 3352, 3360 and 3376. No allowlist entry is added. Applying 3380, 3381 and 3385–3387 to `portava-ci` is on the consolidated owner request.
+
+**New behaviour on deploy, stated because a deploy would start it.** `index.ts` now calls `startCreatorAttributionScheduler()`. Each hourly tick reads the `creator_attribution_enabled` flag through the shared fail-closed `isFlagEnabled`, and writes nothing while the flag is FALSE or absent (production has no 2922 row). Two routers are registered:
+
+- the creator's own reads, which answer `feature_disabled` while the flag is off;
+- `adminCreatorLedger`, behind `requireAdmin`.
+
+**Routed, not fixed.** On 2901's `rent_buddy_earnings_entries`, the beneficiary's `ON DELETE SET NULL` runs as an UPDATE on an append-only table. That would block account erasure for any buddy with an earning (§52.2 item 3). 2901 is Rent-a-Buddy's migration and is not applied in production. The defect joins the owner request alongside §52.8 question 11 (retention on erasure).
+
+**Headline.** P10's report gives C 88 / W 85 / N 12 / X 3. That was measured on its base `c32d5bd02`, before P2, P3, P4 and P7 merged. At the merged tree:
+
+| bucket | count |
+|---|---|
+| BUILT-AND-CORRECT | **93** |
+| BUILT-BUT-WRONG | **81** |
+| NOT-BUILT | **11** |
+| CANNOT-VERIFY | **3** |
+
+The moves since §51.14 are P10's eight N → W: `DV-63`, `DV-65`, `DV-66`, `DV-67`, `DV-68`, `DV-69`, `DV-26` and `DC-23`.
+
+- CONSTRUCTED 174 / 188 = **92.6 %**.
+- CORRECT 93 / 188 = **49.5 %**, unchanged. No ledger row reaches C, because nothing in 2920–2922, 2930 or 3385–3387 is in production and the 2922 flag is FALSE.
+- The four buckets sum to 188.
+
+The eleven rows still N are:
+
+- `A21`, `A18`, `DV-77` and `DV-80` (adapters and media);
+- `A24` (lane P5x, running);
+- `DV-19`, `DV-34`, `DV-41` and `DSV2-12` (lane P6, running);
+- `DV-61` and `DV-62` (commercial rules the owner has not set).
+
 ## Cited, not graded (check:census-scope-coverage)
 
 - NOT-GRADED: artifacts/api-server/src/compass/CompassExplanationEngine.ts — §13.7 item 3 names Compass's HMAC recommendation-token signer as a refactor this lane declined to make in another lane's file. Discovery's recommendation id is minted by lib/discoveryRecommendationId.ts, and no Discovery verdict rests on the signer.
