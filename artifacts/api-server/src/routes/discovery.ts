@@ -1850,7 +1850,7 @@ router.get("/discovery", async (req, res) => {
     // point 6's pattern). Fail-safe: anonymous callers, out-of-cohort users, or a
     // ranking error fall back to the legacy cached order, unchanged.
     let servedFiltered = filtered;
-    let pdeScoredById: Map<string, ScoredCandidate<RankCandidate>> | null = null;
+    let pdeScoredById: Map<string, ScoredCandidate<RankCandidate>> | null = null; let pdeServedStages: PdeStages | null = null;  // census-discovery §63 (DV-52 b): the SERVED call's stages, for the graph reading its rows record
     const pdeCohort = (callerUserId && engineMode.mode === "pde")
       ? isInDiscoveryCohort(engineMode.cohort, callerUserId)
       : null;
@@ -1865,11 +1865,11 @@ router.get("/discovery", async (req, res) => {
         // against a differently-filtered one would attribute to ranking what
         // filtering did.
         servedFiltered = applyFilters(outcome.ranked);
-        pdeScoredById  = outcome.scoredById;
+        pdeScoredById  = outcome.scoredById; pdeServedStages = outcome.stages;
       } catch (err) {
         req.log.warn({ err }, "discovery: pde ranking failed — serving legacy cached order");
         servedFiltered = filtered;
-        pdeScoredById  = null;
+        pdeScoredById  = null; pdeServedStages = null;
       }
     } recordRankObligation({ owed: pdeCohort?.included === true, ranked: pdeScoredById !== null }); // census-discovery §54 H2: cache_bypass producer, in-process only
 
@@ -1922,7 +1922,7 @@ router.get("/discovery", async (req, res) => {
         void logImpression(servedScored, callerUserId, "discovery", exposure.sessionId, {
           servePoint, route: "GET /discovery", rankedInRequest: true,
           destination: destination!, category, cacheLevel,
-          engineMode: engineMode.mode, modeReason: engineMode.reason,
+          engineMode: engineMode.mode, modeReason: engineMode.reason, ...servedGraphReadingFeatures(pdeServedStages),  // §63 DV-52 (b) — the graph reading this order came from; no key at all with the modifiers off
         }, servedPageClock(exposure, slice));  // §48 DV-40/46 — the SAME exposure the response was stamped with, and the served positions
       } else {
         void logDiscoveryServe(getServiceClient(), {
@@ -2271,7 +2271,7 @@ router.get("/discovery", async (req, res) => {
     // now be called over candidates that came from Cache A, on requests that
     // today end inside serveCachedPlaces having never reached a ranker at all.
     // Hoisted so it is accessible after the if/else block for per-page impression logging.
-    let scoredByPlaceId = new Map<string, ScoredCandidate<RankCandidate>>();
+    let scoredByPlaceId = new Map<string, ScoredCandidate<RankCandidate>>(); let coldServedStages: PdeStages | null = null;  // census-discovery §63 (DV-52 b)
     let ranked: DiscoveryPlace[];
     if (callerUserId) {
       const rankSc   = getServiceClient();
@@ -2279,7 +2279,7 @@ router.get("/discovery", async (req, res) => {
       const pdeViewer = await loadPdeViewer(rankSc, callerUserId, rankCity);
       const outcome   = await rankForViewer(places, pdeViewer, { sc: rankSc, served: true });
       ranked          = outcome.ranked;
-      scoredByPlaceId = outcome.scoredById;
+      scoredByPlaceId = outcome.scoredById; coldServedStages = outcome.stages;
     } else {
       // Unauthenticated: keep existing distance/saved-count ordering
       ranked = discoveryCtx ? scoreWithContext(places, discoveryCtx) : places;
@@ -2311,7 +2311,7 @@ router.get("/discovery", async (req, res) => {
         category,
         cacheLevel:      "miss",
         engineMode:      engineMode.mode,
-        modeReason:      engineMode.reason,
+        modeReason:      engineMode.reason, ...servedGraphReadingFeatures(coldServedStages),  // §63 DV-52 (b) — as serve points 1/2/3
       }, servedPageClock(exposure, slice));  // §48 DV-40/46 — the SAME exposure the response was stamped with
     } else { void logDiscoveryServe(getServiceClient(), { userId: callerUserId ?? "", servePoint: DiscoveryServePoint.COLD_FETCH_LEGACY_RANK, items: slice, ...serveClockOf(exposure), context: { destination: destination ?? "", category, cacheLevel: "miss", engineMode: engineMode.mode, modeReason: engineMode.reason, rankedInRequest: false } }); }  // §48 — anonymous ⇒ the per-request row only; signed-in with NO scores (a ranker that returned nothing) ⇒ item rows marked rankedInRequest:false, where before this line it wrote nothing and the ids on the response joined to no row
     const totalMs = Date.now() - t0;
@@ -4290,3 +4290,49 @@ export default router;
 // semantics). Imported at the end so this file's anchored citations do not move;
 // ES imports are hoisted, so the position is a reading matter only.
 import { communityBylineAvatar, readBylineFollowEdges, bylineProfileOf } from "../lib/discoveryPeoplePrivacy.js";
+
+// census-discovery §63 (DV-52 b, §62.7 hunk H3) — what a SERVED row records about
+// the graph reading its ranking consumed. Declared at the end, with its type
+// import, so this file's anchored citations do not move (the import above is
+// hoisted the same way).
+import type { PdeStages } from "../lib/discoveryPde.js";
+
+/**
+ * The six `features` keys a served Discovery impression carries when the ranking
+ * modifiers ran — the city-confidence reading `lib/discoveryModifiers.ts`
+ * turned into a momentum scale and an exploration budget, copied from
+ * `stages.graphReading` (lib/discoveryPde.ts, §62). `compass_city_confidence` is
+ * overwritten on every daily rebuild, so this is the only place a past serve's
+ * graph input survives.
+ *
+ * PROVENANCE ONLY. Spread into the logImpression context AFTER the page is sent;
+ * nothing reads it back, so no order, weight, term or threshold can move (the
+ * 2026-08-15 ranker hold; test/discoveryServedGraphReading.test.ts pins it
+ * against a golden captured before this change).
+ *
+ * ABSENT with the modifiers off (2289, seeded FALSE): `graphReading` is then not
+ * assigned, and this returns no key at all, so a flags-off row is byte-for-byte
+ * the row it was. With them on, all six keys are written, and a field the
+ * reading lacks is JSON null — "no record was read" — never a confident zero.
+ * logImpression's parameter type admits no null, but its storage screen keeps
+ * one and `features` is jsonb; the cast below says exactly that.
+ *
+ * Classified `derived_ranking_signal` in DISCOVERY_FEATURE_KEY_CLASSES
+ * (lib/discoveryRecommendationRecord.ts); without that, DV-39's screen refuses
+ * them by name.
+ */
+export function servedGraphReadingFeatures(
+  stages: Pick<PdeStages, "graphReading"> | null | undefined,
+): Record<string, string | number | boolean> {
+  const g = stages?.graphReading;
+  if (!g) return {};
+  const reading: Record<string, string | number | boolean | null> = {
+    graphDepth:           g.depthScore,
+    graphTier:            g.tier,
+    graphSource:          g.source,
+    graphComputedAt:      g.computedAt,
+    momentumScale:        g.momentumScale,
+    explorationBudgetPct: g.explorationBudgetPct,
+  };
+  return reading as Record<string, string | number | boolean>;
+}
