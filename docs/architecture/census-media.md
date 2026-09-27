@@ -14025,3 +14025,628 @@ this reader as a row. It is restated here with its new state:
 - NOT-GRADED: artifacts/api-server/src/test/postLocationVerificationBoundary.test.ts — cited in §44.2 as the one client-role read of posts in the suites (a live-DB anon feed read); the 2148 write-boundary suite, not a Media verdict.
 - NOT-GRADED: artifacts/api-server/src/routes/location.ts — cited in §44.4 for publish_eligible_at being the geofence exit time plus a window; the location route, cited to classify a column, not graded here.
 - NOT-GRADED: artifacts/api-server/scripts/local-db/shim.sql — cited in §44.5 for the harness's auth.uid() model; test infrastructure, the thing the rehearsal ran on, not a Media surface.
+
+## 43. Lane G2 — a post's location mode, honoured by the remaining server readers (§42.6, items 1–4, 7 and 8) — 2026-09-27
+
+Branch `lane-g2-readers`, cut from `wave8-integration` at `11eec994d` and
+rebased onto `wave8-integration` at `0957d8176` before this section was
+written. No row IDs, no migration numbers, no flag. §42.6 recorded the readers
+lane Q did not fix. This lane fixed items 1–4 (Compass, the Wall, place pages,
+passport postcards), records item 7 (the Hidden-Gem gate) as not reusable, and
+records item 8 (ranking) as unchanged on purpose.
+
+BUILT ON BRANCH IS NOT MERGED. MERGED IS NOT DEPLOYED. Nothing here is applied
+to any database or enabled anywhere. No SQL was run. Production was not read by
+this lane; the integrator's read-only count of 2026-09-27 (§42.1: 9 posts, 8
+`none` with no venue, 1 released `delayed_until_time`) means no production row
+is exposed today by any reader below. The first `city_only`, `hidden` or
+`trusted_circle_only` post with a venue would have been.
+
+### 43.1 The rule, written once
+
+- **The predicate is mapPublicPost's own decision**, as lane Q defined it
+  (`artifacts/api-server/src/lib/postSchemas.ts:327#export function postPlaceWithheld(`,
+  `artifacts/api-server/src/lib/postSchemas.ts:328#return mapPublicPost(row) !== row;`).
+  No reader below has a second rule.
+- **The owner bypass is written once**, in a new module
+  (`artifacts/api-server/src/lib/postPlaceDisclosure.ts:47#export function postPlaceWithheldFrom(`):
+  false for the author, otherwise exactly `postPlaceWithheld(row)`. An absent
+  or empty viewer (an anonymous caller) is never the author.
+- **An internal mark, never serialised**, for the readers whose place is still
+  needed inside the server after the decision is known
+  (`artifacts/api-server/src/lib/postPlaceDisclosure.ts:55#export const POST_PLACE_WITHHELD`).
+  - It is a symbol-keyed property: `JSON.stringify` skips it, so it cannot
+    reach a response or a cache row; object spread copies it, so it survives
+    the pipelines' shallow copies.
+  - It is set ONLY on a row the rule withholds
+    (`artifacts/api-server/src/lib/postPlaceDisclosure.ts:67#export function postPlaceMark(`,
+    `artifacts/api-server/src/lib/postPlaceDisclosure.ts:76#export function withPostPlaceMark<`),
+    so a `none`-mode object is byte for byte what it was — not even a symbol
+    key more (A1).
+  - The boundary asks `artifacts/api-server/src/lib/postPlaceDisclosure.ts:86#export function postPlaceMarkedWithheldFrom(`,
+    which carries the owner bypass for a marked object. A mark with no known
+    author is withheld from everyone (E2).
+- **Every reader SELECTs `location_privacy_mode`**, and `post_status` wherever a
+  released delayed post can occur. The test fake returns ONLY the selected
+  columns, as PostgREST does, so a dropped column reads as `none` and the
+  reader's SELECT case goes red.
+
+What is withheld and what is kept is §42.3's, unchanged: withheld for
+`city_only`, `hidden`, `trusted_circle_only`, `neighborhood_only`, an
+unreleased delayed post and any mode mapPublicPost does not know; not withheld
+for `none`, an absent mode and a released delayed post. City and country are
+kept everywhere, as mapPublicPost keeps them.
+
+### 43.2 Each reader: what it served, where the place is now stripped
+
+**1. The Compass feed (§42.6, item 1).**
+- Served: each post item's canonical place as `placeId`
+  (`artifacts/api-server/src/compass/CompassItemHydrator.ts:134#placeId:         (post.canonical_place_id as string | null) ?? null,`),
+  spread whole into the page (`artifacts/api-server/src/compass/CompassFeedBuilder.ts:791#...r,`).
+- The hydrator SELECTs the mode
+  (`artifacts/api-server/src/compass/CompassItemHydrator.ts:65#canonical_place_id, post_status, location_privacy_mode";`)
+  and marks a withheld post
+  (`artifacts/api-server/src/compass/CompassItemHydrator.ts:135#data:            { title }, ...postPlaceMark(post),`).
+  `placeId` itself is left in place.
+- **Stripped at the page**: buildFeed and buildSection null `placeId` for a
+  non-owner (`artifacts/api-server/src/compass/CompassFeedBuilder.ts:717#pageItems.map((r0) => compassPostPlaceForViewer(r0, profile.userId))`,
+  `artifacts/api-server/src/compass/CompassFeedBuilder.ts:790#pageItems.map((r0) => compassPostPlaceForViewer(r0, profile.userId))`,
+  `artifacts/api-server/src/compass/CompassFeedBuilder.ts:829#export function compassPostPlaceForViewer<`).
+- Why there and not at the source, as §42.6 (1) asked: the same id is the
+  live-constraint subject
+  (`artifacts/api-server/src/compass/CompassLiveConstraints.ts:639#if (item.type === "post" && pid) { out.set(item.id, pid); continue; }`)
+  and the affinity key
+  (`artifacts/api-server/src/compass/CompassScoringEngine.ts:544#const views = context.placeAffinities[placeId] ?? 0;`).
+  The strip runs after the pipeline, boosts, fair exposure, slot allocation,
+  diversity, creator caps, category weights and the page slice, so each of those
+  reads what it always read. A4 shows the affinity on the withheld place still
+  boosts it, and the page's order equals the unmarked order; moving the strip
+  to the source (a mutation in §43.4) turns A1, A3, A3o and A4 red.
+- Every consumer of the page was traced. They all receive the stripped page,
+  because all of them call buildFeed or buildSection:
+  - `/compass/feed`, which caches what it serves
+    (`artifacts/api-server/src/routes/compass.ts:608#void setCachedFeed(sc, user.id, cacheKey, "feed", enrichedFeed);`);
+  - `/compass/feed/section`;
+  - the front-load first page
+    (`artifacts/api-server/src/compass/CompassFrontLoadEngine.ts:348#let   feed    = await buildFeed(items_, profile, context, db, null);`);
+  - the home "best next move", `/compass/recommendations`, the Telegraph cards
+    and `/ask`, which project subsets that never carried a post's `placeId`.
+
+**2. The Wall v2 (§42.6, item 2).**
+- Served, for a post whatever its mode:
+  - a place ref (id, venue name, city, country) from the spine
+    (`artifacts/api-server/src/routes/wall.ts:742#const placeRef = r.canonical_place_id ? placeById.get(String(r.canonical_place_id)) ?? null : null;`)
+    and the postcard loader
+    (`artifacts/api-server/src/services/wall/WallCandidateLoaders.ts:487#const placeRef = r.canonical_place_id ? places.get(String(r.canonical_place_id)) ?? null : null;`);
+  - the See place and Ask Compass actions on it;
+  - a context thread: every kind is anchored on the item's place
+    (`artifacts/api-server/src/services/wall/ContextThreadService.ts:1073#if (!projection.place?.placeId) return undefined;`),
+    and the map kind names the venue
+    (`artifacts/api-server/src/services/wall/ContextThreadService.ts:785#see it on the map`);
+  - Live strip items about the page's places
+    (`artifacts/api-server/src/routes/wall.ts:1202#const placeRef = it.place ?? merged.placeByObject.get(it.canonicalObjectId);`);
+  - a discovery reason drawn from the place being a Hidden Gem
+    (`artifacts/api-server/src/routes/wall.ts:759#isPermittedHiddenGem: placeRef ? permittedGemPlaceIds.has(placeRef.placeId) : false,`).
+- The spine and the postcard loader SELECT the mode
+  (`artifacts/api-server/src/routes/wall.ts:138#"like_count, comment_count, save_count, location_privacy_mode";`,
+  `artifacts/api-server/src/services/wall/WallCandidateLoaders.ts:317#"location_city, location_country, save_count, location_privacy_mode";`)
+  and mark the ref they hand on
+  (`artifacts/api-server/src/routes/wall.ts:784#place: withPostPlaceMark(placeRef, r),`,
+  `artifacts/api-server/src/routes/wall.ts:798#if (placeRef) placeByObject.set(id, withPostPlaceMark(placeRef, r)!);`,
+  `artifacts/api-server/src/services/wall/WallCandidateLoaders.ts:504#place: withPostPlaceMark(placeRef, r),`,
+  `artifacts/api-server/src/services/wall/WallCandidateLoaders.ts:517#if (placeRef) out.placeByObject.set(id, withPostPlaceMark(placeRef, r)!);`).
+  The media loader was already correct: it builds its ref from Media's choke
+  point (`artifacts/api-server/src/services/wall/WallCandidateLoaders.ts:592#const placeRef: PublicPlaceRef | null = proj.placeId`).
+- **Stripped at the response**, after ranking, diversity, the strip and the
+  threads (`artifacts/api-server/src/routes/wall.ts:1247#liveForYou: wallLiveStripForViewer(liveForYou, items.map(`,
+  `artifacts/api-server/src/routes/wall.ts:1248#items: wallItemsForViewer(items, user.id),`,
+  and on GET /wall/live
+  `artifacts/api-server/src/routes/wall.ts:1321#liveForYou: wallLiveStripForViewer(liveStrip.items, liveRefs, user.id),`).
+  - `artifacts/api-server/src/routes/wall.ts:1717#export function wallItemsForViewer(`:
+    for a non-owner, a marked item loses `place`, every action that targets
+    that place, and its context thread. A discovery insertion whose reason is
+    the Hidden-Gem rung is dropped; that reason is derived from explainDiscovery
+    itself (`artifacts/api-server/src/routes/wall.ts:1698#const WALL_GEM_DISCOVERY_REASON: string | null =`).
+  - `artifacts/api-server/src/routes/wall.ts:1741#export function wallLiveStripForViewer(`:
+    a strip item is dropped when its subject is a place that ONLY withheld
+    posts on the page point at. A place a disclosed post also points at stays:
+    that post already disclosed it.
+- Internally nothing changed. The discovery explanation, intent steer, For You
+  ranking, the diversity controller, strip assembly, thread selection and the
+  per-window thread cap all read the marked ref exactly as they read the ref
+  before (B1, B3, B4: same ids, same order, old objects minus the fields).
+- **The two "people you follow were here" counters** list posts AT a place, so
+  they are the §42.6 (3) class. They now skip a withheld post
+  (`artifacts/api-server/src/services/wall/ContextThreadService.ts:496#.select("author_id, created_at, location_privacy_mode, post_status")`,
+  `artifacts/api-server/src/services/wall/ContextThreadService.ts:514#if (!a || a === viewer.viewerId || postPlaceWithheld(row)) continue;`,
+  `artifacts/api-server/src/services/wall/LiveForYouService.ts:449#.select("author_id, canonical_place_id, created_at, location_privacy_mode, post_status")`,
+  `artifacts/api-server/src/services/wall/LiveForYouService.ts:464#|| !byPlace.has(placeId) || postPlaceWithheld(row)) continue;`).
+  The viewer's own posts were never counted, so no owner bypass applies.
+
+**3. Place pages (§42.6, item 3).**
+- **The living page payload** is assembled once per place, cached in
+  `place_living_cache` and served to every caller, anonymous ones included, so
+  it cannot be shaped for one viewer when it is built.
+  - It SELECTs the mode
+    (`artifacts/api-server/src/routes/placeLiving.ts:214#post_status, publish_at, location_privacy_mode") // census-media §43: the owner`).
+    The eligibility filter lane Q cited is unchanged
+    (`artifacts/api-server/src/routes/placeLiving.ts:227#return ((data as any[]) ?? []).filter((p: any) => isEligiblePlaceDayPost(p));`).
+  - Each timeline and bucket entry of a withheld post carries its author's id
+    under an internal key in the CACHED payload
+    (`artifacts/api-server/src/routes/placeLiving.ts:335#id:           p.id, ...livingPostMark(p),`,
+    `artifacts/api-server/src/routes/placeLiving.ts:361#id:           p.id, ...livingPostMark(p),`),
+    and the payload records that it was built with the marks
+    (`artifacts/api-server/src/routes/placeLiving.ts:441#[LIVING_MODE_AWARE_KEY]: true,`).
+  - **Stripped at every `res.json`**, HIT, STALE and MISS
+    (`artifacts/api-server/src/routes/placeLiving.ts:499#res.json(livingPayloadForViewer(payload, livingViewer?.user.id));`,
+    `artifacts/api-server/src/routes/placeLiving.ts:504#res.json(livingPayloadForViewer(payload, livingViewer?.user.id));`,
+    `artifacts/api-server/src/routes/placeLiving.ts:552#res.json(livingPayloadForViewer(payload, livingViewer?.user.id));`),
+    through `artifacts/api-server/src/routes/placeLiving.ts:705#export function livingPayloadForViewer(`.
+    A non-owner loses the entry; the owner keeps it; the two internal keys
+    never reach a response.
+  - A payload cached before this change cannot say which entries to withhold,
+    so it is treated as a miss and rebuilt
+    (`artifacts/api-server/src/routes/placeLiving.ts:481#if (cached && livingPayloadModeAware((cached as any).payload)) {`).
+    That costs one rebuild per cached place after deploy.
+  - The place's shared AI summary is not written from a withheld caption
+    (`artifacts/api-server/src/routes/placeLiving.ts:307#const aiSummaryPosts = allPosts.filter((p: any) => !postPlaceWithheld(p))`).
+- **The living timeline** SELECTs the mode and, after every slice and cut, lists
+  a withheld post only to its author
+  (`artifacts/api-server/src/routes/placeLiving.ts:622#let posts: any[] = ((data as any[]) ?? []).filter((p: any) => isEligiblePlaceDayPost(p));`
+  is unchanged; the filter is at
+  `artifacts/api-server/src/routes/placeLiving.ts:635#const formattedPosts = posts.filter((p: any) => !postPlaceWithheldFrom(p, timelineViewer?.user.id))`).
+- **The Place Day feed** SELECTs the mode
+  (`artifacts/api-server/src/routes/placeDays.ts:102#publish_at, location_privacy_mode, profiles(id, is_private)")`)
+  and skips another author's withheld post before paging
+  (`artifacts/api-server/src/routes/placeDays.ts:114#let visible = chunk.filter((p) => !blocked.has(p.author_id) && isEligiblePlaceDayPost(p)); visible = visible.filter`).
+  The sequence a viewer can page through is the old sequence minus those posts,
+  in the same order (C6 walks every page).
+- **Place Day recaps** SELECT the mode
+  (`artifacts/api-server/src/routes/placeRecaps.ts:60#publish_at, location_privacy_mode, profiles(id, is_private)")`)
+  and never copy another author's withheld post into a recap: the eligibility
+  line lane Q cited is unchanged
+  (`artifacts/api-server/src/routes/placeRecaps.ts:64#const candidates = ((data ?? []) as any[]).filter((post) => !blocked.has(post.author_id) && isEligiblePlaceDayPost(post));`),
+  and the rule runs on the next line
+  (`artifacts/api-server/src/routes/placeRecaps.ts:65#const visible = await excludePrivateAuthorPosts(candidates.filter((post) => !postPlaceWithheldFrom(post, viewerId))`).
+  The recap owner's own withheld post is still theirs to recap, so the
+  "eligible participant" check is unchanged for them (C7o).
+- **The place's public rails** (Best-Of and the top-contributor credit) list
+  posts at the place on the same page. Their one predicate now reads the mode
+  (`artifacts/api-server/src/lib/places/placeCollections.ts:60#return isPostPublished(row) && canReadPost(row, PLACE_RAIL_STRANGER, false, false) && !postPlaceWithheld(`).
+  Both readers SELECT it
+  (`artifacts/api-server/src/lib/places/placeCollections.ts:159#"like_count, save_count, share_count, post_status, location_privacy_mode",`,
+  `artifacts/api-server/src/lib/places/placeCollectionsWorker.ts:494#"post_buckets, like_count, save_count, share_count, location_privacy_mode",`).
+  The rails have no viewer by design ("the only posts that belong on a public
+  rail are the ones a STRANGER may read"), so there is no owner bypass.
+- **The shared predicate is left alone.** `isEligiblePlaceDayPost`
+  (`artifacts/api-server/src/lib/places/placeDays.ts:74#export function isEligiblePlaceDayPost(`)
+  also decides place-day creation, a writer; each LISTING applies the rule
+  after it instead.
+
+**4. Passport postcards (§42.6, item 4).**
+- Served: the postcard's `location_name`, a copy of the post's venue made at
+  create (`artifacts/api-server/src/routes/posts.ts:708#location_name: locationName ?? null,`,
+  `artifacts/api-server/src/routes/postcards.ts:1101#location_name:      postData.location_name ?? null,`),
+  on the public postcard wall
+  (`artifacts/api-server/src/routes/passport.ts:75#locationName: r.location_name ?? null,`).
+- **Decided at read time, not at create.**
+  - The copy is the owner's own record: GET /me/passport/postcards serves it
+    back to them
+    (`artifacts/api-server/src/routes/passport.ts:578#router.get("/me/passport/postcards", async (req, res) => {`).
+  - Withholding it at create would be irreversible, would need both writers
+    changed, and would leave every row already written.
+  - At read time the decision follows the post's CURRENT mode: an owner who
+    later restricts the mode hides the venue on every postcard already
+    written, and one who sets it to `none` shows it again.
+- **Stripped at the wall** for any viewer but the owner
+  (`artifacts/api-server/src/routes/passport.ts:566#const placeWithheldPostIds = isMe ? new Set<string>() : await postcardPostIdsWithPlaceWithheld(sc, postIds, viewerId);`,
+  `artifacts/api-server/src/routes/passport.ts:568#...(isMe ? mapPostcard(r, false) : postcardForViewer(mapPostcard(r, false), placeWithheldPostIds)),`),
+  through `artifacts/api-server/src/routes/passport.ts:2024#export async function postcardPostIdsWithPlaceWithheld(`
+  and `artifacts/api-server/src/routes/passport.ts:2053#export function postcardForViewer(`.
+  - `locationName` becomes null; city and country stay.
+  - It fails closed: an unreadable posts read withholds every venue (D3), and
+    a postcard whose post row is missing is withheld (D1).
+  - The owner's wall costs no extra read and is unchanged (D2).
+- The other postcard readers were read and need nothing:
+  - the Wall's postcard loader is covered by 2 above;
+  - Media's "View in Passport" action and the ranking loader read status and
+    visibility only;
+  - PassportRemembers reads the owner's own rows.
+
+**7. The Hidden-Gem gate on Pulse, Discovery event posts and the trip feed
+(§42.6, item 7): not added, because it is not a reusable function.**
+- The Wall's gate is `gemProtectPost`
+  (`artifacts/api-server/src/routes/posts.ts:443#function gemProtectPost(row: any, ctx: PostGemContext, viewerId: string): any {`)
+  over `loadPostGemContext`
+  (`artifacts/api-server/src/routes/posts.ts:411#async function loadPostGemContext(`).
+  Both are module-private to routes/posts.ts and take the raw snake_case row
+  (`location_name`, `public_lat`, …).
+- What adding it needs, exactly:
+  1. move `PostGemContext`, `loadPostGemContext` and `gemProtectPost` into a
+     lib module and export them, with routes/posts.ts importing them;
+  2. Pulse: load the context for the SERVED page after
+     `artifacts/api-server/src/routes/pulse.ts:912#res.json({ posts: pulsePostsForViewer(rows, orderedPosts, user.id),`
+     and coarsen each served post. Pulse's served post is camelCase
+     (`locationName`, `venueName`, coordinates), so it needs an adapter or a
+     Pulse-shaped variant;
+  3. Discovery event posts: apply it per viewer after the cap
+     (`artifacts/api-server/src/lib/eventPostsDiscovery.ts:537#const capped = applyDiversityCap(scored).map((p) => eventPostForViewer(p, params.viewerId))`),
+     which needs the cached row to carry the post's canonical place
+     internally;
+  4. the trip feed shares the module and could call
+     `gemProtectPost(mapPublicPost(p), ctx, user.id)` at
+     `artifacts/api-server/src/routes/posts.ts:1721#...(p.author_id === user.id ? p : mapPublicPost(p)),`
+     after loading a context for the trip's rows.
+- Each of these coarsens `none`-mode rows near a restrictive gem, and EVERY
+  non-owner row whenever the gem lookup fails (it fails closed). That is a
+  separate axis with its own `none`-mode baseline to re-measure.
+
+**8. Ranking still reads what it withholds (§42.6, item 8): unchanged, on
+purpose.**
+- Pulse's ranking terms are as §42.6 (8) records them
+  (`artifacts/api-server/src/routes/pulse.ts:586#neighborhood: (p.locationName as string | null) ?? null,`,
+  `artifacts/api-server/src/routes/pulse.ts:601#placeId: (p.canonical_place_id as string | null) ?? null,`).
+- This lane adds three readers of the same kind, all deliberately left
+  reading the place:
+  - Compass's affinity boost and live constraints (A4 proves they still read
+    it);
+  - the Wall's discovery explanation, intent steer and For You ranking;
+  - the living page's `sparseMode` count.
+- Removing any of them changes order or membership, which is not provably a
+  narrowing. It stays the ranking owners' decision.
+
+### 43.3 Every change is a narrowing for non-owners only
+
+For each reader, the viewer who is not the author receives the old response
+with fields or entries removed, and nothing added. The owner receives what they
+received before. Two exceptions are stated, not hidden: the two counters and
+the top-contributor rail, where a removal can let a disclosed candidate take
+the freed slot.
+
+- **Compass:** the same sections, items, order and scores; a withheld post's
+  item has `placeId: null` (A2, A4).
+- **Wall items:** the same ids in the same order; a withheld item has no
+  `place`, no place action and no thread (B1, B8). A gem-explained withheld
+  insertion is removed (B3). The ranking metadata of the items after it keeps
+  its old `rank` numbers
+  (`artifacts/api-server/src/services/wall/WallRankingService.ts:386#return { ...p, ranking: meta } as WallProjection;`),
+  so a gap shows that SOMETHING was withheld there, not where it was.
+- **Wall strip:** the old strip minus items about withheld-only places (B4).
+- **The two counters** (context thread, strip producer): a count shrinks, or
+  falls under the k=2 floor.
+  - When a thread's only candidate falls under the floor, the §9 gate may pick
+    the next candidate it already admitted for that same item. A freed
+    per-window slot may give a later item a thread it did not have before.
+  - That is a substitution, not a removal. Every candidate the gate can pick
+    describes a place the viewer may see: a withheld item's thread is stripped
+    at the response anyway.
+- **Living page, timeline, recaps, postcards:** the old lists minus entries;
+  the old card with `locationName: null` (C1, C5, C7, D1).
+- **Place Day feed:** the old sequence minus entries. A page may now include
+  posts that were on the NEXT page before, and the viewer received those one
+  page later before (C6).
+- **Rails:** the Best-Of list loses withheld posts. The top-contributor credit
+  is computed without them, so an author whose contributions at the place are
+  all withheld is no longer credited there, and a disclosed contributor may
+  take the slot (C8).
+
+**Measured both ways.** The final suite was run against the UNFIXED readers:
+every wiring edit reverted to `0957d8176`'s text, the helpers appended at each
+file's tail kept so the suite imports. Every file was restored byte-identical
+(SHA-256).
+
+- **Pass on both the unfixed and the fixed tree** — the pre-change output,
+  pinned: A2n, A3o, B1n, B2o, B8n, C1n, C2o, C5n, C6n, C7o, D1n, D2.
+  - The helper and property cases pass on both too, because the tails are
+    present and they do not depend on the wiring: A4, A6, B5, C4, D4, E1, E2.
+- **Fail on the unfixed tree, pass on the fixed one** — the defect: A1, A2, A3,
+  A5, B1, B2, B3, B4, B6, B7, B8, C1, C2, C3, C4b, C5, C6, C7, C8, D1, D3.
+
+### 43.4 Tests and mutations
+
+**The suite:** `artifacts/api-server/src/test/postLocationModeRemainingReaders.test.ts`,
+40 tests, registered in the api-server `test` script.
+
+- The blocks:
+  - `artifacts/api-server/src/test/postLocationModeRemainingReaders.test.ts:308#describe("A. Compass feed page`
+    drives the real hydrator and builder with a frozen clock;
+  - `artifacts/api-server/src/test/postLocationModeRemainingReaders.test.ts:514#describe("B. The Wall`
+    drives GET /wall and GET /wall/live over the real router, plus the two
+    counters directly;
+  - `artifacts/api-server/src/test/postLocationModeRemainingReaders.test.ts:842#describe("C. Place pages`
+    drives the living page, the timeline, the Place Day feed and recaps over
+    their routers, the rails predicate, and the collections worker's tick;
+  - `artifacts/api-server/src/test/postLocationModeRemainingReaders.test.ts:1116#describe("D. The public postcard wall`;
+  - `artifacts/api-server/src/test/postLocationModeRemainingReaders.test.ts:429#describe("E. lib/postPlaceDisclosure`
+    checks the helpers against mapPublicPost over every mode × status.
+- For every reader it checks:
+  - a withholding mode reaches a non-owner without the place;
+  - the owner keeps it;
+  - a `none`-mode object is WHOLE (a literal, and equal to the pre-change
+    output);
+  - an unknown mode fails closed;
+  - the SELECT carries the mode;
+  - where the place is still read internally, order, membership and score are
+    unchanged (A2, A4, B1, B3, B4).
+- **One existing test changed with the behaviour.** In
+  `artifacts/api-server/src/test/placeLiving.test.ts:373#_placeModeAware: true`
+  and `artifacts/api-server/src/test/placeLiving.test.ts:533#_placeModeAware: true`,
+  the two cached-payload fixtures now carry the mode-aware key: they model a
+  row written by the new assembler.
+  - Without it, the new rule rebuilds them as a miss (C3). The rebuild then
+    reaches the live weather fetch, and the run with the old fixtures recorded
+    14 of 18 passing before it was stopped.
+  - Every assertion in that file is unchanged, and it passes 17 of 17.
+
+**Mutations: 72, each seen red on the final tree, each file restored
+byte-identical (SHA-256).** The runner applied one mutation, ran the suite,
+recorded the red tests, restored the file and compared hashes.
+
+- **The helpers, 7:**
+  - the owner bypass removed from the rule (C5, C5n, C6, C6n, C7, C7o, D4, E1);
+  - a second rule, city_only and hidden only (C5, C6, C7, D1, E1);
+  - the mark never set (A1–A3, A5, A6, B1–B5, B8, E1, E2);
+  - the mark set on every row, i.e. withhold `none` too (A1, A2, A2n, A5, E1);
+  - the ref never marked (B1–B5, B8, E1, E2);
+  - the owner bypass removed from the mark (A3, A3o, A6, B2, B2o, B5, E1);
+  - marks ignored (A2, A3, A5, A6, B1–B5, B8, E1, E2).
+- **Compass, 8:**
+  - the SELECT column dropped (A1–A3, A5);
+  - the mark not set (A1–A3, A5);
+  - buildFeed not stripped (A2, A3);
+  - buildSection not stripped (A5);
+  - the viewer id not passed (A3, A3o);
+  - **the place nulled at the source, before ranking and the live
+    constraints** (A1, A3, A3o, A4);
+  - non-post items stripped too (A6);
+  - every post item stripped (A2, A2n, A3, A3o, A5, A6).
+- **Wall, 25:**
+  - the spine SELECT dropped (B1–B4);
+  - the spine ref not marked (B1–B4);
+  - the spine's strip source not marked (B4);
+  - items not shaped (B1–B4, B8);
+  - the strip not shaped on GET /wall (B4), on GET /wall/live (B4);
+  - the thread kept (B1, B5, B8);
+  - the place actions kept (B1, B5, B8);
+  - the gem-explained insertion kept (B3);
+  - the place kept (B1, B2, B4, B5, B8);
+  - a strip place a disclosed post also points at dropped (B4, B5);
+  - the strip's owner bypass lost (B5);
+  - the items' owner bypass lost (B2, B2o, B5);
+  - every placed item stripped (B1, B1n, B2, B2o, B3, B5, B8, B8n);
+  - the postcard loader's SELECT dropped, its ref not marked, its strip
+    source not marked (B8 each);
+  - the thread counter: SELECT dropped, withheld counted, `post_status` not
+    read so a released delayed post is miscounted, every post dropped (B6 each);
+  - the strip producer: SELECT dropped, withheld counted (B4, B7 each).
+- **Place pages, 27:**
+  - the living SELECT dropped (C1–C3);
+  - timeline entries not marked (C1–C3);
+  - bucket entries not marked (C1);
+  - MISS not shaped (C1–C3), HIT not shaped (C2), STALE not shaped (C2);
+  - a pre-mark cache row served (C3);
+  - the AI summary written from withheld captions (C1);
+  - the living owner bypass lost (C2, C2o, C4);
+  - the internal author key leaked (C2, C4), the mode-aware key leaked
+    (C1, C4);
+  - every listing entry dropped (C1, C1n, C2, C2o, C3, C4);
+  - the timeline: SELECT dropped (C5), withheld listed (C5), owner bypass lost
+    (C5, C5n), every post dropped (C5, C5n);
+  - the Place Day feed: SELECT dropped (C6), withheld listed (C6), owner
+    bypass lost (C6, C6n), every post dropped (C6, C6n);
+  - recaps: SELECT dropped (C7), withheld copied (C7), owner bypass lost
+    (C7, C7o), nothing copied (C7, C7o);
+  - the rails predicate ignoring the mode (C1, C4b, C8);
+  - the Best-Of realtime SELECT dropped (C1);
+  - the worker's SELECT dropped (C8).
+- **Postcards, 7:**
+  - the posts read's SELECT dropped (D1, D4);
+  - the wall not shaped (D1, D3);
+  - the owner paying the read without the bypass (D2);
+  - an unreadable read failing OPEN (D3);
+  - a missing post keeping its venue (D1, D4);
+  - the venue never nulled (D1, D3, D4);
+  - every venue nulled (D1, D1n, D4).
+- One mutation was first written wrongly: it left half a comment as code and
+  failed to compile, rather than red on a test. It was rewritten, and it is
+  red on C1.
+
+**Other suites run green on the final tree:** 91 files — every suite that
+imports a touched module or drives these routes, the Media disclosure suites,
+`projectionConsumers` and `censusScopeCoverage`.
+- 1,556 tests: 1,553 pass, including this suite (40), `placeLiving` (17),
+  `postcards` (95), `postLocationModeOutsideMedia` (20) and
+  `mediaProcessingWorker` (42).
+- The other three are three live-database suites that refuse to start here, as
+  they do on the base tree: the CI Supabase guard refuses before any client
+  exists (`passportPostcardLocationVerification`,
+  `passportPostcardStatusModeration`, `wallFirstPageLiveDb`).
+
+### 43.5 Found, not fixed
+
+Each is the same class of disclosure, recorded with the reason.
+
+1. **Compass: what the page says about a withheld post's place without naming
+   it.**
+   - A post item's `liveIntel` lines and factors, and the page's
+     `pipelineMeta.liveConstraints` records, describe the live state of the
+     post's place
+     (`artifacts/api-server/src/compass/CompassPipeline.ts:387#if (liveIntel) result.liveIntel = liveIntel;`).
+     They carry a snapshot id, never a place id or name.
+   - A feed page cached before deploy is served until its TTL.
+   - Why not fixed: whether a live reading keyed on a withheld place is itself
+     a side channel is Compass's decision (§42.6, 1).
+2. **Wall: the rank gap** (§43.3). It says an item was withheld, not where.
+3. **Living page aggregates.**
+   - The rating averages the like counts of every public post at the place
+     (`artifacts/api-server/src/routes/placeLiving.ts:234#.select("like_count")`).
+   - `sparseMode` counts them
+     (`artifacts/api-server/src/routes/placeLiving.ts:246#const totalPostCount = allPosts.length;`).
+   - The coverage bucket counts are precomputed rows (`place_coverage_buckets`).
+   - Why not fixed: counts, not listings. Changing them changes a number every
+     viewer sees.
+4. **Near-duplicate groups at a place.**
+   - They carry sample media ids, in the living payload
+     (`artifacts/api-server/src/routes/placeLiving.ts:438#dedupGroups:  dedupGroupsOut,`)
+     and at GET /places/:id/dedup-groups
+     (`artifacts/api-server/src/routes/places.ts:1593#.from("media_dedup_groups")`).
+   - A withheld post's media can be in a group.
+   - Why not fixed: the groups are written by Media's dedup worker keyed on
+     media, not posts. The fix belongs in that writer.
+5. **Rows written before deploy.**
+   - `place_best_of` and `place_top_contributors` rows keep withheld posts
+     until the worker recomputes them (up to 6 h for a busy place).
+   - Stored AI summaries (`place_ai_summaries`) and recap versions keep what
+     they were written from.
+   - Why not fixed: stored rows, which a migration or a backfill would change.
+     Neither is this lane's.
+6. **The Place Day itself.**
+   - A withheld post still opens a Place Day (§43.2, 3). The day's existence
+     for that place and date is readable at GET /places/:id/place-days.
+   - It says someone was active there that day, not who.
+   - Why not fixed: changing the writer changes place-day creation for every
+     mode.
+7. **Moment recap contributions**
+   (`artifacts/api-server/src/routes/placeRecaps.ts:45#const rows = ((data ?? []) as any[]).filter((row) => !blocked.has(row.contributor_id)`).
+   - Not changed: a contribution is its author's explicit act of sharing into
+     a Shared Moment, not a listing chosen by place.
+8. **§42.6 (5) and (6)** are unchanged: direct PostgREST reads (a migration,
+   and lane G1's), and Pulse's own geo-tag visibility.
+9. **Other readers keyed on a canonical place were not traced here**: the
+   Hidden Gem services, `mapProjection` and memories. The census has no
+   finding about them either way.
+
+### 43.6 What would turn this red (P24)
+
+- **A new reader that serialises a post's place without the rule.** No guard
+  scans readers; this suite covers the five readers above.
+- **A SELECT that drops `location_privacy_mode`.** The row reads as `none`. The
+  SELECT cases catch it for each reader here.
+- **A consumer that serialises a marked object by a path other than the
+  boundaries named in §43.2.** For example, a new Wall response field built
+  from `merged.placeByObject`, or a Compass consumer that reads `FeedItem`s
+  before buildFeed hands them back.
+- **The strip moved earlier**, into the hydrator or the loaders. A4 (Compass)
+  and B1/B3/B4 (Wall: the old order, the old strip) catch it.
+- **mapPublicPost returning a copy for a row it passes.** Every place would
+  then be withheld (fails closed): the `[both ways]` cases go red.
+- **Stored rows.** A place's rails, summaries and recap versions written before
+  deploy, and Compass feeds cached before deploy (§43.5).
+
+### 43.7 Rows, censuses, freshness
+
+**No MD row moves, and the headline is not restated here.** This is a defect
+fix outside any row.
+
+**No verdict row in any census is made false by this change.** The rows that
+cite the changed regions were re-read:
+
+- **census-wall.**
+  - W97 (the pipeline order) is still true: the response step now also
+    redacts fields, after the same chain.
+  - W110 (the WallResponse members) is still true: the same members, in the
+    same order, with the same types.
+  - W22 (no live signal repeated) is still true: threads are still de-duplicated
+    against the strip as built.
+  - W15 and W91 (social presence from followed people's public posts, k≥2) are
+    narrower, not false.
+  - W7, W30 and W85 (See place and Ask Compass only on a place-linked object)
+    still hold.
+  - W79 (gems through social content, Postcards, discovery or threads) still
+    holds for disclosed places.
+  - W182 (no private or sensitive leakage in items, context or strip) is
+    closer to true than before.
+- **census-media MD269.** Its evidence is the postcard wall's cover
+  (`artifacts/api-server/src/routes/passport.ts:73#mediaUrl: r.media_url ?? null,`),
+  unmoved and unchanged.
+- **census-compass CX-11.** It cites the hydrator's and builder's header
+  comments, which are unchanged.
+
+**The prose this changes.**
+- §42.2's table reads "not fixed" for the Compass feed, Wall v2, place pages
+  and passport postcards. On this branch they are fixed as §43.2 states, and
+  this section is the later statement.
+- §42.6 (9) said the composer's words ("Only your city and country are shared,
+  never the place") are false on §42.6 items 1–5. On this branch they are
+  false on item 5 and on the residue in §43.5.
+- §42's NOT-GRADED reasons for the files below say "recorded, not fixed". They
+  are now fixed; their census status is unchanged (§43.8).
+
+**check:census-freshness.** This lane does not edit the ledger. Of the entries
+it reports, these come from this branch; the others were stale on the base
+(`0957d8176`) already. Each is argued:
+- **census-compass and census-discovery, the Compass feed builder.**
+  - CX-11 cites its header comment (lines 4–9), which is unchanged; CX-02
+    names its section names, which are unchanged.
+  - The one behavioural change nulls a withheld post's `placeId` on the served
+    page, after ranking. No row grades a post item's `placeId`.
+- **census-media, the rule module and this suite.** They are newly watched
+  (§43.8); they have no earlier state for a row to rest on.
+- **census-media and census-passport, the passport route.**
+  - MD269 rests on the wall's `mediaUrl` (line 73) and the owner list's
+    (line 639): both unmoved and unchanged.
+  - census-passport's rows on this route grade the profile and passport
+    projections, not the postcard wall's venue.
+  - The edit is two line-neutral lines in the wall handler, plus helpers at
+    the tail.
+- **census-passport, the collections worker.** P61's Contributor stamp is
+  counted over every active post at the place, which this lane does not touch.
+  Only the two public rails' predicate reads the mode.
+- **census-sensing and census-wall, the context-thread and Live strip services.**
+  - S47, S76, S89 and S117 grade the read path (`liveClaimRead`), the absence
+    of fabricated labels and the strip's shape. W15 and W91 grade the k≥2
+    floor over followed people's public posts.
+  - The change removes withheld posts from two counts, and nothing else.
+  - The counts can only fall, so the floor and "never fabricated" hold.
+- **Silenced by earlier acknowledgements that name the files, argued again
+  here:**
+  - census-wall, the Wall route and the candidate loaders: W97, W110 and W22
+    are re-read in §43.7 above. The loaders' cited lines (the postcard type,
+    the experience time, the media variant) are unmoved.
+  - census-media, the candidate loaders: the Media reader in that file is
+    untouched; only the postcard loader's place ref gains the mark.
+  - census-compass, the hydrator: CX-11's lines 7–11 are unchanged.
+
+### 43.8 Production, files, scope and checks
+
+**Production: nothing here is deployed.**
+- No SQL was run, no flag exists or was enabled, and no migration was added.
+- Deployed as-is, the branch narrows the five readers exactly as §43.3 states.
+- Every place page rebuilds its cached living payload once.
+- That deploy is the owner's call.
+
+**Files.**
+- **New:**
+  - `artifacts/api-server/src/lib/postPlaceDisclosure.ts`;
+  - `artifacts/api-server/src/test/postLocationModeRemainingReaders.test.ts`,
+    registered.
+- **Changed**, every edit above the file's original end line-neutral (checked
+  line by line against `0957d8176`), with helpers and imports appended at the
+  tails:
+  - Compass: the hydrator and the feed builder;
+  - the Wall: the route, the candidate loaders, the context-thread and Live
+    strip services;
+  - place pages: the living page, the Place Day feed, recaps, the rails
+    predicate and the collections worker;
+  - the passport route;
+  - `artifacts/api-server/package.json` (the `test` line);
+  - the two fixtures in placeLiving.test.ts.
+- `lib/postSchemas.ts` and `lib/places/placeDays.ts` are unchanged.
+
+**Scope.** The rule module and this suite are appended to census-media's
+CENSUS_SCOPE with a WIDENED comment. §42 already declares NOT-GRADED most of
+the reader files this section changes; each is still a surface other censuses
+grade, and no census-media verdict rests on it, so they stay as §42 declared
+them.
+
+**Cited, not graded (check:census-scope-coverage), declared for this section:**
+
+- NOT-GRADED: artifacts/api-server/src/services/wall/LiveForYouService.ts — the Live strip's social_presence producer, cited in §43.2 (2) for the counter that now skips a withheld post; census-wall's and census-sensing's surface, no MD verdict rests on it.
+- NOT-GRADED: artifacts/api-server/src/lib/places/placeCollections.ts — the place rails' one predicate and Best-Of's realtime read, cited in §43.2 (3) as a listing outside Media that now reads the owner's mode; Live Places machinery, no MD verdict rests on it.
+- NOT-GRADED: artifacts/api-server/src/lib/places/placeCollectionsWorker.ts — the collections worker that writes place_best_of and place_top_contributors, cited in §43.2 (3) for the SELECT that feeds the rails predicate; census-passport watches it for its stamp, no MD verdict rests on it.
+- NOT-GRADED: artifacts/api-server/src/compass/CompassScoringEngine.ts — cited in §43.2 (1) only for the affinity key that makes a hydrator-side strip not a narrowing; Compass's scoring, graded by census-compass.
+- NOT-GRADED: artifacts/api-server/src/compass/CompassFrontLoadEngine.ts — cited in §43.2 (1) only as one of the Compass page's consumers that receive the stripped page; Compass machinery, not a Media surface.
+- NOT-GRADED: artifacts/api-server/src/compass/CompassPipeline.ts — cited in §43.5 (1) for the live-intel annotation left on a withheld post's item; Compass's pipeline, graded by census-compass, recorded here, not fixed.
+- NOT-GRADED: artifacts/api-server/src/services/wall/WallRankingService.ts — cited in §43.3 for the For You rank numbers that keep a gap where a withheld insertion was dropped; census-wall's ranker, no MD verdict rests on it.
+- NOT-GRADED: artifacts/api-server/src/routes/places.ts — cited in §43.5 (4) for the near-duplicate groups endpoint that can carry a withheld post's media; a Places route, recorded, not fixed, no MD verdict rests on it.
+- NOT-GRADED: artifacts/api-server/src/test/placeLiving.test.ts — the Live Places living-page suite, cited in §43.4 for the two cached-payload fixtures that now model a mode-aware cache row; its assertions are unchanged and no MD verdict rests on it.

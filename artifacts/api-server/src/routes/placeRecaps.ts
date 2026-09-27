@@ -61,8 +61,8 @@ async function collectSources(sc: any, parent: any, kind: "place" | "moment", vi
     .eq("canonical_place_id", parent.place_id).gte("created_at", start).lt("created_at", end)
     .order("created_at", { ascending: true }).order("id", { ascending: true });
   if (error) return { sources: [], error: true };
-  const candidates = ((data ?? []) as any[]).filter((post) => !blocked.has(post.author_id) && isEligiblePlaceDayPost(post)).filter((post) => !postPlaceWithheldFrom(post, viewerId)); // census-media §43: a Place Day recap collects posts BECAUSE of their place; another author's post whose place they withheld is not copied into it (the recap owner's own posts are)
-  const visible = await excludePrivateAuthorPosts(candidates, viewerId, sc, { profilesKey: "profiles" });
+  const candidates = ((data ?? []) as any[]).filter((post) => !blocked.has(post.author_id) && isEligiblePlaceDayPost(post));
+  const visible = await excludePrivateAuthorPosts(candidates.filter((post) => !postPlaceWithheldFrom(post, viewerId)), viewerId, sc, { profilesKey: "profiles" }); // census-media §43: a Place Day recap collects posts BECAUSE of their place; another author's post whose place they withheld is not copied into it (the recap owner's own posts are)
   return { sources: visible.map((post) => ({
     id: post.id, type: "place_day_post", postId: post.id, contributorId: post.author_id, caption: post.content ?? null,
     mediaUrl: Array.isArray(post.media_urls) ? post.media_urls[0] ?? null : null, thumbnailUrl: post.media_thumbnail_url ?? null,
