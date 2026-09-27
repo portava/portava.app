@@ -599,3 +599,74 @@ describe("§37 postcard /complete value and the general-video frame", () => {
     assert.deepEqual(off, { state: "off" });
   });
 });
+
+// ── census-media §37.8 (MD269 (c)): the canonical row is BORN held ─────────────
+import { canonicalModerationAtBirth } from "../lib/media/vendors/mediaVendorStages.js";
+import { recordMediaAssetDetailed, MEDIA_SOURCE_UNDECLARED } from "../lib/mediaAssets.js";
+
+/** feature_flags + the §6 schema probe + media_assets upserts, as recordMediaAssetDetailed calls them. */
+function canonicalWriteClient(flags: Record<string, boolean>, probe: "present" | "missing" = "present") {
+  const upserts: Array<Record<string, unknown>> = [];
+  const client = {
+    from(table: string) {
+      return {
+        select(_cols: string) {
+          return {
+            eq(_c: string, val: string) {
+              return {
+                maybeSingle() {
+                  if (table === "feature_flags") return Promise.resolve({ data: flags[val] ? { enabled: true } : null, error: null });
+                  if (table === "media_assets" && probe === "missing") {
+                    return Promise.resolve({ data: null, error: { code: "PGRST204", message: "Could not find the 'provenance' column of 'media_assets' in the schema cache" } });
+                  }
+                  return Promise.resolve({ data: null, error: null });
+                },
+              };
+            },
+          };
+        },
+        upsert(row: Record<string, unknown>) {
+          upserts.push({ ...row });
+          return { select() { return { single: () => Promise.resolve({ data: { id: "asset-born" }, error: null }) }; } };
+        },
+      };
+    },
+  };
+  return { client: client as any, upserts };
+}
+
+const BORN_INPUT = {
+  ownerUserId: "u1", storageBucket: "post-media", storagePath: "u1/1.mp4", publicUrl: "post-media/u1/1.mp4",
+  mediaType: "video" as const, mimeType: "video/mp4", sizeBytes: 10, width: 64, height: 48, sourceType: MEDIA_SOURCE_UNDECLARED,
+};
+
+describe("§37.8 — MD269 (c): born held while the stage is on, byte-identical while it is off", () => {
+  afterEach(() => resetCanonicalSchemaMemo());
+
+  it("canonicalModerationAtBirth: stage off → {} (spreads to nothing); on → { moderationStatus: 'limited' }", async () => {
+    assert.deepEqual(await canonicalModerationAtBirth(makeStore({}).sc), {});
+    assert.deepEqual(await canonicalModerationAtBirth(makeStore({ [MEDIA_MODERATION_STAGE_FLAG]: true }).sc), { moderationStatus: "limited" });
+  });
+
+  it("the canonical insert: no moderation_status key without it; exactly 'limited' with it — one write either way", async () => {
+    const off = canonicalWriteClient({ media_canonical_enabled: true });
+    await recordMediaAssetDetailed(off.client, { ...BORN_INPUT, ...(await canonicalModerationAtBirth(makeStore({}).sc)) });
+    assert.equal(off.upserts.length, 1);
+    assert.equal("moderation_status" in off.upserts[0]!, false, "stage off: the payload is what it always was");
+    resetCanonicalSchemaMemo();
+    const on = canonicalWriteClient({ media_canonical_enabled: true });
+    await recordMediaAssetDetailed(on.client, { ...BORN_INPUT, moderationStatus: "limited" });
+    assert.equal(on.upserts.length, 1, "born held in ONE write, not written then held");
+    assert.equal(on.upserts[0]!.moderation_status, "limited");
+    const { moderation_status: _m, ...rest } = on.upserts[0]!;
+    assert.deepEqual(rest, off.upserts[0], "nothing else about the insert changes");
+  });
+
+  it("a pre-2250 database (degraded write): the hold is dropped rather than failing a CHECK that has no §36 values", async () => {
+    const d = canonicalWriteClient({ media_canonical_enabled: true, media_canonical_schema_fallback_enabled: true }, "missing");
+    const r = await recordMediaAssetDetailed(d.client, { ...BORN_INPUT, moderationStatus: "limited" });
+    assert.equal(r.outcome, "written_degraded");
+    assert.equal("moderation_status" in d.upserts[0]!, false);
+    assert.ok(r.droppedColumns.includes("moderation_status"), "the drop is reported, not silent");
+  });
+});

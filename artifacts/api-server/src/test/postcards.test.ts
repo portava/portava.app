@@ -287,7 +287,7 @@ function buildFakeClient(tokenToId: Record<string, string>) {
       else if (table === 'user_follows')           rows = allFollows.map((r) => ({ ...r }));
       else if (table === 'profile_privacy_settings') rows = allPrivacySettings.map((r) => ({ ...r }));
       else if (table === 'user_account_states')    rows = allAccountStates.map((r) => ({ ...r }));
-      // All other tables (feature_flags, hashtags, text_spans, etc.) return empty arrays
+      else if (table === 'feature_flags') rows = __flagRows.map((r) => ({ ...r })); // census-media §37.8; all other tables (hashtags, text_spans, etc.) return empty arrays
       return builder(table, rows);
     },
     storage: {
@@ -1616,5 +1616,92 @@ describe('GET /users/:username/passport/postcards — visibility gating', () => 
     // No profile seeded for 'nobody'
     const { status } = await apiReq('GET', '/users/nobody/passport/postcards');
     assert.equal(status, 404);
+  });
+});
+
+// ── census-media §37.8: a held or flagged file neither counts nor becomes the cover ──
+// Rows in feature_flags for this fake (read through the line at the `from`
+// dispatch above). Reset before every case in this block.
+let __flagRows: Array<{ flag: string; enabled: boolean }> = [];
+
+describe('census-media §37.8 — postcard counts and the passport cover read only distributable files', () => {
+  const HELD_ID = '20000000-0000-0000-0000-000000000c09';
+  beforeEach(() => { __flagRows = []; });
+
+  function seedPending(sortOrder = 0) {
+    allPostMedia.push({
+      id: MEDIA_ID, post_id: POST_ID, user_id: OWNER_ID, media_type: 'image', storage_bucket: 'post-media',
+      storage_path: `${OWNER_ID}/${POST_ID}/${MEDIA_ID}.jpg`, public_url: '', mime_type: 'image/jpeg',
+      file_size_bytes: 500_000, processing_status: 'pending', moderation_status: 'pending', sort_order: sortOrder,
+    });
+  }
+
+  it('approved behaviour is unchanged: the file counts and is the passport cover', async () => {
+    seedPending();
+    const { status, body } = await apiReq('POST', `/postcards/${POST_ID}/media/${MEDIA_ID}/complete`,
+      { mimeType: 'image/jpeg', fileSizeBytes: 500_000 }, TOKEN_OWNER);
+    assert.equal(status, 200, JSON.stringify(body));
+    const row = allPostMedia.find((m) => m.id === MEDIA_ID)!;
+    assert.equal(row.moderation_status, 'approved');
+    assert.ok(row.public_url, 'the cover comparison below is not vacuous');
+    assert.equal(body.mediaCount, 1);
+    assert.equal(posts[POST_ID].media_count, 1);
+    assert.equal(allPostcards.length, 1);
+    assert.equal(allPostcards[0].media_url, row.public_url);
+  });
+
+  it('with the §36 stage ON (3356) and no classifier, the HELD file does not count and no cover is made from it', async () => {
+    __flagRows = [{ flag: 'media_moderation_classifier_enabled', enabled: true }];
+    seedPending();
+    const { status, body } = await apiReq('POST', `/postcards/${POST_ID}/media/${MEDIA_ID}/complete`,
+      { mimeType: 'image/jpeg', fileSizeBytes: 500_000 }, TOKEN_OWNER);
+    assert.equal(status, 200, JSON.stringify(body));
+    assert.equal(allPostMedia.find((m) => m.id === MEDIA_ID)!.moderation_status, 'flagged', 'held');
+    assert.equal(body.mediaCount, 0, 'a held file is not counted');
+    assert.equal(posts[POST_ID].media_count, 0);
+    assert.equal(posts[POST_ID].primary_media_type, 'none');
+    assert.equal(allPostcards.length, 0, 'no passport postcard is made from a held file');
+  });
+
+  it('an earlier FLAGGED file is skipped: the approved file is counted alone and is the cover', async () => {
+    allPostMedia.push({
+      id: HELD_ID, post_id: POST_ID, user_id: OWNER_ID, media_type: 'video', storage_bucket: 'post-media',
+      storage_path: `${OWNER_ID}/${POST_ID}/${HELD_ID}.mp4`, public_url: 'post-media/held-cover-must-not-be-used.mp4',
+      mime_type: 'video/mp4', file_size_bytes: 500_000, processing_status: 'ready', moderation_status: 'flagged', sort_order: 0,
+    });
+    seedPending(1);
+    const { status, body } = await apiReq('POST', `/postcards/${POST_ID}/media/${MEDIA_ID}/complete`,
+      { mimeType: 'image/jpeg', fileSizeBytes: 500_000 }, TOKEN_OWNER);
+    assert.equal(status, 200, JSON.stringify(body));
+    assert.equal(body.mediaCount, 1, 'the flagged file is not counted');
+    assert.equal(body.hasVideo, false, 'nor does it make the postcard a video postcard');
+    assert.equal(allPostcards.length, 1, 'the first DISTRIBUTABLE file makes the passport postcard');
+    assert.equal(allPostcards[0].media_url, allPostMedia.find((m) => m.id === MEDIA_ID)!.public_url);
+    assert.notEqual(allPostcards[0].media_url, 'post-media/held-cover-must-not-be-used.mp4');
+  });
+
+  it('the count query NAMES moderation_status — a real database returns only the columns a select names', async () => {
+    // This fake returns every column whatever the select says, so the cases
+    // above cannot see a select that forgot the column; PostgREST would then
+    // return rows without it, and every held file would count again.
+    const selects: string[] = [];
+    const client = buildFakeClient({ [TOKEN_OWNER]: OWNER_ID, [TOKEN_OTHER]: OTHER_ID });
+    const from = client.from.bind(client);
+    (client as any).from = (table: string) => {
+      const b = from(table);
+      if (table === 'post_media') {
+        const select = b.select;
+        b.select = (cols?: string, opts?: unknown) => { selects.push(String(cols ?? '')); return select(cols, opts); };
+      }
+      return b;
+    };
+    _setTestClient(client, true);
+    seedPending();
+    const { status } = await apiReq('POST', `/postcards/${POST_ID}/media/${MEDIA_ID}/complete`,
+      { mimeType: 'image/jpeg', fileSizeBytes: 500_000 }, TOKEN_OWNER);
+    assert.equal(status, 200);
+    const countQuery = selects.find((c) => /\bsort_order\b/.test(c) && /\bpublic_url\b/.test(c) && /\bprocessing_status\b/.test(c));
+    assert.ok(countQuery, `the count query ran (selects: ${JSON.stringify(selects)})`);
+    assert.match(countQuery!, /\bmoderation_status\b/);
   });
 });
