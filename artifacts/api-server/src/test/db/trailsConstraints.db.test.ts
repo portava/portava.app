@@ -114,6 +114,21 @@ describe("DC-02 — §4's label cap holds at the database, including under concu
     assert.equal(held, MAX_SUPPORTING_TRAILS, `the race landed ${held} supporting labels`);
   });
 
+  test("L4. under REPEATABLE READ the lock alone is not enough — the one-primary index still refuses the race", async () => {
+    // A REPEATABLE READ transaction counts with the snapshot of its FIRST
+    // statement, so after waiting on the lock it still does not see the other
+    // writer's committed label. §4's one budget fixed at 1 is therefore also an
+    // index, which refuses at every isolation level.
+    const content = randomUUID();
+    const [a, b] = [newTrail(), newTrail()];
+    const first = psqlAsync(`BEGIN ISOLATION LEVEL REPEATABLE READ;\n${label(a, content, "primary")}\nSELECT pg_sleep(1.5);\nCOMMIT;`);
+    await new Promise((r) => setTimeout(r, 400));
+    const second = psqlAsync(`\\set VERBOSITY verbose\nBEGIN ISOLATION LEVEL REPEATABLE READ;\n${label(b, content, "primary")}\nCOMMIT;`);
+    const [, rb] = await Promise.all([first, second]);
+    const held = Number(scalar(`SELECT count(*) FROM public.content_trails WHERE source_id = '${content}' AND relationship = 'primary';`));
+    assert.equal(held, 1, `REPEATABLE READ landed ${held} primaries:\n${rb.stderr}`);
+  });
+
   test("L3. an UPDATE that would move a label into a full budget is refused too", () => {
     const content = randomUUID();
     const [a, b] = [newTrail(), newTrail()];
@@ -202,7 +217,10 @@ describe("DC-04 — §7's transition relation is enforced by the database", { sk
 
   test("C3. 2910's vocabularies still refuse what the spec does not name", () => {
     const t = newTrail();
-    assert.equal(refusal(`UPDATE public.trails SET lifecycle_status = 'deleted' WHERE id = '${t}';`), "23514");
+    // An INSERT, not an UPDATE: 3381's trigger judges every UPDATE of the state
+    // and would refuse 'deleted' on its own, masking whether 2910's CHECK still
+    // stands. Only the CHECK judges an INSERT.
+    assert.equal(refusal(`INSERT INTO public.trails (slug, title, lifecycle_status) VALUES ('${TAG}-deleted-${randomUUID().slice(0, 8)}', 'x', 'deleted');`), "23514");
     assert.equal(refusal(`INSERT INTO public.content_trails (trail_id, source_type, source_id, relationship, content_state) VALUES ('${t}', 'post', '${randomUUID()}', 'primary', 'viral');`), "23514");
     assert.equal(refusal(`INSERT INTO public.content_trails (trail_id, source_type, source_id, relationship, signal) VALUES ('${t}', 'post', '${randomUUID()}', 'signal', 'vibes');`), "23514");
     assert.equal(refusal(`INSERT INTO public.trail_edges (from_trail_id, to_trail_id, edge_type) VALUES ('${t}', '${t}', 'related');`), "23514");
