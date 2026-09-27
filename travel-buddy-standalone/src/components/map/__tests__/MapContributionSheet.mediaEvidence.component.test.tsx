@@ -270,3 +270,28 @@ describe('MapContributionSheet — a failed photo is shown, and never re-reports
     expect(screen.getByText('Report recorded.')).toBeTruthy();
   });
 });
+
+// ── census-map §45.12 · no picker, no photo step, no upload ───────────────────
+//
+// The map screen hands the sheet a media picker only when the server says this
+// account's consent covers keeping a photo (app/map/index.tsx,
+// usePhotoEvidenceCoverage). This pins the sheet's half: with no picker the
+// tap still reports, and nothing is ever uploaded.
+
+describe('MapContributionSheet — no picker means no photo step and no upload', () => {
+  test('the tap is reported, the photo step is never announced, and nothing is uploaded', async () => {
+    const onClose = jest.fn();
+    const onSubmit = jest.fn();
+    await render(
+      <MapContributionSheet visible object={PLACE} onClose={onClose} onSubmit={onSubmit} />,
+    );
+
+    expect(screen.queryByText('Answer one of these, then you can add a photo to it.')).toBeNull();
+    fireEvent.press(screen.getByLabelText('How busy is it? Busy'));
+    await waitFor(() => expect(onClose).toHaveBeenCalled());
+
+    expect(callLog).toEqual(['submit:crowd_level']);
+    expect(mockUpload).not.toHaveBeenCalled();
+    expect(screen.queryByLabelText('Add a photo to this report')).toBeNull();
+  });
+});

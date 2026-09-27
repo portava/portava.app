@@ -761,3 +761,113 @@ describe("F. a photo is refused under a consent whose words do not name photos",
     assert.deepEqual(callers, [], "a product file calls the test seam that widens which consent keeps photos");
   });
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// G. The client is told BEFORE it uploads (census-map §45.12)
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// GET /v1/intel/consent carries `coversPhotoEvidence`, computed by Gate 2b's own
+// predicate. The client offers the photo step only on `true`.
+
+describe("G. GET /v1/intel/consent says whether a photo would be kept, with the gate's own answer", () => {
+  const USER = "11111111-1111-4111-8111-11111111aaaa";
+  type ConsentRow = { enabled: boolean; consent_version: string | null; consented_at: string | null; withdrawn_at: string | null };
+
+  function routeClient(consent: ConsentRow | null | "error") {
+    return {
+      auth: {
+        async getUser(token: string) {
+          return token === "valid-token"
+            ? { data: { user: { id: USER } }, error: null }
+            : { data: { user: null }, error: { message: "bad token" } };
+        },
+      },
+      from(table: string) {
+        const q: any = { select: () => q, eq: () => q, in: () => q, is: () => q, limit: async () => ({ data: [], error: null }) };
+        q.maybeSingle = async () => {
+          if (table === "profiles") return { data: { account_status: "active" }, error: null };
+          if (table === "intel_contribution_consent") {
+            if (consent === "error") return { data: null, error: { code: "42501", message: "permission denied" } };
+            return { data: consent, error: null };
+          }
+          return { data: null, error: null };
+        };
+        return q;
+      },
+    };
+  }
+
+  async function readConsent(consent: ConsentRow | null | "error"): Promise<{ status: number; body: any }> {
+    const { _setTestClient } = await import("../lib/http.js");
+    const { default: intelRouter } = await import("../routes/intel.js");
+    const express = (await import("express")).default;
+    const { createServer } = await import("node:http");
+    _setTestClient(routeClient(consent), true);
+    const app = express();
+    app.use(express.json());
+    app.use("/api", intelRouter);
+    const server = createServer(app);
+    await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+    const port = (server.address() as any).port as number;
+    try {
+      const res = await fetch(`http://127.0.0.1:${port}/api/v1/intel/consent`, { headers: { Authorization: "Bearer valid-token" } });
+      return { status: res.status, body: await res.json().catch(() => ({})) };
+    } finally {
+      await new Promise<void>((r) => server.close(() => r()));
+      _setTestClient(null, false);
+    }
+  }
+
+  const row = (consent_version: string | null, over: Partial<ConsentRow> = {}): ConsentRow => ({
+    enabled: true, consent_version, consented_at: "2026-09-01T00:00:00.000Z", withdrawn_at: null, ...over,
+  });
+
+  it("with the SHIPPED list, a v1 holder is told false, and so is every other state", async () => {
+    restoreShippedPhotoList();
+    for (const consent of [row("intel_contributions_v1"), row("sensing_contributions_v2"), row(null), null]) {
+      const { status, body } = await readConsent(consent);
+      assert.equal(status, 200, JSON.stringify(body));
+      assert.equal(body.coversPhotoEvidence, false, `${JSON.stringify(consent)} → ${JSON.stringify(body)}`);
+    }
+  });
+
+  it("reads the RECORDED version: only a listed version is told true, and a withdrawal turns it off", async () => {
+    _setPhotoEvidenceConsentVersionsForTests([PHOTO_TEST_VERSION]);
+    assert.equal((await readConsent(row(PHOTO_TEST_VERSION))).body.coversPhotoEvidence, true);
+    assert.equal((await readConsent(row("intel_contributions_v1"))).body.coversPhotoEvidence, false);
+    assert.equal(
+      (await readConsent(row(PHOTO_TEST_VERSION, { withdrawn_at: "2026-09-02T00:00:00.000Z" }))).body.coversPhotoEvidence,
+      false,
+    );
+    assert.equal((await readConsent(row(PHOTO_TEST_VERSION, { enabled: false }))).body.coversPhotoEvidence, false);
+  });
+
+  it("an unreadable consent row answers 500 and no coverage bit at all (the client reads that as false)", async () => {
+    _setPhotoEvidenceConsentVersionsForTests([PHOTO_TEST_VERSION]);
+    const { status, body } = await readConsent("error");
+    assert.equal(status, 500);
+    assert.equal(body.coversPhotoEvidence, undefined);
+  });
+
+  it("the route's answer and the gate's answer are the same for every state (one predicate)", async () => {
+    _setPhotoEvidenceConsentVersionsForTests([PHOTO_TEST_VERSION]);
+    for (const version of ["intel_contributions_v1", PHOTO_TEST_VERSION]) {
+      const told = (await readConsent(row(version))).body.coversPhotoEvidence;
+      const account = randomUUID();
+      const db = captureDb([account], version);
+      const tap = await ingestMapContribution(db, account, {
+        objectId: PLACE, objectKind: "place", kind: "crowd_level", value: "busy", observedAt: OBSERVED,
+      });
+      const kept = await attachMediaEvidence(db, account, {
+        observationId: (tap as any).observation.id, subjectId: PLACE,
+        mediaUri: `post-media/${account}/1756600000000.jpg`, mediaKind: "photo", observedAt: OBSERVED,
+      });
+      assert.equal(told, kept.ok, `${version}: the client was told ${told} but the gate answered ${kept.ok}`);
+    }
+  });
+});
+
+/** Section G's first case runs with the SHIPPED (empty) list. */
+function restoreShippedPhotoList(): void {
+  _setPhotoEvidenceConsentVersionsForTests(null);
+}

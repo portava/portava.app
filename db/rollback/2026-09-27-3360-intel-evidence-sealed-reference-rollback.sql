@@ -16,6 +16,10 @@
 -- Drops the function and the constraint and restores 2223's column comment
 -- verbatim. It REFUSES while 3361 is applied (the constraint VALIDATED and the
 -- function gone): roll 3361 back first, so the two files unwind in order.
+-- It also deletes 3360's schema_migration_ledger row, which
+-- scripts/src/apply-migrations.ts writes in the same transaction as the file:
+-- a rolled-back file the ledger still calls applied is never re-applied by the
+-- runner (rehearsed on the local harness, census-map §45.11).
 --
 -- WHAT IT DOES NOT DO: un-seal anything. Rows re-sealed through the function
 -- stay sealed. Turning them back into plaintext keys would re-introduce the
@@ -46,6 +50,9 @@ ALTER TABLE public.intel_evidence
 COMMENT ON COLUMN public.intel_evidence.reference IS
   'A storage key (`<bucket>/<path>`) or external reference — never a client-supplied URL. The map path stores only a key it has proved belongs to the contributor, in one of the app''s own private media buckets. Never raw coordinates: EXIF is stripped at upload and this table must not become a second location store.';
 
+DELETE FROM public.schema_migration_ledger
+ WHERE filename = '3360_intel_evidence_sealed_reference.sql';
+
 DO $post$
 BEGIN
   IF EXISTS (
@@ -57,6 +64,9 @@ BEGIN
   END IF;
   IF to_regprocedure('public.intel_evidence_rekey_reference(uuid, text, text)') IS NOT NULL THEN
     RAISE EXCEPTION 'POSTCONDITION FAILED: intel_evidence_rekey_reference still present after rollback.';
+  END IF;
+  IF EXISTS (SELECT 1 FROM public.schema_migration_ledger WHERE filename = '3360_intel_evidence_sealed_reference.sql') THEN
+    RAISE EXCEPTION 'POSTCONDITION FAILED: the ledger still records 3360 as applied after rollback.';
   END IF;
 END $post$;
 

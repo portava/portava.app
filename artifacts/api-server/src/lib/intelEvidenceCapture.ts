@@ -819,8 +819,45 @@ export async function consentCoversPhotoEvidence(sc: any, actorId: string): Prom
   const read = await getIntelConsentState(sc, actorId);
   if (!read.ok) return { covered: false, reason: "db_error", detail: "consent version lookup" };
   const state = read.state;
-  if (state.enabled !== true || state.withdrawnAt || !state.consentVersion || !allowed.has(state.consentVersion)) {
+  if (!photoEvidenceCoveredBy(state, allowed)) { // the ONE predicate: GET /v1/intel/consent reports the same answer (end of file)
     return { covered: false, reason: "consent_does_not_cover_photos", detail: PHOTO_CONSENT_REFUSAL };
   }
   return { covered: true };
+}
+
+// ── Telling the client BEFORE it uploads (census-map §45.12) ────────────────
+//
+// Gate 2b refuses a photo only when the attach arrives, and the client uploads
+// the bytes first (POST /api/media/upload). So a refused photo left an object
+// referenced by nothing, which account deletion never finds. The consent read
+// the client already makes, GET /v1/intel/consent, now carries
+// `coversPhotoEvidence`, computed by the SAME predicate the gate uses, so the
+// two cannot disagree. The client offers the photo step only when it reads
+// true (fail-closed on false, absent, or an unreadable state). The value is
+// derived, never stored and never supplied by a client: it is the recorded
+// version checked against PHOTO_EVIDENCE_CONSENT_VERSIONS, which is empty, so
+// today it is false for every account.
+
+/** The recorded consent fields the predicate reads. */
+export interface PhotoCoverageConsentView {
+  enabled?: boolean | null;
+  consentVersion?: string | null;
+  withdrawnAt?: string | null;
+}
+
+/**
+ * Does this recorded consent name photos? Enabled, not withdrawn, and a
+ * recorded version on the list. Nothing else can make it true.
+ */
+export function photoEvidenceCoveredBy(
+  state: PhotoCoverageConsentView | null | undefined,
+  allowed: ReadonlySet<string> = photoEvidenceConsentVersionsForTests ?? new Set(PHOTO_EVIDENCE_CONSENT_VERSIONS),
+): boolean {
+  if (!state || state.enabled !== true || state.withdrawnAt || !state.consentVersion) return false;
+  return allowed.has(state.consentVersion);
+}
+
+/** The consent state as the route returns it: the recorded fields plus the derived coverage bit. */
+export function withPhotoEvidenceCoverage<T extends PhotoCoverageConsentView>(state: T): T & { coversPhotoEvidence: boolean } {
+  return { ...state, coversPhotoEvidence: photoEvidenceCoveredBy(state) };
 }

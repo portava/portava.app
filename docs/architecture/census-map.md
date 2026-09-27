@@ -2374,3 +2374,406 @@ This section does not restate the census headline, because no row moved.
 - NOT-GRADED: artifacts/api-server/src/scripts/rekeyIntelEvidenceReferences.ts — the remediation script, not run, cited in §45.4 only.
 - NOT-GRADED: artifacts/api-server/src/lib/envValidation.ts — cited in §45.3 for the boot warning naming the new key; census-trust watches it, and no Map row grades boot configuration.
 - NOT-GRADED: artifacts/api-server/src/lib/dataRights.ts — cited in §45.3 for the updated rationale text of intel_evidence.reference; the classification itself is unchanged and no Map row grades it.
+
+### §45.11 3360 and 3361, rehearsed on the local harness (and lane P's 3350–3352, at the coordinator's request)
+
+This supersedes two statements above: §45.4's "Not executed against
+Postgres", and §45.9 item 4, which asked for portava-ci. The coordinator
+directed the repo's LOCAL harness instead. **Nothing ran on portava-ci or on
+production.** No flag was touched.
+
+**Where it ran.**
+
+- The harness's own scripts, `scripts/local-db/up.sh` and then
+  `scripts/local-db/run-tests.sh`, on a dedicated cluster so that no other
+  lane's cluster was touched: `LOCAL_DB_DIR=/tmp/portava-local-db-lanex`,
+  `LOCAL_DB_PORT=54371`, database `portava_local`.
+- **PostgreSQL 16.13** (Ubuntu 16.13-0ubuntu0.24.04.1). Production reads
+  17.6 (the integrator's read). Nothing rehearsed here depends on the
+  difference; §45.11.3 says what 3350 needs from both.
+- up.sh's own line, on the final tree:
+  `local-db: ready (booted): postgresql://postgres@127.0.0.1:54371/portava_local — baseline 388 tables; chain from 2093: 329 applied in order, 12 known-unreplayable of 341, 2 of those applied on retry`.
+  3350–3352 (in their reshaped form), 3359 and 3360–3361 are not among the
+  skipped.
+- run-tests.sh's own lines:
+
+  ```
+      ok 1 - 1. on a table with no plaintext row, 3360 then 3361 leave the CHECK validated and the function dropped
+      ok 2 - 2. rollbacks unwind in order (3360's refuses first), and 3360 applies on top of plaintext rows
+      ok 3 - 3. the CHECK refuses a NEW plaintext photo or video reference, and admits sealed, NULL and a text_note
+      ok 4 - 4. the re-seal function is service_role's only, and changes exactly ONE row
+      ok 5 - 5. an EXCEPTION between the DISABLE and the ENABLE leaves the guard enabled, aborted or caught
+      ok 6 - 6. 3361 refuses while a plaintext row remains, changing nothing; then validates and drops the function
+      ok 7 - 7. both rollbacks run cleanly afterwards, in order
+  ok 1 - census-map §45.11 — migrations 3360 and 3361, rehearsed on real PostgreSQL
+  # tests 143
+  # pass 143
+  # fail 0
+  # skipped 0
+  local-db tests: pass=143 fail=0 skipped=0 (exit 0)
+  ```
+
+#### §45.11.1 What the suite proves, against the database
+
+The suite is `artifacts/api-server/src/test/db/intelEvidenceSealedReference.db.test.ts`
+(7 cases, registered on the `test` line, where it skips without a database like
+every `src/test/db` suite).
+
+- **It applies each migration the way the runner does.** It uses the runner's
+  own classifier and its own statement,
+  `` `scripts/src/apply-migrations.ts:984#export function buildApplyStatement(args: {` ``,
+  so the body and its ledger row are one transaction:
+  `` `artifacts/api-server/src/test/db/intelEvidenceSealedReference.db.test.ts:92#function runnerApply(filename: string, sql: string)` ``.
+- **The CHECK** refuses a new plaintext photo or video reference. It admits a
+  sealed one, a NULL one and a plaintext `text_note`.
+- **The re-seal function** is refused to `anon` and `authenticated`
+  ("permission denied for function"). Under `service_role` it re-seals the
+  named row and leaves a second row holding the same plaintext value on
+  another observation untouched. A stale call returns false and changes
+  nothing. A value of the wrong shape is refused. A direct UPDATE afterwards is
+  still refused by the append-only guard.
+- **The `DISABLE TRIGGER` is re-enabled on every path.** `pg_trigger.tgenabled`
+  reads `O` after a success, a stale call and a refusal. It also reads `O` after
+  a unique violation raised between the DISABLE and the ENABLE, both when that
+  aborts the statement and when a caller catches it and reads the trigger in
+  the same transaction:
+  `` `artifacts/api-server/src/test/db/intelEvidenceSealedReference.db.test.ts:319#caught:O` ``.
+  PostgreSQL's subtransaction rollback undoes the DISABLE with the UPDATE.
+- **3361** refuses while a plaintext row remains, and validates nothing, drops
+  nothing and writes no ledger row:
+  `` `artifacts/api-server/src/test/db/intelEvidenceSealedReference.db.test.ts:329#a refused 3361 wrote no ledger row` ``.
+  Once every row is sealed it validates the CHECK and drops the function.
+- **Both rollbacks** run cleanly afterwards, in order, and 3360's refuses to
+  run first.
+
+#### §45.11.2 Found by the rehearsal, and fixed: a rolled-back file stayed "applied"
+
+The runner writes a `schema_migration_ledger` row in each file's own
+transaction. Neither rollback removed it. So after a rollback, the runner's
+next plan would have taken 3360 or 3361 as applied and never re-applied it.
+Each rollback now deletes its own file's row, and its postcondition refuses to
+commit if the row is still there:
+`` `db/rollback/2026-09-27-3360-intel-evidence-sealed-reference-rollback.sql:53#DELETE FROM public.schema_migration_ledger` ``,
+`` `db/rollback/2026-09-27-3361-intel-evidence-sealed-reference-validate-rollback.sql:122#DELETE FROM public.schema_migration_ledger` ``.
+This is the convention of the 10 rollbacks in `db/rollback/` that already do
+so. The other 110 do not, and lane P's three are among them (§45.11.3).
+
+#### §45.11.3 Lane P's 3350, 3351 and 3352, applied the way the runner applies them
+
+At the coordinator's request, after merging `wave8-integration` at
+`2a60f9c3b` (lane P's 3350 reshaped into one BEGIN…COMMIT with its
+postcondition after the COMMIT). None of those files was changed by this lane.
+
+- **The chain, stopped before 3350** (`LOCAL_DB_TO=3350`):
+  `local-db: ready (booted): postgresql://postgres@127.0.0.1:54371/portava_local — baseline 388 tables; chain from 2093 to before 3350: 319 applied in order, 12 known-unreplayable of 331, 2 of those applied on retry`.
+- **Then the runner's own code** (`classifyMigration`, `buildApplyStatement`,
+  `runPlan`). Each statement was sent as ONE query string (`psql -c`), as the
+  Management API receives one `query`: body and ledger row in one transaction,
+  then any postcondition tail in its own. The rollbacks ran newest first, with
+  `psql -f`. The script's output, with its column-header and `(1 row)` lines
+  dropped:
+
+  ```
+  server_version 16.13 (Ubuntu 16.13-0ubuntu0.24.04.1)
+    [state before] 0 |  | 0 | 0 |
+  classify 3350_media_neighborhood_only_location_mode.sql: unwrapped, postconditions after COMMIT
+  classify 3351_media_find_busier_flag.sql: unwrapped, postconditions none (inside the transaction)
+  classify 3352_media_perspective_vantage.sql: unwrapped, postconditions none (inside the transaction)
+    [3350 apply exit 0] (no output)
+    [3350 postcondition exit 0] NOTICE:  3350: neighborhood_only label present; 0 post(s) carry it on this database (0 on a first apply).
+    [3351 apply exit 0] (no output)
+    [3352 apply exit 0] NOTICE:  3352: posts.perspective_vantage present; 0 post(s) carry a vantage on this database (0 on a first apply).
+  outcome 3350_media_neighborhood_only_location_mode.sql: applied
+  outcome 3351_media_find_busier_flag.sql: applied
+  outcome 3352_media_perspective_vantage.sql: applied
+  ledger checksum matches file bytes 3350_media_neighborhood_only_location_mode.sql: t
+  ledger checksum matches file bytes 3351_media_find_busier_flag.sql: t
+  ledger checksum matches file bytes 3352_media_perspective_vantage.sql: t
+    [state after apply] 1 | media_find_busier_enabled=false,media_neighborhood_only_mode_enabled=false,media_perspective_vantage_enabled=false | 1 | 1 | 3350_media_neighborhood_only_location_mode.sql:manual,3351_media_find_busier_flag.sql:manual,3352_media_perspective_vantage.sql:manual
+    [rollback 3352 exit 0] (no output)
+    [state after rollback 3352] 1 | media_find_busier_enabled=false,media_neighborhood_only_mode_enabled=false | 0 | 0 | 3350_media_neighborhood_only_location_mode.sql:manual,3351_media_find_busier_flag.sql:manual,3352_media_perspective_vantage.sql:manual
+    [rollback 3351 exit 0] (no output)
+    [state after rollback 3351] 1 | media_neighborhood_only_mode_enabled=false | 0 | 0 | 3350_media_neighborhood_only_location_mode.sql:manual,3351_media_find_busier_flag.sql:manual,3352_media_perspective_vantage.sql:manual
+    [rollback 3350 exit 0] (no output)
+    [state after rollback 3350] 1 |  | 0 | 0 | 3350_media_neighborhood_only_location_mode.sql:manual,3351_media_find_busier_flag.sql:manual,3352_media_perspective_vantage.sql:manual
+  ```
+
+  The state columns are: the `neighborhood_only` label count, the three flags,
+  the `posts.perspective_vantage` column, its CHECK, and the ledger rows.
+- **What it shows.**
+  - All three applied, their postconditions held, and all three flags were
+    seeded FALSE. The ledger checksums match the files' bytes.
+  - 3350's `ALTER TYPE … ADD VALUE` ran inside the runner's transaction on 16.
+    Both 16 and 17 allow ADD VALUE in a transaction block (since 12). Neither
+    allows USING the new label before COMMIT, and 3350's reshaped form does
+    not: its only comparison is in the tail, after the COMMIT, on `::text`.
+  - Each rollback exited 0 and removed what its header says it removes.
+- **Recorded for lane P, not changed here.**
+  - 3350's rollback leaves the enum label, as its header says (PostgreSQL has
+    no `DROP VALUE`).
+  - **All three rollbacks leave their ledger rows** (`applied_by` manual). The
+    runner would therefore never apply 3350, 3351 or 3352 again after a
+    rollback. This is the gap §45.11.2 closed for 3360 and 3361.
+- **The same runner-shaped run for this lane's own files**, on the same
+  database afterwards, with the rollbacks as they stood before §45.11.2:
+  - 3360 and 3361 classified `unwrapped` with no tail, and both applied
+    (`exit 0`, no output) with ledger checksums matching the files;
+  - then the CHECK read `validated=true`, the function was gone, and the guard
+    read `O`;
+  - after the 3361 rollback: `validated=false`, the function back, guard `O`;
+  - after the 3360 rollback: no CHECK, no function, guard `O`, and the ledger
+    still listing both files as applied. That last line is what exposed
+    §45.11.2.
+
+#### §45.11.4 SQL mutations, each seen red on the harness, every file restored byte-identical
+
+Each mutation was applied to one of the four SQL files, the suite was run
+against the harness, and the file was restored (`filecmp`, then
+`sha256sum -c` over all four: OK). The unmutated run after them: 7/7.
+
+| # | Mutation | File | Cases red (of 7) |
+| --- | --- | --- | --- |
+| mutation S1 | the CHECK admits a plaintext photo or video | 3360 | 2: the CHECK case; 3361's refusal |
+| mutation S2 | the CHECK added VALID (NOT VALID removed) | 3360 | 7 |
+| mutation S3 | anon and authenticated may execute the function (revokes and their postcondition removed) | 3360 | 1: the service_role-only case |
+| mutation S4 | the guard is not re-enabled after the UPDATE | 3360 | 4 |
+| mutation S5 | the exception is swallowed between DISABLE and ENABLE | 3360 | 1: the exception-path case |
+| mutation S6 | the re-seal is not limited to the named row | 3360 | 2: the exactly-one-row case; 3361's case |
+| mutation S7 | 3361's plaintext precondition removed | 3361 | 1: 3361's refusal |
+| mutation S8 | 3361 does not drop the function | 3361 | 7 |
+| mutation S9 | 3360's rollback runs while 3361 is applied | 3360 rollback | 6 |
+| mutation S10 | 3360's rollback leaves the function | 3360 rollback | 5 |
+| mutation S11 | 3361's rollback does not re-create the function | 3361 rollback | 5 |
+| mutation S12 | 3360's rollback keeps its ledger row (DELETE and its postcondition removed) | 3360 rollback | 6 |
+| mutation S13 | 3361's rollback keeps its ledger row (DELETE and its postcondition removed) | 3361 rollback | 5 |
+
+A red count above the named case includes later cases that fail because the
+table was left in the wrong shape. The suite's `before` resets that shape
+without reading the migration files, so a mutated file cannot leave the next
+run stuck.
+
+#### §45.11.5 Lane V's 3359, applied the way the runner applies it, and its rollback both ways
+
+At the coordinator's request, after merging `wave8-integration` at
+`1a5164fc3`, which carries lane V's 3359 (`passport_postcards.media_url` loses
+NOT NULL). 3359 and its rollback were not changed by this lane.
+
+- **The chain, stopped before 3359** (`LOCAL_DB_TO=3359`):
+  `local-db: ready (booted): postgresql://postgres@127.0.0.1:54371/portava_local — baseline 388 tables; chain from 2093 to before 3359: 326 applied in order, 12 known-unreplayable of 338, 2 of those applied on retry`.
+- **Then** one throwaway account and three posts were seeded, 3359 was applied
+  through the runner's own `classifyMigration`, `buildApplyStatement` and
+  `runPlan` (one query string, body and ledger row in one transaction), and
+  the rollback was run with `psql -f`, first with a NULL cover present and
+  then with none. The "resolve" step stands in for the operator's deliberate
+  resolution that the rollback's message asks for: it deletes the one NULL-cover
+  row. The script's output, verbatim except that each `DETAIL: Failing row
+  contains (…)` line and the worktree prefix of the rollback's path are
+  shortened here:
+
+  ```
+  server_version 16.13 (Ubuntu 16.13-0ubuntu0.24.04.1)
+    [state before] media_url is_nullable=NO | null covers=0 | ledger 3359=none
+    [NULL cover BEFORE 3359 exit 1] ERROR:  null value in column "media_url" of relation "passport_postcards" violates not-null constraint
+    [NULL cover BEFORE 3359 exit 1] DETAIL:  Failing row contains (…).
+    [non-NULL cover BEFORE 3359 (control) exit 0] (no output)
+  classify 3359_passport_postcard_cover_nullable.sql: unwrapped, postconditions none (inside the transaction)
+    [3359 apply exit 0] (no output)
+  outcome 3359_passport_postcard_cover_nullable.sql: applied
+  ledger checksum matches file bytes: t
+    [state after 3359] media_url is_nullable=YES | null covers=0 | ledger 3359=manual
+    [NULL cover AFTER 3359 exit 0] (no output)
+    [state with a NULL cover] media_url is_nullable=YES | null covers=1 | ledger 3359=manual
+    [rollback WITH a NULL cover exit 3] psql:…/db/rollback/2026-09-27-3359-passport-postcard-cover-nullable-rollback.sql:30: ERROR:  ROLLBACK REFUSED: 1 passport_postcards row(s) have no cover (media_url IS NULL). Restoring NOT NULL would need a value, and the only one available is a held or removed file. Resolve those rows deliberately first, then re-run this file.
+    [rollback WITH a NULL cover exit 3] CONTEXT:  PL/pgSQL function inline_code_block line 6 at RAISE
+    [state after the refused rollback] media_url is_nullable=YES | null covers=1 | ledger 3359=manual
+    [resolve: delete the NULL-cover row exit 0] (no output)
+    [rollback with NO NULL cover exit 0] (no output)
+    [state after the rollback] media_url is_nullable=NO | null covers=0 | ledger 3359=manual
+    [NULL cover AFTER the rollback exit 1] ERROR:  null value in column "media_url" of relation "passport_postcards" violates not-null constraint
+    [NULL cover AFTER the rollback exit 1] DETAIL:  Failing row contains (…).
+    [cleanup exit 0] (no output)
+  ```
+
+- **What it shows.**
+  - Before 3359 a NULL cover is refused by the column (a non-NULL one, the
+    control, is written). After it, a NULL cover is written.
+  - With a NULL cover present, the rollback refuses (psql exit 3) and changes
+    nothing: the column stays nullable and the row stays.
+  - With none, it restores NOT NULL, and a NULL cover is refused again.
+- **Recorded for lane V, not changed here.** Like lane P's three (§45.11.3),
+  3359's rollback leaves its ledger row (`applied_by` manual). After that
+  rollback the runner would never apply 3359 again.
+
+### §45.12 The server says whether a photo would be kept, and the map offers the photo step only then
+
+This supersedes §45.9 item 5 and the client clause in §45.5's option D.
+
+**Server.**
+
+- `GET` and `PUT /v1/intel/consent` now carry `coversPhotoEvidence`:
+  `` `artifacts/api-server/src/routes/intel.ts:177#res.json(withPhotoEvidenceCoverage(out.state));` ``.
+- **It is Gate 2b's own predicate**, not a copy:
+  `` `artifacts/api-server/src/lib/intelEvidenceCapture.ts:852#export function photoEvidenceCoveredBy(` ``.
+  The gate calls the same function:
+  `` `artifacts/api-server/src/lib/intelEvidenceCapture.ts:822#if (!photoEvidenceCoveredBy(state, allowed))` ``.
+  The bit is true only for an enabled, unwithdrawn grant whose RECORDED
+  `consent_version` is in `PHOTO_EVIDENCE_CONSENT_VERSIONS`. That list is
+  empty, so the bit is false for every account today. Nothing invents
+  coverage.
+- **An unreadable consent row** still answers 500, and carries no bit at all.
+- **Tests:** four cases in section G of the capture suite. The last asserts
+  the route's answer equals the gate's outcome for every state:
+  `` `artifacts/api-server/src/test/intelEvidenceReference.test.ts:852#the route's answer and the gate's answer are the same for every state` ``.
+
+**Client.**
+
+- **The predicate reads the server's answer and nothing else:**
+  `` `travel-buddy-standalone/src/features/map/truth/photoEvidenceCoverage.ts:37#return state.coversPhotoEvidence === true;` ``.
+  It never derives coverage from a version string on the device, because
+  which words name photos is the server's list.
+- **The hook** reads the consent once each time capture is enabled, and not
+  at all while it is off:
+  `` `travel-buddy-standalone/src/hooks/usePhotoEvidenceCoverage.ts:24#if (!enabled) return;` ``.
+- **The map passes the picker to the sheet only on the server's yes:**
+  `` `travel-buddy-standalone/app/map/index.tsx:792#const requestContributionMedia = photoEvidenceCovered ? pickContributionMedia : undefined;` ``.
+  Without a picker the sheet has no photo step
+  (`` `travel-buddy-standalone/src/components/map/MapContributionSheet.tsx:199#const mediaOffered = onRequestMedia != null` ``),
+  so nothing is uploaded and no orphan object is created.
+- **The client type** gains the optional field:
+  `` `travel-buddy-standalone/src/services/intelConsent.ts:25#coversPhotoEvidence?: boolean;` ``.
+- **FAIL-CLOSED.** The step is withheld when the bit is false, absent (an
+  older server), not a boolean, when the read returns nothing or throws, and
+  when the grant is disabled or withdrawn. Until the read lands, it is hidden.
+  A consent granted elsewhere while the map stays mounted is seen on the next
+  mount, which is the safe direction.
+- **Line-neutral.**
+  - `app/map/index.tsx`: lines 69, 722 and 792 are extended in place. Lane I's
+    `onRequestMedia={requestContributionMedia}` stays on line 2905, and no
+    cited line moves.
+  - `services/intelConsent.ts`: line 25 is extended in place.
+  - `routes/intel.ts`: lines 177 and 189 are extended in place, and the import
+    is appended after the file's last line. The PUT keeps its old answer when
+    the write succeeded but the read-back did not: no state, so no bit.
+- **Tests:**
+  - the screen:
+    `` `travel-buddy-standalone/app/map/__tests__/photoStepCoverage.component.test.tsx:411#is withheld when the server says it would not` ``,
+    6 cases;
+  - the predicate:
+    `` `travel-buddy-standalone/src/features/map/truth/__tests__/photoEvidenceCoverage.test.ts:34#only a boolean true counts` ``,
+    4 cases;
+  - the sheet without a picker:
+    `` `travel-buddy-standalone/src/components/map/__tests__/MapContributionSheet.mediaEvidence.component.test.tsx:282#the tap is reported, the photo step is never announced, and nothing is uploaded` ``.
+
+**RED WHEN** the map offers the photo step, or starts an upload, for an
+account whose consent read did not answer `coversPhotoEvidence: true`; or the
+server answers true for a version that is not in Gate 2b's list.
+
+**Orphans before this change.** None can exist in production from this path:
+`map_contributions_enabled` has no row there (§45.5, the integrator's read of
+2026-09-27).
+
+| # | Mutation | File | Went red |
+| --- | --- | --- | --- |
+| mutation G6 | the consent read is not decorated with the bit | `routes/intel.ts` | 3: the shipped list says false; the recorded version decides; route and gate agree |
+| mutation G7 | the bit is true whatever the list says | `lib/intelEvidenceCapture.ts` | 3: the shipped list says false; the recorded version decides (route and gate) |
+| mutation C1 | the picker is handed to the sheet unconditionally | `app/map/index.tsx` | 4: withheld on false, on absent, on unreadable, on a throw |
+| mutation C2 | the consent is read while capture is off | the hook | 1: no read while capture is off |
+| mutation C3 | a valid grant alone offers the step (the bit ignored) | the predicate | 4: withheld on false and on absent (screen); a v1 grant without the yes; only a boolean true |
+| mutation C4 | any truthy bit counts | the predicate | 1: only a boolean true |
+| mutation C5 | the sheet offers the step without a picker | `MapContributionSheet.tsx` | 1: no picker, no step, no upload |
+
+Every mutated file was restored and compared byte for byte (`filecmp`, then
+`sha256sum -c`).
+
+### §45.13 Cited, not graded, by §45.11 and §45.12 (check:census-scope-coverage)
+
+- NOT-GRADED: artifacts/api-server/src/routes/intel.ts — the consent read and write, cited in §45.12 only because they now carry the derived coverage bit; census-sensing and census-highlights-memories watch it, census-sensing grades consent, and no Map row rests on it.
+- NOT-GRADED: travel-buddy-standalone/src/services/intelConsent.ts — the client consent service, cited in §45.12 for the optional coversPhotoEvidence field on its state type; the consent flow is census-sensing's, and no Map row rests on this file.
+- NOT-GRADED: scripts/src/apply-migrations.ts — the migration runner, cited in §45.11 for the statement the rehearsal reuses so that each file and its ledger row are one transaction; no Map row grades how migrations are applied.
+- NOT-GRADED: db/rollback/2026-09-27-3360-intel-evidence-sealed-reference-rollback.sql — the remediation's first rollback, run only on the local harness, cited in §45.11 for its ledger-row removal; no verdict rests on it.
+- NOT-GRADED: db/rollback/2026-09-27-3361-intel-evidence-sealed-reference-validate-rollback.sql — the remediation's second rollback, run only on the local harness, cited in §45.11 for its ledger-row removal; no verdict rests on it.
+
+### §45.14 Checks for §45.11–§45.13, and the stale files this round leaves
+
+Everything was run on Node 24 at the lane's final tree, after merging
+`wave8-integration` at `1a5164fc3`.
+
+**Passing:**
+
+- **Server.** `typecheck` is clean. `typecheck:tests` has 863 diagnostics
+  across 115 files, the baseline.
+- **Client.** `typecheck` (with the import-extension check) is clean.
+  `typecheck:tests` has 173 across 60, the baseline. eslint reports 0 errors
+  on the seven touched client files; its 59 warnings are unused
+  eslint-disable directives already in `app/map/index.tsx`. Every `lint:*`
+  script and `check:route-registry` pass.
+- `check:doc-citations` is clean. The UNANCHORED count is 6372 (ceiling 6434).
+  §45.11–§45.13 add 18 anchored citations and no unanchored one.
+- `check:citation-targets` is at its ceiling, 165 / 165.
+- `check:census-scope-coverage` passes. census-map cites 127 files and watches
+  127 (100%), with 20 declared NOT-GRADED.
+- These pass: `check:census-row-move-labels`, `check:test-registration` (1491
+  registered), `check:security-definer-oracles`, `check:schema-references`,
+  `check:writerless-reads`, `check:enum-literals`.
+- **The harness:** 143/143, skipped 0 (§45.11).
+- **The client suites:** jest 5 suites, 51/51; the predicate's node suite, 4/4.
+
+**Failing, and not this lane's:**
+
+- **The touched and adjacent server suites:** 53 files, 1196 tests, 1195 pass.
+  The one failure is a date bomb in
+  `accountDeletionSensingRevocationReach` ("one reference removed (P2)",
+  2 !== 1).
+  - Its fixture pins NOW to 2026-09-26T07:00Z, and its "standing" snapshot
+    expires at NOW + 24 h, so it has read as withdrawn since 07:00 UTC today.
+  - With the clock moved back one day (`CLOCK_OFFSET_DAYS=-1` through
+    the repo's clock-offset preload) the same suite is 14/14.
+  - Recorded, not fixed: the file is not this lane's.
+- **`check:all`** fails on the five live-database checks (write-path-columns,
+  missing-live-columns, authorization-contract, media-objects,
+  rank-events-surfaces), on `check:census-freshness`, and on
+  `check:census-integrity`.
+  - The integrity failure is census-media's stated headline (C 401 / W 37 /
+    N 12) against its rows (C 408 / W 34 / N 8).
+  - It is inherited. Putting `wave8-integration`'s census-media at
+    `2a60f9c3b` into this tree gives the same error, and this lane's only
+    census-media change is one prose line.
+
+**Stale files.** `check:census-freshness` names these of this lane's files. The
+acknowledgement ledger is the integrator's, so each is listed with its
+argument:
+
+- **census-map:** the rehearsal suite, the hook, `photoEvidenceCoverage.ts`
+  and its test, the screen's coverage test, the sheet's test, and
+  `intelEvidenceReference.test.ts`. §45.11 and §45.12 are this census's own
+  reading of every one of them. M154 is unchanged: the evidence path it grades
+  now also withholds the photo step the server would refuse.
+- **census-media, `lib/intelEvidenceCapture.ts`.** Two exports are appended at
+  the end of the file: the predicate and the decorator. Gate 2b's condition
+  line now calls the predicate, with the same logic it had inline. No MD row
+  moves (census-media §39's new line).
+- **census-trips, the rehearsal suite.** census-trips watches `src/test/db/`.
+  The suite touches only `intel_evidence`, its two migrations and the ledger;
+  no trip table or function. `lib/http.ts` was argued in §45.8.
+- **census-trust.** `lib/envValidation.ts` and `lib/http.ts`, as argued in
+  §45.8, are unchanged since.
+
+**Changed, but already named by an existing acknowledgement.** The check
+cannot tell this lane's change from the acknowledged one:
+
+- `app/map/index.tsx` (census-map, census-discovery). Three line-neutral
+  edits; the sheet gets its picker only on the server's yes. No Discovery
+  surface is touched.
+- `routes/intel.ts` (census-sensing, census-highlights-memories). The consent
+  read and write gain one derived boolean. Stamping, versioning and scopes are
+  unchanged.
+
+The others are not watched by any census: `services/intelConsent.ts` on the
+client, and the two rollbacks. The api package manifest and the freshness
+script are machinery.
+
+The other stale entries (MentionInput, tokens, ReportSheet,
+PassportMemoryService, mediaLocationVisibility, eventPostsDiscovery, and
+census-media's other 87) arrived with the merges and are not this lane's.
+
+This section does not restate any census headline, because no row moved.

@@ -12705,6 +12705,8 @@ The options and what each permits are in census-map §45.5.
 
 No MD row moves.
 
+**Since (census-map §45.11–§45.12):** 3360, 3361 and both rollbacks were rehearsed on the local harness only (PostgreSQL 16.13, 7/7, 13 SQL mutations seen red), and the map now offers the photo step, and so uploads, only when `GET /v1/intel/consent` answers `coversPhotoEvidence: true` for the account, which is false for every account while Gate 2b's list is empty; no MD row moves.
+
 ## 42. Lane Q — a post's location mode, honoured by the post readers outside Media — 2026-09-27
 
 Branch `lane-q-pulse`, from `wave8-integration` at `5956c6233`. No row IDs, no

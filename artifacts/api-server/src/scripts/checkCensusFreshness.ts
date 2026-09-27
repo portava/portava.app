@@ -2489,6 +2489,9 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/migrations/2191_memory_projector_content_and_support.sql",
     // WIDENED 2026-09-27 by lane X (census-map §45): M154's executed evidence that the stored evidence reference names no account.
     "artifacts/api-server/src/test/intelEvidenceReference.test.ts",
+    // WIDENED 2026-09-27 by lane X (census-map §45.11–§45.12): the local-harness rehearsal of 3360/3361, and the hook that decides whether the map offers the photo step.
+    "artifacts/api-server/src/test/db/intelEvidenceSealedReference.db.test.ts",
+    "travel-buddy-standalone/src/hooks/usePhotoEvidenceCoverage.ts",
   ],
   "census-sensing.md": [
     // ADDED 2026-09-14 on the Sensing lane's standing request. The scope covered
