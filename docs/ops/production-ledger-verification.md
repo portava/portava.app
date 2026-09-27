@@ -98,6 +98,18 @@ provenance to appeal to. 167 is "nothing contradicts it", not "it ran".
 | `2220_canonical_locations_search_key.sql` | `input_normalize_city_key()` (and `canonical_locations.search_key`) | runbook **B01**; census-discovery **B01** grades a row on it |
 | `2224_route_hop_signal.sql` | `route_flow_contribution_consent` | drift ratchet; runbook's grant-boundary chain `2224 → 2333` |
 
+**Superseded in part, read 2026-09-27 (read-only).** Four of the nine have since
+been applied by hand, and each carries a `manual` ledger row:
+- `2217_protected_locations.sql`, applied 2026-09-21 11:09 UTC. `protected_zones`
+  exists and holds 0 rows.
+- `2220_canonical_locations_search_key.sql`, applied 2026-09-21 10:52 UTC.
+  `canonical_locations.search_key` is present on 31 of 31 rows.
+- `2910_discovery_trails.sql` (not one of the nine), applied 2026-09-20. Its six
+  tables exist and hold 0 trails.
+- `2894` (not one of the nine) was applied on 2026-09-16.
+
+The table above is kept as the record of what was true when it was measured.
+
 Every one of the nine is independently corroborated by at least one instrument that did
 not use this method — the drift ratchet, the manual runbook, or a census row. None rests
 on this audit alone.
