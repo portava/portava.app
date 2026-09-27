@@ -1929,3 +1929,8 @@ resolver.
 Totals unchanged. Four rows re-tested against the live database; three hold on
 their original evidence, one holds on replaced evidence and a blocker that has
 changed class.
+
+## Cited, not graded (check:census-scope-coverage)
+
+- NOT-GRADED: artifacts/api-server/src/test/censusIntegrityQualifiedVerdicts.test.ts — the suite of check:census-integrity's verdict tokeniser, cited in §40's "four rows became countable" note, which says of itself that it built nothing and closed no gap: it moved the recount to the numbers this document already stated, and no row cites it
+- NOT-GRADED: artifacts/api-server/src/services/passport/PassportProjectionService.ts — census-passport's subject, cited in §43.2 only as a second reader of the locate_friends_enabled flag; the hold on M7 and the rows that inherit it rests on that flag being FALSE in production and on lib/locateFriendsSession.ts, which this census watches

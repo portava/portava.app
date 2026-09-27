@@ -9206,3 +9206,17 @@ ceiling of 234).
 `check:authorization-contract`, `check:media-objects` and
 `check:rank-events-surfaces` exit **2** without live credentials — **NOT RUN, not
 passed**; nothing above rests on them.
+
+## Cited, not graded (check:census-scope-coverage)
+
+- NOT-GRADED: app/trip/[id].tsx — the root-level legacy Expo app's trip screen, which the checker's resolver matches by path; §29.6's fail-closed table and §56's preamble both mean the travel-buddy-standalone client's app/trip/[id].tsx, the screen that mounts TripReadinessCard and TripTodayCard, which is watched through travel-buddy-standalone/app/trip/, and no verdict rests on the root copy
+- NOT-GRADED: travel-buddy-standalone/src/services/layover.ts — census-layover's client service, cited in §39.5 item 3 only as the Layover offline bundle that TR334's original grep matched by accident; that item says the verdict held regardless, and TR334 now rests on src/features/trips/offline/ (§57)
+- NOT-GRADED: scripts/src/saved-places-truncate-guard.test.ts — named in §41.1 only as the suite that set the psql-over-a-child-process convention src/test/db/localDb.ts follows; TR430 and TR431 rest on the database suites under src/test/db/, which are watched
+- NOT-GRADED: travel-buddy-standalone/scripts/run-node-tests.mjs — the client's node test runner, named in §56.1 only because its KNOWN_BROKEN list explains why shared/auth.ts reads the token lazily; no row rests on the runner
+- NOT-GRADED: artifacts/api-server/src/routes/messaging.ts — Telegraph's direct-message route, named in the real-clock section ("The real-clock class, third and fourth instance") only as a file the concurrently running batch had changed, checked out at HEAD and ruled out as the cause of the four clock failures; that section says no verdict moves
+- NOT-GRADED: artifacts/api-server/src/routes/groupChat.ts — Telegraph's group-chat route, named beside routes/messaging.ts in the real-clock section only as the other file ruled out as the cause of the four clock failures; no Trips row rests on it
+- NOT-GRADED: artifacts/api-server/src/test/compass-trip-context.test.ts — a Compass suite, named in §71.1 only because its fake client implements no .or(), which is why the projection's query was left unchanged; the plan window §71.1 built is pinned in tripProjections.test.ts, which is watched
+- NOT-GRADED: artifacts/api-server/src/test/geofence.test.ts — named in §72's exit-code table only to explain why typecheck:tests was red (another lane fixed that file mid-session and the baseline had not been re-recorded); nothing in this census grades geofencing
+- NOT-GRADED: artifacts/api-server/scripts/check-test-registration.mjs — a guard script outside src/scripts/, so the global NOT_GRADED pattern does not reach it; cited in §72's exit-code table as a check that was run, not as evidence for any row
+- NOT-GRADED: artifacts/api-server/src/services/intel/IntelCaptureService.ts — the Intel capture service (census-map watches services/intel/), cited in §70.6, §73.2 and §73.5 only as a caller of the membership boolean that has no catch; §74.3 records that no census-trips row grades the intel crew token it computes
+- NOT-GRADED: artifacts/api-server/src/domain/telegraph/policies/requestOrigin.ts — Telegraph's request-origin policy, cited in §73.2 and §73.5 only as the second caller of isAcceptedTripMember that would need a catch before the boolean may throw; that conversion is recorded as open work, and no row moves on it
