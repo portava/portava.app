@@ -966,6 +966,21 @@ const EXEMPT = [
       'injected fetch is ever removed, or the URL ever comes from the environment, the exemption is void and ' +
       'this file must import the guard.',
   },
+  {
+    file: 'src/test/db/discoveryVerifyBridge.ts',
+    reason:
+      'THE VERIFICATION LANE\'S HARNESS BRIDGE (census-discovery §59). It builds the REAL @supabase/supabase-js ' +
+      'client on purpose, so routes/discovery.ts, routes/rankEvents.ts, the admin debug routes and ' +
+      'CreatorAttributionService run against the local PostgreSQL harness with the requests production sends. ' +
+      'It CANNOT DIAL SUPABASE: createClient is given an injected fetch that turns each request into one psql ' +
+      'statement against LOCAL_DB_URL (imported from src/test/db/localDb.ts, the throwaway database ' +
+      'scripts/local-db/up.sh boots), and that fetch is the only transport the client has; the URL is the ' +
+      'literal "http://p12-verify-bridge.invalid", written in the file and never read from the environment. It ' +
+      'names no Supabase credential variable. It is a helper, not an entry point: it runs only when a ' +
+      'src/test/db/discoveryVerify*.db.test.ts suite imports it, and those suites skip without a local ' +
+      'database. EXEMPTION MEANS UNGUARDED, NOT SAFE — if the injected fetch is ever removed, or the URL ever ' +
+      'comes from the environment, the exemption is void and this file must import the guard.',
+  },
 
   {
     file: 'src/test/mediaAccessFailClosed.test.ts',

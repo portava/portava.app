@@ -402,7 +402,7 @@ export function DiscoveryCategoryTab({
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError]           = useState<string | null>(null);
   const [page, setPage]             = useState(1);
-  const [total, setTotal]           = useState(0);
+  const [total, setTotal]           = useState(0);  const [moreRefused, setMoreRefused] = useState(false);  // DV-83: page ≥ 2 was REFUSED — see load()
   const [locationNudge, setLocationNudge] = useState(false);
   const loadingMore                 = useRef(false);
   const nudgeOpacity                = useRef(new Animated.Value(0)).current;
@@ -456,7 +456,7 @@ export function DiscoveryCategoryTab({
   const load = useCallback(async (nextPage: number, currentFilters: DiscoveryFilters, reset: boolean) => {
     if (!destination) return;
     if (reset) setLoading(true);
-    setError(null);
+    setError(null); setMoreRefused(false);
 
     // Read user coords from refs so this callback stays stable across GPS updates.
     // The location-change effect is the sole handler that re-fires when the user
@@ -512,6 +512,18 @@ export function DiscoveryCategoryTab({
       setError("We couldn't load places just now — this is on our side, not your filters.");
       setPlaces([]);
       setTotal(0);
+      return;
+    }
+
+    // …and a refused LOAD-MORE is not the end of the list. It used to fall through
+    // to the success path below, which set `total` to the refusal's padding `0` and
+    // advanced `page` — so the footer printed "N places found", the list's own
+    // claim that the set had ended, about a page nobody read, and every further
+    // load-more was refused locally (`places.length >= total`). The page already on
+    // screen stays, `total` and `page` stay what the last REAL answer said, and the
+    // footer says what happened in the page-1 refusal's own words, with its retry.
+    if (res.data.refusal?.coverage === 'nothing') {
+      setMoreRefused(true);
       return;
     }
 
@@ -681,10 +693,19 @@ export function DiscoveryCategoryTab({
               tintColor={color.signal}
             />
           }
-          onEndReached={handleLoadMore}
+          // While page ≥ 2 is refused, scrolling does not re-ask: during an outage that
+          // would re-send the same request on every scroll. The footer's retry does.
+          onEndReached={moreRefused ? undefined : handleLoadMore}
           onEndReachedThreshold={0.4}
           ListFooterComponent={
-            places.length >= total && places.length > 0 ? (
+            moreRefused ? (
+              <View style={styles.moreRefused} testID="discovery-category-more-refused">
+                <Text style={styles.emptyDesc}>We couldn't load places just now — this is on our side, not your filters.</Text>
+                <Pressable style={styles.retryBtn} onPress={handleLoadMore}>
+                  <Text style={styles.retryText}>Try again</Text>
+                </Pressable>
+              </View>
+            ) : places.length >= total && places.length > 0 ? (
               <Text style={styles.endText}>{places.length} places found</Text>
             ) : null
           }
@@ -747,6 +768,12 @@ const styles = StyleSheet.create({
     color: color.faint,
     fontSize: 11,
     textAlign: 'center',
+    marginVertical: space.xl,
+  },
+  moreRefused: {
+    alignItems: 'center',
+    gap: space.md,
+    paddingHorizontal: space.xxl,
     marginVertical: space.xl,
   },
 });

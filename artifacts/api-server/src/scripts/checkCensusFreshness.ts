@@ -3979,6 +3979,44 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/test/discoveryTripReadInventory.test.ts",
     // §56.14 (integrator): the snapshot entry fix's suite; A13 and A14 are restated on it.
     "artifacts/api-server/src/test/layoverSnapshotEntry.test.ts",
+    // census-discovery §59 (verification lane P12): its own suites and bridge.
+    "artifacts/api-server/src/test/db/discoveryVerifyBridge.ts",
+    "artifacts/api-server/src/test/db/discoveryVerifyChain.db.test.ts",
+    "artifacts/api-server/src/test/db/discoveryVerifyExplain.db.test.ts",
+    "artifacts/api-server/src/test/db/discoveryVerifyPhase03.db.test.ts",
+    "artifacts/api-server/src/test/discoveryVerifyAudit.test.ts",
+    // §59's graded evidence outside Discovery's own files: DC-26's class suites
+    // and DV-76's tagging code, test and the production baseline it reads.
+    "artifacts/api-server/baseline/20260819_baseline_structure.sql",
+    "artifacts/api-server/src/lib/enrichSpans.ts",
+    "artifacts/api-server/src/services/tagging/TaggingService.ts",
+    "artifacts/api-server/src/test/tagging.test.ts",
+    "artifacts/api-server/src/test/portavaRank.test.ts",
+    "artifacts/api-server/src/test/discoveryPde.test.ts",
+    "artifacts/api-server/src/test/placeMomentumSqlParity.test.ts",
+    "artifacts/api-server/src/test/creatorLedgerProperties.test.ts",
+    "artifacts/api-server/src/test/ciWorkflowArchitecture.test.ts",
+    "artifacts/api-server/src/test/discoveryDivergenceReport.test.ts",
+    // WIDENED 2026-09-27 by census-discovery §60 (client consumers + the end-to-end leg, lane P13):
+    // DC-33's route→client suite, DV-83's static consumer guard and its two new proof suites.
+    // The client files §60 grades (services/discovery.ts, DiscoveryCategoryTab.tsx, ForYouTab.tsx,
+    // the rail, the community/suggest hooks) were already watched.
+    "artifacts/api-server/src/test/discoveryClientRouteE2E.test.ts",
+    "travel-buddy-standalone/src/services/__tests__/discoveryRefusalConsumers.guard.test.ts",
+    "travel-buddy-standalone/src/components/discovery/__tests__/DiscoveryCategoryTab.loadMoreRefusal.component.test.tsx",
+    "travel-buddy-standalone/src/hooks/__tests__/useGlobalSearchSuggestions.refused.component.test.tsx",
+    // WIDENED 2026-09-27 by §58 (lane P8, trending and ecosystem): DV-80 moves N -> W on the monitor report; DC-21,
+    // DV-33 and DC-07 stay W on the read-only trend API, 3410's snapshot parity and their suites. Each is evidence.
+    "artifacts/api-server/src/lib/discoveryTrendExplanation.ts",
+    "artifacts/api-server/src/lib/discoveryEcosystemGovernor.ts",
+    "artifacts/api-server/src/routes/discoveryTrending.ts",
+    "artifacts/api-server/src/scripts/reportDiscoveryEcosystem.ts",
+    "artifacts/api-server/src/migrations/3410_discovery_trend_snapshot_parity.sql",
+    "db/rollback/2026-09-27-3410-discovery-trend-snapshot-parity-rollback.sql",
+    "artifacts/api-server/src/test/discoveryTrendingApi.test.ts",
+    "artifacts/api-server/src/test/discoveryEcosystemGovernor.test.ts",
+    "artifacts/api-server/src/test/db/discoveryTrendSnapshotParity.db.test.ts",
+    "artifacts/api-server/src/test/db/discoveryEcosystemReport.db.test.ts",
     // WIDENED 2026-09-27 by census-discovery §61 (P14, Trails integrity): DC-03 moves on 3415 and
     // the service seam that calls it; DC-20 is re-graded on the attach check; DV-72 is re-graded on
     // 3416's projection. Every §61 verdict row cites these, their rollbacks or the suites that were

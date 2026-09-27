@@ -263,3 +263,46 @@ const TREND_EXPLANATION: Readonly<Partial<Record<DiscoveryTrendState, string>>> 
 export function explainTrendState(state: DiscoveryTrendState): string | null {
   return TREND_EXPLANATION[state] ?? null;
 }
+
+/**
+ * census-discovery DV-33 / §58 — the CLOSED vocabulary of trend reasons.
+ *
+ * One machine-readable code per state that IS a claim, and nothing else. Each
+ * code names what the classifier above actually compared, so a reason can never
+ * say more than the evidence computed: `trend_accelerating` is "recent against
+ * the middle window, above the growth factor", not "popular", and not "saved a
+ * lot" — the windows sum impressions, saves and outcomes together, so which
+ * signal drove a state is NOT computed and no code claims it.
+ *
+ * `unknown` has no code for the same reason it has no sentence.
+ *
+ * Appended at the foot of the file: several census citations anchor lines above.
+ */
+export const TREND_REASON_CODES = [
+  "trend_new_activity",
+  "trend_accelerating",
+  "trend_sustained",
+  "trend_slowing",
+  "trend_returning",
+] as const;
+export type TrendReasonCode = (typeof TREND_REASON_CODES)[number];
+
+const TREND_REASON_FOR_STATE: Readonly<Partial<Record<DiscoveryTrendState, TrendReasonCode>>> = {
+  emerging:     "trend_new_activity",
+  trending:     "trend_accelerating",
+  established:  "trend_sustained",
+  cooling:      "trend_slowing",
+  rediscovered: "trend_returning",
+};
+
+/** The reason for a state: its code and its plain-language sentence, or null for `unknown`. */
+export function trendReasonFor(state: DiscoveryTrendState): { code: TrendReasonCode; text: string } | null {
+  const code = TREND_REASON_FOR_STATE[state];
+  const text = explainTrendState(state);
+  return code && text ? { code, text } : null;
+}
+
+/** Is this one of `03` §9's six stages? A stored value outside them is not a state. */
+export function isTrendState(v: unknown): v is DiscoveryTrendState {
+  return typeof v === "string" && (TREND_STATES as readonly string[]).includes(v);
+}

@@ -9626,6 +9626,784 @@ The import on `:101` gains `withDiscoveryLiveSafety`. At serve path 2, `:2134` b
 
 **Freshness.** The census-discovery ledger now names the seven files §57 watched without acknowledging them, and argues for the three library files and `routes/discovery.ts`. The acknowledgements for census-compass, census-sensing, census-passport, census-trust and census-layover each carry an argument that no verdict of theirs moves.
 
+## §59 — Independent verification (lane P12): the cross-lane chain is built and passes, four C rows do not hold, DV-52 and DV-76 are graded, and the rollout round-trips on the harness
+
+*Written 2026-09-27 by the verification lane on `disc-p12-verify`, branched from `d7bfb15dc` (the tip of `wave8-integration` after §54.14). This lane wrote none of the code it grades. Every verdict here is about code and a local PostgreSQL 16 harness (`scripts/local-db/up.sh`: baseline plus 344 migrations in order, 12 known-unreplayable, none of them Discovery's). Nothing is merged to `main`, applied to `portava-ci` or production, deployed, or flag-enabled; no flag row was written anywhere (every suite answers `feature_flags` from memory and asserts the rows unchanged). The headline is not restated; the integrator does that. `head_commit` is not re-declared.*
+
+### 59.1 Row moves
+
+| ID | was | now | evidence |
+|---|---|---|---|
+| DC-26 | W | **C** | All sixteen of `12`'s classes (`docs/specs/discovery-v1/12_Claude_Code_Implementation.md:171#Required test classes`) have a suite that passes at this tree; §59.3 names each. The one class no lane owned, recommendation → behaviour → attribution (§54.11 H5), is built on the harness through the code that ships: `GET /discovery` signed in, then `POST /rank-events/outcome` with the served id, then `resolveServedRecommendation` and `recordCreatorAttribution` under a published test rule (`artifacts/api-server/src/test/db/discoveryVerifyChain.db.test.ts:207#test("V1. the chain: a signed-in serve's id is stored`). Another viewer's id is refused at the route and at the binding and writes nothing (`artifacts/api-server/src/test/db/discoveryVerifyChain.db.test.ts:252#test("V2. another viewer's id: the outcome is refused and moves nothing`); an unknown id is refused at all three layers (V3); an anonymous serve's ids are on the response and in no `rank_events` row, so nobody can bind them (`artifacts/api-server/src/test/db/discoveryVerifyChain.db.test.ts:288#test("V4. an anonymous serve's ids are on the response and nowhere in rank_events`); a retried save and a retried attribution each land once (`artifacts/api-server/src/test/db/discoveryVerifyChain.db.test.ts:311#test("V5. retries: a replayed save is`). **Harness evidence, not production:** 3386 is unapplied everywhere but the harness, and no production caller passes a recommendation to an attribution (`artifacts/api-server/src/services/creators/CreatorAttributionService.ts:305#export async function resolveServedRecommendation(` has no caller outside tests, as DV-67 already says). The keyless-outcome defect V7 found belongs to DV-37 below and is counted there once (§11.2 rule 2). |
+| DV-52 | ? | **W** | `docs/specs/discovery-v1/05_Graph_Engine.md:125#- it remains explainable enough for debugging.` **The graph itself passes:** typed, time-aware edges with counts, an admin-only debug read whose counts are the tables' own (`artifacts/api-server/src/test/db/discoveryVerifyExplain.db.test.ts:184#test("X3. the graph's debug read is admin-only and its counts are the tables' own`), and a non-admin read of exactly five aggregate keys (`artifacts/api-server/src/test/db/discoveryVerifyExplain.db.test.ts:210#test("X4. the graph read any signed-in user has returns five aggregate keys`). **What fails, exactly:** (1) where the graph reaches a Discovery decision, the decision does not record which graph reading made it. City confidence becomes a momentum scale and an exploration budget (`artifacts/api-server/src/lib/discoveryModifiers.ts:206#const { momentumScale, explorationBudgetPct } = cityConfidenceInputs(cityConfidence);`), but the serve keeps only the modifiers' on/off reason (`artifacts/api-server/src/lib/discoveryPde.ts:558#stages.modifiers = modifiers.reason;`) and, per item, the budget. The confidence record (depth, tier, source, computed-at) and the scale are dropped, and `compass_city_confidence` is overwritten on each daily rebuild, so a past serve's graph input cannot be recovered. (2) Discovery's one ranking-debug writer produces nothing on production's structure: every sample omits two NOT NULL columns (`artifacts/api-server/baseline/20260819_baseline_structure.sql:8799#content_type text NOT NULL,`), and the refusal is swallowed (`artifacts/api-server/src/test/db/discoveryVerifyExplain.db.test.ts:136#test("X1. DEFECT, pinned: the DRS debug sample omits production's NOT NULL content_type/content_id`; X5 shows the same refusal on a live `GET /discovery` cold fetch). The debug read is admin-only and exposes no viewer's data or score to a non-admin (X2, X5). The consumption path is behind 2289 (off, held), so (1) affects no deployment today. |
+| DV-76 | ? | **W** | `docs/specs/discovery-v1/12_Claude_Code_Implementation.md:20#0.3 Complete privacy/tagging Phase 0` names three items and "other catalogued Phase 0 findings". **The three named items are fixed at the route and service, and tested:** pending tags are not rendered (`artifacts/api-server/src/lib/enrichSpans.ts:187#.eq('status', 'approved');`); a friends-only post notifies friends, not one-way followers, and fails closed on every unreadable read (`artifacts/api-server/src/services/tagging/TaggingService.ts:174#if (visibility === 'friends' || visibility === 'friends_only') {`); `disable_tagging` engages when its own row cannot be read (`artifacts/api-server/src/lib/featureFlags.ts:55#export async function isKillSwitchEngaged(`). `tagging.test.ts` passes 35/35. **What fails, exactly:** Phase 0 #1 (unauthorized tagging) is still reachable at the database. `authenticated` holds INSERT on `tags`, and the only insert policy checks the tagger (`artifacts/api-server/baseline/20260819_baseline_structure.sql:32217#CREATE POLICY tags_insert ON public.tags FOR INSERT WITH CHECK ((tagger_id = auth.uid()));`). So a client that skips `POST /api/tags` can tag a user whose `tag_permission` is `nobody`, on a post it does not own, and the row lands `approved` by default (`artifacts/api-server/src/test/db/discoveryVerifyPhase03.db.test.ts:46#test("P1. DEFECT, pinned: a direct client insert tags a 'nobody' user on a stranger's post, and lands APPROVED`). That bypasses the permission, the approval gate #2 depends on, the hourly cap and the #3 kill switch. What the database does hold is P2. Items #5–#7 have no trace anywhere (`docs/security/phase0-tagging-privacy-state.md`), so "other catalogued findings" cannot be counted complete. No tagging census owns this row, so it is graded here. |
+| DV-20 | C | **W** | **Does not hold.** The Trail canonicaliser folds diacritics but not letters that NFKD does not decompose (`artifacts/api-server/src/lib/discoveryTrailObject.ts:162#.normalize("NFKD")`). "Đà Nẵng street food" becomes `a-nang-street-food` and "Da Nang street food" becomes `da-nang-street-food`, and CHECK 1's similarity is 0.6, below the 0.8 duplicate bar (`artifacts/api-server/src/test/discoveryVerifyAudit.test.ts:26#it("A1. DEFECT, pinned (DV-20): 'Đà Nẵng street food' and 'Da Nang street food' canonicalise to two Trails`). Through the shipping `proposeTrail` on the harness, one filed under destination "Đà Nẵng" and one under "da nang" were BOTH admitted, and no check fired. That is two canonical Trails for one theme, and `02` §2's own example city (`#danang`) is the one that breaks. Ł and Ø fail the same way (`odz-murals`, `resund-cycling`). The fold that fixes it already exists and is B01's: `searchKey` folds all three to one key (A1c). |
+| DV-25 | C | **W** | **Does not hold as a correct influence.** The shipping momentum kernel weighs every non-save outcome as positive engagement, `dismiss` included. `dismiss` is the ONE negative outcome (2297). So a place its viewers mark "Not interested" gains momentum over one they merely saw (`artifacts/api-server/src/test/discoveryVerifyAudit.test.ts:44#it("A2. DEFECT, pinned (DV-25): a dismissed place gains momentum over one that was only seen`), and the SQL twin does the same (`artifacts/api-server/src/migrations/2892_place_momentum.sql:463#CASE WHEN outcome = 'save' THEN c_w_save ELSE c_w_outcome END`). The Trail fold inherits it, and the Trail's `02` §9 exposure numerator counts a dismiss as a positive response (`artifacts/api-server/src/services/trails/TrailService.ts:646#if (r.outcome !== "impression") bucket.positives += 1;`). Behaviour does influence Trail momentum, but with the wrong sign for the one negative signal. |
+| DV-37 | C | **W** | **Does not hold for the keyless outcome path.** An outcome with no `recommendation_id` binds to "the most recent upgradable row for (viewer, item, surface)" (`artifacts/api-server/src/routes/rankEvents.ts:208#.in("outcome", upgradableOutcomesFor(outcome))`). Compare-and-set protects two RACING reports of one row (E2E O8b). A sequential RETRY, when the item was served twice, finds the next exposure and moves it too: one "Not interested", two dismisses, two negative signals, the retry answered as a new outcome (`artifacts/api-server/src/test/db/discoveryVerifyChain.db.test.ts:346#test("V7. DEFECT, pinned (DV-37): a KEYLESS outcome retried after a second serve of the same item moves a SECOND exposure`). The row's text states only the unkeyed direct impression as the unkeyed boundary. Every client build before §50 sends keyless outcomes. |
+| DC-15 | C | **W** | **Does not hold as stated.** "One registry row for each of the … indexes that migrations create on Discovery tables" is false for three constraint-backed unique indexes: `trails_slug_unique` (`artifacts/api-server/src/migrations/2910_discovery_trails.sql:160#CONSTRAINT trails_slug_unique UNIQUE (slug),`), `place_momentum_place_run_key` (2892) and `discovery_place_reports_unique` (0061). None has a row in `docs/discovery/query-paths.md` §4. The forward check cannot see such indexes, because it matches only `CREATE [UNIQUE] INDEX` (`artifacts/api-server/src/scripts/checkDiscoveryQueryPaths.ts:67#const INDEX_RE = new RegExp(`). Probed: a migration adding `ALTER TABLE public.rank_events ADD CONSTRAINT … UNIQUE (id, outcome)` leaves the check `RESULT clean`, and the same index spelled `CREATE UNIQUE INDEX` fails it `MISSING`. The probe file was deleted. Ten primary keys and the baseline-only `idx_discovery_cache_dest_cat` also have no row. |
+
+### 59.2 The adversarial audit of §46–§55's C rows
+
+Each row: its spec sentence re-read, its cited suites re-run at this tree, and one negative input or mutation the lane did not use.
+
+| row | verdict | the probe, and what it showed |
+|---|---|---|
+| B01 | **holds, with a caveat** | TS `searchKey` vs SQL `input_normalize_city_key` over 35 names the lane did not use (Đ, Ł, Ø, Þ, Ħ, İ, ß, Æ, Œ, ligatures, fullwidth, suffix and whitespace forms): 35/35 identical, so the query side and stored side cannot disagree. Caveat: letters outside diacritics fold to separators or vanish — `Straße` → `stra e`, `Gießen` → `gie en`, `Æbeltoft` → `beltoft`, `ﬁnland` → `nland`, fullwidth `Ｔｏｋｙｏ` → empty — so a typed "giessen" cannot reach Gießen. G57 says diacritics; this is recorded, not graded against it. |
+| DC-25 | **holds, with a caveat (fixed)** | The note documents the five items. One sentence was false since §53.5 ("the avatar opt-out … is not applied"); corrected in `docs/discovery/cache-architecture-design-note.md` §3 (a line-neutral edit, cited by nothing). |
+| DV-37 | **does not hold** | §59.1 (V7). |
+| DV-38 | **holds, with a caveat** | `schema_version` is checked on all three rank-events entry points (direct, outcome, each batch event) and the dwell route; `"1"` (string) and `2` are refused; the database refuses an unknown version (3375, `db/discoveryTelemetryConstraints` on the harness). Caveat: an explicit `null` is accepted as "absent → current", which is a declared version the server did not read. |
+| DV-39 | **holds, with a caveat** | The screen is an allowlist (an unclassified key is refused, `screenFeaturesForStorage`), and precise-location key names in any case/spelling are dropped. Caveat, the lane's stated bias: values are not inspected, so a coordinate inside an allowed value (a `destination` typed as "38.72,-9.14") would be stored. |
+| DV-45 | **holds** | All 24 CHECKs on `rank_events` and `recommendations` (including P6's three dwell CHECKs) are exercised by name, and a completeness test enumerates `pg_constraint`, so a new CHECK without a case fails. |
+| DSV2-04 | **holds** | Client suites 48/48. A missing, non-finite, negative or non-number validity parses to `null` and is never shown as current; the boundary instant is stale. |
+| DV-46 | **holds (strengthened)** | V1–V5 prove hop 1 → 5 across lanes on a real database for the first time; the served column reads back in `+00:00` and still binds. |
+| DV-20 | **does not hold** | §59.1 (A1, and `proposeTrail` on the harness). |
+| DV-25 | **does not hold** | §59.1 (A2). |
+| DC-02 | **holds** | A single-statement multi-row INSERT of four `supporting` labels for one content is refused at the fourth row by 3380's trigger (rows earlier in the same statement are visible to it); a label moved by UPDATE of `source_id` is covered (the trigger fires `OF relationship, source_type, source_id`). |
+| A24 | **holds** | No server-side response cache on any people surface (`discoverySearch.ts` caches only the buddy launch gate), so going Invisible reaches the next request; suites 23 + 18 + 16 pass. The lane's own owner question (location-off hides a person from name search) stands. |
+| DSV2-12 | **holds, with a caveat** | The keyed trace is exact (V1–V5). Caveat: a keyless outcome is attached by the server to the most recent upgradable exposure and counted "bound by construction", so V7's one action is traced as two bound outcomes on two exposures. Counted once, under DV-37. |
+| DV-71 | **holds** | Probed what R0 does not read: no SECURITY DEFINER function over the sixteen tables is executable by `anon` or `authenticated` (one exists, `decrement_discovery_place_saved_count`, and neither role can call it); no view or materialized view selects from any of the sixteen; the only client column INSERT or UPDATE grants are the kept own-row INSERTs on saves and reports. |
+| DC-15 | **does not hold** | §59.1. |
+
+### 59.3 DC-26 — the sixteen classes at this tree
+
+| class | suite(s), run at this tree | result |
+|---|---|---|
+| unit · scoring feature transforms | `portavaRank.test.ts`, `discoveryPde.test.ts` | 23 + 32 pass |
+| unit · Trail lifecycle | `discoveryTrailObject` (pure), `db/trailsConstraints` T1–T5, C1–C3 | pass |
+| unit · trend lifecycle | `discoveryLocalMomentum.test.ts`, `placeMomentumSqlParity.test.ts` | 32 + 6 pass |
+| unit · ledger math | `creatorLedgerPure.test.ts`, `creatorLedgerProperties.test.ts`, `db/creatorLedgerLifecycle` L1, L14 | 25 + 28 pass |
+| unit · attribution rule versioning | `db/creatorLedgerLifecycle` L5, L8 | pass |
+| integration · event write path | `discoveryTelemetryWriters`, `discoveryServeLog`, `db/discoveryTelemetryConstraints` | 10 + 41 pass |
+| integration · recommendation → behavior → attribution | `db/discoveryVerifyChain` V1–V6 | 8/8 pass (V7 pins DV-37) |
+| integration · RLS | `db/discoveryRlsExplicitPolicies` | pass |
+| integration · Trail visibility | `discoveryTrailAccess.test.ts` | 27 pass |
+| integration · feature flag OFF inertness | `discoveryEngineMode`, `discoveryServePathIsolation`, `discoveryModifiers` | 30 + 16 + 15 pass |
+| database · migrations from current canonical baseline | `scripts/local-db/up.sh` (baseline + chain), CI's local-db job | 344 in order; none of the 12 known-unreplayable is Discovery's |
+| database · CI rehearsal | `.github/workflows/live-db.yml`, pinned by `ciWorkflowArchitecture.test.ts` | 45 pass; the `portava-ci` runs for 3375/3376/3390/3391 are still owed (§54.2 DC-18) |
+| database · schema drift | `check:production-drift`, `creatorLedgerRowSchemaDrift.test.ts` | pass |
+| shadow · old vs new ranking | `discoveryShadow.test.ts`, `discoveryDivergenceReport.test.ts` | 22 + 13 pass |
+| shadow · cache-path correctness | `discoveryCacheRevocation.test.ts`, `discoveryCacheBEligibility.test.ts` | 23 + 28 pass |
+| shadow · recommendation coverage | `discoveryTraceCoverage.test.ts`, `db/discoveryOutcomeMeasurement` | 7 pass + harness |
+
+The full harness set passes 303 of 303 on a freshly built database, 0 skipped.
+
+### 59.4 Rollout rehearsal on the merged chain — harness evidence only
+
+Every Discovery and creator-ledger migration that ships a rollback file (15: 2360, 2361, 2550, 2850, 3366, 3375, 3376, 3380, 3381, 3385, 3386, 3387, 3390, 3391, 3395) was rolled back newest first, all 15 OK, then re-applied oldest first, all 15 OK. The catalogue (columns, indexes, constraints, policies, ACLs and RLS flags, triggers, the Discovery/Trail/creator functions, and the Discovery flags; 674 lines) is identical before and after: order-independent hash `e3a0d7bd5edf39378296328554756467` both sides, against a fresh build. **A correction to this lane's own first reading:** the first fingerprint aggregated without an ORDER BY on the value, so it hashed catalogue scan order and reported six classes "different"; the line-set diff showed the same objects, and the order-independent hash is the one recorded. **No rollback FILE (20):** 2090–2095, 2153, 2289, 2297, 2890–2894, 2910, 2995 (as §54.2 found) and the creator ledger's 2920, 2921, 2922, 2930. This is not a `portava-ci` or production rehearsal (DC-18, DC-27 unchanged).
+
+### 59.5 Privacy spot-checks across lanes
+
+- **3390 posture (P9).** Client privileges (table, column, EXECUTE, and every permissive policy for `anon`, `authenticated` or PUBLIC) were snapshotted with 3390 rolled back and again after re-applying it. Gained: **0**. Lost: 262 (the revocations on `discovery_cache`, `discovery_geocode_cache`, `rank_events`, and the non-kept operations on saves and reports).
+- **P6's dwell route.** `requireUser` first; with 3395 off it answers `feature_disabled` before any read; dwell rows are written as `outcome = 'analytics'` with their own tokens, and every momentum and Trail reader excludes `analytics`, so idle (like passive and active) dwell is never counted.
+- **P10's creator routes.** The three `/creator-economy/me/*` routes take the creator from `requireUser` and read no id from params, query or body; every `/admin/creator-ledger/*` route calls `requireAdmin` (RT1–RT6 on the harness).
+- **P5x.** A24 above; the `/community` avatar gate passes 16/16, and the design note's contrary sentence is corrected.
+
+### 59.6 P5-A (`d0e595b93`) and P5-B (`88884572b`), reviewed as sent, not merged here
+
+- **Suites at `88884572b`:** `discoveryLayoverGems` 27, `layoverSnapshotEntry` 6, `mediaPendingUploadSweep` 21, `discoveryLiveSafetyCompassPath` 4, `discoveryLiveSafetyPrecedence` 14, `mapDiscoveryCandidateAdapter` 17, `discoveryFreeTimeDuplicate` 4, `discoveryTripReadInventory` 3, plus the propagation E2E 22 and cache revocation 23. All pass.
+- **This lane's four suites also pass at `88884572b`, unchanged (17 + harness).** GET /discovery's cache-A and cold-fetch paths are byte-for-byte what they were: with 2850 absent, the new `discovery_live_rank_enabled` read is answered in memory, and V0/X0 find no unmodelled request and no failed statement.
+- **Compass serve points (§57.9 hunk):** with 2850 off, `withDiscoveryLiveSafety` returns the array it was given and reads no claim. A throwing flag read is off. The Compass cache stores the PRE-safety order, so the demotion is re-applied on every hit and revocation holds both ways. **Caveat for A07:** with 2850 ON and the Live-claim read unreadable, nothing is demoted and the Compass order is served as ranked. That is the same as the ranker path, and `readable: false` is reported, but it is a safety constraint that opens on an unreadable read.
+- **§56.14's claim that `resolveLayoverEntry` never answers `permitted` on a failed read:** verified from code. Every failure branch (flag off or unreadable, unknown airport country, passport read error or throw, corridor unreadable, corridor absent) returns `unresolved`.
+- **P5-A's relay refusal** denies an object with any non-`ready` `post_media` row to non-owners. `post_media.processing_status` is `NOT NULL DEFAULT 'pending'`, and every feed already shows `ready` rows only, so no served feed item loses its media.
+- **Rows touched:** A13, A14, A07 and DV-77 are left where §56.14 and §57.13 put them.
+
+### 59.7 Defects found, each routed to its owner (none fixed here unless stated)
+
+1. **DV-20 — Trail slug** (`lib/discoveryTrailObject.ts`, P7's, merged): fold strokes before NFKD, reusing the stored fold rather than a second definition: `const slug = strokeFold(title).normalize("NFKD")…`, with `strokeFold` exported from `lib/canonicalLocations.ts`, and destinations compared by `searchKey`. A1 turns red when it lands; flip it to a guard.
+2. **DV-25 — dismiss as engagement** (`lib/discoveryLocalMomentum.ts` `weightFor`, **P8's, running**): `if (outcome === "dismiss") return 0;` before the generic weight. The SQL twin needs a migration replacing 2892's `rebuild_place_momentum` with `CASE WHEN outcome = 'save' THEN c_w_save WHEN outcome = 'dismiss' THEN 0 ELSE c_w_outcome END` (parity pinned by `placeMomentumSqlParity`). In `services/trails/TrailService.ts` `exposureCountsFrom`: `if (r.outcome !== "impression" && r.outcome !== "dismiss") bucket.positives += 1;`. A2 turns red when the TS half lands.
+3. **DV-37 — keyless outcome retry** (`routes/rankEvents.ts`, P3's, merged): the server cannot tell a retry from a second action without identity. Either accept `client_event_id` on `/rank-events/outcome` as `/rank-events` already does, or refuse a keyless outcome for `surface = 'discovery'` once §50's builds are the floor. The mutation that turned V7 red (a keyless repeat of a recorded (viewer, item, surface, outcome) answers `duplicate`) is one candidate, and it is lossy for a genuine second dismissal.
+4. **DC-15 — constraint-backed indexes** (`scripts/checkDiscoveryQueryPaths.ts`, P9's, merged): extend `INDEX_RE`'s scan to `CONSTRAINT <name> UNIQUE|PRIMARY KEY` inside `CREATE TABLE` and `ALTER TABLE … ADD`, then add rows for `trails_slug_unique`, `place_momentum_place_run_key` and `discovery_place_reports_unique` (and decide whether primary keys need rows).
+5. **DV-52 — debug sampler** (`artifacts/api-server/src/services/ranking/DiscoveryRankingService.ts:839#viewer_id:       viewerId,`, no running owner): production's `ranking_debug_samples` has `content_type text NOT NULL` and `content_id uuid NOT NULL`, and a Discovery item id is not a uuid. It needs a migration relaxing both, or a writer that supplies them, plus a `.then` that reads `{ error }`. X1 and X5 turn red when it lands.
+6. **DV-52 — graph input not recorded** (`lib/discoveryPde.ts`, under the 2026-08-15 hold): when the modifiers are enabled, carry `{ depthScore, tier, source, sourceReason, computedAt, momentumScale, explorationBudgetPct }` into `PdeStages`, so `pde_stages` records the graph reading a serve used. Not built: it is recording inside held machinery.
+7. **DV-76 — direct tag insert** (a migration; tagging has no running owner): no client writes `tags` directly (the client has no `.from('tags')`), so `REVOKE INSERT, UPDATE, DELETE ON public.tags FROM anon, authenticated;` closes it, keeping the parties-only SELECT. Otherwise a restrictive INSERT policy is needed that re-states the route's rules. P1 turns red when it lands.
+
+### 59.8 Tests, and every one seen RED (P24)
+
+| suite | cases | runs on |
+|---|---:|---|
+| `db/discoveryVerifyChain.db.test.ts` | 8 (V0–V7) | the real routes and services over `db/discoveryVerifyBridge.ts` on PostgreSQL 16 |
+| `db/discoveryVerifyExplain.db.test.ts` | 6 (X0–X5) | same |
+| `db/discoveryVerifyPhase03.db.test.ts` | 2 (P1, P2) | PostgreSQL 16, as `authenticated` / `anon`, rolled back |
+| `discoveryVerifyAudit.test.ts` | 3 (A1, A1c, A2) | unit, in `npm test` |
+
+`db/discoveryVerifyBridge.ts` drives the REAL supabase-js client over an injected fetch that runs each request as one psql statement. It extends §51's bridge with rpc (typed from `pg_proc`), `on_conflict` upserts, `single()`, HEAD counts and JSON paths. It records every request it cannot model, and every statement the database refuses, so a suite can assert that nothing on its path failed silently. It is exempted in `check-guard-coverage.mjs` with its reason, as §51's bridge is.
+
+**23 mutations, one at a time; 22 killed and one survived by design.** Every file was restored and sha256-checked identical, and every database mutation was restored and fingerprint-checked (trigger function md5, `tags` ACL and policy md5). Every case above went red under at least one of them:
+
+- **Chain (MC1–MC9).**
+  - The P10 viewer filter AND owner re-check removed → V2.
+  - The P3 route's viewer filter AND binder owner check removed → V2.
+  - The stored id minted one position off → V1, V2, V5, V6, V0.
+  - The binder never recognising a duplicate → V5, V0.
+  - The bound id not written → V1, V5.
+  - 3386's trigger disabled → V3, V4, V5, V0.
+  - The trigger tightened to ownership → V1, V5, V6, V0.
+  - An anonymous serve written as items → V0.
+  - A keyless duplicate guard → V7.
+  - **Survived, by design:** the P10 read filter removed ALONE (MC1a). The binder's own re-check still refuses, which is defence in depth and not a blind spot; MC1 removes both.
+- **Explain (ME1–ME5).**
+  - The sampler fixed → X1, X5, X0.
+  - The debug-samples admin guard removed → X2.
+  - The graph-status guard removed → X3.
+  - The graph status reading an absent column → X3, X0.
+  - `signals` handed to non-admins → X4.
+  - A score on a served item → X5.
+- **Phase 0.3 (MP1–MP4).**
+  - Client INSERT revoked → P1.
+  - Read-all policy → P2.
+  - Tagger-update policy → P2.
+  - `tags_insert` widened → P2.
+- **Audit (MA1–MA3).**
+  - Slug stroke-fold → A1.
+  - Dismiss weighted 0 → A2.
+  - `searchKey` without its fold → A1c.
+
+### 59.9 Checks and runs at this tree
+
+- **`npm test` (the full api-server suite), once:** the counts are in the lane report.
+- **Harness DB set:** 303/303 on a fresh build, 0 skipped.
+- **Passing checks:** `typecheck:tests` at baseline (863 across 115 files); `check:test-registration`; `check:guard-coverage` (with the one exemption); offline column extraction `problems=0`. The remaining census checks are listed in the lane report.
+- **`check:census-integrity` exits 1 by design** until the integrator restates the headline. This section moves seven rows: DC-26 W→C; DV-52 and DV-76 ?→W; DV-20, DV-25, DV-37 and DC-15 C→W.
+
+### 59.10 Read-only production SQL that would turn harness evidence into production evidence
+
+```sql
+-- DV-76: can a client write tags directly in production?
+SELECT grantee, string_agg(privilege_type, ',' ORDER BY privilege_type) FROM information_schema.role_table_grants
+ WHERE table_schema = 'public' AND table_name = 'tags' AND grantee IN ('anon','authenticated') GROUP BY 1;
+SELECT polname, polcmd, pg_get_expr(polqual, polrelid), pg_get_expr(polwithcheck, polrelid) FROM pg_policy WHERE polrelid = 'public.tags'::regclass;
+-- DV-52: is the ranking-debug sampler's target still NOT NULL on content_type/content_id, and has it ever held a Discovery row?
+SELECT column_name, is_nullable, column_default FROM information_schema.columns
+ WHERE table_schema = 'public' AND table_name = 'ranking_debug_samples' AND column_name IN ('content_type','content_id');
+SELECT surface, count(*) FROM ranking_debug_samples GROUP BY 1;
+-- DV-25 / DV-37: how much negative behaviour exists to be mis-weighed, and do keyless double dismisses occur?
+SELECT outcome, count(*) FROM rank_events WHERE surface = 'discovery' GROUP BY 1;
+SELECT user_id, item_id, count(*) FROM rank_events WHERE surface = 'discovery' AND outcome = 'dismiss'
+ GROUP BY 1, 2 HAVING count(*) > 1 LIMIT 20;
+-- DC-15: constraint-backed indexes on the sixteen, as production has them.
+SELECT c.conrelid::regclass, c.conname, c.contype FROM pg_constraint c
+ WHERE c.contype IN ('u','p') AND c.conrelid::regclass::text IN ('trails','place_momentum','discovery_place_reports','rank_events','recommendations');
+```
+
+### 59.11 Freshness and scope
+
+This section changed `docs/discovery/cache-architecture-design-note.md` (one sentence, no verdict rests on it), `artifacts/api-server/scripts/check-guard-coverage.mjs` (one exemption) and the `test` line. It adds to census-discovery's scope its own suites and the files §59 grades from that were unwatched: the production baseline, `lib/enrichSpans.ts`, `services/tagging/TaggingService.ts`, `tagging.test.ts`, and six DC-26 class suites. `check:census-freshness` then names these files. Writing the ledger is the integrator's job, so each is argued here:
+
+- **census-discovery:**
+  - The five `discoveryVerify*` files are new, and they are §59's own evidence.
+  - `test/ciWorkflowArchitecture.test.ts` changed before this lane and joins the scope now. §59.3 grades DC-26's "CI rehearsal" class on it as it stands at this tree (45/45), so the change is what was measured.
+- **census-trips** (it counts every harness suite): `db/discoveryVerifyBridge.ts`, `db/discoveryVerifyChain`, `db/discoveryVerifyExplain` and `db/discoveryVerifyPhase03`. They create and remove only Discovery, creator, graph, debug-sample and tag rows, and they read no `trip_*` object, so no trip verdict can move.
+
+### 59.12 What would turn this red
+
+- A1, A2, P1, V7 or X1 going red: the defect it pins was fixed, and the row it grounds must be re-graded.
+- V1–V6 going red: the served id no longer survives serve → outcome → attribution, or another viewer's, an unknown or an anonymous id binds.
+- The rehearsal hash differing on a rebuilt harness: a rollback file no longer inverts its migration.
+
+### 59.13 Integrator: P12 merged, headline restated, every defect routed to a running lane
+
+*Integrator addendum, 2026-09-27, at the merge of `disc-p12-verify` (`ad2bece5d`, based on `d7bfb15dc`) into `wave8-integration` at `88884572b`.*
+
+- **The merge.** Conflicts were unions only: the `test` line, `CENSUS_SCOPE`, and this census, with §59 after §57.13.
+- **The merged tree.**
+  - P12's four harness suites run on the integrator's harness: the full chain, plus 3400 and the P5-A and P5-B code. Every harness suite passes, 303 of 303, 0 skipped.
+  - `discoveryVerifyAudit` passes 3 of 3 at this tree.
+  - The offline column ledger shows `problems=0`.
+  - `check:guard-coverage` accounts for 126 files, one of them P12's bridge exemption.
+  - `check:doc-citations`, `check:census-scope-coverage` and `check:discovery-query-paths` are clean.
+- **The freshness ledger is written.**
+  - census-discovery: the six files §59.11 names.
+  - census-trips: the four harness files, which read no trip object.
+- **Every §59.7 defect now has an owner in a running lane.** Nothing below is fixed yet. Each fix must flip the §59 pin that holds the defect in place (A1, A2, V7, X1, P1), and the row is re-graded when it lands.
+
+| Defect (§59.7) | Row | Routed to |
+|---|---|---|
+| 1. `canonicalTrailSlug` does not stroke-fold | DV-20 | P14 (§61), which owns `lib/discoveryTrail*.ts` and `services/trails/**` |
+| 2. `dismiss` weighs +2 in momentum: TS `weightFor`, 2892's `rebuild_place_momentum`, and Trail §9 `positives` | DV-25 | P14 (§61). The fix is exclusion (weight 0); no weight is invented |
+| 3. A keyless outcome retried after a second serve moves a second exposure | DV-37 | P15 (§62) |
+| 4. `check:discovery-query-paths` cannot see constraint-backed unique indexes; three registry rows are missing | DC-15 | P15 (§62) |
+| 5. The ranking-debug sampler writes rows production refuses (23502), and swallows the error | DV-52 | P15 (§62) |
+| 6. A Discovery serve does not record the graph reading behind its modifiers | DV-52 | P15 (§62). It records provenance only and changes no order, so it is permitted under the hold; modifiers stay behind 2289 |
+| 7. `authenticated` may INSERT into `tags` directly, bypassing permissions, approval, the cap and `disable_tagging` | DV-76 | P15 (§62), as a migration revoking client DML on `tags`. It must first prove that no server path writes `tags` with a user-scoped client |
+
+**P12's A07 caveat, restated as an owner question.** With `discovery_live_rank_enabled` ON and the Live-claim read unreadable, nothing is demoted. That matches the ranker path and P5-B's F1 ("a failed state read moves nothing"), but it means Sensing `:129`'s safety constraint opens exactly when the read fails. The question: *"When the Live-claim read fails with discovery_live_rank_enabled ON, should Discovery serve without the safety demotion (as today), withhold the affected candidates, or serve with a stated 'safety unverified' label?"*
+
+**Headline** (§59's moves: `DC-26` W → C; `DV-52` and `DV-76` ? → W; `DV-20`, `DV-25`, `DV-37` and `DC-15` C → W):
+
+| bucket | count |
+|---|---|
+| BUILT-AND-CORRECT | **94** |
+| BUILT-BUT-WRONG | **87** |
+| NOT-BUILT | **6** |
+| CANNOT-VERIFY | **1** |
+
+- CONSTRUCTED 181 / 188 = **96.3 %**; CORRECT 94 / 188 = **50.0 %**. The four buckets sum to 188.
+- CORRECT fell by three points because an independent audit found four C rows that did not hold. The denominator is unchanged, and none of the four was re-scoped to keep its verdict.
+- The one row still CANNOT-VERIFY is `DC-27`: whether the rollout sequence is followed cannot be settled until a rollout begins.
+
+## §60 — Client consumer correctness and the end-to-end leg (lane P13): DV-83 gets its static guard and loses a masquerade on "load more", DC-33's route→client leg is built, and C19's last leg is a rollout gate
+
+*Written 2026-09-27 by Discovery lane P13 on branch `disc-p13-client`, cut from `88884572b` (`wave8-integration`). These are implementation verdicts on this branch only. Nothing here is merged to `main`, deployed or flag-enabled. A client change is not realized until an app build carrying it ships.*
+
+### 60.1 DV-83: the brief's premise, checked against the tree
+
+The lane brief restated §28.1: the rail branches on `res.ok` alone, and `ForYouTab` never reads `refused`. **That has been false since §29**, and §50.1 already said so. The tree agrees:
+
+- The rail returns its refused state before the empty check: `travel-buddy-standalone/src/components/discovery/DiscoveryEventPostsRail.tsx:105#if (refused) {`.
+- `ForYouTab` renders both lanes' refusals. The OSM lane is at `travel-buddy-standalone/src/components/discovery/ForYouTab.tsx:273#setSource(osm.ok && osm.data.refusal?.coverage === 'nothing' ? 'refused' : 'none');`. The community lane is at `travel-buddy-standalone/src/components/discovery/ForYouTab.tsx:527#{community.refused && (`.
+
+Both were seen red again in this pass (M28–M30, §60.7). Nothing was rebuilt.
+
+### 60.2 DV-83's consumers, re-derived from code: eleven files, all branching, one masquerade found
+
+The census has twice miscounted this population (§28.5 item 1). So it was derived mechanically, not by reading:
+
+- **Carriers.** An exported function of `travel-buddy-standalone/src/services/discovery.ts` is a carrier if it parses a refusal, or returns a type that declares one. There are nine: `getDiscoveryPlaces`, `getCachedDiscoveryPlaces`, `getDiscoveryCategoryCounts`, `getDiscoveryCategoryCountsBatch`, `getDiscoveryFeed`, `getCommunityPlaces`, `getSavedPlaceIds`, `searchUnified` and `getSearchSuggestions`.
+- **Consumers.** Every file under `src/` and `app/` that value-imports a carrier, or a hook that forwards one. There are **eleven**.
+- **Other clients.** No other client exists. No other artifact calls these routes, and the generated client in `lib/api-client-react` has no importer in the app. §28.5 item 1's falsifier does not fire.
+- **Against §28.1's "8 of 10".** That was a count of rendering consumers, found by reading. This one counts files, found mechanically. It adds the forwarding hook (`useGlobalSearchSuggestions`), the tab-layout prefetch and the count-badge row, the last two of which §29.3 listed as verified by nothing. The prefetch's only effect is the service cache, whose refusal rule is tested. The badge row's absent-versus-zero rule is now held by G4's fragment; no suite renders it.
+
+| consumer | reads | refusal branch (present) | proof suite | `partial` today |
+|---|---|---|---|---|
+| `ForYouTab.tsx` | page, cache, saved ids, community hook | OSM lane and community lane (§60.1), saved ids typed union | `ForYouTab.refusal` | rows shown as complete |
+| `DiscoveryCategoryTab.tsx` | page, cache | page-1 error state; **load-more: was MISSING, fixed below** | `…refusal`, `…loadMoreRefusal` (new) | rows shown as complete |
+| `DiscoveryEventPostsRail.tsx` | feed | refused state before the empty check (§60.1) | `…Rail.refusal` | posts shown |
+| `hooks/useCommunityDiscovery.ts` | community | refused flag, never cached | `useCommunityDiscovery.refusal` | kept and cached |
+| `hooks/useSearchSuggestions.ts` | suggest | refused flag, never cached | `useSearchSuggestions.refusal` | kept and cached |
+| `hooks/useGlobalSearchSuggestions.ts` | forwards the above | `travel-buddy-standalone/src/hooks/useGlobalSearchSuggestions.ts:198#refused: preferGateway ? false : legacy.refused,` | **none — added** | passed through |
+| `travel-buddy-standalone/app/search.tsx` | search, suggest | error state; suggest `refused` to the panel | `search.refusal` | notice naming `failedSources` |
+| `components/map/MapSearchSheet.tsx` | search | refused-everything branch | `MapSearchSheet.refusal` | "incomplete" notice |
+| `travel-buddy-standalone/app/map/index.tsx` | page | error card, not zero results | `projectedPlaces` | pins drawn |
+| `travel-buddy-standalone/app/(tabs)/_layout.tsx` | page, batch counts | answers discarded (prefetch only) | service: refused body never cached | n/a |
+| `travel-buddy-standalone/app/(tabs)/discovery.tsx` | per-category counts | the service omits a refused category, and the badge row reads an absent key as no count, never as a dimmed zero | service: "OMITS a refused category" | real count shown |
+
+**The masquerade, found and fixed.** `DiscoveryCategoryTab` handled a page-1 refusal. It scoped that branch to page 1 on purpose: a refused "load more" must not replace genuine results with a failure card. But a refused page 2 then **fell through to the success path**:
+
+- It set `total` to the refusal's padding `0` and advanced `page`.
+- With 5 rows on screen and `total` 0, the footer printed **"5 places found"**. That is the list's own claim that the set had ended, made about a page nobody read.
+- Every later load-more was refused locally (`places.length >= total`).
+
+**Now** a refused load-more keeps the page, `total` and `page` that the last real answer set (`travel-buddy-standalone/src/components/discovery/DiscoveryCategoryTab.tsx:526#setMoreRefused(true);`):
+
+- The footer says what happened. It uses the page-1 refusal's own sentence and the failure state's own "Try again", and the retry asks for page 2 again. No copy is new.
+- Scrolling does not re-send the request during the outage (`travel-buddy-standalone/src/components/discovery/DiscoveryCategoryTab.tsx:698#onEndReached={moreRefused ? undefined : handleLoadMore}`).
+- The edit is line-neutral above the page-1 branch, which is the line this census anchors.
+- `DiscoveryCategoryTab.loadMoreRefusal.component.test.tsx` has 6 tests. Its three refusal cases were red on the unfixed file, the defect reproduced as "5 places found". Three controls pin the other answers: a real page 2, a genuinely empty page 2 (which still ends the list) and a `partial` page 2 (which still renders its rows).
+
+**The untested link.** The suggest refusal passes from the service through `useSearchSuggestions` and then `useGlobalSearchSuggestions` to `app/search.tsx`, which hands it to the panel. The pass-through inside `useGlobalSearchSuggestions` had no test. `search.refusal` stubs `useSearchSuggestions` to `refused: false`, so a pass-through that dropped the flag was invisible to every suite. `useGlobalSearchSuggestions.refused.component.test.tsx` (3 tests) now runs the real legacy hook under it. The screen's hand-off to the panel (`refused={suggestRefused}`) is held only by G4's fragment; no suite renders the screen with a refusal.
+
+**Caches.** The client holds Discovery answers in exactly three places:
+
+- the service's page cache, which writes no `coverage: "nothing"` body (DC-33's R1 below proves this through the route);
+- the community hook's module cache;
+- the suggest hook's LRU.
+
+None writes a `coverage: "nothing"` body, and each has a suite. The rail, the feed, the counts and both search screens hold no cache.
+
+### 60.3 §29.2 ground 3 closed: DV-83 is now enforced statically
+
+`travel-buddy-standalone/src/services/__tests__/discoveryRefusalConsumers.guard.test.ts` runs under `npm test`'s node runner, so it is part of `check:all`. It has six tests:
+
+- **G1.** The carriers derived from the service equal the pinned nine: `travel-buddy-standalone/src/services/__tests__/discoveryRefusalConsumers.guard.test.ts:265#it('G1. the carriers derived from services/discovery.ts are exactly the pinned set'`. A new carrier fails until it is pinned.
+- **G2.** Every file that consumes a carrier, directly or through a forwarding hook, is registered: `travel-buddy-standalone/src/services/__tests__/discoveryRefusalConsumers.guard.test.ts:270#it('G2. every file that consumes a carrier`. **This is the check that was missing.** The eleventh consumer §29.2 called unconstrained now fails CI until it names its branch and its proof.
+- **G3.** No registry entry is stale.
+- **G4.** Each consumer's branch fragment is still present.
+- **G5.** Each proof suite exists and is a refusal suite.
+- **G6.** The consumer count is eleven, so this section's number cannot drift silently.
+
+**What it cannot do.** A fragment in a file is evidence that the branch exists, not that it works. That remains each proof suite's job.
+
+### 60.4 DC-33: the route→service→projection→client leg
+
+The spec clause is *"Test real route→service→projection→client wiring; include cache hits, expiry, permission changes, sparse coverage, empty candidates, dependency failure and retry"* (`docs/specs/upgrades-v2/02-DISCOVERY-v2.md:38#Test real route→service→projection→client wiring;`). §54.9 left the row 6 of 7: *"The client leg is still missing"*. The reason was that `services/discovery.ts` pulled React Native in at module load.
+
+**The seam (H6 of §54.11).** It was built in the client, line-neutral through every line this census anchors in that file:
+
+- The unused static `lib/supabase` import is gone.
+- The token helper is `require()`d at call time (`travel-buddy-standalone/src/services/discovery.ts:13#require('./apiToken.ts')`). This is the deferred-require pattern the Sentry wrapper already uses to keep services loadable under Node.
+- One JSON body is typed, and one test seam is appended at the foot (`travel-buddy-standalone/src/services/discovery.ts:1310#export function _setDiscoveryTokenSourceForTests(`).
+- A deferred `require` is also invisible to the api-server's test typecheck. That matters because a static edge pulled React Native's global DOM types into the server program and broke server files, which was measured. `typecheck:tests` passes at its baseline in both packages.
+
+**The test.** `artifacts/api-server/src/test/discoveryClientRouteE2E.test.ts` runs the real Discovery and rank-events routers in-process over a loopback socket. It drives them through the shipping client module, its viewer lease, its `withParsedRefusal` boundary, its receipt stamp and its per-viewer cache, and through the client projection and byline resolver a card renders with. The database is the contract-checked PostgREST double every route suite uses. Nominatim and Overpass are doubled. The token SOURCE is doubled (`_setDiscoveryTokenSourceForTests`) and nothing downstream of it: apiToken's refresh logic stays pinned by §50's `discovery.viewerScope` suite. Nothing mocks the service, and no response body is hand-written. It has 13 tests, registered in the api-server `test` line.
+
+| spec class | case |
+|---|---|
+| cache hits | server cache-A serve in every case. On the device, `artifacts/api-server/src/test/discoveryClientRouteE2E.test.ts:213#it("E1. signed in: the client holds the route's page` paints the next mount from cache with no request |
+| expiry | `artifacts/api-server/src/test/discoveryClientRouteE2E.test.ts:401#it("W1. the served duration becomes a device horizon` covers the served `whyNowValidForMs`: current one ms before `receipt + validity`, explicitly stale at it, and a cache repaint keeps the original receipt |
+| permission changes | `artifacts/api-server/src/test/discoveryClientRouteE2E.test.ts:455#it("X1. Alice's accepted` (Alice's accepted "Not interested" reaches her next page and not Bob's), X2 (an account switch mid-flight discards the page), X3 (blocks and the byline) |
+| sparse coverage | R2: an unreadable curated source arrives as `partial`, naming `discovery_places`, and the rows beside it are kept |
+| empty candidates | R3: a genuinely empty city is an empty result with no refusal, cached |
+| dependency failure | `artifacts/api-server/src/test/discoveryClientRouteE2E.test.ts:313#it("R1. dependency failure (Nominatim 429)`: `nothing`, not cached. R4 covers the rail's feed, and the session id is dropped. R5 covers the community table |
+| retry | E3: the same request twice gives the same page, each serve a distinct exposure, and a 502 between them neither caches nor clears the good page. R1: the same outage answered the same way, then the recovery served, not replayed from the phone |
+
+The brief's extra cases:
+
+- **The served `recommendation_id` round trip.** E1: the id the client holds at position *i* is the id on the `rank_events` row the route wrote for *i*. E1b: echoed on an outcome, it moves that exposure and no other, and Bob replaying it gets 404.
+- **Signed in vs anonymous.** E2: no `Authorization` header leaves the client, the route records an anonymous serve, and the client's ids equal the ones the anonymous record reproduces.
+- **Cross-viewer.** X1–X3: no id Alice was served reaches Bob, Bob's first paint is never Alice's page, and Alice's real name is nowhere in what Bob's client received.
+
+### 60.5 C19, re-derived
+
+**The client half is complete, and now proved across the route.**
+
+- No client surface reads the legacy `submittedBy.name`. The only resolver is `communityBylineText(displayName, handle)`, at `travel-buddy-standalone/src/components/DiscoveryWall.tsx:411#By {communityBylineText(gem.submittedBy)}` and `travel-buddy-standalone/src/hooks/useCommunityDiscovery.ts:49#name:        communityBylineText(by),`. The latter overwrites the legacy field with the resolved text before any card sees it.
+- `artifacts/api-server/src/test/discoveryClientRouteE2E.test.ts:510#it("X3. the community byline` runs the real `/community` route into the real resolver. Alice sees "Alice Real" on her own pick. Bob receives `displayName: null` and renders "@alice".
+
+**What is left is the server's shape.** `artifacts/api-server/src/routes/discovery.ts:3095#: (profile.username ?` still bakes `@username` into `name` for every caller: no client version is consulted, so today's shipping builds, which render `name` raw, need it. Dropping or nulling the field is a rollout gate, not code. §50.4's hunk stands unchanged, and the field was not removed.
+
+### 60.6 Row moves
+
+| ID | was | now | evidence |
+|---|---|---|---|
+| DV-83 | W | **W** | Two of §29.2's three grounds are now closed on this branch. **Ground 3, "nothing enforces the invariant statically": closed.** `travel-buddy-standalone/src/services/__tests__/discoveryRefusalConsumers.guard.test.ts:270#it('G2. every file that consumes a carrier` fails on any unregistered consumer, G1–G6 were each seen red, and it runs in `check:all`. All eleven re-derived consumers branch on coverage, not on `ok` alone. The one found not to, a refused load-more rendered as the end of the list, is fixed at `travel-buddy-standalone/src/components/discovery/DiscoveryCategoryTab.tsx:526#setMoreRefused(true);`. No `coverage: "nothing"` body enters any of the three client caches, which is proved through the route by `artifacts/api-server/src/test/discoveryClientRouteE2E.test.ts:313#it("R1. dependency failure (Nominatim 429)`. **Why still W: ground 2.** Whether a consumer may render `partial` as a complete answer is the owner's (§60.8 Q1). Today 8 of 11 consumers do so, 2 surface it and 1 renders nothing, as recorded per file in §60.2. **Production:** nothing here ships until a client build carrying it does. |
+| DC-33 | W | **C** | Every criterion passes in code and tests. The five classes §14.5 passed server-side still pass, and retry is built (§54.9). **The client leg, the one FAIL, now exists:** `artifacts/api-server/src/test/discoveryClientRouteE2E.test.ts:213#it("E1. signed in: the client holds the route's page` and 12 more cases run the real route into the real client module, with each of the spec's seven classes exercised through the client (table in §60.4). All 13 were seen red under 14 targeted mutations, and the files were restored byte-identical. **Not flag-gated:** this row obliges a test of the wiring, and 12 of 13 cases leave every flag that shapes the page at its production state. The serve-log flag is on in the double; it changes writes, not the page, and E1 needs the rows it writes to compare ids. The one case that switches flags on (W1, why-now, behind 2850/2361) does so in the test double, which is where a test must. The flag-gated FEATURES it touches keep their own `W`s (A03, A07) under §31.2's rule, *"A requirement whose feature is disabled is not satisfied"*. **What "client" means here:** the client's module boundary, meaning the parse, the lease, the caches and the projection a card renders. No React Native screen renders under Node. The screens are pinned to the same service contract by their component suites and `typecheck:tests`. **What turns it back:** the client module regaining a static edge to React Native, or a case replaced by a mock of the service or of `fetch`'s body. |
+| C19 | W | **W** | The client half is done and now proved end to end: `artifacts/api-server/src/test/discoveryClientRouteE2E.test.ts:510#it("X3. the community byline`. No client reads the legacy `name` (§60.5). **Why W:** `artifacts/api-server/src/routes/discovery.ts:3095#: (profile.username ?` still emits `@username` in `name` to every caller. Retiring it waits on the oldest supported app build carrying `features/discovery/communityByline.ts`, and no build carrying it has shipped (§60.8 Q2). |
+
+### 60.7 Tests and mutations (P24)
+
+**New suites.** There are 28 new tests in four new files, all green, and each seen red.
+
+| suite | runner | tests |
+|---|---|---:|
+| `artifacts/api-server/src/test/discoveryClientRouteE2E.test.ts` | api-server `npm test` (registered) | 13 |
+| `travel-buddy-standalone/src/services/__tests__/discoveryRefusalConsumers.guard.test.ts` | client node runner | 6 |
+| `travel-buddy-standalone/src/components/discovery/__tests__/DiscoveryCategoryTab.loadMoreRefusal.component.test.tsx` | jest | 6 |
+| `travel-buddy-standalone/src/hooks/__tests__/useGlobalSearchSuggestions.refused.component.test.tsx` | jest | 3 |
+
+**Revived suite.** `travel-buddy-standalone/src/services/__tests__/discovery.liveStatusCached.test.ts` sat in the node runner's `KNOWN_BROKEN` list, and so in the orphan ledger, because `services/discovery.ts` loaded React Native. It now loads, and its 6 tests pass. Both lists shed the entry.
+
+**The mutation matrix.** Thirty mutations were run. Each was restored and sha256-checked byte-identical, and the `git diff` hash was identical before and after.
+
+| mutation | red |
+|---|---|
+| M1 the lease never sends the token | E1, E1b, X1, X3 |
+| M2 a signed-out read sends a blank bearer | E2 |
+| M3 a refused page is cached | R1 |
+| M4 the parse boundary drops `refusal` | R1, R2, R5 |
+| M5 every refusal parsed as `nothing` | R2 |
+| M6 an empty page is not cached | R3 |
+| M7 a refused feed keeps its session id | R4 |
+| M8 no receipt stamp | W1 |
+| M9 an in-flight page for another viewer is returned | X2 |
+| M10 an HTTP failure is parsed as a page | E3 |
+| M11 (server) the dismissal gate removes nothing | X1 |
+| M12 (server) every byline name allowed | X3 |
+| M13 (server) served items carry no id | E1, E1b, E2, E3, X1 |
+| M14 both page-cache isolation layers off | X1 |
+| M15 a refused load-more falls through (the defect) | the three refusal cases |
+| M16 scrolling re-asks during the outage | "does not auto-retry" |
+| M17 the retry reloads page 1 | "says so where page 2 would be" |
+| M18 / M19 / M20 partial, an empty page, or every page 2 routed to the notice | the matching controls |
+| M21 / M22 the global hook drops `refused`, or always reports it | the refused case / both controls |
+| M23 an unregistered consumer file appears | G2, G6 |
+| M24 the rail stops branching | G4 |
+| M25 a new carrier in the service | G1 |
+| M26 a registered consumer's import changes | G3 |
+| M27 a proof suite loses its refusal case | G5 |
+| M28 / M29 / M30 `ForYouTab` OSM lane, community lane, the rail ignoring the refusal (§60.1) | 2, 2 and 2 existing cases |
+
+### 60.8 Owner questions, verbatim, and freshness
+
+**Q1 (DV-83, ground 2):** *"May a Discovery consumer render a `coverage: "partial"` answer as a complete result with no notice, as 8 of the 11 consumers in §60.2 do today? Or must every consumer that renders a list surface `failedSources`, as `app/search.tsx` and `MapSearchSheet` already do? That includes a `partial` answer with no rows, which today reads 'No places found. Try increasing the search radius or adjust the filters.' on the category tabs. If the second, which wording is ratified? This census will not invent copy for it."*
+
+**Q2 (C19):** *"Which app build is the oldest the product still supports, and when will every supported build contain `features/discovery/communityByline.ts` (§50, unshipped)? From then, may `GET /discovery/community` emit `submittedBy.name` in the canonical shape (the real name iff `nameAllowed`, else null), or drop the field?"*
+
+**Freshness.** This census's `CENSUS_SCOPE` is widened by the four new suites. The integrator owns the ledger. Files changed that other censuses watch:
+
+- **census-map:** `travel-buddy-standalone/src/services/discovery.ts`. The Map's legacy places layer calls `getDiscoveryPlaces` with an unchanged signature and body. The change swaps a static import for a call-time `require` of the same helper, types one JSON body and appends a test seam, and it is line-neutral where cited. No Map verdict moves.
+- **census-input-intelligence:** `travel-buddy-standalone/scripts/run-node-tests.mjs`. One `KNOWN_BROKEN` entry was removed, for a Discovery service suite that now loads. Every other file runs exactly as before, and no input-intelligence row rests on that entry.
+
+No server route or lib file was changed, so no server hunk is routed.
+
+- NOT-GRADED: travel-buddy-standalone/scripts/run-node-tests.mjs — §60.7 names its `KNOWN_BROKEN` list, from which one Discovery suite was removed; it is test machinery, graded by census-input-intelligence's scope.
+- NOT-GRADED: travel-buddy-standalone/src/services/__tests__/discovery.liveStatusCached.test.ts — §60.7 records that it runs again now that the service loads under Node; it tests the live-status cache, which no Discovery row grades.
+
+### 60.9 Integrator: P13 merged, headline restated
+
+*Integrator addendum, 2026-09-27, at the merge of `disc-p13-client` (`957ad3df6`, based on `88884572b`) into `wave8-integration` at `838f56cb5`.*
+
+- **The merge.** Conflicts were unions only: the `test` line, `CENSUS_SCOPE`, and this census, with §60 after §59.13.
+- **P13's own count was graded before P12 merged.** It gave C 98 / W 81, which is the tree without §59's moves. At the merged tree, the only move is `DC-33` W → C.
+- **The freshness ledger is written.**
+  - census-discovery: the four new suites.
+  - census-input-intelligence: `run-node-tests.mjs`. One `KNOWN_BROKEN` entry left it, for a Discovery service suite that now loads.
+  - census-map: an argument for `services/discovery.ts`, which changed line-neutrally.
+- **§60.8's two owner questions join the consolidated request:** the `partial`-coverage wording for DV-83, and the oldest supported build for C19's legacy `name`.
+- **Stated limit.** The call-time `require` of the token helper in `services/discovery.ts` is verified by Jest, Node and both typechecks. It has not been verified by a Metro bundle build.
+
+**Headline** (§60's move: `DC-33` W → C):
+
+| bucket | count |
+|---|---|
+| BUILT-AND-CORRECT | **95** |
+| BUILT-BUT-WRONG | **86** |
+| NOT-BUILT | **6** |
+| CANNOT-VERIFY | **1** |
+
+- CONSTRUCTED 181 / 188 = **96.3 %**; CORRECT 95 / 188 = **50.5 %**. The four buckets sum to 188.
+- **Production.** DC-33 is a test obligation and needs no deployment. The client fixes it proves reach no user until an app build carrying them ships.
+
+## §58 — Trending and ecosystem (lane P8): the stored trend state becomes the product's reading and reaches one read-only API, the governor's monitors are measured, and everything that would reorder a page stays held
+
+*Written 2026-09-27 by the Discovery P8 lane on branch `disc-p8-trending`, cut
+from `d7bfb15dc` (the `wave8-integration` tip carrying §46–§55). Every OLD verdict
+below was read from `CENSUS_INTEGRITY_DUMP=ALL`, not from prose. This section
+does not restate the headline. Nothing here is merged, deployed or
+flag-enabled: migration 3410 is applied to the local PostgreSQL 16 harness only
+(applied, rolled back, re-applied), and its flag is FALSE there too.*
+
+*The governing rule is the 2026-08-15 ruling, `docs/discovery/ROADMAP.md` item 4:
+"No optimising ranking machinery over an empty corpus." It holds new trend
+terms, new normalisation axes, a state machine that reorders, manipulation
+penalties, rediscovery boosts and governor adjustments. It does not hold
+correctness repairs, read-only exposure of states that are already computed,
+persisting what is already computed, or measurement. Every row below was sorted
+by that line first. **Nothing built here changes what any surface serves or in
+what order:** no serve or ranking path reads the store or imports the new API
+(`artifacts/api-server/src/test/discoveryTrendingApi.test.ts:457#it("H1. place_momentum is read only by the trend-explanation module"`),
+and `DiscoveryModifiers.trendStates` still has no consumer outside tests, so a
+trend STATE orders nothing anywhere, flag or no flag.*
+
+### 58.1 What was built, by what the hold permits
+
+| permitted by the hold as | built | rows |
+|---|---|---|
+| a correctness repair to existing trend code | 3410 replaces 2892's `rebuild_place_momentum` so the stored snapshot is the reading the product computes: the Discovery surface only (`artifacts/api-server/src/migrations/3410_discovery_trend_snapshot_parity.sql:139#WHERE surface = c_surface`), rows served inside the window only (`artifacts/api-server/src/migrations/3410_discovery_trend_snapshot_parity.sql:142#AND served_at >= v_prior_since`), and lib/discoveryTrendState's own sentence, NULL for `unknown` | DC-07, DV-33 |
+| persisting what is already computed | the same function now stores `03` §9's "unique travelers" per window (`artifacts/api-server/src/migrations/3410_discovery_trend_snapshot_parity.sql:159#count(DISTINCT user_id) FILTER (WHERE at >= v_recent_since)`) and the corpus each row was computed over. The classifier reads neither | DC-07 |
+| exposing already-computed states read-only | `GET /v1/discovery/trending/explanations` (`artifacts/api-server/src/routes/discoveryTrending.ts:45#router.get("/v1/discovery/trending/explanations"`), behind `discovery_trending_api_enabled` seeded FALSE by 3410 | DC-21, DV-33 |
+| a closed reason vocabulary over computed states | `artifacts/api-server/src/lib/discoveryTrendState.ts:281#export const TREND_REASON_CODES = [` — one code per state that is a claim, none for `unknown` | DV-33 |
+| measurement only | the `06` §8 monitor report, `artifacts/api-server/src/lib/discoveryEcosystemGovernor.ts:379#export function buildEcosystemReport(` and `report:discovery-ecosystem`, every read inside READ ONLY | DV-80 |
+| — (held) | nothing for DV-28, DV-29, DV-31, DV-32, DC-06, three of DC-21's actions, or DV-80's adjust half. §58.5 gives each design exactly | all nine |
+
+### 58.2 The trend API, as built
+
+- **Keyed by the viewer's own exposure, not by a place id.** A place id is
+  something anyone can type; keyed by it, the route would be an oracle for the
+  activity at any place, including one a protected-zone pass withheld. The
+  route takes the per-item `recommendationId` the client already holds and binds
+  it only to a Discovery exposure of THIS viewer
+  (`artifacts/api-server/src/lib/discoveryTrendExplanation.ts:235#.eq("user_id", viewerId)`),
+  column or `features` as lib/discoveryDwell reads it. Another viewer's token,
+  an attention row and another surface's token all read `unknown_recommendation`,
+  byte-identical to a token that does not exist (C1–C3).
+- **No raw score.** The body is a closed shape — state, reason code, sentence,
+  and the run's provenance. No rate, weight, total or traveller count at any
+  depth, and no number at all (B2).
+- **A disclosure floor that was not invented.** `emerging` needs only
+  `TREND_MIN_RATE` = 3 of weighted activity, which ONE person's save plus its
+  impression exceeds. A state is therefore disclosed only when both windows
+  carry at least `PRIVACY_THRESHOLD_V1.minUniqueActors` distinct travellers
+  (`artifacts/api-server/src/lib/discoveryTrendExplanation.ts:71#export const TREND_DISCLOSURE_MIN_TRAVELERS = PRIVACY_THRESHOLD_V1.minUniqueActors;`),
+  the k the live-claim path already enforces. Below it the item reads
+  `insufficient_evidence`, exactly as `unknown` and "no row" do, so suppression
+  does not itself disclose that someone was there (D1). A pre-3410 row has no
+  counts and is never disclosed (D2). Whether that k governs trend states is
+  owner question 1.
+- **Freshness from an existing bound.** A stored reading is served no longer
+  than the in-process reading lives, `MOMENTUM_CACHE_TTL_MS`
+  (`artifacts/api-server/src/lib/discoveryTrendExplanation.ts:68#export const TREND_SNAPSHOT_MAX_AGE_MS = MOMENTUM_CACHE_TTL_MS;`).
+  Stale and future-dated runs read `stale_snapshot`; no run reads `no_snapshot`;
+  a newer row written by 2892's all-surfaces function is not read (E1–E4). Nothing
+  schedules the rebuild, so on any database today every answer is `no_snapshot`.
+  That is the honest degradation, and it is stated.
+- **Failure is a 503 with a closed reason**, never a 200 with empty answers:
+  `trend_store_absent` (2892 or 3410 unapplied), `trend_read_failed` (including a
+  failure on the second read after the run was found), `exposure_read_failed`
+  (F, five cases). The flag is read per request and fails closed, so revocation
+  holds on the next request in both directions (A2–A4). A retry is
+  byte-identical and writes nothing (G1).
+
+### 58.3 Row moves
+
+| ID | was | now | evidence |
+|---|---|---|---|
+| DV-80 | N | **W** | The monitor half exists where the row said nothing did. `06` §8's seven monitors, in its order, plus `12` Phase 13's duplicate saturation (`artifacts/api-server/src/lib/discoveryEcosystemGovernor.ts:65#export const ECOSYSTEM_MONITORS: readonly MonitorDef[] = [`). Six are measured with value, sample and denominator named: concentration through P9's own producer and parser (`artifacts/api-server/src/lib/discoveryEcosystemGovernor.ts:265#export function readConcentration(`), repeated recommendations (`db/` and bare id folded, user ids never leave the database), reported spam on served community places, Trail freshness from each live Trail's newest health snapshot, hidden-gem exposure over P6's exposure definition (`artifacts/api-server/src/lib/discoveryEcosystemGovernor.ts:347#export function readHiddenGemExposure(`), and duplicate saturation on served pages. Two are UNMEASURED with the missing input named: new-creator success (neither `06` nor `12` defines "new" or "success") and stale content (no staleness rule exists for a served place). A failed read is UNREADABLE or INPUT ABSENT and a zero denominator is `insufficient_sample` — never 0 (`artifacts/api-server/src/test/discoveryEcosystemGovernor.test.ts:144#it("9. every read failed`). Executed read-only on the harness over controlled rows, and end to end through the script (`artifacts/api-server/src/test/db/discoveryEcosystemReport.db.test.ts:102#it("E1. each monitor reads what the rows imply"`). **W, not C:** `06` §8's own sentence is "Governor adjusts policy bounds", and the adjust half is held and absent — the module exports no adjuster and the report says so (`artifacts/api-server/src/lib/discoveryEcosystemGovernor.ts:397#adjust: "not built`); two monitors have no input; no threshold is ruled for any. |
+
+### 58.4 Rows re-graded from code and left where they are
+
+| ID | verdict | why it stays |
+|---|---|---|
+| DC-21 | W | 2 of `11` §4's 5. **Trend explanation: built** (58.2). **Trending by Trail: built by P7, with one defect** — when the all-surfaces Trail read fails and the item read succeeds, `trailMomentum` stays null (`artifacts/api-server/src/services/trails/TrailService.ts:972#trailMomentum = trailMomentumFromRankEvents(trailRead.rows, m.members, nowMs)[trailId] ?? null;`) and the route serves `trending: false` (`artifacts/api-server/src/routes/trails.ts:340#trending: (r.momentum ?? 0) > 0,`) beside a non-null provenance, so a failed read reads as a measured "not trending" (`11` §9). Hunk in 58.8. P7's viewer scoping and creator/place caps were re-read and hold. **Trending by location, personalized trending, emerging places/Trails: not built** — each is an ordered list or a new term (58.5). "Never return internal raw scores" holds on both built actions. |
+| DV-33 | W | Trend reasons now reach a route as a closed vocabulary with the product's sentence, and the stored sentence equals it (`artifacts/api-server/src/test/discoveryTrendingApi.test.ts:487#it("I3. 3410 stores lib/discoveryTrendState's sentence`). Two things keep it `W`, the second already stated in §12.5, neither closed here: (1) a reason names the state, not what drove it — the windows sum impressions, saves and outcomes, so "saves led this" is not computed and `03` §11's own examples (trip adds, independent groups, first-time visitors) have no input; (2) whether a public reason may name a neighbourhood is unruled. |
+| DC-07 | W | `03` §13's five stores are now each durable AND equal to the product's reading. Raw events: `rank_events`. Aggregated windows, state snapshot, explanation features, model/version references: `place_momentum`'s rates, `trend_state` per `computed_at`, reason plus unique travellers, and `model_version` with the weights, windows and thresholds on every row. The prohibition holds by construction: 2892's postcondition refuses a table without its evidence columns. **The parity is executed, not parsed:** every stored row equals `computeTrendStates` over the loader's own rows — state, four rates and sentence (`artifacts/api-server/src/test/db/discoveryTrendSnapshotParity.db.test.ts:113#it("S1. every stored row equals computeTrendStates`). 2892 failed that on the surface and on the sentence (S2 names the places that told them apart). **W, not C, on one ground:** nothing calls the rebuild, so no deployment stores anything; cadence and retention are unruled (question 4). `feature_version` is DC-17's field (P9's H4) and is not claimed here. The census sentence "no `place_momentum` table exists" was already superseded by §41.2. |
+| DV-28 | W | Re-read. `03` §14's criterion, "distinguish emerging vs established", is met for places by the classifier. Two gaps are in the specification's words: `03` §3 defines Emerging as "small absolute numbers, strong acceleration, **broad independent confirmation**" and the branch that says `emerging` checks only that there is no history (`artifacts/api-server/src/lib/discoveryTrendState.ts:162#if (!hadMid && !hadPrior) return "emerging";`), so one account can make a place emerging; and `03` §4's content lifecycle ("must depend on content type") is absent. Both are new trend terms: held (58.5). |
+| DV-29 | W | Temporal: three windows. Geographic: the place only. No radius or neighbourhood trend (`03` §3 Local Pulse) and no time-of-day effect exist. Held (58.5). |
+| DV-31 | W | Decay: the windows. Rediscovery: detected (`rediscovered`), never retested — `02` §9.5's "periodically retest" needs something to re-expose a cooled place, which is an exploration-slot change. Held (58.5). |
+| DV-32 | W | Re-read, and the row's "minimum-evidence floor" is weaker than it reads: the floor is 3 of WEIGHT, and one account's save (3) plus its impression (1) clears it, so a single account can move the held momentum scalar and the state. `03` §12's "diversity of evidence" is present only at the API's disclosure boundary (58.2), not in the classifier or the scalar. Held (58.5). |
+| DC-06 | W | Re-read against `03` §7's words, and the §14.2 cell's 2 of 6 is generous. **exposure FAIL for trend velocity** — velocity ADDS each impression as activity (`artifacts/api-server/src/lib/discoveryLocalMomentum.ts:174#bucket(r.item_id, r.served_at, MOMENTUM_EVENT_WEIGHTS.impression);`, and `artifacts/api-server/src/lib/discoveryTrendState.ts:217#bucket(r.item_id, r.served_at, TREND_EVENT_WEIGHTS.impression);`), so a place the ranker serves more trends more. DV-30's denominator is the ranker's engagement normaliser, not trend velocity. **content age FAIL** — no creation time is read; the 30-day window is the place's OWN history, which is none of §7's six. creator · Trail · location · time-of-day FAIL as before. 0 of 6 by the spec's words; a velocity with a self-baseline exists, so `W` (built, and wrong on every axis), not `N`. Held (58.5). |
+
+### 58.5 The held machinery — each design exactly, so the owner can answer once
+
+Nothing below is built. Each says what it reads, the shape of the formula, where
+it plugs in, and what it would change in serving order.
+
+1. **DV-28 (a) independent confirmation for `emerging`.** Reads
+   `recent_unique_travelers` (3410 stores it; the loader would select `user_id`,
+   QP-09). Shape: `emerging` additionally requires distinct recent travellers ≥
+   an owner number, else `unknown`; the same guard in `place_momentum_classify`.
+   Plugs into `classifyTrendState` and its SQL mirror. Serving order: none today
+   (no ranker reads states); it changes what the trend API says.
+   **(b) `03` §4 content lifecycle.** Reads content type and age; seven states
+   with per-type decay horizons (owner numbers — "hours" for a nightclub event,
+   "years" for a temple guide). A new classifier over content, not places.
+   Would reorder Trail modules and Discovery pages once consumed.
+2. **DV-29 Local Pulse.** Reads a place → cell map (db/ ids through
+   `discovery_places` lat/lng; OSM ids from the candidate payload). Shape: the
+   same three windows summed per cell and classified by the same rule. Plugs in
+   as `computeAreaTrendStates(rows, cellOf)` beside `computeTrendStates`.
+   Serving order: none unless listed; a listed Local Pulse is a new ordered
+   surface (see 7).
+3. **DV-31 retest of cooled places.** Reads `trend_state = cooling` with a prior
+   peak. Shape: a bounded share of exploration slots re-exposes such places.
+   Plugs into the exploration governor (`lib/discoveryPde.ts`, behind 2289).
+   Serving order: yes — it inserts items into pages.
+4. **DV-32 per-account cap and distinct-traveller floor.** Reads `user_id` per
+   event. Shape: each account contributes at most c weight per place per window,
+   and a place needs ≥ n distinct travellers before momentum or a state is
+   non-zero. Plugs into `computeLocalMomentum` and `computeTrendStates` (bucket
+   by place × user) and the SQL mirror. Serving order: yes, under 2289 — the
+   capped scalar moves the momentum term.
+5. **DC-06 normalisers.** Exposure: velocity from outcomes per exposure against
+   the place's own conversion baseline, impressions no longer counted as
+   activity. Creator: divide by the creator's median place velocity (the 3391
+   `submitted_by` join). Trail: divide by the Trail's velocity
+   (`trailMomentumFromRankEvents` exists). Location: divide by the cell's median
+   velocity (needs 2). Time-of-day: compare recent hours with the same hours of
+   the baseline (`served_at` is on every row). Content age: damp a new item's
+   surge by its age. All plug into the two pure computations. Serving order:
+   yes, under 2289.
+6. **DV-33 signal-led reasons.** Reads the per-window weight share by event kind.
+   Shape: a reason code names the dominant kind (saves, trip adds) when it
+   exceeds a share. Not ranking, but a new reason model the rows cannot yet
+   support for §11's cohort and group examples.
+7. **DC-21's three lists.** Trending by location and emerging places: the
+   newest run's rows for a destination's places, filtered by state and by the
+   disclosure floor, ORDERED — by what is the question. Emerging Trails: the
+   same classifier over the Trail fold `trailMomentumFromRankEvents` already
+   builds. Personalized trending: viewer affinity × trend — a ranking term.
+   Each plugs into `routes/discoveryTrending.ts` as a second action. Serving
+   order: each is a new ordered list.
+8. **DV-80 adjust.** Reads the monitor report and owner-ruled bands. Shape: a
+   pure `proposePolicyBounds(report, rulings)` that, for a monitor outside its
+   band, proposes a change to a NAMED bound — concentration →
+   `MAX_PER_CONTRIBUTOR_PER_PAGE`; new-creator success → the ruled 15–25 %
+   exploration budget or `TRAIL_EXPLORATION_SLOT_PCT`; hidden-gem exposure →
+   the hidden-gem share; repeated recommendations → a seen-set window — as an
+   audited proposal an admin applies (`11` §8 "trend integrity review"). Never
+   per user. Serving order: yes, through the bounds.
+
+### 58.6 Correctness findings in existing trend code
+
+1. **Fixed — 2892's corpus.** The rebuild read every surface; the product reads
+   `discovery`. A `living_page` place view or a pulse impression moved the
+   stored state and nothing the product computes (S2: place H, one Discovery
+   impression among twenty pulse ones, was `emerging` under 2892 and is
+   `unknown` in the product).
+2. **Fixed — 2892's explanation vocabulary.** Different sentences for the same
+   state, and a sentence for `unknown` (I3, S1).
+3. **Recorded, not fixed — an outcome on an impression served before the
+   window.** The loader admits a row only by `served_at`
+   (`artifacts/api-server/src/lib/discoveryLocalMomentum.ts:261#.gte("served_at", since)`),
+   so a save made today on a place last served 31 days ago is not counted, while
+   the module's header says an outcome counts "at its own time". 2892 counted it;
+   3410 mirrors the loader so the store equals the product (S2, place I). The
+   repair is a second bounded read on `outcome_at` with its own partial index;
+   it moves the held 2289 scalar and QP-09's plan, so it is left to whoever
+   lifts that hold, with this test to extend.
+4. **Routed — P7's Trails trending failure path** (58.8).
+5. **Recorded — DV-30 is graded on a different computation.** DV-30 (`C`,
+   "normalizes for exposure", `03` §14) rests on the ranker's engagement
+   normaliser. `03` §14 is Trending's list, and trend velocity counts
+   impressions as activity (DC-06 above). DV-30 is not this lane's row; its
+   verdict is not moved here, and the finding is offered for re-grading.
+6. **Recorded — two model versions for one trend reading** (P9's H3). The
+   in-process reading stamps the ranker's version; the stored one stamps
+   `discovery-trend-state-v1`. An existing suite pins the first as a design
+   choice, so it is left to DC-17's owner. The API serves the stored one.
+
+### 58.7 Tests, and every one seen RED
+
+52 new tests in four suites, all registered in the `test` script: 31 in
+`src/test/discoveryTrendingApi.test.ts`, 13 in
+`src/test/discoveryEcosystemGovernor.test.ts`, 4 in
+`src/test/db/discoveryTrendSnapshotParity.db.test.ts` and 4 in
+`src/test/db/discoveryEcosystemReport.db.test.ts` (the last two run on the
+harness and skip without it). They were written after the code, so each was
+proved by mutation: 41 targeted mutations, each run against the suites it
+names, each file restored and its sha256 checked IDENTICAL, and for the five
+SQL mutations the real 3410 re-applied afterwards. Every one of the 52 went red
+under at least one. The ones worth reading:
+
+| mutation | red |
+|---|---|
+| the exposure read's `user_id` filter inverted | C1, C2, and every per-item answer |
+| the disclosure floor removed (`return true`) | D1, D2, D3 |
+| the newest-run read loses `source_surface` | E4, B1, and S4 on the real database |
+| a second-read error ignored | F "fails on the SECOND read" |
+| a random field in the body | G1 (retry), B2 (closed shape), A4 |
+| 3410 reads every surface (2892's corpus) | S1, S2 — and 3410's own postcondition refused the file |
+| 3410 counts outcomes of impressions served before the window | S1, S2, and the postcondition |
+| 3410's cooling sentence or save weight drifts | I3 / I4 in the pure suite, S1 on the database |
+| the READ ONLY wrapper replaced by BEGIN/COMMIT | E2 |
+| the script falls back to a database it was not given | E4 |
+| an adjuster exported from the governor module | 13 |
+| a user id added to the repeat read's output | 12 |
+
+### 58.8 Hunk for the integrator (P7's files; line-neutral)
+
+- **H-P8-1 — Trails trending, a failed read must not read as "not trending".**
+  `artifacts/api-server/src/services/trails/TrailService.ts` line 972: replace
+  `?? null;` with `?? 0;` and append `  // measured: absent from the fold is 0; null now means only that the read failed (census-discovery §58)`.
+  `artifacts/api-server/src/routes/trails.ts` line 340: replace
+  `trending: (r.momentum ?? 0) > 0,` with
+  `trending: r.momentum === null ? null : r.momentum > 0,  // null: no reading (a failed Trail read, or no member), never "not trending" (census-discovery §58)`.
+  No other line moves. A no-member Trail then reads `trending: null`, matching
+  its `readingProvenance: null`. The test belongs in
+  `discoveryTrailRoutes.test.ts`: fail only the SECOND `rank_events` read
+  (the all-surfaces one) and assert `trending === null`; the existing happy-path
+  assertion `typeof r.body.trending === "boolean"` still holds.
+
+### 58.9 Checks run at this tree
+
+`typecheck`, `typecheck:tests` (863 diagnostics across 115 files, baseline
+unchanged), `check:test-registration`, `check:census-scope-coverage`,
+`check:migration-prefixes` (637 files), `check:flag-polarity`,
+`check:discovery-query-paths` (56 rows, clean), `check:writerless-reads`,
+`check:guard-coverage`, `check:route-auth-gate` (175 route files),
+`check:doc-citations`, `check:citation-targets` and the integrator's
+column-resolution diff (`problems=0`) all pass. **`check:census-integrity` fails,
+and only on the headline:** DV-80's move makes the rows count C 97 / W 82 / N 6 /
+X 3 against the stated C 97 / W 81 / N 7 / X 3, and this section does not restate
+the headline. With that headline appended to a scratch copy, the check passes
+with nothing else changed. The same drift is the only failure in the full
+`npm test` at this tree (`censusIdGrammar` and `censusIntegrityQualifiedVerdicts`
+read the real corpus).
+`docs/architecture/telegraph-phase0-inventory.md` was regenerated for the
+migration count. QP-22 in `docs/discovery/query-paths.md` records the API's two
+reads and their harness plans; no index was added.
+
+### 58.10 Other censuses, and freshness
+
+- **census-discovery.** `CENSUS_SCOPE` widened with the four new source files,
+  3410 and its rollback, and the four suites. `lib/discoveryTrendState.ts`,
+  `routes/index.ts`, `package.json` and `docs/discovery/query-paths.md` changed:
+  the first gained lines at its foot only, the second one line written over the blank line at its tail (its length is pinned by `creatorLedgerMigrationShape3385` M6), the
+  third two list entries on existing lines, the fourth two cells. No cited line
+  moved.
+- **census-trips** counts `artifacts/api-server/src/test/db/`, so the two new
+  database suites age it. They exercise `place_momentum`, `rank_events`, the
+  report reads and 3410. No Trips verdict can move.
+- **census-telegraph** reads `docs/architecture/telegraph-phase0-inventory.md`,
+  which changed only in its migration count.
+- **census-compass, census-map:** no file they count was touched. The map
+  lane's own trend-state list is a different vocabulary and nothing built here
+  reads it.
+
+The freshness ledger JSON is the integrator's to write.
+
+### 58.11 Read-only production SQL that would turn harness evidence into production evidence
+
+```sql
+-- 1. Is the store there, repaired, and gated?
+SELECT to_regclass('public.place_momentum') IS NOT NULL AS store,
+       EXISTS (SELECT 1 FROM information_schema.columns
+                WHERE table_schema = 'public' AND table_name = 'place_momentum'
+                  AND column_name = 'source_surface') AS repaired_3410,
+       (SELECT position('surface = c_surface' IN p.prosrc) > 0 FROM pg_proc p
+         WHERE p.proname = 'rebuild_place_momentum') AS rebuild_scoped;
+SELECT flag, enabled FROM public.feature_flags WHERE flag = 'discovery_trending_api_enabled';
+
+-- 2. Has anything ever been stored, and over which corpus?
+SELECT source_surface, count(*), min(computed_at), max(computed_at)
+  FROM public.place_momentum GROUP BY source_surface;
+
+-- 3. DV-32 / 58.2: places whose last-48-hour Discovery activity came from ONE account.
+SELECT count(*) FROM (
+  SELECT item_id FROM public.rank_events
+   WHERE surface = 'discovery' AND outcome <> 'analytics'
+     AND served_at >= now() - interval '48 hours'
+   GROUP BY item_id HAVING count(DISTINCT user_id) = 1) one_account;
+
+-- 4. DC-06: how much of trend velocity is exposure (impressions) rather than outcomes.
+SELECT count(*) FILTER (WHERE outcome = 'impression') AS impressions_only,
+       count(*) FILTER (WHERE outcome NOT IN ('impression','analytics')) AS converted
+  FROM public.rank_events
+ WHERE surface = 'discovery' AND served_at >= now() - interval '30 days';
+```
+
+And the monitor report itself, which runs every read inside READ ONLY and
+writes nothing: `pnpm run report:discovery-ecosystem -- --db-url <read-only production URL> --days 30`.
+
+### 58.12 Owner questions, verbatim
+
+1. **Disclosure.** "Is a published trend state an aggregate that
+   PRIVACY_THRESHOLD_V1 governs (at least 15 distinct travellers in each window
+   it describes), and must the trend API also withhold a state for a place inside
+   a protected zone? The same question applies to P7's Trails `trending`
+   boolean and item order, which today carry no traveller floor."
+2. **The ranker hold, scoped.** "The 2026-08-15 hold still covers every design in
+   census-discovery §58.5. Should any of them be scheduled before the corpus is
+   fixed — (a) a per-account cap and distinct-traveller floor in the trend and
+   momentum computation, (b) exposure-normalised velocity and the other five
+   `03` §7 normalisers, (c) a location-scoped or emerging trend list and what
+   orders it, (d) re-exposing cooled places, (e) the governor's adjust half —
+   or do all of them wait?"
+3. **Explanations.** "May a public trend explanation name a neighbourhood, as
+   `03` §11's 'Rising quickly in Sukhumvit tonight' does, and should it name the
+   signal that drove the trend (saves, trip adds), which is not computed
+   today?"
+4. **The snapshot.** "At what cadence should rebuild_place_momentum run, how long
+   are snapshots kept, and may a stored state be served for longer than the
+   in-process reading lives (10 minutes)?"
+5. **The governor.** "Which policy bounds may the Ecosystem Governor move,
+   within what ranges and on which monitor values — and is it automatic, or a
+   proposal an admin approves? And what do 'new creator' and 'success' mean for
+   new-creator success?"
+
+### 58.13 What would turn this red
+
+- Any serve or ranking path reading `place_momentum` or importing the trend API
+  (H1, H2), or a trend STATE reaching `portavaRank`.
+- 3410's rebuild drifting from `computeTrendStates` in corpus, window, weight or
+  sentence (S1, S2, I3, I4; 3410's postcondition for the corpus and window).
+- A trend API answer carrying a number, or a state disclosed below the floor,
+  from a stale run, or for another viewer's exposure (B2, D1–D3, E1–E4, C1–C3).
+- A monitor with a failed or absent input reading 0, or a threshold or adjuster
+  appearing in the governor module without a ruling (9, 13).
+- `discovery_trending_api_enabled` seeded or flipped ON without owner question 1
+  answered: 3410's postcondition refuses the seed.
+
+### 58.14 Integrator: P8 merged after §60, headline restated, two routings
+
+*Integrator addendum, 2026-09-27, at the merge of `disc-p8-trending` (`f2f48d795`, based on `d7bfb15dc`) into `wave8-integration` at `dc6fa1d4b`.*
+
+- **The merge.** Conflicts were unions only: the `test` line, `CENSUS_SCOPE`, and this census, with §58 after §60.9 because it merged last. The telegraph inventory was regenerated for 3410.
+- **Order.** §58's row statements now come after §59's and §60's. That changes no verdict: every §58 statement is DV-80 N → W or a W → W re-grade of a row no later section touched. The recount equals the pre-merge count plus DV-80's one move.
+- **The freshness ledger is written.**
+  - census-discovery: §58's eleven files.
+  - census-trips: the two harness suites, which read no trip object.
+- **Routing 1: the momentum function now has two writers in flight.**
+  - 3410 replaces 2892's `rebuild_place_momentum`: the discovery surface only, served-in-window rows, and the product's sentences.
+  - P14 (§61) is fixing DV-25, where a dismiss counts as positive momentum, and that fix needs the SQL twin changed too.
+  - P14 is told to take 3410's body as its base. It must not rebuild from 2892's. Its migration must `CREATE OR REPLACE` 3410's function with the one exclusion, and its TS/SQL parity test runs on a chain that includes 3410.
+- **Routing 2: hunk H-P8-1 goes to P14, which owns `services/trails/**` and `routes/trails.ts`.**
+  - `TrailService.ts:972`: `?? null` becomes `?? 0`.
+  - `routes/trails.ts:340`: `trending: r.momentum === null ? null : r.momentum > 0`.
+  - Before this change, a failed all-surfaces read served `trending: false` beside a valid provenance, so a failure read as a measured "not trending".
+
+**Headline** (§58's move: `DV-80` N → W):
+
+| bucket | count |
+|---|---|
+| BUILT-AND-CORRECT | **95** |
+| BUILT-BUT-WRONG | **87** |
+| NOT-BUILT | **5** |
+| CANNOT-VERIFY | **1** |
+
+- CONSTRUCTED 182 / 188 = **96.8 %**; CORRECT 95 / 188 = **50.5 %**. The four buckets sum to 188.
+- **The five rows still N:** `A18` and `DV-34` (the ranker hold), `A21` (no Telegraph action acts on a Discovery object; an owner question), and `DV-61` and `DV-62` (commercial rules the owner has not set).
+- **Production.** 3410 is applied to the harness only, and `discovery_trending_api_enabled` exists on no shared database.
+
 ## §61 — Trails integrity (lane P14): creation decided where the insert is, one identity per theme and place, attach names content that exists, a dismiss is not momentum, and one Trail projection built rebuildable
 
 *Written 2026-09-27 by the Discovery P14 lane on `disc-p14-trails-db`, cut from `88884572b` (the `wave8-integration` tip, carrying §46–§57). DV-20 and DV-25 were added to this lane's scope by the integrator after §59 (lane P12, verification) re-graded both `C` → `W`. §59 is not in this lane's base, so their "was" below is §59's `W`, as the integrator instructed. The other three OLD verdicts were read from `CENSUS_INTEGRITY_DUMP=ALL` at the base: DC-03 `W` (§51.6), DC-20 `W` (§51.6), DV-72 `W` (§11.5; P9's §54.2 re-grade is prose, so the table row is the last statement). Nothing here is merged to `main`, deployed, applied to a shared database or flag-enabled. **This section does not restate the headline.***

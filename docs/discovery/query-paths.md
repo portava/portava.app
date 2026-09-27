@@ -117,7 +117,7 @@ The Trail-affinity input. **Index:** `idx_trail_follows_user`. Harness: Index Sc
 
 ### QP-22 Latest momentum for a place
 
-2892's table (no reader yet): `place_id = x ORDER BY computed_at DESC LIMIT 1`. **Index:** `place_momentum_place_computed_idx`. Harness: Index Scan, 1 row.
+2892's table (no reader yet): `place_id = x ORDER BY computed_at DESC LIMIT 1`. **Index:** `place_momentum_place_computed_idx`. Harness: Index Scan, 1 row. **Reader since census-discovery §58** — `lib/discoveryTrendExplanation.readTrendSnapshot`, behind `discovery_trending_api_enabled` (3410, seeded FALSE), makes two reads: the newest run, `source_surface = 'discovery' ORDER BY computed_at DESC LIMIT 1` (**Index:** `place_momentum_computed_idx`, filter on `source_surface`), then that run's rows for at most 20 served ids, `computed_at = x AND place_id = ANY(…)` (**Index:** `place_momentum_computed_idx` or `place_momentum_place_computed_idx`). Harness, empty table, `enable_seqscan = off`: Index Scan with no Sort node for both. A harness plan at zero rows proves the index is usable, not that the planner chooses it at production volume; the table ships empty and nothing schedules the rebuild.
 
 ### QP-23 Shadow divergence report window
 
@@ -180,7 +180,7 @@ One row per table or index that a migration in `artifacts/api-server/src/migrati
 | index | `rank_events_recommendation_idempotency_idx` | `rank_events` | 2891 | QP-10 | the idempotency arbiter for (recommendation_id, outcome), and the binding lookup |
 | table | `place_momentum` | `place_momentum` | 2892 | QP-22 | derived, rebuildable (DV-72); absent from production |
 | index | `place_momentum_place_computed_idx` | `place_momentum` | 2892 | QP-22 | latest snapshot per place |
-| index | `place_momentum_computed_idx` | `place_momentum` | 2892 | not a hot path: a run's rows by time; nothing reads it yet | per-run reads and retention |
+| index | `place_momentum_computed_idx` | `place_momentum` | 2892 | QP-22 | per-run reads and retention; the trend API's newest-run read (census-discovery §58) |
 | index | `place_momentum_live_state_idx` | `place_momentum` | 2892 | not a hot path: "what is trending" listing; no reader yet | partial on classified rows |
 | table | `trails` | `trails` | 2910 | QP-13 | 0 Trails in production |
 | table | `content_trails` | `content_trails` | 2910 | QP-14 | Trail membership |
