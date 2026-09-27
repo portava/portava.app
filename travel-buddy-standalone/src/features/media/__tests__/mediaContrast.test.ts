@@ -1062,7 +1062,7 @@ const S_TAIL = {
   mvTopButtonPhoto: [PHOTO, 'rgba(17,17,15,0.55)'], mvLeftPhoto: [PHOTO, 'rgba(17,17,15,0.71)'], mvLeftChip: [PHOTO, 'rgba(17,17,15,0.71)', W_('0.12')], mvRightPhoto: [PHOTO, 'rgba(17,17,15,0.80)'], mvSpinnerPhoto: [PHOTO, 'rgba(17,17,15,0.47)'], mvDotsPhoto: [PHOTO, 'rgba(17,17,15,0.87)'], mvCloseOnInk: [color.ink, 'rgba(17,17,15,0.6)'], // §31.13: the Grid's full-screen viewer. Then shared components on a photograph.
   appHeaderOverlayPhoto: [PHOTO, 'rgba(17,17,15,0.58)'], // §31.13: the tab's overlayTint; the header's own default is 0.28 black
   burstPhoto: [PHOTO, 'rgba(255,60,60,0.12)'],
-  radialBackdropPhoto: [PHOTO, 'rgba(0,0,0,0.35)'], ...SHEET_SURFACES, // census-media §33: the grounds of the shared sheets Media opens (imported at the tail)
+  radialBackdropPhoto: [PHOTO, 'rgba(0,0,0,0.35)'], ...SHEET_SURFACES, ...NESTED_SURFACES, // census-media §33 and §33.13: the grounds of the shared sheets Media opens (imported at the tail)
 } as const satisfies Record<string, readonly string[]>;
 
 /** Layers for a surface id — the tail's surfaces as well as the ones above. Hoisted; S_TAIL is read only for tail ids. */
@@ -1539,7 +1539,7 @@ test('census-media §31.13: no pair is pinned, and every StampButton on a Media 
 // guard measures every other consumer of each change before and after.
 // OS-drawn UI the sheets hand off to (Alert dialogs, the OS share sheet, the
 // native date and time picker) is not in the source and is not paired.
-import { MEDIA_SHEET_PAIRS, SF, SHEET_SURFACES } from '../../../theme/__tests__/sharedSheetContrast.pairs.ts';
+import { MEDIA_SHEET_PAIRS, SF, SHEET_SURFACES, NESTED_SURFACES, SF_NESTED } from '../../../theme/__tests__/sharedSheetContrast.pairs.ts';
 
 for (const p of MEDIA_SHEET_PAIRS) add({ id: `sheets.${p.id}`, fg: p.fg, on: p.on, kind: p.kind, at: p.at });
 
@@ -1580,5 +1580,52 @@ test('census-media §33: dynamic type — no Text in the shared sheets opts out 
   }
   assert.ok(files.length >= 15, `scanned ${files.length} files`);
   assert.ok(textElements >= 100, `found ${textElements} <Text elements`);
+  assert.deepEqual(offenders, []);
+});
+
+// ═══ census-media §33.13 — the nested sheets, appended at the TAIL ═══
+// The four sheets the comment sheet opens from inside itself, and what ReportSheet opens for a
+// safety photo, are Media-flow surfaces under H7 (the owner: "Shared ownership does not exclude a
+// surface users encounter in the Media flow"). Their pairs are in the same fixture and were added
+// to MEDIA_SHEET_PAIRS before this module evaluated, so the loop above measured them; this block
+// checks that they are there, that their files are cited, and that none of their Text caps scaling.
+const NESTED_PREFIXES = ['sheets.tagPreview.', 'sheets.profilePreview.', 'sheets.likers.', 'sheets.report.'] as const;
+const NESTED_FILES: readonly string[] = Object.values(SF_NESTED);
+
+test('census-media §33.13: the nested sheets the comment sheet opens are measured surfaces, and every file they draw from is cited', () => {
+  const nested = MEASURED.filter((m) => NESTED_PREFIXES.some((p) => m.pair.id.startsWith(p)));
+  for (const p of NESTED_PREFIXES) assert.ok(nested.some((m) => m.pair.id.startsWith(p)), `no pair measures ${p}`);
+  assert.ok(nested.length >= 90, `expected >= 90 nested-sheet pairs, got ${nested.length}`);
+  // Each is opened from inside the comment sheet, and the needle says where.
+  for (const [opener, needle] of [
+    ['src/components/CommentsSheet.tsx', '<ProfilePreviewCard'],
+    ['src/components/CommentsSheet.tsx', '<EngagementUserListSheet'],
+    ['src/components/CommentsSheet.tsx', '<ReportSheet'],
+    ['src/components/RichText.tsx', '<TagPreviewSheet'],
+    ['src/components/ReportSheet.tsx', '<MediaPickerButton'],
+    ['src/components/ReportSheet.tsx', '<MediaAttachmentTray'],
+    ['src/components/ui/MediaPickerButton.tsx', '<MediaSourceSheet'],
+  ] as const) {
+    assert.ok(nested.some((m) => m.pair.at.some(([file, n]) => file === opener && n === needle)), `${opener}: no pair anchors ${needle}`);
+  }
+  const cited = new Set(nested.flatMap((m) => m.pair.at.map(([file]) => file)));
+  for (const file of NESTED_FILES) assert.ok(cited.has(file), `${file} is listed but no pair cites it`);
+  // Over the picked photo, the tray's marks are floors, as every photo pair above is.
+  assert.ok(nested.filter((m) => m.floor).length >= 7, 'the attachment tray is floored over any photo');
+  assert.ok(Object.keys(NESTED_SURFACES).every((k) => Object.prototype.hasOwnProperty.call(S_TAIL, k)), 'every nested ground is a surface here');
+  assert.deepEqual(nested.filter((m) => m.pair.finding !== undefined).map((m) => m.pair.id), []);
+  assert.deepEqual(nested.filter((m) => m.threshold !== null && m.ratio < m.threshold).map((m) => `${m.pair.id}: ${m.ratio.toFixed(2)}`), []);
+});
+
+test('census-media §33.13: dynamic type — no Text in the nested sheets opts out of, or caps, OS font scaling', () => {
+  let textElements = 0;
+  const offenders: string[] = [];
+  for (const file of NESTED_FILES) {
+    const text = source(file);
+    textElements += (text.match(/<Text\b/g) ?? []).length;
+    if (/allowFontScaling\s*=\s*\{\s*false\s*\}/.test(text)) offenders.push(`${file}: allowFontScaling={false}`);
+    if (/maxFontSizeMultiplier/.test(text)) offenders.push(`${file}: maxFontSizeMultiplier`);
+  }
+  assert.ok(textElements >= 60, `found ${textElements} <Text elements`);
   assert.deepEqual(offenders, []);
 });

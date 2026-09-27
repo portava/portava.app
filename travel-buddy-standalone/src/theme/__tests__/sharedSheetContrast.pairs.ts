@@ -115,7 +115,7 @@ export const SHEET_SURFACES = {
   sheetPlanConfirmSubmitting: [atOpacity(color.signalStrong, 0.6, color.paper)],
   sheetPlanConfirmSubmittingWas: [atOpacity(color.signal, 0.6, color.paper)],
 } as const satisfies Record<string, readonly string[]>;
-export type SheetSurface = keyof typeof SHEET_SURFACES;
+export type SheetSurface = keyof typeof SHEET_SURFACES | keyof typeof NESTED_SURFACES; // §33.13: plus the nested sheets' grounds, declared at the tail
 
 export interface SheetPair {
   /** Unique within this module; mediaContrast.test.ts prefixes `sheets.`. */
@@ -380,3 +380,200 @@ add({ id: 'disambiguation.searchInsteadIcon', fg: color.deep, on: 'sheetPaperRai
 
 /** Every pair of the five sheets as they render when opened from Media. */
 export const MEDIA_SHEET_PAIRS: readonly SheetPair[] = P;
+
+// ═══ census-media §33.13 — the nested sheets, appended at the TAIL so the lines §33 cites do not move ═══
+//
+// The owner's H7 ruling reaches every surface a user meets in the Media flow. From the five sheets
+// above, these open ON TOP of the flow without leaving it (a navigation to another screen leaves it):
+//   - TagPreviewSheet: long-press an @mention or #hashtag in a comment (RichText);
+//   - ProfilePreviewCard: tap a comment's author;
+//   - EngagementUserListSheet: tap a comment's like count;
+//   - ReportSheet: long-press a comment, then Report — its three steps, and for a safety concern the
+//     photo button (MediaPickerButton), the source sheet it opens (MediaSourceSheet) and the picked
+//     photo's card (MediaAttachmentTray, one image: no cover, reorder or alt text for this policy).
+// OS-drawn UI (Alert dialogs, the camera and photo library, Settings, the browser) is not paired.
+// The add(...) calls below push into the same array MEDIA_SHEET_PAIRS exports, so both suites read them.
+
+/** Files of the nested sheets and what they draw, relative to the standalone app root. */
+export const SF_NESTED = {
+  tagPreview: 'src/components/TagPreviewSheet.tsx',
+  profilePreview: 'src/components/ProfilePreviewCard.tsx',
+  avatarImage: 'src/components/ui/DisplayMediaImage.tsx',
+  likers: 'src/components/EngagementUserListSheet.tsx',
+  report: 'src/components/ReportSheet.tsx',
+  photoButton: 'src/components/ui/MediaPickerButton.tsx',
+  sourceSheet: 'src/components/ui/MediaSourceSheet.tsx',
+  tray: 'src/components/ui/MediaAttachmentTray.tsx',
+} as const;
+
+/** The literal a bottom layer uses for "any photograph": floored over a 16-level grid, as in mediaContrast.test.ts. */
+const PHOTO_LAYER = 'PHOTO';
+
+export const NESTED_SURFACES = {
+  sheetPrSignal18: [color.paperRaised, hexA(color.signal, '18')],
+  sheetPrDeep15: [color.paperRaised, hexA(color.deep, '15')],
+  sheetPrDeep18: [color.paperRaised, hexA(color.deep, '18')],
+  sheetPrWarn18: [color.paperRaised, hexA(color.warn, '18')],
+  sheetPrViolet18: [color.paperRaised, hexA('#8B5CF6', '18')],
+  sheetPrSuccess18: [color.paperRaised, hexA(color.success, '18')],
+  sheetSafety: ['#FEF3C7'],
+  /** ReportSheet's primary button while disabled (`opacity: 0.45` on the sheet), now and before §33. */
+  sheetReportDisabled: [atOpacity(color.signalStrong, 0.45, color.paperRaised)],
+  sheetReportDisabledWas: [atOpacity(color.signal, 0.45, color.paperRaised)],
+  /** MediaSourceSheet's "Settings" chip in a denied row, before §33 drew the row at opacity 0.7. */
+  sheetDeniedSettingsWas: [atOpacity(color.haze, 0.7, color.paperRaised)],
+  /** MediaAttachmentTray, over the picked photo. */
+  trayScrimPhoto: [PHOTO_LAYER, 'rgba(0,0,0,0.55)'],
+  trayTrackPhoto: [PHOTO_LAYER, 'rgba(0,0,0,0.55)', 'rgba(17,17,15,0.4)'],
+  trayTrackPhotoWas: [PHOTO_LAYER, 'rgba(0,0,0,0.55)', 'rgba(255,255,255,0.35)'],
+  trayCancelPhoto: [PHOTO_LAYER, 'rgba(0,0,0,0.55)', 'rgba(0,0,0,0.45)'],
+  trayRetryPhoto: [PHOTO_LAYER, 'rgba(255,77,46,0.6)', 'rgba(0,0,0,0.45)'],
+  trayRemoveOnErrorPhoto: [PHOTO_LAYER, 'rgba(255,77,46,0.6)', 'rgba(0,0,0,0.55)'],
+} as const satisfies Record<string, readonly string[]>;
+
+/** Every ground either list names. */
+export const ALL_SHEET_SURFACES: Record<SheetSurface, readonly string[]> = { ...SHEET_SURFACES, ...NESTED_SURFACES };
+
+const AVATAR_FALLBACK: Needle[] = [[SF.avatar, /fallback: \{\s*backgroundColor: color\.haze,/], [SF.avatar, "initial: { ...t.small, fontWeight: '700', color: color.ink },"]];
+
+// ─ TagPreviewSheet — long-press an @mention or #hashtag in a comment ─
+const TP = SF_NESTED.tagPreview;
+const TP_SHEET: Needle = [TP, /sheet: \{\s*backgroundColor: color\.paperRaised,/];
+const TP_OPENED: Needle[] = [[SF.richText, "onLongPress={() => setPreview({ kind: 'hashtag', hashtag: seg.hashtag })}"], [SF.richText, '<TagPreviewSheet']];
+add({ id: 'tagPreview.header', fg: color.mute, on: 'sheetPaperRaised', kind: 'text', at: [...TP_OPENED, TP_SHEET, [TP, "headerLabel: { ...t.small, color: color.mute, fontWeight: '600' },"]] });
+add({ id: 'tagPreview.close', fg: color.ink, on: 'sheetPaperRaised', kind: 'ui', at: [TP_SHEET, [TP, '<X size={18} color={color.ink} />']] });
+add({ id: 'tagPreview.loading', fg: color.signal, on: 'sheetPaperRaised', kind: 'ui', at: [TP_SHEET, [TP, '<ActivityIndicator color={color.signal} />']] });
+add({ id: 'tagPreview.error', fg: color.mute, was: color.faint, on: 'sheetPaperRaised', kind: 'text', at: [TP_SHEET, [TP, "errorText: { ...t.small, color: color.mute, textAlign: 'center' },"]] });
+add({ id: 'tagPreview.hashtag.icon', fg: color.deep, on: 'sheetPrDeep15', kind: 'decor', at: [[TP, "backgroundColor: color.deep + '15'"], [TP, '<Hash size={28} color={color.deep} />']] }); // beside "#slug" and under the "Hashtag" header
+add({ id: 'tagPreview.hashtag.slug', fg: color.ink, on: 'sheetPaperRaised', kind: 'text', at: [TP_SHEET, [TP, "hashtagSlug: { ...t.title, color: color.ink, textAlign: 'center' },"]] });
+add({ id: 'tagPreview.sub', fg: color.mute, on: 'sheetPaperRaised', kind: 'text', at: [TP_SHEET, [TP, 'entitySub: { ...t.small, color: color.mute },']] });
+const TP_FOLLOW: Needle = [TP, /followBtn: \{[^}]*backgroundColor: color\.deep,/];
+const TP_FOLLOWING: Needle = [TP, "backgroundColor: color.deep + '18', borderWidth: 1.5, borderColor: color.deep,"];
+add({ id: 'tagPreview.follow.label', fg: color.onInk, on: 'sheetDeep', kind: 'text', at: [TP_FOLLOW, [TP, "followBtnText: { ...t.bodyStrong, color: color.onInk, fontWeight: '700' },"]] });
+add({ id: 'tagPreview.follow.following', fg: color.deep, on: 'sheetPrDeep18', kind: 'text', at: [TP_FOLLOWING, [TP, 'followBtnTextActive: { color: color.deep },']] });
+add({ id: 'tagPreview.follow.spinner', fg: color.onInk, on: 'sheetDeep', kind: 'ui', at: [TP_FOLLOW, [TP, '<ActivityIndicator size="small" color={following ? color.deep : color.onInk} />']] });
+add({ id: 'tagPreview.follow.spinnerFollowing', fg: color.deep, on: 'sheetPrDeep18', kind: 'ui', at: [TP_FOLLOWING, [TP, '<ActivityIndicator size="small" color={following ? color.deep : color.onInk} />']] });
+add({ id: 'tagPreview.viewFeed', fg: color.ink, on: 'sheetHaze', kind: 'text', at: [[TP, /viewBtn: \{[^}]*backgroundColor: color\.haze,/], [TP, "viewBtnText: { ...t.bodyStrong, color: color.ink, fontWeight: '700' },"]] });
+const TP_REPORT: Needle = [TP, 'paddingVertical: space.xs, opacity: 1,'];
+add({ id: 'tagPreview.report.label', fg: color.mute, was: atOpacity(color.faint, 0.6, color.paperRaised), on: 'sheetPaperRaised', kind: 'text', at: [TP_SHEET, TP_REPORT, [TP, 'reportBtnText: { ...t.small, color: color.mute },']] });
+add({ id: 'tagPreview.report.icon', fg: color.mute, was: atOpacity(color.faint, 0.6, color.paperRaised), on: 'sheetPaperRaised', kind: 'decor', at: [TP_REPORT, [TP, '<Flag size={12} color={color.mute} />']] }); // beside "Report hashtag"
+add({ id: 'tagPreview.report.spinner', fg: color.mute, was: atOpacity(color.faint, 0.6, color.paperRaised), on: 'sheetPaperRaised', kind: 'ui', at: [TP_REPORT, [TP, '? <ActivityIndicator size="small" color={color.mute} />']] });
+add({ id: 'tagPreview.user.name', fg: color.ink, on: 'sheetPaperRaised', kind: 'text', at: [TP_SHEET, [TP, "userName: { ...t.bodyStrong, color: color.ink, fontWeight: '700' },"]] });
+add({ id: 'tagPreview.user.handle', fg: color.mute, on: 'sheetPaperRaised', kind: 'text', at: [TP_SHEET, [TP, 'userHandle: { ...t.small, color: color.mute },']] });
+add({ id: 'tagPreview.user.bio', fg: color.mute, on: 'sheetPaperRaised', kind: 'text', at: [TP_SHEET, [TP, 'userBio: { ...t.body, color: color.mute,']] });
+add({ id: 'tagPreview.user.avatarInitials', fg: color.ink, on: 'sheetHaze', kind: 'text', at: [[TP, '<Avatar uri={data.avatarUrl} name={data.name ?? data.handle} size={56} />'], ...AVATAR_FALLBACK] });
+add({ id: 'tagPreview.cta', fg: color.onInk, on: 'sheetInk', kind: 'text', at: [[TP, /viewBtnFull: \{[^}]*backgroundColor: color\.ink,/], [TP, "viewBtnFullText: { ...t.bodyStrong, color: color.onInk, fontWeight: '700' },"]] });
+add({ id: 'tagPreview.minimal.title', fg: color.ink, on: 'sheetPaperRaised', kind: 'text', at: [TP_SHEET, [TP, "entityTitle: { ...t.bodyStrong, color: color.ink, textAlign: 'center', fontWeight: '700' },"]] });
+add({ id: 'tagPreview.minimal.close', fg: color.muteStrong, was: color.mute, on: 'sheetHaze', kind: 'text', at: [[TP, /dimBtnFull: \{[^}]*backgroundColor: color\.haze,/], [TP, "dimBtnText: { ...t.bodyStrong, color: color.muteStrong, fontWeight: '600' },"]] });
+for (const [kind, fg, on, needle] of [
+  ['trip', color.deep, 'sheetPrDeep18', "iconBg={color.deep + '18'}"],
+  ['circle', color.warn, 'sheetPrWarn18', "iconBg={color.warn + '18'}"],
+  ['event', '#8B5CF6', 'sheetPrViolet18', "iconBg={'#8B5CF6' + '18'}"],
+  ['place', color.success, 'sheetPrSuccess18', "iconBg={color.success + '18'}"],
+] as const) {
+  add({ id: `tagPreview.minimal.${kind}Icon`, fg, on, kind: 'decor', at: [[TP, needle], [TP, '<Icon size={28} color={iconColor} />']] }); // beside the entity's title and its type line
+}
+
+// ─ ProfilePreviewCard — tap a comment's author ─
+const PV = SF_NESTED.profilePreview;
+const PV_SHEET: Needle = [PV, /sheet: \{\s*backgroundColor: color\.paper,/];
+add({ id: 'profilePreview.close', fg: color.mute, on: 'sheetPaper', kind: 'ui', at: [[SF.comments, '<ProfilePreviewCard'], PV_SHEET, [PV, '<X size={20} color={color.mute} />']] });
+add({ id: 'profilePreview.loading', fg: color.mute, on: 'sheetPaper', kind: 'ui', at: [PV_SHEET, [PV, '<ActivityIndicator size="large" color={color.mute} />']] });
+add({ id: 'profilePreview.empty', fg: color.mute, on: 'sheetPaper', kind: 'text', at: [PV_SHEET, [PV, 'emptyText: { ...t.body, color: color.mute },']] });
+add({ id: 'profilePreview.avatarInitials', fg: '#FFFFFF', on: 'sheetDeep', wasOn: 'sheetHaze', kind: 'text', at: [[PV, 'style={s.avatar}'], [PV, "backgroundColor: color.deep, // AvatarImage's own ground"], [SF_NESTED.avatarImage, "initials: { color: '#fff', fontWeight: '700' },"]] });
+add({ id: 'profilePreview.name', fg: color.ink, on: 'sheetPaper', kind: 'text', at: [PV_SHEET, [PV, "name: { ...t.bodyStrong, color: color.ink, fontWeight: '700', marginTop: space.xs, fontSize: 17 },"]] });
+add({ id: 'profilePreview.handle', fg: color.mute, on: 'sheetPaper', kind: 'text', at: [PV_SHEET, [PV, 'handleText: { ...t.small, color: color.mute },']] });
+add({ id: 'profilePreview.bio', fg: color.ink, on: 'sheetPaper', kind: 'text', at: [PV_SHEET, [PV, /bio: \{\s*\.\.\.t\.body,\s*color: color\.ink,/]] });
+add({ id: 'profilePreview.statNum', fg: color.ink, on: 'sheetPaper', kind: 'text', at: [PV_SHEET, [PV, "statNum: { ...t.bodyStrong, color: color.ink, fontWeight: '700' },"]] });
+add({ id: 'profilePreview.statLabel', fg: color.mute, on: 'sheetPaper', kind: 'text', at: [PV_SHEET, [PV, 'statLabel: { ...t.small, color: color.mute, fontSize: 11 },']] });
+add({ id: 'profilePreview.view', fg: color.onInk, on: 'sheetInk', kind: 'text', at: [[PV, /viewBtn: \{\s*backgroundColor: color\.ink,/], [PV, "viewBtnText: { ...t.bodyStrong, color: color.onInk, fontWeight: '700' },"]] });
+
+// ─ EngagementUserListSheet — tap a comment's like count ─
+const EU = SF_NESTED.likers;
+const EU_SHEET: Needle = [EU, /sheet: \{\s*backgroundColor: color\.paper,/];
+add({ id: 'likers.title', fg: color.ink, on: 'sheetPaper', kind: 'text', at: [[SF.comments, '<EngagementUserListSheet'], EU_SHEET, [EU, /title: \{\s*flex: 1,\s*\.\.\.t\.heading,\s*color: color\.ink,/]] });
+add({ id: 'likers.close', fg: color.ink, on: 'sheetPaperRaised', kind: 'ui', at: [[EU, '<X size={18} color={color.ink} />'], [EU, /closeBtn: \{[^}]*backgroundColor: color\.paperRaised,/]] });
+add({ id: 'likers.loading', fg: color.signal, on: 'sheetPaper', kind: 'ui', at: [EU_SHEET, [EU, '<ActivityIndicator size="small" color={color.signal} />']] });
+add({ id: 'likers.loadingMore', fg: color.signal, on: 'sheetPaper', kind: 'ui', at: [EU_SHEET, [EU, /color=\{color\.signal\}\n\s*style=\{\{ paddingVertical: 12 \}\}/]] });
+add({ id: 'likers.empty', fg: color.mute, on: 'sheetPaper', kind: 'text', at: [EU_SHEET, [EU, /emptyText: \{\s*\.\.\.t\.body,\s*color: color\.mute,/]] });
+add({ id: 'likers.retry', fg: color.onInk, on: 'sheetSignalStrong', wasOn: 'sheetSignal', kind: 'text', at: [[EU, /retryBtn: \{[^}]*backgroundColor: color\.signalStrong,/], [EU, /retryText: \{\s*\.\.\.t\.bodyStrong,\s*color: color\.onInk,/]] });
+add({ id: 'likers.row.name', fg: color.ink, on: 'sheetPaper', kind: 'text', at: [EU_SHEET, [EU, /name: \{\s*\.\.\.t\.bodyStrong,\s*color: color\.ink,/]] });
+add({ id: 'likers.row.verified', fg: '#1A3A5C', on: 'sheetPaper', kind: 'ui', at: [[EU, '{user.verified ? <VerifiedStamp size="sm" /> : null}'], [SF.verified, "const ink = dark ? 'rgba(250,249,246,0.92)' : '#1A3A5C';"]] });
+add({ id: 'likers.row.handle', fg: color.mute, was: color.faint, on: 'sheetPaper', kind: 'text', at: [EU_SHEET, [EU, /handle: \{\s*\.\.\.t\.small,\s*color: color\.mute,/]] });
+add({ id: 'likers.row.avatarInitials', fg: color.ink, on: 'sheetHaze', kind: 'text', at: [[EU, '<Avatar'], ...AVATAR_FALLBACK] });
+add({ id: 'likers.row.followsYou', fg: color.muteStrong, was: color.mute, on: 'sheetHaze', kind: 'text', at: [[EU, /followsYouBadge: \{\s*backgroundColor: color\.haze,/], [EU, /followsYouText: \{[^}]*color: color\.muteStrong,/]] });
+const EU_FOLLOW: Needle = [EU, /followBtn: \{[^}]*backgroundColor: color\.signalStrong,/];
+add({ id: 'likers.row.follow', fg: color.onInk, on: 'sheetSignalStrong', wasOn: 'sheetSignal', kind: 'text', at: [EU_FOLLOW, [EU, /followText: \{\s*\.\.\.t\.bodyStrong,\s*color: color\.onInk,/]] });
+add({ id: 'likers.row.followSpinner', fg: color.onInk, on: 'sheetSignalStrong', wasOn: 'sheetSignal', kind: 'ui', at: [EU_FOLLOW, [EU, 'color={isFollowing ? color.mute : color.onInk}']] });
+add({ id: 'likers.row.following', fg: color.mute, on: 'sheetPaper', kind: 'text', at: [EU_SHEET, [EU, /followingText: \{\s*\.\.\.t\.bodyStrong,\s*color: color\.mute,/]] });
+add({ id: 'likers.row.followingSpinner', fg: color.mute, on: 'sheetPaper', kind: 'ui', at: [EU_SHEET, [EU, 'color={isFollowing ? color.mute : color.onInk}']] });
+add({ id: 'likers.row.followingOutline', fg: color.haze, on: 'sheetPaper', kind: 'decor', at: [[EU, /followingBtn: \{[^}]*borderColor: color\.haze,/]] }); // "Following" names the button
+
+// ─ ReportSheet — long-press a comment, then Report ─
+const RS = SF_NESTED.report;
+const RS_SHEET: Needle = [RS, /sheet: \{\s*backgroundColor: color\.paperRaised,/];
+const RS_SELECTED: Needle = [RS, "optionRowSelected: { borderColor: color.signal, backgroundColor: color.signal + '0A' },"];
+const RS_PRIMARY: Needle = [RS, /primaryBtn: \{[^}]*backgroundColor: color\.signalStrong,/];
+add({ id: 'report.title', fg: color.ink, on: 'sheetPaperRaised', kind: 'text', at: [[SF.comments, '<ReportSheet'], RS_SHEET, [RS, "title: { ...t.bodyStrong, color: color.ink, fontWeight: '700', fontSize: 16 },"]] });
+add({ id: 'report.sub', fg: color.mute, on: 'sheetPaperRaised', kind: 'text', at: [RS_SHEET, [RS, 'sub:   { ...t.small, color: color.mute, marginBottom: space.md },']] });
+add({ id: 'report.close', fg: color.ink, on: 'sheetPaperRaised', kind: 'ui', at: [RS_SHEET, [RS, '<X size={20} color={color.ink} />']] });
+add({ id: 'report.option.label', fg: color.ink, on: 'sheetPaperRaised', kind: 'text', at: [RS_SHEET, [RS, 'optionLabel:         { ...t.body, color: color.ink },']] });
+add({ id: 'report.option.outline', fg: color.haze, on: 'sheetPaperRaised', kind: 'decor', at: [[RS, /optionRow: \{[^}]*borderColor: color\.haze,/]] }); // each option's label names it
+add({ id: 'report.option.selectedLabel', fg: color.signalStrong, was: color.signal, on: 'sheetPrSignal0A', kind: 'text', at: [RS_SELECTED, [RS, "optionLabelSelected: { color: color.signalStrong, fontWeight: '700' },"]] });
+add({ id: 'report.option.check', fg: color.signalStrong, was: color.signal, on: 'sheetPrSignal0A', kind: 'text', at: [RS_SELECTED, [RS, "check: { fontSize: 14, color: color.signalStrong, fontWeight: '700' },"]] }); // the ✓ glyph, measured as text
+add({ id: 'report.option.selectedOutline', fg: color.signal, on: 'sheetPaperRaised', kind: 'ui', at: [RS_SELECTED] }); // the selected state's second channel; the brand value clears 3:1
+add({ id: 'report.primary.label', fg: color.onInk, on: 'sheetSignalStrong', wasOn: 'sheetSignal', kind: 'text', at: [RS_PRIMARY, [RS, "primaryBtnLabel: { ...t.bodyStrong, color: color.onInk, fontWeight: '700' },"]] });
+add({ id: 'report.primary.spinner', fg: color.onInk, on: 'sheetSignalStrong', wasOn: 'sheetSignal', kind: 'ui', at: [RS_PRIMARY, [RS, '? <ActivityIndicator size="small" color={color.onInk} />\n                  : <Text style={rs.primaryBtnLabel}>Submit report</Text>}']] });
+add({ id: 'report.primary.disabled', fg: atOpacity(color.onInk, 0.45, color.paperRaised), on: 'sheetReportDisabled', wasOn: 'sheetReportDisabledWas', kind: 'decor', at: [RS_PRIMARY, [RS, 'btnDisabled:    { opacity: 0.45 },']] }); // "Next" before a category is chosen (1.4.3)
+add({ id: 'report.back', fg: color.signalStrong, was: color.signal, on: 'sheetPaperRaised', kind: 'text', at: [RS_SHEET, [RS, 'backLabel: { ...t.body, color: color.signalStrong },']] });
+const RS_DETAILS: Needle = [RS, /detailInput: \{[^}]*color: color\.ink,/];
+add({ id: 'report.details.text', fg: color.ink, on: 'sheetPaperRaised', kind: 'text', at: [RS_SHEET, RS_DETAILS] });
+add({ id: 'report.details.placeholder', fg: color.mute, on: 'sheetPaperRaised', kind: 'text', at: [RS_SHEET, [RS, 'placeholder="Describe what happened…"\n                placeholderTextColor={color.mute}']] });
+add({ id: 'report.details.outline', fg: color.haze, on: 'sheetPaperRaised', kind: 'decor', at: [[RS, /detailInput: \{\s*borderWidth: 1,\s*borderColor: color\.haze,/]] }); // its placeholder names it
+add({ id: 'report.details.count', fg: color.mute, was: color.faint, on: 'sheetPaperRaised', kind: 'text', at: [RS_SHEET, [RS, "charCount: { ...t.small, color: color.mute, textAlign: 'right', marginBottom: space.sm },"]] });
+add({ id: 'report.photoLabel', fg: color.mute, on: 'sheetPaperRaised', kind: 'text', at: [RS_SHEET, [RS, "photoLabel: { ...t.small, color: color.mute, fontWeight: '600', marginBottom: 2 },"]] });
+add({ id: 'report.done.icon', fg: '#000000', on: 'sheetPaperRaised', kind: 'decor', at: [[RS, 'doneIcon: { fontSize: 38, marginBottom: space.sm },']] }); // the ✓ in the platform's default text colour, above "Thanks — our team will review this."
+add({ id: 'report.done.sub', fg: color.mute, on: 'sheetPaperRaised', kind: 'text', at: [RS_SHEET, [RS, "doneSub:  { ...t.body, color: color.mute, textAlign: 'center' },"]] });
+const RS_SAFETY: Needle = [RS, "backgroundColor: '#FEF3C7',"];
+add({ id: 'report.safety.title', fg: '#92400E', on: 'sheetSafety', kind: 'text', at: [RS_SAFETY, [RS, "safetyTitle: { ...t.small, fontWeight: '700', color: '#92400E', marginBottom: 2 },"]] });
+add({ id: 'report.safety.sub', fg: '#92400E', on: 'sheetSafety', kind: 'text', at: [RS_SAFETY, [RS, "safetySub:   { ...t.small, color: '#92400E', lineHeight: 16 },"]] });
+add({ id: 'report.safety.link', fg: '#92400E', on: 'sheetSafety', kind: 'text', at: [RS_SAFETY, [RS, "safetyLink:  { ...t.small, color: '#92400E', fontWeight: '700', textDecorationLine: 'underline', marginTop: 4 },"]] });
+add({ id: 'report.safety.icon', fg: '#B45309', on: 'sheetSafety', kind: 'decor', at: [RS_SAFETY, [RS, '<ShieldAlert size={16} color="#B45309" />']] }); // beside the banner's title
+add({ id: 'report.block.label', fg: color.signalStrong, was: color.signal, on: 'sheetPaperRaised', kind: 'text', at: [RS_SHEET, [RS, "blockBtnLabel: { ...t.bodyStrong, color: color.signalStrong, fontWeight: '700' },"]] });
+add({ id: 'report.block.outline', fg: color.signal, on: 'sheetPaperRaised', kind: 'decor', at: [[RS, /blockBtn: \{[^}]*borderColor: color\.signal,/]] }); // "Also block …" names the button
+add({ id: 'report.block.busy', fg: atOpacity(color.signal, 0.45, color.paperRaised), on: 'sheetPaperRaised', kind: 'decor', at: [[RS, '? <ActivityIndicator size="small" color={color.signal} />'], [RS, 'style={[rs.blockBtn, blockBusy && rs.btnDisabled]}']] }); // disabled while blocking (1.4.3)
+add({ id: 'report.done.button', fg: color.mute, on: 'sheetPaperRaised', kind: 'text', at: [RS_SHEET, [RS, 'doneBtnLabel: { ...t.body, color: color.mute },']] });
+// The safety photo: MediaPickerButton's icon button, the sheet it opens, and the picked photo's card.
+const PB = SF_NESTED.photoButton;
+add({ id: 'report.photoButton.icon', fg: color.ink, on: 'sheetPaperRaised', kind: 'ui', at: [[RS, '<MediaPickerButton'], [PB, /iconBtn: \{[^}]*backgroundColor: color\.paperRaised,/], [PB, '<ImageIcon size={22} color={isDisabled ? color.faint : color.ink} />']] });
+add({ id: 'report.photoButton.disabled', fg: atOpacity(color.faint, 0.4, color.paperRaised), on: 'sheetPaperRaised', kind: 'decor', at: [[PB, 'disabled: {\n    opacity: 0.4,']] }); // after the one photo this policy allows (1.4.3)
+const MS = SF_NESTED.sourceSheet;
+const MS_SHEET: Needle = [MS, /sheet: \{\s*backgroundColor: color\.paperRaised,/];
+const MS_CAMERA: Needle = [MS, "<View style={[s.iconCircle, { backgroundColor: color.signal + '18' }]}>"];
+const MS_LIBRARY: Needle = [MS, "<View style={[s.iconCircle, { backgroundColor: color.deep + '18' }]}>"];
+const MS_DENIED: Needle = [MS, 'opacity: 1, // was 0.7'];
+add({ id: 'report.source.title', fg: color.ink, on: 'sheetPaperRaised', kind: 'text', at: [[PB, '<MediaSourceSheet'], MS_SHEET, [MS, /title: \{\s*\.\.\.t\.heading,\s*color: color\.ink,/]] });
+add({ id: 'report.source.cameraIcon', fg: color.signal, on: 'sheetPrSignal18', kind: 'decor', at: [MS_CAMERA, [MS, '<Camera size={20} color={cameraDenied ? color.faint : color.signal} />']] }); // beside "Camera"
+add({ id: 'report.source.cameraLoading', fg: color.signalStrong, was: color.signal, on: 'sheetPrSignal18', kind: 'ui', at: [MS_CAMERA, [MS, "{busy === 'camera' ? (\n                <ActivityIndicator size=\"small\" color={color.signalStrong} />"]] });
+add({ id: 'report.source.libraryIcon', fg: color.deep, on: 'sheetPrDeep18', kind: 'decor', at: [MS_LIBRARY, [MS, '<ImageIcon size={20} color={libraryDenied ? color.faint : color.deep} />']] }); // beside "Photo Library"
+add({ id: 'report.source.libraryLoading', fg: color.deep, on: 'sheetPrDeep18', kind: 'ui', at: [MS_LIBRARY, [MS, '<ActivityIndicator size="small" color={color.deep} />']] });
+add({ id: 'report.source.label', fg: color.ink, on: 'sheetPaperRaised', kind: 'text', at: [MS_SHEET, [MS, /rowLabel: \{\s*\.\.\.t\.bodyStrong,\s*color: color\.ink,/]] });
+add({ id: 'report.source.sub', fg: color.mute, was: color.faint, on: 'sheetPaperRaised', kind: 'text', at: [MS_SHEET, [MS, /rowSub: \{\s*\.\.\.t\.small,\s*color: color\.mute,/]] });
+add({ id: 'report.source.deniedLabel', fg: color.mute, was: atOpacity(color.mute, 0.7, color.paperRaised), on: 'sheetPaperRaised', kind: 'text', at: [MS_DENIED, [MS, /rowLabelDenied: \{\s*color: color\.mute,/]] });
+add({ id: 'report.source.deniedSub', fg: color.mute, was: atOpacity(color.faint, 0.7, color.paperRaised), on: 'sheetPaperRaised', kind: 'text', at: [MS_DENIED, [MS, /rowSub: \{\s*\.\.\.t\.small,\s*color: color\.mute,/]] });
+add({ id: 'report.source.deniedSettings', fg: color.ink, was: atOpacity(color.ink, 0.7, color.paperRaised), on: 'sheetHaze', wasOn: 'sheetDeniedSettingsWas', kind: 'text', at: [MS_DENIED, [MS, /settingsBtn: \{[^}]*backgroundColor: color\.haze,/], [MS, /settingsBtnText: \{[^}]*color: color\.ink,/]] });
+add({ id: 'report.source.deniedIcon', fg: color.faint, on: 'sheetPrSignal18', kind: 'decor', at: [MS_DENIED, [MS, '<Camera size={20} color={cameraDenied ? color.faint : color.signal} />']] }); // beside the denied row's label
+add({ id: 'report.source.cancel', fg: color.mute, on: 'sheetPaperRaised', kind: 'text', at: [MS_SHEET, [MS, /cancelText: \{\s*\.\.\.t\.body,\s*color: color\.mute,/]] });
+add({ id: 'report.source.cancelIcon', fg: color.mute, on: 'sheetPaperRaised', kind: 'decor', at: [[MS, '<X size={16} color={color.mute} />']] }); // beside "Cancel"
+const TR = SF_NESTED.tray;
+const TR_SCRIM: Needle = [TR, /uploadOverlay: \{[^}]*backgroundColor: 'rgba\(0,0,0,0\.55\)',/];
+const TR_REMOVE: Needle = [TR, /removeBtn: \{[^}]*backgroundColor: 'rgba\(0,0,0,0\.55\)',/];
+const TR_ERROR: Needle = [TR, /errorOverlay: \{[^}]*backgroundColor: 'rgba\(255,77,46,0\.6\)',/];
+add({ id: 'report.tray.remove.photoFloor', fg: '#FFFFFF', on: 'trayScrimPhoto', kind: 'ui', at: [[RS, '<MediaAttachmentTray'], TR_REMOVE, [TR, '<X size={12} color="#fff" />']] });
+add({ id: 'report.tray.removeOnError.photoFloor', fg: '#FFFFFF', on: 'trayRemoveOnErrorPhoto', kind: 'ui', at: [TR_ERROR, TR_REMOVE, [TR, '<X size={12} color="#fff" />']] });
+add({ id: 'report.tray.uploading.photoFloor', fg: '#FFFFFF', on: 'trayScrimPhoto', kind: 'ui', at: [TR_SCRIM, [TR, '<ActivityIndicator size="small" color="#fff" testID={`upload-spinner-${item.id}`} />']] });
+add({ id: 'report.tray.progress.photoFloor', fg: '#FFFFFF', on: 'trayTrackPhoto', wasOn: 'trayTrackPhotoWas', kind: 'ui', at: [TR_SCRIM, [TR, /progressBar: \{[^}]*backgroundColor: 'rgba\(17,17,15,0\.4\)',/], [TR, /progressFill: \{[^}]*backgroundColor: '#fff',/]] });
+add({ id: 'report.tray.cancel.photoFloor', fg: '#FFFFFF', on: 'trayCancelPhoto', kind: 'ui', at: [TR_SCRIM, [TR, /cancelBtn: \{[^}]*backgroundColor: 'rgba\(0,0,0,0\.45\)',/], [TR, '<X size={10} color="#fff" />']] });
+add({ id: 'report.tray.retry.photoFloor', fg: '#FFFFFF', on: 'trayRetryPhoto', kind: 'text', at: [TR_ERROR, [TR, /retryBtn: \{[^}]*backgroundColor: 'rgba\(0,0,0,0\.45\)',/], [TR, /retryText: \{\s*color: '#fff',/]] });
+add({ id: 'report.tray.retryIcon.photoFloor', fg: '#FFFFFF', on: 'trayRetryPhoto', kind: 'decor', at: [TR_ERROR, [TR, '<RefreshCw size={14} color="#fff" />']] }); // beside "Retry"
+add({ id: 'report.tray.errorText', fg: color.signalStrong, was: color.signal, on: 'sheetPaperRaised', kind: 'text', at: [RS_SHEET, [TR, /errorText: \{[^}]*color: color\.signalStrong,/]] });
