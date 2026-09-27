@@ -66,7 +66,7 @@ import { IntentSheet } from '../../src/components/map/IntentSheet.tsx';
 import { LayersSheet, loadLayerPreferences } from '../../src/components/map/LayersSheet.tsx';
 import { LivePlaceSheet } from '../../src/components/map/LivePlaceSheet.tsx';
 import { WhyShownSheet } from '../../src/components/map/WhyShownSheet.tsx';
-import { MapContributionSheet } from '../../src/components/map/MapContributionSheet.tsx';
+import { MapContributionSheet } from '../../src/components/map/MapContributionSheet.tsx'; import { usePhotoEvidenceCoverage } from '../../src/hooks/usePhotoEvidenceCoverage.ts';
 import { MapBottomActions } from '../../src/components/map/MapBottomActions.tsx';
 import { LivePulseCard } from '../../src/components/map/LivePulseCard.tsx';
 import { MapHeader, mapHeaderStackOffset } from '../../src/components/map/MapHeader.tsx';
@@ -719,7 +719,7 @@ function FullScreenMapScreenInner() {
    * artifact is evidence for an observation, not a position, and
    * `intel_evidence` must not become a second location store.
    */
-  const requestContributionMedia = useCallback(
+  const pickContributionMedia = useCallback( // offered to the sheet only when photo evidence is covered — see `requestContributionMedia` below
     async (kind: MediaKind): Promise<MapMediaAsset | null> => {
       const assets = await pickMedia({
         title: kind === 'video' ? 'Add video' : 'Add photo',
@@ -789,7 +789,7 @@ function FullScreenMapScreenInner() {
    * such key and the entry points stay hidden — which is the correct direction.
    */
   const contributionsEnabled =
-    isFlagEnabled('map_contributions_enabled') && isFlagEnabled('intel_capture_quick_signal');
+    isFlagEnabled('map_contributions_enabled') && isFlagEnabled('intel_capture_quick_signal'); const photoEvidenceCovered = usePhotoEvidenceCoverage(contributionsEnabled); const requestContributionMedia = photoEvidenceCovered ? pickContributionMedia : undefined; // census-map §45.12: no photo step, so no upload, unless the server says this account's consent covers photos (fail-closed)
 
   const {
     enabledLayers,

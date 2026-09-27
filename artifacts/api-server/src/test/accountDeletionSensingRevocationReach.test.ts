@@ -188,7 +188,7 @@ const MEM_HIT = "99999999-9999-4999-8999-999999999991";
 const MEM_MISS = "99999999-9999-4999-8999-999999999992";
 const MEM_P3 = "99999999-9999-4999-8999-999999999993";
 const MEM_OWN = "99999999-9999-4999-8999-999999999994";
-const SERVING = { privacy_eligible: true, expires_at: new Date(NOW + 24 * 3_600_000).toISOString() };
+const SERVING = { privacy_eligible: true, expires_at: new Date(Math.max(NOW, Date.now()) + 24 * 3_600_000).toISOString() }; // "standing" against whichever clock the run uses: executeAccountDeletion reads the real one, so a fixed NOW + 24 h expired at 2026-09-27T07:00Z
 
 function fixtureRows(): Record<string, Row[]> {
   return {

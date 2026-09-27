@@ -19,6 +19,10 @@
 --
 -- It changes no row. Sealed references stay sealed (see the 3360 rollback for
 -- why nothing may un-seal them).
+--
+-- It deletes 3361's schema_migration_ledger row (the runner writes it in the
+-- file's own transaction), so a later run of scripts/src/apply-migrations.ts
+-- re-applies 3361 instead of taking it as applied (census-map §45.11).
 
 BEGIN;
 
@@ -115,6 +119,9 @@ GRANT EXECUTE ON FUNCTION public.intel_evidence_rekey_reference(uuid, text, text
 COMMENT ON FUNCTION public.intel_evidence_rekey_reference(uuid, text, text) IS
   'Remediation for census-map §45: replaces ONE photo/video evidence row''s pre-3360 plaintext storage key with its sealed form, only if the row still holds exactly that plaintext value. Lifts the append-only row guard for that one UPDATE and restores it before returning, as 3002 §5 did for actor_id. service_role only. Dropped by 3361.';
 
+DELETE FROM public.schema_migration_ledger
+ WHERE filename = '3361_intel_evidence_sealed_reference_validate.sql';
+
 DO $post$
 BEGIN
   IF NOT EXISTS (
@@ -127,6 +134,9 @@ BEGIN
   END IF;
   IF to_regprocedure('public.intel_evidence_rekey_reference(uuid, text, text)') IS NULL THEN
     RAISE EXCEPTION 'POSTCONDITION FAILED: intel_evidence_rekey_reference was not re-created.';
+  END IF;
+  IF EXISTS (SELECT 1 FROM public.schema_migration_ledger WHERE filename = '3361_intel_evidence_sealed_reference_validate.sql') THEN
+    RAISE EXCEPTION 'POSTCONDITION FAILED: the ledger still records 3361 as applied after rollback.';
   END IF;
 END $post$;
 

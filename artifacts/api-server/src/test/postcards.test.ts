@@ -151,10 +151,12 @@ function buildFakeClient(tokenToId: Record<string, string>) {
     let updateData: any = null;
     let deleteMode = false;
     let countMode = false;
+    let returning = false;
 
     const b: any = {
       select(_cols?: string, opts?: any) {
         if (opts?.count === 'exact' && opts?.head === true) countMode = true;
+        if (deleteMode) returning = true; // census-media §37.10: delete().select() returns the deleted rows, as PostgREST does
         return b;
       },
       eq(col: string, val: any)    { filtered = filtered.filter((r) => r[col] === val); return b; },
@@ -230,7 +232,7 @@ function buildFakeClient(tokenToId: Record<string, string>) {
             const toDelete = new Set(filtered.map((r: any) => r.id));
             allPostMedia = allPostMedia.filter((r) => !toDelete.has(r.id));
           }
-          return cb({ data: null, error: null });
+          return cb({ data: returning ? filtered.map((r: any) => ({ ...r })) : null, error: null });
         }
 
         if (updateData !== null) {
@@ -1777,14 +1779,15 @@ describe('census-media §37.9 — a moderation decision on a postcard file refre
     assert.deepEqual(body.postcard, { state: 'synced', mediaCount: 1, cover: 'repointed' });
   });
 
-  it('REJECT the only counted file: the count goes to 0; with no file left that counts the cover is left and says so', async () => {
+  it('REJECT the only counted file: the count goes to 0; with no file left that counts the cover is CLEARED (census-media §37.10 item 3; was: left, and said so)', async () => {
     seedFile(A_ID, 0); seedPassport(A_ID, 1);
     const { status, body } = await moderate(A_ID, 'reject');
     assert.equal(status, 200, JSON.stringify(body));
     assert.equal(posts[POST_ID].media_count, 0, 'a rejected file is no longer counted');
     assert.equal(posts[POST_ID].primary_media_type, 'none');
     assert.equal(allPostcards[0].media_count, 0);
-    assert.deepEqual(body.postcard, { state: 'synced', mediaCount: 0, cover: 'no_countable_file' });
+    assert.equal(allPostcards[0].media_url, null, 'the cover is not left on the rejected file');
+    assert.deepEqual(body.postcard, { state: 'synced', mediaCount: 0, cover: 'cleared' });
   });
 
   it('a decision that does not change whether the file counts does not recount (approve an approved file; flag a file still processing)', async () => {
@@ -1884,5 +1887,289 @@ describe('census-media §37.9 — a moderation decision on a postcard file refre
     for (const restated of ['media_count', 'countsTowardPostcard', 'NON_DISTRIBUTABLE_MEDIA_MODERATION_STATES', 'primary_media_type', 'passport_postcards']) {
       assert.ok(!src.includes(restated), `routes/adminMedia.ts mentions ${restated} — the rule belongs to routes/postcards.ts`);
     }
+  });
+});
+
+// ── census-media §37.10: §37.9.5's findings — owner delete, the cleared cover, two moderators, no uploader ──
+describe('census-media §37.10 — the owner delete moves the cover, an uncountable postcard has no cover, and two moderators cannot leave a stale count', () => {
+  const ADMIN_ID = '00000000-0000-0000-0000-000000000c0b';
+  const TOKEN_ADMIN = 'fake-pc-admin-2';
+  const A_ID = '20000000-0000-0000-0000-000000000da1';
+  const B_ID = '20000000-0000-0000-0000-000000000db2';
+  const url = (id: string) => `https://cdn.test/${id}.jpg`;
+  const tokens = () => ({ [TOKEN_OWNER]: OWNER_ID, [TOKEN_OTHER]: OTHER_ID, [TOKEN_ADMIN]: ADMIN_ID });
+
+  beforeEach(() => {
+    __flagRows = [];
+    allProfiles.push({ id: ADMIN_ID, role: 'admin', username: 'moderator2', handle: 'moderator2', account_status: 'active' });
+    _setTestClient(buildFakeClient(tokens()), true);
+  });
+
+  function seedFile(id: string, sortOrder: number, moderation = 'approved', processing = 'ready') {
+    allPostMedia.push({
+      id, post_id: POST_ID, user_id: OWNER_ID, media_type: 'image', storage_bucket: 'post-media',
+      storage_path: `post-media/${OWNER_ID}/${POST_ID}/${id}.jpg`, thumbnail_storage_path: null, public_url: url(id),
+      mime_type: 'image/jpeg', file_size_bytes: 500_000, processing_status: processing, moderation_status: moderation, sort_order: sortOrder,
+    });
+  }
+  function seedPassport(cover: string | null, mediaCount: number) {
+    allPostcards.push({
+      id: 'pc-37-10', post_id: POST_ID, user_id: OWNER_ID, media_url: cover, media_count: mediaCount, has_video: false, primary_media_type: 'image',
+      caption: 'Test postcard', location_name: null, location_city: 'Tokyo', location_country: 'Japan', location_verified: false,
+      stamp_eligible: false, visibility: 'public', status: 'active', pinned_at: null, note: null, created_at: '2026-09-27T00:00:00Z',
+    });
+    posts[POST_ID].media_count = mediaCount;
+  }
+  const moderate = (id: string, action: string) =>
+    apiReq('POST', `/admin/media/${id}/moderate`, { action, target: 'post_media' }, TOKEN_ADMIN);
+  const ownerDelete = (id: string) => apiReq('DELETE', `/postcards/${POST_ID}/media/${id}`, undefined, TOKEN_OWNER);
+  const status = (id: string) => allPostMedia.find((m) => m.id === id)?.moderation_status;
+
+  /**
+   * A client whose FIRST write matching `match` waits at a gate. The chain is
+   * recorded and replayed against the live store when the gate opens, so a
+   * compare-and-set sees the row as it is THEN — which is what two concurrent
+   * requests against one database look like.
+   */
+  function gatedClient(match: (table: string, verb: string, arg: any) => boolean) {
+    let release!: () => void; const gate = new Promise<void>((r) => { release = r; });
+    let reached!: () => void; const reachedP = new Promise<void>((r) => { reached = r; });
+    let used = false;
+    const client = buildFakeClient(tokens());
+    const from = client.from.bind(client);
+    (client as any).from = (table: string) => {
+      const calls: Array<[string, any[]]> = [];
+      let gated = false;
+      const replay = async () => {
+        if (gated) { reached(); await gate; }
+        let b: any = from(table);
+        for (const [m, a] of calls) b = b[m](...a);
+        return { b };
+      };
+      const proxy: any = new Proxy({}, {
+        get(_t, prop: string | symbol) {
+          if (prop === 'then') return (ok: any, bad: any) => replay().then(({ b }) => b.then(ok, bad));
+          if (prop === 'maybeSingle' || prop === 'single') return () => replay().then(({ b }) => b[prop]());
+          return (...a: any[]) => {
+            if (!used && (prop === 'update' || prop === 'delete') && match(table, String(prop), a[0])) { used = true; gated = true; }
+            calls.push([String(prop), a]);
+            return proxy;
+          };
+        },
+      });
+      return proxy;
+    };
+    return { client, release, reached: reachedP };
+  }
+
+  // ── Item 1 ──
+  it('ITEM 1 — the OWNER deleting the cover file moves the cover to the next file that counts; deleting the last clears it', async () => {
+    seedFile(A_ID, 0); seedFile(B_ID, 1); seedPassport(url(A_ID), 2);
+    const first = await ownerDelete(A_ID);
+    assert.equal(first.status, 200, JSON.stringify(first.body));
+    assert.equal(posts[POST_ID].media_count, 1);
+    assert.equal(allPostcards[0].media_url, url(B_ID), 'the cover is not left on the removed file');
+    const last = await ownerDelete(B_ID);
+    assert.equal(last.status, 200, JSON.stringify(last.body));
+    assert.equal(posts[POST_ID].media_count, 0);
+    assert.equal(allPostcards[0].media_url, null, 'with no file left the cover is cleared, never left on a removed file');
+  });
+
+  it('ITEM 1 — the owner delete reads the removed file\'s URL by NAME (a real database returns only what a select names)', async () => {
+    const selects: string[] = [];
+    const client = buildFakeClient(tokens());
+    const from = client.from.bind(client);
+    (client as any).from = (table: string) => {
+      const b = from(table);
+      if (table === 'post_media') {
+        const select = b.select;
+        b.select = (cols?: string, opts?: unknown) => { selects.push(String(cols ?? '')); return select(cols, opts); };
+      }
+      return b;
+    };
+    _setTestClient(client, true);
+    seedFile(A_ID, 0); seedFile(B_ID, 1); seedPassport(url(A_ID), 2);
+    assert.equal((await ownerDelete(A_ID)).status, 200);
+    const load = selects.find((c) => /\bstorage_bucket\b/.test(c) && /\bprocessing_status\b/.test(c) && !/\bsort_order\b/.test(c));
+    assert.ok(load, `the delete's read ran (selects: ${JSON.stringify(selects)})`);
+    assert.match(load!, /\bpublic_url\b/);
+  });
+
+  it('ITEM 1 — an owner delete whose recount could not read writes nothing to the cover either', async () => {
+    const client = buildFakeClient(tokens());
+    const from = client.from.bind(client);
+    (client as any).from = (table: string) => {
+      const b = from(table);
+      if (table === 'post_media') {
+        const select = b.select;
+        b.select = (cols?: string, opts?: unknown) => {
+          if (/\bsort_order\b/.test(String(cols ?? ''))) {
+            const failing: any = { eq: () => failing, then: (ok: any) => Promise.resolve({ data: null, error: { message: 'read failed' } }).then(ok) };
+            return failing;
+          }
+          return select(cols, opts);
+        };
+      }
+      return b;
+    };
+    _setTestClient(client, true);
+    seedFile(A_ID, 0); seedFile(B_ID, 1); seedPassport(url(A_ID), 2);
+    assert.equal((await ownerDelete(A_ID)).status, 200);
+    assert.equal(posts[POST_ID].media_count, 2, 'no zeros');
+    assert.equal(allPostcards[0].media_url, url(A_ID), 'an unread recount proves nothing about the cover: it is not cleared on a guess');
+  });
+
+  // ── Item 3 ──
+  it('ITEM 3 — a cleared cover is FILLED when a file counts again: a moderator releasing it, or the owner uploading one (/complete)', async () => {
+    seedFile(A_ID, 0); seedPassport(url(A_ID), 1);
+    const rejected = await moderate(A_ID, 'reject');
+    assert.equal(rejected.status, 200, JSON.stringify(rejected.body));
+    assert.equal(allPostcards[0].media_url, null, 'precondition: cleared');
+    const released = await moderate(A_ID, 'approve');
+    assert.equal(released.status, 200, JSON.stringify(released.body));
+    assert.equal(allPostcards[0].media_url, url(A_ID), 'the released file is the cover again');
+    assert.deepEqual(released.body.postcard, { state: 'synced', mediaCount: 1, cover: 'filled' });
+
+    const flagged = await moderate(A_ID, 'flag');
+    assert.equal(flagged.status, 200);
+    assert.equal(allPostcards[0].media_url, null, 'precondition: cleared again');
+    allPostMedia.push({
+      id: MEDIA_ID, post_id: POST_ID, user_id: OWNER_ID, media_type: 'image', storage_bucket: 'post-media',
+      storage_path: `${OWNER_ID}/${POST_ID}/${MEDIA_ID}.jpg`, public_url: '', mime_type: 'image/jpeg',
+      file_size_bytes: 500_000, processing_status: 'pending', moderation_status: 'pending', sort_order: 1,
+    });
+    const done = await apiReq('POST', `/postcards/${POST_ID}/media/${MEDIA_ID}/complete`, { mimeType: 'image/jpeg', fileSizeBytes: 500_000 }, TOKEN_OWNER);
+    assert.equal(done.status, 200, JSON.stringify(done.body));
+    const uploaded = allPostMedia.find((m) => m.id === MEDIA_ID)!;
+    assert.ok(uploaded.public_url, 'the comparison is not vacuous');
+    assert.equal(allPostcards[0].media_url, uploaded.public_url, '/complete fills a cleared cover');
+    assert.equal(allPostcards.length, 1, 'the existing postcard is filled, not a second one made');
+  });
+
+  it('ITEM 3 — before 3359 the database refuses a null cover: the clear is reported as failed and the cover is left, never guessed', async () => {
+    const client = buildFakeClient(tokens());
+    const from = client.from.bind(client);
+    (client as any).from = (table: string) => {
+      const b = from(table);
+      if (table === 'passport_postcards') {
+        const update = b.update;
+        b.update = (d: any) => {
+          if (d && 'media_url' in d && d.media_url === null) {
+            const refused: any = { eq: () => refused, then: (ok: any) => Promise.resolve({ data: null, error: { code: '23502', message: 'null value in column "media_url" violates not-null constraint' } }).then(ok) };
+            return refused;
+          }
+          return update(d);
+        };
+      }
+      return b;
+    };
+    _setTestClient(client, true);
+    seedFile(A_ID, 0); seedPassport(url(A_ID), 1);
+    const { status: st, body } = await moderate(A_ID, 'reject');
+    assert.equal(st, 200, JSON.stringify(body));
+    assert.equal(posts[POST_ID].media_count, 0, 'the count still drops');
+    assert.equal(allPostcards[0].media_url, url(A_ID), 'the refused clear leaves the cover as it was');
+    assert.deepEqual(body.postcard, { state: 'synced', mediaCount: 0, cover: 'failed' });
+  });
+
+  it('ITEM 3 — the readers of a null cover: the public and the owner postcard lists return mediaUrl null', async () => {
+    seedPassport(null, 0);
+    const pub = await apiReq('GET', '/users/owner/passport/postcards');
+    assert.equal(pub.status, 200, JSON.stringify(pub.body));
+    assert.equal(pub.body.postcards.length, 1);
+    assert.equal(pub.body.postcards[0].mediaUrl, null);
+    const mine = await apiReq('GET', '/me/passport/postcards', undefined, TOKEN_OWNER);
+    assert.equal(mine.status, 200, JSON.stringify(mine.body));
+    assert.equal(mine.body.postcards.length, 1);
+    assert.equal(mine.body.postcards[0].mediaUrl, null);
+  });
+
+  // ── Item 4 ──
+  it('ITEM 4 — compare-and-set: a rejection whose read went stale (an approval landed first) is decided from the approved state its write replaced', async () => {
+    seedFile(A_ID, 0, 'flagged');
+    const g = gatedClient((table, verb, arg) => table === 'post_media' && verb === 'update' && arg?.moderation_status === 'rejected');
+    _setTestClient(g.client, true);
+    const rejecting = moderate(A_ID, 'reject'); // reads 'flagged', then waits at its write
+    await g.reached;
+    const approved = await moderate(A_ID, 'approve');
+    assert.equal(approved.status, 200, JSON.stringify(approved.body));
+    assert.equal(posts[POST_ID].media_count, 1, 'precondition: the approval counted the file');
+    assert.equal(allPostcards.length, 1, 'precondition: and made the passport postcard');
+    g.release();
+    const rejected = await rejecting;
+    assert.equal(rejected.status, 200, JSON.stringify(rejected.body));
+    assert.equal(status(A_ID), 'rejected');
+    assert.equal(posts[POST_ID].media_count, 0, 'the rejection uncounted the file the approval had counted');
+    assert.equal(allPostcards[0].media_url, null, 'and the cover left it');
+  });
+
+  it('ITEM 4 — re-read after write: an approval whose recount was overtaken by a rejection re-runs the step, so the stale count does not stand', async () => {
+    seedFile(A_ID, 0, 'flagged');
+    const g = gatedClient((table, verb, arg) => table === 'posts' && verb === 'update' && arg && 'media_count' in arg);
+    _setTestClient(g.client, true);
+    const approving = moderate(A_ID, 'approve'); // counts the file (1), then waits before writing that count
+    await g.reached;
+    const rejected = await moderate(A_ID, 'reject');
+    assert.equal(rejected.status, 200, JSON.stringify(rejected.body));
+    assert.equal(posts[POST_ID].media_count, 0, 'precondition: the rejection wrote 0');
+    g.release();
+    const approved = await approving;
+    assert.equal(approved.status, 200, JSON.stringify(approved.body));
+    assert.equal(status(A_ID), 'rejected');
+    assert.equal(posts[POST_ID].media_count, 0, 'the approval\'s stale 1 was re-derived after it re-read the file');
+    assert.ok(allPostcards.every((pc) => pc.media_url !== url(A_ID)), 'no passport cover is left on the rejected file');
+  });
+
+  it('ITEM 4 — the admin delete decides from the row it deleted (RETURNING), not from its earlier read', async () => {
+    seedFile(A_ID, 0, 'flagged');
+    const g = gatedClient((table, verb) => table === 'post_media' && verb === 'delete');
+    _setTestClient(g.client, true);
+    const deleting = moderate(A_ID, 'delete'); // reads 'flagged', audits, then waits at the row delete
+    await g.reached;
+    const approved = await moderate(A_ID, 'approve');
+    assert.equal(approved.status, 200, JSON.stringify(approved.body));
+    assert.equal(posts[POST_ID].media_count, 1, 'precondition: the approval counted the file');
+    g.release();
+    const deleted = await deleting;
+    assert.equal(deleted.status, 200, JSON.stringify(deleted.body));
+    assert.equal(allPostMedia.length, 0);
+    assert.equal(posts[POST_ID].media_count, 0, 'the deleted file was counted when it was deleted');
+    assert.equal(allPostcards[0].media_url, null, 'and the cover left it');
+  });
+
+  it('ITEM 4 — a status that keeps moving under the write is refused as a conflict after bounded retries; nothing is re-derived from a state nobody can vouch for', async () => {
+    const client = buildFakeClient(tokens());
+    const from = client.from.bind(client);
+    let casAttempts = 0;
+    (client as any).from = (table: string) => {
+      const b = from(table);
+      if (table === 'post_media') {
+        b.update = () => {
+          // Every compare-and-set finds the status already moved: it matches nothing.
+          casAttempts += 1;
+          const none: any = { eq: () => none, is: () => none, select: () => none, then: (ok: any) => Promise.resolve({ data: [], error: null }).then(ok) };
+          return none;
+        };
+      }
+      return b;
+    };
+    _setTestClient(client, true);
+    seedFile(A_ID, 0, 'flagged');
+    const { status: st, body } = await moderate(A_ID, 'approve');
+    assert.equal(st, 409, JSON.stringify(body));
+    assert.equal(casAttempts, 3, 'the first write and two retries, then it stops');
+    assert.equal(posts[POST_ID].media_count, 0, 'no step ran');
+    assert.equal(allPostcards.length, 0);
+  });
+
+  // ── Item 5 ──
+  it('ITEM 5 — a file with no uploader id: the passport postcard is made for the post\'s author, as the upload path would', async () => {
+    seedFile(A_ID, 0, 'flagged');
+    allPostMedia[0].user_id = null;
+    const { status: st, body } = await moderate(A_ID, 'approve');
+    assert.equal(st, 200, JSON.stringify(body));
+    assert.equal(posts[POST_ID].media_count, 1);
+    assert.equal(allPostcards.length, 1, 'the passport postcard is made');
+    assert.equal(allPostcards[0].user_id, OWNER_ID, 'for the post\'s author');
   });
 });

@@ -1991,6 +1991,18 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "travel-buddy-standalone/app/media-viewer/__tests__/pageDots.layout.component.test.tsx",
     // WIDENED 2026-09-27 by census-media §42 (lane Q, integration): the suite that proves Pulse, Discovery event posts and the trip feed apply mapPublicPost's rule, which §42 cites as its evidence; §36's disclosure rule is graded through it outside Media.
     "artifacts/api-server/src/test/postLocationModeOutsideMedia.test.ts",
+    // WIDENED 2026-09-27 by lane V (census-media §37.10): the readers of passport_postcards.media_url that §37.10.3's null cover rests on (MD269) — a change to any of them can break "every reader handles a null cover".
+    "artifacts/api-server/src/routes/passport.ts",
+    "travel-buddy-standalone/src/components/PostcardsTab.tsx",
+    "travel-buddy-standalone/src/types/models.ts",
+    "travel-buddy-standalone/src/utils/destinationGrouping.ts",
+    "travel-buddy-standalone/app/destinations/[city].tsx",
+    "travel-buddy-standalone/src/services/profile.ts",
+    // WIDENED 2026-09-27 by census-media §37.10 (integration): MD269's activation now names 3359 (a postcard with no countable file gets a null cover), so the migration and its rollback are graded.
+    "artifacts/api-server/src/migrations/3359_passport_postcard_cover_nullable.sql",
+    "db/rollback/2026-09-27-3359-passport-postcard-cover-nullable-rollback.sql",
+    // WIDENED 2026-09-27 by census-media §40.12–§40.13 (lane R, round 2): the inset hook the Gems and Watch rails and the Gems bottom content now take their tab-bar and FAB clearance from; a change to useLayoverAwareBottomInset can move them under the tab button again.
+    "travel-buddy-standalone/src/hooks/useBottomInset.ts",
     // WIDENED 2026-09-27 by census-media §44 (lane G1): migration 3362 (the client roles' column grants on posts), its rollback, and the database suite that proves both, which §44 cites as the fix for §42.6 item 5.
     "artifacts/api-server/src/migrations/3362_posts_client_column_grants.sql",
     "db/rollback/2026-09-27-3362-posts-client-column-grants-rollback.sql",
@@ -2483,6 +2495,9 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/migrations/2191_memory_projector_content_and_support.sql",
     // WIDENED 2026-09-27 by lane X (census-map §45): M154's executed evidence that the stored evidence reference names no account.
     "artifacts/api-server/src/test/intelEvidenceReference.test.ts",
+    // WIDENED 2026-09-27 by lane X (census-map §45.11–§45.12): the local-harness rehearsal of 3360/3361, and the hook that decides whether the map offers the photo step.
+    "artifacts/api-server/src/test/db/intelEvidenceSealedReference.db.test.ts",
+    "travel-buddy-standalone/src/hooks/usePhotoEvidenceCoverage.ts",
   ],
   "census-sensing.md": [
     // ADDED 2026-09-14 on the Sensing lane's standing request. The scope covered

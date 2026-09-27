@@ -31,14 +31,14 @@ import {
   StyleSheet,
   Share,
   Alert,
-  Dimensions,
+  Dimensions, useWindowDimensions, type LayoutChangeEvent,
 } from 'react-native';
 import { Avatar } from '../ui/Avatar.tsx';
 import { recordMediaShare, mediaSignalRecorder } from '../../services/mediaInteractions.ts'; import { emitMediaSignal, emitMediaNorthStar } from '../../features/media/telemetry/mediaTelemetry.ts';
 import { ShareSheet } from '../ShareSheet.tsx';
 import { formatCompactCount } from '../../lib/counterFormat.ts';
 import { LinearGradient } from 'expo-linear-gradient';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useSafeAreaInsets } from 'react-native-safe-area-context'; import { useLayoverAwareBottomInset } from '../../hooks/useBottomInset.ts'; import { getOverlayHeaderTotalHeight } from '../ui/AppHeader.tsx'; // census-media §40.11: the rail's vertical budget
 import { router } from 'expo-router';
 import {
   MessageCircle,
@@ -241,7 +241,7 @@ export function WatchItemOverlay({
   }, [item.linkedEntity]);
 
   const bottomPad = Math.max(insets.bottom + 100, 120); // leave space for progress bar + nav pill
-
+  const rail = useWatchRailFit(insets.top, bottomPad, contextFirst); // census-media §40.11: the rail clears the Media tab's FAB and fits under the header
   return (
     <View style={StyleSheet.absoluteFill} pointerEvents="box-none">
       {/* Cinematic scrim — bottom 65% gradient */}
@@ -398,7 +398,7 @@ export function WatchItemOverlay({
         </View>
 
         {/* ── Right action column ──────────────────────────────────────── */}
-        <View style={s.rightCol} pointerEvents="box-none">{contextFirst ? <ContextCompassButton item={item} /> : null}
+        <View style={[s.rightCol, rail.style]} onLayout={rail.onLayout} testID="watch-action-rail" pointerEvents="box-none">{contextFirst ? <ContextCompassButton item={item} /> : null}
           {/* Stamp button — traveling ink overlay launched from this position */}
           <View ref={stampGroupRef} style={s.heartGroup}>
             <Animated.View style={stampButtonStyle as any}>
@@ -748,3 +748,45 @@ const ctx = StyleSheet.create({
   placeName: { ...t.bodyStrong, color: color.onInk },
   placeHint: { ...t.stamp, color: color.onInkMute },
 });
+
+// ── census-media §40.11 — the Watch rail's vertical budget ───────────────────
+//
+// The rail sat on the overlay's bottom row, 120 above the screen's bottom edge,
+// and the Media tab's FAB (app/(tabs)/media.tsx `fab`: 16 above
+// useLayoverAwareBottomInset(), avatar.s52 tall) floats over the same right
+// edge, so "More options" was under the FAB and a tap on it created a post.
+//
+//   1. The rail's bottom edge now starts space.sm above the FAB's top edge (a
+//      marginBottom on top of the row's bottomPad; the left column is unmoved).
+//   2. The rail's top edge should stay below the chrome over the feed: the
+//      overlay header (getOverlayHeaderTotalHeight) and the mode selector under
+//      it (4 below the header, 46 tall with its border), plus space.sm. When
+//      the rail's natural height (measured, gaps excluded) would cross that
+//      line, its gaps shrink from space.xl toward space.xs. On a short screen
+//      with the context overlay on (census-media §34), even space.xs gaps do not
+//      fit; the rail then keeps its FAB clearance and rises into the selector's
+//      fading scrim, still below the header bar (§40.11 has the numbers).
+const WATCH_RAIL_FAB_CLEARANCE = 16 + avatar.s52 + space.sm;
+const WATCH_RAIL_TOP_CLEARANCE = 4 + 46 + space.sm;
+
+function useWatchRailFit(insetsTop: number, bottomPad: number, contextFirst: boolean) {
+  const { height: windowH } = useWindowDimensions();
+  const fabTopClear = useLayoverAwareBottomInset() + WATCH_RAIL_FAB_CLEARANCE;
+  const railBottom = Math.max(bottomPad, fabTopClear);
+  const budget = windowH - railBottom - (getOverlayHeaderTotalHeight(insetsTop) + WATCH_RAIL_TOP_CLEARANCE);
+  // The rail's children: [Ask Compass], the Stamp group, Comment, Save, Share,
+  // Send to a chat, More options, with one gap between each pair.
+  const gaps = contextFirst ? 6 : 5;
+  const [content, setContent] = useState<number | null>(null);
+  const gap = content === null ? space.xl : watchRailGap(budget, content, gaps);
+  const onLayout = useCallback((e: LayoutChangeEvent) => {
+    const measured = Math.round(e.nativeEvent.layout.height - gap * gaps);
+    setContent((prev) => (prev === measured ? prev : measured));
+  }, [gap, gaps]);
+  return { style: { marginBottom: railBottom - bottomPad, gap }, onLayout };
+}
+
+/** The rail's gap: space.xl when the rail fits its budget, less when it would not, never under space.xs. */
+export function watchRailGap(budget: number, content: number, gaps: number): number {
+  return Math.max(space.xs, Math.min(space.xl, Math.floor((budget - content) / gaps)));
+}

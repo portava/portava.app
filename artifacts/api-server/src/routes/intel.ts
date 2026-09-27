@@ -174,7 +174,7 @@ router.get("/v1/intel/consent", asyncHandler(async (req, res) => {
   // re-stamp a consent the person already gave.
   const out = await getIntelConsentState(getServiceClient()!, auth.user.id);
   if (!out.ok) return sendError(res, "db_error", "could not read your consent state");
-  res.json(out.state);
+  res.json(withPhotoEvidenceCoverage(out.state)); // + coversPhotoEvidence, Gate 2b's own predicate (census-map §45.12)
 }));
 
 router.put("/v1/intel/consent", asyncHandler(async (req, res) => {
@@ -186,7 +186,7 @@ router.put("/v1/intel/consent", asyncHandler(async (req, res) => {
   if (!parsed.success) return sendError(res, "invalid_payload", "enabled (boolean) is required");
   const out = await setIntelConsent(getServiceClient()!, auth.user.id, parsed.data.enabled, parsed.data.disclosureVersion);
   if (!out.ok) return out.reason === "disclosure_version_mismatch" ? sendError(res, "conflict", "disclosure_version_mismatch: the terms changed; review the current text") : sendError(res, "db_error", "consent update failed");
-  res.json(out.state);
+  res.json(out.state ? withPhotoEvidenceCoverage(out.state) : out.state); // the same derived bit after a grant or a withdrawal; an unread-back state still carries none
 }));
 
 // ── Capture ─────────────────────────────────────────────────────────────────
@@ -384,3 +384,6 @@ router.get("/v1/internal/intel/trail/movement", asyncHandler(async (req: Request
 }));
 
 export default router;
+
+// census-map §45.12: the consent read tells the client whether a photo would be kept.
+import { withPhotoEvidenceCoverage } from "../lib/intelEvidenceCapture.js";

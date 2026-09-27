@@ -22,7 +22,7 @@ export interface IntelConsentState {
   consentedAt: string | null;
   withdrawnAt: string | null;
   /** The disclosure version a NEW grant is recorded under. */
-  currentDisclosureVersion: string;
+  currentDisclosureVersion: string; /** Server-derived (Gate 2b's predicate): would a map photo be KEPT for this account? Absent on an older server, which reads as no. */ coversPhotoEvidence?: boolean;
 }
 
 async function authedFetch(path: string, opts: RequestInit = {}): Promise<Response> {

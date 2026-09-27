@@ -809,7 +809,7 @@ export default function MediaViewer() {
           <View style={tailStyles.dotsPill}>{items.map((_, i) => (
             <View
               key={i}
-              style={[ms.dot, i === activeIndex && ms.dotActive]}
+              style={[ms.dot, i === activeIndex && ms.dotActive, pageDotWindow(i, activeIndex, items.length)]}
             />
           ))}</View>
         </View>
@@ -885,4 +885,25 @@ const tailStyles = StyleSheet.create({
 const PAGE_DOTS_SLOT = 2 * 6 + dot.s5 + space.sm;
 function overlayBaseline(insetBottom: number): number {
   return Math.max(insetBottom + 16, 24);
+}
+
+// census-media §40.13 — at most PAGE_DOTS_MAX dots. The pill is 10 px wider
+// per item (a 5 px dot and a 5 px gap), so with the Grid's whole loaded feed as
+// pages it outgrew the left column at ~28 items and the screen at ~36. Up to
+// PAGE_DOTS_MAX items nothing changes. Beyond that the dots are a window of
+// PAGE_DOTS_MAX around the current page (it sits in the middle once it can),
+// and a window edge that has more pages beyond it draws its dot at 3 px instead
+// of 5. The current page keeps its 14 px white dot. The widest pill is
+// 9 × 10 + 20 = 110 px, under any left column (the column is the screen less
+// 93 px: 227 px on a 320 px screen).
+const PAGE_DOTS_MAX = 9;
+const PAGE_DOT_HIDDEN = { display: 'none' } as const;
+const PAGE_DOT_EDGE = { width: 3, height: 3, borderRadius: 1.5 } as const;
+function pageDotWindow(i: number, active: number, count: number) {
+  if (count <= PAGE_DOTS_MAX) return null;
+  const start = Math.max(0, Math.min(active - Math.floor(PAGE_DOTS_MAX / 2), count - PAGE_DOTS_MAX));
+  const end = start + PAGE_DOTS_MAX; // exclusive
+  if (i < start || i >= end) return PAGE_DOT_HIDDEN;
+  if ((i === start && start > 0) || (i === end - 1 && end < count)) return PAGE_DOT_EDGE;
+  return null;
 }

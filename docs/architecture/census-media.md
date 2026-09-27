@@ -10592,6 +10592,263 @@ The rest are the files §37.8.9 lists, plus those that arrived with this merge o
 
 Headline: not restated. No row moved.
 
+### 37.10 Follow-up 3 — §37.9.5's five findings: four fixed, one waits on an owner decision — 2026-09-27
+
+At the integrator's request, lane V merged `wave8-integration` (head `f33daa305`,
+which carries §37.9) into `lane-v-vendor` as a merge commit, then took §37.9.5's
+five findings in order.
+
+Every fix reuses the three pieces §37.9 introduced: `isCountedPostcardFile`,
+`syncPostcardAfterMediaChange` and `repointPassportCover`. No second count
+rule or cover rule exists. Edits are line-neutral or at a file's tail. No flag
+is enabled, and no database is touched. **No verdict moves** (§37.10.7).
+
+#### 37.10.1 Item 1 — the owner's delete moves a cover that sat on the removed file (fixed)
+
+This was live whatever 3356 says: an owner deleting their postcard's cover file
+left `passport_postcards.media_url` on a removed object.
+- The route's read now names the file's URL
+  (`artifacts/api-server/src/routes/postcards.ts:1171#processing_status, public_url') // census-media §37.10 item 1`).
+- After its unchanged recount, the route hands that URL to the one cover rule
+  (`artifacts/api-server/src/routes/postcards.ts:1227#await repointPassportCover(sc, postId, counts, req,`).
+- The cover moves to the first file that still counts. With none left, it is
+  cleared (§37.10.3).
+- A recount whose read failed writes nothing, and that now includes the cover
+  (`artifacts/api-server/src/routes/postcards.ts:1654#if (counts.unread) return 'failed';`).
+
+#### 37.10.2 Item 2 — the canonical cover attachment: NOT built, because moving it needs an owner decision
+
+**How it is written.** Exactly once, when the passport postcard is lazily
+created: `recordEntityMedia(…, entityType: 'postcard', isCover: true)`
+(`artifacts/api-server/src/routes/postcards.ts:1122#void recordEntityMedia(sc, {`).
+- It is fire-and-forget and fail-soft.
+- It is gated by `media_canonical_enabled`, seeded FALSE
+  (`artifacts/api-server/src/migrations/0191_media_assets.sql:101#('media_canonical_enabled', FALSE,`).
+- It upserts one `media_attachments` row. That table is unique only on
+  (asset, entity type, entity)
+  (`artifacts/api-server/src/migrations/0191_media_assets.sql:54#UNIQUE (media_asset_id, entity_type, entity_id)`).
+  Its cover index is not unique, and it has no column saying who wrote a row.
+
+**Why moving it is not mechanical.** The owner can also attach their own assets
+to their own postcard, with `is_cover` and a position, through
+`POST /media/:id/attachments`
+(`artifacts/api-server/src/routes/mediaActions.ts:142#case "postcard":`,
+`artifacts/api-server/src/routes/mediaActions.ts:277#isCover: body.is_cover,`).
+So a postcard's canonical attachments are not a mirror of `media_url`, and the
+system cannot tell its own cover row from one the owner chose.
+
+**The readers.** The canonical projection lists every attachment of the entity,
+and keeps `is_cover` inert
+(`artifacts/api-server/src/lib/media/mediaCanonicalRead.ts:250#is carried for a future cover-first rule and is inert today`).
+The Wall's experience time prefers the cover, and its quick-media row reads
+every `postcard` link.
+
+**The three decisions, exactly:**
+1. **Who owns a postcard's canonical cover?**
+   - (a) The system: it mirrors `media_url`, and an owner-set cover is
+     overwritten when the legacy cover moves.
+   - (b) The owner: the system moves only a cover row whose asset is the file
+     `media_url` just left, and never marks a new one.
+   - (c) Record who wrote each row: a migration adding a writer column to
+     `media_attachments`, and then (a) for system rows only.
+2. **When the legacy cover leaves a file, what happens to that file's postcard
+   attachment?**
+   - Detach it: a `media_attachments` DELETE.
+   - Or keep it as a non-cover attachment. The projection then still lists the
+     file under the postcard; a held asset is refused there by its own
+     canonical state, but a file its owner deleted is not (§37.10.6 item 1).
+3. **Does the move run while `media_canonical_enabled` is off?** It would be
+   correcting rows written while the flag was on.
+   `recordEntityMedia` writes nothing while the flag is off. So a move that may
+   detach but not attach leaves the postcard with no canonical cover.
+
+**What this costs today.** `media_attachments` held no rows in either database
+when `lib/media/mediaCanonicalRead.ts` last recorded its counts (2026-09-07),
+and the flag is off. So no stale canonical postcard cover can exist yet. The
+decision is an activation prerequisite for `media_canonical_enabled`, and
+nothing was built.
+
+#### 37.10.3 Item 3 — a postcard with no countable file has NO cover (fixed; needs 3359 applied)
+
+**The fail-closed state is null.**
+`passport_postcards.media_url` is `text NOT NULL`
+(`artifacts/api-server/baseline/20260819_baseline_structure.sql:7801#media_url text NOT NULL,`).
+So the only value it could keep was the held or removed file's URL. The
+Postcards tab renders that URL as its last fallback
+(`travel-buddy-standalone/src/components/PostcardsTab.tsx:225#card.mediaUrl);`).
+
+**The rule.** One rule, in `repointPassportCover`, decides the cover:
+- A cover that is one of the post's files that no longer counts, or the file
+  just removed, moves to the first file that counts.
+- With no file left that counts, the cover is cleared to null
+  (`artifacts/api-server/src/routes/postcards.ts:1664#return next === null ? 'cleared' : cover ? 'repointed' : 'filled';`).
+- A null cover is filled once a file counts again
+  (`artifacts/api-server/src/routes/postcards.ts:1659#if (cover && !(counts.uncountedUrls.includes(cover) || alsoGone.includes(cover))) return 'kept';`).
+- A cover it cannot prove stale is still left alone.
+
+**`/complete` runs the rule too.** It now belongs to the shared step
+(`artifacts/api-server/src/routes/postcards.ts:1135#const cover = await repointPassportCover(sc, postId, counts, req, alsoGone);`),
+so an owner's new upload fills a cleared cover. This is the one change to
+`/complete`'s writes. Its response is unchanged.
+
+**The outcome.** `no_countable_file` is replaced by `cleared` and `filled`
+(`artifacts/api-server/src/routes/postcards.ts:1636#export type PassportCoverOutcome =`).
+§37.9's REJECT case changed its expectation to match, and names the change.
+
+**The schema.** `artifacts/api-server/src/migrations/3359_passport_postcard_cover_nullable.sql`
+drops the NOT NULL. It is lane V's band and is NOT applied.
+- Its rollback, `db/rollback/2026-09-27-3359-passport-postcard-cover-nullable-rollback.sql`,
+  refuses while any cover is null, rather than invent a value.
+- **Until 3359 is applied**, the database refuses the null. The rule logs it,
+  reports `failed`, and leaves the cover as it was, which is today's behaviour.
+  A test pins that.
+
+**Every reader of `passport_postcards.media_url`, and how it reads null:**
+
+| Reader | Null handling |
+| --- | --- |
+| `GET /users/:u/passport/postcards` (`artifacts/api-server/src/routes/passport.ts:73#mediaUrl: r.media_url ?? null,`) | `null`; pinned by a test |
+| `GET /me/passport/postcards` (`artifacts/api-server/src/routes/passport.ts:639#mediaUrl: r.media_url ?? null,`) | `null`; pinned by a test |
+| `PATCH /passport/postcards/:id` | returns the row as stored |
+| `repointPassportCover` | reads null as "no cover" and fills it |
+| client `PassportPostcard.mediaUrl` (`travel-buddy-standalone/src/types/models.ts:529#mediaUrl: string`) | typed nullable already |
+| client PostcardsTab | last fallback; `displayUri` is already null for every video without a poster |
+| client `utils/destinationGrouping.ts`, `app/destinations/[city].tsx`, `services/profile.ts` `enrichPostcard` | truthiness checks |
+| SQL | no function, view or trigger in the baseline or the migration tree reads the column |
+
+`can_see_postcard` reads status, visibility and the post. The client readers
+were read, not tested.
+
+#### 37.10.4 Item 4 — two moderators on one file (fixed)
+
+**The status write is a compare-and-set** on the status the before-state read
+saw.
+- The route: `artifacts/api-server/src/routes/adminMedia.ts:850#await withPriorModerationStatus(priorPm, sc`.
+- The narrowing: `artifacts/api-server/src/routes/adminMedia.ts:1028#function withPriorModerationStatus(`.
+
+A write that matches nothing means the status moved, or the row went, after the
+read. The row is then read again and the write retried
+(`artifacts/api-server/src/routes/adminMedia.ts:855#let priorAtWrite = priorPm, casConflict = false;`).
+- After two retries the decision is refused with a 409
+  (`artifacts/api-server/src/routes/adminMedia.ts:1061#conflict: true`).
+- So the "did countability change" decision is always made from the state the
+  write actually replaced.
+- If the re-read cannot run, the write goes through unconditionally, as it did
+  before, and the step runs from an unknown prior.
+
+**Re-read after write.** A recount reads and then writes, and a second decision
+can land between the two. So after the step, the file's status is read again.
+If it is no longer the status this decision wrote, the step re-runs from the
+rows as they are, at most twice
+(`artifacts/api-server/src/routes/postcards.ts:1710#for (let rerun = 0; input.recheckMediaId`).
+
+**The admin delete decides from the row it deleted.** The delete's RETURNING
+gives that row
+(`artifacts/api-server/src/routes/adminMedia.ts:838#const { data: deletedRows, error: delErr }`),
+not the read taken before the audit and the storage removal.
+
+The owner's delete always recounts, so there is no skip decision to go stale.
+
+#### 37.10.5 Item 5 — a file with no uploader id (fixed)
+
+**What the correct outcome is.** The passport postcard belongs to the post's
+author.
+- `/postcards/:id/media/upload-url` makes a slot only for the author
+  (`artifacts/api-server/src/routes/postcards.ts:453#if ((postRow as any).author_id !== user.id)`).
+- So `post_media.user_id` is the author, and the column is NOT NULL.
+
+**Recount-only was not correct.** It left a released file's postcard without
+the passport postcard the upload path would have made.
+
+**What the code does now.**
+- The moderation step reads the author from the post when it has no uploader
+  id (`artifacts/api-server/src/routes/postcards.ts:1754#select('author_id')`),
+  and runs the whole step.
+- Only when no author can be read either does it recount and move the cover
+  without making a passport postcard, and it logs that.
+- It cannot make one: `passport_postcards.user_id` is NOT NULL, and there is no
+  one to make it for.
+
+#### 37.10.6 Found while doing it — recorded, not fixed
+
+1. **The owner's delete of a postcard file never reaches the canonical asset.**
+   The route makes no `media_assets` call, and no trigger on `post_media`
+   does. A canonical row for that file stays `active` after its bytes are
+   removed. `MediaLifecycleService` has the `owner_deleted` transition, but
+   nothing on this path calls it. This bears on §37.10.2's second decision.
+2. **A stale step may briefly make a passport postcard.** A step overtaken by a
+   rejection (item 4) can create the passport postcard from its stale count
+   before its re-read. The re-run then clears that postcard's cover and zeroes
+   its count. The postcard row stays, with no cover, as any postcard does whose
+   files are all held.
+3. **Not re-measured here.** The migration apply-order suite reports
+   `3350_media_neighborhood_only_location_mode.sql` (lane P, arrived with this
+   merge) as a shape the applier refuses. 3359 is accepted: it classifies as
+   `unwrapped`.
+
+#### 37.10.7 Tests, mutations, rows, files
+
+**Tests.** There are eleven new cases in
+`artifacts/api-server/src/test/postcards.test.ts`, under "census-media §37.10 —…":
+- item 1 ×3: the cover moves, then clears; the read names `public_url`; an
+  unread recount leaves the cover;
+- item 3 ×3: a cleared cover is filled on release and by `/complete`; the
+  pre-3359 refusal is reported and leaves the cover; both postcard lists return
+  `mediaUrl: null`;
+- item 4 ×4, each interleaving two real requests through a gate that holds one
+  write until the other request has finished:
+  - compare-and-set: a rejection whose read went stale;
+  - re-read after write: an approval whose recount was overtaken;
+  - the delete's RETURNING;
+  - a status that keeps moving → 409 after bounded retries;
+- item 5 ×1: no uploader → the passport postcard is made for the author;
+- plus §37.9's REJECT case, updated from `no_countable_file` to `cleared`.
+
+The fake now returns the deleted rows when `delete()` is followed by
+`select()`, as PostgREST does. postcards passes 95/95, and 446/446 across
+sixteen media and admin suites.
+
+**Mutations.** There were sixteen, run one at a time by the §37.5 harness. All
+sixteen went red, and none survived. The diff hash of the tracked tree was the
+same before and after (`f40f746a…`).
+
+| Id | Mutation | Red in |
+| --- | --- | --- |
+| H1a | the owner delete does not move the cover | item 1 "the cover is not left on the removed file" |
+| H1b | its read drops `public_url` | item 1 "reads the removed file's URL by NAME" |
+| H3a · H3a2 | no clear when nothing counts | item 1 "…the cover is cleared"; §37.9 REJECT |
+| H3b | a null cover is never filled | item 3 "the released file is the cover again" |
+| H3c | the step does not run the cover rule | item 3 "precondition: cleared" |
+| H3d | a refused clear is reported as `cleared` | item 3 "before 3359…" |
+| H3e | an unread recount may clear the cover | item 1 "…could not read writes nothing to the cover" |
+| H3f | the public list maps a null cover to `''` | item 3 "the readers of a null cover" |
+| H4a | no compare-and-set | item 4 "the rejection uncounted the file the approval had counted" |
+| H4b | no retry after a failed compare-and-set | item 4 compare-and-set (404) |
+| H4c · H4d | no re-read after the step / not asked for | item 4 "the approval's stale 1 was re-derived…" |
+| H4e | the delete decides from its earlier read | item 4 "the deleted file was counted when it was deleted" |
+| H4f | exhausted retries are not a conflict | item 4 "…refused as a conflict" |
+| H5a | no author fallback | item 5 "the passport postcard is made" |
+
+**Rows.**
+
+| ID | Was | Now | Evidence |
+| --- | --- | --- | --- |
+| MD269 | W | **W** | §37.9.5's accessible findings are fixed, and the canonical cover waits on the owner (§37.10.2). The owner's delete moves the cover (§37.10.1). A postcard with no countable file has no cover once 3359 is applied (§37.10.3). Two moderators on one file cannot leave a stale count (§37.10.4). A file with no uploader id makes the author's passport postcard (§37.10.5). Still W because of (a), the owner question in §37.8.5, and because no classifier exists. ACTIVATION: 3356; and 3359 for a cleared cover. EXTERNAL: a classifier vendor or staffed review. BLOCKER: the (a) owner rule. |
+
+MD63, MD277, MD280, MD282, MD283, MD284, MD289 and MD293 are unchanged.
+
+**Files changed:**
+- server: `routes/postcards.ts` and `routes/adminMedia.ts`, line-neutral above
+  every cited line, with new code at their tails;
+- migration 3359 and its rollback, both new;
+- tests: `postcards.test.ts`, with the block appended and one fake extended;
+- `checkCensusFreshness.ts`: census-media now watches the six readers of the
+  cover that §37.10.3 rests on. They are `routes/passport.ts`,
+  `PostcardsTab.tsx`, `types/models.ts`, `utils/destinationGrouping.ts`,
+  `app/destinations/[city].tsx` and `services/profile.ts`.
+
+Headline: not restated. No row moved.
+
 ## 33. Lane T — the shared sheets Media opens, fixed through the design system (H7) — 2026-09-27
 
 Lane T owns one row, **MD403**, for one owner ruling, **H7**. The work is on
@@ -12400,6 +12657,275 @@ BUILT ON BRANCH IS NOT MERGED. MERGED IS NOT DEPLOYED.
 | the three test suites in §40.3 | new |
 | `artifacts/api-server/src/scripts/checkCensusFreshness.ts` | census-media's scope widened by one file: the viewer's new suite, which the §40.3 table cites |
 
+### 40.11 Round 2 — the §40.7 findings, measured on the merged tree
+
+The coordinator asked lane R to fix every §40.7 finding that is a functional
+layout defect on a Media surface, with the same method as §40.2–§40.5. The
+branch first took wave8-integration (`9a8a209a4`, which carries lanes F, P,
+T, V and X) as a merge commit, `6e8550cce`. The fixes are in `3097e71f1`.
+
+"Before" below means a web export of `6e8550cce`; "after" means `3097e71f1`.
+The probes ran at 390×844 and 375×667. The Watch, Gems and viewer scenes
+were also run at 390×844 with safe-area insets of top 47 and bottom 34
+injected into the web render (the harness sets the padding of the probe
+element that react-native-safe-area-context reads on web; `Platform.OS`
+stays `web`). The harness now has a fixture flag reply, a verified tile with
+a long name, and 40 extra Grid tiles, each served only to the scene that asks
+for it, so the H8 frames are unchanged.
+
+| §40.7 finding | Verdict | Where |
+| --- | --- | --- |
+| The Watch rail's ⋯ under the FAB | defect; fixed, flag 3341 off and on | §40.12 |
+| The Gems caption and handle under the tab bar | defect; fixed | §40.13 |
+| The page-dot pill outgrowing the column and the screen | defect; fixed (capped) | §40.14 |
+| The Grid's verified stamp meeting the disc | defect; fixed | §40.15 |
+| The Gems rail against the filter bar at 375×667 | not a defect: 9 px clear | §40.16 |
+| The legacy inline ⋯ menu under the block | not reachable: GemsFeed, the only caller, passes `onMore` | §40.7 |
+
+### 40.12 The Watch rail clears the tab button and fits under the header
+
+**Before.** The rail sat on the overlay's bottom row, `max(insets.bottom +
+100, 120)` above the screen's bottom edge. The FAB (16 above
+`useLayoverAwareBottomInset()`, 52 tall) sat over the same right edge.
+
+| Viewport, flag 3341 | Rail | FAB | What went wrong |
+| --- | --- | --- | --- |
+| 390×844, off | y 303–724 | y 680–732 | A tap on ⋯ lands on "Create a post". |
+| 390×844, on | y 227–724 | y 680–732 | The same. |
+| 375×667, off | y 126–547 | y 503–555 | The same. The Stamp's top is under the mode selector's scrim. |
+| 375×667, on | y 50–547 | y 503–555 | The same. A tap on "Ask Compass" lands on the header bar ("Watch"). |
+
+**Fix.** It is one hook, called on an existing blank line:
+`travel-buddy-standalone/src/components/media/WatchItemOverlay.tsx:244#const rail = useWatchRailFit(insets.top, bottomPad, contextFirst);`.
+It is applied to the rail at
+`travel-buddy-standalone/src/components/media/WatchItemOverlay.tsx:401#onLayout={rail.onLayout} testID="watch-action-rail"`.
+1. **The lift.** The rail's bottom edge now starts `space.sm` above the FAB's
+   top edge. It is a `marginBottom` on the rail over the row's `bottomPad`,
+   so the left column does not move:
+   `travel-buddy-standalone/src/components/media/WatchItemOverlay.tsx:786#return { style: { marginBottom: railBottom - bottomPad, gap }, onLayout };`.
+   It uses the FAB's own inset hook, so insets and a layover pill lift both.
+2. **The fit.** The rail's top edge should stay below the header
+   (`getOverlayHeaderTotalHeight`) and the mode selector (4 below it, 46
+   tall), plus `space.sm`: y 156 on web.
+   - The rail is measured once through `onLayout`, gaps excluded.
+   - If that height would cross the line, the gaps shrink from `space.xl`
+     (24) toward `space.xs` (4):
+     `travel-buddy-standalone/src/components/media/WatchItemOverlay.tsx:790#export function watchRailGap(budget: number, content: number, gaps: number): number {`.
+   - Where the rail fits, the gap stays 24, as today.
+
+**After.** Every control is tappable at its centre in every case.
+
+| Viewport, flag 3341 | Rail | Gap | Result |
+| --- | --- | --- | --- |
+| 390×844, off | y 251–672 | 24 | 8 px above the FAB. Every control is painted by the rail at its four corners and its centre. |
+| 390×844, on | y 175–672 | 24 | As above. |
+| 375×667, off | y 159–495 | 7 | As above. |
+| 375×667, on | y 118–495 | 4 | Tappable, but see the residual below. |
+| 390×844, insets 47/34, off | y 217–638 | 24 | FAB y 646–698. |
+| 390×844, insets 47/34, on | y 159–638 | 21 | FAB y 646–698. |
+
+**Residual, not a functional defect: 375×667 with the context overlay on.**
+- **Why it cannot fit.** The rail's content (Compass 69, six 44-px
+  controls, padding 20) is 353 px. The space between the header-and-selector
+  line (156) and the FAB clearance (495) is 339. So the rail cannot fit even
+  at 4-px gaps.
+- **Where it ends up.** It keeps its FAB clearance and rises to y 118, which
+  is below the header bar (it ends at 98).
+- **What covers it.** Ask Compass (y 130–199) is tapped as itself. Its upper
+  part lies under the mode selector's fading scrim (`rgba(0,0,0,0.45)` to
+  transparent over y 102–172). At the disc's top corners the scrim is 0.24;
+  at its centre, 0.05.
+- **Contrast.** The ink glyph on the disc, so dimmed, is still about 10:1.
+- **What would clear it.** An owner call on the short-screen rail: fewer
+  controls, or a smaller Compass. Not a layout fix.
+
+### 40.13 The Gems caption and handle end above the tab bar
+
+**Before.** The bottom content's `paddingBottom` was `BOTTOM_SAFE +
+space.md`: 28 on web and Android. The floating tab pill covers the bottom
+76 px (12 above the inset, 64 tall).
+
+| Viewport | Handle | Avatar | Caption lines | Tab pill starts at |
+| --- | --- | --- | --- | --- |
+| 390×844 | y 755–770 | y 733.5–769.5 | y 781–814 | y 768 |
+| 375×667 | y 578–593 | — | y 604–637 | y 591 |
+
+At 390×844 the caption lines were not painted on top at any sampled point.
+
+**Fix.** The `paddingBottom` is now the app's own clearance for tab surfaces
+(`hooks/useBottomInset.ts`, Tier 1), which also follows a layover pill:
+`travel-buddy-standalone/src/components/media/GemsItemOverlay.tsx:101#const tabBarClearance = useLayoverAwareBottomInset();`,
+applied at
+`travel-buddy-standalone/src/components/media/GemsItemOverlay.tsx:198#{ paddingBottom: tabBarClearance }`.
+
+**After.** 31 text lines and controls were checked in each case. Every one
+is clear of the pill, the FAB and the filter bar, and painted on top.
+
+| Viewport | Lowest content | Pill starts at | Highest content | Filter bar ends at |
+| --- | --- | --- | --- | --- |
+| 390×844 | y 746 | y 768 (22 px clear) | — | — |
+| 375×667 | y 569 | y 591 (22 px clear) | y 262 | y 246 (16 px clear) |
+| 390×844, insets 47/34 | y 712 | y 734 (22 px clear) | — | — |
+
+### 40.14 The page dots are capped at nine
+
+**Before.** The pill is `10 × pages + 20` px wide. With 48 pages (the fixture
+Grid's 8 tiles plus 40 more) it was 500 px wide, wider than the left column
+(297 at 390, 282 at 375) and than the screen.
+
+**Fix: the least visible change.**
+- **Nine or fewer pages.** Nothing changes. The H8 fixture's 8 pages still
+  draw 8 dots, 100 px wide.
+- **More than nine.** The pill draws a window of 9 dots around the current
+  page:
+  `travel-buddy-standalone/app/media-viewer/[id].tsx:812#pageDotWindow(i, activeIndex, items.length)`,
+  `travel-buddy-standalone/app/media-viewer/[id].tsx:899#const PAGE_DOTS_MAX = 9;`.
+  - Once it can, the current page sits in the middle of the window.
+  - A window edge with more pages beyond it draws its dot at 3 px instead
+    of 5.
+  - The current page keeps its 14-px white dot.
+  - No colour changes.
+- **Width.** The widest pill is 110 px, under the narrowest left column this
+  app lays out (227 px on a 320-px screen).
+
+**After.**
+
+| Viewport, pages | Dots drawn | Pill |
+| --- | --- | --- |
+| 390×844, 48 pages, on page 1 | 9: `14 5 5 5 5 5 5 5 3` | 108 px, x 141–249 |
+| 390×844, 48 pages, on page 25 | 9: `3 5 5 5 14 5 5 5 3` | 108 px |
+| 375×667, 48 pages | 9 | 108 px |
+
+Nothing is covered in any case.
+
+### 40.15 The Grid's verified stamp stops short of the disc
+
+The fixture has a GPS-verified tile, first in the Grid, named "Miradouro de
+Santa Luzia e Jardim Júlio de Castilho" and carrying a duration and a view
+count.
+
+**Before.** The stamp (left 6, up to ~158 px) ran under the disc (right 4).
+The disc paints over the name's end.
+
+| Disc state | Gap at 390×844 | Gap at 375×667 |
+| --- | --- | --- |
+| Idle | −14.1 px | −22.1 px |
+| Count 1284 | −25.6 px | −33.6 px |
+| Count 100000 | −38.8 px | −46.8 px |
+
+**Fix.**
+- **The width.** The stamp's `maxWidth` is what the disc leaves: the tile,
+  less the stamp's left 6, the disc's right 4, the disc's measured width, and
+  an 8-px gap (which also absorbs the stamp's −12° turn):
+  `travel-buddy-standalone/src/components/media/GridTile.tsx:151#maxWidth: verifiedStampMaxWidth(cellWidth, discWidth)`.
+- **The measurement.** The disc's width is measured through `onLayout`
+  (`travel-buddy-standalone/src/components/media/GridTile.tsx:169#testID="grid-tile-stamp-disc" onLayout=`),
+  so a wider count cannot run into it.
+- **The text.** The stamp's two lines now fill the stamp and truncate inside
+  it: `travel-buddy-standalone/src/components/media/VerifiedLocationStamp.tsx:59#alignSelf: 'stretch', textAlign: 'center',`.
+  On web, a line sized to its own text overflowed a narrowed stamp's border.
+- **What does not change.** The Watch and viewer stamps are not narrowed, so
+  they render as before (the text box stretches to a stamp that is its own
+  width).
+
+**After.** The name ends in an ellipsis. Stamp text is painted on top at
+three points per line (both visible ends and the middle), mapped onto the
+turned line. The duration and the count
+stay painted on top.
+
+| Disc state | Gap, 390×844 | Name shown, 390×844 | Gap, 375×667 | Name shown, 375×667 |
+| --- | --- | --- | --- | --- |
+| Idle | +5.6 px | 110 of 347 px | +5.5 px | 102 px |
+| Count 1284 | +5.1 px | 99 px | +4.9 px | 91 px |
+| Count 100000 | +5.7 px | 85 px | +5.6 px | 77 px |
+
+The gaps are measured between the turned stamp's bounding box and the disc.
+
+### 40.16 Not a defect: the Gems rail against the filter bar at 375×667
+
+- **Measured.** The rail is at y 255–495; the filter bar ends at 246, so
+  there is 9 px of clearance. With injected insets 47/34 at 390×844 the
+  clearance is 152 px. Not fixed.
+- **A correction to §40.7's "Short screens with insets".** It said an iPhone
+  SE's 20-pt status bar would push the filter bar into the rail. It does
+  not. The header floors its top padding at 54
+  (`getOverlayHeaderTotalHeight = max(insets.top, 54) + 44`), so a top inset
+  under 54 moves nothing. On an SE the chrome is exactly the web render's.
+
+### 40.17 Tests (round 2)
+
+24 new tests, in four new suites and six new cases in the viewer's suite.
+Each fix was mutated out and seen red (§40.18).
+
+| Suite | What it pins |
+| --- | --- |
+| `travel-buddy-standalone/src/components/media/__tests__/WatchItemOverlay.railFit.component.test.tsx:109#describe('WatchItemOverlay — the rail clears the Media tab FAB'` | The rail's bottom (bottomPad plus its marginBottom) is at least the FAB's top plus 4, in 7 cases: insets 0, 34 and 48, a layover pill, flag off and on. The row's paddingBottom, and so the left column, is unmoved. A source needle keeps media.tsx's FAB geometry what the test assumes. |
+| `travel-buddy-standalone/src/components/media/__tests__/WatchItemOverlay.railFit.component.test.tsx:144#describe('watchRailGap — the rail fits its budget'` | `watchRailGap` at the probe's budgets: 24 where the rail fits, a gap that fits at 375×667 off, and never under 4. |
+| `travel-buddy-standalone/src/components/media/__tests__/WatchItemOverlay.railFitLayout.component.test.tsx:56#it('667-px window, flag off` | With a 667-px window, after the rail reports its measured height its gap shrinks, and its top clears the header-and-selector line. |
+| `travel-buddy-standalone/src/components/media/__tests__/GemsItemOverlay.tabBarClearance.component.test.tsx:74#describe('GemsItemOverlay — the bottom content ends above the floating tab bar'` | The bottom content's paddingBottom is at least the tab pill's top plus 8 (and the layover pill's), for insets 0, 34 and 48, with and without a layover pill. |
+| `travel-buddy-standalone/app/media-viewer/__tests__/pageDots.layout.component.test.tsx:190#describe('MediaViewer — the page-dot pill never outgrows the left column'` | For 8, 9, 10, 48 and 200 pages: every page keeps its dot in the tree; at most 9 are drawn; exactly one is active and 14 px wide; the drawn window is the 9 around the active page; the edge dots are 3 px exactly when pages lie beyond; the pill is at most 227 px. |
+| `travel-buddy-standalone/src/components/media/__tests__/GridTile.verifiedStamp.component.test.tsx:62#it('a long verified name` | The stamp leaves the disc an 8-px gap when idle, and again after the disc reports a 47.5-px layout. Its two lines stretch and are one line each. |
+
+### 40.18 Mutations (round 2): each fix reverted alone, and seen red
+
+In each run, one fix was reverted, the jest suite was run, and the tree was
+re-exported and probed at both viewports. Then `git checkout` restored the
+file, and the tree was clean after every run.
+
+| Mutation | Jest | Probe |
+| --- | --- | --- |
+| M8a: the rail's lift removed | RED, 7 of the FAB-clearance cases | RED at both viewports, flag off and on: the rail intersects the FAB and the ⋯ tap lands on "Create a post" |
+| M8b: the rail's gap fixed at 24 | RED, the 667-px layout case | RED at 375×667 only (as designed): flag off, the Stamp's top is painted over; flag on, the rail leaves the viewport and Ask Compass and the Stamp are painted over |
+| M9: the bottom content's padding back to `BOTTOM_SAFE + space.md` | RED, 5 of 5 | RED at both viewports: the handle, the avatar and three caption lines under the tab pill |
+| M10: every dot drawn | RED, 4 of the 6 new viewer cases | RED at both viewports: a 500-px pill that leaves the screen, wider than the left column |
+| M11a: no `maxWidth` on the verified stamp | RED | RED in all 6 cases: gaps −14.1 to −46.8 |
+| M11b: the disc's width not measured (fixed at 36) | RED | RED once the disc shows a count: gaps −5.9 and −19.1 at 390×844, −6 and −19.2 at 375×667 |
+| M11c: the stamp's name sized to itself | RED | RED at 375×667 with a six-digit count, where the name is painted over |
+
+### 40.19 The final re-shoot, the H7 sheets and the flag-ON previews
+
+Everything is under the session scratchpad at `lane-r/final/`, with a
+`manifest.md`. Per image it gives the scene, the tree SHA, the flags, what
+changed, and the census section.
+- **H8 set (01–11).** AFTER from the branch head, paired with lane S's
+  BEFORE (`ff89a7b20`).
+- **H7 sheets (21–25).** AFTER, paired with lane S's baseline at
+  `e9e0b0404`.
+- **Lane T's nested sheets (26–30).** BEFORE (`e9e0b0404`) and AFTER:
+  ProfilePreviewCard, EngagementUserListSheet, ReportSheet steps 1 and 2,
+  and MediaSourceSheet (whose web variant hides the Camera row).
+- **Not reachable on web: TagPreviewSheet.** It opens only on a long-press
+  of an @mention or #hashtag, and react-native-web's `Text` implements
+  `onPress`, never `onLongPress`. A mention's short press navigates to the
+  profile instead.
+- **Flag-ON previews.** Lane F's four flags were set in the fixture reply
+  only: the World landing, Watch, and Gems.
+
+### 40.20 Checks (round 2)
+
+| Check | Result |
+| --- | --- |
+| Client `tsc -p tsconfig.json --noEmit` | 0 errors |
+| eslint on the changed sources | 0 errors, the same warning counts as at `6e8550cce` |
+| eslint on the new tests | 0 errors; only the house `require()` and `any` warnings in jest mock factories |
+| lint:mocks, lint:imports, check:orphan-tests | pass |
+| mediaContrast.test.ts | 18 of 18 |
+| jest: every suite under src/components/media, the viewer's, the Media tab's three, MediaWorldShell, HiddenGemsMediaScreen, WallScreen.quickMedia | 24 suites, 123 tests |
+| jest (web renderer): WatchStamp, mediaSurfaceFlags | 5 of 5 |
+
+The api-server checks are in the report that carries this section.
+
+### 40.21 Files changed (round 2)
+
+| File | Change |
+| --- | --- |
+| `travel-buddy-standalone/src/components/media/WatchItemOverlay.tsx:244#const rail = useWatchRailFit` | The rail's lift and fit. Line-neutral, with a hook and a helper appended. |
+| `travel-buddy-standalone/src/components/media/GemsItemOverlay.tsx:101#const tabBarClearance` | The bottom content's tab-bar clearance. Line-neutral. |
+| `travel-buddy-standalone/app/media-viewer/[id].tsx:902#function pageDotWindow` | The nine-dot window. Line-neutral, with constants and a helper appended. |
+| `travel-buddy-standalone/src/components/media/GridTile.tsx:299#function verifiedStampMaxWidth` | The verified stamp's width. Line-neutral, with a constant and a helper appended. |
+| `travel-buddy-standalone/src/components/media/VerifiedLocationStamp.tsx:51#alignSelf: 'stretch'` | The stamp's lines fill it. Line-neutral. |
+| the four new suites in §40.17, and six cases added to the viewer's suite | tests |
+
 ## 39. Pointer: §35.7 items 1 and 2 are closed fail-safe on branch, recorded in census-map §45 (lane X) — 2026-09-27
 
 **Item 1, the reference.** The map evidence path stored
@@ -12447,6 +12973,8 @@ The options and what each permits are in census-map §45.5.
   ever wired.
 
 No MD row moves.
+
+**Since (census-map §45.11–§45.12):** 3360, 3361 and both rollbacks were rehearsed on the local harness only (PostgreSQL 16.13, 7/7, 13 SQL mutations seen red), and the map now offers the photo step, and so uploads, only when `GET /v1/intel/consent` answers `coversPhotoEvidence: true` for the account, which is false for every account while Gate 2b's list is empty; no MD row moves.
 
 ## 42. Lane Q — a post's location mode, honoured by the post readers outside Media — 2026-09-27
 
@@ -12919,7 +13447,6 @@ again here:
 - NOT-GRADED: artifacts/api-server/src/routes/placeRecaps.ts — place recaps, cited in §42.6 (3) as a listing outside Media that ignores the owner's mode; Live Places' reader, recorded, not fixed.
 - NOT-GRADED: artifacts/api-server/src/services/wall/ContextThreadService.ts — the Wall's context thread, cited in §42.6 (3) for counting followed authors' posts at a place without the mode; census-wall's, recorded, not fixed.
 - NOT-GRADED: artifacts/api-server/src/lib/places/placeDays.ts — isEligiblePlaceDayPost, cited in §42.6 (3) as the shared predicate that reads no mode; Live Places machinery, recorded, not fixed.
-- NOT-GRADED: artifacts/api-server/src/routes/passport.ts — the passport postcard reader, cited in §42.6 (4) for serving the copied venue; census-passport's surface, recorded, not fixed.
 - NOT-GRADED: artifacts/api-server/src/migrations/2148_posts_write_boundary.sql — cited in §42.6 (5) for the table-level SELECT grant on posts; a database boundary finding, not a Media verdict, and it needs a migration this lane does not have.
 
 ## 44. Lane G1 — the posts columns a client role may read through PostgREST — 2026-09-27
