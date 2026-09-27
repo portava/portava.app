@@ -1943,6 +1943,8 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/migrations/3357_media_transcoder_flag.sql",
     "artifacts/api-server/src/migrations/3358_media_captions_flag.sql",
     "artifacts/api-server/src/test/mediaVendorSeams.test.ts",
+    // WIDENED 2026-09-27 by lane V (census-media §37.8): MD269's restated evidence — a held or flagged postcard file neither counts nor becomes the passport cover — rests on this suite's §37.8 block.
+    "artifacts/api-server/src/test/postcards.test.ts",
   ],
   // census-telegraph.md — declared 2026-09-11 on the same basis as Media above:
   // 451 requirements out of CANNOT BE CHECKED, a clock started rather than a

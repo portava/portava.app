@@ -9981,3 +9981,280 @@ Each edit is line-neutral or at the tail, and §37.1 is their re-measurement.
 - NOT-GRADED: travel-buddy-standalone/eas.json — cited in §37.3 only for the build profile an owner or CI would use; a build recipe, not evidence for any row.
 
 Headline: not restated. No row moved.
+
+### 37.8 Follow-up — four accessible defects fixed, and the owner question behind MD269 (a) — 2026-09-27
+
+At the integrator's request, lane V merged `wave8-integration` into
+`lane-v-vendor` as a merge commit, then fixed the four defects that §37.1 (MD269)
+and §37.6 recorded as needing no vendor. The same rules apply as for §37: every
+edit is line-neutral or at a file's tail, no flag is enabled, and no database is
+touched. **No verdict moves** (§37.8.6).
+
+#### 37.8.1 A held or flagged file no longer counts, and is never the passport cover (§37.6 item 1; MD269 (b))
+
+The count query now reads the file's moderation state
+(`artifacts/api-server/src/routes/postcards.ts:192#sort_order, moderation_status')`).
+A file counts only if it is ready AND distributable
+(`artifacts/api-server/src/routes/postcards.ts:197#.filter((r: any) => countsTowardPostcard(r))`),
+and distributable means outside the one deny-set every post_media reader
+applies: flagged, limited, rejected, removed, owner_deleted
+(`artifacts/api-server/src/routes/postcards.ts:1608#export function countsTowardPostcard(`).
+
+The same rule decides `media_count`, `has_video`, `primary_media_type` and
+`firstReadyUrl`, the URL copied into `passport_postcards.media_url`. So a held
+file cannot become the cover, and a postcard whose only file is held gets no
+passport postcard yet.
+
+Tests (`artifacts/api-server/src/test/postcards.test.ts`, "census-media §37.8 — postcard counts…"):
+- approved files count and become the cover, as before;
+- with 3356 ON and no classifier, the held file counts 0 and no postcard is made;
+- an earlier flagged file is skipped, and the approved file alone counts and is
+  the cover;
+- the count query names `moderation_status`.
+
+**A live change, and the right one.** A file an admin flagged or rejected also
+stops counting, from the next time that postcard's counts are refreshed.
+
+#### 37.8.2 `/complete` takes a video's size from its container when the client sends none (§37.6 item 2)
+
+The pre-verification refusal is gone
+(`artifacts/api-server/src/routes/postcards.ts:813#if (p.width == null || p.height == null) {`,
+which now only logs). The final guard refuses only when NEITHER the probed
+container nor the client states a size
+(`artifacts/api-server/src/routes/postcards.ts:1006#if (baseUpdate.width === null || baseUpdate.height === null) {`),
+and the probed size still wins over the client's.
+
+Tests (`artifacts/api-server/src/test/mediaVideoTransport.test.ts`, "§37.8 on the wire…"):
+- no client size and a container stating 48×64 → ready at 48×64;
+- no client size and a silent container (a real audio-only M4A) → 400 with the
+  dimension message, and the row stays pending;
+- a client size with a silent container → the client's size, as before.
+
+**Two pinned tests changed their expectation. A reviewer should read these
+first.** Both are in `artifacts/api-server/src/test/mediaUploadHardening.test.ts`:
+- **"completing a video upload without width+height is rejected…"** Its fake
+  storage now serves a container that states no size, so the case still reaches
+  the dimension guard. The download used to be unreachable.
+- **"rejects dimensionless video WITHOUT any storage round-trip"** is now
+  "a dimensionless video is PROBED, not refused on its face…". It asserts the
+  store IS read, and that with the store down the answer is the retryable 503,
+  never the dimension message.
+
+The old test pinned the decision this fix reverses. That decision was right
+while the client's figure was the only source, and census-media §22 added the
+probe.
+
+#### 37.8.3 Staged part copies are named by their owner, and swept (§37.6 item 3)
+
+**Naming.** Every staged copy's name now carries the slot that owns it: the
+batch path and the one-at-a-time path both use
+`travel-buddy-standalone/src/services/media/backgroundTransfer.ts:89#stagedPartUri(dir, owner)`,
+from `travel-buddy-standalone/src/services/media/backgroundTransfer.ts:287#export function stagedPartUri(`.
+The key is `travel-buddy-standalone/src/services/media/resumableUpload.ts:330#export function slotOwnerKey(`,
+which the uploader passes for its own slot.
+
+**The sweep** is `travel-buddy-standalone/src/services/media/backgroundTransfer.ts:323#export async function sweepStagedParts(`.
+It runs at launch and on every foreground, before the queue resumes
+(`travel-buddy-standalone/src/services/media/postcardUploadDevice.ts:141#await sweepOrphanedStagedParts();`).
+Its rules:
+- A copy whose slot belongs to a job that can still RESUME, under ANY account on
+  the device (`travel-buddy-standalone/src/services/media/postcardUploadQueue.ts:217#export async function liveUploadOwners(`),
+  is **never** deleted, however old.
+- A copy whose slot belongs to no resumable job is deleted.
+- A copy that names no owner (made by the code before this) is deleted only
+  after `STAGED_UNATTRIBUTED_MAX_AGE_MS`, six hours. That is three times the
+  two-hour life of a Supabase signed upload URL, so no OS task can still be
+  sending it.
+- If the live set cannot be read (no key enumeration, a failed read, an entry
+  that does not parse), NOTHING with an owner is deleted.
+- The directory is listed BEFORE the live set is read. A job persists its slot
+  before it stages a byte, so a job enqueued between the two reads cannot lose
+  its copies.
+- It is bounded: one listing, and at most 200 deletions per run; the rest are
+  deferred to the next run.
+
+Why deleting an orphan costs nothing: resuming never reads a staged copy. The
+next session re-stages what is missing from the picked file itself.
+
+Tests (`travel-buddy-standalone/src/services/media/__tests__/mediaVendorDevice.test.ts`, "§37.8 —…", 11 cases over FsLike and QueueStorage doubles).
+The device glue (`sweepOrphanedStagedParts`) is not node-tested: it only
+wires those two functions to expo-file-system and AsyncStorage.
+
+**Kept on purpose.** Stale copies of a slot that is still live are kept, as
+instructed, even though a live slot's copy older than six hours cannot be in
+use either. They are bounded by the job's run limit (MAX_RUNS) times its
+missing parts, and they go at the first sweep after the job ends.
+
+#### 37.8.4 The canonical row is born held while the stage is on (MD269 (c))
+
+With 3356 ON, `/media/upload`'s canonical row is written ONCE, already `limited`
+(`artifacts/api-server/src/routes/posts.ts:257#canonicalModerationAtBirth(sc).then((atBirth) => recordMediaAsset(sc, { ...atBirth,`,
+`artifacts/api-server/src/lib/media/vendors/mediaVendorStages.ts:309#export async function canonicalModerationAtBirth(`,
+`artifacts/api-server/src/lib/mediaAssets.ts:389#...(input.moderationStatus ? { moderation_status: input.moderationStatus } : {})`).
+No canonical reader distributes `limited`, so the one-round-trip window is
+closed. The decider then moves the row: limited → active or rejected.
+
+With the stage OFF the helper returns `{}` and the insert carries no new key.
+
+Tests:
+- `artifacts/api-server/src/test/mediaVideoPosterGeneral.test.ts` "§37.8 on the wire…":
+  stage off, the payload's key set is exactly the pre-§37.8 set; stage on, the
+  SAME single insert carries `limited` and nothing else changes;
+- `artifacts/api-server/src/test/mediaVendorSeams.test.ts` "§37.8 — MD269 (c)…".
+
+**In a pre-2250 database (the degraded write path)** the hold is dropped and
+reported in `droppedColumns`
+(`artifacts/api-server/src/lib/mediaAssets.ts:461#if ("moderation_status" in row) { delete row.moderation_status;`).
+The legacy CHECK has no §36 values, and MediaModerationService refuses that
+schema too, so there nothing can hold a canonical row. That is stated as the
+limit, not hidden.
+
+A stage switched on between the insert and the ingest run is still covered by
+the hold-first step (§37.2), which is now a no-op for a row that was born held.
+
+#### 37.8.5 MD269 (a) — the owner question, not built
+
+**The question.** When the §36 stage holds a general (Pulse) post's media, what
+happens to the POST?
+
+**Why it needs an owner rule.**
+- A general post's media travel as `posts.media_urls`. The legacy readers (Pulse,
+  Wall, the profile grid, `GET /posts/:id`) consult no per-media moderation
+  state, only `posts.status` and `posts.post_status`
+  (`artifacts/api-server/src/lib/postVisibility.ts:122#Delayed-publish gate`).
+- So a hold that reaches those readers has to be a post-level state.
+- `post_status` is ALSO the delayed-publish state machine: `pending_location_exit`
+  and `pending_delay`, flipped to `published` by
+  `artifacts/api-server/src/lib/delayedPostPublisher.ts`.
+- A post can be both "wait until the author has left" and "wait for a
+  moderator", and one column cannot hold both.
+- The post is created after its media were uploaded, so the stage may already
+  have answered — or may answer later, after the post is published.
+
+**Options:**
+1. **Hold the whole post** with `post_status = 'pending_safety_review'`,
+   derived at `POST /posts` from the canonical state of its media, and applied
+   later if a classifier rejects afterwards. This needs three rules:
+   - the precedence rule (the safety hold first, then the delayed-publish machine
+     resumes where it would have been), which requires storing the delayed state
+     the hold displaced;
+   - that the publisher never promotes `pending_safety_review`;
+   - whether a PUBLISHED post may be pulled back to a hold when a late verdict
+     arrives.
+2. **Publish the post, withhold only the held media.** Every legacy reader of
+   `media_urls` would filter by the media's canonical state. That touches the
+   Pulse, Wall and profile read paths in other lanes' files, and adds a
+   per-URL lookup to each.
+3. **Refuse to create the post while any of its media is held** (409 "in review",
+   and the composer waits or saves a draft). This is a UX decision; the
+   delayed-publish machine stays as it is.
+4. **Scope §36 to the Media surfaces.** Canonical readers already refuse
+   `limited`; the owner accepts that Pulse and Wall show the post. That would
+   answer MD269 by narrowing where it applies, which is the owner's call, not a
+   lane's.
+
+**What each option costs.**
+- Option 1 is the only one that holds everything: one post-level state, and
+  one rule each for precedence and late verdicts.
+- Option 3 is the smallest to build.
+- Option 4 builds nothing.
+
+Until the owner chooses, MD269 stays W on (a).
+
+#### 37.8.6 Rows restated
+
+| ID | Was | Now | Evidence |
+| --- | --- | --- | --- |
+| MD269 | W | **W** | (b) is fixed: the postcard count and cover now read only distributable files (§37.8.1). (c) is fixed: the canonical row is born held (§37.8.4). Still W because of (a), the owner question in §37.8.5, and because no classifier exists. With 3356 on, it is the staffed hold for postcard files and canonical rows. It is not yet one for general posts' legacy read paths. ACTIVATION: 3356. EXTERNAL: a classifier vendor or staffed review. BLOCKER: the (a) owner rule; and (§37.8.7 item 1) a released hold is never recounted. |
+| MD284 | W | **W** | The JS half gains a bounded sweep of orphaned staged copies that never deletes a resumable job's copy (§37.8.3). The device questions are unchanged: an iOS device run, an Android foreground-service module, and the device matrix (§37.3). |
+
+MD63, MD277, MD280, MD282, MD283, MD289 and MD293 are unchanged from §37.1.
+MD283 benefits from (b) and (c) in the same way as MD269, and stays W on the
+missing classifier.
+
+#### 37.8.7 Found while doing it — recorded, not fixed
+
+1. **Releasing a hold never recounts.** When a moderator approves a held
+   postcard file (`POST /admin/media/:id/moderate`, which is
+   `artifacts/api-server/src/routes/adminMedia.ts`), the postcard's counts are
+   not refreshed. A postcard whose only file was held keeps `media_count` 0, and
+   gets no passport postcard, until some other media change on that post. The
+   recount lives in postcards.ts and the passport creation is inline in
+   `/complete`. The fix is to move both behind one function the admin approve
+   path also calls. This is an activation prerequisite for 3356; it changes no
+   behaviour while 3356 is off, because nothing is held.
+2. **One fixture change is not an expectation change.** `postcards.test.ts`'s
+   fake gained a `feature_flags` source, and
+   `mediaVideoPosterGeneral.test.ts`'s fake now records the insert as sent,
+   because later updates mutated the stored row. The pre-existing cases are
+   unchanged and pass.
+
+#### 37.8.8 Mutations — each seen red, every file restored byte-identical
+
+Twenty mutations. After the run, the tree's diff hash was unchanged.
+**One survived first: F1c.** The count-query select dropped `moderation_status`,
+and the fake returned every column whatever the select named. The added case
+"the count query NAMES moderation_status" makes it red.
+
+| Id | Mutation | Red in |
+| --- | --- | --- |
+| F1a · F1b | every file counts / the distributable filter removed | postcards "§37.8" (held, flagged-cover) |
+| F1c | the count query stops selecting `moderation_status` | **survived first**; red after "the count query NAMES moderation_status" |
+| F2a | the pre-verification refusal restored | transport "no client dimensions… 48×64"; hardening "PROBED" |
+| F2b | the final guard removed | transport "…refused with the dimension message"; hardening "…rejected with invalid_payload" |
+| F4a · F4b | never born held / always born held | poster-general on-the-wire; seams |
+| F4c · F4e | the insert drops the hold / the route drops the spread | seams; poster-general |
+| F4d | the degraded write keeps the hold | seams "a pre-2250 database…" |
+| F3a | staged names carry no owner | device naming and batch-naming cases |
+| F3b · F3c | a live slot's copy deleted / owned copies deleted when the live set is unknown | device sweep cases |
+| F3d · F3f | young unowned copies deleted / no per-run bound | device sweep cases |
+| F3e | live set read before the listing | device "lists the directory BEFORE…" |
+| F3g · F3h · F3j | terminal jobs counted live / an unparseable entry read as nothing / another account's jobs ignored | device live-set cases |
+| F3i | the one-at-a-time path loses the owner | device "…the batch AND the one-at-a-time path" |
+
+#### 37.8.9 Files, scope and checks
+
+**Changed:**
+- server: `routes/postcards.ts`, `routes/posts.ts`, `lib/mediaAssets.ts`,
+  `lib/media/vendors/mediaVendorStages.ts`;
+- client: `services/media/backgroundTransfer.ts`, `resumableUpload.ts`,
+  `postcardUploadQueue.ts` and `postcardUploadDevice.ts`;
+- tests: the five server suites and the one client suite named above.
+
+Every edit above a cited line is line-neutral. Old anchors stay alive in
+trailing `(was: …)` comments where a line's text changed.
+
+`artifacts/api-server/src/test/postcards.test.ts` is newly watched, because
+MD269's restated evidence rests on it.
+
+**Freshness.** `check:census-freshness` reports census-media STALE on 26 files.
+The acknowledgement is the integrator's to write.
+
+Fourteen are lane V's. Each is new or re-measured in §37.1 or §37.8, and no
+verdict moved:
+- the six vendor seams;
+- migrations 3355–3358;
+- mediaVendorSeams.test.ts;
+- postcards.test.ts: newly watched, and its change is §37.8.1's block plus a
+  `feature_flags` source in its fake;
+- mediaVendorDevice.test.ts;
+- videoCompression.ts.
+
+Twelve arrived with `wave8-integration` (lanes E and I). This lane did not touch
+or re-measure them:
+- `intelConsent.ts`, `intelEvidenceCapture.ts`, `intelProjectionAggregator.ts`,
+  `mapAggregation.ts`;
+- migration 3002;
+- `mapObservations.ts`, `mediaViewRequest.ts`, `backfill-media-assets.ts`,
+  `PassportMemoryService.ts`;
+- the suites `mediaAssetSourceDeclared.test.ts` and
+  `mediaContributorReputationSelfOnly.test.ts`;
+- the client's `consentDisclosure.ts`.
+
+census-highlights-memories is stale on `PassportMemoryService.ts`, from the same
+merge.
+
+The modified files an older acknowledgement already names (the §20.8 item 3
+blind spot) are the ones §37.8.9 lists as changed.
+
+Headline: not restated. No row moved.
