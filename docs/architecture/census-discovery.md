@@ -9228,8 +9228,14 @@ unchanged), `check:test-registration`, `check:census-scope-coverage`,
 `check:migration-prefixes` (637 files), `check:flag-polarity`,
 `check:discovery-query-paths` (56 rows, clean), `check:writerless-reads`,
 `check:guard-coverage`, `check:route-auth-gate` (175 route files),
-`check:doc-citations`, `check:citation-targets`, `check:census-integrity` and
-the integrator's column-resolution diff (`problems=0`) all pass.
+`check:doc-citations`, `check:citation-targets` and the integrator's
+column-resolution diff (`problems=0`) all pass. **`check:census-integrity` fails,
+and only on the headline:** DV-80's move makes the rows count C 97 / W 82 / N 6 /
+X 3 against the stated C 97 / W 81 / N 7 / X 3, and this section does not restate
+the headline. With that headline appended to a scratch copy, the check passes
+with nothing else changed. The same drift is the only failure in the full
+`npm test` at this tree (`censusIdGrammar` and `censusIntegrityQualifiedVerdicts`
+read the real corpus).
 `docs/architecture/telegraph-phase0-inventory.md` was regenerated for the
 migration count. QP-22 in `docs/discovery/query-paths.md` records the API's two
 reads and their harness plans; no index was added.
@@ -9239,7 +9245,7 @@ reads and their harness plans; no index was added.
 - **census-discovery.** `CENSUS_SCOPE` widened with the four new source files,
   3410 and its rollback, and the four suites. `lib/discoveryTrendState.ts`,
   `routes/index.ts`, `package.json` and `docs/discovery/query-paths.md` changed:
-  the first gained lines at its foot only, the second one line at its tail, the
+  the first gained lines at its foot only, the second one line written over the blank line at its tail (its length is pinned by `creatorLedgerMigrationShape3385` M6), the
   third two list entries on existing lines, the fourth two cells. No cited line
   moved.
 - **census-trips** counts `artifacts/api-server/src/test/db/`, so the two new
