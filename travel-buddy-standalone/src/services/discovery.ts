@@ -1,7 +1,7 @@
 /** Discovery service — fetches place data from /api/discovery. Destination-scoped, category-filtered. Anonymous
  *  when signed out; sent WITH the viewer's token when signed in, and device-cached per viewer (VIEWER SCOPE, foot of file). */
-import { supabase } from '../lib/supabase.ts';
-import { freshToken as freshApiToken } from './apiToken.ts';
+// The token helper is required LAZILY in freshToken below: a static apiToken → lib/supabase → react-native edge would stop
+// this module loading (and type-checking) under Node, where the route→client leg drives it (census-discovery §60, DC-33).
 import type { DiscoveryEventPost } from '../types/discovery.ts';
 import { openDiscoveryLease, isCurrentDiscoveryScope, isLeaseViewerCurrent, onDiscoveryScopeChange, VIEWER_CHANGED_ERROR, type DiscoveryLease, type DiscoveryScope } from './discoveryViewerScope.ts';
 import { stampCandidateReceipt } from '../features/discovery/candidateProjection.ts';
@@ -10,7 +10,7 @@ const apiBase = () => process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
 
 async function freshToken(): Promise<string | null> {
   try {
-    return freshApiToken();
+    return await (_tokenSourceForTests ?? (require('./apiToken.ts') as { freshToken: () => Promise<string | null> }).freshToken)();  // lib/sentry.ts's deferred require()
   } catch {
     return null;
   }
@@ -267,7 +267,7 @@ export async function getPlaceLiveStatus(
   try {
     const res = await fetch(`${base}/api/places/live-status?${params}`);
     if (!res.ok) return null;
-    const body = await res.json();
+    const body = (await res.json()) as { liveStatus?: PlaceLiveStatus } | null;  // typed: under Node's lib `json()` is `unknown`
     return (body?.liveStatus as PlaceLiveStatus | undefined) ?? null;
   } catch {
     return null;
@@ -1292,4 +1292,21 @@ function communityForLease(
 ): { ok: true; data: CommunityDiscoveryResult; scope: DiscoveryScope } | { ok: false; error: string } {
   if (!isLeaseViewerCurrent(lease)) return { ok: false, error: VIEWER_CHANGED_ERROR };
   return { ok: true, data, scope: lease.scope };
+}
+
+// ── TOKEN SOURCE (test seam) ──────────────────────────────────────────────────
+//
+// `freshToken` above resolves the viewer's token through `services/apiToken.ts`,
+// imported lazily so this module has no static path to React Native. The ONE
+// override is this seam, and it exists for the route→client leg
+// (artifacts/api-server/src/test/discoveryClientRouteE2E.test.ts, census-discovery
+// §60): that suite runs the real Discovery router in-process and drives THIS
+// module against it under Node, where apiToken cannot load. It replaces where the
+// token comes from and nothing else — the lease, the header, the parse, the
+// projection and both caches are the production code. No production caller.
+let _tokenSourceForTests: (() => Promise<string | null>) | null = null;
+
+/** Test seam: resolve the viewer's token from `source` instead of apiToken; `null` restores apiToken. */
+export function _setDiscoveryTokenSourceForTests(source: (() => Promise<string | null>) | null): void {
+  _tokenSourceForTests = source;
 }
