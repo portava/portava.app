@@ -878,6 +878,21 @@ export const KNOWN_PRODUCTION_GAPS: Record<string, Gap> = {
       "empty after the merge. Strike it off in the change that applies 2920-2922, " +
       "2930 and 3385-3387 to PRODUCTION.",
   },
+  // ── Added 2026-09-27 by census-discovery §62 (P15 verified-defect repairs) ──
+  rank_event_outcome_receipts: {
+    classification: "unapplied",
+    note:
+      "Migration 3420 (DV-37, `04` §3 idempotent where retried): one row per KEYED " +
+      "outcome that landed on a rank_events exposure, written by trigger in the same " +
+      "statement as the UPDATE; its primary key (user_id, client_event_id) refuses a " +
+      "second landing of one client event. Rehearsed on the local PostgreSQL harness " +
+      "only (apply with a behavioural probe, rollback, re-apply, fresh-chain replay). " +
+      "THE READER LATCHES OFF WITHOUT IT: routes/rankEvents.ts reads it only for an " +
+      "outcome that carries client_event_id, and on 42P01/PGRST205 (or 42703/PGRST204 " +
+      "naming the key column) warns once and records the outcome keyless. No shipped " +
+      "client sends a key yet (census-discovery §62.7 H1), so it stays empty after the " +
+      "merge. Strike it off in the change that applies 3420 to PRODUCTION.",
+  },
 };
 
 /**
