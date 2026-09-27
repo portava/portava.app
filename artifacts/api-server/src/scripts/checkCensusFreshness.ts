@@ -4054,6 +4054,13 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/migrations/3417_place_momentum_dismiss_excluded.sql",
     "db/rollback/2026-09-27-3417-place-momentum-dismiss-excluded-rollback.sql",
     "artifacts/api-server/src/test/db/placeMomentumDismiss.db.test.ts",
+    // §63 (lane P16): the evidence DV-76, DV-37 and DV-52 are restated from.
+    "artifacts/api-server/src/test/tagPermissionVocabulary.test.ts",
+    "artifacts/api-server/src/test/discoveryServedGraphReading.test.ts",
+    "artifacts/api-server/src/test/fixtures/discoveryServedGraphReadingGolden.json",
+    "travel-buddy-standalone/src/hooks/__tests__/useRankOutcome.clientEventId.component.test.ts",
+    "travel-buddy-standalone/src/services/__tests__/rankEvents.clientEventId.component.test.ts",
+    "travel-buddy-standalone/src/hooks/__tests__/useRankOutcome.component.test.ts",
   ],
   // ── ADDED 2026-09-15: census-passport joins the CHECKABLE set ──────────────
   //

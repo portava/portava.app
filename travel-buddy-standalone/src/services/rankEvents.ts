@@ -6,7 +6,7 @@
  * narrow the impression lookup to the correct feed load.
  */
 import { freshToken as freshApiToken } from './apiToken.ts';
-
+import { newClientEventId } from './discoveryDwell.ts';  // census-discovery §63 (DV-37)
 const apiBase = () => (process.env.EXPO_PUBLIC_API_BASE_URL ?? '').replace(/\/$/, '');
 
 /**
@@ -56,6 +56,10 @@ export async function recordOutcome(
 
     const body: Record<string, string> = { item_id: itemId, surface, outcome };
     if (sessionId) body.session_id = sessionId;
+    // §63 (DV-37): one call is one action, so it is named once. This sender does
+    // not retry, so the key is never re-sent from here; it lets the server answer
+    // any transport-level replay of the same request as `duplicate`.
+    body.client_event_id = newClientEventId();
 
     await fetch(`${base}/api/rank-events/outcome`, {
       method: 'POST',

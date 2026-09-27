@@ -581,7 +581,7 @@ export const DISCOVERY_FEATURE_KEY_CLASSES: Readonly<Record<string, TelemetryFie
   trailAffinity:     "derived_ranking_signal",
   officialPublisher: "derived_ranking_signal",
   placeEngagement:   "derived_ranking_signal",
-};
+  /* census-discovery §63 (DV-52 b): the graph reading a SERVED page was ranked under (routes/discovery.ts servedGraphReadingFeatures) — a city-level aggregate the modifiers consumed, never a viewer's position; on this line so the anchored citations below do not move */ graphDepth: "derived_ranking_signal", graphTier: "derived_ranking_signal", graphSource: "derived_ranking_signal", graphComputedAt: "derived_ranking_signal", momentumScale: "derived_ranking_signal", explorationBudgetPct: "derived_ranking_signal", };
 
 /**
  * Keys that are a position whatever else is true (`04` §12, spec §8). Refused

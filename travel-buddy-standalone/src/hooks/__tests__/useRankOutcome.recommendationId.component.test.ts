@@ -56,6 +56,8 @@ const RID = 'Ab3_-x9QzW7kLmN2pR4tUv';
 const fetchMock = jest.fn((_url: string, _init?: RequestInit) => Promise.resolve({ ok: true } as Response));
 
 const ORIGINAL_FETCH = global.fetch;
+/** §63 (DV-37): every outcome now names its action with a fresh v4 `client_event_id`. */
+const KEY = expect.stringMatching(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
 const ORIGINAL_BASE  = process.env.EXPO_PUBLIC_API_BASE_URL;
 
 beforeEach(() => {
@@ -92,7 +94,7 @@ describe('DV-46 — the served recommendationId reaches POST /rank-events/outcom
     await settle();
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(fetchMock.mock.calls[0][0]).toBe('https://api.test/api/rank-events/outcome');
-    expect(postedBody()).toEqual({ item_id: 'node/1', surface: 'discovery', outcome: 'tap', recommendation_id: RID });
+    expect(postedBody()).toEqual({ item_id: 'node/1', surface: 'discovery', outcome: 'tap', recommendation_id: RID, client_event_id: KEY });
   });
 
   it('absent ⇒ the KEY is absent — an anonymous serve carries no id and none is invented', async () => {
@@ -141,7 +143,7 @@ describe('DV-46 — the served recommendationId reaches POST /rank-events/outcom
     const { result } = await renderHook(() => useRankOutcome({ surface: 'discovery' }));
     await act(async () => { result.current.reportTap('node/1'); });
     await settle();
-    expect(postedBody()).toEqual({ item_id: 'node/1', surface: 'discovery', outcome: 'tap' });
+    expect(postedBody()).toEqual({ item_id: 'node/1', surface: 'discovery', outcome: 'tap', client_event_id: KEY });
   });
 
   it('the awaited dismissal carries the id too', async () => {
@@ -149,7 +151,7 @@ describe('DV-46 — the served recommendationId reaches POST /rank-events/outcom
     let ok = false;
     await act(async () => { ok = await result.current.reportDismiss('node/1', RID); });
     expect(ok).toBe(true);
-    expect(postedBody()).toEqual({ item_id: 'node/1', surface: 'discovery', outcome: 'dismiss', recommendation_id: RID });
+    expect(postedBody()).toEqual({ item_id: 'node/1', surface: 'discovery', outcome: 'dismiss', recommendation_id: RID, client_event_id: KEY });
   });
 });
 

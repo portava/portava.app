@@ -17,9 +17,9 @@
  *       the author tags a user who allows it on the author's own post (201,
  *       approved; a retry is alreadyTagged, no second row); a stranger's post
  *       is refused (403) and writes nothing.
- *   P4  DEFECT, pinned (§62): the ROUTE tags a user whose tag_permission is
- *       'nobody' (201, approved) — the permission engine does not know profiles'
- *       enum values. Routed as a hunk (§62.7); flip it when that lands.
+ *   P4  FLIPPED at §63 (hunk H2): the ROUTE refuses a user whose tag_permission
+ *       is 'nobody' (403, no row, retry the same). P4b–P4e: interacted, friends_only,
+ *       revocation through PATCH /me/tag-permission, and another viewer — all on the real route.
  *
  * P1/P2 run in a transaction that is ROLLED BACK; P3/P4's rows are committed by
  * the bridge (one statement per request) and deleted in after().
@@ -109,18 +109,18 @@ describe("DV-76 — Phase 0.3 at the database, for a client that skips the route
 
   describe("P3. the route still tags through the service role (census-discovery §62)", () => {
     let author = "", allows = "", nobody = "", stranger = "";
-    let ownPost = "", strangersPost = "";
+    let ownPost = "", strangersPost = ""; let interacted = "", friendsOnly = "", viewerC = "";  // §63
     let server: Server | null = null;
     let base = "";
     let b: Bridge;
 
     before(async () => {
-      author = seedUser("p15tagA"); allows = seedUser("p15tagB"); nobody = seedUser("p15tagN"); stranger = seedUser("p15tagS");
-      exec(`UPDATE public.profiles SET tag_permission = 'nobody' WHERE id = '${nobody}';\n` +
+      author = seedUser("p15tagA"); allows = seedUser("p15tagB"); nobody = seedUser("p15tagN"); stranger = seedUser("p15tagS"); interacted = seedUser("p16tagI"); friendsOnly = seedUser("p16tagF"); viewerC = seedUser("p16tagC");  // §63: three more
+      exec(`UPDATE public.profiles SET tag_permission = 'nobody' WHERE id = '${nobody}';\n` + `UPDATE public.profiles SET tag_permission = 'interacted' WHERE id = '${interacted}';\n` + `UPDATE public.profiles SET tag_permission = 'friends_only' WHERE id = '${friendsOnly}';\n` +
            `UPDATE public.profiles SET tag_permission = 'anyone' WHERE id = '${allows}';`);
       ownPost = scalar(`INSERT INTO public.posts (author_id) VALUES ('${author}') RETURNING id`)!;
       strangersPost = scalar(`INSERT INTO public.posts (author_id) VALUES ('${stranger}') RETURNING id`)!;
-      b = bridge({ flags: { disable_tagging: { enabled: false } }, tokens: { "author-token": author } });
+      b = bridge({ flags: { disable_tagging: { enabled: false } }, tokens: { "author-token": author, "allows-token": allows, "c-token": viewerC } });
       _setTestClient(b.client, true);
       _setTestServiceClient(b.client);
       const app = express();
@@ -136,19 +136,19 @@ describe("DV-76 — Phase 0.3 at the database, for a client that skips the route
       if (server) await new Promise<void>((r) => server!.close(() => r()));
       _setTestClient(null as any, false);
       _setTestServiceClient(null as any);
-      const u = [author, allows, nobody, stranger].map(lit).join(",");
+      const u = [author, allows, nobody, stranger, interacted, friendsOnly, viewerC].filter(Boolean).map(lit).join(",");
       exec(
-        `DELETE FROM public.tags WHERE tagger_id IN (${u}) OR tagged_user_id IN (${u});\n` +
+        `DELETE FROM public.tags WHERE tagger_id IN (${u}) OR tagged_user_id IN (${u});\n` + `DELETE FROM public.user_follows WHERE follower_id IN (${u}) OR following_id IN (${u});\n` + `DELETE FROM public.user_friendships WHERE user_a IN (${u}) OR user_b IN (${u});\n` +  // §63: P4b–P4e's edges
         `DELETE FROM public.posts WHERE author_id IN (${u});\n` +
         `DELETE FROM public.profiles WHERE id IN (${u});\n` +
         `DELETE FROM auth.users WHERE id IN (${u});`,
       );
     });
 
-    const post = async (body: Record<string, unknown>) => {
+    const post = async (body: Record<string, unknown>, token = "author-token") => {
       const res = await fetch(`${base}/api/tags`, {
         method: "POST",
-        headers: { "content-type": "application/json", authorization: "Bearer author-token" },
+        headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
         body: JSON.stringify(body),
       });
       return { status: res.status, body: await res.json().catch(() => null) as any };
@@ -173,23 +173,87 @@ describe("DV-76 — Phase 0.3 at the database, for a client that skips the route
       assert.equal(tagRows(strangersPost), 0);
     });
 
-    test("P4. DEFECT, pinned (§62): the ROUTE tags a user whose tag_permission is 'nobody' — the permission engine does not know profiles' vocabulary", async () => {
-      // services/interactionPermissions.ts switches on who_can_tag ?? profiles.tag_permission
-      // over {everyone, friends, friends_only, followers, no_one, approval_required}
-      // with `default: canTag = true`. profiles.tag_permission is the enum
-      // {anyone, interacted, friends_only, nobody} (PATCH /me/tag-permission
-      // writes it), so 'nobody' and 'interacted' fall to the default and ALLOW.
-      // The inline @mention path honours 'nobody' (TaggingService); this route
-      // does not. Closing the direct INSERT (P1) leaves this door open. The fix
-      // is a hunk routed to the engine's owner (census-discovery §62.7); when it
-      // lands this goes red — flip it to expect 403 and no row.
-      const toNobody = await post({ source_type: "post", source_id: ownPost, tagged_user_id: nobody });
-      assert.equal(toNobody.status, 201, JSON.stringify(toNobody.body));
-      assert.equal(toNobody.body?.status, "approved");
-      assert.equal(Number(scalar(`SELECT count(1) FROM public.tags WHERE tagged_user_id = '${nobody}'`)), 1,
-        "a user who chose 'nobody' is tagged, approved, through the route");
+    // §62 pinned DV-76 here as test("P4. DEFECT, pinned (§62): the ROUTE tags a user whose tag_permission is 'nobody' — the permission engine does not know profiles' vocabulary"). §63 flipped it (hunk H2):
+    test("P4. FLIPPED (§63): the ROUTE refuses a user whose tag_permission is 'nobody' — 403, no row, and a retry is refused the same way", async () => {
+      // Before §63, services/interactionPermissions.ts switched over
+      // {everyone, friends, friends_only, followers, no_one, approval_required}
+      // with `default: canTag = true`, so profiles' 'nobody' and 'interacted'
+      // ALLOWED and this request answered 201 approved.
+      for (let attempt = 1; attempt <= 2; attempt++) {
+        const toNobody = await post({ source_type: "post", source_id: ownPost, tagged_user_id: nobody });
+        assert.equal(toNobody.status, 403, `attempt ${attempt}: ${JSON.stringify(toNobody.body)}`);
+        assert.equal(toNobody.body?.message, "This user does not allow tags from you");
+        assert.equal(Number(scalar(`SELECT count(1) FROM public.tags WHERE tagged_user_id = '${nobody}'`)), 0,
+          `attempt ${attempt}: a user who chose 'nobody' is NOT tagged, by any status`);
+      }
       assert.deepEqual(b.unmodelled, [], `every request the route issued was modelled:\n${b.unmodelled.join("\n")}`);
       assert.deepEqual(b.failed.map((f) => /:: (\S+)/.exec(f)?.[1]), ["23505"], `the only refusal is P3a's provoked duplicate:\n${b.failed.join("\n")}`);
+    });
+
+    /** §63 — the tagged user changes their OWN setting through the real route. */
+    const patchPerm = async (token: string, tagPermission: string) => {
+      const res = await fetch(`${base}/api/me/tag-permission`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+        body: JSON.stringify({ tagPermission }),
+      });
+      return { status: res.status, body: await res.json().catch(() => null) as any };
+    };
+    const newPost = (by: string) => scalar(`INSERT INTO public.posts (author_id) VALUES ('${by}') RETURNING id`)!;
+
+    test("P4b. (§63) 'interacted': refused with no follow either way; admitted once the tagged user follows the author", async () => {
+      const p = newPost(author);
+      const before = await post({ source_type: "post", source_id: p, tagged_user_id: interacted });
+      assert.equal(before.status, 403, JSON.stringify(before.body));
+      assert.equal(tagRows(p), 0);
+      exec(`INSERT INTO public.user_follows (follower_id, following_id) VALUES ('${interacted}', '${author}');`);
+      const after = await post({ source_type: "post", source_id: p, tagged_user_id: interacted });
+      assert.equal(after.status, 201, JSON.stringify(after.body));
+      assert.equal(after.body?.status, "approved");
+      assert.equal(tagRows(p), 1);
+    });
+
+    test("P4c. (§63) 'friends_only': a mutual follow is not a friendship (403); a friendship row admits (201)", async () => {
+      const p = newPost(author);
+      exec(`INSERT INTO public.user_follows (follower_id, following_id) VALUES ('${author}', '${friendsOnly}'), ('${friendsOnly}', '${author}');`);
+      const mutual = await post({ source_type: "post", source_id: p, tagged_user_id: friendsOnly });
+      assert.equal(mutual.status, 403, JSON.stringify(mutual.body));
+      assert.equal(tagRows(p), 0);
+      const [ua, ub] = author < friendsOnly ? [author, friendsOnly] : [friendsOnly, author];
+      exec(`INSERT INTO public.user_friendships (user_a, user_b) VALUES ('${ua}', '${ub}');`);
+      const friend = await post({ source_type: "post", source_id: p, tagged_user_id: friendsOnly });
+      assert.equal(friend.status, 201, JSON.stringify(friend.body));
+      assert.equal(tagRows(p), 1);
+    });
+
+    test("P4d. (§63) revocation: the tagged user's own PATCH /me/tag-permission to 'nobody' refuses the author's NEXT attempt; 'anyone' re-admits", async () => {
+      const p = newPost(author);
+      const off = await patchPerm("allows-token", "nobody");
+      assert.equal(off.status, 200, JSON.stringify(off.body));
+      assert.equal(scalar(`SELECT tag_permission FROM public.profiles WHERE id = '${allows}'`), "nobody");
+      const refused = await post({ source_type: "post", source_id: p, tagged_user_id: allows });
+      assert.equal(refused.status, 403, JSON.stringify(refused.body));
+      assert.equal(tagRows(p), 0);
+      // A retry of the tag P3a landed is refused too: the setting binds every NEW
+      // attempt. The existing row is not removed — that is DELETE /api/tags/:id's job.
+      const retryOld = await post({ source_type: "post", source_id: ownPost, tagged_user_id: allows });
+      assert.equal(retryOld.status, 403, JSON.stringify(retryOld.body));
+      assert.equal(tagRows(ownPost), 1, "the refused retry wrote nothing and removed nothing");
+      const on = await patchPerm("allows-token", "anyone");
+      assert.equal(on.status, 200, JSON.stringify(on.body));
+      const again = await post({ source_type: "post", source_id: p, tagged_user_id: allows });
+      assert.equal(again.status, 201, JSON.stringify(again.body));
+      assert.equal(tagRows(p), 1);
+    });
+
+    test("P4e. (§63) cross-viewer: 'nobody' binds a viewer the tagged user mutually follows, on that viewer's own post", async () => {
+      const p = newPost(viewerC);
+      exec(`INSERT INTO public.user_follows (follower_id, following_id) VALUES ('${nobody}', '${viewerC}'), ('${viewerC}', '${nobody}');`);
+      const r = await post({ source_type: "post", source_id: p, tagged_user_id: nobody }, "c-token");
+      assert.equal(r.status, 403, JSON.stringify(r.body));
+      assert.equal(Number(scalar(`SELECT count(1) FROM public.tags WHERE tagged_user_id = '${nobody}'`)), 0);
+      assert.deepEqual(b.unmodelled, [], `every request P4b–P4e issued was modelled:\n${b.unmodelled.join("\n")}`);
+      assert.deepEqual(b.failed.map((f) => /:: (\S+)/.exec(f)?.[1]), ["23505"], `still only P3a's provoked duplicate:\n${b.failed.join("\n")}`);
     });
   });
 });
