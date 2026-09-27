@@ -61,8 +61,8 @@
  *                    is destination affinity, not trip fit, and calling it
  *                    trip_match would be the over-claim this module exists to
  *                    avoid.
- *   season_match     No seasonality signal exists under any name. Compass's
- *                    `time_relevance` is hours-to-event, not season.
+ *   season_match     LEFT this list in census-discovery §47: Compass's CPH-15 `city_season` factor ranks for_you and
+ *                    is now reported (compass/CompassPipeline.ts), so the code has a producer. ONE remains, trip_match.
  *
  * Emitting any of the three would be exactly the defect `00-readme` §1 and
  * Sensing §5.1 name for why-now: a prediction rendered as an observation.
@@ -112,7 +112,7 @@ export type DiscoveryReasonCode = (typeof DISCOVERY_REASON_CODES)[number];
  */
 export const REASON_CODES_WITHOUT_PRODUCER: readonly DiscoveryReasonCode[] = [
   "trip_match",
-  "season_match",
+  // "season_match" — producer since census-discovery §47: Compass `city_season` (CPH-15), mapped below
 ];
 
 /**
@@ -131,7 +131,7 @@ const SIGNAL_TO_CODE: Readonly<Record<string, DiscoveryReasonCode>> = {
   neighborhoodMatch: "nearby_now",   // PDE
   open_now:          "nearby_now",   // Compass
   availability:      "nearby_now",   // Compass
-  time_relevance:    "nearby_now",   // Compass — "Happening soon"
+  time_relevance:    "nearby_now",   city_season: "season_match", // Compass — "Happening soon"; city_season is CPH-15's month-profile factor (census-discovery §47), declared on this line so the cited lines below do not move
   actionability:     "nearby_now",   // PDE
   availabilityFit:   "nearby_now",   // PDE
   capacityOpen:      "nearby_now",   // PDE
@@ -245,7 +245,7 @@ const PLAIN_LANGUAGE: Readonly<Partial<Record<DiscoveryReasonCode, string>>> = {
   creator_affinity: "From travelers whose posts you follow.",
   exploration:      "Newer here, and worth a look.",
   saved_similar:    "Because you saved similar places.",
-  social_context:   "Fits how you like to travel with others.",
+  social_context:   "Fits how you like to travel with others.", season_match: "What people here do at this time of year.", // season_match: fixed text, names no month or category (§47)
 };
 
 export function explainReasonCode(code: DiscoveryReasonCode): string | null {
