@@ -347,8 +347,8 @@ export async function runPipeline(
     // city's graph history says its category peaks in the current time slice.
     const wm = worldModelBoostForItem(sanitized, worldModel, now);
     let rankingFactors = wm.factor
-      ? [...annotation.factors, wm.factor]
-      : annotation.factors;
+      ? [...annotation.factors, wm.factor, ...(wm.seasonFactor ? [wm.seasonFactor] : [])]  // census-discovery §47 (DV-18): the season addend is already IN wm.boost (CompassGraphEngine worldModelBoostForItem), so its factor is reported, not added — no score moves
+      : [...annotation.factors, ...(wm.seasonFactor ? [wm.seasonFactor] : [])];
 
     // CCL-05 — the shared world / experience / forecast / opportunity
     // projections, valued for THIS candidate. Bounded and named, the same shape
