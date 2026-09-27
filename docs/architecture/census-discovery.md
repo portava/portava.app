@@ -10920,7 +10920,7 @@ The migrations' own probes and postconditions also refuse M02, M09, M38, M43, M4
 - **`services/trails/TrailService.ts`** is 1,626 lines before and after. The 20 lines the census cited in it at the base still carry their whole anchors, including `servableMembers`'s, where `export` was added in front of the anchor. §59 and §58.4 quoted two lines that this section then changed in place, `:646#r.outcome` (DV-25) and `:972#trailMomentum` (H-P8-1). Those quotations are de-pointered (§61.14).
 - **`lib/discoveryTrailObject.ts`** is 421 lines before and after. Its cited lines hold, and `.normalize("NFKD")` stays on `:162#.normalize(`.
 - **`lib/discoveryLocalMomentum.ts`** is 320 lines before and after. Only `weightFor`'s first line changed.
-- **`routes/trails.ts`**: the two lines the census cited at the base are unchanged. `artifacts/api-server/src/routes/trails.ts:340#trending: r.momentum === null ? null : r.momentum > 0,` changed in place for H-P8-1, and §58.4's quotation of it is de-pointered.
+- **`routes/trails.ts`**: the two lines the census cited at the base are unchanged. `artifacts/api-server/src/routes/trails.ts:340#trending: r.momentumUnread ? null : (r.momentum ?? 0) > 0,` changed in place for H-P8-1, and §58.4's quotation of it is de-pointered.
 
 `check:doc-citations` and `check:citation-targets` are clean.
 
@@ -11017,11 +11017,72 @@ The commits are on `disc-p14-trails-db`. The fresh-chain `run-tests.sh` and the 
 
 The fix is two line-neutral edits:
 - A successful read with no entry for the Trail is a measured 0, so only a failed read leaves `null` (`artifacts/api-server/src/services/trails/TrailService.ts:972#nowMs)[trailId] ?? 0; // H-P8-1`).
-- The route serves that `null` as `trending: null` (`artifacts/api-server/src/routes/trails.ts:340#trending: r.momentum === null ? null : r.momentum > 0,`).
+- The route serves that `null` as `trending: null` (`artifacts/api-server/src/routes/trails.ts:340#trending: r.momentumUnread ? null : (r.momentum ?? 0) > 0,`).
 
 **Tests.** One route case fails only the second `rank_events` read. It asserts `trending === null`, a non-null provenance, and that both reads were issued (`artifacts/api-server/src/test/discoveryTrailRoutes.test.ts:658#it("H-P8-1: when only the all-surfaces read fails`). Its control reads no events through two successful reads and asserts `trending === false`, a measured zero. M53 reverts the route and turns the first red. M54 reverts the service and turns the control red.
 
 **A visible consequence.** A Trail with no members also answers `trending: null` now, where it answered `false`. The service already returned no reading for it (`none(null)`, with a null provenance). `null` is the answer the route's own comment gives for "no reading was taken". The client type is not this lane's file (P13), and `null` is falsy wherever a boolean was tested.
+
+### 61.17 Integrator: P14 merged, H1 applied, §59's A1 and A2 flipped, headline restated
+
+*Integrator addendum, 2026-09-27. P14's `disc-p14-trails-db` (`a9f92b1cd`, which carries `75278df7b`) merged into `wave8-integration` at `7c083b524`.*
+
+- **The merge.**
+  - Conflicts were unions only: the `test` line, `CENSUS_SCOPE`, and this census, with §61 after §62.14.
+  - `docs/discovery/query-paths.md` numbered a new path QP-25 in both lanes:
+    - P15's keyed-outcome receipt was merged first and keeps QP-25;
+    - P14's proposal comparison set becomes **QP-26**;
+    - the `trail_relations` rebuild becomes **QP-27**.
+  - The renumbering is applied in `query-paths.md`, `query-paths-explain.sql` and the header comments of 3415 (line 87) and 3416 (line 65). Every edit is line-neutral. §4's registry holds both lanes' rows.
+  - `check:discovery-query-paths` is clean at 62 of 62.
+- **§61.11's H1 is applied.** `weightFor` in P8's trend reading weighs a dismiss zero (`artifacts/api-server/src/lib/discoveryTrendState.ts:174#if (outcome === "dismiss") return 0; if (outcome === "save") return TREND_EVENT_WEIGHTS.save;`), line-neutral.
+  - Without H1, 3417's SQL and the TS reading disagree about dismisses. §58 builds its trend parity (3410) on those two agreeing.
+  - D3 (`db/placeMomentumDismiss.db.test.ts`) no longer takes a `todo` gate. It asserts H1 itself and runs unconditionally. It passes 3/3 on the harness, and with H1 reverted it is RED, not `todo`; the file was restored sha256-identical.
+- **§59's A1 and A2 are flipped from DEFECT to FIXED.** A2c is added as the control that two saves on the same rows do cross the floor: `artifacts/api-server/src/test/discoveryVerifyAudit.test.ts:29#it("A1. FIXED (DV-20, §61): 'Đà Nẵng street food' and 'Da Nang street food' canonicalise to ONE Trail`, `artifacts/api-server/src/test/discoveryVerifyAudit.test.ts:47#it("A2. FIXED (DV-25, §61): a dismissed place gains no momentum over one that was only seen`, `artifacts/api-server/src/test/discoveryVerifyAudit.test.ts:66#it("A2c. CONTROL: the same two rows SAVED do cross the floor`.
+  - Each flipped case was seen red with its fix reverted:
+    - removing the dismiss arm from `discoveryLocalMomentum.weightFor` turns A2 red;
+    - bypassing the letter fold in `canonicalTrailSlug` turns A1 red.
+  - Both files were restored sha256-identical, and the file passes 4/4.
+  - §59's two citations of the old DEFECT names are de-pointered, following §19.2's precedent. The quoted text stays, with commit `838f56cb5` and the old line.
+- **The three C moves, reviewed against their criteria.**
+  - **DC-03.** The four `02` §5 checks now run inside 3415's `trail_propose`, under a per-title-token advisory lock. The race suite's P1 is red without the lock.
+  - **DV-20.** One slug for Đ/Ł/Ø spellings, at both the TS and the SQL fold.
+  - **DV-25.** A dismiss weighs zero on every path that reaches momentum or trend: `computeLocalMomentum`, 3417's `rebuild_place_momentum`, and now `computeTrendStates`.
+  - All three are implementation-C under §51.1's rule, the same rule as DC-02 on 3380. **3415–3417 are applied to the harness only, and to no shared database.**
+  - Deploy order: 3415 must precede this code, or `POST /v1/discovery/trails` answers 503 `trails_unavailable`. It fails closed; it never creates a Trail unserialised.
+- **A regression P14's post-merge suite would have caught, fixed here.** The full api-server suite on this merge failed exactly 1 of 27,546 cases: DC-17's `GET /trending distinguishes \`not trending\` from \`never measured\``.
+  - DC-17 pins an EMPTY Trail as `trending: false` with `readingProvenance: null`, and pins the service's `momentum: null` for it in `discoveryTrailProvenance.test.ts`.
+  - §61.16 had accepted `null` for the empty Trail as a side effect of H-P8-1. P14's full suite never ran after its merge of §58–§60, which carried that test.
+  - H-P8-1's own ground is narrower: a FAILED read must not claim "not trending". The service now marks exactly that case (`artifacts/api-server/src/services/trails/TrailService.ts:1000#...(trailRead ? {} : { momentumUnread: true as const })`), and the route serves `null` only for it. Both edits are line-neutral.
+  - An empty Trail is again a measured `false`, with null provenance, as DC-17 pins.
+  - Both contracts now hold: 133/133 across the four Trail suites. Dropping the marker turns H-P8-1's route case red, and it was restored sha256-identical.
+  - §61.16's "visible consequence" paragraph no longer describes the tree.
+- **Not applied: §61.11's H2**, `searchKey`'s deletion of ß, æ, œ, þ and ŋ.
+  - §59 recorded it against B01 as a caveat, not a grade: G57 says diacritics.
+  - Changing `searchKey` means changing 2220's SQL fold, and recomputing every stored `canonical_locations.search_key` in the same release; otherwise the query side and the stored side disagree.
+  - That module is census-input-intelligence's (G57). The finding stands, with no verdict moved.
+- **Harness, fresh chain on this merge:** 352 migrations applied in order, 12 of 364 known-unreplayable; every harness suite passes **348 / 348**, todo 0. **Full api-server suite:** the first run was 27,545 / 27,546, and its one failure is the DC-17 regression fixed below. After the fix it was 27,544 / 27,546. Its two failures are load-induced timeouts with four lanes running: the guard-reachability CONTROL at 180 s, and the Wall first-page timing ratchet. Each passes alone (25/25 and 6/6).
+- **The freshness ledger is written.**
+  - census-discovery: §61's sixteen files, plus the integrator's two edits.
+  - census-trips: the four new harness suites, which read no trip object.
+- **§61.12's owner questions join the consolidated request:**
+  - per-pair traveller affinity;
+  - place co-occurrence;
+  - circle momentum;
+  - non-public events and route plans in a Trail;
+  - §51.10 q5 for DC-20's WHO legs.
+
+**Headline** (§61's moves: `DC-03`, `DV-20`, `DV-25` W → C):
+
+| bucket | count |
+|---|---|
+| BUILT-AND-CORRECT | **99** |
+| BUILT-BUT-WRONG | **83** |
+| NOT-BUILT | **5** |
+| CANNOT-VERIFY | **1** |
+
+- CONSTRUCTED 182 / 188 = **96.8 %**. CORRECT 99 / 188 = **52.7 %**. The four buckets sum to 188.
+- **Production:** 3415, 3416 and 3417 are applied to the harness only. Production holds 0 Trails, and 2892 and 3410 are absent there.
 
 ## Cited, not graded (check:census-scope-coverage)
 

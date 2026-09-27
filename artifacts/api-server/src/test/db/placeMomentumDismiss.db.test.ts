@@ -13,9 +13,9 @@
  *       (the SQL store's TypeScript mirror) over the same rows with a dismiss's outcome
  *       weight removed — the exclusion, stated in TypeScript's own kernel
  *   D3  parity on the RAW rows. computeTrendStates' own `weightFor` is lane P8's
- *       file and the same one-line exclusion is routed to the integrator (§61.11,
- *       hunk H1); until it lands this case is `todo`, and once it lands it runs
- *       as an ordinary case with no edit here.
+ *       file; the same one-line exclusion was routed to the integrator (§61.11,
+ *       hunk H1) and is applied (§61.17). D3 now runs unconditionally, so a
+ *       revert of H1 turns it RED, never back into a silent `todo`.
  */
 import { describe, test, before, after } from "node:test";
 import assert from "node:assert/strict";
@@ -120,10 +120,10 @@ describe("D — DV-25: a dismiss adds no momentum to the SQL store (3417)", { sk
     }
   });
 
-  // H1 (§61.11) is lib/discoveryTrendState.weightFor's own `dismiss → 0`. Detected, not assumed.
+  // H1 (§61.11, applied §61.17) is lib/discoveryTrendState.weightFor's own `dismiss → 0`; `h1` is asserted inside D3, not used to skip it.
   const h1 = HAVE_DB && computeTrendStates([{ item_id: "h1", outcome: "dismiss", served_at: iso(1), outcome_at: iso(0.5) }], NOW_MS).h1!.evidence.totalWeight === 1;
   test("D3. parity on the RAW rows: computeTrendStates and the SQL store agree about dismisses themselves",
-    { todo: h1 ? false : "routed hunk H1 (lib/discoveryTrendState.weightFor, lane P8's file) is not applied yet" }, () => {
+    () => { assert.ok(h1, "H1: computeTrendStates must weigh a dismiss zero (impression 1 + dismiss 0 = 1)");
       const got = stored(pairs.flat());
       const ts = computeTrendStates(asRows(seeded), NOW_MS);
       for (const id of pairs.flat()) {

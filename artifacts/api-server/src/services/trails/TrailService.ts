@@ -901,7 +901,7 @@ export async function relatedTrails(sc: any, trailId: string): Promise<RelatedTr
 export interface TrailTrendingResult {
   refusal: TrailRefusal;
   /** Trail-level momentum in [0,1] from the SHIPPING momentum kernel, or null. */
-  momentum: number | null;
+  momentum: number | null; /** §61.17: set ONLY when the Trail-momentum read FAILED — `momentum: null` alone also means "no members", a measured empty (DC-17). */ momentumUnread?: true;
   /** Member items with momentum, strongest first. Never a raw score to a client. */
   items: Array<{ id: string; sourceType: string; sourceId: string }>;
   /**
@@ -997,7 +997,7 @@ export async function trailTrending(
     .filter((r) => capped.has(r.id))
     .map((r) => ({ id: r.id, sourceType: r.source_type, sourceId: r.source_id }));
 
-  return { refusal: null, momentum: trailMomentum, items, momentumProvenance };
+  return { refusal: null, momentum: trailMomentum, items, momentumProvenance, ...(trailRead ? {} : { momentumUnread: true as const }) }; // §61.17: the route serves `trending: null` only for THIS
 }
 
 // ── The MODIFIER load (DV-18's trail_affinity producer) ─────────────────────
