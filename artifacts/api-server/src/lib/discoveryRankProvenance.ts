@@ -363,3 +363,21 @@ export function buildRankProvenance(
   }
   return out;
 }
+
+// ── census-discovery §48 (DV-40): the model the PDE path serves under ─────────
+//
+// `DISCOVERY_MODEL_VERSION` above names the COMPASS discovery pipeline. Two
+// `GET /discovery` serve paths do not run it: the cache-A PDE cohort and the
+// cold fetch rank through `lib/discoveryPde.ts` → `lib/portavaRank.ts`. Before
+// §48 those rows carried no `modelVersion` at all; stamping them with the
+// Compass constant would have been a false record of which model ordered the
+// page. Declared here, at the foot, because this module's constants above are
+// cited by line.
+
+/**
+ * The PDE / portavaRank ranking shape. Bump when `portavaRank.scoreCandidate`'s
+ * feature set or weighting changes in a way that makes two pages
+ * non-comparable — the same rule as `DISCOVERY_MODEL_VERSION`, for the other
+ * ranker.
+ */
+export const DISCOVERY_PDE_MODEL_VERSION = "portava-rank-pde-2026-09";

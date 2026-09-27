@@ -38,7 +38,7 @@ import { fetchUserTimezone, localHourFor, nowUtcInstant } from "../lib/localTime
 import { isEnabled } from "../compass/flags";
 import type { RankCandidate, ScoredCandidate } from "../lib/portavaRank";
 import { logImpression } from "../lib/rankLog";
-import { logDiscoveryServe, DiscoveryServePoint } from "../lib/discoveryServeLog.js";  import { recommendationIdFor } from "../lib/discoveryRecommendationId.js";  // DC-22 — the id the serve log mints is now also handed to the client; see newServeExposure at the foot of this file.
+import { logDiscoveryServe, DiscoveryServePoint } from "../lib/discoveryServeLog.js";  /* DC-22 — the id the serve log mints is also handed to the client; see newServeExposure at the foot of this file. */  import { stampServedRecommendations, mintServeExposure, exposureForResponse, serveClockOf } from "../lib/discoveryRecommendationRecord.js";  // §48 (P3) — the shared served-recommendation contract
 // D11 / `11` §9 — "A failure must not masquerade as success." One vocabulary for
 // every Discovery refusal; lib/discoveryRefusal.ts documents why the status stays
 // 200 and the named refusal rides inside the existing envelope instead.
@@ -1919,11 +1919,11 @@ router.get("/discovery", async (req, res) => {
         const servedScored = slice
           .map((p) => pdeScoredById!.get(p.id))
           .filter((s): s is ScoredCandidate<RankCandidate> => s !== undefined);
-        void logImpression(servedScored, callerUserId, "discovery", undefined, {
+        void logImpression(servedScored, callerUserId, "discovery", exposure.sessionId, {
           servePoint, route: "GET /discovery", rankedInRequest: true,
           destination: destination!, category, cacheLevel,
           engineMode: engineMode.mode, modeReason: engineMode.reason,
-        });
+        }, servedPageClock(exposure, slice));  // §48 DV-40/46 — the SAME exposure the response was stamped with, and the served positions
       } else {
         void logDiscoveryServe(getServiceClient(), {
           userId: callerUserId, servePoint, items: slice, sessionId: exposure.sessionId, servedAt: exposure.servedAt,  // DC-22 — the SAME exposure the response was stamped with, so an outcome reported against a served id lands on this row.
@@ -2001,7 +2001,7 @@ router.get("/discovery", async (req, res) => {
           }
         })();
       }
-    }
+    } else { void logDiscoveryServe(getServiceClient(), { userId: "", servePoint: cacheLevel === "L1" ? DiscoveryServePoint.CACHE_A_L1 : cacheLevel === "L2_fresh" ? DiscoveryServePoint.CACHE_A_L2_FRESH : DiscoveryServePoint.CACHE_A_L2_STALE, items: slice, ...serveClockOf(exposure), context: { destination: destination!, category, cacheLevel, engineMode: engineMode.mode, modeReason: engineMode.reason } }); }  // §48 — an ANONYMOUS cache-A serve: no user-keyed row, one per-request row (lib/discoveryServeLog.ts foot)
   }
 
   // ── L1: in-process memory (fastest — zero network) ─────────────────────────
@@ -2303,7 +2303,7 @@ router.get("/discovery", async (req, res) => {
       // carries the real ranking features) and gains only the serve-point
       // marker. It deliberately does NOT also call logDiscoveryServe — that
       // would write a second impression row for every served item.
-      void logImpression(servedScored, callerUserId, "discovery", undefined, {
+      void logImpression(servedScored, callerUserId, "discovery", exposure.sessionId, {
         servePoint:      DiscoveryServePoint.COLD_FETCH_LEGACY_RANK,
         route:           "GET /discovery",
         rankedInRequest: true,
@@ -2312,8 +2312,8 @@ router.get("/discovery", async (req, res) => {
         cacheLevel:      "miss",
         engineMode:      engineMode.mode,
         modeReason:      engineMode.reason,
-      });
-    }
+      }, servedPageClock(exposure, slice));  // §48 DV-40/46 — the SAME exposure the response was stamped with
+    } else { void logDiscoveryServe(getServiceClient(), { userId: callerUserId ?? "", servePoint: DiscoveryServePoint.COLD_FETCH_LEGACY_RANK, items: slice, ...serveClockOf(exposure), context: { destination: destination ?? "", category, cacheLevel: "miss", engineMode: engineMode.mode, modeReason: engineMode.reason, rankedInRequest: false } }); }  // §48 — anonymous ⇒ the per-request row only; signed-in with NO scores (a ranker that returned nothing) ⇒ item rows marked rankedInRequest:false, where before this line it wrote nothing and the ids on the response joined to no row
     const totalMs = Date.now() - t0;
     req.log.info(
       { destination, category, geocodeMs, osmMs, totalMs, cacheLevel: "miss",
@@ -2731,9 +2731,9 @@ router.get("/discovery/feed", async (req, res) => {
     // §7 New-to-Me annotation — additive, order-preserving, flag-gated, fail-safe.
     const feedAnnotated = await annotateNewToMe(getServiceClient(), viewerId, slice);
     const feedEnvelope = {
-      places: feedAnnotated,
+      places: stampServedRecommendations(feedAnnotated, exposureForResponse(res, viewerId, feedSessionId)),  // §48 DV-40 — positions 0..n-1, exactly as the serve log writes them
       events:   [],
-      posts:    eventPosts,
+      posts:    stampServedRecommendations(eventPosts as Array<DiscoveryEventPost & { id: string }>, exposureForResponse(res, viewerId, feedSessionId), feedAnnotated.length),  // …and the posts continue the same list
       memories: [],
       sections: [],
       nextCursor,
@@ -2775,14 +2775,14 @@ router.get("/discovery/feed", async (req, res) => {
         userId: viewerId,
         servePoint: DiscoveryServePoint.FEED,
         route: "GET /discovery/feed",
-        sessionId: feedSessionId,
+        ...serveClockOf(exposureForResponse(res, viewerId, feedSessionId)),  // §48 — the response's own clock and session (feedSessionId)
         items: [
           ...slice.map((p) => ({ id: p.id })),
           ...eventPosts.map((p: DiscoveryEventPost) => ({ id: String((p as any).id), kind: "post" as const })),
         ],
         context: { destination: destination ?? "", categories: effectiveCats.join(","), offset },
       });
-    }
+    } else { logServeUnlessRefused(res, getServiceClient(), { userId: "", servePoint: DiscoveryServePoint.FEED, route: "GET /discovery/feed", ...serveClockOf(exposureForResponse(res, null, feedSessionId)), items: slice.map((p) => ({ id: p.id })), context: { destination: destination ?? "", categories: effectiveCats.join(","), offset } }); }  // §48 — an ANONYMOUS feed serve: the per-request row only (no event posts are fetched without a viewer)
   } catch (err) {
     req.log.error({ err }, "discovery/feed failed");
     sendDiscoveryRefusal(
@@ -3150,7 +3150,7 @@ router.get("/discovery/community", async (req, res) => {
     ]);
 
     res.json({
-      items: servedItems.map((i) => {
+      items: stampServedRecommendations(servedItems, exposureForResponse(res, communityViewerId)).map((i) => {  // §48 DV-40 — every served item carries its exposure id, anonymous included
         const a = voteAgg.get(i.id);
         return {
           ...i,
@@ -3181,7 +3181,7 @@ router.get("/discovery/community", async (req, res) => {
       userId:     communityViewerId ?? "",
       servePoint: DiscoveryServePoint.COMMUNITY,
       items:      servedItems.map((i) => ({ id: i.id })),
-      route:      "/discovery/community",
+      route:      "/discovery/community", ...serveClockOf(exposureForResponse(res, communityViewerId)),  // §48 — the SAME exposure the response was stamped with; an anonymous caller now writes the per-request row
       context:    { city, ageFilter: ageFilterComm },
     });
   } catch (err) {
@@ -4163,10 +4163,14 @@ function emptyFeedEnvelope(destination: string | null, sessionId: string) {
  */
 interface ServeExposure {
   /**
-   * NULL for an anonymous caller, deliberately. The serve log writes no row
-   * without a `user_id`, so an id minted for an anonymous serve would name an
-   * exposure record that does not exist. `withRecommendationIds` therefore
-   * emits nothing at all rather than a well-formed id that joins to nothing.
+   * NULL for an anonymous caller. The serve log writes no `rank_events` row
+   * without a `user_id`. Until census-discovery §48 that meant an anonymous
+   * item got NO id, because one would have named an exposure record that did
+   * not exist. It exists now: every serve, anonymous included, writes one
+   * `public.recommendations` row (3376) from which each item's id is re-derived
+   * under the anonymous viewer key — so `withRecommendationIds` stamps every
+   * item, as `04` §5 requires, and an anonymous id can still never be credited
+   * with an outcome (lib/discoveryRecommendationRecord.ts, ANONYMOUS SERVES).
    */
   userId:    string | null;
   /** One session id for the whole serve — the same "single open" semantics the serve log documents. */
@@ -4177,7 +4181,16 @@ interface ServeExposure {
 
 /** Mint the exposure identity for this request. Called once, before any serve path runs. */
 function newServeExposure(userId: string | null): ServeExposure {
-  return { userId, sessionId: randomUUID(), servedAt: new Date().toISOString() };
+  return mintServeExposure(userId);   // §48 — the contract's minting, so every Discovery route mints alike
+}
+
+/**
+ * §48 — what `logImpression` needs to stamp the SAME ids the response carries:
+ * the exposure's clock, and the served page's ids in order, so each scored row
+ * takes its SERVED position rather than its index in the scored subset.
+ */
+function servedPageClock(exposure: ServeExposure, page: ReadonlyArray<{ id: string }>): { servedAt: string; servedIds: string[] } {
+  return { servedAt: exposure.servedAt, servedIds: page.map((p) => p.id) };
 }
 
 /**
@@ -4205,19 +4218,10 @@ function withRecommendationIds<T extends { id: string }>(
   items: readonly T[],
   exposure: ServeExposure,
 ): Array<T & { recommendationId?: string }> {
-  const userId = exposure.userId;
-  if (!userId) return items as Array<T & { recommendationId?: string }>;
-  return items.map((item, position) => ({
-    ...item,
-    recommendationId: recommendationIdFor({
-      userId,
-      sessionId: exposure.sessionId,
-      servedAt:  exposure.servedAt,
-      surface:   "discovery",
-      position,
-      itemId:    item.id,
-    }),
-  }));
+  // §48 — anonymous serves included. For a signed-in viewer the id is
+  // byte-identical to `recommendationIdFor` over the same coordinates (the
+  // contract delegates to it), so every id already handed out is unchanged.
+  return stampServedRecommendations(items, exposure);
 }
 
 /**

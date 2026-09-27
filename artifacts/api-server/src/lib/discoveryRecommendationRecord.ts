@@ -111,6 +111,36 @@ export function mintServeExposure(
   };
 }
 
+/** One exposure per RESPONSE object, however many call sites ask for it. */
+const _exposureByResponse = new WeakMap<object, ServeExposure>();
+
+/**
+ * The exposure of THIS response — minted on the first call, the same object on
+ * every later one.
+ *
+ * For a route whose response is built in one place and logged in another (the
+ * feed, community, hidden gems, map search), this is how both sides get ONE
+ * clock and ONE session without threading a variable through code they do not
+ * own: key it on the response object. Later calls ignore their arguments — the
+ * first minting is the exposure. A WeakMap, so nothing outlives the response.
+ */
+export function exposureForResponse(
+  res: object,
+  userId: string | null,
+  sessionId?: string | null,
+): ServeExposure {
+  const known = _exposureByResponse.get(res);
+  if (known) return known;
+  const minted = mintServeExposure(userId, sessionId);
+  _exposureByResponse.set(res, minted);
+  return minted;
+}
+
+/** The two exposure coordinates a serve-log call takes: `{ sessionId, servedAt }`. */
+export function serveClockOf(e: ServeExposure): { sessionId: string; servedAt: string } {
+  return { sessionId: e.sessionId, servedAt: e.servedAt };
+}
+
 /**
  * The canonical spelling of a serve instant.
  *

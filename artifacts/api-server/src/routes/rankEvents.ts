@@ -20,7 +20,7 @@ import { asyncHandler } from "../lib/asyncHandler";
 import { linkOutcomeSignal } from "../compass/CompassOutcomeEngine";
 import { RankingEvent, OUTCOME_TO_ANALYTICS_EVENT } from "../services/ranking/rankingAnalytics.js";
 import { recordNegativeDistributionSignal } from "../services/ranking/DiscoveryRankingService.js";
-import { recommendationIdFor } from "../lib/discoveryRecommendationId.js";  import { RECOMMENDATION_ID_SHAPE, RECOMMENDATION_ARBITER, RECOMMENDATION_ID_MIGRATION, isMissingRecommendationIdSchema, noteRecommendationIdAbsent, recommendationIdSchemaAbsent, reportRankEventsRejection, _resetRecommendationIdSchemaLatch as _resetSharedRecommendationIdLatch } from "../lib/rankEventsProvenance.js";  /* one line ON PURPOSE — see WHY THIS FILE IS EDITED IN PLACE, below. */
+import { recommendationIdFor } from "../lib/discoveryRecommendationId.js";  import { RECOMMENDATION_ID_SHAPE, RECOMMENDATION_ARBITER, RECOMMENDATION_ID_MIGRATION, isMissingRecommendationIdSchema, noteRecommendationIdAbsent, recommendationIdSchemaAbsent, reportRankEventsRejection, _resetRecommendationIdSchemaLatch as _resetSharedRecommendationIdLatch } from "../lib/rankEventsProvenance.js";  /* one line ON PURPOSE — see WHY THIS FILE IS EDITED IN PLACE, below. */  import { bindOutcomeToExposure, checkEventSchemaVersion, canonicalServedAt, isDuplicateExposureReplay, type OutcomeBinding } from "../lib/discoveryRecommendationRecord.js";  /* census-discovery §48 — the shared served-recommendation contract */
 const router = Router();
 
 // ── POST /rank-events — direct impression write ───────────────────────────────
@@ -38,7 +38,7 @@ type DirectEventType = typeof DIRECT_EVENT_TYPES[number];
 const directEventSchema = z.object({
   event_type:  z.enum(DIRECT_EVENT_TYPES),
   entity_type: z.string().min(1).max(50),
-  entity_id:   z.string().min(1).max(200),
+  entity_id:   z.string().min(1).max(200),  client_event_id: z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i, "client_event_id must be a UUID").optional(), schema_version: z.unknown().optional(),  // §48 DV-37 / DV-38
 });
 
 router.post("/rank-events", asyncHandler(async (req, res) => {
@@ -52,7 +52,7 @@ router.post("/rank-events", asyncHandler(async (req, res) => {
     return;
   }
 
-  const { event_type, entity_id } = parsed.data;
+  const { event_type, entity_id, client_event_id } = parsed.data; if (!acceptsEventVersion(res, parsed.data.schema_version)) return;  // §48 DV-38 — an unknown record version is refused, never stored
 
   const sc = getServiceClient();
   if (!sc) {
@@ -73,7 +73,7 @@ router.post("/rank-events", asyncHandler(async (req, res) => {
   const servedAt = new Date().toISOString();
   await writeDirectImpression(sc, { event_type, item_id: entity_id,
     surface: "living_page", user_id: user.id, served_at: servedAt,
-    outcome: "impression", recommendation_id: directExposureToken(user.id, entity_id, servedAt) }, req.log);
+    outcome: "impression", recommendation_id: directExposureToken(user.id, entity_id, servedAt, client_event_id), keyed: client_event_id !== undefined }, req.log);
 
   res.json({ ok: true });
 }));
@@ -176,7 +176,7 @@ const outcomeBodySchema = z.object({
   item_id:    z.string().min(1).max(200),
   surface:    z.enum(SURFACE_VALUES),
   outcome:    z.enum(OUTCOME_VALUES),
-  session_id: z.string().regex(UUID_RE, "session_id must be a valid UUID").optional(),
+  session_id: z.string().regex(UUID_RE, "session_id must be a valid UUID").optional(),  recommendation_id: z.string().regex(RECOMMENDATION_ID_SHAPE, "recommendation_id is not a served exposure id").optional(), schema_version: z.unknown().optional(),  // §48 DV-46 / DV-38
 });
 
 router.post("/rank-events/outcome", asyncHandler(async (req, res) => {
@@ -189,7 +189,7 @@ router.post("/rank-events/outcome", asyncHandler(async (req, res) => {
     sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid payload");
     return;
   }
-  const { item_id, surface, outcome, session_id } = parsed.data;
+  const { item_id, surface, outcome, session_id, recommendation_id: claimedId } = parsed.data; if (!acceptsEventVersion(res, parsed.data.schema_version)) return;  // §48 — DV-38: an unknown version is refused; DV-46: a served id, when the client echoes one, is BOUND below
 
   const sc = getServiceClient();
   if (!sc) {
@@ -213,7 +213,7 @@ router.post("/rank-events/outcome", asyncHandler(async (req, res) => {
     query = query.eq("session_id", session_id);
   }
 
-  const picked = await readUpgradableExposure(sc, query, {
+  const picked = claimedId ? await readClaimedExposure(sc, user.id, claimedId, req.log) : await readUpgradableExposure(sc, query, {
     userId: user.id, itemId: item_id, surface, outcome, sessionId: session_id,
   }, req.log);
   if (picked.error) {
@@ -225,15 +225,15 @@ router.post("/rank-events/outcome", asyncHandler(async (req, res) => {
     sendError(res, "not_found", "No matching impression row found for this item");
     return;
   }
-  const recommendationId = exposureTokenFor(row, user.id, item_id, surface);  // `04` §10.6
-  const { error: updateErr } = await sc
+  const binding = claimedId ? bindOutcomeToExposure({ callerUserId: user.id, body: { item_id, surface, outcome }, row, upgradable: upgradableOutcomesFor(outcome) }) : null; if (binding && refuseUnboundOutcome(res, binding)) return; const cas = newOutcomeCas(outcome, binding), scCas = compareAndSetClient(sc, cas); const recommendationId = claimedId ?? exposureTokenFor(row, user.id, item_id, surface);  // `04` §10.6; §48 DV-37/46 — bind a claimed id to THIS viewer, then compare-and-set
+  const { error: updateErr } = await scCas
     .from("rank_events")
     .update({ outcome, outcome_at: new Date().toISOString(), ...(canStampExposureToken(recommendationId) ? { recommendation_id: recommendationId } : {}) })
     .eq("id", row.id);
 
-  const settled = await settleOutcomeUpdate(sc, row.id, outcome, recommendationId, updateErr, req.log);
+  const settled = await settleOutcomeUpdate(sc, row.id, outcome, recommendationId, updateErr, req.log, cas);
   if (!settled.ok) {
-    sendError(res, "db_error", settled.message);
+    sendError(res, settled.notFound ? "not_found" : "db_error", settled.message);
     return;
   }
 
@@ -245,7 +245,7 @@ router.post("/rank-events/outcome", asyncHandler(async (req, res) => {
   // `else` arm here is "went", so a dismiss falling through would record the
   // viewer as having GONE to a place they explicitly waved away — the strongest
   // positive signal the chain carries, written from its opposite.
-  if (outcome !== DISMISS) {
+  if (outcome !== DISMISS && !settled.duplicate) {  // §48 DV-37 — a replay links nothing a second time
     // 'trip_add' maps to `saved`, NOT the `went` fallthrough: a trip add is a
     // plan to go and `went` asserts the traveller WAS THERE, which is the same
     // class of fabrication the dismiss exclusion above exists to prevent.
@@ -259,7 +259,7 @@ router.post("/rank-events/outcome", asyncHandler(async (req, res) => {
   // increment_distribution_stats: the latter moves eligible_impressions in the
   // same statement, and an outcome must never move the exposure denominator
   // (see the note at the end of this handler). Fire-and-forget.
-  if (outcome === DISMISS) {
+  if (outcome === DISMISS && !settled.duplicate) {  // §48 DV-37 — a replayed dismiss must not count twice in a cross-viewer statistic
     void recordNegativeDistributionSignal(sc, item_id, user.id);
   }
 
@@ -297,7 +297,7 @@ router.post("/rank-events/outcome", asyncHandler(async (req, res) => {
   // above, for outcome='dismiss' only, through a separate RPC that leaves
   // eligible_impressions alone.
 
-  res.json({ ok: true });
+  res.json(settled.duplicate ? { ok: true, duplicate: true } : { ok: true });  // §48 DV-37 — a replay of a recorded outcome is answered as the success it was
 }));
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -519,7 +519,9 @@ export function exposureTokenFor(
   return recommendationIdFor({
     userId,
     sessionId: typeof row?.["session_id"] === "string" ? (row["session_id"] as string) : "",
-    servedAt:  typeof row?.["served_at"]  === "string" ? (row["served_at"]  as string) : "",
+    // Canonicalised (§48): PostgREST reads timestamptz back as "…+00:00" and the
+    // writer minted "…Z" — the same instant, a different digest.
+    servedAt:  typeof row?.["served_at"]  === "string" ? canonicalServedAt(row["served_at"] as string) : "",
     surface,
     position:  typeof position === "number" ? position : -1,
     itemId,
@@ -589,18 +591,19 @@ async function settleOutcomeUpdate(
   recommendationId: string,
   firstErr: any,
   log: RouteLog | undefined,
-): Promise<{ ok: true } | { ok: false; message: string }> {
-  if (!firstErr) return { ok: true };
+  cas?: OutcomeCas,
+): Promise<{ ok: true; duplicate?: boolean; notFound?: undefined } | { ok: false; message: string; notFound?: boolean }> {
+  if (!firstErr) return cas ? settleCompareAndSet(sc, rowId, outcome, cas) : { ok: true };
 
   if (isMissingRecommendationIdSchema(firstErr)) {
     noteRecommendationIdUnavailable(firstErr, log, "outcome update");
-    const { error: retryErr } = await sc
+    const { error: retryErr } = await (cas ? compareAndSetClient(sc, cas) : sc)
       .from("rank_events")
       // The latch is now "absent", so canStampExposureToken is false and the
       // spread contributes nothing — the same patch the old helper produced.
       .update({ outcome, outcome_at: new Date().toISOString(), ...(canStampExposureToken(recommendationId) ? { recommendation_id: recommendationId } : {}) })
       .eq("id", rowId);
-    if (!retryErr) return { ok: true };
+    if (!retryErr) return cas ? settleCompareAndSet(sc, rowId, outcome, cas) : { ok: true };
     firstErr = retryErr;
   }
 
@@ -723,7 +726,18 @@ async function writeOutcomeAnalyticsRow(
  * index would settle the second into the first. At millisecond resolution that
  * is a double-fired client, not two views.
  */
-export function directExposureToken(userId: string, itemId: string, servedAt: string): string {
+export function directExposureToken(userId: string, itemId: string, servedAt: string, clientEventId?: string): string {
+  // §48 DV-37 — a client that names its event (`client_event_id`, a UUID it
+  // mints once and re-sends on every retry) gets a token that does NOT depend
+  // on the server's clock, so a retried POST collides with its first landing on
+  // 2891's index instead of minting a second exposure. Without one, the
+  // historical token: a function of the instant, which a retry cannot reproduce
+  // — stated rather than hidden, and the reason the key exists.
+  if (clientEventId) {
+    return recommendationIdFor({
+      userId, sessionId: `client-event:${clientEventId.toLowerCase()}`, servedAt: "", surface: "living_page", position: 0, itemId,
+    });
+  }
   return recommendationIdFor({
     userId, sessionId: "", servedAt, surface: "living_page", position: 0, itemId,
   });
@@ -738,6 +752,8 @@ interface DirectImpressionRow {
   served_at:         string;
   outcome:           string;
   recommendation_id: string;
+  /** §48 — the token came from a client event id: a repeat is a RETRY, and the first landing wins. */
+  keyed?:            boolean;
 }
 
 /**
@@ -788,13 +804,17 @@ async function writeDirectImpression(
       RECOMMENDATION_ID_SHAPE.test(row.recommendation_id) &&
       typeof rel?.upsert === "function";
 
+    // A KEYED repeat is a retry of the same client event: DO NOTHING, so the
+    // first landing's served_at stands. An unkeyed repeat keeps the historical
+    // DO UPDATE (the row ends up as the latest report).
     const first = canArbitrate
-      ? await rel.upsert(withToken, { onConflict: RECOMMENDATION_ARBITER, ignoreDuplicates: false })
+      ? await rel.upsert(withToken, { onConflict: RECOMMENDATION_ARBITER, ignoreDuplicates: row.keyed === true })
       : recommendationIdSchemaAbsent()
         ? await rel.insert(bare)
         : await rel.insert(withToken);
     if (!first?.error) return;
 
+    if (isDuplicateExposureReplay(first.error)) return;   // §48 DV-37 — a keyed retry already landed (plain-insert path)
     if (isMissingRecommendationIdSchema(first.error)) {
       noteRecommendationIdUnavailable(first.error, log, "direct impression");
       const retry = await sc.from("rank_events").insert(bare);
@@ -892,9 +912,23 @@ async function handleDirectEventBatch(req: any, res: any, userId: string): Promi
   // touch one row twice — a 21000 on the WHOLE statement, which for an
   // all-or-nothing batch means every row lost. So the position is the item's
   // INDEX in the batch, which is also the truthful thing to say about it.
-  const rows = bare.map((r, idx) => ({ ...r, recommendation_id: recommendationIdFor({
-    userId, sessionId: "", servedAt, surface: "living_page", position: idx, itemId: r.item_id,
-  }) }));
+  // §48 DV-38 — every event in the batch declares a version this server reads,
+  // or none; one unknown version refuses the whole batch, naming its index.
+  for (let i = 0; i < parsed.data.events.length; i++) {
+    const check = checkEventSchemaVersion(parsed.data.events[i]!.schema_version);
+    if (!check.ok) { sendError(res, "invalid_payload", `events.${i}.schema_version: unsupported_schema_version: ${check.reason}`); return; }
+  }
+  // §48 DV-37 — an event the client NAMED (`client_event_id`) takes a token that
+  // does not depend on this flush's clock, so a retried flush collides with the
+  // one that landed instead of doubling every exposure in it.
+  const rows = bare.map((r, idx) => {
+    const cid = parsed.data.events[idx]!.client_event_id;
+    return { ...r, recommendation_id: cid
+      ? directExposureToken(userId, r.item_id, servedAt, cid)
+      : recommendationIdFor({ userId, sessionId: "", servedAt, surface: "living_page", position: idx, itemId: r.item_id }) };
+  });
+  const keyedBatch = parsed.data.events.some((e) => e.client_event_id !== undefined);
+  if (keyedBatch && !recommendationIdSchemaAbsent()) { await handleKeyedDirectBatch(req, res, sc, rows); return; }
 
   const attempt = recommendationIdSchemaAbsent()
     ? await sc.from("rank_events").insert(bare)
@@ -927,6 +961,211 @@ async function handleDirectEventBatch(req: any, res: any, userId: string): Promi
   }
 
   res.json({ ok: true, accepted: rows.length });
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// census-discovery §48 — versioned, BOUND, retry-safe ingestion (DV-37, DV-38, DV-46)
+// ═══════════════════════════════════════════════════════════════════════════════
+//
+// The served-recommendation contract is lib/discoveryRecommendationRecord.ts.
+// Three properties are enforced here, each at the door rather than downstream:
+//
+//   VERSIONED (DV-38)  A body that declares a `schema_version` this server does
+//                      not read is refused 400 `unsupported_schema_version`.
+//                      Absent ⇒ version 1: every client that exists predates the
+//                      field, and refusing them would be an outage, not a check.
+//
+//   BOUND (DV-46)      An outcome that echoes the served `recommendation_id` is
+//                      credited to THAT exposure and to no other: the lookup is
+//                      (signed-in caller, id). Another viewer's id, an anonymous
+//                      id, an unknown id → 404, credits nothing. An id naming a
+//                      different item or surface → 409. An id whose exposure has
+//                      already moved past this outcome → 404 (stale). Without an
+//                      id, the historical item lookup, unchanged.
+//
+//   RETRY-SAFE (DV-37) The funnel update is COMPARE-AND-SET on the row's current
+//                      outcome. Of two concurrent identical reports exactly one
+//                      moves the row; the other — and any later replay of an
+//                      outcome already recorded — is answered 200
+//                      `{ duplicate: true }` and moves NO counter a second time
+//                      (no second Compass link, no second negative signal). The
+//                      analytics row is an upsert on (recommendation_id,
+//                      'analytics'), so re-driving it on a replay completes a
+//                      first attempt that died after the update: a partial
+//                      failure followed by a retry converges.
+
+/** DV-38 — refuse an event whose declared schema version this server cannot read. */
+function acceptsEventVersion(res: any, v: unknown): boolean {
+  const check = checkEventSchemaVersion(v);
+  if (check.ok) return true;
+  sendError(res, "invalid_payload", `unsupported_schema_version: ${check.reason}`);
+  return false;
+}
+
+/** What a claimed-id lookup reads: enough to bind, and to re-derive nothing. */
+const CLAIMED_EXPOSURE_COLUMNS        = "id, user_id, item_id, surface, outcome, position, served_at, session_id, features, recommendation_id";
+const CLAIMED_EXPOSURE_COLUMNS_LEGACY = "id, user_id, item_id, surface, outcome, position, served_at, session_id, features";
+
+/**
+ * The exposure a claimed id names — for THIS viewer only, and never the
+ * analytics row that shares its token. Matched on 2891's column OR on
+ * `features.recommendationId` (every serve-log row since §13.3 carries it
+ * there), so a row written before the column was filled still binds.
+ */
+async function readClaimedExposure(
+  sc: any, userId: string, rid: string, log: RouteLog | undefined,
+): Promise<{ row: any | null; error: any | null }> {
+  // `rid` passed the shape CHECK at the zod boundary ([A-Za-z0-9_-]{22}), so it
+  // cannot carry a PostgREST filter delimiter into the `or` expression.
+  const first = recommendationIdSchemaAbsent()
+    ? await sc.from("rank_events").select(CLAIMED_EXPOSURE_COLUMNS_LEGACY)
+        .eq("user_id", userId).eq("features->>recommendationId", rid).neq("outcome", "analytics")
+        .order("served_at", { ascending: false }).limit(1)
+    : await sc.from("rank_events").select(CLAIMED_EXPOSURE_COLUMNS)
+        .eq("user_id", userId).or(`recommendation_id.eq.${rid},features->>recommendationId.eq.${rid}`).neq("outcome", "analytics")
+        .order("served_at", { ascending: false }).limit(1);
+  if (!first?.error) return { row: ((first?.data as any[]) ?? [])[0] ?? null, error: null };
+  if (!isMissingRecommendationIdSchema(first.error)) return { row: null, error: first.error };
+  noteRecommendationIdUnavailable(first.error, log, "claimed-id select");
+  const second = await sc.from("rank_events").select(CLAIMED_EXPOSURE_COLUMNS_LEGACY)
+    .eq("user_id", userId).eq("features->>recommendationId", rid).neq("outcome", "analytics")
+    .order("served_at", { ascending: false }).limit(1);
+  if (second?.error) return { row: null, error: second.error };
+  return { row: ((second?.data as any[]) ?? [])[0] ?? null, error: null };
+}
+
+/**
+ * Answer a binding that credits nothing. Returns true when it answered.
+ * `not_found` never says WHY — whether the id belongs to somebody else is not
+ * this caller's to learn.
+ */
+export function refuseUnboundOutcome(res: any, binding: OutcomeBinding): boolean {
+  switch (binding.kind) {
+    case "bound":
+    case "duplicate":
+      return false;
+    case "not_found":
+      sendError(res, "not_found", "No exposure with this recommendation_id for this viewer");
+      return true;
+    case "mismatch":
+      sendError(res, "conflict", `recommendation_id names a different ${binding.field} than this event`);
+      return true;
+    case "not_upgradable":
+      sendError(res, "not_found", "stale: this exposure has already moved past this outcome");
+      return true;
+  }
+}
+
+/** The compare-and-set state one outcome report carries through the update. */
+export interface OutcomeCas {
+  /** The outcomes the row may hold for this report to move it. */
+  upgradable: string[];
+  /** true: this report moved the row · false: it did not (someone else did) · null: unknown (no CAS available). */
+  applied:    boolean | null;
+  /** The binding already knows this is a replay: do not touch the row. */
+  skip:       boolean;
+}
+
+export function newOutcomeCas(outcome: OutcomeValue, binding: OutcomeBinding | null): OutcomeCas {
+  return { upgradable: upgradableOutcomesFor(outcome), applied: null, skip: binding?.kind === "duplicate" };
+}
+
+/**
+ * A client whose `.from(t).update(p).eq(c, v)` is COMPARE-AND-SET: the update
+ * also requires the row's outcome to still be upgradable, and returns the rows
+ * it moved so the caller learns whether IT moved the row.
+ *
+ * Real PostgREST builders carry `.in` and `.select` after `.eq`, so production
+ * always gets the guard. A narrower client (a test double whose `.eq` already
+ * resolves) passes through unchanged with `applied: null` — "unknown", never
+ * "won" — which is the pre-§48 behaviour, and the route treats it that way.
+ */
+export function compareAndSetClient(sc: any, cas: OutcomeCas): any {
+  return {
+    from: (table: string) => ({
+      update: (patch: Record<string, unknown>) => ({
+        eq: (col: string, val: unknown) => {
+          if (cas.skip) { cas.applied = false; return Promise.resolve({ data: [], error: null }); }
+          const built = sc.from(table).update(patch).eq(col, val);
+          if (typeof built?.in !== "function") { cas.applied = null; return built; }
+          const narrowed = built.in("outcome", cas.upgradable);
+          const counted = typeof narrowed?.select === "function" ? narrowed.select("id") : narrowed;
+          return Promise.resolve(counted).then((r: any) => {
+            cas.applied = r?.error ? null : Array.isArray(r?.data) ? r.data.length > 0 : null;
+            return r;
+          });
+        },
+      }),
+    }),
+  };
+}
+
+/**
+ * The update landed without error; did THIS report move the row?
+ *   applied true/null → it did (or we cannot know): the historical answer.
+ *   applied false     → it did not. If the row now holds this outcome, this
+ *                       report is a duplicate of one that did: 200, no side
+ *                       effects. Otherwise the row moved elsewhere: stale, 404.
+ */
+async function settleCompareAndSet(
+  sc: any, rowId: unknown, outcome: OutcomeValue, cas: OutcomeCas,
+): Promise<{ ok: true; duplicate?: boolean } | { ok: false; message: string; notFound?: boolean }> {
+  if (cas.applied !== false) return { ok: true };
+  if (cas.skip) return { ok: true, duplicate: true };
+  const { data, error } = await sc.from("rank_events").select("outcome").eq("id", rowId).maybeSingle();
+  if (error) return { ok: false, message: String(error?.message ?? "db_error") };
+  const current = (data as { outcome?: unknown } | null)?.outcome;
+  if (current === outcome) return { ok: true, duplicate: true };
+  // Moved by a concurrent report to an outcome this one may not replace: stale.
+  if (typeof current === "string" && !cas.upgradable.includes(current)) {
+    return { ok: false, notFound: true, message: "stale: this exposure moved to another outcome concurrently" };
+  }
+  // The statement reported no row moved, yet the row is absent or still
+  // upgradable. A database cannot produce that (the WHERE that refused it is
+  // the same one this re-read contradicts); a client that reports no rows for
+  // every update can. Answer as before §48 — success — rather than invent a
+  // refusal out of a missing count.
+  return { ok: true };
+}
+
+/**
+ * The keyed batch: `INSERT … ON CONFLICT (recommendation_id, outcome) DO
+ * NOTHING`, returning the rows that landed. A replayed flush lands nothing and
+ * is told so — `accepted` counts the NEW rows, `duplicates` the rest — instead
+ * of the all-or-nothing plain insert refusing the whole retry with a 23505 and
+ * answering it as a 500. Still all-or-nothing for any OTHER refusal.
+ */
+async function handleKeyedDirectBatch(req: any, res: any, sc: any, rows: ReadonlyArray<Record<string, unknown>>): Promise<void> {
+  // Two events naming the same client event AND item are one event: send once.
+  const seen = new Set<string>();
+  const unique = rows.filter((r) => {
+    const k = String(r["recommendation_id"]);
+    if (seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
+  const rel = sc.from("rank_events");
+  const attempt = typeof rel?.upsert === "function"
+    ? await rel.upsert(unique, { onConflict: RECOMMENDATION_ARBITER, ignoreDuplicates: true }).select("id")
+    : await rel.insert(unique);
+  let error = attempt?.error ?? null;
+  if (error && isDuplicateExposureReplay(error)) {
+    // The plain-insert path (no upsert on this client): the whole replay collided.
+    res.json({ ok: true, accepted: 0, duplicates: rows.length });
+    return;
+  }
+  if (error) {
+    reportRankEventsRejection(req.log, {
+      writer: RANK_EVENTS_WRITER, err: error, rows: unique.length,
+      extra: { where: "keyed direct impression batch" },
+    });
+    (req.log?.error ?? console.error).call(req.log ?? console, { err: error, count: unique.length },
+      "rank-events: keyed batch insert rejected — NOTHING was written");
+    sendError(res, "db_error", error.message);
+    return;
+  }
+  const landed = Array.isArray(attempt?.data) ? attempt.data.length : unique.length;
+  res.json({ ok: true, accepted: landed, duplicates: rows.length - landed });
 }
 
 export default router;
