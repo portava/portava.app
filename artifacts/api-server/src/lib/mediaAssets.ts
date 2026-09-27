@@ -49,7 +49,7 @@ import {
   appendEdit,
   normalizeProvenance,
   computeIntelligenceEligibility,
-  type AppendEditOptions,
+  type AppendEditOptions, type MediaSourceType, MEDIA_SOURCE_UNDECLARED,
 } from "./media/mediaEvidenceEligibility.js";
 import {
   probeCanonicalAssetSchema,
@@ -133,8 +133,8 @@ export interface RecordAssetInput {
   height?: number | null;
   thumbnailPath?: string | null;
   thumbnailUrl?: string | null;
-  /** provenance: 'user' | 'official' | 'provider' | 'community' | ... */
-  sourceType?: string;
+  /** §6 source, or MEDIA_SOURCE_UNDECLARED where the spec does not settle it. Every production call states it (census-media §35, MD37; src/test/mediaAssetSourceDeclared.test.ts). */
+  sourceType?: MediaSourceType;
   processingStatus?: string;
   /** §6 capturedAt (may precede uploadedAt); feeds provenance + eligibility. */
   capturedAt?: string | null;
@@ -359,7 +359,7 @@ export async function recordMediaAssetDetailed(
     // so eligibility is driven purely by source + capture. This is a PURE
     // computation; it runs only on the flag-on write path.
     const provenance = initProvenance({
-      sourceType: input.sourceType ?? "user",
+      sourceType: input.sourceType ?? MEDIA_SOURCE_UNDECLARED,
       capturedAt: input.capturedAt ?? null,
       hasLocation: input.hasLocation ?? false,
     });
@@ -383,7 +383,7 @@ export async function recordMediaAssetDetailed(
       height: input.height ?? null,
       thumbnail_path: input.thumbnailPath ?? null,
       thumbnail_url: input.thumbnailUrl ?? null,
-      source_type: input.sourceType ?? "user",
+      source_type: input.sourceType ?? MEDIA_SOURCE_UNDECLARED,
       captured_at: input.capturedAt ?? null,
       provenance,
       intelligence_eligibility: intelligenceEligibility,
@@ -793,8 +793,8 @@ export interface RecordEntityMediaInput {
   entityId: string;
   position?: number;
   isCover?: boolean;
-  /** §6 sourceType; defaults to the legacy 'user' when omitted. */
-  sourceType?: string;
+  /** §6 sourceType, or MEDIA_SOURCE_UNDECLARED where the spec does not settle it. Every production call states it (census-media §35, MD37). */
+  sourceType?: MediaSourceType;
 }
 
 /**
@@ -1086,7 +1086,7 @@ export async function recordPostMediaAttachments(
         entityType: "post",
         entityId: input.postId,
         position: i,
-        isCover: i === 0,
+        isCover: i === 0, sourceType: MEDIA_SOURCE_UNDECLARED, // census-media §35 MD37: a post's file is an upload, whose §6 source was never declared
       });
       if (r.attachmentId) linked++;
     }
@@ -1095,3 +1095,9 @@ export async function recordPostMediaAttachments(
     return 0;
   }
 }
+
+/**
+ * census-media §35 (MD37). Re-exported so every writer's call site imports the
+ * named undeclared source from the module it already imports the writer from.
+ */
+export { MEDIA_SOURCE_UNDECLARED };

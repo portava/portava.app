@@ -57,7 +57,7 @@ import {
   verifyUploadedBytes,
   ALLOWED_MEDIA_MIME,
 } from "../lib/mediaPipeline.js";
-import { recordMediaAsset, capturedAtFromImageBytes, recordPostMediaAttachments } from "../lib/mediaAssets.js";
+import { recordMediaAsset, capturedAtFromImageBytes, recordPostMediaAttachments, MEDIA_SOURCE_UNDECLARED } from "../lib/mediaAssets.js";
 import { resolvePostPlace } from "../lib/places/placeResolve.js";
 import { classifyBuckets, incrementBucketCounts } from "../lib/places/bucketClassifier.js";
 import { ensurePlaceDay, isEligiblePlaceDayPost } from "../lib/places/placeDays.js";
@@ -255,7 +255,7 @@ router.post(
 
     // Canonical dual-write (flag-gated OFF; fail-soft — legacy flow unaffected).
     void recordMediaAsset(sc, {
-      ownerUserId: user.id,
+      ownerUserId: user.id, sourceType: MEDIA_SOURCE_UNDECLARED, // §6 source: this route receives bytes and a Content-Type, never camera vs library (census-media §35, MD37)
       storageBucket: STORAGE_BUCKET,
       storagePath: path,
       publicUrl: mediaRelayUrl,

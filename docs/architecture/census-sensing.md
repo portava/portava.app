@@ -4832,7 +4832,7 @@ S92 reads: *"the bridge is a graph-edge projection and `grep` over
 exists (+243) and its own first line calls itself *"S92's arrow, built from the
 session's OUTCOME"*. It is imported at
 `artifacts/api-server/src/lib/memoryProjectionScheduler.ts:52#}`, and the
-scheduler is started from `artifacts/api-server/src/index.ts:58#import`.
+scheduler is started from `artifacts/api-server/src/index.ts:59#startMemoryProjectionScheduler` (its import) and called at `:185#startMemoryProjectionScheduler();` (corrected 2026-09-27; was `:58#import`, right when written, until dbf804b9f added a line above it on 2026-09-26; line 58 is now `registerScopedTrustApplier`'s import, which the one-word anchor still passed. The new anchor names the import rather than the word `import` because a snapshot copy under files/ ends in the same path, so this citation is checked on its first word only).
 
 The row's RED WHEN — *S54 exists AND memory eligibility is computed from a
 session's OUTCOME rather than from a graph edge* — has **fired on the code**.
