@@ -12181,6 +12181,275 @@ BUILT ON BRANCH IS NOT MERGED. MERGED IS NOT DEPLOYED.
 | the three test suites in §40.3 | new |
 | `artifacts/api-server/src/scripts/checkCensusFreshness.ts` | census-media's scope widened by one file: the viewer's new suite, which the §40.3 table cites |
 
+### 40.11 Round 2 — the §40.7 findings, measured on the merged tree
+
+The coordinator asked lane R to fix every §40.7 finding that is a functional
+layout defect on a Media surface, with the same method as §40.2–§40.5. The
+branch first took wave8-integration (`9a8a209a4`, which carries lanes F, P,
+T, V and X) as a merge commit, `6e8550cce`. The fixes are in `3097e71f1`.
+
+"Before" below means a web export of `6e8550cce`; "after" means `3097e71f1`.
+The probes ran at 390×844 and 375×667. The Watch, Gems and viewer scenes
+were also run at 390×844 with safe-area insets of top 47 and bottom 34
+injected into the web render (the harness sets the padding of the probe
+element that react-native-safe-area-context reads on web; `Platform.OS`
+stays `web`). The harness now has a fixture flag reply, a verified tile with
+a long name, and 40 extra Grid tiles, each served only to the scene that asks
+for it, so the H8 frames are unchanged.
+
+| §40.7 finding | Verdict | Where |
+| --- | --- | --- |
+| The Watch rail's ⋯ under the FAB | defect; fixed, flag 3341 off and on | §40.12 |
+| The Gems caption and handle under the tab bar | defect; fixed | §40.13 |
+| The page-dot pill outgrowing the column and the screen | defect; fixed (capped) | §40.14 |
+| The Grid's verified stamp meeting the disc | defect; fixed | §40.15 |
+| The Gems rail against the filter bar at 375×667 | not a defect: 9 px clear | §40.16 |
+| The legacy inline ⋯ menu under the block | not reachable: GemsFeed, the only caller, passes `onMore` | §40.7 |
+
+### 40.12 The Watch rail clears the tab button and fits under the header
+
+**Before.** The rail sat on the overlay's bottom row, `max(insets.bottom +
+100, 120)` above the screen's bottom edge. The FAB (16 above
+`useLayoverAwareBottomInset()`, 52 tall) sat over the same right edge.
+
+| Viewport, flag 3341 | Rail | FAB | What went wrong |
+| --- | --- | --- | --- |
+| 390×844, off | y 303–724 | y 680–732 | A tap on ⋯ lands on "Create a post". |
+| 390×844, on | y 227–724 | y 680–732 | The same. |
+| 375×667, off | y 126–547 | y 503–555 | The same. The Stamp's top is under the mode selector's scrim. |
+| 375×667, on | y 50–547 | y 503–555 | The same. A tap on "Ask Compass" lands on the header bar ("Watch"). |
+
+**Fix.** It is one hook, called on an existing blank line:
+`travel-buddy-standalone/src/components/media/WatchItemOverlay.tsx:244#const rail = useWatchRailFit(insets.top, bottomPad, contextFirst);`.
+It is applied to the rail at
+`travel-buddy-standalone/src/components/media/WatchItemOverlay.tsx:401#onLayout={rail.onLayout} testID="watch-action-rail"`.
+1. **The lift.** The rail's bottom edge now starts `space.sm` above the FAB's
+   top edge. It is a `marginBottom` on the rail over the row's `bottomPad`,
+   so the left column does not move:
+   `travel-buddy-standalone/src/components/media/WatchItemOverlay.tsx:786#return { style: { marginBottom: railBottom - bottomPad, gap }, onLayout };`.
+   It uses the FAB's own inset hook, so insets and a layover pill lift both.
+2. **The fit.** The rail's top edge should stay below the header
+   (`getOverlayHeaderTotalHeight`) and the mode selector (4 below it, 46
+   tall), plus `space.sm`: y 156 on web.
+   - The rail is measured once through `onLayout`, gaps excluded.
+   - If that height would cross the line, the gaps shrink from `space.xl`
+     (24) toward `space.xs` (4):
+     `travel-buddy-standalone/src/components/media/WatchItemOverlay.tsx:790#export function watchRailGap(budget: number, content: number, gaps: number): number {`.
+   - Where the rail fits, the gap stays 24, as today.
+
+**After.** Every control is tappable at its centre in every case.
+
+| Viewport, flag 3341 | Rail | Gap | Result |
+| --- | --- | --- | --- |
+| 390×844, off | y 251–672 | 24 | 8 px above the FAB. Every control is painted by the rail at its four corners and its centre. |
+| 390×844, on | y 175–672 | 24 | As above. |
+| 375×667, off | y 159–495 | 7 | As above. |
+| 375×667, on | y 118–495 | 4 | Tappable, but see the residual below. |
+| 390×844, insets 47/34, off | y 217–638 | 24 | FAB y 646–698. |
+| 390×844, insets 47/34, on | y 159–638 | 21 | FAB y 646–698. |
+
+**Residual, not a functional defect: 375×667 with the context overlay on.**
+- **Why it cannot fit.** The rail's content (Compass 69, six 44-px
+  controls, padding 20) is 353 px. The space between the header-and-selector
+  line (156) and the FAB clearance (495) is 339. So the rail cannot fit even
+  at 4-px gaps.
+- **Where it ends up.** It keeps its FAB clearance and rises to y 118, which
+  is below the header bar (it ends at 98).
+- **What covers it.** Ask Compass (y 130–199) is tapped as itself. Its upper
+  part lies under the mode selector's fading scrim (`rgba(0,0,0,0.45)` to
+  transparent over y 102–172). At the disc's top corners the scrim is 0.24;
+  at its centre, 0.05.
+- **Contrast.** The ink glyph on the disc, so dimmed, is still about 10:1.
+- **What would clear it.** An owner call on the short-screen rail: fewer
+  controls, or a smaller Compass. Not a layout fix.
+
+### 40.13 The Gems caption and handle end above the tab bar
+
+**Before.** The bottom content's `paddingBottom` was `BOTTOM_SAFE +
+space.md`: 28 on web and Android. The floating tab pill covers the bottom
+76 px (12 above the inset, 64 tall).
+
+| Viewport | Handle | Avatar | Caption lines | Tab pill starts at |
+| --- | --- | --- | --- | --- |
+| 390×844 | y 755–770 | y 733.5–769.5 | y 781–814 | y 768 |
+| 375×667 | y 578–593 | — | y 604–637 | y 591 |
+
+At 390×844 the caption lines were not painted on top at any sampled point.
+
+**Fix.** The `paddingBottom` is now the app's own clearance for tab surfaces
+(`hooks/useBottomInset.ts`, Tier 1), which also follows a layover pill:
+`travel-buddy-standalone/src/components/media/GemsItemOverlay.tsx:101#const tabBarClearance = useLayoverAwareBottomInset();`,
+applied at
+`travel-buddy-standalone/src/components/media/GemsItemOverlay.tsx:198#{ paddingBottom: tabBarClearance }`.
+
+**After.** 31 text lines and controls were checked in each case. Every one
+is clear of the pill, the FAB and the filter bar, and painted on top.
+
+| Viewport | Lowest content | Pill starts at | Highest content | Filter bar ends at |
+| --- | --- | --- | --- | --- |
+| 390×844 | y 746 | y 768 (22 px clear) | — | — |
+| 375×667 | y 569 | y 591 (22 px clear) | y 262 | y 246 (16 px clear) |
+| 390×844, insets 47/34 | y 712 | y 734 (22 px clear) | — | — |
+
+### 40.14 The page dots are capped at nine
+
+**Before.** The pill is `10 × pages + 20` px wide. With 48 pages (the fixture
+Grid's 8 tiles plus 40 more) it was 500 px wide, wider than the left column
+(297 at 390, 282 at 375) and than the screen.
+
+**Fix: the least visible change.**
+- **Nine or fewer pages.** Nothing changes. The H8 fixture's 8 pages still
+  draw 8 dots, 100 px wide.
+- **More than nine.** The pill draws a window of 9 dots around the current
+  page:
+  `travel-buddy-standalone/app/media-viewer/[id].tsx:812#pageDotWindow(i, activeIndex, items.length)`,
+  `travel-buddy-standalone/app/media-viewer/[id].tsx:899#const PAGE_DOTS_MAX = 9;`.
+  - Once it can, the current page sits in the middle of the window.
+  - A window edge with more pages beyond it draws its dot at 3 px instead
+    of 5.
+  - The current page keeps its 14-px white dot.
+  - No colour changes.
+- **Width.** The widest pill is 110 px, under the narrowest left column this
+  app lays out (227 px on a 320-px screen).
+
+**After.**
+
+| Viewport, pages | Dots drawn | Pill |
+| --- | --- | --- |
+| 390×844, 48 pages, on page 1 | 9: `14 5 5 5 5 5 5 5 3` | 108 px, x 141–249 |
+| 390×844, 48 pages, on page 25 | 9: `3 5 5 5 14 5 5 5 3` | 108 px |
+| 375×667, 48 pages | 9 | 108 px |
+
+Nothing is covered in any case.
+
+### 40.15 The Grid's verified stamp stops short of the disc
+
+The fixture has a GPS-verified tile, first in the Grid, named "Miradouro de
+Santa Luzia e Jardim Júlio de Castilho" and carrying a duration and a view
+count.
+
+**Before.** The stamp (left 6, up to ~158 px) ran under the disc (right 4).
+The disc paints over the name's end.
+
+| Disc state | Gap at 390×844 | Gap at 375×667 |
+| --- | --- | --- |
+| Idle | −14.1 px | −22.1 px |
+| Count 1284 | −25.6 px | −33.6 px |
+| Count 100000 | −38.8 px | −46.8 px |
+
+**Fix.**
+- **The width.** The stamp's `maxWidth` is what the disc leaves: the tile,
+  less the stamp's left 6, the disc's right 4, the disc's measured width, and
+  an 8-px gap (which also absorbs the stamp's −12° turn):
+  `travel-buddy-standalone/src/components/media/GridTile.tsx:151#maxWidth: verifiedStampMaxWidth(cellWidth, discWidth)`.
+- **The measurement.** The disc's width is measured through `onLayout`
+  (`travel-buddy-standalone/src/components/media/GridTile.tsx:169#testID="grid-tile-stamp-disc" onLayout=`),
+  so a wider count cannot run into it.
+- **The text.** The stamp's two lines now fill the stamp and truncate inside
+  it: `travel-buddy-standalone/src/components/media/VerifiedLocationStamp.tsx:59#alignSelf: 'stretch', textAlign: 'center',`.
+  On web, a line sized to its own text overflowed a narrowed stamp's border.
+- **What does not change.** The Watch and viewer stamps are not narrowed, so
+  they render as before (the text box stretches to a stamp that is its own
+  width).
+
+**After.** The name ends in an ellipsis. Stamp text is painted on top at
+three points per line (both visible ends and the middle), mapped onto the
+turned line. The duration and the count
+stay painted on top.
+
+| Disc state | Gap, 390×844 | Name shown, 390×844 | Gap, 375×667 | Name shown, 375×667 |
+| --- | --- | --- | --- | --- |
+| Idle | +5.6 px | 110 of 347 px | +5.5 px | 102 px |
+| Count 1284 | +5.1 px | 99 px | +4.9 px | 91 px |
+| Count 100000 | +5.7 px | 85 px | +5.6 px | 77 px |
+
+The gaps are measured between the turned stamp's bounding box and the disc.
+
+### 40.16 Not a defect: the Gems rail against the filter bar at 375×667
+
+- **Measured.** The rail is at y 255–495; the filter bar ends at 246, so
+  there is 9 px of clearance. With injected insets 47/34 at 390×844 the
+  clearance is 152 px. Not fixed.
+- **A correction to §40.7's "Short screens with insets".** It said an iPhone
+  SE's 20-pt status bar would push the filter bar into the rail. It does
+  not. The header floors its top padding at 54
+  (`getOverlayHeaderTotalHeight = max(insets.top, 54) + 44`), so a top inset
+  under 54 moves nothing. On an SE the chrome is exactly the web render's.
+
+### 40.17 Tests (round 2)
+
+24 new tests, in four new suites and six new cases in the viewer's suite.
+Each fix was mutated out and seen red (§40.18).
+
+| Suite | What it pins |
+| --- | --- |
+| `travel-buddy-standalone/src/components/media/__tests__/WatchItemOverlay.railFit.component.test.tsx:109#describe('WatchItemOverlay — the rail clears the Media tab FAB'` | The rail's bottom (bottomPad plus its marginBottom) is at least the FAB's top plus 4, in 7 cases: insets 0, 34 and 48, a layover pill, flag off and on. The row's paddingBottom, and so the left column, is unmoved. A source needle keeps media.tsx's FAB geometry what the test assumes. |
+| `travel-buddy-standalone/src/components/media/__tests__/WatchItemOverlay.railFit.component.test.tsx:144#describe('watchRailGap — the rail fits its budget'` | `watchRailGap` at the probe's budgets: 24 where the rail fits, a gap that fits at 375×667 off, and never under 4. |
+| `travel-buddy-standalone/src/components/media/__tests__/WatchItemOverlay.railFitLayout.component.test.tsx:56#it('667-px window, flag off` | With a 667-px window, after the rail reports its measured height its gap shrinks, and its top clears the header-and-selector line. |
+| `travel-buddy-standalone/src/components/media/__tests__/GemsItemOverlay.tabBarClearance.component.test.tsx:74#describe('GemsItemOverlay — the bottom content ends above the floating tab bar'` | The bottom content's paddingBottom is at least the tab pill's top plus 8 (and the layover pill's), for insets 0, 34 and 48, with and without a layover pill. |
+| `travel-buddy-standalone/app/media-viewer/__tests__/pageDots.layout.component.test.tsx:190#describe('MediaViewer — the page-dot pill never outgrows the left column'` | For 8, 9, 10, 48 and 200 pages: every page keeps its dot in the tree; at most 9 are drawn; exactly one is active and 14 px wide; the drawn window is the 9 around the active page; the edge dots are 3 px exactly when pages lie beyond; the pill is at most 227 px. |
+| `travel-buddy-standalone/src/components/media/__tests__/GridTile.verifiedStamp.component.test.tsx:62#it('a long verified name` | The stamp leaves the disc an 8-px gap when idle, and again after the disc reports a 47.5-px layout. Its two lines stretch and are one line each. |
+
+### 40.18 Mutations (round 2): each fix reverted alone, and seen red
+
+In each run, one fix was reverted, the jest suite was run, and the tree was
+re-exported and probed at both viewports. Then `git checkout` restored the
+file, and the tree was clean after every run.
+
+| Mutation | Jest | Probe |
+| --- | --- | --- |
+| M8a: the rail's lift removed | RED, 7 of the FAB-clearance cases | RED at both viewports, flag off and on: the rail intersects the FAB and the ⋯ tap lands on "Create a post" |
+| M8b: the rail's gap fixed at 24 | RED, the 667-px layout case | RED at 375×667 only (as designed): flag off, the Stamp's top is painted over; flag on, the rail leaves the viewport and Ask Compass and the Stamp are painted over |
+| M9: the bottom content's padding back to `BOTTOM_SAFE + space.md` | RED, 5 of 5 | RED at both viewports: the handle, the avatar and three caption lines under the tab pill |
+| M10: every dot drawn | RED, 4 of the 6 new viewer cases | RED at both viewports: a 500-px pill that leaves the screen, wider than the left column |
+| M11a: no `maxWidth` on the verified stamp | RED | RED in all 6 cases: gaps −14.1 to −46.8 |
+| M11b: the disc's width not measured (fixed at 36) | RED | RED once the disc shows a count: gaps −5.9 and −19.1 at 390×844, −6 and −19.2 at 375×667 |
+| M11c: the stamp's name sized to itself | RED | RED at 375×667 with a six-digit count, where the name is painted over |
+
+### 40.19 The final re-shoot, the H7 sheets and the flag-ON previews
+
+Everything is under the session scratchpad at `lane-r/final/`, with a
+`manifest.md`. Per image it gives the scene, the tree SHA, the flags, what
+changed, and the census section.
+- **H8 set (01–11).** AFTER from the branch head, paired with lane S's
+  BEFORE (`ff89a7b20`).
+- **H7 sheets (21–25).** AFTER, paired with lane S's baseline at
+  `e9e0b0404`.
+- **Lane T's nested sheets (26–30).** BEFORE (`e9e0b0404`) and AFTER:
+  ProfilePreviewCard, EngagementUserListSheet, ReportSheet steps 1 and 2,
+  and MediaSourceSheet (whose web variant hides the Camera row).
+- **Not reachable on web: TagPreviewSheet.** It opens only on a long-press
+  of an @mention or #hashtag, and react-native-web's `Text` implements
+  `onPress`, never `onLongPress`. A mention's short press navigates to the
+  profile instead.
+- **Flag-ON previews.** Lane F's four flags were set in the fixture reply
+  only: the World landing, Watch, and Gems.
+
+### 40.20 Checks (round 2)
+
+| Check | Result |
+| --- | --- |
+| Client `tsc -p tsconfig.json --noEmit` | 0 errors |
+| eslint on the changed sources | 0 errors, the same warning counts as at `6e8550cce` |
+| eslint on the new tests | 0 errors; only the house `require()` and `any` warnings in jest mock factories |
+| lint:mocks, lint:imports, check:orphan-tests | pass |
+| mediaContrast.test.ts | 18 of 18 |
+| jest: every suite under src/components/media, the viewer's, the Media tab's three, MediaWorldShell, HiddenGemsMediaScreen, WallScreen.quickMedia | 24 suites, 123 tests |
+| jest (web renderer): WatchStamp, mediaSurfaceFlags | 5 of 5 |
+
+The api-server checks are in the report that carries this section.
+
+### 40.21 Files changed (round 2)
+
+| File | Change |
+| --- | --- |
+| `travel-buddy-standalone/src/components/media/WatchItemOverlay.tsx:244#const rail = useWatchRailFit` | The rail's lift and fit. Line-neutral, with a hook and a helper appended. |
+| `travel-buddy-standalone/src/components/media/GemsItemOverlay.tsx:101#const tabBarClearance` | The bottom content's tab-bar clearance. Line-neutral. |
+| `travel-buddy-standalone/app/media-viewer/[id].tsx:902#function pageDotWindow` | The nine-dot window. Line-neutral, with constants and a helper appended. |
+| `travel-buddy-standalone/src/components/media/GridTile.tsx:299#function verifiedStampMaxWidth` | The verified stamp's width. Line-neutral, with a constant and a helper appended. |
+| `travel-buddy-standalone/src/components/media/VerifiedLocationStamp.tsx:51#alignSelf: 'stretch'` | The stamp's lines fill it. Line-neutral. |
+| the four new suites in §40.17, and six cases added to the viewer's suite | tests |
+
 ## 39. Pointer: §35.7 items 1 and 2 are closed fail-safe on branch, recorded in census-map §45 (lane X) — 2026-09-27
 
 **Item 1, the reference.** The map evidence path stored
