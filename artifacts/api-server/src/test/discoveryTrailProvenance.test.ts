@@ -54,6 +54,7 @@ import {
   getTrailModules, trailTrending, loadViewerTrailModifier,
 } from "../services/trails/TrailService.js";
 import { toPublicProvenance } from "../routes/trails.js";
+import { orPredicate } from "./helpers/postgrestOrFilter.js";
 import {
   _resetLocalMomentumCacheForTest, MOMENTUM_BASELINE_WINDOW_MS,
 } from "../lib/discoveryLocalMomentum.js";
@@ -121,6 +122,10 @@ function makeDb(seed: Record<string, Row[]>, erroring: string[] = []) {
       is(c: string, v: any) { filters.push((r) => (r[c] ?? null) === v); return b; },
       gt(c: string, v: any) { filters.push((r) => String(r[c] ?? "") > String(v)); return b; },
       gte(c: string, v: any) { filters.push((r) => String(r[c] ?? "") >= String(v)); return b; },
+      // lib/blocks.fetchBlockedSet narrows inside `.or()`; the Trail pages are
+      // viewer-scoped by it (census-discovery §51). A missing `.or` throws
+      // there, reads as an unreadable block list, and withholds every member.
+      or(expr: string) { filters.push(orPredicate(expr)); return b; },
       order() { return b; },
       limit(n: number) { limitN = n; return b; },
       range(a: number, z: number) { range = [a, z]; return b; },

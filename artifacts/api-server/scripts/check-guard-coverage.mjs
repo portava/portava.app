@@ -951,6 +951,21 @@ const EXEMPT = [
       'EXEMPTION MEANS UNGUARDED, NOT SAFE — if the injected fetch is ever removed, or the URL ever comes ' +
       'from the environment, the exemption is void and this file must import the guard.',
   },
+  {
+    file: 'src/test/db/trailPostgrestBridge.ts',
+    reason:
+      'THE TRAILS HARNESS BRIDGE (census-discovery §51). It builds the REAL @supabase/supabase-js client on ' +
+      'purpose, so TrailService and routes/trails.ts run against the local PostgreSQL harness with the filters ' +
+      'production sends. It CANNOT DIAL SUPABASE: createClient is given an injected fetch that turns each ' +
+      'request into one psql statement, and that fetch is the only transport the client has; the URL is the ' +
+      'literal "http://trail-bridge.invalid", written in the file and never read from the environment. It ' +
+      'names no Supabase credential variable. The psql it runs goes to LOCAL_DB_URL through the same ' +
+      'src/test/db/localDb.ts door every database suite uses, the throwaway database scripts/local-db/up.sh ' +
+      'boots. It is a helper, not an entry point: it runs only when src/test/db/trailsService.db.test.ts ' +
+      'imports it, and that suite skips without a local database. EXEMPTION MEANS UNGUARDED, NOT SAFE — if the ' +
+      'injected fetch is ever removed, or the URL ever comes from the environment, the exemption is void and ' +
+      'this file must import the guard.',
+  },
 
   {
     file: 'src/test/mediaAccessFailClosed.test.ts',

@@ -262,7 +262,7 @@ router.get("/v1/discovery/trails/:id/modules", asyncHandler(async (req: Request,
   if (!id.success) return sendError(res, "invalid_payload", "trail id must be a uuid");
 
   const sc = getServiceClient();
-  const r = await getTrailModules(sc, id.data);
+  const r = await getTrailModules(sc, id.data, { viewerId: auth.user.id });
   if (r.refusal) return sendTrailRefusal(res, r.refusal);
 
   res.json({
@@ -327,7 +327,7 @@ router.get("/v1/discovery/trails/:id/trending", asyncHandler(async (req: Request
   const id = uuid.safeParse(req.params.id);
   if (!id.success) return sendError(res, "invalid_payload", "trail id must be a uuid");
 
-  const r = await trailTrending(getServiceClient(), id.data);
+  const r = await trailTrending(getServiceClient(), id.data, Date.now(), { viewerId: auth.user.id });
   if (r.refusal) return sendTrailRefusal(res, r.refusal);
   // `11` §4's prohibition, honoured: `trending` is a BOOLEAN derived from the
   // Trail's momentum and the momentum number itself is not serialised.
@@ -458,8 +458,9 @@ router.post("/v1/discovery/trails/:id/reports", asyncHandler(async (req: Request
   if (r.refusal) return sendTrailRefusal(res, r.refusal);
   // No moderation outcome is disclosed: §15 makes resolution an admin action,
   // and telling a reporter what happened to a report is a channel for probing
-  // other people's content state.
-  res.status(202).json({ reported: r.reported });
+  // other people's content state. `duplicate` tells the REPORTER only that
+  // their own identical open report already stands (`11` §1, a retry).
+  res.status(202).json(r.duplicate ? { reported: r.reported, duplicate: true } : { reported: r.reported });
 }));
 
 export default router;
