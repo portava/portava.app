@@ -1926,6 +1926,8 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     // WIDENED 2026-09-27 by the coverage-guard fix (census-media §32.14): MD338 (§30, §32) — the receipt reader §32.1's privacy argument rests on, and the byte gate's fail-closed suite §30 and §32.9 ran as regression evidence.
     "artifacts/api-server/src/services/intel/PresenceVerifier.ts",
     "artifacts/api-server/src/test/mediaAccessFailClosed.test.ts",
+    // WIDENED 2026-09-27 by census-media §40 (lane R): the viewer's page-dots layout suite, which §40.3 cites as the pin on the dots' own slot (the route file itself is already watched above).
+    "travel-buddy-standalone/app/media-viewer/__tests__/pageDots.layout.component.test.tsx",
   ],
   // census-telegraph.md — declared 2026-09-11 on the same basis as Media above:
   // 451 requirements out of CANNOT BE CHECKED, a clock started rather than a
