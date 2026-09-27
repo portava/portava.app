@@ -8973,3 +8973,481 @@ pass owns them. No verdict moves on any of them.
 census-wall each cite
 `artifacts/api-server/src/scripts/checkCensusFreshness.ts:1520#ADDED 2026-09-20 by census-wall §13`.
 The widened scope arrays above it moved it from line 1406.
+
+## 33. Lane T — the shared sheets Media opens, fixed through the design system (H7) — 2026-09-27
+
+Lane T owns one row, **MD403**, for one owner ruling, **H7**. The work is on
+branch `lane-t-h7`, cut from `e9e0b0404`, the head of
+`claude/sensing-completion-20260925`.
+
+This lane wrote no migration, read or wrote no database, and enabled no flag.
+It changed no server file and no existing token's value. It added two tokens
+and changed ten shared client components, all line-neutrally. It edited no
+Media-owned file except `mediaContrast.test.ts`. The headline is not
+restated here.
+
+**MD403 stays W.** Every pair the four sheets and DisambiguationSheet paint
+when opened from Media is now asserted and passes, and no pair of any other
+consumer got worse (§33.4, §33.6). Two things keep the row open, and each is
+named exactly in §33.8:
+- four modal sheets the comment sheet opens from inside itself are reachable
+  in the Media flow and are measured by no lane;
+- the owner said "Keep MD403 open until verified", and on-device review of
+  the visible changes (H8, extended by §33.5) has not happened.
+
+### 33.1 Row table
+
+| ID | Was | Now | Evidence |
+| --- | --- | --- | --- |
+| MD403 | **W** | **W** | **The owner ruled H7 YES on 2026-09-27** (§33.2), so the four shared sheets Media opens, and CreationAssist's "See all" DisambiguationSheet, are inside §46. **Re-measured, they failed on 43 pairs in 26 colour/ground groups**: 25 in the four sheets against the 19 §31.13.6 counted, and 1 in DisambiguationSheet. The difference is that the components drawn inside the sheets were measured too (§33.3). **Fixed through the design system:** two role tokens, `travel-buddy-standalone/src/theme/tokens.ts:13#signalStrong: '#C43B23'` and `travel-buddy-standalone/src/theme/tokens.ts:16#muteStrong: '#696660'`, and ten shared components moved onto them or onto `mute`; no existing token changed value (§33.4). **Asserted as Media's own pairs:** 170 sheet pairs, 127 asserted and all passing, 43 decorative, none pinned (`travel-buddy-standalone/src/features/media/__tests__/mediaContrast.test.ts:1552#test('census-media §33: the shared sheets Media opens are measured surfaces`); the whole file now holds 762 pairs, 689 asserted and passing, 0 pinned. **No other consumer regressed:** `travel-buddy-standalone/src/theme/__tests__/sharedSheetContrast.consumers.test.ts:308#test('no consumer pair got worse, and none that is asserted ends below WCAG AA'` measures 205 pairs on the grounds of 54 consumer files, before and after: 74 improved, 131 unchanged, 0 worse, 0 below AA (§33.6). Every change was seen red when reverted (§33.7). Readings (a)–(c) of §31.13.8 stand as stated. **RED WHEN** both hold: (1) the four modal sheets the comment sheet opens from inside itself — `travel-buddy-standalone/src/components/TagPreviewSheet.tsx`, `travel-buddy-standalone/src/components/ProfilePreviewCard.tsx`, `travel-buddy-standalone/src/components/EngagementUserListSheet.tsx` and `travel-buddy-standalone/src/components/ReportSheet.tsx` — are measured as asserted pairs and pass, or the owner rules that H7 stops at the sheets it names; and (2) the owner's "until verified" is met: the visible changes of §31.8, §31.13.15 and §33.5 are reviewed on a device (H8). **Blocker:** branch work for (1); two owner decisions for (1)'s alternative and for (2). |
+
+### 33.2 The ruling
+
+The owner's words, verbatim:
+
+> "H7: Yes. Include comments, share, place picker, and plan picker in Media's
+> contrast requirement. Shared ownership does not exclude a surface users
+> encounter in the Media flow. Fix the 19 failing pairs through the
+> appropriate design-system components or tokens, then check their other
+> consumers for regressions. Keep MD403 open until verified."
+
+- §31.13.6 put the case that §46 does not govern these sheets. The owner did
+  not accept it, so its "Not governed" line no longer holds.
+- The comment in the contrast test that said the sheets were "not pairs here"
+  is marked superseded in place
+  (`travel-buddy-standalone/src/features/media/__tests__/mediaContrast.test.ts:1387#SUPERSEDED by census-media §33`).
+- The ruling also reaches the DisambiguationSheet that CreationAssist opens
+  from the add-gem sheet, as §31.13.6 said it would.
+- "Keep MD403 open until verified" is why the row does not move here (§33.8).
+
+### 33.3 Re-measured: 43 failing pairs in 26 groups, not 19
+
+Each sheet was read as it renders when Media opens it, with every shared
+component drawn inside its own layout. The pairs, with the needles that tie
+each colour to its source line, are in
+`travel-buddy-standalone/src/theme/__tests__/sharedSheetContrast.pairs.ts:382#export const MEDIA_SHEET_PAIRS`.
+
+| Sheet (opened from) | Drawn inside it | Pairs | Asserted | Decor | Failing before | Groups | §31.13.6 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| CommentsSheet (Watch, Gems, the Grid viewer) | RichText, TranslationToggle, VerifiedStamp, StampIcon, MentionInput, MentionSuggestionList | 51 | 43 | 8 | 19 | 8 | 7 |
+| ShareSheet (Watch; the World shell's Telegraph share) | PortavaSheet, SectionHeader, Avatar | 44 | 31 | 13 | 10 | 7 | 7 |
+| GlobalPlacePicker (the add-gem sheet) | — | 28 | 19 | 9 | 5 | 5 | 2 |
+| PlanPickerController (the World action rail, Route It, the Watch list) | DatePickerField, LockTypeSelector | 38 | 27 | 11 | 8 | 5 | 3 |
+| DisambiguationSheet (CreationAssist's "See all") | EntitySuggestionRow | 9 | 7 | 2 | 1 | 1 | 1 |
+| **Total** | | **170** | **127** | **43** | **43** | **26** | **20** |
+
+A group is one colour on one ground at one threshold. What §31.13.6 missed:
+- **CommentsSheet:** the "Hashtag" chip in the mention suggestions, `signal`
+  on its own 0x15 tint (2.99).
+- **GlobalPlacePicker:** the "Use my current location" row, `signal` text on
+  the paper sheet (3.14); and the two loading spinners that replace the GPS
+  and custom-row icons, `signal` on their 0x20 and 0x15 tints (2.70, 2.85).
+  Each spinner is the only sign of the loading state, so it is a 3:1 mark.
+- **PlanPickerController:** the DatePickerField placeholder and the
+  LockTypeSelector hint, `faint` on paper (2.73); and LockTypeSelector's
+  inactive chip labels, `mute` on `haze` (4.41).
+
+Every failing pair, before and after:
+
+| Sheet | Colour on ground (bar) | Pairs | Before → after |
+| --- | --- | --- | --- |
+| CommentsSheet | `faint` text on paperRaised (4.5) | the empty state, a comment's time, "Edited", "Reply"/"Edit", the idle like count, "No replies yet." | 2.88 → 5.55 (`mute`) |
+| CommentsSheet | `faint` icons on paperRaised (3) | the idle like stamp, delete, a reply's edit pencil, the reply arrow | 2.88 → 5.55 (`mute`) |
+| CommentsSheet | `signal` text on paperRaised (4.5) | an @mention, the liked count, the hashtag-cap warning | 3.31 → 5.25 (`signalStrong`) |
+| CommentsSheet | onInk text on `signal` (4.5) | the inline edit's "Save" | 3.14 → 4.99 (fill `signalStrong`) |
+| CommentsSheet | `mute` text on `haze` (4.5) | "Comments have been turned off." | 4.41 → 4.55 (`muteStrong`) |
+| CommentsSheet | `faint` text on paper (4.5) | "Replying to …", the input's placeholder | 2.73 → 5.27 (`mute`) |
+| CommentsSheet | `faint` icon on paper (3) | the reply context's ✕ | 2.73 → 5.27 (`mute`) |
+| CommentsSheet | `signal` text on its 0x15 tint (4.5) | the "Hashtag" chip | 2.99 → 4.75 (`signalStrong`) |
+| ShareSheet | `faint` text on paperRaised (4.5) | the three options' subtitles | 2.88 → 5.55 (`mute`) |
+| ShareSheet | `signal` text on paperRaised (4.5) | "‹ Back" | 3.31 → 5.25 (`signalStrong`) |
+| ShareSheet | `faint` text on paper (4.5) | the note and search placeholders | 2.73 → 5.27 (`mute`) |
+| ShareSheet | `signal` text on its 0x07 tint (4.5) | "New Telegraph" | 3.20 → 5.08 (`signalStrong`) |
+| ShareSheet | `signal` text on its 0x0A tint (4.5) | the selected thread's name | 3.15 → 5.01 (`signalStrong`) |
+| ShareSheet | onInk text on `signal` (4.5) | the ✓ badge, a selected Avatar's initials, "Send" | 3.14 → 4.99 (fill `signalStrong`) |
+| ShareSheet | `signal` text on its 0x15 tint (4.5) | a person row's "Send" badge | 2.99 → 4.75 (`signalStrong`) |
+| GlobalPlacePicker | `faint` text on paperRaised (4.5) | the search placeholder | 2.88 → 5.55 (`mute`) |
+| GlobalPlacePicker | `signal` text on paperRaised (4.5) | "Retry" | 3.31 → 5.25 (`signalStrong`) |
+| GlobalPlacePicker | `signal` text on paper (4.5) | "Use my current location" | 3.14 → 4.99 (`signalStrong`) |
+| GlobalPlacePicker | `signal` spinner on its 0x20 tint (3) | the GPS row loading | 2.70 → 4.29 (`signalStrong`) |
+| GlobalPlacePicker | `signal` spinner on its 0x15 tint (3) | the custom row resolving | 2.85 → 4.52 (`signalStrong`) |
+| PlanPickerController | `signal` text on paper (4.5) | the error line, "Create new trip", the date picker's iOS "Done" | 3.14 → 4.99 (`signalStrong`) |
+| PlanPickerController | `signal` text on its 0x12 tint (4.5) | the selected trip chip | 2.89 → 4.59 (`signalStrong`) |
+| PlanPickerController | `faint` text on paper (4.5) | the date placeholder, the lock-type hint | 2.73 → 5.27 (`mute`) |
+| PlanPickerController | `mute` text on `haze` (4.5) | the inactive lock-type chips | 4.41 → 4.55 (`muteStrong`) |
+| PlanPickerController | onInk text on `signal` (4.5) | "Add to Plan" | 3.14 → 4.99 (fill `signalStrong`) |
+| DisambiguationSheet | `faint` text on paperRaised (4.5) | a candidate's reason | 2.88 → 5.55 (`mute`) |
+
+Nothing else in the five sheets failed. Their icon-only controls in `signal`
+(the send arrow's fill, the loading spinners on plain paper, the liked stamp)
+clear 3:1 on their grounds and keep the brand value.
+
+### 33.4 The fix, chosen by measurement
+
+**Option (a), a new value for an existing token, is ruled out for all three.**
+For `faint` and `signal` it was tried against the asserted pairs, and each
+result below was run on this tree and restored. For `mute`, what rules it out is what cannot be measured:
+
+- **`faint`**, documented as "tertiary text, placeholders", has 789 uses in
+  291 files. The lightest shade of it that clears 4.5:1 on paper is
+  `#75726B` (×0.75). At that value, 13 asserted Media pairs where `faint` is
+  text on Media's dark grounds fall below AA, from 4.55–6.57 to 2.72–3.94.
+  Examples: `time.neutral` goes 6.57 → 3.94, `mosaic.chipCount` 5.44 → 3.26,
+  and `viewer.relatedChipCount.photoFloor` 4.55 → 2.72. A darker `faint` does not
+  serve every consumer.
+- **`signal`**, the brand vermilion, has 1,917 uses in 420 files. The owner
+  ratified `#FF4D2E` by name (`docs/architecture/brand-palette-decision.md`).
+  At `#C43B23`, nine asserted Media pairs over photographs and dark backings fall below their bar:
+  the stamped icons, the saved bookmarks and the progress fills go 3.11 → 1.96;
+  the gems filter's selected fill 3.23 → 2.03 and its active label 5.72 → 3.60. Changing `signal` is a
+  visible brand change, and it would break the dark surfaces.
+- **`mute`**, documented as "secondary text", has 2,645 uses in 494 files. It
+  clears AA on paper (5.27) and paperRaised (5.55), and misses only on `haze`
+  (4.41). `haze` is documented as "dividers, card edges", not as a text
+  ground. A value 2% darker (`#696660`) clears 4.5:1 on `haze` and raises every pair on a light ground. But this lane
+  cannot measure 2,645 uses one by one, and any `mute` on a dark ground
+  (3.40:1 on ink) would get worse. So the change is confined to the two
+  components that put text on `haze`.
+
+**What was chosen:**
+
+1. **(b) `signalStrong: '#C43B23'`**
+   (`travel-buddy-standalone/src/theme/tokens.ts:13#signalStrong: '#C43B23'`).
+   - Used for vermilion text on a light ground or a signal tint, for a state
+     mark where `signal` misses 3:1, and for the fill under onInk text.
+   - Its value is `signal`'s channels ×0.77, which keeps the hue. That is the
+     lightest shade on a 0.01 grid that clears 4.5:1 on every ground it is
+     used on. The tightest is the plan picker's selected-trip chip at 4.59;
+     ×0.78 gives 4.47. The guard checks both.
+   - It is the value §31.2 chose locally for Media's action rail
+     (`ACTIVE_ON_PAPER`) and §31.13.2 chose for the Grid's retry fill. The
+     design system now names it.
+2. **(b) `muteStrong: '#696660'`**
+   (`travel-buddy-standalone/src/theme/tokens.ts:16#muteStrong: '#696660'`).
+   - Used for secondary text on a `haze` fill.
+   - Its value is `mute` ×0.98 at 4.55:1; ×0.99 gives 4.48. It is the value
+     Media's Grid filter chip already uses as a literal.
+   - Against `mute` it differs by 2%, which is not visible.
+3. **(c) `faint` text on a light ground takes the existing `mute`.**
+   - A new tertiary token was considered and rejected by measurement. On
+     paper, AA caps tertiary text at L* 48.5, and `mute` sits at L* 44.1.
+     `faint` itself is L* 62.9.
+   - The only band left for a distinct AA tertiary is 4.4 L* wide, so such a
+     token would be a near-duplicate of `mute`.
+   - Hierarchy is carried by size, weight and italics, as §31.2 did for the
+     trust chips.
+
+**The rule, recorded on the token lines themselves:**
+- `signal` stays the brand fill, mark and live pulse
+  (`travel-buddy-standalone/src/theme/tokens.ts:12#signal: '#FF4D2E', // vermilion — primary action + live pulse only`,
+  unchanged). Vermilion text on light grounds takes `signalStrong`.
+- Text on a `haze` fill takes `muteStrong`.
+- `faint` meets AA as text only on dark grounds
+  (`travel-buddy-standalone/src/theme/tokens.ts:17#faint: '#9C988F', // tertiary text, placeholders — as text it clears AA only on dark grounds`).
+
+**Brand implication.** `#FF4D2E` is unchanged everywhere and asserted
+unchanged. Inside the five sheets, vermilion text now reads as a deeper
+vermilion (`#C43B23`). Five fills under light text take it too: the comment edit's Save, the share sheet's Send and ✓ badge, the plan picker's Add to Plan, and a selected Avatar's disc
+(§33.5). Where the brand vermilion was a fill or a mark that already
+cleared its bar, it was left alone: the comment send button, the create-trip
+disc, the liked stamp, the spinners on plain paper, and every signal tint.
+
+### 33.5 What changed, and every visible change
+
+All edits are line-neutral: 52 lines changed in place across 11 files. They
+fall into three kinds:
+- `faint` → `mute` for text and 3:1 marks on light grounds;
+- `signal` → `signalStrong` for text, for the two tinted spinners, and for
+  fills under onInk text;
+- `mute` → `muteStrong` for text on `haze`.
+
+Lines, for the screenshot lane:
+
+| Component (file) | Element | Before → after | Where it is seen |
+| --- | --- | --- | --- |
+| CommentsSheet (`src/components/CommentsSheet.tsx`) | comment time, "Edited", "Reply"/"Edit", idle like count, "No comments yet…", "No replies yet.", "Replying to …", the "Add a comment…" placeholder | `#9C988F` → `#6B6862` | the comment sheet from Watch, Gems and the Grid viewer; every post's comment sheet (PostEngagementBar); the post screen's inline comments |
+| CommentsSheet | idle like stamp, delete, reply edit pencil, reply arrow, reply-context ✕ | `#9C988F` → `#6B6862` | same |
+| CommentsSheet | @mentions in comment and reply bodies | `#FF4D2E` → `#C43B23` | same |
+| CommentsSheet | the liked count | `#FF4D2E` → `#C43B23` | same |
+| CommentsSheet | inline edit "Save" fill and border | `#FF4D2E` → `#C43B23` | same, while editing your own comment |
+| CommentsSheet | "Comments have been turned off." | `#6B6862` → `#696660` (not visible) | same, when the author turned comments off |
+| MentionInput (`src/components/MentionInput.tsx`) | "Max N hashtags reached" | `#FF4D2E` → `#C43B23` | every composer with mentions: comments, Telegraph threads, group chat, Highlight, Postcard, Pulse create |
+| MentionSuggestionList (`src/components/MentionSuggestionList.tsx`) | the "Hashtag" chip label | `#FF4D2E` → `#C43B23` | the same composers, while suggesting |
+| ShareSheet (`src/components/ShareSheet.tsx`) | the three options' subtitles | `#9C988F` → `#6B6862` | Watch's send sheet; the World shell's Telegraph share; every post's share sheet |
+| ShareSheet | "‹ Back", "New Telegraph", a selected thread's name, a person row's "Send" badge label | `#FF4D2E` → `#C43B23` | same, in the chat picker |
+| ShareSheet | note and search placeholders | `#9C988F` → `#6B6862` | same |
+| ShareSheet | ✓ badge fill; "Send" button fill | `#FF4D2E` → `#C43B23` | same |
+| Avatar (`src/components/ui/Avatar.tsx`) | a selected thread's no-photo disc | `#FF4D2E` → `#C43B23` | ShareSheet and DiscoveryShareSheet chat pickers |
+| GlobalPlacePicker (`src/components/selectors/GlobalPlacePicker.tsx`) | search placeholder | `#9C988F` → `#6B6862` | the add-gem place field and the place pickers in 25 other files |
+| GlobalPlacePicker | "Use my current location"; "Retry" | `#FF4D2E` → `#C43B23` | same |
+| GlobalPlacePicker | the GPS and custom-row spinners | `#FF4D2E` → `#C43B23` | same, while locating or resolving |
+| PlanPickerController (`src/components/PlanPickerController.tsx`) | the error line, "Create new trip", the selected-trip chip label | `#FF4D2E` → `#C43B23` | "Add to Trip Plan" from the World action rail, Route It, the Watch list, and every other opener |
+| PlanPickerController | "Add to Plan" fill | `#FF4D2E` → `#C43B23` | same |
+| DatePickerField (`src/components/DateTimePickerField.tsx`) | the placeholder | `#9C988F` → `#6B6862` | the plan picker and the date/time fields in eight other files |
+| DatePickerField | iOS "Done" | `#FF4D2E` → `#C43B23` | same, iOS only, while the spinner is open |
+| LockTypeSelector (`src/components/itinerary/LockTypeSelector.tsx`) | inactive chip labels | `#6B6862` → `#696660` (not visible) | the plan picker, AddToPlanSheet, PlanItemSheet |
+| LockTypeSelector | the hint under the chips | `#9C988F` → `#6B6862` | same |
+| DisambiguationSheet (`src/platform/input-assistance/components/DisambiguationSheet.tsx`) | a candidate's reason line | `#9C988F` → `#6B6862` | "See all" from CreationAssist: the add-gem sheet, trip/new, gems/submit, events/create |
+
+All paths are under `travel-buddy-standalone/`.
+
+The fixes by site:
+- **CommentsSheet's mention colour** is passed through RichText's existing
+  `mentionColor` prop on both call sites, not by changing RichText's default.
+  RichText's other callers paint mentions on grounds this lane did not need
+  to touch (§33.6).
+- **DisambiguationSheet's reason colour** is passed through
+  EntitySuggestionRow's existing `reasonColor`. EntitySuggestionRow's
+  default, which §31.13.5's test pins, is unchanged.
+
+These visible changes join H8. They are on shared surfaces well beyond Media,
+so H8's device review should take them in (§33.8).
+
+### 33.6 Every other consumer: the regression guard
+
+`travel-buddy-standalone/src/theme/__tests__/sharedSheetContrast.consumers.test.ts`
+is new. It runs under node:test with the client's other suites, and it does
+four things.
+
+1. **No existing token changed value.** Every token at `e9e0b0404` is pinned,
+   and the only new keys are `signalStrong` and `muteStrong`
+   (`travel-buddy-standalone/src/theme/__tests__/sharedSheetContrast.consumers.test.ts:129#test('every token that existed before §33 keeps its value`).
+   So the 5,351 uses of `faint`, `signal` and `mute` keep their values, and only
+   the uses §33.5 lists moved off them.
+2. **Every consumer is found by a scan, not a list.** It scans all 1,510
+   source files under `app/` and `src/`, resolving each relative or `@/` import.
+   For each changed component, the files that import it and draw it must
+   equal the list in the test
+   (`travel-buddy-standalone/src/theme/__tests__/sharedSheetContrast.consumers.test.ts:187#test('every consumer of each changed component is enumerated`).
+   - For Avatar, only files that pass `selected` count, since only the
+     selected fill changed.
+   - For LockTypeSelector, only files that draw the selector count, not the
+     ones that import its `LOCK_STYLE` / `LOCK_LABEL`.
+   - Every use of a new token must sit in a measured component
+     (`travel-buddy-standalone/src/theme/__tests__/sharedSheetContrast.consumers.test.ts:198#test('every use of a new token is in a component this guard measures'`).
+3. **Every pair is measured before and after, on each consumer's own
+   ground.** It reads each sheet's 170 pairs. It re-grounds the comment rows
+   on the post screen's paper, for CommentsSection. It measures MentionInput's
+   warning on each of the five other composers' grounds, and
+   LockTypeSelector's hint on AddToPlanSheet's paper and PlanItemSheet's
+   white.
+4. **It fails on regressions and on moved counts.** It fails if any pair got
+   worse, or if an asserted pair ends below AA. It also fails if the recorded
+   counts move
+   (`travel-buddy-standalone/src/theme/__tests__/sharedSheetContrast.consumers.test.ts:337#assert.deepEqual(counts, { changedComponents: 10`).
+
+| Changed components | Consumer files | Pairs | Asserted | Improved | Unchanged | Worse | Failing before | Failing after |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 10 | 54 | 205 | 160 | 74 | 131 | **0** | 65 | **0** |
+
+The consumers, by changed component:
+
+| Component | Consumer files |
+| --- | --- |
+| CommentsSheet | 3 |
+| ShareSheet | 3 |
+| GlobalPlacePicker | 26 |
+| PlanPickerController | 12, the provider in `_layout` included |
+| DisambiguationSheet | 1, CreationAssist, which four creation screens draw |
+| MentionInput | 6 |
+| MentionSuggestionList | 6 |
+| DatePickerField | 9 |
+| LockTypeSelector | 3 |
+| Avatar, `selected` only | 2 |
+
+Most of these components paint their own ground (a modal sheet, a field, a
+chip, a fill), so a pair measures the same for every consumer. Where the
+ground is the consumer's, each consumer's ground is anchored by a needle in
+its own file. Beyond Media, the change improves:
+- the post screen's inline comments (15 of its 28 pairs improved);
+- the hashtag-cap warning on five composers;
+- the lock-type hint on two more sheets;
+- DiscoveryShareSheet's selected avatar;
+- every other GlobalPlacePicker, ShareSheet, plan picker and date field in
+  the app.
+
+**Left as they were: not worse, and outside the Media flow.** These were
+seen while enumerating and are recorded, not fixed:
+- RichText's default mention colour is still `signal`. Its Pulse, meetup,
+  hashtag-feed and Telegraph callers draw mentions in `signal` on light
+  grounds (3.31:1 on white, 3.14:1 on paper).
+- EntitySuggestionRow's default reason is still `faint`, in SmartInput's
+  suggestion overlay.
+- DiscoveryShareSheet's own ✓ badge and selected name are still `signal`.
+- LockTypeSelector's exported `LOCK_STYLE.flexible` badge is `mute` on
+  `haze`.
+- `faint` text remains on light grounds across screens this ruling does not
+  reach.
+
+The token rule in §33.4 is the fix for each, when its owner takes it up.
+
+### 33.7 Mutations, each seen red and restored
+
+Each mutation edits one file in place and runs both suites. The file is then
+restored byte for byte, and `git diff --quiet HEAD` on it exits 0. The runner
+is a scratch script, not committed.
+
+- **Every changed source line, reverted one at a time to its text at
+  `e9e0b0404` (49 mutations):**
+  - The guard went red on all 49.
+  - The Media contrast test went red on 46.
+  - The three the Media test does not see are CommentsSection's own lines
+    on the post screen: its reply-context ✕, its input placeholder and its
+    empty state. They are outside the Media flow, and the guard sees them.
+- **The first run found five mutations the guard missed.** Two call sites
+  shared one needle: CommentsSheet's two RichText calls, and CommentsSection's
+  copies of the sheet's ✕ and placeholder. Each site now has its own needle,
+  and the re-run is the one counted above.
+- **Named mutations (19), guard red on all 19:**
+
+| # | Mutation | Media test | Guard |
+| --- | --- | --- | --- |
+| W01–W11 | each changed file (tokens and the ten components) back to `e9e0b0404` whole | red on all 11 | red on all 11 |
+| T1 | `signalStrong` back to `#FF4D2E` | AA test red | lightest-shade, no-worse and counts red |
+| T2 | `muteStrong` back to `mute` | AA test red | same three red |
+| T3 | `signalStrong` one step too light (×0.82) | AA test red | same three red |
+| T4 | `signalStrong` darker than needed (×0.72) | green | lightest-shade test red |
+| T5 | an existing token moves: `mute` lightened to `#7A7770` | AA test red | token pin, lightest-shade, no-worse and counts red |
+| T6 | option (a) for `faint`: `#75726B` | AA test red on 13 Media dark-ground pairs | token pin, changed-for-a-reason and counts red |
+| G1 | `signalStrong` used in TranslationToggle, which the guard does not measure | needle red | new-token-use test red |
+| G2 | a new file that imports and draws ShareSheet | green | consumer-scan test red |
+
+### 33.8 What keeps MD403 at W, named exactly
+
+1. **Four nested modal sheets.** The comment sheet opens them from inside
+   itself, so a user reaches each one without leaving the Media flow. No
+   lane has measured any of them.
+   - TagPreviewSheet opens on tapping an @mention or #hashtag
+     (`travel-buddy-standalone/src/components/RichText.tsx:263#<TagPreviewSheet`).
+   - ProfilePreviewCard opens on tapping an author
+     (`travel-buddy-standalone/src/components/CommentsSheet.tsx:1435#<ProfilePreviewCard`).
+   - EngagementUserListSheet opens on tapping a like count
+     (`travel-buddy-standalone/src/components/CommentsSheet.tsx:363#<EngagementUserListSheet`).
+   - ReportSheet opens on long-pressing a comment and choosing Report
+     (`travel-buddy-standalone/src/components/CommentsSheet.tsx:1442#<ReportSheet`).
+   - **Why they are in reach.** The ruling names four sheets, but its reason
+     is "a surface users encounter in the Media flow", which reaches these.
+   - **What their style lines show.** A read of their style lines shows the
+     same token classes: `signal` text and fills, `faint` text, onInk on
+     `signal`. ReportSheet also draws MediaPickerButton and
+     MediaAttachmentTray for a safety report. That read is not a measurement,
+     and no number is given for it.
+   - **How to close it.** The fixture and guard here take them as more pairs
+     and more `CHANGED` entries, with no new machinery.
+   - Either they are measured and fixed as branch work, or the owner rules
+     that H7 stops at the sheets it names.
+2. **"Keep MD403 open until verified."**
+   - **Verified on this branch:** every pair of the four sheets and
+     DisambiguationSheet, as they render when opened from Media, is asserted
+     and passes (170 pairs, 127 asserted, none pinned). No pair of any other
+     consumer got worse (205 pairs, 54 consumers).
+   - **Not verified:** the result on a device; the owner's H8 decision on
+     lane K's visible changes (§31.8, §31.13.15), which is still pending; and
+     §33.5's visible changes, which H8's review should now include. If H8
+     revises a colour, `mediaContrast.test.ts` and the guard re-measure it
+     and name each pair it moves.
+3. **Not paired, as before:**
+   - Plain-View drag handles carry no state and name no control, as §31 did
+     not pair the Media sheets' own.
+   - The comment sheet's pressable handle is classed decorative
+     (`travel-buddy-standalone/src/theme/__tests__/sharedSheetContrast.pairs.ts:145#id: 'comments.handle'`).
+     It is hidden from assistive tech, the labelled ✕ closes the sheet, and
+     scrolling to the top collapses it. Like readings (a)–(c), it is the owner's to overrule.
+   - OS-drawn UI is not in the source: Alert dialogs, the OS share sheet
+     behind "Share Post", and the native date and time picker.
+   - Dynamic type: no Text in the five sheets or the components drawn inside
+     them opts out of, or caps, OS font scaling
+     (`travel-buddy-standalone/src/features/media/__tests__/mediaContrast.test.ts:1569#dynamic type — no Text in the shared sheets`).
+     The one exception is Avatar's monogram, which §31.13.5 already records.
+
+### 33.9 Pair counts (`mediaContrast.test.ts`)
+
+| | Pairs | Asserted | Pass | Pinned | Decorative | Floors |
+| --- | --- | --- | --- | --- | --- | --- |
+| At `e9e0b0404` (after §31.13 pass 4) | 592 | 562 | 562 | 0 | 30 | 166 |
+| After §33 | 762 | 689 | 689 | 0 | 73 | 166 |
+
+- All 592 earlier pairs are still measured and unchanged.
+- The 170 new pairs are all `sheets.*`.
+- The sheets are opaque light grounds, so none is a floor.
+- The new surfaces are spread into `S_TAIL` on one existing line
+  (`travel-buddy-standalone/src/features/media/__tests__/mediaContrast.test.ts:1065#...SHEET_SURFACES`).
+- The pairs are added at the tail
+  (`travel-buddy-standalone/src/features/media/__tests__/mediaContrast.test.ts:1544#for (const p of MEDIA_SHEET_PAIRS) add(`).
+
+### 33.10 Checks
+
+All run on this branch.
+
+- **Contrast test.** `mediaContrast.test.ts` passes 16 of 16, with 762
+  pairs, 0 pinned and 0 failing.
+- **The guard.** `sharedSheetContrast.consumers.test.ts` passes 9 of 9.
+- **Client node:test.** `npm test` runs 866 suites and 7,062 tests, all
+  passing.
+- **Jest.** `--findRelatedTests` on every changed file selects 522 component
+  suites, since tokens.ts is imported by nearly every component. All 522
+  pass, with 3,136 tests. The web config's 3 related suites pass 8 of 8.
+- **Client static checks.**
+  - `tsc --noEmit -p tsconfig.json` is clean.
+  - The test typecheck is at its baseline: 173 diagnostics across 60
+    files, none above baseline.
+  - eslint on every changed file gives 0 errors. Each changed component
+    has the same warning count as at `e9e0b0404`, and the new files have
+    none.
+  - All eight `lint:*` scripts pass.
+- **Census checks,** run in `artifacts/api-server`:
+  - `check:doc-citations` passes. Anchored citations stand at 7,363, up
+    from 7,339 with this section's; 0 anchors are off their cited lines;
+    unanchored citations stay at 6,355.
+  - `check:citation-targets` stays at 165 / 165.
+  - `check:census-integrity` passes. No row moves.
+  - `check:census-scope-coverage` passes after this section's widening:
+    census-media watches 349 of the 349 files it cites. No floor is lowered.
+  - `check:census-row-move-labels` and `check:test-registration` pass.
+  - `src/test/projectionConsumers.test.ts` and
+    `src/test/censusScopeCoverage.test.ts` pass 38 of 38.
+  - api-server `typecheck` is clean and `typecheck:tests` is at its baseline (863 across 115 files). `check:all` fails only on `check:census-freshness` (below) and the five live-DB checks the lane rules allow: write-path-columns, missing-live-columns, authorization-contract, media-objects and rank-events-surfaces. Each of those refuses to run without a sanctioned non-production database.
+  - `check:census-freshness` reports five censuses stale on this lane's
+    files. The acknowledgement ledger is not edited; the integrator writes
+    the acknowledgements. Each file changes colours only, or is §33's own
+    test code:
+    - **census-media**, 11 files: tokens.ts, the two new test files,
+      DateTimePickerField, MentionInput, MentionSuggestionList,
+      PlanPickerController, LockTypeSelector, GlobalPlacePicker, Avatar and
+      DisambiguationSheet. They are §33's own subject, and §33 re-measures
+      them. CommentsSheet, ShareSheet and `mediaContrast.test.ts` also
+      changed, and are already named by the ledger.
+    - **census-input-intelligence:** MentionInput, GlobalPlacePicker and
+      DisambiguationSheet. Each is colour-only. G167 cites
+      DisambiguationSheet's lines 56–75 for the scrim,
+      `accessibilityViewIsModal` and the "Search … instead" escape; line 65
+      now passes the rows a reason colour, and all three still hold.
+      ShareSheet also changed and is already named.
+    - **census-discovery:** MentionInput. A08 cites it as one of the input
+      engines Discovery does not own, and a colour cannot move that.
+    - **census-passport** and **census-wall:** tokens.ts. Their rows cite
+      `signal` and `deep` on lines 12 and 14, which are byte-identical. No
+      existing token changed value, and the guard asserts it.
+    - **census-trust:** CommentsSheet, already named by its ledger, so not
+      flagged. TV-3a grades that a comment's overflow opens ReportSheet,
+      and it still does.
+
+### 33.11 Files changed
+
+| File | Change |
+| --- | --- |
+| `travel-buddy-standalone/src/theme/tokens.ts` | `signalStrong` and `muteStrong` added; the rule recorded on the `faint` line (three lines, in place) |
+| `travel-buddy-standalone/src/components/CommentsSheet.tsx`, `ShareSheet.tsx`, `PlanPickerController.tsx`, `MentionInput.tsx`, `MentionSuggestionList.tsx`, `DateTimePickerField.tsx`, `selectors/GlobalPlacePicker.tsx`, `itinerary/LockTypeSelector.tsx`, `ui/Avatar.tsx`; `travel-buddy-standalone/src/platform/input-assistance/components/DisambiguationSheet.tsx` | colours moved as in §33.5 (in place) |
+| `travel-buddy-standalone/src/features/media/__tests__/mediaContrast.test.ts` | one surface line extended, the superseded comment marked, the §33 tail appended |
+| `travel-buddy-standalone/src/theme/__tests__/sharedSheetContrast.pairs.ts` | new: the sheets' pairs, grounds and needles |
+| `travel-buddy-standalone/src/theme/__tests__/sharedSheetContrast.consumers.test.ts` | new: the regression guard |
+| `artifacts/api-server/src/scripts/checkCensusFreshness.ts` | census-media's `CENSUS_SCOPE` widened for this section |
+| `docs/ops/sensing-production-approval-request.md` | the H7 row records the ruling and what was done (in place) |
+
+### 33.12 Production — nothing here is deployed
+
+- Nothing in §33 is merged to main, pushed or deployed, so it is in no build
+  a user has.
+- The change is client-only. No flag, seed, migration, database or server
+  file was touched.
+- `SENSING_ANON_GRANTED_SCOPES` and the 2481 ledger entry are untouched.

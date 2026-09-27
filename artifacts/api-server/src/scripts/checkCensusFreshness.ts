@@ -1926,6 +1926,22 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     // WIDENED 2026-09-27 by the coverage-guard fix (census-media §32.14): MD338 (§30, §32) — the receipt reader §32.1's privacy argument rests on, and the byte gate's fail-closed suite §30 and §32.9 ran as regression evidence.
     "artifacts/api-server/src/services/intel/PresenceVerifier.ts",
     "artifacts/api-server/src/test/mediaAccessFailClosed.test.ts",
+    // WIDENED 2026-09-27 by census-media §33 (lane T, H7): MD403 now grades the shared sheets Media opens — the role tokens, the sheets and the components drawn inside them that §33 changed, the pairs fixture and the design-system regression guard, and the four nested sheets MD403's RED WHEN names as unmeasured.
+    "travel-buddy-standalone/src/theme/tokens.ts",
+    "travel-buddy-standalone/src/theme/__tests__/sharedSheetContrast.pairs.ts",
+    "travel-buddy-standalone/src/theme/__tests__/sharedSheetContrast.consumers.test.ts",
+    "travel-buddy-standalone/src/components/selectors/GlobalPlacePicker.tsx",
+    "travel-buddy-standalone/src/components/PlanPickerController.tsx",
+    "travel-buddy-standalone/src/platform/input-assistance/components/DisambiguationSheet.tsx",
+    "travel-buddy-standalone/src/components/MentionInput.tsx",
+    "travel-buddy-standalone/src/components/MentionSuggestionList.tsx",
+    "travel-buddy-standalone/src/components/DateTimePickerField.tsx",
+    "travel-buddy-standalone/src/components/itinerary/LockTypeSelector.tsx",
+    "travel-buddy-standalone/src/components/RichText.tsx",
+    "travel-buddy-standalone/src/components/TagPreviewSheet.tsx",
+    "travel-buddy-standalone/src/components/ProfilePreviewCard.tsx",
+    "travel-buddy-standalone/src/components/EngagementUserListSheet.tsx",
+    "travel-buddy-standalone/src/components/ReportSheet.tsx",
   ],
   // census-telegraph.md — declared 2026-09-11 on the same basis as Media above:
   // 451 requirements out of CANNOT BE CHECKED, a clock started rather than a
