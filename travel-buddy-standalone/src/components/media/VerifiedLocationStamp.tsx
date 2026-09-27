@@ -48,7 +48,7 @@ const s = StyleSheet.create({
     fontSize: 7,
     letterSpacing: 1.8,
     color: '#E8DFC8',
-    fontWeight: '700',
+    fontWeight: '700', alignSelf: 'stretch', textAlign: 'center', // census-media §40.14: fills the stamp's width and truncates inside it when a caller narrows the stamp
   },
   name: {
     fontFamily: 'Courier',
@@ -56,6 +56,6 @@ const s = StyleSheet.create({
     fontWeight: '700',
     letterSpacing: 0.8,
     color: '#E8DFC8',
-    maxWidth: 130,
+    maxWidth: 130, alignSelf: 'stretch', textAlign: 'center', // census-media §40.14: as the eyebrow; sized to its own text, a name on web overflowed a narrowed stamp's border
   },
 });
