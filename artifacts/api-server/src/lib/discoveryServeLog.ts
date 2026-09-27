@@ -38,7 +38,7 @@
  * instead of being lost on the floor. It still never throws: instrumentation
  * must not break a feed response.
  */
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { isFlagEnabled } from "./featureFlags.js";
 import { logger } from "./logger.js";
 // `12` "Stop conditions" — this writer is the only instrument that knows whether
@@ -52,7 +52,7 @@ import { recordImpressionDistributionStats } from "../services/ranking/Discovery
 // three without a migration. See lib/discoveryRecommendationId for why the
 // Compass token could not be reused as-is.
 import { recommendationIdFor } from "./discoveryRecommendationId.js";
-import { DISCOVERY_MODEL_VERSION } from "./discoveryRankProvenance.js";  import { isMissingRecommendationIdSchema, noteRecommendationIdAbsent, recommendationIdSchemaAbsent, reportRankEventsRejection } from "./rankEventsProvenance.js";  /* DV-40 / §41.1. ON ONE LINE ON PURPOSE: eleven anchored doc citations point at fixed line numbers in this file (`:70`, `:415`, `:421`, `:426`, `:430`, `:444`, `:450`, `:466`, `:475`, `:477`), most of them in docs/architecture/census-discovery.md, and check:doc-citations fails an anchor whose text has moved. Inserting a line here would red that guard with no fix available in this lane. See the note at the foot of this file. */
+import { DISCOVERY_MODEL_VERSION } from "./discoveryRankProvenance.js";  import { canonicalServedAt, serveIdFor, screenFeaturesForStorage, isDuplicateExposureReplay } from "./discoveryRecommendationRecord.js";  import { isMissingRecommendationIdSchema, noteRecommendationIdAbsent, recommendationIdSchemaAbsent, reportRankEventsRejection } from "./rankEventsProvenance.js";  /* DV-40 / §41.1. ON ONE LINE ON PURPOSE: eleven anchored doc citations point at fixed line numbers in this file (`:70`, `:415`, `:421`, `:426`, `:430`, `:444`, `:450`, `:466`, `:475`, `:477`), most of them in docs/architecture/census-discovery.md, and check:doc-citations fails an anchor whose text has moved. Inserting a line here would red that guard with no fix available in this lane. See the note at the foot of this file. */
 
 /** Feature flag gating every write in this module. Absent row ⇒ disabled. */
 export const DISCOVERY_SERVE_LOG_FLAG = "discovery_serve_log_enabled";
@@ -377,27 +377,27 @@ export async function logDiscoveryServe(
   try {
     if (!sc) return;
     const { userId, servePoint, items, route, sessionId, context, reasonCodesById } = params;  const servedAtIn = params.servedAt;
-    if (!userId || items.length === 0) return;
+    if (!userId || items.length === 0) return void (await logDiscoveryServeRequestOnly(sc, params));  // DV-06 / §48 — an anonymous serve, or a serve of nothing, writes NO rank_events row (user_id is NOT NULL; there is no item) but is still a REQUEST: one public.recommendations row, see the foot of this file.
 
     if (!(await serveLogEnabled(sc))) return;
 
-    const servedAt = servedAtIn ?? new Date().toISOString();
+    const servedAt = canonicalServedAt(servedAtIn ?? new Date().toISOString());
     // One session id for the whole batch — mirrors the "single open" semantics
     // callers rely on for funnel reconstruction (lib/rankLog.ts:97-100).
-    const effectiveSessionId = sessionId ?? randomUUID();
+    const effectiveSessionId = sessionId ?? randomUUID(), serveId = serveIdFor({ userId, sessionId: effectiveSessionId, servedAt });  // DV-06 — the per-REQUEST id every row of this serve carries
 
     // `04` §3 "privacy-classified", enforced before anything is built. Done
     // ONCE per batch rather than per row: the context is one object shared by
     // every row of the serve, and classifying it per item would re-derive the
     // same answer N times and log the same warning N times.
-    const classified = classifyServeContext(context);
-    if (classified.dropped.length > 0) {
+    const classified = classifyServeContext(context), screened = screenFeaturesForStorage(classified.kept);  // DV-39 — a key no class covers is REFUSED, not stored
+    if (classified.dropped.length > 0 || screened.refused.length > 0) {
       // Same rule as the insert-rejection branch below: a refusal nobody can
       // see is how a defect survives. Key NAMES only — the values are the thing
       // being withheld, and a warning that printed them would be the leak.
       logger.warn(
-        { servePoint, route, droppedKeys: classified.dropped },
-        "discoveryServeLog: precise-location keys withheld from features (04 §12)",
+        { servePoint, route, droppedKeys: classified.dropped, refusedKeys: screened.refused },
+        "discoveryServeLog: precise-location or unclassified keys withheld from features (04 §12, §3)",
       );
     }
 
@@ -405,7 +405,7 @@ export async function logDiscoveryServe(
       user_id:    userId,
       item_id:    item.id,
       item_kind:  item.kind !== undefined ? item.kind : itemKindFor(item.id),
-      position:   idx,  ...(recommendationIdSchemaAbsent() ? {} : { recommendation_id: recommendationIdFor({ userId, sessionId: effectiveSessionId, servedAt, surface: "discovery", position: idx, itemId: item.id }) }),  // `04` §5 / census DV-40, DV-46, DSV2-12 — 2891's COLUMN, carrying exactly the token features.recommendationId carries below. A token in a jsonb key is a VALUE; a token in a column is a JOIN KEY that an index can arbitrate. 2891 was applied to portava-ci and to production on 2026-09-14, and that deployment record measured what a column with no writer is worth: "rows carrying a recommendation_id — 0". features.recommendationId is KEPT rather than moved, because every row written before this line carries it there and routes/rankEvents.ts reads column -> features -> derived in that order. The conditional spread is the same idiom routes/rankEvents.ts uses at its two update sites: once the latch says 2891 is absent here, the column is OMITTED from the payload rather than sent and retried, so the failed round-trip is paid once per process and not once per serve.
+      position:   idx,  ...(recommendationIdSchemaAbsent() ? {} : { recommendation_id: recommendationIdFor({ userId, sessionId: effectiveSessionId, servedAt, surface: "discovery", position: idx, itemId: item.id }), schema_version: DISCOVERY_EVENT_SCHEMA_VERSION, privacy_class: DISCOVERY_EVENT_PRIVACY_CLASS }),  // DV-38/DV-39 (§48): 2890's two columns are now WRITTEN, not defaulted, and ride the same latch — a database without 2890 answers 42703/PGRST204 exactly as one without 2891 does, and the legacy retry below omits all three. `04` §5 / census DV-40, DV-46, DSV2-12 — 2891's COLUMN, carrying exactly the token features.recommendationId carries below. A token in a jsonb key is a VALUE; a token in a column is a JOIN KEY that an index can arbitrate. 2891 was applied to portava-ci and to production on 2026-09-14, and that deployment record measured what a column with no writer is worth: "rows carrying a recommendation_id — 0". features.recommendationId is KEPT rather than moved, because every row written before this line carries it there and routes/rankEvents.ts reads column -> features -> derived in that order. The conditional spread is the same idiom routes/rankEvents.ts uses at its two update sites: once the latch says 2891 is absent here, the column is OMITTED from the payload rather than sent and retried, so the failed round-trip is paid once per process and not once per serve.
       features: {
         servePoint,
         route:  route ?? "GET /discovery",
@@ -413,7 +413,7 @@ export async function logDiscoveryServe(
         // stored Compass order and is deliberately `false`: the order came from
         // a ranker, but not from this request.
         rankedInRequest: RANKED_IN_REQUEST.has(servePoint),
-        ...classified.kept,
+        ...screened.kept,
         // `04` §5 — placed AFTER the context spread ON PURPOSE. These three are
         // the record, not decoration: a caller passing a `context` key of the
         // same name must not be able to overwrite the denominator with its own
@@ -428,11 +428,11 @@ export async function logDiscoveryServe(
         // reason the three above are: a caller must not be able to restate
         // which shape wrote the row or what class it belongs to.
         schemaVersion: DISCOVERY_EVENT_SCHEMA_VERSION,
-        privacyClass: DISCOVERY_EVENT_PRIVACY_CLASS,
+        privacyClass: DISCOVERY_EVENT_PRIVACY_CLASS, serveId, servedCount: items.length,  // DV-06 — every exposure carries its REQUEST's denominator, not only its own existence
         // Present ONLY when something was withheld, so a present key always
         // means a call site sent a coordinate and an absent one is not an
         // ambiguous silence.
-        ...(classified.dropped.length > 0 ? { privacyDropped: classified.dropped } : {}),
+        ...(classified.dropped.length > 0 ? { privacyDropped: classified.dropped } : {}), ...(screened.refused.length > 0 ? { privacyRefused: screened.refused } : {}),
       },
       outcome:    "impression",
       served_at:  servedAt,
@@ -440,13 +440,13 @@ export async function logDiscoveryServe(
       session_id: effectiveSessionId,
     }));
 
-    attemptedItems = rows.length;
+    attemptedItems = rows.length; await logDiscoveryServeRequest(sc, { userId, sessionId: effectiveSessionId, servedAt, servePoint, route, items, context: screened.kept });  // DV-06 — this request's own row, before its items'
     const { error } = await sc.from("rank_events").insert(rows);
     // DV-40's degrade path, and it is load-bearing: on a database WITHOUT 2891 the
     // column above is a PGRST204 and EVERY row of this serve is lost, which would
     // make adding a join key cost the telemetry it was added to make joinable. So
     // the batch is redone ONCE in the pre-2891 shape — column omitted, not nulled.
-    const settled = error && isMissingRecommendationIdSchema(error) ? await retryServeRowsWithoutToken(sc, rows, { servePoint, route }) : { error };
+    const settled = error && isMissingRecommendationIdSchema(error) ? await retryServeRowsWithoutToken(sc, rows, { servePoint, route }) : settleReplay(error);  if (!settled.duplicate)  // DV-37 (§48): a REPLAY of this exact serve collides whole on 2891's (recommendation_id, outcome) index and writes nothing — the idempotency guarantee working, so it is neither a rejection nor a second landing, and it moves no denominator.
     recordServeLogOutcome({
       outcome: settled.error ? "rejected" : "landed",
       servedItems: rows.length,
@@ -458,7 +458,7 @@ export async function logDiscoveryServe(
       // writer of this table is fire-and-forget, so a constraint refusing a whole
       // surface reads like a surface nobody uses. COUNTED by the constraint that caused it:
       reportRankEventsRejection(logger, { writer: SERVE_LOG_WRITER, err: settled.error, rows: rows.length, extra: { servePoint, route } });
-    } else {
+    } else if (!settled.duplicate) {
       // Exposure denominator — content_distribution_stats.eligible_impressions
       // mirrors the impression rows that landed (lib/rankLog.ts does the same
       // for the ranked writers). Still behind the flag above: with it off there
@@ -494,17 +494,35 @@ export async function logDiscoveryServe(
 // It is one edit to undo once those citations are re-anchored, and the proposed
 // re-anchorings are filed with the census text this change ships with.
 //
-// WHAT COULD NOT BE DONE FOR THE SAME REASON, stated because it is the larger
-// half of DV-37 and a reader should not have to infer the gap:
+// DV-37 — HOW THIS WRITER IS IDEMPOTENT WITHOUT AN `ON CONFLICT` (census §48).
+// An earlier note here said the write at :444 needed `.upsert(...)` to use
+// 2891's index as its arbiter. It does not. Every row of a serve carries the
+// token derived from that serve's own coordinates, and a PLAIN multi-row insert
+// is one statement: replaying the same serve collides on the UNIQUE
+// (recommendation_id, outcome) index and the WHOLE statement is refused 23505,
+// writing nothing. That refusal IS the arbitration. `settleReplay` below reads
+// it for what it is — a duplicate, not a rejection — so it is not counted as a
+// lost write and does not move `eligible_impressions` a second time. A 23505 on
+// any other constraint keeps the rejection path.
 //
-//   The write at line 444 is still a plain `.insert(rows)`. 2891's UNIQUE index
-//   over (recommendation_id, outcome) is now WRITABLE from here — every row
-//   carries the token — but it is not yet the ARBITER, because an `ON CONFLICT`
-//   needs `.upsert(rows, { onConflict: ... })` and the anchor at :444 is the
-//   literal text `const { error } = await sc.from("rank_even`, which pins both
-//   the statement's line AND its first forty-two characters. routes/rankEvents.ts
-//   HAS the arbiter on all three of its write paths, so the index has one caller;
-//   this writer is the second, and the change is four lines once :444 is free.
+// WHY NOT `.upsert(rows, { onConflict, ignoreDuplicates: true })` — the
+// ON CONFLICT DO NOTHING form this note used to propose. It is WEAKER here, and
+// the reason is the outcome route: it UPDATES the impression row in place
+// (impression → tap), which frees the pair (id, 'impression'). A replay after
+// one item was tapped would, under DO NOTHING, skip the untouched rows and
+// RE-INSERT the tapped item's impression — a second exposure for one serve,
+// exactly the inflation DV-37 exists to prevent. The plain multi-row insert is
+// one statement, so the untouched rows' collisions refuse the whole replay and
+// the tapped item is not resurrected either (pinned on a real database by
+// src/test/db/discoveryTelemetryIdempotency.db.test.ts). The boundary left,
+// stated rather than hidden: a replay arriving after EVERY row of the serve
+// has moved past 'impression' collides with nothing and would land. The serve
+// log is written once, right after the response and before any outcome can
+// arrive, and nothing in the tree retries it.
+//
+// A measured second reason: seventeen route suites fake this write as
+// `.insert` and capture it; the property is proved on the harness instead of
+// by editing their capture.
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** This module's name in the rejection counter and in the schema latch. */
@@ -532,7 +550,7 @@ async function retryServeRowsWithoutToken(
   sc:   any,
   rows: readonly any[],
   ctx:  { servePoint: number; route?: string },
-): Promise<{ error: unknown }> {
+): Promise<{ error: unknown; duplicate: boolean }> {
   if (!recommendationIdSchemaAbsent()) {
     logger.warn(
       { ...ctx, migration: "2891_rank_events_recommendation_id.sql" },
@@ -554,5 +572,184 @@ async function retryServeRowsWithoutToken(
     session_id: r.session_id,
   }));
   const { error } = await sc.from("rank_events").insert(legacy);
-  return { error };
+  // No token, so nothing for a replay to collide on: never a duplicate.
+  return { error, duplicate: false };
+}
+
+/**
+ * DV-37 — read an insert error for what it is.
+ *
+ * A 23505 on 2891's exposure index means this exact serve is already written:
+ * `error` becomes null and `duplicate` true. Anything else is returned as it
+ * came, including a 23505 on some other constraint, which is a real refusal.
+ */
+function settleReplay(error: unknown): { error: unknown; duplicate: boolean } {
+  if (error && isDuplicateExposureReplay(error)) return { error: null, duplicate: true };
+  return { error, duplicate: false };
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// DV-06 / DV-40 / §48 — THE PER-REQUEST RECORD (`public.recommendations`, 3376)
+// ═════════════════════════════════════════════════════════════════════════════
+//
+// One row per served Discovery REQUEST, signed-in or anonymous. It is what makes
+// a denominator countable per request, and it is the ONLY durable record of an
+// anonymous serve: `rank_events.user_id` is NOT NULL, so an anonymous serve
+// writes no item rows, and lib/discoveryRecommendationRecord.ts explains why it
+// must not. Every item's nine-field record is recoverable from this row
+// (`recommendationRecordsFromServeRequest`), with `user_id` null.
+//
+// Gated on the SAME flag as the item rows. Fire-and-forget: never throws.
+// Idempotent: the id is `serveIdFor(exposure)` and the write goes through
+// 3376's `record_discovery_serve_request`, an `INSERT … ON CONFLICT (id) DO
+// NOTHING` that answers 'written' or 'duplicate' — so a replay writes nothing,
+// raises nothing and logs no ERROR in Postgres.
+//
+// WHY AN RPC AND NOT `.from(...).insert(...)`: the conflict has to be resolved
+// by the database, and the function is where ON CONFLICT lives without a
+// client-side arbiter. A second, measured reason: seventeen route suites fake
+// this client with an `insert` that captures EVERY table into one list and
+// assert its length; the per-request row is a different table, and writing it
+// through `.rpc` keeps those suites' claims about rank_events exactly as
+// strong as they were rather than editing their capture.
+//
+// DEGRADES, ONCE, WHERE 3376 IS NOT APPLIED. Production has no such function
+// until the migration is applied. A missing function (PostgREST PGRST202,
+// Postgres 42883) or table (42P01, PGRST205) latches this writer off for the
+// life of the process after ONE warning naming the migration — the item rows,
+// the older and more important signal, do not depend on it either way.
+
+/** 3376's table, function and file — named in every warning. */
+export const SERVE_REQUEST_TABLE = "recommendations";
+export const SERVE_REQUEST_RPC = "record_discovery_serve_request";
+export const SERVE_REQUEST_MIGRATION = "3376_discovery_recommendations_per_request.sql";
+
+let _serveRequestTable: "unknown" | "absent" = "unknown";
+let _serveRequestAbsenceAnnounced = false;
+
+/** Test seam: the latch is process-wide. */
+export function _resetServeRequestTableLatch(): void {
+  _serveRequestTable = "unknown";
+  _serveRequestAbsenceAnnounced = false;
+}
+
+/** Is this error "3376 is not on this database" — its function or its table? */
+export function isMissingServeRequestTable(err: unknown): boolean {
+  const e = err as { code?: unknown; message?: unknown } | null | undefined;
+  const code = String(e?.code ?? "");
+  if (code === "42P01" || code === "PGRST205" || code === "PGRST202" || code === "42883") return true;
+  const msg = String(e?.message ?? "").toLowerCase();
+  return (msg.includes(SERVE_REQUEST_TABLE) || msg.includes(SERVE_REQUEST_RPC))
+    && (msg.includes("does not exist") || msg.includes("could not find"));
+}
+
+/** The shape one serve hands the per-request writer. */
+export interface DiscoveryServeRequestParams {
+  /** "" or null ⇔ anonymous. */
+  userId:     string | null;
+  sessionId:  string;
+  servedAt:   string;
+  servePoint: DiscoveryServePointId;
+  route?:     string;
+  items:      readonly ServedItem[];
+  /** Already screened context; hashed, never stored. */
+  context?:   Record<string, string | number | boolean | null>;
+}
+
+/**
+ * `10` §3's context_hash: a digest of the SCREENED request context — never a
+ * position, never the viewer. Null when there is no context to describe.
+ */
+export function serveContextHash(context?: Record<string, unknown> | null): string | null {
+  if (!context) return null;
+  const keys = Object.keys(context).sort();
+  if (keys.length === 0) return null;
+  const canonical = JSON.stringify(["portava:discovery:context:v1", keys.map((k) => [k, context[k] ?? null])]);
+  return createHash("sha256").update(canonical).digest("base64url").slice(0, 22);
+}
+
+/** Build the one row. Pure; exported so a test can hold the writer to the table's CHECKs. */
+export function buildServeRequestRow(p: DiscoveryServeRequestParams): Record<string, unknown> {
+  const userId = p.userId && p.userId.length > 0 ? p.userId : null;
+  const servedAt = canonicalServedAt(p.servedAt);
+  return {
+    id:             serveIdFor({ userId, sessionId: p.sessionId, servedAt }),
+    user_id:        userId,
+    viewer_class:   userId ? "signed_in" : "anonymous",
+    session_id:     p.sessionId,
+    surface:        "discovery",
+    serve_point:    p.servePoint,
+    route:          p.route ?? null,
+    model_version:  DISCOVERY_MODEL_VERSION,
+    context_hash:   serveContextHash(p.context),
+    served_count:   p.items.length,
+    item_ids:       p.items.map((i) => String(i.id)),
+    item_kinds:     p.items.map((i) => (i.kind !== undefined ? i.kind : itemKindFor(String(i.id))) ?? ""),
+    served_at:      servedAt,
+    schema_version: DISCOVERY_EVENT_SCHEMA_VERSION,
+    privacy_class:  DISCOVERY_EVENT_PRIVACY_CLASS,
+  };
+}
+
+/**
+ * Write the per-request row. Never throws; gated on the serve-log flag.
+ * Returns what happened so a test can assert it without reading a log.
+ */
+export async function logDiscoveryServeRequest(
+  sc: any,
+  p:  DiscoveryServeRequestParams,
+): Promise<"written" | "duplicate" | "rejected" | "absent" | "skipped"> {
+  try {
+    if (_serveRequestTable === "absent") return "absent";
+    if (!sc || typeof sc.rpc !== "function") return "skipped";
+    if (!(await serveLogEnabled(sc))) return "skipped";
+    const row = buildServeRequestRow(p);
+    const { data, error } = await sc.rpc(SERVE_REQUEST_RPC, { p_row: row });
+    if (!error) return data === "duplicate" ? "duplicate" : "written";
+    if (isMissingServeRequestTable(error)) {
+      // Two serves in flight can both reach here before either latches; one
+      // line per process is the intent, so the announcement has its own flag.
+      if (!_serveRequestAbsenceAnnounced) {
+        _serveRequestAbsenceAnnounced = true;
+        logger.warn(
+          { migration: SERVE_REQUEST_MIGRATION, servePoint: p.servePoint, route: p.route },
+          "discoveryServeLog: public.recommendations is unavailable — per-request denominators and " +
+          "every ANONYMOUS serve go unrecorded until 3376 is applied here",
+        );
+      }
+      _serveRequestTable = "absent";
+      return "absent";
+    }
+    reportRankEventsRejection(logger, {
+      writer: `${SERVE_LOG_WRITER} → ${SERVE_REQUEST_TABLE}`, err: error, rows: 1,
+      extra: { servePoint: p.servePoint, route: p.route },
+    });
+    return "rejected";
+  } catch (err) {
+    logger.warn({ err }, "discoveryServeLog: per-request insert threw");
+    return "rejected";
+  }
+}
+
+/**
+ * The path for a serve that writes NO item rows: an anonymous caller, or a
+ * signed-in serve of nothing. Before §48 this returned without a trace, which
+ * is how production's anonymous Discovery traffic left no record at all.
+ *
+ * The session is the route's own per-request id when it passed one (every
+ * Discovery route mints it server-side) and a fresh one otherwise — never
+ * anything a client supplied, so two anonymous rows cannot be linked.
+ */
+async function logDiscoveryServeRequestOnly(sc: any, params: DiscoveryServeLogParams): Promise<void> {
+  if (!sc) return;
+  const classified = classifyServeContext(params.context);
+  await logDiscoveryServeRequest(sc, {
+    userId:     params.userId && params.userId.length > 0 ? params.userId : null,
+    sessionId:  params.sessionId ?? randomUUID(),
+    servedAt:   params.servedAt ?? new Date().toISOString(),
+    servePoint: params.servePoint,
+    route:      params.route ?? "GET /discovery",
+    items:      params.items,
+    context:    screenFeaturesForStorage(classified.kept).kept,
+  });
 }

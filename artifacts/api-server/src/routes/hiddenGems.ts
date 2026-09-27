@@ -85,7 +85,7 @@ import {
   deriveGemProjection,
 } from "../services/hiddenGems/HiddenGemContributionService.js";
 import { GEM_CONTRIBUTION_TYPES } from "../lib/hiddenGemState.js";
-import { logDiscoveryServe, DiscoveryServePoint } from "../lib/discoveryServeLog.js";
+import { logDiscoveryServe, DiscoveryServePoint } from "../lib/discoveryServeLog.js";  import { stampServedRecommendations, exposureForResponse, serveClockOf } from "../lib/discoveryRecommendationRecord.js";  // census-discovery §48 — serve point 11's response carries the ids its serve-log rows do
 
 import { isAdmin } from "../lib/requireAdmin.js";
 
@@ -544,7 +544,7 @@ router.get("/hidden-gems", async (req, res) => {
       if (p) { base.gemState = p.gemState; base.gemConfidence = p.gemConfidence; }
       return base;
     });
-    res.json({ gems: enriched3, total: enriched3.length });
+    res.json({ gems: stampServedRecommendations(enriched3, exposureForResponse(res, callerId ?? null)), total: enriched3.length });  // §48 DV-40 — every served gem carries its exposure id, anonymous included
 
     // Serve point 11 — this route ranks (discoverGems: verification weight +
     // saves + visits + vibe-tag match) and served its results to users while
@@ -560,7 +560,7 @@ router.get("/hidden-gems", async (req, res) => {
     void logDiscoveryServe(sc, {
       userId:     callerId ?? "",
       servePoint: DiscoveryServePoint.HIDDEN_GEMS,
-      route:      "GET /hidden-gems",
+      route:      "GET /hidden-gems", ...serveClockOf(exposureForResponse(res, callerId ?? null)),  // §48 — the SAME exposure the response carries
       items:      enriched3.map((g: any) => ({ id: String(g.id), kind: "gem" as const })),
       context:    {
         city:         opts.city ?? null,
@@ -731,7 +731,7 @@ router.get("/hidden-gems/nearby", async (req, res) => {
       }),
     );
 
-    res.json({ ok: true, gems });
+    res.json({ ok: true, gems: stampServedRecommendations(gems, exposureForResponse(res, user.id)) });  // §48 DV-40 — every served gem carries its exposure id
 
     // Serve point 11 — same reasoning as GET /hidden-gems above; the `route`
     // field is what separates the two in the corpus. findNearbyGems ranks by
@@ -739,7 +739,7 @@ router.get("/hidden-gems/nearby", async (req, res) => {
     void logDiscoveryServe(sc, {
       userId:     user.id,
       servePoint: DiscoveryServePoint.HIDDEN_GEMS,
-      route:      "GET /hidden-gems/nearby",
+      route:      "GET /hidden-gems/nearby", ...serveClockOf(exposureForResponse(res, user.id)),  // §48 — the SAME exposure the response carries
       items:      gems.map((g: any) => ({ id: String(g.id), kind: "gem" as const })),
       // Never the caller's coordinates — spec §8: precise GPS is not logged.
       context:    { radiusKm: parsed.data.radiusKm, category: parsed.data.category ?? null },

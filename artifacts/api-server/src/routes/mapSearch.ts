@@ -29,7 +29,7 @@ import {
 } from "../lib/mapSearch.js";
 import {
   logDiscoveryServe, DiscoveryServePoint, searchTypeToItemKind,
-} from "../lib/discoveryServeLog.js";
+} from "../lib/discoveryServeLog.js";  import { stampServedRecommendations, exposureForResponse, serveClockOf } from "../lib/discoveryRecommendationRecord.js";  // census-discovery §48 — serve point 12's response carries the ids its serve-log rows do
 import { buildCommandsFromIntent } from "../lib/mapCommands.js";
 import { forwardGeocode } from "../lib/geocodeForward.js";
 
@@ -260,7 +260,7 @@ router.get("/map/search", asyncHandler(async (req, res) => {
 
   res.json({
     enabled: true,
-    results: page,
+    results: stampServedRecommendations(page.map((r) => ({ ...r, id: String(r.id) })), exposureForResponse(res, user.id)),  // §48 DV-40 — each result carries its exposure id
     viewport: { lat, lng, radiusKm },
     total: rankedResults.length,
     nextCursor,
@@ -285,7 +285,7 @@ router.get("/map/search", asyncHandler(async (req, res) => {
   void logDiscoveryServe(sc, {
     userId:     user.id,
     servePoint: DiscoveryServePoint.MAP_SEARCH,
-    route:      "GET /map/search",
+    route:      "GET /map/search", ...serveClockOf(exposureForResponse(res, user.id)),  // §48 — the SAME exposure the response carries
     items:      page.map((r) => ({ id: String(r.id), kind: searchTypeToItemKind(r.resultType) })),
     context:    { radiusKm, hasQuery: query !== null, resultCount: page.length },
   });

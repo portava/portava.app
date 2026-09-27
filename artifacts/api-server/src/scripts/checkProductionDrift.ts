@@ -844,6 +844,25 @@ export const KNOWN_PRODUCTION_GAPS: Record<string, Gap> = {
       "Strike it off in the same change that applies 3002 to PRODUCTION and " +
       "refreshes the two production snapshots.",
   },
+  // ── Added 2026-09-27 by census-discovery §48 (P3 telemetry) ─────────────────
+  recommendations: {
+    classification: "unapplied",
+    note:
+      "Migration 3376 (`10` §3 recommendations): one row per served Discovery " +
+      "request, signed-in or anonymous — the per-request exposure denominator " +
+      "(DV-06) and the only durable record of an anonymous serve (DV-40), which " +
+      "rank_events cannot hold because its user_id is NOT NULL. Rehearsed on the " +
+      "local PostgreSQL harness (apply, idempotent re-apply, production-shape " +
+      "rehearsal with 2893 unapplied, rollback refusing while populated); applied " +
+      "to no Supabase project. THE WRITER EXISTS AND LATCHES OFF WITHOUT IT: " +
+      "lib/discoveryServeLog.logDiscoveryServeRequest calls " +
+      "record_discovery_serve_request behind discovery_serve_log_enabled and, on " +
+      "PGRST202/PGRST205/42883/42P01, warns once and stops asking. Because that flag is TRUE in " +
+      "production, APPLYING 3376 STARTS WRITES on the next deploy — one row per " +
+      "Discovery request, anonymous ones included. Strike it off in the same " +
+      "change that applies 3376 to PRODUCTION and refreshes the two production " +
+      "snapshots.",
+  },
 };
 
 /**
