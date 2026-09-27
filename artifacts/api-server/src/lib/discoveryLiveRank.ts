@@ -33,7 +33,7 @@
  *
  *   1. SAFETY OUTRANKS OPPORTUNITY (§7, §16, §20). A Live-qualified
  *      `unsafe_density` reading sets `safety.unsafe` and DEMOTES: the row is
- *      forced behind every non-demoted row in the window and its opportunity
+ *      forced behind every non-demoted row, tail included (§57), and its opportunity
  *      value is 0. There is no weight, no mode and no evidence combination
  *      that can promote it. This is the census's S66 gap — the Map strips
  *      promotion near a notice and Compass answers SKIP, and until this module
@@ -335,7 +335,7 @@ export function whyNowFrom(
   if (state.walkIn === false) out.push("walk_in_refused");
   else if (state.queueMinMinutes !== null && axes.friction !== null && axes.friction < 0) out.push(`queue_${state.queueMinMinutes}m`);
   if (state.vibe) out.push(`reported_vibe_${state.vibe}`);
-  return out.slice(0, WHY_NOW_MAX);
+  return out.slice(0, state.unsafe ? 1 : WHY_NOW_MAX); // Sensing §7 (spec line 129), census-discovery §57 — a dangerous place is never ALSO handed opportunity/vibe reasons: its why-now is the safety reading alone (always out[0] here), never "unsafe · building · lively".
 }
 
 /** The weighted composite, mapped from the signed axis space into 0..1. Null when no axis is known. */
@@ -435,7 +435,7 @@ export interface LiveRankOutcome<T> {
   byId: Map<string, DiscoveryLiveRank>;
   /** How many head rows were graded. */
   windowSize: number;
-  /** Rows a safety reading pushed to the back of the window. */
+  /** Rows a safety reading pushed to the back — behind the ungraded tail as well (census-discovery §57). */
   demoted: number;
 }
 
@@ -443,7 +443,7 @@ export interface LiveRankOutcome<T> {
  * Re-rank the head window of `rows` on live evidence. Rows outside the window,
  * and rows the engine could not grade, keep their incoming order; the sort is
  * stable on the incoming index, so an ungraded row never overtakes another
- * ungraded row.
+ * ungraded row. A DEMOTED row is then placed after the tail as well (§57).
  */
 export function rankDiscoveryLive<T extends LiveRankRow>(rows: readonly T[], opts: LiveRankOptions): LiveRankOutcome<T> {
   const windowSize = Math.min(rows.length, LIVE_RANK_WINDOW);
@@ -466,7 +466,7 @@ export function rankDiscoveryLive<T extends LiveRankRow>(rows: readonly T[], opt
     return a.index - b.index;
   });
   return {
-    ranked: [...scored.map((s) => s.row), ...tail],
+    ranked: [...scored.filter((s) => !s.grade.safety.demoted).map((s) => s.row), ...tail, ...scored.filter((s) => s.grade.safety.demoted).map((s) => s.row)], // §57 — behind the UNGRADED tail too: a dangerous place may not stay ahead of a row nobody showed was dangerous on relevance alone.
     byId,
     windowSize,
     demoted: scored.filter((s) => s.grade.safety.demoted).length,

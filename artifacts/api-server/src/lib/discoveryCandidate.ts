@@ -126,9 +126,9 @@
  */
 import type { RankCandidate, ScoredCandidate } from "./portavaRank.js";
 import type { DiscoveryRankProvenance } from "./discoveryRankProvenance.js";
-import { explainReasons, type DiscoveryReason } from "./discoveryReasonCodes.js";
+import { explainReasons, type DiscoveryReason, type DiscoveryReasonCode } from "./discoveryReasonCodes.js";
 import { isFlagEnabled } from "./featureFlags.js";
-import { loadPdeViewer, rankForViewer, type PdePlace } from "./discoveryPde.js";
+import { loadPdeViewer, rankForViewer, type PdePlace, type PdeReadFailure } from "./discoveryPde.js";
 import type { DiscoveryLiveRank } from "./discoveryLiveRank.js";
 import { point } from "./mapObjects.js";
 import { classifyAgainstProtected, type ProtectedZone } from "./protectedLocations.js";
@@ -425,7 +425,7 @@ export function projectDiscoveryCandidate(row: CandidateSourceRow, ctx: Candidat
     : ctx.rankedBy === "compass" && provenance ? provenance.reasons
     : [];
   const whyForUser = signals.slice(0, WHY_FOR_USER_MAX);
-  return {
+  return withSafetyPrecedence(ctx, {
     id: row.id,
     whyNow: whyNowOf(row.id, ctx), whyNowValidForMs: whyNowValidForMsOf(row.id, ctx, nowMs),
     whyForUser,
@@ -436,7 +436,7 @@ export function projectDiscoveryCandidate(row: CandidateSourceRow, ctx: Candidat
     coverage: coverageForCandidate(row.id, ctx).coverage,
     provenance,
     reasons: explainReasons(signals),
-  };
+  });
 }
 
 // ── Flag (cached 30 s, mirrors discoveryServeLog) ─────────────────────────────
@@ -534,7 +534,7 @@ export interface CandidateReadOutcome<T> {
   candidates: Array<{ place: T; candidate: DiscoveryCandidate }>;
   rankedBy: DiscoveryRankedBy;
   /** Writes the ranker attempted and the no-write client intercepted. Must be 0 on the served path; here it is expected to be > 0 when PDE ran. */
-  suppressedWrites: number;
+  suppressedWrites: number; /** The viewer-side reads that FAILED on this run (lib/discoveryPde `PdeReadFailure`, in the order they failed). Absent when no per-user read was made (anonymous viewer, empty input). Non-empty ⇒ `whyForUser` was computed WITHOUT those inputs, so a consumer must not serve the answer as complete (`11` §9): the loader keeps the reads non-fatal, and this is how the failure leaves the reader instead of being dropped here. */ degraded?: readonly PdeReadFailure[];
 }
 
 /**
@@ -576,7 +576,7 @@ export async function readDiscoveryCandidatesForViewer<T extends CandidateSource
   return {
     candidates: outcome.ranked.map((place) => ({ place, candidate: projectDiscoveryCandidate(place, ctx) })),
     rankedBy: "pde",
-    suppressedWrites: outcome.stages.suppressedWrites,
+    suppressedWrites: outcome.stages.suppressedWrites, degraded: [...(viewer.degraded ?? [])],
   };
 }
 
@@ -607,3 +607,36 @@ export function whyNowValidForMsOf(
   const horizonMs = horizonAt ? Date.parse(horizonAt) : Number.NaN;
   return Number.isFinite(horizonMs) ? Math.max(0, horizonMs - nowMs) : null;
 }
+
+/**
+ * Sensing §7 (spec line 129) — *"Safety constraints outrank opportunity/vibe. A dangerous
+ * place must never simultaneously be promoted as 'best move now'."* —
+ * census-discovery A07, §57.
+ *
+ * lib/discoveryLiveRank already DEMOTES a Live `unsafe_density` row (behind
+ * every non-demoted row, the ungraded tail included) and gives it a why-now of
+ * the safety reading alone. But the projection has a second "now" channel the
+ * ranker does not own: `reasons`, whose `nearby_now` code renders on the card
+ * as `01` §11's plain language "Close to you and open around now." — which, on
+ * a place the same serve just graded dangerous, is precisely a "best move now"
+ * label sitting beside the danger. So on a DEMOTED row that one code is
+ * withheld. Nothing else is touched: the ranker's own `whyForUser` keys (a
+ * record of which features contributed) and every other reason (taste, trail,
+ * creator) are not "now" claims, and the row itself still renders — hiding a
+ * dangerous place would be its own failure, exactly as lib/mapDisplayResolver
+ * keeps a noticed place on the map and only strips its promotion.
+ *
+ * Inert without a live grade: `liveRankById` is null whenever
+ * `discovery_live_rank_enabled` is off, so the flags-off projection is the
+ * object it was given, unchanged.
+ */
+export function withSafetyPrecedence(
+  ctx: Pick<CandidateServeContext, "liveRankById">,
+  candidate: DiscoveryCandidate,
+): DiscoveryCandidate {
+  if (ctx.liveRankById?.get(candidate.id)?.safety?.demoted !== true) return candidate;
+  return { ...candidate, reasons: candidate.reasons.filter((r) => r.code !== SAFETY_WITHHELD_REASON) };
+}
+
+/** The one `01` §11 code whose plain language is a "now" claim — see `withSafetyPrecedence`. */
+export const SAFETY_WITHHELD_REASON: DiscoveryReasonCode = "nearby_now";
