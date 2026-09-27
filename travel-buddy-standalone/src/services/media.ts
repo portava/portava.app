@@ -181,7 +181,7 @@ export async function uploadMedia(media: PickedMedia, validateOpts?: ValidateMed
   // Read the local file URI into a Blob (Expo/web compatible).
   let blob: Blob;
   try {
-    const resp = await fetch(media.uri);
+    const resp = await fetch(await videoUriForUpload(media.uri, media.type === 'video', media.fileSize)); // §37 MD282: media.uri itself unless a compressor module is in the binary and switched on
     blob = await resp.blob();
   } catch (e) {
     return {
@@ -303,3 +303,5 @@ export async function deleteUploadedMedia(publicUrl: string): Promise<void> {
 // §37 (census-media §22): the general-upload video poster. Imported at the TAIL
 // so no line above moves (census-media cites this file by line); ESM hoists it.
 import { attachVideoPoster, deviceGeneralPosterDeps } from './media/generalVideoPoster.ts';
+// §37 MD282 (census-media §37): the device compression seam. At the TAIL for the same reason.
+import { videoUriForUpload } from './media/videoCompression.ts';

@@ -556,3 +556,55 @@ describe("MD281 on the wire — a resumable part upload into the postcard slot",
     assert.deepEqual([...state.objects.keys()], []);
   });
 });
+
+// ── census-media §37 (MD269 / MD283): the §36 safety-moderation stage at /complete ──
+// The classifier is a TEST DOUBLE. What is proved is the wiring: with the seeded
+// flag off, /complete writes 'approved' exactly as before; with it on and no
+// classifier, the file completes HELD ('flagged'), which every post_media reader
+// refuses to distribute; with a classifier, its verdict decides.
+import {
+  _setMediaModerationClassifierForTest,
+  type MediaModerationClassifier,
+} from "../lib/media/vendors/mediaModerationClassifier.js";
+
+describe("§37 on the wire — POST /postcards/:id/media/:mediaId/complete takes its moderation value from the stage", () => {
+  const complete = async () => {
+    state.objects.set(`post-media/${SLOT_PATH}`, Buffer.from(PORTRAIT_MP4));
+    const r = await json("POST", `/api/postcards/${POST}/media/${MEDIA}/complete`, {
+      mimeType: "video/mp4", fileSizeBytes: PORTRAIT_MP4.length, durationSeconds: 2, width: 48, height: 64,
+    });
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    const write = state.updates.find((u) => u.table === "post_media" && u.patch.processing_status === "ready");
+    assert.ok(write, "the ready write happened");
+    return write.patch.moderation_status as string;
+  };
+
+  it("flag off (the seed): 'approved', as before", async () => {
+    assert.equal(await complete(), "approved");
+  });
+
+  it("flag on, no classifier configured: completes HELD as 'flagged'", async () => {
+    state.flags.media_moderation_classifier_enabled = true;
+    assert.equal(await complete(), "flagged");
+  });
+
+  it("flag on, a video-capable classifier: its verdict decides ('block' → 'rejected'), and it read THIS slot", async () => {
+    state.flags.media_moderation_classifier_enabled = true;
+    const seen: string[] = [];
+    const c: MediaModerationClassifier = {
+      name: "wire-classifier",
+      capabilities: { image: true, video: true, videoFrame: false },
+      async classify({ subject, target }) {
+        seen.push(`${target}:${subject.bucket}/${subject.path}`);
+        return { ok: true, value: { verdict: "block", labels: ["test"], confidence: 0.99 } };
+      },
+    };
+    _setMediaModerationClassifierForTest(c);
+    try {
+      assert.equal(await complete(), "rejected");
+      assert.deepEqual(seen, [`file:post-media/${SLOT_PATH}`]);
+    } finally {
+      _setMediaModerationClassifierForTest(null);
+    }
+  });
+});

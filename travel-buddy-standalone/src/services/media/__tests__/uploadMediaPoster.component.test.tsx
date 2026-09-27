@@ -93,3 +93,39 @@ describe('uploadMedia — a video gets ITS poster, not an unrelated image', () =
     expect(calls.some((c) => c.url.includes('/poster'))).toBe(false);
   });
 });
+
+// ── census-media §37, MD282: uploadMedia reads its file through the compression
+// seam. The native module is a TEST DOUBLE; what is proved is which file is read.
+import { _setTestVideoCompressionFlag, _setTestVideoCompressorLookup } from '../videoCompression.ts';
+
+describe('uploadMedia — MD282: the original file unless a compressor is present and switched on', () => {
+  const savedFetch = (globalThis as any).fetch;
+  const smaller = () => ({ compressAsync: async () => ({ uri: 'file:///clip.small.mp4', sizeBytes: 400, width: 720, height: 1280 }) });
+  beforeAll(() => {
+    process.env.EXPO_PUBLIC_API_BASE_URL = 'https://api.test';
+    _setTestConfiguredOverride(true);
+    _setTestTokenProvider(async () => 'tok');
+  });
+  afterAll(() => {
+    (globalThis as any).fetch = savedFetch;
+    _setTestConfiguredOverride(null);
+    _setTestTokenProvider(null);
+    delete process.env.EXPO_PUBLIC_API_BASE_URL;
+  });
+  afterEach(() => { _setTestVideoCompressionFlag(null); _setTestVideoCompressorLookup(null); });
+
+  it('shipped (switch off): the picked file is read, even with a module present', async () => {
+    _setTestVideoCompressorLookup(smaller);
+    const calls = installFetch(201);
+    await uploadMedia(VIDEO, { maxVideoDurationSeconds: 60 });
+    expect(calls[0]!.url).toBe('file:///clip.mp4');
+  });
+
+  it('switch on, module present, copy smaller than the picker size: the COMPRESSED copy is read', async () => {
+    _setTestVideoCompressionFlag(true);
+    _setTestVideoCompressorLookup(smaller);
+    const calls = installFetch(201);
+    await uploadMedia(VIDEO, { maxVideoDurationSeconds: 60 });
+    expect(calls[0]!.url).toBe('file:///clip.small.mp4');
+  });
+});

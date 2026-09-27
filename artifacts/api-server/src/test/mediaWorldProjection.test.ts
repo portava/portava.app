@@ -2199,3 +2199,229 @@ describe("census-media §28.5 — the near-search place read is the Map's PLACE_
     assert.equal(norm(m![1]!), norm(cols));
   });
 });
+
+// ═════════════════════════════════════════════════════════════════════════════
+// census-media §37 — §38's two VISUAL queries through the vision seam
+// (MD289 "looks social", MD293 "look like this", MD63's candidate stage).
+// The provider is a TEST DOUBLE throughout: these prove the seam refuses by
+// name, validates what a provider says, and re-gates every proposal — not that
+// any vendor can see anything.
+// ═════════════════════════════════════════════════════════════════════════════
+import {
+  searchMediaVisual,
+  parseMediaSearchVisual,
+} from "../services/media/MediaSearchService.js";
+import type { MediaVisionProvider, CrowdLevel } from "../lib/media/vendors/mediaVisionProvider.js";
+
+function fakeVision(
+  levels: Record<string, [CrowdLevel, number]>,
+  similar: Array<[string, number]>,
+  calls: string[],
+  extraSignals: unknown[] = [],
+): MediaVisionProvider {
+  return {
+    name: "fake-vision",
+    capabilities: { sceneSignals: true, similarMedia: true, ingest: false },
+    async sceneSignals({ items }) {
+      calls.push(`scene:${items.map((i) => i.mediaId).sort().join(",")}`);
+      return {
+        ok: true,
+        value: [
+          ...items.filter((i) => levels[i.mediaId]).map((i) => ({ mediaId: i.mediaId, kind: "crowd_level" as const, value: levels[i.mediaId]![0], confidence: levels[i.mediaId]![1] })),
+          ...(extraSignals as any[]),
+        ],
+      };
+    },
+    async similarMedia({ seed }) {
+      calls.push(`similar:${seed.mediaId}`);
+      return { ok: true, value: similar.map(([mediaId, score]) => ({ mediaId, score })) };
+    },
+    async ingest() { return { ok: false, reason: "unsupported" }; },
+  };
+}
+const stageOn = async () => true;
+const stageOff = async () => false;
+
+describe("MD289 — 'Nightlife that looks social tonight': the criterion is applied or refused BY NAME, never dropped", () => {
+  const nightlife = () => [
+    makePost({ id: uid(81), category: "nightlife", createdAt: isoAgo(5 * 60_000) }),
+    makePost({ id: uid(82), category: "nightlife", createdAt: isoAgo(5 * 60_000) }),
+    makePost({ id: uid(83), category: "nightlife", createdAt: isoAgo(5 * 60_000) }),
+  ];
+
+  it("no visual criterion → exactly searchMedia, `visual: null`", async () => {
+    const sc = makeSc(baseData({ posts: nightlife() }));
+    const viewer = await resolveViewer(sc, VIEWER, { needFollows: false });
+    const r = await searchMediaVisual(sc, viewer, { category: "nightlife", freshOnly: true }, Date.now(), { stageEnabled: stageOff });
+    assert.equal(r.visual, null);
+    assert.equal(r.media.length, 3);
+  });
+
+  it("stage OFF (the seed): an EMPTY answer naming `stage_off` — not 'all nightlife tonight' — and the provider is never asked", async () => {
+    const sc = makeSc(baseData({ posts: nightlife() }));
+    const viewer = await resolveViewer(sc, VIEWER, { needFollows: false });
+    const calls: string[] = [];
+    const r = await searchMediaVisual(sc, viewer, { category: "nightlife", freshOnly: true, looksSocial: true }, Date.now(), {
+      stageEnabled: stageOff, provider: fakeVision({}, [], calls),
+    });
+    assert.deepEqual(r.visual, { criteria: ["looksSocial"], state: "stage_off", provider: null });
+    assert.deepEqual(r.media, []);
+    assert.deepEqual(r.criteriaUsed, ["category", "freshOnly", "looksSocial"]);
+    assert.deepEqual(calls, []);
+  });
+
+  it("stage ON with no provider configured: `no_provider`, empty", async () => {
+    const sc = makeSc(baseData({ posts: nightlife() }));
+    const viewer = await resolveViewer(sc, VIEWER, { needFollows: false });
+    const r = await searchMediaVisual(sc, viewer, { category: "nightlife", looksSocial: true }, Date.now(), { stageEnabled: stageOn });
+    assert.equal(r.visual?.state, "no_provider");
+    assert.deepEqual(r.media, []);
+  });
+
+  it("stage ON with a provider: keeps only what looks social at the owner's threshold; an injected id is ignored", async () => {
+    const sc = makeSc(baseData({ posts: nightlife() }));
+    const viewer = await resolveViewer(sc, VIEWER, { needFollows: false });
+    const calls: string[] = [];
+    const provider = fakeVision(
+      { [uid(81)]: ["social", 0.9], [uid(82)]: ["quiet", 0.95], [uid(83)]: ["busy", 0.4] },
+      [],
+      calls,
+      [{ mediaId: uid(99), kind: "crowd_level", value: "social", confidence: 0.99 }],
+    );
+    const r = await searchMediaVisual(sc, viewer, { category: "nightlife", freshOnly: true, looksSocial: true }, Date.now(), { stageEnabled: stageOn, provider });
+    assert.equal(r.visual?.state, "answered");
+    assert.deepEqual(r.media.map((m) => m.id), [uid(81)]);
+    assert.equal(r.totals.media, 1);
+    assert.deepEqual(r.people.map((p) => p.perspectiveCount), [1], "roll-ups are recomputed from what was kept");
+    assert.equal(JSON.stringify(r).includes(uid(99)), false);
+  });
+
+  it("'looks social' alone narrows nothing — EMPTY MEANS EMPTY, and the provider is never asked", async () => {
+    const sc = makeSc(baseData({ posts: nightlife() }));
+    const viewer = await resolveViewer(sc, VIEWER, { needFollows: false });
+    const calls: string[] = [];
+    const r = await searchMediaVisual(sc, viewer, { looksSocial: true }, Date.now(), { stageEnabled: stageOn, provider: fakeVision({}, [], calls) });
+    assert.equal(r.visual?.state, "nothing_to_narrow");
+    assert.deepEqual(r.media, []);
+    assert.deepEqual(calls, []);
+  });
+
+  it("a provider that throws is `provider_failed` and returns nothing", async () => {
+    const sc = makeSc(baseData({ posts: nightlife() }));
+    const viewer = await resolveViewer(sc, VIEWER, { needFollows: false });
+    const provider = fakeVision({}, [], []);
+    provider.sceneSignals = async () => { throw new Error("vendor down"); };
+    const r = await searchMediaVisual(sc, viewer, { category: "nightlife", looksSocial: true }, Date.now(), { stageEnabled: stageOn, provider });
+    assert.equal(r.visual?.state, "provider_failed");
+    assert.deepEqual(r.media, []);
+  });
+});
+
+describe("MD293 — 'Find places that look like this': the seed is gated, the index only PROPOSES", () => {
+  const SEED = uid(90);
+
+  it("a seed the viewer cannot see never reaches the index (`seed_not_visible`)", async () => {
+    const sc = makeSc(baseData({
+      posts: [makePost({ id: SEED, author_id: AUTHOR_B })],
+      blocks: [{ blocker_id: VIEWER, blocked_id: AUTHOR_B }],
+    }));
+    const viewer = await resolveViewer(sc, VIEWER, { needFollows: false });
+    const calls: string[] = [];
+    const r = await searchMediaVisual(sc, viewer, { lookLike: SEED }, Date.now(), { stageEnabled: stageOn, provider: fakeVision({}, [[uid(91), 0.9]], calls) });
+    assert.equal(r.visual?.state, "seed_not_visible");
+    assert.deepEqual(calls, [], "the index must not be an oracle for media the viewer cannot see");
+    assert.deepEqual(r.media, []);
+  });
+
+  it("every proposal goes back through the gate: a blocked author's and a private account's media are dropped; order is the index's", async () => {
+    const sc = makeSc(baseData({
+      posts: [
+        makePost({ id: SEED }),
+        makePost({ id: uid(91), placeId: PLACE_1 }),
+        makePost({ id: uid(92), placeId: GEM_PLACE }),
+        makePost({ id: uid(93), author_id: AUTHOR_B }),
+        makePost({ id: uid(94), author_id: "44444444-4444-4444-4444-444444444444", authorIsPrivate: true }),
+      ],
+      blocks: [{ blocker_id: VIEWER, blocked_id: AUTHOR_B }],
+    }));
+    const viewer = await resolveViewer(sc, VIEWER, { needFollows: false });
+    const calls: string[] = [];
+    const provider = fakeVision({}, [[uid(93), 0.99], [uid(92), 0.9], [uid(94), 0.85], [uid(91), 0.5], [SEED, 1]], calls);
+    const r = await searchMediaVisual(sc, viewer, { lookLike: SEED }, Date.now(), { stageEnabled: stageOn, provider });
+    assert.deepEqual(calls, [`similar:${SEED}`]);
+    assert.equal(r.visual?.state, "answered");
+    assert.deepEqual(r.media.map((m) => m.id), [uid(92), uid(91)], "the gate decides; the index only orders");
+    assert.deepEqual(r.places.map((p) => p.placeId).sort(), [GEM_PLACE, PLACE_1].sort());
+    assert.equal(r.unsupported.some((u) => u.startsWith("visual similarity")), false, "answered — so no longer listed as unsupported");
+  });
+
+  it("both criteria at once apply both: 'look like this' AND 'looks social'", async () => {
+    const sc = makeSc(baseData({ posts: [makePost({ id: SEED }), makePost({ id: uid(91) }), makePost({ id: uid(92) })] }));
+    const viewer = await resolveViewer(sc, VIEWER, { needFollows: false });
+    const provider = fakeVision({ [uid(91)]: ["quiet", 0.9], [uid(92)]: ["social", 0.9] }, [[uid(91), 0.9], [uid(92), 0.8]], []);
+    const r = await searchMediaVisual(sc, viewer, { lookLike: SEED, looksSocial: true }, Date.now(), { stageEnabled: stageOn, provider });
+    assert.deepEqual(r.media.map((m) => m.id), [uid(92)]);
+    assert.deepEqual(r.visual?.criteria, ["looksSocial", "lookLike"]);
+  });
+
+  it("parseMediaSearchVisual: a present lookLike that is not a media id is a 400, not an ignored field", () => {
+    assert.deepEqual(parseMediaSearchVisual({ looksSocial: "true" }), { ok: true, visual: { looksSocial: true, lookLike: null } });
+    assert.equal(parseMediaSearchVisual({ lookLike: "../../etc" }).ok, false);
+    assert.deepEqual(parseMediaSearchVisual({ lookLike: SEED.toUpperCase() }), { ok: true, visual: { looksSocial: false, lookLike: SEED } });
+  });
+});
+
+describe("MD289 · MD293 — over HTTP: GET /media/search refuses a visual criterion by name while the stage is off", () => {
+  const serveVisual = async (data: Dataset) => {
+    const express = (await import("express")).default;
+    const { createServer } = await import("node:http");
+    const { default: mediaWorldRouter } = await import("../routes/mediaWorld.js");
+    const client = makeSc(data);
+    client.auth = { getUser: async () => ({ data: { user: { id: VIEWER } }, error: null }) };
+    _setTestClient(client, true);
+    const app = express();
+    app.use((req: any, _res: any, next: any) => { req.log = { info() {}, error() {}, warn() {}, debug() {} }; next(); });
+    app.use("/api", mediaWorldRouter);
+    const server = createServer(app);
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const port = (server.address() as any).port;
+    const get = async (p: string) => {
+      const r = await fetch(`http://127.0.0.1:${port}${p}`, { headers: { Authorization: "Bearer tok" } });
+      return { status: r.status, body: await r.json() as any };
+    };
+    const close = () => { server.close(); _clearTestClient(); _setTestServiceClient(null); };
+    return { get, close };
+  };
+
+  it("an event found BY NAME is not served beside a refused visual criterion — a name cannot satisfy 'looks social'", async () => {
+    const { get, close } = await serveVisual({ ...canonicalData(), posts: [makePost({ id: uid(85), content: "beach festival" })] });
+    try {
+      const control = await get("/api/media/search?q=beach%20festival");
+      assert.deepEqual(control.body.events.map((e: any) => e.id), [EVENT_PUBLIC], "control: the event IS found by name");
+      const social = await get("/api/media/search?q=beach%20festival&looksSocial=true");
+      assert.equal(social.body.visual.state, "stage_off");
+      assert.deepEqual(social.body.events, []);
+      assert.deepEqual(social.body.media, []);
+    } finally {
+      close();
+    }
+  });
+
+  it("with the seeded flag off, looksSocial answers stage_off and an empty list (control: without it, the nightlife is there)", async () => {
+    const { get, close } = await serveVisual(baseData({ posts: [makePost({ id: uid(81), category: "nightlife", createdAt: isoAgo(60_000) })] }));
+    try {
+      const control = await get("/api/media/search?category=nightlife&freshOnly=true");
+      assert.equal(control.status, 200);
+      assert.deepEqual(control.body.media.map((m: any) => m.id), [uid(81)]);
+      assert.equal(control.body.visual, null);
+      const social = await get("/api/media/search?category=nightlife&freshOnly=true&looksSocial=true");
+      assert.equal(social.status, 200);
+      assert.deepEqual(social.body.visual, { criteria: ["looksSocial"], state: "stage_off", provider: null });
+      assert.deepEqual(social.body.media, []);
+      const bad = await get("/api/media/search?lookLike=not-an-id");
+      assert.equal(bad.status, 400);
+    } finally {
+      close();
+    }
+  });
+});

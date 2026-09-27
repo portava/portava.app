@@ -211,3 +211,48 @@ describe('PostcardComposer — the server envelope is enforced on the device (§
     expect(mockPrepare).not.toHaveBeenCalled();
   });
 });
+
+// ── census-media §37, MD282: the device compression seam on the composer's path ──
+// The native module is a TEST DOUBLE supplied through the seam's lookup; no
+// encoder runs here. What is proved: with no module (every build today) or the
+// switch off (the shipped default), the ORIGINAL file is reserved, uploaded and
+// completed; with a module and the switch on, the COMPRESSED file is — its size
+// is what the slot is reserved for, and its dimensions are what /complete gets.
+import { _setTestVideoCompressionFlag, _setTestVideoCompressorLookup } from '../../services/media/videoCompression.ts';
+
+describe('PostcardComposer — MD282 device video compression, through its seam', () => {
+  const postcards = () => jest.requireMock('../../services/postcards.ts') as Record<string, jest.Mock>;
+  beforeEach(() => {
+    resolvePick = null;
+    mockCompleteUpload.mockClear();
+    postcards().uploadToSignedUrl.mockClear();
+    postcards().getUploadUrl.mockClear();
+  });
+  afterEach(() => {
+    _setTestVideoCompressionFlag(null);
+    _setTestVideoCompressorLookup(null);
+  });
+
+  it('shipped default (switch off): the picked file travels untouched', async () => {
+    _setTestVideoCompressorLookup(() => ({ compressAsync: async () => ({ uri: 'file:///clip.small.mp4', sizeBytes: 900_000, width: 720, height: 1280 }) }));
+    await pickAndPost('video');
+    expect(postcards().uploadToSignedUrl.mock.calls[0]![1]).toBe('file:///clip.mp4');
+    expect(postcards().getUploadUrl.mock.calls[0]![1]).toEqual(expect.objectContaining({ fileSizeBytes: 2_000_000 }));
+  });
+
+  it('switch on but NO module in the binary: the picked file travels untouched', async () => {
+    _setTestVideoCompressionFlag(true);
+    _setTestVideoCompressorLookup(() => null);
+    await pickAndPost('video');
+    expect(postcards().uploadToSignedUrl.mock.calls[0]![1]).toBe('file:///clip.mp4');
+  });
+
+  it('switch on and a module present: the COMPRESSED file is reserved, uploaded and completed with its own size and dimensions', async () => {
+    _setTestVideoCompressionFlag(true);
+    _setTestVideoCompressorLookup(() => ({ compressAsync: async () => ({ uri: 'file:///clip.small.mp4', sizeBytes: 900_000, width: 720, height: 1280 }) }));
+    await pickAndPost('video');
+    expect(postcards().getUploadUrl.mock.calls[0]![1]).toEqual(expect.objectContaining({ fileSizeBytes: 900_000 }));
+    expect(postcards().uploadToSignedUrl.mock.calls[0]![1]).toBe('file:///clip.small.mp4');
+    expect(mockCompleteUpload.mock.calls[0]![2]).toEqual(expect.objectContaining({ fileSizeBytes: 900_000, width: 720, height: 1280 }));
+  });
+});

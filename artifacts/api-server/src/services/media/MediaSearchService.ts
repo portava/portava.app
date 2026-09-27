@@ -839,3 +839,261 @@ import { loadActiveProtectedZones } from "../../lib/protectedZoneStore.js";
 import { applyProtection, haversineMeters, type ProtectedZone } from "../../lib/protectedLocations.js";
 import { projectPlace, type PlaceRowLike } from "../../lib/mapProjectPlace.js";
 import { centroidOf, type MapObject } from "../../lib/mapObjects.js";
+
+// ── §38 VISUAL criteria — "…that looks social" and "Find places that look like this" ──
+//
+// census-media §37 (MD289, MD293, and MD63's evidence-extraction stage). Both
+// need a vision provider (lib/media/vendors/mediaVisionProvider), and the
+// provider is the refusing default until the owner picks one. So both answer
+// with a NAMED REFUSAL and an empty result, never with results that ignore the
+// criterion: "Nightlife that looks social tonight" must not come back as "all
+// nightlife tonight" with nothing on screen saying the second half was dropped.
+//
+// NOT A SECOND READ PATH, and the index is not a disclosure path:
+//   • "looks social" NARROWS what `searchMedia` already returned for the other
+//     criteria. Alone it narrows nothing, and EMPTY MEANS EMPTY holds.
+//   • "look like this" first asks `searchMedia` whether the viewer can see the
+//     SEED at all (`mediaId`, the same gate as "Where was this photo taken?").
+//     A seed the viewer cannot see never reaches the provider, so the index
+//     cannot be used as an oracle for someone else's media. The ids the index
+//     proposes then go through the shared loader and projector — the same two
+//     functions as every lens — so the index can PROPOSE media, never DISCLOSE it.
+//
+// APPENDED AT THE END OF THE FILE ON PURPOSE: census-media anchors citations
+// above, and nothing may move them.
+
+/** How many similar media the index is asked for, before the gate decides. */
+export const VISUAL_SIMILAR_LIMIT = 60;
+
+export interface MediaSearchVisualQuery {
+  /** §38 "…that looks social" (MD289): narrows the other criteria by a scene signal. */
+  looksSocial?: boolean;
+  /** §38 "Find places that look like this" (MD293): a media id the viewer can already see. */
+  lookLike?: string | null;
+}
+
+export type MediaSearchVisualState =
+  /** The provider answered and the criterion was applied. */
+  | "answered"
+  /** `media_vision_provider_enabled` is off (migration 3355 seeds it FALSE). */
+  | "stage_off"
+  /** No vision provider is configured: the refusing default answered. */
+  | "no_provider"
+  /** The configured provider cannot do this (no scene signals / no index). */
+  | "unsupported"
+  /** The provider errored, timed out, or answered something that failed validation. */
+  | "provider_failed"
+  /** `lookLike` names media this viewer cannot see, or that does not exist. Indistinguishable on purpose. */
+  | "seed_not_visible"
+  /** "looks social" with no other criterion: there is nothing to narrow. */
+  | "nothing_to_narrow";
+
+export interface MediaSearchVisualReport {
+  criteria: Array<"looksSocial" | "lookLike">;
+  state: MediaSearchVisualState;
+  provider: string | null;
+}
+
+export interface MediaSearchVisualResult {
+  /** Null when the query carried no visual criterion — the search is exactly `searchMedia`. */
+  visual: MediaSearchVisualReport | null;
+}
+
+/** Parse the two visual query parameters. `lookLike` that is present and not a media id is a 400, not an ignored field. */
+export function parseMediaSearchVisual(
+  query: Record<string, unknown>,
+): { ok: true; visual: MediaSearchVisualQuery } | { ok: false; message: string } {
+  const looksSocial = query.looksSocial === "true" || query.looksSocial === "1";
+  const raw = query.lookLike;
+  if (raw === undefined || raw === null || raw === "") return { ok: true, visual: { looksSocial, lookLike: null } };
+  if (typeof raw !== "string" || !UUID_RE.test(raw)) return { ok: false, message: "lookLike must be a media id" };
+  return { ok: true, visual: { looksSocial, lookLike: raw.toLowerCase() } };
+}
+
+/** The criteria `searchMedia` would record for these fields, in its order. Used for a refusal's `criteriaUsed`. */
+function declaredCriteria(query: MediaSearchQuery & MediaSearchNearQuery): string[] {
+  const out: string[] = [];
+  if (normalizeSearchTerm(query.q)) out.push("q");
+  if (normalizeSearchTerm(query.city)) out.push("city");
+  if (normalizeSearchTerm(query.category)) out.push("category");
+  if (typeof query.placeId === "string" && UUID_RE.test(query.placeId)) out.push("placeId");
+  if (typeof query.tripId === "string" && query.tripId.length > 0) out.push("tripId");
+  if (typeof query.mediaId === "string" && UUID_RE.test(query.mediaId)) out.push("mediaId");
+  if (query.scope === "me" || query.scope === "trip") out.push("scope");
+  if (query.freshOnly === true) out.push("freshOnly");
+  if (query.near) out.push("near");
+  return out;
+}
+
+function stateForRefusal(reason: string): MediaSearchVisualState {
+  if (reason === "not_configured") return "no_provider";
+  if (reason === "unsupported") return "unsupported";
+  return "provider_failed";
+}
+
+export interface MediaSearchVisualDeps {
+  provider?: MediaVisionProvider;
+  stageEnabled?: (sc: SupabaseClient) => Promise<boolean>;
+}
+
+type VisualSearchAnswer = MediaSearchResults & MediaSearchNearResult & MediaSearchVisualResult;
+
+/**
+ * `searchMedia`, plus the two §38 visual criteria. With neither criterion it IS
+ * `searchMedia` (and `visual: null`). With either, and the stage off or no
+ * provider, it answers an empty result whose `visual.state` names why.
+ */
+export async function searchMediaVisual(
+  sc: SupabaseClient,
+  viewer: ViewerResolved,
+  query: MediaSearchQuery & MediaSearchNearQuery & MediaSearchVisualQuery,
+  nowMs: number,
+  deps: MediaSearchVisualDeps = {},
+): Promise<VisualSearchAnswer> {
+  const criteria: Array<"looksSocial" | "lookLike"> = [];
+  if (query.looksSocial === true) criteria.push("looksSocial");
+  const seed = typeof query.lookLike === "string" && UUID_RE.test(query.lookLike) ? query.lookLike.toLowerCase() : null;
+  if (seed) criteria.push("lookLike");
+  if (criteria.length === 0) return { ...(await searchMedia(sc, viewer, query, nowMs)), visual: null };
+
+  const refuse = (state: MediaSearchVisualState, provider: string | null): VisualSearchAnswer => ({
+    ...emptyResults(nowMs, [...declaredCriteria(query), ...criteria]),
+    near: null,
+    visual: { criteria, state, provider },
+  });
+
+  const stageOn = await (deps.stageEnabled ?? isMediaVisionStageEnabled)(sc);
+  if (!stageOn) return refuse("stage_off", null);
+  const provider = deps.provider ?? getMediaVisionProvider();
+
+  if (seed) return searchLookingLike(sc, viewer, query, seed, criteria, provider, nowMs, refuse);
+
+  // ── "…that looks social": narrow the other criteria's answer ─────────────
+  const base = await searchMedia(sc, viewer, { ...query, limit: MAX_LIMIT }, nowMs);
+  if (base.criteriaUsed.length === 0) return refuse("nothing_to_narrow", provider.name);
+  const answered: MediaSearchVisualReport = { criteria, state: "answered", provider: provider.name };
+  if (base.media.length === 0) {
+    return { ...base, criteriaUsed: [...base.criteriaUsed, ...criteria], visual: answered };
+  }
+  const scene = await sceneCandidatesFor(provider, base.media.map((m) => ({ mediaId: m.id, storageKey: m.url || null })));
+  if (!scene.ok) return refuse(stateForRefusal(scene.reason), provider.name);
+  const social = new Set(scene.value.candidates.filter(candidateLooksSocial).map((c) => c.mediaId));
+  const kept = base.media.filter((m) => social.has(m.id));
+  const places = rollUpPlaces(kept, nowMs);
+  const placeIds = new Set(places.map((p) => p.placeId));
+  const people = rollUpPeople(kept);
+  const hiddenGems = base.hiddenGems.filter((g) => placeIds.has(g.placeId));
+  const experiences = base.experiences.filter((e) => e.placeIds.some((id) => placeIds.has(id)));
+  const limit = Math.min(Math.max(1, query.limit ?? DEFAULT_LIMIT), MAX_LIMIT);
+  return {
+    ...base,
+    criteriaUsed: [...base.criteriaUsed, ...criteria],
+    media: kept.slice(0, limit),
+    places,
+    people,
+    hiddenGems,
+    experiences,
+    totals: { media: kept.length, places: places.length, people: people.length, hiddenGems: hiddenGems.length, experiences: experiences.length },
+    unsupported: [...base.unsupported, `"looks social" narrows only the first ${MAX_LIMIT} matches of the other criteria`],
+    visual: answered,
+  };
+}
+
+/** "Find places that look like this": gate the seed, ask the index, gate every proposal. */
+async function searchLookingLike(
+  sc: SupabaseClient,
+  viewer: ViewerResolved,
+  query: MediaSearchQuery & MediaSearchNearQuery & MediaSearchVisualQuery,
+  seed: string,
+  criteria: Array<"looksSocial" | "lookLike">,
+  provider: MediaVisionProvider,
+  nowMs: number,
+  refuse: (state: MediaSearchVisualState, provider: string | null) => VisualSearchAnswer,
+): Promise<VisualSearchAnswer> {
+  // 1. The seed, through the same gate as `mediaId` ("Where was this photo taken?").
+  const seedView = await searchMedia(sc, viewer, { mediaId: seed }, nowMs);
+  const seedItem = seedView.media.find((m) => m.id.toLowerCase() === seed);
+  if (!seedItem) return refuse("seed_not_visible", provider.name);
+
+  // 2. The index proposes.
+  const similar = await similarMediaFor(provider, { mediaId: seedItem.id, storageKey: seedItem.url || null }, VISUAL_SIMILAR_LIMIT);
+  if (!similar.ok) return refuse(stateForRefusal(similar.reason), provider.name);
+  const answered: MediaSearchVisualReport = { criteria, state: "answered", provider: provider.name };
+  const criteriaUsed = [...declaredCriteria({ ...query, mediaId: null }), ...criteria];
+  const empty = (near: MediaSearchNearReport | null): VisualSearchAnswer => ({ ...emptyResults(nowMs, criteriaUsed), near, visual: answered });
+  if (similar.value.ids.length === 0) return empty(null);
+
+  // 3. The gate decides every proposal, under the viewer's own criteria.
+  const scope: MediaSearchScope = query.scope === "me" || query.scope === "trip" ? query.scope : "all";
+  const tripId = typeof query.tripId === "string" && query.tripId.length > 0 ? query.tripId : null;
+  if (scope === "trip" && !tripId) return empty(null);
+  let nearCtx: NearContext | null = null;
+  if (query.near) nearCtx = await openNearContext(sc, query.near);
+  if (nearCtx?.report.refusal) return empty(nearCtx.report);
+  const candidates = await loadEligibleCandidatesOrRefuse(sc, viewer, {
+    feedType: scope === "me" ? "following" : "for_you",
+    authorId: scope === "me" ? viewer.viewerId : null,
+    city: normalizeSearchTerm(query.city) ?? undefined,
+    category: normalizeSearchTerm(query.category)?.toLowerCase() ?? null,
+    placeId: typeof query.placeId === "string" && UUID_RE.test(query.placeId) ? query.placeId : null,
+    tripId,
+    postIds: similar.value.ids,
+    limit: 200,
+    nowMs,
+  });
+  const captions = captionsById(candidates);
+  let matched = await projectCandidatesProtected(sc, viewer, candidates, nowMs);
+  const q = normalizeSearchTerm(query.q);
+  if (q) {
+    const needle = q.toLowerCase();
+    matched = matched.filter((p) => haystack(p, captions.get(p.id) ?? null).includes(needle));
+  }
+  if (query.freshOnly === true) matched = matched.filter((p) => isFreshEnoughForLabel(nowMs - new Date(p.capturedAt).getTime()));
+  if (nearCtx) matched = await keepWithinRadius(sc, nearCtx, matched);
+  // The index's order is the answer's order: closest first. The seed is not its own neighbour.
+  const rank = new Map(similar.value.ids.map((id, i) => [id, i] as const));
+  matched = matched
+    .filter((m) => m.id.toLowerCase() !== seed)
+    .sort((a, b) => (rank.get(a.id.toLowerCase()) ?? Infinity) - (rank.get(b.id.toLowerCase()) ?? Infinity));
+  // Both criteria at once ("places that look like this AND look social"): narrow here too, never drop one.
+  if (criteria.includes("looksSocial") && matched.length > 0) {
+    const scene = await sceneCandidatesFor(provider, matched.map((m) => ({ mediaId: m.id, storageKey: m.url || null })));
+    if (!scene.ok) return refuse(stateForRefusal(scene.reason), provider.name);
+    const social = new Set(scene.value.candidates.filter(candidateLooksSocial).map((c) => c.mediaId));
+    matched = matched.filter((m) => social.has(m.id));
+  }
+  if (matched.length === 0) return empty(nearCtx?.report ?? null);
+
+  const limit = Math.min(Math.max(1, query.limit ?? DEFAULT_LIMIT), MAX_LIMIT);
+  const places = rollUpPlaces(matched, nowMs);
+  const people = rollUpPeople(matched);
+  const undetermined: string[] = [];
+  const gemResult = await resolveGemResults(sc, viewer.viewerId, places.map((p) => p.placeId));
+  if (!gemResult.determined) undetermined.push("hiddenGems");
+  return {
+    generatedAt: new Date(nowMs).toISOString(),
+    criteriaUsed,
+    media: matched.slice(0, limit),
+    places,
+    people,
+    hiddenGems: gemResult.gems,
+    // An experience is found through a matched post's trip; a visual neighbour
+    // is not a member of the seed's experience, so none is resolved here.
+    experiences: [],
+    totals: { media: matched.length, places: places.length, people: people.length, hiddenGems: gemResult.gems.length, experiences: 0 },
+    unsupported: MEDIA_SEARCH_UNSUPPORTED.filter((u) => !u.startsWith("visual similarity")),
+    undetermined,
+    near: nearCtx?.report ?? null,
+    visual: answered,
+  };
+}
+
+// Imported at the TAIL so no cited line above moves (census-media §12.9); ESM hoists them.
+import {
+  candidateLooksSocial,
+  getMediaVisionProvider,
+  sceneCandidatesFor,
+  similarMediaFor,
+  type MediaVisionProvider,
+} from "../../lib/media/vendors/mediaVisionProvider.js";
+import { isMediaVisionStageEnabled } from "../../lib/media/vendors/mediaVendorStages.js";

@@ -270,7 +270,7 @@ router.post(
       // omitted the field, so media_assets.captured_at had no writer at all and
       // the Wall's §16 experienceAt could never differ from publishedAt.
       capturedAt,
-    }).then((assetId) => recordMeasuredDuration(sc, assetId, videoProbe)); // §37: the probed duration_ms, never the declared one
+    }).then(async (assetId) => { await recordMeasuredDuration(sc, assetId, videoProbe); await runMediaVendorIngest(sc, { assetId, bucket: STORAGE_BUCKET, path, mediaType: sniffed.kind, durationMs: videoProbe?.durationMs ?? null }); }); // §37: the probed duration_ms, never the declared one; then the four vendor stages, each behind its own flag seeded FALSE (census-media §37)
 
     // Response stays backward-compatible ({url, path}); new fields are additive.
     // `phash` is included so the client can persist it on the post_media row.
@@ -3685,3 +3685,8 @@ async function admitUploadBeforeBody(req: any, res: any, userId: string): Promis
   req.uploadGuard = guard;
   return true;
 }
+
+// census-media §37: the moderation, vision, transcode and caption stages after a /media/upload.
+// Every stage is behind its own flag, seeded FALSE (3355–3358). Imported at the TAIL so no cited
+// line above moves; ESM hoists imports.
+import { runMediaVendorIngest } from "../lib/media/vendors/mediaVendorStages.js";

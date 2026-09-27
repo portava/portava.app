@@ -1937,6 +1937,12 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     // WIDENED 2026-09-27 by lane I (census-media §35): the two suites §35.5's MD37 and MD197 statements rest on.
     "artifacts/api-server/src/test/mediaAssetSourceDeclared.test.ts",
     "artifacts/api-server/src/test/mediaContributorReputationSelfOnly.test.ts",
+    // WIDENED 2026-09-27 by lane V (census-media §37): MD63/MD269/MD277/MD280/MD283/MD289/MD293 rest on the vendor-stage flags 3355–3358 and the suite that tests the seams (the seams themselves sit under lib/media/, watched above).
+    "artifacts/api-server/src/migrations/3355_media_vision_provider_flag.sql",
+    "artifacts/api-server/src/migrations/3356_media_moderation_classifier_flag.sql",
+    "artifacts/api-server/src/migrations/3357_media_transcoder_flag.sql",
+    "artifacts/api-server/src/migrations/3358_media_captions_flag.sql",
+    "artifacts/api-server/src/test/mediaVendorSeams.test.ts",
   ],
   // census-telegraph.md — declared 2026-09-11 on the same basis as Media above:
   // 451 requirements out of CANNOT BE CHECKED, a clock started rather than a
