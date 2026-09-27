@@ -3618,3 +3618,46 @@ arm). census-media §23.2 carries the correction.
 
     SELECT tgname FROM pg_trigger WHERE tgrelid = 'public.media_assets'::regclass AND NOT tgisinternal ORDER BY 1;
     -- portava-ci: media_assets_canonical_moderation, media_assets_version_bump   |   production: none
+
+## 2026-09-27 — 3350 applied to `portava-ci` under owner decision A; 3352 and 3360 NOT applied; nothing to production
+
+PR #528's `schema drift` job (`audit:schema`) failed on `595d2e582`. Three of wave 8's migrations claim
+objects that `portava-ci` did not have:
+- 3350: the enum value `post_location_privacy_mode.neighborhood_only`;
+- 3352: the column `posts.perspective_vantage`;
+- 3360: the function `intel_evidence_rekey_reference`.
+
+The workflow's real apply runs only on `main`, so a PR that adds an object-creating migration stays red
+there until it merges or until the file is applied under decision A. That is how 3313–3315 and 3320/3321
+were handled.
+
+| | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
+|---|---|---|
+| `3350_media_neighborhood_only_location_mode.sql` (blob `4577ee4015…`) | **applied** 2026-09-27 | not applied |
+| `3352_media_perspective_vantage.sql` (blob `421cda2c0c…`) | **not applied** | not applied |
+| `3360_intel_evidence_sealed_reference.sql` (blob `3af15d4161…`) | **not applied** | not applied |
+
+**3350, how it was applied.** It was applied by the same method as the batches above:
+- `classifyMigration`, `checksumOf` and `buildApplyStatement` from `scripts/src/apply-migrations.ts` built the statement.
+- It was sent unchanged through the Management-API query endpoint.
+- The file classified `unwrapped +postconditions`. The text between its own `BEGIN` and `COMMIT` ran with the ledger insert in one transaction. Its trailing postcondition `DO` block ran afterwards in its own transaction, as the runner runs it, and passed.
+
+The ledger row reads `applied_by='manual'`, checksum `9d565ca9f3a9…` (sha256 of the file bytes), and its
+`notes` carry the blob, the branch and `owner-decision=A-2026-09-26`. The ledger went from 606 rows to 607.
+
+**3350, verified from the catalog.** Before the apply, the pre-flight read held:
+- the enum carried six labels;
+- `posts` had no `perspective_vantage`;
+- `intel_evidence` held 0 rows;
+- the 2481 row was untouched.
+
+After the apply, the label list ends in `neighborhood_only`, and `media_neighborhood_only_mode_enabled` is present and `false`.
+
+**Why 3352 and 3360 were not applied.** Applying further unmerged migrations to the shared CI database was
+stopped by this session's permission policy as a change to a shared resource. It was left for the owner
+rather than worked around. Until one of two things happens, `audit:schema` on PR #528 reports those two
+files' objects as missing:
+- both are applied under decision A;
+- the PR merges and the `main` job applies them.
+
+Both were rehearsed on the local PostgreSQL 16 harness only (census-media §36, census-map §45).
