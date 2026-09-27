@@ -3801,6 +3801,21 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/test/db/discoveryTelemetryIdempotency.db.test.ts",
     "travel-buddy-standalone/src/hooks/useRankOutcome.ts",
     "travel-buddy-standalone/src/components/discovery/PlaceCard.tsx",
+    // WIDENED 2026-09-27 by census-discovery §51 (P7 Trails): DV-20, DV-25 and DC-02 moved to C on the two Trail libraries this census grades and had never watched, migrations 3380/3381 and their rollbacks, and the Trails suites whose red-before runs carry every §51 verdict; the harness bridge is watched because the database suite's evidence runs through it.
+    "artifacts/api-server/src/lib/discoveryTrailObject.ts",
+    "artifacts/api-server/src/lib/discoveryTrailHealth.ts",
+    "artifacts/api-server/src/migrations/3380_content_trails_label_cap_serialised.sql",
+    "artifacts/api-server/src/migrations/3381_trail_lifecycle_transitions.sql",
+    "db/rollback/2026-09-27-3380-content-trails-label-cap-serialised-rollback.sql",
+    "db/rollback/2026-09-27-3381-trail-lifecycle-transitions-rollback.sql",
+    "artifacts/api-server/src/test/discoveryTrailServedIds.test.ts",
+    "artifacts/api-server/src/test/discoveryTrailAccess.test.ts",
+    "artifacts/api-server/src/test/discoveryTrailSchemaContract.test.ts",
+    "artifacts/api-server/src/test/discoveryTrailRoutes.test.ts",
+    "artifacts/api-server/src/test/discoveryTrailProvenance.test.ts",
+    "artifacts/api-server/src/test/db/trailsConstraints.db.test.ts",
+    "artifacts/api-server/src/test/db/trailsService.db.test.ts",
+    "artifacts/api-server/src/test/db/trailPostgrestBridge.ts",
   ],
   // ── ADDED 2026-09-15: census-passport joins the CHECKABLE set ──────────────
   //

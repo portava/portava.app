@@ -6717,6 +6717,347 @@ SELECT date_trunc('day', served_at) AS day, surface, count(*) FROM public.rank_e
 
 - NOT-GRADED: artifacts/api-server/src/test/helpers/fakeDiscoveryTelemetryDb.ts — test machinery for the E2E suite; no verdict rests on the fake itself, only on the routes it runs.
 
+## §51 — Trails (lane P7): one read in both served id spaces, §4 and §7 enforced by the database, and what a viewer may be served
+
+*Written 2026-09-27 by the Discovery P7 lane (Trails) on branch `disc-p7-trails`,
+cut from `74ae5cead` with P2 (`1a13e01ea`) and P3 (`0bae67263`) merged in. The
+commits are `ae886cacd` (id spaces), `4d71700b6` (3380/3381), `f4df61378` (API
+correctness), `0eb2d17f1` (the harness suite), `dbdf7eb6e` (two harness cases
+strengthened by mutation), and the commit carrying this section. Every OLD
+verdict below was read from `CENSUS_INTEGRITY_DUMP=ALL`, not from prose. All
+twelve rows this lane is accountable for read `W`, last stated in §17.1. This
+section does not restate the headline.*
+
+### 51.1 What is known about production, as given
+
+The integrating lane read these on 2026-09-27. This lane read no production.
+
+- **2910 is applied to production** (2026-09-20) and holds **0** Trails. §47.1
+  already records that §17.3's *"portava-ci only"* is stale for 2910.
+- `routes/trails.ts` and `services/trails/TrailService.ts` are on `origin/main`.
+  **Whether main is deployed is not established.**
+- **3380 and 3381** (this section) are applied to the local PostgreSQL 16
+  harness and to nothing else.
+
+Every `C` below is therefore **implementation-C on this branch**. No Trail has
+ever been served in production, and no production `db/` exposure has been counted
+against one. Neither is claimed.
+
+### 51.2 The defect: two served id spaces, one read
+
+`content_trails.source_id` is a bare uuid
+(`artifacts/api-server/src/migrations/2910_discovery_trails.sql:179#source_id      uuid        NOT NULL,`).
+`GET /discovery` serves a DB-backed place, whether a `discovery_places` row or a
+canonical `places` row, as `db/<uuid>`
+(`artifacts/api-server/src/routes/discovery.ts:1136#const rawIds = dbPlaces.map((p) => p.id.slice(3)); // strip 'db/' prefix`).
+The serve log writes that id verbatim
+(`artifacts/api-server/src/lib/discoveryServeLog.ts:406#item_id:    item.id,`).
+`GET /discovery/community` serves the same `discovery_places` row with a bare id.
+
+Every Trails read of `rank_events` asked only for the bare id. So only community
+exposures were ever counted, in all four places the count mattered:
+
+- §9's exposure denominators (DV-22);
+- `trending_now`'s order (DV-21);
+- GET …/trending's per-item order and its `trending` boolean (DC-21, DV-25);
+- DV-25's momentum scale on the affinity the ranker receives.
+
+The suites seeded bare ids, so none of them could see it. Two further defects
+sat in the same reads:
+
+- The loader's 10-minute cache entry `trail:<id>` was shared by `getTrailModules`
+  (place members only) and `trailTrending` (every member). Whichever ran first
+  chose the corpus the other read for ten minutes.
+- The Trail-momentum read excluded `analytics` rows only after a single
+  `.limit(1000)`. Those rows are one per ranked candidate, so they could fill
+  the page and push real activity out of the window.
+
+**The fix** is one reader,
+`artifacts/api-server/src/services/trails/TrailService.ts:587#async function readMemberEvents(`.
+It asks for both ids of a place member
+(`artifacts/api-server/src/services/trails/TrailService.ts:552#export function servedIdsForMember(`)
+and folds each `db/` row back onto its member. The fold is exact: a `db/` row can
+only come back for a place member's own id. One row counts as one event, so the
+two spaces are summed and nothing is counted twice. The reader excludes
+`analytics` in the query and pages under a stable total order, up to the
+momentum loader's own ceiling. It reports when it was truncated, and it has no
+cache. The arithmetic stays the shipping kernel's (`computeLocalMomentum`). No
+new term, weight or threshold was added.
+
+**RED before the fix, with the writer's `db/` shape.**
+`artifacts/api-server/src/test/discoveryTrailServedIds.test.ts`: 8 of 9 cases
+were red. They cover a place served 600 times as `db/` still taking the
+exploration slot, and `trending_now` and GET …/trending staying empty on `db/`
+saves. They cover the affinity scale being identical hot and cold (0.48 against
+0.48), and analytics rows crowding out eight saves. The last is the stale
+corpus: a post's momentum missing from …/trending after …/modules had read the
+Trail.
+
+The "summed, never double-counted" case sits at the ceiling from both sides:
+
+- 249 bare plus 250 `db/` is still new;
+- 250 plus 250 is not.
+
+On the real schema, `artifacts/api-server/src/test/db/trailsService.db.test.ts`
+H1 inserts `rank_events` rows exactly as the serve log writes them.
+
+### 51.3 The database: §4 under concurrency (3380) and §7's two relations (3381)
+
+The brief asked for illegal transitions to be proved refused **at the
+database**. They were not refused. Measured on the harness before any change
+(`artifacts/api-server/src/test/db/trailsConstraints.db.test.ts`, 8 of 12 red):
+
+- **§4's cap raced open.** Two sessions attaching a primary label to one content
+  in two Trails landed two primaries. Racing for the last supporting slot landed
+  four labels against a budget of three. 2910's trigger counts with a plain
+  SELECT, and under READ COMMITTED neither writer sees the other's uncommitted row.
+- **§7 was enforced only in TypeScript, as read-then-write.** The following were
+  all admitted: an UPDATE `archived → active`, the one move the relation calls
+  terminal; `proposed → stale`; `just_arrived → rediscovered`. A promotion
+  racing an archive ended `active`.
+
+**3380** takes a per-content transaction-scoped advisory lock before the count
+(`artifacts/api-server/src/migrations/3380_content_trails_label_cap_serialised.sql:100#PERFORM pg_advisory_xact_lock(`).
+It also adds a partial UNIQUE index for the one budget the spec itself fixes at
+one
+(`artifacts/api-server/src/migrations/3380_content_trails_label_cap_serialised.sql:120#CREATE UNIQUE INDEX IF NOT EXISTS uq_content_trails_one_primary`).
+The lock alone depends on READ COMMITTED; L4 shows the index refusing the race
+under REPEATABLE READ.
+
+**3381** is two BEFORE UPDATE triggers
+(`artifacts/api-server/src/migrations/3381_trail_lifecycle_transitions.sql:83#CREATE OR REPLACE FUNCTION public.trails_lifecycle_transition()`,
+`artifacts/api-server/src/migrations/3381_trail_lifecycle_transitions.sql:111#CREATE OR REPLACE FUNCTION public.content_trails_state_transition()`).
+They carry the relation in `lib/discoveryTrailObject.ts` verbatim
+(`artifacts/api-server/src/lib/discoveryTrailObject.ts:101#const LIFECYCLE_TRANSITIONS`,
+`artifacts/api-server/src/lib/discoveryTrailObject.ts:126#const CONTENT_TRANSITIONS`).
+T5 and C2 compare the database with the TypeScript for every ordered pair of
+distinct states. The schema-contract suite pins the SQL text to the TypeScript,
+so a drift fails without a database. The TypeScript writer is now also a
+compare-and-set
+(`artifacts/api-server/src/services/trails/TrailService.ts:1615#.eq("lifecycle_status", from)`).
+
+Both were rehearsed on the harness in this order:
+
+1. applied;
+2. re-applied (idempotent);
+3. rolled back, with the suite going red again;
+4. re-applied;
+5. replayed in chain order on a fresh `up.sh`: 337 applied in order;
+6. all 216 database cases green under `run-tests.sh`.
+
+The rollbacks are
+`db/rollback/2026-09-27-3380-content-trails-label-cap-serialised-rollback.sql`
+and `db/rollback/2026-09-27-3381-trail-lifecycle-transitions-rollback.sql`.
+
+### 51.4 What a viewer may be served, and how §10 counts
+
+Each defect below was live, and each has a test that was red before its fix
+(`artifacts/api-server/src/test/discoveryTrailAccess.test.ts`, 25 of 27 red on the
+prior commit; `trailsService.db.test.ts`, 13 of 14 red on the pre-lane code).
+
+| defect | fix |
+|---|---|
+| **Archived Trails served.** 2910's RLS hides an archived Trail from every client (`artifacts/api-server/src/migrations/2910_discovery_trails.sql:357#FOR SELECT TO authenticated USING (lifecycle_status <> 'archived');`). The routes read on the service client, served detail, modules, trending and related for it, and accepted follows, content and reports. | Hidden to every viewer-facing read and write; related Trails drop archived neighbours (`artifacts/api-server/src/services/trails/TrailService.ts:198#async function readTrail(`) |
+| **Blocks ignored.** A member contributed or created by a user the viewer blocked, in either direction, was served. | lib/blocks.ts's symmetric, fail-closed rule, applied per viewer to modules and trending (`artifacts/api-server/src/routes/trails.ts:265#const r = await getTrailModules(sc, id.data, { viewerId: auth.user.id });`) |
+| **No revocation.** `source_id` has no foreign key. A post deleted, tombstoned, taken down, unpublished, not yet due or made non-public after attachment was still served. So were an event or route whose row was gone, and a creator whose account was no longer active. | Withheld (`artifacts/api-server/src/services/trails/TrailService.ts:295#async function servableMembers(`). Every source read fails closed. |
+| **DV-13 counted the wrong person.** The creator cap keyed on the contributor who attached a row, so one author's posts suggested by three users were three "creators". | The cap keys on the content's author (post author, event host, route owner, community-place submitter), and on the contributor only where the source has none (`artifacts/api-server/src/services/trails/TrailService.ts:731#contributorId: r.creatorId ?? r.contributor_id,`). The trending list passes the same caps (`artifacts/api-server/src/services/trails/TrailService.ts:931#export const TRAIL_TRENDING_PAGE_SIZE = 20;`). |
+| **DV-23 never clustered posts.** Posts carried no place, so §10's own case, many near-duplicate posts about one place, was never clustered. One place attached under three labels took two slots of one page. | Posts cluster by the place they are about; one content takes one slot per module (`artifacts/api-server/src/services/trails/TrailService.ts:762#const considered = ordered.filter((r) => {`) |
+| **Reports were not idempotent.** Every retry was a new row and a new unit of `report_rate`, so one user could floor a Trail's health multiplier alone. A report could name another Trail's membership. | A retried identical open report answers `duplicate`; `report_rate` counts one per reporter per target (`artifacts/api-server/src/services/trails/TrailService.ts:380#function distinctReportCount(`); the named membership must belong to the Trail. |
+| **§4 judged a batch as one content.** Two different posts attached as primary in one request collided as a "duplicate". | Judged per `(source_type, source_id)`, the trigger's own key (`artifacts/api-server/src/services/trails/TrailService.ts:1415#const groups = new Map<string, TrailLabel[]>();`) |
+| **DV-24 lost the relationship on a partial failure.** A failed `child` edge write (deliberately non-fatal) left a sub-Trail unreachable in both directions although its pointer named its parent. | The pointer is read too, both ways, deduplicated against the edge (`artifacts/api-server/src/services/trails/TrailService.ts:860#const kids = await sc.from("trails").select("id").eq("parent_trail_id", trailId);`) |
+| **DC-03 CHECK 1 was scoped by destination.** CHECK 1 is destination-independent by its own definition, but ran over a destination-scoped set, so "After Dark Bangkok" filed under Phuket was admitted beside "Bangkok After Dark". The destination was spliced unquoted into a PostgREST `or=` filter, and a comma rewrote it into a 500. A declared parent was looked for only among same-destination peers, so a geographic sub-Trail (§6) could not declare one. | Candidates widened across destinations by a token pigeonhole bound (`artifacts/api-server/src/services/trails/TrailService.ts:1244#const needed = tokens.length - Math.ceil(DUPLICATE_TITLE_SIMILARITY * tokens.length) + 1;`); destination quoted (`artifacts/api-server/src/services/trails/TrailService.ts:97#function postgrestQuoted(value: string): string {`); parent read by id, never archived (`artifacts/api-server/src/services/trails/TrailService.ts:1273#const parent = await readTrail(sc, parentId);`) |
+
+DV-13 and DV-23 were verified with controlled data on the real schema
+(`trailsService.db.test.ts`):
+
+- **H2.** One author with six posts, attached by three other people, against
+  one post each from two others. Across five requests and all four modules, no
+  module ever held more than two of that author's items; both other creators
+  were always present; every response was identical.
+- **H3.** Five authors' posts about one canonical place: two served, three
+  counted under `moreFromThisPlace`.
+
+There is no pagination on the modules route, so "across pages" collapses to
+"across requests". The bound holds on every request by construction, not on
+average.
+
+### 51.5 Row moves
+
+| ID | was | now | evidence |
+|---|---|---|---|
+| DV-20 | W | **C** | `02` §19: *"Trails are canonical objects, not strings."* A Trail is a row with a uuid and a UNIQUE canonical slug. Content references `trail_id`, never a title. Creation runs §5's four checks, and CHECK 1 now runs across destinations as its own definition says (`artifacts/api-server/src/services/trails/TrailService.ts:1244#const needed = tokens.length - Math.ceil(DUPLICATE_TITLE_SIMILARITY * tokens.length) + 1;`). §51.4's harness case H4 refuses a re-ordered title filed under another destination. Graded on the criterion's object-versus-string contrast. The one way two objects for one theme can still arise, a concurrent race, is DC-03's residual (§51.6) and is not hidden here. Implementation-C; no production Trail exists. |
+| DV-25 | W | **C** | `02` §19: *"user behavior can influence Trail momentum."* `rank_events` on a Trail's members, in both served id spaces and on every surface they are served on, fold onto the Trail through the shipping kernel (`artifacts/api-server/src/services/trails/TrailService.ts:587#async function readMemberEvents(`). This reaches a live route: GET …/trending's `trending` boolean, proved on the harness with serve-log-shaped `db/` saves (H1). It also reaches the affinity scale, whose consumer is the held flag-2289 term. The one behaviour that CANNOT reach it is behaviour on the Trail page itself (§51.7). The criterion is *can*, and it does. Implementation-C; production has written no `rank_events` row on any surface since 2026-08-27 (§48.1). |
+| DC-02 | W | **C** | `02` §4: *"Do not let creators attach unlimited discovery labels."* The budgets are finite and per content, judged per content in the API (`artifacts/api-server/src/services/trails/TrailService.ts:1415#const groups = new Map<string, TrailLabel[]>();`). They are enforced by the database under concurrency (`artifacts/api-server/src/migrations/3380_content_trails_label_cap_serialised.sql:100#PERFORM pg_advisory_xact_lock(`), and the spec's one primary Trail is enforced at every isolation level (`artifacts/api-server/src/migrations/3380_content_trails_label_cap_serialised.sql:120#CREATE UNIQUE INDEX IF NOT EXISTS uq_content_trails_one_primary`). `trailsConstraints.db.test.ts` L0–L4 cover this, and L1/L2 were red before 3380. The 3 and 5 are not spec numbers, but the criterion is *not unlimited*, which any finite budget meets. 3380 is applied to the harness only. |
+
+### 51.6 Rows re-read and left `W`, each with what stands in front of it
+
+| ID | verdict | why it stays |
+|---|---|---|
+| DV-13 | W | The identity is now right (§51.4) and the per-module bound holds on every request (H2). What is missing is not code. Whether the bound is per spotlight module or across the whole Trail page, and at what share, is not set by the spec or the owner. `MAX_PER_CONTRIBUTOR_PER_PAGE` (`artifacts/api-server/src/lib/discoveryTrailHealth.ts:319#export const MAX_PER_CONTRIBUTOR_PER_PAGE = 2;`) was chosen by an earlier lane. Today one creator may hold two slots in each of four modules and in trending. Whether that is "dominate" is the owner's threshold, not this lane's. |
+| DV-21 | W | **The §17.1 cell overstates.** It reads *"four modules, four distinct objectives"*, but only two can ever fill. `evergreen` needs `content_state` `evergreen`/`featured` (`artifacts/api-server/src/services/trails/TrailService.ts:824#build("evergreen", "durable_quality", null,`), and nothing writes a content transition. `local_picks` needs `source = 'curated'` (`artifacts/api-server/src/services/trails/TrailService.ts:826#build("local_picks", "curation", null, byConfidence.filter((r) => r.source === "curated")),`), and attach writes only `user`/`system`. `just_arrived` publishes a 7-day horizon it does not apply (`artifacts/api-server/src/services/trails/TrailService.ts:814#const justArrived = build("just_arrived", "recency", 7 * DAY, explorationCandidates, reserved);`). Applying it without a content-lifecycle writer would leave every older member in no module, so it is sequenced behind DC-04's owner question, not applied. `trending_now` now orders on real momentum (§51.2). §8's *"its own objective and time horizon"* fails for `just_arrived`. |
+| DV-22 | W | The denominators are now real (§51.2), but §9's *"every eligible new item"* fails for three reasons. (1) The reserved slot always goes to the newest qualified item(s) (`artifacts/api-server/src/lib/discoveryTrailHealth.ts:454#export function fairExposureSlots(`). Trail-module serves are not logged, so the Trail's own grant never moves the denominator, and a backlog beyond the page is never explored. That needs an owner surface ruling (§51.7) or rotation, which is new ranking machinery under the hold. (2) "New" is `content_state = 'just_arrived'`, which no writer ever changes. (3) Steps 3–5 are computed (`artifacts/api-server/src/lib/discoveryTrailHealth.ts:471#else decisions[it.id] = positives / impressions >= TRAIL_EXPOSURE_EXPAND_RATE ? "expand" : "taper";`) and drive nothing that is served. |
+| DV-23 | W | 2 of 5 of §10's clauses. **Cluster by place: PASS** for posts and places. **Diversify creators: PASS.** **Diversify media: FAIL.** The media cap is off by default (`artifacts/api-server/src/lib/discoveryTrailHealth.ts:365#const maxMedia = opts?.maxPerMediaType ?? null;`) and no media type is supplied. **Reduce repeated viewpoints: FAIL.** Nothing reads a viewpoint. **Preserve access through "more from this place": PARTIAL.** A count is served, and no route returns the items it counts. Clustering is by id, not content similarity, and a post's canonical place is not linked to a `discovery_places` member of the same venue. `MAX_PER_PLACE_PER_PAGE` (`artifacts/api-server/src/lib/discoveryTrailHealth.ts:321#export const MAX_PER_PLACE_PER_PAGE = 2;`) is not an owner number. |
+| DV-24 | W | §40.5 stands. `trail_edges` has one writer, and it writes only `child` (`artifacts/api-server/src/services/trails/TrailService.ts:1335#edge_type: "child",`). Five of §6's six kinds cannot exist. The read side is now correct for what can exist: both directions, the pointer honoured on a partial failure, archived neighbours dropped. Who may declare the other kinds is the owner question in §51.10. |
+| DC-03 | W | The four checks run, CHECK 1 across destinations, over input that cannot rewrite the filter (§51.4). **Not serialised.** Two proposals racing each other each check a catalogue that does not yet hold the other. Near-duplicates with different slugs can both be admitted; the UNIQUE slug refuses only an identical one. Closing it needs the checks inside the database under a lock, a larger migration than this lane wrote. |
+| DC-04 | W | Both relations are enforced at the database (3381) and the TypeScript writer is a compare-and-set, as §51.3 records. **Reachability:** only `proposed → active` has a writer. `needs_update`, `stale` and `archived` are §15 moderation moves and `11` §8's "Trail archive", and none is built. No code moves in-Trail content out of `just_arrived`. What should move it is not specified. |
+| DC-05 | W | Nine keys are computed, and the floor keeps health from erasing content. But: `geographic_diversity` is always null, because no caller supplies a geographic cell (`artifacts/api-server/src/lib/discoveryTrailHealth.ts:219#if (cells && typeof cells === "object") {`) and the cell is undefined. `new_creator_exposure` is a membership share, not an exposure (`artifacts/api-server/src/lib/discoveryTrailHealth.ts:187#metrics.new_creator_exposure = share(fromNew, attributed);`). Health influences ranking only through the held flag-2289 term; inside the Trail's own modules it orders nothing. Corrected here: one reporter's retries no longer inflate `report_rate`. |
+| DC-20 | W | All nine actions are reachable. §51.4's nine defects are closed and tested. **`11` §10 *"every mutation is authorized"* still fails for attach.** Any signed-in user may `attach` any content id of any type at the author's-statement confidence (`artifacts/api-server/src/services/trails/TrailService.ts:1436#const confidence = actor.mode === "attach" ? 0.8 : 0.4;`). A third party's `suggest` consumes the content's §4 budget, so a stranger can take a post's single primary slot. Neither the source's existence nor its type is checked at attach. `place` may name either of two tables, and `itinerary` has no table, so neither can be revoked. |
+
+### 51.7 Must the Trail routes log exposures of their own? Decided from code: not required, not decision-free
+
+No row's criterion names Trail-module exposures. DV-22's denominators, DV-25's
+momentum and DC-21's boolean read `rank_events`, and those rows now arrive from
+every surface in both id spaces. Writing Trail-module serves would still be the
+right completion of DV-22, since it makes the Trail's own grant consume its
+bound. It is **not decision-free**:
+
+- the only admitted surface that fits is `discovery` (`PERSISTED_RANK_SURFACES`,
+  eight labels; §48 DV-44);
+- `GET /discovery`'s momentum reads that surface, so Trail serves would move
+  Discovery's place momentum;
+- `trending_now` would become self-reinforcing, because serving a module item
+  raises the momentum that ranks it into the module;
+- a `trail` surface needs a migration widening the surface CHECK, which this
+  lane may not write;
+- the serve points are P3's enum.
+
+P3's §48.6 reached the same conclusion for "Trail open". **Not written.** It is
+DV-22's first residual and DV-25's recorded limit: behaviour on the Trail page
+itself cannot move the Trail's momentum.
+
+### 51.8 The held Discovery-feed term: a key-space defect recorded, not fixed
+
+`loadViewerTrailModifier` feeds the flag-2289 term
+(`artifacts/api-server/src/lib/discoveryPde.ts:584#trailAffinity: modifiers.enabled ? modifiers.trailAffinity : undefined,`).
+It filters memberships by the candidate ids it is handed and keys its output by
+bare `source_id`
+(`artifacts/api-server/src/services/trails/TrailService.ts:1163#const affinityRows = rows.filter((r) => ids.has(r.source_id));`).
+Every Discovery DB candidate id is `db/<uuid>`. **When the hold lifts, the term
+matches no DB-backed place.** Its momentum input is fixed by §51.2. The key
+space is not changed here, because the term is held and is not this lane's.
+
+The repair is to map each candidate id through `memberIdForServedId`, filter on
+the member id, and re-key the returned map by the served id(s) that named each
+member.
+
+### 51.9 Tests, and every one seen RED
+
+| suite | cases | red before its fix |
+|---|---:|---|
+| `discoveryTrailServedIds.test.ts` (new) | 9 | 8 on the pre-lane code; the ninth, a pure helper case, killed by mutations M01/M02 |
+| `discoveryTrailAccess.test.ts` (new) | 27 | 25 on `ae886cacd`; the remaining two killed by M09 and M34 |
+| `discoveryTrailSchemaContract.test.ts` (+7) | 17 | the seven new cases killed by text mutations S1–S6 |
+| `db/trailsConstraints.db.test.ts` (new) | 13 | 8 before 3380/3381; the rest killed on harness clones by D1–D7 |
+| `db/trailsService.db.test.ts` (new) | 14 | 13 on the pre-lane code; H6 killed by M30 |
+
+`discoveryTrailRoutes.test.ts` and `discoveryTrailProvenance.test.ts` changed
+only their fakes, so that they page (`.range`/`.gte`), return an UPDATE's matched
+rows, and narrow inside `.or()`. Without those, the new reads would have
+answered "unknown" in every case. All eight trail suites together pass 306 of
+306. The 216 database cases pass on a fresh replay.
+
+**P24, 48 mutations, each applied alone and each seen red:**
+
+- 35 in code: `TrailService.ts` and `routes/trails.ts`, restored and sha256-checked
+  byte-identical after each;
+- 7 on throwaway clones of the harness database (D1–D7);
+- 6 in migration and rollback text (S1–S6).
+
+Three cases are killed only by a paired mutation, and that is defence in depth,
+not a blind spot:
+
+- **L1**, the primary race: lock and index each cover it. It goes red only with
+  both removed (the rollback).
+- **C3**: first written as an UPDATE, which 3381 refuses on its own, so dropping
+  2910's CHECK survived. It was rewritten as an INSERT and then killed (D7).
+- **The CAS test**: killed by removing the compare (M10) and by accepting zero
+  matched rows (M11).
+
+`trailPostgrestBridge.ts` runs the real supabase-js client against the harness by
+translating each PostgREST request into SQL. No verdict rests on the bridge, only
+on the service and route code it lets run against real constraints.
+
+### 51.10 Owner questions, verbatim
+
+1. **DV-24.** "Who may declare two Trails `related`, `seasonal_variant`,
+   `geographic_sub` or `experience_branch` — the proposer, the owner of either
+   Trail, moderation only, or a system job — and must such an edge be reviewed
+   before it is navigable?"
+2. **DV-22 / DV-25.** "May a Trail module's own serves be written to
+   `rank_events`, and under which surface? `discovery` is the only admitted fit,
+   but it would feed Discovery's place momentum and make `trending_now`
+   self-reinforcing; a `trail` surface needs a migration widening the surface
+   CHECK."
+3. **DV-13.** "Is the one-creator bound per spotlight module or across the whole
+   Trail page, and at what share? The code's 2 per module per page was not set
+   by the spec or by you."
+4. **DC-04 / DV-21.** "What moves in-Trail content between §7's six states, and
+   who runs §15's moderation moves (`needs_update`, `stale`, `archived`)? Until
+   something does, `evergreen` cannot fill and `just_arrived` cannot honour its
+   seven-day horizon."
+5. **DC-20.** "Who may `attach` content to a Trail at the author's-statement
+   confidence, and does a third party's `suggest` count against the content's §4
+   budget? Which table does a `place` member name (`discovery_places` or
+   `places`), and what is an `itinerary`?"
+6. **DC-05.** "What geographic cell defines `geographic_diversity`, and is
+   `new_creator_exposure` meant to be an exposure share, rather than the
+   membership share it is today?"
+7. **DV-23.** "Does §10's 'preserve access through more from this place' require
+   a route that returns the held-back items, or is the place's own page that
+   access?"
+
+### 51.11 Read-only production SQL that would settle what code cannot
+
+```sql
+-- 2910 as live, and the preconditions 3380 and 3381 will assert:
+SELECT count(*) AS trails FROM public.trails;
+SELECT source_type, source_id, count(*) FROM public.content_trails
+ WHERE relationship = 'primary' GROUP BY 1, 2 HAVING count(*) > 1;          -- must be empty for 3380
+SELECT conname, pg_get_constraintdef(oid) FROM pg_constraint
+ WHERE conrelid IN ('public.trails'::regclass, 'public.content_trails'::regclass) AND contype = 'c' ORDER BY 1;
+SELECT tgname FROM pg_trigger
+ WHERE tgrelid IN ('public.trails'::regclass, 'public.content_trails'::regclass) AND NOT tgisinternal;
+SELECT position('pg_advisory_xact_lock' IN pg_get_functiondef('public.content_trails_label_cap()'::regprocedure));  -- 0 until 3380
+SELECT polname, pg_get_expr(polqual, polrelid) FROM pg_policy WHERE polrelid = 'public.trails'::regclass;
+-- The served id space, as production writes it:
+SELECT surface, (item_id LIKE 'db/%') AS db_prefixed, count(*), max(served_at)
+  FROM public.rank_events WHERE surface = 'discovery' GROUP BY 1, 2;
+-- Report retries (must be empty once the write-side check is deployed):
+SELECT trail_id, reported_by, content_trail_id, count(*) FROM public.trail_reports
+ WHERE resolution IS NULL GROUP BY 1, 2, 3 HAVING count(*) > 1;
+```
+
+### 51.12 Freshness: the counted files this section changed, argued
+
+`check:census-freshness` will name these for this census:
+
+- **`services/trails/TrailService.ts` and `routes/trails.ts`.** Re-measured here
+  in full. They are the evidence for all twelve rows above.
+- **The new files this section adds to `CENSUS_SCOPE`:**
+  - 3380, 3381 and their rollbacks;
+  - `lib/discoveryTrailObject.ts` and `lib/discoveryTrailHealth.ts`, graded here
+    and not watched before;
+  - the five suites in §51.9;
+  - `test/db/trailPostgrestBridge.ts`.
+
+**census-trips** counts the directory prefix `artifacts/api-server/src/test/db/`.
+This section adds three Trails files there: `trailsConstraints.db.test.ts`,
+`trailsService.db.test.ts` and `trailPostgrestBridge.ts`. None is Trips evidence
+and no Trips verdict can move. `routes/discovery.ts`, `lib/discoveryServeLog.ts`,
+`lib/discoveryPde.ts` and `lib/discoveryLocalMomentum.ts` were read, not changed.
+The freshness ledger JSON is the integrator's to write.
+
+### 51.13 What would turn this red
+
+- **A new Discovery serve id shape** (anything besides bare and `db/<uuid>` for
+  a place). `servedIdsForMember` must learn it, or the denominators go short
+  again.
+- **3380 or 3381 applied without the other, or rolled back.** The rollbacks name
+  the tests that go red.
+- **A second lifecycle or label writer.** It is caught by the triggers, which is
+  the point, and it must map 23514 as a refusal, not a 500.
+- **Lifting the flag-2289 hold** without §51.8's re-keying.
+
 ## Cited, not graded (check:census-scope-coverage)
 
 - NOT-GRADED: artifacts/api-server/src/compass/CompassExplanationEngine.ts — §13.7 item 3 names Compass's HMAC recommendation-token signer as a refactor this lane declined to make in another lane's file. Discovery's recommendation id is minted by lib/discoveryRecommendationId.ts, and no Discovery verdict rests on the signer.
