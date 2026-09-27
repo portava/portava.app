@@ -11651,3 +11651,477 @@ records the exit, restores the file and compares SHA-256.
 **Cited, not graded (check:census-scope-coverage), declared for this section:**
 
 - NOT-GRADED: artifacts/api-server/src/lib/eventPostsDiscovery.ts — named once in §36.9 as a finding outside Media (a post reader that ignores the owner's location mode); no MD verdict rests on it, and it is Discovery's reader, not Media's.
+
+## 42. Lane Q — a post's location mode, honoured by the post readers outside Media — 2026-09-27
+
+Branch `lane-q-pulse`, from `wave8-integration` at `5956c6233`. No row IDs, no
+migration numbers, no flag. The defect is the one lane P recorded and left in
+§36.9: a post's `location_privacy_mode` was honoured by Media (§36) and by the
+Wall (mapPublicPost), and ignored by two other post readers, Pulse and the
+Discovery "Live from events" feed. This lane traced both, looked for every
+other reader of the same kind, fixed three, and records the rest.
+
+BUILT ON BRANCH IS NOT MERGED. MERGED IS NOT DEPLOYED. Nothing here is applied
+to any database or enabled anywhere. No SQL was run. Production was not read by
+this lane.
+
+### 42.1 What was found
+
+**The venue is stored whatever the owner chose, and withheld only at read time.**
+- POST /posts writes the tagged venue into `posts.location_name` unconditionally
+  (`artifacts/api-server/src/routes/posts.ts:630#location_name: locationName ?? null,`).
+- It hands the same string to Pulse's geo tag
+  (`artifacts/api-server/src/routes/posts.ts:863#venueName:                 locationName ?? null,`),
+  which stores it as `pulse_geo_tags.venue_name`
+  (`artifacts/api-server/src/services/location/PulseGeoTagService.ts:149#venue_name:          venueName        ?? null,`).
+- It resolves a canonical place from that venue, also whatever the mode
+  (`artifacts/api-server/src/routes/posts.ts:961#if (locationName && locationLat != null && locationLng != null) {`).
+- "Publish now without location" sets the mode to `hidden` and nulls
+  `venue_name`, the label and the coordinates
+  (`artifacts/api-server/src/routes/posts.ts:2134#location_privacy_mode: "hidden",`,
+  `artifacts/api-server/src/routes/posts.ts:2139#venue_name: null,`). It keeps
+  `location_name` and the geo tag's copy.
+
+So every reader decides. The Wall's decision is mapPublicPost: pass `none`, an
+absent mode, and a released delayed post
+(`artifacts/api-server/src/lib/postSchemas.ts:184#&& row.post_status === "published") return row;`);
+withhold the venue for everything else, an unknown mode included.
+
+**The three readers that did not decide, traced end to end.**
+- **GET /api/pulse.** Every public post, to every signed-in viewer:
+  - `locationName` from `posts.location_name`
+    (`artifacts/api-server/src/routes/pulse.ts:353#locationName:    row.location_name ?? null,`);
+  - `venueName` from the geo tag
+    (`artifacts/api-server/src/routes/pulse.ts:357#venueName:       geoTag?.venue_name ?? null,`);
+  - the geo tag's district, and the canonical place id
+    (`artifacts/api-server/src/routes/pulse.ts:382#canonical_place_id: (row.canonical_place_id as string | null) ?? null,`).
+  - The client maps `locationName` to the card's `neighborhood`
+    (`travel-buddy-standalone/src/services/pulse.ts:161#neighborhood: p.locationName ?? undefined,`),
+    and the card renders it as the location chip
+    (`travel-buddy-standalone/src/components/PulseFeedCard.tsx:228#const chipLabel   = item.venueName ?? item.neighborhood ?? item.city;`).
+    The venue reached the screen.
+- **Discovery "Live from events"** (`lib/eventPostsDiscovery.ts`). Its one
+  caller is GET /discovery/feed, for a signed-in viewer only
+  (`artifacts/api-server/src/routes/discovery.ts:2695#? fetchEventPostsForDiscovery({`),
+  and the result is the envelope's `posts`. It is cached per (city, radius), not
+  per viewer. Two paths:
+  - Path A, a post the author linked to an event, used the post's own venue
+    whenever the event had none
+    (`artifacts/api-server/src/lib/eventPostsDiscovery.ts:327#venueName: event.location_name ?? post.location_name ?? null,`),
+    and served `public_lat`/`public_lng`.
+  - Path B chose a post BECAUSE its tagged place is an events venue, named that
+    place (`artifacts/api-server/src/lib/eventPostsDiscovery.ts:431#venueName: place.name ?? null,`),
+    and gated it on the place's own coordinates
+    (`artifacts/api-server/src/lib/eventPostsDiscovery.ts:423#const proximityLat: number | null = place.lat ?? post.public_lat ?? null;`).
+    A caller who moves `lat`/`lng` can locate it.
+  - The client card labels the post with
+    `travel-buddy-standalone/src/components/discovery/DiscoveryEventPostCard.tsx:55#const label = post.linkedEventTitle ?? post.venueLabel ?? post.venueName ?? null;`,
+    so Path B's place name is what it shows.
+- **GET /api/trips/:tripId/posts** (found by the search below, not named in
+  §36.9). It serves the raw row to any signed-in viewer: public posts to
+  non-members, trip-only posts to members. That row carries `location_name`,
+  plus a `public_location_label` which stored the venue for every
+  trusted_circle_only post written before §36. It applied neither mapPublicPost
+  nor anything else.
+
+**Measured context: not overstated.** The integrator's read-only production
+read of 2026-09-27 (not repeated by this lane) found 9 posts:
+- 8 have mode `none` and no `location_name`;
+- 1 is `delayed_until_time`, published, with a `location_name`. That is a
+  released delayed post, whose venue every reader serves by design.
+
+So no production row is exposed today by these three readers. This is a code
+defect. It would have exposed the first `city_only`, `hidden` or
+`trusted_circle_only` post that carries a venue, including any post published
+"without location", and, once enabled, the first `neighborhood_only` post.
+
+### 42.2 Every post reader outside Media that serialises a post's venue or place
+
+Found by searching `artifacts/api-server/src` (routes, services, lib, compass)
+for `location_name`, `locationName`, `venue_name`, `venueName`,
+`public_location_label` and `canonical_place_id`. Each hit was then read to see
+whether it is a POST read that reaches a non-owner.
+
+| Reader | What it serves of a post's place | Honoured the mode before | Now |
+| --- | --- | --- | --- |
+| GET /api/pulse | venue name, geo-tag venue and district, place id | no | **fixed** (§42.3) |
+| Discovery "Live from events" | Path A: venue fallback, coordinates. Path B: the place name, and the listing itself | no | **fixed** (§42.3) |
+| GET /api/trips/:tripId/posts | `location_name`, `public_location_label` | no | **fixed** (§42.3) |
+| Wall: GET /posts (following, global), GET /posts/:postId | through mapPublicPost, then the gem gate (`artifacts/api-server/src/routes/posts.ts:1343#const safe = gemProtectPost(mapPublicPost(p), followingGemCtx, user.id);`) | yes | unchanged |
+| Media (Watch feed, grid, World views, rail, Compass media context) | through resolveMediaPlaceDisclosure (§36) | yes | unchanged |
+| GET /airport/pulse | city and country only | not applicable | unchanged |
+| My World memories (`MyWorldMemoryService`) | the owner's own posts only | not applicable | unchanged |
+| Telegraph post shareable | no place | not applicable | unchanged |
+| GET /pulse/live | reads no posts | not applicable | unchanged |
+| Compass feed post items | the place id, as `placeId` | no | **not fixed** (§42.6, 1) |
+| Wall v2 post spine and postcard loader | a place ref: id, name, city | no | **not fixed** (§42.6, 2) |
+| Place pages and threads: living page, timeline, place-day feed, recaps, Wall context thread | the post listed or counted AT its place | no | **not fixed** (§42.6, 3) |
+| Passport postcards | a copy of `location_name`, made at create | no | **not fixed** (§42.6, 4) |
+| Direct PostgREST reads of `posts` | every column of every row the policies admit | no | **not fixed** (§42.6, 5) |
+
+### 42.3 The rule, and how each fixed reader applies it
+
+**One rule, not a new one.** The predicate is mapPublicPost's own decision
+(`artifacts/api-server/src/lib/postSchemas.ts:327#export function postPlaceWithheld(`):
+it is true exactly when mapPublicPost does not hand back the row it was given
+(`artifacts/api-server/src/lib/postSchemas.ts:328#return mapPublicPost(row) !== row;`).
+The two cannot drift. A mode mapPublicPost learns to withhold is withheld here
+too, and the suite checks it over every mode × status (D1).
+
+- **Withheld:** `city_only`, `hidden`, `trusted_circle_only`,
+  `neighborhood_only`, an unreleased delayed post, and any mode mapPublicPost
+  does not know.
+- **Not withheld:** `none`, an absent mode, and a released delayed post, whose
+  semantics are unchanged.
+- **The author always sees their own post in full.**
+- **City and country are kept for every mode, `hidden` included.** That is what
+  mapPublicPost keeps, what `locationPrivacyModeToCeiling` maps `hidden` to
+  (`city`), and what the composer copy has said since §22.6.
+
+**GET /api/pulse**
+- The feed SELECTs the mode
+  (`artifacts/api-server/src/routes/pulse.ts:84#location_source, canonical_place_id, location_privacy_mode`).
+  Without it, every row reads as `none`.
+- The rule runs on the SERVED page, at `res.json`
+  (`artifacts/api-server/src/routes/pulse.ts:912#res.json({ posts: pulsePostsForViewer(rows, orderedPosts, user.id),`),
+  through `artifacts/api-server/src/routes/pulse.ts:2021#export function pulsePostsForViewer`.
+- A withheld post keeps every field and loses four: `locationName`,
+  `venueName`, `locationDistrict` and `canonical_place_id`. It keeps its city
+  and country.
+- The district is withheld for `neighborhood_only` too: Pulse has no
+  neighbourhood label, so it shows the city (§36.4.1). The one writer of the
+  geo tag never supplies a district, so this is null today in any case.
+- It runs after ranking on purpose. The ranker, the creator caps and the intent
+  overlays read the shaped posts, so redacting while shaping changed which posts
+  a capped page kept and in what order. That was the first draft, and A7 was
+  written against it.
+- The client is unchanged. With `locationName` null, the chip falls back to
+  the city.
+
+**Discovery "Live from events"**
+- Both paths SELECT the mode
+  (`artifacts/api-server/src/lib/eventPostsDiscovery.ts:285#publish_eligible_at, location_privacy_mode`,
+  `artifacts/api-server/src/lib/eventPostsDiscovery.ts:381#publish_eligible_at, location_privacy_mode,`).
+- The decision is taken once per row and stored on the cached row
+  (`artifacts/api-server/src/lib/eventPostsDiscovery.ts:340#groupKey: event.id, placeWithheld: postPlaceWithheld(post),`,
+  `artifacts/api-server/src/lib/eventPostsDiscovery.ts:442#groupKey: post.location_place_id ?? null, placeWithheld: postPlaceWithheld(post),`).
+- It is applied per viewer, after the shared cache, AND after scoring and the
+  three-per-event cap
+  (`artifacts/api-server/src/lib/eventPostsDiscovery.ts:537#const capped = applyDiversityCap(scored).map((p) => eventPostForViewer(p, params.viewerId))`,
+  `artifacts/api-server/src/lib/eventPostsDiscovery.ts:590#function eventPostForViewer(`).
+- **Path B:** a withheld post is not listed for a non-owner
+  (`artifacts/api-server/src/lib/eventPostsDiscovery.ts:592#if (post.sourceKind === "venue_category") return null;`).
+  This is lane P's place-page rule (§36.5, 4).
+- **Path A:** a withheld post stays under the event its author linked it to.
+  Media's event page lists linked posts the same way
+  (`artifacts/api-server/src/services/media/MediaExperienceResolver.ts:223#Hero media: posts explicitly linked to the event (post_event_links)`).
+  Its venue becomes the event's own or nothing, and its coordinates are
+  withheld
+  (`artifacts/api-server/src/lib/eventPostsDiscovery.ts:593#return { ...post, venueName: post.venueLabel, publicLat: null, publicLng: null };`).
+
+**GET /api/trips/:tripId/posts**
+- mapPublicPost, the Wall's own redactor, is applied to every row but the
+  viewer's own
+  (`artifacts/api-server/src/routes/posts.ts:1721#...(p.author_id === user.id ? p : mapPublicPost(p)),`).
+- `location_name` is nulled, and the label is rebuilt from city and country
+  (`hidden`: no label).
+
+### 42.4 Every change is a narrowing for non-owners only
+
+Each fixed reader returns exactly its pre-change output unless the viewer is
+not the author AND the post's place is withheld. In that case:
+
+| Reader | What changes for that one post | The page |
+| --- | --- | --- |
+| Pulse | four fields become null | the same posts in the same order (A7) |
+| Discovery, Path A | `venueName` becomes the event's venue: the same value when the event has one, null when it has none. The coordinates become null. | the old page minus entries: nothing can win a cap slot (B7) |
+| Discovery, Path B | the entry is removed | as above |
+| Trip feed | `location_name` becomes null, and `public_location_label` is rebuilt | unchanged |
+
+The rebuilt label is the one value that can gain text: from null, or from a
+city alone, to "City, Country". It is composed only of `location_city` and
+`location_country`, which the same response already serves. No response gains
+information.
+
+**Measured both ways.** The final suite was run against the unfixed readers
+(`pulse.ts`, `eventPostsDiscovery.ts` and `posts.ts` at `5956c6233`, the helper
+present so the suite imports), then against the fixed tree:
+
+| Tests | Unfixed readers | Fixed tree |
+| --- | --- | --- |
+| A1, A2, A5, B1, B7, C1, C4, D1, D2 (none-mode, released-delayed, owner and whole-shape cases) | pass | pass |
+| A3, A4, A6, A7, B2–B6, C2, C3 (the defect) | fail | pass |
+
+The first row passing on both sides is the proof that nothing else changed.
+
+### 42.5 Tests and mutations
+
+**The suite:** `artifacts/api-server/src/test/postLocationModeOutsideMedia.test.ts`,
+20 tests, registered in the api-server `test` script.
+- `artifacts/api-server/src/test/postLocationModeOutsideMedia.test.ts:223#describe("A. GET /api/pulse — the owner's location mode"`
+  drives the real route over a fake client. Its A7 case turns the ranking pass
+  on, with a place-affinity fixture that is shown to move the ranking
+  (`artifacts/api-server/src/test/postLocationModeOutsideMedia.test.ts:292#it("A7. with the ranking pass ON`).
+- `artifacts/api-server/src/test/postLocationModeOutsideMedia.test.ts:422#describe("B. eventPostsDiscovery`
+  includes the shared-cache case (owner first, then non-owner, and the reverse)
+  and the cap case
+  (`artifacts/api-server/src/test/postLocationModeOutsideMedia.test.ts:513#it("B7. the page a non-owner gets is the page as scored and capped`).
+- `artifacts/api-server/src/test/postLocationModeOutsideMedia.test.ts:595#describe("C. GET /api/trips/:tripId/posts`
+  uses the shared posts-route harness.
+- `artifacts/api-server/src/test/postLocationModeOutsideMedia.test.ts:637#describe("D. postPlaceWithheld ≡ mapPublicPost`.
+
+For each reader, the suite checks:
+- a withholding mode reaches a non-owner without the venue;
+- the owner still gets it;
+- a `none`-mode post, the whole served object and envelope, is exactly as
+  before;
+- an unknown mode fails closed;
+- the query SELECTs the mode.
+
+**Mutations: 30, each seen red on the final tree, each file restored
+byte-identical (SHA-256).** The runner applied one mutation, ran the suite,
+recorded the failing tests, restored the file and compared hashes.
+- **Pulse, 11:**
+  - owner bypass removed (A5);
+  - never withhold (A3, A4, A7);
+  - withhold `none` too (A1, A2);
+  - each of the four fields left in the redaction (A3, A4, and A7 for all but
+    the district);
+  - the SELECT column dropped (A6);
+  - the page served unredacted (A3, A4, A7);
+  - the viewer id not passed (A5);
+  - **the redaction moved before ranking** (A7 alone).
+- **Discovery, 13:**
+  - owner bypass removed (B5);
+  - the rule off (B2–B5);
+  - withhold `none` too (B1, B7);
+  - the Path B listing kept (B3–B5);
+  - the post's venue as fallback (B2, B4, B5);
+  - coordinates kept (B2, B4);
+  - each path never marking a row (B2/B3, B4, B5);
+  - each path's SELECT column dropped (B6);
+  - the viewer id dropped (B5);
+  - not applied (B2–B5);
+  - **applied before scoring and the cap** (B7 alone).
+- **Trip feed, 3:**
+  - the raw row (C2, C3);
+  - owner bypass removed (C4);
+  - over-redaction (C1–C3).
+- **The predicate, 3:**
+  - never withhold (A3, A4, A7, B2–B5, D);
+  - always withhold (A1, A2, B1, B7, D);
+  - drifting from mapPublicPost on unknown modes (A4, B4, D).
+
+**Other suites run green on the final tree:** the 24 files that import the
+touched modules or drive these routes, 528 tests in all. They include:
+- `eventPostsDiscovery`, `discoveryFeed`;
+- `pulseFeaturedField`, `pulseRanking`, `pulseServedImpressions`, `pulseGps`,
+  the three `livePulse*` suites;
+- `posts`, `postPublishGatePlatformWide`, `delayedGeotag`;
+- `mediaGemAndPrivacyDisclosure`, `mediaNeighborhoodOnlyMode`,
+  `mediaPrivacyClientParity`;
+- `projectionConsumers`, `censusScopeCoverage`.
+
+### 42.6 Found, not fixed
+
+Each is the same class of disclosure, and each is recorded with the reason it
+was not fixed here.
+
+1. **The Compass feed's post items carry the place id.**
+   - The item's `placeId` is the post's canonical place
+     (`artifacts/api-server/src/compass/CompassItemHydrator.ts:134#placeId:         (post.canonical_place_id as string | null) ?? null,`).
+   - The feed serves the whole item: `FeedItem` spreads the pipeline result
+     (`artifacts/api-server/src/compass/CompassFeedBuilder.ts:791#...r,`), and
+     CompassPrivacyGuard does not strip `placeId`.
+   - **Why not fixed:** the same id is the live-constraint subject
+     (`artifacts/api-server/src/compass/CompassLiveConstraints.ts:639#if (item.type === "post" && pid) { out.set(item.id, pid); continue; }`).
+     Live constraints may exclude or demote an item. Nulling the id at the
+     hydrator would stop them applying, and an item they excluded would appear.
+     That is not provably a narrowing.
+   - **The fix:** strip `placeId` from the served item, not the pipeline input.
+     Whether an exclusion keyed on a withheld place is itself a side channel is
+     Compass's decision.
+2. **Wall v2 serves a place ref for a post whatever its mode.**
+   - The ref is `{placeId, name, city}`, in the post spine
+     (`artifacts/api-server/src/routes/wall.ts:742#const placeRef = r.canonical_place_id ? placeById.get(String(r.canonical_place_id)) ?? null : null;`)
+     and in the postcard loader
+     (`artifacts/api-server/src/services/wall/WallCandidateLoaders.ts:487#const placeRef = r.canonical_place_id ? places.get(String(r.canonical_place_id)) ?? null : null;`).
+     The media loader in the same file does go through the choke point.
+   - **Why not fixed:** the place ref is also the key for the Live For You strip
+     (five builders), the discovery explanation's gem permission and the
+     context thread. Withholding it changes what the Wall assembles around a
+     post, and census-wall's rows should be re-read against that change.
+   - **The fix:** null the ref for `postPlaceWithheld(row)` rows of other
+     authors, SELECTing the mode. Then re-read each consumer.
+3. **Place pages list a withheld post at its place.**
+   - The anonymous living page and its timeline
+     (`artifacts/api-server/src/routes/placeLiving.ts:227#return ((data as any[]) ?? []).filter((p: any) => isEligiblePlaceDayPost(p));`,
+     `artifacts/api-server/src/routes/placeLiving.ts:622#let posts: any[] = ((data as any[]) ?? []).filter((p: any) => isEligiblePlaceDayPost(p));`).
+   - The place-day feed
+     (`artifacts/api-server/src/routes/placeDays.ts:114#let visible = chunk.filter((p) => !blocked.has(p.author_id) && isEligiblePlaceDayPost(p));`).
+   - Recaps
+     (`artifacts/api-server/src/routes/placeRecaps.ts:64#const candidates = ((data ?? []) as any[]).filter((post) => !blocked.has(post.author_id) && isEligiblePlaceDayPost(post));`).
+   - The Wall's "people you follow were here" thread
+     (`artifacts/api-server/src/services/wall/ContextThreadService.ts:497#.eq("canonical_place_id", place.placeId)`).
+   - The shared predicate reads no mode
+     (`artifacts/api-server/src/lib/places/placeDays.ts:74#export function isEligiblePlaceDayPost(`),
+     and it also decides place-day materialisation. A withheld post has a
+     canonical place because POST /posts resolves one whatever the mode (§42.1).
+   - **Why not fixed:** this is lane P's §36.5 (4) outside Media. It is one
+     predicate plus every caller's SELECT, and the predicate is shared with a
+     writer. It is the Live Places surfaces' own change. The living page and
+     timeline check `live_places_enabled`, the place-day feed
+     `place_days_enabled`, and recaps their own gate (`areRecapsEnabled`); the
+     Wall thread was not traced to a flag.
+4. **Passport postcards copy the venue.**
+   - The auto-created postcard copies `location_name` whatever the post's mode
+     (`artifacts/api-server/src/routes/posts.ts:708#location_name: locationName ?? null,`,
+     `artifacts/api-server/src/routes/postcards.ts:1101#location_name:      postData.location_name ?? null,`).
+   - The passport serves the copy
+     (`artifacts/api-server/src/routes/passport.ts:75#locationName: r.location_name ?? null,`).
+   - **Why not fixed:** it is a second object, with its own visibility, two
+     writers, several passport readers, and rows already written.
+5. **Direct PostgREST reads.**
+   - The tree grants table-level SELECT on `posts` to the client roles
+     (`artifacts/api-server/src/migrations/2148_posts_write_boundary.sql:86#GRANT SELECT ON TABLE public.posts TO authenticated;`).
+   - Its policies admit public active rows
+     (`artifacts/api-server/baseline/20260819_baseline_structure.sql:30371#CREATE POLICY posts_select ON public.posts FOR SELECT USING (public.can_see_post(id));`).
+   - No migration in the tree restricts columns. A client holding the public
+     key can therefore read `location_name` of any row those policies admit,
+     whatever its mode. It can read the private coordinate columns too.
+   - **Production's grants and policies were not read by this lane.** The
+     finding is about the tree.
+   - **Why not fixed:** it needs a migration (column grants or a view) and
+     production approval. This lane has no migration numbers.
+6. **Pulse's own location setting does not bind the venue either.**
+   - Hotel blur caps a post's geo tag to `neighborhood`
+     (`artifacts/api-server/src/services/location/PulseGeoTagService.ts:129#visibility = capToNeighborhood(visibility);`),
+     as does the composer's per-post choice.
+   - The feed still serves the geo tag's `venueName` and the post's
+     `locationName` whatever the tag's `location_visibility`, for `none`-mode
+     posts too.
+   - **Why not fixed:** this is a second owner setting, not
+     `location_privacy_mode`. Honouring it would change `none`-mode responses,
+     which this lane was bound to leave exactly as they were.
+7. **No Hidden-Gem gate on these readers.** The Wall gates on the gem after
+   mapPublicPost (§42.2). Pulse, Discovery event posts and the trip feed do not.
+   This is a separate axis, and adding it would change `none`-mode rows.
+8. **Ordering still reads what it withholds.**
+   - Pulse ranks on the post's venue and place id
+     (`artifacts/api-server/src/routes/pulse.ts:586#neighborhood: (p.locationName as string | null) ?? null,`,
+     `artifacts/api-server/src/routes/pulse.ts:601#placeId: (p.canonical_place_id as string | null) ?? null,`).
+     A place the viewer has viewed earns ×1.15.
+   - Discovery scores on `public_lat`/`public_lng`. The write path leaves them
+     null for every withholding mode
+     (`artifacts/api-server/src/lib/delayedPostPublisher.ts:94#For city_only / hidden modes, public_lat/lng remain null.`).
+   - **Why not fixed:** removing these inputs changes the ranking and, through
+     the creator caps, which posts are served. That is not provably a narrowing,
+     so it is the ranking owner's decision (§42.4 keeps set and order fixed).
+9. **§22.6, item 1, says of the composer's location copy "The words are now
+   true (MD321)".**
+   - The words include "Only your city and country are shared, never the
+     place", quoted in §36.5.
+   - On this branch they are true on the Wall, Media, Pulse, Discovery event
+     posts and the trip feed. They are false on items 1–5.
+   - MD321's own row claims a client module the composer consults, proved
+     against the server by parity. It does not claim the words hold on every
+     reader, so no verdict moves. The prose sentence overstates, and the
+     integrator should know.
+
+### 42.7 What would turn this red (P24)
+
+- **A new post reader outside Media that serialises a place without
+  `postPlaceWithheld`.** No guard scans readers. The suite covers these three.
+- **A SELECT that drops `location_privacy_mode`.** The row then reads as `none`,
+  exactly as for the Wall. A6 and B6 catch it for these readers only.
+- **mapPublicPost returning a copy for a row it passes.** Every place would then
+  be withheld, which fails closed. D1 would go red.
+- **The redaction moved earlier, into shaping or scoring.** A7 and B7 catch it.
+- **A production row.** Today none is withheld and carries a venue (§42.1). The
+  first one is the one this fix exists for. The direct-read path (§42.6, 5)
+  bypasses all of it.
+
+### 42.8 Rows, censuses, freshness
+
+**No MD row moves, and the headline is not restated here.** This is a defect
+fix outside any row.
+
+**No verdict row in any census is made false by this change.** The one prose
+statement it bears on is §42.6, 9.
+
+**check:census-freshness.** It reports one new stale entry. The other scope
+hits are silenced mechanically by earlier acknowledgements that name the
+files; those acknowledgements argued about other changes, so each is argued
+again here:
+- **census-map, `artifacts/api-server/src/lib/eventPostsDiscovery.ts`**
+  (reported).
+  - The only row citing the file is M174, which cites the delayed-publish gate
+    at line 186.
+  - That gate is untouched: `postPassesStaticFilters` is unchanged, and every
+    edit above line 186 is line-neutral.
+  - The change only removes entries and fields from a viewer's page after the
+    gate. No verdict moves.
+- **census-trips, `artifacts/api-server/src/routes/pulse.ts`** (named by an
+  existing acknowledgement).
+  - TR299 cites Pulse as "the generic city feed". It moved to C on a separate
+    Trip Pulse projection.
+  - This change does not make Pulse trip-aware, and does not touch that
+    projection. No verdict moves.
+- **census-trust, `artifacts/api-server/src/routes/pulse.ts`** (named by an
+  existing acknowledgement).
+  - A17, which moved to C, cites Pulse among the former direct trust reads. It
+    claims zero direct `trust_profiles`/`trust_caps` reads outside
+    `services/trust`.
+  - This change adds no read of any trust table, and leaves Pulse's ranking
+    block untouched: the mode is read in the SELECT and applied only at
+    `res.json`. No verdict moves.
+- **census-wall and census-media, `artifacts/api-server/src/routes/posts.ts`**
+  (named by existing acknowledgements).
+  - The one changed line is in GET /trips/:tripId/posts, which no census
+    cites.
+  - Every citation into the file (upload, capture time, Wall feeds, create) is
+    at an unmoved line with unchanged text.
+
+### 42.9 Production: nothing here is deployed
+
+- No SQL was run, no flag exists or was enabled, and no migration was added.
+- Deployed as-is, the branch would narrow three readers exactly as §42.4
+  states. That deploy is the owner's call.
+
+### 42.10 Files, scope and checks
+
+- **New:**
+  - `artifacts/api-server/src/test/postLocationModeOutsideMedia.test.ts`,
+    registered.
+- **Changed:**
+  - `artifacts/api-server/src/lib/postSchemas.ts`: `postPlaceWithheld`,
+    appended at the tail.
+  - `artifacts/api-server/src/routes/pulse.ts`: the SELECT, one comment line,
+    the `res.json` line, and a helper at the tail.
+  - `artifacts/api-server/src/lib/eventPostsDiscovery.ts`: the import, one
+    interface line, two SELECT lines, two push lines, the cap line, and a
+    helper at the tail.
+  - `artifacts/api-server/src/routes/posts.ts`: one line.
+  - `artifacts/api-server/package.json`: the `test` line.
+- **Every edit above a cited line is line-neutral:**
+  - the Pulse line §36.9 cites keeps its text, so its anchor still holds;
+  - the discovery line census-map's M174 cites (the delayed-publish gate) is
+    unmoved.
+
+**Cited, not graded (check:census-scope-coverage), declared for this section:**
+
+- NOT-GRADED: artifacts/api-server/src/services/location/PulseGeoTagService.ts — Pulse's geo-tag writer, cited in §42.1 for the venue copy it stores and in §42.6 (6) for hotel blur; a Pulse write path, no MD verdict rests on it.
+- NOT-GRADED: artifacts/api-server/src/routes/placeLiving.ts — the Live Places living page and timeline, cited in §42.6 (3) as a reader outside Media that lists a withheld post at its place; recorded, not fixed, and not a Media surface.
+- NOT-GRADED: travel-buddy-standalone/src/services/pulse.ts — the client's Pulse service, cited in §42.1 to trace locationName to the card's chip; Pulse's client, no MD verdict rests on it.
+- NOT-GRADED: artifacts/api-server/src/routes/discovery.ts — cited in §42.1 only as the one caller of lib/eventPostsDiscovery (GET /discovery/feed); Discovery's route, graded by census-discovery, not here.
+- NOT-GRADED: travel-buddy-standalone/src/components/discovery/DiscoveryEventPostCard.tsx — the Discovery event-post card, cited in §42.1 for the label it renders; Discovery's client, no MD verdict rests on it.
+- NOT-GRADED: artifacts/api-server/src/compass/CompassItemHydrator.ts — the Compass feed's post source, cited in §42.6 (1) as a reader outside Media that serves a withheld post's place id; recorded, not fixed, Compass's to decide.
+- NOT-GRADED: artifacts/api-server/src/compass/CompassFeedBuilder.ts — cited in §42.6 (1) only to show the Compass FeedItem spreads the whole item into the response; Compass machinery, not a Media surface.
+- NOT-GRADED: artifacts/api-server/src/compass/CompassLiveConstraints.ts — cited in §42.6 (1) for the live-constraint subject that makes a hydrator-side fix not provably a narrowing; Compass's, graded by census-compass.
+- NOT-GRADED: artifacts/api-server/src/routes/wall.ts — the Wall v2 post spine, cited in §42.6 (2) for the place ref it serves whatever the mode; census-wall's surface, recorded here, not fixed.
+- NOT-GRADED: artifacts/api-server/src/routes/placeDays.ts — the place-day feed, cited in §42.6 (3) as a listing outside Media that ignores the owner's mode; Live Places' reader, recorded, not fixed.
+- NOT-GRADED: artifacts/api-server/src/routes/placeRecaps.ts — place recaps, cited in §42.6 (3) as a listing outside Media that ignores the owner's mode; Live Places' reader, recorded, not fixed.
+- NOT-GRADED: artifacts/api-server/src/services/wall/ContextThreadService.ts — the Wall's context thread, cited in §42.6 (3) for counting followed authors' posts at a place without the mode; census-wall's, recorded, not fixed.
+- NOT-GRADED: artifacts/api-server/src/lib/places/placeDays.ts — isEligiblePlaceDayPost, cited in §42.6 (3) as the shared predicate that reads no mode; Live Places machinery, recorded, not fixed.
+- NOT-GRADED: artifacts/api-server/src/routes/passport.ts — the passport postcard reader, cited in §42.6 (4) for serving the copied venue; census-passport's surface, recorded, not fixed.
+- NOT-GRADED: artifacts/api-server/src/migrations/2148_posts_write_boundary.sql — cited in §42.6 (5) for the table-level SELECT grant on posts; a database boundary finding, not a Media verdict, and it needs a migration this lane does not have.
