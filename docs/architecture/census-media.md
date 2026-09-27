@@ -8973,3 +8973,282 @@ pass owns them. No verdict moves on any of them.
 census-wall each cite
 `artifacts/api-server/src/scripts/checkCensusFreshness.ts:1520#ADDED 2026-09-20 by census-wall §13`.
 The widened scope arrays above it moved it from line 1406.
+
+## 37. Lane V — the nine rows that wait on a vendor, a native build or a device — 2026-09-27
+
+Lane V of the 2026-09-27 pass, on branch `lane-v-vendor` from `e9e0b0404`. It
+owns the nine rows §28.9 filed under "a vendor, a native build or a device run":
+MD63, MD277, MD280, MD282 (N) and MD269, MD283, MD284 (W), plus MD289 and MD293,
+which §28.9 filed under "an owner definition" but which also need a vision
+provider. The owner's instruction for this pass was to complete every piece of
+accessible code, integration, native-build preparation and test, to attempt every
+available build and device run, and, where one is blocked, to name the exact
+missing access, vendor capability or device.
+
+**No verdict moves.** Each row now has its code finished up to one seam, and
+behind each seam is a capability this tree does not have: a vendor, a native
+module, a build, or a device. A seam whose default refuses is not the capability
+it waits for. So a row that was N stays N; §37.1 argues each row separately.
+**Nothing here is merged, deployed or flag-enabled. The four new flags are
+seeded FALSE and no database was touched.**
+
+### 37.1 The rows, restated — what is built, what flips it, what only the outside world can show
+
+| ID | Was | Now | Evidence and what remains |
+| --- | --- | --- | --- |
+| MD63 | N | **N** | IMPLEMENTATION, done up to the vendor. The EVIDENCE EXTRACTION stage now has an output type and exactly one constructor, `artifacts/api-server/src/lib/media/vendors/mediaVisionProvider.ts:169#export function deriveVisualEvidenceCandidates(`. It keeps a signal only for a media id the caller asked about, only in a closed vocabulary, and only with a confidence in [0, 1]. It stamps `verified: false` and `eligibleAsObservation: false` as literals, so no provider can promote an inference (`artifacts/api-server/src/lib/media/vendors/mediaVisionProvider.ts:155#verified: false;`). Its production caller is §38's "looks social" filter (MD289 below). The provider is the refusing default (`artifacts/api-server/src/lib/media/vendors/mediaVisionProvider.ts:117#export const REFUSING_VISION_PROVIDER`), and the table of implemented adapters is empty (`artifacts/api-server/src/lib/media/vendors/mediaVisionProvider.ts:126#export const IMPLEMENTED_VISION_PROVIDERS`). It stays N because no configuration of this tree reads a pixel for meaning: the seam is where an extractor goes, not an extractor. ACTIVATION: `media_vision_provider_enabled` (3355). EXTERNAL: a vision provider that returns a per-image scene or crowd estimate with a confidence, chosen and cleared by the owner (sending photographs to a model is a cost and data-protection decision); for video, a video-capable model or the stored poster frame. BLOCKER: no vision vendor chosen, so `MEDIA_VISION_PROVIDER` names nothing. |
+| MD269 | W | **W** | IMPLEMENTATION, mostly done. The §36 stage now has a decider, `artifacts/api-server/src/lib/media/vendors/mediaModerationClassifier.ts:164#export async function decidePreDistribution(`. With the stage on, every answer that is not a valid classifier verdict HOLDS the file: no classifier, an unsupported kind, a refusal, a throw, a timeout, or a malformed answer. The decider is wired at three points. **Postcard `/complete`:** `artifacts/api-server/src/routes/postcards.ts:978#await preDistributionPostMediaStatus(` — with the stage off it writes `approved` exactly as before, and a hold is `flagged`, never `pending`, because a READY `pending` row passes the post_media readers. **The canonical row of a `/media/upload`:** through MediaModerationService, from `artifacts/api-server/src/routes/posts.ts:273#await runMediaVendorIngest(sc,` into `artifacts/api-server/src/lib/media/vendors/mediaVendorStages.ts:116#export async function runMediaVendorIngest(`. There the row is HELD before the classifier is asked (`artifacts/api-server/src/lib/media/vendors/mediaVendorStages.ts:136#HOLD FIRST, then decide.`), so it is not distributable while a classifier decides. One residual window is left: lib/mediaAssets writes the row as `processing`, and the hold lands one round trip later. Closing it means the canonical writer choosing the initial state, a change for activation. **A general video's poster:** see MD283. With 3356 ON and no classifier, this IS the staffed hold the row offers as its operator alternative. New postcard files complete `flagged` and new canonical rows go `limited`, and the existing `POST /admin/media/:id/moderate` approve releases them. It stays W because two paths still distribute undecided. (a) A general (Pulse) post's legacy read path gates on `posts.post_status`, which an upload-time stage cannot reach. A hold there has to be composed with the delayed-publish states (`pending_location_exit`, `pending_delay`), and that needs an owner rule, not a guess. (b) `artifacts/api-server/src/routes/postcards.ts:196#.filter((r: any) => r.processing_status === 'ready')` counts a held file in `media_count` and can make it the passport cover URL (§37.6 item 1). ACTIVATION: 3356, the owner's decision that every new upload waits for a person until a classifier exists. EXTERNAL: a classifier vendor, or staffed review capacity. BLOCKER: (a) and (b), plus no classifier and no decision to staff a hold. |
+| MD277 | N | **N** | IMPLEMENTATION, done up to the vendor. The transcoder seam's refusing default is `artifacts/api-server/src/lib/media/vendors/mediaTranscoder.ts:81#export const REFUSING_TRANSCODER`. Each new video is submitted at ingestion (`artifacts/api-server/src/lib/media/vendors/mediaTranscoder.ts:134#export async function submitForTranscode(`). What "a ladder" must be before anything is served as adaptive is stated as code, `artifacts/api-server/src/lib/media/vendors/mediaTranscoder.ts:103#export function validateRenditionLadder(`: an https `.m3u8` or `.mpd` matching the claimed protocol, and at least two distinct rungs. NOT built, on purpose: the playback API and the player's source switch. How a private clip's manifest and segments are authorised is the vendor's model (signed per-viewer URLs, signed cookies, or segments proxied through mediaAccess), and a consumer built before its producer is the writerless-read pattern this repo's own ratchets forbid. The player half needs no ABR code: AVPlayer and ExoPlayer choose rungs from a master playlist. ACTIVATION: 3357. EXTERNAL: a transcoder (a hosted service, or an ffmpeg worker tier) whose playback authorisation keeps private video private; then a device run showing a rung switch under a throttled network. BLOCKER: no transcoder chosen or funded. |
+| MD280 | N | **N** | IMPLEMENTATION, done up to the source. The ASR seam's refusing default is `artifacts/api-server/src/lib/media/vendors/mediaCaptionSource.ts:163#export const REFUSING_CAPTION_SOURCE`. Its validated call is `artifacts/api-server/src/lib/media/vendors/mediaCaptionSource.ts:184#export async function captionTrackFor(`. Every track must pass `artifacts/api-server/src/lib/media/vendors/mediaCaptionSource.ts:91#export function parseWebVtt(` WHOLE, whether an ASR vendor produced it or a person typed it, and it is refused if it runs past the measured duration. A kept track is stored at a path derived from the video (`artifacts/api-server/src/lib/media/vendors/mediaCaptionSource.ts:145#export function captionTrackPathFor(`), with `upsert: false`. NOT built, on purpose: serving (lib/mediaAccess deciding `<path>.captions.vtt` as its video, the way posters are decided) and the player's cue renderer. Both are consumers of a track that no configuration can produce yet. §15.9 stands. ACTIVATION: 3358. EXTERNAL: an ASR vendor with a data-processing agreement covering users' speech, OR an owner decision for an authored-WebVTT flow. BLOCKER: the caption source is undecided. |
+| MD282 | N | **N** | IMPLEMENTATION, done up to the native module. The JS seam is `travel-buddy-standalone/src/services/media/videoCompression.ts:128#export async function compressVideoForUpload`. It looks for ONE module by name through `requireOptionalNativeModule` (`travel-buddy-standalone/src/services/media/videoCompression.ts:98#requireOptionalNativeModule(name)`), which returns null, not an error, when the binary lacks it. Absent, or switched off, the video passes through as the SAME object. It uses a copy only if the module returns a smaller file with its size and display dimensions. It is wired at all four client upload paths: the postcard composer (`travel-buddy-standalone/src/components/PostcardComposer.tsx:398#compressVideoForUpload(picked)`), `uploadMedia` (`travel-buddy-standalone/src/services/media.ts:184#videoUriForUpload(media.uri`), stories (`travel-buddy-standalone/src/services/stories.ts:103#videoUriForUpload(localUri`) and memories (`travel-buddy-standalone/src/services/memories.ts:300#videoUriForUpload(localUri`). The native contract the module must implement is written in the file's header. It stays N because no build that exists re-encodes a byte. ACTIVATION: `DEFAULT_ENABLED` (`travel-buddy-standalone/src/services/media/videoCompression.ts:61#const DEFAULT_ENABLED = false;`), flipped in the same build that adds the module, after a device run. EXTERNAL: a native encoder module implementing that contract (§37.4), a native build (§37.3), and a device run showing a smaller clip that uploads, keeps its orientation and duration, and plays. BLOCKER: no native module in the client package.json (an infra or owner decision), and no build access. |
+| MD283 | W | **W** | IMPLEMENTATION, done up to the vendor. Video has its own rules in the same decider. A video-capable classifier reads the whole clip and may approve it. A frame-only classifier may REJECT or HOLD a clip, never approve it: one poster is one instant of a clip that can be minutes long (`artifacts/api-server/src/lib/media/vendors/mediaModerationClassifier.ts:112#export const FRAME_ALLOW_CLEARS_VIDEO = false;`). A general video's frame arrives after its upload, so the poster route gives the classifier its look there, and that look can only tighten (`artifacts/api-server/src/routes/mediaVideoPoster.ts:115#void moderateVideoOnFrame(sc,`, `artifacts/api-server/src/lib/media/vendors/mediaVendorStages.ts:275#export async function moderateVideoOnFrame(`). Postcard `/complete` hands over the slot's own poster path. ACTIVATION: 3356. EXTERNAL: a classifier with async VIDEO moderation. With only an image classifier, every video waits for a person. BLOCKER: no classifier chosen; MD269's (a) and (b). |
+| MD284 | W | **W** | IMPLEMENTATION, JS half done. EVERY missing part is now handed to the OS at once. Every part's byte range is staged into its own cache file one at a time, to bound JS memory, and then every upload task is created and STARTED before any is awaited (`travel-buddy-standalone/src/services/media/backgroundTransfer.ts:175#export async function putPartsInBackground(`). The background transport offers the batch (`travel-buddy-standalone/src/services/media/backgroundTransfer.ts:85#putParts: (parts, contentType, onSent)`), and the resumable uploader uses it whenever it can (`travel-buddy-standalone/src/services/media/resumableUpload.ts:162#if (transport.putParts && pending.length > 1) {`). A part the batch did not deliver is never counted as sent: no answer, 408/425/429 or 5xx fall back to the one-at-a-time retries after one wait, and 400/401/403 get a fresh session. Still NOT shown: that iOS finishes the handed-over tasks while the app is suspended, and relaunches it to report them. expo-file-system registers the app-delegate hook for that, but only a device can show it happens. Android is unchanged: expo-file-system's legacy module uploads through OkHttp inside the app process and never reads the session type, so a backgrounded or killed Android process loses its parts until a foreground service keeps it alive, and that service needs a native module (§37.4). ACTIVATION: `DEFAULT_ENABLED` (`travel-buddy-standalone/src/services/media/uploadTransportFlag.ts:19#DEFAULT_ENABLED = false`), unchanged. EXTERNAL: an iOS device build and run (background → a multi-part upload completes → assemble); an Android foreground-service module plus `FOREGROUND_SERVICE_DATA_SYNC` in the manifest (absent from the prebuilt manifest, §37.3); a device matrix run (§37.3). BLOCKER: no macOS or EAS access for iOS; no Android SDK; no device; no foreground-service module. |
+| MD289 | W | **W** | IMPLEMENTATION, done up to the vendor and the owner's threshold. `looksSocial=true` is a real criterion (`artifacts/api-server/src/services/media/MediaSearchService.ts:946#export async function searchMediaVisual(`, reached from `artifacts/api-server/src/routes/mediaWorld.ts:331#searchMediaVisual(`). It is APPLIED through MD63's candidates or REFUSED BY NAME with an empty answer (`artifacts/api-server/src/services/media/MediaSearchService.ts:966#if (!stageOn) return refuse("stage_off", null);`). It is never dropped: before this, "Nightlife that looks social tonight" could only be asked as "nightlife tonight". An event found by name is not served beside it (`artifacts/api-server/src/routes/mediaWorld.ts:347#results.visual ? null : str(req.query.q)`). What counts as "looks social" is a stated owner value: `busy` or `social` at a confidence of at least 0.6 (`artifacts/api-server/src/lib/media/vendors/mediaVisionProvider.ts:71#export const LOOKS_SOCIAL_LEVELS`). ACTIVATION: 3355. EXTERNAL: a vision provider (MD63). OWNER: ratify or replace the threshold. BLOCKER: no vision provider; the threshold is unratified. |
+| MD293 | N | **N** | IMPLEMENTATION, done up to the vendor. `lookLike=<media id>` first puts the SEED through the same gate as "Where was this photo taken?", so a seed the viewer cannot see never reaches the index (`artifacts/api-server/src/services/media/MediaSearchService.ts:1016#if (!seedItem) return refuse("seed_not_visible", provider.name);`). Every id the index proposes then goes back through the shared candidate loader and projector: the index can propose media, never disclose it. The proposals themselves are validated (`artifacts/api-server/src/lib/media/vendors/mediaVisionProvider.ts:216#export function validateSimilarMedia(`). It stays N because there is still no cross-place visual index. `MEDIA_SEARCH_UNSUPPORTED` keeps saying so until an index answers. ACTIVATION: 3355. EXTERNAL: an image-embedding model and a vector index keyed by media id, with deletion when the media is deleted. BLOCKER: no visual index chosen. |
+
+These restatements move no count: the headline §28.9 restated is unchanged by
+this section.
+
+### 37.2 What was built, and where it is wired
+
+**Four vendor seams, one shape.** Each seam is a typed adapter interface, a
+refusing default, an empty `IMPLEMENTED_*` table and an env variable that selects
+from it. An env value that names nothing implemented selects the refusing
+default and reports the typo
+(`artifacts/api-server/src/lib/media/vendors/vendorCommon.ts:94#export function selectVendor<A>(`).
+Every vendor call is bounded and never throws: a throw, a slow call and an answer
+that is not a VendorAnswer are all "no answer"
+(`artifacts/api-server/src/lib/media/vendors/vendorCommon.ts:57#export async function callVendor<T>(`).
+Candidate vendors are named in each seam's header with the capability each must
+have. None is chosen.
+
+**The upload-path stages.** `runMediaVendorIngest` runs after the canonical row
+of every `/media/upload` is written, like the duration write before it. It reads
+four flags, each seeded FALSE: 3355 vision, 3356 moderation, 3357 transcode,
+3358 captions
+(`artifacts/api-server/src/lib/media/vendors/mediaVendorStages.ts:55#export const MEDIA_MODERATION_STAGE_FLAG`).
+With all four off it does nothing else, and a test counts the reads.
+
+**Search.** `GET /media/search` takes `looksSocial` and `lookLike`
+(`artifacts/api-server/src/services/media/MediaSearchService.ts:903#export function parseMediaSearchVisual(`).
+A `lookLike` that is present but is not a media id is a 400, not an ignored
+field. The response carries a `visual` report (`null` when no visual criterion
+was asked), so every other search is byte-for-byte `searchMedia`.
+
+**Migrations** 3355–3358, each seeded FALSE with a postcondition that refuses a
+seed that finds it ON, and each with a rollback that refuses to delete a row the
+owner has turned on:
+`artifacts/api-server/src/migrations/3355_media_vision_provider_flag.sql`,
+`artifacts/api-server/src/migrations/3356_media_moderation_classifier_flag.sql`,
+`artifacts/api-server/src/migrations/3357_media_transcoder_flag.sql`,
+`artifacts/api-server/src/migrations/3358_media_captions_flag.sql`.
+Their rollbacks:
+`db/rollback/2026-09-27-3355-media-vision-provider-flag-rollback.sql`,
+`db/rollback/2026-09-27-3356-media-moderation-classifier-flag-rollback.sql`,
+`db/rollback/2026-09-27-3357-media-transcoder-flag-rollback.sql`,
+`db/rollback/2026-09-27-3358-media-captions-flag-rollback.sql`.
+Applied to no database. 3359 is unused.
+
+### 37.3 Builds attempted, and exactly where each one stops
+
+Measured 2026-09-27 in this container: Linux x86_64, no `/dev/kvm`, no macOS, no
+attached device, no `EXPO_TOKEN`, Node 24, OpenJDK 21. The generated native
+directories were made in a scratch copy and are committed nowhere.
+
+| Command | Result | The exact blocking error, or the missing access |
+| --- | --- | --- |
+| `npx expo prebuild --platform android --no-install` (scratch copy) | **Succeeded.** `android/` generated. package.json unchanged. Every config plugin in `travel-buddy-standalone/app.json` ran. | None. What it shows for MD284: the manifest has `FOREGROUND_SERVICE` and `FOREGROUND_SERVICE_LOCATION`, but NOT `FOREGROUND_SERVICE_DATA_SYNC`, and there is no upload service. Nothing an upload needs in the background is declared, because the module that would declare it does not exist in the tree. |
+| `npx expo prebuild --platform ios --no-install` (scratch copy) | **Succeeded.** `ios/` generated; CocoaPods not run. | None at prebuild. `UIBackgroundModes` is `fetch` and `location`. A background URLSession needs no mode. expo-file-system's `FileSystemBackgroundSessionHandler` is registered as an app-delegate subscriber by autolinking. Whether it works is a device question. |
+| `./gradlew assembleDebug`, attempt 1 | **Failed** after 1 m 32 s. | `Cannot find a Java installation on your machine … matching: {languageVersion=17 …}. Some toolchain resolvers had internal failures: foojay (Unable to tunnel through proxy. Proxy returns "HTTP/1.1 403 Forbidden")`. The React Native Gradle plugin asks for a JDK 17 toolchain, only JDK 21 is installed, and `api.foojay.io` is denied. |
+| `./gradlew assembleDebug`, attempt 2 (JDK 17 unpacked from the Ubuntu security pool into the scratchpad and passed as `org.gradle.java.installations.paths`) | **Failed** in 14 s. | `Could not HEAD 'https://repo.maven.apache.org/…/kotlin-gradle-plugin-api-1.9.24-gradle82.jar'. Received status code 429`: Maven Central rate-limited a transitive download. Transient. |
+| `./gradlew assembleDebug`, attempt 3 (same) | **Failed** in 41 s, after compiling the RN and Expo settings plugins. | `Could not resolve com.android.tools.build:gradle:8.5.0 … Could not GET 'https://dl.google.com/dl/android/maven2/com/android/tools/build/gradle/8.5.0/gradle-8.5.0.pom'. Received status code 403 from server: Forbidden`. **"maven.google.com is reachable" is true only for its index page.** Every artifact request 301-redirects to `dl.google.com`, which the network policy denies. So the Android Gradle Plugin cannot be resolved, and the build stops before it would even look for the SDK. The SDK is also missing, since `dl.google.com/android/repository` is the same host. |
+| EAS (`eas build`) | **Not attempted.** | `expo.dev` and `api.expo.dev` answer the proxy's CONNECT with 403, and no `EXPO_TOKEN` exists in this environment. |
+| iOS build, device runs | **Not attempted.** | No macOS host or Xcode, no `/dev/kvm` for an emulator, and no physical device. |
+
+**What an owner, or CI with the access, runs** — secrets by NAME only:
+
+1. **EAS:** set `EXPO_TOKEN`. From `travel-buddy-standalone`, run
+   `eas build --profile development --platform ios` and
+   `eas build --profile development --platform android`. The profile is
+   `development` in `travel-buddy-standalone/eas.json`: `developmentClient: true`,
+   internal distribution, iOS `m-medium`. iOS signing needs the Apple team
+   credentials EAS manages (an App Store Connect API key: `EXPO_ASC_KEY_ID`,
+   `EXPO_ASC_ISSUER_ID` and `EXPO_ASC_API_KEY_PATH`, or an interactive Apple
+   login). Sentry source-map upload reads `SENTRY_AUTH_TOKEN`, `SENTRY_ORG` and
+   `SENTRY_PROJECT`; the prebuild warned that org and project are unset.
+2. **Local Android instead:** a host that can reach `dl.google.com`, with
+   Android SDK Platform 35 and build-tools, JDK 17, and `ANDROID_HOME`. Then
+   `npx expo prebuild --platform android` and `./gradlew assembleDebug`.
+3. **Before either build means anything for MD282 or MD284,** the owner or infra
+   adds the native modules §37.4 names. That is a package.json change this lane
+   may not make. Then flip the two client switches in that build.
+
+**Device matrix** — each cell is a run a person makes:
+
+| Row | iOS | Android | What it must show |
+| --- | --- | --- | --- |
+| MD284 | iPhone on iOS 17 and on iOS 18 (current), with Low Power Mode off and then on | Pixel-class device on Android 14 (the dataSync foreground-service rules) and Android 15 (its 6-hour dataSync limit); plus one vendor skin with aggressive process killing (Samsung One UI or Xiaomi HyperOS) | A 60–100 MB video posted, the app backgrounded within 2 s, then the screen locked. The upload completes without the app being reopened: the server's session lists every part, and the queue assembles on the next foreground. Then again with the app force-quit, where iOS must NOT continue, and on relaunch the upload resumes from the server's listing. |
+| MD282 | The same iPhones, with a 4K HEVC clip and a portrait clip | The same Android devices, with a 4K clip and a portrait clip | The uploaded file is smaller than the pick, at or under VIDEO_COMPRESSION_POLICY. The server probe reads the same duration within 0.1 s and the same display orientation. It plays in the Watch cell. |
+
+### 37.4 The native modules and vendors, named — none chosen
+
+- **MD284, Android foreground service.** Candidates:
+  `react-native-background-upload`, whose android-upload-service runs uploads
+  in a foreground service with a notification and whose iOS side uses a
+  background URLSession; `@notifee/react-native`, whose `asForegroundService`
+  hosts the existing JS queue; or a small local Expo module. The local module
+  would use either WorkManager with `setForeground`, or, on Android 14+, the
+  user-initiated data transfer job, which needs the `RUN_USER_INITIATED_JOBS`
+  permission.
+  Whichever is chosen must:
+  - declare `foregroundServiceType="dataSync"` and `FOREGROUND_SERVICE_DATA_SYNC`
+    (or use a user-initiated job);
+  - show a notification;
+  - survive the app moving to the background.
+  Google Play's foreground-service declaration then applies.
+- **MD282, device encoder.** Candidates: a local Expo module (like
+  `vendor/expo-openmls`) over AVAssetExportSession or AVAssetWriter on iOS and
+  androidx.media3 Transformer on Android; or an Expo-module wrapper over
+  `react-native-compressor`, which is not itself an Expo module and so is not
+  found by `requireOptionalNativeModule`. The module must implement the contract
+  in `travel-buddy-standalone/src/services/media/videoCompression.ts`: `PortavaVideoCompressor.compressAsync(uri, { maxBitrateBps, maxLongEdgePx })`
+  returning `{ uri, sizeBytes, width, height }`, as H.264/AAC MP4, with display
+  rotation kept. ffmpeg-kit is not a candidate: it was retired and its binaries
+  withdrawn.
+- **Vision (MD63, MD289, MD293), moderation (MD269, MD283), transcoding (MD277)
+  and captions (MD280).** The candidates are named, each with the capability it
+  must have and the env names its adapter would read, in the header of its seam
+  under `artifacts/api-server/src/lib/media/vendors/`.
+
+### 37.5 Tests and mutations — each seen red, every file restored byte-identical
+
+New: `artifacts/api-server/src/test/mediaVendorSeams.test.ts` (33 cases, registered)
+and `travel-buddy-standalone/src/services/media/__tests__/mediaVendorDevice.test.ts`
+(13 cases). Extended: `artifacts/api-server/src/test/mediaWorldProjection.test.ts`
+(+13 at its tail, including two over HTTP),
+`artifacts/api-server/src/test/mediaVideoTransport.test.ts` (+3 over HTTP),
+`artifacts/api-server/src/test/mediaVideoPosterGeneral.test.ts` (+3 over HTTP),
+`travel-buddy-standalone/src/components/__tests__/PostcardComposer.videoPoster.component.test.tsx` (+3),
+`travel-buddy-standalone/src/services/media/__tests__/uploadMediaPoster.component.test.tsx` (+2)
+and `travel-buddy-standalone/src/services/media/__tests__/storyMemoryPoster.component.test.tsx` (+4).
+Every adapter in them is a test double. They prove the seams, not a vendor.
+
+A harness applied one mutation, ran the named suite, and restored the file.
+After the whole run, the tree's diff hash and every new file's hash matched what
+they were before it. All 35 mutations went red on an assertion. The first run
+exposed two weak mutations (V8 and V24): each went red by crashing rather than
+on an assertion. Both were rewritten and went red on an assertion.
+
+| Id | Mutation | Red in |
+| --- | --- | --- |
+| V1 · V23 | no classifier, or a failed classifier call, APPROVES | seams "no classifier is a staffed hold", "a refusal, a throw…"; transport "/complete … HELD as 'flagged'" |
+| V2 | one frame's allow clears a video | seams "a FRAME-only classifier…" |
+| V3 | a hold is written `pending` | seams, transport |
+| V4 | the stage reads ON regardless of its flag | seams "flag off → 'approved'"; transport "flag off (the seed)" |
+| V5 · V6 | a provider injects an id it was not asked about / marks an inference verified | seams MD63; projection "an injected id is ignored" |
+| V7 | the seed counts as its own neighbour | seams MD293 |
+| V8 | the seed gate is bypassed | projection "a seed the viewer cannot see never reaches the index" |
+| V9 · V11 · V22 | stage off drops the criterion / the route drops `looksSocial` / events by name are served beside a refused visual criterion | projection (service and HTTP) |
+| V10 | `/complete` writes the literal `'approved'` again | transport |
+| V12 · V13 · V24 | a one-rung ladder accepted / a zero-length cue accepted / invalid VTT accepted | seams |
+| V14 | no timeout on a vendor call | seams "a slow call is `timeout`" |
+| V15 | a caption track may overwrite | seams |
+| V16 | vision runs with its flag off | seams "all four flags off" |
+| V17 · V18 | `/media/upload` or the poster route stops calling its stage | poster-general over HTTP |
+| V19 | the frame look applies a hold, not only a reject | seams "only TIGHTENS" |
+| V25 | the canonical row is not held while the classifier decides | seams "holds the row BEFORE the classifier is asked", "HOLDS the canonical row" |
+| V20 | an env value `toString` selects a prototype member | seams |
+| V21 | "looks social" keeps everything | projection |
+| D1 · D4 | the uploader or the background transport stops batching | device "ONE call"; "offers the batch" |
+| D2 | a part with no answer is counted as sent | device "retried ONE AT A TIME" |
+| D3 | tasks started one after another (serial) | device "all N tasks are running at once" |
+| D5 | a part that could not be staged is handed over anyway | device |
+| D6 · D7 · D8 | compression on by default / a bigger copy used / a copy without dimensions used | device MD282 |
+| D9 | the composer skips the seam | composer "the COMPRESSED file is reserved…" |
+| D10 | a refused signed PUT in a batch fails the run instead of re-signing | device "gets a fresh session" |
+
+### 37.6 Found while doing it — recorded, not fixed
+
+1. **A held postcard file still counts, and can become the passport cover.**
+   `refreshMediaCounts` selects `processing_status = 'ready'` and ignores
+   moderation (the MD269 row cites the line). So once 3356 is on, a `flagged`
+   file counts in `media_count` and can be copied into
+   `passport_postcards.media_url`. mediaAccess still denies its bytes, so the
+   cover is broken rather than leaked. Today the same is true of any file an
+   admin flagged or rejected. This is an activation prerequisite for 3356. It is
+   not fixed here, because it changes a live count for every admin-moderated
+   file.
+2. **Postcard `/complete` requires the client's width and height for a video**
+   before it downloads and probes the container. A new wire test found this: a
+   `/complete` without them is refused (`width and height are required…`), even
+   though the container, probed a few lines later, states both. The
+   pre-existing tests always send them. Outside these rows.
+3. **Staged part files after an app kill.** `putPartsInBackground` deletes its
+   staged files when the batch settles. If the process is killed first, they
+   stay in the cache directory, which the OS may purge. No sweep exists. That is
+   bounded by one video's size.
+4. **The environment facts, corrected.** "maven.google.com is reachable" is true
+   of its index and false for every artifact (§37.3). The first Gradle blocker
+   is the JDK 17 toolchain (`api.foojay.io` denied), before the SDK.
+5. **A jest warning, not a failure.** The supabase-js auth refresh timer logs
+   "Cannot log after tests are done" in the `uploadMedia` and story/memory
+   suites. It fires on elapsed time and comes from `lib/supabase`'s
+   auto-refresh, not from a line this lane touched.
+
+### 37.7 Files, scope and checks
+
+**Changed (counted by census-media):**
+- The four routes `artifacts/api-server/src/routes/posts.ts`,
+  `artifacts/api-server/src/routes/postcards.ts`,
+  `artifacts/api-server/src/routes/mediaWorld.ts` and
+  `artifacts/api-server/src/routes/mediaVideoPoster.ts`: line-neutral edits,
+  with imports at each file's tail. The `/complete` moderation line keeps its
+  old anchor (`moderation_status:      'approved',`, cited by §9.2) in a
+  trailing `(was: …)` comment.
+- `artifacts/api-server/src/services/media/MediaSearchService.ts`: appended at
+  the tail.
+- `travel-buddy-standalone/src/components/PostcardComposer.tsx`,
+  `travel-buddy-standalone/src/services/media.ts`,
+  `travel-buddy-standalone/src/services/stories.ts` and
+  `travel-buddy-standalone/src/services/memories.ts`: line-neutral, with tail
+  imports.
+- `travel-buddy-standalone/src/services/media/resumableUpload.ts`: the cited
+  line 109 is unmoved, and the batch path sits below it.
+- `travel-buddy-standalone/src/services/media/backgroundTransfer.ts`: the cited
+  line 142 is unmoved, and the batch sits at the tail.
+- The seven test files named in §37.5.
+
+**New:**
+- the six files under artifacts/api-server/src/lib/media/vendors/;
+- `travel-buddy-standalone/src/services/media/videoCompression.ts`;
+- the two new test files;
+- migrations 3355–3358 and their four rollbacks.
+
+**Scope.** `artifacts/api-server/src/scripts/checkCensusFreshness.ts` now
+watches the four migrations and the new server suite. The seams, the client
+files and the client suite sit under directories census-media already watches.
+Declared below, not graded: the four rollbacks, and the client's app.json and
+eas.json, which are cited only as build facts.
+
+**Freshness.** `check:census-freshness` reports census-media STALE on 13 files.
+Every one is a file this lane created: the six seams, the four migrations, the
+two new suites and videoCompression.ts. The argument is the same for each: it is
+new, it is exactly what §37.1 re-measured, and no verdict moved. The
+acknowledgement is the integrator's to write. The check does NOT list the
+modified files that an older acknowledgement already names, and they changed
+too (the §20.8 item 3 blind spot):
+- the four routes;
+- MediaSearchService.ts;
+- PostcardComposer.tsx, services/media.ts, stories.ts and memories.ts;
+- resumableUpload.ts and backgroundTransfer.ts;
+- the seven extended suites.
+Each edit is line-neutral or at the tail, and §37.1 is their re-measurement.
+
+- NOT-GRADED: db/rollback/2026-09-27-3355-media-vision-provider-flag-rollback.sql — the undo script for 3355's seed, named in §37.2 as the rollback path; the rows rest on 3355 applied (watched), never on its reversal, as with 3338's rollback in §30.12.
+- NOT-GRADED: db/rollback/2026-09-27-3356-media-moderation-classifier-flag-rollback.sql — the undo script for 3356's seed, named in §37.2 as the rollback path; MD269 and MD283 rest on 3356 and the decider, never on the flag row's removal.
+- NOT-GRADED: db/rollback/2026-09-27-3357-media-transcoder-flag-rollback.sql — the undo script for 3357's seed, named in §37.2 as the rollback path; MD277 rests on the seam and 3357, never on the flag row's removal.
+- NOT-GRADED: db/rollback/2026-09-27-3358-media-captions-flag-rollback.sql — the undo script for 3358's seed, named in §37.2 as the rollback path; MD280 rests on the seam and 3358, never on the flag row's removal.
+- NOT-GRADED: travel-buddy-standalone/app.json — cited in §37.3 only for what the scratch prebuild generated from it (its plugins and permission list); no row's verdict rests on its content, and MD284 rests on the transport files and on the absent native module.
+- NOT-GRADED: travel-buddy-standalone/eas.json — cited in §37.3 only for the build profile an owner or CI would use; a build recipe, not evidence for any row.
+
+Headline: not restated. No row moved.

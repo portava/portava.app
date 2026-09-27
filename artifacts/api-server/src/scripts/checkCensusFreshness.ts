@@ -1926,6 +1926,12 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     // WIDENED 2026-09-27 by the coverage-guard fix (census-media §32.14): MD338 (§30, §32) — the receipt reader §32.1's privacy argument rests on, and the byte gate's fail-closed suite §30 and §32.9 ran as regression evidence.
     "artifacts/api-server/src/services/intel/PresenceVerifier.ts",
     "artifacts/api-server/src/test/mediaAccessFailClosed.test.ts",
+    // WIDENED 2026-09-27 by lane V (census-media §37): MD63/MD269/MD277/MD280/MD283/MD289/MD293 rest on the vendor-stage flags 3355–3358 and the suite that tests the seams (the seams themselves sit under lib/media/, watched above).
+    "artifacts/api-server/src/migrations/3355_media_vision_provider_flag.sql",
+    "artifacts/api-server/src/migrations/3356_media_moderation_classifier_flag.sql",
+    "artifacts/api-server/src/migrations/3357_media_transcoder_flag.sql",
+    "artifacts/api-server/src/migrations/3358_media_captions_flag.sql",
+    "artifacts/api-server/src/test/mediaVendorSeams.test.ts",
   ],
   // census-telegraph.md — declared 2026-09-11 on the same basis as Media above:
   // 451 requirements out of CANNOT BE CHECKED, a clock started rather than a
