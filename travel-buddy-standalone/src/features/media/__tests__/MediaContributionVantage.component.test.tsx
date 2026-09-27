@@ -1,23 +1,24 @@
 /**
- * MediaContributionScreen — spec §34 "Show neighborhood only" on the §4 Media
- * Contribution sheet (census-media §36, MD262).
+ * MediaContributionScreen — §12 perspective groups on the §4 Media Contribution
+ * sheet (census-media §36, MD82–MD85).
  *
- * The sheet offers "Neighbourhood only" ONLY while the server flag
- * `media_neighborhood_only_mode_enabled` is on (seeded OFF by migration 3350;
- * the server refuses the mode while it is off). With it off the four precision
- * chips are exactly as before; with it on, choosing it sends `neighborhood_only`.
+ * The sheet offers "Where in the place?" ONLY while the server flag
+ * `media_perspective_vantage_enabled` is on (seeded OFF by migration 3352; the
+ * server refuses a vantage while it is off), and only for a category that is
+ * one of §12's four entity types. The chosen group is sent as
+ * `perspectiveVantage`.
  */
 import React from 'react';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react-native';
 import { MediaContributionScreen } from '../screens/MediaContributionScreen.tsx';
 
-let mockFlagOn = false;
+let mockVantageOn = false;
 const mockCreatePost = jest.fn();
 
 // NOTE: intentionally exhaustive — isEnabled is the only field the screen reads.
 jest.mock('../../../context/FeatureFlagsContext.tsx', () => ({
   useFeatureFlags: () => ({
-    isEnabled: (k: string) => mockFlagOn && k === 'media_neighborhood_only_mode_enabled',
+    isEnabled: (k: string) => mockVantageOn && k === 'media_perspective_vantage_enabled',
     isLivePlacesEnabled: () => false,
     loading: false,
   }),
@@ -54,7 +55,7 @@ jest.mock('../../../components/CachedImage.tsx', () => {
 const PICKED = { uri: 'file:///x.jpg', mimeType: 'image/jpeg', type: 'image' };
 
 beforeEach(() => {
-  mockFlagOn = false;
+  mockVantageOn = false;
   mockCreatePost.mockReset();
   mockCreatePost.mockResolvedValue({ ok: true, data: { id: 'post-1', post_status: 'published' } });
 });
@@ -64,21 +65,33 @@ async function open() {
   await waitFor(() => expect(screen.getByTestId('media-contribution-sheet')).toBeTruthy());
 }
 
-test('flag OFF: the four precision choices, and no neighbourhood', async () => {
+test('flag OFF: no vantage question, even for a §12 category', async () => {
   await open();
-  for (const p of ['venue', 'city_only', 'after_i_leave', 'hidden']) {
-    expect(screen.getByTestId(`media-contribution-precision-${p}`)).toBeTruthy();
-  }
-  expect(screen.queryByTestId('media-contribution-precision-neighborhood')).toBeNull();
+  await fireEvent.press(screen.getByTestId('media-contribution-category-nightlife'));
+  expect(screen.queryByText('Where in the place?')).toBeNull();
+  expect(screen.queryByTestId('media-contribution-vantage-entrance')).toBeNull();
 });
 
-test('flag ON: "Neighbourhood only" is offered and the save carries neighborhood_only', async () => {
-  mockFlagOn = true;
+test('flag ON: a Nightclub category offers §12\'s groups, a non-§12 category offers none', async () => {
+  mockVantageOn = true;
   await open();
-  await fireEvent.press(screen.getByTestId('media-contribution-precision-neighborhood'));
+  expect(screen.queryByText('Where in the place?')).toBeNull();
+  await fireEvent.press(screen.getByTestId('media-contribution-category-culture'));
+  expect(screen.queryByText('Where in the place?')).toBeNull();
+  await fireEvent.press(screen.getByTestId('media-contribution-category-nightlife'));
+  for (const k of ['entrance', 'queue', 'street', 'main_room', 'stage', 'bar', 'vip', 'outside']) {
+    expect(screen.getByTestId(`media-contribution-vantage-${k}`)).toBeTruthy();
+  }
+});
+
+test('flag ON: the chosen group is sent as perspectiveVantage', async () => {
+  mockVantageOn = true;
+  await open();
+  await fireEvent.press(screen.getByTestId('media-contribution-category-nightlife'));
+  await fireEvent.press(screen.getByTestId('media-contribution-vantage-queue'));
   await fireEvent.press(screen.getByTestId('media-contribution-pick'));
   await waitFor(() => expect(screen.getByTestId('contribution-preview')).toBeTruthy());
   await fireEvent.press(screen.getByTestId('media-contribution-submit'));
   await waitFor(() => expect(mockCreatePost).toHaveBeenCalledTimes(1));
-  expect(mockCreatePost.mock.calls[0]![0]).toMatchObject({ locationPrivacyMode: 'neighborhood_only' });
+  expect(mockCreatePost.mock.calls[0]![0]).toMatchObject({ category: 'nightlife', perspectiveVantage: 'queue' });
 });

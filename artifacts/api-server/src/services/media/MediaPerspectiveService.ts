@@ -3,7 +3,7 @@
  * "perspective" primitive the World shell renders (§12/§13).
  *
  * A perspective is a permitted visual contribution showing an aspect of a place
- * or experience. There is no perspective COLUMN in the schema today (the audit
+ * or experience. There is no perspective COLUMN in the schema today (the audit [was: true until migration 3352 — census-media §36 added posts.perspective_vantage, a CONTRIBUTOR-declared §12 group behind media_perspective_vantage_enabled; buildPerspectiveSummary groups by it when a projection carries one]
  * confirms the perspective primitive is net-new), so this service derives a
  * perspective bucket from the only honest signals a media row already carries:
  * its `category` (nightlife / food / …) and place. It NEVER invents a specific
@@ -153,7 +153,7 @@ export function buildPerspectiveSummary(
 
   const byKey = new Map<string, MediaProjection[]>();
   for (const m of media) {
-    const k = bucketKey(m);
+    const k = perspectiveGroupKey(m); // the declared §12 vantage, else the category bucket (census-media §36)
     const list = byKey.get(k) ?? [];
     list.push(m);
     byKey.set(k, list);
@@ -168,7 +168,7 @@ export function buildPerspectiveSummary(
     const contributors = new Set(sorted.map((m) => m.contributor?.id).filter(Boolean));
     groups.push({
       key,
-      label: labelFor(key),
+      label: PERSPECTIVE_VANTAGE_LABELS[key] ?? labelFor(key),
       perspectiveCount: sorted.length,
       freshCount: countFresh(capturedAts, nowMs),
       freshness: aggregateFreshness(capturedAts, nowMs),
@@ -228,3 +228,18 @@ export function buildCategoryBuckets(media: MediaProjection[], nowMs: number): C
   });
   return buckets;
 }
+
+// ── §12 perspective groups (census-media §36, MD82–MD85) ────────────────────
+// Appended at the tail so no cited line above moves; ESM hoists the import and
+// the function.
+/**
+ * A place's perspective group for one item: the §12 vantage its contributor
+ * named, when the projection carries one (it does only where the viewer may be
+ * told the place), else the category bucket this service always used. The
+ * World "FOR YOU NOW" buckets (buildCategoryBuckets) stay category-only — §4.1
+ * counts "Nightlife · 18 fresh perspectives", not entrances.
+ */
+export function perspectiveGroupKey(p: MediaProjection): string {
+  return typeof p.vantage === "string" && p.vantage.length > 0 ? p.vantage : bucketKey(p);
+}
+import { PERSPECTIVE_VANTAGE_LABELS } from "../../lib/media/perspectiveVantage.js";

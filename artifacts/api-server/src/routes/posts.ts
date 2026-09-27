@@ -571,12 +571,12 @@ router.post("/posts", async (req, res) => {
     locationVisibility,
     filterId, filterIntensity, mediaThumbnailUrl, mediaDurationSeconds,
     locationPrivacyMode: reqPrivacyMode, publishAfterTime, geofenceRadiusMeters,
-    venueName, venueId, category,
+    venueName, venueId, category, perspectiveVantage,
   } = parsed.data;
   const locationSource = locationSrc ?? 'none'; if (!(await neighborhoodOnlyModePermitted(flagSc, reqPrivacyMode))) { sendError(res, "feature_disabled", NEIGHBORHOOD_ONLY_DISABLED_MESSAGE); return; } // §34 "Show neighborhood only" is refused, and nothing written, until media_neighborhood_only_mode_enabled (census-media §36)
 
   // ── Delayed geotag: compute sensitivity / privacy mode / geofence radius ──
-  const sens = sensitivityLevel(venueName ?? null);
+  const sens = sensitivityLevel(venueName ?? null); const vantageDecision = await decidePerspectiveVantageWrite(flagSc, perspectiveVantage ?? null, category ?? null); if (!vantageDecision.ok) { sendError(res, vantageDecision.code, vantageDecision.message); return; } // §12 vantage: refused while media_perspective_vantage_enabled is off, and outside the category's §12 groups (census-media §36)
   const privacyMode: LocationPrivacyMode = reqPrivacyMode ?? defaultPrivacyMode(locationSource, sens);
   const radius = geofenceRadius(sens, geofenceRadiusMeters ?? undefined);
   const publicLabel = safeLocationLabel(locationName ?? null, locationCity ?? null, locationCountry ?? null, privacyMode, sens);
@@ -646,7 +646,7 @@ router.post("/posts", async (req, res) => {
       updated_by: user.id,
       source: "api_server",
       // editorial category
-      category: category ?? null,
+      category: category ?? null, perspective_vantage: vantageDecision.write, // undefined unless a vantage was chosen with the flag on — supabase-js drops an undefined key, so every other insert is byte-identical (census-media §36)
       // media filters
       filter_id: filterId ?? 'original',
       filter_intensity: filterIntensity ?? 100,
@@ -3687,3 +3687,5 @@ async function admitUploadBeforeBody(req: any, res: any, userId: string): Promis
 }
 // Imported at the TAIL so no cited line above moves; ESM hoists it (census-media §36, MD262).
 import { neighborhoodOnlyModePermitted, NEIGHBORHOOD_ONLY_DISABLED_MESSAGE } from "../lib/media/neighborhoodOnlyMode.js";
+// census-media §36 (MD82–MD85): tail import, ESM hoists it.
+import { decidePerspectiveVantageWrite } from "../lib/media/perspectiveVantage.js";

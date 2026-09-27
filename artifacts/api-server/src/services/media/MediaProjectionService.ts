@@ -676,7 +676,7 @@ export async function projectCandidatesProtected(
   rows: MediaCandidateRow[],
   nowMs: number,
 ): Promise<MediaProjection[]> {
-  if (rows.length === 0) return []; rows = await prepareCanonicalRows(sc, viewer, rows); if (rows.length === 0) return [];
+  if (rows.length === 0) return []; rows = await prepareCanonicalRows(sc, viewer, rows); if (rows.length === 0) return []; const vantages = await loadPerspectiveVantages(sc, rows); // §12 vantage — no read while media_perspective_vantage_enabled is off (census-media §36)
   // Two independent batch reads, one round trip's worth of latency. The gem
   // context is fail-CLOSED (losing it widens disclosure); the neighborhood map
   // is fail-SOFT (losing it only removes a label) — see loadPlaceNeighborhoods.
@@ -689,10 +689,10 @@ export async function projectCandidatesProtected(
     const p = toMediaProjection(row, nowMs);
     if (!p) continue;
     out.push(
-      applyLocationDisclosure(
+      withPerspectiveVantage(vantages, String(row.id), applyLocationDisclosure( // the vantage rides the place: attached only when the disclosure kept the place id
         p,
         disclosureForRow(row, viewer.viewerId, ctx, neighborhoodForRow(row, neighborhoods)),
-      ),
+      )),
     );
   }
   return visibleToViewerOrRefuse(sc, viewer.viewerId, out); // census-media §28: every count downstream is taken from what this viewer may see
@@ -1904,3 +1904,5 @@ export function keepDisclosedAtPlace(media: MediaProjection[], placeId: string |
   if (!placeId) return media;
   return media.filter((m) => m.placeId === placeId);
 }
+// census-media §36 (MD82–MD85): tail import, ESM hoists it.
+import { loadPerspectiveVantages, withPerspectiveVantage } from "../../lib/media/perspectiveVantage.js";

@@ -4,7 +4,7 @@
  *
  * The contributor states, before anything is sent:
  *   • WHAT their perspective shows — the category the §12 perspective grouping
- *     really buckets by (no vantage the schema cannot store is offered);
+ *     really buckets by, and — only while media_perspective_vantage_enabled (census-media §36) — the §12 group within it that the server stores;
  *   • WHO may see it — public or only them (§33);
  *   • HOW PRECISELY the place is shown — the place, the city only, only after
  *     they leave (§34 delayed publishing), or no location at all.
@@ -18,7 +18,7 @@ import { color, radius, space } from '../../../theme/tokens.ts';
 import { CachedImage } from '../../../components/CachedImage.tsx';
 import {
   CONTRIBUTION_CATEGORIES,
-  PRECISION_LABELS, contributionPrecisions,
+  PRECISION_LABELS, contributionPrecisions, contributionVantages,
   type ContributionAction,
   type ContributionDraft,
   type ContributionPrecision,
@@ -32,7 +32,7 @@ export interface MediaContributionSheetProps {
   onSubmit: () => void;
   /** Why the draft cannot be sent yet, or null. */
   blocker: string | null;
-  busy: boolean; /** §34 "Neighbourhood only" (census-media §36): offered only while the server accepts it. Default false — the four choices the sheet always offered. */ neighborhoodOffered?: boolean;
+  busy: boolean; /** §34 "Neighbourhood only" (census-media §36): offered only while the server accepts it. Default false — the four choices the sheet always offered. */ neighborhoodOffered?: boolean; /** §12 vantages (census-media §36): offered only while the server accepts them. Default false. */ vantageOffered?: boolean;
 }
 
 const precisionsFor = (neighborhoodOffered: boolean): ContributionPrecision[] => contributionPrecisions({ neighborhoodOffered }); // §34 "Neighbourhood only" is offered only while the server accepts it (census-media §36)
@@ -44,7 +44,7 @@ export function MediaContributionSheet({
   onPickMedia,
   onSubmit,
   blocker,
-  busy, neighborhoodOffered = false,
+  busy, neighborhoodOffered = false, vantageOffered = false,
 }: MediaContributionSheetProps) {
   return (
     <ScrollView contentContainerStyle={styles.content} testID="media-contribution-sheet" keyboardShouldPersistTaps="handled">
@@ -77,6 +77,23 @@ export function MediaContributionSheet({
           />
         ))}
       </View>
+
+      {contributionVantages(draft.category, { offered: vantageOffered }).length > 0 ? (
+        <>
+          <Text style={styles.label}>Where in the place?</Text>
+          <View style={styles.chips}>
+            {contributionVantages(draft.category, { offered: vantageOffered }).map((v) => (
+              <Chip
+                key={v.key}
+                label={v.label}
+                active={draft.vantage === v.key}
+                testID={`media-contribution-vantage-${v.key}`}
+                onPress={() => dispatch({ type: 'set_vantage', vantage: v.key })}
+              />
+            ))}
+          </View>
+        </>
+      ) : null}
 
       <Text style={styles.label}>Who can see it?</Text>
       <View style={styles.chips}>

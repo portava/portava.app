@@ -236,6 +236,10 @@ export const createPostSchema = z
     venueId: z.string().max(256).nullish(),
     // editorial category (food, nightlife, beach, etc.)
     category: z.string().max(64).nullish(),
+    // §12 perspective group the contributor names (census-media §36, MD82–MD85).
+    // Parsed as text; lib/media/perspectiveVantage decides whether it may be
+    // written (flag) and whether it is one of the category's §12 groups.
+    perspectiveVantage: z.string().max(32).nullish(),
   })
   .superRefine((val, ctx) => {
     if (val.visibility === "trip_only" && !val.tripId) {
