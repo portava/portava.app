@@ -112,7 +112,7 @@ router.post(
       { userId: user.id, storagePath: video.path, posterPath: video.posterPath },
       _assetRetryDelayMs !== null ? { delayMs: _assetRetryDelayMs } : {},
     );
-    if (asset !== "updated") {
+    if (asset === "updated") void moderateVideoOnFrame(sc, { bucket: POSTER_BUCKET, path: video.path, framePath: video.posterPath }); /* census-media §37 (MD283): only ever tightens; off while 3356 is */ if (asset !== "updated") {
       req.log?.warn?.({ path: video.path, asset }, "video poster: stored, but not recorded on a canonical media_assets row");
     }
 
@@ -127,3 +127,7 @@ router.post(
 );
 
 export default router;
+
+// census-media §37 (MD283): a frame-capable classifier's look at the stored frame. Imported at the
+// TAIL so the anchored route line above does not move; ESM hoists imports.
+import { moderateVideoOnFrame } from "../lib/media/vendors/mediaVendorStages.js";

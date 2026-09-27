@@ -465,3 +465,70 @@ describe("MD275 on the wire — POST /media/upload/poster", () => {
     assert.ok(state.objects.has(`post-media/${path}.poster.jpg`));
   });
 });
+
+// ── census-media §37: the vendor stages on the upload path, on the wire ──────
+// Every adapter is a TEST DOUBLE; what is proved is the wiring — which route
+// hands what to which seam, and that nothing is handed over while the seeded
+// flags are off.
+import { _setMediaVisionProviderForTest, type MediaVisionProvider } from "../lib/media/vendors/mediaVisionProvider.js";
+import { _setMediaModerationClassifierForTest, type MediaModerationClassifier } from "../lib/media/vendors/mediaModerationClassifier.js";
+
+describe("§37 on the wire — POST /media/upload and /media/upload/poster reach the vendor seams only behind their flags", () => {
+  const calls: string[] = [];
+  const vision: MediaVisionProvider = {
+    name: "wire-vision",
+    capabilities: { sceneSignals: false, similarMedia: false, ingest: true },
+    async sceneSignals() { return { ok: false, reason: "unsupported" }; },
+    async similarMedia() { return { ok: false, reason: "unsupported" }; },
+    async ingest(i) { calls.push(`ingest:${i.assetId}:${i.bucket}/${i.path}`); return { ok: true, value: { accepted: true } }; },
+  };
+  const frameClassifier: MediaModerationClassifier = {
+    name: "wire-frame-classifier",
+    capabilities: { image: true, video: false, videoFrame: true },
+    async classify({ subject, target }) { calls.push(`classify:${target}:${subject.framePath}`); return { ok: true, value: { verdict: "allow", labels: [], confidence: 0.9 } }; },
+  };
+  beforeEach(() => {
+    calls.length = 0;
+    _setMediaVisionProviderForTest(vision);
+    _setMediaModerationClassifierForTest(frameClassifier);
+  });
+  after(() => {
+    _setMediaVisionProviderForTest(null);
+    _setMediaModerationClassifierForTest(null);
+  });
+
+  it("flags off (the seed): an upload and its poster reach no vendor", async () => {
+    state.flags.media_canonical_enabled = true;
+    const up = await req("POST", "/api/media/upload", PLAIN_MP4, "video/mp4");
+    assert.equal(up.status, 201, JSON.stringify(up.body));
+    await settle();
+    const poster = await req("POST", `/api/media/upload/poster?path=${encodeURIComponent(up.body.path)}`, await jpegWithGps(), "image/jpeg");
+    assert.equal(poster.status, 201, JSON.stringify(poster.body));
+    await settle();
+    assert.deepEqual(calls, []);
+  });
+
+  it("vision on: the stored file is handed to the index under the canonical asset the upload just recorded", async () => {
+    state.flags.media_canonical_enabled = true;
+    state.flags.media_vision_provider_enabled = true;
+    const up = await req("POST", "/api/media/upload", PLAIN_MP4, "video/mp4");
+    assert.equal(up.status, 201, JSON.stringify(up.body));
+    await settle();
+    const row = state.upserts[0];
+    assert.ok(row, "the canonical write ran");
+    assert.deepEqual(calls, [`ingest:${row.id}:post-media/${up.body.path}`]);
+  });
+
+  it("moderation on, a frame-only classifier: nothing to read at upload (held), then the POSTER route shows it the stored frame", async () => {
+    state.flags.media_canonical_enabled = true;
+    state.flags.media_moderation_classifier_enabled = true;
+    const up = await req("POST", "/api/media/upload", PLAIN_MP4, "video/mp4");
+    assert.equal(up.status, 201, JSON.stringify(up.body));
+    await settle();
+    assert.deepEqual(calls, [], "a frame-only classifier has no frame at upload time: held, not asked");
+    const poster = await req("POST", `/api/media/upload/poster?path=${encodeURIComponent(up.body.path)}`, await jpegWithGps(), "image/jpeg");
+    assert.equal(poster.status, 201, JSON.stringify(poster.body));
+    await settle();
+    assert.deepEqual(calls, [`classify:frame:${up.body.path}.poster.jpg`]);
+  });
+});
