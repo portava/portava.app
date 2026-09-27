@@ -3997,6 +3997,14 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/test/creatorLedgerProperties.test.ts",
     "artifacts/api-server/src/test/ciWorkflowArchitecture.test.ts",
     "artifacts/api-server/src/test/discoveryDivergenceReport.test.ts",
+    // WIDENED 2026-09-27 by census-discovery §60 (client consumers + the end-to-end leg, lane P13):
+    // DC-33's route→client suite, DV-83's static consumer guard and its two new proof suites.
+    // The client files §60 grades (services/discovery.ts, DiscoveryCategoryTab.tsx, ForYouTab.tsx,
+    // the rail, the community/suggest hooks) were already watched.
+    "artifacts/api-server/src/test/discoveryClientRouteE2E.test.ts",
+    "travel-buddy-standalone/src/services/__tests__/discoveryRefusalConsumers.guard.test.ts",
+    "travel-buddy-standalone/src/components/discovery/__tests__/DiscoveryCategoryTab.loadMoreRefusal.component.test.tsx",
+    "travel-buddy-standalone/src/hooks/__tests__/useGlobalSearchSuggestions.refused.component.test.tsx",
   ],
   // ── ADDED 2026-09-15: census-passport joins the CHECKABLE set ──────────────
   //

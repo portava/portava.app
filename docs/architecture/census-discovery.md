@@ -9841,6 +9841,208 @@ This section changed `docs/discovery/cache-architecture-design-note.md` (one sen
 - CORRECT fell by three points because an independent audit found four C rows that did not hold. The denominator is unchanged, and none of the four was re-scoped to keep its verdict.
 - The one row still CANNOT-VERIFY is `DC-27`: whether the rollout sequence is followed cannot be settled until a rollout begins.
 
+## §60 — Client consumer correctness and the end-to-end leg (lane P13): DV-83 gets its static guard and loses a masquerade on "load more", DC-33's route→client leg is built, and C19's last leg is a rollout gate
+
+*Written 2026-09-27 by Discovery lane P13 on branch `disc-p13-client`, cut from `88884572b` (`wave8-integration`). These are implementation verdicts on this branch only. Nothing here is merged to `main`, deployed or flag-enabled. A client change is not realized until an app build carrying it ships.*
+
+### 60.1 DV-83: the brief's premise, checked against the tree
+
+The lane brief restated §28.1: the rail branches on `res.ok` alone, and `ForYouTab` never reads `refused`. **That has been false since §29**, and §50.1 already said so. The tree agrees:
+
+- The rail returns its refused state before the empty check: `travel-buddy-standalone/src/components/discovery/DiscoveryEventPostsRail.tsx:105#if (refused) {`.
+- `ForYouTab` renders both lanes' refusals. The OSM lane is at `travel-buddy-standalone/src/components/discovery/ForYouTab.tsx:273#setSource(osm.ok && osm.data.refusal?.coverage === 'nothing' ? 'refused' : 'none');`. The community lane is at `travel-buddy-standalone/src/components/discovery/ForYouTab.tsx:527#{community.refused && (`.
+
+Both were seen red again in this pass (M28–M30, §60.7). Nothing was rebuilt.
+
+### 60.2 DV-83's consumers, re-derived from code: eleven files, all branching, one masquerade found
+
+The census has twice miscounted this population (§28.5 item 1). So it was derived mechanically, not by reading:
+
+- **Carriers.** An exported function of `travel-buddy-standalone/src/services/discovery.ts` is a carrier if it parses a refusal, or returns a type that declares one. There are nine: `getDiscoveryPlaces`, `getCachedDiscoveryPlaces`, `getDiscoveryCategoryCounts`, `getDiscoveryCategoryCountsBatch`, `getDiscoveryFeed`, `getCommunityPlaces`, `getSavedPlaceIds`, `searchUnified` and `getSearchSuggestions`.
+- **Consumers.** Every file under `src/` and `app/` that value-imports a carrier, or a hook that forwards one. There are **eleven**.
+- **Other clients.** No other client exists. No other artifact calls these routes, and the generated client in `lib/api-client-react` has no importer in the app. §28.5 item 1's falsifier does not fire.
+- **Against §28.1's "8 of 10".** That was a count of rendering consumers, found by reading. This one counts files, found mechanically. It adds the forwarding hook (`useGlobalSearchSuggestions`), the tab-layout prefetch and the count-badge row, the last two of which §29.3 listed as verified by nothing. The prefetch's only effect is the service cache, whose refusal rule is tested. The badge row's absent-versus-zero rule is now held by G4's fragment; no suite renders it.
+
+| consumer | reads | refusal branch (present) | proof suite | `partial` today |
+|---|---|---|---|---|
+| `ForYouTab.tsx` | page, cache, saved ids, community hook | OSM lane and community lane (§60.1), saved ids typed union | `ForYouTab.refusal` | rows shown as complete |
+| `DiscoveryCategoryTab.tsx` | page, cache | page-1 error state; **load-more: was MISSING, fixed below** | `…refusal`, `…loadMoreRefusal` (new) | rows shown as complete |
+| `DiscoveryEventPostsRail.tsx` | feed | refused state before the empty check (§60.1) | `…Rail.refusal` | posts shown |
+| `hooks/useCommunityDiscovery.ts` | community | refused flag, never cached | `useCommunityDiscovery.refusal` | kept and cached |
+| `hooks/useSearchSuggestions.ts` | suggest | refused flag, never cached | `useSearchSuggestions.refusal` | kept and cached |
+| `hooks/useGlobalSearchSuggestions.ts` | forwards the above | `travel-buddy-standalone/src/hooks/useGlobalSearchSuggestions.ts:198#refused: preferGateway ? false : legacy.refused,` | **none — added** | passed through |
+| `travel-buddy-standalone/app/search.tsx` | search, suggest | error state; suggest `refused` to the panel | `search.refusal` | notice naming `failedSources` |
+| `components/map/MapSearchSheet.tsx` | search | refused-everything branch | `MapSearchSheet.refusal` | "incomplete" notice |
+| `travel-buddy-standalone/app/map/index.tsx` | page | error card, not zero results | `projectedPlaces` | pins drawn |
+| `travel-buddy-standalone/app/(tabs)/_layout.tsx` | page, batch counts | answers discarded (prefetch only) | service: refused body never cached | n/a |
+| `travel-buddy-standalone/app/(tabs)/discovery.tsx` | per-category counts | the service omits a refused category, and the badge row reads an absent key as no count, never as a dimmed zero | service: "OMITS a refused category" | real count shown |
+
+**The masquerade, found and fixed.** `DiscoveryCategoryTab` handled a page-1 refusal. It scoped that branch to page 1 on purpose: a refused "load more" must not replace genuine results with a failure card. But a refused page 2 then **fell through to the success path**:
+
+- It set `total` to the refusal's padding `0` and advanced `page`.
+- With 5 rows on screen and `total` 0, the footer printed **"5 places found"**. That is the list's own claim that the set had ended, made about a page nobody read.
+- Every later load-more was refused locally (`places.length >= total`).
+
+**Now** a refused load-more keeps the page, `total` and `page` that the last real answer set (`travel-buddy-standalone/src/components/discovery/DiscoveryCategoryTab.tsx:526#setMoreRefused(true);`):
+
+- The footer says what happened. It uses the page-1 refusal's own sentence and the failure state's own "Try again", and the retry asks for page 2 again. No copy is new.
+- Scrolling does not re-send the request during the outage (`travel-buddy-standalone/src/components/discovery/DiscoveryCategoryTab.tsx:698#onEndReached={moreRefused ? undefined : handleLoadMore}`).
+- The edit is line-neutral above the page-1 branch, which is the line this census anchors.
+- `DiscoveryCategoryTab.loadMoreRefusal.component.test.tsx` has 6 tests. Its three refusal cases were red on the unfixed file, the defect reproduced as "5 places found". Three controls pin the other answers: a real page 2, a genuinely empty page 2 (which still ends the list) and a `partial` page 2 (which still renders its rows).
+
+**The untested link.** The suggest refusal passes from the service through `useSearchSuggestions` and then `useGlobalSearchSuggestions` to `app/search.tsx`, which hands it to the panel. The pass-through inside `useGlobalSearchSuggestions` had no test. `search.refusal` stubs `useSearchSuggestions` to `refused: false`, so a pass-through that dropped the flag was invisible to every suite. `useGlobalSearchSuggestions.refused.component.test.tsx` (3 tests) now runs the real legacy hook under it. The screen's hand-off to the panel (`refused={suggestRefused}`) is held only by G4's fragment; no suite renders the screen with a refusal.
+
+**Caches.** The client holds Discovery answers in exactly three places:
+
+- the service's page cache, which writes no `coverage: "nothing"` body (DC-33's R1 below proves this through the route);
+- the community hook's module cache;
+- the suggest hook's LRU.
+
+None writes a `coverage: "nothing"` body, and each has a suite. The rail, the feed, the counts and both search screens hold no cache.
+
+### 60.3 §29.2 ground 3 closed: DV-83 is now enforced statically
+
+`travel-buddy-standalone/src/services/__tests__/discoveryRefusalConsumers.guard.test.ts` runs under `npm test`'s node runner, so it is part of `check:all`. It has six tests:
+
+- **G1.** The carriers derived from the service equal the pinned nine: `travel-buddy-standalone/src/services/__tests__/discoveryRefusalConsumers.guard.test.ts:265#it('G1. the carriers derived from services/discovery.ts are exactly the pinned set'`. A new carrier fails until it is pinned.
+- **G2.** Every file that consumes a carrier, directly or through a forwarding hook, is registered: `travel-buddy-standalone/src/services/__tests__/discoveryRefusalConsumers.guard.test.ts:270#it('G2. every file that consumes a carrier`. **This is the check that was missing.** The eleventh consumer §29.2 called unconstrained now fails CI until it names its branch and its proof.
+- **G3.** No registry entry is stale.
+- **G4.** Each consumer's branch fragment is still present.
+- **G5.** Each proof suite exists and is a refusal suite.
+- **G6.** The consumer count is eleven, so this section's number cannot drift silently.
+
+**What it cannot do.** A fragment in a file is evidence that the branch exists, not that it works. That remains each proof suite's job.
+
+### 60.4 DC-33: the route→service→projection→client leg
+
+The spec clause is *"Test real route→service→projection→client wiring; include cache hits, expiry, permission changes, sparse coverage, empty candidates, dependency failure and retry"* (`docs/specs/upgrades-v2/02-DISCOVERY-v2.md:38#Test real route→service→projection→client wiring;`). §54.9 left the row 6 of 7: *"The client leg is still missing"*. The reason was that `services/discovery.ts` pulled React Native in at module load.
+
+**The seam (H6 of §54.11).** It was built in the client, line-neutral through every line this census anchors in that file:
+
+- The unused static `lib/supabase` import is gone.
+- The token helper is `require()`d at call time (`travel-buddy-standalone/src/services/discovery.ts:13#require('./apiToken.ts')`). This is the deferred-require pattern the Sentry wrapper already uses to keep services loadable under Node.
+- One JSON body is typed, and one test seam is appended at the foot (`travel-buddy-standalone/src/services/discovery.ts:1310#export function _setDiscoveryTokenSourceForTests(`).
+- A deferred `require` is also invisible to the api-server's test typecheck. That matters because a static edge pulled React Native's global DOM types into the server program and broke server files, which was measured. `typecheck:tests` passes at its baseline in both packages.
+
+**The test.** `artifacts/api-server/src/test/discoveryClientRouteE2E.test.ts` runs the real Discovery and rank-events routers in-process over a loopback socket. It drives them through the shipping client module, its viewer lease, its `withParsedRefusal` boundary, its receipt stamp and its per-viewer cache, and through the client projection and byline resolver a card renders with. The database is the contract-checked PostgREST double every route suite uses. Nominatim and Overpass are doubled. The token SOURCE is doubled (`_setDiscoveryTokenSourceForTests`) and nothing downstream of it: apiToken's refresh logic stays pinned by §50's `discovery.viewerScope` suite. Nothing mocks the service, and no response body is hand-written. It has 13 tests, registered in the api-server `test` line.
+
+| spec class | case |
+|---|---|
+| cache hits | server cache-A serve in every case. On the device, `artifacts/api-server/src/test/discoveryClientRouteE2E.test.ts:213#it("E1. signed in: the client holds the route's page` paints the next mount from cache with no request |
+| expiry | `artifacts/api-server/src/test/discoveryClientRouteE2E.test.ts:401#it("W1. the served duration becomes a device horizon` covers the served `whyNowValidForMs`: current one ms before `receipt + validity`, explicitly stale at it, and a cache repaint keeps the original receipt |
+| permission changes | `artifacts/api-server/src/test/discoveryClientRouteE2E.test.ts:455#it("X1. Alice's accepted` (Alice's accepted "Not interested" reaches her next page and not Bob's), X2 (an account switch mid-flight discards the page), X3 (blocks and the byline) |
+| sparse coverage | R2: an unreadable curated source arrives as `partial`, naming `discovery_places`, and the rows beside it are kept |
+| empty candidates | R3: a genuinely empty city is an empty result with no refusal, cached |
+| dependency failure | `artifacts/api-server/src/test/discoveryClientRouteE2E.test.ts:313#it("R1. dependency failure (Nominatim 429)`: `nothing`, not cached. R4 covers the rail's feed, and the session id is dropped. R5 covers the community table |
+| retry | E3: the same request twice gives the same page, each serve a distinct exposure, and a 502 between them neither caches nor clears the good page. R1: the same outage answered the same way, then the recovery served, not replayed from the phone |
+
+The brief's extra cases:
+
+- **The served `recommendation_id` round trip.** E1: the id the client holds at position *i* is the id on the `rank_events` row the route wrote for *i*. E1b: echoed on an outcome, it moves that exposure and no other, and Bob replaying it gets 404.
+- **Signed in vs anonymous.** E2: no `Authorization` header leaves the client, the route records an anonymous serve, and the client's ids equal the ones the anonymous record reproduces.
+- **Cross-viewer.** X1–X3: no id Alice was served reaches Bob, Bob's first paint is never Alice's page, and Alice's real name is nowhere in what Bob's client received.
+
+### 60.5 C19, re-derived
+
+**The client half is complete, and now proved across the route.**
+
+- No client surface reads the legacy `submittedBy.name`. The only resolver is `communityBylineText(displayName, handle)`, at `travel-buddy-standalone/src/components/DiscoveryWall.tsx:411#By {communityBylineText(gem.submittedBy)}` and `travel-buddy-standalone/src/hooks/useCommunityDiscovery.ts:49#name:        communityBylineText(by),`. The latter overwrites the legacy field with the resolved text before any card sees it.
+- `artifacts/api-server/src/test/discoveryClientRouteE2E.test.ts:510#it("X3. the community byline` runs the real `/community` route into the real resolver. Alice sees "Alice Real" on her own pick. Bob receives `displayName: null` and renders "@alice".
+
+**What is left is the server's shape.** `artifacts/api-server/src/routes/discovery.ts:3095#: (profile.username ?` still bakes `@username` into `name` for every caller: no client version is consulted, so today's shipping builds, which render `name` raw, need it. Dropping or nulling the field is a rollout gate, not code. §50.4's hunk stands unchanged, and the field was not removed.
+
+### 60.6 Row moves
+
+| ID | was | now | evidence |
+|---|---|---|---|
+| DV-83 | W | **W** | Two of §29.2's three grounds are now closed on this branch. **Ground 3, "nothing enforces the invariant statically": closed.** `travel-buddy-standalone/src/services/__tests__/discoveryRefusalConsumers.guard.test.ts:270#it('G2. every file that consumes a carrier` fails on any unregistered consumer, G1–G6 were each seen red, and it runs in `check:all`. All eleven re-derived consumers branch on coverage, not on `ok` alone. The one found not to, a refused load-more rendered as the end of the list, is fixed at `travel-buddy-standalone/src/components/discovery/DiscoveryCategoryTab.tsx:526#setMoreRefused(true);`. No `coverage: "nothing"` body enters any of the three client caches, which is proved through the route by `artifacts/api-server/src/test/discoveryClientRouteE2E.test.ts:313#it("R1. dependency failure (Nominatim 429)`. **Why still W: ground 2.** Whether a consumer may render `partial` as a complete answer is the owner's (§60.8 Q1). Today 8 of 11 consumers do so, 2 surface it and 1 renders nothing, as recorded per file in §60.2. **Production:** nothing here ships until a client build carrying it does. |
+| DC-33 | W | **C** | Every criterion passes in code and tests. The five classes §14.5 passed server-side still pass, and retry is built (§54.9). **The client leg, the one FAIL, now exists:** `artifacts/api-server/src/test/discoveryClientRouteE2E.test.ts:213#it("E1. signed in: the client holds the route's page` and 12 more cases run the real route into the real client module, with each of the spec's seven classes exercised through the client (table in §60.4). All 13 were seen red under 14 targeted mutations, and the files were restored byte-identical. **Not flag-gated:** this row obliges a test of the wiring, and 12 of 13 cases leave every flag that shapes the page at its production state. The serve-log flag is on in the double; it changes writes, not the page, and E1 needs the rows it writes to compare ids. The one case that switches flags on (W1, why-now, behind 2850/2361) does so in the test double, which is where a test must. The flag-gated FEATURES it touches keep their own `W`s (A03, A07) under §31.2's rule, *"A requirement whose feature is disabled is not satisfied"*. **What "client" means here:** the client's module boundary, meaning the parse, the lease, the caches and the projection a card renders. No React Native screen renders under Node. The screens are pinned to the same service contract by their component suites and `typecheck:tests`. **What turns it back:** the client module regaining a static edge to React Native, or a case replaced by a mock of the service or of `fetch`'s body. |
+| C19 | W | **W** | The client half is done and now proved end to end: `artifacts/api-server/src/test/discoveryClientRouteE2E.test.ts:510#it("X3. the community byline`. No client reads the legacy `name` (§60.5). **Why W:** `artifacts/api-server/src/routes/discovery.ts:3095#: (profile.username ?` still emits `@username` in `name` to every caller. Retiring it waits on the oldest supported app build carrying `features/discovery/communityByline.ts`, and no build carrying it has shipped (§60.8 Q2). |
+
+### 60.7 Tests and mutations (P24)
+
+**New suites.** There are 28 new tests in four new files, all green, and each seen red.
+
+| suite | runner | tests |
+|---|---|---:|
+| `artifacts/api-server/src/test/discoveryClientRouteE2E.test.ts` | api-server `npm test` (registered) | 13 |
+| `travel-buddy-standalone/src/services/__tests__/discoveryRefusalConsumers.guard.test.ts` | client node runner | 6 |
+| `travel-buddy-standalone/src/components/discovery/__tests__/DiscoveryCategoryTab.loadMoreRefusal.component.test.tsx` | jest | 6 |
+| `travel-buddy-standalone/src/hooks/__tests__/useGlobalSearchSuggestions.refused.component.test.tsx` | jest | 3 |
+
+**Revived suite.** `travel-buddy-standalone/src/services/__tests__/discovery.liveStatusCached.test.ts` sat in the node runner's `KNOWN_BROKEN` list, and so in the orphan ledger, because `services/discovery.ts` loaded React Native. It now loads, and its 6 tests pass. Both lists shed the entry.
+
+**The mutation matrix.** Thirty mutations were run. Each was restored and sha256-checked byte-identical, and the `git diff` hash was identical before and after.
+
+| mutation | red |
+|---|---|
+| M1 the lease never sends the token | E1, E1b, X1, X3 |
+| M2 a signed-out read sends a blank bearer | E2 |
+| M3 a refused page is cached | R1 |
+| M4 the parse boundary drops `refusal` | R1, R2, R5 |
+| M5 every refusal parsed as `nothing` | R2 |
+| M6 an empty page is not cached | R3 |
+| M7 a refused feed keeps its session id | R4 |
+| M8 no receipt stamp | W1 |
+| M9 an in-flight page for another viewer is returned | X2 |
+| M10 an HTTP failure is parsed as a page | E3 |
+| M11 (server) the dismissal gate removes nothing | X1 |
+| M12 (server) every byline name allowed | X3 |
+| M13 (server) served items carry no id | E1, E1b, E2, E3, X1 |
+| M14 both page-cache isolation layers off | X1 |
+| M15 a refused load-more falls through (the defect) | the three refusal cases |
+| M16 scrolling re-asks during the outage | "does not auto-retry" |
+| M17 the retry reloads page 1 | "says so where page 2 would be" |
+| M18 / M19 / M20 partial, an empty page, or every page 2 routed to the notice | the matching controls |
+| M21 / M22 the global hook drops `refused`, or always reports it | the refused case / both controls |
+| M23 an unregistered consumer file appears | G2, G6 |
+| M24 the rail stops branching | G4 |
+| M25 a new carrier in the service | G1 |
+| M26 a registered consumer's import changes | G3 |
+| M27 a proof suite loses its refusal case | G5 |
+| M28 / M29 / M30 `ForYouTab` OSM lane, community lane, the rail ignoring the refusal (§60.1) | 2, 2 and 2 existing cases |
+
+### 60.8 Owner questions, verbatim, and freshness
+
+**Q1 (DV-83, ground 2):** *"May a Discovery consumer render a `coverage: "partial"` answer as a complete result with no notice, as 8 of the 11 consumers in §60.2 do today? Or must every consumer that renders a list surface `failedSources`, as `app/search.tsx` and `MapSearchSheet` already do? That includes a `partial` answer with no rows, which today reads 'No places found. Try increasing the search radius or adjust the filters.' on the category tabs. If the second, which wording is ratified? This census will not invent copy for it."*
+
+**Q2 (C19):** *"Which app build is the oldest the product still supports, and when will every supported build contain `features/discovery/communityByline.ts` (§50, unshipped)? From then, may `GET /discovery/community` emit `submittedBy.name` in the canonical shape (the real name iff `nameAllowed`, else null), or drop the field?"*
+
+**Freshness.** This census's `CENSUS_SCOPE` is widened by the four new suites. The integrator owns the ledger. Files changed that other censuses watch:
+
+- **census-map:** `travel-buddy-standalone/src/services/discovery.ts`. The Map's legacy places layer calls `getDiscoveryPlaces` with an unchanged signature and body. The change swaps a static import for a call-time `require` of the same helper, types one JSON body and appends a test seam, and it is line-neutral where cited. No Map verdict moves.
+- **census-input-intelligence:** `travel-buddy-standalone/scripts/run-node-tests.mjs`. One `KNOWN_BROKEN` entry was removed, for a Discovery service suite that now loads. Every other file runs exactly as before, and no input-intelligence row rests on that entry.
+
+No server route or lib file was changed, so no server hunk is routed.
+
+- NOT-GRADED: travel-buddy-standalone/scripts/run-node-tests.mjs — §60.7 names its `KNOWN_BROKEN` list, from which one Discovery suite was removed; it is test machinery, graded by census-input-intelligence's scope.
+- NOT-GRADED: travel-buddy-standalone/src/services/__tests__/discovery.liveStatusCached.test.ts — §60.7 records that it runs again now that the service loads under Node; it tests the live-status cache, which no Discovery row grades.
+
+### 60.9 Integrator: P13 merged, headline restated
+
+*Integrator addendum, 2026-09-27, at the merge of `disc-p13-client` (`957ad3df6`, based on `88884572b`) into `wave8-integration` at `838f56cb5`.*
+
+- **The merge.** Conflicts were unions only: the `test` line, `CENSUS_SCOPE`, and this census, with §60 after §59.13.
+- **P13's own count was graded before P12 merged.** It gave C 98 / W 81, which is the tree without §59's moves. At the merged tree, the only move is `DC-33` W → C.
+- **The freshness ledger is written.**
+  - census-discovery: the four new suites.
+  - census-input-intelligence: `run-node-tests.mjs`. One `KNOWN_BROKEN` entry left it, for a Discovery service suite that now loads.
+  - census-map: an argument for `services/discovery.ts`, which changed line-neutrally.
+- **§60.8's two owner questions join the consolidated request:** the `partial`-coverage wording for DV-83, and the oldest supported build for C19's legacy `name`.
+- **Stated limit.** The call-time `require` of the token helper in `services/discovery.ts` is verified by Jest, Node and both typechecks. It has not been verified by a Metro bundle build.
+
+**Headline** (§60's move: `DC-33` W → C):
+
+| bucket | count |
+|---|---|
+| BUILT-AND-CORRECT | **95** |
+| BUILT-BUT-WRONG | **86** |
+| NOT-BUILT | **6** |
+| CANNOT-VERIFY | **1** |
+
+- CONSTRUCTED 181 / 188 = **96.3 %**; CORRECT 95 / 188 = **50.5 %**. The four buckets sum to 188.
+- **Production.** DC-33 is a test obligation and needs no deployment. The client fixes it proves reach no user until an app build carrying them ships.
+
 ## Cited, not graded (check:census-scope-coverage)
 
 - NOT-GRADED: artifacts/api-server/src/compass/CompassExplanationEngine.ts — §13.7 item 3 names Compass's HMAC recommendation-token signer as a refactor this lane declined to make in another lane's file. Discovery's recommendation id is minted by lib/discoveryRecommendationId.ts, and no Discovery verdict rests on the signer.
