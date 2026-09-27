@@ -642,7 +642,7 @@ const CLASSIFIED = [
       'so a suppression is auditable — this flag gates whether projection happens at all, not whether the ' +
       'privacy gate is honoured; that is never optional.',
   },
-
+  { flag: 'MEDIA_WATCH_STAGE24_RANKING_ENABLED', kind: 'CAPABILITY', reason: 'SCREAMING_CASE capability gate (census-media §34, owner decision F2; seeded OFF by 3343): `true` = the Watch feed (GET /api/media/feed) is ordered by the §24 Media Ranking stage instead of the legacy MediaFeedRankingService.rankMediaFeed. Read through the shared isFlagEnabled in services/media/WatchStage24Ranking.ts, so an unreadable flag leaves the legacy ranker ordering the page, which is today.' },
 ];
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1075,7 +1075,7 @@ const APP_UNRESOLVED_READS = [
       '`flagKey: \'MEDIA_VIEW_MODE_{FULLSCREEN,GRID,HIDDEN_GEMS}_ENABLED\'` properties. The scanner reads ' +
       'those literals through its `flagKey:` pattern, so all three names ARE in the app-read population and ' +
       'ARE checked by R9 — the unresolvable call site adds no name the scan is missing. Verified by hand ' +
-      'against media.tsx on 2026-09-05; all three are seeded by 2037_media_tab_flags.sql.',
+      'against media.tsx on 2026-09-05; all three are seeded by 2037_media_tab_flags.sql. ' + 'census-media §34 (2026-09-27) added a FOURTH entry, `flagKey: \'MEDIA_TAB_WORLD_DEFAULT_ENABLED\'` (seeded by 3340), read the same way. For that entry both filter sites call resolveMediaSurfaceDecisions (src/features/media/state/mediaSurfaceFlags.ts), which reads it and MEDIA_WORLD_SHELL_ENABLED as isEnabled literals.',
   },
 ];
 

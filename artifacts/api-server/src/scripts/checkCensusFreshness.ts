@@ -1959,6 +1959,17 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "travel-buddy-standalone/src/components/ProfilePreviewCard.tsx",
     "travel-buddy-standalone/src/components/EngagementUserListSheet.tsx",
     "travel-buddy-standalone/src/components/ReportSheet.tsx",
+    // WIDENED 2026-09-27 by census-media §34 (lane F): the F1/F2 flag seeds every §34 row's ACTIVATION names, the playback manager MD425's tap-to-play rests on, and the suites that prove each flag's OFF state is today and its ON state the spec.
+    "artifacts/api-server/src/migrations/3340_media_tab_world_default_flag.sql",
+    "artifacts/api-server/src/migrations/3341_media_watch_context_overlay_flag.sql",
+    "artifacts/api-server/src/migrations/3342_media_watch_tap_to_play_flag.sql",
+    "artifacts/api-server/src/migrations/3343_media_watch_stage24_ranking_flag.sql",
+    "artifacts/api-server/src/test/mediaWatchStage24Ranking.test.ts",
+    "travel-buddy-standalone/src/hooks/useWatchPlayback.ts",
+    "travel-buddy-standalone/src/hooks/__tests__/useWatchPlayback.autoplay.component.test.tsx",
+    "travel-buddy-standalone/app/(tabs)/__tests__/media.worldDefault.component.test.tsx",
+    "travel-buddy-standalone/app/(tabs)/__tests__/media.worldDefaultSwitch.component.test.tsx",
+    "travel-buddy-standalone/app/(tabs)/__tests__/media.watchChip.component.test.tsx",
   ],
   // census-telegraph.md — declared 2026-09-11 on the same basis as Media above:
   // 451 requirements out of CANNOT BE CHECKED, a clock started rather than a

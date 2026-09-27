@@ -10459,3 +10459,397 @@ All run on this branch.
 - The change is client-only. No flag, seed, migration, database or server
   file was touched.
 - `SENSING_ANON_GRANTED_SCOPES` and the 2481 ledger entry are untouched.
+
+## 34. Lane F — the owner's surface decisions F1 and F2, built as flags seeded to today — 2026-09-27
+
+Branch `lane-f-surface`, cut from `claude/sensing-completion-20260925` at
+`e9e0b0404`. The code is in `aa81e8eff`, and this section follows it.
+Migrations 3340–3343 are written and applied to no database. No
+flag was enabled anywhere. Built on the branch, not merged. Merged would still
+not be deployed, and deployed would still not be flag-enabled.
+
+### 34.1 What was asked, and the short answer
+
+This lane owns fifteen rows: MD1, MD3, MD11, MD29, MD87, MD215, MD286, MD402,
+MD408, MD412, MD419, MD424, MD425, MD427 and MD435. The first fourteen are the
+§28.9 F1/F2 list without MD2, which belongs to Lane C, the ranker lane. MD435
+is §28.9's owner-definition row; its ranker half was assigned here. F1 and F2
+are the two decisions §14.4 records:
+- **F1:** does the World shell, a context-first surface, become the Media
+  tab's default instead of Watch?
+- **F2:** do the Watch overlay's Stamp/count rail, full-screen autoplay paging
+  and the legacy Watch ranker stop being primary?
+
+This lane split each row into the code that was still missing and the decision
+that only an owner can take. It built all of the missing code. Each decision is
+now one flag, seeded FALSE, which is today's behaviour.
+
+**Nothing a user sees changes until an owner flips a row.** Every reader fails
+closed to today. With every flag off, the tab, the overlay, the feed and the
+ranking are exactly what ships now. That is proven for each flag in §34.3, and
+each proof went red under mutation (§34.4).
+
+**No row moves.** Every one of the fifteen RED WHENs asks for the shipped
+default surface or the shipped ordering to change. That change is now a flag
+flip, and a flip is not C. MD435 also carries an owner definition that no flag
+can settle. §34.5 rewrites each blocker as the exact activation it waits on.
+
+### 34.2 What was unbuilt, and is now built
+
+There are four flags: one for F1 and three for F2. The client reads the first
+three through one pure resolver,
+`travel-buddy-standalone/src/features/media/state/mediaSurfaceFlags.ts:64#worldDefault: isEnabled('MEDIA_WORLD_SHELL_ENABLED') && isEnabled('MEDIA_TAB_WORLD_DEFAULT_ENABLED'),`,
+which answers TODAY for an absent, unfetched, non-`true` or throwing read. The
+server reads the fourth through `isFlagEnabled`.
+
+**F1: `MEDIA_TAB_WORLD_DEFAULT_ENABLED` (3340).**
+- *Unbuilt before:* the tab's opening mode was hard-coded. The store default is
+  still `travel-buddy-standalone/src/stores/mediaStore.ts:104#selectedMode: 'watch',`
+  and the tab opened on the first of Watch · Grid · Gems. The World shell was
+  reachable only through a pill that pushed `/media-world`.
+- *Built:*
+  - `world` is a mode of the tab itself and is listed first:
+    `travel-buddy-standalone/app/(tabs)/media.tsx:54#const ALL_MODES: ModeItem[] = [{ key: 'world', label: 'World', flagKey: 'MEDIA_TAB_WORLD_DEFAULT_ENABLED' },`.
+    It appears only while `MEDIA_WORLD_SHELL_ENABLED` is on as well.
+  - The tab's opening mode is the first enabled mode, so the tab then opens on
+    the World shell,
+    `travel-buddy-standalone/app/(tabs)/media.tsx:109#{selectedMode === 'world' && <MediaWorldTabSurface`.
+    The shell is fed the same coarse location inputs as `/media-world`:
+    `travel-buddy-standalone/src/features/media/screens/MediaWorldTabSurface.tsx:39#headerAccessory={modeSwitcher}`.
+  - The tab's mode switcher is drawn under the World header, through a new
+    optional `headerAccessory` prop on the shell. Watch stays one tap away.
+  - The tab opens on World at every launch, even over a persisted Watch:
+    `travel-buddy-standalone/src/stores/mediaStore.ts:166#const candidate = openOnDefault ? defaultMode`
+    and `travel-buddy-standalone/app/(tabs)/media.tsx:242#openOnDefault={defaultMode === 'world'}`.
+    MD427 asks for no full-screen stranger video immediately on open, and a
+    restored Watch would be exactly that. With the flag off, the persisted mode
+    wins, as before.
+  - The World pill is dropped while World is a mode, because it would open the
+    same surface a second way.
+
+**F2 overlay: `MEDIA_WATCH_CONTEXT_OVERLAY_ENABLED` (3341).**
+- *Unbuilt before:* Watch had one overlay. Its Stamp is the first and largest
+  control and carries counts,
+  `travel-buddy-standalone/src/components/media/WatchItemOverlay.tsx:416#formatCompactCount(item.stampItCount!)`.
+  It had no Compass control.
+- *Built:* the flag is read once per overlay,
+  `travel-buddy-standalone/src/components/media/WatchItemOverlay.tsx:179#const contextFirst = useMediaSurfaceDecisions().contextOverlay;`.
+  When it is on:
+  - Ask Compass is the first rail control and the largest, a 52 pt onInk disc
+    with a label,
+    `travel-buddy-standalone/src/components/media/WatchItemOverlay.tsx:401#{contextFirst ? <ContextCompassButton item={item} /> : null}`.
+    It hands the media id and the §15 rail's prompt to Compass, exactly as the
+    rail does.
+  - Stamp, comment and save keep their controls and lose their counts,
+    `travel-buddy-standalone/src/components/media/WatchItemOverlay.tsx:407#count={contextFirst ? undefined : stampVisualCount}`.
+    The Stamp It count is not drawn:
+    `travel-buddy-standalone/src/components/media/WatchItemOverlay.tsx:413#{!contextFirst && (item.stampItCount ?? 0) > 0 ? (`.
+  - The left column opens on the place, ahead of the creator:
+    `travel-buddy-standalone/src/components/media/WatchItemOverlay.tsx:273#{contextFirst ? <ContextPlaceHeader item={item} /> : null}`.
+    Tapping it opens that place's perspectives through the §14 entry context,
+    on this perspective, falling back to the place screen when there is nothing
+    to stage:
+    `travel-buddy-standalone/src/components/media/WatchItemOverlay.tsx:710#void openPlaceByIdPerspectives(placeId,`.
+
+**F2 autoplay: `MEDIA_WATCH_TAP_TO_PLAY_ENABLED` (3342).**
+- *Unbuilt before:* two paths play a cell with no tap. Viewability makes a
+  cell active and the cell plays,
+  `travel-buddy-standalone/src/components/media/WatchVideoCell.tsx:158#shouldPlay={isActive}`.
+  Separately, the playback manager calls `playAsync` on whichever item becomes
+  active, on refocus, and on foreground.
+- *Built:*
+  - A cell that becomes the viewable one starts paused under a "Tap to play"
+    mark,
+    `travel-buddy-standalone/src/components/media/WatchFeedList.tsx:94#const [userPaused, setUserPaused] = useState(tapToPlay);`.
+    The single tap that pauses today is what starts it.
+  - The manager is told not to autoplay,
+    `travel-buddy-standalone/src/components/media/WatchFeedList.tsx:461#const tapToPlay = useMediaSurfaceDecisions().tapToPlay; const playback = useWatchPlayback({ autoplay: !tapToPlay });`,
+    and honours it:
+    `travel-buddy-standalone/src/hooks/useWatchPlayback.ts:126#if (id && focusedRef.current && autoplayRef.current) {`.
+  - Leaving the tab or the app returns a started cell to "Tap to play". With
+    autoplay off nothing resumes the cell, so the state shown must match the
+    player's state.
+  - A long press restores whatever state it found.
+  - Paging is unchanged. What is retired is autoplay as the navigation.
+
+**F2 ranker: `MEDIA_WATCH_STAGE24_RANKING_ENABLED` (3343).**
+- *Unbuilt before:* the Watch feed was ordered only by
+  `artifacts/api-server/src/services/ranking/MediaFeedRankingService.ts:635#export function rankMediaFeed<T extends MediaFeedItem>(`,
+  which multiplies by watch completion, qualified views and re-watches at
+  `artifacts/api-server/src/services/ranking/MediaFeedRankingService.ts:673#const completionMult  = watchCompletionMultiplier(item.watchCompletionRate);`.
+  It is Media's second ranker, and GET /media/feed is its only request path.
+- *Built:* with the flag on, the page the eligibility gate admitted is ordered
+  by the §42 stage the World shell already uses:
+  - `artifacts/api-server/src/routes/mediaFeed.ts:1572#const capped = watchStage24 ? await orderWatchCandidatesByStage24(`
+    calls
+    `artifacts/api-server/src/services/media/WatchStage24Ranking.ts:100#const ordered = await rankCandidatesForViewer(`.
+  - The legacy ranker is not called:
+    `artifacts/api-server/src/routes/mediaFeed.ts:1555#const rankedResults: MediaRankedItem<RankingMediaFeedItem>[] = watchStage24 ? [] : rankMediaFeed({`.
+  - Membership is untouched. The stage returns the same row objects, and
+    they are mapped back by id, so none is dropped, duplicated or invented.
+    The private-author guard, the limit, the cursor and hydration all run after
+    it, as they did after the legacy ranker.
+  - Impressions log the §24 terms the page was ordered by, prefixed `s24_`.
+    The legacy "Why This?" snapshot is not written for a page the legacy
+    ranker did not order.
+  - The flag is not gated by `MEDIA_RANKING_ENABLED`. That flag is the legacy
+    ranker's own master switch, and the stage has none in the World shell
+    either.
+  - While the flag is off, the one cost is an extra flag read per Watch page.
+    It is started beside the ranking loads, so it adds no round trip.
+
+**Reused existing flags.**
+- `MEDIA_WORLD_SHELL_ENABLED` is F1's prerequisite; `worldDefault` is false
+  without it.
+- `MEDIA_VIEW_MODE_FULLSCREEN_ENABLED`, seeded **true** (2037), already
+  removes Watch entirely when set false. No code was needed for the strict
+  reading of MD419; §34.6 lists it.
+- `MEDIA_ACTIVE_CREATOR_BOOST_ENABLED` takes effect only inside
+  `rankMediaFeed`. With the ranker flag on, it orders nothing. It was not
+  reused as the switch, because it is one boost and not the ranker. The same
+  flip bears on MD2, the per-creator boost, but MD2 is Lane C's row and is not
+  graded here.
+
+### 34.3 Both states, tested the way the repo tests flags
+
+Each OFF case asserts today's render or ordering exactly. Each ON case asserts
+the specified behaviour. The existing suites for every changed component still
+pass unchanged, with one deliberate exception, noted at the end of this list.
+
+- **Server (node:test, `artifacts/api-server/src/test/mediaWatchStage24Ranking.test.ts`, 17 cases, registered).**
+  These cases go through the real route over a fake PostgREST client:
+  - OFF, whether absent, FALSE or unreadable, keeps the DB order that
+    `MEDIA_RANKING_ENABLED` off produces. With the legacy switch on, the
+    legacy ranker still decides and still writes its snapshot:
+    `artifacts/api-server/src/test/mediaWatchStage24Ranking.test.ts:225#OFF by absence: today's order`.
+  - ON puts the post the viewer wants first, and moving the want moves the
+    order:
+    `artifacts/api-server/src/test/mediaWatchStage24Ranking.test.ts:242#ON: the §24 stage orders the page`.
+  - ON with 40 stamps on the other post and the legacy switch on changes
+    nothing: no legacy snapshot is written, and every impression carries the
+    `s24_*` terms and no legacy term:
+    `artifacts/api-server/src/test/mediaWatchStage24Ranking.test.ts:248#ON: the stamp count moves nothing`.
+  - Further cases check the helper's identity and each-once guarantee.
+  - Each migration seeds its flag FALSE, is a seed and not DDL, and refuses to
+    find its flag ON. Each rollback deletes only a FALSE row.
+- **Client, pure resolver (node:test,
+  `travel-buddy-standalone/src/features/media/__tests__/mediaSurfaceFlags.test.ts`, 6 cases).**
+  - The seed is TODAY.
+  - F1 needs both of its flags.
+  - Each F2 flag turns on only its own decision.
+  - Only a literal `true` counts, and a throwing reader reads as TODAY.
+  - Every name the resolver reads is seeded FALSE.
+- **Client, jest (native renderer).**
+  - F1: `media.worldDefault` (7 query cases) and `media.worldDefaultSwitch`
+    (one press). This renderer commits one press per file, so the press has its
+    own file.
+    - Off is Watch · Grid · Gems, opening on Watch, with no World surface.
+    - The shell flag alone still shows today's pill.
+    - F1 without the shell changes nothing.
+    - A persisted mode is restored.
+    - On, the tab opens on World with World first and no Watch feed mounted,
+      even over a persisted Watch. The switcher sits inside the World surface,
+      and Watch is one tap away.
+  - F2 overlay: `WatchItemOverlay.contextOverlay` (6 cases),
+    `WatchItemOverlay.contextPress` (Compass and place pressed) and
+    `WatchItemOverlay.contextPlaceOpened`.
+    - Off, Stamp leads with all four counts and there is no Compass control.
+    - On, Compass precedes Stamp, comment and save, and none of the four counts
+      is drawn.
+    - On, the place leads the left column, above the creator, and the chip is
+      not drawn twice.
+    - A label-only place is drawn but not tappable.
+    - Compass receives the media id and the prompt.
+    - The place opens the entry context, or the place screen when the entry
+      context stages nothing.
+  - F2 autoplay: `WatchFeedList.tapToPlay`, `WatchFeedList.tapToPlayLeave` and
+    `useWatchPlayback.autoplay`.
+    - Off, the cell is active at once and the manager autoplays.
+    - On, the cell is inactive under "Tap to play", the manager is told not to
+      autoplay, and the tap starts the cell.
+    - On, leaving the tab returns the cell to "Tap to play". Off, the cell does
+      not listen.
+    - The manager plays nothing when told not to, and still pauses the item it
+      leaves.
+  - The one deliberate edit to an existing suite is in
+    `media.watchChip.component.test.tsx`. Its flag mock answered **every**
+    flag true, and that now includes F1, under which the tab opens on World by
+    design rather than on the persisted Gems its scenario starts from. The mock
+    now answers every flag but F1, which is the surface that test was written
+    for. The edit is one line and line-neutral.
+- **Contrast.** Eight new pairs were measured under the §31 rules, appended to
+  `mediaContrast.test.ts`. The Compass glyph on its disc measures 17.95. The
+  place hint measures 4.55 at the photo floor, which clears 4.5 by the least
+  margin of any new pair. All eight pass, and none is pinned.
+
+### 34.4 Mutations, each seen red, each restored byte-identical
+
+Every file was checksummed before and after. Each mutation was applied alone,
+by an exact-string replacement.
+
+| Id | Mutation | Red |
+| --- | --- | --- |
+| mS1 | route ignores the flag | 2 ON cases |
+| mS2 | reader always true | 4 OFF cases |
+| mS3 | impressions lose the `s24_*` terms | 1 |
+| mS4 | stage order discarded | 3 |
+| mS5 | legacy ranker still runs when ON | 1 |
+| mS6 | flag name misspelled | 2 |
+| mC1 | root filter never lists World | 4 |
+| mC2 | chip filter never lists World | 3 |
+| mC3 | World mode renders nothing | 4 |
+| mC4 | persisted mode wins over the World default | 1 (MD427 case) |
+| mC5 | World default without the shell flag | 1 |
+| mC6 | World pill kept beside the World mode | 1 |
+| mC7 | World listed last instead of first | 4 |
+| mC8 | overlay flag ignored | 5 |
+| mC9 | overlay on regardless of flag | 1 |
+| mC10 | Stamp count still drawn | 1 |
+| mC11 | Stamp It count still drawn | 1 |
+| mC12 | Compass drawn after the social rail | 1 |
+| mC13 | place opens /place, not the entry context | 2 |
+| mC14 | no fallback when nothing is staged | 1 |
+| mC15 | Compass without the media id | 1 |
+| mC16 | place chip drawn twice | 2 |
+| mC17 | cell starts unpaused under tap-to-play | 3 |
+| mC18 | manager told to autoplay | 1 |
+| mC19 | manager ignores `autoplay: false` | 1 |
+| mC20 | leaving the tab does not rest the cell | 1 |
+| mC21 | "Tap to play" never drawn | 1 |
+| mC22 | tap-to-play on regardless of flag | 2 |
+| mC23 | the list does not pass tap-to-play to its cells | 3 |
+| mP1 | the client reads an unseeded overlay flag name | `check-flag-polarity` R9 |
+| mP2 | the tap-to-play seed loses its reader | `check-flag-polarity` R6 |
+| mP3 | the server flag loses its classification | `check-flag-polarity` R1 |
+
+Thirty-two mutations were applied, and all thirty-two turned red. The last
+three were aimed at the flag-polarity guard, to show that it sees the new
+names.
+**A redundant guard was found this way, not a hole.** Removing `&& !watchStage24`
+from the snapshot condition does not redden anything. With the stage on,
+`rankedResults` is empty, and the snapshot writer already returns on an empty
+list. The condition is kept as the stated intent. It is not counted as a proof.
+
+### 34.5 The fifteen rows: none moves, and each blocker is now an activation
+
+Every RED WHEN below asks for the shipped default surface, or the shipped
+ordering, to change. Each of those changes is a flag flip. A flag seeded FALSE
+is not the reached default, so each row stays **W**. The implementation half is
+done for every row, and MD435 keeps an owner definition that no flag settles.
+
+| ID | old | **new** | evidence |
+| --- | --- | --- | --- |
+| MD1 | W | **W** | IMPLEMENTATION done: the World shell as the tab's own first mode (§34.2 F1), and a place-first Watch overlay (F2). **ACTIVATION: `MEDIA_TAB_WORLD_DEFAULT_ENABLED` = true with `MEDIA_WORLD_SHELL_ENABLED` = true (and `MEDIA_TAB_ENABLED` = true for a Media tab to exist at all), owner decision F1.** RED WHEN unchanged, §19.6. |
+| MD3 | W | **W** | IMPLEMENTATION done: the tab can open on a surface with no infinite feed. **ACTIVATION: as MD1, owner decision F1.** |
+| MD11 | W | **W** | IMPLEMENTATION done: the reached surface can be the outcome-ranked shell (F1), and Watch itself can be ranked by the §24 stage, which reads no watch time (`artifacts/api-server/src/routes/mediaFeed.ts:1572#const capped = watchStage24 ? await orderWatchCandidatesByStage24(`). **ACTIVATION: `MEDIA_TAB_WORLD_DEFAULT_ENABLED` = true with `MEDIA_WORLD_SHELL_ENABLED` = true, owner decision F1; for the Watch half, `MEDIA_WATCH_STAGE24_RANKING_ENABLED` = true, owner decision F2.** |
+| MD29 | W | **W** | IMPLEMENTATION done: the dashboard is the tab's opening page when F1 is on (`travel-buddy-standalone/src/features/media/screens/MediaWorldTabSurface.tsx:39#headerAccessory={modeSwitcher}`). **ACTIVATION: as MD1, owner decision F1.** |
+| MD87 | W | **W** | IMPLEMENTATION done: under F1 every open is a §14 entry context; under the F2 overlay a Watch place open goes through the entry context (`travel-buddy-standalone/src/components/media/WatchItemOverlay.tsx:710#void openPlaceByIdPerspectives(placeId,`). **ACTIVATION: F1 flags as MD1, and `MEDIA_WATCH_CONTEXT_OVERLAY_ENABLED` = true, owner decisions F1 and F2.** The Grid tile's `/media-viewer/[id]` is untouched; it gains the §15 rail only with the shell flag (§19.6). |
+| MD215 | W | **W** | IMPLEMENTATION done: the watch multipliers are replaced by the §24 stage behind a flag, and the count rail is demoted behind a flag. **ACTIVATION: `MEDIA_WATCH_STAGE24_RANKING_ENABLED` = true AND `MEDIA_WATCH_CONTEXT_OVERLAY_ENABLED` = true, owner decision F2.** |
+| MD286 | W | **W** | IMPLEMENTATION done: the default can be not-Watch (F1). **ACTIVATION: `MEDIA_TAB_WORLD_DEFAULT_ENABLED` = true with `MEDIA_WORLD_SHELL_ENABLED` = true (owner decision F1), or `MEDIA_VIEW_MODE_FULLSCREEN_ENABLED` = false (owner decision F2).** The RED WHEN reads "that seed off or the default not 'watch'", and either satisfies it. |
+| MD402 | W | **W** | IMPLEMENTATION done: the reached surface can optimise neither minutes, scroll depth nor autoplay (F1), and Watch itself can drop all three (F2 ranker and autoplay flags). **ACTIVATION: F1 flags as MD1, owner decision F1; for Watch, `MEDIA_WATCH_STAGE24_RANKING_ENABLED` = true and `MEDIA_WATCH_TAP_TO_PLAY_ENABLED` = true, owner decision F2.** |
+| MD408 | W | **W** | IMPLEMENTATION done: an overlay with no Stamp, comment, save or Stamp It count (`travel-buddy-standalone/src/components/media/WatchItemOverlay.tsx:407#count={contextFirst ? undefined : stampVisualCount}`). **ACTIVATION: `MEDIA_WATCH_CONTEXT_OVERLAY_ENABLED` = true (owner decision F2), or the F1 flags.** |
+| MD412 | W | **W** | IMPLEMENTATION done: Compass is the first and largest Watch control (`travel-buddy-standalone/src/components/media/WatchItemOverlay.tsx:401#{contextFirst ? <ContextCompassButton item={item} /> : null}`). **ACTIVATION: `MEDIA_WATCH_CONTEXT_OVERLAY_ENABLED` = true (owner decision F2), or the F1 flags.** |
+| MD419 | W | **W** | IMPLEMENTATION done: the paging feed need not be the default mode. **ACTIVATION: F1 flags as MD1 (owner decision F1). Strict reading (no such feed at all): `MEDIA_VIEW_MODE_FULLSCREEN_ENABLED` = false, existing flag, no code, owner decision F2.** |
+| MD424 | W | **W** | IMPLEMENTATION done: Stamp is neither first nor largest, and carries no count, on the context overlay. **ACTIVATION: `MEDIA_WATCH_CONTEXT_OVERLAY_ENABLED` = true, owner decision F2.** |
+| MD425 | W | **W** | IMPLEMENTATION done: no cell plays without a tap (`travel-buddy-standalone/src/components/media/WatchFeedList.tsx:94#const [userPaused, setUserPaused] = useState(tapToPlay);`), and the default surface can be the shell, which has no autoplay. **ACTIVATION: `MEDIA_WATCH_TAP_TO_PLAY_ENABLED` = true (owner decision F2), or the F1 flags.** |
+| MD427 | W | **W** | IMPLEMENTATION done: the tab opens context-first on every launch, even over a persisted Watch (`travel-buddy-standalone/src/stores/mediaStore.ts:166#const candidate = openOnDefault ? defaultMode`). **ACTIVATION: F1 flags as MD1, owner decision F1.** EXTERNAL VERIFICATION: a device cold start straight into the tab while the flag fetch is in flight, §34.7. |
+| MD435 | W | **W** | IMPLEMENTATION done: with the flag on, `rankMediaFeed` has no request path (`artifacts/api-server/src/routes/mediaFeed.ts:1555#const rankedResults: MediaRankedItem<RankingMediaFeedItem>[] = watchStage24 ? [] : rankMediaFeed({`). Deleting it is a follow-up that belongs after activation, because the flag-off path must survive until the owner decides; `buildPlaceAffinities` in the same file has other callers. **ACTIVATION: `MEDIA_WATCH_STAGE24_RANKING_ENABLED` = true, owner decision F2. OWNER DEFINITION still open: §42 against §48, whether Media may own the §24 stage at all (§21.4).** |
+
+### 34.6 Activation — for the approval request
+
+These steps are drafted for the integrator to fold into the approval request.
+Nothing here was run against any database.
+
+**Prerequisites common to all four flags:**
+- the branch is merged and its migration applied;
+- for the three client flags, a client build or JS bundle containing the reader
+  is what users run, since an older binary ignores the row;
+- the app picks up a flag on its next fetch, at launch or on return to the
+  foreground.
+
+The 2026-09-22 production snapshot records
+`artifacts/api-server/src/lib/capability/snapshots/20260922-production-schema.json:6612#"MEDIA_TAB_ENABLED": false`
+and
+`artifacts/api-server/src/lib/capability/snapshots/20260922-production-schema.json:6608#"MEDIA_RANKING_ENABLED": false`,
+and lists no `MEDIA_WORLD_SHELL_ENABLED` row. Those are facts about that file.
+This lane read no database.
+
+| Flag | Value | Prerequisite | Verify | Recover |
+| --- | --- | --- | --- | --- |
+| `MEDIA_TAB_WORLD_DEFAULT_ENABLED` | true | 3340 applied; `MEDIA_WORLD_SHELL_ENABLED` = true (2300 applied), or this flag does nothing; `MEDIA_TAB_ENABLED` = true (2037), or no Media tab exists in the nav bar; client build with this branch; a `mobile-reachability-ledger` entry for the World shell as the tab's mode (the F1 settlement in §14.4 asks for one). | `GET /api/feature-flags` shows both flags true. On a device, the Media tab opens on the World header and lens bar, with World · Watch · Grid · Gems under the header and World selected. Kill and relaunch with Watch last selected: the tab still opens on World. Tapping Watch shows the feed. | Set it false. On the next fetch the tab lists Watch · Grid · Gems again and opens on the first, and the persisted mode is honoured again. Then run `db/rollback/2026-09-27-3340-media-tab-world-default-flag-rollback.sql` if the row itself must go; it refuses while the flag is true. |
+| `MEDIA_WATCH_CONTEXT_OVERLAY_ENABLED` | true | 3341 applied; client build with this branch. It is independent of the shell flag. | On Watch, the rail begins with the Compass disc and labels, and shows no numbers under Stamp, comment or save and no Stamp It count. The place name leads the left column. Tapping Compass opens Compass with the media's context. Tapping the place opens that place's perspectives, or the place screen when there are none. | Set it false: today's rail on the next fetch. The rollback file is the 3341 one. |
+| `MEDIA_WATCH_TAP_TO_PLAY_ENABLED` | true | 3342 applied; client build with this branch; a device QA pass of expo-av pause and resume (§34.7). | Scrolling Watch, each new cell shows "Tap to play" with no sound or motion until tapped. A tap plays and a second tap pauses. Switching tabs, or backgrounding and foregrounding, returns the cell to "Tap to play" with the player paused. | Set it false: autoplay on viewability returns on the next fetch. The rollback file is the 3342 one. |
+| `MEDIA_WATCH_STAGE24_RANKING_ENABLED` | true | 3343 applied; the API deployed with this branch. `MEDIA_RANKING_ENABLED` is not a prerequisite and is not consulted. With it off, as the snapshot records for production, Watch is chronological today and becomes §24-ranked on the flip. | Feed-level: new `rank_events` rows for `surface = 'watch_feed'` carry `s24_*` features and no legacy keys. No new `media_ranking_snapshots` rows are written for `watch_feed`. Operational: watch GET /media/feed latency, since the stage's loader adds its reads per page, each settling to neutral on error. | Set it false: the legacy ranker orders the next request. The rollback file is the 3343 one. |
+
+**Two decisions the flags cannot take.**
+- **MD419, strict reading.** `MEDIA_VIEW_MODE_FULLSCREEN_ENABLED` = false
+  removes Watch altogether. That is an existing flag, currently true, and
+  needs no code. It is only needed if F1's "not the default" is not enough.
+- **MD435.** §42 against §48 needs an owner ruling.
+
+### 34.7 Web render, and what needs a device
+
+**Web render: done, as a DOM render and not a screenshot.**
+`travel-buddy-standalone/src/features/media/__tests__/mediaSurfaceFlags.webrender.test.tsx`
+renders the flag-ON surfaces through react-dom, via jest-expo/web, the
+harness `WatchStamp.webrender` already uses. It reads the DOM in document
+order and checks four things:
+- Overlay off: today's labels and all four counts.
+- Overlay on: "Ask Compass about this" precedes "Stamp", no count appears in
+  the text, and "An Thuong · Da Nang" precedes "Jane Doe".
+- Tap-to-play on: "Tap to play" is painted over a cell whose `isActive` is
+  false.
+- F1: the World header's "MEDIA" precedes the World and Watch chips, and the
+  chips precede the lens bar.
+
+The four DOM dumps and their label orders were written to the lane's scratch
+directory. There is no headless browser in this environment, so no pixels
+exist. The other lane's screenshot harness can render the same four
+components.
+
+**What needs a device run, and why.** None of this can be reached from here.
+- **F1 layout.** The shell mounts inside a tab screen rather than a stack
+  route. Its `SafeAreaView` inset, the mode switcher under the header, and the
+  FAB over the lenses are native layout, and jsdom does not lay out.
+- **F1, MD427, the cold start.** The flag set is fetched at app start, and
+  while it is in flight the tab renders today's default, Watch, because
+  fail-closed means today. A deep link straight into the Media tab on a cold
+  start could show Watch for that fetch before switching to World. Only a
+  device shows how long that window is. A fix, such as a neutral placeholder
+  while loading, would change today's flag-off behaviour, and so was not made.
+- **F2 tap-to-play.** expo-av's pause, resume and seek on iOS and Android, the
+  AppState transitions, and the gesture layer's single tap are all native. The
+  tests stub each of them.
+- **F2 overlay.** Touch targets and the rail's layout with a 52 pt disc on
+  small screens.
+- **The ranker** needs no device, but needs production reads after the flip,
+  for the latency and `rank_events` checks in §34.6.
+
+### 34.8 What would turn this red
+
+- A seed found ON. Each migration's postcondition raises, and the suite
+  asserts it.
+- A reader that fails open. The resolver's cases, and the server's absent,
+  FALSE and unreadable cases, would redden.
+- Any OFF case diverging from today. Each is asserted directly, and the
+  existing suites for the changed components run unchanged, apart from the one
+  mock narrowed in §34.3.
+- An owner flipping a flag without the client build that reads it. Nothing
+  would happen, and nothing would say so. That is why each activation row
+  names the build as a prerequisite.
+
+### 34.9 Files
+
+- **Watched, appended to census-media's `CENSUS_SCOPE`:**
+  - migrations 3340–3343;
+  - `travel-buddy-standalone/src/hooks/useWatchPlayback.ts`;
+  - the server suite;
+  - the playback suite;
+  - the two tab suites.
+
+  Everything else this section cites is under an already-watched path:
+  `services/media/`, `services/ranking/`, `features/media/`,
+  `components/media/`, `routes/mediaFeed.ts`, `stores/mediaStore.ts` and
+  `app/(tabs)/media.tsx`.
+- NOT-GRADED: artifacts/api-server/src/lib/capability/snapshots/20260922-production-schema.json — the frozen production capture, quoted in §34.6 only for the current values of MEDIA_TAB_ENABLED and MEDIA_RANKING_ENABLED as activation prerequisites; no §34 verdict rests on it, and this lane read no database.
+- NOT-GRADED: db/rollback/2026-09-27-3340-media-tab-world-default-flag-rollback.sql — the undo script for migration 3340's flag seed, named in §34.6's Recover column as the way to remove the row once the flag is off again; the §34 rows rest on 3340 applied (watched) and on its reader, never on its reversal.
