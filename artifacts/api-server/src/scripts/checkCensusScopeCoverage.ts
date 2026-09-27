@@ -44,7 +44,7 @@
 import { readdirSync, readFileSync, existsSync, statSync } from "node:fs";
 import { join, posix } from "node:path";
 import { execFileSync } from "node:child_process";
-import { measureCensusCoverage, type Resolution } from "./lib/censusScopeCoverage.js";
+import { measureCensusCoverage, resolveAmongCandidates, type Resolution } from "./lib/censusScopeCoverage.js";
 
 const REPO = new URL("../../../../", import.meta.url).pathname.replace(/\/$/, "");
 const CENSUS_DIR = join(REPO, "docs/architecture");
@@ -208,6 +208,16 @@ function loadScopes(): Record<string, string[]> {
 }
 
 const byBase = repoFiles();
+const fileLines = new Map<string, string[]>();
+/** Line `n` (1-based) of a repo file, read once per file. */
+function lineAt(p: string, n: number): string | undefined {
+  let lines = fileLines.get(p);
+  if (!lines) {
+    try { lines = readFileSync(join(REPO, p), "utf8").split("\n"); } catch { lines = []; }
+    fileLines.set(p, lines);
+  }
+  return lines[n - 1];
+}
 const scopes = loadScopes();
 const files = readdirSync(CENSUS_DIR).filter((f) => f.startsWith("census-") && f.endsWith(".md")).sort();
 const problems: string[] = [];
@@ -222,13 +232,13 @@ for (const f of files) {
   }
   const covered = (p: string) => scope.some((s) => (s.endsWith("/") ? p.startsWith(s) : p === s || p.startsWith(s + "/")));
   const isRepoFile = (p: string) => existsSync(join(REPO, p)) && statSync(join(REPO, p)).isFile();
-  const resolve = (cited: string): Resolution => {
-    if (isRepoFile(cited)) return { path: cited };
+  // The same candidates check:doc-citations builds (resolveCitationPath): every
+  // tracked path equal to the citation or ending in "/" + it; a bare basename
+  // matches every file of that name. lib/censusScopeCoverage.ts decides among them.
+  const resolve = (cited: string, suffix?: string): Resolution => {
     const hits = byBase.get(posix.basename(cited)) ?? [];
-    const narrowed = cited.includes("/") ? hits.filter((h) => h.endsWith(cited)) : hits;
-    if (narrowed.length === 1) return { path: narrowed[0]! };
-    if (narrowed.length > 1) return { ambiguous: true };
-    return null;
+    const candidates = cited.includes("/") ? hits.filter((h) => h === cited || h.endsWith("/" + cited)) : hits;
+    return resolveAmongCandidates(cited, candidates, suffix, lineAt);
   };
   const m = measureCensusCoverage({ text, resolve, covered, isMachinery, isRepoFile });
   const { counts, ambiguous, unresolved, machinery, declared, cited, uncovered, ratio } = m;

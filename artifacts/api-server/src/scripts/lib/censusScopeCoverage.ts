@@ -64,8 +64,8 @@
  * that would contradict it.
  */
 
-/** A file citation, with or without a `:LINE`, `:A-B` or `:LINE#anchor` suffix. */
-export const CITE_RE = /`([A-Za-z0-9_./()\[\]+@-]+\.(?:ts|tsx|sql|mjs|js|json|yml))(?::[^`\n]*)?`/g;
+/** A file citation, with or without a `:LINE`, `:A-B` or `:LINE#anchor` suffix (group 2). */
+export const CITE_RE = /`([A-Za-z0-9_./()\[\]+@-]+\.(?:ts|tsx|sql|mjs|js|json|yml))(?::([^`\n]*))?`/g;
 
 /** The pattern this module replaced, kept so the tests can show what it missed. */
 export const LEGACY_CITE_RE = /`([A-Za-z0-9_./-]+\.(?:ts|tsx|sql|mjs|js|json|yml))(?::[0-9,\-#A-Za-z_]*)?`/g;
@@ -90,11 +90,50 @@ export function isVerdictRowLine(line: string): boolean {
 
 export type Resolution = { path: string } | { ambiguous: true } | null;
 
+/**
+ * WHICH FILE A CITATION NAMES — the rule check:doc-citations uses
+ * (`resolveCitationPath` + its anchor test), so the two guards cannot disagree
+ * about it. Measured 2026-09-27: this checker took an exact root path whenever
+ * one existed, so `app/messages/[id].tsx` — cited 40 times by census-telegraph,
+ * meaning the standalone client's screen — resolved to a 44-line mock at the
+ * repo root, while doc-citations verified the same citations against the
+ * standalone file. `candidates` is every repo path equal to the citation or
+ * ending in `/` + it. One candidate is the answer. Several are decided:
+ *
+ * - AN ANCHORED citation (`:LINE#text`) by its anchor, exactly as doc-citations
+ *   decides it: the candidates whose cited line contains the anchor text.
+ *   Exactly one is the answer; none or several is AMBIGUOUS — reported, never
+ *   guessed. (doc-citations fails the "several" case outright, so a census that
+ *   passes it never reaches that branch.)
+ * - AN UNANCHORED citation literally: the path exactly as written, if a file is
+ *   there. The repo carries legacy snapshot trees (`files/`, `follows-backend/`,
+ *   `portava-stamp-wave2-files/`, …) holding copies of real paths, so every
+ *   full path `artifacts/api-server/src/routes/index.ts` also suffix-matches
+ *   `files/artifacts/api-server/src/routes/index.ts`; reading those as
+ *   ambiguous would stop the checker measuring the plainest citations there
+ *   are. With no exact file, several candidates are ambiguous.
+ */
+export function resolveAmongCandidates(
+  cited: string,
+  candidates: readonly string[],
+  suffix: string | undefined,
+  lineAt: (path: string, line: number) => string | undefined,
+): Resolution {
+  if (candidates.length === 0) return null;
+  if (candidates.length === 1) return { path: candidates[0]! };
+  const m = /^(\d+)(?:[-–,]\d+)*#(.+)$/.exec(suffix ?? "");
+  if (!m) return candidates.includes(cited) ? { path: cited } : { ambiguous: true };
+  const line = Number(m[1]);
+  const needle = m[2]!;
+  const holding = candidates.filter((c) => (lineAt(c, line) ?? "").includes(needle));
+  return holding.length === 1 ? { path: holding[0]! } : { ambiguous: true };
+}
+
 export interface CoverageInput {
   /** The census document. */
   text: string;
-  /** A cited string to one repo path, to ambiguity, or to nothing. */
-  resolve: (cited: string) => Resolution;
+  /** A cited path plus its `:…` suffix (if any) to one repo path, to ambiguity, or to nothing. */
+  resolve: (cited: string, suffix?: string) => Resolution;
   /** Is this repo path in the census's CENSUS_SCOPE? */
   covered: (path: string) => boolean;
   /** Is this repo path shared machinery (the checker's NOT_GRADED)? */
@@ -133,7 +172,7 @@ export function measureCensusCoverage(input: CoverageInput): CoverageResult {
     if (decl) { declLines.push({ path: decl[1]!, reason: decl[2]!.trim(), line: i + 1 }); return; }
     const row = isVerdictRowLine(line);
     for (const m of line.matchAll(CITE_RE)) {
-      const r = input.resolve(m[1]!);
+      const r = input.resolve(m[1]!, m[2]);
       if (r === null) { unresolved++; continue; }
       if ("ambiguous" in r) { ambiguous++; continue; }
       counts.set(r.path, (counts.get(r.path) ?? 0) + 1);

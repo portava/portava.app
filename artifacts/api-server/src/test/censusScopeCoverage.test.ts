@@ -29,6 +29,7 @@ import {
   MIN_REASON,
   isVerdictRowLine,
   measureCensusCoverage,
+  resolveAmongCandidates,
   type CoverageInput,
 } from "../scripts/lib/censusScopeCoverage.js";
 
@@ -145,6 +146,46 @@ describe("census-media §32.14 — a NOT-GRADED declaration says so, and cannot 
     for (const l of ["| `path.ts` | change | yes |", "| File | Change |", "| --- | --- |", "- MD403 in prose", "| Census | Reported |"]) {
       assert.equal(isVerdictRowLine(l), false, l);
     }
+  });
+});
+
+describe("census-media §32.14 — which file a citation names: the rule check:doc-citations uses", () => {
+  const ROOT_MOCK = "app/messages/[id].tsx";
+  const STANDALONE = "travel-buddy-standalone/app/messages/[id].tsx";
+  const SNAPSHOT = "files/artifacts/api-server/src/routes/index.ts";
+  const REAL = "artifacts/api-server/src/routes/index.ts";
+  const LINES: Record<string, string[]> = {
+    [ROOT_MOCK]: ["export default function Mock() {", "  return null;", "}"],
+    [STANDALONE]: ["import x from 'y';", "export default function ThreadScreen() {", "  const { send } = useMessaging(threadId);"],
+    [SNAPSHOT]: ["router.use(tripsRouter);"],
+    [REAL]: ["router.use(tripsRouter);"],
+  };
+  const lineAt = (p: string, n: number) => LINES[p]?.[n - 1];
+
+  it("an ANCHORED citation goes to the one candidate whose cited line holds the anchor — not to the exact root file", () => {
+    assert.deepEqual(resolveAmongCandidates(ROOT_MOCK, [ROOT_MOCK, STANDALONE], "3#useMessaging(threadId)", lineAt), { path: STANDALONE });
+  });
+
+  it("an anchor that holds nowhere, or in two files, decides nothing: ambiguous, never guessed", () => {
+    assert.deepEqual(resolveAmongCandidates(ROOT_MOCK, [ROOT_MOCK, STANDALONE], "3#notThere", lineAt), { ambiguous: true });
+    assert.deepEqual(resolveAmongCandidates(REAL, [REAL, SNAPSHOT], "1#router.use(tripsRouter)", lineAt), { ambiguous: true });
+  });
+
+  it("an UNANCHORED citation is read literally: the exact path when a file is there, so snapshot copies do not unmeasure a full path", () => {
+    assert.deepEqual(resolveAmongCandidates(REAL, [REAL, SNAPSHOT], undefined, lineAt), { path: REAL });
+    assert.deepEqual(resolveAmongCandidates(REAL, [REAL, SNAPSHOT], "12-14", lineAt), { path: REAL });
+  });
+
+  it("with no exact file and several candidates, an unanchored citation is ambiguous; one candidate is the answer; none is nothing", () => {
+    assert.deepEqual(resolveAmongCandidates("routes/index.ts", [REAL, SNAPSHOT], undefined, lineAt), { ambiguous: true });
+    assert.deepEqual(resolveAmongCandidates("messages/[id].tsx", [STANDALONE], "9#anything", lineAt), { path: STANDALONE });
+    assert.equal(resolveAmongCandidates("nowhere.ts", [], undefined, lineAt), null);
+  });
+
+  it("measureCensusCoverage hands the resolver the citation's suffix", () => {
+    const seen: Array<[string, string | undefined]> = [];
+    measureCensusCoverage({ ...input("`app/messages/[id].tsx:3#useMessaging(threadId)` and `app/x.ts`"), resolve: (c, s) => { seen.push([c, s]); return null; } });
+    assert.deepEqual(seen, [["app/messages/[id].tsx", "3#useMessaging(threadId)"], ["app/x.ts", undefined]]);
   });
 });
 
