@@ -650,7 +650,7 @@ export interface DiscoveryServeRequestParams {
   sessionId:  string;
   servedAt:   string;
   servePoint: DiscoveryServePointId;
-  route?:     string;
+  route?:     string; modelVersion?: string; // census-discovery §55.12: the model that ordered THIS page (the PDE writer passes its own)
   items:      readonly ServedItem[];
   /** Already screened context; hashed, never stored. */
   context?:   Record<string, string | number | boolean | null>;
@@ -680,7 +680,7 @@ export function buildServeRequestRow(p: DiscoveryServeRequestParams): Record<str
     surface:        "discovery",
     serve_point:    p.servePoint,
     route:          p.route ?? null,
-    model_version:  DISCOVERY_MODEL_VERSION,
+    model_version:  p.modelVersion ?? DISCOVERY_MODEL_VERSION,
     context_hash:   serveContextHash(p.context),
     served_count:   p.items.length,
     item_ids:       p.items.map((i) => String(i.id)),

@@ -1169,3 +1169,26 @@ async function handleKeyedDirectBatch(req: any, res: any, sc: any, rows: Readonl
 }
 
 export default router;
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// census-discovery §55 — DV-41: `04` §7 dwell quality, POST /rank-events/dwell
+// ═══════════════════════════════════════════════════════════════════════════════
+//
+// APPENDED BELOW `export default router` ON PURPOSE. Census rows cite this file
+// by line (179, 228, 229-238, 600, 1083, 1138 …), so every existing line keeps
+// its position and text; a registration after the default export still runs at
+// module evaluation, before any importer mounts the router.
+//
+// A SIBLING PATH, NOT A BRANCH OF /rank-events/outcome: a dwell is not a funnel
+// rung (the outcome zod enum refuses it, and a dwell must never upgrade the
+// exposure's outcome), and the contract names no route for it. Everything but
+// the authentication lives in lib/discoveryDwell.ts: the owner's flag (3395,
+// seeded FALSE — off ⇒ 404 feature_disabled, nothing read, nothing written), the
+// (caller, recommendation_id) binding, and the retry-idempotent write.
+import { acceptDiscoveryDwell } from "../lib/discoveryDwell.js";
+
+router.post("/rank-events/dwell", asyncHandler(async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  await acceptDiscoveryDwell(getServiceClient(), req, res, auth.user.id);
+}));

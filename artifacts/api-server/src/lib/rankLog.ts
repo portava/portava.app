@@ -781,7 +781,7 @@ async function logDiscoveryPdeServeRequest(
     sessionId:  e.sessionId,
     servedAt:   e.servedAt,
     servePoint: servePoint as DiscoveryServePointId,
-    route:      typeof extraFeatures?.["route"] === "string" ? (extraFeatures["route"] as string) : "GET /discovery",
+    route:      typeof extraFeatures?.["route"] === "string" ? (extraFeatures["route"] as string) : "GET /discovery", modelVersion: DISCOVERY_PDE_MODEL_VERSION,
     // The REQUEST served every id on its page, scored or not; the denominator
     // is the page, not the ranked subset.
     items:      servedIds && servedIds.length > 0
