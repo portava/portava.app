@@ -11833,6 +11833,8 @@ The merged assertion is therefore `false` again (`artifacts/api-server/src/test/
 
 **What this does not change.** No verdict moves, and nothing is applied anywhere. The two live-column checks and `audit:schema` stay red until the pending migrations are applied to `portava-ci`, which is owner item A.
 
+**The repair broke a guard, and CI caught it.** `discoveryTrailIntegrity.test.ts` C6 asserts that nothing outside migrations and tests names `trail_relations`, so that no ranker can read it. The ratchet key named the table, so the full suite failed 1 of 27,641 on `87eb688fe`. I had run the drift check and its own suite, but not the suites that scan the source for that name. C6 now exempts exactly one path, `scripts/checkProductionDrift.ts`, with the reason in the test: that file opens no client and issues no query. C6 is still red when a probe names the table in any other `scripts/` file or reads it from `lib/`. Both probes were run and removed. Every suite that reads the drift script, names `trail_relations` or reads a census passes: 1,308 / 1,308 across 64 files.
+
 **For every lane that adds a table:** run `check:production-drift` and give the table its `unapplied` entry. That applies to P21 (3435–3439), P27 (3440–3444) and P28 (3445–3447).
 
 ## Cited, not graded (check:census-scope-coverage)

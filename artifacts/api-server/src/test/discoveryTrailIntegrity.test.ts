@@ -75,6 +75,11 @@ describe("C — 3415 and 3416 carry the TypeScript's rules", () => {
 
   it("C6. nothing but migrations and tests names trail_relations — no reader, so no ranker reads it", () => {
     const hits: string[] = [];
+    // The one file that may name the table without reading it: the production-drift
+    // ratchet, whose KNOWN_PRODUCTION_GAPS key records that production LACKS it
+    // (census-discovery §64.14). It opens no client and issues no query. Exempt by
+    // exact path only, so a reader added anywhere else — scripts included — still fails.
+    const NAMES_WITHOUT_READING = new Set([join("scripts", "checkProductionDrift.ts")]);
     const walk = (dir: string) => {
       for (const name of readdirSync(dir)) {
         const p = join(dir, name);
@@ -83,7 +88,7 @@ describe("C — 3415 and 3416 carry the TypeScript's rules", () => {
           walk(p);
         // The table or its rebuild, as a name — not a path that merely contains it
         // (3416's filename is watched by census scripts, and names nothing).
-        } else if (/\.(ts|mts|js|mjs)$/.test(name) && /\btrail_relations\b|rebuild_trail_relations/.test(readFileSync(p, "utf8"))) {
+        } else if (/\.(ts|mts|js|mjs)$/.test(name) && !NAMES_WITHOUT_READING.has(relative(SRC, p)) && /\btrail_relations\b|rebuild_trail_relations/.test(readFileSync(p, "utf8"))) {
           hits.push(relative(SRC, p));
         }
       }
