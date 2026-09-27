@@ -44,6 +44,7 @@
 import { readdirSync, readFileSync, existsSync, statSync } from "node:fs";
 import { join, posix } from "node:path";
 import { execFileSync } from "node:child_process";
+import { measureCensusCoverage, type Resolution } from "./lib/censusScopeCoverage.js";
 
 const REPO = new URL("../../../../", import.meta.url).pathname.replace(/\/$/, "");
 const CENSUS_DIR = join(REPO, "docs/architecture");
@@ -179,8 +180,11 @@ const CENSUS_SCOPE_FLOORS: Record<string, number> = {
   "census-wall.md": 0.95,   // widened 2026-09-11
 };
 
-/** Extract repo-relative-looking file citations from a census. */
-const CITE_RE = /`([A-Za-z0-9_./-]+\.(?:ts|tsx|sql|mjs|js|json|yml))(?::[0-9,\-#A-Za-z_]*)?`/g;
+// The citation pattern and the per-census NOT-GRADED declarations live in
+// lib/censusScopeCoverage.ts, where they are tested. census-media §32.14
+// records why: the pattern this file used to hold did not count most anchored
+// citations, or any Expo route path, so every ratio it reported was measured
+// over a subset of what each census cites.
 
 function repoFiles(): Map<string, string[]> {
   const out = new Map<string, string[]>();
@@ -211,35 +215,24 @@ const rows: string[] = [];
 
 for (const f of files) {
   const text = readFileSync(join(CENSUS_DIR, f), "utf8");
-  const counts = new Map<string, number>();
-  let ambiguous = 0;
-  let unresolved = 0;
-  for (const m of text.matchAll(CITE_RE)) {
-    const cited = m[1]!;
-    let resolved: string | null = null;
-    if (existsSync(join(REPO, cited)) && statSync(join(REPO, cited)).isFile()) {
-      resolved = cited;
-    } else {
-      const hits = byBase.get(posix.basename(cited)) ?? [];
-      const narrowed = cited.includes("/") ? hits.filter((h) => h.endsWith(cited)) : hits;
-      if (narrowed.length === 1) resolved = narrowed[0]!;
-      else if (narrowed.length > 1) { ambiguous++; continue; }
-      else { unresolved++; continue; }
-    }
-    counts.set(resolved, (counts.get(resolved) ?? 0) + 1);
-  }
-
   const scope = scopes[f];
   if (!scope) {
     rows.push(`  ${f.padEnd(34)} no CENSUS_SCOPE entry — not floored here; census-freshness reports it`);
     continue;
   }
   const covered = (p: string) => scope.some((s) => (s.endsWith("/") ? p.startsWith(s) : p === s || p.startsWith(s + "/")));
-  const allCited = [...counts.keys()];
-  const machinery = allCited.filter(isMachinery);
-  const cited = allCited.filter((p) => !isMachinery(p));
-  const uncovered = cited.filter((p) => !covered(p)).sort((a, b) => (counts.get(b)! - counts.get(a)!));
-  const ratio = cited.length === 0 ? 1 : (cited.length - uncovered.length) / cited.length;
+  const isRepoFile = (p: string) => existsSync(join(REPO, p)) && statSync(join(REPO, p)).isFile();
+  const resolve = (cited: string): Resolution => {
+    if (isRepoFile(cited)) return { path: cited };
+    const hits = byBase.get(posix.basename(cited)) ?? [];
+    const narrowed = cited.includes("/") ? hits.filter((h) => h.endsWith(cited)) : hits;
+    if (narrowed.length === 1) return { path: narrowed[0]! };
+    if (narrowed.length > 1) return { ambiguous: true };
+    return null;
+  };
+  const m = measureCensusCoverage({ text, resolve, covered, isMachinery, isRepoFile });
+  const { counts, ambiguous, unresolved, machinery, declared, cited, uncovered, ratio } = m;
+  for (const d of m.declarationProblems) problems.push(`::error::${f} ${d}`);
   const floor = CENSUS_SCOPE_FLOORS[f];
 
   rows.push(
@@ -249,7 +242,8 @@ for (const f of files) {
       (floor != null ? ` (floor ${(floor * 100).toFixed(0)}%)` : " (no floor set)") +
       (ambiguous ? ` · ${ambiguous} ambiguous basename(s) not resolved` : "") +
       (unresolved ? ` · ${unresolved} citation(s) name no file in the tree` : "") +
-      (machinery.length ? ` · ${machinery.length} machinery file(s) excluded from the denominator` : ""),
+      (machinery.length ? ` · ${machinery.length} machinery file(s) excluded from the denominator` : "") +
+      (declared.size ? ` · ${declared.size} declared NOT-GRADED in the census itself` : ""),
   );
   if (uncovered.length > 0) {
     // Five is the reading limit, not the reporting limit. CENSUS_SCOPE_LIST_ALL=1
@@ -264,7 +258,9 @@ for (const f of files) {
     problems.push(
       `::error::${f} watches ${(ratio * 100).toFixed(0)}% of the files it cites, below its floor of ` +
         `${(floor * 100).toFixed(0)}%. Either add the uncovered paths to CENSUS_SCOPE in ` +
-        `checkCensusFreshness.ts, or — if they are genuinely not what this census grades — say so. ` +
+        `checkCensusFreshness.ts, or — if they are genuinely not what this census grades — say so, ` +
+        `with a "- NOT-GRADED: <repo path> — <reason>" line in the census (lib/censusScopeCoverage.ts; ` +
+        `refused for any file a verdict row cites). ` +
         `Lowering the floor to pass is the one response that is never right.`,
     );
   }
