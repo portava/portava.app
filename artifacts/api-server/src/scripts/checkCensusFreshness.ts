@@ -4005,6 +4005,18 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "travel-buddy-standalone/src/services/__tests__/discoveryRefusalConsumers.guard.test.ts",
     "travel-buddy-standalone/src/components/discovery/__tests__/DiscoveryCategoryTab.loadMoreRefusal.component.test.tsx",
     "travel-buddy-standalone/src/hooks/__tests__/useGlobalSearchSuggestions.refused.component.test.tsx",
+    // WIDENED 2026-09-27 by §58 (lane P8, trending and ecosystem): DV-80 moves N -> W on the monitor report; DC-21,
+    // DV-33 and DC-07 stay W on the read-only trend API, 3410's snapshot parity and their suites. Each is evidence.
+    "artifacts/api-server/src/lib/discoveryTrendExplanation.ts",
+    "artifacts/api-server/src/lib/discoveryEcosystemGovernor.ts",
+    "artifacts/api-server/src/routes/discoveryTrending.ts",
+    "artifacts/api-server/src/scripts/reportDiscoveryEcosystem.ts",
+    "artifacts/api-server/src/migrations/3410_discovery_trend_snapshot_parity.sql",
+    "db/rollback/2026-09-27-3410-discovery-trend-snapshot-parity-rollback.sql",
+    "artifacts/api-server/src/test/discoveryTrendingApi.test.ts",
+    "artifacts/api-server/src/test/discoveryEcosystemGovernor.test.ts",
+    "artifacts/api-server/src/test/db/discoveryTrendSnapshotParity.db.test.ts",
+    "artifacts/api-server/src/test/db/discoveryEcosystemReport.db.test.ts",
   ],
   // ── ADDED 2026-09-15: census-passport joins the CHECKABLE set ──────────────
   //

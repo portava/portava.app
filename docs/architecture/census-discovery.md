@@ -10043,6 +10043,367 @@ No server route or lib file was changed, so no server hunk is routed.
 - CONSTRUCTED 181 / 188 = **96.3 %**; CORRECT 95 / 188 = **50.5 %**. The four buckets sum to 188.
 - **Production.** DC-33 is a test obligation and needs no deployment. The client fixes it proves reach no user until an app build carrying them ships.
 
+## §58 — Trending and ecosystem (lane P8): the stored trend state becomes the product's reading and reaches one read-only API, the governor's monitors are measured, and everything that would reorder a page stays held
+
+*Written 2026-09-27 by the Discovery P8 lane on branch `disc-p8-trending`, cut
+from `d7bfb15dc` (the `wave8-integration` tip carrying §46–§55). Every OLD verdict
+below was read from `CENSUS_INTEGRITY_DUMP=ALL`, not from prose. This section
+does not restate the headline. Nothing here is merged, deployed or
+flag-enabled: migration 3410 is applied to the local PostgreSQL 16 harness only
+(applied, rolled back, re-applied), and its flag is FALSE there too.*
+
+*The governing rule is the 2026-08-15 ruling, `docs/discovery/ROADMAP.md` item 4:
+"No optimising ranking machinery over an empty corpus." It holds new trend
+terms, new normalisation axes, a state machine that reorders, manipulation
+penalties, rediscovery boosts and governor adjustments. It does not hold
+correctness repairs, read-only exposure of states that are already computed,
+persisting what is already computed, or measurement. Every row below was sorted
+by that line first. **Nothing built here changes what any surface serves or in
+what order:** no serve or ranking path reads the store or imports the new API
+(`artifacts/api-server/src/test/discoveryTrendingApi.test.ts:457#it("H1. place_momentum is read only by the trend-explanation module"`),
+and `DiscoveryModifiers.trendStates` still has no consumer outside tests, so a
+trend STATE orders nothing anywhere, flag or no flag.*
+
+### 58.1 What was built, by what the hold permits
+
+| permitted by the hold as | built | rows |
+|---|---|---|
+| a correctness repair to existing trend code | 3410 replaces 2892's `rebuild_place_momentum` so the stored snapshot is the reading the product computes: the Discovery surface only (`artifacts/api-server/src/migrations/3410_discovery_trend_snapshot_parity.sql:139#WHERE surface = c_surface`), rows served inside the window only (`artifacts/api-server/src/migrations/3410_discovery_trend_snapshot_parity.sql:142#AND served_at >= v_prior_since`), and lib/discoveryTrendState's own sentence, NULL for `unknown` | DC-07, DV-33 |
+| persisting what is already computed | the same function now stores `03` §9's "unique travelers" per window (`artifacts/api-server/src/migrations/3410_discovery_trend_snapshot_parity.sql:159#count(DISTINCT user_id) FILTER (WHERE at >= v_recent_since)`) and the corpus each row was computed over. The classifier reads neither | DC-07 |
+| exposing already-computed states read-only | `GET /v1/discovery/trending/explanations` (`artifacts/api-server/src/routes/discoveryTrending.ts:45#router.get("/v1/discovery/trending/explanations"`), behind `discovery_trending_api_enabled` seeded FALSE by 3410 | DC-21, DV-33 |
+| a closed reason vocabulary over computed states | `artifacts/api-server/src/lib/discoveryTrendState.ts:281#export const TREND_REASON_CODES = [` — one code per state that is a claim, none for `unknown` | DV-33 |
+| measurement only | the `06` §8 monitor report, `artifacts/api-server/src/lib/discoveryEcosystemGovernor.ts:379#export function buildEcosystemReport(` and `report:discovery-ecosystem`, every read inside READ ONLY | DV-80 |
+| — (held) | nothing for DV-28, DV-29, DV-31, DV-32, DC-06, three of DC-21's actions, or DV-80's adjust half. §58.5 gives each design exactly | all nine |
+
+### 58.2 The trend API, as built
+
+- **Keyed by the viewer's own exposure, not by a place id.** A place id is
+  something anyone can type; keyed by it, the route would be an oracle for the
+  activity at any place, including one a protected-zone pass withheld. The
+  route takes the per-item `recommendationId` the client already holds and binds
+  it only to a Discovery exposure of THIS viewer
+  (`artifacts/api-server/src/lib/discoveryTrendExplanation.ts:235#.eq("user_id", viewerId)`),
+  column or `features` as lib/discoveryDwell reads it. Another viewer's token,
+  an attention row and another surface's token all read `unknown_recommendation`,
+  byte-identical to a token that does not exist (C1–C3).
+- **No raw score.** The body is a closed shape — state, reason code, sentence,
+  and the run's provenance. No rate, weight, total or traveller count at any
+  depth, and no number at all (B2).
+- **A disclosure floor that was not invented.** `emerging` needs only
+  `TREND_MIN_RATE` = 3 of weighted activity, which ONE person's save plus its
+  impression exceeds. A state is therefore disclosed only when both windows
+  carry at least `PRIVACY_THRESHOLD_V1.minUniqueActors` distinct travellers
+  (`artifacts/api-server/src/lib/discoveryTrendExplanation.ts:71#export const TREND_DISCLOSURE_MIN_TRAVELERS = PRIVACY_THRESHOLD_V1.minUniqueActors;`),
+  the k the live-claim path already enforces. Below it the item reads
+  `insufficient_evidence`, exactly as `unknown` and "no row" do, so suppression
+  does not itself disclose that someone was there (D1). A pre-3410 row has no
+  counts and is never disclosed (D2). Whether that k governs trend states is
+  owner question 1.
+- **Freshness from an existing bound.** A stored reading is served no longer
+  than the in-process reading lives, `MOMENTUM_CACHE_TTL_MS`
+  (`artifacts/api-server/src/lib/discoveryTrendExplanation.ts:68#export const TREND_SNAPSHOT_MAX_AGE_MS = MOMENTUM_CACHE_TTL_MS;`).
+  Stale and future-dated runs read `stale_snapshot`; no run reads `no_snapshot`;
+  a newer row written by 2892's all-surfaces function is not read (E1–E4). Nothing
+  schedules the rebuild, so on any database today every answer is `no_snapshot`.
+  That is the honest degradation, and it is stated.
+- **Failure is a 503 with a closed reason**, never a 200 with empty answers:
+  `trend_store_absent` (2892 or 3410 unapplied), `trend_read_failed` (including a
+  failure on the second read after the run was found), `exposure_read_failed`
+  (F, five cases). The flag is read per request and fails closed, so revocation
+  holds on the next request in both directions (A2–A4). A retry is
+  byte-identical and writes nothing (G1).
+
+### 58.3 Row moves
+
+| ID | was | now | evidence |
+|---|---|---|---|
+| DV-80 | N | **W** | The monitor half exists where the row said nothing did. `06` §8's seven monitors, in its order, plus `12` Phase 13's duplicate saturation (`artifacts/api-server/src/lib/discoveryEcosystemGovernor.ts:65#export const ECOSYSTEM_MONITORS: readonly MonitorDef[] = [`). Six are measured with value, sample and denominator named: concentration through P9's own producer and parser (`artifacts/api-server/src/lib/discoveryEcosystemGovernor.ts:265#export function readConcentration(`), repeated recommendations (`db/` and bare id folded, user ids never leave the database), reported spam on served community places, Trail freshness from each live Trail's newest health snapshot, hidden-gem exposure over P6's exposure definition (`artifacts/api-server/src/lib/discoveryEcosystemGovernor.ts:347#export function readHiddenGemExposure(`), and duplicate saturation on served pages. Two are UNMEASURED with the missing input named: new-creator success (neither `06` nor `12` defines "new" or "success") and stale content (no staleness rule exists for a served place). A failed read is UNREADABLE or INPUT ABSENT and a zero denominator is `insufficient_sample` — never 0 (`artifacts/api-server/src/test/discoveryEcosystemGovernor.test.ts:144#it("9. every read failed`). Executed read-only on the harness over controlled rows, and end to end through the script (`artifacts/api-server/src/test/db/discoveryEcosystemReport.db.test.ts:102#it("E1. each monitor reads what the rows imply"`). **W, not C:** `06` §8's own sentence is "Governor adjusts policy bounds", and the adjust half is held and absent — the module exports no adjuster and the report says so (`artifacts/api-server/src/lib/discoveryEcosystemGovernor.ts:397#adjust: "not built`); two monitors have no input; no threshold is ruled for any. |
+
+### 58.4 Rows re-graded from code and left where they are
+
+| ID | verdict | why it stays |
+|---|---|---|
+| DC-21 | W | 2 of `11` §4's 5. **Trend explanation: built** (58.2). **Trending by Trail: built by P7, with one defect** — when the all-surfaces Trail read fails and the item read succeeds, `trailMomentum` stays null (`artifacts/api-server/src/services/trails/TrailService.ts:972#trailMomentum = trailMomentumFromRankEvents(trailRead.rows, m.members, nowMs)[trailId] ?? null;`) and the route serves `trending: false` (`artifacts/api-server/src/routes/trails.ts:340#trending: (r.momentum ?? 0) > 0,`) beside a non-null provenance, so a failed read reads as a measured "not trending" (`11` §9). Hunk in 58.8. P7's viewer scoping and creator/place caps were re-read and hold. **Trending by location, personalized trending, emerging places/Trails: not built** — each is an ordered list or a new term (58.5). "Never return internal raw scores" holds on both built actions. |
+| DV-33 | W | Trend reasons now reach a route as a closed vocabulary with the product's sentence, and the stored sentence equals it (`artifacts/api-server/src/test/discoveryTrendingApi.test.ts:487#it("I3. 3410 stores lib/discoveryTrendState's sentence`). Two things keep it `W`, the second already stated in §12.5, neither closed here: (1) a reason names the state, not what drove it — the windows sum impressions, saves and outcomes, so "saves led this" is not computed and `03` §11's own examples (trip adds, independent groups, first-time visitors) have no input; (2) whether a public reason may name a neighbourhood is unruled. |
+| DC-07 | W | `03` §13's five stores are now each durable AND equal to the product's reading. Raw events: `rank_events`. Aggregated windows, state snapshot, explanation features, model/version references: `place_momentum`'s rates, `trend_state` per `computed_at`, reason plus unique travellers, and `model_version` with the weights, windows and thresholds on every row. The prohibition holds by construction: 2892's postcondition refuses a table without its evidence columns. **The parity is executed, not parsed:** every stored row equals `computeTrendStates` over the loader's own rows — state, four rates and sentence (`artifacts/api-server/src/test/db/discoveryTrendSnapshotParity.db.test.ts:113#it("S1. every stored row equals computeTrendStates`). 2892 failed that on the surface and on the sentence (S2 names the places that told them apart). **W, not C, on one ground:** nothing calls the rebuild, so no deployment stores anything; cadence and retention are unruled (question 4). `feature_version` is DC-17's field (P9's H4) and is not claimed here. The census sentence "no `place_momentum` table exists" was already superseded by §41.2. |
+| DV-28 | W | Re-read. `03` §14's criterion, "distinguish emerging vs established", is met for places by the classifier. Two gaps are in the specification's words: `03` §3 defines Emerging as "small absolute numbers, strong acceleration, **broad independent confirmation**" and the branch that says `emerging` checks only that there is no history (`artifacts/api-server/src/lib/discoveryTrendState.ts:162#if (!hadMid && !hadPrior) return "emerging";`), so one account can make a place emerging; and `03` §4's content lifecycle ("must depend on content type") is absent. Both are new trend terms: held (58.5). |
+| DV-29 | W | Temporal: three windows. Geographic: the place only. No radius or neighbourhood trend (`03` §3 Local Pulse) and no time-of-day effect exist. Held (58.5). |
+| DV-31 | W | Decay: the windows. Rediscovery: detected (`rediscovered`), never retested — `02` §9.5's "periodically retest" needs something to re-expose a cooled place, which is an exploration-slot change. Held (58.5). |
+| DV-32 | W | Re-read, and the row's "minimum-evidence floor" is weaker than it reads: the floor is 3 of WEIGHT, and one account's save (3) plus its impression (1) clears it, so a single account can move the held momentum scalar and the state. `03` §12's "diversity of evidence" is present only at the API's disclosure boundary (58.2), not in the classifier or the scalar. Held (58.5). |
+| DC-06 | W | Re-read against `03` §7's words, and the §14.2 cell's 2 of 6 is generous. **exposure FAIL for trend velocity** — velocity ADDS each impression as activity (`artifacts/api-server/src/lib/discoveryLocalMomentum.ts:174#bucket(r.item_id, r.served_at, MOMENTUM_EVENT_WEIGHTS.impression);`, and `artifacts/api-server/src/lib/discoveryTrendState.ts:217#bucket(r.item_id, r.served_at, TREND_EVENT_WEIGHTS.impression);`), so a place the ranker serves more trends more. DV-30's denominator is the ranker's engagement normaliser, not trend velocity. **content age FAIL** — no creation time is read; the 30-day window is the place's OWN history, which is none of §7's six. creator · Trail · location · time-of-day FAIL as before. 0 of 6 by the spec's words; a velocity with a self-baseline exists, so `W` (built, and wrong on every axis), not `N`. Held (58.5). |
+
+### 58.5 The held machinery — each design exactly, so the owner can answer once
+
+Nothing below is built. Each says what it reads, the shape of the formula, where
+it plugs in, and what it would change in serving order.
+
+1. **DV-28 (a) independent confirmation for `emerging`.** Reads
+   `recent_unique_travelers` (3410 stores it; the loader would select `user_id`,
+   QP-09). Shape: `emerging` additionally requires distinct recent travellers ≥
+   an owner number, else `unknown`; the same guard in `place_momentum_classify`.
+   Plugs into `classifyTrendState` and its SQL mirror. Serving order: none today
+   (no ranker reads states); it changes what the trend API says.
+   **(b) `03` §4 content lifecycle.** Reads content type and age; seven states
+   with per-type decay horizons (owner numbers — "hours" for a nightclub event,
+   "years" for a temple guide). A new classifier over content, not places.
+   Would reorder Trail modules and Discovery pages once consumed.
+2. **DV-29 Local Pulse.** Reads a place → cell map (db/ ids through
+   `discovery_places` lat/lng; OSM ids from the candidate payload). Shape: the
+   same three windows summed per cell and classified by the same rule. Plugs in
+   as `computeAreaTrendStates(rows, cellOf)` beside `computeTrendStates`.
+   Serving order: none unless listed; a listed Local Pulse is a new ordered
+   surface (see 7).
+3. **DV-31 retest of cooled places.** Reads `trend_state = cooling` with a prior
+   peak. Shape: a bounded share of exploration slots re-exposes such places.
+   Plugs into the exploration governor (`lib/discoveryPde.ts`, behind 2289).
+   Serving order: yes — it inserts items into pages.
+4. **DV-32 per-account cap and distinct-traveller floor.** Reads `user_id` per
+   event. Shape: each account contributes at most c weight per place per window,
+   and a place needs ≥ n distinct travellers before momentum or a state is
+   non-zero. Plugs into `computeLocalMomentum` and `computeTrendStates` (bucket
+   by place × user) and the SQL mirror. Serving order: yes, under 2289 — the
+   capped scalar moves the momentum term.
+5. **DC-06 normalisers.** Exposure: velocity from outcomes per exposure against
+   the place's own conversion baseline, impressions no longer counted as
+   activity. Creator: divide by the creator's median place velocity (the 3391
+   `submitted_by` join). Trail: divide by the Trail's velocity
+   (`trailMomentumFromRankEvents` exists). Location: divide by the cell's median
+   velocity (needs 2). Time-of-day: compare recent hours with the same hours of
+   the baseline (`served_at` is on every row). Content age: damp a new item's
+   surge by its age. All plug into the two pure computations. Serving order:
+   yes, under 2289.
+6. **DV-33 signal-led reasons.** Reads the per-window weight share by event kind.
+   Shape: a reason code names the dominant kind (saves, trip adds) when it
+   exceeds a share. Not ranking, but a new reason model the rows cannot yet
+   support for §11's cohort and group examples.
+7. **DC-21's three lists.** Trending by location and emerging places: the
+   newest run's rows for a destination's places, filtered by state and by the
+   disclosure floor, ORDERED — by what is the question. Emerging Trails: the
+   same classifier over the Trail fold `trailMomentumFromRankEvents` already
+   builds. Personalized trending: viewer affinity × trend — a ranking term.
+   Each plugs into `routes/discoveryTrending.ts` as a second action. Serving
+   order: each is a new ordered list.
+8. **DV-80 adjust.** Reads the monitor report and owner-ruled bands. Shape: a
+   pure `proposePolicyBounds(report, rulings)` that, for a monitor outside its
+   band, proposes a change to a NAMED bound — concentration →
+   `MAX_PER_CONTRIBUTOR_PER_PAGE`; new-creator success → the ruled 15–25 %
+   exploration budget or `TRAIL_EXPLORATION_SLOT_PCT`; hidden-gem exposure →
+   the hidden-gem share; repeated recommendations → a seen-set window — as an
+   audited proposal an admin applies (`11` §8 "trend integrity review"). Never
+   per user. Serving order: yes, through the bounds.
+
+### 58.6 Correctness findings in existing trend code
+
+1. **Fixed — 2892's corpus.** The rebuild read every surface; the product reads
+   `discovery`. A `living_page` place view or a pulse impression moved the
+   stored state and nothing the product computes (S2: place H, one Discovery
+   impression among twenty pulse ones, was `emerging` under 2892 and is
+   `unknown` in the product).
+2. **Fixed — 2892's explanation vocabulary.** Different sentences for the same
+   state, and a sentence for `unknown` (I3, S1).
+3. **Recorded, not fixed — an outcome on an impression served before the
+   window.** The loader admits a row only by `served_at`
+   (`artifacts/api-server/src/lib/discoveryLocalMomentum.ts:261#.gte("served_at", since)`),
+   so a save made today on a place last served 31 days ago is not counted, while
+   the module's header says an outcome counts "at its own time". 2892 counted it;
+   3410 mirrors the loader so the store equals the product (S2, place I). The
+   repair is a second bounded read on `outcome_at` with its own partial index;
+   it moves the held 2289 scalar and QP-09's plan, so it is left to whoever
+   lifts that hold, with this test to extend.
+4. **Routed — P7's Trails trending failure path** (58.8).
+5. **Recorded — DV-30 is graded on a different computation.** DV-30 (`C`,
+   "normalizes for exposure", `03` §14) rests on the ranker's engagement
+   normaliser. `03` §14 is Trending's list, and trend velocity counts
+   impressions as activity (DC-06 above). DV-30 is not this lane's row; its
+   verdict is not moved here, and the finding is offered for re-grading.
+6. **Recorded — two model versions for one trend reading** (P9's H3). The
+   in-process reading stamps the ranker's version; the stored one stamps
+   `discovery-trend-state-v1`. An existing suite pins the first as a design
+   choice, so it is left to DC-17's owner. The API serves the stored one.
+
+### 58.7 Tests, and every one seen RED
+
+52 new tests in four suites, all registered in the `test` script: 31 in
+`src/test/discoveryTrendingApi.test.ts`, 13 in
+`src/test/discoveryEcosystemGovernor.test.ts`, 4 in
+`src/test/db/discoveryTrendSnapshotParity.db.test.ts` and 4 in
+`src/test/db/discoveryEcosystemReport.db.test.ts` (the last two run on the
+harness and skip without it). They were written after the code, so each was
+proved by mutation: 41 targeted mutations, each run against the suites it
+names, each file restored and its sha256 checked IDENTICAL, and for the five
+SQL mutations the real 3410 re-applied afterwards. Every one of the 52 went red
+under at least one. The ones worth reading:
+
+| mutation | red |
+|---|---|
+| the exposure read's `user_id` filter inverted | C1, C2, and every per-item answer |
+| the disclosure floor removed (`return true`) | D1, D2, D3 |
+| the newest-run read loses `source_surface` | E4, B1, and S4 on the real database |
+| a second-read error ignored | F "fails on the SECOND read" |
+| a random field in the body | G1 (retry), B2 (closed shape), A4 |
+| 3410 reads every surface (2892's corpus) | S1, S2 — and 3410's own postcondition refused the file |
+| 3410 counts outcomes of impressions served before the window | S1, S2, and the postcondition |
+| 3410's cooling sentence or save weight drifts | I3 / I4 in the pure suite, S1 on the database |
+| the READ ONLY wrapper replaced by BEGIN/COMMIT | E2 |
+| the script falls back to a database it was not given | E4 |
+| an adjuster exported from the governor module | 13 |
+| a user id added to the repeat read's output | 12 |
+
+### 58.8 Hunk for the integrator (P7's files; line-neutral)
+
+- **H-P8-1 — Trails trending, a failed read must not read as "not trending".**
+  `artifacts/api-server/src/services/trails/TrailService.ts` line 972: replace
+  `?? null;` with `?? 0;` and append `  // measured: absent from the fold is 0; null now means only that the read failed (census-discovery §58)`.
+  `artifacts/api-server/src/routes/trails.ts` line 340: replace
+  `trending: (r.momentum ?? 0) > 0,` with
+  `trending: r.momentum === null ? null : r.momentum > 0,  // null: no reading (a failed Trail read, or no member), never "not trending" (census-discovery §58)`.
+  No other line moves. A no-member Trail then reads `trending: null`, matching
+  its `readingProvenance: null`. The test belongs in
+  `discoveryTrailRoutes.test.ts`: fail only the SECOND `rank_events` read
+  (the all-surfaces one) and assert `trending === null`; the existing happy-path
+  assertion `typeof r.body.trending === "boolean"` still holds.
+
+### 58.9 Checks run at this tree
+
+`typecheck`, `typecheck:tests` (863 diagnostics across 115 files, baseline
+unchanged), `check:test-registration`, `check:census-scope-coverage`,
+`check:migration-prefixes` (637 files), `check:flag-polarity`,
+`check:discovery-query-paths` (56 rows, clean), `check:writerless-reads`,
+`check:guard-coverage`, `check:route-auth-gate` (175 route files),
+`check:doc-citations`, `check:citation-targets` and the integrator's
+column-resolution diff (`problems=0`) all pass. **`check:census-integrity` fails,
+and only on the headline:** DV-80's move makes the rows count C 97 / W 82 / N 6 /
+X 3 against the stated C 97 / W 81 / N 7 / X 3, and this section does not restate
+the headline. With that headline appended to a scratch copy, the check passes
+with nothing else changed. The same drift is the only failure in the full
+`npm test` at this tree (`censusIdGrammar` and `censusIntegrityQualifiedVerdicts`
+read the real corpus).
+`docs/architecture/telegraph-phase0-inventory.md` was regenerated for the
+migration count. QP-22 in `docs/discovery/query-paths.md` records the API's two
+reads and their harness plans; no index was added.
+
+### 58.10 Other censuses, and freshness
+
+- **census-discovery.** `CENSUS_SCOPE` widened with the four new source files,
+  3410 and its rollback, and the four suites. `lib/discoveryTrendState.ts`,
+  `routes/index.ts`, `package.json` and `docs/discovery/query-paths.md` changed:
+  the first gained lines at its foot only, the second one line written over the blank line at its tail (its length is pinned by `creatorLedgerMigrationShape3385` M6), the
+  third two list entries on existing lines, the fourth two cells. No cited line
+  moved.
+- **census-trips** counts `artifacts/api-server/src/test/db/`, so the two new
+  database suites age it. They exercise `place_momentum`, `rank_events`, the
+  report reads and 3410. No Trips verdict can move.
+- **census-telegraph** reads `docs/architecture/telegraph-phase0-inventory.md`,
+  which changed only in its migration count.
+- **census-compass, census-map:** no file they count was touched. The map
+  lane's own trend-state list is a different vocabulary and nothing built here
+  reads it.
+
+The freshness ledger JSON is the integrator's to write.
+
+### 58.11 Read-only production SQL that would turn harness evidence into production evidence
+
+```sql
+-- 1. Is the store there, repaired, and gated?
+SELECT to_regclass('public.place_momentum') IS NOT NULL AS store,
+       EXISTS (SELECT 1 FROM information_schema.columns
+                WHERE table_schema = 'public' AND table_name = 'place_momentum'
+                  AND column_name = 'source_surface') AS repaired_3410,
+       (SELECT position('surface = c_surface' IN p.prosrc) > 0 FROM pg_proc p
+         WHERE p.proname = 'rebuild_place_momentum') AS rebuild_scoped;
+SELECT flag, enabled FROM public.feature_flags WHERE flag = 'discovery_trending_api_enabled';
+
+-- 2. Has anything ever been stored, and over which corpus?
+SELECT source_surface, count(*), min(computed_at), max(computed_at)
+  FROM public.place_momentum GROUP BY source_surface;
+
+-- 3. DV-32 / 58.2: places whose last-48-hour Discovery activity came from ONE account.
+SELECT count(*) FROM (
+  SELECT item_id FROM public.rank_events
+   WHERE surface = 'discovery' AND outcome <> 'analytics'
+     AND served_at >= now() - interval '48 hours'
+   GROUP BY item_id HAVING count(DISTINCT user_id) = 1) one_account;
+
+-- 4. DC-06: how much of trend velocity is exposure (impressions) rather than outcomes.
+SELECT count(*) FILTER (WHERE outcome = 'impression') AS impressions_only,
+       count(*) FILTER (WHERE outcome NOT IN ('impression','analytics')) AS converted
+  FROM public.rank_events
+ WHERE surface = 'discovery' AND served_at >= now() - interval '30 days';
+```
+
+And the monitor report itself, which runs every read inside READ ONLY and
+writes nothing: `pnpm run report:discovery-ecosystem -- --db-url <read-only production URL> --days 30`.
+
+### 58.12 Owner questions, verbatim
+
+1. **Disclosure.** "Is a published trend state an aggregate that
+   PRIVACY_THRESHOLD_V1 governs (at least 15 distinct travellers in each window
+   it describes), and must the trend API also withhold a state for a place inside
+   a protected zone? The same question applies to P7's Trails `trending`
+   boolean and item order, which today carry no traveller floor."
+2. **The ranker hold, scoped.** "The 2026-08-15 hold still covers every design in
+   census-discovery §58.5. Should any of them be scheduled before the corpus is
+   fixed — (a) a per-account cap and distinct-traveller floor in the trend and
+   momentum computation, (b) exposure-normalised velocity and the other five
+   `03` §7 normalisers, (c) a location-scoped or emerging trend list and what
+   orders it, (d) re-exposing cooled places, (e) the governor's adjust half —
+   or do all of them wait?"
+3. **Explanations.** "May a public trend explanation name a neighbourhood, as
+   `03` §11's 'Rising quickly in Sukhumvit tonight' does, and should it name the
+   signal that drove the trend (saves, trip adds), which is not computed
+   today?"
+4. **The snapshot.** "At what cadence should rebuild_place_momentum run, how long
+   are snapshots kept, and may a stored state be served for longer than the
+   in-process reading lives (10 minutes)?"
+5. **The governor.** "Which policy bounds may the Ecosystem Governor move,
+   within what ranges and on which monitor values — and is it automatic, or a
+   proposal an admin approves? And what do 'new creator' and 'success' mean for
+   new-creator success?"
+
+### 58.13 What would turn this red
+
+- Any serve or ranking path reading `place_momentum` or importing the trend API
+  (H1, H2), or a trend STATE reaching `portavaRank`.
+- 3410's rebuild drifting from `computeTrendStates` in corpus, window, weight or
+  sentence (S1, S2, I3, I4; 3410's postcondition for the corpus and window).
+- A trend API answer carrying a number, or a state disclosed below the floor,
+  from a stale run, or for another viewer's exposure (B2, D1–D3, E1–E4, C1–C3).
+- A monitor with a failed or absent input reading 0, or a threshold or adjuster
+  appearing in the governor module without a ruling (9, 13).
+- `discovery_trending_api_enabled` seeded or flipped ON without owner question 1
+  answered: 3410's postcondition refuses the seed.
+
+### 58.14 Integrator: P8 merged after §60, headline restated, two routings
+
+*Integrator addendum, 2026-09-27, at the merge of `disc-p8-trending` (`f2f48d795`, based on `d7bfb15dc`) into `wave8-integration` at `dc6fa1d4b`.*
+
+- **The merge.** Conflicts were unions only: the `test` line, `CENSUS_SCOPE`, and this census, with §58 after §60.9 because it merged last. The telegraph inventory was regenerated for 3410.
+- **Order.** §58's row statements now come after §59's and §60's. That changes no verdict: every §58 statement is DV-80 N → W or a W → W re-grade of a row no later section touched. The recount equals the pre-merge count plus DV-80's one move.
+- **The freshness ledger is written.**
+  - census-discovery: §58's eleven files.
+  - census-trips: the two harness suites, which read no trip object.
+- **Routing 1: the momentum function now has two writers in flight.**
+  - 3410 replaces 2892's `rebuild_place_momentum`: the discovery surface only, served-in-window rows, and the product's sentences.
+  - P14 (§61) is fixing DV-25, where a dismiss counts as positive momentum, and that fix needs the SQL twin changed too.
+  - P14 is told to take 3410's body as its base. It must not rebuild from 2892's. Its migration must `CREATE OR REPLACE` 3410's function with the one exclusion, and its TS/SQL parity test runs on a chain that includes 3410.
+- **Routing 2: hunk H-P8-1 goes to P14, which owns `services/trails/**` and `routes/trails.ts`.**
+  - `TrailService.ts:972`: `?? null` becomes `?? 0`.
+  - `routes/trails.ts:340`: `trending: r.momentum === null ? null : r.momentum > 0`.
+  - Before this change, a failed all-surfaces read served `trending: false` beside a valid provenance, so a failure read as a measured "not trending".
+
+**Headline** (§58's move: `DV-80` N → W):
+
+| bucket | count |
+|---|---|
+| BUILT-AND-CORRECT | **95** |
+| BUILT-BUT-WRONG | **87** |
+| NOT-BUILT | **5** |
+| CANNOT-VERIFY | **1** |
+
+- CONSTRUCTED 182 / 188 = **96.8 %**; CORRECT 95 / 188 = **50.5 %**. The four buckets sum to 188.
+- **The five rows still N:** `A18` and `DV-34` (the ranker hold), `A21` (no Telegraph action acts on a Discovery object; an owner question), and `DV-61` and `DV-62` (commercial rules the owner has not set).
+- **Production.** 3410 is applied to the harness only, and `discovery_trending_api_enabled` exists on no shared database.
+
 ## Cited, not graded (check:census-scope-coverage)
 
 - NOT-GRADED: artifacts/api-server/src/compass/CompassExplanationEngine.ts — §13.7 item 3 names Compass's HMAC recommendation-token signer as a refactor this lane declined to make in another lane's file. Discovery's recommendation id is minted by lib/discoveryRecommendationId.ts, and no Discovery verdict rests on the signer.
