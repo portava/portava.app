@@ -9,11 +9,11 @@
  * sets: does it explain, and does it ever hand another viewer's data or a raw
  * score to a non-admin?
  *
- *   X1  DEFECT, pinned: DiscoveryRankingService's 1-in-N debug sample (the only
- *       writer of `ranking_debug_samples`) omits two NOT NULL columns production
- *       carries (`content_type`, `content_id` — baseline 20260819), so every
- *       sample is refused 23502 and swallowed. The admin read below can only
- *       ever return rows somebody else wrote.
+ *   X1  FLIPPED at §62 (was: DEFECT, pinned — every debug sample omitted the NOT
+ *       NULL content_type/content_id of production's `ranking_debug_samples`,
+ *       was refused 23502, and was swallowed). The writer now supplies the type
+ *       always and a uuid content_id where the item has one, and 3421 lets a
+ *       Discovery sample carry none: every sample LANDS, and the admin reads it.
  *   X2  GET /admin/ranking/debug-samples, on controlled rows: an admin reads
  *       the breakdowns (raw scores included); a signed-in non-admin gets 403
  *       and not one byte of either viewer's sample; no token is 401.
@@ -24,10 +24,10 @@
  *   X5  GET /discovery to a signed-in non-admin, on the legacy-ranked cold
  *       fetch: no score, component or feature vector on the response, and no
  *       other viewer's id anywhere in it. With the ranking experiment flag on
- *       (in memory) the same serve shows X1's defect on the LIVE path: one
- *       debug sample attempted per candidate, every one refused 23502.
+ *       (in memory) the same serve exercises X1 on the LIVE path: one debug
+ *       sample per candidate, every one landed (§62; was: every one refused).
  *   X0  the flag rows were never written; every request was modelled; the
- *       only statements the database refused are the five samples above.
+ *       database refused nothing (§62; was: exactly the five samples above).
  */
 import { describe, test, before, after } from "node:test";
 import assert from "node:assert/strict";
@@ -133,29 +133,29 @@ describe("DV-52 — the graph and Discovery's debug surfaces explain, and only t
     );
   });
 
-  test("X1. DEFECT, pinned: the DRS debug sample omits production's NOT NULL content_type/content_id — every sample is refused and swallowed", async () => {
+  // §59 pinned DV-52 here as test("X1. DEFECT, pinned: the DRS debug sample omits production's NOT NULL content_type/content_id — every sample is refused and swallowed"). §62 flipped it:
+  test("X1. FLIPPED (§62): the DRS debug sample carries content_type, a content_id only for a uuid item, and LANDS — the admin read returns it", async () => {
+    const x1Session = randomUUID(), dbItem = "db/" + randomUUID(), uuidItem = randomUUID();   // uuidItem: a post-shaped item whose id IS a uuid
     const viewer = {
       viewerId: viewerA, travelStyles: ["food"], preferredLanguages: [], preferredCities: [CITY], currentCity: CITY,
       currentCountry: null, lat: null, lng: null, viewerAge: null, followedCreatorIds: new Set<string>(),
       mutedCreatorIds: new Set<string>(), blockedCreatorIds: new Set<string>(), seenItemIds: new Set<string>(),
-      sessionId: randomUUID(), lastActiveAt: null,
+      sessionId: x1Session, lastActiveAt: null,
     } as RankingViewerContext;
     const realRandom = Math.random;
     Math.random = () => 0;   // sample EVERY item (the writer samples 1-in-10)
     let out: unknown[] = [];
     try {
-      out = await rankItems([drsInput("db/" + randomUUID()), drsInput("node/9912001")], "discovery", viewer, b.client,
+      out = await rankItems([drsInput(dbItem), drsInput("node/9912001"), { ...drsInput(uuidItem), itemType: "post" } as RankingInput], "discovery", viewer, b.client,
         { flags: { RANKING_EXPERIMENT_ENABLED: true } } as any, { emitPerCandidateAnalytics: false });
-    } finally {
-      Math.random = realRandom;
-    }
-    assert.equal(out.length, 2, "precondition: the ranker ran and scored both items");
+    } finally { Math.random = realRandom; }
+    assert.equal(out.length, 3, "precondition: the ranker ran and scored all three items");
     await new Promise((r) => setTimeout(r, 500));
-    const written = Number(scalar(`SELECT count(1) FROM public.ranking_debug_samples WHERE viewer_id = '${viewerA}'`));
-    const refusals = b.failed.filter((f) => f.includes("/rest/v1/ranking_debug_samples"));
-    assert.equal(written, 0, "no debug sample lands on production's structure");
-    assert.equal(refusals.length, 2, `each attempt was refused by the database:\n${b.failed.join("\n")}`);
-    assert.ok(refusals.every((f) => /23502 null value in column "content_(type|id)"/.test(f)), refusals.join("\n"));
+    assert.deepEqual(b.failed.filter((f) => f.includes("/rest/v1/ranking_debug_samples")), [], `no sample was refused (was: each refused 23502):\n${b.failed.join("\n")}`);
+    const landed = (scalar(`SELECT string_agg(item_id || '|' || content_type || '|' || coalesce(content_id::text, '-'), ',') FROM public.ranking_debug_samples WHERE viewer_id = '${viewerA}' AND session_id = '${x1Session}'`) ?? "").split(",").sort();
+    assert.deepEqual(landed, [`${dbItem}|place|-`, `node/9912001|place|-`, `${uuidItem}|post|${uuidItem}`].sort(), "every sample lands: a type always, a uuid content_id only where the item id is one");
+    const asAdmin = await call("/api/admin/ranking/debug-samples?surface=discovery&limit=200", "admin-token");
+    assert.deepEqual([asAdmin.status, (asAdmin.body.samples as any[]).filter((s) => s.session_id === x1Session && s.components && typeof s.explanation_key === "string").length], [200, 3], "the admin read returns the sampler's OWN rows now");
   });
 
   test("X2. the admin debug read explains with raw scores — to an admin only; a non-admin reads nothing of either viewer", async () => {
@@ -227,7 +227,7 @@ describe("DV-52 — the graph and Discovery's debug surfaces explain, and only t
     }) as DiscoveryPlace);
     _setTestDbPlacesOverride(async () => places);
     const realRandom = Math.random;
-    Math.random = () => 0;   // the in-request ranker's debug sample fires for EVERY candidate (X1's defect, on the live path)
+    Math.random = () => 0;   // the in-request ranker's debug sample fires for EVERY candidate (X1, on the live path)
     let r: Awaited<ReturnType<typeof call>>;
     try {
       r = await call(`/api/discovery?destination=${CITY}&lat=38.7&lng=-9.1`, "a-token");
@@ -237,9 +237,9 @@ describe("DV-52 — the graph and Discovery's debug surfaces explain, and only t
     }
     assert.equal(r.status, 200, r.text.slice(0, 300));
     const refused = b.failed.filter((f) => f.includes("/rest/v1/ranking_debug_samples") && /23502/.test(f));
-    assert.equal(refused.length, 2 + 3, `the cold fetch's ranker tried one debug sample per candidate, and each was refused:\n${b.failed.join("\n")}`);
-    assert.equal(Number(scalar(`SELECT count(1) FROM public.ranking_debug_samples WHERE viewer_id = '${viewerA}' AND session_id IS DISTINCT FROM 'p12x'`)), 0,
-      "none of them landed (X2's controlled rows excepted)");
+    assert.equal(refused.length, 0, `the cold fetch's ranker sampled every candidate and none was refused (was: 2 + 3 refused 23502):\n${b.failed.join("\n")}`);
+    assert.equal(Number(scalar(`SELECT count(1) FROM public.ranking_debug_samples WHERE viewer_id = '${viewerA}' AND session_id IS NULL AND surface = 'discovery' AND content_type = 'place' AND content_id IS NULL`)), 3,
+      "one landed per candidate (the PDE's DRS pass has no session id; X1's and X2's rows carry theirs)");
     assert.equal(r.body?.meta?.cacheLevel, "miss", "precondition: the cold fetch, which ranks in-request");
     const items = r.body.places as any[];
     assert.equal(items.length, 3);
@@ -252,9 +252,9 @@ describe("DV-52 — the graph and Discovery's debug surfaces explain, and only t
     const after = scalar(`SELECT COALESCE(json_agg(t ORDER BY flag), '[]'::json)::text FROM (SELECT flag, enabled FROM public.feature_flags WHERE flag IN ('RANKING_EXPERIMENT_ENABLED','discovery_serve_log_enabled','DISCOVERY_ENGINE_MODE')) t`) ?? "";
     assert.equal(after, flagRowsBefore);
     assert.deepEqual(b.unmodelled, [], b.unmodelled.join("\n"));
-    // The database refused exactly the five debug samples X1 (2) and X5 (3)
-    // provoked, and nothing else on any path this suite drove.
-    assert.equal(b.failed.length, 5, b.failed.join("\n"));
+    // §62: the database refused NOTHING on any path this suite drove. Before the
+    // fix it refused exactly the five debug samples X1 (2) and X5 (3) provoked.
+    assert.equal(b.failed.length, 0, b.failed.join("\n"));
     assert.ok(b.failed.every((f) => f.startsWith("POST /rest/v1/ranking_debug_samples :: 23502 ")), b.failed.join("\n"));
   });
 });

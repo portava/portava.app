@@ -555,7 +555,7 @@ export async function rankForViewer<T extends PdePlace>(
       modifiers = inertModifiers("flag_off");
     }
   }
-  stages.modifiers = modifiers.reason;
+  stages.modifiers = modifiers.reason; if (modifiers.enabled) stages.graphReading = graphReadingOf(modifiers);  // census-discovery §62 (DV-52): provenance only — the graph reading these modifiers came from; absent with them off
 
   const viewerContext: ViewerContext = {
     userId:       viewer.userId,
@@ -1049,4 +1049,69 @@ export async function loadViewerNeighborhood(
     readFailed(degraded, "viewer_neighborhood", err ?? true);
     return null;
   }
+}
+
+// ── census-discovery §62 (DV-52) — WHICH graph reading produced the modifiers ──
+//
+// §59.1 DV-52 (1): where the graph reaches a Discovery decision, the decision
+// did not record which graph reading made it. lib/discoveryModifiers.ts turns
+// `compass_city_confidence` (depth, tier, the CPV2-12 source and its reason,
+// computed-at) into a momentum scale and an exploration budget, but `stages`
+// kept only the on/off reason — and the confidence row is OVERWRITTEN on each
+// daily rebuild, so a past serve's graph input could not be recovered.
+//
+// PROVENANCE ONLY, AND ONLY WITH THE MODIFIERS ON. `graphReadingOf` copies
+// values the modifiers record already holds; it reads nothing, computes no
+// weight, term or threshold, and nothing downstream of it reads it back, so no
+// order can change (db-free golden test: test/discoveryPdeGraphReading.test.ts).
+// With the modifiers OFF (2289, seeded OFF, and the 2026-08-15 ranker hold) the
+// key is not ASSIGNED — not assigned `undefined` — so the OFF `stages` object,
+// and every byte serialised from it, is what it was before §62.
+//
+// WHERE IT IS RECORDED. `routes/discovery.ts` hands `outcome.stages` whole to
+// logDiscoveryShadowServe, so a shadow serve's `pde_stages` jsonb carries it
+// with no writer change. The SERVED path (engine mode `pde`) records no
+// `stages` at all today — not even the on/off reason — and its per-item
+// features pass DV-39's allowlist screen, which classifies no graph or governor
+// key. Recording the reading on served rows is a route + classifier change
+// outside this file (census-discovery §62.5).
+//
+// Declared by merging, down here, for the reason the PdeViewer merge above
+// gives: every line near the original interface is an anchored citation.
+
+/** One city-confidence reading, as the modifiers consumed it. Null fields: no record was read (absent, or the read failed — the loader cannot tell them apart and both mean THIN). */
+export interface PdeGraphReading {
+  /** The canonical city key the reading was stored under, or null. */
+  city: string | null;
+  /** compass_city_confidence.depth_score (0–100), or the platform coverage's. */
+  depthScore: number | null;
+  tier: string | null;
+  /** CPV2-12: which store answered — `platform_coverage` | `compass_graph`; null = unknown provenance. */
+  source: string | null;
+  sourceReason: string | null;
+  /** When the reading was computed — the key that makes an overwritten row recoverable from logs. */
+  computedAt: string | null;
+  /** What the reading became (lib/discoveryModifiers.ts cityConfidenceInputs). */
+  momentumScale: number;
+  explorationBudgetPct: number;
+}
+
+export interface PdeStages {
+  /** §62: present ONLY when the modifiers ran. Absent (never `undefined`-valued) with them off. */
+  graphReading?: PdeGraphReading;
+}
+
+/** Pure: the reading the modifiers record carries. Reads nothing; copies only. */
+export function graphReadingOf(m: DiscoveryModifiers): PdeGraphReading {
+  const c = m.cityConfidence;
+  return {
+    city:                 typeof c?.city === "string" && c.city !== "" ? c.city : null,
+    depthScore:           typeof c?.depthScore === "number" && Number.isFinite(c.depthScore) ? c.depthScore : null,
+    tier:                 typeof c?.tier === "string" ? c.tier : null,
+    source:               typeof c?.source === "string" ? c.source : null,
+    sourceReason:         typeof c?.sourceReason === "string" ? c.sourceReason : null,
+    computedAt:           typeof c?.computedAt === "string" && c.computedAt !== "" ? c.computedAt : null,
+    momentumScale:        m.momentumScale,
+    explorationBudgetPct: m.explorationBudgetPct,
+  };
 }
