@@ -6,7 +6,7 @@
 
 To reproduce, run `docs/discovery/query-paths-explain.sql` against the harness. It seeds the rows, analyzes, explains, and then rolls everything back. It must never be pointed at `portava-ci` or production.
 
-`pnpm run check:discovery-query-paths` keeps §4 complete. It fails when any migration creates a table or an index on a Discovery table without a registry row here, and when a row names an object that no migration creates.
+`pnpm run check:discovery-query-paths` keeps §4 complete. It fails when any migration creates a table or an index on a Discovery table without a registry row here, and when a row names an object that no migration creates. Since census-discovery §62 an "index" includes one a UNIQUE or EXCLUDE constraint creates, inline in `CREATE TABLE` or through `ALTER TABLE … ADD`, and an unnamed one fails until it is named.
 
 ## 1. Cardinality
 
@@ -131,10 +131,24 @@ The Trail-affinity input. **Index:** `idx_trail_follows_user`. Harness: Index Sc
 - **Duplicate indexes in the baseline**, which no migration in this tree creates, so §4 does not register them. The 2026-08-19 baseline carries `discovery_cache_expires_idx` and `idx_discovery_cache_expires_at` (the same column), `discovery_geocode_cache_expires_idx` and `idx_discovery_geocode_cache_expires_at`, `discovery_places_type_idx` and `discovery_places_place_type_idx`, and `discovery_places_osm_id_idx` (unique) beside `idx_discovery_places_osm_id`. Each pair doubles the write cost for no read. Dropping an index in production is an operator decision, and this lane made none.
 - **`discovery_place_saves`** exists only in the baseline, with `discovery_place_saves_pkey (user_id, place_id)` and `discovery_place_saves_user_idx (user_id)`. The second is a prefix of the first.
 - **QP-03, QP-04 and QP-12 have no usable index**, which is correct at 184 rows. The spec's "unapplied geo indexes can leave production on sequential scans" is the same class of fact: the plan is right for today's corpus and wrong for a large one.
+- **Two indexes duplicated by a constraint (§62).** Both come from migrations in this tree, and both were invisible to the check until §62.
+  - `place_momentum_place_run_key` is `UNIQUE (place_id, computed_at)`, and `place_momentum_place_computed_idx` is `(place_id, computed_at DESC)`: the same two columns. A btree scans either way. With the plain index dropped inside the script's transaction, QP-22 is an `Index Scan Backward using place_momentum_place_run_key`, 1 row (QP-22-without-place_momentum_place_computed_idx). Every row a rebuild writes maintains both. 2892 is applied to no production database, so this costs nothing yet.
+  - `discovery_place_reports_unique` is `UNIQUE (place_id, reporter_id)`, and `discovery_place_reports_place_idx` is `(place_id)`, its leading column. The planner chose the single-column index for the by-place count. Either index serves that read.
+  - Dropping either index is a schema decision for the owner of that table's migration, and §62 made none.
 
 ## 4. Index and table registry (checked by `check:discovery-query-paths`)
 
 One row per table or index that a migration in `artifacts/api-server/src/migrations/` creates on a Discovery table. Columns: kind, name, table, the migration(s) that create it, the query path it serves (or "not a hot path" with the reason), and the rationale.
+
+**What counts as an index (§62).** A `CREATE [UNIQUE] INDEX` counts. So does the index a UNIQUE or EXCLUDE constraint builds, inline or added later: it costs the same on every write and the planner can choose it the same way. **A PRIMARY KEY has no row of its own. This is a reading of `10` §4, stated here so it can be contested.** `10` §4 asks each *query path* for an "index rationale". A primary key is not chosen to serve a path. It is the table's row identity, a table has exactly one, and its rationale is the table's own, which the table's row already carries. Where a path uses a primary key, the path's section names it (QP-01, QP-02, QP-06, QP-15). A UNIQUE constraint is an optional design choice with a write cost, so it needs its own reason. The same reading covers `idx_discovery_cache_dest_cat`, which only the baseline creates: no migration makes it, so the check cannot key it, and like §3's duplicates it is recorded rather than registered.
+
+**Harness evidence for the three §62 rows** (`query-paths-explain.sql`, the `§62` block, at the §1 cardinality). None of the three is read on a hot path. Each is an insert-time arbiter. So the meaningful plan is the arbiter itself (`EXPLAIN` of the `INSERT … ON CONFLICT`, without `ANALYZE`, because `ANALYZE` would write), plus the reads that could use the index but do not:
+
+| constraint-backed index | what the harness shows |
+|---|---|
+| `trails_slug_unique` | A slug-equality probe is an `Index Scan using trails_slug_unique`, 1 row of 2,000. `proposeTrail`'s peer read (`destination = x OR destination IS NULL OR slug ILIKE %x%`) is a `Seq Scan` that keeps 30 rows and removes 1,970. A btree cannot serve a leading-wildcard `ILIKE`, so the constraint gives that read nothing. |
+| `place_momentum_place_run_key` | `Conflict Arbiter Indexes: place_momentum_place_run_key` on the rebuild's `ON CONFLICT (place_id, computed_at) DO UPDATE`. QP-22 uses `place_momentum_place_computed_idx` while that index exists, and this one when it does not (§3). |
+| `discovery_place_reports_unique` | `Conflict Arbiter Indexes: discovery_place_reports_unique` on `ON CONFLICT (place_id, reporter_id) DO NOTHING`. The by-place count (`routes/admin.ts`) is an `Index Only Scan using discovery_place_reports_place_idx` (§3). |
 
 | kind | name | table | migration | path | rationale |
 |---|---|---|---|---|---|
@@ -146,6 +160,7 @@ One row per table or index that a migration in `artifacts/api-server/src/migrati
 | table | `discovery_place_reports` | `discovery_place_reports` | 0061 | not a hot path: written on report, read only by moderation | 0 rows in production |
 | index | `discovery_place_reports_place_idx` | `discovery_place_reports` | 0061 | not a hot path: moderation by place | FK-side index on `place_id` (ON DELETE CASCADE from discovery_places) |
 | index | `discovery_place_reports_reporter_idx` | `discovery_place_reports` | 0061 | not a hot path: the reporter's own-row policy and account erasure | FK-side index on `reporter_id` |
+| index | `discovery_place_reports_unique` | `discovery_place_reports` | 0061 | not a hot path: the one-report-per-(place, reporter) arbiter, probed once per report insert; no writer in this tree, 0 rows in production | `CONSTRAINT … UNIQUE (place_id, reporter_id)`, 0061's "upsert on conflict"; harness: the conflict arbiter (§4 note, §62). Its leading column duplicates `discovery_place_reports_place_idx` (§3) |
 | index | `discovery_places_primary_category_idx` | `discovery_places` | 0083 | not a hot path: the tab filter runs in TypeScript after QP-03 | category browse outside the serve path |
 | index | `discovery_places_city_category_idx` | `discovery_places` | 0083 | not a hot path: exact-city equality only, and the serve path uses `ILIKE` | Compass / seed tooling reads |
 | index | `discovery_places_osm_id_idx` | `discovery_places` | 0086 | QP-05 | uniqueness of an OSM place's row; the baseline adds a non-unique twin (§3) |
@@ -173,6 +188,7 @@ One row per table or index that a migration in `artifacts/api-server/src/migrati
 | index | `place_momentum_place_computed_idx` | `place_momentum` | 2892 | QP-22 | latest snapshot per place |
 | index | `place_momentum_computed_idx` | `place_momentum` | 2892 | not a hot path: a run's rows by time; nothing reads it yet | per-run reads and retention |
 | index | `place_momentum_live_state_idx` | `place_momentum` | 2892 | not a hot path: "what is trending" listing; no reader yet | partial on classified rows |
+| index | `place_momentum_place_run_key` | `place_momentum` | 2892 | not a hot path: `rebuild_place_momentum`'s `ON CONFLICT (place_id, computed_at)` arbiter, one probe per row a rebuild writes; QP-22 reads `place_momentum_place_computed_idx` | `CONSTRAINT … UNIQUE (place_id, computed_at)`: one reading per place per run, which makes a rebuild idempotent; harness: the conflict arbiter (§4 note, §62). Same two columns as `place_momentum_place_computed_idx` (§3) |
 | table | `trails` | `trails` | 2910 | QP-13 | 0 Trails in production |
 | table | `content_trails` | `content_trails` | 2910 | QP-14 | Trail membership |
 | table | `trail_edges` | `trail_edges` | 2910 | QP-15 | declared Trail relations |
@@ -181,6 +197,7 @@ One row per table or index that a migration in `artifacts/api-server/src/migrati
 | table | `trail_reports` | `trail_reports` | 2910 | QP-16 | moderation input to Trail health |
 | index | `idx_trails_destination_lifecycle` | `trails` | 2910 | QP-13 | Trails for a destination, by lifecycle |
 | index | `idx_trails_parent` | `trails` | 2910 | not a hot path: parent walk on a merge or split | partial on `parent_trail_id IS NOT NULL` |
+| index | `trails_slug_unique` | `trails` | 2910 | not a hot path: the uniqueness arbiter probed once per Trail proposal insert (a 23505 is a concurrent duplicate); no read filters `slug` by equality, and the proposal's peer read is `slug ILIKE %token%`, which a btree cannot serve | `CONSTRAINT … UNIQUE (slug)`: `02` §18's canonical handle: one slug is one Trail. Whether two spellings of a theme reach the same slug is the canonicaliser's job (DV-20), not this index's; harness: an equality probe is an Index Scan on it, the peer read a Seq Scan (§4 note, §62) |
 | index | `uq_content_trails_label` | `content_trails` | 2910 | not a hot path: a uniqueness constraint (one label per member), probed on insert | enforces `02` §4's one label per (trail, source, relationship, signal) |
 | index | `idx_content_trails_trail` | `content_trails` | 2910 | QP-14 | members of a Trail, newest first |
 | index | `idx_content_trails_source` | `content_trails` | 2910 | not a hot path: "which Trails is this place in" and the label-cap trigger | (source_type, source_id) |

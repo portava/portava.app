@@ -9,11 +9,11 @@
  * with plans captured on the local harness. A document is only worth something
  * while it stays complete, so this check makes it complete BY CONSTRUCTION:
  *
- *   1. Every `CREATE TABLE` and every `CREATE [UNIQUE] INDEX` that any file in
- *      src/migrations/ issues against a Discovery table must have a registry
- *      row in the document (`| table | … |` / `| index | … |`), naming the
- *      migration that creates it. A NEW Discovery migration that adds an index
- *      or a table without one fails here.
+ *   1. Every `CREATE TABLE`, `CREATE [UNIQUE] INDEX` and UNIQUE/EXCLUDE constraint
+ *      (inline or `ALTER TABLE … ADD`, §62) any file in src/migrations/ issues on
+ *      a Discovery table must have a registry row in the document (`| table | … |`
+ *      / `| index | … |`), naming the migration that creates it. A NEW Discovery
+ *      migration that adds an index or a table without one fails here.
  *   2. Every registry row must carry a rationale and either a query-path id
  *      (QP-nn) that the document defines, or the literal words
  *      "not a hot path" with a reason.
@@ -54,7 +54,7 @@ export function isDiscoveryTable(name: string): boolean {
   return DISCOVERY_TABLES.has(name) || name.startsWith("discovery_") || name.startsWith("trail");
 }
 
-export interface SchemaObject { kind: "table" | "index"; name: string; table: string; migration: string }
+export interface SchemaObject { kind: "table" | "index"; name: string; table: string; migration: string; /** §62: a UNIQUE/EXCLUDE constraint with no CONSTRAINT name — the registry cannot key it. */ unnamed?: boolean }
 
 /** Strip `--` line comments and C-style block comments. String contents are not parsed; a migration is not a string literal. */
 export function stripSqlComments(sql: string): string {
@@ -80,7 +80,7 @@ export function discoveryObjectsIn(migration: string, sql: string): SchemaObject
     const table = (m[3] ?? m[4] ?? "").toLowerCase();
     if (isDiscoveryTable(table)) out.push({ kind: "index", name, table, migration });
   }
-  return out;
+  return out.concat(constraintIndexesIn(migration, text));   // §62 DC-15 — UNIQUE/EXCLUDE constraints create indexes too
 }
 
 export interface RegistryRow { kind: "table" | "index"; name: string; table: string; migrations: string[]; path: string; rationale: string; line: number }
@@ -126,7 +126,7 @@ export function checkRegistry(objects: SchemaObject[], doc: string): CheckResult
   const malformed: string[] = [];
   for (const [k, os] of created) {
     const row = byKey.get(k);
-    if (!row) { missing.push(os[0]!); continue; }
+    if (os[0]!.unnamed) { malformed.push(`${os[0]!.name} (${os[0]!.migration}): an unnamed UNIQUE/EXCLUDE constraint creates an index this registry cannot key — name it (CONSTRAINT <name> UNIQUE …) and add its row`); continue; } if (!row) { missing.push(os[0]!); continue; }
     for (const o of os) {
       if (!row.migrations.some((m) => o.migration.startsWith(m.replace(/\.sql$/, "")))) {
         malformed.push(`${o.kind} ${o.name}: created by ${o.migration}, which its row (line ${row.line}) does not name`);
@@ -180,6 +180,120 @@ function main(): void {
     process.exit(1);
   }
   console.log("RESULT clean");
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// census-discovery §62 (DC-15) — constraint-backed indexes
+// ═══════════════════════════════════════════════════════════════════════════════
+//
+// Declared here, below every line a census cites (`:67`, `:114`), and reached
+// from `discoveryObjectsIn` by hoisted function declaration.
+//
+// THE GAP §59 FOUND. `CREATE TABLE (… CONSTRAINT x UNIQUE (…))` and
+// `ALTER TABLE … ADD CONSTRAINT x UNIQUE (…)` build a btree exactly as
+// `CREATE UNIQUE INDEX x` does — same maintenance cost on every write, same
+// planner candidate — but INDEX_RE matches only the CREATE INDEX spelling. So
+// `trails_slug_unique`, `place_momentum_place_run_key` and
+// `discovery_place_reports_unique` had no row, and a new migration adding one
+// passed the check. An EXCLUDE constraint builds an index the same way and is
+// registered the same way.
+//
+// PRIMARY KEY IS NOT REGISTERED — the reading, stated in query-paths.md §4. `10`
+// §4 asks each query path for an "index rationale". A primary key is not chosen
+// to serve a path; it is the table's row identity, it exists exactly once per
+// table, and its rationale is the table's own, which the table's registry row
+// already carries (and which this check already requires). Where a path uses a
+// primary key, the path's section names it (QP-01, QP-02, QP-06, QP-15). A
+// UNIQUE or EXCLUDE constraint is the opposite case: an optional design choice
+// with a write cost, so it needs a reason of its own.
+//
+// AN UNNAMED UNIQUE/EXCLUDE (`UNIQUE (a, b)`, `col text UNIQUE`,
+// `ALTER TABLE t ADD UNIQUE (…)`) gets a name PostgreSQL derives, which a
+// registry keyed by name cannot match reliably (truncation, collision suffixes).
+// It is reported MALFORMED with the instruction to name it, not silently passed.
+//
+// Scope, stated: DDL issued as a string through EXECUTE is matched only where it
+// is spelled out in full like any other statement; DDL assembled with format()
+// is invisible, exactly as it is to INDEX_RE.
+
+const CONSTRAINT_INDEX_KIND = String.raw`(?:UNIQUE|EXCLUDE)\b`;
+const ALTER_TABLE_RE = new RegExp(
+  String.raw`\bALTER\s+TABLE\s+(?:IF\s+EXISTS\s+)?(?:ONLY\s+)?${qualified}\s+([^;]*)`, "gi");
+const NAMED_CONSTRAINT_RE = new RegExp(String.raw`\bCONSTRAINT\s+${ident}\s+${CONSTRAINT_INDEX_KIND}`, "i");
+const TABLE_LEVEL_RE = /^\s*(?:CONSTRAINT\s|PRIMARY\s+KEY|UNIQUE\b|EXCLUDE\b|CHECK\b|FOREIGN\s+KEY|LIKE\s)/i;
+
+/** Blank out single-quoted literals, so `CHECK (x IN ('unique'))` is not a UNIQUE. */
+function withoutStringLiterals(sql: string): string {
+  return sql.replace(/'(?:[^']|'')*'/g, "''");
+}
+
+/** The text between the `(` at `open - 1` and its matching `)`; quote-aware. */
+function balancedBody(text: string, open: number): string {
+  let depth = 1, quote: string | null = null;
+  for (let i = open; i < text.length; i++) {
+    const ch = text[i]!;
+    if (quote) { if (ch === quote) quote = null; continue; }
+    if (ch === "'" || ch === '"') { quote = ch; continue; }
+    if (ch === "(") depth++;
+    else if (ch === ")" && --depth === 0) return text.slice(open, i);
+  }
+  return text.slice(open);
+}
+
+/** Split on commas at parenthesis depth 0; quote-aware. */
+function splitTopLevelCommas(sql: string): string[] {
+  const out: string[] = [];
+  let depth = 0, quote: string | null = null, cur = "";
+  for (const ch of sql) {
+    if (quote) { if (ch === quote) quote = null; cur += ch; continue; }
+    if (ch === "'" || ch === '"') { quote = ch; cur += ch; continue; }
+    if (ch === "(") depth++;
+    if (ch === ")") depth--;
+    if (ch === "," && depth === 0) { out.push(cur); cur = ""; continue; }
+    cur += ch;
+  }
+  if (cur.trim() !== "") out.push(cur);
+  return out;
+}
+
+/**
+ * The index one table element (a column definition, a table constraint, or the
+ * body of an `ALTER TABLE … ADD`) creates through a UNIQUE/EXCLUDE constraint.
+ * `null` when it creates none.
+ */
+function constraintIndexOf(element: string, table: string, migration: string): SchemaObject | null {
+  const el = withoutStringLiterals(element);
+  const named = NAMED_CONSTRAINT_RE.exec(el);
+  if (named) return { kind: "index", name: (named[1] ?? named[2] ?? "").toLowerCase(), table, migration };
+  const isTableLevel = TABLE_LEVEL_RE.test(el);
+  const unnamed = isTableLevel
+    ? new RegExp(String.raw`^\s*${CONSTRAINT_INDEX_KIND}`, "i").test(el)
+    : /\bUNIQUE\b/i.test(el);   // a column definition: `col text UNIQUE`
+  return unnamed ? { kind: "index", name: `(unnamed UNIQUE/EXCLUDE on ${table})`, table, migration, unnamed: true } : null;
+}
+
+/** Every index a UNIQUE/EXCLUDE constraint creates on a Discovery table, in one migration's (comment-stripped) text. */
+export function constraintIndexesIn(migration: string, text: string): SchemaObject[] {
+  const out: SchemaObject[] = [];
+  for (const m of text.matchAll(TABLE_RE)) {
+    const table = (m[1] ?? m[2] ?? "").toLowerCase();
+    if (!isDiscoveryTable(table)) continue;
+    for (const element of splitTopLevelCommas(balancedBody(text, m.index! + m[0].length))) {
+      const o = constraintIndexOf(element, table, migration);
+      if (o) out.push(o);
+    }
+  }
+  for (const m of text.matchAll(ALTER_TABLE_RE)) {
+    const table = (m[1] ?? m[2] ?? "").toLowerCase();
+    if (!isDiscoveryTable(table)) continue;
+    for (const action of splitTopLevelCommas(m[3] ?? "")) {
+      const add = /^\s*ADD\s+(?:COLUMN\s+)?(?:IF\s+NOT\s+EXISTS\s+)?([\s\S]*)$/i.exec(action);
+      if (!add) continue;
+      const o = constraintIndexOf(add[1]!, table, migration);
+      if (o) out.push(o);
+    }
+  }
+  return out;
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main();

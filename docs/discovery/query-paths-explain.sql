@@ -203,6 +203,31 @@ SELECT trend_state, recent_rate FROM public.place_momentum WHERE place_id = 'nod
 EXPLAIN (ANALYZE, COSTS OFF, TIMING OFF, SUMMARY OFF)
 SELECT count(*) FROM public.discovery_shadow_serves WHERE serve_point = 1 AND observed_at >= now() - interval '1 day';
 
+-- census-discovery §62 (DC-15): the three constraint-backed unique indexes the
+-- check could not see. None is a hot read; each is an insert-time arbiter, so the
+-- meaningful plans are the arbiter (EXPLAIN of the INSERT … ON CONFLICT, not
+-- ANALYZE: it would write) and the reads that could, but do not, use them.
+\echo '### §62 trails_slug_unique: the slug-equality probe a proposal INSERT makes'
+EXPLAIN (ANALYZE, COSTS OFF, TIMING OFF, SUMMARY OFF)
+SELECT id FROM public.trails WHERE slug = 'qp-42';
+\echo '### §62 trails_slug_unique: the proposal peer read (TrailService proposeTrail), which it cannot serve'
+EXPLAIN (ANALYZE, COSTS OFF, TIMING OFF, SUMMARY OFF)
+SELECT id, slug, title, destination FROM public.trails
+ WHERE destination = 'City 42' OR destination IS NULL OR slug ILIKE '%qp-42%' LIMIT 500;
+\echo '### §62 place_momentum_place_run_key: the rebuild''s conflict arbiter (2892 rebuild_place_momentum)'
+EXPLAIN (COSTS OFF)
+INSERT INTO public.place_momentum (place_id, computed_at, recent_rate, mid_rate, prior_rate, total_weight, trend_state, model_version, event_weights, window_ms, thresholds)
+VALUES ('node/42', now(), 1, 1, 1, 3, 'unknown', 'm', '{}', '{}', '{}')
+ON CONFLICT (place_id, computed_at) DO UPDATE SET recent_rate = EXCLUDED.recent_rate;
+\echo '### §62 discovery_place_reports_unique: the one-report-per-(place, reporter) arbiter (0061)'
+EXPLAIN (COSTS OFF)
+INSERT INTO public.discovery_place_reports (place_id, reporter_id, reason)
+VALUES ('10000000-0000-4000-8000-000000000013', '00000000-0000-4000-8000-000000000002', 'qp')
+ON CONFLICT (place_id, reporter_id) DO NOTHING;
+\echo '### §62 discovery_place_reports by place (routes/admin.ts most-reported count)'
+EXPLAIN (ANALYZE, COSTS OFF, TIMING OFF, SUMMARY OFF)
+SELECT count(*) FROM public.discovery_place_reports WHERE place_id = '10000000-0000-4000-8000-000000000013';
+
 -- The same two window paths WITHOUT 3391's partial index, to show what it buys.
 DROP INDEX IF EXISTS public.rank_events_discovery_served_at;
 \echo '### QP-19-before-3391 Discovery exposures in the window, no partial index'
@@ -216,5 +241,12 @@ SELECT item_id, outcome, served_at, outcome_at FROM public.rank_events
    AND item_id IN ('db/10000000-0000-4000-8000-000000000005','db/10000000-0000-4000-8000-000000000010','db/10000000-0000-4000-8000-000000000015')
    AND served_at >= now() - interval '7 days'
  ORDER BY served_at DESC, id DESC LIMIT 1000;
+
+-- §62: QP-22 WITHOUT place_momentum_place_computed_idx, to show that the unique
+-- constraint's index over the same two columns serves it on its own.
+DROP INDEX IF EXISTS public.place_momentum_place_computed_idx;
+\echo '### QP-22-without-place_momentum_place_computed_idx (§62)'
+EXPLAIN (ANALYZE, COSTS OFF, TIMING OFF, SUMMARY OFF)
+SELECT trend_state, recent_rate FROM public.place_momentum WHERE place_id = 'node/42' ORDER BY computed_at DESC LIMIT 1;
 
 ROLLBACK;
