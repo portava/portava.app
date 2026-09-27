@@ -28,7 +28,7 @@ import {
   verifyUploadedBytes,
   MEDIA_SIZE_LIMITS,
 } from '../lib/mediaPipeline.js';
-import { recordEntityMedia } from '../lib/mediaAssets.js'; import { recordPostcardCreatedSignal } from '../lib/mediaAnalytics.js';
+import { recordEntityMedia, MEDIA_SOURCE_UNDECLARED } from '../lib/mediaAssets.js'; import { recordPostcardCreatedSignal } from '../lib/mediaAnalytics.js';
 
 const router = Router();
 
@@ -1124,7 +1124,7 @@ router.post('/postcards/:id/media/:mediaId/complete', async (req, res) => {
           publicUrl: counts.firstReadyUrl,
           entityType: 'postcard',
           entityId: (pcIns.data as any).id as string,
-          isCover: true,
+          isCover: true, sourceType: MEDIA_SOURCE_UNDECLARED, // the post's uploaded file: §6 source never declared (census-media §35, MD37)
         });
         // census-media §21 — §44 "Memory / Postcard created", at the one
         // moment the Postcard row is actually written.

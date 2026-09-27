@@ -636,3 +636,39 @@ export function isOperationalEvidenceAt(asset: EvidenceAssetInput, nowMs?: numbe
   if (!e.eligible || !e.expiresAt) return false;
   return now < new Date(e.expiresAt).getTime();
 }
+
+// ── census-media §35 (MD37): §6's eight values, and the one no writer chose ───
+
+/**
+ * The eight §6 `MediaAsset.sourceType` values, exactly, in the spec's order.
+ * `MediaSourceType` above is these eight plus the legacy 'user'.
+ */
+export const SPEC_MEDIA_SOURCE_TYPES = [
+  "camera",
+  "library",
+  "provider",
+  "official",
+  "community",
+  "generated",
+  "screenshot",
+  "derivative",
+] as const satisfies readonly MediaSourceType[];
+
+/**
+ * What a `media_assets` writer passes when the spec does not settle its source.
+ *
+ * It is the legacy 'user' — the value those writers already stored through the
+ * writer's own fallback — under a name, so that a writer nobody has told its
+ * source SAYS so where it writes, and the list of such writers is the owner's
+ * decision inventory (census-media §35, MD37; pinned by
+ * src/test/mediaAssetSourceDeclared.test.ts).
+ *
+ * It is deliberately NOT one of the eight. Choosing one would be a protection
+ * change, not a rename: camera, library and community are evidence-eligible
+ * (EVIDENCE_ELIGIBLE_SOURCE_TYPES above), which a presence receipt reads
+ * (services/intel/PresenceVerifier checkReceipt), and they rank as `authentic`
+ * where 'user' ranks `unknown` (lib/mediaRankingSignals provenanceClassOf). The
+ * upload route receives bytes and a Content-Type only, so which of camera,
+ * library or screenshot a file is was never declared to the server.
+ */
+export const MEDIA_SOURCE_UNDECLARED = "user" as const satisfies MediaSourceType;

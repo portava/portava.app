@@ -9252,3 +9252,453 @@ lane did not make it.
 | docs/architecture/census-discovery.md | lines 4971 and 5294 |
 | docs/architecture/census-input-intelligence.md | line 1055 (a second correction on the same row) |
 | docs/architecture/census-media.md | §38.4's four items marked closed or corrected (line-neutral), and §38.7 to §38.10 |
+
+## 35. Lane I — the media → intelligence boundary: what was unbuilt, what waits on a decision, and the questions that decide it — 2026-09-27
+
+**Scope.** Ten rows: MD37, MD53, MD58, MD65, MD66, MD71, MD162, MD197,
+MD370 and MD445. Branch `lane-i-intel`, cut from
+`claude/sensing-completion-20260925` at `e9e0b0404`.
+
+**The rule this lane worked under.** Most of these rows wait on MD65, which
+§20.6 records as an owner SAFETY decision. Building any part of that decision
+"behind a flag" would still fix its shape before the owner has chosen it. So
+this lane:
+- wrote no `intel_observations`, `intel_evidence` or claim row from media;
+- resolved no other account's rotating contributor token;
+- widened no disclosure of anyone's content;
+- applied nothing to any database, pressed no flag, and authored no migration.
+  Numbers 3345–3349 were assigned and are unused, for the reason in §35.3.
+
+**No row moves.** The ten are restated in §35.5 with the RED WHEN each still
+needs. Each is split into IMPLEMENTATION, DECISION and EXTERNAL VERIFICATION.
+
+### 35.1 Re-read before building — what the tree already says
+
+Four facts change the questions the owner is asked. Each was checked against
+the code, not the census sentence.
+
+1. **Media already reaches intelligence in two dark places outside Media. A
+   third place, Media's own, has no caller.** None of the three writes an
+   observation from media, so MD65's RED WHEN is not met.
+   - **The §22 map path.** It stores a photo as EVIDENCE bolted to an
+     observation the same person just made. The server's ruling is that
+     "a photo is evidence, not a claim"
+     (`artifacts/api-server/src/routes/mapObservations.ts:371#a photo is evidence, not a claim`).
+     The client now wires the prompt
+     (`travel-buddy-standalone/app/map/index.tsx:2905#onRequestMedia={requestContributionMedia}`).
+     Two flags gate it, `map_contributions_enabled` and
+     `intel_capture_quick_signal`, plus intel consent
+     (`artifacts/api-server/src/lib/intelEvidenceCapture.ts:210#if (!(await hasValidIntelConsent(sc, actorId))) return reject("consent_required");`).
+   - **The presence receipt (P3).** It reads a media asset the actor owns as
+     presence evidence for their observation. It holds only for a §35-eligible
+     asset
+     (`artifacts/api-server/src/services/intel/PresenceVerifier.ts:438#if (!isEvidenceEligible({ ...(asset as any), now: nowMs })) return refuse("ineligible");`),
+     behind `intel_presence_verification_enabled`.
+   - **Media's own seam.** `linkMediaEvidence` still has no caller
+     (`artifacts/api-server/src/lib/media/mediaEvidenceLink.ts:119#export async function linkMediaEvidence(`).
+     Its read half already feeds confidence when `media_evidence_enabled` is on
+     (`artifacts/api-server/src/lib/intelProjectionAggregator.ts:111#evidenceQuality: ev.hasEvidence ? 0.8 : 0.3,`).
+
+   So the MD65 decision is not a blank page. The Sensing and Map lanes have
+   already answered part of it for the map, and §35.4 asks whether Media
+   follows that answer.
+
+2. **The seam-state note is stale on three of its five gaps.**
+   `docs/map/media-evidence-seam-state-20260903.md:50#The §22 media prompt is not reachable in the UI.`
+   and its gaps 2 and 3 no longer hold:
+   - the prompt is mounted;
+   - the map uploads through `POST /media/upload`;
+   - the server accepts media evidence that carries an `observationId`.
+
+   Gaps 4 and 5 still hold: nothing writes a `media_attachments` row of type
+   `observation`, and no Moment, Highlight or Postcard surface produces an
+   observation. The note is outside this lane and was not edited.
+
+3. **The `'user'` in `media_assets.source_type` comes from the writer, not the
+   table.** §20.6's MD37 cell blames 0191's column default
+   (`artifacts/api-server/src/migrations/0191_media_assets.sql:28#DEFAULT 'user'`).
+   In fact the writer sent `'user'` itself, through its own `?? "user"`, and
+   no writer in this tree omits the column. The W stands; only the mechanism
+   in that cell was wrong.
+
+4. **Migration 2250 states an intention nothing carries out.** Its CHECK comment
+   says the legacy value "Maps to library/community"
+   (`artifacts/api-server/src/migrations/2250_media_asset_canonical_model.sql:105#Maps to library/community.`).
+   No code maps it. The §35 classifier treats `'user'` as NOT evidence-eligible,
+   and the ranker ranks it `unknown`. The owner question in §35.4 (MD37) has to
+   settle which of the two is right.
+
+### 35.2 What was built — the parts no decision governs
+
+**A. MD37: every `media_assets` writer now states its §6 source.**
+
+§6 lists eight names and settles, for no writer in this tree, which one an
+ordinary upload is. The upload route receives bytes and a Content-Type, never
+"camera" or "library". So nothing here chooses a value. What was built is the
+part that needs no choice:
+- **A named value for "not declared".** `MEDIA_SOURCE_UNDECLARED` is the
+  existing `'user'` under a name, so every writer that has not been told its
+  source says so where it writes
+  (`artifacts/api-server/src/lib/media/mediaEvidenceEligibility.ts:674#export const MEDIA_SOURCE_UNDECLARED = "user" as const satisfies MediaSourceType;`).
+  The eight are listed once, beside it
+  (`artifacts/api-server/src/lib/media/mediaEvidenceEligibility.ts:646#export const SPEC_MEDIA_SOURCE_TYPES = [`).
+- **The writer's fallback is that name, not a bare literal**
+  (`artifacts/api-server/src/lib/mediaAssets.ts:386#source_type: input.sourceType ?? MEDIA_SOURCE_UNDECLARED,`).
+  The input types narrow from `string` to the §6 union plus the legacy value,
+  so a misspelt source no longer compiles.
+- **Every writer states its source.** The table below lists each one. Every
+  edit is line-neutral: an existing line was extended, so no citation moved.
+
+| Writer | What it writes | Stated source |
+| --- | --- | --- |
+| upload route | the uploaded file | undeclared — `artifacts/api-server/src/routes/posts.ts:258#ownerUserId: user.id, sourceType: MEDIA_SOURCE_UNDECLARED,` |
+| postcard auto-create | the post's first ready file | undeclared — `artifacts/api-server/src/routes/postcards.ts:1127#isCover: true, sourceType: MEDIA_SOURCE_UNDECLARED,` |
+| memory create | the memory's photo | undeclared — `artifacts/api-server/src/services/passport/PassportMemoryService.ts:142#isCover: true, sourceType: MEDIA_SOURCE_UNDECLARED,` |
+| post attachments | each file of a new post | undeclared — `artifacts/api-server/src/lib/mediaAssets.ts:1089#isCover: i === 0, sourceType: MEDIA_SOURCE_UNDECLARED,` |
+| gem submit | the gem's photo | `community`, unchanged — `artifacts/api-server/src/services/hiddenGems/HiddenGemService.ts:197#sourceType: "community",` |
+| backfill script | twelve legacy sources undeclared; event media and gem photos `community` | the default parameter is removed, so every call states its source — `artifacts/api-server/src/scripts/backfill-media-assets.ts:33#async function upsertAsset(owner: string, publicUrl: string, sourceType: MediaSourceType)` |
+
+**No stored value changes.** Every writer stores exactly what it stored before.
+
+**The guard** is `artifacts/api-server/src/test/mediaAssetSourceDeclared.test.ts`
+(13 cases). It reads the TypeScript AST of `src/`, with tests excluded and
+scripts included. It fails when:
+- a canonical writer call omits `sourceType`, passes a bare `"user"`, or passes
+  a computed value;
+- a new code path INSERTs or UPSERTs a `media_assets` row;
+- anything UPDATEs `source_type`, including through the versioned patch;
+- the undeclared sites differ from the pinned inventory
+  (`artifacts/api-server/src/test/mediaAssetSourceDeclared.test.ts:213#const UNDECLARED_INVENTORY`).
+  That inventory is the owner's decision list: five sites, one of them twelve
+  backfill calls.
+- the sentinel stops being storable, becomes one of the eight, becomes
+  evidence-eligible, or ranks `authentic`
+  (`artifacts/api-server/src/test/mediaAssetSourceDeclared.test.ts:394#it("the sentinel is not one of the eight, is not evidence-eligible, and does not rank as authentic"`).
+
+It also pins the eight against the spec text and against 2250's CHECK. Each
+check has a control that fails if the scan found nothing.
+
+**B. MD197's boundary: the reputation route no longer resolves another
+account's rotating tokens.** This is a privacy fix, found while checking the
+boundary.
+
+What was wrong:
+- `GET /v1/media/contributors/:contributorId/reputation` took any account id
+  and any place id from the caller and returned that account's §25 reputation.
+- Computing it runs 3310's account-to-tokens bridge for the NAMED account
+  (`artifacts/api-server/src/services/media/MediaContributorReputationService.ts:63#const identities = await readOwnContributorIdentities(sc, scope.contributorId);`).
+- The bridge's contract is that the caller's authorization already
+  established the account id
+  (`artifacts/api-server/src/lib/intelConsent.ts:481#Runs in the safe direction only — the caller must already hold the account id,`).
+  The route established nothing.
+- `placeExpertise` is min(accepted observations at the place, 8) / 8
+  (`artifacts/api-server/src/lib/mediaContributorReputation.ts:115#export function placeExpertise(placeAccepted: number): number {`).
+- So any signed-in user could read how many accepted reports a named person
+  had made AT A NAMED PLACE: where that person has been.
+- The server route reads no flag. Only the client chip is gated, by
+  `media_request_a_view_enabled`.
+- This is the exact use of the bridge that MD197's blocker forbids the ranker.
+
+The fix: the route now answers only for the caller's own account
+(`artifacts/api-server/src/routes/mediaViewRequest.ts:176#if (contributorId.data !== auth.user.id) {`).
+It refuses before any identity RPC and before any contribution row is read.
+
+Proved over HTTP through the real router, `requireUser` and the real service
+(`artifacts/api-server/src/test/mediaContributorReputationSelfOnly.test.ts:154#it("another account's reputation is refused, and nothing about that account is resolved or read"`).
+A CONTROL shows the other account's count really is in the data
+(`artifacts/api-server/src/test/mediaContributorReputationSelfOnly.test.ts:148#it("CONTROL: the data the old route disclosed is really there`).
+
+What it changes for a person:
+- The perspective viewer's trust chips
+  (`travel-buddy-standalone/src/features/media/screens/MediaPerspectiveViewerScreen.tsx:529#<ContributorTrustChips contributorId={contributor.id} subjectId={placeId} />`)
+  now render nothing for anyone but the viewer. That is the component's own
+  degrade contract, and the chip is flag-dark today.
+- Whether others may see a contributor's §25 trust is §35.4's MD197 question.
+  One word from the owner, and the authorization they choose, reopens it.
+
+**For the integrator.** MD205, MD206, MD207 and MD450 are graded C on the §25
+dimensions being COMPUTED. They are not this lane's rows and are not restated.
+Read them against this change, because the dimensions are now served to their
+subject only.
+
+### 35.3 What was deliberately not built, and why each would decide something
+
+- **MD71 — a pure function for "live" freshness.** It cannot be defined
+  without a claim.
+  - The media side caps at `fresh`, on purpose
+    (`artifacts/api-server/src/lib/media/mediaFreshness.ts:4#It caps at 'fresh'`).
+  - §48 gives freshness to Live Intelligence, and §39 forbids presenting
+    anything cached as live.
+  - A `live` derived from age alone would manufacture a live label from a raw
+    photo. A `live` derived from "backs a live claim" needs the evidence link
+    MD65 decides, and choosing to label the PHOTO rather than the claim is
+    itself part of that decision.
+- **MD162 — the zone-naming join.** The gateway guard would not stop a read
+  of `geo_zones` names by id, because it guards reader functions, not tables.
+  But the join would still decide something:
+  - The zone model is the gateway's alone
+    (`artifacts/api-server/src/routes/mapProjection.ts:91#THE ZONE MODEL IS THIS ROUTE'S JOB, AND ONLY THIS ROUTE'S.`).
+  - The place-to-zone association the pairing needs already exists INSIDE the
+    gateway and is not published
+    (`artifacts/api-server/src/routes/mapProjection.ts:900#const model = buildFlowZoneModel(zones, indexPlaceZones(placeRows, zones));`).
+  - A flow carries zone ids only
+    (`artifacts/api-server/src/lib/mapAggregation.ts:1250#export interface CrowdFlowPayload {`).
+  - Names alone would not meet the RED WHEN, and a Media-side zone read is the
+    second zone model the gateway exists to prevent.
+- **MD53 and MD58 — an observation ref, an evidence role or corroboration on
+  a served item.** Each needs a READ of `intel_evidence`.
+  - The Map lane's module records that such a read path needs a moderation
+    decision first.
+  - Worse, serving "this photo backs observation O" tells every viewer that
+    the photo's owner made observation O. That re-identifies a contribution
+    3002 tokenised, and every other contribution under the same weekly token.
+- **MD370 — `POST /media/:id/contribution`.** What a media contribution
+  CREATES is MD65's question: a §19 mission answer, a §16.3 gem observation or
+  a place perspective. An endpoint writing any one of them picks the answer.
+- **No migration.** Dropping 0191's `DEFAULT 'user'` would change nothing,
+  because every writer sends the column (§35.1 fact 3). And WHICH value lands
+  is the MD37 decision itself.
+
+### 35.4 The questions the owner must answer
+
+Each option says:
+- what it makes the system do to a real person's photo;
+- the consent it needs;
+- what it would cost to build, and where.
+
+**MD65 — may a photo or video published in Media become an input to Live
+Intelligence?** This decides MD53, MD58, MD65, MD66, MD370, MD445 and one
+branch of MD71.
+
+*Question 1, whether and how.*
+
+| Option | What it does to a person's photo | Rows it settles | Cost and files |
+| --- | --- | --- | --- |
+| Option 0 — never, in Media | Nothing changes. Media photos never inform intelligence; the Map path stays the only evidence path. | Settled by a spec amendment conceding §9's OBSERVATION → CLAIM stages and §49 Phase 5's second half for Media. The rows are recorded as deliberately not built. | Docs only: the spec and this census. |
+| Option A — evidence only, attached to a proposition the SAME person states at the same moment | The Map ruling, extended to Media. The person taps a §19 answer (Quiet / Moderate / Busy) or a §16.3 gem observation, and may attach one of their own photos. The TAP is the observation; the photo is stored beside it as evidence, never shown to others, and deleted with the observation's retention (180 days) or the account. | MD65, MD66, MD370 and MD445 can be met; MD53 and MD58 still need Question 5. | A Media contribution route in artifacts/api-server/src/routes/mediaActions.ts that calls the EXISTING capture service (services/intel/IntelCaptureService.ts) and then the existing seam (lib/media/mediaEvidenceLink.ts). The identity-safe evidence store of Question 3. The consent text of Question 2. The client sheet (MD28). Its flag seeded off. Tests. |
+| Option B — the photo itself is the observation | A model reads the pixels and proposes a state ("busy"). That is VISUAL INFERENCE presented as an observation, which §9 forbids calling fact. | Needs MD63's vision provider first. | External: a vendor, a data-protection review, and a decode tier for video. |
+
+*Question 2, consent.* The consent today is `intel_contribution_consent`.
+- The only text in force describes Quick Signals, not photos
+  (`travel-buddy-standalone/src/lib/sensing/consentDisclosure.ts:60#Your Quick Signals can be combined with reports from other travelers to show what a place is like right now.`).
+- Option A therefore needs one of these:
+  - **(a)** A new disclosure version naming photos: kept as evidence, not shown
+    to others, retained up to 180 days, erased with the account. It is
+    owner-approved copy, shipped with the server constant in one release, as
+    `sensing_contributions_v2` was prepared.
+  - **(b)** A per-contribution confirmation on the sheet, on top of the
+    standing consent.
+- With neither, a person who agreed to "Quick Signals" would have their
+  photos kept. §35.7 item 2 records that the Map path already does this.
+
+*Question 3, contributor identity under 3002.* Any link from an evidence row
+to the photo re-identifies the contributor.
+- The canonical asset carries `owner_user_id`.
+- The storage key carries the account id in its first segment
+  (`artifacts/api-server/src/routes/posts.ts:210#const basePath =`).
+- So `intel_evidence.media_asset_id` or a storage-key `reference` turns a
+  tokenised observation back into an account. By extension it does the same
+  for every observation that account made under the same weekly token.
+
+The options:
+- **(i)** Accept it, and record it as a "verify" purpose alongside the tables
+  3002 already leaves account-linked
+  (`artifacts/api-server/src/migrations/3002_intel_contribution_identity.sql:103#c) Tables OUTSIDE this migration's scope still bridge an observation to an`).
+- **(ii)** Store an UNLINKABLE copy.
+  - How: re-encode the bytes into an evidence bucket under a random key with
+    no owner segment, and keep no `media_asset_id`.
+  - Erasure: `erase_intel_for_actor` already derives every live token for an
+    account, so it can find the copy by its token-keyed row.
+  - Cost: a migration (bucket and column), a copy step in the contribution
+    route, the erasure path, and tests.
+- **(iii)** Keep no bytes. Record only that a photo was attached. That is
+  useless for review or moderation.
+
+*Question 4, claim vocabulary.* Under Option A the photo backs only claim
+types that already exist
+(`artifacts/api-server/src/lib/intelContracts.ts:467#export const PHASE1_CLAIM_TYPES`):
+the §19 buttons map to `crowd.level`. §16.3's nine gem observations live in
+`hidden_gem_contributions`, which is keyed by account and is not the intel
+store, so a gem photo is attached to that store instead. The owner answers
+two things:
+- whether a photo may back `queue.wait`, `access.walk_in`, `vibe.state`,
+  `closure.state` or `event.status` too;
+- whether a media-only claim type such as "visual current" may ever exist. The
+  Sensing ruling says no, because a photo asserts no proposition.
+
+*Question 5, what linked evidence may DO.*
+- **Confidence.** With `media_evidence_enabled` on, a linked eligible photo
+  lifts evidence quality from 0.3 to 0.8. That is a one-tap confidence boost
+  for unmoderated media unless a moderation step exists first.
+- **Visibility.** May a viewer be told that a photo backs an observation
+  (MD53, MD58)? Doing so re-identifies the contribution (§35.3).
+
+The possible answers:
+- evidence counts toward confidence only after moderation;
+- evidence never counts, and is audit only;
+- evidence refs are shown only to the photo's owner.
+
+**MD197 — may Media resolve another account's contributor tokens, to rank
+their media (§24 Contribution Value) or to show their §25 trust?**
+- **Today:** neither happens. The ranker scores Contribution Value as marginal
+  coverage, and §35.2 B closed the display route.
+- **Real-person effect:** any "yes" computes, per viewer and per page, a
+  summary of where and how often a named person reported.
+
+| Option | What it does | Consent | Cost and files |
+| --- | --- | --- | --- |
+| Option 0 — no | Contribution Value stays marginal coverage (lib/mediaRankingSignals.ts), and §25 trust is shown to its subject only. MD197 is settled by conceding §14.4's reputation falsifier. | None. | Docs only. |
+| Option A — per request | The ranker and the display route resolve each author's tokens through 3310 on every request. | None exists that covers it. | About (authors per page × live epochs) sha256 calls per request. Files: services/media/MediaContributorReputationService.ts, the ranker stage, and the route. Recommended against: it is re-identification as a service. |
+| Option B — opt-in public trust band | A contributor chooses to show a coarse band (no per-place count). It is computed in THEIR OWN session (account → own tokens, the bridge's intended direction) and stored keyed by account, so the ranker and chips read it without touching a token. | A new explicit opt-in ("show my contribution trust to others"). | A migration (table plus flag, from this lane's range if assigned), the writer, a ranker term, the client toggle, and tests. |
+| Option C — k-gated band for consenting contributors | A job enumerates consenting accounts, as payee resolution already does, and publishes a band only when there are at least k contributions. | The intel consent text would have to say so. | As B, plus the job. |
+
+Whatever the answer, Place Expertise at a NAMED place should not be shown to
+others unless that person has already published media at that place to that
+viewer.
+
+**MD37 — which §6 source does an ordinary upload carry?** The five sites in
+§35.2 A are the list this answer changes.
+
+| Option | What it does to people's content | Cost and files |
+| --- | --- | --- |
+| Option 0 — a ninth value | §6 gains an "undeclared" member, and `'user'` is it. No photo changes eligibility or rank. MD37 is met by the amendment. | Spec and census; the sentinel keeps its value. |
+| Option A — declared at capture | The client says camera, library or screenshot, and the server records it. Camera and library photos become evidence-eligible (presence receipts can hold) and rank `authentic` (`artifacts/api-server/src/lib/mediaRankingSignals.ts:190#export function provenanceClassOf(row: MediaCandidateRow): ProvenanceClass {`). A client can lie, so the owner must also say whether a DECLARED camera is enough for evidence. | The client picker and upload (src/hooks/useMediaPicker.ts, services/media.ts), a form field on routes/posts.ts, and the five call sites. |
+| Option B — map `'user'` to library, as 2250's comment says | Every existing and future upload becomes evidence-eligible and `authentic` at once. That is a protection change across all content, and it also raises the ranker's provenance term from 0.5 to 1. | One constant. Its effect is not small. |
+| Option C — infer from EXIF | A heuristic: camera make present means camera. EXIF is spoofable and is stripped after reading. | `lib/exifFacts`, the upload route. |
+
+The owner is also asked to confirm two values already in the tree:
+- `community` for gem photos and event media. It is evidence-eligible, and
+  was chosen by an earlier lane, not by the spec.
+- The backfill leaves legacy rows `'user'`.
+
+**MD71 — may a photo be labelled `live`?**
+- **(a)** No. The spec concedes the cap at `fresh`, and MD71 is settled by
+  the amendment.
+- **(b)** Only when it backs a claim that is live now. This needs MD65 Option A
+  and Question 5's visibility answer, because the label discloses the link.
+- **(c)** By age alone. Recommended against: it contradicts §39.
+
+**MD162 — will the Map gateway publish, to consumers, the display name of
+each flow endpoint and the ids of the disclosed places inside each zone?**
+- **Yes:** Media pairs its perspectives with those place ids and renders §22.
+  The cost is the gateway's `crowd_flow` payload
+  (lib/mapAggregation.ts, routes/mapProjection.ts) plus a Media NOW-lens
+  consumer and its tests.
+- **No:** §22 is conceded.
+
+Either way the row also needs PRODUCTION DATA. A flow must clear
+`MIN_SIGNAL_FAMILIES` with `map_crowd_flow_enabled` on, and a photo can never
+be a signal family, because it declares no origin zone.
+
+### 35.5 Rows — restated, none moves
+
+| Row | Was | Now | IMPLEMENTATION | DECISION | EXTERNAL VERIFICATION |
+| --- | --- | --- | --- | --- | --- |
+| MD37 | **W** | **W** | Done on branch. Every writer states its source, and the guard pins them (`artifacts/api-server/src/test/mediaAssetSourceDeclared.test.ts:213#const UNDECLARED_INVENTORY`). Remaining: the value, at the five sites. | §35.4 MD37: which source an undeclared upload carries. RED WHEN unchanged: every write carries one of the eight. | None until the value is chosen. Then P1 (a production write reaching `media_assets`). |
+| MD53 | **W** | **W** | Nothing decision-free remains. The seam exists with no caller (`artifacts/api-server/src/lib/media/mediaEvidenceLink.ts:119#export async function linkMediaEvidence(`). | MD65 Options A, i/ii and 5. Serving the ref is a re-identification. | A production evidence row, once built and enabled. |
+| MD58 | **W** | **W** | Nothing decision-free remains. The served item's shape is `MediaProjection` (`artifacts/api-server/src/lib/media/mediaProjection.ts:100#export interface MediaProjection extends MediaProjectionLayers {`). | MD65 Question 5. | As MD53. |
+| MD65 | **W** | **W** | Nothing decision-free remains. The Map and presence paths are not Media's (§35.1). | MD65 Questions 1–4, a SAFETY decision. | The flag press and a production observation carrying media, after build. |
+| MD66 | **W** | **W** | Follows MD65. | MD65 Questions 4 and 5. | As MD65. |
+| MD71 | **W** | **W** | Deliberately not built (§35.3). | §35.4 MD71: (a) a spec concession, or (b) after MD65. | None for (a). |
+| MD162 | **N** | **N** | Deliberately not built (§35.3). The zone model stays the gateway's (`artifacts/api-server/src/routes/mapProjection.ts:91#THE ZONE MODEL IS THIS ROUTE'S JOB, AND ONLY THIS ROUTE'S.`). | §35.4 MD162: a Map-owner publishing decision. | A publishable flow in production: flags on and families above the floor. |
+| MD197 | **W** | **W** | The boundary is enforced on branch; the display route no longer resolves others' tokens (`artifacts/api-server/src/routes/mediaViewRequest.ts:176#if (contributorId.data !== auth.user.id) {`). The ranker term is deliberately not built. | §35.4 MD197. | None. |
+| MD370 | **W** | **W** | Deliberately not built (§35.3). | MD65 Question 1: what a contribution creates. | As MD65. |
+| MD445 | **W** | **W** | Follows MD65; qualification (its first half) is delivered. | MD65. | As MD65. |
+
+### 35.6 Mutations — each seen red, every file restored byte-identical (checked with `cmp`)
+
+| Mutation | File | What it did | Went red |
+| --- | --- | --- | --- |
+| mutation R1 | routes/mediaViewRequest.ts | self-only check disabled | another account's reputation refused |
+| mutation R2 | same | refuse only when a place is named | refused without a place too |
+| mutation R3 | same | resolve the account's tokens, then refuse | both refusal cases (an RPC was made) |
+| mutation S1 | routes/posts.ts | upload writer omits its source | explicit-source case and inventory |
+| mutation S2 | services/passport/PassportMemoryService.ts | bare `"user"` literal | explicit-source case and inventory |
+| mutation S3 | lib/media/mediaEvidenceEligibility.ts | sentinel becomes `"library"` | the eight-values case and sentinel case |
+| mutation S4 | scripts/backfill-media-assets.ts | default source parameter restored | backfill case |
+| mutation S5 | lib/mediaAssets.ts | writer fallback back to a bare literal | payload case |
+| mutation S6 | services/media/MediaModerationService.ts | versioned patch relabels `source_type` | no-relabel case |
+| mutation S7 | services/hiddenGems/HiddenGemService.ts | gem source `community` → `camera` | spec-valued inventory |
+| mutation S8 | lib/mediaVideoPoster.ts | a new direct INSERT on `media_assets` | only-two-inserters case |
+
+### 35.7 Found outside the rows — recorded, not fixed
+
+1. **The Map evidence path stores the account id beside a tokenised
+   observation.** It persists the storage key as `intel_evidence.reference`
+   (`artifacts/api-server/src/lib/intelEvidenceCapture.ts:183#return { ok: true, reference:`).
+   The key's first segment is the uploader's account id.
+   - 3002 tokenises `intel_evidence.actor_id`, but this column puts the account
+     back.
+   - Any observation with map media evidence resolves to its author, and so
+     does every observation under that author's weekly token.
+   - It is dark behind `map_contributions_enabled` and
+     `intel_capture_quick_signal`.
+   - Owner: the Sensing and Map lanes. It is the same identity question as
+     §35.4 MD65 Question 3.
+2. **The same path keeps a photo under a consent whose words name Quick
+   Signals only** (§35.4 MD65 Question 2). It accepts any valid intel consent,
+   and the only version in force is v1.
+3. **The seam-state note is stale** (§35.1 fact 2).
+4. **Client, after §35.2 B.** `ContributorTrustChips` still requests other
+   contributors' reputation. It now receives 403 and renders nothing, by
+   design. The client lane may stop asking, and should do so once MD197 is
+   answered either way.
+
+### 35.8 Production — nothing here is deployed
+
+BUILT ON BRANCH IS NOT MERGED. MERGED IS NOT DEPLOYED. No database was read or
+written, no flag was touched, and no migration was authored. The reputation
+route change takes effect only when this branch is merged and deployed. Whether
+the route is reachable in production today was not verified.
+
+### 35.9 Checks, and the stale files this lane leaves for the integrator
+
+All run on Node 24 at the lane's final tree.
+
+**Passing:**
+- typecheck: clean.
+- typecheck:tests: 863 diagnostics across 115 files, which is the baseline and
+  not above it.
+- check:doc-citations: clean. The UNANCHORED count is 6355, unchanged by this
+  section.
+- check:citation-targets: at the ceiling, 165 / 165.
+- check:census-integrity: passed. Media is 450 rows: C 401, W 37, N 12, all
+  unchanged.
+- check:census-scope-coverage: census-media is 343 / 343.
+- check:census-row-move-labels and check:test-registration: pass.
+- The touched and adjacent suites: 1168 / 1168.
+
+**Failing, as expected:**
+- check:all fails on the five live-DB checks.
+- check:census-freshness fails for the reason below.
+
+**Stale files.** check:census-freshness names these. The acknowledgement
+ledger is the integrator's, so each file is listed here with the one-line
+argument for why it cannot have moved a verdict.
+
+census-media, twelve files:
+- routes/mediaViewRequest.ts — §35.2 B. MD197 stays W. The dimensions MD205,
+  MD206, MD207 and MD450 grade are still computed, but are served to their
+  subject only; the integrator reads those four against it.
+- scripts/backfill-media-assets.ts — §35.2 A. Every call now states the source
+  it stored before; no stored value changes.
+- services/passport/PassportMemoryService.ts — the memory writer states the
+  source it stored before.
+- test/mediaAssetSourceDeclared.test.ts and
+  test/mediaContributorReputationSelfOnly.test.ts — new, the suites §35.5
+  cites.
+- lib/intelConsent.ts, lib/intelEvidenceCapture.ts,
+  lib/intelProjectionAggregator.ts, lib/mapAggregation.ts,
+  migrations/3002_intel_contribution_identity.sql, routes/mapObservations.ts
+  and the client's src/lib/sensing/consentDisclosure.ts — newly watched, not
+  edited here. Their changes before this lane were read against §35 when it
+  was written.
+
+census-passport and census-highlights-memories, one file:
+- services/passport/PassportMemoryService.ts — one line extended: the memory
+  photo's canonical fan-out now states its §6 source, the same `'user'` it
+  stored before. No memory, passport or visibility behaviour changes.
+
+### 35.10 Cited, not graded (check:census-scope-coverage)
+
+- NOT-GRADED: travel-buddy-standalone/app/map/index.tsx — the Map screen, cited once in §35.1 only to show that the §22 media prompt is now mounted, a Map-lane fact recorded as context for the owner's MD65 question; no MD row grades the Map screen, and the server path it reaches is watched here (routes/mapObservations.ts, lib/intelEvidenceCapture.ts).
