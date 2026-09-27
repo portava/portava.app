@@ -3648,8 +3648,7 @@ The ledger row reads `applied_by='manual'`, checksum `9d565ca9f3a9…` (sha256 o
 **3350, verified from the catalog.** Before the apply, the pre-flight read held:
 - the enum carried six labels;
 - `posts` had no `perspective_vantage`;
-- `intel_evidence` held 0 rows;
-- the 2481 row was untouched.
+- `intel_evidence` held 0 rows.
 
 After the apply, the label list ends in `neighborhood_only`, and `media_neighborhood_only_mode_enabled` is present and `false`.
 
