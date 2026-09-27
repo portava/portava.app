@@ -11823,6 +11823,18 @@ The merged assertion is therefore `false` again (`artifacts/api-server/src/test/
 
 **Freshness.** The ledger names the two new suites for census-discovery and the harness suite for census-trips, with the arguments in §64.12.
 
+### 64.14 Integrator addendum — `check:production-drift` was red since §61, and it was mine to see
+
+**What was wrong.** 3416 (§61, P14) declares `trail_relations`. Production does not have that table, and no entry in `KNOWN_PRODUCTION_GAPS` named it. `check:production-drift` is static: it compares the tree with the committed production snapshot and contacts no database. It has therefore failed on every head since the P14 merge (`9af90c0ee`), including `4d9839ebd`, `e6165fd0a` and `e74335720`. I had read those runs' live-database job as only the known unapplied-migration reds (`audit:schema`, `check:write-path-columns`, `check:missing-live-columns`). That job also carried this failure, which is a real defect on the branch and needs no credentials to reproduce.
+
+**The repair.** `trail_relations` is now on the ratchet, classified `unapplied`, which must reach zero, with its migration and its strike-off condition (`artifacts/api-server/src/scripts/checkProductionDrift.ts:897#trail_relations: {`). It is recorded exactly as the three Discovery tables beside it (`recommendations`, `creator_ledger_audit_events`, `rank_event_outcome_receipts`) were. The note states only what was checked: nothing outside the migration and its tests reads or writes the table, or calls `rebuild_trail_relations`, so it stays empty after the merge.
+
+**Seen red, then green.** At `e74335720`, `check:production-drift` exits 1 naming `trail_relations`. With the entry it exits 0, and `productionDriftExtraction.test.ts` passes 15 / 15.
+
+**What this does not change.** No verdict moves, and nothing is applied anywhere. The two live-column checks and `audit:schema` stay red until the pending migrations are applied to `portava-ci`, which is owner item A.
+
+**For every lane that adds a table:** run `check:production-drift` and give the table its `unapplied` entry. That applies to P21 (3435–3439), P27 (3440–3444) and P28 (3445–3447).
+
 ## Cited, not graded (check:census-scope-coverage)
 
 - NOT-GRADED: artifacts/api-server/src/compass/CompassExplanationEngine.ts — §13.7 item 3 names Compass's HMAC recommendation-token signer as a refactor this lane declined to make in another lane's file. Discovery's recommendation id is minted by lib/discoveryRecommendationId.ts, and no Discovery verdict rests on the signer.
@@ -11848,3 +11860,4 @@ The merged assertion is therefore `false` again (`artifacts/api-server/src/test/
 - NOT-GRADED: artifacts/api-server/src/test/censusIdGrammar.test.ts — §64.8 names it only as a full-suite failure caused by this census's pre-existing headline mismatch (the same at `9af90c0ee`); no verdict rests on it.
 - NOT-GRADED: artifacts/api-server/src/test/censusIntegrityQualifiedVerdicts.test.ts — §64.8 names it only as the five cases that the same pre-existing mismatch cancels; no verdict rests on it.
 - NOT-GRADED: artifacts/api-server/src/test/guardReachability.test.ts — §64.8 names it only as a full-suite case killed by its own spawn timeout under load; the checker it spawns passes alone, and no verdict rests on it.
+- NOT-GRADED: artifacts/api-server/src/test/productionDriftExtraction.test.ts — §64.14 cites it only as the drift check's own suite, run to show the ratchet entry for `trail_relations` leaves the check's extraction and staleness rules passing; no Discovery verdict rests on it.

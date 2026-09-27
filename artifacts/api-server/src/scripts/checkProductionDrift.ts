@@ -893,6 +893,19 @@ export const KNOWN_PRODUCTION_GAPS: Record<string, Gap> = {
       "client sends a key yet (census-discovery §62.7 H1), so it stays empty after the " +
       "merge. Strike it off in the change that applies 3420 to PRODUCTION.",
   },
+  // ── Added 2026-09-27 for census-discovery §61 (P14 Trails integrity; recorded at §64.14) ──
+  trail_relations: {
+    classification: "unapplied",
+    note:
+      "Migration 3416 (`10` §3 graph projections, DV-72): the derived, rebuildable " +
+      "Trail-relation projection over DECLARED relations only (trail_edges, " +
+      "trails.parent_trail_id, and common content in content_trails); common traveler " +
+      "flow is not built. Rehearsed on the local PostgreSQL harness only; applied to no " +
+      "Supabase project. NO APPLICATION CODE READS OR WRITES IT: nothing outside the " +
+      "migration and its tests calls rebuild_trail_relations or selects from the table, " +
+      "so it stays empty after the merge. Strike it off in the change that applies 3416 " +
+      "to PRODUCTION.",
+  },
 };
 
 /**
