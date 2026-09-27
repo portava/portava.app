@@ -4061,6 +4061,8 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "travel-buddy-standalone/src/hooks/__tests__/useRankOutcome.clientEventId.component.test.ts",
     "travel-buddy-standalone/src/services/__tests__/rankEvents.clientEventId.component.test.ts",
     "travel-buddy-standalone/src/hooks/__tests__/useRankOutcome.component.test.ts",
+    // census-discovery §66 (re-verification lane P20): DV-30, C32, DC-26 and B01 move C -> W on this suite.
+    "artifacts/api-server/src/test/discoveryVerifyAudit2.test.ts",
   ],
   // ── ADDED 2026-09-15: census-passport joins the CHECKABLE set ──────────────
   //

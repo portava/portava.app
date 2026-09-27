@@ -70,4 +70,21 @@ describe("census-discovery §59 — adversarial negative inputs for §46–§55'
     const m = computeLocalMomentum(rows as any, nowMs).values;
     assert.ok((m["db/saved"] ?? 0) > 0, `two saves must cross the floor: ${m["db/saved"]}`);
   });
+  it("A1d. DEFECT, pinned (DV-20, §66.11): 'Ǿresund' and 'Øresund' canonicalise to two Trails; the fold deletes 114 of 398 Latin letters", () => {
+    // §61.7 claims the slug "folds every Latin letter NFKD cannot decompose". The stroke table runs
+    // BEFORE NFD, so Ǿ (Ø + acute) is never looked up, and hooked/barred letters (Ƀ, Ƙ, …) have no entry.
+    assert.equal(canonicalTrailSlug("Øresund cycling"), "oresund-cycling");
+    assert.equal(canonicalTrailSlug("Ǿresund cycling"), "resund-cycling", "Ǿ is deleted, not folded to o");
+    assert.equal(canonicalTrailSlug("Ƀerlin street art"), "erlin-street-art", "Ƀ (B with stroke) is deleted");
+    let deleted = 0, letters = 0;
+    for (let c = 0xc0; c <= 0x24f; c++) {
+      const ch = String.fromCodePoint(c);
+      if (!/\p{L}/u.test(ch)) continue;
+      letters++;
+      const k = canonicalTrailSlug(ch + "x");
+      if (!k || k === "x") deleted++;
+    }
+    assert.equal(letters, 398);
+    assert.equal(deleted, 114, "Latin-1 Supplement … Latin Extended-B letters the fold deletes outright");
+  });
 });
