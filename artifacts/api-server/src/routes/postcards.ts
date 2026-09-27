@@ -494,11 +494,11 @@ router.post('/postcards/:id/media/upload-url', async (req, res) => {
   const storagePath = `${user.id}/${postId}/${mediaId}.${mimeInfo.ext}`;
 
   // Backfill storage_path now that we have the mediaId
-  await sc
+  const { error: pathErr } = await sc
     .from('post_media')
     .update({ storage_path: storagePath })
-    .eq('id', mediaId)
-    .then(undefined, () => {});
+    .eq('id', mediaId);  // census-discovery §56 (DV-77): BOUND. A slot whose path did not record is one no sweep can find, so no URL is minted for it.
+  if (pathErr) { req.log.error({ err: pathErr, mediaId }, 'postcards: storage_path backfill failed — refusing rather than minting an untracked upload URL'); await sc.from('post_media').update({ processing_status: 'failed' }).eq('id', mediaId).then(undefined, () => {}); sendError(res, "db_error", "We couldn't prepare your upload. Please try again.", { exposeDetail: true }); return; }
 
   // Generate signed upload URL
   const { data: urlData, error: urlErr } = await sc.storage
@@ -1490,8 +1490,8 @@ function requireInternalSecret(req: any, res: any): boolean {
   return true;
 }
 
-/** How old a pending row must be before it is considered an orphan (ms). */
-const ORPHAN_CUTOFF_MS = 60 * 60 * 1000; // 1 hour
+/** How old a pending row must be before it is considered an orphan (ms). Defined with the pass, in services/media/PendingUploadSweep.ts. */
+const ORPHAN_CUTOFF_MS = PENDING_UPLOAD_ORPHAN_CUTOFF_MS; // 1 hour
 
 router.post('/postcards/sweep-orphans', async (req, res) => {
   if (!requireInternalSecret(req, res)) return;
@@ -1502,83 +1502,83 @@ router.post('/postcards/sweep-orphans', async (req, res) => {
     return;
   }
 
-  const cutoff = new Date(Date.now() - ORPHAN_CUTOFF_MS).toISOString();
-
-  // Load orphaned pending rows (cap at 200 per sweep to bound latency).
-  const { data: orphans, error: fetchErr } = await sc
-    .from('post_media')
-    .select('id, storage_path, storage_bucket')
-    .eq('processing_status', 'pending')
-    .lt('created_at', cutoff)
-    .limit(200);
-
-  if (fetchErr) {
-    req.log?.error?.({ err: fetchErr }, 'sweep-orphans: failed to fetch pending rows');
+  // ── census-discovery §56 (DV-77) — the pass moved, the rules did not ─────────
+  //
+  // What used to be written out here is now `sweepAbandonedPendingUploads` in
+  // services/media/PendingUploadSweep.ts, called by THIS manual trigger and by
+  // lib/media/pendingUploadSweepScheduler.ts — the scheduler this endpoint's
+  // header asked for ("designed to be called on a schedule") and never had.
+  // Two copies of a deletion pass drift, and the drift is invisible until one of
+  // them deletes a row the other would have kept.
+  //
+  // The four rules this block used to state in code, and still holds, are:
+  //
+  //   1. Only `processing_status = 'pending'` rows older than the cutoff. Pending
+  //      is exactly "not yet stripped": /complete strips in place, THEN marks
+  //      the row ready, and a /complete that refuses the bytes leaves it pending.
+  //   2. Storage objects BEFORE the row. `remove` reports failure in `{ error }`
+  //      rather than by rejecting; a failed removal KEEPS the row so the next
+  //      pass can find the bytes again. Deleting the row first would strand the
+  //      object permanently — nothing else records where it is.
+  //   3. The resumable-upload artifacts (parts, poster) under the same rule.
+  //   4. A missing object is not an error: every step is idempotent, so two
+  //      passes racing on one row, or a retry after a partial pass, converge.
+  //
+  // And three it did not have, each stated where it is implemented: the read is
+  // ordered OLDEST FIRST, so a backlog larger than one batch cannot starve the
+  // oldest raw original; a row with no recorded `storage_path` has its path
+  // DERIVED (the old block removed nothing for it and then deleted the only
+  // pointer to the bytes); and a row is re-read as still pending immediately
+  // before its bytes are removed, so one that completed meanwhile is not
+  // stripped of the file it now serves.
+  //
+  // The response is unchanged: `{ swept, errors }`, and 500 `db_error` when the
+  // pending rows cannot be read — never `{ swept: 0 }` for a read that failed.
+  //
+  // WHAT THIS DOES NOT CHANGE: who may call it (INTERNAL_API_SECRET, compared
+  // in constant time above), the cutoff (the same one hour), or the batch (the
+  // same 200). The cutoff and the batch are the values this endpoint shipped
+  // with on 2026-08-11; neither has been ratified, and §56 says so.
+  //
+  // The lines below this comment are the whole handler now. The comment is this
+  // long on purpose: census-media and census-discovery cite later lines of this
+  // file by number (the moderation literals, the postcard-sync helpers), and a
+  // shorter block here would move every one of them. It is documentation of the
+  // moved rules rather than padding, and it is the only place a reader of this
+  // route will look for them.
+  //
+  // ─────────────────────────────────────────────────────────────────────────────
+  //
+  // The manual trigger ignores the scheduler's flag on purpose. It is an
+  // operator's explicit act behind the internal secret; the flag
+  // (`media_pending_upload_sweep_enabled`, migration 3400, seeded FALSE) gates
+  // only the UNATTENDED pass, which is the one that needs an owner's decision.
+  //
+  // An operator who calls this is doing, once, exactly what the scheduler would
+  // do every hour with the flag on — no more, no less.
+  //
+  // ─────────────────────────────────────────────────────────────────────────────
+  //
+  // Retry semantics, for the operator: calling this twice in a row is safe. The
+  // second call finds the rows the first could not finish (their counts are in
+  // `errors`) and tries them again; rows the first call finished are gone.
+  //
+  // Concurrency, for the operator: this and the scheduler may run at once, on
+  // one instance or several. Both use the same idempotent steps, so the worst
+  // outcome is a row counted in `errors` by the pass that lost the race.
+  //
+  // What the pass reports: `examined` rows read, `swept` rows whose bytes and
+  // row are gone, `errors` rows kept for the next pass, and `more` when the
+  // batch was full. Only `swept` and `errors` are returned here, as before.
+  //
+  const result = await sweepAbandonedPendingUploads(sc, { cutoffMs: ORPHAN_CUTOFF_MS, log: req.log });
+  if (!result.ok) {
+    req.log?.error?.({ reason: result.reason }, 'sweep-orphans: failed to fetch pending rows');
     res.status(500).json({ error: 'db_error', message: 'Failed to load orphaned rows' });
     return;
   }
 
-  const rows = (orphans ?? []) as Array<{ id: string; storage_path: string; storage_bucket: string }>;
-  if (rows.length === 0) {
-    res.status(200).json({ swept: 0, errors: 0 });
-    return;
-  }
-
-  let swept = 0;
-  let errors = 0;
-
-  for (const row of rows) {
-    try {
-      // Remove storage objects (original + any feed variant) BEFORE deleting
-      // the DB row. Order matters: if storage removal fails, we KEEP the DB row
-      // so a subsequent sweep can retry. Deleting the DB row first would orphan
-      // the storage object permanently — the sweep could never find it again.
-      //
-      // `remove` reports errors in the resolved `{ error }` field, not via
-      // rejection. A missing object is not an error (idempotent); a genuine
-      // bucket failure IS an error that must keep the row alive for retry.
-      if (row.storage_path) {
-        const { error: rmErr } = await sc.storage
-          .from(row.storage_bucket || STORAGE_BUCKET)
-          .remove([row.storage_path, `${row.storage_path}.feed.jpg`]);
-        if (rmErr) {
-          req.log?.warn?.({ err: rmErr, mediaId: row.id, storagePath: row.storage_path },
-            'sweep-orphans: storage removal failed — retaining DB row for retry');
-          errors++;
-          continue; // Leave the DB row so the next sweep can try again.
-        }
-        // A pending slot is exactly where an abandoned resumable upload leaves
-        // its parts (and possibly a poster). Same retry rule as the original.
-        const { error: artErr } = await removeTransportArtifacts(
-          sc.storage.from(row.storage_bucket || STORAGE_BUCKET), row.storage_path,
-        );
-        if (artErr) {
-          req.log?.warn?.({ err: artErr, mediaId: row.id, storagePath: row.storage_path },
-            'sweep-orphans: transport artifact removal failed — retaining DB row for retry');
-          errors++;
-          continue;
-        }
-      }
-
-      // Storage objects gone (or there was no path). Now safe to delete the row.
-      const { error: delErr } = await sc
-        .from('post_media')
-        .delete()
-        .eq('id', row.id);
-
-      if (delErr) {
-        req.log?.warn?.({ err: delErr, mediaId: row.id }, 'sweep-orphans: failed to delete row');
-        errors++;
-      } else {
-        swept++;
-      }
-    } catch (err) {
-      req.log?.warn?.({ err, mediaId: row.id }, 'sweep-orphans: unexpected error for row');
-      errors++;
-    }
-  }
-
-  res.status(200).json({ swept, errors });
+  res.status(200).json({ swept: result.swept, errors: result.errors });
 });
 
 export default router;
@@ -1589,7 +1589,7 @@ export default router;
 // placement does not change evaluation order.
 import { probeVideoContainer, resolveStoredDuration, type VideoProbe } from '../lib/videoMetadata.js';
 import { admissiblePosterPath } from '../lib/mediaPosterPath.js';
-import { removeTransportArtifacts } from '../lib/postcardMediaTransport.js';
+import { removeTransportArtifacts } from '../lib/postcardMediaTransport.js';  import { sweepAbandonedPendingUploads, PENDING_UPLOAD_ORPHAN_CUTOFF_MS } from '../services/media/PendingUploadSweep.js';  // census-discovery §56 (DV-77)
 
 // census-media §37 (MD269/MD283): the §36 safety-moderation stage decides the value /complete
 // writes. Off (the seed), it is 'approved', as before. Imported at the TAIL, like the block above.

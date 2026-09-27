@@ -484,7 +484,7 @@ async function decide(
     if (pmRows.length > 0) {
       // A truncated page cannot support a deny-if-any scan: an unservable row
       // could be the one that did not fit. Deny instead of guessing.
-      if (pmRows.length >= POST_MEDIA_ATTACHMENT_CAP) return false;
+      if (pmRows.length >= POST_MEDIA_ATTACHMENT_CAP) return false;  if (pmRows.some((r) => String(r?.processing_status ?? "") !== "ready")) return false;  // census-discovery §56 (DV-77): a row that is not `ready` may hold the UNSTRIPPED original (/complete strips in place, THEN marks ready) — never served to anyone but its owner (branch 1)
       // ANY attachment moderated away denies the object. A rejection is recorded
       // per attachment, and this function answers about the BYTES — one post's
       // clean row is not authority to serve what another post's row removed.

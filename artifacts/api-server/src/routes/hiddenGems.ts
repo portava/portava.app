@@ -87,7 +87,7 @@ import {
 import { GEM_CONTRIBUTION_TYPES } from "../lib/hiddenGemState.js";
 import { logDiscoveryServe, DiscoveryServePoint } from "../lib/discoveryServeLog.js";  import { stampServedRecommendations, exposureForResponse, serveClockOf } from "../lib/discoveryRecommendationRecord.js";  // census-discovery §48 — serve point 11's response carries the ids its serve-log rows do
 
-import { isAdmin } from "../lib/requireAdmin.js";
+import { isAdmin } from "../lib/requireAdmin.js";  import { layoverGemWindow, gemsUnderLayoverMode, certifiedWindowKeys, LAYOVER_WINDOW_UNREADABLE_MESSAGE } from "../lib/discoveryLayoverGems.js";  // census-discovery §56 (A13/A14): the layover window is the certified snapshot's
 
 const router = Router();
 
@@ -422,10 +422,10 @@ router.get("/hidden-gems", async (req, res) => {
   if (req.query.city) opts.city = req.query.city as string;
   if (req.query.neighborhood) opts.neighborhood = req.query.neighborhood as string;
   if (req.query.category) opts.category = req.query.category as string;
-  if (req.query.layoverSafe === "1") {
-    opts.layoverSafe = true;
-    if (req.query.availableMinutes) opts.minLayoverMinutes = parseInt(req.query.availableMinutes as string);
-  }
+  const layoverWindow = req.query.layoverSafe === "1" ? await layoverGemWindow(sc, callerId) : null;  // §56 (A14): see GET /hidden-gems/layover-safe below
+  if (layoverWindow?.kind === "refused") { sendError(res, "degraded_unavailable", LAYOVER_WINDOW_UNREADABLE_MESSAGE); return; }
+  if (layoverWindow) { opts.layoverSafe = true; if (layoverWindow.kind === "certified") opts.minLayoverMinutes = layoverWindow.minutes;
+    else if (req.query.availableMinutes) opts.minLayoverMinutes = parseInt(req.query.availableMinutes as string); }  // not in a layover: the caller's hypothetical, as before
   if (req.query.verificationLevel) opts.verificationLevel = req.query.verificationLevel as string;
   if (req.query.submittedBy)       opts.submittedBy = req.query.submittedBy as string;
 
@@ -518,7 +518,7 @@ router.get("/hidden-gems", async (req, res) => {
       return sendError(res, "db_error", err.message);
     }
   }
-
+  if (layoverWindow?.kind === "certified" && layoverWindow.minutes < 1) { res.json({ gems: [], total: 0 }); return; }  // §56: a certified window with no usable minutes admits nothing — never "no filter"
   try {
     // Use weighted discovery ranking (verif weight + saves + visits + vibe-tag match)
     const { discoverGems } = await import("../services/hiddenGems/HiddenGemDiscoveryService.js");
@@ -531,7 +531,7 @@ router.get("/hidden-gems", async (req, res) => {
       limit: opts.limit,
     });
     const rawGems = ranked.map((r) => r.gem);
-    const safe = await applyGemPrivacyBatch(rawGems, sc, callerId, callerTripId);
+    const gatedGems = await gemsUnderLayoverMode(sc, callerId, layoverWindow, await applyGemPrivacyBatch(rawGems, sc, callerId, callerTripId), "GET /hidden-gems"); if (!gatedGems.ok) { sendError(res, "degraded_unavailable", gatedGems.message); return; } const safe = gatedGems.gems;  // §56 (A14): in Layover mode, only the certified action universe
     const gemIds3 = (safe as any[]).map((g: any) => g.id as string);
     const [agg3, projections3] = await Promise.all([
       batchFetchGemAggregates(sc, gemIds3),
@@ -544,7 +544,7 @@ router.get("/hidden-gems", async (req, res) => {
       if (p) { base.gemState = p.gemState; base.gemConfidence = p.gemConfidence; }
       return base;
     });
-    res.json({ gems: stampServedRecommendations(enriched3, exposureForResponse(res, callerId ?? null)), total: enriched3.length });  // §48 DV-40 — every served gem carries its exposure id, anonymous included
+    res.json({ gems: stampServedRecommendations(enriched3, exposureForResponse(res, callerId ?? null)), total: enriched3.length, ...certifiedWindowKeys(layoverWindow, gatedGems.summary) });  // §48 DV-40 — every served gem carries its exposure id, anonymous included
 
     // Serve point 11 — this route ranks (discoverGems: verification weight +
     // saves + visits + vibe-tag match) and served its results to users while
@@ -614,23 +614,23 @@ router.get("/hidden-gems/layover-safe", async (req, res) => {
     sendError(res, "feature_disabled"); return;
   }
 
-  const availableMinutes = parseInt(req.query.availableMinutes as string);
-  if (!Number.isFinite(availableMinutes) || availableMinutes < 1) {
+  // census-discovery §56 (A13/A14): in a LIVE layover the window is the certified snapshot's `usableMinutes` and the
+  // query figure is ignored — it can neither widen nor narrow it; only a caller who is in no layover states a hypothetical.
+  const callerId = await resolveCallerId(req, sc);
+  const window = await layoverGemWindow(sc, callerId);
+  if (window.kind === "refused") { sendError(res, "degraded_unavailable", LAYOVER_WINDOW_UNREADABLE_MESSAGE); return; }
+  const availableMinutes = window.kind === "certified" ? window.minutes : parseInt(req.query.availableMinutes as string);
+  if (window.kind === "stated" && (!Number.isFinite(availableMinutes) || availableMinutes < 1)) {
     sendError(res, "invalid_payload", "availableMinutes must be a positive integer");
     return;
   }
-
-  const callerId = await resolveCallerId(req, sc);
   const city = req.query.city as string | undefined;
-
   try {
-    const gems = await listGems(sc, {
-      city,
-      layoverSafe: true,
-      minLayoverMinutes: availableMinutes,
-    });
+    // A certified window with no usable minutes admits nothing — never "no filter", and never a 400 about the client.
+    const gems = availableMinutes < 1 ? [] : await listGems(sc, { city, layoverSafe: true, minLayoverMinutes: availableMinutes });
     const safe = await applyGemPrivacyBatch(gems, sc, callerId);
-    res.json({ gems: safe, total: safe.length, availableMinutes });
+    const gated = await gemsUnderLayoverMode(sc, callerId, window, safe, "GET /hidden-gems/layover-safe"); if (!gated.ok) { sendError(res, "degraded_unavailable", gated.message); return; }
+    res.json({ gems: gated.gems, total: gated.gems.length, availableMinutes, ...certifiedWindowKeys(window, gated.summary) });
   } catch (err: any) {
     sendError(res, "db_error", err.message);
   }

@@ -122,7 +122,7 @@ import {
   type ActionUniverse,
   type ReplanCandidate,
 } from "./LayoverEventReplanner.js";
-import { snapshotIdFor } from "./layoverLedger.js";
+import { snapshotIdFor } from "./layoverLedger.js"; import { resolveLayoverEntry, layoverAirportCountry } from "./layoverEntryGate.js";
 import { safeReturnPosture, type SafeReturnPosture } from "./LayoverSafeReturnService.js";
 import { airportPoint, placePoint } from "./LayoverTravelTime.js";
 import type { LayoverReasonCode, ReturnCorridorRisk } from "./LayoverSafetyEngine.js";
@@ -350,7 +350,7 @@ export async function certifiedLayoverSnapshot(
   const airport = resolved.airport;
 
   // THE ONE CERTIFICATION. Everything below reads it.
-  const record = certifySessionFeasibility(airport, session, { nowMs });
+  const record = certifySessionFeasibility(airport, session, { nowMs, entry: await resolveLayoverEntry(db, session.userId, layoverAirportCountry(airport)) });
   const posture = safeReturnPosture(record);
   const centre = airportPoint(airport);
   const envelope = safeEnvelope(record.envelope.usableMinutes, centre, record.confidence);

@@ -3940,6 +3940,27 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/test/db/discoveryDerivedRebuild.db.test.ts",
     "docs/discovery/query-paths.md",
     "docs/discovery/query-paths-explain.sql",
+    // ── §56 (lane P5-A, cross-architecture adapters I) ── the files §56's verdict rows rest on. A13/A14: the
+    // Hidden Gems layover window, and the surfaces §56.3 re-derived for A13 (Compass, Safe Return, Layover's own
+    // recommendations). DV-77: the abandoned-upload sweep, its scheduler and flag, the ingest route and the relay.
+    // A21: what Telegraph can execute. DV-51: the graph builder. Each is graded by a §56 row, so each is watched.
+    "artifacts/api-server/src/lib/discoveryLayoverGems.ts",
+    "artifacts/api-server/src/test/discoveryLayoverGems.test.ts",
+    "artifacts/api-server/src/test/discoveryLayoverMode.test.ts",
+    "artifacts/api-server/src/test/hiddenGems.test.ts",
+    "artifacts/api-server/src/services/airport/LayoverCompassService.ts",
+    "artifacts/api-server/src/services/airport/LayoverSafeReturnService.ts",
+    "artifacts/api-server/src/services/airport/LayoverReturnEscalation.ts",
+    "artifacts/api-server/src/services/airport/LayoverRecommendationService.ts",
+    "artifacts/api-server/src/services/media/PendingUploadSweep.ts",
+    "artifacts/api-server/src/lib/media/pendingUploadSweepScheduler.ts",
+    "artifacts/api-server/src/migrations/3400_media_pending_upload_sweep_flag.sql",
+    "db/rollback/2026-09-27-3400-media-pending-upload-sweep-flag-rollback.sql",
+    "artifacts/api-server/src/test/mediaPendingUploadSweep.test.ts",
+    "artifacts/api-server/src/routes/postcards.ts",
+    "artifacts/api-server/src/lib/mediaAccess.ts",
+    "artifacts/api-server/src/routes/telegraphCommands.ts",
+    "artifacts/api-server/src/compass/CompassGraphEngine.ts",
   ],
   // ── ADDED 2026-09-15: census-passport joins the CHECKABLE set ──────────────
   //

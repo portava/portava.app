@@ -8737,7 +8737,7 @@ changed. The freshness ledger JSON is the integrator's to write.
 - NOT-GRADED: artifacts/api-server/src/test/helpers/discoveryOutcomeCorpus.ts — test machinery that drives the real writers and routes to build the §55 fixtures; no verdict rests on the helper itself.
 - NOT-GRADED: artifacts/api-server/src/lib/intelIndependence.ts — cited in §55.5 for what it clusters (intel observations); DV-34 grades Discovery code, and no Discovery verdict rests on this Sensing module.
 - NOT-GRADED: artifacts/api-server/src/lib/intelProjectionAggregator.ts — cited in §55.5 as intelIndependence's one aggregation caller; Sensing's, not Discovery's.
-- NOT-GRADED: artifacts/api-server/src/compass/CompassGraphEngine.ts — cited in §55.8 as a routed finding for the Compass graph owner; no Discovery verdict rests on it.
+- (Withdrawn by the integrator at §56.14: this line declared `compass/CompassGraphEngine.ts` NOT-GRADED for §55.8's routed finding. §56.7 now grades DV-51 against that file, so `CENSUS_SCOPE` watches it and the declaration no longer applies.)
 
 ### 55.14 Integrator: P6 merged, the routed model-version hunk applied, DSV2-12 to C, headline restated
 
@@ -9000,6 +9000,429 @@ SELECT to_regclass('public.schema_migration_ledger');
 - The moves since §55.14 are P9's `DV-71` and `DC-15`, W → C.
 - CONSTRUCTED 178 / 188 = **94.7 %**; CORRECT 97 / 188 = **51.6 %**. The four buckets sum to 188.
 - **Production evidence is still owed.** 3390 and 3391 are applied to the local harness only. `DV-71` still owes the production policy catalogue (§54.12's SQL). `DC-15`'s plans are harness plans at a stated synthetic cardinality, not production plans.
+
+## §56 — Cross-architecture adapters I (lane P5-A): the Layover-mode gems read the certified window, the abandoned-upload sweep gets the caller it never had, and the snapshot's missing border input is found
+
+*Written 2026-09-27 by lane P5-A on branch `disc-p5a-adapters`, off
+`e6f6ff7c7` (the `wave8-integration` tip carrying §46–§52). Every OLD verdict
+below was read from `CENSUS_INTEGRITY_DUMP=ALL` at that tree: A13 **W**, A14
+**W**, A21 **N**, DV-51 **W**, DV-77 **N**. This section does not restate the
+headline; the integrating lane does.*
+
+### 56.1 The ceiling, stated first
+
+Nothing here is merged to `main`, deployed, applied to a shared database or
+flag-enabled. One migration was written (3400, a FALSE-seeded flag row, with
+rollback) and applied to NO database. No ranking machinery was added and the
+default (flags-off) Discovery serve is unchanged in content and order. Two
+changes are live on deploy with no flag, and each is named where it is argued:
+the Hidden Gems layover minutes source (§56.2) and the relay's refusal of a
+`post_media` object whose row is not `ready` (§56.5).
+
+### 56.2 A14 — the Layover surface a traveller is actually shown took its window from the query string
+
+`GET /hidden-gems/layover-safe` is what the layover dashboard's
+`LayoverDiscoveryCard` calls — the Discovery surface the layover dashboard
+renders inside an airport session — and at `e6f6ff7c7` it still did what the original A14 row
+said: `parseInt(req.query.availableMinutes)`, with no session read at all.
+`GET /hidden-gems?layoverSafe=1&availableMinutes=` had the same shape. The
+client sends the server's own `window.usableMinutes` from when the overview
+loaded, so the figure is right at fetch time and stale afterwards (the window
+only shrinks), and any caller can send a larger one. That is a second
+time-budget answer about the same layover, which A13's `:66` forbids.
+
+Both now resolve their window through one module,
+`artifacts/api-server/src/lib/discoveryLayoverGems.ts:104#export async function layoverGemWindow(`,
+which reads `certifiedLayoverSnapshot` and answers one of three things:
+
+| caller | window | route behaviour |
+|---|---|---|
+| in a LIVE layover | `snapshot.usableMinutes` (`artifacts/api-server/src/lib/discoveryLayoverGems.ts:120#return { kind: "certified", minutes: read.snapshot.usableMinutes`) | the query figure is IGNORED — it can neither widen nor narrow the window, and is no longer required; a certified window with no usable minutes is an empty `200`, never "no filter" and never a `400` (`artifacts/api-server/src/routes/hiddenGems.ts:630#availableMinutes < 1 ? [] : await listGems`); the body adds `minutesSource` and `snapshotId` |
+| in NO layover (anonymous, or `no_live_layover_session`) | the caller's stated hypothetical, exactly as before | not Layover mode — the Gems screen's "How long is your layover?" tab; the body is byte-identical to before |
+| snapshot UNREADABLE (`isDegradedRefusal`) | none (`artifacts/api-server/src/lib/discoveryLayoverGems.ts:117#? { kind: "refused", reason: read.reason`) | `503 degraded_unavailable`, never the query figure and never a list |
+
+The route edits are line-neutral: `artifacts/api-server/src/routes/hiddenGems.ts:620#const window = await layoverGemWindow(sc, callerId);`,
+`artifacts/api-server/src/routes/hiddenGems.ts:622#window.kind === "certified" ? window.minutes`
+and, on the list route, `artifacts/api-server/src/routes/hiddenGems.ts:425#await layoverGemWindow(sc, callerId) : null`.
+
+**In Layover mode**, with `layover_discovery_mode_enabled` on, a certified
+caller's gems now pass the same gate the three `/discovery` surfaces use,
+handed THIS request's snapshot so one request is certified once
+(`artifacts/api-server/src/lib/discoveryLayoverGems.ts:147#{ snapshotRead: window.read }`,
+`artifacts/api-server/src/lib/discoveryLayoverMode.ts:252#const read = opts.snapshotRead ?? await certifiedLayoverSnapshot(sc, userId);`).
+An unmeasured gem is withheld and named `UNMEASURED`; a stop the traveller
+stated admits exactly that gem; a decertified session closes it; an
+unreadable `layover_plan_stops` refuses. Flag off (the seed): an identity.
+
+**Is this live on deploy?** Yes, for the minutes source: `hidden_gems_enabled`
+and `hidden_gems_layover_enabled` read TRUE in the 2026-09-22 production
+capture, so a traveller in a live layover is filtered on the snapshot's
+current figure rather than the one their device sent. On a healthy screen the
+two agree at fetch time; afterwards the server's is the smaller and correct
+one. Nobody outside a live layover sees any change. It is directed by this
+package's brief; it adds no ranking and changes no order. The Layover-mode
+gate on the same route is behind the FALSE flag and changes nothing today.
+
+**Revocation, both directions, and the other negative paths** — proved against
+a table-backed fake that is MUTATED between two requests
+(`artifacts/api-server/src/test/discoveryLayoverGems.test.ts:342#it("a window that SHRINKS between two requests withholds on the next one"`):
+a window that shrinks withholds the gem it admitted, and admits it again when
+it widens; a session read that fails between two requests withholds on the
+next; a session that decertifies (the traveller will stay airside) turns an
+admitted gem `CLOSED` on the next
+(`artifacts/api-server/src/test/discoveryLayoverGems.test.ts:401#it("DECERTIFIED between two requests`);
+a session that ENDS stops being Layover mode on the next request, which is an
+answer (the traveller is no longer in a layover), not a withholding. The same
+two-request property holds on `GET /discovery/community` and on a
+`GET /discovery` CACHE-A hit, whose cached page is re-gated against the new
+window (`artifacts/api-server/src/test/discoveryLayoverGems.test.ts:526#it("GET /discovery on a CACHE-A hit`).
+Cross-viewer: one traveller's layover neither gates nor lends its window to
+another (`artifacts/api-server/src/test/discoveryLayoverGems.test.ts:297#it("CROSS-VIEWER: A's layover neither gates B nor lends B its window"`).
+Retries return the same served set.
+
+### 56.3 A13 — which surfaces consume the snapshot, re-derived from code
+
+| surface | consumes `certifiedLayoverSnapshot`? | its own certification or time budget |
+|---|---|---|
+| Discovery — `GET /discovery` (four serve paths), `/discovery/feed`, `/discovery/community` | yes, through `discoveryLayoverGate` (`routes/discovery.ts`'s `layoverGatedPlaces` and the community call) | none |
+| Discovery — `GET /hidden-gems/layover-safe`, `GET /hidden-gems?layoverSafe=1` | **yes, since §56.2** | none |
+| Discovery — `portavaRank.availabilityFitScore` | no | a DORMANT duplicate: *"Layover/limited-window mode: must start within the window"*, `artifacts/api-server/src/lib/portavaRank.ts:289#minutesUntil <= ctx.availableMinutes ? 1 : -0.5`. No caller sets `ViewerContext.availableMinutes`, so it never runs; `lib/portavaRank.ts` is not this lane's file and the ranker hold stands, so it is named, not removed |
+| Compass — tools and `routes/compass.ts` | yes: `artifacts/api-server/src/compass/CompassTools.ts:1804#const r = await certifiedLayoverSnapshot(sc as any, userId);`, `artifacts/api-server/src/routes/compass.ts:1728#const snap = await certifiedLayoverSnapshot(sc, user.id);` | none |
+| Compass — the in-layover question (`POST` via `routes/airport.ts` → `answerLayoverQuestion`) | no | a DUPLICATE budget: it re-derives usable minutes as cutoff − now − buffer (`artifacts/api-server/src/services/airport/LayoverCompassService.ts:144#Math.round((cutoffMs - now.getTime()) / 60000)`, `artifacts/api-server/src/services/airport/LayoverCompassService.ts:146#const usableMin = Math.max(0, availMin - bufferMin);`) instead of reading `record.envelope.usableMinutes` |
+| Trips card / Map envelope / dashboard (`routes/airport.ts`) | no | certifies inline, WITH the entry input: `artifacts/api-server/src/routes/airport.ts:1375#certifySessionFeasibility(airport, session, { nowMs, entry: await sessionEntry(sc, airport, session) })` |
+| Safe Return | no | the canonical derivation, called directly: `artifacts/api-server/src/services/airport/LayoverSafeReturnService.ts:510#const before = certifySessionFeasibility(airport, session, { nowMs: input.nowMs });`; the reminder instant is arithmetic on the certified deadline (`artifacts/api-server/src/services/airport/LayoverReturnEscalation.ts:306#const correctMs = deadlineMs - RETURN_SOON_LEAD_MIN * 60_000;`) |
+| Layover recommendations | no | inline, unchanged since §33: `artifacts/api-server/src/services/airport/LayoverRecommendationService.ts:473#const certified = certifySessionFeasibility(airport, session, { nowMs });` |
+
+**A defect found, and the reason the Discovery half cannot be C yet.** The
+snapshot certifies WITHOUT the entry input
+(as found at the lane's commit 396a570ca; the integrator applied §56.12's fix in the merge (§56.14), so the line now reads `artifacts/api-server/src/services/airport/LayoverSnapshot.ts:353#{ nowMs, entry: await resolveLayoverEntry(db, session.userId, layoverAirportCountry(airport)) }`)
+while the airport routes pass it. `passport_entry_intelligence_enabled` reads
+TRUE in the 2026-09-22 production capture. Reproduced on this tree with the
+Layover lane's own fake and a corridor curated as `visa_required`: the airport
+route certifies verdict **`no`**; the snapshot certifies **`entry_unverified`
+with `landsideOpen: true`**; the two input hashes — and so the two snapshot
+ids — differ. So for a traveller whose border is refused, the dashboard says
+they may not leave while every snapshot consumer (Discovery Layover mode,
+Compass's tools) treats landside as open. There are two certifications of one
+session, which is exactly what `:803` forbids. `services/airport/LayoverSnapshot.ts`
+is additive-only for this lane, so the fix is routed, not applied (§56.12).
+
+### 56.4 A21 — no executable Telegraph action acts on a Discovery object
+
+The registration mechanism exists
+(`artifacts/api-server/src/services/telegraph/actionRegistry.ts:213#export const TELEGRAPH_ACTION_REGISTRY`),
+so the row's old reason is gone. What Telegraph can execute is exactly the
+four `ProposedAction` kinds
+(`artifacts/api-server/src/routes/telegraphCommands.ts:71#kind: "add_to_plan" | "create_meetup" | "open_poll" | "ask_followup";`),
+and none carries a Discovery object: their `params` are template titles and
+categories. The chat-suggestion add-to-plan writes a `trip_plan_items` row
+with `source_type: "telegraph"` from a free-text suggestion, not from a place.
+Discovery objects DO appear in Telegraph, and actions ARE offered on them —
+but not as Telegraph actions:
+
+- the shared place's rich card offers *Add to Plan* and *Save*, which call the
+  trip wishlist picker and Discovery's bookmark sync DIRECTLY from the client
+  (`travel-buddy-standalone/src/components/DiscoveryCardMessage.tsx:194#onPress={() => setPickerVisible(true)}`,
+  `travel-buddy-standalone/src/components/DiscoveryCardMessage.tsx:205#const res = await toggleSave({`),
+  with no command, so Telegraph never authorizes, previews or executes them;
+- the share contract lists five §8.1 actions for a PLACE or HIDDEN_GEM
+  (`artifacts/api-server/src/services/telegraph/shareables.ts:206#return ["ADD_TO_TRIP", "CREATE_PLAN", "MEET_HERE", "SHARE_PLACE", "DO_THIS_NOW"];`),
+  each owned by another domain's surface or carried as a coordination
+  MESSAGE, whose canonical write is Telegraph's own.
+
+Registering a Discovery action would mean inventing one, which this lane was
+told not to do. **A21 stays N**, and the question it waits on is §56.9's.
+Spec `:610` — *"Rich-card actions follow tap -> command -> owning domain
+authorization/write"* — is what the card's two buttons do not do, and that is
+Telegraph's rich-card architecture, recorded for census-telegraph rather than
+graded here.
+
+### 56.5 DV-77 — the sweep existed; nothing ran it
+
+`00-readme` §1.4 and Phase 0.4, verbatim:
+*"Redesign durable ingest so no raw unstripped original can persist merely
+because a completion handler never runs"*
+(`docs/specs/discovery-architecture-v1/discovery-v1-12-implementation-plan.md:28#Redesign durable ingest so no raw unstripped original can persist`).
+
+Re-derived from code at `e6f6ff7c7`. Of the readme's three bypasses, the HEIC
+fallback is closed (`POST /media/upload` now refuses an image it cannot
+re-encode), and the admin stamp-artwork base64 upload still stores bytes
+unprocessed but has no completion handler, so it is outside this row's words
+(§56.11). The postcard transport is the one path where the server does not
+hold the bytes at ingest: the client PUTs them to a signed URL and `/complete`
+strips them later. Between the two the raw original sits in `post-media`, and
+four things kept it there:
+
+1. `POST /api/postcards/sweep-orphans` has removed exactly these since
+   2026-08-11, but it is an internal-secret endpoint "designed to be called on
+   a schedule" and **nothing calls it**: no scheduler in `src/index.ts`, no
+   cron, no workflow (`docs/fact-layer-20260810/PROMOTION.md` §C, re-verified).
+2. `upload-url` minted the signed URL even when recording the slot's path
+   failed — the backfill's error was never read — and the sweep then removed
+   nothing for a row with an empty path and deleted the row, the one pointer to
+   the bytes.
+3. The sweep's read had no order, so a backlog could starve the oldest.
+4. The relay (`lib/mediaAccess.ts` branch 3a) never looked at
+   `processing_status`, so a non-owner holding the path of a PENDING object on
+   a public post was served the unstripped bytes.
+
+Built:
+
+- the pass MOVED, rules unchanged, to
+  `artifacts/api-server/src/services/media/PendingUploadSweep.ts:134#export async function sweepAbandonedPendingUploads(`,
+  oldest first (`artifacts/api-server/src/services/media/PendingUploadSweep.ts:149#.order("created_at", { ascending: true })`),
+  a derived path for an unrecorded slot, and a KEPT row when none can be derived
+  (`artifacts/api-server/src/services/media/PendingUploadSweep.ts:123#export function pendingSlotPath(`),
+  and a re-read that leaves a just-completed row its file
+  (`artifacts/api-server/src/services/media/PendingUploadSweep.ts:190#if (!still) { completedMeanwhile++; continue; }`).
+  The route delegates and answers the same `{ swept, errors }` / `500 db_error`
+  (`artifacts/api-server/src/routes/postcards.ts:1574#const result = await sweepAbandonedPendingUploads(sc, { cutoffMs: ORPHAN_CUTOFF_MS, log: req.log });`);
+- its caller, started from `artifacts/api-server/src/index.ts:302#startPendingUploadSweepScheduler();`,
+  hourly, reading `media_pending_upload_sweep_enabled` at the top of every pass
+  (`artifacts/api-server/src/lib/media/pendingUploadSweepScheduler.ts:100#const flag = await readFlagState(sc, "media_pending_upload_sweep_enabled");`).
+  Off or absent: nothing else is read. Unreadable: nothing runs AND the pass
+  records a failure (`artifacts/api-server/src/lib/media/pendingUploadSweepScheduler.ts:101#if (flag === "unreadable") {`);
+- the flag, seeded FALSE with a postcondition that refuses ON
+  (`artifacts/api-server/src/migrations/3400_media_pending_upload_sweep_flag.sql:49#'media_pending_upload_sweep_enabled',`),
+  and a rollback that refuses while it is ON
+  (`db/rollback/2026-09-27-3400-media-pending-upload-sweep-flag-rollback.sql:34#'ROLLBACK REFUSED (3400)`);
+- ingest fails closed: no URL for a slot whose path did not record
+  (`artifacts/api-server/src/routes/postcards.ts:501#if (pathErr) {`);
+- never served: the relay refuses a non-owner any object whose `post_media` row
+  is not `ready` (`artifacts/api-server/src/lib/mediaAccess.ts:487#String(r?.processing_status ?? "") !== "ready")) return false;`).
+  Live on deploy with no flag. Every `post_media` reader already filters to
+  `ready`, and `/complete` strips in place BEFORE it writes `ready`, so the only
+  bytes this withholds are ones nobody could legitimately have been handed.
+
+**The bound, exactly.** With the flag on and the database readable, an upload
+whose completion never ran is removed — object, feed variant, resumable
+parts, poster, then row — no later than `PENDING_UPLOAD_ORPHAN_CUTOFF_MS` (one
+hour) + `PENDING_UPLOAD_SWEEP_INTERVAL_MS` (one hour) after its slot was
+reserved, while fewer than 200 slots are abandoned per hour; past that, the
+backlog drains oldest first at 200 an hour and the pass says `more: true`.
+Proved with a slot reserved through the real `upload-url` route, raw JPEG
+bytes with an EXIF segment PUT at the minted path, parts and a poster beside
+it, and no `/complete`
+(`artifacts/api-server/src/test/mediaPendingUploadSweep.test.ts:285#it("by cutoff + one interval: object, feed variant, parts and poster gone, THEN the row"`),
+and a stranger refused those bytes while the owner is not
+(`artifacts/api-server/src/test/mediaPendingUploadSweep.test.ts:307#it("a stranger is refused the pending bytes of a PUBLIC post; the owner is not"`).
+All three constants — the one-hour cutoff, the 200 batch, the hourly cadence
+— are the values the endpoint shipped with or its own header's example, and
+**none is ratified**.
+
+One generated artifact moved with it: the deletion graph now sees a sweeper on
+`post_media` (it scans `services/`, and the pass used to live in `routes/`), so
+`lib/deletion/deletionGraph.snapshot.json`'s `post_media` entry reads
+`governedElsewhere: true` with `services/media/PendingUploadSweep.ts` as its
+sweeper. Regenerated with `src/lib/deletion/writeSnapshot.ts`; only that entry
+changed.
+
+**Why W and not C.** The flag is FALSE, so on every database today the
+original of an abandoned upload still persists indefinitely. The never-served
+half is unconditional; the removal half is built, tested and dark.
+
+### 56.6 DV-51 — the rebuild does not retire an edge whose support is gone
+
+`05` §6: *"Use derived strength from: recency, frequency, diversity, confirmed
+experiences. Do not store 'relationship truth' as a single permanent score"*
+(`docs/specs/discovery-architecture-v1/discovery-v1-05-graph-engine.md:92#as a single permanent score.`);
+§9: *"it can decay stale relationships"*
+(`docs/specs/discovery-architecture-v1/discovery-v1-05-graph-engine.md:124#it can decay stale relationships,`).
+
+The row's evidence says the scheduled rebuild retires an edge that stops
+being supported ("decay by reconstruction"). **That is true of one edge family
+and false of the rest.** The rebuild UPSERTS what its capped source reads
+produce (`artifacts/api-server/src/compass/CompassGraphEngine.ts:991#.upsert(chunk, { onConflict: "src_type,src_key,dst_type,dst_key,edge_type" });`),
+with the weight equal to the observation count
+(`artifacts/api-server/src/compass/CompassGraphEngine.ts:980#weight:         e.count,`),
+and deletes only experience nodes whose memory is gone
+(`artifacts/api-server/src/compass/CompassGraphEngine.ts:2148#const experienceRevocations = await reconcileExperienceNodes(db);`)
+and non-canonical city keys. Reproduced with the real `buildGraphFromSources`:
+a `visited` edge built from one presence stamp is still stored, at weight 1
+and its original `last_seen`, after that stamp is revoked and the graph is
+rebuilt. So, apart from revoked experiences, a relationship's stored strength
+is the permanent score §6 forbids, and nothing lowers it with age.
+
+The spec names the four inputs and not the rule — no functional form, no
+constant, no combination of the four, no retirement threshold. Building one
+is a new product rule, so this lane grades and asks (§56.9). Retiring
+batch-absent edges is NOT the decision-free half it looks like: the source
+reads are capped at `BUILD_LIMIT`, so an edge missing from one build is not
+proof its support vanished. **DV-51 stays W**, on corrected evidence: the
+experience-revocation retirement and the time-aware `first_seen`/`last_seen`
+fields are built; decay is not.
+
+### 56.7 Row moves
+
+| ID | was | now | evidence |
+|---|---|---|---|
+| DV-77 | N | **W** | Phase 0.4, `docs/specs/discovery-architecture-v1/discovery-v1-12-implementation-plan.md:28#Redesign durable ingest so no raw unstripped original can persist`. The one path where it can — the postcard signed upload whose `/complete` never runs — gets the caller its sweep never had, started with the server (wiring pinned by `artifacts/api-server/src/test/mediaPendingUploadSweep.test.ts:454#it("the scheduler is STARTED by the server`), a sweep that no longer deletes a row before the bytes it points at can be found (`artifacts/api-server/src/services/media/PendingUploadSweep.ts:123#export function pendingSlotPath(`), an ingest that mints no URL for an unrecorded slot (`artifacts/api-server/src/routes/postcards.ts:501#if (pathErr) {`), and a relay that serves a pending object to nobody but its owner (`artifacts/api-server/src/lib/mediaAccess.ts:487#String(r?.processing_status ?? "") !== "ready")) return false;`). Bound proved: cutoff + one interval (§56.5). **Why W and not C:** the removal runs only behind `media_pending_upload_sweep_enabled` (`artifacts/api-server/src/migrations/3400_media_pending_upload_sweep_flag.sql:49#'media_pending_upload_sweep_enabled',`), seeded FALSE and applied nowhere, so today an abandoned original still persists; the three constants are unratified. |
+| A13 | W | **W** | Re-derived (§56.3). Every Discovery path that reasons about layover time now reads the snapshot — the two Hidden Gems paths since §56.2 (`artifacts/api-server/src/lib/discoveryLayoverGems.ts:104#export async function layoverGemWindow(`) — except a DORMANT ranker term no caller reaches (`artifacts/api-server/src/lib/portavaRank.ts:289#minutesUntil <= ctx.availableMinutes ? 1 : -0.5`). Compass's tools consume it (§56.3). **Why W:** the in-layover Compass answer re-derives usable minutes (`artifacts/api-server/src/services/airport/LayoverCompassService.ts:146#const usableMin = Math.max(0, availMin - bufferMin);`); Trips, Map, Safe Return and Layover's own recommendations certify inline rather than through the snapshot (`artifacts/api-server/src/routes/airport.ts:1375#certifySessionFeasibility(airport, session, { nowMs, entry: await sessionEntry(sc, airport, session) })`); and the snapshot certifies WITHOUT the entry input those routes pass (as found at the lane's commit 396a570ca; the integrator applied §56.12's fix in the merge (§56.14), so the line now reads `artifacts/api-server/src/services/airport/LayoverSnapshot.ts:353#{ nowMs, entry: await resolveLayoverEntry(db, session.userId, layoverAirportCountry(airport)) }`), so a refused border reads `no` on the dashboard and `entry_unverified`, landside open, in every snapshot consumer. |
+| A14 | W | **W** | Re-derived (§56.2). All five Discovery serve surfaces that can be in Layover mode — `GET /discovery`'s four paths, `/feed`, `/community`, and now `GET /hidden-gems/layover-safe` and `GET /hidden-gems?layoverSafe=1` — show only `admittedIds` when the mode is on; the gems window is the snapshot's (`artifacts/api-server/src/routes/hiddenGems.ts:622#window.kind === "certified" ? window.minutes`); an unreadable or failed read withholds with a named reason; revocation holds across two requests in both directions and on a Cache-A hit (`artifacts/api-server/src/test/discoveryLayoverGems.test.ts:342#it("a window that SHRINKS between two requests withholds on the next one"`). *"Two of the three Discovery surfaces are still ungated"* is no longer true. **Why W and not C:** the universe the gate enforces is the SNAPSHOT's, and the snapshot omits the entry input (A13 above), so for a refused border it admits landside places the dashboard's certification closes; `layover_discovery_mode_enabled` is FALSE; and only places the traveller already planned can be admitted (no dwell source — §38's measurement gap, unchanged). |
+| A21 | N | **N** | *"No registration mechanism exists"* is false (`artifacts/api-server/src/services/telegraph/actionRegistry.ts:213#export const TELEGRAPH_ACTION_REGISTRY`), and the row stays N for a different reason: no executable Telegraph action acts on a Discovery object (`artifacts/api-server/src/routes/telegraphCommands.ts:71#kind: "add_to_plan" | "create_meetup" | "open_poll" | "ask_followup";`). The Discovery-object actions Telegraph shows — the shared card's Add to Plan and Save (`travel-buddy-standalone/src/components/DiscoveryCardMessage.tsx:205#const res = await toggleSave({`) — call their owning domains directly and are not Telegraph actions. Registering one would invent a product action; §56.9 asks. |
+| DV-51 | W | **W** | Corrected evidence (§56.6). The rebuild is upsert-only (`artifacts/api-server/src/compass/CompassGraphEngine.ts:991#.upsert(chunk, { onConflict: "src_type,src_key,dst_type,dst_key,edge_type" });`); it retires experience edges whose memory is gone (`artifacts/api-server/src/compass/CompassGraphEngine.ts:2148#const experienceRevocations = await reconcileExperienceNodes(db);`) and nothing else, and a revoked stamp's `visited` edge survives a rebuild at its old weight (reproduced). §6's graded decay is unspecified beyond its inputs (`docs/specs/discovery-architecture-v1/discovery-v1-05-graph-engine.md:92#as a single permanent score.`); §56.9 asks for the rule. |
+
+### 56.8 Tests, and every one seen RED
+
+`src/test/discoveryLayoverGems.test.ts` — 27 tests (A13/A14): minutes source,
+the stated path's unchanged body, cross-viewer, fail-closed (sessions, airport
+profiles, plan stops), empty certified window, revocation (shrink, widen, end,
+failed read, decertify, Cache-A hit), retries, one certification per request,
+Layover mode on and off, and the list route.
+`src/test/mediaPendingUploadSweep.test.ts` — 21 tests (DV-77): bound (not
+before, by cutoff + interval), ready rows untouched, never served
+(stranger refused, owner and ready controls), flag off / absent / unreadable,
+unreadable `post_media`, partial failure then retry, convergence, derived and
+underivable paths, completed-meanwhile, oldest first, ingest refusal and its
+control, the manual trigger's shape and failure, and the scheduler's wiring.
+Both are registered in `npm test`.
+
+Nineteen targeted mutations, each run against its suite and each file restored
+byte-identically (sha256 compared):
+
+| # | mutation | killed by |
+|---|---|---|
+| L1 | the window ignores the snapshot | 17 tests (WIDEN, NARROW, CROSS-VIEWER, both FAIL CLOSED, empty window, SHRINKS, …) |
+| L2 | a degraded snapshot falls back to the query figure | both FAIL CLOSED cases, the failed-read revocation, the list route's |
+| L3 | the Layover-mode gate is skipped for gems | the three mode-ON cases |
+| L4 | a gate refusal fails open | the unreadable-plan-stops case |
+| L5 | layover-safe: a zero certified window becomes "no filter" | the empty-window case |
+| L6 | list route: the same | the list route's empty-window case |
+| L7 | the gate re-reads the snapshot | one certification per request |
+| L8 | list route: certified minutes not applied | the list route's WIDEN case |
+| D1 | `upload-url` mints a URL for an unrecorded slot | the ingest refusal |
+| D2 | the relay serves a non-ready row | the stranger case |
+| D3 | no re-read before removal | completed-meanwhile |
+| D4 | newest first | oldest first |
+| D5 | no derived path | the derived-path case |
+| D6 | a failed removal deletes the row anyway | partial failure then retry |
+| D7 | an unreadable flag reads as absent | flag unreadable |
+| D8 | the flag is ignored | flag off, flag absent |
+| D9 | an unreadable `post_media` reported as zero work | both unreadable-`post_media` cases |
+| D10 | the scheduler is not started | the wiring case |
+| D11 | parts and poster left behind | the bound, retry and derived-path cases |
+
+**3400 on PostgreSQL 16** (the local harness, port 54501, a throwaway cluster,
+never a Supabase project): the chain replay from 2093 applied 3400 in order and
+the row read `false`; a second apply was a no-op; with the row set TRUE the
+migration's postcondition raised `POSTCONDITION FAILED (3400)` and the rollback
+raised `ROLLBACK REFUSED (3400)`, leaving the row TRUE; set back to FALSE, the
+rollback removed it; a re-apply restored it FALSE.
+
+The pre-existing suites these files touch pass unchanged:
+`discoveryLayoverMode.test.ts` (40), `hiddenGems.test.ts` (64), and the ten
+media-access suites (376).
+
+**The full `npm test`** (27,239 tests) passes except the census-integrity
+assertions of the census-integrity tool's own suites (2 failures, 5
+cancelled): DV-77's move makes the rows count C 93 / W 82 / N 10 /
+X 3 against a stated headline of C 93 / W 81 / N 11 / X 3, and this section does
+not restate the headline. Run against a copy of the corpus with only that
+headline restated, `check:census-integrity` passes. The first run's third
+failure, the deletion-graph snapshot, is fixed by the regeneration in §56.5.
+
+### 56.9 Owner questions, verbatim
+
+1. **A13 / A14 (routed to the Layover owner).** *"Should `certifiedLayoverSnapshot` certify with the same entry input the airport routes pass (`resolveLayoverEntry`), so that a traveller whose border is refused is `no` — landside closed — in Discovery's Layover mode and in Compass's tools, as it already is on the dashboard?"*
+2. **A13 (routed to the Layover owner).** *"Should `answerLayoverQuestion` read `usableMinutes` off the certified record (or the snapshot) instead of re-deriving it from `cutoffMs − now − totalBuffer`, and should Trips, Map, Safe Return and `LayoverRecommendationService` consume `certifiedLayoverSnapshot` rather than calling `certifySessionFeasibility` themselves?"*
+3. **A14 (product).** *"Is the Gems screen's 'How long is your layover?' tab — a traveller in no layover browsing gems by a hypothetical duration — a product surface to keep? If it is, `/hidden-gems/layover-safe` keeps answering a stated figure for callers with no live layover; if not, the route should answer only for a live certified layover."*
+4. **A21 (Telegraph and Discovery owners).** *"Should the actions a Telegraph rich card offers on a shared Discovery place — the discovery card's Save and Add to Plan, and the PLACE / HIDDEN_GEM share actions ADD_TO_TRIP, CREATE_PLAN, MEET_HERE, SHARE_PLACE and DO_THIS_NOW — become executable Telegraph actions (tap → command → Discovery authorization and write, §30A.11) registered under domain `discovery`, or stay direct calls to their owning domains outside `TELEGRAPH_ACTION_REGISTRY`?"*
+5. **DV-77 (media owner).** *"May the abandoned-upload sweep run unattended — `media_pending_upload_sweep_enabled` ON — deleting every postcard upload still pending one hour after its slot was reserved, including a resumable video its owner is still sending? If yes, are one hour, 200 per pass and hourly the numbers, or what are they?"*
+6. **DV-51 (product).** *"What is the decay rule for a graph edge — the function of the age of its latest support (with its frequency, diversity and confirmed experiences) that sets its strength, the constant or constants in that function per edge type, and the strength below which an edge is retired — and may a rebuild retire an edge whose source rows it did not read, given that its source reads are capped at `BUILD_LIMIT`?"*
+
+### 56.10 Read-only production SQL that would turn harness evidence into production evidence
+
+None of it was run by this lane.
+
+- **DV-77 backlog:** `SELECT count(*), min(created_at) FROM public.post_media WHERE processing_status = 'pending' AND created_at < now() - interval '1 hour';` and `SELECT count(*) FROM public.post_media WHERE processing_status = 'pending' AND storage_path = '';` — how many unstripped originals the sweep would remove, and how many the old sweep would have stranded.
+- **DV-77 flag:** `SELECT flag, enabled FROM public.feature_flags WHERE flag = 'media_pending_upload_sweep_enabled';` — absent until 3400 is applied.
+- **A13/A14 exposure:** `SELECT status, count(*) FROM public.entry_requirements GROUP BY status;` and `SELECT count(*) FROM public.layover_sessions s JOIN public.traveler_passports p ON p.user_id = s.user_id WHERE s.status IN ('active','returning');` — whether any curated corridor is refused, and so whether the snapshot's missing entry input can be reached in production today.
+- **A14 flag:** `SELECT flag, enabled FROM public.feature_flags WHERE flag IN ('layover_discovery_mode_enabled','hidden_gems_layover_enabled','hidden_gems_enabled','passport_entry_intelligence_enabled');`.
+- **DV-51:** `SELECT edge_type, count(*), min(last_seen) FROM public.compass_graph_edges GROUP BY edge_type;` — how old the oldest undecayed support is, per family.
+
+### 56.11 Other censuses this touches
+
+- **census-layover** — L6 (`:66`) and L269 (§25): the snapshot's consumer set grew by the Hidden Gems layover paths, and the entry divergence (§56.3) is a finding against L6's "one certified snapshot". Not re-graded here. Freshness: `lib/discoveryLayoverMode.ts` changed in place (the `snapshotRead` option) — added to its acknowledgement with that argument.
+- **census-media** — MD217 and MD258 stay C: their C rests on stripping at upload, and the pending window neither grades is now never served to a non-owner and, flag on, bounded. The admin stamp-artwork base64 upload (`routes/stampCatalog.ts`) still stores bytes to a public bucket without re-encoding; it has no completion handler, so it is outside DV-77's words and is recorded for census-media. Freshness: `services/media/PendingUploadSweep.ts` and `lib/media/pendingUploadSweepScheduler.ts` are new counted files — added to its acknowledgement; `routes/postcards.ts` and `lib/mediaAccess.ts` were already named.
+- **census-telegraph** — spec `:610`'s rich-card path (the discovery card's two direct buttons, §56.4). Not graded here; no Telegraph file changed.
+
+### 56.12 Routed hunk for the integrator — the snapshot's entry input (NOT applied)
+
+`services/airport/LayoverSnapshot.ts` is additive-only for this lane. The fix,
+line-neutral, for whoever owns it:
+
+```diff
+-import { snapshotIdFor } from "./layoverLedger.js";
++import { snapshotIdFor } from "./layoverLedger.js"; import { resolveLayoverEntry, layoverAirportCountry } from "./layoverEntryGate.js";
+@@ certifiedLayoverSnapshot
+-  const record = certifySessionFeasibility(airport, session, { nowMs });
++  const record = certifySessionFeasibility(airport, session, { nowMs, entry: await resolveLayoverEntry(db, session.userId, layoverAirportCountry(airport)) });
+```
+
+`resolveLayoverEntry` never answers `permitted` on a failed read (every
+unreadable source is `unresolved`), so the change can only close landside,
+never open it. It adds three reads per snapshot (the flag, `traveler_passports`,
+`entry_requirements`). With it, the snapshot and the airport route certify the
+same inputs, so the same `inputHash` and the same `snapshotId`.
+
+### 56.13 What would turn this red
+
+- A Discovery path in Layover mode filtering on a caller-supplied figure, or
+  falling back to one when the snapshot cannot be read.
+- A certified window with no minutes served as "no filter".
+- A second certification of one request's layover inside Discovery.
+- A pending `post_media` object served to anyone but its owner.
+- The sweep deleting a row before its bytes, or a row with an unrecorded path.
+- `upload-url` minting a URL for a slot whose path did not record.
+- `media_pending_upload_sweep_enabled` seeded or read as ON.
+- The pending-upload scheduler leaving `src/index.ts`.
+
+- NOT-GRADED: artifacts/api-server/src/compass/CompassTools.ts — cited in §56.3 only for the fact that Compass's tools read `certifiedLayoverSnapshot`; A13's verdict rests on the surfaces that do NOT (LayoverCompassService, routes/airport.ts, the snapshot's missing entry input), which are watched.
+- NOT-GRADED: artifacts/api-server/src/lib/deletion/deletionGraph.snapshot.json — named in §56.5 only as a generated artifact regenerated because the sweep moved into `services/`; no §56 verdict rests on it, and deletionGraph.test.ts pins it to the code.
+- NOT-GRADED: artifacts/api-server/src/lib/deletion/writeSnapshot.ts — named in §56.5 only as the generator that was run; this section changed nothing in it.
+- index.ts stays NOT-GRADED under §52's declaration and for its reason: §56.5 cites only the one line that starts the pending-upload scheduler, and that line is pinned by `mediaPendingUploadSweep.test.ts`'s wiring case, which this census watches.
+
+### 56.14 Integrator: P5-A merged, §56.12's entry fix applied, headline restated
+
+*Integrator addendum, 2026-09-27, at the merge of `disc-p5a-adapters` (`396a570ca`, based on `e6f6ff7c7`) into `wave8-integration` at `d7bfb15dc`.*
+
+- **The merge.** Conflicts were unions only:
+  - the `test` line and `CENSUS_SCOPE`;
+  - this census, with §56 after §54.14;
+  - the freshness ledger's census-discovery entry (both sides added files and appended to its reason; merged as the union of the files and both appended arguments, checked three-way against the base entry);
+  - the telegraph inventory, regenerated.
+- **§56.12's routed hunk is applied, line-neutral.** `certifiedLayoverSnapshot` now certifies with the entry input the airport routes pass (`artifacts/api-server/src/services/airport/LayoverSnapshot.ts:353#entry: await resolveLayoverEntry(db, session.userId, layoverAirportCountry(airport))`). A refused corridor is `no` with landside closed in every snapshot consumer (`artifacts/api-server/src/test/layoverSnapshotEntry.test.ts:67#it("a REFUSED corridor (visa_required) certifies`).
+  - A permitted corridor still opens landside. Every data gap is `entry_unverified` and closes nothing: flag off, no passport, no corridor row, or any of the three tables unreadable.
+  - A corridor change between two reads changes the next snapshot, in both directions. Two reads of the same world give the same `snapshotId`. The snapshot's certified entry input equals what the routes' `resolveLayoverEntry` answers.
+  - Reverting the one line turns 5 of the 6 tests red; the file was restored sha256-identical.
+- **§56.9 question 1 is withdrawn, and the change can be reverted.** The fix follows from rules already written: Layover `:66` requires every surface to consume *the same* certified snapshot, and §6.1 makes entry a named input of certification (the feasibility record's `entry` input, which its `inputHash` covers). `resolveLayoverEntry` never answers `permitted` on a failed read, so the change can only close landside. If the Layover owner rules the other way, it is a one-line revert.
+- **Production today, read-only (2026-09-27).**
+  - `passport_entry_intelligence_enabled` is `true`.
+  - `entry_requirements` holds 39,402 corridors, 21,182 of them outside the three permitted statuses.
+  - 0 users have a `traveler_passports` row, and 0 `layover_sessions` are `active`.
+  - So the divergence could not yet reach anyone: without a passport every corridor resolves `no_passport_on_file`. The first traveller to add a passport would have met it. Nothing here is deployed.
+- **Tests at the merged tree.**
+  - Every layover, Hidden Gems, Discovery-layover, Compass-layover and pending-upload suite passes, 1,338 of 1,338.
+  - `hiddenGemSelfPublish` is a live-DB suite: it refuses without credentials by design, and it is not on the unit `test` line.
+- **Row moves.** A13 and A14 are restated with the entry defect removed; neither moves.
+
+| ID | was | now | evidence |
+|---|---|---|---|
+| A13 | W | **W** | The snapshot and the airport routes now certify the same inputs (`artifacts/api-server/src/services/airport/LayoverSnapshot.ts:353#entry: await resolveLayoverEntry(db, session.userId, layoverAirportCountry(airport))`). Two things still keep A13 at W, and both are §56.9 question 2. First, the in-layover Compass answer re-derives usable minutes (`artifacts/api-server/src/services/airport/LayoverCompassService.ts:146#const usableMin = Math.max(0, availMin - bufferMin);`). Second, Trips, Map, Safe Return and `LayoverRecommendationService` certify inline rather than consuming the snapshot. |
+| A14 | W | **W** | For a refused border the Layover-mode universe is now the dashboard's: landside is closed (`artifacts/api-server/src/test/layoverSnapshotEntry.test.ts:99#it("revocation both ways: the corridor changing between two reads changes the NEXT snapshot"`). Two things still keep A14 at W. `layover_discovery_mode_enabled` is FALSE in production, which was read today. And only places the traveller already planned can be admitted; there is no dwell source (§38). |
+
+**Headline:**
+
+| bucket | count |
+|---|---|
+| BUILT-AND-CORRECT | **97** |
+| BUILT-BUT-WRONG | **82** |
+| NOT-BUILT | **6** |
+| CANNOT-VERIFY | **3** |
+
+- The move since §54.14 is P5-A's `DV-77`, N → W.
+- CONSTRUCTED 179 / 188 = **95.2 %**; CORRECT 97 / 188 = **51.6 %**. The four buckets sum to 188.
+- **Nothing in §56 is in production.** 3400 is applied only to the local harness, and `media_pending_upload_sweep_enabled` does not exist on any shared database. The `/hidden-gems/layover-safe` minutes change and the relay's pending-object refusal are not deployed.
 
 ## Cited, not graded (check:census-scope-coverage)
 
