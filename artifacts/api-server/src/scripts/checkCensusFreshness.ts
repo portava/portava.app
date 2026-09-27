@@ -4052,6 +4052,10 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/migrations/3417_place_momentum_dismiss_excluded.sql",
     "db/rollback/2026-09-27-3417-place-momentum-dismiss-excluded-rollback.sql",
     "artifacts/api-server/src/test/db/placeMomentumDismiss.db.test.ts",
+    // WIDENED 2026-09-27 by census-discovery §64 (P17, Trail member visibility): DC-20's re-grade
+    // cites the two suites that were seen red on the event and route rules and on the counts.
+    "artifacts/api-server/src/test/discoveryTrailMemberVisibility.test.ts",
+    "artifacts/api-server/src/test/db/trailsMemberVisibility.db.test.ts",
   ],
   // ── ADDED 2026-09-15: census-passport joins the CHECKABLE set ──────────────
   //

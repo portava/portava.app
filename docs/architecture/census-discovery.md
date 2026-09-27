@@ -11023,6 +11023,251 @@ The fix is two line-neutral edits:
 
 **A visible consequence.** A Trail with no members also answers `trending: null` now, where it answered `false`. The service already returned no reading for it (`none(null)`, with a null provenance). `null` is the answer the route's own comment gives for "no reading was taken". The client type is not this lane's file (P13), and `null` is falsy wherever a boolean was tested.
 
+## §64 — Trail member visibility (lane P17): a Trail serves an event or a route plan only as the product already would, and no number it shows counts a member it withholds
+
+*Written 2026-09-27 by the Discovery P17 lane on `disc-p17-trail-visibility`, cut from `9af90c0ee` (the integration tip carrying §46–§62 and §61). The row this lane is accountable for, DC-20, reads `W` at its last statement (§61.7), and that was read from `CENSUS_INTEGRITY_DUMP=ALL` at the base. No migration was written. Nothing here is merged to `main`, deployed, applied to a shared database or flag-enabled, and no Trail exists in production (§51.1). **This section does not restate the headline.***
+
+### 64.1 The defect, as §61 left it
+
+§61.4 recorded it as found and not fixed, and §61.12 question 4 put it to the owner. `servableMembers` (`artifacts/api-server/src/services/trails/TrailService.ts:295#async function servableMembers(`) decides what a viewer is served of a Trail. It failed posts closed, but it served an event or a route plan to every viewer as long as the row existed. So a friends-only, invite-only, draft, cancelled or archived event was served to every viewer of the Trail with its host's id, and so was another traveller's route plan with its owner's id. The same helper is the attach gate (`artifacts/api-server/src/services/trails/TrailService.ts:1397#const verified = await verifyAttachSources(sc, labels, actor.userId, servableMembers);`), so anyone could also attach such content.
+
+This lane does **not** answer question 4. It makes the unanswered state fail closed, as posts already do: a Trail serves such content only as the rest of the product already would.
+
+**Measured on `9af90c0ee`, before any change:**
+
+- **Unit suite:** 18 of its 21 cases were red.
+- **Harness suite:** all 8 of its cases were red.
+
+On the real schema, a stranger was served all 24 visibility × state events, where 2033's policy lets that stranger read 5. A stranger and an anonymous viewer were served all eight route plans. A stranger's `memberCount` was 2 over one public and one invite-only event.
+
+### 64.2 The product's own rules, found before any was written
+
+**Events.** Every surface that shows an event to someone other than its host was read.
+
+| surface | who else may read an event | where |
+|---|---|---|
+| database, `events_public_read` | `visibility = 'public'`, a state in the allowlist, and the host not blocked either way | `artifacts/api-server/src/migrations/2033_rls_hardening.sql:269#AND state IN ('open', 'full', 'waitlist', 'started', 'completed')`; production's structure carries it verbatim (`artifacts/api-server/baseline/20260819_baseline_structure.sql:28027#CREATE POLICY events_public_read ON public.events FOR SELECT`) |
+| database, `events_participant_read` | any RSVP or role holder, **in any state** | `artifacts/api-server/src/migrations/2033_rls_hardening.sql:276#host_id = auth.uid() OR user_is_event_participant(id)` |
+| `GET /events/:id`, `canViewEvent` | host and staff in any state; nobody else in a non-live state (`artifacts/api-server/src/routes/events.ts:4332#if (["draft", "cancelled", "archived"].includes(ev.state)) return false;`); anyone if public (`artifacts/api-server/src/routes/events.ts:4334#if (ev.visibility === "public") return true;`); friends and participants if friends-only; circle or trip members if `circle`/`trip`; participants if invite-only | `canViewEvent` |
+| `GET /events/:id`, `checkEventEligibility` | after `canViewEvent` (`artifacts/api-server/src/routes/events.ts:2438#const readElig = await checkEventEligibility(sc, ev as any, user.id);`): never a banned viewer (`artifacts/api-server/src/routes/events.ts:709#if (bannedRole) return { ok: false, errorCode: "forbidden", message: "You are banned from this event" };`); age, trust and verified gates when `events_trust_gates_enabled` is on (`artifacts/api-server/src/routes/events.ts:712#const trustGatesEnabled = await isFlagEnabled(sc, "events_trust_gates_enabled");`) | an ineligible viewer gets 404 |
+| `GET /events` feed | browse states only; public, or friends-only for friends (`artifacts/api-server/src/routes/events.ts:1184#if (ev.visibility === "friends_only" && !friendHosts.has(ev.host_id as string)) return false;`); banned viewers dropped (`artifacts/api-server/src/routes/events.ts:1186#if (bannedEvents.has(ev.id as string)) return false;`); gates when flagged | |
+| Discovery search, events tab | public only (`artifacts/api-server/src/routes/discoverySearch.ts:739#.eq("visibility", "public")`), never draft, cancelled or archived (`artifacts/api-server/src/routes/discoverySearch.ts:750#.not("state", "in", '("draft","cancelled","archived")')`); blocked, age-restricted and inactive hosts dropped | |
+| `lib/mapSearch.ts` `loadNearbyEvents` | public or friends-only-for-friends, never draft, cancelled or archived | |
+
+**Where they agree.** Every surface that serves an event to a stranger requires `visibility = 'public'` and a state outside draft, cancelled and archived. On the eight-label `event_state` enum, 2033's allowlist and the API's denylist are the same five states. **A completed or past event is readable:**
+
+- `completed` is in the allowlist and in the feed's `BROWSE_STATES`.
+- Discovery search's "upcoming" window is a default order, not a rule, and it admits past events under a time intent.
+
+**Where they disagree, and what this takes (the stricter each time):**
+
+1. **Friends and participants.** The API admits the host's friends to a friends-only event. 2033 does not, but it admits any participant in ANY state, which the API refuses for a non-live event. In a public space the Trail resolves neither relationship, as it resolves neither a post's followers nor its trip members (`artifacts/api-server/src/services/trails/TrailService.ts:326#if (!decidePostReadable({ author_id: p.author_id, visibility: p.visibility, trip_id: p.trip_id }, viewerId ?? "", false, false).readable) continue;`). That is stricter than both. On the harness, TV1 shows 2033 admitting an RSVP holder to all 24 events.
+2. **Bans.** 2033 admits a banned viewer to a public event; the API does not. The ban is applied.
+3. **Viewer gates.** Only the detail route refuses an ineligible viewer, and only with the flag on. A Trail does not resolve a viewer's age, trust or verification, so a gated event is its host's only. That is the posts' fail-closed default, and it is stricter than every surface while the flag is off (§64.9 question 3).
+4. **Staff.** `canViewEvent` admits co-hosts and moderators at any state and visibility. The Trail admits the host only, the posts' author exception.
+5. **`circle_id` / `trip_id` on a PUBLIC event.** No surface narrows by them. 2033, `canViewEvent`, the feed and search read `visibility` alone, and `POST /events/:id/link-circle` keeps an event public unless the host asks. So they scope nothing here either (E6).
+   - The circle and trip scoping the product does have is the API's `circle`/`trip` visibility (`artifacts/api-server/src/routes/events.ts:812#visibility:      z.enum(["public", "friends_only", "invite_only", "circle", "trip"]).default("public"),`), and the Trail serves it to the host only (E1b).
+   - **Found, not fixed (the events lane's):** those two values cannot be stored. Production's enum holds three labels (`artifacts/api-server/baseline/20260819_baseline_structure.sql:189#CREATE TYPE public.event_visibility AS ENUM (`), so `link-circle` with `setCircleVisibility` (`artifacts/api-server/src/routes/events.ts:6571#if (setCircleVisibility) patch.visibility = "circle";`) fails at the database.
+
+**Route plans.** There is no public route-plan concept: no visibility column, and no circle rule anywhere. One rule does make some plans readable by others, and all three places that enforce it agree:
+
+- **Readers:**
+  - 2334's `route_plans_member_select` (`artifacts/api-server/src/migrations/2334_route_plan_crew_visibility.sql:191#trip_id IS NOT NULL AND authz.is_trip_crew(trip_id)`);
+  - `GET /route-plans/:id` (`artifacts/api-server/src/routes/routePlan.ts:329#const isMember = await isAcceptedTripMember(client, plan.tripId, user.id);`);
+  - `lib/trailLiveIntel.ts` (`artifacts/api-server/src/lib/trailLiveIntel.ts:101#authorized = (await requireTripMember(sc, plan.trip_id, viewerId)) !== null;`).
+- **The rule:** the owner, and the trip's ACCEPTED crew as `lib/http.ts` `requireTripMember` defines it (`artifacts/api-server/src/lib/http.ts:450#export async function requireTripMember(`):
+  - roles owner, co_host, member and viewer with status `accepted` (`artifacts/api-server/src/lib/http.ts:490#const acceptedRoles = ["owner", "co_host", "member", "viewer"];`);
+  - the trip's owner when they hold no membership row (`artifacts/api-server/src/lib/http.ts:482#if (trip && (trip as any).owner_id === userId) return { role: "owner" };`);
+  - a THROW when either read fails.
+
+It is reused as it is, not restated. A draft or cancelled plan is its owner's alone, which is stricter than the three readers, which admit the crew to a draft. `lib/tripPolicy.ts`, named as a candidate in this lane's brief, does not exist at this tree.
+
+### 64.3 What was built (`TrailService.ts` and one line of `routes/trails.ts`; all line-neutral where cited)
+
+- **The reads.** The event read now selects the columns the rule needs, spelled literally at the call site (`artifacts/api-server/src/services/trails/TrailService.ts:311#readRows("events", (ids) => sc.from("events").select("id, host_id, visibility, state, verified_only, trust_score_min, age_min, age_max")`). The route read adds `trip_id, status` (`:312`).
+- **`memberAccessFor`** (`artifacts/api-server/src/services/trails/TrailService.ts:1693#async function memberAccessFor(`) reads two things, once per call (`artifacts/api-server/src/services/trails/TrailService.ts:315#const access = await memberAccessFor(sc, events, routes, viewerId, unread);`):
+  - **bans**, from `event_roles`, only for events this viewer could otherwise be served and does not host;
+  - **the crew verdict**, through `requireTripMember` itself (`artifacts/api-server/src/services/trails/TrailService.ts:1723#crewOf.set(tripId, (await requireTripMember(sc, tripId, viewerId!)) !== null);`), only for trips whose active or completed plans this viewer does not own.
+  - The host, the owner and an anonymous viewer need neither read, and none is issued for them (R4).
+- **Events** (`artifacts/api-server/src/services/trails/TrailService.ts:331#!access.event(e)) continue;`): the host is served their own; anyone else only an event that is public, in `EVENT_PUBLIC_READ_STATES` (`artifacts/api-server/src/services/trails/TrailService.ts:1674#export const EVENT_PUBLIC_READ_STATES: ReadonlySet<string> = new Set(["open", "full", "waitlist", "started", "completed"]);`, 2033's list), ungated, and not banning them. An anonymous viewer gets public events only.
+- **Routes** (`artifacts/api-server/src/services/trails/TrailService.ts:335#!access.route(r)) continue;`): the owner, or an accepted crew member of the plan's trip while it is active or completed; nobody else, and never an anonymous viewer.
+- **Fail closed.** A ban read or membership read that fails withholds every member it would have vouched for. It is named in `unread` (`artifacts/api-server/src/services/trails/TrailService.ts:1706#unread?.add("event_roles");`, `:1725` with `TripAccessUnavailableError`'s own `trip_members` or `trips`), so attach answers 503.
+- **No cache.** Nothing is remembered between calls, so a change of visibility, state, ban or membership holds on the next read.
+
+### 64.4 Attach and suggest
+
+`verifyAttachSources` is unchanged and still delegates to `servableMembers`. So an actor can no longer attach an event or route plan they cannot see, and the answer is `unknown_content`, the same as for an id that does not exist (X1, TV4). `trailAttachIntegrity.ts` needs no rule of its own; only its header's description of the helper changed, line-neutrally.
+
+**An actor MAY attach their own non-public event or route plan, because they can see it. It is then served to them and to no one else.** That is safe:
+
+- **Nobody else is served it.** A's own friends-only event and draft route are admitted (201). A's module listing holds both; B's holds neither; nor does A's friend's (X1, X2, TV4). A crew member may attach an active trip route they can see, and it is then served only to its owner and its crew.
+- **No number shows it** (§64.5).
+- **Whose budget it spends.** It spends that content's own §4 budget, whose owner is the one who attached it. Whether a THIRD party's suggestion may spend it is §51.10 question 5, untouched.
+
+A ban or crew read that fails admits nothing: 503 `degraded_unavailable`, retryable, and no row is written (X3, TV6).
+
+### 64.5 Every downstream reader, and every number a viewer is shown
+
+| reader | measured over, before | after §64 | a withheld member counted in a public number? |
+|---|---|---|---|
+| `GET …/modules`: items, `moreFromThisPlace`, `explorationSlots`, `readingProvenance` | the viewer's servable members | same set, now with the §64 rules | no |
+| `GET …/trending` items | the viewer's servable members | same | no |
+| `GET …/trending`'s `trending` and `readingProvenance` | **every member** | the viewer's servable members (`artifacts/api-server/src/services/trails/TrailService.ts:950#if (servable.length === 0) return none(null);`) | **it was.** Withheld members made the Trail answer as measured where an empty Trail answers `null`, and a withheld member's surge made a Trail "trending" with no item in it (C3, C4, TV7). |
+| `GET …/:id` `memberCount` and §12's word | **every member** | the viewer's servable members (`artifacts/api-server/src/services/trails/TrailService.ts:409#const view = await servedTrailView(sc, m.members, opts.viewerId ?? null, nowMs);`; the route passes its caller at `artifacts/api-server/src/routes/trails.ts:214#const r = await getTrail(getServiceClient(), id.data, Date.now(), { viewerId: auth.user.id });`) | **it was.** A friends-only event, another traveller's route, and since §51 a followers-only post each raised a stranger's count. One attached today turned a stranger's "Quiet right now" into "Fresh today" (C1, C2, TV7). |
+| §11 health (`health`, `healthScale`, the hourly `trail_health_snapshots` row) | every member | unchanged, still the WHOLE Trail's | no. It is never serialised (the route suite's no-metrics assertion); it is a ranking input and a stored diagnostic |
+| `loadViewerTrailModifier` (the held flag-2289 term) | every followed-Trail member | unchanged | not a served number. A withheld member's momentum and membership still shape the health scale and the momentum applied to PUBLIC place candidates. **Recorded for whoever lifts the hold** (§64.10) |
+
+The count and the word are computed from the viewer's view (`servedTrailView`). Whole-Trail health keeps `report_rate` and the multiplier. **An outage now undercounts.** When a source read fails, `memberCount` counts what this viewer is served under that failure, which is exactly what `…/modules` serves in the same failure. It never counts what cannot be verified.
+
+**Public members are served byte for byte as before.** G1 pins, as a golden captured by running the same fixture through `9af90c0ee`'s code, at a fixed clock, the detail's `memberCount`, word and `healthScale`, all four modules with both provenances, and the trending reading. The fixture is a place, a public post, a public open event and a public COMPLETED event, with momentum on two of them. The golden is identical after the change.
+
+### 64.6 Row verdicts
+
+| ID | was | now | evidence |
+|---|---|---|---|
+| DC-20 | W | W | **The read-visibility leg is closed for events and route plans; the WHO legs stay the owner's.** §61.7's "attach names content … that the actor could be served" now means, for an event, 2033's `events_public_read` plus the API's ban and eligibility rules, and otherwise the host only (`artifacts/api-server/src/services/trails/TrailService.ts:331#!access.event(e)) continue;`). For a route plan it means its owner and its trip's accepted crew as `requireTripMember` decides, never a draft or cancelled plan (`artifacts/api-server/src/services/trails/TrailService.ts:335#!access.route(r)) continue;`). This holds at the serve path and at attach, fails closed on every new read, and no shown number counts a withheld member. On the real schema, a stranger's view equals what 2033's RLS lets that stranger read (`artifacts/api-server/src/test/db/trailsMemberVisibility.db.test.ts:168#test("TV1. events: every visibility × every state × six viewers; the stranger's view IS 2033's events_public_read"`), and the crew's view is 2334's minus draft and cancelled (TV3). TV1–TV8 were red on `9af90c0ee`. §61.12 question 4 is not answered; its unanswered state now withholds. **Still failing `11` §10 *"every mutation is authorized"*:** any signed-in user may attach any content they can see at the author's-statement confidence (`artifacts/api-server/src/services/trails/TrailService.ts:1436#const confidence = actor.mode === "attach" ? 0.8 : 0.4;`), and a third party's suggestion still spends the content's §4 budget. Both are §51.10 question 5, open verbatim. No flag gates Trails (§61.1), so §31.2's rule, *"A requirement whose feature is disabled is not satisfied"*, does not apply here. The verdict is an implementation reading on this branch. |
+
+**Earlier `C` rows, re-read for a claim this repair falsifies:**
+
+- DV-20, DV-25, DC-02 and DC-03 cite their own code paths. None rests on `servableMembers`' event or route branch.
+- §51.4's revocation row claimed only row EXISTENCE for events and routes (*"an event or route whose row was gone"*). That was true then and is true now.
+- DV-25's GET …/trending path is now measured over the viewer's servable members. Its criterion, *"can influence"*, still holds: the host's surge on their own event makes their Trail trending (C3, TV7).
+
+**No row regresses.**
+
+**Rows this touches without a verdict change here:**
+
+- **DC-21** (§58.4, P8's): the trending boolean and its provenance are now per viewer.
+- **DC-05:** whole-Trail health is unchanged; the §12 word is now per viewer.
+- **DV-27** (`C`): the status is still one of five words and never a number.
+- **DV-13 and DV-23:** their caps run over the same servable set.
+
+### 64.7 Tests, and every one seen RED (P24)
+
+| suite | cases | red before its fix / killed by |
+|---|---:|---|
+| `discoveryTrailMemberVisibility.test.ts` (new, unit) | 21 | 18 red on `9af90c0ee`. E5, E6 and G1 passed there as controls and are killed by K17, K18 and K19. |
+| `db/trailsMemberVisibility.db.test.ts` (new, harness) | 8 | All 8 red on `9af90c0ee`. TV8's first form (only "the same request twice") passed there. It now also retries after a failed crew read, which the base code ignores; it is killed by K16 and K20. |
+| `discoveryTrailAccess.test.ts` | 27 | fixture only: its one event row gains the columns production stores, all NOT NULL or defaulted |
+| `discoveryTrailProvenance.test.ts` | 17 | one assertion, `null` for an empty Trail's `trending` (§61.16). It was **red at `9af90c0ee`**, since §61.16 changed the route and left this assertion expecting `false`. Killed by K22. |
+
+**22 mutations, each applied alone, each seen red, each file restored and sha256-checked** (driver: run the named suites, record the red cases, restore, compare hashes):
+
+- **K01**: `EVENT_PUBLIC_READ_STATES` admits `draft`. Red: TV1, E1.
+- **K02**: the visibility test dropped. Red: TV1, TV4, TV5, TV7, E1, E1b, X1, V1, C1–C4.
+- **K03**: viewer gates ignored. Red: TV2, E2.
+- **K04**: bans read but ignored. Red: TV2, E3.
+- **K05**: an unreadable ban list read as "no bans". Red: TV6, E4, V2.
+- **K06**: an unreadable ban list not named in `unread`. Red: TV6, E4, X3.
+- **K07**: the host exception removed. Red: TV1, TV2, TV4, TV5, TV7, E1, E1b, E2, X1, C1–C3.
+- **K08**: the crew admitted at any status. Red: TV3, R1, R4, X2.
+- **K09**: any trip whose membership was READ admits, whatever the verdict. Red: TV3, R1.
+- **K10**: a failed membership read not named. Red: TV6, R2, R3.
+- **K11**: the owner exception removed. Red: TV3, TV4, TV6, R1, R2, X2.
+- **K12**: `memberCount` from the whole-Trail health. Red: TV7, C1.
+- **K13**: the §12 word from the whole-Trail health. Red: C2.
+- **K14**: …/trending decides "no reading" over every member. Red: TV7, C3.
+- **K15**: …/trending's boolean over every member. Red: C4.
+- **K16**: the detail route passes no viewer. Red: TV7, TV8, C1, C2.
+- **K17**: an unread or missing event row treated as "no rule". Red: E5, X1, and `discoveryTrailAccess.test.ts`'s "an event whose row is gone is withheld".
+- **K18**: a stricter-than-product rule withholding public events that carry a `circle_id` or `trip_id`. Red: E6.
+- **K19**: `completed` dropped from the public-read states. Red: E1, G1.
+- **K20**: a remembered (sticky) membership failure. Red: TV6, TV8, R3, V2.
+- **K21**: the crew read issued for a draft plan. Red: R4.
+- **K22**: the route serves `(momentum ?? 0) > 0`, §61.16's defect. Red: `discoveryTrailProvenance.test.ts`'s "GET /trending distinguishes".
+
+Every new case is killed at least once: all 21 unit cases and all 8 harness cases. No mutation survived, so no test had to be strengthened after a run.
+
+### 64.8 Checks and runs at this tree
+
+**Type checks.** `typecheck` passes. `typecheck:tests` holds its baseline: 863 diagnostics across 115 files, no file above its baseline, and the two new suites carry none.
+
+**Citation and census checks.** `check:doc-citations` (RESULT clean) and `check:citation-targets` (164 / 164) pass. `check:census-scope-coverage` passes: census-discovery is at 351 / 351 = 100 %, with the seven quoted rule sources declared NOT-GRADED. `check:census-row-move-labels` and `check:test-registration` pass.
+
+**Guard checks.** `check:guard-coverage`, `check:route-auth-gate`, `check:flag-polarity`, `check:migration-prefixes` (644 files, no new prefix), `check:writerless-reads` and `check:discovery-query-paths` all pass. No Discovery table or index was added.
+
+**The column checker.** The integrator's offline script reports `problems=0`. Every new read spells its table and columns literally at the call site: `event_roles.event_id`, the six new `events` columns, and `route_plans.trip_id, status`. `requireTripMember`'s reads are `lib/http.ts`'s own and unchanged.
+
+**`check:census-integrity`** now reads DC-20 as `W` at §64.6. Its one problem is the headline mismatch that was already there at `9af90c0ee`: the stated C 96 / W 86 against rows counting C 99 / W 83. That is the integrator's to restate; §64 moves no verdict.
+
+**`check:census-freshness`** names the files that no acknowledgement covers yet, listed in the lane's report:
+- census-discovery: the two new suites;
+- census-trips: the new `src/test/db/` suite.
+
+**The Trails suites.** The nine unit suites (`src/test/discoveryTrail*.test.ts`) pass 270 / 270.
+
+**Full api-server `npm test`:** 1,520 files, 27,083 cases. 27,076 pass, 2 fail and 5 are cancelled, none of them this section's:
+- **The census-integrity CONTROL** (`censusIdGrammar.test.ts`) fails on census-discovery's headline mismatch, and its hook failure cancels the five cases of `censusIntegrityQualifiedVerdicts.test.ts`. Both files give the same 1 fail and 5 cancelled against `9af90c0ee`'s own census, checked by swapping it in and restoring this file sha256-identical.
+- **`guardReachability.test.ts`'s CONTROL** was killed by its own 180 s spawn timeout on a shared box at load average above 20; the file says to re-run it alone. The checker it spawns, run alone at this tree, exits 0 ("every guard on disk is registered").
+
+**The harness.** Every database suite (`run-tests.sh`) on a fresh `up.sh` of the chain at `9af90c0ee` (352 applied in order, 12 known-unreplayable of 364) passes 356 / 356 across 62 suites, with none skipped, which `run-tests.sh` requires.
+
+No migration was written, so the telegraph inventory's migration count is unchanged.
+
+### 64.9 Owner questions, verbatim
+
+1. **DC-20, event relationships inside a Trail.** "Should a Trail serve a friends-only event to the host's friends, and an invite-only event to its invitees and co-hosts, as `GET /events/:id` would — and a followers-only or trip-only post to followers and trip members, as the post read path would? Today a Trail resolves none of these relationships and serves such content to its host or author alone."
+2. **DC-20, trip crew.** "A trip's accepted crew is served that trip's active route plan inside a Trail, because `requireTripMember` already lets them read it; a trip-only post by the same people is not. Should the two agree, and in which direction?"
+3. **DC-20, gated events.** "Should a Trail resolve each viewer's eligibility for an age-, trust- or verified-gated public event (`checkEventEligibility`, behind `events_trust_gates_enabled`), or keep such events to their host as now?"
+4. §61.12 question 4 and §51.10 question 5 stay open as written there.
+
+### 64.10 Found, not fixed
+
+- **The API's `circle`/`trip` event visibility cannot be stored** (§64.2, 5). This is the events lane's.
+- **The held flag-2289 term reads every member.** `loadViewerTrailModifier` computes health scale and Trail momentum over every followed-Trail member, withheld ones included. It serves no number, but when the hold lifts, a withheld member's activity will move the rank of public places in a follower's feed. The repair is to pass each follower's servable members, as §64 does for the trending boolean.
+- **The age-restricted host set.** Discovery search drops age-restricted hosts (`fetchAgeRestrictedSet`), and `servableMembers` applies that to no member type: posts, places, events or routes. It is a creator-level rule, not an event or route rule, and is left for the Trails read path's owner.
+
+### 64.11 Read-only production SQL that would turn harness evidence into production evidence
+
+```sql
+-- The rule's inputs as production holds them (TV1 and TV3 pin them on the harness):
+SELECT polname, pg_get_expr(polqual, polrelid) FROM pg_policy
+ WHERE polrelid IN ('public.events'::regclass, 'public.route_plans'::regclass) AND polcmd IN ('r', '*') ORDER BY 1;
+SELECT enum_range(NULL::public.event_visibility), enum_range(NULL::public.event_state), enum_range(NULL::public.route_plan_status);
+SELECT pg_get_functiondef('authz.is_trip_crew(uuid)'::regprocedure);
+SELECT flag, enabled FROM public.feature_flags WHERE flag = 'events_trust_gates_enabled';
+-- How much of production's events a Trail would serve a stranger:
+SELECT visibility, state,
+       count(*) FILTER (WHERE verified_only OR trust_score_min IS NOT NULL OR age_min IS NOT NULL OR age_max IS NOT NULL) AS gated,
+       count(*) AS events
+  FROM public.events GROUP BY 1, 2 ORDER BY 1, 2;
+SELECT count(*) AS bans FROM public.event_roles WHERE role = 'banned';
+-- Members attached before §64 that it now withholds from a stranger (0 while production holds 0 Trails, §51.1):
+SELECT ct.source_type, count(*) AS members,
+       count(*) FILTER (WHERE ct.source_type = 'event' AND NOT EXISTS (
+         SELECT 1 FROM public.events e WHERE e.id = ct.source_id AND e.visibility = 'public'
+            AND e.state IN ('open','full','waitlist','started','completed')
+            AND NOT e.verified_only AND e.trust_score_min IS NULL AND e.age_min IS NULL AND e.age_max IS NULL)) AS events_withheld,
+       count(*) FILTER (WHERE ct.source_type = 'route') AS routes_withheld
+  FROM public.content_trails ct GROUP BY 1;
+```
+
+### 64.12 Freshness, other censuses, and what would turn this red
+
+**census-discovery.**
+
+- **Re-measured here:** `services/trails/TrailService.ts`, `routes/trails.ts` and `services/trails/trailAttachIntegrity.ts`, the last changed in its header only. They are the evidence for DC-20.
+- **Changed in one place each:** `discoveryTrailAccess.test.ts` (fixture) and `discoveryTrailProvenance.test.ts` (assertion).
+- **Added to `CENSUS_SCOPE`:** the two new suites.
+
+The rule sources are quoted and not graded, and are listed under "Cited, not graded": `routes/events.ts`, `lib/http.ts`, 2033, 2334, `routes/routePlan.ts`, `lib/trailLiveIntel.ts` and `lib/mapSearch.ts`. What guards each is different:
+
+- **2033 and 2334** are compared with the Trail on the harness, so a change that moves either turns TV1 or TV3 red.
+- **`requireTripMember`** is imported, not copied, so a change to it flows into the Trail. TV3 then shows whether the Trail still agrees with 2334.
+- **`routes/events.ts`'s ban and eligibility rules** are COPIED. E2–E4 and TV2 pin the Trail's copy, so a change to the product's rule there would NOT turn a test red: the Trail would keep the old rule. That divergence risk is recorded here rather than watched.
+
+**census-trips** counts the `src/test/db/` prefix. This section adds `trailsMemberVisibility.db.test.ts` there. It seeds trips and memberships only to exercise Trails' reuse of `requireTripMember`, and no Trips verdict can move.
+
+The freshness ledger is the integrator's.
+
+**What would turn this red:**
+
+- **A new event visibility or state label, or a change to 2033's policy.** TV1's parity with RLS fails, and E1 and E1b fail closed for an unknown value.
+- **A change to `requireTripMember` or to 2334.** TV3 fails.
+- **A new reader of `content_trails`** that serves or counts members without `servableMembers`: a whole-Trail count on a new route, or a feed built from memberships.
+- **A cache put in front of the ban or crew reads.** V1, V2, TV5 and TV8 fail.
+- **Lifting the flag-2289 hold** without §64.10's per-follower view.
+
 ## Cited, not graded (check:census-scope-coverage)
 
 - NOT-GRADED: artifacts/api-server/src/compass/CompassExplanationEngine.ts — §13.7 item 3 names Compass's HMAC recommendation-token signer as a refactor this lane declined to make in another lane's file. Discovery's recommendation id is minted by lib/discoveryRecommendationId.ts, and no Discovery verdict rests on the signer.
@@ -11034,3 +11279,13 @@ The fix is two line-neutral edits:
 - NOT-GRADED: artifacts/api-server/src/lib/placeIdBridge.ts — §62.3 cites it only to show that a `db/` uuid names one of two tables, which is why the debug sample writes no `content_id` for it; no verdict rests on the bridge.
 - NOT-GRADED: artifacts/api-server/src/routes/messaging.ts — §62.4 names it as one of five callers of `processTagging`, each passing the service client; the finding is about `tags`' writers, and census-telegraph grades this route.
 - NOT-GRADED: travel-buddy-standalone/src/hooks/useEventRsvp.ts — §62.7 H1 lists its rsvp and join reports as outcome call sites the client hunk covers; they report on the events surface, and no Discovery verdict rests on them.
+- NOT-GRADED: artifacts/api-server/src/routes/events.ts — §64.2 quotes its read rules (`canViewEvent`, `checkEventEligibility`, the `/events` feed, `link-circle`) as the rules a Trail's event members reuse; census-discovery grades none of its routes, and §64's E1–E4 and TV1–TV2 pin the Trail's copy of the rule, so a change there turns a test red rather than aging a verdict.
+- NOT-GRADED: artifacts/api-server/src/migrations/2033_rls_hardening.sql — §64.2 quotes `events_public_read` as the public-read rule the Trail copies; TV1 compares the Trail with that policy on the harness, and no verdict rests on the migration itself.
+- NOT-GRADED: artifacts/api-server/src/migrations/2334_route_plan_crew_visibility.sql — §64.2 quotes `route_plans_member_select` as one of three readers of the trip-crew rule; TV3 compares the Trail with it on the harness.
+- NOT-GRADED: artifacts/api-server/src/lib/http.ts — §64 reuses `requireTripMember` from it unchanged, by import; it is the Trips lane's definition of an accepted crew member, and TV3 pins the Trail's use of it.
+- NOT-GRADED: artifacts/api-server/src/routes/routePlan.ts — §64.2 cites `GET /route-plans/:id` only as a second reader of the same crew rule; no verdict rests on it.
+- NOT-GRADED: artifacts/api-server/src/lib/trailLiveIntel.ts — §64.2 cites it only as the third reader that delegates to `requireTripMember`; it is the IG trail, not a `02` Trail, and no verdict rests on it.
+- NOT-GRADED: artifacts/api-server/src/lib/mapSearch.ts — §64.2 surveyed its nearby-events filter as one of the event surfaces; no verdict rests on it.
+- NOT-GRADED: artifacts/api-server/src/test/censusIdGrammar.test.ts — §64.8 names it only as a full-suite failure caused by this census's pre-existing headline mismatch (the same at `9af90c0ee`); no verdict rests on it.
+- NOT-GRADED: artifacts/api-server/src/test/censusIntegrityQualifiedVerdicts.test.ts — §64.8 names it only as the five cases that the same pre-existing mismatch cancels; no verdict rests on it.
+- NOT-GRADED: artifacts/api-server/src/test/guardReachability.test.ts — §64.8 names it only as a full-suite case killed by its own spawn timeout under load; the checker it spawns passes alone, and no verdict rests on it.
