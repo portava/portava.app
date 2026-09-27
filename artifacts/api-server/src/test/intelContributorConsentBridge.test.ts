@@ -63,7 +63,7 @@ import {
 } from "../lib/intelConsent.js";
 import { assembleClaimInput, type ClaimRow } from "../lib/intelProjectionAggregator.js";
 import { readCrowdFlowSignals } from "../lib/crowdFlowProducer.js";
-import { attachMediaEvidence } from "../lib/intelEvidenceCapture.js";
+import { _setPhotoEvidenceConsentVersionsForTests, attachMediaEvidence } from "../lib/intelEvidenceCapture.js";
 import { readContributorReputation } from "../services/media/MediaContributorReputationService.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -72,6 +72,15 @@ const ROLLBACKS = resolve(HERE, "../../../../db/rollback");
 
 const BRIDGE_MIGRATION = "3310_intel_consent_contributor_bridge.sql";
 const BRIDGE_ROLLBACK = "2026-09-25-3310-intel-consent-contributor-bridge-rollback.sql";
+
+// Section F drives attachMediaEvidence to a successful write, and that path seals
+// the stored reference (census-map §45) and refuses with no key configured.
+process.env.INTEL_EVIDENCE_REFERENCE_KEY ??= "consent-bridge-suite-key-0123456789abcdef";
+// Gate 2b keeps a photo only under a disclosure whose words name photos, and no
+// real version does. Section F tests ownership AFTER that gate, so its consenting
+// accounts hold a fictional covering version.
+const PHOTO_TEST_VERSION = "test_only_disclosure_naming_photos";
+_setPhotoEvidenceConsentVersionsForTests([PHOTO_TEST_VERSION]);
 
 // ═══════════════════════════════════════════════════════════════════════════
 // A. THE MIGRATION — the bridge may only ever hand back a subset of its input
@@ -255,7 +264,7 @@ function makeStore(cfg: StoreConfig): FakeStore {
       ...o,
       actor_id: o.actor_id == null ? null : stored(o.actor_id, o.epoch ?? EPOCHS[0]),
     })),
-    intel_contribution_consent: (cfg.consented ?? []).map((id) => ({ user_id: id, enabled: true, withdrawn_at: null })),
+    intel_contribution_consent: (cfg.consented ?? []).map((id) => ({ user_id: id, enabled: true, withdrawn_at: null, consent_version: PHOTO_TEST_VERSION })),
     intel_evidence: cfg.evidence ?? [],
     intel_confirmations: [],
     intel_state_snapshots: cfg.snapshots ?? [],

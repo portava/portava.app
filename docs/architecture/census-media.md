@@ -11070,6 +11070,294 @@ All run on this branch.
   file was touched.
 - `SENSING_ANON_GRANTED_SCOPES` and the 2481 ledger entry are untouched.
 
+### 33.13 Follow-up: the nested sheets, measured and fixed — the implementation is complete
+
+The integrator sent lane T back after merging `039c7f406` into
+`wave8-integration` (`97a40abfd`). That branch was merged into `lane-t-h7` as
+a merge commit (`be3f4192e`), bringing lanes E, I and V; nothing conflicted.
+This subsection is appended after §33.12.
+
+**The integrator's reading, which this lane applies.** The owner's ruling
+says "Shared ownership does not exclude a surface users encounter in the
+Media flow". A sheet the comment sheet opens on top of the Media flow is
+encountered in that flow. So the nested sheets named in §33.8 item 1 are
+inside MD403's requirement, and measuring them is branch work, not an owner
+question.
+
+**Result.**
+- Every surface reachable from the five sheets without leaving the Media
+  flow is now measured as asserted pairs, and all of them pass. None is
+  pinned and none is unmeasured.
+- Every change was seen red when reverted, and no consumer pair got worse.
+- **The implementation is complete. MD403 stays W** on verification only
+  (§33.13.1).
+
+#### 33.13.1 Row table
+
+| ID | Was | Now | Evidence |
+| --- | --- | --- | --- |
+| MD403 | **W** | **W** | **Implementation complete; verification remaining.** §33's statement stands for the five sheets: 170 pairs, all asserted pairs pass, none pinned. It now also holds for everything they open without leaving the Media flow (§33.13.2): the four nested sheets the comment sheet opens (TagPreviewSheet, ProfilePreviewCard, EngagementUserListSheet, ReportSheet), and the photo button, source sheet and photo card ReportSheet opens for a safety report. Those add 102 pairs: 82 asserted and all passing, 20 decorative, 7 floored over the picked photo. They were measured in the shared fixture (`travel-buddy-standalone/src/theme/__tests__/sharedSheetContrast.pairs.ts:398#export const SF_NESTED`) and asserted as Media's own (`travel-buddy-standalone/src/features/media/__tests__/mediaContrast.test.ts:1615#test('census-media §33.13: the nested sheets the comment sheet opens are measured surfaces`). The whole Media file holds 864 pairs: 771 asserted, all passing, 0 pinned. **Re-measured, the nested sheets failed on 21 pairs in 18 groups.** Each was fixed with the §33 tokens or at the shared component (§33.13.4). **No consumer regressed:** the guard now covers 16 changed components on 67 consumer files, 310 pairs: 103 improved, 207 unchanged, 0 worse, 0 below AA (`travel-buddy-standalone/src/theme/__tests__/sharedSheetContrast.consumers.test.ts:337#changedComponents: 16`). **Not paired, and not app source:** OS-drawn UI — the Alert dialogs, the OS share sheet, the camera and photo library, Settings, the browser and the native date/time picker. **Out of the flow:** a navigation to another screen, such as a profile, a trip, Telegraph, a hashtag feed, Discovery or trip/new. Readings (a)–(c) of §31.13.8, and §33.8 item 3's classification of the comment sheet's pressable handle, stand as stated. **Blocker:** VERIFICATION: owner visual review (H8, extended to the §33 changes) and an on-device review; no implementation remaining. |
+
+#### 33.13.2 Every surface reachable from the five sheets
+
+Each opener was read for the modals it renders and the routes it pushes. A
+modal drawn over the flow is a surface of the flow. A route push or a Linking
+call leaves it. An OS-drawn dialog is not app source and is not paired.
+
+| From | Opens (how) | Kind | Measured |
+| --- | --- | --- | --- |
+| CommentsSheet | ProfilePreviewCard (tap an author's name) | modal sheet | §33.13, 10 pairs |
+| CommentsSheet | EngagementUserListSheet (tap a like count) | modal sheet | §33.13, 16 pairs |
+| CommentsSheet | ReportSheet (long-press a comment → the OS "Comment options" alert → Report); its three steps: category, details, confirmation | modal sheet | §33.13, 27 pairs |
+| CommentsSheet, via RichText | TagPreviewSheet (long-press an @mention or #hashtag; one card per type: user, hashtag, trip, circle, event, place) | modal sheet | §33.13, 26 pairs |
+| ReportSheet, safety concern | MediaPickerButton (the photo button) | inline control | §33.13, 2 pairs |
+| MediaPickerButton | MediaSourceSheet (Camera / Photo Library / Cancel, and the denied rows) | modal sheet | §33.13, 13 pairs |
+| ReportSheet, after a pick | MediaAttachmentTray (the one-photo card: remove, uploading, progress, cancel, retry, error line) | inline, over the photo | §33.13, 8 pairs, 7 floored |
+| MediaSourceSheet | VideoStoryTrimSheet | modal sheet | **not reachable here**: it opens only for a story video, and the safety-report policy allows one image |
+| CommentsSheet, ShareSheet, TagPreviewSheet, ReportSheet, MediaSourceSheet, RichText | Alert dialogs; the OS share sheet ("Share Post"); the camera and library; Settings; the browser (ReportSheet's emergency link) | OS-drawn | not app source; not paired |
+| PlanPickerController | DatePickerField's native date/time picker | OS-drawn | not app source; not paired |
+| ProfilePreviewCard, EngagementUserListSheet rows, TagPreviewSheet's CTA, a mention's tap, ShareSheet's "New Telegraph", PlanPickerController's "Create new trip" | another screen (profile, trip, meetup, hashtag feed, Discovery, Telegraph, trip/new) | navigation | leaves the Media flow |
+| GlobalPlacePicker, DisambiguationSheet | nothing further (the location permission is OS-drawn) | — | — |
+
+**AddToPlanSheet and PlanItemSheet are not reachable from the plan picker.**
+PlanPickerController imports neither, and its only route is "Create new
+trip". Their LockTypeSelector hint is measured as a consumer pair in §33.6,
+not as a Media-flow surface.
+
+**Profile preview actions.** ProfilePreviewCard has two: close, and "View
+full profile", which navigates away. Both are measured.
+
+#### 33.13.3 Re-measured: 21 failing pairs in 18 groups
+
+| Sheet | Pairs | Asserted | Decor | Failing before | Groups |
+| --- | --- | --- | --- | --- | --- |
+| TagPreviewSheet | 26 | 20 | 6 | 4 | 4 |
+| ProfilePreviewCard | 10 | 10 | 0 | 1 | 1 |
+| EngagementUserListSheet | 16 | 15 | 1 | 4 | 3 |
+| ReportSheet | 27 | 20 | 7 | 6 | 4 |
+| MediaPickerButton | 2 | 1 | 1 | 0 | 0 |
+| MediaSourceSheet | 13 | 9 | 4 | 4 | 4 |
+| MediaAttachmentTray | 8 | 7 | 1 | 2 | 2 |
+| **Total** | **102** | **82** | **20** | **21** | **18** |
+
+Every failing pair, before and after:
+
+| Sheet | Colour on ground (bar) | Pairs | Before → after |
+| --- | --- | --- | --- |
+| TagPreviewSheet | `faint` text on paperRaised (4.5) | the error line | 2.88 → 5.55 (`mute`) |
+| TagPreviewSheet | `faint` at the button's 0.6 opacity (4.5; 3) | "Report hashtag", and its spinner | 1.79 → 5.55 (`mute`, full opacity) |
+| TagPreviewSheet | `mute` text on `haze` (4.5) | the event card's "Close" | 4.41 → 4.55 (`muteStrong`) |
+| ProfilePreviewCard | white initials on `haze` (4.5) | the no-photo avatar | 1.26 → 11.80 (AvatarImage's own `deep` ground) |
+| EngagementUserListSheet | onInk text on `signal` (4.5) | "Follow" / "Follow back", "Retry" | 3.14 → 4.99 (fill `signalStrong`) |
+| EngagementUserListSheet | `faint` text on paper (4.5) | a liker's handle | 2.73 → 5.27 (`mute`) |
+| EngagementUserListSheet | `mute` text on `haze` (4.5) | "Follows you" | 4.41 → 4.55 (`muteStrong`) |
+| ReportSheet | `signal` text on its 0x0A tint (4.5) | the selected category's label and its ✓ | 3.15 → 5.01 (`signalStrong`) |
+| ReportSheet | onInk text on `signal` (4.5) | "Next" / "Submit report" | 3.14 → 4.99 (fill `signalStrong`) |
+| ReportSheet | `signal` text on paperRaised (4.5) | "← Back", "Also block …" | 3.31 → 5.25 (`signalStrong`) |
+| ReportSheet | `faint` text on paperRaised (4.5) | the "N/500" count | 2.88 → 5.55 (`mute`) |
+| MediaSourceSheet | `signal` spinner on its 0x18 tint (3) | the camera row loading | 2.95 → 4.68 (`signalStrong`) |
+| MediaSourceSheet | `faint` text on paperRaised (4.5) | each row's second line | 2.88 → 5.55 (`mute`) |
+| MediaSourceSheet | `mute` at the denied row's 0.7 opacity (4.5) | a denied row's label | 2.98 → 5.55 (full opacity) |
+| MediaSourceSheet | `faint` at 0.7 opacity (4.5) | a denied row's second line | 2.00 → 5.55 (`mute`, full opacity) |
+| MediaAttachmentTray | white fill on the light 0.35 track, over any photo (3) | upload progress | 2.50 → 8.64 (a dark 0.4 ink track) |
+| MediaAttachmentTray | `signal` text on paperRaised (4.5) | the upload error line | 3.31 → 5.25 (`signalStrong`) |
+
+Nothing else failed. What already cleared its bar:
+- the tray's other marks over the photo (remove, spinner, cancel and retry,
+  at 4.76–10.51);
+- the safety banner's amber text (6.37);
+- the hashtag Follow button (onInk on `deep`) and its "Following" state;
+- the report option's selected outline in `signal` (3.31, kept as the brand
+  mark).
+
+#### 33.13.4 The fixes
+
+The fix follows §33.4's rule:
+- `faint` text on a light ground takes `mute`;
+- vermilion text, and a fill under onInk text, take `signalStrong`;
+- secondary text on `haze` takes `muteStrong`.
+
+Three fixes are at the shared component, each named by what the measurement
+showed.
+
+- **Opacity no longer dims an active control.**
+  - TagPreviewSheet's report link was drawn at `opacity: 0.6`
+    (`travel-buddy-standalone/src/components/TagPreviewSheet.tsx:410#opacity: 1, // was 0.6`).
+  - MediaSourceSheet's denied rows were drawn at `opacity: 0.7`
+    (`travel-buddy-standalone/src/components/ui/MediaSourceSheet.tsx:407#opacity: 1, // was 0.7`).
+  - Both are active controls: one reports a hashtag, one opens Settings. So
+    WCAG 1.4.3's inactive-component exemption does not apply to them, and
+    the opacity took their text to 1.8–3.0:1.
+  - They now draw at full opacity. The denied state is carried by the
+    `mute` label, the "access denied — tap to open Settings" line, and the
+    Settings button.
+- **ProfilePreviewCard's avatar disc is AvatarImage's own `deep` ground**
+  (`travel-buddy-standalone/src/components/ProfilePreviewCard.tsx:166#backgroundColor: color.deep, // AvatarImage's own ground`).
+  - The card's style overrode AvatarImage's `deep` with `haze`.
+  - AvatarImage always draws white initials, so the initials read 1.26:1.
+  - Every other AvatarImage caller keeps the component's `deep` default.
+- **MediaAttachmentTray's upload track is a dark wash**
+  (`travel-buddy-standalone/src/components/ui/MediaAttachmentTray.tsx:614#rgba(17,17,15,0.4)`),
+  where it was a 0.35 white wash on the 0.55 scrim.
+  - Over a bright photo, the white progress fill read 2.50:1 on the old
+    track, and it now floors at 8.64.
+  - This is the same change §31.2 made to the World viewer's progress track.
+
+**Brand.** `#FF4D2E` is unchanged. Where the brand vermilion was a mark
+that cleared its bar, it stays, for example:
+- the report option's selected outline;
+- "Also block …"'s outline;
+- the camera icon;
+- the spinners on plain paperRaised or paper.
+
+#### 33.13.5 Every visible change in the nested sheets, for the screenshot lane
+
+All paths are under `travel-buddy-standalone/src/components/`.
+
+| Component (file) | What changes | Before → after | Where it is seen |
+| --- | --- | --- | --- |
+| TagPreviewSheet (`TagPreviewSheet.tsx`) | the error line | `#9C988F` → `#6B6862` | a mention/hashtag preview, from any RichText: comments, Pulse cards, Telegraph, meetups, the hashtag feed |
+| TagPreviewSheet | "Report hashtag": its text, flag icon and spinner | `#9C988F` at 60% opacity (reads about `#C4C1BC`) → `#6B6862` at full opacity | the hashtag preview |
+| TagPreviewSheet | the event card's "Close" label | `#6B6862` → `#696660` (not visible) | an event mention's preview |
+| ProfilePreviewCard (`ProfilePreviewCard.tsx`) | the avatar disc: the no-photo initials disc, and the placeholder behind a loading photo | `#E8E5DE` (haze) → `#0A3D4A` (deep); the white initials become readable | tap an author's name in comments |
+| EngagementUserListSheet (`EngagementUserListSheet.tsx`) | a liker's handle | `#9C988F` → `#6B6862` | "Liked by" from comments, posts (PostEngagementBar) and highlights (HighlightViewer) |
+| EngagementUserListSheet | "Follow" / "Follow back" fill; "Retry" fill | `#FF4D2E` → `#C43B23` | same |
+| EngagementUserListSheet | "Follows you" badge text | `#6B6862` → `#696660` (not visible) | same |
+| ReportSheet (`ReportSheet.tsx`) | the selected category's label and ✓ | `#FF4D2E` → `#C43B23` | every report entry: comments, posts, profiles, Telegraph, events, buddy listings, reviews, the map |
+| ReportSheet | "Next" and "Submit report" fill | `#FF4D2E` → `#C43B23` | same |
+| ReportSheet | "← Back"; "Also block …" / "Unblock …" label | `#FF4D2E` → `#C43B23` | same |
+| ReportSheet | the "N/500" count | `#9C988F` → `#6B6862` | same, on the details step |
+| MediaSourceSheet (`ui/MediaSourceSheet.tsx`) | each row's second line | `#9C988F` → `#6B6862` | the photo source sheet: the safety report, and every MediaPickerButton, profile photos, the event composer and memories |
+| MediaSourceSheet | the camera row's loading spinner | `#FF4D2E` → `#C43B23` | same, while the camera opens |
+| MediaSourceSheet | a denied row (camera or library permission refused) | the whole row at 70% opacity → full opacity | same, after a permission is refused |
+| MediaAttachmentTray (`ui/MediaAttachmentTray.tsx`) | the upload progress track under the white fill | `rgba(255,255,255,0.35)` → `rgba(17,17,15,0.4)` (a dark groove) | the picked-photo card while uploading: the safety report, submit a place, a review, the become-a-buddy application |
+| MediaAttachmentTray | the upload error line under the card | `#FF4D2E` → `#C43B23` | same, after a failed upload |
+
+These join H8's review with §33.5's list.
+
+#### 33.13.6 The regression guard, extended
+
+The guard reads the same fixture. It scans the consumers of six more changed
+components:
+
+| Component | Consumer files |
+| --- | --- |
+| TagPreviewSheet | 1, RichText |
+| ProfilePreviewCard | 1 |
+| EngagementUserListSheet | 3 |
+| ReportSheet | 11 |
+| MediaSourceSheet | 4, MediaPickerButton included |
+| MediaAttachmentTray | 4 |
+
+It measures the tray's error line on the other three consumers' own grounds,
+each of them paper. MediaPickerButton and AvatarImage did not change.
+
+Every addition is line-neutral or at the file's tail, so §33's cited lines do
+not move. A photo ground is floored over the same 16-level grid the Media
+test uses
+(`travel-buddy-standalone/src/theme/__tests__/sharedSheetContrast.consumers.test.ts:356#function measureRatio`).
+
+| | Changed components | Consumer files | Pairs | Asserted | Improved | Unchanged | Worse | Failing before | Failing after |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| §33 | 10 | 54 | 205 | 160 | 74 | 131 | 0 | 65 | 0 |
+| §33.13 | 16 | 67 | 310 | 245 | 103 | 207 | **0** | 89 | **0** |
+
+`color.signalStrong` and `color.muteStrong` are still used only in measured
+components, and that is checked by scan. No existing token changed value.
+
+#### 33.13.7 Mutations, each seen red and restored
+
+Each mutation edits one file in place and runs both suites. The file is then
+restored byte for byte, and `git status` is clean after every run.
+
+| Set | Mutations | Guard red | Media test red |
+| --- | --- | --- | --- |
+| Every changed nested-sheet line, reverted one at a time to its text at `be3f4192e` | 22 | 22 | 22 |
+| Each of the six files back to `be3f4192e` whole | 6 | 6 | 6 |
+| A new file that imports and draws ReportSheet; the same for MediaAttachmentTray | 2 | 2 | 0 (the consumer scan is the guard's) |
+| The tray track made nearly clear (`0.05`): it still passes, so only the needle catches it | 1 | 1 | 1 |
+| §33's 49 per-line and 19 named mutations, re-run on this tree | 68 | 68 | 63 (as §33.7 recorded) |
+
+#### 33.13.8 Pair counts (`mediaContrast.test.ts`)
+
+| | Pairs | Asserted | Pass | Pinned | Decorative | Floors |
+| --- | --- | --- | --- | --- | --- | --- |
+| After §33 | 762 | 689 | 689 | 0 | 73 | 166 |
+| After §33.13 | 864 | 771 | 771 | 0 | 93 | 173 |
+
+Nothing was dropped or changed; the 102 new pairs are all nested-sheet
+pairs. The nested grounds are spread into `S_TAIL` on §33's line
+(`travel-buddy-standalone/src/features/media/__tests__/mediaContrast.test.ts:1065#...NESTED_SURFACES`).
+Dynamic type: no Text in the nested sheets opts out of, or caps, OS font
+scaling
+(`travel-buddy-standalone/src/features/media/__tests__/mediaContrast.test.ts:1640#no Text in the nested sheets`).
+
+#### 33.13.9 Checks
+
+- **Contrast test and guard.** `mediaContrast.test.ts` passes 18 of 18, and
+  the guard passes 9 of 9.
+- **Jest.** `--findRelatedTests` on the six changed nested-sheet components
+  selects 137 component suites, and all pass (754 tests). No web suite is
+  related.
+- **Client static checks.**
+  - `tsc` is clean.
+  - The test typecheck is at its baseline: 173 across 60.
+  - eslint shows the same per-file counts as at `be3f4192e`, with 0 errors,
+    and none in the test files.
+  - `lint:imports` and all eight `lint:*` scripts pass.
+- **Client node:test.** `npm test` runs 869 suites and 7,079 tests, all passing.
+- **Census and API server**, run in `artifacts/api-server`:
+  - `check:doc-citations` passes, with 7,516 anchored citations and 0 off
+    their lines.
+  - `check:citation-targets` stays at 165 / 165.
+  - `check:census-integrity`, `check:census-row-move-labels` and
+    `check:test-registration` pass.
+  - `check:census-scope-coverage` passes after this subsection's widening:
+    census-media watches 373 of the 373 files it cites.
+  - `projectionConsumers.test.ts` and `censusScopeCoverage.test.ts` pass
+    38 of 38.
+  - `typecheck` is clean, and `typecheck:tests` is at its baseline (863
+    across 115 files).
+  - `check:all` fails only on `check:census-freshness` and the five live-DB
+    checks the lane rules allow.
+- **`check:census-freshness`, lane T's files only.** Other stale files come
+  from the lanes merged in through `wave8-integration` (I, V, E): the intel
+  and vendor modules, migrations 3002 and 3355–3358,
+  `PassportMemoryService.ts` and `consentDisclosure.ts`. Their
+  acknowledgements belong to the integrator's merge of those lanes. The
+  acknowledgement ledger is not edited. Each of lane T's files changes
+  colours or opacity only, or is §33's own test code:
+  - **census-media:** tokens.ts, the two §33 test files, and the fourteen
+    changed components not already in its ledger: DateTimePickerField,
+    MentionInput, MentionSuggestionList, PlanPickerController,
+    LockTypeSelector, GlobalPlacePicker, Avatar, DisambiguationSheet,
+    TagPreviewSheet, ProfilePreviewCard, EngagementUserListSheet,
+    ReportSheet, MediaSourceSheet and MediaAttachmentTray. They are §33's
+    subject, and §33 and §33.13 re-measure every one.
+  - **census-trust:** ReportSheet. TV-3a grades that every report entry
+    point opens the unified ReportSheet. The categories, steps, submit,
+    block action and safety banner are unchanged; only colours and one
+    fill moved.
+  - **census-input-intelligence:** MentionInput, GlobalPlacePicker and
+    DisambiguationSheet, as §33.10 argued. G167's lines 56–75 still hold.
+  - **census-discovery:** MentionInput, as §33.10 argued.
+  - **census-passport** and **census-wall:** tokens.ts. Lines 12 and 14 are
+    byte-identical, and no value changed.
+
+#### 33.13.10 Files changed
+
+| File | Change |
+| --- | --- |
+| `travel-buddy-standalone/src/components/TagPreviewSheet.tsx`, `ProfilePreviewCard.tsx`, `EngagementUserListSheet.tsx`, `ReportSheet.tsx`, `ui/MediaSourceSheet.tsx`, `ui/MediaAttachmentTray.tsx` | colours and the three component fixes of §33.13.4 (22 lines, in place) |
+| `travel-buddy-standalone/src/theme/__tests__/sharedSheetContrast.pairs.ts` | the nested sheets' files, grounds and 102 pairs (tail); the ground type widened (in place) |
+| `travel-buddy-standalone/src/theme/__tests__/sharedSheetContrast.consumers.test.ts` | six more changed components, the tray's consumer pairs and photo floors (tail); nine lines changed in place, the counts among them with their old anchor kept as "was" |
+| `travel-buddy-standalone/src/features/media/__tests__/mediaContrast.test.ts` | the nested grounds and import (two lines, in place); the §33.13 tests (tail) |
+| `artifacts/api-server/src/scripts/checkCensusFreshness.ts` | census-media's `CENSUS_SCOPE` widened for the three newly cited files |
+| `docs/ops/sensing-production-approval-request.md` | the H7 row records the follow-up (in place) |
+
+Nothing is merged to main, pushed or deployed. No flag, seed, migration,
+database or server logic was touched.
+
 ## 34. Lane F — the owner's surface decisions F1 and F2, built as flags seeded to today — 2026-09-27
 
 Branch `lane-f-surface`, cut from `claude/sensing-completion-20260925` at
@@ -11870,3 +12158,292 @@ records the exit, restores the file and compares SHA-256.
 **Cited, not graded (check:census-scope-coverage), declared for this section:**
 
 - NOT-GRADED: artifacts/api-server/src/lib/eventPostsDiscovery.ts — named once in §36.9 as a finding outside Media (a post reader that ignores the owner's location mode); no MD verdict rests on it, and it is Discovery's reader, not Media's.
+
+## 40. Lane R — three layout defects the H8 renders exposed — 2026-09-27
+
+Lane S rendered the Media screens before and after lane K's contrast work
+(§31.8, §31.12, §31.13). The renders were real `expo export -p web` builds,
+driven by Playwright over fixtures. Three of lane K's new backings turned
+layout overlaps that had been invisible into visible defects. This section
+fixes the layout only:
+- no colour, alpha or backing changes;
+- every contrast pair still passes;
+- H8, the owner's visual review of lane K's changes, is still pending.
+
+### 40.1 Rows
+
+**No row moves.** MD403 stays where its last statement puts it. This section
+fixes geometry, and MD403 grades contrast. The contrast suite still passes
+unchanged:
+`travel-buddy-standalone/src/features/media/__tests__/mediaContrast.test.ts:835#test('every solid-ground and fallback pair meets WCAG AA`
+(14 of 14 tests).
+
+### 40.2 The three defects, and the fixes
+
+Each defect was first reproduced by a hit-test probe on a web export of the
+base, `e9e0b0404`. Geometry is in CSS px at 390×844 (§40.4).
+
+**1. Gems: the rail was dimmed and could not be tapped.**
+- **The layer.** The bottom content (place block, creator row, caption) is a
+  later sibling of the absolutely positioned rail. It carries a full-width
+  0.81 backing (§31.12). Siblings paint in tree order, so the block was drawn
+  over the rail from y 492 down. A tap at the centre of Stamp, Save, Share
+  and ⋯ landed on the block. Lane S's probe of the pre-lane-K tree
+  (`ff89a7b20`) found Stamp, Save and Share landing on the block, and ⋯ on
+  the FAB. So the untappable half predates the backing; the dimming did not.
+- **The FAB.** The rail's bottom edge, at `BOTTOM_SAFE + 120` (y 708), sat
+  inside the Media tab FAB's box (y 680–732). ⋯ overlapped the FAB.
+- **Fix, the layer.** The rail gets `zIndex: 2`:
+  `travel-buddy-standalone/src/components/media/GemsItemOverlay.tsx:368#position: 'absolute', zIndex: 2,`.
+- **Fix, the position.** The rail's bottom is now computed at render:
+  `travel-buddy-standalone/src/components/media/GemsItemOverlay.tsx:102#const railBottom = useLayoverAwareBottomInset() + RAIL_FAB_CLEARANCE;`,
+  applied at
+  `travel-buddy-standalone/src/components/media/GemsItemOverlay.tsx:142#<View style={[styles.actionColumn, { bottom: railBottom }]} testID="gems-action-rail">`.
+  - It uses the same inset hook the FAB uses
+    (`travel-buddy-standalone/app/(tabs)/media.tsx:170#{ bottom: bottomInset + 16 },`).
+  - It adds the FAB's offset, its height and a gap:
+    `travel-buddy-standalone/src/components/media/GemsItemOverlay.tsx:540#const RAIL_FAB_CLEARANCE = 16 + avatar.s52 + space.sm;`.
+  - A home-indicator inset, a three-button navigation bar and an active
+    layover pill all lift the FAB and the rail together.
+- **Why a layer, and not a narrower block.** The block's backing spans the
+  full width, and its text already stops 80 px short of the right edge. A
+  layer fixes the paint order and the taps without changing any measured
+  backing. Where the rail overlaps the block, the rail's own 0.89 backing is
+  composited over the block's 0.81. That only darkens the ground under the
+  rail's light glyphs, so every rail pair measured over a photo still holds.
+
+**2. Grid: the tile's stamp disc hid the view count.**
+- **The overlap.** The disc (§31.12, now 0.80) sat at `bottom: 4` at zIndex
+  6. The meta row is right-aligned too, is 27 px tall (12 + 11 + 4), and sits
+  at zIndex 3. The 44-px disc covered the count on every tile: "12.4K" read
+  "…K".
+- **Fix.** The disc now sits above the meta row, at the same height the
+  verified-location stamp already uses:
+  `travel-buddy-standalone/src/components/media/GridTile.tsx:283#bottom: 28,`.
+- **The slot.** The count's line box has a fixed 11-px line height. It stays
+  clear of the disc up to a font scale of about 2.2×.
+
+**3. Viewer: the page-dot pill hid a caption line.**
+- **The overlap.** The pill (§31.13, 0.87) sat at a fixed
+  `max(insets.bottom + 80, 90)`. That lands inside the left column whenever
+  the column is taller than about 70 px, which is always once a caption
+  shows. It hid "should" in the Lisbon post and "honest version" in the Porto
+  post.
+- **Fix.** The dots get a slot of their own under the columns:
+  - they sit on the columns' old baseline
+    (`travel-buddy-standalone/app/media-viewer/[id].tsx:806#bottom: overlayBaseline(insets.bottom)`);
+  - when they show, the columns rise by the pill's height plus a gap
+    (`travel-buddy-standalone/app/media-viewer/[id].tsx:224#paddingBottom: overlayBaseline(insets.bottom) + (pageDots ? PAGE_DOTS_SLOT : 0)`,
+    `travel-buddy-standalone/app/media-viewer/[id].tsx:885#const PAGE_DOTS_SLOT = 2 * 6 + dot.s5 + space.sm;`).
+- **Why a slot, and not a new fixed height.** Neither element depends on how
+  tall the left column is, so no caption, place chip or loading row can reach
+  the dots. With one item there are no dots and no slot.
+
+**Line neutrality.** No line moves in any of the three files. Edits extend
+existing lines, and the two new constants and the one helper are appended at
+the files' tails. None of the edited lines is a cited one, so every citation
+of these files still lands on its line:
+- the viewer's route file: lines 309, 389, 441, 502, 529, 568, 796, 809, 874
+  and 875 here, and 329 and 680 in the share audit;
+- the Gems overlay: lines 148, 154, 157, 161, 165, 329, 353, 372, 430 and 451;
+- the Grid tile: lines 95, 175, 186, 226 and 285.
+
+### 40.3 Tests
+
+Three new jest suites pin the layers and the slots by style. 13 tests; each
+fix was mutated out and seen red (§40.5).
+
+| Suite | What it pins |
+| --- | --- |
+| `travel-buddy-standalone/src/components/media/__tests__/GemsItemOverlay.railLayer.component.test.tsx:131#describe('GemsItemOverlay — the rail is drawn above the place block'` | The rail and the bottom content share a parent. The rail is absolute, with a zIndex above the content's. Every rail control is inside the rail, none inside the content. Both measured backings are unchanged. |
+| `travel-buddy-standalone/src/components/media/__tests__/GemsItemOverlay.railLayer.component.test.tsx:159#describe('GemsItemOverlay — the rail clears the Media tab FAB'` | The rail's bottom is at least the FAB's top plus 4, for five cases: insets 0, 34 and 48, with and without a layover pill. A source needle keeps the FAB's geometry in media.tsx what the test assumes. |
+| `travel-buddy-standalone/src/components/media/__tests__/GridTile.stampDisc.component.test.tsx:103#it.each(cases)("%s: the disc starts above the meta row"` | For a photo tile and a video tile: both are anchored to the tile's bottom. The disc's `bottom` is at least the meta row's height, computed from its padding and its tallest line. The count is in the row and not in the disc. The 0.80 backing is kept. |
+| `travel-buddy-standalone/app/media-viewer/__tests__/pageDots.layout.component.test.tsx:142#it.each([0, 34])('insets.bottom %i: the dots end below the columns, with a gap'` | The whole screen is rendered with 8 items. The dots' top edge (their `bottom`, plus the pill's height from its own padding and dots) is at least 4 px below the columns' bottom edge, for insets 0 and 34. The 0.87 backing is kept. A second case checks that one item draws no dots and reserves no slot. |
+
+### 40.4 Probe results — the web render (evidence, not a CI test)
+
+The harness is lane S's, copied to lane R's scratch folder with probe scenes
+added. It drives a real `expo export -p web` of the tree in Playwright's
+Chromium at 390×844, over the same fixtures, with nothing leaving the browser.
+Two kinds of hit test are used:
+
+- **Tap.** `document.elementFromPoint` at a point: what a tap lands on.
+- **Paint.** The same point with pointer events forced on. It walks
+  `elementsFromPoint` from the top and skips invisible layers (opacity 0) and
+  layers that paint nothing there. It reports what is drawn on top, even under
+  a `pointerEvents="none"` pill or count.
+
+Base means `e9e0b0404`; fix means `debe0746c`.
+
+| Probe | Base | Fix |
+| --- | --- | --- |
+| Gems, rail vs FAB | Rail y 468–708 intersects the FAB (y 680–732). ⋯'s box intersects the FAB. | Rail y 432–672, 8 px above the FAB. No control intersects it. |
+| Gems, taps at each control's centre (idle; saved and stamped) | Stamp, Save, Share and ⋯ all land on the place block. | All eight land on the control itself. |
+| Gems, paint at each control's four corners and centre | Stamp's lower half, and all of Save, Share and ⋯, are under the 0.81 block. | All 20 points per scene are painted by the rail or the control. |
+| Gems, paint on the rail's own backing (between controls, and 3 px above its bottom edge) | The block at all four points. | The rail at all four points. |
+| Gems, block content under the rail | none | none |
+| Grid, four tiles in view: disc vs count box | All four intersect (Lisbon: disc y 315–359, count y 348–359). | None intersect (Lisbon: disc y 291–335, count y 348–359). |
+| Grid, paint on the count's glyphs (left, middle, right) | The disc paints over the left and middle of every count. | Every point is the count's own text. |
+| Grid, tap at the Stamp's centre | the Stamp | the Stamp |
+| Viewer idle (Lisbon): pill vs left column | Pill y 737–754, inside the column (y 660–820). The caption line "the one everyone should." is under the pill. | Pill y 803–820. The column ends at 795, an 8-px gap. 13 text lines and 7 controls checked, none covered. |
+| Viewer, image error (Porto) | Pill inside the column. "Francesinha, the honest version." is under the pill. | Clear. 11 lines and 7 controls, none covered. |
+| Viewer, loading | Clear. The column is only the 52-px loading row. | Clear. |
+
+**A short screen.** At 375×667 the fix's probes all pass as well. The Gems
+rail sits at y 255–495, 9 px below the filter bar (which ends at 246), and
+8 px above the FAB.
+
+### 40.5 Mutations — each fix reverted alone, and seen red
+
+In each run, one fix was reverted, the tree was rebuilt and probed, and the
+file was then restored with `git checkout`. `git status` was clean after
+every run.
+
+| Mutation | Jest | Probe |
+| --- | --- | --- |
+| M1a: the rail's `zIndex: 2` removed | RED: "the rail is the upper layer" (zIndex undefined) | RED, 13 failures: Save, Share and ⋯ taps land on `gems-bottom-content`, and the rail's backing is under the block at 4 of 4 points |
+| M1b: the rail's bottom back to `BOTTOM_SAFE + 120` | RED: 5 of 5 FAB-clearance cases | RED: the rail box intersects the FAB, ⋯'s box intersects the FAB, and part of ⋯ is painted over |
+| M2: the disc back to `bottom: 4` | RED: 2 of 2 (expected ≥ 27, received 4) | RED, 8 failures: on all four tiles the disc intersects the count and paints over it |
+| M3a: the dots back to `max(insets.bottom + 80, 90)` | RED: 2 of 3 (the dots' top plus 4 is 111 against the columns' 49, and 135 against 75) | RED: the pill intersects the left column in idle, image-error and loading; one caption line covered in each of the first two |
+| M3b: the columns no longer rise (no slot) | RED: 3 of 3 | RED: the pill intersects the left column in all three states; two lines covered in each of the first two |
+
+### 40.6 The re-shoot
+
+The H8 set (01–11) was re-shot from the branch head's export, with the same
+harness, fixtures, viewport and steps as lane S. The shots are in the session
+scratchpad under `lane-r/shots/`, with:
+- pair composites against lane S's BEFORE;
+- composites against lane S's AFTER for the frames that changed;
+- a manifest.
+
+Pixel diff against lane S's AFTER (any channel > 8):
+
+| Frame | Differs from lane S's AFTER |
+| --- | --- |
+| 01 watch, 09 grid error, 10 header, 11 add-gem assist | 0 px (identical) |
+| 02 and 03 Gems | only the rail, x 321–378, y 432–683 |
+| 04, 05 and 07 viewer | only the bottom block, y 543–820 (columns up 25 px, dots below them) |
+| 06 viewer loading | the bottom block, and the spinner, which is captured mid-rotation |
+| 08 grid | only the stamp discs, x 153–384, y 275–685 |
+
+### 40.7 Found while doing it — recorded, not fixed
+
+None of these is one of the three defects, and no verdict moves on any of
+them.
+- **The Watch rail's ⋯ is under the FAB.** The probe at 390×844 and at
+  375×667 finds that a tap at the centre of the Watch rail's "More options"
+  lands on "Create a post" (the FAB). The Watch overlay's `bottom` row sits at
+  `max(insets.bottom + 100, 120)`, inside the FAB's box. This is the same class
+  as defect 1's FAB half. Moving the Watch rail changes that overlay's
+  two-column alignment, so it is left for the owner's call.
+- **The Gems caption sits under the floating tab pill.** The bottom content's
+  `paddingBottom` is `BOTTOM_SAFE + space.md` (28 on web), but the tab pill
+  covers the bottom 76 px. In `02` and `03` the creator's handle is half
+  hidden, and the caption is fully hidden, behind the pill. This predates
+  lane K.
+- **Page-dot width.** The pill is `10 × items + 20` px wide. With about 28 or
+  more items it becomes wider than the left column, and with about 36 or more
+  it becomes wider than the screen. The Grid can hand the viewer that many
+  items. This predates §31.13.
+- **The verified-location stamp and the Grid disc.** The verified-location
+  stamp (left 6, bottom 28, up to about 158 px wide) and the disc (right 4)
+  can meet on a 190-px tile when the place name is long.
+  - They already overlapped at bottom 4 to 48.
+  - At bottom 28 they share a 28–67 band.
+  - The disc draws on top (zIndex 6 over 4).
+  - No fixture tile is verified, so this is arithmetic, not a render.
+- **Short screens with insets.** The fix's rail clears the filter bar by 9 px
+  at 375×667 on web, where the insets are 0. On an iPhone SE, the 20-pt status
+  bar moves the filter bar down, so by arithmetic the rail's top 8-px padding
+  and about 3 px of the Stamp's box would sit under it. Before the fix, the
+  rail's bottom was inside the FAB instead. Not measured on a device.
+- **The legacy inline ⋯ menu** in `GemsItemOverlay` renders only when no
+  `onMore` is passed. It is drawn before the bottom content, so it would sit
+  under the block. GemsFeed, the only caller, passes `onMore`.
+
+### 40.8 Production — nothing here is deployed
+
+BUILT ON BRANCH IS NOT MERGED. MERGED IS NOT DEPLOYED.
+- The work is on branch `lane-r-render`.
+- Nothing is merged, built for a store, or run on a device.
+- The renders are web renders: react-native-web in Chromium, with safe-area
+  insets of 0.
+- No database or flag was touched.
+
+### 40.9 Checks
+
+| Check | Result |
+| --- | --- |
+| Client `tsc -p tsconfig.json --noEmit` | 0 errors |
+| Test typecheck baseline | 173 across 60 files, the same as the baseline |
+| eslint on the three changed sources | 0 errors, the same warning counts as at `e9e0b0404` (3, 2, 1) |
+| eslint on the new tests | 0 errors; only the `require()` warnings in jest mock factories, the house pattern |
+| lint:imports, bare-image, avatar-icon-sizing, ksv, mocks, orphan-tests, close-then-navigate, dev-proxy-not-shipped | all pass |
+| mediaContrast.test.ts | 14 of 14 |
+| jest, new suites | 13 of 13 |
+| jest, the new and related suites (all of src/components/media, the viewer's, the Media tab's three, MediaWorldShell, HiddenGemsMediaScreen, WallScreen.quickMedia) | 15 suites, 86 tests pass |
+| jest (web renderer), WatchStamp.webrender | 1 of 1 |
+| api-server typecheck; typecheck:tests | 0 errors; 863 across 115 files, the same as the baseline |
+| check:doc-citations; check:citation-targets | pass (unanchored 6355 against the 6434 ceiling); 165 of the 165 ceiling |
+| check:census-integrity, check:census-scope-coverage, check:census-row-move-labels | pass (census-media: 337 cited, 337 watched) |
+| check:census-freshness | stale: census-media, only for this section's three new suites, which are left to the integrator's acknowledgement |
+| projectionConsumers.test.ts, censusScopeCoverage.test.ts | 38 of 38 |
+| check:all | 39 pass. Six fail: census-freshness, as above, and the five live-DB checks (write-path-columns, missing-live-columns, authorization-contract, media-objects, rank-events-surfaces), which the non-production guard refused before any connection |
+
+### 40.10 Files changed
+
+| File | Change |
+| --- | --- |
+| `travel-buddy-standalone/src/components/media/GemsItemOverlay.tsx:368#zIndex: 2` | The rail's layer and its FAB-relative bottom. Line-neutral, with one constant appended. |
+| `travel-buddy-standalone/src/components/media/GridTile.tsx:283#bottom: 28,` | The disc's slot. Line-neutral. |
+| `travel-buddy-standalone/app/media-viewer/[id].tsx:885#const PAGE_DOTS_SLOT` | The dots' slot. Line-neutral, with a constant and a helper appended. |
+| the three test suites in §40.3 | new |
+| `artifacts/api-server/src/scripts/checkCensusFreshness.ts` | census-media's scope widened by one file: the viewer's new suite, which the §40.3 table cites |
+
+## 39. Pointer: §35.7 items 1 and 2 are closed fail-safe on branch, recorded in census-map §45 (lane X) — 2026-09-27
+
+**Item 1, the reference.** The map evidence path stored
+`intel_evidence.reference` as a storage key whose first segment is the
+uploader's account id, beside a contributor id 3002 tokenises.
+
+- **Now:** the reference is sealed to its observation under a server key and
+  names no account in any encoding. It opens only through two readers: the
+  contributor's own reader (through the byte gate), and account deletion,
+  which now also reads under the account's 3002 tokens.
+- **Remediation** for any pre-seal row is prepared (3360, a script, 3361) and
+  applied to no database.
+
+**Item 2, photos under v1.** On the coordinator's request, a fail-closed gate
+was added: `consent_does_not_cover_photos`, HTTP 409.
+
+- A photo or video is kept only when the contributor's recorded
+  `consent_version` is in an explicit list of versions whose words name
+  photos, and that list is EMPTY.
+- v1 names Quick Signals only. v2 was read: it does not name photos, and it is
+  not approved, so it is left out.
+- Every media contribution is therefore refused before anything is read or
+  written.
+- The tap it would support is a separate request and is unaffected.
+- No consent word, version or granted scope changed.
+
+**RED WHEN** a contributor holding only v1 (or v2, or no recorded version) gets
+a photo or video kept, or a tap stops being recorded because of the gate.
+
+**The owner step it waits on.** Approve disclosure words that name photos and
+videos kept as evidence. Then ship, in ONE release:
+
+- that version as the server's `INTEL_CONSENT_DISCLOSURE_VERSION`;
+- its words on the client;
+- its string in the gate's list.
+
+The options and what each permits are in census-map §45.5.
+
+**For Media's rows:**
+
+- the seam writer, `lib/media/mediaEvidenceLink.ts`, no longer copies the
+  storage path into `reference`;
+- its `media_asset_id` still joins to an owner (§35.4 MD65 Question 3);
+- it has no consent check of any kind, and must pass the same gate if it is
+  ever wired.
+
+No MD row moves.

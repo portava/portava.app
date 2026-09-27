@@ -29,7 +29,7 @@ import {
 } from 'react-native';
 import { Avatar } from '../ui/Avatar.tsx';
 import { LinearGradient } from 'expo-linear-gradient'; import { Bookmark, MessageCircle } from 'lucide-react-native'; // census-media §31.13: the rail's comment and save glyphs
-import { color, space, radius, type as t } from '../../theme/tokens.ts';
+import { avatar, color, space, radius, type as t } from '../../theme/tokens.ts'; import { useLayoverAwareBottomInset } from '../../hooks/useBottomInset.ts'; // census-media §40: the rail clears the Media tab's FAB
 import type { GemsFeedItem } from '../../hooks/useGemsFeed.ts';
 import { PlaceQuickActions } from '../PlaceQuickActions.tsx';
 import { StampButton } from '../stamps/StampButton.tsx';
@@ -99,7 +99,7 @@ export function GemsItemOverlay({
 }: GemsItemOverlayProps) {
   // Legacy inline mini-menu — only used when onMore is not provided.
   const [moreMenuOpen, setMoreMenuOpen] = useState(false);
-  const [captionExpanded, setCaptionExpanded] = useState(false);
+  const [captionExpanded, setCaptionExpanded] = useState(false); const railBottom = useLayoverAwareBottomInset() + RAIL_FAB_CLEARANCE; // census-media §40: the FAB's top edge, plus a gap
 
   const loc = item.location;
   const firstMedia = item.media[0] ?? null;
@@ -139,7 +139,7 @@ export function GemsItemOverlay({
       />
 
       {/* ── Right action column ───────────────────────────────────────────── */}
-      <View style={styles.actionColumn}>
+      <View style={[styles.actionColumn, { bottom: railBottom }]} testID="gems-action-rail">
         <StampButton
           entityType="gem"
           entityId={item.id}
@@ -195,7 +195,7 @@ export function GemsItemOverlay({
       )}
 
       {/* ── Bottom content ─────────────────────────────────────────────────── */}
-      <View style={styles.bottomContent}>
+      <View style={styles.bottomContent} testID="gems-bottom-content">
         {/* Place block — dominant */}
         {loc && (
           <View style={styles.placeBlock}>
@@ -365,9 +365,9 @@ const styles = StyleSheet.create({
     top: '40%', // start gradient halfway down
   },
   actionColumn: {
-    position: 'absolute',
+    position: 'absolute', zIndex: 2, // census-media §40: above the bottom content, a later sibling whose full-width 0.81 backing painted over the rail's lower half and took its taps
     right: space.md,
-    bottom: BOTTOM_SAFE + 120,
+    // bottom: railBottom, set at render (census-media §40); was bottom: BOTTOM_SAFE + 120, inside the Media tab FAB's box, so ⋯ sat under the FAB
     alignItems: 'center',
     gap: space.lg, paddingVertical: space.sm, paddingHorizontal: space.xs, borderRadius: 999, backgroundColor: 'rgba(0,0,0,0.89)', // census-media §31.12/§31.13: a backing under the action column. Under the StampButton's onDark tone every asserted pair on it clears from 0.74; 0.89 is kept because the rail's emoji, whose colours come from the platform font and are not measured, sit on it too
   },
@@ -529,3 +529,12 @@ const styles = StyleSheet.create({
     lineHeight: 18,
   },
 });
+
+// census-media §40 — where the action rail sits. The Media tab's FAB
+// (app/(tabs)/media.tsx `fab`) floats 16 above useLayoverAwareBottomInset()
+// and is avatar.s52 tall, over this overlay's right edge; the rail's bottom
+// edge starts space.sm above the FAB's top edge, so its lowest control (⋯) is
+// never under the FAB. The rail takes the same inset hook as the FAB, so an
+// active layover pill lifts both. Pinned by
+// __tests__/GemsItemOverlay.railLayer.component.test.tsx.
+const RAIL_FAB_CLEARANCE = 16 + avatar.s52 + space.sm;

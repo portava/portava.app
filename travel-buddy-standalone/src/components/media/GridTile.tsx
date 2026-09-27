@@ -153,7 +153,7 @@ function GridTileInner({ item, index, cellWidth, cellHeight, onPress, isVisible 
       ) : null}
 
       {/* ── Bottom row: duration (left) + view count (right) ──────── */}
-      <View style={styles.bottomRow} pointerEvents="none">
+      <View style={styles.bottomRow} pointerEvents="none" testID="grid-tile-meta-row">
         {isVideo && item.durationMs != null ? (
           <Text style={styles.metaText}>{formatDuration(item.durationMs)}</Text>
         ) : null}
@@ -166,7 +166,7 @@ function GridTileInner({ item, index, cellWidth, cellHeight, onPress, isVisible 
       </View>
 
       {/* ── Stamp-it collect button — bottom-right corner ─────────── */}
-      <View style={styles.stampBtnWrapper} pointerEvents="box-none">
+      <View style={styles.stampBtnWrapper} pointerEvents="box-none" testID="grid-tile-stamp-disc">
         <StampButton
           entityType="media"
           entityId={item.id}
@@ -280,7 +280,7 @@ const styles = StyleSheet.create({
   // ── Stamp-it collect button ─────────────────────────────────────────
   stampBtnWrapper: {
     position: 'absolute',
-    bottom: 4,
+    bottom: 28, // census-media §40: above the bottom meta row (12 + 11 + 4 = 27 tall), as verifiedStamp sits; was bottom: 4, which put the 0.80 disc over the view count
     right: 4,
     zIndex: 6, borderRadius: 999, backgroundColor: 'rgba(17,17,15,0.80)', // census-media §31.13: under the StampButton's onDark tone 0.80 is set by the stamped icon in `signal` (§31.12 had zIndex: 6, borderRadius: 999, backgroundColor: 'rgba(17,17,15,0.95)', for its idle `mute` icon)
   },

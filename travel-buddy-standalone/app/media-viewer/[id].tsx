@@ -159,7 +159,7 @@ interface OverlayProps {
   /** Media v2 World shell (§15): show the action-rail entry when enabled. */
   showActions?: boolean;
   /** Opens the media action rail. */
-  onActions?: () => void;
+  onActions?: () => void; /** census-media §40: the screen draws page dots in their own slot under the columns; the columns rise by PAGE_DOTS_SLOT to leave it free. */ pageDots?: boolean;
 }
 
 function ViewerOverlay({
@@ -179,7 +179,7 @@ function ViewerOverlay({
   isOwner,
   stampItCount,
   showActions,
-  onActions,
+  onActions, pageDots,
 }: OverlayProps) {
   const insets = useSafeAreaInsets();
 
@@ -221,8 +221,8 @@ function ViewerOverlay({
 
       {/* ── Bottom area: author + actions ────────────────────────────── */}
       <View
-        style={[ov.bottom, { paddingBottom: Math.max(insets.bottom + 16, 24) }]}
-        pointerEvents="box-none"
+        style={[ov.bottom, { paddingBottom: overlayBaseline(insets.bottom) + (pageDots ? PAGE_DOTS_SLOT : 0) }]}
+        pointerEvents="box-none" testID="viewer-overlay-bottom"
       >
         {/* Left column: author + caption + place */}
         <View style={ov.leftCol} pointerEvents="box-none">
@@ -781,7 +781,7 @@ export default function MediaViewer() {
         isOwner={activeIsOwner}
         stampItCount={activeStampItCount}
         showActions={worldShellEnabled}
-        onActions={() => setActionsOpen(true)}
+        onActions={() => setActionsOpen(true)} pageDots={items.length > 1}
       />
 
       {/* ── Comment sheet ─────────────────────────────────────────── */}
@@ -803,8 +803,8 @@ export default function MediaViewer() {
       {/* Page indicator dots (only when multiple items) */}
       {items.length > 1 ? (
         <View
-          style={[ms.dots, { bottom: Math.max(insets.bottom + 80, 90) }]}
-          pointerEvents="none"
+          style={[ms.dots, { bottom: overlayBaseline(insets.bottom) /* census-media §40: the columns' old baseline, now the dots' slot; was Math.max(insets.bottom + 80, 90), over the left column's last lines */ }]}
+          pointerEvents="none" testID="viewer-page-dots"
         >
           <View style={tailStyles.dotsPill}>{items.map((_, i) => (
             <View
@@ -874,3 +874,15 @@ const tailStyles = StyleSheet.create({
   spinnerBadge: { padding: 10, borderRadius: 999, backgroundColor: 'rgba(17,17,15,0.47)' },
   dotsPill: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 8, paddingVertical: 6, borderRadius: 999, backgroundColor: 'rgba(17,17,15,0.87)' },
 });
+
+// census-media §40 — the page dots get a slot of their own. The pill sat at
+// max(insets.bottom + 80, 90), over the left column's last lines, and once it
+// had its 0.87 backing it hid a caption line (H8, lane S). Now the dots sit on
+// the columns' old baseline and, when they show, the columns rise by the
+// pill's height (2 × its paddingVertical 6, plus one dot) and a gap, so neither
+// covers the other whatever the left column holds. Pinned by
+// __tests__/pageDots.layout.component.test.tsx.
+const PAGE_DOTS_SLOT = 2 * 6 + dot.s5 + space.sm;
+function overlayBaseline(insetBottom: number): number {
+  return Math.max(insetBottom + 16, 24);
+}

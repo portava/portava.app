@@ -30,7 +30,7 @@ import { dirname, join, posix } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { color } from '../tokens.ts';
-import { MEDIA_SHEET_PAIRS, SF, SHEET_SURFACES, type Kind, type Needle, type SheetPair, type SheetSurface } from './sharedSheetContrast.pairs.ts';
+import { MEDIA_SHEET_PAIRS, SF, SHEET_SURFACES, ALL_SHEET_SURFACES, SF_NESTED, type Kind, type Needle, type SheetPair, type SheetSurface } from './sharedSheetContrast.pairs.ts';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 // …/src/theme/__tests__ → the standalone app root.
@@ -181,7 +181,7 @@ const CHANGED: readonly Changed[] = [
   },
   { file: SF.lockType, draws: /<LockTypeSelector\b/, consumers: ['src/components/AddToPlanSheet.tsx', 'src/components/PlanPickerController.tsx', 'src/components/itinerary/PlanItemSheet.tsx'] },
   // Only the `selected` fallback changed: a consumer is an importer that passes `selected` to an <Avatar … />.
-  { file: SF.avatar, draws: /<Avatar\b(?:(?!\/>)[\s\S])*?\bselected\b(?:(?!\/>)[\s\S])*?\/>/, consumers: ['src/components/DiscoveryShareSheet.tsx', 'src/components/ShareSheet.tsx'] },
+  { file: SF.avatar, draws: /<Avatar\b(?:(?!\/>)[\s\S])*?\bselected\b(?:(?!\/>)[\s\S])*?\/>/, consumers: ['src/components/DiscoveryShareSheet.tsx', 'src/components/ShareSheet.tsx'] }, ...changedNested(), // §33.13: the nested sheets, declared at the tail
 ];
 
 test('every consumer of each changed component is enumerated, from a scan of app/ and src/', () => {
@@ -225,7 +225,7 @@ function componentOf(p: SheetPair): string {
   if (p.id.startsWith('planPicker.lock.')) return SF.lockType;
   if (p.id.startsWith('planPicker.')) return SF.planPicker;
   if (p.id.startsWith('disambiguation.')) return SF.disambiguation;
-  throw new Error(`no component for ${p.id}`);
+  return nestedComponentOf(p); // §33.13: the nested sheets' ids, at the tail (it throws for an unknown id)
 }
 
 const POST: Needle[] = [['app/post/[id].tsx', '<View style={{ flex: 1, backgroundColor: color.paper }}>'], ['app/post/[id].tsx', '<CommentsSection']];
@@ -263,14 +263,14 @@ const CONSUMER_PAIRS: ConsumerPair[] = [
   ] as const).map(([file, on, ground]): ConsumerPair => ({
     id: `lockType.hint.${file}`, fg: LOCK_HINT.fg, was: LOCK_HINT.was, on: on as SheetSurface, kind: 'text',
     at: [[file, '<LockTypeSelector value={lockType} onChange={setLockType} />'], [file, ground], ...LOCK_HINT.at.filter(([f]) => f === SF.lockType)], component: SF.lockType, consumer: file,
-  })),
+  })), ...nestedConsumerPairs(), // §33.13: the attachment tray's error line on its other consumers' grounds, at the tail
 ];
 
 interface Measured { pair: ConsumerPair; before: number; after: number; threshold: number | null }
 const MEASURED: Measured[] = CONSUMER_PAIRS.map((pair) => ({
   pair,
-  before: ratioOn(pair.was ?? pair.fg, SHEET_SURFACES[pair.wasOn ?? pair.on]),
-  after: ratioOn(pair.fg, SHEET_SURFACES[pair.on]),
+  before: measureRatio(pair.was ?? pair.fg, ALL_SHEET_SURFACES[pair.wasOn ?? pair.on]), // §33.13: floors a photo ground
+  after: measureRatio(pair.fg, ALL_SHEET_SURFACES[pair.on]),
   threshold: pair.kind === 'decor' ? null : THRESHOLD[pair.kind],
 }));
 const improved = MEASURED.filter((m) => m.after > m.before + EPS);
@@ -284,7 +284,7 @@ test('the new tokens are the lightest same-hue shades that clear AA where they a
   assert.equal(color.signalStrong, scale(color.signal, 0.77), 'signalStrong is signal ×0.77');
   const worstAt = (k: number) => Math.min(...strongText.map((m) => (m.pair.on === 'sheetSignalStrong'
     ? ratioOn(m.pair.fg, [scale(color.signal, k)])
-    : ratioOn(scale(color.signal, k), SHEET_SURFACES[m.pair.on]))));
+    : ratioOn(scale(color.signal, k), ALL_SHEET_SURFACES[m.pair.on]))));
   assert.ok(worstAt(0.77) >= 4.5, `×0.77 reads ${worstAt(0.77).toFixed(3)}`);
   assert.ok(worstAt(0.78) < 4.5, `×0.78 would also clear (${worstAt(0.78).toFixed(3)}) — signalStrong is darker than it needs to be`);
   // muteStrong: secondary text on a haze fill.
@@ -313,7 +313,7 @@ test('no consumer pair got worse, and none that is asserted ends below WCAG AA',
 test('every pair §33 changed was changed for a reason: it was below AA, or it shares a state with one that was', () => {
   const moved = MEASURED.filter((m) => m.pair.was !== undefined || m.pair.wasOn !== undefined);
   // A moved, asserted pair either failed before, or moved with a failing pair it is drawn with.
-  const companions = new Set(['share.thread.checkBadge', 'share.avatar.fillSelected', 'comments.inlineSave.spinner', 'share.send.spinner', 'planPicker.confirm.spinner']);
+  const companions = new Set(['share.thread.checkBadge', 'share.avatar.fillSelected', 'comments.inlineSave.spinner', 'share.send.spinner', 'planPicker.confirm.spinner', 'likers.row.followSpinner', 'report.primary.spinner', 'report.source.deniedSettings']);
   const unexplained = moved.filter((m) => m.threshold !== null && m.before >= m.threshold && !companions.has(m.pair.id)
     && !m.pair.id.startsWith('commentsSection.') && !m.pair.id.startsWith('mentionInput.') && !m.pair.id.startsWith('lockType.'));
   assert.deepEqual(unexplained.map((m) => `${m.pair.id}: was ${m.before.toFixed(2)}`), []);
@@ -334,7 +334,7 @@ test('the counts: consumers, pairs, improved, unchanged, worse', () => {
   };
   assert.equal(counts.improved + counts.unchanged + counts.worse, counts.pairs);
   // Recorded in census-media §33. A change to any of these is a change to what §33 claims.
-  assert.deepEqual(counts, { changedComponents: 10, consumers: 54, pairs: 205, asserted: 160, improved: 74, unchanged: 131, worse: 0, failingBefore: 65, failingAfter: 0 });
+  assert.deepEqual(counts, { changedComponents: 16, consumers: 67, pairs: 310, asserted: 245, improved: 103, unchanged: 207, worse: 0, failingBefore: 89, failingAfter: 0 }); // §33.13 (was: assert.deepEqual(counts, { changedComponents: 10, consumers: 54, pairs: 205, asserted: 160, improved: 74, unchanged: 131, worse: 0, failingBefore: 65, failingAfter: 0 }), before the nested sheets)
 });
 
 test('print the before/after table when SHEET_CONTRAST_TABLE=1', () => {
@@ -347,3 +347,61 @@ test('print the before/after table when SHEET_CONTRAST_TABLE=1', () => {
   });
   console.log(['| pair | consumer | before | ratio | after | ratio | bar | result | change |', '| --- | --- | --- | --- | --- | --- | --- | --- | --- |', ...rows].join('\n'));
 });
+
+// ═══ census-media §33.13 — the nested sheets, appended at the TAIL so the lines §33 cites do not move ═══
+// Function declarations are hoisted, so the lists above can spread what these return; each reads only
+// imports, never a later `const`.
+
+/** A photo ground ('PHOTO' at the bottom) is floored over every underlay on a 16-level grid, as mediaContrast.test.ts does. */
+function measureRatio(fg: string, layers: readonly string[]): number {
+  if (layers[0] !== 'PHOTO') return ratioOn(fg, layers);
+  const levels = Array.from({ length: 16 }, (_, i) => i * 17);
+  let min = Infinity;
+  for (const r of levels) for (const g of levels) for (const b of levels) {
+    let bg: Rgba = { r, g, b, a: 1 };
+    for (const l of layers.slice(1)) bg = over(parseColor(l), bg);
+    const v = contrast(over(parseColor(fg), bg), bg);
+    if (v < min) min = v;
+  }
+  return min;
+}
+
+function nestedComponentOf(p: SheetPair): string {
+  if (p.id.startsWith('tagPreview.')) return SF_NESTED.tagPreview;
+  if (p.id.startsWith('profilePreview.')) return SF_NESTED.profilePreview;
+  if (p.id.startsWith('likers.')) return SF_NESTED.likers;
+  if (p.id.startsWith('report.photoButton.')) return SF_NESTED.photoButton;
+  if (p.id.startsWith('report.source.')) return SF_NESTED.sourceSheet;
+  if (p.id.startsWith('report.tray.')) return SF_NESTED.tray;
+  if (p.id.startsWith('report.')) return SF_NESTED.report;
+  throw new Error(`no component for ${p.id}`);
+}
+
+/** The nested sheets §33.13 changed, and every consumer that draws each (MediaPickerButton and AvatarImage did not change). */
+function changedNested(): Changed[] {
+  return [
+    { file: SF_NESTED.tagPreview, draws: /<TagPreviewSheet\b/, consumers: ['src/components/RichText.tsx'] },
+    { file: SF_NESTED.profilePreview, draws: /<ProfilePreviewCard\b/, consumers: ['src/components/CommentsSheet.tsx'] },
+    { file: SF_NESTED.likers, draws: /<EngagementUserListSheet\b/, consumers: ['src/components/CommentsSheet.tsx', 'src/components/HighlightViewer.tsx', 'src/components/PostEngagementBar.tsx'] },
+    { file: SF_NESTED.report, draws: /<ReportSheet\b/, consumers: [
+      'app/(rent-a-buddy)/buddy/[id].tsx', 'app/event/[id].tsx', 'app/map/index.tsx', 'app/messages/[id].tsx', 'app/post/[id].tsx', 'app/u/[username].tsx',
+      'src/components/CommentsSheet.tsx', 'src/components/PulseFeedCard.tsx', 'src/components/ReviewsSection.tsx', 'src/components/ThreadSafetySheet.tsx', 'src/components/map/MapEntityActionRow.tsx',
+    ] },
+    { file: SF_NESTED.sourceSheet, draws: /<MediaSourceSheet\b/, consumers: ['app/profile/edit/photos.tsx', 'src/components/EventComposerSheet.tsx', 'src/components/MemoriesTab.tsx', 'src/components/ui/MediaPickerButton.tsx'] },
+    { file: SF_NESTED.tray, draws: /<MediaAttachmentTray\b/, consumers: ['app/(rent-a-buddy)/become/apply.tsx', 'app/review/[entityType]/[entityId].tsx', 'src/components/ReportSheet.tsx', 'src/components/discovery/SubmitPlaceSheet.tsx'] },
+  ];
+}
+
+/** MediaAttachmentTray's error line sits on its consumer's ground; ReportSheet's is measured with the sheet. */
+function nestedConsumerPairs(): ConsumerPair[] {
+  const errorText = MEDIA_SHEET_PAIRS.find((p) => p.id === 'report.tray.errorText');
+  if (!errorText) throw new Error('report.tray.errorText is missing from the fixture');
+  return ([
+    ['src/components/discovery/SubmitPlaceSheet.tsx', /container: \{[^}]*backgroundColor: color\.paper,/],
+    ['app/review/[entityType]/[entityId].tsx', "container:    { flex: 1, backgroundColor: '#FAF9F6' },"],
+    ['app/(rent-a-buddy)/become/apply.tsx', '<View style={{ flex: 1, backgroundColor: color.paper }}>'],
+  ] as const).map(([file, ground]): ConsumerPair => ({
+    id: `tray.errorText.${file}`, fg: errorText.fg, was: errorText.was, on: 'sheetPaper', kind: 'text',
+    at: [[file, '<MediaAttachmentTray'], [file, ground], ...errorText.at.filter(([f]) => f === SF_NESTED.tray)], component: SF_NESTED.tray, consumer: file,
+  }));
+}
