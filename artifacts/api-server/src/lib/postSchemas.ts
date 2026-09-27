@@ -22,7 +22,7 @@ export const locationPrivacyMode = z.enum([
   "city_only",
   "delayed_until_exit",
   "delayed_until_time",
-  "trusted_circle_only",
+  "trusted_circle_only", "neighborhood_only", // §34 "Show neighborhood only" (migration 3350, census-media §36). Parsing is not permission: the routes refuse it unless media_neighborhood_only_mode_enabled (lib/media/neighborhoodOnlyMode).
 ]);
 export type LocationPrivacyMode = z.infer<typeof locationPrivacyMode>;
 
@@ -149,7 +149,7 @@ export function defaultPrivacyMode(
 
 /**
  * Return a safe public label that never exposes exact GPS coordinates.
- * For city_only or high-sensitivity: only city+country.
+ * For city_only, neighborhood_only, trusted_circle_only or high-sensitivity: only city+country.
  * Otherwise: the venue name or city.
  */
 export function safeLocationLabel(
@@ -160,7 +160,7 @@ export function safeLocationLabel(
   sensitivity: LocationSensitivityLevel,
 ): string | null {
   if (mode === "hidden") return null;
-  if (mode === "city_only" || sensitivity === "high") {
+  if (mode === "city_only" || mode === "neighborhood_only" || mode === "trusted_circle_only" || sensitivity === "high") { // census-media §36: neighborhood_only has no neighbourhood label at write time, and trusted_circle_only used to store the VENUE here
     return [locationCity, locationCountry].filter(Boolean).join(", ") || null;
   }
   return locationName ?? ([locationCity, locationCountry].filter(Boolean).join(", ") || null);
@@ -180,12 +180,12 @@ export function safeLocationLabel(
 export function mapPublicPost(row: any): any {
   const mode = row.location_privacy_mode as string | null | undefined;
   if (!mode || mode === "none") return row;
-  if (mode === "city_only" || mode === "hidden" || mode === "trusted_circle_only") {
-    return { ...row, location_name: null };
-  }
-  // delayed_until_exit / delayed_until_time: suppress until published
-  if (row.post_status === "published") return row;
-  return { ...row, location_name: null };
+  // A delayed post, once RELEASED: the geofence cleared, the place is revealed by design. Only the two delayed modes reach this branch.
+  if ((mode === "delayed_until_exit" || mode === "delayed_until_time") && row.post_status === "published") return row;
+  // Every other mode withholds the venue: city_only, hidden, trusted_circle_only, neighborhood_only (§34, 3350), an unreleased delayed post — AND a value this function does not know. An unknown mode used to fall through to the branch above and serve the venue of any published row (census-media §36).
+  // The public label is rebuilt from city/country, never trusted: safeLocationLabel stored the VENUE as the label of every trusted_circle_only post, and adminPortavaPosts can store it for city_only. Hidden keeps no label, as it is written.
+  const label = mode === "hidden" ? null : ([row.location_city, row.location_country].filter(Boolean).join(", ") || null);
+  return { ...row, location_name: null, ...("public_location_label" in row ? { public_location_label: label } : {}) };
 }
 
 // ── Create schema ─────────────────────────────────────────────────────────────

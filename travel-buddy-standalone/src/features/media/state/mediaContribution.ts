@@ -26,7 +26,7 @@
  */
 export type MediaVisibilityChoice = 'public' | 'private';
 
-export type ContributionPrecision = 'venue' | 'city_only' | 'after_i_leave' | 'hidden';
+export type ContributionPrecision = 'venue' | 'city_only' | 'after_i_leave' | 'hidden' | 'neighborhood'; // neighborhood: §34 "Show neighborhood only" (census-media §36) — offered only while the server accepts it (contributionPrecisions)
 
 export interface ContributionDraft {
   /** The picked asset (from the app's picker). */
@@ -59,18 +59,18 @@ export const CONTRIBUTION_CATEGORIES: readonly { key: string; label: string }[] 
 ];
 
 /** §33/§34 location precision → the post write's `locationPrivacyMode`. */
-export const PRECISION_TO_PRIVACY_MODE: Record<ContributionPrecision, 'none' | 'city_only' | 'delayed_until_exit' | 'hidden'> = {
+export const PRECISION_TO_PRIVACY_MODE: Record<ContributionPrecision, 'none' | 'city_only' | 'delayed_until_exit' | 'hidden' | 'neighborhood_only'> = {
   venue: 'none',
   city_only: 'city_only',
   after_i_leave: 'delayed_until_exit',
-  hidden: 'hidden',
+  hidden: 'hidden', neighborhood: 'neighborhood_only',
 };
 
 export const PRECISION_LABELS: Record<ContributionPrecision, string> = {
   venue: 'Show the place',
   city_only: 'City only',
   after_i_leave: 'After I leave',
-  hidden: 'No location',
+  hidden: 'No location', neighborhood: 'Neighbourhood only',
 };
 
 /** The place a contribution is bound to — the canonical record's own public fields. */
@@ -170,4 +170,20 @@ export function doneCopy(pending: boolean, precision: ContributionPrecision): st
   if (pending && precision === 'after_i_leave') return 'Saved — your perspective appears once you have left.';
   if (pending) return 'Saved — your perspective appears shortly.';
   return 'Thanks — your perspective is part of this place now.';
+}
+
+// ── §34 "Show neighborhood only" on the contribution sheet (census-media §36) ──
+// Appended so no cited line above moves.
+
+/**
+ * The precisions the sheet offers, in the order it offers them. Without the
+ * server flag (media_neighborhood_only_mode_enabled, seeded OFF) this is the
+ * four it always offered; with it, "Neighbourhood only" sits between the place
+ * and the city — §34's own order. The server refuses the mode while the flag
+ * is off, so it is never offered without it.
+ */
+export function contributionPrecisions(opts: { neighborhoodOffered: boolean }): ContributionPrecision[] {
+  return opts.neighborhoodOffered
+    ? ['venue', 'neighborhood', 'city_only', 'after_i_leave', 'hidden']
+    : ['venue', 'city_only', 'after_i_leave', 'hidden'];
 }

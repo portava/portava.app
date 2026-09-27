@@ -22,6 +22,7 @@ import {
   doneCopy,
   PRECISION_TO_PRIVACY_MODE,
   CONTRIBUTION_CATEGORIES,
+  contributionPrecisions,
   type ContributionPlace,
 } from '../state/mediaContribution.ts';
 
@@ -70,6 +71,7 @@ test('every precision choice maps onto the post write\'s locationPrivacyMode —
     city_only: 'city_only',
     after_i_leave: 'delayed_until_exit',
     hidden: 'hidden',
+    neighborhood: 'neighborhood_only',
   });
   let d = contributionReducer(INITIAL_CONTRIBUTION_DRAFT, { type: 'pick_media', media: PICKED });
   d = contributionReducer(d, { type: 'set_precision', precision: 'after_i_leave' });
@@ -99,4 +101,13 @@ test('a held-back post is reported as held back, never as already live', () => {
   assert.match(doneCopy(true, 'after_i_leave'), /once you have left/);
   assert.match(doneCopy(true, 'venue'), /appears shortly/);
   assert.match(doneCopy(false, 'venue'), /part of this place now/);
+});
+
+test('§34 "Neighbourhood only" is offered only while the server accepts it (census-media §36)', () => {
+  assert.deepEqual(contributionPrecisions({ neighborhoodOffered: false }), ['venue', 'city_only', 'after_i_leave', 'hidden'],
+    'flag off: the four choices the sheet always offered, in the same order');
+  assert.deepEqual(contributionPrecisions({ neighborhoodOffered: true }), ['venue', 'neighborhood', 'city_only', 'after_i_leave', 'hidden']);
+  let d = contributionReducer(INITIAL_CONTRIBUTION_DRAFT, { type: 'pick_media', media: PICKED });
+  d = contributionReducer(d, { type: 'set_precision', precision: 'neighborhood' });
+  assert.equal(toCreatePostInput(d, PLACE, { url: 'u', mediaType: 'image' }, null).locationPrivacyMode, 'neighborhood_only');
 });

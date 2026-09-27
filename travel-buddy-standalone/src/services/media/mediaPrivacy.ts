@@ -40,7 +40,7 @@ export type ComposerLocationMode =
   | 'city_only'
   | 'delayed_until_exit'
   | 'delayed_until_time'
-  | 'trusted_circle_only';
+  | 'trusted_circle_only' | 'neighborhood_only'; // neighborhood_only: spec §34 "Show neighborhood only" (migration 3350, census-media §36)
 
 export const COMPOSER_LOCATION_MODES: readonly ComposerLocationMode[] = [
   'none',
@@ -48,7 +48,7 @@ export const COMPOSER_LOCATION_MODES: readonly ComposerLocationMode[] = [
   'city_only',
   'delayed_until_exit',
   'delayed_until_time',
-  'trusted_circle_only',
+  'trusted_circle_only', 'neighborhood_only',
 ] as const;
 
 /** When the post itself becomes visible to anyone but its author. */
@@ -86,7 +86,7 @@ export const DISCLOSURE: Readonly<Record<ComposerLocationMode, LocationDisclosur
   city_only: { ...WITHHELD_NAME, release: 'now' },
   trusted_circle_only: { ...WITHHELD_NAME, release: 'now' },
   delayed_until_exit: { ...WITHHELD_NAME, release: 'after_exit' },
-  delayed_until_time: { ...WITHHELD_NAME, release: 'at_time' },
+  delayed_until_time: { ...WITHHELD_NAME, release: 'at_time' }, neighborhood_only: { ...WITHHELD_NAME, tier: 'neighborhood', release: 'now' }, // §34: the venue is withheld as for city_only; the tier is the neighbourhood, and only the Media World views know a neighbourhood label — elsewhere a non-author sees the city
 };
 
 /** Unknown input is read as the strictest delayed mode — never as `none`. */
@@ -150,6 +150,9 @@ export function locationPrivacyHint(
       ? `Your post appears at ${clock(opts.scheduledTime)}, with the place.`
       : 'Pick a time for your post to appear.';
   }
+  if (applied === 'neighborhood_only') {
+    return 'Nobody sees the place you tagged. At most its neighbourhood is shown, and your city and country stay on the post.';
+  }
   if (applied === 'trusted_circle_only') {
     return `Nobody sees the place you tagged — your Trusted Circle included. ${kept}`;
   }
@@ -174,4 +177,32 @@ export function locationRequestFields(
     locationPrivacyMode: m === 'none' ? undefined : m,
     publishAfterTime: m === 'delayed_until_time' ? (scheduledTime?.toISOString() ?? null) : null,
   };
+}
+
+// ── §34 "Show neighborhood only", offered only while the server permits it ──
+// (census-media §36, MD262). Appended so no cited line above moves.
+
+/** The server flag (migration 3350, seeded OFF) that lets a person choose it. */
+export const NEIGHBORHOOD_ONLY_MODE_FLAG = 'media_neighborhood_only_mode_enabled';
+
+/** The choice itself. Placed before "City only", in §34's own order. */
+export const NEIGHBORHOOD_ONLY_CHOICE: { mode: ComposerLocationMode; label: string } = {
+  mode: 'neighborhood_only',
+  label: 'Neighbourhood',
+};
+
+/**
+ * The composer's choices. With the flag off this is LOCATION_CHOICES, the same
+ * array — the composer is unchanged. With it on, "Neighbourhood" is offered
+ * before "City only". The server refuses the mode while its flag is off, so
+ * offering it here without the flag would promise a choice the post cannot keep.
+ */
+export function locationChoices(opts: { neighborhoodOnly: boolean }): ReadonlyArray<{ mode: ComposerLocationMode; label: string }> {
+  if (!opts.neighborhoodOnly) return LOCATION_CHOICES;
+  const out: Array<{ mode: ComposerLocationMode; label: string }> = [];
+  for (const c of LOCATION_CHOICES) {
+    if (c.mode === 'city_only') out.push(NEIGHBORHOOD_ONLY_CHOICE);
+    out.push(c);
+  }
+  return out;
 }

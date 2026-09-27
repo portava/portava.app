@@ -18,7 +18,7 @@ import { color, radius, space } from '../../../theme/tokens.ts';
 import { CachedImage } from '../../../components/CachedImage.tsx';
 import {
   CONTRIBUTION_CATEGORIES,
-  PRECISION_LABELS,
+  PRECISION_LABELS, contributionPrecisions,
   type ContributionAction,
   type ContributionDraft,
   type ContributionPrecision,
@@ -32,10 +32,10 @@ export interface MediaContributionSheetProps {
   onSubmit: () => void;
   /** Why the draft cannot be sent yet, or null. */
   blocker: string | null;
-  busy: boolean;
+  busy: boolean; /** §34 "Neighbourhood only" (census-media §36): offered only while the server accepts it. Default false — the four choices the sheet always offered. */ neighborhoodOffered?: boolean;
 }
 
-const PRECISIONS: ContributionPrecision[] = ['venue', 'city_only', 'after_i_leave', 'hidden'];
+const precisionsFor = (neighborhoodOffered: boolean): ContributionPrecision[] => contributionPrecisions({ neighborhoodOffered }); // §34 "Neighbourhood only" is offered only while the server accepts it (census-media §36)
 
 export function MediaContributionSheet({
   placeName,
@@ -44,7 +44,7 @@ export function MediaContributionSheet({
   onPickMedia,
   onSubmit,
   blocker,
-  busy,
+  busy, neighborhoodOffered = false,
 }: MediaContributionSheetProps) {
   return (
     <ScrollView contentContainerStyle={styles.content} testID="media-contribution-sheet" keyboardShouldPersistTaps="handled">
@@ -86,7 +86,7 @@ export function MediaContributionSheet({
 
       <Text style={styles.label}>How precisely is the place shown?</Text>
       <View style={styles.chips}>
-        {PRECISIONS.map((p) => (
+        {precisionsFor(neighborhoodOffered).map((p) => (
           <Chip
             key={p}
             label={PRECISION_LABELS[p]}

@@ -573,7 +573,7 @@ router.post("/posts", async (req, res) => {
     locationPrivacyMode: reqPrivacyMode, publishAfterTime, geofenceRadiusMeters,
     venueName, venueId, category,
   } = parsed.data;
-  const locationSource = locationSrc ?? 'none';
+  const locationSource = locationSrc ?? 'none'; if (!(await neighborhoodOnlyModePermitted(flagSc, reqPrivacyMode))) { sendError(res, "feature_disabled", NEIGHBORHOOD_ONLY_DISABLED_MESSAGE); return; } // §34 "Show neighborhood only" is refused, and nothing written, until media_neighborhood_only_mode_enabled (census-media §36)
 
   // ── Delayed geotag: compute sensitivity / privacy mode / geofence radius ──
   const sens = sensitivityLevel(venueName ?? null);
@@ -2032,7 +2032,7 @@ router.patch("/posts/:postId/location-privacy", async (req, res) => {
     sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid payload");
     return;
   }
-  const { locationPrivacyMode: newMode, publishAfterTime } = parsed.data;
+  const { locationPrivacyMode: newMode, publishAfterTime } = parsed.data; if (!(await neighborhoodOnlyModePermitted(getServiceClient(), newMode))) { sendError(res, "feature_disabled", NEIGHBORHOOD_ONLY_DISABLED_MESSAGE); return; } // census-media §36, as the create
 
   const { data: existing, error: loadErr } = await client
     .from("posts")
@@ -2063,7 +2063,7 @@ router.patch("/posts/:postId/location-privacy", async (req, res) => {
     patch.post_status = "pending_delay";
     patch.publish_eligible_at = publishAfterTime;
     patch.publish_after_time = publishAfterTime;
-  } else if (newMode === "none" || newMode === "hidden" || newMode === "city_only" || newMode === "trusted_circle_only") {
+  } else if (newMode === "none" || newMode === "hidden" || newMode === "city_only" || newMode === "trusted_circle_only" || newMode === "neighborhood_only") {
     patch.post_status = "published";
     patch.published_at = new Date(nowMs).toISOString();
     patch.publish_eligible_at = null;
@@ -3685,3 +3685,5 @@ async function admitUploadBeforeBody(req: any, res: any, userId: string): Promis
   req.uploadGuard = guard;
   return true;
 }
+// Imported at the TAIL so no cited line above moves; ESM hoists it (census-media §36, MD262).
+import { neighborhoodOnlyModePermitted, NEIGHBORHOOD_ONLY_DISABLED_MESSAGE } from "../lib/media/neighborhoodOnlyMode.js";

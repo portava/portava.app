@@ -388,7 +388,7 @@ export const POST_LOCATION_PRIVACY_MODES = [
   "city_only",
   "delayed_until_exit",
   "delayed_until_time",
-  "trusted_circle_only",
+  "trusted_circle_only", "neighborhood_only", // §34 "Show neighborhood only" — migration 3350, census-media §36
 ] as const;
 export type PostLocationPrivacyMode = (typeof POST_LOCATION_PRIVACY_MODES)[number];
 
@@ -415,6 +415,12 @@ export function locationPrivacyModeToCeiling(
 ): LocationVisibilityTier | null {
   if (mode == null || mode === "" || mode === "none") return null;
   switch (mode) {
+    // §34 "Show neighborhood only" (3350, census-media §36). The owner's
+    // explicit choice of the tier between city and place. Not delayed, so it
+    // binds from creation; like every restrictive mode it withholds the venue
+    // and — through resolveMediaPlaceDisclosure — the canonical place id.
+    case "neighborhood_only":
+      return "neighborhood";
     case "hidden":
     case "city_only":
     case "trusted_circle_only":
