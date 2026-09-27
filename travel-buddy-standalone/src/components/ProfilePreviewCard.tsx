@@ -163,7 +163,7 @@ const s = StyleSheet.create({
     width: AVATAR_SIZE,
     height: AVATAR_SIZE,
     borderRadius: AVATAR_SIZE / 2,
-    backgroundColor: color.haze,
+    backgroundColor: color.deep, // AvatarImage's own ground: its white initials read 1.2:1 on haze (census-media §33.13)
   },
   avatarFallback: {
     alignItems: 'center',

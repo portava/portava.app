@@ -276,7 +276,7 @@ export function MediaSourceSheet({
           >
             <View style={[s.iconCircle, { backgroundColor: color.signal + '18' }]}>
               {busy === 'camera' ? (
-                <ActivityIndicator size="small" color={color.signal} />
+                <ActivityIndicator size="small" color={color.signalStrong} />
               ) : (
                 <Camera size={20} color={cameraDenied ? color.faint : color.signal} />
               )}
@@ -404,7 +404,7 @@ const s = StyleSheet.create({
     minHeight: 64,
   },
   rowDenied: {
-    opacity: 0.7,
+    opacity: 1, // was 0.7: the denied row is still an active control (it opens Settings), so it keeps full contrast; its state is the label, the line under it and the Settings button (census-media §33.13)
   },
   iconCircle: {
     width: avatar.s44, height: avatar.s44,
@@ -426,7 +426,7 @@ const s = StyleSheet.create({
   },
   rowSub: {
     ...t.small,
-    color: color.faint,
+    color: color.mute,
   },
   settingsBtn: {
     paddingHorizontal: space.sm,

@@ -1983,6 +1983,10 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/test/mediaGemAndPrivacyDisclosure.test.ts",
     // WIDENED 2026-09-27 by lane V (census-media §37.8): MD269's restated evidence — a held or flagged postcard file neither counts nor becomes the passport cover — rests on this suite's §37.8 block.
     "artifacts/api-server/src/test/postcards.test.ts",
+    // WIDENED 2026-09-27 by census-media §33.13 (lane T follow-up): what ReportSheet opens for a safety photo — the photo button, the source sheet and the photo card, now measured Media-flow surfaces MD403 rests on.
+    "travel-buddy-standalone/src/components/ui/MediaPickerButton.tsx",
+    "travel-buddy-standalone/src/components/ui/MediaSourceSheet.tsx",
+    "travel-buddy-standalone/src/components/ui/MediaAttachmentTray.tsx",
   ],
   // census-telegraph.md — declared 2026-09-11 on the same basis as Media above:
   // 451 requirements out of CANNOT BE CHECKED, a clock started rather than a
