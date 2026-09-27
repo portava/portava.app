@@ -125,7 +125,7 @@ construction that is inert in production; it counts as built, consistent with ev
 
 | id | Obligation | V | Evidence |
 |---|---|---|---|
-| CG-01 | `:8` Compass consumes the shared layer; no surface builds its own assistance engine | **W** | The client duplicates the server's starter set: `travel-buddy-standalone/src/…/compass/compassPrompt.ts` re-implements `buildCompassStarters` and `app/(tabs)/ai.tsx:399` calls the client one (census-input-intelligence G359 `W`). Client-side; recorded, not edited. |
+| CG-01 | `:8` Compass consumes the shared layer; no surface builds its own assistance engine | **W** | The client duplicates the server's starter set: `travel-buddy-standalone/src/…/compass/compassPrompt.ts` re-implements `buildCompassStarters` and `app/(tabs)/ai.tsx:399` calls the client one (census-input-intelligence G359 `W`). Client-side; recorded, not edited. **No longer true, noted 2026-09-27 (census-media §41.3):** e0d858f28 removed the client builder, and the screen now renders the server's starters (`travel-buddy-standalone/app/(tabs)/ai.tsx:413#starters={startersFromSuggestions(starterAssist.suggestions)}`). This row is not CG-01's last statement; §26.13 is. |
 | CG-02 | `:150-152` Compass prompt: contextual starters based on current surface | **C** | census-input-intelligence G88 `C` (`projection.ts:258-304`), confirmed by the client wiring at `travel-buddy-standalone/app/(tabs)/ai.tsx:412-424#<CompassStarters` (G364; corrected 2026-09-27, verdict unmoved: the same block was 398–410 until e0d858f28 moved it 14 lines down). |
 | CG-03 | `:160-163` Context carryover bounded to the task; Compass prompt carries Trip context; no silent preference rewrite | **C** | Trip context is attached server-side on every ask (`compass/CompassTripContext.ts:1-11`, called at `routes/compass.ts:1491-1495`) and as structured refs on starters (G364). Boundedness: `CompassTemporaryIntent.ts:14-20` *"reads no profile and writes nothing, so it CANNOT rewrite a preference"*; `compass/CompassSearchDecayService.ts:5-9` decays a search nudge so it *"doesn't permanently skew"* the feed. |
 | CG-04 | `:213` Compass: convert phrase into structured request/action with referenced entities | **C** | G137 `C` (`semanticIntent.ts:231-268` produces `open_compass` with the parse); the drop is on the *search bar's* client (G305), not Compass's — `travel-buddy-standalone/app/(tabs)/ai.tsx:112-118#if (!prefillMessage` consumes `prefillMessage` (corrected 2026-09-27, verdict unmoved: 98–104 until e0d858f28 moved the effect 14 lines down). |
@@ -881,7 +881,7 @@ CT-02 (still exactly eleven `compass/` modules reading `.from("trip*")` directly
 is still a fourth resolver; `grep -rn TelegraphRelationship` over `src/` returns **0** — the canonical
 model census-telegraph T379 asks for does not exist anywhere yet). CG-01 too: the client still calls
 its own `buildCompassStarters` at `app/(tabs)/ai.tsx:399`, and census-input-intelligence G359 is
-still W.
+still W. *(No longer true, noted 2026-09-27, census-media §41.3: e0d858f28 removed the client builder and `travel-buddy-standalone/app/(tabs)/ai.tsx:413#startersFromSuggestions(starterAssist.suggestions)` renders the server's starters; CG-01 was re-graded in §26.13. This paragraph records the 2026-09-13 re-run (§12) and is kept as it was measured.)*
 
 ### 12.3 The residual, as a number: the four-way test over all 18 W rows
 
