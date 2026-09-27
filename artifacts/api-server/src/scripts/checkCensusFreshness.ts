@@ -2014,6 +2014,13 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/migrations/3363_place_copies_client_column_grants.sql",
     "db/rollback/2026-09-27-3363-place-copies-client-column-grants-rollback.sql",
     "artifacts/api-server/src/test/db/placeCopiesClientColumnGrants.db.test.ts",
+    // WIDENED 2026-09-27 by census-media §44.18 (lane G1, write boundaries): migrations 3364 (pulse_geo_tags) and 3365 (post_media, 2158's write intent as a narrowing), their rollbacks, and the two database suites that prove them.
+    "artifacts/api-server/src/migrations/3364_pulse_geo_tags_write_boundary.sql",
+    "db/rollback/2026-09-27-3364-pulse-geo-tags-write-boundary-rollback.sql",
+    "artifacts/api-server/src/migrations/3365_post_media_write_boundary.sql",
+    "db/rollback/2026-09-27-3365-post-media-write-boundary-rollback.sql",
+    "artifacts/api-server/src/test/db/pulseGeoTagsWriteBoundary.db.test.ts",
+    "artifacts/api-server/src/test/db/postMediaWriteBoundary.db.test.ts",
   ],
   // census-telegraph.md — declared 2026-09-11 on the same basis as Media above:
   // 451 requirements out of CANNOT BE CHECKED, a clock started rather than a

@@ -293,9 +293,9 @@ describe("census-media §44.11 — 3363: the place columns of pulse_geo_tags, pa
     assert.ok(nonSelect(now.privs).length > 0, "anti-vacuity: the tables carry write privileges to compare");
     assert.deepEqual(nonSelect(now.privs), nonSelect(rolled.privs), "the rollback moves no INSERT/UPDATE/DELETE/… privilege");
     // And 3363 moved none: the client roles' write privileges are exactly the ones
-    // 2151/2152 (postcards), 2158 (post_media) and the baseline (pulse_geo_tags'
-    // GRANT ALL — the write gap census-media §44.16 records, pinned here as
-    // today's behaviour, not endorsed) left.
+    // 2151/2152 (postcards) and 2158 (post_media) left. UPDATED ON PURPOSE by 3364
+    // (census-media §44.18): pulse_geo_tags' GRANT ALL, pinned here before as the
+    // write gap §44.16 recorded, is revoked, so no client role writes it any more.
     const pmIns = ["post_id", "user_id", "media_type", "storage_bucket", "storage_path", "public_url", "thumbnail_url",
       "thumbnail_storage_path", "mime_type", "file_size_bytes", "duration_seconds", "width", "height", "sort_order"];
     const pcUpd = ["media_url", "caption", "location_name", "location_city", "location_country", "visibility", "pinned_at", "note"];
@@ -304,11 +304,11 @@ describe("census-media §44.11 — 3363: the place columns of pulse_geo_tags, pa
       ...pmIns.filter((c) => c !== "post_id" && c !== "user_id").map((c) => `post_media|${c}|authenticated|UPDATE|false`),
       ...["post_id", "user_id", ...pcUpd].map((c) => `passport_postcards|${c}|authenticated|INSERT|false`),
       ...pcUpd.map((c) => `passport_postcards|${c}|authenticated|UPDATE|false`),
-      ...["anon", "authenticated"].flatMap((g) =>
-        ["DELETE", "INSERT", "REFERENCES", "TRIGGER", "TRUNCATE", "UPDATE"].map((p) => `pulse_geo_tags||${g}|${p}|false`)),
+      // (was: pulse_geo_tags' six table-level writes for anon and authenticated, until 3364)
+      ...([] as string[]),
     ].sort();
     const clientWrites = nonSelect(now.privs).filter((p: string) => ["anon", "authenticated", "PUBLIC"].includes(p.split("|")[2]!));
-    assert.deepEqual([...clientWrites].sort(), expectedWrites, "the client roles' write privileges are exactly what they were before 3363");
+    assert.deepEqual([...clientWrites].sort(), expectedWrites, "the client roles' write privileges are exactly 2151/2152's and 2158's: 3363 moved none, 3364 removed pulse_geo_tags'");
     // The owner updates their own postcard's note (column UPDATE from 2151) …
     asOk({ role: "authenticated", uid: A }, `UPDATE public.passport_postcards SET note = 'g3 owner note' WHERE id = '${CARD}';`);
     assert.equal(scalar(`SELECT note FROM public.passport_postcards WHERE id = '${CARD}'`), "g3 owner note");
