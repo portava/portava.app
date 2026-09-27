@@ -2007,6 +2007,10 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/migrations/3362_posts_client_column_grants.sql",
     "db/rollback/2026-09-27-3362-posts-client-column-grants-rollback.sql",
     "artifacts/api-server/src/test/db/postsClientColumnGrants.db.test.ts",
+    // WIDENED 2026-09-27 by census-media §44.11 (lane G1 follow-up): migration 3363 (the client roles' column grants on the three tables holding a copy of a post's place), its rollback, and the database suite that proves both.
+    "artifacts/api-server/src/migrations/3363_place_copies_client_column_grants.sql",
+    "db/rollback/2026-09-27-3363-place-copies-client-column-grants-rollback.sql",
+    "artifacts/api-server/src/test/db/placeCopiesClientColumnGrants.db.test.ts",
   ],
   // census-telegraph.md — declared 2026-09-11 on the same basis as Media above:
   // 451 requirements out of CANNOT BE CHECKED, a clock started rather than a
