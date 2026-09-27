@@ -1943,6 +1943,22 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/migrations/3357_media_transcoder_flag.sql",
     "artifacts/api-server/src/migrations/3358_media_captions_flag.sql",
     "artifacts/api-server/src/test/mediaVendorSeams.test.ts",
+    // WIDENED 2026-09-27 by census-media §33 (lane T, H7): MD403 now grades the shared sheets Media opens — the role tokens, the sheets and the components drawn inside them that §33 changed, the pairs fixture and the design-system regression guard, and the four nested sheets MD403's RED WHEN names as unmeasured.
+    "travel-buddy-standalone/src/theme/tokens.ts",
+    "travel-buddy-standalone/src/theme/__tests__/sharedSheetContrast.pairs.ts",
+    "travel-buddy-standalone/src/theme/__tests__/sharedSheetContrast.consumers.test.ts",
+    "travel-buddy-standalone/src/components/selectors/GlobalPlacePicker.tsx",
+    "travel-buddy-standalone/src/components/PlanPickerController.tsx",
+    "travel-buddy-standalone/src/platform/input-assistance/components/DisambiguationSheet.tsx",
+    "travel-buddy-standalone/src/components/MentionInput.tsx",
+    "travel-buddy-standalone/src/components/MentionSuggestionList.tsx",
+    "travel-buddy-standalone/src/components/DateTimePickerField.tsx",
+    "travel-buddy-standalone/src/components/itinerary/LockTypeSelector.tsx",
+    "travel-buddy-standalone/src/components/RichText.tsx",
+    "travel-buddy-standalone/src/components/TagPreviewSheet.tsx",
+    "travel-buddy-standalone/src/components/ProfilePreviewCard.tsx",
+    "travel-buddy-standalone/src/components/EngagementUserListSheet.tsx",
+    "travel-buddy-standalone/src/components/ReportSheet.tsx",
   ],
   // census-telegraph.md — declared 2026-09-11 on the same basis as Media above:
   // 451 requirements out of CANNOT BE CHECKED, a clock started rather than a

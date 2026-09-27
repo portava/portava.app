@@ -62,7 +62,7 @@ export function DisambiguationSheet({
 
         <View style={styles.list}>
           {candidates.map((c) => (
-            <EntitySuggestionRow key={c.id} suggestion={c} onPress={onSelect} />
+            <EntitySuggestionRow key={c.id} suggestion={c} onPress={onSelect} reasonColor={color.mute} />
           ))}
         </View>
 

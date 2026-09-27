@@ -138,7 +138,7 @@ const s = StyleSheet.create({
     flex: 1,
   },
   placeholder: {
-    color: color.faint,
+    color: color.mute,
   },
   clearBtn: {
     padding: 4,
@@ -156,7 +156,7 @@ const s = StyleSheet.create({
   },
   doneBtnText: {
     ...t.bodyStrong,
-    color: color.signal,
+    color: color.signalStrong,
     fontWeight: '700',
   },
 });

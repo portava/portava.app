@@ -10,11 +10,11 @@ export const color = {
   paper: '#FAF9F6', // base background
   paperRaised: '#FFFFFF', // cards on paper
   signal: '#FF4D2E', // vermilion — primary action + live pulse only
-  signalDim: '#E5391C',
+  signalDim: '#E5391C', signalStrong: '#C43B23', // signalStrong: vermilion at AA on light grounds (signal ×0.77, same hue) — vermilion TEXT on paper, paperRaised or a signal tint, a state mark where signal misses 3:1, and the fill under onInk text; signal stays the brand fill, mark and live pulse (census-media §33)
   deep: '#0A3D4A', // teal-ink — destination accents
   haze: '#E8E5DE', // dividers, card edges
-  mute: '#6B6862', // secondary text
-  faint: '#9C988F', // tertiary text, placeholders
+  mute: '#6B6862', muteStrong: '#696660', // secondary text; mute reads 4.41:1 on haze, so secondary text on a haze fill takes muteStrong (4.55:1) (census-media §33)
+  faint: '#9C988F', // tertiary text, placeholders — as text it clears AA only on dark grounds (2.3–2.9:1 on paper, paperRaised and haze), so text on a light ground that must meet AA takes mute (census-media §33)
   scrimTop: 'rgba(17,17,15,0)',
   scrimBottom: 'rgba(17,17,15,0.78)',
   onInk: '#FAF9F6', // text on dark/immersive
