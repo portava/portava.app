@@ -2228,6 +2228,39 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     // and the other censuses this one cross-references. Those are machinery and
     // neighbours this census NAMES; none of them is a Telegraph behaviour it
     // GRADES, and the same exclusion is already in force for Sensing and Media.
+    // WIDENED 2026-09-27 by the coverage-guard fix (census-media §32.14): files verdict rows cite — T9/T28/T262/T266's shared-context routes, T262's Trips command route, T344's routes/telegraph.ts, T79's search, T220's two block helpers, T31's 2217 and T290's permissions suite.
+    "artifacts/api-server/src/routes/telegraphSharedContext.ts",
+    "artifacts/api-server/src/server/trips/commandRoute.ts",
+    "artifacts/api-server/src/routes/telegraph.ts",
+    "artifacts/api-server/src/services/telegraphSearch.ts",
+    "artifacts/api-server/src/lib/blocks.ts",
+    "artifacts/api-server/src/lib/exclusionSet.ts",
+    "artifacts/api-server/src/migrations/2217_protected_locations.sql",
+    "artifacts/api-server/src/test/telegraphProjectionPermissions.test.ts",
+    // WIDENED 2026-09-27 by the coverage-guard fix (census-media §32.14): the red-first suites prose sections rest moves and held verdicts on — §14.2/§14.3 (T79, T344/T438), §15, §16.3, §18.2, §19.3, §19.6 item 4, §20.3, §23.2, §24.7 and §27.1–§27.3 (T178, T233, T416).
+    "artifacts/api-server/src/test/telegraphDeletedMediaRedaction.test.ts",
+    "artifacts/api-server/src/test/telegraphInboxFailsLoud.test.ts",
+    "artifacts/api-server/src/test/telegraphShareFamilies.test.ts",
+    "artifacts/api-server/src/test/messageLanguageProvenance.test.ts",
+    "artifacts/api-server/src/test/telegraphNotFoundHonesty.test.ts",
+    "artifacts/api-server/src/test/telegraphDurableContextHonesty.test.ts",
+    "artifacts/api-server/src/test/exclusionFailClosedRoutes.test.ts",
+    "artifacts/api-server/src/test/telegraphChatOutageHonesty.test.ts",
+    "artifacts/api-server/src/test/telegraphLegacyReadMarkerThreshold.test.ts",
+    "artifacts/api-server/src/test/telegraphMentionBlockFailClosed.test.ts",
+    "artifacts/api-server/src/test/telegraphDeliveryReceipts.test.ts",
+    "artifacts/api-server/src/test/telegraphStreamResume.test.ts",
+    "artifacts/api-server/src/test/telegraphFanoutBounds.test.ts",
+    // WIDENED 2026-09-27 by the coverage-guard fix (census-media §32.14): code prose arguments rest on — §10.9's shared write gates, §19.6 item 1's retranslate gate, and §33.3's expiry readers that make the availability sweep safe.
+    "artifacts/api-server/src/lib/telegraphThreadWrite.ts",
+    "artifacts/api-server/src/lib/retranslateGate.ts",
+    "artifacts/api-server/src/services/passport/PassportProjectionService.ts",
+    // WIDENED 2026-09-27 by the coverage-guard fix (census-media §32.14): schema facts in the frozen legacy migration root — T260's meetups.chat_thread_id join (§11.9) and §16.2's "no CHECK on language_detection_source".
+    "migrations/0013_availability_meetups.sql",
+    "migrations/0009_translation.sql",
+    "migrations/APPLY_THESE_IN_ORDER.sql",
+    // WIDENED 2026-09-27 by the coverage-guard fix (census-media §32.14): the bare spelling forty T-row citations write; this checker resolves it to the root app/ mock, so it is listed beside the travel-buddy-standalone/app/messages/ prefix above, which holds the screen they grade.
+    "app/messages/[id].tsx",
   ],
   // census-map.md, census-sensing.md, census-compass.md and
   // census-input-intelligence.md — declared 2026-09-11 on the same basis as
@@ -2677,6 +2710,23 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     // lib/envValidation.ts, migrations/2402_telegraph_membership_rls_recursion.sql,
     // baseline/20260819_baseline_structure.sql and app.json. Nor any src/scripts/
     // path: the header above records that doing so broke CI on b94a6fae.
+    // WIDENED 2026-09-27 by the coverage-guard fix (census-media §32.14): the §2.1 decision route's Live gate, and the boot and router wiring §22.1 (S92), §26.3 (S39/S24) and §27.3 (S18/S32's session issuer) rest on.
+    "artifacts/api-server/src/lib/compassDecisionAssembly.ts",
+    "artifacts/api-server/src/index.ts",
+    "artifacts/api-server/src/routes/index.ts",
+    // WIDENED 2026-09-27 by the coverage-guard fix (census-media §32.14): the proofs for S79 (§24.1), S83 (§24.2) and S112 (§22.2), S112's production caller (§24.4–§27.1), and §26.4's S49/S92 controlled-test rows.
+    "artifacts/api-server/src/test/compassGroundingLiveClaims.test.ts",
+    "artifacts/api-server/src/test/sensingConsumersTripWorld.test.ts",
+    "artifacts/api-server/src/test/sensingConsumersRevocationReach.test.ts",
+    "artifacts/api-server/src/services/accountDeletion/AccountDeletionService.ts",
+    "artifacts/api-server/src/test/memoryProjectionScheduler.test.ts",
+    "artifacts/api-server/src/test/discoveryCacheBEligibility.test.ts",
+    "artifacts/api-server/src/test/mapDiscoveryCandidateConsumer.test.ts",
+    // WIDENED 2026-09-27 by the coverage-guard fix (census-media §32.14): S39's presence-context flag (3004, §21.1) and S29's permission surface — the §26.2 opt-in screen, the client app.json, and the bare app.json S29's §10.5 verdict row writes (this checker resolves it to the root mock), which therefore leaves the not-added list above.
+    "artifacts/api-server/src/migrations/3004_sensing_presence_context_flag.sql",
+    "travel-buddy-standalone/app/settings/intel-prompts.tsx",
+    "travel-buddy-standalone/app.json",
+    "app.json",
   ],
   "census-compass.md": [
     // B8, 2026-09-14: three modules census-compass grades and did not watch.
@@ -3153,6 +3203,17 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/lib/mapProducers/worldMomentProducer.ts",
     "artifacts/api-server/src/routes/locateFriends.ts",
     "artifacts/api-server/src/routes/safeReturn.ts",
+    // WIDENED 2026-09-27 by the coverage-guard fix (census-media §32.14): the suites G85/G86/G89/G100/G109/G226/G228/G232 cite on their rows and G57's evidence names, which the old citation pattern never counted.
+    "artifacts/api-server/src/test/inputAssistancePersonalization.test.ts",
+    "artifacts/api-server/src/test/inputAssistanceSavedEntities.test.ts",
+    "artifacts/api-server/src/test/inputAssistanceVenueBinding.test.ts",
+    "artifacts/api-server/src/test/inputAssistanceSelectionMemoryLiveDb.test.ts",
+    "artifacts/api-server/src/test/canonicalLocations.test.ts",
+    "artifacts/api-server/src/test/canonicalSearchKeyProductionShape.test.ts",
+    // WIDENED 2026-09-27 by the coverage-guard fix (census-media §32.14): G359/G364's Compass screen and G147's onboarding screen — the standalone file, and the bare spellings the rows write, which this checker resolves to the root app/ mock (the app/_layout.tsx precedent above).
+    "travel-buddy-standalone/app/(tabs)/ai.tsx",
+    "app/(tabs)/ai.tsx",
+    "app/(auth)/onboarding.tsx",
   ],
   "census-discovery.md": [
     // ── ADDED 2026-09-15 by §43: the registry B05 now rests on ──────────────

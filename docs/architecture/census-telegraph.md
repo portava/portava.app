@@ -9681,3 +9681,34 @@ re-measurement of the corpus. `head_commit` is unchanged at `1fe72289b`; the
 acknowledgement covering these files is in
 `artifacts/api-server/src/scripts/CENSUS_STALENESS_ACKNOWLEDGED.json` and, like
 §30's, argues that a verdict DID move rather than that none could.
+
+## Cited, not graded (check:census-scope-coverage)
+
+Declared 2026-09-27 by the coverage-guard fix (census-media §32.14). Each line names a file this census cites and does not grade, and says why. The guard refuses a declaration for any file a verdict row cites.
+
+- NOT-GRADED: artifacts/api-server/src/services/tagging/TaggingService.ts — counted in §17.8 and §19.4's tally of dropped-error reads beyond routes/messaging.ts and recorded there as fail-closed (it tags nobody when the block set is unreadable); §19.6 item 6 says it was not re-derived and the finding is not restated as this census's own, and T344's C rests on the three route files §20.5 classified and on routes/messaging.ts.
+- NOT-GRADED: artifacts/api-server/src/test/tripOpportunityProjection.test.ts — a Trips suite, named in §17.9 only to account for two red cases in a full-suite run as another lane's real-clock fragility, green on the merged tree once 53615fd72 froze its clock; no Telegraph verdict rests on it.
+- NOT-GRADED: artifacts/api-server/src/test/docCitations.test.ts — the citation guard's own suite, named in §10.20 because a broken anchor in this census also fails it; it measures citations and grades no Telegraph behaviour.
+- NOT-GRADED: travel-buddy-standalone/app/(rent-a-buddy)/buddy/[id].tsx — Rent-a-Buddy's buddy-profile screen, named in §15.3 only to explain why BUDDY_SERVICE's deep link was withdrawn (the screen takes a buddy id, not a service id); the share-family verdicts rest on the registry and its declared-no-screen list, not on this screen.
+- NOT-GRADED: travel-buddy-standalone/app/layover/[id].tsx — census-layover's screen, named in §15.8 item 7 only as where other lanes' failing citations pointed at that moment; this census grades nothing in it.
+- NOT-GRADED: artifacts/api-server/src/routes/airport.ts — census-layover's route, named in §16.7 only as another lane's in-flight work that had doc-citations and freshness red; no Telegraph row cites it.
+- NOT-GRADED: artifacts/api-server/src/routes/trips.ts — census-trips' route, cited in §17.1 as one of three callers showing lib/chatSync.ts is a live path; §17.7 moves only T349, which does not rest on it, and the roster-eviction fix rests on lib/chatSync.ts and services/groupChatSync.ts, both watched.
+- NOT-GRADED: artifacts/api-server/src/test/notNullWrites.test.ts — a NOT NULL write guard over routes/groupChat.ts, named in §17.6 because §17.4's synthesized translation row tripped its body-null regex and M19 narrowed the pattern; §17.7's one move (T349) does not rest on it.
+- NOT-GRADED: travel-buddy-standalone/src/hooks/useMessaging.ts — the unread-badge hook, cited in §19.6 item 4 only to price an owner decision (omitting newHighlights would change the wire, not the badge); the decision is surfaced, not taken, and no verdict moved on it.
+- NOT-GRADED: artifacts/api-server/src/test/generated/liveColumns.json — the generated live-schema column snapshot, read in §19.7 only to confirm independently that no visa* table exists for T39's VISA_CARD half; §19.7 leaves T39 where §13 put it and moves nothing on that reading.
+- NOT-GRADED: artifacts/api-server/src/test/telegraphChatSuggestionsPrivacy.test.ts — named only in §20.8's list of suites re-run because they import the edited route; no row and no prose argument rests on its cases.
+- NOT-GRADED: artifacts/api-server/src/test/failOpenServiceReads.test.ts — named only in §20.8's list of suites re-run because they import the edited route; no row and no prose argument rests on its cases.
+- NOT-GRADED: artifacts/api-server/src/test/tripKernel.test.ts — the Trip Kernel suite, named only in §20.8's list of suites re-run because it imports the edited route; census-trips grades it and no row here rests on it.
+- NOT-GRADED: artifacts/api-server/src/test/intelligence.test.ts — named only in §21.7's check-run tally beside the Telegraph-named suites; it grades no Telegraph behaviour.
+- NOT-GRADED: artifacts/api-server/src/test/tripTelegraphProjection.test.ts — census-trips' projection suite, named in §21.7 only to record a one-off file-level flake with 18/18 subtests green; no row here rests on it.
+- NOT-GRADED: artifacts/api-server/src/compass/CompassMediaContext.ts — named in §22.7 only as another lane's in-flight file carrying tsc diagnostics this lane did not add; no Telegraph row cites it.
+- NOT-GRADED: artifacts/api-server/src/services/safeReturn/__tests__/safeReturnLiveShareExpiryHonesty.test.ts — another lane's in-flight suite, named in §22.7 only as carrying tsc diagnostics this lane did not add.
+- NOT-GRADED: artifacts/api-server/src/services/airport/__tests__/layoverExpirySweepVisible.test.ts — census-layover's in-flight suite, named in §22.7 only as carrying tsc diagnostics this lane did not add.
+- NOT-GRADED: artifacts/api-server/src/test/mediaIndependentSources.test.ts — the Media lane's suite, named in §22.7 only as where the seventeen new typecheck:tests diagnostics were, none of them added by this lane.
+- NOT-GRADED: artifacts/api-server/src/test/mediaWorldProjection.test.ts — the Media lane's suite, named in §22.7 only as where the seventeen new typecheck:tests diagnostics were, none of them added by this lane.
+- NOT-GRADED: artifacts/api-server/src/lib/openai.ts — the OpenAI client seam routes/telegraph.ts was switched to in §24.7 so its suite could drive the route, recorded there as an enabling change and not a fix; no verdict rests on the client.
+- NOT-GRADED: artifacts/api-server/scripts/check-flag-polarity.mjs — a guard, named in §31.6 as the reason 2990 seeds an explicit FALSE flag; it checks flag reads against migrations and grades no Telegraph behaviour.
+- NOT-GRADED: artifacts/api-server/src/services/location/LocationPermissionService.ts — cited in §31.9 as the origin of the no_location vocabulary lib/mapTravelers mirrored, in a Map-surface defect fixed in passing; §31.9 moves no verdict in this census or in census-map.
+- NOT-GRADED: artifacts/api-server/src/test/mapTravelers.test.ts — the four assertions pinning §31.9's Map-surface allowlist fix; §31.9 states that no verdict moves on it here or in census-map and leaves the Map lane to decide.
+- NOT-GRADED: artifacts/api-server/src/test/passportSharedContext.test.ts — Passport's suite, named in §33.10 only as re-run unchanged beside the lane's own; §33's rows rest on the three new coordination suites, which are watched.
+- NOT-GRADED: artifacts/api-server/src/test/splitClockGuard.test.ts — a repo-wide invariant suite (no function reads the clock twice), named in §33.10 as what caught a split clock read in the typed-message route; it grades no Telegraph behaviour.
