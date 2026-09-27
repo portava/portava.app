@@ -18,7 +18,7 @@
  * runs under node:test with no react-native. The real transport is
  * uploadHttp.ts.
  */
-import { classifyStatus, DEFAULT_RETRY, withRetry, type RetryOptions } from './uploadRetry.ts';
+import { backoffDelayMs, classifyStatus, DEFAULT_RETRY, withRetry, type RetryOptions } from './uploadRetry.ts';
 
 /** What `file.slice()` returns is opaque here — it is handed straight to putPart. */
 export interface FileLike {
@@ -35,7 +35,7 @@ export interface ResumableTransport {
     part: unknown,
     contentType: string,
     onSent?: (bytes: number) => void,
-  ): Promise<{ status: number; retryAfter: string | null }>;
+  ): Promise<{ status: number; retryAfter: string | null }>; /** MD284 — OPTIONAL: every part handed over AT ONCE (see PutPartsFn at the end of this file). */ putParts?: PutPartsFn;
 }
 
 export interface ResumableEnv {
@@ -151,9 +151,27 @@ export async function uploadSlotResumable(
     let sent = session.receivedBytes;
     onProgress?.(Math.min(1, sent / session.totalBytes));
 
-    // ── 2. The missing parts, each retried on its own ──────────────────────
+    // ── 2. The missing parts ───────────────────────────────────────────────
+    // MD284: a transport that can hand parts to the OS (backgroundTransfer.ts)
+    // gets EVERY missing part at once, so the whole remaining file is queued
+    // with the OS before the app can be suspended — not just the part in
+    // flight. What that batch could not deliver (no answer, 408/425/429/5xx)
+    // falls through to the one-at-a-time path below, with its own retries.
     let needFreshUrls = false;
-    for (const part of session.missing) {
+    let pending: SessionPart[] = session.missing;
+    if (transport.putParts && pending.length > 1) {
+      const batch = await putAllAtOnce(transport.putParts, session, pending, file, contentType, sent, onProgress);
+      if (batch.kind === 'fail') return { ok: false, retryable: false, reason: batch.reason };
+      sent = batch.sent;
+      onProgress?.(Math.min(1, sent / session.totalBytes));
+      needFreshUrls = batch.needFreshUrls;
+      pending = needFreshUrls ? [] : batch.stragglers;
+      if (pending.length > 0) {
+        await env.sleep(batch.retryAfterMs ?? backoffDelayMs(1, retry, retry.random));
+        if (env.isCancelled?.()) return { ok: false, retryable: false, reason: 'cancelled', cancelled: true };
+      }
+    }
+    for (const part of pending) {
       const start = part.index * session.chunkBytes;
       const body = file.slice(start, start + part.size);
       const put = await withRetry<true>(async () => {
@@ -205,4 +223,94 @@ export async function abandonSlotSession(slot: SlotRef, transport: ResumableTran
   } catch {
     // best-effort; the server's orphan sweep removes parts of an abandoned slot
   }
+}
+
+// ── MD284: every missing part handed over at once ────────────────────────────
+//
+// census-media MD284's RED WHEN: "an iOS device build shows a multi-part upload
+// completing while the app is suspended from the moment it is backgrounded.
+// That needs every missing part enqueued as a background task at once rather
+// than serially." Serially, only the part in flight is in the OS's hands when
+// iOS suspends the app; the next part is started by JavaScript, which is not
+// running. Handing every part over at once is the JS half; whether the OS then
+// finishes them while the app is suspended is exactly what only a device run
+// can show (census-media §37).
+
+/** One part's outcome from a batch: an HTTP answer, or no answer at all. */
+export type PartOutcome = { status: number; retryAfter: string | null } | { error: string };
+
+/**
+ * Hand every part to the transport at once and settle them all. `onSent`
+ * reports bytes per part, by its position in `parts`. Must not throw; a part
+ * that got no answer is `{ error }`. The result has one entry per part, in order.
+ */
+export type PutPartsFn = (
+  parts: Array<{ url: string; part: unknown }>,
+  contentType: string,
+  onSent?: (position: number, bytes: number) => void,
+) => Promise<PartOutcome[]>;
+
+type BatchResult =
+  | { kind: 'fail'; reason: string }
+  | { kind: 'ok'; sent: number; stragglers: SessionPart[]; needFreshUrls: boolean; retryAfterMs: number | null };
+
+async function putAllAtOnce(
+  putParts: PutPartsFn,
+  session: Session,
+  parts: SessionPart[],
+  file: FileLike,
+  contentType: string,
+  sentBefore: number,
+  onProgress?: (fraction: number) => void,
+): Promise<BatchResult> {
+  const inFlight = new Array<number>(parts.length).fill(0);
+  const report = () => onProgress?.(Math.min(1, (sentBefore + inFlight.reduce((a, b) => a + b, 0)) / session.totalBytes));
+  let outcomes: PartOutcome[];
+  try {
+    outcomes = await putParts(
+      parts.map((p) => {
+        const start = p.index * session.chunkBytes;
+        return { url: p.uploadUrl, part: file.slice(start, start + p.size) };
+      }),
+      contentType,
+      (position, bytes) => {
+        const p = parts[position];
+        if (!p) return;
+        inFlight[position] = Math.min(Math.max(0, bytes), p.size);
+        report();
+      },
+    );
+  } catch (err) {
+    outcomes = parts.map(() => ({ error: err instanceof Error ? err.message : 'batch dispatch failed' }));
+  }
+  let sent = sentBefore;
+  const stragglers: SessionPart[] = [];
+  let needFreshUrls = false;
+  let retryAfterMs: number | null = null;
+  for (let i = 0; i < parts.length; i++) {
+    const part = parts[i]!;
+    const o = outcomes[i];
+    // A missing entry is the transport breaking its contract: treat it as no answer, never as success.
+    if (!o || 'error' in o) {
+      stragglers.push(part);
+      continue;
+    }
+    const c = classifyStatus(o.status, o.retryAfter);
+    if (c.kind === 'ok') {
+      sent += part.size;
+      continue;
+    }
+    if (c.kind === 'retry') {
+      stragglers.push(part);
+      if (c.afterMs != null) retryAfterMs = Math.max(retryAfterMs ?? 0, c.afterMs);
+      continue;
+    }
+    // Refused by Storage: an expired or consumed signature is fixed by a fresh session.
+    if (o.status === 400 || o.status === 401 || o.status === 403) {
+      needFreshUrls = true;
+      continue;
+    }
+    return { kind: 'fail', reason: `part ${part.index} HTTP ${o.status}` };
+  }
+  return { kind: 'ok', sent, stragglers, needFreshUrls, retryAfterMs };
 }

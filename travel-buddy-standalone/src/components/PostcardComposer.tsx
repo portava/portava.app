@@ -395,7 +395,7 @@ export function PostcardComposer({ visible, onClose, onSuccess }: Props) {
 
   /** The picked asset, brought inside the server's envelope — or null (error already shown). */
   async function withinServerEnvelope(picked: PickedAsset): Promise<PickedAsset | null> {
-    if (picked.isVideo) return picked;
+    if (picked.isVideo) return (await compressVideoForUpload(picked)).video; // §37 MD282: the SAME asset unless a compressor module is in the binary AND its switch is on (both absent today)
     const prepared = await prepareImageForUpload(
       normalizePickedAsset({
         uri: picked.uri,
@@ -959,3 +959,7 @@ const s = StyleSheet.create({
   },
   stampHint: { ...t.small, color: color.faint },
 });
+
+// §37 MD282 (census-media §37): device video compression seam. Imported at the TAIL so the
+// lines census-media cites in this file do not move; ESM hoists imports.
+import { compressVideoForUpload } from '../services/media/videoCompression.ts';
