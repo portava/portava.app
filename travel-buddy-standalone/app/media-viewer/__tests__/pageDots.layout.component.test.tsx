@@ -77,21 +77,26 @@ jest.mock('../../../src/services/mediaInteractions.ts', () => ({
   recordMediaShare: async () => {},
 }));
 
-// NOTE: intentional exhaustive stubs — the rail's stamp, the sheets, the
-// images and the quick-action chips are content inside the columns; this
-// test is about where the columns and the dots sit.
+// This test is about where the columns and the dots sit, so everything drawn
+// inside a column, or over the screen, is stubbed.
+// NOTE: intentional exhaustive stub — the rail's stamp (its own network and
+// animation) is content inside the right column.
 jest.mock('../../../src/components/stamps/StampButton.tsx', () => ({
   StampButton: () => null,
 }));
+// NOTE: intentional exhaustive stub — the comment sheet is closed here.
 jest.mock('../../../src/components/media/MediaCommentSheet.tsx', () => ({
   MediaCommentSheet: () => null,
 }));
+// NOTE: intentional exhaustive stub — the World shell's action rail is off.
 jest.mock('../../../src/features/media/components/MediaActionRail.tsx', () => ({
   MediaActionRail: () => null,
 }));
+// NOTE: intentional exhaustive stub — the page's image is not under test.
 jest.mock('../../../src/components/CachedImage', () => ({
   CachedImage: () => null,
 }));
+// NOTE: intentional exhaustive stub — the quick-action chips are content inside the left column.
 jest.mock('../../../src/components/PlaceQuickActions.tsx', () => ({
   PlaceQuickActions: () => null,
 }));
