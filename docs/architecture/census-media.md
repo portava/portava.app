@@ -9040,7 +9040,7 @@ matched.
 
 ### 38.4 Found while doing it — recorded, not fixed
 
-1. **The citation guards cannot see an Expo route-group path.**
+1. **The citation guards cannot see an Expo route-group path.** *(Closed in §38.7.)*
    - The shared citation grammar (CITATION_RE in check-doc-citations.mjs,
      which check:citation-targets and check:citation-symbols also use) allows
      no parenthesis in a path segment. So a citation into (tabs) is matched by
@@ -9053,7 +9053,7 @@ matched.
      is verified by any check; the three green mutations above show it.
    - The fix belongs to the owner of check-doc-citations.mjs: admit "(" and ")"
      in a path segment, then re-measure the floors.
-2. **census-trips §69.1's TR128 bullet** says the TravelTimeProvider port has
+2. **census-trips §69.1's TR128 bullet** *(corrected in §38.8)* says the TravelTimeProvider port has
    "no second implementation". A Google Routes adapter for that port now exists
    in the Trips contracts directory (GoogleRoutesTravelTimeProvider). Its own
    header says "PREPARED, NOT WIRED", and the Trips seams still bind the
@@ -9061,12 +9061,12 @@ matched.
    Layover constant is noRoutedProvider. The NEITHER class that §68.2 gives
    TR128, TR267, TR341 and TR412 ("a subsystem nobody has written") may need
    re-reading. No verdict is implied here.
-3. **census-discovery states the same stale fact in two more places.** §37.5
+3. **census-discovery states the same stale fact in two more places.** *(Corrected in §38.8.)* §37.5
    item 1 (line 4970) names the one line to change, and it has changed.
    §39.6 (line 5290) says the constant is "unchanged and still the
    no-routed-provider one". Both were right on 2026-09-15. Neither was on this
    lane's list, so both stay byte-identical.
-4. **census-input-intelligence G359** also says "Four pre-existing engines
+4. **census-input-intelligence G359** *(corrected in §38.8)* also says "Four pre-existing engines
    remain unmigrated and live (G6)". G6's own row now counts three that are
    live and ungated; the fourth runs only as a gated fallback. Not edited.
 
@@ -9538,3 +9538,167 @@ census-passport and census-highlights-memories, one file:
 ### 35.10 Cited, not graded (check:census-scope-coverage)
 
 - NOT-GRADED: travel-buddy-standalone/app/map/index.tsx — the Map screen, cited once in §35.1 only to show that the §22 media prompt is now mounted, a Map-lane fact recorded as context for the owner's MD65 question; no MD row grades the Map screen, and the server path it reaches is watched here (routes/mapObservations.ts, lib/intelEvidenceCapture.ts).
+
+### 38.7 Follow-up (integrator's request): the route-group hole, closed
+
+§38.4 item 1 found it: the shared citation grammar could not read a path
+through an Expo Router route group. So a citation of app/(tabs)/ai.tsx, line 399, was not counted,
+not checked and not reported, by any of the three citation guards. The
+integrator asked for the grammar to be fixed, for tests, for every newly
+failing citation to be fixed, and for no ratchet to be loosened.
+
+**Measured first.**
+- A path segment already admitted `[` and `]`. So `[id]`, `[slug]` and
+  `[...slug]` were already read: 112 bracketed-path citations before the change
+  and 112 after.
+- The gap was parentheses only. The new grammar reads 44 direct citations the
+  old one did not, in 11 covered documents; 20 of them are anchored. It also
+  binds 9 bare `:NNN` continuations on the same lines that had been orphans
+  (the orphan count fell from 1604 to 1595).
+
+**The fix**, in check-doc-citations.mjs, the file the other two guards import
+their grammar from:
+- A directory segment is now either an ordinary run of segment characters or
+  a whole parenthesised group followed by `/`. This is
+  `artifacts/api-server/scripts/check-doc-citations.mjs:386#const SEG`, and the
+  three path patterns (direct, bare path, whole anchor) use it.
+- A parenthesis is **not** a segment character. If it were, prose that opens a
+  parenthesis right before a path, and a markdown link, would swallow that
+  parenthesis into the path. Mutation MG5 below shows that this breaks the real corpus.
+- The edit is line-neutral: one line is extended and three are changed in
+  place. The explanation is appended at the end of the file. A first draft
+  inserted the comment above the grammar. That moved the file's own lines, and
+  the four anchored citations of it in census-discovery (lines 6049, 6051) and
+  census-input-intelligence (lines 2798, 2800) went red. Those were the only
+  failures the change produced, and none of those four lines was edited.
+
+**Every guard, after the fix.**
+
+| guard | before (874b6fca9) | after | ratchet |
+| --- | --- | --- | --- |
+| check:doc-citations, citations | 13,729 | 13,782 | — |
+| check:doc-citations, anchored | 7,374 | 7,394 | floor 3,381, not changed |
+| check:doc-citations, whole-anchor checkable | 7,251 | 7,270 | floor 3,193, not changed |
+| check:doc-citations, unanchored | 6,355 | 6,388 | ceiling 6,434, not changed and not exceeded |
+| check:doc-citations, failures | 0 | 0 | — |
+| check:citation-targets, judged; land on nothing | 2,884; 165 | 2,888; 165 | ceiling 165, not changed |
+| check:citation-symbols, judged; absent; misplaced | 121; 0; 34 | 121; 0; 34 | ceilings 0 and 34, not changed |
+
+**Newly failing citations: none.**
+- Every one of the 53 newly read citations resolves.
+- Every anchor among them holds, and no anchor holds in two files.
+- None is a single-line citation that citation-targets finds landing on
+  nothing.
+So no census line had to be repointed for the grammar. The three ai.tsx
+anchors that §38.3 showed green under a one-line move now go **RED**
+(mutations M26–M28).
+
+**What the fix does not do.** 24 of the 53 use the short path, such as
+app/(tabs)/ai.tsx. The repo root holds small mock copies at those paths: a
+114-line ai.tsx, a 110-line _layout.tsx, a 151-line passport.tsx, and 46-line
+and 214-line (auth) screens. So those citations have two candidate files.
+- check:doc-citations checks such an unanchored citation for range against
+  either candidate.
+- check:citation-targets and check:citation-symbols skip it as ambiguous.
+
+That is the treatment every path with a twin gets, as app/messages/[id].tsx
+already did, and it is not special to groups. Read against the standalone
+file, these newly read citations land on something that is not their
+evidence. None of them fails a guard, so none was edited here:
+- census-compass lines 128 and 883, at ai.tsx line 399: `})}`.
+- census-compass lines 131 and 171, at ai.tsx 98–104. The range now opens on
+  `setRefreshing(true);`; the effect is at 112–118.
+- census-compass line 129 and census-input-intelligence line 1065, at ai.tsx
+  398–410 and 60. These are off by a few lines (the assist bar opens at 403,
+  and useAiWritingAssist is at 61).
+- census-media line 989, at media.tsx 26. That line is the expo-router import;
+  the Gem import is line 27.
+- passport-certification line 53, at passport.tsx 709, 642 and 824: `>`,
+  `</View>` and `</Text>`.
+- census-media line 8959 (§32.15) quotes the stale G359 clause, with its
+  ai.tsx 399.
+- Already corrected on their own lines in §38.2: census-input-intelligence
+  line 1055, and census-passport lines 348 and 516.
+
+The rest were not judged here. mobile-reachability-ledger's three are pinned to
+a commit by that document's own declaration, and they stay pinned.
+
+**Tests**: 16 cases, appended to the end of the doc-citations suite
+(docCitations.test.ts, 43 tests before, 59 after), in four blocks:
+1. **Read** (6 cases): an unanchored route-group citation; an anchored one; a
+   `[id]` and a `[...slug]` segment inside nested groups; unbackticked prose; a
+   following bare `:NNN` that inherits the group file rather than the file
+   before it; a bare backticked group path that names the file for a
+   continuation.
+2. **Never** (3 cases): a prose parenthesis stays outside an ordinary path; a
+   group inside a parenthesised aside is read without the aside's own
+   parenthesis; a markdown link is not swallowed.
+3. **Checked** (5 cases), over a synthetic tree that holds a standalone file
+   and its root mock: a moved anchor; a whole anchor that is stale while its
+   first word holds; a range past the end of the file; a short path decided by
+   its anchor. Each is reported.
+4. **The other two guards** (2 cases): check:citation-targets and
+   check:citation-symbols, run as the CLI over a throwaway tree. One finds a
+   route-group citation on `})}`; the other finds an absent symbol and exits 1.
+
+Neither of those two guards had a suite of its own, which is why they are
+driven from this one.
+
+| mutation of the grammar (file restored, sha256 compared) | suite result |
+| --- | --- |
+| MG1 — all three patterns back to the old grammar | **RED**: 14 fail, which is all 13 read, checked and other-guard cases plus the third "never" case |
+| MG2 — the direct pattern only | **RED**: 12 fail |
+| MG3 — the bare-path pattern only | **RED**: the continuation case fails |
+| MG4 — the whole-anchor pattern only | **RED**: the stale whole-anchor case fails |
+| MG5 — the wrong fix: `(` and `)` added as segment characters | **RED**: 5 fail, which is the 3 "never" cases, the older `[id]` markdown-link case, and the real-corpus test |
+
+### 38.8 Follow-up: the four further stale statements, corrected
+
+Each correction was measured first. Each is line-neutral and dated, and no
+verdict moved: the `CENSUS_INTEGRITY_DUMP=ALL` listing is byte-identical to
+§38's. Every new anchor was moved by one line and went **RED** (M21–M25).
+
+| census or file | location | old text | new text (appended) | evidence |
+| --- | --- | --- | --- | --- |
+| census-trips | §69.1, the TR128 / TR267 / TR341 / TR412 bullet, line 7803 | "There is no second implementation. Holds, and NEITHER is the right class — a routed provider is an external service, not a file." Written 2026-09-15; true then. | The port has two more routed implementations. The Google Routes adapter in the Trips contracts (6c785f074, 2026-09-17) is PREPARED, NOT WIRED. The corridor adapter (74890f906, 2026-09-22) is wired into the Layover seam only, behind two switches. Every Trips seam still binds the straight-line provider, so the four rows stay W. The NEITHER reason as written no longer holds; reclassifying is not done here. | The anchors on that line: GoogleRoutesTravelTimeProvider.ts line 151 (its factory) and tripFeasibility.ts line 111 (the straight-line binding). Only its own suite imports the adapter, and that suite asserts no Trips or Layover seam imports it. TripFreedomProjection.ts line 45 and TripRouteChainProjection.ts line 42 bind the straight-line provider too. |
+| GoogleRoutesTravelTimeProvider.ts (a comment; no behaviour change) | header, lines 9 and 11 | Line 11: "LayoverTravelTime.ts, line 83 … = noRoutedProvider;". Line 9: "TripFreedomProjection.ts, line 44". | Line 11 now shows the constant as it reads, and says it read `= noRoutedProvider` until 74890f906, which wired the lib/providers corridor adapter rather than this file. Line 9 says 45 (was 44). | The seam lines were read at HEAD. The file's own suite passes (15 of 15). |
+| census-discovery | §37.5 item 1, line 4971 (the item begins on 4970) | "One line at LAYOVER_TRAVEL_TIME_PROVIDER and zero lines in Discovery; travelSource already reports "routed_port" the moment it exists." Written 2026-09-15. | The one line has been written, with zero lines in Discovery. A port answer still becomes "routed_port". What item 1 needs now is an owner's spend decision on the two switches, not code. | The anchors on that line: LayoverTravelTime.ts line 83, and discoveryLayoverTiming.ts lines 377–379, where a port answer becomes "routed_port". |
+| census-discovery | §39.6, line 5294 (the sentence begins on 5290) | "that port's provider constant is unchanged and still the no-routed-provider one … there is still no routed provider and no dwell source." Written 2026-09-15. | The constant is the corridor adapter over a Google Routes corridor provider, not a straight-line stand-in. It still answers NO_ROUTED_PROVIDER wherever either switch is unset. The gap stays narrowed but not closed: it waits on a spend decision rather than code, and there is still no dwell source. | As for A14 in §38.2; the dwell grep still finds nothing. |
+| census-input-intelligence | G359, line 1055 | "Four pre-existing engines remain unmigrated and live (G6)". True on 2026-09-09. | Measured: four remain unmigrated, but only three are live and ungated. useGooglePlacesAutocomplete and usePlaceSearch run under GlobalPlacePicker, and MentionInput runs on six surfaces. useSearchSuggestions has run only as the gated fallback since 1fe72289b (2026-09-15), as G6 records. | The anchor on that line is useGlobalSearchSuggestions.ts line 150 (the legacyEnabled gate). Its only direct caller is at line 154. All four hooks still carry their own timer and abort controller. |
+
+**Stopped on nothing. One question is flagged and not answered.** TR128, TR267,
+TR341 and TR412 are W, and they stay W. Their §68.2 class is NEITHER ("a
+subsystem nobody has written"). That class was a reading of the blocker, not a
+verdict, and the blocker now reads as a wiring change plus an owner's spend
+decision, which is closer to BOTH. Moving four rows between classes changes
+§69.2's and §73.1's restated distribution, OWNER 102 · BOTH 20 · BRANCH 0 ·
+NEITHER 5. That is a reclassification for census-trips' next pass, and this
+lane did not make it.
+
+### 38.9 Checks, after the follow-up
+
+- check:doc-citations: RESULT clean. It reads 13,788 citations, 7,400 of them anchored and all
+  holding, and 6,388 unanchored (ceiling 6,434).
+- check:citation-targets: 165 / 165.
+- check:citation-symbols: PASSED (121 judged; 0 absent; 34 misplaced).
+- check:census-integrity: PASSED, with every headline unchanged. The
+  `CENSUS_INTEGRITY_DUMP=ALL` listing is byte-identical to the one taken
+  before §38.
+- check:census-scope-coverage: PASSED, all thirteen at 100 %.
+- check:census-freshness: PASSED, 0 STALE. The Trips adapter's header changed.
+  census-trips watches that file, and it is already named in census-trips'
+  acknowledgement.
+- check:census-row-move-labels: PASSED.
+- The doc-citations suite passes 59 of 59.
+
+### 38.10 Files changed by the follow-up
+
+| file | change |
+| --- | --- |
+| artifacts/api-server/scripts/check-doc-citations.mjs | the route-group grammar (line-neutral), and its explanation at the end of the file |
+| artifacts/api-server/src/test/docCitations.test.ts | 16 cases, appended |
+| artifacts/api-server/src/domain/trips/contracts/GoogleRoutesTravelTimeProvider.ts | header comment, lines 9 and 11 (line-neutral) |
+| docs/architecture/census-trips.md | line 7803 |
+| docs/architecture/census-discovery.md | lines 4971 and 5294 |
+| docs/architecture/census-input-intelligence.md | line 1055 (a second correction on the same row) |
+| docs/architecture/census-media.md | §38.4's four items marked closed or corrected (line-neutral), and §38.7 to §38.10 |
