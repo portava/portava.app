@@ -4905,12 +4905,12 @@ classifiers, which turn those defaults back into `null`. The classifiers are **c
 re-spelled — L6's rule.
 
 **The travel term has exactly one producer and it currently produces nothing.**
-`landsideLeg` is the port; `LAYOVER_TRAVEL_TIME_PROVIDER` is `noRoutedProvider`, so every
+`landsideLeg` is the port; `LAYOVER_TRAVEL_TIME_PROVIDER` is `noRoutedProvider` (true when written; corrected 2026-09-27 at the end of this paragraph), so every
 answer is `{ minutes: null, source: "unmeasured", reason: "NO_ROUTED_PROVIDER" }` at zero
 I/O cost. The straight-line provider was **refused** as a substitute, for the reason §33.2
 already gives from the other direction: a great circle is a LOWER bound, so it can refuse a
 journey and can never certify one. Feeding it in as a measurement would *admit* cards on
-evidence that only ever licences exclusion.
+evidence that only ever licences exclusion. **Corrected 2026-09-27:** since 74890f906 (2026-09-22) the constant is `corridorTravelTimeProvider(googleRoutesCorridorProvider)`, not `noRoutedProvider` (`artifacts/api-server/src/services/airport/LayoverTravelTime.ts:83#export const LAYOVER_TRAVEL_TIME_PROVIDER: TravelTimeProvider = corridorTravelTimeProvider(googleRoutesCorridorProvider);`). The corridor provider refuses before it builds any request unless `LAYOVER_ROUTED_CORRIDOR_ENABLED` is affirmative and `GOOGLE_MAPS_API_KEY` is present, and the adapter reports that refusal as `NO_ROUTED_PROVIDER`; with either switch unset every answer is still the unmeasured one above, plus a `detail` field. So the travel term now has a producer that answers only once both switches are set. This correction read the code, not any deployment's environment.
 
 ### 37.2 Three states, and a mutant that proves the middle one is real
 
@@ -4963,12 +4963,12 @@ not counted as having been shown. Both the gate and the response read the snapsh
 
 | id | was | now | evidence |
 |---|---|---|---|
-| A14 | N | **W** | *"Discovery has no Layover mode"* and *"`routes/discovery.ts` still has zero occurrences of `layover`"* are both false at this tree. `lib/discoveryLayoverMode.ts` + `lib/discoveryLayoverTiming.ts` gate `GET /discovery/community` on flag → `certifiedLayoverSnapshot` → stated terms → `certifiedActionUniverse`, serving only `admittedIds` and naming every withholding with its state and reason. The two timing terms are resolved through the Layover domain's OWN classifiers and port — `statedTravelMin` / `statedDurationMin` over `layover_plan_stops`, and `landsideLeg` — and **the timing module contains no numeric literal at all**, which a test asserts. Unreadable `layover_sessions` / `airport_profiles` / `layover_plan_stops` each REFUSE with the failing source named; `session_not_found` and `no_live_layover_session` turn the mode off rather than refusing. 20 tests, 6 mutations by the implementing pass plus M-F by this lane, all restored byte-identical. **Why W and not C:** the row says *"in Layover mode"* without naming a surface, and two of the three Discovery surfaces are still ungated; and on this tree the mode admits only places the traveller has ALREADY planned, because `LAYOVER_TRAVEL_TIME_PROVIDER` is `noRoutedProvider` and no dwell source exists for a place nobody has planned. **That is a missing measurement, not missing code** — and inventing either number is what §37.1 refused to do. |
+| A14 | N | **W** | *"Discovery has no Layover mode"* and *"`routes/discovery.ts` still has zero occurrences of `layover`"* are both false at this tree. `lib/discoveryLayoverMode.ts` + `lib/discoveryLayoverTiming.ts` gate `GET /discovery/community` on flag → `certifiedLayoverSnapshot` → stated terms → `certifiedActionUniverse`, serving only `admittedIds` and naming every withholding with its state and reason. The two timing terms are resolved through the Layover domain's OWN classifiers and port — `statedTravelMin` / `statedDurationMin` over `layover_plan_stops`, and `landsideLeg` — and **the timing module contains no numeric literal at all**, which a test asserts. Unreadable `layover_sessions` / `airport_profiles` / `layover_plan_stops` each REFUSE with the failing source named; `session_not_found` and `no_live_layover_session` turn the mode off rather than refusing. 20 tests, 6 mutations by the implementing pass plus M-F by this lane, all restored byte-identical. **Why W and not C:** the row says *"in Layover mode"* without naming a surface, and two of the three Discovery surfaces are still ungated; and on this tree the mode admits only places the traveller has ALREADY planned, because `LAYOVER_TRAVEL_TIME_PROVIDER` is `noRoutedProvider` and no dwell source exists for a place nobody has planned. *(Corrected 2026-09-27, verdict unmoved: since 74890f906 the constant is `corridorTravelTimeProvider(googleRoutesCorridorProvider)` at `artifacts/api-server/src/services/airport/LayoverTravelTime.ts:83#export const LAYOVER_TRAVEL_TIME_PROVIDER`, which answers `NO_ROUTED_PROVIDER` unless both `LAYOVER_ROUTED_CORRIDOR_ENABLED` and `GOOGLE_MAPS_API_KEY` are set, so with either unset the admitted set is unchanged; and with no dwell source either way, a place nobody has planned still cannot be admitted.)* **That is a missing measurement, not missing code** — and inventing either number is what §37.1 refused to do. |
 
 ### 37.5 What `A14` still needs, and none of it is more code here
 
 1. **A routed travel-time provider.** One line at `LAYOVER_TRAVEL_TIME_PROVIDER` and **zero**
-   lines in Discovery; `travelSource` already reports `"routed_port"` the moment it exists.
+   lines in Discovery; `travelSource` already reports `"routed_port"` the moment it exists. **Corrected 2026-09-27; true when written on 2026-09-15:** the one line has since been written, with zero lines in Discovery. 74890f906 (2026-09-22) set it to the corridor adapter (`artifacts/api-server/src/services/airport/LayoverTravelTime.ts:83#export const LAYOVER_TRAVEL_TIME_PROVIDER`), and a port answer still becomes `"routed_port"` at `artifacts/api-server/src/lib/discoveryLayoverTiming.ts:377-379#source: portMinutes !== null`. What item 1 now needs is not code: the adapter refuses until `LAYOVER_ROUTED_CORRIDOR_ENABLED` is affirmative and `GOOGLE_MAPS_API_KEY` is present, which is an owner's spend decision.
 2. **A dwell source with real provenance** — a duration column, or a derived figure carrying
    a source class and confidence in the `TravelAssumption` pattern. **Not a category
    average.** There is none today and none was invented.
@@ -5291,7 +5291,7 @@ that port's provider constant is **unchanged and still the no-routed-provider on
 prerequisite was built, not the routing provider, and no straight-line stand-in was
 introduced. **`A14`'s measurement gap is therefore narrowed but not closed**: the
 seam is now ready to carry a routed provenance, and there is still no routed
-provider and no dwell source.
+provider and no dwell source. **Corrected 2026-09-27; true when written on 2026-09-15:** the constant is no longer the no-routed-provider one. Since 74890f906 (2026-09-22) it is the corridor adapter over a Google Routes corridor provider (a routing provider, not a straight-line stand-in), and it refuses until both of its switches are set, so every answer is still `NO_ROUTED_PROVIDER` wherever either is unset. The gap stays narrowed but not closed: a routed figure now waits on an owner's spend decision rather than on code, and there is still no dwell source.
 
 Recorded because it is the kind of thing that otherwise goes unnoticed: adding an
 unapplied migration that touches `layover_recommendations` made

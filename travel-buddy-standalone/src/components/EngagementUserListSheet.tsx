@@ -314,7 +314,7 @@ const s = StyleSheet.create({
   retryBtn: {
     paddingHorizontal: space.lg,
     paddingVertical: space.sm,
-    backgroundColor: color.signal,
+    backgroundColor: color.signalStrong,
     borderRadius: radius.pill,
   },
   retryText: {
@@ -351,7 +351,7 @@ const s = StyleSheet.create({
   },
   handle: {
     ...t.small,
-    color: color.faint,
+    color: color.mute,
     fontSize: 12,
   },
   followsYouBadge: {
@@ -363,13 +363,13 @@ const s = StyleSheet.create({
   followsYouText: {
     fontSize: 10,
     fontWeight: '600',
-    color: color.mute,
+    color: color.muteStrong,
   },
   followBtn: {
     paddingHorizontal: 14,
     paddingVertical: 7,
     borderRadius: radius.pill,
-    backgroundColor: color.signal,
+    backgroundColor: color.signalStrong,
     minWidth: 82,
     alignItems: 'center',
     justifyContent: 'center',

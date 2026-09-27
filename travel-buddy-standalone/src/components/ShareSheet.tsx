@@ -373,7 +373,7 @@ export function ShareSheet({ visible, postId, onClose, onShareSuccess, telegraph
             <TextInput
               style={s.captionInput}
               placeholder="Add a note (optional)…"
-              placeholderTextColor={color.faint}
+              placeholderTextColor={color.mute}
               value={caption}
               onChangeText={setCaption}
               maxLength={200}
@@ -388,7 +388,7 @@ export function ShareSheet({ visible, postId, onClose, onShareSuccess, telegraph
               <TextInput
                 style={s.searchInput}
                 placeholder="Search chats or find someone…"
-                placeholderTextColor={color.faint}
+                placeholderTextColor={color.mute}
                 value={threadSearch}
                 onChangeText={handleSearchChange}
                 autoCorrect={false}
@@ -652,7 +652,7 @@ const s = StyleSheet.create({
   backText: {
     fontSize: 15,
     fontWeight: '600',
-    color: color.signal,
+    color: color.signalStrong,
   },
   scrollContent: {
     gap: 0,
@@ -682,7 +682,7 @@ const s = StyleSheet.create({
   },
   optionSub: {
     fontSize: 12,
-    color: color.faint,
+    color: color.mute,
   },
   cancel: {
     marginHorizontal: space.lg,
@@ -742,7 +742,7 @@ const s = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  newThreadLabel: { fontSize: 14, fontWeight: '700', color: color.signal },
+  newThreadLabel: { fontSize: 14, fontWeight: '700', color: color.signalStrong },
   newThreadSub: { fontSize: 11, color: color.mute, marginTop: 1 },
 
   loadingRow: { alignItems: 'center', justifyContent: 'center', paddingVertical: space.xl, gap: space.sm },
@@ -759,9 +759,9 @@ const s = StyleSheet.create({
   threadRow: { flexDirection: 'row', alignItems: 'center', gap: space.md, paddingHorizontal: space.md, paddingVertical: 12 },
   threadRowSelected: { backgroundColor: color.signal + '0A' },
   threadName: { fontSize: 14, fontWeight: '700', color: color.ink },
-  threadNameSelected: { color: color.signal },
+  threadNameSelected: { color: color.signalStrong },
   threadSub: { fontSize: 11, color: color.mute, marginTop: 1 },
-  checkBadge: { width: icon.s20, height: icon.s20, borderRadius: icon.s20 / 2, backgroundColor: color.signal, alignItems: 'center', justifyContent: 'center' },
+  checkBadge: { width: icon.s20, height: icon.s20, borderRadius: icon.s20 / 2, backgroundColor: color.signalStrong, alignItems: 'center', justifyContent: 'center' },
   checkText: { fontSize: 12, color: color.onInk, fontWeight: '700' },
 
   sendBtn: {
@@ -771,7 +771,7 @@ const s = StyleSheet.create({
     gap: space.sm,
     marginHorizontal: space.lg,
     marginTop: space.sm,
-    backgroundColor: color.signal,
+    backgroundColor: color.signalStrong,
     borderRadius: radius.md,
     paddingVertical: 14,
   },
@@ -819,5 +819,5 @@ const s = StyleSheet.create({
     borderWidth: 1,
     borderColor: color.signal + '40',
   },
-  startChatText: { fontSize: 12, fontWeight: '700', color: color.signal },
+  startChatText: { fontSize: 12, fontWeight: '700', color: color.signalStrong },
 });

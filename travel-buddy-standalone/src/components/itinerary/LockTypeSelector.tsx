@@ -66,7 +66,7 @@ const ls = StyleSheet.create({
   row:            { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
   chip:           { borderRadius: 8, paddingHorizontal: 12, paddingVertical: 6, backgroundColor: color.haze },
   chipActive:     { backgroundColor: color.deep },
-  chipText:       { ...t.small, color: color.mute, fontWeight: '600' },
+  chipText:       { ...t.small, color: color.muteStrong, fontWeight: '600' },
   chipTextActive: { color: '#fff' },
-  hint:           { ...t.small, color: color.faint },
+  hint:           { ...t.small, color: color.mute },
 });

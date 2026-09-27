@@ -138,7 +138,7 @@ export type MediaActionId =
   | "invite_people"
   | "follow_this_night"
   | "save_route"
-  | "report" | "directions" | "view_event" | "view_passport" | "find_quieter" | "find_cheaper" | "contribute_gem" | "link_event";
+  | "report" | "directions" | "view_event" | "view_passport" | "find_quieter" | "find_cheaper" | "contribute_gem" | "link_event" | "find_busier"; // find_busier: §15, census-media §36 (MD101) — offered only while media_find_busier_enabled
 
 export interface MediaActionTarget {
   method: "GET" | "POST" | "DELETE";
@@ -687,7 +687,7 @@ export async function resolveMediaActions(
     }
   }
 
-  return { mediaId, entityRefs: entities.graphRefs, actions: await withSection21Actions(sc, viewer, entities, actions, { compassOn, editableTripIds, authorId: typeof (row as any).author_id === "string" ? (row as any).author_id : null, postCreatedAt: typeof (row as any).created_at === "string" ? (row as any).created_at : null }), planGateDetermined: planEditable !== null };
+  return { mediaId, entityRefs: entities.graphRefs, actions: await withFindBusierAction(sc, entities, await withSection21Actions(sc, viewer, entities, actions, { compassOn, editableTripIds, authorId: typeof (row as any).author_id === "string" ? (row as any).author_id : null, postCreatedAt: typeof (row as any).created_at === "string" ? (row as any).created_at : null }), compassOn), planGateDetermined: planEditable !== null }; // withFindBusierAction: §15 Busier, census-media §36
 }
 
 // ── Do This Experience (§15.2) ────────────────────────────────────────────────
@@ -1209,5 +1209,55 @@ export async function withSection21Actions(
     }
   }
 
+  return out;
+}
+
+// ── §15 "Find … Busier" (census-media §36, MD101) ───────────────────────────
+// Appended at the tail so no cited line above moves; ESM hoists the functions.
+
+/** Seeded FALSE by migration 3351. Read fail-closed. */
+export const FIND_BUSIER_FLAG = "media_find_busier_enabled";
+
+/** Is §15 "Find … Busier" offered? A failed read is "no". */
+export async function isFindBusierEnabled(sc: SupabaseClient): Promise<boolean> {
+  return isFlagEnabled(sc, FIND_BUSIER_FLAG).catch(() => false);
+}
+
+/**
+ * Add §15's "Find somewhere busier" to a rail, directly after Find Cheaper.
+ *
+ * The SAME conditions as Find Quieter and Find Cheaper (withSection21Actions):
+ * Compass on, and a canonical place the location/gem choke point let this
+ * viewer be told about — with no disclosable anchor there is nothing to be
+ * busier THAN. Plus the flag. It targets the same Compass ask with the
+ * server-written prompt and `comparator: "busier"`; the §32 context grounds
+ * that axis on `crowd.level`, the reading Quieter already compares on
+ * (CompassMediaContext.COMPARATOR_AXIS_CLAIM), and prints "cannot compare"
+ * when there is no permitted, unexpired reading.
+ *
+ * Returns the input array untouched when any condition fails.
+ */
+export async function withFindBusierAction(
+  sc: SupabaseClient,
+  entities: ResolvedMediaEntities,
+  actions: MediaAction[],
+  compassOn: boolean,
+): Promise<MediaAction[]> {
+  if (!compassOn || !entities.placeId) return actions;
+  if (!(await isFindBusierEnabled(sc))) return actions;
+  const busier: MediaAction = {
+    id: "find_busier",
+    label: "Find somewhere busier",
+    outcome: "compass",
+    target: {
+      method: "POST",
+      endpoint: "/api/compass/ask",
+      params: { mediaId: entities.mediaId, prompt: "Find a busier version of this.", comparator: "busier" },
+    },
+  };
+  const out = [...actions];
+  const after = out.findIndex((a) => a.id === "find_cheaper");
+  if (after >= 0) out.splice(after + 1, 0, busier);
+  else out.push(busier);
   return out;
 }

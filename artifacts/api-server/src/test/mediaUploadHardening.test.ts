@@ -516,7 +516,7 @@ describe("POST /api/postcards/:id/media/:mediaId/complete — null-dim guard rej
           return {
             async upload() { return { data: null, error: null }; },
             getPublicUrl() { return { data: { publicUrl: "" } }; },
-            async download() { return { data: null, error: { message: "not implemented" } }; },
+            async download() { return { data: { arrayBuffer: async () => new Uint8Array(AUDIO_ONLY_M4A).buffer }, error: null }; }, // census-media §37.8: the stored container states NO display size, so neither source gives one
             // /complete range-reads the uploaded video's first 64 bytes to
             // verify them, since the client wrote straight to Storage and the
             // declared fileSizeBytes proves nothing. The video here is VALID —
@@ -583,23 +583,23 @@ describe("POST /api/postcards/:id/media/:mediaId/complete — null-dim guard rej
       "DB update must not be attempted when width/height are null — app guard fires first");
   });
 
-  it("rejects dimensionless video WITHOUT any storage round-trip — cheap check runs first", async () => {
-    // ORDERING REGRESSION TEST. The case above cannot see ordering: it mocks
-    // createSignedUrl to succeed, so the dimension guard is reached whether the
-    // storage verification runs before it or after it. That is precisely how
-    // the ordering defect survived — the verification was added ahead of the
-    // guard, and on a dimensionless payload the request paid a signed URL and a
-    // range read only to fail in the catch with the generic
-    // "Video could not be verified. Please re-upload.", losing the specific
-    // message the assertion above was deliberately written for.
+  it("a dimensionless video is PROBED, not refused on its face; with the store down the answer is the store's (census-media §37.8)", async () => {
+    // EXPECTATION CHANGED ON PURPOSE (census-media §37.8). This test used to be
+    // "rejects dimensionless video WITHOUT any storage round-trip": /complete
+    // refused a payload with no width/height before reading storage, so the
+    // specific dimension message stayed reachable with the store down. That was
+    // right while the client's figure was the only source of a video's size.
+    // Since census-media §22, /complete probes the stored container, so a
+    // client that sends no dimensions for a video whose container states them
+    // was refused for a size the server reads itself.
     //
-    // Here storage is armed to EXPLODE if touched. A dimensionless video must
-    // be rejected before anything reaches the store, with the specific message.
-    // If someone moves the verification back ahead of the guard, this fails on
-    // the storageTouched assertion; if someone deletes the pre-check, it fails
-    // on the message. Fail-closed on storage is not weakened by any of this —
-    // a payload WITH dimensions still goes through full byte verification, and
-    // the case above still covers that path.
+    // The new rule: refuse only when NEITHER source states a size (the case
+    // above, whose stored container states none). So a dimensionless payload
+    // MUST reach storage, and with storage failing the size is genuinely
+    // unknown: the answer is the retryable storage failure, never the dimension
+    // message, and nothing is written. Removing the probe-first order, or
+    // restoring the pre-check, turns this red on the storageTouched assertion.
+    // Fail-closed on storage is unchanged: nothing is marked ready here.
     let storageTouched = false;
     const client: any = makePostcardsClient();
     const realStorageFrom = client.storage.from.bind(client.storage);
@@ -609,11 +609,11 @@ describe("POST /api/postcards/:id/media/:mediaId/complete — null-dim guard rej
         ...handle,
         async createSignedUrl() {
           storageTouched = true;
-          throw new Error("storage must not be touched for a locally-rejectable payload");
+          throw new Error("the store is down");
         },
         async download() {
           storageTouched = true;
-          throw new Error("storage must not be touched for a locally-rejectable payload");
+          throw new Error("the store is down");
         },
       };
     };
@@ -625,14 +625,14 @@ describe("POST /api/postcards/:id/media/:mediaId/complete — null-dim guard rej
       { mimeType: "video/mp4", fileSizeBytes: 1024, width: null, height: null },
     );
 
-    assert.equal(storageTouched, false,
-      "a payload rejectable from the request body alone must not reach storage");
-    assert.equal(r.status, 400, `expected 400, got ${r.status}: ${JSON.stringify(r.body)}`);
-    assert.equal(r.body.error, "invalid_payload");
-    assert.match(
+    assert.equal(storageTouched, true,
+      "a dimensionless video must be probed — its container may state the size");
+    assert.equal(r.status, 503, `expected the storage failure (503), got ${r.status}: ${JSON.stringify(r.body)}`);
+    assert.equal(r.body.error, "degraded_unavailable");
+    assert.doesNotMatch(
       String(r.body.message ?? r.body.detail ?? JSON.stringify(r.body)),
       /width.*height|height.*width/i,
-      "the specific dimension message must survive — not the generic verification failure",
+      "an unknown size is not reported as a missing one",
     );
     assert.equal(client._wasUpdateAttempted(), false);
   });
@@ -844,3 +844,5 @@ describe("census-media §28.10 — /media/upload refuses before reading the body
 // Imported at the TAIL so no cited line above moves (census-media §28.10); ESM hoists imports.
 import { checkRateLimit, _resetRateLimit } from "../lib/rateLimit.js";
 import { UPLOAD_RATE_WINDOW_MS } from "../lib/mediaPipeline.js";
+// census-media §37.8: a real container that states no display size (an audio-only M4A).
+import { AUDIO_ONLY_M4A } from "./videoProbeFixtures.js";

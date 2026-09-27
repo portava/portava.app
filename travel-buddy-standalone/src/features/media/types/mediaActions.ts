@@ -35,7 +35,7 @@ export type MediaActionId =
   | 'view_event'
   | 'view_passport'
   | 'find_quieter'
-  | 'find_cheaper'
+  | 'find_cheaper' | 'find_busier' // find_busier: §15 "Find … Busier" — the server offers it only while media_find_busier_enabled (census-media §36)
   | 'contribute_gem'
   | 'invite_people'
   | 'follow_this_night'

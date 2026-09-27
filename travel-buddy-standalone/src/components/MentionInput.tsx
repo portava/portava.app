@@ -291,7 +291,7 @@ const styles = StyleSheet.create({
   },
   capWarning: {
     ...t.small,
-    color: color.signal,
+    color: color.signalStrong,
     paddingHorizontal: space.sm,
     paddingBottom: 2,
   },

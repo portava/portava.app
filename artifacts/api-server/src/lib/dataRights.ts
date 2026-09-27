@@ -183,7 +183,7 @@ export const FIELD_RIGHTS: readonly FieldRight[] = [
   { table: "intel_evidence", column: "actor_id", ownership: "restricted_no_redistribution", personal: true, reason: "Identifies the contributor." },
   { table: "intel_evidence", column: "evidence_kind", ownership: "portava_owned", personal: false, reason: "Portava's evidence taxonomy." },
   { table: "intel_evidence", column: "reference", ownership: "restricted_no_redistribution", personal: true,
-    reason: "A storage key. Handing it out is handing out the artifact, and the object may carry more than the claim did." },
+    reason: "A storage key, SEALED to its observation (lib/intelEvidenceCapture; a pre-3360 row may hold it plain). Opened, it names the contributor's account and hands out the artifact, and the object may carry more than the claim did." },
   { table: "intel_evidence", column: "expires_at", ownership: "portava_owned", personal: false,
     reason: "Portava's retention deadline for the artifact. Internal scheduling; it says when evidence goes, not what it contains." },
   { table: "intel_evidence", column: "detail", ownership: "contributor_licensed", personal: true,

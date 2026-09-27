@@ -52,7 +52,7 @@ export interface MediaWorldShellProps {
   /** Deep-linked lens (`/media-world?lens=experiences`). Unknown ⇒ NOW. */
   initialLens?: string | null;
   /** Deep-linked Event / Trip ids for the EXPERIENCES lens. */
-  experienceIds?: string[];
+  experienceIds?: string[]; /** census-media §34 (F1): drawn under the header — the Media tab's mode switcher when the shell is the tab's own mode. Absent everywhere else. */ headerAccessory?: React.ReactNode;
 }
 
 /** A generic viewer open — only for a changing-now card that names no canonical place. */
@@ -82,7 +82,7 @@ function openPlacePerspectiveViewer({ media, view }: { media: MediaProjection; v
   router.push(`/media-perspective/${encodeURIComponent(media.id)}` as never);
 }
 
-function MediaWorldShellInner({ cityId, cityName: cityNameProp = null, lat, lng, initialLens = null, experienceIds: linkedExperienceIds }: MediaWorldShellProps) {
+function MediaWorldShellInner({ cityId, cityName: cityNameProp = null, lat, lng, initialLens = null, experienceIds: linkedExperienceIds, headerAccessory = null }: MediaWorldShellProps) {
   const [nav, dispatch] = useReducer(lensNavReducer, INITIAL_LENS_NAV, (s) => initialNav(s, initialLens));
   const { state: worldState, reload } = useMediaWorld({ cityId, city: cityNameProp, lat, lng });
   const [why, setWhy] = useState<{ visible: boolean; explanation: string | null }>({
@@ -113,7 +113,7 @@ function MediaWorldShellInner({ cityId, cityName: cityNameProp = null, lat, lng,
         asOfLabel={asOf}
         onSearch={() => router.push('/media-search' as never)}
         onCompass={() => router.push('/(tabs)/ai' as never)}
-      />
+      />{headerAccessory}
 
       <LensTabBar active={nav.lens} onSelect={selectLens} />
       <PresentationModeBar modes={modes} active={nav.mode} onSelect={selectMode} />

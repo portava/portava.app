@@ -10,7 +10,7 @@ import type { QueueRuntime } from './postcardUploadQueue.ts';
 import type { ApiResult, PipelineDeps, PostcardUploadInput } from './postcardUploadPipeline.ts';
 import type { FileLike } from './resumableUpload.ts';
 import { apiCall, deviceResumableTransport, putPart, readFileBlob, uploadPoster } from './uploadHttp.ts';
-import { backgroundFile, backgroundPartTransport, loadExpoFs, type FsLike, type PartDescriptor } from './backgroundTransfer.ts';
+import { backgroundFile, backgroundPartTransport, loadExpoFs, sweepStagedParts, type FsLike, type PartDescriptor, type StagedSweepResult } from './backgroundTransfer.ts';
 import { extractVideoPoster } from './mediaProcessing.ts';
 import { isResumableMediaUploadEnabled } from './uploadTransportFlag.ts';
 
@@ -115,7 +115,7 @@ export function deviceQueueRuntime(): QueueRuntime {
   return {
     storage: {
       getItem: async (key) => (await storage()).getItem(key),
-      setItem: async (key, value) => (await storage()).setItem(key, value),
+      setItem: async (key, value) => (await storage()).setItem(key, value), allKeys: async () => (await storage()).getAllKeys(), // §37.8: every account's jobs, for the staged-part sweep
     },
     accountId: async () => {
       const { getCurrentAccountId } = await import('../accountId.ts');
@@ -138,7 +138,7 @@ export function installPostcardUploadResume(appState: {
   if (!isResumableMediaUploadEnabled()) return () => {};
   const kick = () => {
     void import('./postcardUploadQueue.ts').then(async ({ getPostcardUploadQueue }) => {
-      const q = await getPostcardUploadQueue();
+      const q = await getPostcardUploadQueue(); await sweepOrphanedStagedParts(); // §37.8: bounded, never throws, never deletes a resumable job's copy
       await q.resumePending();
     }).catch(() => {});
   };
@@ -147,4 +147,23 @@ export function installPostcardUploadResume(appState: {
     if (state === 'active') kick();
   });
   return () => sub.remove();
+}
+
+/**
+ * census-media §37.8 — at launch and on every foreground, before the queue
+ * resumes: delete staged part copies that belong to no resumable upload
+ * (backgroundTransfer.sweepStagedParts, which lists the cache first and reads
+ * every account's live jobs second). Null when there is no native file system.
+ * Never throws.
+ */
+export async function sweepOrphanedStagedParts(): Promise<StagedSweepResult | null> {
+  try {
+    const fs = await loadExpoFs();
+    if (!fs) return null;
+    const { storage } = deviceQueueRuntime();
+    const { liveUploadOwners } = await import('./postcardUploadQueue.ts');
+    return await sweepStagedParts(fs, () => liveUploadOwners(storage), Date.now());
+  } catch {
+    return null;
+  }
 }

@@ -57,7 +57,7 @@ import {
   verifyUploadedBytes,
   ALLOWED_MEDIA_MIME,
 } from "../lib/mediaPipeline.js";
-import { recordMediaAsset, capturedAtFromImageBytes, recordPostMediaAttachments } from "../lib/mediaAssets.js";
+import { recordMediaAsset, capturedAtFromImageBytes, recordPostMediaAttachments, MEDIA_SOURCE_UNDECLARED } from "../lib/mediaAssets.js";
 import { resolvePostPlace } from "../lib/places/placeResolve.js";
 import { classifyBuckets, incrementBucketCounts } from "../lib/places/bucketClassifier.js";
 import { ensurePlaceDay, isEligiblePlaceDayPost } from "../lib/places/placeDays.js";
@@ -254,8 +254,8 @@ router.post(
     const mediaRelayUrl = `${STORAGE_BUCKET}/${path}`;
 
     // Canonical dual-write (flag-gated OFF; fail-soft — legacy flow unaffected).
-    void recordMediaAsset(sc, {
-      ownerUserId: user.id,
+    void canonicalModerationAtBirth(sc).then((atBirth) => recordMediaAsset(sc, { ...atBirth, // census-media §37.8: born HELD while 3356 is on; {} (byte-identical) otherwise (was: void recordMediaAsset(sc, {)
+      ownerUserId: user.id, sourceType: MEDIA_SOURCE_UNDECLARED, // §6 source: this route receives bytes and a Content-Type, never camera vs library (census-media §35, MD37)
       storageBucket: STORAGE_BUCKET,
       storagePath: path,
       publicUrl: mediaRelayUrl,
@@ -270,7 +270,7 @@ router.post(
       // omitted the field, so media_assets.captured_at had no writer at all and
       // the Wall's §16 experienceAt could never differ from publishedAt.
       capturedAt,
-    }).then((assetId) => recordMeasuredDuration(sc, assetId, videoProbe)); // §37: the probed duration_ms, never the declared one
+    })).then(async (assetId) => { await recordMeasuredDuration(sc, assetId, videoProbe); await runMediaVendorIngest(sc, { assetId, bucket: STORAGE_BUCKET, path, mediaType: sniffed.kind, durationMs: videoProbe?.durationMs ?? null }); }); // §37: the probed duration_ms, never the declared one; then the four vendor stages, each behind its own flag seeded FALSE (census-media §37)
 
     // Response stays backward-compatible ({url, path}); new fields are additive.
     // `phash` is included so the client can persist it on the post_media row.
@@ -571,12 +571,12 @@ router.post("/posts", async (req, res) => {
     locationVisibility,
     filterId, filterIntensity, mediaThumbnailUrl, mediaDurationSeconds,
     locationPrivacyMode: reqPrivacyMode, publishAfterTime, geofenceRadiusMeters,
-    venueName, venueId, category,
+    venueName, venueId, category, perspectiveVantage,
   } = parsed.data;
-  const locationSource = locationSrc ?? 'none';
+  const locationSource = locationSrc ?? 'none'; if (!(await neighborhoodOnlyModePermitted(flagSc, reqPrivacyMode))) { sendError(res, "feature_disabled", NEIGHBORHOOD_ONLY_DISABLED_MESSAGE); return; } // §34 "Show neighborhood only" is refused, and nothing written, until media_neighborhood_only_mode_enabled (census-media §36)
 
   // ── Delayed geotag: compute sensitivity / privacy mode / geofence radius ──
-  const sens = sensitivityLevel(venueName ?? null);
+  const sens = sensitivityLevel(venueName ?? null); const vantageDecision = await decidePerspectiveVantageWrite(flagSc, perspectiveVantage ?? null, category ?? null); if (!vantageDecision.ok) { sendError(res, vantageDecision.code, vantageDecision.message); return; } // §12 vantage: refused while media_perspective_vantage_enabled is off, and outside the category's §12 groups (census-media §36)
   const privacyMode: LocationPrivacyMode = reqPrivacyMode ?? defaultPrivacyMode(locationSource, sens);
   const radius = geofenceRadius(sens, geofenceRadiusMeters ?? undefined);
   const publicLabel = safeLocationLabel(locationName ?? null, locationCity ?? null, locationCountry ?? null, privacyMode, sens);
@@ -646,7 +646,7 @@ router.post("/posts", async (req, res) => {
       updated_by: user.id,
       source: "api_server",
       // editorial category
-      category: category ?? null,
+      category: category ?? null, perspective_vantage: vantageDecision.write, // undefined unless a vantage was chosen with the flag on — supabase-js drops an undefined key, so every other insert is byte-identical (census-media §36)
       // media filters
       filter_id: filterId ?? 'original',
       filter_intensity: filterIntensity ?? 100,
@@ -2032,7 +2032,7 @@ router.patch("/posts/:postId/location-privacy", async (req, res) => {
     sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid payload");
     return;
   }
-  const { locationPrivacyMode: newMode, publishAfterTime } = parsed.data;
+  const { locationPrivacyMode: newMode, publishAfterTime } = parsed.data; if (!(await neighborhoodOnlyModePermitted(getServiceClient(), newMode))) { sendError(res, "feature_disabled", NEIGHBORHOOD_ONLY_DISABLED_MESSAGE); return; } // census-media §36, as the create
 
   const { data: existing, error: loadErr } = await client
     .from("posts")
@@ -2063,7 +2063,7 @@ router.patch("/posts/:postId/location-privacy", async (req, res) => {
     patch.post_status = "pending_delay";
     patch.publish_eligible_at = publishAfterTime;
     patch.publish_after_time = publishAfterTime;
-  } else if (newMode === "none" || newMode === "hidden" || newMode === "city_only" || newMode === "trusted_circle_only") {
+  } else if (newMode === "none" || newMode === "hidden" || newMode === "city_only" || newMode === "trusted_circle_only" || newMode === "neighborhood_only") {
     patch.post_status = "published";
     patch.published_at = new Date(nowMs).toISOString();
     patch.publish_eligible_at = null;
@@ -3685,3 +3685,12 @@ async function admitUploadBeforeBody(req: any, res: any, userId: string): Promis
   req.uploadGuard = guard;
   return true;
 }
+
+// census-media §37: the moderation, vision, transcode and caption stages after a /media/upload.
+// Every stage is behind its own flag, seeded FALSE (3355–3358). Imported at the TAIL so no cited
+// line above moves; ESM hoists imports.
+import { runMediaVendorIngest, canonicalModerationAtBirth } from "../lib/media/vendors/mediaVendorStages.js";
+// Imported at the TAIL so no cited line above moves; ESM hoists it (census-media §36, MD262).
+import { neighborhoodOnlyModePermitted, NEIGHBORHOOD_ONLY_DISABLED_MESSAGE } from "../lib/media/neighborhoodOnlyMode.js";
+// census-media §36 (MD82–MD85): tail import, ESM hoists it.
+import { decidePerspectiveVantageWrite } from "../lib/media/perspectiveVantage.js";

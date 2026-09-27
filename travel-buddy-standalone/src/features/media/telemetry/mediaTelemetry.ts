@@ -98,7 +98,7 @@ export const MEDIA_NORTH_STAR_EVENTS: readonly MediaNorthStarEvent[] = [
  * Mapped (a real-world transition):
  *   • show_on_map / view_experience / view_event / follow_this_night →
  *     media_place_open (open the entity behind the media)
- *   • ask_compass / find_quieter / find_cheaper → media_compass
+ *   • ask_compass / find_quieter / find_cheaper / find_busier → media_compass
  *   • directions → media_route, emitted once directions OPEN (NORTH_STAR_ON_COMPLETION)
  *   • create_plan / do_this_experience → media_plan; add_to_trip → media_trip_add
  *   • report                        → media_correction  (user-supplied correction)
@@ -118,7 +118,7 @@ export function mediaActionToNorthStar(actionId: string): MediaNorthStarEvent | 
   switch (actionId) {
     case 'show_on_map': case 'view_experience': case 'view_event': case 'follow_this_night':
       return 'media_place_open';
-    case 'ask_compass': case 'find_quieter': case 'find_cheaper':
+    case 'ask_compass': case 'find_quieter': case 'find_cheaper': case 'find_busier':
       return 'media_compass';
     case 'directions':
       return 'media_route';

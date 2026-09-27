@@ -12,6 +12,8 @@ import {
   COMPOSER_LOCATION_MODES,
   DISCLOSURE,
   LOCATION_CHOICES,
+  NEIGHBORHOOD_ONLY_MODE_FLAG,
+  locationChoices,
   disclosureFor,
   effectiveMode,
   locationPrivacyHint,
@@ -30,8 +32,18 @@ describe('the disclosure table', () => {
     assert.equal(disclosureFor('publish_everything').placeName, false);
     assert.equal(disclosureFor(undefined).release, 'after_exit');
   });
-  it('offers every mode the post API carries, exactly once', () => {
-    assert.deepEqual([...LOCATION_CHOICES.map((c) => c.mode)].sort(), [...COMPOSER_LOCATION_MODES].sort());
+  it('offers every mode the post API carries, exactly once — neighbourhood only while its flag is on', () => {
+    // census-media §36: `neighborhood_only` (§34 "Show neighborhood only") is a
+    // mode the post API parses, but the server refuses it until
+    // media_neighborhood_only_mode_enabled, so the composer offers it only then.
+    assert.deepEqual(
+      [...locationChoices({ neighborhoodOnly: true }).map((c) => c.mode)].sort(),
+      [...COMPOSER_LOCATION_MODES].sort(),
+    );
+    assert.deepEqual(
+      [...LOCATION_CHOICES.map((c) => c.mode)].sort(),
+      [...COMPOSER_LOCATION_MODES.filter((m) => m !== 'neighborhood_only')].sort(),
+    );
   });
 });
 
@@ -80,5 +92,32 @@ describe('locationRequestFields — the wire is unchanged', () => {
       publishAfterTime: '2026-09-26T21:30:00.000Z',
     });
     assert.deepEqual(locationRequestFields('garbage', null), { locationPrivacyMode: 'delayed_until_exit', publishAfterTime: null });
+  });
+});
+
+describe('§34 "Show neighborhood only" (census-media §36)', () => {
+  it('flag OFF: the composer offers exactly what it offered before — the same array', () => {
+    assert.equal(locationChoices({ neighborhoodOnly: false }), LOCATION_CHOICES);
+  });
+  it('flag ON: "Neighbourhood" is offered once, just before "City only" (§34 order)', () => {
+    const modes = locationChoices({ neighborhoodOnly: true }).map((c) => c.mode);
+    assert.equal(modes.filter((m) => m === 'neighborhood_only').length, 1);
+    assert.equal(modes.indexOf('neighborhood_only') + 1, modes.indexOf('city_only'));
+  });
+  it('reads the server flag by its seeded name', () => {
+    assert.equal(NEIGHBORHOOD_ONLY_MODE_FLAG, 'media_neighborhood_only_mode_enabled');
+  });
+  it('says what the server does: the venue is withheld, at most the neighbourhood is shown, released now', () => {
+    assert.equal(DISCLOSURE.neighborhood_only.placeName, false);
+    assert.equal(DISCLOSURE.neighborhood_only.tier, 'neighborhood');
+    assert.equal(DISCLOSURE.neighborhood_only.release, 'now');
+    const hint = locationPrivacyHint('neighborhood_only', { hasPlace: true });
+    assert.match(hint, /Nobody sees the place you tagged/);
+    assert.match(hint, /At most its neighbourhood/);
+    assert.doesNotMatch(hint, /with the place/);
+  });
+  it('is sent as itself (not dropped like `none`)', () => {
+    assert.equal(locationRequestFields('neighborhood_only', null).locationPrivacyMode, 'neighborhood_only');
+    assert.equal(effectiveMode('neighborhood_only', true), 'neighborhood_only');
   });
 });
