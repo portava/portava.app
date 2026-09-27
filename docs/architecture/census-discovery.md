@@ -10414,7 +10414,7 @@ This lane read no production.
 
 - **2910 is applied to production** (2026-09-20) and holds **0** Trails (§51.1).
 - **2892 is absent from production** (§54.2), and 3410 (§58) is applied to the harness only. 3417 cannot apply anywhere until both have: its precondition refuses rather than guessing.
-- **3415, 3416 and 3417** are applied to the local PostgreSQL 16 harness only (port 54551). They are not applied to `portava-ci` or to production. A fresh `up.sh` replays them in chain order: 348 files applied in order, 12 known-unreplayable of 360.
+- **3415, 3416 and 3417** are applied to the local PostgreSQL 16 harness only (port 54551). They are not applied to `portava-ci` or to production. A fresh `up.sh` on the merged chain replays them in order after 3410: 349 files applied in order, 12 known-unreplayable of 361.
 - **Deploy order is now load-bearing.** `proposeTrail` fails CLOSED without 3415: `POST /v1/discovery/trails` answers 503 `degraded_unavailable` instead of creating a Trail unserialised (§61.2). Deploying this code before 3415 is applied disables Trail creation in that deployment, and says so.
 
 Every `C` below is **implementation-C on this branch**, under §51.1's rule for this subsystem: *"Every `C` below is therefore **implementation-C on this branch**. No Trail has ever been served in production, and no production `db/` exposure has been counted against one. Neither is claimed."* The integrator accepted that rule for DC-02 on an equally unapplied 3380 (§51.14: *"Every one of the eleven Discovery moves this round is an implementation verdict on this branch; 3380 and 3381 are applied to the local harness only, and no Trail exists in production."*). No flag gates Trail creation, attach or the momentum kernel, so §57.2's flag leg does not apply. The migration and branch legs of §17.3's ceiling do apply. If the integrator holds DC-03, DV-20 and DV-25 at `W` under them, they are held for the reason DC-02 would be.
@@ -10516,20 +10516,23 @@ On the pre-lane code, 8 of I1–I9 were red. I3 (real content is admitted) is th
 - GET …/trending's `trending` boolean;
 - DV-25's Trail momentum.
 
-2892's `rebuild_place_momentum` did the same in SQL, and `TrailService.exposureCountsFrom` counted a dismiss as a §9 positive response.
+`rebuild_place_momentum` did the same in SQL, in 2892's body and in 3410's (§58), which owns the function now. `TrailService.exposureCountsFrom` counted a dismiss as a §9 positive response.
 
 **Three sites, each excluding it with zero. There is no negative weight and no new term:**
 
 1. **The kernel.** `artifacts/api-server/src/lib/discoveryLocalMomentum.ts:147#if (outcome === "dismiss") return 0;` is line-neutral, and the only line of P8's file this lane touched, as the integrator allowed. A dismissed row still counts as the impression it was.
 2. **§9's positives.** `artifacts/api-server/src/services/trails/TrailService.ts:646#if (r.outcome !== "impression" && r.outcome !== "dismiss") bucket.positives += 1;`. A dismissed serve is still an impression in the denominator.
-3. **The SQL store.** 3417 replaces `rebuild_place_momentum` with 2892's body byte for byte except one CASE arm (`artifacts/api-server/src/migrations/3417_place_momentum_dismiss_excluded.sql:111#CASE WHEN outcome = 'save' THEN c_w_save WHEN outcome = 'dismiss' THEN 0 ELSE c_w_outcome END`). The diff against 2892 is that one line. Its rollback restores 2892's body verbatim.
+3. **The SQL store.** 3417 replaces `rebuild_place_momentum` with **3410's** body byte for byte except one CASE arm (`artifacts/api-server/src/migrations/3417_place_momentum_dismiss_excluded.sql:111#CASE WHEN outcome = 'save' THEN c_w_save WHEN outcome = 'dismiss' THEN 0 ELSE c_w_outcome END`). The diff against 3410's function is that one line. It was first written on 2892's body; after P8's merge the integrator routed it onto 3410's, because laid on 2892's it would have silently undone 3410's corpus and sentences. It now refuses to apply without 3410 (`artifacts/api-server/src/migrations/3417_place_momentum_dismiss_excluded.sql:59#RAISE EXCEPTION 'PRECONDITION FAILED (3417): place_momentum.source_surface is missing.`), which was rehearsed: with 3410 rolled back, 3417 refused and changed nothing. Its rollback restores 3410's body verbatim.
 
-**Parity.** 2892's TypeScript mirror is `lib/discoveryTrendState.computeTrendStates`, not `computeLocalMomentum`, and it has its own `weightFor`, in lane P8's file. So:
+**Parity, on a chain that includes 3410.** The SQL store's TypeScript mirror is `lib/discoveryTrendState.computeTrendStates`, not `computeLocalMomentum`, and it has its own `weightFor`, in lane P8's file. The dismiss suite asserts 3410 is in the chain before it seeds. So:
 
 - **D2** proves the SQL store equals `computeTrendStates` over the same rows with a dismiss's outcome weight removed. That is the exclusion, stated in the TypeScript kernel's own terms.
-- **D3** is the parity on the RAW rows. It runs as `todo` until the routed hunk H1 (§61.11) gives `computeTrendStates` the same one-line exclusion, and it detects H1 by behaviour. With H1 applied in a scratch run, D3 and all 32 of `discoveryLocalMomentum.test.ts` pass, and the file was restored sha256-identical. With H1 applied and 3417 rolled back, D1–D3 are red.
+- **D3** is the parity on the RAW rows. It runs as `todo` until the routed hunk H1 (§61.11) gives `computeTrendStates` the same one-line exclusion, and it detects H1 by behaviour. With H1 applied in a scratch run on the 3410 chain, 76 of 76 pass across D1–D3, P8's `discoveryTrendSnapshotParity.db.test.ts`, `discoveryTrendingApi.test.ts`, `placeMomentumSqlParity.test.ts` and `discoveryLocalMomentum.test.ts`. The file was restored sha256-identical. With 3417 rolled back, D1 and D2 are red (M50).
+- P8's parity suite seeds no dismiss, so 3417 does not disturb it: it passes with 3417 applied and H1 absent.
 
-**Lineage note, not fixed.** 3417 keeps 2892's `model_version` and `event_weights`, as asked ("matching 2892's structure exactly otherwise"). A row written after 3417 therefore does not say that dismisses were excluded. That is DC-17's field-level question, not changed here.
+**Left as 3410 writes them, not fixed.**
+- 3417 keeps `model_version` and `event_weights`, as asked (3410's exact body, only the dismiss weight changed). A row written after 3417 therefore does not say that dismisses were excluded. That is DC-17's field-level question.
+- A dismiss's outcome row stays in the event set at weight 0, so its traveller is still counted in `recent_unique_travelers` and `window_unique_travelers`, 3410's disclosure floor. A viewer who dismissed a place inside 48 hours of now, after a serve before that window, counts toward the floor that lets its state be published. Whether a dismisser counts toward that floor is §58's to answer.
 
 ### 61.6 DV-72 — the five `10` §3 projections, re-derived from the spec and the tree
 
@@ -10537,7 +10540,7 @@ On the pre-lane code, 8 of I1–I9 were red. I3 (real content is admitted) is th
 
 | projection | spec definition | source rows | exists? | rebuildable? | this lane |
 |---|---|---|---|---|---|
-| `place_momentum` | `03`'s trend state (2892) | `rank_events` | repository (2892), not production | yes, proven on the harness (§54.2 P1/P2) | its rebuild now excludes dismisses (3417, §61.5); P8 re-grades DC-07 on it |
+| `place_momentum` | `03`'s trend state (2892; 3410 owns the rebuild since §58) | `rank_events` | repository (2892, 3410), not production | yes, proven on the harness (§54.2 P1/P2, §58) | its rebuild now excludes dismisses (3417 on 3410's body, §61.5); §58 re-graded DC-07 on it |
 | `trail_relations` | `05` §2 Trail Graph: *"Edges from: parent/child, related topic, geographic branch, common content, common traveler flow"*; §5 *"typed and time-aware"*; §6 strength from recency, frequency, diversity and confirmed experiences, with no formula; §8 *"Materialized/derived tables can serve: … Trail relations"* | `trail_edges`, `trails.parent_trail_id`, `content_trails` | **repository (3416), harness only** | **yes: R1–R5** | **built**, without a strength and without traveller flow |
 | `traveler_affinities` | `05` §2 Traveler Graph: *"follows, shared trips, shared events, accepted Travel Marks, Shared Moments, repeated interactions"*; §6 strength, no formula; §7 privacy boundary | `user_follows`, `trip_members`, `event_rsvps`, `shared_moment_memberships` / `shared_moment_contributions`, `rank_events`; no Travel Marks table exists in this tree | no | — | **not built**: a per-pair inference about people |
 | `place_cooccurrence` | `05` §2 Place Graph: *"common itinerary co-occurrence, same Trail, same trip sequence, traveler transitions"* | `trip_plan_items`, `route_stops`, `plan_checkins`, `circle_checkins` (personal itineraries and movement) | no | — | **not built**: co-occurrence over personal itineraries |
@@ -10583,9 +10586,9 @@ No purpose, scope or consent version names inferring an affinity between travell
 | `db/trailsProposalRace.db.test.ts` (new) | 14 | P1, P5, P6, P7 red on the pre-lane service; P1, P3 and P5 red without the lock (M02). P2–P4 and G1–G4 test the SQL and are killed by M02–M14 and M43–M46, M51. S5 is red with the pre-lane slug in both layers (M47). S6 and S7 are killed by M44 and M45. |
 | `db/trailsAttachIntegrity.db.test.ts` (new) | 9 | 8 red on the pre-lane service and route. I3 is killed by M16. |
 | `db/trailRelationsRebuild.db.test.ts` (new) | 5 | red with 3416 rolled back; each also killed by M36–M39 |
-| `db/placeMomentumDismiss.db.test.ts` (new) | 3 | D1 and D2 red with 3417 rolled back (M50). D3 is `todo` until H1, and red with H1 applied and 3417 rolled back. |
+| `db/placeMomentumDismiss.db.test.ts` (new) | 3 | D1 and D2 red with 3417 rolled back (M50, re-run on the 3410 chain). D3 is `todo` until H1, and passes with H1 applied (§61.5). |
 | `discoveryTrailIntegrity.test.ts` (new) | 26 | C1–C6, T1–T6, V1–V7, S1–S4 and M1–M3, each killed by a named mutation (§61.8's list) |
-| `discoveryTrailRoutes.test.ts` (+3) | 61 | the three §61 cases are killed by M08, M34 and M35 |
+| `discoveryTrailRoutes.test.ts` (+5) | 63 | the three §61 cases are killed by M08, M34 and M35, and the two H-P8-1 cases by M53 and M54 |
 
 `discoveryTrailRoutes.test.ts`, `discoveryTrailAccess.test.ts` and `db/trailsService.db.test.ts` changed their fixtures only:
 
@@ -10595,7 +10598,7 @@ No purpose, scope or consent version names inferring an affinity between travell
 
 `trailPostgrestBridge.ts` gained RPC, a concurrent mode, a barrier, a commit hold and a per-request failure predicate, all opt-in. Every earlier suite runs as before.
 
-**52 mutations, each applied alone, each seen red, each file restored and sha256-checked.** They were re-run in full at the final code state:
+**54 mutations, each applied alone, each seen red, each file restored and sha256-checked.** M01–M52 were re-run in full at the pre-merge code state. After the merge of `75278df7b`, M50 was re-run on the 3410 chain and M53–M54 were added:
 
 - **M01**: the pre-lane `TrailService.ts`.
 - **M02–M14**: 3415's lock, the destination threshold, the isolation guard, the waiver, the parent's archive check, `normalize`, the rounding, strict superset, the null-destination leg, the pigeonhole and the waiver set. The migrations were re-applied without their probe blocks, so that the test, not the probe, sees each mutation.
@@ -10605,6 +10608,7 @@ No purpose, scope or consent version names inferring an affinity between travell
 - **M40, M41**: 3416's relation kinds, and a planted reader.
 - **M42–M47, M51, M52**: DV-20's fold, key and key leg, in each layer.
 - **M48–M50**: DV-25's three sites.
+- **M53, M54**: H-P8-1's route answer and the service's measured zero (§61.16).
 
 Five mutations survived a run, and each exposed a weak test, now fixed:
 
@@ -10620,7 +10624,8 @@ The migrations' own probes and postconditions also refuse M02, M09, M38, M43, M4
 
 1. 3415, 3416 and 3417 applied, then re-applied, which is idempotent.
 2. Each rolled back, with its suite going red; each re-applied, and green.
-3. The full chain replayed on a fresh `up.sh`, and `run-tests.sh` run on it (§61.15).
+3. After the merge, the full chain replayed on a fresh `up.sh` with 3410 in it, and `run-tests.sh` run on it (§61.15).
+4. 3417 refused to apply with 3410 rolled back, and changed nothing. 3410 and 3417 were then re-applied, and 3417 re-applied again, which is idempotent.
 
 ### 61.9 A reproduction script that 3380 had silently broken
 
@@ -10628,16 +10633,16 @@ The migrations' own probes and postconditions also refuse M02, M09, M38, M43, M4
 
 ### 61.10 Line-neutral edits
 
-- **`services/trails/TrailService.ts`** is 1,626 lines before and after. All 20 lines the census cites in it still carry their whole anchors, including `servableMembers`'s, where `export` was added in front of the anchor.
+- **`services/trails/TrailService.ts`** is 1,626 lines before and after. The 20 lines the census cited in it at the base still carry their whole anchors, including `servableMembers`'s, where `export` was added in front of the anchor. §59 and §58.4 quoted two lines that this section then changed in place, `:646#r.outcome` (DV-25) and `:972#trailMomentum` (H-P8-1). Those quotations are de-pointered (§61.14).
 - **`lib/discoveryTrailObject.ts`** is 421 lines before and after. Its cited lines hold, and `.normalize("NFKD")` stays on `:162#.normalize(`.
 - **`lib/discoveryLocalMomentum.ts`** is 320 lines before and after. Only `weightFor`'s first line changed.
-- **`routes/trails.ts`**: both lines the census cites in it are unchanged.
+- **`routes/trails.ts`**: the two lines the census cited at the base are unchanged. `artifacts/api-server/src/routes/trails.ts:340#trending: r.momentum === null ? null : r.momentum > 0,` changed in place for H-P8-1, and §58.4's quotation of it is de-pointered.
 
 `check:doc-citations` and `check:citation-targets` are clean.
 
 ### 61.11 Routed hunks (NOT applied)
 
-**H1 — `artifacts/api-server/src/lib/discoveryTrendState.ts`, lane P8's file, line-neutral.** This is the same one-line exclusion as the kernel, so that 2892/3417's TypeScript mirror agrees with the SQL store about dismisses:
+**H1 — `artifacts/api-server/src/lib/discoveryTrendState.ts`, lane P8's file, line-neutral.** This is the same one-line exclusion as the kernel, so that the SQL store's TypeScript mirror (3410, 3417) agrees with it about dismisses. P8's merge appended code at the file's foot only; `weightFor` is unchanged there, so the hunk applies as written:
 
 ```diff
  function weightFor(outcome: string): number {
@@ -10647,7 +10652,7 @@ The migrations' own probes and postconditions also refuse M02, M09, M38, M43, M4
  }
 ```
 
-With it applied, `db/placeMomentumDismiss.db.test.ts` D3 stops being `todo` and passes, and `discoveryLocalMomentum.test.ts` passes 32 of 32. Its "the two modules must weigh the same rows the same way" guard pins the constants only, so it passes with or without H1.
+With it applied on the 3410 chain, `db/placeMomentumDismiss.db.test.ts` D3 stops being `todo` and passes, and 76 of 76 pass across it, P8's parity and trending suites, `placeMomentumSqlParity.test.ts` and `discoveryLocalMomentum.test.ts` (§61.5). That last suite's "the two modules must weigh the same rows the same way" guard pins the constants only, so it passes with or without H1.
 
 **H2 — `artifacts/api-server/src/lib/canonicalLocations.ts` (and 2220's SQL fold), optional, owner's call.** `searchKey` deletes ß, æ, œ, þ and ŋ exactly as the slug did. `lib/discoveryTrailFold.TRAIL_LETTER_FOLD` is the table that closes it. Trails already fold in front of `searchKey`, so Trails do not need H2; B01's search does.
 
@@ -10662,9 +10667,10 @@ With it applied, `db/placeMomentumDismiss.db.test.ts` D3 stops being `todo` and 
 ### 61.13 Read-only production SQL that would turn harness evidence into production evidence
 
 ```sql
--- 3415 / 3416 / 3417 present (NULL / false until applied), and their preconditions:
+-- 3415 / 3416 / 3417 present (NULL / false until applied), and their preconditions (3417 needs 2892 and 3410):
 SELECT to_regprocedure('public.trail_propose(text,text,text,uuid,uuid)'), to_regclass('public.trail_relations'),
        to_regprocedure('public.rebuild_place_momentum(timestamptz)') IS NOT NULL AS has_2892,
+       EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'place_momentum' AND column_name = 'source_surface') AS has_3410,
        position('''dismiss''' IN coalesce(pg_get_functiondef(to_regprocedure('public.rebuild_place_momentum(timestamptz)')), '')) > 0 AS has_3417;
 SELECT current_setting('server_encoding');                          -- must be UTF8 for 3415's normalize()
 SELECT rolname, rolconfig FROM pg_roles WHERE rolname IN ('authenticator','service_role');  -- no default isolation above READ COMMITTED
@@ -10694,14 +10700,19 @@ SELECT surface, count(*) FILTER (WHERE outcome = 'dismiss') AS dismisses, count(
 
 **census-trips** counts the `src/test/db/` prefix. This section adds four database suites there and edits the Trails bridge and `trailsService.db.test.ts`. None of them is Trips evidence, and no Trips verdict can move.
 
-`docs/architecture/telegraph-phase0-inventory.md` was regenerated for the migration count (640). The freshness ledger is the integrator's.
+`docs/architecture/telegraph-phase0-inventory.md` was regenerated for the migration count (641 after the merge). The freshness ledger is the integrator's.
+
+**Other sections' text this section edited, without touching a verdict.** Three quotations in other lanes' rows quoted lines that §61 then fixed. Each is de-pointered as §19.2 did: the quoted text stays as the record of what the code said, with the line and the commit, and the parseable `file:NNN#` form is removed so no gate treats a dead quotation as a live claim.
+- §59's DV-25 row: `services/trails/TrailService.ts:646#bucket.positives`, the §9 positive count.
+- §58.4's DC-21 row: `services/trails/TrailService.ts:972#trailMomentum` and `src/routes/trails.ts:340#trending:`, the H-P8-1 defect.
 
 **Rows in other sections this touches, without a verdict change here:**
-- DC-07 (P8) rests on `place_momentum`, whose rebuild 3417 changes.
+- DC-07 (§58) rests on `place_momentum`, whose rebuild 3417 changes by one CASE arm on 3410's body.
+- DC-21 (§58.4) names the H-P8-1 defect as one of its grounds. It is fixed on this branch (§61.16). The verdict and its other grounds are §58's.
 - DC-17's lineage has the note in §61.5.
 - DV-71's sixteen tables become seventeen with `trail_relations`, which carries 3390's posture. However, 3390's R0 list and 3391's `rls_leak` measurement are fixed at sixteen and do not see it.
 - DV-82's `rls_leak` producer has the same gap.
-- §59's A1 and A2 (P12) pin the two defects DV-20 and DV-25 fixed, and will go red at the merge, as the integrator anticipated.
+- §59's A1 and A2 (P12, `discoveryVerifyAudit.test.ts`) pin the two defects that DV-20 and DV-25 fixed. They are in this branch since the merge and are red here, as the integrator anticipated. P12's file is not edited; the integrator flips them.
 
 ### 61.15 Commits, what was run, and what would turn this red
 
@@ -10713,7 +10724,20 @@ The commits are on `disc-p14-trails-db`. The fresh-chain `run-tests.sh` and the 
 - **Deploying this code without 3415** (§61.1).
 - **A reader of `trail_relations`, or a ranker using it, without an owner rule.** C6 fails.
 - **A new outcome that means rejection** (for example a "hide"), added without the same exclusion. It would raise momentum as `dismiss` did.
+- **A later `CREATE OR REPLACE` of `rebuild_place_momentum`** built on 3410's or 2892's body instead of 3417's. It would silently restore the dismiss weight. 3417's postcondition runs only when 3417 is applied; D1 and D2 catch it on the harness.
 - **Unicode drift between the database's `normalize` and the runtime's `String.prototype.normalize`.** G1 would catch it on the corpus, not on every title.
+
+### 61.16 H-P8-1 — a failed Trail read is not a measured "not trending"
+
+§58.4 found it and the integrator routed it here, because this lane owns `services/trails/**` and `routes/trails.ts`. `GET …/trails/:id/trending` reads `rank_events` twice: the Discovery-surface item read, which gives the order and the provenance, and the all-surfaces Trail read, which gives the boolean. When only the second failed, the service left the Trail momentum `null`. The route served `(null ?? 0) > 0`, which is `false`, beside a valid provenance. A failure therefore read as a measured "not trending" (`11` §9).
+
+The fix is two line-neutral edits:
+- A successful read with no entry for the Trail is a measured 0, so only a failed read leaves `null` (`artifacts/api-server/src/services/trails/TrailService.ts:972#nowMs)[trailId] ?? 0; // H-P8-1`).
+- The route serves that `null` as `trending: null` (`artifacts/api-server/src/routes/trails.ts:340#trending: r.momentum === null ? null : r.momentum > 0,`).
+
+**Tests.** One route case fails only the second `rank_events` read. It asserts `trending === null`, a non-null provenance, and that both reads were issued (`artifacts/api-server/src/test/discoveryTrailRoutes.test.ts:658#it("H-P8-1: when only the all-surfaces read fails`). Its control reads no events through two successful reads and asserts `trending === false`, a measured zero. M53 reverts the route and turns the first red. M54 reverts the service and turns the control red.
+
+**A visible consequence.** A Trail with no members also answers `trending: null` now, where it answered `false`. The service already returned no reading for it (`none(null)`, with a null provenance). `null` is the answer the route's own comment gives for "no reading was taken". The client type is not this lane's file (P13), and `null` is falsy wherever a boolean was tested.
 
 ## Cited, not graded (check:census-scope-coverage)
 
