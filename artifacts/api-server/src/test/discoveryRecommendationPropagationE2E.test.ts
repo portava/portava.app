@@ -324,15 +324,18 @@ describe("§48 DV-46 — an outcome carrying the served id binds to THAT exposur
     assert.deepEqual(db.analytics(), [], "no analytics row was credited to anybody");
   });
 
-  it("O3. an ANONYMOUS id presented by a signed-in viewer binds nothing", async () => {
+  it("O3. an ANONYMOUS id presented by a signed-in viewer binds nothing — even for an item she WAS served", async () => {
     install({ flags: SERVE_LOG_ON });
-    _setTestDbPlacesOverride(async () => []);
-    _injectTestCacheEntry(KEY, FOUR());
+    // Alice holds a real exposure of every item, so an implementation that
+    // ignored the id and fell back to the item lookup WOULD find a row to
+    // credit — which is the only way this case can fail, and why it is built so.
+    await servedToAlice();
     const anon = await getDiscovery();
     const o = await postOutcome("alice-token", {
       item_id: anon.body.places[0].id, surface: "discovery", outcome: "tap", recommendation_id: idsOf(anon.body)[0],
     });
     assert.equal(o.status, 404, `an id minted under '${ANONYMOUS_VIEWER_KEY}' names no signed-in exposure`);
+    assert.ok(db.impressions().every((x) => x.outcome === "impression"), "Alice's own exposure of that item did not move");
   });
 
   it("O4. a STALE id (the exposure already moved past this outcome) is refused and moves nothing", async () => {
