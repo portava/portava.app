@@ -451,6 +451,11 @@ run_check "check:telegraph-slos" pnpm run check:telegraph-slos
 # artifact both exists and cannot rot.
 run_check "check:telegraph-inventory" pnpm run check:telegraph-inventory
 
+# check:discovery-query-paths — census-discovery DC-15. `10` §4: every new query
+# path needs expected cardinality, index rationale and EXPLAIN verification.
+# docs/discovery/query-paths.md carries them; this fails when a migration creates
+# a Discovery table or index with no registry row there, or a row goes stale.
+run_check "check:discovery-query-paths" pnpm run check:discovery-query-paths
 run_gate  "check:rank-events-surfaces" pnpm run check:rank-events-surfaces
 
 echo ""

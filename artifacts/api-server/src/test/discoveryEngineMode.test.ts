@@ -344,9 +344,11 @@ describe("N. 12 stop conditions — the evaluator", () => {
       "event_rejection_rate", "recommendation_logging_gap", "creator_concentration",
       "reports_hides", "cache_bypass", "rls_leak", "attribution_double_count",
     ]);
-    assert.deepEqual([...STOP_CONDITIONS_WITHOUT_PRODUCER], [
-      "creator_concentration", "reports_hides", "cache_bypass", "rls_leak", "attribution_double_count",
-    ], "the five with no producer must be named, so 'never trips' is distinguishable from 'working'");
+    // census-discovery §54: all seven now have a producer, so the list of
+    // producerless conditions is empty; the five that cannot TRIP are the five
+    // with no ruling, and N8 pins that they are named on every evaluation.
+    assert.deepEqual([...STOP_CONDITIONS_WITHOUT_PRODUCER], [],
+      "a condition without a producer must be named here, so 'never trips' is distinguishable from 'working'");
   });
 
   it("N2. nothing trips on an empty window — absence of evidence is not evidence", () => {
@@ -408,14 +410,15 @@ describe("N. 12 stop conditions — the evaluator", () => {
     );
   });
 
-  it("N8. a condition with no producer can never appear in `tripped`", () => {
+  it("N8. a condition with no ruling can never appear in `tripped`", () => {
     for (let i = 0; i < STOP_MIN_SAMPLE * 5; i++) recordServeLogOutcome({ outcome: "rejected", servedItems: 10 });
     const v = evaluateStopConditions();
-    for (const c of STOP_CONDITIONS_WITHOUT_PRODUCER) {
-      assert.ok(!v.tripped.includes(c), `${c} has no input; it must never claim to have fired`);
+    const unruled = ["creator_concentration", "reports_hides", "cache_bypass", "rls_leak", "attribution_double_count"];
+    for (const c of unruled) {
+      assert.ok(!v.tripped.includes(c as never), `${c} has no ruling; it must never claim to have fired`);
     }
     assert.deepEqual(
-      [...v.unenforced], [...STOP_CONDITIONS_WITHOUT_PRODUCER],
+      [...v.unenforced], unruled,
       "every evaluation must carry the list of conditions it did NOT check, so a clean result cannot be read as 'all seven are fine'",
     );
   });
