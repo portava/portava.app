@@ -325,7 +325,7 @@ piece absent. **MISSING** = absent. *No section is MISSING.*
 | § | Topic | Verdict | Evidence (file · symbol · line at `8f186410d`) |
 | --- | --- | --- | --- |
 | 1–2 | Product definition / Wall jobs | BUILT | `components/WallScreen.tsx:88-122` composes QuickMedia→LiveForYou→Header→FeedMode→Feed; `WallFeed.tsx` renders projections with no dependency on intelligence (header is an optional `ListHeaderComponent`, `:56,101`). |
-| 3 | Primary screen architecture | BUILT | `WallScreen.tsx`; bottom nav is the app tab bar (`app/(tabs)/_layout.tsx:423`, registered hidden behind `wall_enabled`). |
+| 3 | Primary screen architecture | BUILT | `WallScreen.tsx`; bottom nav is the app tab bar (`travel-buddy-standalone/app/(tabs)/_layout.tsx:471-472#name="wall"`, registered hidden behind `wall_enabled`; corrected 2026-09-27 from 423, where it sat at a739137a9 with `href: null`, and its `href` now follows the flag). |
 | 4 | Live For You | BUILT | `services/wall/LiveForYouService.ts` · `MAX_LIVE_FOR_YOU = 4` (`:42`, clamped `:117`), `MAX_SUBJECT_PROBES = 16` (`:46,129`), feed dedup; `LiveForYouStrip.tsx:54` renders `null` when empty. Test: `wallLiveForYou.test.ts:100,115`. |
 | 5 | Feed modes | BUILT | For You `WallRankingService.rankForYou:273`; Following `FollowingFeedService.buildFollowing:105` (strict reverse-chron); `FeedModeSwitcher.tsx` (`WallScreen.tsx:111`). |
 | 6 | Feed object model | BUILT | `lib/wallProjection.ts:224-231` · `WallObjectType` 7-member union + `WallProjection` base. *See §3 for the 6/7 emittable caveat.* |
@@ -558,7 +558,7 @@ postcondition that raises `POSTCONDITION FAILED: … seeded ON — … must ship
 if `on_count <> 0` (`2270:85-86`, `2272:72-73`). `wall_enabled` is the master
 gate and every route checks it before any canonical read (§9 #1);
 `isFlagEnabled` treats an unreadable flag as off. The client tab is registered
-but hidden (`app/(tabs)/_layout.tsx:423`).
+but hidden (`travel-buddy-standalone/app/(tabs)/_layout.tsx:471-472#name="wall"`; corrected 2026-09-27 from 423: it is hidden while `wall_enabled` is off, because its `href` now follows the flag).
 
 **Migrations 2270 / 2271 / 2272 are present in the repository.**
 
