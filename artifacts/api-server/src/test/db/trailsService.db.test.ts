@@ -98,6 +98,8 @@ before(async () => {
   if (!HAVE_DB) return;
   assert.equal(scalar("SELECT to_regclass('public.trails') IS NOT NULL;"), "t", "2910 must be applied");
   assert.equal(scalar("SELECT to_regprocedure('public.trails_lifecycle_transition()') IS NOT NULL;"), "t", "3381 must be applied");
+  // §61: proposeTrail decides through trail_propose and fails closed without it.
+  assert.equal(scalar("SELECT to_regprocedure('public.trail_propose(text,text,text,uuid,uuid)') IS NOT NULL;"), "t", "3415 must be applied");
   _setTestClient(bridge!.client, true);
   await new Promise<void>((resolve, reject) => {
     server.once("listening", () => resolve());
@@ -202,7 +204,7 @@ describe("H3 — DV-23: near-duplicates of one place are clustered and stay reac
   test("one place attached as primary and two Signals in ONE request is one item on the page", async () => {
     const [viewer, c] = [user("h3w"), user("h3c")];
     const t = trail();
-    const place = randomUUID();
+    const place = canonicalPlace(); // §61: attach requires the place to exist
     const res = await attachContentToTrail(sc(), t, [
       { sourceType: "place", sourceId: place, relationship: "primary" },
       { sourceType: "place", sourceId: place, relationship: "signal", signal: "rooftop" },
@@ -304,7 +306,7 @@ describe("H6 — DC-04: the promotion goes through the transition trigger; an ar
   test("first content promotes proposed → active; archived refuses a move in TypeScript AND at the database", async () => {
     const u = user("h6a");
     const t = trail("proposed");
-    const res = await attachContentToTrail(sc(), t, [{ sourceType: "place", sourceId: randomUUID(), relationship: "primary" }], { userId: u, mode: "attach" });
+    const res = await attachContentToTrail(sc(), t, [{ sourceType: "place", sourceId: canonicalPlace(), relationship: "primary" }], { userId: u, mode: "attach" });
     assert.equal(res.attached, 1);
     assert.equal(scalar(`SELECT lifecycle_status FROM public.trails WHERE id = '${t}';`), "active");
 

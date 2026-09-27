@@ -144,7 +144,7 @@ export interface MomentumMap {
 }
 
 function weightFor(outcome: string): number {
-  if (outcome === "save") return MOMENTUM_EVENT_WEIGHTS.save;
+  if (outcome === "dismiss") return 0; if (outcome === "save") return MOMENTUM_EVENT_WEIGHTS.save; // §61 (DV-25): a dismiss is EXCLUDED — zero, never a negative weight
   return MOMENTUM_EVENT_WEIGHTS.outcome;
 }
 

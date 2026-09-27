@@ -5,16 +5,19 @@
  * or DEFECT the lanes did not test, pinned so a fix turns it red and forces the
  * census to be updated, or a CONTROL that shows the probe itself is sound.
  *
- *   A1  DEFECT, pinned (DV-20): the Trail canonicaliser drops letters NFKD does
- *       not decompose — Đ, Ł, Ø — so "Đà Nẵng street food" and "Da Nang street
- *       food" are two canonical Trails, and CHECK 1's similarity (0.6) is below
- *       the duplicate bar. `02` §2's own example (#danang) is the city it breaks.
+ *   A1  FIXED (DV-20, §61; flipped in §61.14): the Trail canonicaliser now
+ *       folds the letters NFKD does not decompose — Đ, Ł, Ø — so "Đà Nẵng
+ *       street food" and "Da Nang street food" are ONE canonical Trail, and
+ *       CHECK 1's similarity is at the duplicate bar. P12 pinned this as a
+ *       DEFECT at 838f56cb5 (two slugs, similarity 0.6); reverting §61's fold
+ *       turns it red.
  *   A1c CONTROL: the repository's stored-fold search key (B01) folds both
- *       spellings to one key; the fold the Trail slug needs already exists.
- *   A2  DEFECT, pinned (DV-25): the shared momentum kernel weighs a `dismiss`
- *       ("Not interested", the ONE negative outcome, 2297) as a positive
- *       engagement — a place its viewers dismiss GAINS momentum over one they
- *       merely saw.
+ *       spellings to one key, the same answer the Trail slug now gives.
+ *   A2  FIXED (DV-25, §61; flipped in §61.14): the shared momentum kernel
+ *       weighs a `dismiss` ("Not interested", the ONE negative outcome, 2297)
+ *       as zero, so a place its viewers dismiss gains NO momentum over one
+ *       they merely saw. A2c is the control: a save on the same rows does
+ *       cross the floor, so A2 is not green because the floor is unreachable.
  */
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
@@ -23,16 +26,16 @@ import { searchKey } from "../lib/canonicalLocations.js";
 import { computeLocalMomentum } from "../lib/discoveryLocalMomentum.js";
 
 describe("census-discovery §59 — adversarial negative inputs for §46–§55's C rows", () => {
-  it("A1. DEFECT, pinned (DV-20): 'Đà Nẵng street food' and 'Da Nang street food' canonicalise to two Trails", () => {
+  it("A1. FIXED (DV-20, §61): 'Đà Nẵng street food' and 'Da Nang street food' canonicalise to ONE Trail", () => {
     const native = "Đà Nẵng street food";
     const ascii = "Da Nang street food";
-    assert.equal(canonicalTrailSlug(native), "a-nang-street-food", "Đ is not decomposed by NFKD, so the city loses its first letter");
+    assert.equal(canonicalTrailSlug(native), "da-nang-street-food", "Đ is folded to D, so the city keeps its first letter");
     assert.equal(canonicalTrailSlug(ascii), "da-nang-street-food");
-    assert.notEqual(canonicalTrailSlug(native), canonicalTrailSlug(ascii));
-    assert.ok(titleSimilarity(native, ascii) < DUPLICATE_TITLE_SIMILARITY,
-      `CHECK 1 does not catch it either: similarity ${titleSimilarity(native, ascii)} < ${DUPLICATE_TITLE_SIMILARITY}`);
-    assert.equal(canonicalTrailSlug("Łódź murals"), "odz-murals");
-    assert.equal(canonicalTrailSlug("Øresund cycling"), "resund-cycling");
+    assert.equal(canonicalTrailSlug(native), canonicalTrailSlug(ascii));
+    assert.ok(titleSimilarity(native, ascii) >= DUPLICATE_TITLE_SIMILARITY,
+      `CHECK 1 catches it as well: similarity ${titleSimilarity(native, ascii)} >= ${DUPLICATE_TITLE_SIMILARITY}`);
+    assert.equal(canonicalTrailSlug("Łódź murals"), "lodz-murals");
+    assert.equal(canonicalTrailSlug("Øresund cycling"), "oresund-cycling");
   });
 
   it("A1c. CONTROL: the stored-fold search key already folds both spellings to one key", () => {
@@ -41,12 +44,13 @@ describe("census-discovery §59 — adversarial negative inputs for §46–§55'
     assert.equal(searchKey("Øresund cycling"), searchKey("Oresund cycling"));
   });
 
-  it("A2. DEFECT, pinned (DV-25): a dismissed place gains momentum over one that was only seen", () => {
+  it("A2. FIXED (DV-25, §61): a dismissed place gains no momentum over one that was only seen", () => {
     const nowMs = Date.parse("2026-09-27T12:00:00Z");
     const recent = new Date(nowMs - 60 * 60 * 1000).toISOString();
     const rows = [];
-    // Two rows each: two impressions (weight 2) stay under the 3-weight floor;
-    // two DISMISSED impressions weigh 2 + 2×2 = 6 and cross it.
+    // Two rows each: two impressions (weight 2) stay under the 3-weight floor.
+    // Two DISMISSED impressions weighed 2 + 2×2 = 6 before §61 and crossed it;
+    // with a dismiss weighing zero they weigh 2, the same as seen-only.
     for (let i = 0; i < 2; i++) {
       rows.push({ item_id: "db/seen-only", outcome: "impression", served_at: recent, outcome_at: null });
       rows.push({ item_id: "db/dismissed", outcome: "dismiss", served_at: recent, outcome_at: recent });
@@ -55,7 +59,15 @@ describe("census-discovery §59 — adversarial negative inputs for §46–§55'
     const seen = m["db/seen-only"] ?? 0;
     const dismissed = m["db/dismissed"] ?? 0;
     assert.equal(seen, 0, "two plain impressions are below the momentum floor");
-    assert.ok(dismissed > 0,
-      `"Not interested" counted as engagement: dismissed=${dismissed}, seen-only=${seen}`);
+    assert.equal(dismissed, 0,
+      `"Not interested" must not count as engagement: dismissed=${dismissed}, seen-only=${seen}`);
+  });
+
+  it("A2c. CONTROL: the same two rows SAVED do cross the floor, so A2's zero is the dismiss weight, not an unreachable floor", () => {
+    const nowMs = Date.parse("2026-09-27T12:00:00Z");
+    const recent = new Date(nowMs - 60 * 60 * 1000).toISOString();
+    const rows = [0, 1].map(() => ({ item_id: "db/saved", outcome: "save", served_at: recent, outcome_at: recent }));
+    const m = computeLocalMomentum(rows as any, nowMs).values;
+    assert.ok((m["db/saved"] ?? 0) > 0, `two saves must cross the floor: ${m["db/saved"]}`);
   });
 });

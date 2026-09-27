@@ -171,7 +171,7 @@ export function classifyTrendState(e: TrendEvidence): DiscoveryTrendState {
 }
 
 function weightFor(outcome: string): number {
-  if (outcome === "save") return TREND_EVENT_WEIGHTS.save;
+  if (outcome === "dismiss") return 0; if (outcome === "save") return TREND_EVENT_WEIGHTS.save; // §61.14 H1 (DV-25): a dismiss is not activity — zero, as 3417's SQL arm
   return TREND_EVENT_WEIGHTS.outcome;
 }
 

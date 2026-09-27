@@ -131,10 +131,10 @@ function sendTrailRefusal(res: Response, refusal: Exclude<TrailRefusal, null>): 
       return sendError(res, "not_found", "trail not found");
     case "invalid_request":
       return sendError(res, "invalid_payload", "request refused by 02_Trails rules");
-    case "trails_unavailable":
-    case "no_service_client":
+    case "trails_unavailable": case "no_service_client":
       // 503, not 500: nothing failed. The Trail object is not deployed here.
       return sendError(res, "degraded_unavailable", "trails are not available in this deployment");
+    case "source_unreadable": return sendError(res, "degraded_unavailable", "the content could not be verified; nothing was attached"); // §61, retryable
     default:
       return sendError(res, "db_error", "trail read failed");
   }
@@ -337,7 +337,7 @@ router.get("/v1/discovery/trails/:id/trending", asyncHandler(async (req: Request
   // `readingProvenance` rather than `momentumProvenance`: see the note on the
   // modules route above — the `11` §4 tripwire forbids the WORD here.
   res.json({
-    trending: (r.momentum ?? 0) > 0,
+    trending: r.momentum === null ? null : r.momentum > 0, // H-P8-1 (§58.4, §61): a failed read is unknown (null), never a measured "not trending"
     items: r.items,
     readingProvenance: toPublicProvenance(r.momentumProvenance),
   });
@@ -381,18 +381,33 @@ const attachmentBody = z.object({
  */
 function sendAttachResult(
   res: Response,
-  r: { attached: number; capRefusals: Array<{ label: { relationship: string; signal: string | null }; reason: string }> },
+  r: {
+    attached: number;
+    capRefusals: Array<{ label: { relationship: string; signal: string | null }; reason: string }>;
+    sourceRefusals?: Array<{ sourceType: string; sourceId: string; reason: string }>;
+  },
 ): void {
+  // census-discovery §61 (DC-20): a label whose content does not exist, that
+  // the caller may not see, or whose type has no table is named with the ids
+  // the CALLER sent — echoing them discloses nothing — and one reason:
+  // `unknown_content` (the same for "no such post" and "a post you may not
+  // see", so the refusal is not an existence oracle) or
+  // `unverifiable_source_type`. Only present when non-empty, so every response
+  // that had no such label is byte-identical to before.
+  const contentRefusals = (r.sourceRefusals ?? []).map((x) => ({ sourceType: x.sourceType, sourceId: x.sourceId, reason: x.reason }));
+  const content = contentRefusals.length > 0 ? { contentRefusals } : {};
   if (r.attached === 0) {
     res.status(409).json({
-      error: "label_cap_refused",
+      error: r.capRefusals.length === 0 && contentRefusals.length > 0 ? "content_refused" : "label_cap_refused",
       refusals: r.capRefusals.map((x) => ({ relationship: x.label.relationship, signal: x.label.signal, reason: x.reason })),
+      ...content,
     });
     return;
   }
   res.status(201).json({
     attached: r.attached,
     refusals: r.capRefusals.map((x) => ({ relationship: x.label.relationship, signal: x.label.signal, reason: x.reason })),
+    ...content,
   });
 }
 

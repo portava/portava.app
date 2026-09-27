@@ -32,16 +32,51 @@
  *
  * `failTables` makes a named table's statements fail with a chosen error — the
  * one thing a real database cannot be asked to do on cue.
+ *
+ * census-discovery §61 added three things, all opt-in, so every earlier suite
+ * runs exactly as before:
+ *   POST /rest/v1/rpc/<fn>  → `SELECT to_json(public.<fn>(arg => literal, …))`,
+ *           named arguments as PostgREST passes them (`failTables["rpc/<fn>"]`
+ *           fails it on cue).
+ *   `concurrent`  statements run in an ASYNC psql child, so requests issued
+ *           together really overlap in the database (spawnSync would queue
+ *           them behind one another in this process and prove nothing about
+ *           a race).
+ *   `barrier`     requests that match are held until `count` of them have
+ *           arrived and then released together — the worst interleaving of N
+ *           racing proposals (every pre-check read finished, no write begun),
+ *           produced on demand rather than hoped for.
+ *   `holdCommitMs` each rpc's transaction stays open that long before it
+ *           commits, so the racing DECISIONS overlap too (psql start-up jitter
+ *           alone can otherwise serialise them and hide a missing lock).
  */
 import { createClient } from "@supabase/supabase-js";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { LOCAL_DB_URL } from "./localDb.js";
 
 type Row = Record<string, unknown>;
 
 export interface BridgeOptions {
-  /** table → the error every statement against it answers with. */
+  /** table (or `rpc/<fn>`) → the error every statement against it answers with. */
   failTables?: Record<string, { code: string; message: string }>;
+  /** Run each statement in an async psql child so concurrent requests overlap. */
+  concurrent?: boolean;
+  /** Hold matching requests until `count` have arrived, then release them together. */
+  barrier?: { match: (method: string, path: string) => boolean; count: number; timeoutMs?: number };
+  /**
+   * Fail ONE kind of request rather than a whole table — e.g. the Trail
+   * service's creator-standing read of `profiles`, without also failing the
+   * auth gate's own read of the same table. `path` is decoded.
+   */
+  failWhen?: (method: string, path: string) => { code: string; message: string } | null;
+  /**
+   * Hold every rpc's transaction open this long AFTER the function returns and
+   * BEFORE it commits (`pg_sleep` inside the same `psql -1` transaction). Racing
+   * decisions then overlap in the database whatever the process start-up jitter:
+   * without a lock each would decide on a snapshot that holds none of the
+   * others' uncommitted rows.
+   */
+  holdCommitMs?: number;
 }
 
 export interface BridgeHandle {
@@ -182,16 +217,40 @@ function orderClause(order: string | null): string {
 
 interface Exec { ok: boolean; stdout: string; code: string; message: string; details: string }
 
-function run(sql: string): Exec {
-  const script = `\\set VERBOSITY verbose\nSET LOCAL ROLE service_role;\n${sql}\n`;
-  const r = spawnSync("psql", ["-X", "-q", "-1", "-v", "ON_ERROR_STOP=1", "-At", LOCAL_DB_URL], {
-    input: script, encoding: "utf8", timeout: 60_000,
-  });
-  if (r.status === 0) return { ok: true, stdout: (r.stdout ?? "").trim(), code: "", message: "", details: "" };
-  const stderr = r.stderr ?? "";
+const PSQL_ARGS = ["-X", "-q", "-1", "-v", "ON_ERROR_STOP=1", "-At", LOCAL_DB_URL];
+const script = (sql: string) => `\\set VERBOSITY verbose\nSET LOCAL ROLE service_role;\n${sql}\n`;
+
+function settle(status: number | null, stdout: string, stderr: string): Exec {
+  if (status === 0) return { ok: true, stdout: stdout.trim(), code: "", message: "", details: "" };
   const m = /ERROR:\s+([0-9A-Z]{5}):\s+(.*)/.exec(stderr);
   const d = /DETAIL:\s+(.*)/.exec(stderr);
   return { ok: false, stdout: "", code: m?.[1] ?? "XX000", message: m?.[2]?.trim() ?? stderr.trim(), details: d?.[1]?.trim() ?? "" };
+}
+
+function run(sql: string): Exec {
+  const r = spawnSync("psql", PSQL_ARGS, { input: script(sql), encoding: "utf8", timeout: 60_000 });
+  return settle(r.status, r.stdout ?? "", r.stderr ?? "");
+}
+
+function runAsync(sql: string): Promise<Exec> {
+  return new Promise((resolve) => {
+    const child = spawn("psql", PSQL_ARGS, { stdio: ["pipe", "pipe", "pipe"] });
+    let out = "";
+    let err = "";
+    child.stdout.setEncoding("utf8").on("data", (c: string) => { out += c; });
+    child.stderr.setEncoding("utf8").on("data", (c: string) => { err += c; });
+    child.on("error", (e) => resolve(settle(-1, "", String(e))));
+    child.on("close", (code) => resolve(settle(code, out, err)));
+    child.stdin.end(script(sql));
+  });
+}
+
+/** One named argument as PostgREST passes it: an untyped literal, resolved against the function's own parameter types. */
+function rpcArgument(name: string, value: unknown): string {
+  if (value === null || value === undefined) return `${ident(name)} => NULL`;
+  if (typeof value === "string") return `${ident(name)} => ${dollar(value)}`;
+  if (typeof value === "number" || typeof value === "boolean") return `${ident(name)} => ${dollar(String(value))}`;
+  return `${ident(name)} => ${dollar(JSON.stringify(value))}`;
 }
 
 function json(body: unknown, status: number): Response {
@@ -207,6 +266,21 @@ function pgError(e: Exec): Response {
 
 export function makeTrailBridge(opts: BridgeOptions = {}): BridgeHandle {
   const log: BridgeHandle["log"] = [];
+  const exec = (sql: string): Promise<Exec> => (opts.concurrent ? runAsync(sql) : Promise.resolve(run(sql)));
+
+  // The barrier: the first `count` matching requests wait for one another.
+  const held: Array<() => void> = [];
+  let released = false;
+  const releaseAll = () => { released = true; while (held.length > 0) held.shift()!(); };
+  const atBarrier = (method: string, path: string): Promise<void> => {
+    const b = opts.barrier;
+    if (!b || released || !b.match(method, path)) return Promise.resolve();
+    return new Promise<void>((resolve) => {
+      held.push(resolve);
+      if (held.length >= b.count) releaseAll();
+      else if (held.length === 1) setTimeout(releaseAll, b.timeoutMs ?? 20_000).unref();
+    });
+  };
 
   const fetchImpl = async (input: any, init: any = {}): Promise<Response> => {
     const url = new URL(typeof input === "string" ? input : input.url);
@@ -228,14 +302,31 @@ export function makeTrailBridge(opts: BridgeOptions = {}): BridgeHandle {
 
     if (!url.pathname.startsWith("/rest/v1/")) throw new Error(`trailPostgrestBridge: unhandled path ${url.pathname}`);
     const table = url.pathname.slice("/rest/v1/".length);
-    if (table.startsWith("rpc/")) throw new Error(`trailPostgrestBridge: rpc is out of scope (${table})`);
+    await atBarrier(method, `${url.pathname}${url.search}`);
+
+    if (table.startsWith("rpc/")) {
+      if (method !== "POST") throw new Error(`trailPostgrestBridge: rpc by ${method} is out of scope (${table})`);
+      const fn = table.slice("rpc/".length);
+      const failure = opts.failTables?.[table];
+      if (failure) {
+        log.push({ method, path: url.pathname, sql: "(failTables)" });
+        return json({ ...failure, details: null, hint: null }, 400);
+      }
+      const args = (body ? JSON.parse(body) : {}) as Row;
+      const sql = `SELECT COALESCE(to_json(public.${ident(fn)}(${Object.entries(args).map(([k, v]) => rpcArgument(k, v)).join(", ")})), 'null'::json)::text;`;
+      log.push({ method, path: url.pathname, sql });
+      const hold = opts.holdCommitMs ? `\nSELECT pg_sleep(${Number(opts.holdCommitMs) / 1000});` : "";
+      const e = await exec(sql + hold);
+      if (!e.ok) return pgError(e);
+      return json(JSON.parse(e.stdout || "null"), 200);
+    }
     const t = `public.${ident(table)}`;
     const params = url.searchParams;
     const prefer = headers["prefer"] ?? "";
     const representation = prefer.includes("return=representation");
     const select = params.get("select");
 
-    const failure = opts.failTables?.[table];
+    const failure = opts.failTables?.[table] ?? opts.failWhen?.(method, decodeURIComponent(`${url.pathname}${url.search}`)) ?? null;
     if (failure) {
       log.push({ method, path: `${url.pathname}${url.search}`, sql: "(failTables)" });
       return json({ ...failure, details: null, hint: null }, 400);
@@ -249,7 +340,7 @@ export function makeTrailBridge(opts: BridgeOptions = {}): BridgeHandle {
         + `${whereClause(params, "")}${orderClause(params.get("order"))}`
         + `${limit !== null ? ` LIMIT ${Number(limit)}` : ""}${offset !== null ? ` OFFSET ${Number(offset)}` : ""}) _q;`;
       log.push({ method, path: `${url.pathname}${url.search}`, sql });
-      const e = run(sql);
+      const e = await exec(sql);
       if (!e.ok) return pgError(e);
       return json(JSON.parse(e.stdout || "[]"), 200);
     }
@@ -284,7 +375,7 @@ export function makeTrailBridge(opts: BridgeOptions = {}): BridgeHandle {
     }
 
     log.push({ method, path: `${url.pathname}${url.search}`, sql });
-    const e = run(sql);
+    const e = await exec(sql);
     if (!e.ok) return pgError(e);
     if (!representation) return json(null, method === "POST" ? 201 : 204);
     return json(JSON.parse(e.stdout || "[]"), method === "POST" ? 201 : 200);

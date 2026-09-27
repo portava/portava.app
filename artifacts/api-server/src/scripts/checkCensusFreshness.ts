@@ -4033,6 +4033,25 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/test/discoveryQueryPathsConstraints.test.ts",
     "artifacts/api-server/src/routes/tags.ts",
     "artifacts/api-server/src/services/interactionPermissions.ts",
+    // WIDENED 2026-09-27 by census-discovery §61 (P14, Trails integrity): DC-03 moves on 3415 and
+    // the service seam that calls it; DC-20 is re-graded on the attach check; DV-72 is re-graded on
+    // 3416's projection. Every §61 verdict row cites these, their rollbacks or the suites that were
+    // seen red, so each is watched.
+    "artifacts/api-server/src/services/trails/trailProposal.ts",
+    "artifacts/api-server/src/services/trails/trailAttachIntegrity.ts",
+    "artifacts/api-server/src/migrations/3415_trail_proposal_serialised.sql",
+    "artifacts/api-server/src/migrations/3416_trail_relations_projection.sql",
+    "db/rollback/2026-09-27-3415-trail-proposal-serialised-rollback.sql",
+    "db/rollback/2026-09-27-3416-trail-relations-projection-rollback.sql",
+    "artifacts/api-server/src/test/discoveryTrailIntegrity.test.ts",
+    "artifacts/api-server/src/test/db/trailsProposalRace.db.test.ts",
+    "artifacts/api-server/src/test/db/trailsAttachIntegrity.db.test.ts",
+    "artifacts/api-server/src/test/db/trailRelationsRebuild.db.test.ts",
+    // §61 integrator addendum: DV-20's letter fold, DV-25's SQL store (3417, its rollback) and the suite that pins it.
+    "artifacts/api-server/src/lib/discoveryTrailFold.ts",
+    "artifacts/api-server/src/migrations/3417_place_momentum_dismiss_excluded.sql",
+    "db/rollback/2026-09-27-3417-place-momentum-dismiss-excluded-rollback.sql",
+    "artifacts/api-server/src/test/db/placeMomentumDismiss.db.test.ts",
   ],
   // ── ADDED 2026-09-15: census-passport joins the CHECKABLE set ──────────────
   //

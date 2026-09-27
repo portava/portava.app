@@ -24,6 +24,7 @@ To reproduce, run `docs/discovery/query-paths-explain.sql` against the harness. 
 | `place_momentum` | 20,000 | table absent (2892 unapplied) | §47.1 |
 | `rank_event_outcome_receipts` | 20,000 (10 per viewer) | table absent (3420 unapplied) | §62 |
 | `trails` / `content_trails` / `trail_edges` / `trail_follows` / `trail_reports` / `trail_health_snapshots` | 2,000 / 50,000 / 4,000 / 10,000 / 500 / 20,000 | `trails` 0 (2910 applied 2026-09-20); the rest not read | §47.1 |
+| `trail_relations` | 3,991 after one rebuild over the rows above (QP-27) | table absent (3416 unapplied) | census-discovery §61 |
 
 **Expected production growth, where anything states it.** `recommendations` gets one row per served Discovery request while `discovery_serve_log_enabled` is on, which is its value in production (3376's header). `rank_events` gets one `discovery` row per served item per signed-in serve. No document states an expected corpus size for `discovery_places` or `trails`. The synthetic figures are chosen so a plan has something to choose between. They are not a forecast.
 
@@ -131,6 +132,14 @@ The Trail-affinity input. **Index:** `idx_trail_follows_user`. Harness: Index Sc
 
 `routes/rankEvents.ts` (`readOutcomeReceipt`): `rank_event_outcome_receipts` by `(user_id, client_event_id)`, once per outcome report that carries a `client_event_id`, before any other read. **Index:** the table's primary key, which is also the idempotency arbiter. Harness: Index Scan using `rank_event_outcome_receipts_pkey`, 1 row of 20,000. Expected cardinality: one row per keyed outcome, so at most `rank_events`' outcome count for the client builds that send a key (production: 13 `discovery` rows ever, and no build sends a key yet). The write side is the trigger `rank_events_outcome_receipt`, which fires only on an UPDATE that names `rank_events.outcome_client_event_id`. Only the keyed outcome route does that, so no other `rank_events` write pays for it (QP-24).
 
+### QP-26 A Trail proposal's comparison set, under 3415's lock
+
+*census-discovery §61.* `public.trail_proposal_peers`, which `public.trail_propose` (3415) reads after taking its per-title-token advisory locks, and which is the same filter `TrailService.proposeTrail`'s pre-check sends through PostgREST: `destination = $1 OR destination IS NULL OR slug ILIKE ANY ($patterns)`. **Index:** none is usable, and none is added. The `ILIKE '%tok%'` legs cannot use a b-tree, so the read is a sequential scan of `trails` at any size. Harness, 2,000 Trails: Seq Scan, 2,000 rows removed by filter. **Cardinality:** production holds 0 Trails. The read runs inside the serialised window, so its duration is also how long a colliding proposal waits. If the catalogue grows past a few tens of thousands of Trails, a trigram index on `slug` is the index this path would want. It is not added here, because nothing measured needs it.
+
+### QP-27 The `trail_relations` rebuild
+
+*census-discovery §61.* `public.rebuild_trail_relations` (3416): one `INSERT … SELECT` over `trail_edges`, `trails.parent_trail_id` and a self-join of `content_trails` on (source_type, source_id). **Not a hot path:** nothing calls it and nothing reads its output. **Index:** the parent-pointer branch uses `idx_trails_parent` and an anti-join on `trail_edges_pkey`. The common-content branch groups `content_trails` and merge-joins it with itself: no index serves a whole-table self-join, and none is wanted. Harness, 2,000 Trails, 2,000 edges and 30,000 memberships (10,000 contents held by two Trails): Append of a Seq Scan (2,000 declared edges), a Nested Loop Anti Join (0 pointers without an edge) and a HashAggregate over a Merge Join (9,990 shared pairs → 1,991 relations). 3,991 rows in all. `idx_trail_relations_to` (3416) serves "relations into a Trail", for a reader that does not exist yet. The primary key serves "relations out of a Trail".
+
 ## 3. Findings this document does not fix
 
 - **Duplicate indexes in the baseline**, which no migration in this tree creates, so §4 does not register them. The 2026-08-19 baseline carries `discovery_cache_expires_idx` and `idx_discovery_cache_expires_at` (the same column), `discovery_geocode_cache_expires_idx` and `idx_discovery_geocode_cache_expires_at`, `discovery_places_type_idx` and `discovery_places_place_type_idx`, and `discovery_places_osm_id_idx` (unique) beside `idx_discovery_places_osm_id`. Each pair doubles the write cost for no read. Dropping an index in production is an operator decision, and this lane made none.
@@ -217,6 +226,8 @@ One row per table or index that a migration in `artifacts/api-server/src/migrati
 | index | `recommendations_served_at` | `recommendations` | 3376 | QP-21 | the per-window denominator |
 | index | `rank_events_discovery_served_at` | `rank_events` | 3391 | QP-19, QP-09 | Discovery exposures in a window, without scanning other surfaces |
 | table | `rank_event_outcome_receipts` | `rank_event_outcome_receipts` | 3420 | QP-25 | one row per keyed outcome that landed. Its primary key `(user_id, client_event_id)` is the only index: the idempotency arbiter, the lookup, and account erasure's cascade (§62) |
+| table | `trail_relations` | `trail_relations` | 3416 | not a hot path: a derived projection (`10` §3) that nothing reads and only `rebuild_trail_relations` writes (QP-27) | the Trail Graph of `05` §2 over declared relations and common content. 0 rows in production (3416 unapplied; 0 Trails). Rebuildable by construction (census-discovery §61, DV-72) |
+| index | `idx_trail_relations_to` | `trail_relations` | 3416 | not a hot path: "relations into a Trail", for a reader that does not exist yet (QP-27) | (to_trail_id, relation). Out-relations use the primary key (from_trail_id, to_trail_id, relation) |
 
 ## 5. What would turn this red
 

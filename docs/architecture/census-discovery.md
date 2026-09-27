@@ -9637,8 +9637,8 @@ The import on `:101` gains `withDiscoveryLiveSafety`. At serve path 2, `:2134` b
 | DC-26 | W | **C** | All sixteen of `12`'s classes (`docs/specs/discovery-v1/12_Claude_Code_Implementation.md:171#Required test classes`) have a suite that passes at this tree; §59.3 names each. The one class no lane owned, recommendation → behaviour → attribution (§54.11 H5), is built on the harness through the code that ships: `GET /discovery` signed in, then `POST /rank-events/outcome` with the served id, then `resolveServedRecommendation` and `recordCreatorAttribution` under a published test rule (`artifacts/api-server/src/test/db/discoveryVerifyChain.db.test.ts:207#test("V1. the chain: a signed-in serve's id is stored`). Another viewer's id is refused at the route and at the binding and writes nothing (`artifacts/api-server/src/test/db/discoveryVerifyChain.db.test.ts:252#test("V2. another viewer's id: the outcome is refused and moves nothing`); an unknown id is refused at all three layers (V3); an anonymous serve's ids are on the response and in no `rank_events` row, so nobody can bind them (`artifacts/api-server/src/test/db/discoveryVerifyChain.db.test.ts:288#test("V4. an anonymous serve's ids are on the response and nowhere in rank_events`); a retried save and a retried attribution each land once (`artifacts/api-server/src/test/db/discoveryVerifyChain.db.test.ts:311#test("V5. retries: a replayed save is`). **Harness evidence, not production:** 3386 is unapplied everywhere but the harness, and no production caller passes a recommendation to an attribution (`artifacts/api-server/src/services/creators/CreatorAttributionService.ts:305#export async function resolveServedRecommendation(` has no caller outside tests, as DV-67 already says). The keyless-outcome defect V7 found belongs to DV-37 below and is counted there once (§11.2 rule 2). |
 | DV-52 | ? | **W** | `docs/specs/discovery-v1/05_Graph_Engine.md:125#- it remains explainable enough for debugging.` **The graph itself passes:** typed, time-aware edges with counts, an admin-only debug read whose counts are the tables' own (`artifacts/api-server/src/test/db/discoveryVerifyExplain.db.test.ts:184#test("X3. the graph's debug read is admin-only and its counts are the tables' own`), and a non-admin read of exactly five aggregate keys (`artifacts/api-server/src/test/db/discoveryVerifyExplain.db.test.ts:210#test("X4. the graph read any signed-in user has returns five aggregate keys`). **What fails, exactly:** (1) where the graph reaches a Discovery decision, the decision does not record which graph reading made it. City confidence becomes a momentum scale and an exploration budget (`artifacts/api-server/src/lib/discoveryModifiers.ts:206#const { momentumScale, explorationBudgetPct } = cityConfidenceInputs(cityConfidence);`), but the serve keeps only the modifiers' on/off reason (`artifacts/api-server/src/lib/discoveryPde.ts:558#stages.modifiers = modifiers.reason;`) and, per item, the budget. The confidence record (depth, tier, source, computed-at) and the scale are dropped, and `compass_city_confidence` is overwritten on each daily rebuild, so a past serve's graph input cannot be recovered. (2) Discovery's one ranking-debug writer produces nothing on production's structure: every sample omits two NOT NULL columns (`artifacts/api-server/baseline/20260819_baseline_structure.sql:8799#content_type text NOT NULL,`), and the refusal is swallowed (`artifacts/api-server/src/test/db/discoveryVerifyExplain.db.test.ts:136#test("X1. DEFECT, pinned: the DRS debug sample omits production's NOT NULL content_type/content_id`; X5 shows the same refusal on a live `GET /discovery` cold fetch). The debug read is admin-only and exposes no viewer's data or score to a non-admin (X2, X5). The consumption path is behind 2289 (off, held), so (1) affects no deployment today. |
 | DV-76 | ? | **W** | `docs/specs/discovery-v1/12_Claude_Code_Implementation.md:20#0.3 Complete privacy/tagging Phase 0` names three items and "other catalogued Phase 0 findings". **The three named items are fixed at the route and service, and tested:** pending tags are not rendered (`artifacts/api-server/src/lib/enrichSpans.ts:187#.eq('status', 'approved');`); a friends-only post notifies friends, not one-way followers, and fails closed on every unreadable read (`artifacts/api-server/src/services/tagging/TaggingService.ts:174#if (visibility === 'friends' || visibility === 'friends_only') {`); `disable_tagging` engages when its own row cannot be read (`artifacts/api-server/src/lib/featureFlags.ts:55#export async function isKillSwitchEngaged(`). `tagging.test.ts` passes 35/35. **What fails, exactly:** Phase 0 #1 (unauthorized tagging) is still reachable at the database. `authenticated` holds INSERT on `tags`, and the only insert policy checks the tagger (`artifacts/api-server/baseline/20260819_baseline_structure.sql:32217#CREATE POLICY tags_insert ON public.tags FOR INSERT WITH CHECK ((tagger_id = auth.uid()));`). So a client that skips `POST /api/tags` can tag a user whose `tag_permission` is `nobody`, on a post it does not own, and the row lands `approved` by default (`artifacts/api-server/src/test/db/discoveryVerifyPhase03.db.test.ts:46#test("P1. DEFECT, pinned: a direct client insert tags a 'nobody' user on a stranger's post, and lands APPROVED`). That bypasses the permission, the approval gate #2 depends on, the hourly cap and the #3 kill switch. What the database does hold is P2. Items #5–#7 have no trace anywhere (`docs/security/phase0-tagging-privacy-state.md`), so "other catalogued findings" cannot be counted complete. No tagging census owns this row, so it is graded here. |
-| DV-20 | C | **W** | **Does not hold.** The Trail canonicaliser folds diacritics but not letters that NFKD does not decompose (`artifacts/api-server/src/lib/discoveryTrailObject.ts:162#.normalize("NFKD")`). "Đà Nẵng street food" becomes `a-nang-street-food` and "Da Nang street food" becomes `da-nang-street-food`, and CHECK 1's similarity is 0.6, below the 0.8 duplicate bar (`artifacts/api-server/src/test/discoveryVerifyAudit.test.ts:26#it("A1. DEFECT, pinned (DV-20): 'Đà Nẵng street food' and 'Da Nang street food' canonicalise to two Trails`). Through the shipping `proposeTrail` on the harness, one filed under destination "Đà Nẵng" and one under "da nang" were BOTH admitted, and no check fired. That is two canonical Trails for one theme, and `02` §2's own example city (`#danang`) is the one that breaks. Ł and Ø fail the same way (`odz-murals`, `resund-cycling`). The fold that fixes it already exists and is B01's: `searchKey` folds all three to one key (A1c). |
-| DV-25 | C | **W** | **Does not hold as a correct influence.** The shipping momentum kernel weighs every non-save outcome as positive engagement, `dismiss` included. `dismiss` is the ONE negative outcome (2297). So a place its viewers mark "Not interested" gains momentum over one they merely saw (`artifacts/api-server/src/test/discoveryVerifyAudit.test.ts:44#it("A2. DEFECT, pinned (DV-25): a dismissed place gains momentum over one that was only seen`), and the SQL twin does the same (`artifacts/api-server/src/migrations/2892_place_momentum.sql:463#CASE WHEN outcome = 'save' THEN c_w_save ELSE c_w_outcome END`). The Trail fold inherits it, and the Trail's `02` §9 exposure numerator counts a dismiss as a positive response (`artifacts/api-server/src/services/trails/TrailService.ts:646#if (r.outcome !== "impression") bucket.positives += 1;`). Behaviour does influence Trail momentum, but with the wrong sign for the one negative signal. |
+| DV-20 | C | **W** | **Does not hold.** The Trail canonicaliser folds diacritics but not letters that NFKD does not decompose (`artifacts/api-server/src/lib/discoveryTrailObject.ts:162#.normalize("NFKD")`). "Đà Nẵng street food" becomes `a-nang-street-food` and "Da Nang street food" becomes `da-nang-street-food`, and CHECK 1's similarity is 0.6, below the 0.8 duplicate bar (`discoveryVerifyAudit.test.ts` A1, as pinned at 838f56cb5 (line 26): "A1. DEFECT, pinned (DV-20): 'Đà Nẵng street food' and 'Da Nang street food' canonicalise to two Trails"; flipped to FIXED in §61.14). Through the shipping `proposeTrail` on the harness, one filed under destination "Đà Nẵng" and one under "da nang" were BOTH admitted, and no check fired. That is two canonical Trails for one theme, and `02` §2's own example city (`#danang`) is the one that breaks. Ł and Ø fail the same way (`odz-murals`, `resund-cycling`). The fold that fixes it already exists and is B01's: `searchKey` folds all three to one key (A1c). |
+| DV-25 | C | **W** | **Does not hold as a correct influence.** The shipping momentum kernel weighs every non-save outcome as positive engagement, `dismiss` included. `dismiss` is the ONE negative outcome (2297). So a place its viewers mark "Not interested" gains momentum over one they merely saw (`discoveryVerifyAudit.test.ts` A2, as pinned at 838f56cb5 (line 44): "A2. DEFECT, pinned (DV-25): a dismissed place gains momentum over one that was only seen"; flipped to FIXED in §61.14), and the SQL twin does the same (`artifacts/api-server/src/migrations/2892_place_momentum.sql:463#CASE WHEN outcome = 'save' THEN c_w_save ELSE c_w_outcome END`). The Trail fold inherits it, and the Trail's `02` §9 exposure numerator counts a dismiss as a positive response (`if (r.outcome !== "impression") bucket.positives += 1;`, TrailService.ts line 646 at `75278df7b`; de-pointered by §61, which fixed it). Behaviour does influence Trail momentum, but with the wrong sign for the one negative signal. |
 | DV-37 | C | **W** | **Does not hold for the keyless outcome path.** An outcome with no `recommendation_id` binds to "the most recent upgradable row for (viewer, item, surface)" (`artifacts/api-server/src/routes/rankEvents.ts:208#.in("outcome", upgradableOutcomesFor(outcome))`). Compare-and-set protects two RACING reports of one row (E2E O8b). A sequential RETRY, when the item was served twice, finds the next exposure and moves it too: one "Not interested", two dismisses, two negative signals, the retry answered as a new outcome (`artifacts/api-server/src/test/db/discoveryVerifyChain.db.test.ts:346#test("V7. DEFECT, pinned (DV-37): a KEYLESS outcome retried after a second serve of the same item moves a SECOND exposure`). The row's text states only the unkeyed direct impression as the unkeyed boundary. Every client build before §50 sends keyless outcomes. |
 | DC-15 | C | **W** | **Does not hold as stated.** "One registry row for each of the … indexes that migrations create on Discovery tables" is false for three constraint-backed unique indexes: `trails_slug_unique` (`artifacts/api-server/src/migrations/2910_discovery_trails.sql:160#CONSTRAINT trails_slug_unique UNIQUE (slug),`), `place_momentum_place_run_key` (2892) and `discovery_place_reports_unique` (0061). None has a row in `docs/discovery/query-paths.md` §4. The forward check cannot see such indexes, because it matches only `CREATE [UNIQUE] INDEX` (`artifacts/api-server/src/scripts/checkDiscoveryQueryPaths.ts:67#const INDEX_RE = new RegExp(`). Probed: a migration adding `ALTER TABLE public.rank_events ADD CONSTRAINT … UNIQUE (id, outcome)` leaves the check `RESULT clean`, and the same index spelled `CREATE UNIQUE INDEX` fails it `MISSING`. The probe file was deleted. Ten primary keys and the baseline-only `idx_discovery_cache_dest_cat` also have no row. |
 
@@ -10123,7 +10123,7 @@ trend STATE orders nothing anywhere, flag or no flag.*
 
 | ID | verdict | why it stays |
 |---|---|---|
-| DC-21 | W | 2 of `11` §4's 5. **Trend explanation: built** (58.2). **Trending by Trail: built by P7, with one defect** — when the all-surfaces Trail read fails and the item read succeeds, `trailMomentum` stays null (`artifacts/api-server/src/services/trails/TrailService.ts:972#trailMomentum = trailMomentumFromRankEvents(trailRead.rows, m.members, nowMs)[trailId] ?? null;`) and the route serves `trending: false` (`artifacts/api-server/src/routes/trails.ts:340#trending: (r.momentum ?? 0) > 0,`) beside a non-null provenance, so a failed read reads as a measured "not trending" (`11` §9). Hunk in 58.8. P7's viewer scoping and creator/place caps were re-read and hold. **Trending by location, personalized trending, emerging places/Trails: not built** — each is an ordered list or a new term (58.5). "Never return internal raw scores" holds on both built actions. |
+| DC-21 | W | 2 of `11` §4's 5. **Trend explanation: built** (58.2). **Trending by Trail: built by P7, with one defect** — when the all-surfaces Trail read fails and the item read succeeds, `trailMomentum` stays null (`trailMomentum = trailMomentumFromRankEvents(trailRead.rows, m.members, nowMs)[trailId] ?? null;`, TrailService.ts line 972 at `75278df7b`; de-pointered by §61, which applied H-P8-1) and the route serves `trending: false` (`trending: (r.momentum ?? 0) > 0,`, routes/trails.ts line 340 at `75278df7b`; de-pointered by §61) beside a non-null provenance, so a failed read reads as a measured "not trending" (`11` §9). Hunk in 58.8. P7's viewer scoping and creator/place caps were re-read and hold. **Trending by location, personalized trending, emerging places/Trails: not built** — each is an ordered list or a new term (58.5). "Never return internal raw scores" holds on both built actions. |
 | DV-33 | W | Trend reasons now reach a route as a closed vocabulary with the product's sentence, and the stored sentence equals it (`artifacts/api-server/src/test/discoveryTrendingApi.test.ts:487#it("I3. 3410 stores lib/discoveryTrendState's sentence`). Two things keep it `W`, the second already stated in §12.5, neither closed here: (1) a reason names the state, not what drove it — the windows sum impressions, saves and outcomes, so "saves led this" is not computed and `03` §11's own examples (trip adds, independent groups, first-time visitors) have no input; (2) whether a public reason may name a neighbourhood is unruled. |
 | DC-07 | W | `03` §13's five stores are now each durable AND equal to the product's reading. Raw events: `rank_events`. Aggregated windows, state snapshot, explanation features, model/version references: `place_momentum`'s rates, `trend_state` per `computed_at`, reason plus unique travellers, and `model_version` with the weights, windows and thresholds on every row. The prohibition holds by construction: 2892's postcondition refuses a table without its evidence columns. **The parity is executed, not parsed:** every stored row equals `computeTrendStates` over the loader's own rows — state, four rates and sentence (`artifacts/api-server/src/test/db/discoveryTrendSnapshotParity.db.test.ts:113#it("S1. every stored row equals computeTrendStates`). 2892 failed that on the surface and on the sentence (S2 names the places that told them apart). **W, not C, on one ground:** nothing calls the rebuild, so no deployment stores anything; cadence and retention are unruled (question 4). `feature_version` is DC-17's field (P9's H4) and is not claimed here. The census sentence "no `place_momentum` table exists" was already superseded by §41.2. |
 | DV-28 | W | Re-read. `03` §14's criterion, "distinguish emerging vs established", is met for places by the classifier. Two gaps are in the specification's words: `03` §3 defines Emerging as "small absolute numbers, strong acceleration, **broad independent confirmation**" and the branch that says `emerging` checks only that there is no history (`artifacts/api-server/src/lib/discoveryTrendState.ts:162#if (!hadMid && !hadPrior) return "emerging";`), so one account can make a place emerging; and `03` §4's content lifecycle ("must depend on content type") is absent. Both are new trend terms: held (58.5). |
@@ -10687,6 +10687,341 @@ This section adds to census-discovery's scope 3420–3422 and their rollbacks, i
 
 - CONSTRUCTED 182 / 188 = **96.8 %**; CORRECT 96 / 188 = **51.1 %**. The four buckets sum to 188.
 - **Production.** 3420, 3421 and 3422 are applied to the harness only. 3422's revoke closes a live hole on every database it reaches, and it is applied to none.
+
+## §61 — Trails integrity (lane P14): creation decided where the insert is, one identity per theme and place, attach names content that exists, a dismiss is not momentum, and one Trail projection built rebuildable
+
+*Written 2026-09-27 by the Discovery P14 lane on `disc-p14-trails-db`, cut from `88884572b` (the `wave8-integration` tip, carrying §46–§57). The integrator then authorised one merge of the integration tip `75278df7b` (§58–§60) so that 3417 could be built on 3410 (§61.5). DV-20 and DV-25 were added to this lane's scope by the integrator after §59 (lane P12, verification) re-graded both `C` → `W`; their "was" below is §59's `W`, which since the merge is also the last statement in this file. The other three OLD verdicts were read from `CENSUS_INTEGRITY_DUMP=ALL` at the base, and §58–§60 do not restate them: DC-03 `W` (§51.6), DC-20 `W` (§51.6), DV-72 `W` (§11.5; P9's §54.2 re-grade is prose, so the table row is the last statement). Nothing here is merged to `main`, deployed, applied to a shared database or flag-enabled. **This section does not restate the headline.***
+
+### 61.1 What is known about production, as given
+
+This lane read no production.
+
+- **2910 is applied to production** (2026-09-20) and holds **0** Trails (§51.1).
+- **2892 is absent from production** (§54.2), and 3410 (§58) is applied to the harness only. 3417 cannot apply anywhere until both have: its precondition refuses rather than guessing.
+- **3415, 3416 and 3417** are applied to the local PostgreSQL 16 harness only (port 54551). They are not applied to `portava-ci` or to production. A fresh `up.sh` on the merged chain replays them in order after 3410: 349 files applied in order, 12 known-unreplayable of 361.
+- **Deploy order is now load-bearing.** `proposeTrail` fails CLOSED without 3415: `POST /v1/discovery/trails` answers 503 `degraded_unavailable` instead of creating a Trail unserialised (§61.2). Deploying this code before 3415 is applied disables Trail creation in that deployment, and says so.
+
+Every `C` below is **implementation-C on this branch**, under §51.1's rule for this subsystem: *"Every `C` below is therefore **implementation-C on this branch**. No Trail has ever been served in production, and no production `db/` exposure has been counted against one. Neither is claimed."* The integrator accepted that rule for DC-02 on an equally unapplied 3380 (§51.14: *"Every one of the eleven Discovery moves this round is an implementation verdict on this branch; 3380 and 3381 are applied to the local harness only, and no Trail exists in production."*). No flag gates Trail creation, attach or the momentum kernel, so §57.2's flag leg does not apply. The migration and branch legs of §17.3's ceiling do apply. If the integrator holds DC-03, DV-20 and DV-25 at `W` under them, they are held for the reason DC-02 would be.
+
+### 61.2 DC-03 — the race, produced, and the decision moved to where the insert is
+
+**Measured before the fix.** On the pre-lane `TrailService.ts`, six proposals with the same theme and six different slugs ran concurrently. The bridge held every write until all six pre-check reads had finished, so each proposal checked a catalogue that held none of the others. **All six were admitted**: `r…p1-bangkok-after-dark`, `after-dark-r…p1-bangkok`, `bangkok-r…p1-after-dark`, `dark-after-bangkok-r…p1`, `r…p1-after-dark-bangkok`, `bangkok-after-dark-r…p1`.
+
+**The fix is 3415.** `public.trail_propose` (`artifacts/api-server/src/migrations/3415_trail_proposal_serialised.sql:396#CREATE OR REPLACE FUNCTION public.trail_propose(`) runs these steps in one READ COMMITTED transaction:
+
+1. It takes a transaction-scoped advisory lock on every title token, in ascending key order (`artifacts/api-server/src/migrations/3415_trail_proposal_serialised.sql:423#PERFORM pg_advisory_xact_lock(v_key);`).
+2. It re-reads the declared parent `FOR SHARE` and refuses it if it is gone or archived (`artifacts/api-server/src/migrations/3415_trail_proposal_serialised.sql:430#IF NOT FOUND OR v_parent_state = 'archived' THEN`).
+3. It reads the comparison set (`artifacts/api-server/src/migrations/3415_trail_proposal_serialised.sql:351#CREATE OR REPLACE FUNCTION public.trail_proposal_peers(p_title text, p_destination text)`).
+4. It re-runs the four checks (`artifacts/api-server/src/migrations/3415_trail_proposal_serialised.sql:259#CREATE OR REPLACE FUNCTION public.trail_canonicalisation_verdict(p_title text, p_destination text, p_peers jsonb)`) and the declared parent's waiver.
+5. It inserts.
+
+It refuses to run at any other isolation level (`artifacts/api-server/src/migrations/3415_trail_proposal_serialised.sql:412#IF current_setting('transaction_isolation') <> 'read committed' THEN`), because under a transaction snapshot the lock would not show it the racer.
+
+**Why a lock per token is enough.** Each of the four refusals implies the two titles share a token:
+
+- CHECK 1 needs similarity ≥ 0.8 or an identical slug.
+- CHECK 2 needs similarity ≥ 0.6.
+- CHECK 3 compares theme tokens, which are a subset of the title's tokens.
+- CHECK 4 needs a non-empty strict subset.
+
+So any two proposals that could refuse each other take the same lock and run one after the other. Two that share no token never wait on each other.
+
+`TrailService.proposeTrail` keeps its TypeScript checks, unchanged, as the pre-check. Only its insert is replaced, line-neutrally, by the call (`artifacts/api-server/src/services/trails/TrailService.ts:1297#const committed = await commitTrailProposal(sc, {`). The call fails closed when the function is absent (`artifacts/api-server/src/services/trails/TrailService.ts:1304#if (committed.kind === "unavailable") return { ...none, refusal: "trails_unavailable" };`, `artifacts/api-server/src/services/trails/trailProposal.ts:94#if (error) return isMissingProposalFunction(error) ? { kind: "unavailable" } : { kind: "error", error };`). The functions are SECURITY INVOKER with a pinned `search_path` (`10` §6). They are executable by `service_role` only, because `trail_propose` takes the proposer as an argument.
+
+**Same inputs, same verdicts.** The SQL mirrors the TypeScript, so the drift hazard 2892 documents applies here too. It is pinned four ways:
+
+- **G1**: the canonical slug, on 320 titles (NFKD ligatures, circled digits, the Kelvin sign, fullwidth letters, emoji, combining marks, and every folded letter of §61.3).
+- **G2**: similarity with its rounding, for all 1,211 (|A|, |B|, shared) cases up to 14. PostgreSQL's `round()` on a double rounds half to even and `Math.round` does not, so the SQL rounds half up by hand.
+- **G3**: the four checks, over 600 seeded cases of which more than 300 refuse, every check firing. Destinations include several spellings of one place.
+- **G4**: 40 sequential proposals through the real service. The SQL comparison set equals the set the pre-check read, and every outcome is the TypeScript verdict.
+
+G4 passes on the pre-lane service too: where DV-20's fold does not apply, the non-racing verdicts are unchanged. Where it applies (§61.3), they change on purpose, and G1/G3 fail on the pre-lane `discoveryTrailObject.ts`. The SQL sees MORE than the pre-check in two places, and so can only refuse more:
+
+- It has no `LIMIT`. The pre-check reads at most 1,000 peers and logs when it reaches that bound.
+- It has a leg that matches the same destination spelled differently (§61.3), which PostgREST cannot compute.
+
+C1–C4 pin the thresholds, the pigeonhole bound, the waiver set and the rounding as text.
+
+### 61.3 DV-20 — one theme, one Trail, whatever the letters
+
+**§59's defect, reproduced on this branch.** `canonicalTrailSlug` decomposed (NFKD) and then deleted everything outside [a-z0-9]. A Latin letter with NO decomposition was therefore deleted rather than folded. "Đà Nẵng street food" became `a-nang-…` beside "Da Nang street food"'s `da-nang-…` (similarity 0.6), and the two destinations were compared as unequal strings. So both were admitted as two canonical Trails. The same happened for every such letter, not only the stroke ones: "Straße Food" became `stra-e-food` beside "Strasse Food"'s `strasse-food`.
+
+**The fold** (`artifacts/api-server/src/lib/discoveryTrailFold.ts:47#export function trailLetterFold(s: string): string {`) is applied before the decomposition (`artifacts/api-server/src/lib/discoveryTrailObject.ts:161#const slug = trailLetterFold(title)`, line-neutral; `.normalize("NFKD")` stays on `:162#.normalize(`). It has two parts:
+
+- **The stroke fold** is B01's own table, reused and not restated: `lib/canonicalLocations.strokeFold`, the fourteen letters 2220 also translates (đ Đ ø Ø ł Ł ħ Ħ ŧ Ŧ ð Ð ı İ).
+- **The letter fold** covers the Latin letters with neither a decomposition nor a stroke. Each goes to its CLDR Latin-ASCII spelling: ß ẞ → ss, æ Æ → ae, œ Œ → oe, þ Þ → th, ŋ Ŋ → ng. Without it, §59's finding stands for those letters.
+
+**A destination** is now compared by `trailDestinationKey`: the letter fold, then B01's `searchKey` (`artifacts/api-server/src/lib/discoveryTrailObject.ts:244#const n = trailDestinationKey(d);`). So "Đà Nẵng", "DA  NANG" and "da nang" are one destination.
+
+3415 applies the same fold in SQL, in the slug and in the destination key (`artifacts/api-server/src/migrations/3415_trail_proposal_serialised.sql:122#CREATE OR REPLACE FUNCTION public.trail_letter_fold(p_text text)`). Its comparison set also matches a destination by key (`artifacts/api-server/src/migrations/3415_trail_proposal_serialised.sql:381#OR (v_key IS NOT NULL AND public.trail_normalised_destination(tr.destination) = v_key)`), so the database compares a peer the pre-check's PostgREST read could not find.
+
+**Parity**, TypeScript against SQL:
+- G1 covers the slug over every folded letter.
+- S7 covers the destination key over 170 spellings.
+- G3 covers the checks with several spellings of one place.
+- S4 pins the fold tables as text.
+
+**Through the service:**
+- The defect's own case is refused (S5).
+- A peer filed under another spelling of the destination, which the pre-check did not read, is refused by the database alone (S6).
+
+**Found, not fixed:** `lib/canonicalLocations.searchKey` itself (B01's search and 2220's `search_key`) still deletes ß, æ, œ, þ and ŋ. The Trail key folds them in front of it. Extending `searchKey` is that module's owner's (§61.11, H2). Non-Latin scripts still reduce to their Latin words: "東京 Nights" slugs as `nights`, and a wholly non-Latin title is refused as uncanonicalisable. That merges or refuses; it never makes two Trails for one theme.
+
+### 61.4 DC-20 — attach names content that exists, of the type it says, that the actor may see
+
+`attachContentToTrail` checked neither existence nor type (§51.6). It now calls `verifyAttachSources` before §4's budget is judged (`artifacts/api-server/src/services/trails/TrailService.ts:1397#const verified = await verifyAttachSources(sc, labels, actor.userId, servableMembers);`). Every rule comes from code that already existed:
+
+| type | admitted when | where the rule comes from |
+|---|---|---|
+| `post`, `event`, `route` | the row exists and the ACTOR could be served it | `servableMembers`, the Trail read path's own helper (`artifacts/api-server/src/services/trails/TrailService.ts:295#async function servableMembers(`): post visibility, publication and schedule, the creator's standing, and blocks in both directions |
+| `place` | a `discovery_places` row **or** a canonical `places` row (`artifacts/api-server/src/services/trails/trailAttachIntegrity.ts:101#sc.from("places").select("id").in("id", placeIds),`), and a community place's submitter not blocked | Both tables, because existing Trail code already treats both as members: `servableMembers` serves a place absent from `discovery_places` as an authorless venue fact, `servedIdsForMember` folds the `db/<uuid>` that `GET /discovery` serves for either table, and a post's cluster place is its canonical `places` id. Picking one table would answer §51.10 question 5. |
+| `itinerary` | never: refused as `unverifiable_source_type` (`artifacts/api-server/src/services/trails/trailAttachIntegrity.ts:56#export const VERIFIABLE_TRAIL_SOURCE_TYPES = ["post", "place", "event", "route"] as const;`) | no table holds one, so an id can be neither verified nor revoked; what an itinerary IS stays question 5 |
+
+**Visibility at attach is not a WHO rule, and here is why it had to come with the existence check.** Without it, the check would be an oracle. "No such post" would be 409 and "a private post you may not see" would be 201, so a stranger could probe which private post ids exist. The unseen and the absent therefore get ONE answer, `unknown_content`, as `detachContentFromTrail` already does for "unknown" and "not yours". Who may attach content they CAN see, and at which confidence, is untouched. So is whether a suggestion spends the content's budget.
+
+**Failures.**
+- A source that cannot be read admits nothing. The route answers 503 `degraded_unavailable`, retryable, with its own message (`artifacts/api-server/src/routes/trails.ts:137#case "source_unreadable": return sendError(res, "degraded_unavailable", "the content could not be verified; nothing was attached"); // §61, retryable`). This covers the content table, both place tables, the block list and the creator-standing read.
+- A refused label is named, with the ids the caller sent, in `contentRefusals`, which appears only when there is one. When nothing was attached and no budget refused, the error is `content_refused` (`artifacts/api-server/src/routes/trails.ts:401#error: r.capRefusals.length === 0 && contentRefusals.length > 0 ? "content_refused" : "label_cap_refused",`).
+
+On the pre-lane code, 8 of I1–I9 were red. I3 (real content is admitted) is the ninth, and M16 kills it.
+
+**Found, not fixed, because each is a serve-path rule rather than attach integrity:**
+
+- `servableMembers` applies no visibility rule to an event (`visibility` friends-only, invite-only, circle or trip; `state` draft or cancelled) or to a route plan's owner. Such content is attached and served to everyone, as it was before this lane.
+- The serve path reads only `discovery_places`. A place member whose canonical `places` row is later deleted is still served.
+- An author's own post is refused before its `publish_at`, because the helper withholds it until then.
+
+### 61.5 DV-25 — a dismiss is not momentum
+
+**§59's defect.** `lib/discoveryLocalMomentum.weightFor` weighed every non-save outcome at 2, `dismiss` included. So a place people dismissed GAINED momentum. It gained it in:
+
+- `GET /discovery`'s momentum;
+- a Trail's `trending_now` order;
+- GET …/trending's `trending` boolean;
+- DV-25's Trail momentum.
+
+`rebuild_place_momentum` did the same in SQL, in 2892's body and in 3410's (§58), which owns the function now. `TrailService.exposureCountsFrom` counted a dismiss as a §9 positive response.
+
+**Three sites, each excluding it with zero. There is no negative weight and no new term:**
+
+1. **The kernel.** `artifacts/api-server/src/lib/discoveryLocalMomentum.ts:147#if (outcome === "dismiss") return 0;` is line-neutral, and the only line of P8's file this lane touched, as the integrator allowed. A dismissed row still counts as the impression it was.
+2. **§9's positives.** `artifacts/api-server/src/services/trails/TrailService.ts:646#if (r.outcome !== "impression" && r.outcome !== "dismiss") bucket.positives += 1;`. A dismissed serve is still an impression in the denominator.
+3. **The SQL store.** 3417 replaces `rebuild_place_momentum` with **3410's** body byte for byte except one CASE arm (`artifacts/api-server/src/migrations/3417_place_momentum_dismiss_excluded.sql:111#CASE WHEN outcome = 'save' THEN c_w_save WHEN outcome = 'dismiss' THEN 0 ELSE c_w_outcome END`). The diff against 3410's function is that one line. It was first written on 2892's body; after P8's merge the integrator routed it onto 3410's, because laid on 2892's it would have silently undone 3410's corpus and sentences. It now refuses to apply without 3410 (`artifacts/api-server/src/migrations/3417_place_momentum_dismiss_excluded.sql:59#RAISE EXCEPTION 'PRECONDITION FAILED (3417): place_momentum.source_surface is missing.`), which was rehearsed: with 3410 rolled back, 3417 refused and changed nothing. Its rollback restores 3410's body verbatim.
+
+**Parity, on a chain that includes 3410.** The SQL store's TypeScript mirror is `lib/discoveryTrendState.computeTrendStates`, not `computeLocalMomentum`, and it has its own `weightFor`, in lane P8's file. The dismiss suite asserts 3410 is in the chain before it seeds. So:
+
+- **D2** proves the SQL store equals `computeTrendStates` over the same rows with a dismiss's outcome weight removed. That is the exclusion, stated in the TypeScript kernel's own terms.
+- **D3** is the parity on the RAW rows. It runs as `todo` until the routed hunk H1 (§61.11) gives `computeTrendStates` the same one-line exclusion, and it detects H1 by behaviour. With H1 applied in a scratch run on the 3410 chain, 76 of 76 pass across D1–D3, P8's `discoveryTrendSnapshotParity.db.test.ts`, `discoveryTrendingApi.test.ts`, `placeMomentumSqlParity.test.ts` and `discoveryLocalMomentum.test.ts`. The file was restored sha256-identical. With 3417 rolled back, D1 and D2 are red (M50).
+- P8's parity suite seeds no dismiss, so 3417 does not disturb it: it passes with 3417 applied and H1 absent.
+
+**Left as 3410 writes them, not fixed.**
+- 3417 keeps `model_version` and `event_weights`, as asked (3410's exact body, only the dismiss weight changed). A row written after 3417 therefore does not say that dismisses were excluded. That is DC-17's field-level question.
+- A dismiss's outcome row stays in the event set at weight 0, so its traveller is still counted in `recent_unique_travelers` and `window_unique_travelers`, 3410's disclosure floor. A viewer who dismissed a place inside 48 hours of now, after a serve before that window, counts toward the floor that lets its state be published. Whether a dismisser counts toward that floor is §58's to answer.
+
+### 61.6 DV-72 — the five `10` §3 projections, re-derived from the spec and the tree
+
+`10` §3 lists the five names and says *"These are derived and rebuildable."* `05_Graph_Engine.md` is where four of them are defined. §54.2's *"`10` §3 gives each a name and nothing else"* is right about `10` and misses `05` §2, which names the Trail Graph's sources.
+
+| projection | spec definition | source rows | exists? | rebuildable? | this lane |
+|---|---|---|---|---|---|
+| `place_momentum` | `03`'s trend state (2892; 3410 owns the rebuild since §58) | `rank_events` | repository (2892, 3410), not production | yes, proven on the harness (§54.2 P1/P2, §58) | its rebuild now excludes dismisses (3417 on 3410's body, §61.5); §58 re-graded DC-07 on it |
+| `trail_relations` | `05` §2 Trail Graph: *"Edges from: parent/child, related topic, geographic branch, common content, common traveler flow"*; §5 *"typed and time-aware"*; §6 strength from recency, frequency, diversity and confirmed experiences, with no formula; §8 *"Materialized/derived tables can serve: … Trail relations"* | `trail_edges`, `trails.parent_trail_id`, `content_trails` | **repository (3416), harness only** | **yes: R1–R5** | **built**, without a strength and without traveller flow |
+| `traveler_affinities` | `05` §2 Traveler Graph: *"follows, shared trips, shared events, accepted Travel Marks, Shared Moments, repeated interactions"*; §6 strength, no formula; §7 privacy boundary | `user_follows`, `trip_members`, `event_rsvps`, `shared_moment_memberships` / `shared_moment_contributions`, `rank_events`; no Travel Marks table exists in this tree | no | — | **not built**: a per-pair inference about people |
+| `place_cooccurrence` | `05` §2 Place Graph: *"common itinerary co-occurrence, same Trail, same trip sequence, traveler transitions"* | `trip_plan_items`, `route_stops`, `plan_checkins`, `circle_checkins` (personal itineraries and movement) | no | — | **not built**: co-occurrence over personal itineraries |
+| `circle_momentum` | `05` §2 Circle Graph: *"Internal model of travel-group activity and drift"*; §3 *"circle momentum, circle stability, expansion, inactivity, reconnection"* | `circles`, `circle_memberships`, `circle_checkins`, `circle_presence`, `route_plans.circle_id` | no | — | **not built**: a group-level behavioural inference |
+
+**`trail_relations` (3416)** (`artifacts/api-server/src/migrations/3416_trail_relations_projection.sql:96#CREATE TABLE IF NOT EXISTS public.trail_relations (`) holds three kinds of row:
+
+- **declared edges**, verbatim, with their declared strength;
+- **parent pointers** that no declared `child` edge carries. This is the same de-duplication `relatedTrails` performs.
+- **common content**: pairs of Trails that hold the same (source_type, source_id), each pair once. Each row carries its count and its window, which are the frequency and recency ingredients, not a score made from them.
+
+Every row carries `10` §9's four lineage fields: the source window, a feature version, a model version (the projection's definition) and the computation time.
+
+`05` §6's strength is **not** computed. No formula exists, and §6 also says *"Do not store 'relationship truth' as a single permanent score"*. Common traveller flow is **not** included, because it is behavioural.
+
+`rebuild_trail_relations(p_now)` (`artifacts/api-server/src/migrations/3416_trail_relations_projection.sql:154#CREATE OR REPLACE FUNCTION public.rebuild_trail_relations(p_now timestamptz DEFAULT now())`) replaces every row in one statement and one snapshot. It is SECURITY INVOKER, executable by `service_role` only, and serialised by its own advisory lock. The table has RLS on, four RESTRICTIVE client-deny policies in 3390's pattern, and `service_role` SELECT, INSERT and DELETE, with no UPDATE.
+
+**Nothing reads it and nothing calls the rebuild.** There is therefore no flag to seed, and no ranker reads it: C6 fails if any non-test, non-migration source names the table or its rebuild (the ROADMAP 2026-08-15 hold). A future reader must apply the viewer's visibility. The projection is a function of the rows, not of a viewer, and a common-content count includes members a given viewer may not be served.
+
+**The consent machinery that exists, and why none of it covers the other three:**
+
+- `sensingConsentScopes` / `sensingContributionPolicy` define seven purpose scopes (collect, retain, aggregate, infer, personalize, surface, share) for SENSING contributions only.
+- `highlightProjectionPolicy`'s memory consent dimensions (STORE, RESURFACE, PERSONALIZE, SHARE, CONTRIBUTE_TO_AGGREGATE_INTEL) cover memories and highlights.
+- `locationPurposes` declares lawful basis and retention per location-processing purpose.
+- `dataRights` classifies the intel tables.
+
+No purpose, scope or consent version names inferring an affinity between travellers, a co-occurrence over their itineraries, or a circle's momentum for Discovery. Building any of the three would decide that question (§61.12).
+
+### 61.7 Row verdicts
+
+| ID | was | now | evidence |
+|---|---|---|---|
+| DC-03 | W | **C** | `02` §5: *"Creation should require canonicalization checks: duplicate title similarity, destination overlap, semantic overlap, existing parent/child Trail."* All four run, CHECK 1 across destinations (§51.4), and a refusal is a 409 naming the check and `06` §6's suggested parent (§17.1). §51.6's one ground, **not serialised**, is closed. The decision is taken where the insert is, under a per-title-token lock, over the catalogue as it stands (`artifacts/api-server/src/migrations/3415_trail_proposal_serialised.sql:423#PERFORM pg_advisory_xact_lock(v_key);`), and the service routes creation through it and fails closed without it (`artifacts/api-server/src/services/trails/TrailService.ts:1297#const committed = await commitTrailProposal(sc, {`). Six racing near-duplicates with six different slugs: six admitted before, exactly one after, every other refused naming it (`artifacts/api-server/src/test/db/trailsProposalRace.db.test.ts:99#test("P1. six racing near-duplicates with six DIFFERENT slugs`). Six racing non-duplicates are all admitted (P2). A second proposal waits for the first to commit and is refused by it (P3). Outside DV-20's fold the non-racing verdicts are unchanged (G1–G4). Implementation-C under §51.1's rule; 3415 is applied to the harness only. |
+| DV-20 | W | **C** | `02` §19: *"Trails are canonical objects, not strings."* §59's ground was that two spellings of one theme became two canonical Trails. It is closed on both legs of the identity. The slug folds every Latin letter NFKD cannot decompose (`artifacts/api-server/src/lib/discoveryTrailObject.ts:161#const slug = trailLetterFold(title)`), and destinations compare by one geographic key (`artifacts/api-server/src/lib/discoveryTrailObject.ts:244#const n = trailDestinationKey(d);`). The database decision applies the same fold, with TS/SQL parity (G1, G3, S7) and the defect's own case refused through the service (`artifacts/api-server/src/test/db/trailsProposalRace.db.test.ts:410#test("S5. the defect's own case, through the service`). §51.5's named residual, the concurrent race, is DC-03's and is closed above. Non-Latin scripts still reduce to their Latin words, which merges or refuses and never duplicates (§61.3). Implementation-C; 3415 is applied to the harness only. |
+| DV-25 | W | **C** | `02` §19: *"user behavior can influence Trail momentum."* §59's ground was that it influenced it the WRONG way: a dismiss raised momentum. Every path by which behaviour reaches a Trail's momentum runs through `computeLocalMomentum`: `trending_now`, GET …/trending's boolean, and DV-25's Trail momentum on the held flag-2289 term. That kernel now excludes a dismiss (`artifacts/api-server/src/lib/discoveryLocalMomentum.ts:147#if (outcome === "dismiss") return 0;`; M1, M2). So does §9's positive count (M3), and so does the SQL store 3417 rebuilds (D1, D2). The criterion is *can*, and the behaviour that can is now the behaviour that means interest. H1, the trend-state kernel's own exclusion, is routed (§61.11). No Trail reading uses that kernel. |
+| DC-20 | W | W | **The integrity leg is closed; the WHO legs are the owner's.** Closed: an attach or suggestion names content that exists in the table its type names and that the actor could be served. Itinerary is refused as unverifiable, and an unreadable source admits nothing (`artifacts/api-server/src/services/trails/TrailService.ts:1397#const verified = await verifyAttachSources(sc, labels, actor.userId, servableMembers);`; `artifacts/api-server/src/test/db/trailsAttachIntegrity.db.test.ts:139#test("I1. a nonexistent id is refused`, I2–I9, 8 of 9 red before). `place` admits both tables because the Trail read path already treats both as members (§61.4). **Still failing `11` §10 *"every mutation is authorized"*:** any signed-in user may attach any content they can see at the author's-statement confidence (`artifacts/api-server/src/services/trails/TrailService.ts:1436#const confidence = actor.mode === "attach" ? 0.8 : 0.4;`), and a third party's suggestion still spends the content's §4 budget. Both are §51.10 question 5, which stays open verbatim. |
+| DV-72 | W | W | `10` §10 *"derived tables are rebuildable"*. Two of the five `10` §3 projections exist, both in the repository and neither in production: `place_momentum` (2892, §54.2) and now `trail_relations` (`artifacts/api-server/src/migrations/3416_trail_relations_projection.sql:154#CREATE OR REPLACE FUNCTION public.rebuild_trail_relations(p_now timestamptz DEFAULT now())`). The latter is proven rebuildable on the harness: equal to an independent projection, identical after a drop, unchanged by a second rebuild, and exact after a source change (`artifacts/api-server/src/test/db/trailRelationsRebuild.db.test.ts:163#test("R1. rebuild-equivalence`, R2–R4). `traveler_affinities`, `place_cooccurrence` and `circle_momentum` do not exist. Each is a behavioural inference about people or groups that no declared purpose or consent covers (§61.6), and a table that does not exist is not rebuildable. |
+
+### 61.8 Tests, and every one seen RED (P24)
+
+| suite | cases | red before its fix / killed by |
+|---|---:|---|
+| `db/trailsProposalRace.db.test.ts` (new) | 14 | P1, P5, P6, P7 red on the pre-lane service; P1, P3 and P5 red without the lock (M02). P2–P4 and G1–G4 test the SQL and are killed by M02–M14 and M43–M46, M51. S5 is red with the pre-lane slug in both layers (M47). S6 and S7 are killed by M44 and M45. |
+| `db/trailsAttachIntegrity.db.test.ts` (new) | 9 | 8 red on the pre-lane service and route. I3 is killed by M16. |
+| `db/trailRelationsRebuild.db.test.ts` (new) | 5 | red with 3416 rolled back; each also killed by M36–M39 |
+| `db/placeMomentumDismiss.db.test.ts` (new) | 3 | D1 and D2 red with 3417 rolled back (M50, re-run on the 3410 chain). D3 is `todo` until H1, and passes with H1 applied (§61.5). |
+| `discoveryTrailIntegrity.test.ts` (new) | 26 | C1–C6, T1–T6, V1–V7, S1–S4 and M1–M3, each killed by a named mutation (§61.8's list) |
+| `discoveryTrailRoutes.test.ts` (+5) | 63 | the three §61 cases are killed by M08, M34 and M35, and the two H-P8-1 cases by M53 and M54 |
+
+`discoveryTrailRoutes.test.ts`, `discoveryTrailAccess.test.ts` and `db/trailsService.db.test.ts` changed their fixtures only:
+
+- the place and post ids they attach now name rows that exist;
+- the route fake answers `trail_propose` at its last step;
+- the database suite asserts that 3415 is applied.
+
+`trailPostgrestBridge.ts` gained RPC, a concurrent mode, a barrier, a commit hold and a per-request failure predicate, all opt-in. Every earlier suite runs as before.
+
+**54 mutations, each applied alone, each seen red, each file restored and sha256-checked.** M01–M52 were re-run in full at the pre-merge code state. After the merge of `75278df7b`, M50 was re-run on the 3410 chain and M53–M54 were added:
+
+- **M01**: the pre-lane `TrailService.ts`.
+- **M02–M14**: 3415's lock, the destination threshold, the isolation guard, the waiver, the parent's archive check, `normalize`, the rounding, strict superset, the null-destination leg, the pigeonhole and the waiver set. The migrations were re-applied without their probe blocks, so that the test, not the probe, sees each mutation.
+- **M05, M39**: a client `GRANT` on the function and on the table.
+- **M15–M35**: the attach check and its seams: both place tables, the type gate, each unread report, visibility, pairing, suggest, the verifier's early returns, `commitTrailProposal`'s mapping, and the two route answers.
+- **M36–M38**: 3416's lineage, clock and delete.
+- **M40, M41**: 3416's relation kinds, and a planted reader.
+- **M42–M47, M51, M52**: DV-20's fold, key and key leg, in each layer.
+- **M48–M50**: DV-25's three sites.
+- **M53, M54**: H-P8-1's route answer and the service's measured zero (§61.16).
+
+Five mutations survived a run, and each exposed a weak test, now fixed:
+
+- **M02**: with the lock removed, P3 went red but P1 stayed green in the final run (it had been red in the first). psql start-up jitter had serialised the six decisions after the barrier released them. The bridge now holds each decision's transaction open 400 ms before it commits, so the decisions overlap in the database. Without the lock, P1, P3 and P5 are red, in two consecutive runs.
+- **M12**: G4 had no destination-less Trail that only the `IS NULL` leg could find. The one it now seeds first carried a tag containing the test's own token, so the `ILIKE` leg found it anyway; its tag was changed.
+- **M20**: I5's `profiles` case failed the whole table, so the auth gate's own ban read answered the 503. The case now fails only the creator-standing read, and asserts the attach path's own message.
+- **M24**: V3 now also asserts that nothing is read after a place table fails.
+- **M48**: M1 saturated, since six recent rows read 1.0 with or without the dismiss weight. It now sits on a baseline below saturation.
+
+The migrations' own probes and postconditions also refuse M02, M09, M38, M43, M44 and M47. That is recorded as defence in depth, not counted as kills.
+
+**Rehearsal on the harness:**
+
+1. 3415, 3416 and 3417 applied, then re-applied, which is idempotent.
+2. Each rolled back, with its suite going red; each re-applied, and green.
+3. After the merge, the full chain replayed on a fresh `up.sh` with 3410 in it, and `run-tests.sh` run on it (§61.15).
+4. 3417 refused to apply with 3410 rolled back, and changed nothing. 3410 and 3417 were then re-applied, and 3417 re-applied again, which is idempotent.
+
+### 61.9 A reproduction script that 3380 had silently broken
+
+`docs/discovery/query-paths-explain.sql` (P9's `10` §4 reproduction) aborted on any harness with 3380 applied. Its one-transaction seed of 20,000 contents made the label-cap trigger take 20,000 advisory locks and hold them to COMMIT, which fails with *"out of shared memory"*. Every QP after the seed then ran inside an aborted transaction. The seed now skips triggers for its own inserts (harness only; the rows respect the caps), and the script runs clean again. QP-13 and QP-14 reproduce exactly as documented. QP-25 (the proposal comparison set under 3415's lock) and QP-26 (the rebuild) are added, with registry rows for `trail_relations` and `idx_trail_relations_to`.
+
+### 61.10 Line-neutral edits
+
+- **`services/trails/TrailService.ts`** is 1,626 lines before and after. The 20 lines the census cited in it at the base still carry their whole anchors, including `servableMembers`'s, where `export` was added in front of the anchor. §59 and §58.4 quoted two lines that this section then changed in place, `:646#r.outcome` (DV-25) and `:972#trailMomentum` (H-P8-1). Those quotations are de-pointered (§61.14).
+- **`lib/discoveryTrailObject.ts`** is 421 lines before and after. Its cited lines hold, and `.normalize("NFKD")` stays on `:162#.normalize(`.
+- **`lib/discoveryLocalMomentum.ts`** is 320 lines before and after. Only `weightFor`'s first line changed.
+- **`routes/trails.ts`**: the two lines the census cited at the base are unchanged. `artifacts/api-server/src/routes/trails.ts:340#trending: r.momentum === null ? null : r.momentum > 0,` changed in place for H-P8-1, and §58.4's quotation of it is de-pointered.
+
+`check:doc-citations` and `check:citation-targets` are clean.
+
+### 61.11 Routed hunks (NOT applied)
+
+**H1 — `artifacts/api-server/src/lib/discoveryTrendState.ts`, lane P8's file, line-neutral.** This is the same one-line exclusion as the kernel, so that the SQL store's TypeScript mirror (3410, 3417) agrees with it about dismisses. P8's merge appended code at the file's foot only; `weightFor` is unchanged there, so the hunk applies as written:
+
+```diff
+ function weightFor(outcome: string): number {
+-  if (outcome === "save") return TREND_EVENT_WEIGHTS.save;
++  if (outcome === "dismiss") return 0; if (outcome === "save") return TREND_EVENT_WEIGHTS.save; // §61 (DV-25): a dismiss is EXCLUDED — zero, never a negative weight
+   return TREND_EVENT_WEIGHTS.outcome;
+ }
+```
+
+With it applied on the 3410 chain, `db/placeMomentumDismiss.db.test.ts` D3 stops being `todo` and passes, and 76 of 76 pass across it, P8's parity and trending suites, `placeMomentumSqlParity.test.ts` and `discoveryLocalMomentum.test.ts` (§61.5). That last suite's "the two modules must weigh the same rows the same way" guard pins the constants only, so it passes with or without H1.
+
+**H2 — `artifacts/api-server/src/lib/canonicalLocations.ts` (and 2220's SQL fold), optional, owner's call.** `searchKey` deletes ß, æ, œ, þ and ŋ exactly as the slug did. `lib/discoveryTrailFold.TRAIL_LETTER_FOLD` is the table that closes it. Trails already fold in front of `searchKey`, so Trails do not need H2; B01's search does.
+
+### 61.12 Owner questions, verbatim
+
+1. **DV-72, `traveler_affinities`.** "May Portava derive a per-pair traveller affinity from follows, shared trips, shared events, Travel Marks, Shared Moments and repeated interactions (`05` §2) — under which consent or lawful basis, retained for how long, visible to whom — and what is its strength (`05` §6 names recency, frequency, diversity and confirmed experiences but no weights or window)?"
+2. **DV-72, `place_cooccurrence`.** "Is place co-occurrence computed from people's itineraries, trip sequences and transitions (`05` §2) — and if so under which purpose and consent, from what minimum number of distinct travellers before a pair is stored, and over what window — or only from places sharing a Trail, which needs no personal data?"
+3. **DV-72, `circle_momentum`.** "What is a circle's momentum (`05` §3: momentum, stability, expansion, inactivity, reconnection): which activity counts, over what window, may it be computed without every member's consent to group-level inference, and who may ever see it (`05` §3 says 'internally')?"
+4. **DC-20, event and route visibility in a Trail.** "May a Trail hold, and serve to everyone, an event that is not public (friends-only, invite-only, circle, trip, draft, cancelled) or another traveller's route plan? The Trail read path applies post visibility but no event or route rule, so today both are attached and served; and may an author attach their own post before its publish time?"
+5. §51.10 question 5 stays open as written there, for DC-20's WHO legs.
+
+### 61.13 Read-only production SQL that would turn harness evidence into production evidence
+
+```sql
+-- 3415 / 3416 / 3417 present (NULL / false until applied), and their preconditions (3417 needs 2892 and 3410):
+SELECT to_regprocedure('public.trail_propose(text,text,text,uuid,uuid)'), to_regclass('public.trail_relations'),
+       to_regprocedure('public.rebuild_place_momentum(timestamptz)') IS NOT NULL AS has_2892,
+       EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'place_momentum' AND column_name = 'source_surface') AS has_3410,
+       position('''dismiss''' IN coalesce(pg_get_functiondef(to_regprocedure('public.rebuild_place_momentum(timestamptz)')), '')) > 0 AS has_3417;
+SELECT current_setting('server_encoding');                          -- must be UTF8 for 3415's normalize()
+SELECT rolname, rolconfig FROM pg_roles WHERE rolname IN ('authenticator','service_role');  -- no default isolation above READ COMMITTED
+-- DV-20: Trails whose slug the fold would now write differently (the letters §61.3 folds)
+SELECT id, slug, title FROM public.trails WHERE title ~ '[đĐøØłŁħĦŧŦðÐıİßẞæÆœŒþÞŋŊ]';
+-- DC-20: members attached before §61 that the attach check would now refuse
+SELECT ct.source_type, count(*) AS members,
+       count(*) FILTER (WHERE ct.source_type = 'itinerary'
+         OR (ct.source_type = 'post'  AND NOT EXISTS (SELECT 1 FROM public.posts p WHERE p.id = ct.source_id))
+         OR (ct.source_type = 'event' AND NOT EXISTS (SELECT 1 FROM public.events e WHERE e.id = ct.source_id))
+         OR (ct.source_type = 'route' AND NOT EXISTS (SELECT 1 FROM public.route_plans r WHERE r.id = ct.source_id))
+         OR (ct.source_type = 'place' AND NOT EXISTS (SELECT 1 FROM public.discovery_places d WHERE d.id = ct.source_id)
+                                      AND NOT EXISTS (SELECT 1 FROM public.places pl WHERE pl.id = ct.source_id))) AS unverifiable
+  FROM public.content_trails ct GROUP BY 1;
+-- DV-25: how much of production's behaviour the exclusion touches
+SELECT surface, count(*) FILTER (WHERE outcome = 'dismiss') AS dismisses, count(*) AS rows, max(outcome_at) FILTER (WHERE outcome = 'dismiss')
+  FROM public.rank_events GROUP BY 1;
+```
+
+### 61.14 Freshness, and other censuses
+
+**census-discovery.**
+- `services/trails/TrailService.ts`, `routes/trails.ts`, `lib/discoveryTrailObject.ts` and `lib/discoveryLocalMomentum.ts` were re-measured; they are the evidence for the five rows.
+- `docs/discovery/query-paths.md` and `query-paths-explain.sql` changed for §61.9.
+- The four changed Trails test files changed fixtures only (§61.8).
+- The fourteen new files are appended to `CENSUS_SCOPE`.
+
+**census-trips** counts the `src/test/db/` prefix. This section adds four database suites there and edits the Trails bridge and `trailsService.db.test.ts`. None of them is Trips evidence, and no Trips verdict can move.
+
+`docs/architecture/telegraph-phase0-inventory.md` was regenerated for the migration count (641 after the merge). The freshness ledger is the integrator's.
+
+**Other sections' text this section edited, without touching a verdict.** Three quotations in other lanes' rows quoted lines that §61 then fixed. Each is de-pointered as §19.2 did: the quoted text stays as the record of what the code said, with the line and the commit, and the parseable `file:NNN#` form is removed so no gate treats a dead quotation as a live claim.
+- §59's DV-25 row: `services/trails/TrailService.ts:646#bucket.positives`, the §9 positive count.
+- §58.4's DC-21 row: `services/trails/TrailService.ts:972#trailMomentum` and `src/routes/trails.ts:340#trending:`, the H-P8-1 defect.
+
+**Rows in other sections this touches, without a verdict change here:**
+- DC-07 (§58) rests on `place_momentum`, whose rebuild 3417 changes by one CASE arm on 3410's body.
+- DC-21 (§58.4) names the H-P8-1 defect as one of its grounds. It is fixed on this branch (§61.16). The verdict and its other grounds are §58's.
+- DC-17's lineage has the note in §61.5.
+- DV-71's sixteen tables become seventeen with `trail_relations`, which carries 3390's posture. However, 3390's R0 list and 3391's `rls_leak` measurement are fixed at sixteen and do not see it.
+- DV-82's `rls_leak` producer has the same gap.
+- §59's A1 and A2 (P12, `discoveryVerifyAudit.test.ts`) pin the two defects that DV-20 and DV-25 fixed. They are in this branch since the merge and are red here, as the integrator anticipated. P12's file is not edited; the integrator flips them.
+
+### 61.15 Commits, what was run, and what would turn this red
+
+The commits are on `disc-p14-trails-db`. The fresh-chain `run-tests.sh` and the full `npm test` are recorded in the lane's report.
+
+**What would turn this red:**
+- **A second writer of `trails`** (a curated seed, an admin tool) that inserts without `trail_propose`. It is not serialised against proposals. The UNIQUE slug still refuses an identical one.
+- **PostgREST or the service role configured with a default isolation above READ COMMITTED.** `trail_propose` refuses, and creation answers 503, which is visible, not silent.
+- **Deploying this code without 3415** (§61.1).
+- **A reader of `trail_relations`, or a ranker using it, without an owner rule.** C6 fails.
+- **A new outcome that means rejection** (for example a "hide"), added without the same exclusion. It would raise momentum as `dismiss` did.
+- **A later `CREATE OR REPLACE` of `rebuild_place_momentum`** built on 3410's or 2892's body instead of 3417's. It would silently restore the dismiss weight. 3417's postcondition runs only when 3417 is applied; D1 and D2 catch it on the harness.
+- **Unicode drift between the database's `normalize` and the runtime's `String.prototype.normalize`.** G1 would catch it on the corpus, not on every title.
+
+### 61.16 H-P8-1 — a failed Trail read is not a measured "not trending"
+
+§58.4 found it and the integrator routed it here, because this lane owns `services/trails/**` and `routes/trails.ts`. `GET …/trails/:id/trending` reads `rank_events` twice: the Discovery-surface item read, which gives the order and the provenance, and the all-surfaces Trail read, which gives the boolean. When only the second failed, the service left the Trail momentum `null`. The route served `(null ?? 0) > 0`, which is `false`, beside a valid provenance. A failure therefore read as a measured "not trending" (`11` §9).
+
+The fix is two line-neutral edits:
+- A successful read with no entry for the Trail is a measured 0, so only a failed read leaves `null` (`artifacts/api-server/src/services/trails/TrailService.ts:972#nowMs)[trailId] ?? 0; // H-P8-1`).
+- The route serves that `null` as `trending: null` (`artifacts/api-server/src/routes/trails.ts:340#trending: r.momentum === null ? null : r.momentum > 0,`).
+
+**Tests.** One route case fails only the second `rank_events` read. It asserts `trending === null`, a non-null provenance, and that both reads were issued (`artifacts/api-server/src/test/discoveryTrailRoutes.test.ts:658#it("H-P8-1: when only the all-surfaces read fails`). Its control reads no events through two successful reads and asserts `trending === false`, a measured zero. M53 reverts the route and turns the first red. M54 reverts the service and turns the control red.
+
+**A visible consequence.** A Trail with no members also answers `trending: null` now, where it answered `false`. The service already returned no reading for it (`none(null)`, with a null provenance). `null` is the answer the route's own comment gives for "no reading was taken". The client type is not this lane's file (P13), and `null` is falsy wherever a boolean was tested.
 
 ## Cited, not graded (check:census-scope-coverage)
 

@@ -91,11 +91,17 @@ INSERT INTO public.trails (id, slug, title, destination, lifecycle_status)
 SELECT ('20000000-0000-4000-8000-' || lpad(g::text, 12, '0'))::uuid, 'qp-' || g, 'Trail ' || g, 'City ' || (g % 100),
        (ARRAY['proposed','active','active','active','stale','archived'])[1 + g % 6]
   FROM generate_series(1, 2000) g;
+-- census-discovery §61: since 3380 the label-cap trigger takes one advisory lock
+-- per content and holds it to COMMIT, so this one-transaction seed of 20,000
+-- contents ran out of lock slots ("out of shared memory") and aborted the whole
+-- script. The seed skips the triggers (harness only; the rows respect the caps).
+SET LOCAL session_replication_role = replica;
 INSERT INTO public.content_trails (trail_id, source_type, source_id, relationship, contributor_id, created_at)
 SELECT ('20000000-0000-4000-8000-' || lpad((1 + g % 2000)::text, 12, '0'))::uuid, 'place',
        ('10000000-0000-4000-8000-' || lpad((1 + g % 20000)::text, 12, '0'))::uuid, 'supporting',
        ('00000000-0000-4000-8000-' || lpad((1 + g % 2000)::text, 12, '0'))::uuid, now() - make_interval(hours => g)
   FROM generate_series(1, 50000) g ON CONFLICT DO NOTHING;
+SET LOCAL session_replication_role = origin;
 INSERT INTO public.trail_edges (from_trail_id, to_trail_id, edge_type)
 SELECT ('20000000-0000-4000-8000-' || lpad((1 + g % 2000)::text, 12, '0'))::uuid,
        ('20000000-0000-4000-8000-' || lpad((1 + (g * 31 + 1) % 2000)::text, 12, '0'))::uuid, 'related'
@@ -209,6 +215,35 @@ SELECT trend_state, recent_rate FROM public.place_momentum WHERE place_id = 'nod
 \echo '### QP-23 shadow divergence report window (lib/discoveryDivergenceReport.ts)'
 EXPLAIN (ANALYZE, COSTS OFF, TIMING OFF, SUMMARY OFF)
 SELECT count(*) FROM public.discovery_shadow_serves WHERE serve_point = 1 AND observed_at >= now() - interval '1 day';
+-- census-discovery §61 (QP-27): a Signal on 10,000 of the seeded contents in a
+-- second Trail, so content is SHARED between Trails. Seeded here, after QP-01..23
+-- ran, so their plans are over the same rows as before; triggers skipped as above.
+SET LOCAL session_replication_role = replica;
+INSERT INTO public.content_trails (trail_id, source_type, source_id, relationship, signal, created_at)
+SELECT ('20000000-0000-4000-8000-' || lpad((1 + (g * 7) % 2000)::text, 12, '0'))::uuid, 'place',
+       ('10000000-0000-4000-8000-' || lpad((1 + g % 20000)::text, 12, '0'))::uuid, 'signal', 'food', now() - make_interval(hours => g)
+  FROM generate_series(1, 10000) g ON CONFLICT DO NOTHING;
+SET LOCAL session_replication_role = origin;
+ANALYZE public.content_trails;
+\echo '### QP-26 the proposal comparison set, as trail_propose reads it under its per-token lock (3415, census-discovery §61)'
+EXPLAIN (ANALYZE, COSTS OFF, TIMING OFF, SUMMARY OFF)
+SELECT id, slug, title, destination FROM public.trails
+ WHERE destination = 'city 42' OR destination IS NULL OR slug ILIKE ANY (ARRAY['%riverside%']);
+\echo '### QP-27 the trail_relations rebuild (3416, census-discovery §61), as the one SELECT it inserts'
+EXPLAIN (ANALYZE, COSTS OFF, TIMING OFF, SUMMARY OFF)
+SELECT e.from_trail_id, e.to_trail_id, e.edge_type, NULL::integer FROM public.trail_edges AS e
+UNION ALL
+SELECT t.parent_trail_id, t.id, 'child', NULL::integer FROM public.trails AS t
+ WHERE t.parent_trail_id IS NOT NULL
+   AND NOT EXISTS (SELECT 1 FROM public.trail_edges AS e
+                    WHERE e.from_trail_id = t.parent_trail_id AND e.to_trail_id = t.id AND e.edge_type = 'child')
+UNION ALL
+SELECT s.a, s.b, 'common_content', count(*)::integer
+  FROM (SELECT x.trail_id AS a, y.trail_id AS b
+          FROM (SELECT trail_id, source_type, source_id FROM public.content_trails GROUP BY 1, 2, 3) AS x
+          JOIN (SELECT trail_id, source_type, source_id FROM public.content_trails GROUP BY 1, 2, 3) AS y
+            ON y.source_type = x.source_type AND y.source_id = x.source_id AND x.trail_id < y.trail_id) AS s
+ GROUP BY s.a, s.b;
 
 \echo '### QP-25 a keyed outcome''s receipt, by (viewer, client_event_id) (routes/rankEvents.ts, 3420, §62)'
 EXPLAIN (ANALYZE, COSTS OFF, TIMING OFF, SUMMARY OFF)
