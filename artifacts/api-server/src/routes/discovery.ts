@@ -98,7 +98,7 @@ import { reasonCodesByIdFromProvenance } from "../lib/discoveryReasonCodes.js";
 // behind discovery_live_rank_enabled (2850, seeded OFF): with the flag off
 // withDiscoveryLiveRank returns the very array it was handed, same reference,
 // having read no claim — so the served order and JSON are byte-identical.
-import { parseIntentMode, withDiscoveryLiveRank } from "../lib/discoveryLiveRankRead.js";
+import { parseIntentMode, withDiscoveryLiveRank, withDiscoveryLiveSafety } from "../lib/discoveryLiveRankRead.js";
 import {
   blockFingerprint, authorizedContextKey, eligibleDbIdSet, withMutedAuthors, withCurrentRows,  // census-discovery §47 — the author policy (mutes, standing) and cache-B row revocation
   cacheBEntryUsable, inactiveSubmitterIds, submitterInGoodStanding, inactiveSubmittersFromEmbed, isAdultOnlyVenue,
@@ -2131,14 +2131,14 @@ router.get("/discovery", async (req, res) => {
             const cCacheHit = cAcceptance.usable ? cStored : undefined;
             if (cCacheHit) {
               const cFiltered = applyFilters(cCacheHit.places && withCurrentRows(cCacheHit.places, dbPlaces));  // census-discovery §47: the stored ORDER, the CURRENT row content — a moderated image or blurb is not replayed from the stored copy
-              const dismB = await dismissGatedPlaces(callerUserId, cFiltered, dbFailedSources);  // "Not interested" — serve path 2 of 4.
+              const cSafe = await withDiscoveryLiveSafety(getServiceClient(), cFiltered); const dismB = await dismissGatedPlaces(callerUserId, cSafe.places, dbFailedSources);  // "Not interested" — serve path 2 of 4. census-discovery §57 (A07): Sensing :129 on an order Compass owns — the demotion only, no live influence.
               const gateB = await layoverGatedPlaces(callerUserId, dismB.places, "GET /discovery"); if (!gateB.ok) { sendDiscoveryRefusal(res, emptyDiscoveryPlacesEnvelope(destination ?? null, ctxLabel ?? null), gateB.refusal); return; } const cSlice = gateB.places.slice(offset, offset + PAGE_SIZE).map(toPublic);  // A14 — see serve path 1.
               req.log.info({ destination, cacheLevel: "compass_candidate_hit" }, "discovery: compass candidate cache hit");
               const cAnnotated = await annotateNewToMe(getServiceClient(), callerUserId, cSlice);
               // 06 §5: cachedAt is the entry's own write clock, which the TTL
               // check above already reads. Passing null discarded it.
               const cCandidates = await withDiscoveryCandidates(getServiceClient(), withRecommendationIds(cAnnotated, exposure), {
-                cacheLevel: "compass_candidate_hit", cachedAt: cCacheHit.at, scoredById: null, rankedBy: "compass",
+                cacheLevel: "compass_candidate_hit", cachedAt: cCacheHit.at, scoredById: null, rankedBy: "compass", liveRankById: cSafe.applied ? cSafe.byId : null,  // §57: demoted rows only
                 // `06` §5 / DSV2-06 — the stored provenance is REPLAYED, not
                 // rebuilt. `rankedAt` inside it is the moment the ranker ran;
                 // re-stamping it here would report a rank that never happened.
@@ -2227,11 +2227,11 @@ router.get("/discovery", async (req, res) => {
             // Only pipeline-passed items appear when the flag is enabled.
             const merged = compassRanked;
             const cFiltered  = applyFilters(merged);
-            const dismC = await dismissGatedPlaces(callerUserId, cFiltered, dbFailedSources);  // "Not interested" — serve path 3 of 4.
+            const cSafeC = await withDiscoveryLiveSafety(getServiceClient(), cFiltered); const dismC = await dismissGatedPlaces(callerUserId, cSafeC.places, dbFailedSources);  // "Not interested" — serve path 3 of 4. census-discovery §57 (A07): the same demotion-only pass as serve path 2.
             const gateC = await layoverGatedPlaces(callerUserId, dismC.places, "GET /discovery"); if (!gateC.ok) { sendDiscoveryRefusal(res, emptyDiscoveryPlacesEnvelope(destination ?? null, ctxLabel ?? null), gateC.refusal); return; } const cSlice     = gateC.places.slice(offset, offset + PAGE_SIZE).map(toPublic);  // A14 — see serve path 1.
             const cFreshAnnotated = await annotateNewToMe(getServiceClient(), callerUserId, cSlice);
             const cFreshCandidates = await withDiscoveryCandidates(getServiceClient(), withRecommendationIds(cFreshAnnotated, exposure), {
-              cacheLevel: "compass_fresh_rank", cachedAt: Date.now(), scoredById: null, rankedBy: "compass",
+              cacheLevel: "compass_fresh_rank", cachedAt: Date.now(), scoredById: null, rankedBy: "compass", liveRankById: cSafeC.applied ? cSafeC.byId : null,  // §57: demoted rows only
               provenanceById: cProvenanceById,
             });
             sendDiscoveryPlacesEnvelope(res, { places: cFreshCandidates, total: gateC.places.length, destination, context: ctxLabel, cached: false, ageFilterMeta,

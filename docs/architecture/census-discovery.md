@@ -9424,7 +9424,210 @@ same inputs, so the same `inputHash` and the same `snapshotId`.
 - CONSTRUCTED 179 / 188 = **95.2 %**; CORRECT 97 / 188 = **51.6 %**. The four buckets sum to 188.
 - **Nothing in §56 is in production.** 3400 is applied only to the local harness, and `media_pending_upload_sweep_enabled` does not exist on any shared database. The `/hidden-gems/layover-safe` minutes change and the relay's pending-object refusal are not deployed.
 
+## §57 — Cross-architecture adapters II (lane P5-B): the Map says when Discovery's read degraded, a dangerous place is never first and never "open around now", and the Trip and free-time duplicates are named and pinned
+
+*Written 2026-09-27 by the Discovery P5-B lane (Map, Trips, Sensing safety and projection) on `disc-p5b-adapters`, branched from `862ba541f` (the tip of `wave8-integration`). Code and tests: `495ee3de3`; this section is the commit after it. Nothing here is merged to `main`, deployed or flag-enabled. No migration is added. No flag is read that was not read before. Every flag this section turns on is a row in an in-memory test double, created and discarded per test. **`head_commit` is NOT re-declared and the headline is NOT restated**: the integrator does both. §57.11 names the counted files this lane changed.*
+
+These are adapter and correctness repairs. None adds ranking machinery. None changes what the flags-off Discovery path serves, or in what order: every behavioural change below is reached only with `discovery_live_rank_enabled` (2850) ON, or only on the Map's gate-OPEN read behind `discovery_candidate_projection_enabled` (2361). The gate-shut Map body is pinned byte for byte against the base (§57.3, G1).
+
+### 57.1 Row verdicts — no row moves
+
+| id | was | now | evidence |
+|---|---|---|---|
+| A25 | W | W | **Re-graded against the integrator's four criteria; one defect found and fixed; W on §31.2's rule.** The brief's premise, *"no caller outside its test"*, is stale: §31 recorded the Map half built, and the call is at `artifacts/api-server/src/routes/mapProjection.ts:1396#outcome = await readDiscoveryCandidatesForViewer(`, behind Discovery's own flag at `artifacts/api-server/src/routes/mapProjection.ts:1376#candidateFlagOn = await isFlagEnabled(sc, "discovery_candidate_projection_enabled");`. Graded against the integrator's words, it met three of four. **Flags-off byte identity:** the whole gate-shut body is a literal golden, `artifacts/api-server/src/test/mapDiscoveryCandidateAdapter.test.ts:138#const GOLDEN_FLAGS_OFF = JSON.stringify({`. It passes against the base library files (§57.8), and it stays byte-identical when every Discovery-only table is broken (G2). **Cross-viewer and revocation both ways:** X1–X4. **Retries:** R1, R2. **A failed Discovery read with a stated reason: FAILED at base.** The reader cannot throw on a database error, because every viewer read inside it is non-fatal by design. The realistic failure, a degraded preferences, follows or seen read, was dropped in the reader, so the Map reported `refusal: null` (complete) over a `whyForUser` computed with no taste. Fixed: `artifacts/api-server/src/lib/discoveryCandidate.ts:579#degraded: [...(viewer.degraded ?? [])],` carries the list out, and `artifacts/api-server/src/lib/mapDiscoveryCandidates.ts:319#: degraded !== undefined && degraded.length > 0 ? "viewer_state_unreadable"` states it (D1–D4, red at base). **Why still W:** §31.2's rule, quoted in §57.2. 2361 is FALSE-seeded, its row was absent in production when last read (§31.2), and D9 is unratified. |
+| A07 | W | W | **Four defects found with the flags on in-process. Three are fixed in this lane's files; one is routed as a hunk. W on §57.2's rule.** (1) The demotion was scoped to the 60-row live window, so a dangerous place outranked every row past it, and led the page when the whole window was dangerous. Now it goes behind the tail too: `artifacts/api-server/src/lib/discoveryLiveRankRead.ts:175#const reordered = [...outcome.ranked.filter((r) => !outcome.byId.get(r.id)?.safety.demoted)` and `artifacts/api-server/src/lib/discoveryLiveRank.ts:469#ranked: [...scored.filter((s) => !s.grade.safety.demoted)`. (2) A dangerous place's why-now carried opportunity and vibe reasons beside the danger. Now it is the safety reading alone: `artifacts/api-server/src/lib/discoveryLiveRank.ts:338#return out.slice(0, state.unsafe ? 1 : WHY_NOW_MAX);`. (3) Its `reasons` still rendered `01` §11's "Close to you and open around now.". That code is now withheld on a demoted row: `artifacts/api-server/src/lib/discoveryCandidate.ts:633#export function withSafetyPrecedence(`. (4) GET /discovery's two Compass serve points apply no Discovery safety at all (§57.4). The demotion-only pass is built at `artifacts/api-server/src/lib/discoveryLiveRankRead.ts:222#export async function withDiscoveryLiveSafety<T extends LiveRankSourceRow>(`, and the five-line wiring is a hunk for `routes/discovery.ts` (§57.9). **Why still W:** 2850 is FALSE-seeded, no producer writes a Live `unsafe_density` anywhere (§17.3; census-sensing S66), and (4) is not wired on this branch. |
+| A03 | W | W | **Every criterion verified on controlled data, with one finding routed.** Prediction: an emerging trajectory reaches the candidate only as `forecast_*`, with `whyNowValidForMs: null`, so the client's why-now rule never shows it as current. The candidate's own truth class is never one no producer backs (T1). Stale state: an expired reading neither demotes nor explains, and a current one carries a validity that ends at its own horizon (E1). A failed state read moves and labels nothing (F1). Retries repeat exactly (R1). **Finding, not fixed here:** `nearby_now`'s plain language asserts "open around now" whenever PDE's `distance`, `cityMatch` or `neighborhoodMatch` fired (`artifacts/api-server/src/lib/discoveryReasonCodes.ts:128#distance:          "nearby_now",   // Compass + PDE`, `artifacts/api-server/src/lib/discoveryReasonCodes.ts:243#nearby_now:       "Close to you and open around now.",`). Nothing on that path observed opening hours, so it is a present-tense claim with no observation behind it, rendered as fact (§57.5). **Why still W:** doubly flag-gated (2361, 2850), unchanged since §45.3. |
+| A10 | W | W | **Every direct Trip read left in Discovery, re-derived and named. None is movable without a behaviour change; the inventory is now a ratchet.** There are four sites (§57.6). Two are the legacy arms beside the projection arms the capability already chooses between: `artifacts/api-server/src/routes/discoverySearch.ts:917#.from("trips")` and `artifacts/api-server/src/routes/discoverySearch.ts:1065#.from("trips")`. Switching them IS the change 2420/2550 exist to hold back. One is `artifacts/api-server/src/routes/discoverySearch.ts:1009#.from("trip_plan_items")`, which is read on both arms, and Trips publishes no plan-item projection. One was not in the census before: `artifacts/api-server/src/services/location/DiscoveryLocationContext.ts:169#.from("trips")`. It re-decides "the viewer's next trip" for `?context=going_soon` (`artifacts/api-server/src/services/location/DiscoveryLocationContext.ts:172#.in("status", ["planning", "active"])`, owner only). Trips publishes no viewer-trip projection for it to move to. `discoveryTripReadInventory.test.ts` fails on a fifth site, and also on one of the four disappearing. |
+| A11 | W | W | **The named duplicate is dead on every Discovery path, and it is not replaceable by a read of the windows.** `artifacts/api-server/src/lib/portavaRank.ts:286#if (ctx.availableMinutes != null) {` is reached only by a candidate with a start (`artifacts/api-server/src/lib/portavaRank.ts:283#if (!c.startsAt) return 0;`). Discovery's one ranker context carries neither free-time field (`artifacts/api-server/src/lib/discoveryPde.ts:560#const viewerContext: ViewerContext = {`), and its candidates carry no start (`artifacts/api-server/src/lib/discoveryPde.ts:590#const candidates: PlaceCandidate<T>[] = places.map((p) => ({`). A 400-case seeded property test shows that no free-time input changes a Discovery score, feature or order. A control proves the property is not vacuous. **Not replaced:** a caller-supplied minute budget and a set of Temporal Freedom windows are different inputs, so no read of the windows can equal the scalar "on every input" (the brief's bar). `portavaRank.ts` is under the ranker hold, and removing the dead branch is its owner's call. **Why still W:** the first half, the consumption at `artifacts/api-server/src/routes/discoverySearch.ts:830#const read = await readTripWindows(sc, ctx.tripId, userId);`, is behind `trip_operational_projections_enabled` (2778, FALSE), exactly as the row's last statement says. |
+
+### 57.2 The rule every row above is graded under
+
+This lane applies §31.2's rule, verbatim:
+
+> *"A requirement whose feature is disabled is not satisfied, and this census has graded A03 `W` on that exact basis since it was written. Grading A25 `C` while A03 is `W` for the same shut gate would make the two inconsistent on the same projection."*
+
+It also applies §17.3's four-part ceiling as §52.1 restated it: unapplied migrations, zero rows anywhere, a FALSE-seeded flag, an unmerged branch. All five rows sit behind a flag seeded FALSE (2361, 2850, 2550 with 2420, 2778), and the branch is unmerged. So no row reaches `C` here, however complete its implementation on the branch. Implementation correctness and production evidence are kept apart below. Every "fixed" means *on this branch, in code and in tests*. None of it means *served*.
+
+### 57.3 `A25`: what was re-graded, and the defect the Map hid
+
+**The criteria.** The integrator named four: flags-off byte identity, proven by a golden; cross-viewer isolation (a private or blocked submitter's place never carries another viewer's relevance); a failed Discovery read degrading the layer with a stated reason, never failing the Map; and stable retries.
+
+- **Golden.** The first suite (`mapDiscoveryCandidateConsumer.test.ts`) proved an ABSENCE: no `"candidate"` byte with the gate shut. That passes through a drifted count, a reordered object or a new report key. G1 pins the whole body instead. G2 records every table the gate-shut route reads, and requires that none of Discovery's (`user_follows`, `compass_user_preferences`, `rank_events`, `ranking_config`) be among them. It repeats the request with all four broken and requires the same bytes. G3 proves the list is not vacuous: with the gate open, those tables are read. G4 proves the gate-open body is the gate-shut body plus annotations and nothing else.
+- **Cross-viewer.** A Map `place` is `public.places` venue identity with no user column, so there is no submitter to be private or blocked. The only objects that carry a person are other kinds (gem, event, trip stop, memory, buddy zone, crew member, saved place, meeting point). X4 pins that none of those is ever offered to Discovery's reader, even with a Discovery id in its payload. X1 serves two viewers over one world, interleaved A · B · A: B never gets A's taste, and A's two answers are byte-identical. X2 records every per-user filter the reader issued and requires each to name the requester. X3 and X3b are revocation both ways: a taste A withdraws is gone on A's next read, and a taste B grants appears on B's next read. Nothing about a viewer outlives the request.
+- **The defect, and why it was invisible.** `readDiscoveryCandidatesForViewer` cannot throw on a database error. `lib/discoveryPde`'s `loadPdeViewer` keeps every viewer read non-fatal and records failures in `PdeViewer.degraded`, and the reader dropped that list. So the Map's `read_threw` refusal covered a failure that cannot happen, and the failure that can happen reported COMPLETE. Now the reader returns `degraded` (`artifacts/api-server/src/lib/discoveryCandidate.ts:537#suppressedWrites: number; /** The viewer-side reads that FAILED on this run`), and the fold reports `refusal: "viewer_state_unreadable"`, `coverage: "partial"`, and the failed reads by `lib/discoveryPde`'s own names (`artifacts/api-server/src/lib/mapDiscoveryCandidates.ts:316#const degraded = outcome.degraded;`). The key is present exactly when the reader ran. The two refusals and the nothing-eligible answer read no viewer state and carry no key, which is also what keeps G1's bytes. The Map stays 200, `enabled: true`, and every byte outside the Discovery layer is identical to the healthy answer (D1). The spelling follows the gateway's own `block_set_unreadable` / `protection_unreadable`.
+- **Retries.** R1 (healthy) and R2 (degraded) are byte-identical twice over. **One caveat, measured and not fixed:** with `RANKING_EXPERIMENT_ENABLED` ON, `DiscoveryRankingService` takes a 1-in-10 random debug sample per item (`artifacts/api-server/src/services/ranking/DiscoveryRankingService.ts:835#if (Math.random() * SAMPLE_RATE >= 1) return;`, gated at `artifacts/api-server/src/services/ranking/DiscoveryRankingService.ts:1032#const experimentEnabled = flags["RANKING_EXPERIMENT_ENABLED"] ?? false;`). On a Map read that write is intercepted and COUNTED, so the report's `suppressedWrites` can differ between two identical requests, while every projection stays identical. The file is not this lane's (§57.10).
+- **Sensing `:129` on the Map (S1).** With live rank ON and a Live `unsafe_density` on a place, no Map candidate carries a why-now: the Map reader hands no grade in. The Map's order is the same with the projection on or off, so Discovery never labels a Map object "best move now".
+
+### 57.4 `A07`: four defects, found with the flags on
+
+All four are reached only with `discovery_live_rank_enabled` ON. Flags off, `withDiscoveryLiveRank` returns the array it was handed and reads no claim, and `withSafetyPrecedence` returns the object it was handed.
+
+1. **The window leak.** The sort put a demoted row *"behind every non-demoted row in the window"*. The route grades the head 60 of the whole filtered list and appends the rest ungraded, so every row past 60 sat behind a place the same serve had graded dangerous. When the whole head was dangerous, the page led with one. Sensing `:129` says safety outranks opportunity, and a position held over an ungraded row is held on relevance alone. P1 (60 dangerous rows and 2 past the window) and P2 (a page-by-page walk) were red before the fix. P3 and P4 pin the serve-point function the cold path shares and the pure engine.
+2. **The why-now.** `whyNowFrom` put the safety reading first and then kept going: trajectory, walk-in or queue, reported vibe. A dangerous place rendered as "crowd unsafe density · trajectory building · reported vibe lively", which is a promotion beside the danger. It is now the safety reading alone (L1). A safe neighbour keeps its own reasons.
+3. **The reason text.** On a PDE-ranked serve, a dangerous place's `reasons` still carried `nearby_now`, which the client renders verbatim as "Close to you and open around now." That one code is withheld on a demoted row (L2). The ranker's own `whyForUser` record and every non-"now" reason are untouched, and the row still renders. That follows `lib/mapDisplayResolver`'s precedent: a noticed place stays on the map with its promotion stripped. L3 pins that the function is inert without a grade.
+4. **The Compass serve points.** GET /discovery's serve paths 2 (`compass_candidate_hit`) and 3 (`compass_fresh_rank`) serve Compass's pipeline order and never call Discovery's live layer. Their only safety is Compass's own Live exclusion, gated by the environment switch `COMPASS_LIVE_CONSTRAINTS_ENABLED` (`artifacts/api-server/src/compass/CompassLiveConstraints.ts:79#export function liveConstraintsEnabled`), a different gate from 2850. With 2850 ON and the switch unset, a Live `unsafe_density` place was served FIRST on the `for_you` Compass path. That was observed: `discoveryLiveSafetyCompassPath.test.ts` C1 is red on this branch. The pass that fixes it is built here and applies the same gated read and the same grade as the ranker, so the two cannot disagree about what is dangerous. It KEEPS Compass's order and moves only the demoted rows, and it spends no live influence (S2 shows the ranker would have). It hands the projection the demoted rows' grades only, so no other why-now appears. It cannot be wired here because `routes/discovery.ts` is not this lane's file. §57.9 gives the hunk. With it applied, C1 passes and every C test, the Discovery route suites and cache-B's pass. C1 is registered as `todo` until the hunk lands. Flip it when merging.
+
+**Surfaces that render the candidate, and where each stands.** The Discovery server projection: fixed (1–3). The why-now chips: the client renders `whyNow` and `reasons` verbatim (`travel-buddy-standalone/src/components/discovery/DiscoveryCandidateChips.tsx`), so fixing the server fixes what the chips can say. The client was read, not changed. The Map: never renders Discovery's why-now (S1). The Compass serve points of GET /discovery: routed (4). **The Compass handoff does NOT read Discovery's grade.** No Compass module imports `lib/discoveryLiveRank` (only `lib/intentModes`, the shared mode list). Compass's own safety is `CompassLiveConstraints`, graded in census-sensing S66 and census-compass, and not re-graded here.
+
+### 57.5 `A03`: the criteria, and one finding in another lane's file
+
+- **Truth class carried, prediction marked.** A forecast reaches the wire only in the forecast vocabulary (`forecast_building`), with `whyNowValidForMs: null`. `whyNowValidForMsOf` reads the horizon of the claims that QUALIFIED, and a forecast has none. The client's `whyNowPresentation` does not show a claim with no validity as current, so a prediction is never shown as an observation. The candidate's own `truthClass` is the listing's class and never `inferred`, `predicted` or `conflicting` (T1 and the existing B-group tests in `discoveryCandidate.test.ts`). **What is not carried** is a machine-readable truth class for the EVIDENCE behind `whyNow`: the `forecast_` prefix is the only marker. No criterion here fails on that, and it is recorded rather than built, because adding a field to `DiscoveryCandidate` is a projection change D9 would have to ratify.
+- **Stale state expires.** An expired reading is not read (`liveClaimRead`'s `expires_at` filter). It would also be refused if it were, by Live-eligibility's own `validUntil` check: mutation M21 removed the first guard and E1 stayed green, because the second held. A current reading is sent with a validity that ends at its own horizon (E1).
+- **A failed state read.** A failed snapshot read moves nothing, demotes nothing and explains nothing (F1). **Residual, a label and not a safety fault:** `lib/liveClaimRead` answers a failed snapshot read with `[]` (`artifacts/api-server/src/lib/liveClaimRead.ts:389#logger.warn({ err: error }, "liveClaimRead: snapshot read failed");`), so Discovery grades the row `none` ("looked, saw nothing") where §20 wants `unreadable`, and `meta.liveRank.readable` stays true. The order and every label are unaffected either way. Distinguishing the two needs `readLiveClaims` to report its error, which is Sensing's file.
+- **The finding.** `lib/discoveryReasonCodes` maps PDE's `distance`, `cityMatch` and `neighborhoodMatch` to `nearby_now` and renders it "Close to you and open around now." No PDE input reads opening hours, so for a PDE-ranked row the second half is an unobserved present-tense claim rendered as fact. That is §5.1's complaint exactly, though not about a prediction. It is the reason-code owner's text (§47, DV-18), so it is an owner question (§57.10), not an edit. §57.4(3) already keeps it off a dangerous place.
+
+### 57.6 `A10`: the four direct Trip reads, and why none moved
+
+| site | table | what it decides | movable to a Trip contract with no behaviour change? |
+|---|---|---|---|
+| `routes/discoverySearch.ts` `searchTrips` | `trips` | the visibility rule, legacy arm | **No.** The projection arm beside it already exists, and the capability (2550 AND 2420's `trips.version`) chooses between them. Production lacks 2420, so moving the legacy arm makes every production trip search fail closed. The move is the deployment, not a refactor |
+| `routes/discoverySearch.ts` `searchPlans` | `trips` | parent-trip admission, legacy arm | **No**, the same capability |
+| `routes/discoverySearch.ts` `searchPlans` | `trip_plan_items` | which plan items match | **No.** It is read on BOTH arms, and `domain/trips/contracts/` publishes no plan-item projection |
+| `services/location/DiscoveryLocationContext.ts` `getNextTripCity` | `trips` | "the viewer's next trip", for `?context=going_soon` | **No.** Trips publishes no viewer-trip projection. It also re-decides Trip semantics that differ from Trips': it counts `planning` and `active` but not `upcoming`, which is a real `trip_status` label, and owned trips only, not joined. A projection would change which city `going_soon` resolves to, and that is a behaviour change on the flags-off path |
+
+No hunk is offered: there is nothing to move. The fourth site is new to this census. It lives under `services/location/` and is reached only from `routes/discovery.ts`, and no earlier section named it. The inventory test pins all four and fails in both directions.
+
+### 57.7 `A11`: dead on Discovery, and not replaceable
+
+The brief allowed replacing the duplicate time computation with a read of the windows only if the result is provably identical on every input. It is not, and cannot be. `availabilityFitScore` takes a caller-supplied scalar (`availableMinutes`), and Temporal Freedom windows are a set of intervals with commitments. No function of the windows equals a function of an arbitrary scalar on every input. The property test proves what does hold: over 400 seeded Discovery-shaped candidate sets and viewer contexts, eleven free-time inputs (none, zero, positive, huge, negative, `availableNow` either way) leave every score, feature vector and order unchanged, and `availabilityFit` is 0 on every Discovery candidate. G1 and G2 pin the two facts that make that true, one source line each. The arithmetic still exists in the shared ranker. No caller in the tree sets either field, so it is dead everywhere, not only on Discovery. Deleting it is a ranker change under the hold.
+
+### 57.8 Tests, and every one seen red (P24)
+
+Five suites, registered on the `test` line: 17 + 14 + 4 + 4 + 3 = **42 tests**, 41 run and 1 `todo`.
+
+| suite | tests | covers |
+|---|---|---|
+| `src/test/mapDiscoveryCandidateAdapter.test.ts` | 17 | A25: G1–G4, X1–X4 (incl. X3b), D1–D4, R1–R2, S1 |
+| `src/test/discoveryLiveSafetyPrecedence.test.ts` | 14 | A07/A03: P1–P4, S1–S3, L1–L3, T1, E1, F1, R1 |
+| `src/test/discoveryLiveSafetyCompassPath.test.ts` | 4 | A07 on the Compass serve points: C0, C1 (`todo` until §57.9 lands), C2, C3 |
+| `src/test/discoveryFreeTimeDuplicate.test.ts` | 4 | A11: P1 (400-case property), P2 (control), G1, G2 |
+| `src/test/discoveryTripReadInventory.test.ts` | 3 | A10: I1–I3 |
+
+**Against the base.** The four library files were swapped for their `862ba541f` versions and the suites re-run, then restored byte-identically. G1 PASSES at base, which is the byte-identity proof: the golden is what production's gate-shut Map already serves. D1, D2, D3 and R2 FAIL at base, which is the defect. The precedence suite cannot load at base, because its subjects are new exports, so its defects were shown red by reverting each fix (below).
+
+**Mutations** (each applied as an exact unique replacement, the named suite run, the file restored and its sha256 checked identical; 33 run, 32 killed):
+
+| id | file | mutation | red |
+|---|---|---|---|
+| M1 | `mapDiscoveryCandidates.ts` | the gate-shut report grows `degraded: []` | G1, G1b, G2, D4 |
+| M2 | `routes/mapProjection.ts` | the flag branch never refuses | G1, G1b, G2 |
+| M3 | `discoveryCandidate.ts` | every viewer treated as anonymous | G3, X1, X2, X3, X3b, D1, D2, R2 |
+| M4 | `mapDiscoveryCandidates.ts` | the fold also bumps `renderingPriority` | G4 |
+| M5 | `discoveryCandidate.ts` | the viewer memoised across requests | X1, X2, X3, X3b, D1, D2, R2 |
+| M6 | `discoveryPde.ts` | the follows read keyed on another id | X2 |
+| M7 | `mapDiscoveryCandidates.ts` | the kind gate removed | X4 |
+| M8 | `mapDiscoveryCandidates.ts` | `degraded` ignored by the fold (the defect) | D1, D2, D3, R2 |
+| M9 | `discoveryCandidate.ts` | the reader drops `degraded` (the defect) | D1, D2, R2 |
+| M10 | `mapDiscoveryCandidates.ts` | a per-call counter in the report | X1, R1, R2 |
+| M11 | `mapDiscoveryCandidates.ts` | the fold reverses the page | G4, S1 |
+| M13 | `discoveryLiveRankRead.ts` | the window-scoped reorder (the defect) | P1, P2, P3 |
+| M14 | `discoveryLiveRank.ts` | the engine's window-scoped `ranked` (the defect) | P4 |
+| M15 | `discoveryLiveRankRead.ts` | the safety pass copies instead of returning `places` | S1, S3 |
+| M16 | `discoveryLiveRankRead.ts` | the safety pass serves the ranker's order | S2 |
+| M17 | `discoveryLiveRank.ts` | the unsafe why-now slice (the defect) | L1 |
+| M18 | `discoveryCandidate.ts` | `withSafetyPrecedence` inert (the defect) | L2 |
+| M19 | `discoveryCandidate.ts` | `withSafetyPrecedence` fires without a demotion | L2, L3 |
+| M20 | `discoveryLiveRank.ts` | a forecast spelt as an observation | T1 |
+| M21 | `liveClaimRead.ts` | the `expires_at` filter removed | **none — survived**: Live-eligibility's own `validUntil` check still refuses the claim. E1 is killed by M22 |
+| M22 | `discoveryCandidate.ts` | the validity an hour too long | E1 |
+| M23 | `discoveryCandidate.ts` | "no reading" answered `[]`, not null | E1, F1 |
+| M24 | `discoveryLiveRankRead.ts` | alternate calls reverse the order | P1, P2, F1, R1 |
+| M25 | `routes/discovery.ts` | the fresh-rank serve label | C0, C2 |
+| M26 | `portavaRank.ts` | a start-less candidate answers the free-time window | P1 |
+| M27 | `portavaRank.ts` | the fit always 0 | P2 |
+| M28 | `discoveryPde.ts` | `availableMinutes: 60` in Discovery's ranker context | G1 |
+| M29 | `discoveryPde.ts` | `startsAt` on Discovery's candidate | G2 |
+| M30 | `discoveryTripProjectionConsumer.ts` | a new `trip_members` read | I1 |
+| M31 | `routes/discoverySearch.ts` | the trips branch no longer keyed on the projection gate | I2 |
+| M32 | `tripDiscoveryProjection.ts` | `discoverable` made optional | I3 |
+| M33 | `discoveryLiveRankRead.ts` (over the §57.9 hunk) | the safety pass reads a claim with the flag off | C2 |
+| M34 | `discoveryLiveRankRead.ts` (over the §57.9 hunk) | the safety pass reorders when nothing is dangerous | C3 |
+
+C1 is red on this branch (the defect) and green with the hunk. The hunk was applied to a copy of `routes/discovery.ts`, the suites were run, and the file was restored to sha256 `b68afb248c60bec6dc8db51349ae98f7246b3d0228895c39ee43d3643ffe2eef`, byte-identical.
+
+**Existing tests changed:** none. Every pre-existing suite touching these files passes unchanged, including `discoveryLiveRank.test.ts`, whose unsafe case already expected `["crowd_unsafe_density"]`.
+
+**The full api-server suite** (`npm test`, this branch): 27,290 tests, 27,289 pass, 0 fail, 1 `todo` (C1). `typecheck` is clean, and `typecheck:tests` is at its baseline (863 across 115 files; the five new suites add none). No SQL was touched, so the local-DB harness was not run.
+
+### 57.9 The routed hunk (`routes/discovery.ts`, line-neutral, five lines)
+
+The import on `:101` gains `withDiscoveryLiveSafety`. At serve path 2, `:2134` becomes `const cSafe = await withDiscoveryLiveSafety(getServiceClient(), cFiltered); const dismB = await dismissGatedPlaces(callerUserId, cSafe.places, dbFailedSources);` with its comment kept. `:2141` gains `liveRankById: cSafe.applied ? cSafe.byId : null,` after `rankedBy: "compass",`, so `:2141#cacheLevel:` still holds. At serve path 3, `:2230` and `:2234` get the same pair, named `cSafeC`. With 2850 absent or FALSE, `withDiscoveryLiveSafety` returns `cFiltered` itself, reads no claim, and hands `null` grades: the served JSON is byte-identical (C2, C3). The lane's report carries the diff verbatim. With it merged, flip C1's `todo` off.
+
+### 57.10 Owner questions, verbatim
+
+1. **Compass-path safety (A07).** *"On GET /discovery's Compass serve points, which gate owns Sensing `:129`: Discovery's `discovery_live_rank_enabled`, via the demotion-only pass §57.9 wires, or Compass's `COMPASS_LIVE_CONSTRAINTS_ENABLED` environment switch? Today they are independent, so one can be on while the page it governs is served by the other's path."*
+2. **`nearby_now` text (A03, reason-code owner).** *"Should `nearby_now` keep one plain-language string, 'Close to you and open around now.', when PDE grounds it on distance or city match alone — signals that say nothing about opening hours — or should the PDE-grounded case say only what was measured (for example 'Close to you.')?"*
+3. **`going_soon` (A10, Trips).** *"Will Trips publish a viewer-scoped 'next trip' projection for Discovery's `?context=going_soon`, and should it count `upcoming` trips and trips the viewer has joined? Discovery's reader counts neither today."*
+4. **The dead free-time branch (A11, ranker owner).** *"`portavaRank.availabilityFitScore`'s `availableMinutes` / `availableNow` arms have no caller that sets either field. Delete them under the hold, or keep them for a Temporal Freedom consumer that would supply windows instead?"*
+5. **The retry counter (A25, DRS owner).** *"Is `RANKING_EXPERIMENT_ENABLED` on in production? If so, the Map report's `suppressedWrites` varies between identical requests, because of DRS's 1-in-10 random debug sample. Should that sample be deterministic by item, as its own comment says ('deterministic by item position modulo'), when the code uses `Math.random()`?"*
+
+### 57.11 Files, freshness, and what this section does NOT claim
+
+**Changed (code):** `lib/discoveryCandidate.ts` (line-neutral above its last cited line, plus one function appended), `lib/discoveryLiveRank.ts` (line-neutral), `lib/discoveryLiveRankRead.ts` (line-neutral, plus one function appended), and `lib/mapDiscoveryCandidates.ts`. **Tests:** the five suites of §57.8, and `package.json`'s `test` line (append-only). **Scope:** census-discovery's `CENSUS_SCOPE` block in `src/scripts/checkCensusFreshness.ts` (append-only, below). **Not changed:** `routes/mapProjection.ts`, `routes/discovery.ts`, `routes/discoverySearch.ts`, `lib/portavaRank.ts`, `lib/discoveryPde.ts`, `lib/discoveryReasonCodes.ts`, any migration, any flag.
+
+**Counted by other censuses** (`CENSUS_SCOPE`):
+
+- `lib/discoveryCandidate.ts`: census-discovery and census-sensing.
+- `lib/discoveryLiveRank.ts` and `lib/discoveryLiveRankRead.ts`: census-discovery, census-sensing and census-compass.
+- `lib/mapDiscoveryCandidates.ts`: no census before this section.
+
+**Scope.** `check:census-scope-coverage` required it, so census-discovery's `CENSUS_SCOPE` now also watches:
+
+- `lib/mapDiscoveryCandidates.ts` and `services/location/DiscoveryLocationContext.ts`;
+- `lib/liveClaimRead.ts`, because E1 and F1 rest on its expiry filter and its failed-read branch, and a mutation row cites it;
+- `mapDiscoveryCandidateConsumer.test.ts`, `discoveryLiveRank.test.ts` and the five new suites.
+
+`compass/CompassLiveConstraints.ts`, cited only to name another lane's gate, is declared NOT-GRADED at the foot of this census. The freshness ledger for all of these is the integrator's to write.
+
+**Not claimed:**
+
+- That any row is production-realized.
+- That the §57.9 hunk is applied.
+- That `unsafe_density` has ever been written by a real producer.
+- That D9's mappings are ratified.
+
+### 57.12 What would turn this red
+
+- A change to the gate-shut Map body that does not also change G1's literal.
+- A Discovery-only table read with 2361 shut.
+- A new direct Trip read in a Discovery module, or one of the four disappearing without A10 being re-graded.
+- Discovery's ranker context gaining `availableMinutes` or `availableNow`, or its candidates gaining `startsAt`.
+- A demoted row ahead of any row not graded dangerous, on any serve path, once §57.9 lands.
+- A "now" reason or an opportunity why-now on a demoted row.
+
+### 57.13 Integrator: P5-B merged, §57.9's Compass-path hunk applied, C1 un-`todo`'d
+
+*Integrator addendum, 2026-09-27, at the merge of `disc-p5b-adapters` (`495ee3de3` + `25c110540`, based on `862ba541f`) into `wave8-integration` at `d0e595b93`.*
+
+- **The merge.** Conflicts were unions only: the `test` line, `CENSUS_SCOPE`, and this census, with §57 after §56.14.
+- **§57.9's hunk is applied, line-neutral, exactly as routed.**
+  - `:101` imports `withDiscoveryLiveSafety`.
+  - Serve path 2 passes its filtered Compass order through it before the dismissal gate (`artifacts/api-server/src/routes/discovery.ts:2134#const cSafe = await withDiscoveryLiveSafety(getServiceClient(), cFiltered);`), and so does serve path 3 (`artifacts/api-server/src/routes/discovery.ts:2230#const cSafeC = await withDiscoveryLiveSafety(getServiceClient(), cFiltered);`).
+  - `:2141` and `:2234` hand the demoted grades to the candidate projection.
+- **C1 runs.** Its `todo` is removed (`artifacts/api-server/src/test/discoveryLiveSafetyCompassPath.test.ts:203#it("C1 live rank ON: a Live unsafe_density place is never first on either Compass serve point`).
+  - With the hunk: 4 of 4 pass, including C2 (live rank OFF, the Compass order is served untouched and no claim is read) and C3 (ON with nothing dangerous, the order equals the flag-off order).
+  - With only the hunk reverted: C1 fails, 1 of 4. The file was restored sha256-identical.
+  - The four new P5-B suites and C1 pass 42 of 42.
+- **A07 stays W, now for one reason.** Its routed defect is gone on the branch: a Live `unsafe_density` place was served first on GET /discovery's two Compass serve points, where no Discovery pass looked at it. What remains is §57.2's rule: 2850 and 2361 are FALSE, so none of this runs in any deployment.
+- **§57.10 question 1 is unchanged.** The hunk makes Discovery's gate apply on the Compass path; it does not decide which of the two gates owns Sensing `:129` there.
+
+| ID | was | now | evidence |
+|---|---|---|---|
+| A07 | W | **W** | Every serve path that can render a candidate now applies the demotion: paths 1 and 4 through `withDiscoveryLiveRank`, and paths 2 and 3 through the Compass-path pass (`artifacts/api-server/src/routes/discovery.ts:2134#const cSafe = await withDiscoveryLiveSafety(getServiceClient(), cFiltered);`). A dangerous place is never first, never carries an opportunity or vibe why-now, and is never "open around now". **Why W:** `discovery_live_rank_enabled` (2850) and `discovery_candidate_projection_enabled` (2361) are FALSE, and no producer has written `unsafe_density` (§57.11); the §31.2 rule applies. |
+
+**Headline** (unchanged: §57 moves no row):
+
+| bucket | count |
+|---|---|
+| BUILT-AND-CORRECT | **97** |
+| BUILT-BUT-WRONG | **82** |
+| NOT-BUILT | **6** |
+| CANNOT-VERIFY | **3** |
+
+**Freshness.** The census-discovery ledger now names the seven files §57 watched without acknowledging them, and argues for the three library files and `routes/discovery.ts`. The acknowledgements for census-compass, census-sensing, census-passport, census-trust and census-layover each carry an argument that no verdict of theirs moves.
+
 ## Cited, not graded (check:census-scope-coverage)
 
 - NOT-GRADED: artifacts/api-server/src/compass/CompassExplanationEngine.ts — §13.7 item 3 names Compass's HMAC recommendation-token signer as a refactor this lane declined to make in another lane's file. Discovery's recommendation id is minted by lib/discoveryRecommendationId.ts, and no Discovery verdict rests on the signer.
 - NOT-GRADED: artifacts/api-server/src/routes/plan.ts — §39.1 names its add-to-trip-plan route as the server-side trip add, and §39.4 assigns that add to the Trips lane. The trip_add signal DV-79 and DC-09 grade is written by the client's PlanPickerController (§41.6), not by this route.
+- NOT-GRADED: artifacts/api-server/src/compass/CompassLiveConstraints.ts — §57.4 cites its environment gate to show the Compass serve points' only safety is Compass's own; census-compass and census-sensing S66 grade it, and no §57 verdict rests on it.

@@ -3961,6 +3961,24 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/lib/mediaAccess.ts",
     "artifacts/api-server/src/routes/telegraphCommands.ts",
     "artifacts/api-server/src/compass/CompassGraphEngine.ts",
+    // WIDENED 2026-09-27 by census-discovery §57 (cross-architecture adapters II, lane P5-B):
+    // A25's Map fold and its two suites, A10's newly named direct Trip reader, A07/A03's
+    // live-safety suites, A11's property suite and A10's inventory ratchet. Every §57 verdict
+    // row cites these, so each is watched. lib/liveClaimRead.ts is watched too: §57's E1 and
+    // F1 rest on its expiry filter and its failed-read branch. compass/CompassLiveConstraints.ts,
+    // cited only to name another lane's gate, is declared NOT-GRADED in the census.
+    "artifacts/api-server/src/lib/mapDiscoveryCandidates.ts",
+    "artifacts/api-server/src/lib/liveClaimRead.ts",
+    "artifacts/api-server/src/services/location/DiscoveryLocationContext.ts",
+    "artifacts/api-server/src/test/mapDiscoveryCandidateConsumer.test.ts",
+    "artifacts/api-server/src/test/mapDiscoveryCandidateAdapter.test.ts",
+    "artifacts/api-server/src/test/discoveryLiveRank.test.ts",
+    "artifacts/api-server/src/test/discoveryLiveSafetyPrecedence.test.ts",
+    "artifacts/api-server/src/test/discoveryLiveSafetyCompassPath.test.ts",
+    "artifacts/api-server/src/test/discoveryFreeTimeDuplicate.test.ts",
+    "artifacts/api-server/src/test/discoveryTripReadInventory.test.ts",
+    // §56.14 (integrator): the snapshot entry fix's suite; A13 and A14 are restated on it.
+    "artifacts/api-server/src/test/layoverSnapshotEntry.test.ts",
   ],
   // ── ADDED 2026-09-15: census-passport joins the CHECKABLE set ──────────────
   //

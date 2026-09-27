@@ -172,7 +172,7 @@ export async function withDiscoveryLiveRank<T extends LiveRankSourceRow>(
     const outcome = rankDiscoveryLive(rows, {
       mode, nowMs, queueToleranceMinutes: opts.queueToleranceMinutes ?? null,
     });
-    const reordered = [...outcome.ranked.map((r) => r.source), ...places.slice(LIVE_RANK_WINDOW)];
+    const reordered = [...outcome.ranked.filter((r) => !outcome.byId.get(r.id)?.safety.demoted).map((r) => r.source), ...places.slice(LIVE_RANK_WINDOW), ...outcome.ranked.filter((r) => outcome.byId.get(r.id)?.safety.demoted).map((r) => r.source)]; // census-discovery §57 — a demoted row goes behind the rows past the window as well, not only behind the graded ones: Sensing §7 (spec line 129) is "never promoted", and ahead of every ungraded row is a promotion earned on relevance alone.
     return {
       places: reordered, applied: true, readable, mode,
       byId: outcome.byId, windowSize: outcome.windowSize, demoted: outcome.demoted,
@@ -181,4 +181,60 @@ export async function withDiscoveryLiveRank<T extends LiveRankSourceRow>(
     // A ranking layer may never empty or truncate a feed.
     return { ...empty, mode };
   }
+}
+
+// ── Safety only — census-discovery §57, A07 ───────────────────────────────────
+
+export interface LiveSafetyServeOutcome<T> {
+  /** `places` itself when nothing was demoted (or the flag is off); otherwise a new array. */
+  places: T[];
+  /** True only when the flag was on AND the grade actually ran. */
+  applied: boolean;
+  /** False ⇒ the live gates refused; nothing was demoted. */
+  readable: boolean;
+  /**
+   * The grades of the DEMOTED rows only, keyed by row id — exactly what
+   * lib/discoveryCandidate needs to give a demoted row its safety why-now and to
+   * withhold its "now" reason (`withSafetyPrecedence`). Every other row is
+   * absent, so a serve point that uses this adds NO why-now of any other kind.
+   */
+  byId: Map<string, DiscoveryLiveRank>;
+  demoted: number;
+}
+
+/**
+ * Sensing §7 (spec line 129) for a serve point whose ORDER Discovery's live rank does not
+ * own. GET /discovery's two Compass serve points (`compass_candidate_hit`,
+ * `compass_fresh_rank`) serve Compass's pipeline order and never call
+ * `withDiscoveryLiveRank`, so with `discovery_live_rank_enabled` ON a Live
+ * `unsafe_density` place is demoted on serve paths 1 and 4 and NOT on 2 and 3 —
+ * where the only safety is Compass's own Live exclusion, gated separately by
+ * the COMPASS_LIVE_CONSTRAINTS_ENABLED environment switch. Same surface, same flag,
+ * two answers.
+ *
+ * This applies the constraint and nothing else: the SAME gated read and the
+ * SAME grade as `withDiscoveryLiveRank` (so it cannot disagree with it about
+ * what is dangerous), then the incoming order is KEPT and only the demoted rows
+ * move — behind every other row, the tail included. No live influence is
+ * spent, so it adds no ranking; it is a constraint on an order someone else
+ * owns. Flag OFF ⇒ `places` itself, no claim read, exactly as the ranker.
+ */
+export async function withDiscoveryLiveSafety<T extends LiveRankSourceRow>(
+  sc: any,
+  places: T[],
+  opts: LiveRankServeOptions = {},
+): Promise<LiveSafetyServeOutcome<T>> {
+  const graded = await withDiscoveryLiveRank(sc, places, opts);
+  const demotedById = new Map<string, DiscoveryLiveRank>();
+  for (const [id, grade] of graded.byId) if (grade.safety.demoted) demotedById.set(id, grade);
+  if (!graded.applied || demotedById.size === 0) {
+    return { places, applied: graded.applied, readable: graded.readable, byId: demotedById, demoted: 0 };
+  }
+  return {
+    places: [...places.filter((p) => !demotedById.has(p.id)), ...places.filter((p) => demotedById.has(p.id))],
+    applied: true,
+    readable: graded.readable,
+    byId: demotedById,
+    demoted: demotedById.size,
+  };
 }
