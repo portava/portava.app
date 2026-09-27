@@ -714,7 +714,7 @@ export async function buildFeed(
     const endIdx   = startIdx + PAGE_SIZE;
     const pageItems = allItems.slice(startIdx, endIdx);
 
-    const feedItems: FeedItem[] = pageItems.map((r) => ({
+    const feedItems: FeedItem[] = pageItems.map((r0) => compassPostPlaceForViewer(r0, profile.userId)).map((r) => ({ // census-media §43: the page is ranked, capped and sliced; only then is a withheld post's place id stripped for a non-owner
       ...r,
       section:         name,
       explanationKey:  buildExplanationKey(r, name, profile),
@@ -787,7 +787,7 @@ export async function buildSection(
   const endIdx   = startIdx + PAGE_SIZE;
   const pageItems = allItems.slice(startIdx, endIdx);
 
-  const feedItems: FeedItem[] = pageItems.map((r) => ({
+  const feedItems: FeedItem[] = pageItems.map((r0) => compassPostPlaceForViewer(r0, profile.userId)).map((r) => ({ // census-media §43: as in buildFeed
     ...r,
     section:         sectionName,
     explanationKey:  buildExplanationKey(r, sectionName, profile),
@@ -804,4 +804,31 @@ export async function buildSection(
     nextCursor,
     fallback:   false,
   };
+}
+
+// ── census-media §43: a post's location mode, at the Compass page ────────────
+// Appended at the tail so no cited line above moves; ESM hoists imports and
+// function declarations.
+import { postPlaceMarkedWithheldFrom } from "../lib/postPlaceDisclosure.js";
+
+/**
+ * One ranked result, as a viewer may receive it. A `post` item whose place
+ * mapPublicPost withholds (CompassItemHydrator marks it) loses its `placeId`
+ * unless the viewer is its author; everything else is handed back as the very
+ * same object.
+ *
+ * WHY HERE AND NOT AT THE HYDRATOR. The same `placeId` is the post's live-
+ * constraint subject (CompassLiveConstraints.resolveLiveSubjects) and its
+ * place-affinity key (CompassScoringEngine.scoreItem). Nulling it at the source
+ * would stop an exclusion or demotion applying and change scores, so an item a
+ * constraint excluded could appear. Stripping it after the page is ranked,
+ * diversified, capped, weighted and sliced leaves every one of those internal
+ * steps reading what it always read: the page has the same items, in the same
+ * order, with the same scores — and one field fewer.
+ */
+export function compassPostPlaceForViewer<T extends { item: CompassItem }>(r: T, viewerId: string): T {
+  const item = r.item;
+  if (!item || item.type !== "post" || item.placeId == null) return r;
+  if (!postPlaceMarkedWithheldFrom(item, viewerId)) return r;
+  return { ...r, item: { ...item, placeId: null } };
 }

@@ -57,7 +57,7 @@ const PLACE_RAIL_STRANGER = "place-rail:no-viewer";
  * contribution count computed over their hidden posts.
  */
 export function isPublicPlaceRailPost(row: ReadablePost & { post_status?: string | null }): boolean {
-  return isPostPublished(row) && canReadPost(row, PLACE_RAIL_STRANGER, false, false);
+  return isPostPublished(row) && canReadPost(row, PLACE_RAIL_STRANGER, false, false) && !postPlaceWithheld(row as { location_privacy_mode?: unknown; post_status?: unknown }); // census-media §43: a stranger may not read the place of a post whose owner withheld it (mapPublicPost's rule), so it is not on the place's rails either; callers must SELECT location_privacy_mode
 }
 
 // ── Engagement score formula ──────────────────────────────────────────────────
@@ -156,7 +156,7 @@ async function fetchBestOfRealtime(sc: SupabaseClient, placeId: string): Promise
     .from("posts")
     .select(
       "id, author_id, trip_id, visibility, content, media_type, media_urls, media_thumbnail_url, " +
-      "like_count, save_count, share_count, post_status",
+      "like_count, save_count, share_count, post_status, location_privacy_mode", // census-media §43: read by isPublicPlaceRailPost
     )
     .eq("canonical_place_id", placeId)
     .eq("status", "active")
@@ -268,3 +268,6 @@ export async function enqueueLivingCacheInvalidation(
     );
   }
 }
+
+// census-media §43 — appended at the tail so no cited line above moves; ESM hoists imports.
+import { postPlaceWithheld } from "../postSchemas.js";

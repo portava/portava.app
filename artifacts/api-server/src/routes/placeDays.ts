@@ -99,7 +99,7 @@ router.get("/places/:id/place-days/:date/feed", asyncHandler(async (req, res) =>
   let exhausted = false;
   while (candidates.length <= parsed.data.limit && !exhausted) {
     let query = ctx.sc.from("posts")
-      .select("id, author_id, content, media_urls, media_thumbnail_url, media_type, created_at, visibility, status, post_status, publish_at, profiles(id, is_private)")
+      .select("id, author_id, content, media_urls, media_thumbnail_url, media_type, created_at, visibility, status, post_status, publish_at, location_privacy_mode, profiles(id, is_private)") // census-media §43: the owner's mode, read below
       .eq("canonical_place_id", place.id).eq("status", "active")
       .gte("created_at", start).lt("created_at", end)
       .order("created_at", { ascending: false }).order("id", { ascending: false }).limit(chunkSize);
@@ -111,7 +111,7 @@ router.get("/places/:id/place-days/:date/feed", asyncHandler(async (req, res) =>
     const chunk = (raw as any[]) ?? [];
     if (chunk.length === 0) { exhausted = true; break; }
     rawCursor = { createdAt: new Date(chunk[chunk.length - 1].created_at).toISOString(), id: chunk[chunk.length - 1].id };
-    let visible = chunk.filter((p) => !blocked.has(p.author_id) && isEligiblePlaceDayPost(p));
+    let visible = chunk.filter((p) => !blocked.has(p.author_id) && isEligiblePlaceDayPost(p)); visible = visible.filter((p) => !postPlaceWithheldFrom(p, ctx.userId)); // census-media §43: this feed lists posts BECAUSE of their place, so a post whose owner withheld it is not listed here, except to its author (isEligiblePlaceDayPost stays as it is: it also decides place-day creation)
     visible = await excludePrivateAuthorPosts(visible, ctx.userId, ctx.sc, { profilesKey: "profiles" });
     candidates.push(...visible);
     exhausted = chunk.length < chunkSize;
@@ -131,3 +131,6 @@ router.get("/places/:id/place-days/:date/feed", asyncHandler(async (req, res) =>
 }));
 
 export default router;
+
+// census-media §43 — appended at the tail so no cited line above moves; ESM hoists imports.
+import { postPlaceWithheldFrom } from "../lib/postPlaceDisclosure.js";

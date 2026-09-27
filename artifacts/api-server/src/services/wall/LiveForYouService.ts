@@ -446,7 +446,7 @@ export async function buildSocialPresenceLiveCandidates(
     const cutoff = new Date(now.getTime() - SOCIAL_PRESENCE_DAYS * 24 * 60 * 60 * 1000).toISOString();
     const { data, error } = await sc
       .from("posts")
-      .select("author_id, canonical_place_id, created_at")
+      .select("author_id, canonical_place_id, created_at, location_privacy_mode, post_status") // census-media §43: as ContextThreadService's social_presence
       .in("canonical_place_id", [...byPlace.keys()])
       .eq("visibility", "public")
       .eq("status", "active")
@@ -461,7 +461,7 @@ export async function buildSocialPresenceLiveCandidates(
     for (const row of data as any[]) {
       const placeId = row.canonical_place_id ? String(row.canonical_place_id) : null;
       const author = row.author_id ? String(row.author_id) : "";
-      if (!placeId || !author || author === viewerId || !byPlace.has(placeId)) continue;
+      if (!placeId || !author || author === viewerId || !byPlace.has(placeId) || postPlaceWithheld(row)) continue; // census-media §43: a post whose owner withheld its place does not count at it
       (distinctByPlace.get(placeId) ?? distinctByPlace.set(placeId, new Set()).get(placeId)!).add(author);
       const t = Date.parse(String(row.created_at ?? ""));
       if (!Number.isNaN(t)) newestByPlace.set(placeId, Math.max(newestByPlace.get(placeId) ?? 0, t));
@@ -1101,3 +1101,6 @@ export async function buildTripSignalLiveCandidates(
  * an operator seeing it is not the caller being told. Left alone on purpose.
  */
 export const LIVE_STRIP_EMPTINESS_RULING = "spec §34 / TABLE 5: an unavailable producer degrades the strip; an absent strip item asserts nothing" as const;
+
+// census-media §43 — appended at the tail so no cited line above moves; ESM hoists imports.
+import { postPlaceWithheld } from "../../lib/postSchemas.js";

@@ -57,11 +57,11 @@ async function collectSources(sc: any, parent: any, kind: "place" | "moment", vi
   if (!parent.local_date || !parent.timezone) return { sources: [], error: true };
   const { start, end } = utcRangeForLocalDate(parent.local_date, parent.timezone);
   const { data, error } = await sc.from("posts")
-    .select("id, author_id, content, media_urls, media_thumbnail_url, media_type, created_at, visibility, status, post_status, publish_at, profiles(id, is_private)")
+    .select("id, author_id, content, media_urls, media_thumbnail_url, media_type, created_at, visibility, status, post_status, publish_at, location_privacy_mode, profiles(id, is_private)") // census-media §43: the owner's mode, read below
     .eq("canonical_place_id", parent.place_id).gte("created_at", start).lt("created_at", end)
     .order("created_at", { ascending: true }).order("id", { ascending: true });
   if (error) return { sources: [], error: true };
-  const candidates = ((data ?? []) as any[]).filter((post) => !blocked.has(post.author_id) && isEligiblePlaceDayPost(post));
+  const candidates = ((data ?? []) as any[]).filter((post) => !blocked.has(post.author_id) && isEligiblePlaceDayPost(post)).filter((post) => !postPlaceWithheldFrom(post, viewerId)); // census-media §43: a Place Day recap collects posts BECAUSE of their place; another author's post whose place they withheld is not copied into it (the recap owner's own posts are)
   const visible = await excludePrivateAuthorPosts(candidates, viewerId, sc, { profilesKey: "profiles" });
   return { sources: visible.map((post) => ({
     id: post.id, type: "place_day_post", postId: post.id, contributorId: post.author_id, caption: post.content ?? null,
@@ -165,3 +165,6 @@ router.get("/place-recaps/:id", asyncHandler(async (req, res) => {
   res.json({ recap: ctx.recap, version: version.data, chapters: chapters.data ?? [], snapshots: snapshots.data ?? [] });
 }));
 export default router;
+
+// census-media §43 — appended at the tail so no cited line above moves; ESM hoists imports.
+import { postPlaceWithheldFrom } from "../lib/postPlaceDisclosure.js";
