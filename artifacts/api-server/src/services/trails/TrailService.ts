@@ -19,8 +19,8 @@
  * sort on exactly ONE already-existing value:
  *
  *   just_arrived   `content_trails.created_at`            — a column
- *   trending_now   `lib/discoveryLocalMomentum.loadLocalMomentum` — the
- *                  SHIPPING momentum loader, over `rank_events`, unchanged
+ *   trending_now   `lib/discoveryLocalMomentum.computeLocalMomentum` — the
+ *                  SHIPPING momentum kernel, over `rank_events`, unchanged
  *   evergreen      `content_trails.confidence`            — a column
  *   local_picks    `content_trails.confidence`, curated rows only
  *
@@ -44,7 +44,8 @@
  * DC-03, DC-04, DC-05, DC-20, DC-21.
  */
 import {
-  loadLocalMomentum, MOMENTUM_BASELINE_WINDOW_MS,
+  computeLocalMomentum, MOMENTUM_BASELINE_WINDOW_MS, MOMENTUM_PAGE_SIZE, MOMENTUM_ROW_LIMIT,
+  type MomentumRow,
 } from "../../lib/discoveryLocalMomentum.js";
 import type { DerivedStoreProvenance } from "../../lib/discoveryRankProvenance.js";
 import {
@@ -327,66 +328,140 @@ export interface TrailModulesResult {
 const DAY = 86_400_000;
 
 /**
- * Rows read in ONE page when measuring §9's exposure denominators.
+ * The ceiling on `rank_events` rows ONE Trail read pages in, across all pages.
  *
- * 1000 is PostgREST's `db-max-rows`, not a preference: asking for more returns
- * 1000 and says nothing about it (see lib/discoveryLocalMomentum.ts's own note
- * on the same trap). A full page therefore means the window was TRUNCATED, and
- * truncated counts are wrong counts in the one direction that matters — an item
- * whose impressions were cut off looks new again and re-qualifies for an
- * opportunity it has already had. `readExposureCounts` reports that as
- * unmeasured rather than serving the smaller number.
+ * Borrowed from the momentum loader rather than chosen here, so a Trail
+ * reading and a Discovery reading of the same places bound the same window.
+ * The read pages at MOMENTUM_PAGE_SIZE because PostgREST caps a response at
+ * `db-max-rows` (1000) and says nothing about it: a single `.limit(1000)` read
+ * could not tell a complete window from a truncated one. A read that REACHES
+ * the ceiling is reported as truncated, and each consumer states what it does
+ * with that (see `readMemberEvents`).
  */
-export const MAX_TRAIL_EXPOSURE_EVENTS = 1_000;
+export const MAX_TRAIL_EVENT_ROWS = MOMENTUM_ROW_LIMIT;
+/** §9's exposure denominators are refused, not shortened, past this bound. */
+export const MAX_TRAIL_EXPOSURE_EVENTS = MAX_TRAIL_EVENT_ROWS;
+
+// ── The id spaces one member is exposed under (census-discovery §51) ─────────
+//
+// `content_trails.source_id` is a BARE uuid (2910). The Discovery writers do
+// not all write bare ids: `GET /discovery` serves — and its serve log writes to
+// `rank_events.item_id` — a DB-backed place as `db/<uuid>` (routes/discovery.ts,
+// queryDbPlaces for `discovery_places` rows and queryCanonicalPlaces for
+// `places` rows), while `GET /discovery/community` serves the same
+// `discovery_places` row bare. Every Trails read of `rank_events` used to ask
+// for the bare id only, so a Trail place's main-feed exposures and outcomes —
+// the bulk of them — were invisible to §9's denominators, to `trending_now`,
+// to GET …/trending and to DV-25's Trail momentum.
+//
+// The fold below is EXACT, not a heuristic: a `db/` row can only come back
+// from a read whose id list named `db/<source_id>` of a PLACE member, so
+// stripping the prefix names that member and nothing else. One row is one
+// event whichever id it carries, so the two spaces are summed and nothing is
+// counted twice. OSM serve ids (`node/…`) name no Trail member — a
+// `content_trails.source_id` is a uuid — and are never asked for.
+
+/** The served-id prefix `GET /discovery` gives a DB-backed place (`db/<uuid>`). */
+export const DISCOVERY_DB_PLACE_PREFIX = "db/";
+
+/** Every `rank_events.item_id` one Trail member can be exposed under. */
+export function servedIdsForMember(sourceType: string, sourceId: string): string[] {
+  return sourceType === "place" ? [sourceId, `${DISCOVERY_DB_PLACE_PREFIX}${sourceId}`] : [sourceId];
+}
+
+/** A `rank_events.item_id` → the `content_trails.source_id` it names. */
+export function memberIdForServedId(itemId: string): string {
+  return itemId.startsWith(DISCOVERY_DB_PLACE_PREFIX) ? itemId.slice(DISCOVERY_DB_PLACE_PREFIX.length) : itemId;
+}
+
+interface MemberEventRead {
+  /** Non-analytics rows, `item_id` folded onto the member's `source_id`. */
+  rows: MomentumRow[];
+  /** The read stopped at MAX_TRAIL_EVENT_ROWS, not at the end of the window. */
+  truncated: boolean;
+}
+
+/**
+ * The ONE `rank_events` read behind every Trails number: §9's exposure
+ * denominators, `trending_now`'s order, GET …/trending, and DV-25's Trail
+ * momentum. `undefined` means the read FAILED — a different fact from an empty
+ * window, and every caller keeps the two apart.
+ *
+ * `surface`: `"discovery"` for the per-item readings (the same rows the
+ * momentum loader reads for `GET /discovery`), `null` for the Trail-level fold,
+ * which counts a Trail's posts on every surface they are served on.
+ *
+ * `analytics` rows are excluded IN THE QUERY: they are ranker bookkeeping, one
+ * per candidate, and excluded after the read they would fill the bounded pages
+ * and push real activity out of the window. The order is `served_at DESC, id
+ * DESC` — a stable total order, so paging neither repeats nor skips a row, and
+ * truncation keeps the most RECENT rows, which is the half the 48-hour window
+ * turns on. There is no cache: the loader's `trail:<id>` entry was shared by
+ * two readers asking for DIFFERENT member sets, so whichever ran first chose
+ * the corpus the other read for ten minutes.
+ */
+async function readMemberEvents(
+  sc: any,
+  members: ReadonlyArray<{ source_type: string; source_id: string }>,
+  nowMs: number,
+  surface: "discovery" | null,
+): Promise<MemberEventRead | undefined> {
+  const ids = [...new Set(members.flatMap((m) =>
+    typeof m?.source_id === "string" && m.source_id.length > 0 ? servedIdsForMember(m.source_type, m.source_id) : []))];
+  if (ids.length === 0) return { rows: [], truncated: false };
+  const since = new Date(nowMs - MOMENTUM_BASELINE_WINDOW_MS).toISOString();
+  const rows: MomentumRow[] = [];
+  let fetched = 0;
+  try {
+    for (let offset = 0; offset < MAX_TRAIL_EVENT_ROWS; offset += MOMENTUM_PAGE_SIZE) {
+      let q = sc.from("rank_events").select("item_id, outcome, served_at, outcome_at");
+      if (surface) q = q.eq("surface", surface);
+      const { data, error } = await q
+        .neq("outcome", "analytics")
+        .in("item_id", ids)
+        .gte("served_at", since)
+        .order("served_at", { ascending: false })
+        .order("id", { ascending: false })
+        .range(offset, Math.min(offset + MOMENTUM_PAGE_SIZE, MAX_TRAIL_EVENT_ROWS) - 1);
+      if (error || !Array.isArray(data)) return undefined;
+      fetched += data.length;
+      for (const r of data as any[]) {
+        if (typeof r?.item_id !== "string" || r.item_id.length === 0) continue;
+        rows.push({ item_id: memberIdForServedId(r.item_id), outcome: r.outcome, served_at: r.served_at, outcome_at: r.outcome_at ?? null });
+      }
+      if (data.length < MOMENTUM_PAGE_SIZE) return { rows, truncated: false };
+      if (fetched >= MAX_TRAIL_EVENT_ROWS) break;
+    }
+    return { rows, truncated: true };
+  } catch {
+    return undefined;
+  }
+}
 
 export interface TrailExposureCount { impressions: number; positives: number }
 
 /**
- * `02` §9 "Use exposure denominators" — the denominators, actually read.
+ * `02` §9 "Use exposure denominators" — over rows `readMemberEvents` read.
  *
- * Returns `undefined` when the read failed OR when it could not be bounded, and
- * a map (possibly empty) when it succeeded. An item MISSING from a returned map
- * has a measured denominator of zero; an absent map means no denominator was
- * measured at all. Those are different facts and `getTrailModules` keeps them
+ * An item MISSING from the returned map has a measured denominator of zero; the
+ * caller passes no rows at all when nothing was measured, and keeps that case
  * apart, because §9's whole judgement — "has this item already had its bounded
  * opportunity?" — is a statement about a denominator, and a fabricated zero
- * answers it "no" for every item forever.
- *
- * Reads the same `rank_events` rows, on the same surface, with the same
- * `analytics` exclusion and the same 30-day window the momentum loader uses.
- * One impression per served row; a row whose outcome is not `impression` is
- * also a positive response, which is §9 step 3's numerator.
+ * answers it "no" for every item forever. One impression per served row; a row
+ * whose outcome is not `impression` is also a positive response, which is §9
+ * step 3's numerator.
  */
-async function readExposureCounts(
-  sc: any, itemIds: readonly string[], nowMs: number,
-): Promise<Record<string, TrailExposureCount> | undefined> {
-  const ids = [...new Set(itemIds.filter((id) => typeof id === "string" && id.length > 0))];
-  if (ids.length === 0) return {};
-  try {
-    const since = new Date(nowMs - MOMENTUM_BASELINE_WINDOW_MS).toISOString();
-    const { data, error } = await sc.from("rank_events")
-      .select("item_id, outcome, served_at")
-      .eq("surface", "discovery")
-      .neq("outcome", "analytics")
-      .in("item_id", ids)
-      .gt("served_at", since)
-      .limit(MAX_TRAIL_EXPOSURE_EVENTS);
-    if (error) return undefined;
-    const rows = (data ?? []) as any[];
-    if (rows.length >= MAX_TRAIL_EXPOSURE_EVENTS) return undefined;
-
-    const out: Record<string, TrailExposureCount> = {};
-    for (const r of rows) {
-      const id = r?.item_id;
-      if (typeof id !== "string" || id.length === 0) continue;
-      const bucket = (out[id] ??= { impressions: 0, positives: 0 });
-      bucket.impressions += 1;
-      if (r.outcome !== "impression") bucket.positives += 1;
-    }
-    return out;
-  } catch {
-    return undefined;
+function exposureCountsFrom(
+  rows: readonly MomentumRow[], memberIds: ReadonlySet<string>,
+): Record<string, TrailExposureCount> {
+  const out: Record<string, TrailExposureCount> = {};
+  for (const r of rows) {
+    if (!memberIds.has(r.item_id)) continue;
+    const bucket = (out[r.item_id] ??= { impressions: 0, positives: 0 });
+    bucket.impressions += 1;
+    if (r.outcome !== "impression") bucket.positives += 1;
   }
+  return out;
 }
 
 /**
@@ -424,23 +499,37 @@ export async function getTrailModules(
     nowMs,
   });
 
-  // The ONE non-chronological ordering input, and it is borrowed rather than
-  // built: the momentum loader `GET /discovery` already uses, over the same
-  // `rank_events` rows, with its own cache key so it cannot evict Discovery's.
+  // ONE `rank_events` read serves both of this function's readings: §9's
+  // exposure denominators for the exploration candidates and `trending_now`'s
+  // momentum for the place members. Both are read in BOTH served id spaces
+  // (`readMemberEvents`), on the surface the momentum loader reads.
+  const byNewest = [...m.members].sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at));
+  const explorationCandidates = byNewest.filter(
+    (r) => r.content_state === "just_arrived" || r.content_state === "rediscovered",
+  );
+  const placeMembers = m.members.filter((r) => r.source_type === "place");
+  const events: MemberEventRead | undefined = placeMembers.length + explorationCandidates.length > 0
+    ? await readMemberEvents(sc, [...placeMembers, ...explorationCandidates], nowMs, "discovery")
+    : { rows: [], truncated: false };
+
+  // The ONE non-chronological ordering input, and its arithmetic is borrowed
+  // rather than built: `computeLocalMomentum` is the kernel `GET /discovery`'s
+  // momentum loader runs, over the same rows, windows and weights.
   //
-  // DC-17: the loader's `provenance` is RETAINED, not dropped. It is the record
-  // of the window `trending_now`'s order was computed over, and the reason it is
-  // carried rather than re-derived here is that a second stamp built beside the
-  // numbers can drift from the arithmetic it describes.
-  const placeIds = m.members.filter((r) => r.source_type === "place").map((r) => r.source_id);
+  // DC-17: the kernel's `provenance` is RETAINED. It is the record of the window
+  // `trending_now`'s order was computed over, stamped by the same function that
+  // did the arithmetic. `null` means no reading entered this result — no place
+  // members, or a read that FAILED — never a window that was not consulted.
   let momentum: Record<string, number> = {};
   let momentumProvenance: DerivedStoreProvenance | null = null;
-  if (placeIds.length > 0) {
-    try {
-      const reading = await loadLocalMomentum(sc, placeIds, { cacheKey: `trail:${trailId}`, nowMs });
-      momentum = reading.values;
-      momentumProvenance = reading.provenance;
-    } catch { momentum = {}; momentumProvenance = null; }
+  if (placeMembers.length > 0 && events) {
+    const placeIds = new Set(placeMembers.map((r) => r.source_id));
+    const reading = computeLocalMomentum(events.rows.filter((e) => placeIds.has(e.item_id)), nowMs);
+    momentum = { ...reading.values };
+    momentumProvenance = reading.provenance;
+    if (events.truncated) {
+      logger.warn({ trailId, rowLimit: MAX_TRAIL_EVENT_ROWS }, "trail momentum: row ceiling reached — window bounded to the most recent rows");
+    }
   }
 
   const toItem = (r: MemberRow) => ({
@@ -479,7 +568,6 @@ export async function getTrailModules(
     return { key, objective, horizonMs, items, moreFromThisPlace: d.moreFromThisPlace, explorationSlots: null };
   };
 
-  const byNewest = [...m.members].sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at));
   const byConfidence = [...m.members].sort((a, b) => Number(b.confidence) - Number(a.confidence));
   const byMomentum = [...m.members].sort(
     (a, b) => (momentum[b.source_id] ?? 0) - (momentum[a.source_id] ?? 0),
@@ -490,12 +578,16 @@ export async function getTrailModules(
   // a tautology: every id it could reserve was already being served, so nothing
   // was reserved FOR anything. §9's point is that an item which would otherwise
   // not be seen gets a bounded chance to be.
-  const explorationCandidates = byNewest.filter(
-    (r) => r.content_state === "just_arrived" || r.content_state === "rediscovered",
-  );
-  const exposureCounts = await readExposureCounts(
-    sc, explorationCandidates.map((r) => r.source_id), nowMs,
-  );
+  //
+  // The denominators are REFUSED, not shortened, when the read failed or hit its
+  // ceiling: a truncated count is wrong in the one direction that matters (an
+  // item whose impressions were cut off looks new again). With no candidates
+  // there is nothing to judge and the answer is a measured "nothing qualified".
+  const exposureCounts: Record<string, TrailExposureCount> | undefined = explorationCandidates.length === 0
+    ? {}
+    : events && !events.truncated
+      ? exposureCountsFrom(events.rows, new Set(explorationCandidates.map((r) => r.source_id)))
+      : undefined;
   let explorationSlots: string[] | null = null;
   let reserved: Set<string> | undefined;
   if (exposureCounts) {
@@ -625,29 +717,29 @@ export async function trailTrending(sc: any, trailId: string, nowMs = Date.now()
   // provenance here would describe a computation that never ran (DC-17).
   if (itemIds.length === 0) return none(null);
 
-  // The rows are `rank_events` rows, read through the momentum loader. Trail
-  // momentum is those same rows folded onto the Trail — one kernel, two scopes,
-  // no second velocity model (DV-25).
+  // Per-item ORDER: the discovery-surface rows the momentum loader reads, in
+  // both served id spaces, through the shipping kernel. Trail MOMENTUM: the
+  // same kernel over every surface the members are served on, folded onto the
+  // Trail — one kernel, two scopes, no second velocity model (DV-25). Two reads
+  // because the two scopes differ; neither is cached, so neither can hand the
+  // other a corpus chosen for a different member set.
   let perItem: Record<string, number> = {};
   let momentumProvenance: DerivedStoreProvenance | null = null;
-  try {
-    const reading = await loadLocalMomentum(sc, itemIds, { cacheKey: `trail:${trailId}`, nowMs });
-    perItem = reading.values;
+  const itemRead = await readMemberEvents(sc, m.members, nowMs, "discovery");
+  if (itemRead) {
+    const reading = computeLocalMomentum(itemRead.rows, nowMs);
+    perItem = { ...reading.values };
     momentumProvenance = reading.provenance;
-  } catch { perItem = {}; momentumProvenance = null; }
-
-  const { data, error } = await sc.from("rank_events")
-    .select("item_id, outcome, served_at, outcome_at")
-    .in("item_id", itemIds)
-    .order("served_at", { ascending: false })
-    .limit(1000);
-  let trailMomentum: number | null = null;
-  if (error) {
-    if (isMissingRelation(error)) return none("trails_unavailable");
-    logger.warn({ trailId, code: error.code }, "trail trending event read failed");
   } else {
-    const folded = trailMomentumFromRankEvents((data ?? []) as any[], m.members, nowMs);
-    trailMomentum = folded[trailId] ?? null;
+    logger.warn({ trailId }, "trail trending item read failed");
+  }
+
+  let trailMomentum: number | null = null;
+  const trailRead = await readMemberEvents(sc, m.members, nowMs, null);
+  if (trailRead) {
+    trailMomentum = trailMomentumFromRankEvents(trailRead.rows, m.members, nowMs)[trailId] ?? null;
+  } else {
+    logger.warn({ trailId }, "trail trending event read failed");
   }
 
   const items = [...m.members]
@@ -683,8 +775,8 @@ export const MAX_FOLLOWED_TRAILS_PER_VIEWER = 50;
  * the metrics were actually computed over.
  */
 export const MAX_TRAIL_MEMBERS_SCANNED = 1000;
-/** rank_events rows folded onto the followed Trails for DV-25 momentum. */
-export const MAX_TRAIL_MOMENTUM_EVENTS = 1000;
+/** rank_events rows folded onto the followed Trails for DV-25 momentum — the one read ceiling. */
+export const MAX_TRAIL_MOMENTUM_EVENTS = MAX_TRAIL_EVENT_ROWS;
 
 /**
  * Open `trail_reports` counts for several Trails in ONE read, or `undefined`
@@ -724,19 +816,11 @@ async function readOpenReportCounts(
 async function readTrailMomentum(
   sc: any, members: readonly TrailMembershipRow[], nowMs: number,
 ): Promise<Record<string, number> | undefined> {
-  const itemIds = [...new Set(members.map((m) => m.source_id))];
-  if (itemIds.length === 0) return {};
-  try {
-    const { data, error } = await sc.from("rank_events")
-      .select("item_id, outcome, served_at, outcome_at")
-      .in("item_id", itemIds)
-      .order("served_at", { ascending: false })
-      .limit(MAX_TRAIL_MOMENTUM_EVENTS);
-    if (error) return undefined;
-    return trailMomentumFromRankEvents((data ?? []) as any[], members, nowMs);
-  } catch {
-    return undefined;
-  }
+  // Every surface, both served id spaces, analytics excluded in the query —
+  // the same read GET …/trending folds for its boolean (`readMemberEvents`).
+  const read = await readMemberEvents(sc, members, nowMs, null);
+  if (!read) return undefined;
+  return trailMomentumFromRankEvents(read.rows, members, nowMs);
 }
 
 /**
