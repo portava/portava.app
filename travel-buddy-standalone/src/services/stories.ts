@@ -100,7 +100,7 @@ export async function uploadStoryMedia(localUri: string, mediaType: string): Pro
     if (!token) return null;
 
     // Fetch the local file as a blob
-    const response = await fetch(localUri);
+    const response = await fetch(await videoUriForUpload(localUri, mediaType.startsWith('video/'))); // §37 MD282: localUri itself unless a compressor module is in the binary and switched on
     const blob = await response.blob();
 
     const uploadRes = await fetch(`${apiBase()}/api/media/upload`, {
@@ -288,3 +288,5 @@ export async function removeCloseFriend(userId: string): Promise<{ ok: boolean }
 // §37 (census-media §22): a story video gets its poster, attached in the
 // background. Imported at the TAIL so no line above moves; ESM hoists it.
 import { attachPosterInBackground } from './media/generalVideoPoster.ts';
+// §37 MD282 (census-media §37): the device compression seam. At the TAIL for the same reason.
+import { videoUriForUpload } from './media/videoCompression.ts';

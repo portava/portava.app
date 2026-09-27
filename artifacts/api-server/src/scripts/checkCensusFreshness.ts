@@ -1587,6 +1587,8 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     // WIDENED 2026-09-27 by the coverage-guard fix (census-media §32.14): W72 — §17's postcard-link writer and the Quick Media suite that proves the fix.
     "artifacts/api-server/src/routes/postcards.ts",
     "artifacts/api-server/src/test/wallQuickMedia.test.ts",
+    // WIDENED 2026-09-27 by lane E (census-media §38.11): W10 now spells its tab-registration citation as the standalone screen, so the guard checks the file the row means rather than the repo-root mock above.
+    "travel-buddy-standalone/app/(tabs)/_layout.tsx",
   ],
   // Discovery has NO SPEC. Its 67 rows are 25 inbound obligations from other
   // surfaces' specs, 9 rows shared with the Global Input Intelligence census,
@@ -1926,6 +1928,67 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     // WIDENED 2026-09-27 by the coverage-guard fix (census-media §32.14): MD338 (§30, §32) — the receipt reader §32.1's privacy argument rests on, and the byte gate's fail-closed suite §30 and §32.9 ran as regression evidence.
     "artifacts/api-server/src/services/intel/PresenceVerifier.ts",
     "artifacts/api-server/src/test/mediaAccessFailClosed.test.ts",
+    // WIDENED 2026-09-27 by lane I (census-media §35): the facts §35.5's MD65/MD53/MD58/MD197/MD162 statements and §35.4's owner questions rest on — the Map evidence path and its consent gate, the consent bridge's contract, the consent text in force, 3002's identity boundary, the aggregator's evidence lift and the crowd-flow payload's zone ids.
+    "artifacts/api-server/src/lib/intelEvidenceCapture.ts",
+    "artifacts/api-server/src/routes/mapObservations.ts",
+    "artifacts/api-server/src/lib/intelConsent.ts",
+    "travel-buddy-standalone/src/lib/sensing/consentDisclosure.ts",
+    "artifacts/api-server/src/migrations/3002_intel_contribution_identity.sql",
+    "artifacts/api-server/src/lib/intelProjectionAggregator.ts",
+    "artifacts/api-server/src/lib/mapAggregation.ts",
+    // WIDENED 2026-09-27 by lane I (census-media §35): the two suites §35.5's MD37 and MD197 statements rest on.
+    "artifacts/api-server/src/test/mediaAssetSourceDeclared.test.ts",
+    "artifacts/api-server/src/test/mediaContributorReputationSelfOnly.test.ts",
+    // WIDENED 2026-09-27 by lane V (census-media §37): MD63/MD269/MD277/MD280/MD283/MD289/MD293 rest on the vendor-stage flags 3355–3358 and the suite that tests the seams (the seams themselves sit under lib/media/, watched above).
+    "artifacts/api-server/src/migrations/3355_media_vision_provider_flag.sql",
+    "artifacts/api-server/src/migrations/3356_media_moderation_classifier_flag.sql",
+    "artifacts/api-server/src/migrations/3357_media_transcoder_flag.sql",
+    "artifacts/api-server/src/migrations/3358_media_captions_flag.sql",
+    "artifacts/api-server/src/test/mediaVendorSeams.test.ts",
+    // WIDENED 2026-09-27 by census-media §33 (lane T, H7): MD403 now grades the shared sheets Media opens — the role tokens, the sheets and the components drawn inside them that §33 changed, the pairs fixture and the design-system regression guard, and the four nested sheets MD403's RED WHEN names as unmeasured.
+    "travel-buddy-standalone/src/theme/tokens.ts",
+    "travel-buddy-standalone/src/theme/__tests__/sharedSheetContrast.pairs.ts",
+    "travel-buddy-standalone/src/theme/__tests__/sharedSheetContrast.consumers.test.ts",
+    "travel-buddy-standalone/src/components/selectors/GlobalPlacePicker.tsx",
+    "travel-buddy-standalone/src/components/PlanPickerController.tsx",
+    "travel-buddy-standalone/src/platform/input-assistance/components/DisambiguationSheet.tsx",
+    "travel-buddy-standalone/src/components/MentionInput.tsx",
+    "travel-buddy-standalone/src/components/MentionSuggestionList.tsx",
+    "travel-buddy-standalone/src/components/DateTimePickerField.tsx",
+    "travel-buddy-standalone/src/components/itinerary/LockTypeSelector.tsx",
+    "travel-buddy-standalone/src/components/RichText.tsx",
+    "travel-buddy-standalone/src/components/TagPreviewSheet.tsx",
+    "travel-buddy-standalone/src/components/ProfilePreviewCard.tsx",
+    "travel-buddy-standalone/src/components/EngagementUserListSheet.tsx",
+    "travel-buddy-standalone/src/components/ReportSheet.tsx",
+    // WIDENED 2026-09-27 by census-media §34 (lane F): the F1/F2 flag seeds every §34 row's ACTIVATION names, the playback manager MD425's tap-to-play rests on, and the suites that prove each flag's OFF state is today and its ON state the spec.
+    "artifacts/api-server/src/migrations/3340_media_tab_world_default_flag.sql",
+    "artifacts/api-server/src/migrations/3341_media_watch_context_overlay_flag.sql",
+    "artifacts/api-server/src/migrations/3342_media_watch_tap_to_play_flag.sql",
+    "artifacts/api-server/src/migrations/3343_media_watch_stage24_ranking_flag.sql",
+    "artifacts/api-server/src/test/mediaWatchStage24Ranking.test.ts",
+    "travel-buddy-standalone/src/hooks/useWatchPlayback.ts",
+    "travel-buddy-standalone/src/hooks/__tests__/useWatchPlayback.autoplay.component.test.tsx",
+    "travel-buddy-standalone/app/(tabs)/__tests__/media.worldDefault.component.test.tsx",
+    "travel-buddy-standalone/app/(tabs)/__tests__/media.worldDefaultSwitch.component.test.tsx",
+    "travel-buddy-standalone/app/(tabs)/__tests__/media.watchChip.component.test.tsx",
+    // WIDENED 2026-09-27 by lane P (census-media §36): MD262, MD101 and MD82–MD85/MD444's C rest on migrations 3350–3352 and the four suites that prove them, and §36.5's narrowings on the gem/privacy disclosure suite that now asserts them.
+    "artifacts/api-server/src/migrations/3350_media_neighborhood_only_location_mode.sql",
+    "artifacts/api-server/src/migrations/3351_media_find_busier_flag.sql",
+    "artifacts/api-server/src/migrations/3352_media_perspective_vantage.sql",
+    "artifacts/api-server/src/test/mediaNeighborhoodOnlyMode.test.ts",
+    "artifacts/api-server/src/test/mediaFindBusier.test.ts",
+    "artifacts/api-server/src/test/mediaPerspectiveVantage.test.ts",
+    "artifacts/api-server/src/test/mediaProductDecisionPlumbing.test.ts",
+    "artifacts/api-server/src/test/mediaGemAndPrivacyDisclosure.test.ts",
+    // WIDENED 2026-09-27 by lane V (census-media §37.8): MD269's restated evidence — a held or flagged postcard file neither counts nor becomes the passport cover — rests on this suite's §37.8 block.
+    "artifacts/api-server/src/test/postcards.test.ts",
+    // WIDENED 2026-09-27 by census-media §33.13 (lane T follow-up): what ReportSheet opens for a safety photo — the photo button, the source sheet and the photo card, now measured Media-flow surfaces MD403 rests on.
+    "travel-buddy-standalone/src/components/ui/MediaPickerButton.tsx",
+    "travel-buddy-standalone/src/components/ui/MediaSourceSheet.tsx",
+    "travel-buddy-standalone/src/components/ui/MediaAttachmentTray.tsx",
+    // WIDENED 2026-09-27 by census-media §40 (lane R): the viewer's page-dots layout suite, which §40.3 cites as the pin on the dots' own slot (the route file itself is already watched above).
+    "travel-buddy-standalone/app/media-viewer/__tests__/pageDots.layout.component.test.tsx",
   ],
   // census-telegraph.md — declared 2026-09-11 on the same basis as Media above:
   // 451 requirements out of CANNOT BE CHECKED, a clock started rather than a

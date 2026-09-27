@@ -6,9 +6,9 @@
  * are:
  *
  *   routes/tripFeasibility.ts:111                const PROVIDER = straightLineTravelTimeProvider;
- *   domain/trips/projections/TripFreedomProjection.ts:44     const BOUND_PROVIDER = straightLineTravelTimeProvider;
+ *   domain/trips/projections/TripFreedomProjection.ts:45     const BOUND_PROVIDER = straightLineTravelTimeProvider;  (was :44; corrected 2026-09-27)
  *   domain/trips/projections/TripRouteChainProjection.ts:42  const BOUND_PROVIDER = straightLineTravelTimeProvider;
- *   services/airport/LayoverTravelTime.ts:83     export const LAYOVER_TRAVEL_TIME_PROVIDER = noRoutedProvider;
+ *   services/airport/LayoverTravelTime.ts:83     export const LAYOVER_TRAVEL_TIME_PROVIDER: TravelTimeProvider = corridorTravelTimeProvider(googleRoutesCorridorProvider);  (corrected 2026-09-27: it read `= noRoutedProvider` until 74890f906 on 2026-09-22, which wired the lib/providers corridor adapter, not this file; that adapter refuses unless LAYOVER_ROUTED_CORRIDOR_ENABLED and GOOGLE_MAPS_API_KEY are both set)
  *
  * Each is a module constant rather than an env lookup ON PURPOSE, so that
  * turning a routed provider on is a reviewed code change and not a deploy-time

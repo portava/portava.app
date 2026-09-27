@@ -158,9 +158,9 @@ function HashtagCard({
       </View>
       <Pressable style={s.reportBtn} onPress={handleReport} disabled={reportBusy}>
         {reportBusy
-          ? <ActivityIndicator size="small" color={color.faint} />
+          ? <ActivityIndicator size="small" color={color.mute} />
           : <>
-              <Flag size={12} color={color.faint} />
+              <Flag size={12} color={color.mute} />
               <Text style={s.reportBtnText}>Report hashtag</Text>
             </>
         }
@@ -393,7 +393,7 @@ const s = StyleSheet.create({
   },
   headerLabel: { ...t.small, color: color.mute, fontWeight: '600' },
   center: { alignItems: 'center', justifyContent: 'center', paddingVertical: space.xxxl },
-  errorText: { ...t.small, color: color.faint, textAlign: 'center' },
+  errorText: { ...t.small, color: color.mute, textAlign: 'center' },
 
   card: { paddingHorizontal: space.lg, paddingBottom: space.lg, alignItems: 'center', gap: space.md },
 
@@ -407,9 +407,9 @@ const s = StyleSheet.create({
 
   reportBtn: {
     flexDirection: 'row', alignItems: 'center', gap: 4,
-    paddingVertical: space.xs, opacity: 0.6,
+    paddingVertical: space.xs, opacity: 1, // was 0.6, which drew its label at 1.8:1; it is an active control, so it keeps full contrast (census-media §33.13)
   },
-  reportBtnText: { ...t.small, color: color.faint },
+  reportBtnText: { ...t.small, color: color.mute },
 
   ctaRow: { flexDirection: 'row', gap: space.sm, width: '100%', paddingTop: space.xs },
   followBtn: {
@@ -436,7 +436,7 @@ const s = StyleSheet.create({
     width: '100%', paddingVertical: 12, borderRadius: radius.pill,
     backgroundColor: color.haze, alignItems: 'center',
   },
-  dimBtnText: { ...t.bodyStrong, color: color.mute, fontWeight: '600' },
+  dimBtnText: { ...t.bodyStrong, color: color.muteStrong, fontWeight: '600' },
 
   userRow: { flexDirection: 'row', gap: space.md, alignItems: 'center', alignSelf: 'stretch' },
   avatar: { width: avatar.s56, height: avatar.s56, borderRadius: avatar.s56 / 2, backgroundColor: color.haze },

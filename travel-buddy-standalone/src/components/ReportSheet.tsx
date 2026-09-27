@@ -362,8 +362,8 @@ const rs = StyleSheet.create({
   },
   optionRowSelected: { borderColor: color.signal, backgroundColor: color.signal + '0A' },
   optionLabel:         { ...t.body, color: color.ink },
-  optionLabelSelected: { color: color.signal, fontWeight: '700' },
-  check: { fontSize: 14, color: color.signal, fontWeight: '700' },
+  optionLabelSelected: { color: color.signalStrong, fontWeight: '700' },
+  check: { fontSize: 14, color: color.signalStrong, fontWeight: '700' },
 
   detailInput: {
     borderWidth: 1,
@@ -375,11 +375,11 @@ const rs = StyleSheet.create({
     minHeight: 96,
     marginBottom: 4,
   },
-  charCount: { ...t.small, color: color.faint, textAlign: 'right', marginBottom: space.sm },
+  charCount: { ...t.small, color: color.mute, textAlign: 'right', marginBottom: space.sm },
 
   primaryBtn: {
     marginTop: space.md,
-    backgroundColor: color.signal,
+    backgroundColor: color.signalStrong,
     borderRadius: radius.md,
     paddingVertical: 13,
     alignItems: 'center',
@@ -388,7 +388,7 @@ const rs = StyleSheet.create({
   primaryBtnLabel: { ...t.bodyStrong, color: color.onInk, fontWeight: '700' },
 
   backBtn:  {},
-  backLabel: { ...t.body, color: color.signal },
+  backLabel: { ...t.body, color: color.signalStrong },
 
   doneRow:  { alignItems: 'center', paddingVertical: space.md },
   doneIcon: { fontSize: 38, marginBottom: space.sm },
@@ -424,7 +424,7 @@ const rs = StyleSheet.create({
     paddingVertical: 12,
     alignItems: 'center',
   },
-  blockBtnLabel: { ...t.bodyStrong, color: color.signal, fontWeight: '700' },
+  blockBtnLabel: { ...t.bodyStrong, color: color.signalStrong, fontWeight: '700' },
 
   doneBtn: {
     marginTop: space.sm,

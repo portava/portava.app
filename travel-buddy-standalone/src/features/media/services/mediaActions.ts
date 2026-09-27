@@ -90,7 +90,7 @@ export const MEDIA_ACTION_IDS: readonly MediaActionId[] = [
   'view_event',
   'view_passport',
   'find_quieter',
-  'find_cheaper',
+  'find_cheaper', 'find_busier',
   'contribute_gem',
   'invite_people',
   'follow_this_night',
@@ -369,7 +369,7 @@ export function resolveMediaActionExecution(
       return postId ? { kind: 'navigate', route: `/postcard/${encodeURIComponent(postId)}` } : { kind: 'unsupported' };
     }
     case 'find_quieter':
-    case 'find_cheaper': {
+    case 'find_cheaper': case 'find_busier': {
       const mediaId = paramStr(action, 'mediaId') ?? refId(entityRefs, 'media');
       const prompt = paramStr(action, 'prompt');
       return mediaId && prompt ? { kind: 'compass', mediaId, prompt } : { kind: 'unsupported' };

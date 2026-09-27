@@ -117,7 +117,7 @@ export interface MediaProjection extends MediaProjectionLayers {
   /** Freshness class from age. NEVER 'live' — that word is reserved for gated live claims. */
   freshness: "fresh" | "recent" | "historical";
   /** Contributor credit — visible but secondary in world-first lenses (§46). */
-  contributor: MediaContributor | null;
+  contributor: MediaContributor | null; /** §12 perspective group the contributor named (census-media §36). Present ONLY when the viewer may be told the place. */ vantage?: string;
 }
 
 /** A raw candidate row as fetched from `posts` (may carry precise columns we ignore). */

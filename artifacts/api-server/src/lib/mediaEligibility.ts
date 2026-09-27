@@ -410,6 +410,15 @@ export async function filterEligibleMediaCandidates(
           if (!tripId) return false;
           if (!viewerCtx.viewerTripIds?.has(tripId)) return false;
         }
+        // census-media §36 (MD255): an audience this gate does not know is
+        // REFUSED, never admitted. The post enum holds public · trip_only ·
+        // private · followers_only, and each is decided above or admitted here
+        // (a followers_only post IS for this viewer: the follow check at the
+        // top of this branch is exactly "the viewer follows the author"). A
+        // value added later — §33's `following` or `shared_moment` — used to
+        // fall through to every follower; it now reaches nobody but its author
+        // until this gate is taught what it means.
+        if (!FOLLOWING_FEED_ADMITTED_VISIBILITIES.has(visibility)) return false;
       }
     } else {
       // For-you feed: only public items
@@ -536,3 +545,21 @@ export async function loadViewerTripIds(
 
   return tripIds;
 }
+
+// ── census-media §36 (MD255): the following feed's known audiences ──────────
+// Appended at the tail so no cited line above moves; the Set is initialised
+// when this module loads, before any filter call can read it.
+/**
+ * The post visibilities the FOLLOWING branch of filterEligibleMediaCandidates
+ * may admit for a non-author once the follow (and, for trip_only, membership)
+ * checks above have passed. `followers` is the raw spelling of followers_only
+ * (lib/postVisibility treats them as one tier). Anything else — `private`,
+ * which is refused above anyway, and every value nobody has taught this gate —
+ * is refused.
+ */
+export const FOLLOWING_FEED_ADMITTED_VISIBILITIES: ReadonlySet<string> = new Set([
+  "public",
+  "trip_only",
+  "followers_only",
+  "followers",
+]);

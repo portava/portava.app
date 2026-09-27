@@ -160,7 +160,7 @@ const s = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  fallbackSelected: { backgroundColor: color.signal },
+  fallbackSelected: { backgroundColor: color.signalStrong },
   // Shape change, not only colour — visible without colour perception.
   selectedRing: { borderWidth: 2, borderColor: color.ink },
   initial: { ...t.small, fontWeight: '700', color: color.ink },

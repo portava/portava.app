@@ -5,7 +5,7 @@
  * POST /v1/media/view-requests                      — request a current perspective of a place
  * PUT  /v1/media/view-requests/opt-in               — the caller opts in/out as a view contributor
  * GET  /v1/media/places/:placeId/visual-coverage    — "last visual update Nm ago" + staleness
- * GET  /v1/media/contributors/:contributorId/reputation — intelligence-trust dimensions (§25)
+ * GET  /v1/media/contributors/:contributorId/reputation — intelligence-trust dimensions (§25), the CALLER'S OWN only (census-media §35, MD197)
  *
  * Every route authenticates through requireUser (the ban/suspend gate + the
  * service-role client). The write routes are the mutating ones; the two GETs are
@@ -160,6 +160,22 @@ router.get("/v1/media/contributors/:contributorId/reputation", asyncHandler(asyn
   if (!auth) return;
   const contributorId = z.string().uuid().safeParse(req.params.contributorId);
   if (!contributorId.success) return sendError(res, "invalid_payload", "contributor id (uuid) required");
+  // ONLY THE CALLER'S OWN REPUTATION, until the owner decides otherwise
+  // (census-media §35, MD197). The reputation is computed from the contributor's
+  // intel_observations, which migration 3002 keys by rotating tokens precisely so
+  // that no one can trivially resolve a contribution to an account. Resolving an
+  // account's tokens is 3310's account -> tokens bridge, whose contract
+  // (lib/intelConsent readOwnContributorIdentities) is that "the caller must
+  // already hold the account id, and its authorization is what established
+  // that". This route established none: any signed-in caller could name any
+  // account id and any place, and read back that account's accepted-observation
+  // count AT THAT PLACE (placeExpertise is min(n, 8) / 8), i.e. where a named
+  // person has reported from. Whether other people may see a contributor's §25
+  // trust at all is an owner decision; until it is made, the answer is the one
+  // that discloses nothing new.
+  if (contributorId.data !== auth.user.id) {
+    return sendError(res, "forbidden", "Only your own contributor reputation can be read");
+  }
   const subjectId = typeof req.query.subjectId === "string" && req.query.subjectId.length > 0
     ? req.query.subjectId
     : null;

@@ -84,3 +84,47 @@ describe('story and memory videos get the poster the server derives', () => {
     });
   }
 });
+
+// ── census-media §37, MD282: these two helpers read their file through the
+// compression seam. The native module is a TEST DOUBLE; what is proved is which
+// file is read — the original with no module or the switch off (every build
+// today), the compressed copy with both.
+import { _setTestVideoCompressionFlag, _setTestVideoCompressorLookup } from '../videoCompression.ts';
+
+describe('story and memory videos read their bytes through the MD282 compression seam', () => {
+  const saved = (globalThis as any).fetch;
+  const small = () => ({ compressAsync: async () => ({ uri: 'file:///clip.small.mp4', sizeBytes: 10, width: 720, height: 1280 }) });
+  beforeAll(() => {
+    process.env.EXPO_PUBLIC_API_BASE_URL = 'https://api.test';
+    _setTestMediaNatives({ thumbnail: (uri, opts) => mockGetThumbnail(uri, opts) });
+  });
+  afterAll(() => {
+    (globalThis as any).fetch = saved;
+    delete process.env.EXPO_PUBLIC_API_BASE_URL;
+    _setTestMediaNatives({ thumbnail: null });
+  });
+  afterEach(() => { _setTestVideoCompressionFlag(null); _setTestVideoCompressorLookup(null); });
+  const posterDone = (calls: Array<{ url: string }>) => settle(() => calls.some((c) => c.url.includes('/api/media/upload/poster')));
+
+  for (const [name, upload] of [['story', uploadStoryMedia], ['memory', uploadMemoryMedia]] as const) {
+    it(`${name}: switch off (shipped) → the ORIGINAL file is read, even with a module present`, async () => {
+      _setTestVideoCompressorLookup(small);
+      const calls = installFetch();
+      await upload('file:///clip.mp4', 'video/mp4');
+      await posterDone(calls);
+      expect(calls[0]!.url).toBe('file:///clip.mp4');
+    });
+
+    it(`${name}: switch on and a module present → the COMPRESSED copy is read; a photo never is`, async () => {
+      _setTestVideoCompressionFlag(true);
+      _setTestVideoCompressorLookup(small);
+      const calls = installFetch();
+      await upload('file:///clip.mp4', 'video/mp4');
+      await posterDone(calls);
+      expect(calls[0]!.url).toBe('file:///clip.small.mp4');
+      const photo = installFetch();
+      await upload('file:///p.jpg', 'image/jpeg');
+      expect(photo[0]!.url).toBe('file:///p.jpg');
+    });
+  }
+});

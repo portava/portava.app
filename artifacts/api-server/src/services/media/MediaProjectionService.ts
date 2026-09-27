@@ -676,7 +676,7 @@ export async function projectCandidatesProtected(
   rows: MediaCandidateRow[],
   nowMs: number,
 ): Promise<MediaProjection[]> {
-  if (rows.length === 0) return []; rows = await prepareCanonicalRows(sc, viewer, rows); if (rows.length === 0) return [];
+  if (rows.length === 0) return []; rows = await prepareCanonicalRows(sc, viewer, rows); if (rows.length === 0) return []; const vantages = await loadPerspectiveVantages(sc, rows); // §12 vantage — no read while media_perspective_vantage_enabled is off (census-media §36)
   // Two independent batch reads, one round trip's worth of latency. The gem
   // context is fail-CLOSED (losing it widens disclosure); the neighborhood map
   // is fail-SOFT (losing it only removes a label) — see loadPlaceNeighborhoods.
@@ -689,10 +689,10 @@ export async function projectCandidatesProtected(
     const p = toMediaProjection(row, nowMs);
     if (!p) continue;
     out.push(
-      applyLocationDisclosure(
+      withPerspectiveVantage(vantages, String(row.id), applyLocationDisclosure( // the vantage rides the place: attached only when the disclosure kept the place id
         p,
         disclosureForRow(row, viewer.viewerId, ctx, neighborhoodForRow(row, neighborhoods)),
-      ),
+      )),
     );
   }
   return visibleToViewerOrRefuse(sc, viewer.viewerId, out); // census-media §28: every count downstream is taken from what this viewer may see
@@ -930,7 +930,7 @@ export async function buildPlaceProjection(
     limit: DEFAULT_CANDIDATE_LIMIT,
     nowMs,
   });
-  const media = await rankAndProject(sc, viewer, candidates, nowMs);
+  const media = keepDisclosedAtPlace(await rankAndProject(sc, viewer, candidates, nowMs), placeId); // census-media §36: a place page lists only what may be SAID to be at this place
   if (!placeCity) placeCity = media.find((m) => m.city)?.city ?? null;
   if (!placeName) placeName = media.find((m) => m.placeLabel)?.placeLabel ?? null;
 
@@ -1552,7 +1552,7 @@ export async function buildTimelineProjection(
     limit: DEFAULT_CANDIDATE_LIMIT,
     nowMs,
   });
-  const media = (await rankAndProject(sc, viewer, candidates, nowMs)).sort(
+  const media = keepDisclosedAtPlace(await rankAndProject(sc, viewer, candidates, nowMs), opts.placeId ?? null).sort( // census-media §36, as the place page
     (a, b) => new Date(b.capturedAt).getTime() - new Date(a.capturedAt).getTime(),
   );
 
@@ -1877,3 +1877,32 @@ async function attachClusterCovers(
 }
 
 // `filterMediaProjectionVisibility` is imported on the file's import line (census-media §28.1 needed it there first).
+
+// ── §33/§34 on PLACE-SCOPED reads (census-media §36, MD262) ──────────────────
+//
+// Appended at the tail so no cited line above moves; function declarations
+// hoist.
+/**
+ * Keep only the items this viewer may be TOLD are at `placeId`.
+ *
+ * A place-scoped read — GET /media/places/:placeId, and GET /media/timeline
+ * with a placeId — selects its candidates BY canonical_place_id, so every row
+ * it returns is at that place. Each projection has already been through the
+ * location choke point, which withholds `placeId` from a viewer who may not
+ * learn it: the owner chose city_only / hidden / trusted_circle_only /
+ * neighborhood_only, the post is an unreleased delayed one, or a Hidden Gem's
+ * ceiling binds. Listing such an item ON the place's own page discloses the
+ * very place the choke point withheld — the page is the place — so it is
+ * dropped here. The item is not hidden anywhere else: it still appears where
+ * it can be shown at its own tier (the city World view, the People lens).
+ *
+ * The OWNER keeps their own items (the choke point never withholds a place id
+ * from its owner), and with no placeId the read is not place-scoped and nothing
+ * is filtered. Narrowing only: this returns a subset of its input.
+ */
+export function keepDisclosedAtPlace(media: MediaProjection[], placeId: string | null): MediaProjection[] {
+  if (!placeId) return media;
+  return media.filter((m) => m.placeId === placeId);
+}
+// census-media §36 (MD82–MD85): tail import, ESM hoists it.
+import { loadPerspectiveVantages, withPerspectiveVantage } from "../../lib/media/perspectiveVantage.js";

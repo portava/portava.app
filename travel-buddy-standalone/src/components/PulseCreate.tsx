@@ -36,7 +36,7 @@ import { createFilterDismissHandlers } from './PulseFilterSheet.machine';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { loadLastCategory, saveLastCategory, clearLastCategory } from './pulseCreateCategoryStorage.ts';
 // §33/§34: what each location choice actually does comes from the client privacy module, not from copy here.
-import { LOCATION_CHOICES, locationPrivacyHint, locationRequestFields } from '../services/media/mediaPrivacy.ts';
+import { locationChoices, NEIGHBORHOOD_ONLY_MODE_FLAG, locationPrivacyHint, locationRequestFields } from '../services/media/mediaPrivacy.ts'; import { useFeatureFlags } from '../context/FeatureFlagsContext.tsx';
 
 /* ── Types ── */
 
@@ -212,7 +212,7 @@ export function UnifiedPostComposer({
   const [filterEditorPending, setFilterEditorPending] = useState<PickedMedia | null>(null);
   const [filterId, setFilterId] = useState<string>('original');
   const [filterIntensity, setFilterIntensity] = useState<number>(100);
-  const [locationPrivacyMode, setLocationPrivacyMode] = useState<LocationPrivacyMode>('none');
+  const [locationPrivacyMode, setLocationPrivacyMode] = useState<LocationPrivacyMode>('none'); const { isEnabled } = useFeatureFlags(); const LOCATION_CHOICES = locationChoices({ neighborhoodOnly: isEnabled(NEIGHBORHOOD_ONLY_MODE_FLAG) }); // §34 "Show neighborhood only" is offered only while the server accepts it (census-media §36); with the flag off this is the same list as before
   const [scheduledTime, setScheduledTime] = useState<Date | null>(null);
 
   // Restore the last-used category for the selected post type, falling back to

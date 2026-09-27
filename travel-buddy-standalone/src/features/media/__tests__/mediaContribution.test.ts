@@ -22,6 +22,9 @@ import {
   doneCopy,
   PRECISION_TO_PRIVACY_MODE,
   CONTRIBUTION_CATEGORIES,
+  contributionPrecisions,
+  contributionVantages,
+  PERSPECTIVE_VANTAGE_FLAG,
   type ContributionPlace,
 } from '../state/mediaContribution.ts';
 
@@ -70,6 +73,7 @@ test('every precision choice maps onto the post write\'s locationPrivacyMode —
     city_only: 'city_only',
     after_i_leave: 'delayed_until_exit',
     hidden: 'hidden',
+    neighborhood: 'neighborhood_only',
   });
   let d = contributionReducer(INITIAL_CONTRIBUTION_DRAFT, { type: 'pick_media', media: PICKED });
   d = contributionReducer(d, { type: 'set_precision', precision: 'after_i_leave' });
@@ -99,4 +103,41 @@ test('a held-back post is reported as held back, never as already live', () => {
   assert.match(doneCopy(true, 'after_i_leave'), /once you have left/);
   assert.match(doneCopy(true, 'venue'), /appears shortly/);
   assert.match(doneCopy(false, 'venue'), /part of this place now/);
+});
+
+test('§34 "Neighbourhood only" is offered only while the server accepts it (census-media §36)', () => {
+  assert.deepEqual(contributionPrecisions({ neighborhoodOffered: false }), ['venue', 'city_only', 'after_i_leave', 'hidden'],
+    'flag off: the four choices the sheet always offered, in the same order');
+  assert.deepEqual(contributionPrecisions({ neighborhoodOffered: true }), ['venue', 'neighborhood', 'city_only', 'after_i_leave', 'hidden']);
+  let d = contributionReducer(INITIAL_CONTRIBUTION_DRAFT, { type: 'pick_media', media: PICKED });
+  d = contributionReducer(d, { type: 'set_precision', precision: 'neighborhood' });
+  assert.equal(toCreatePostInput(d, PLACE, { url: 'u', mediaType: 'image' }, null).locationPrivacyMode, 'neighborhood_only');
+});
+
+test('§12 vantages are offered only with the flag and a §12 category (census-media §36)', () => {
+  assert.equal(PERSPECTIVE_VANTAGE_FLAG, 'media_perspective_vantage_enabled');
+  assert.deepEqual(contributionVantages('nightlife', { offered: false }), [], 'flag off: none');
+  assert.deepEqual(contributionVantages('culture', { offered: true }), [], 'culture has no §12 list');
+  assert.deepEqual(contributionVantages(null, { offered: true }), []);
+  assert.deepEqual(contributionVantages('nightlife', { offered: true }).map((v) => v.label),
+    ['Entrance', 'Queue', 'Street', 'Main Room', 'Stage', 'Bar', 'VIP', 'Outside']);
+});
+
+test('the chosen vantage is sent; changing to a category whose list lacks it drops it', () => {
+  let d = contributionReducer(INITIAL_CONTRIBUTION_DRAFT, { type: 'pick_media', media: PICKED });
+  d = contributionReducer(d, { type: 'set_category', category: 'nightlife' });
+  d = contributionReducer(d, { type: 'set_vantage', vantage: 'entrance' });
+  assert.equal(toCreatePostInput(d, PLACE, { url: 'u', mediaType: 'image' }, null).perspectiveVantage, 'entrance');
+  // Restaurant also has an Entrance — it survives the switch.
+  d = contributionReducer(d, { type: 'set_category', category: 'food' });
+  assert.equal(d.vantage, 'entrance');
+  // Beach does not — it is dropped rather than sent with the wrong list.
+  d = contributionReducer(d, { type: 'set_category', category: 'beach' });
+  assert.equal(d.vantage, null);
+  assert.equal('perspectiveVantage' in toCreatePostInput(d, PLACE, { url: 'u', mediaType: 'image' }, null), false,
+    'no vantage ⇒ the field is absent, as before');
+  // Tapping the chosen vantage again clears it.
+  d = contributionReducer(d, { type: 'set_vantage', vantage: 'sunset' });
+  d = contributionReducer(d, { type: 'set_vantage', vantage: 'sunset' });
+  assert.equal(d.vantage, null);
 });
