@@ -72,6 +72,8 @@ function fakeClient(opts: {
       _t: t, _payload: null as any, _filters: [] as Array<[string, any]>,
       select() { return this; },
       eq(c: string, v: any) { this._filters.push([c, v]); return this; },
+      in() { return this; },
+      neq() { return this; },
       lte() { return this; },
       order() { return this; },
       limit() { return this; },
@@ -113,14 +115,46 @@ function fakeClient(opts: {
           const byType = this._filters.find(([c]: any) => c === "creator_type");
           return emit({ data: byType ? rows.filter((r) => r.creator_type === byType[1]) : rows, error: null });
         }
-        if (t === "creator_attributions") return emit({ data: opts.attributionRows ?? [], error: null });
+        if (t === "creator_attributions") {
+          // An id-filtered read answers from the rows by id, as PostgREST would.
+          const byId = this._filters.find(([c]: any) => c === "id");
+          const rows = opts.attributionRows ?? [];
+          return emit({ data: byId ? rows.filter((r) => r.id === byId[1]) : rows, error: null });
+        }
         if (t === "creator_earning_entries") return emit({ data: opts.entryRows ?? [], error: null });
         return emit({ data: null, error: null });
       },
     };
     return state;
   };
-  return { client: { from }, writes };
+  // 3387's one-transaction door. Recorded as an `rpc` write so the "no update,
+  // no delete" test sees it; answers as a first delivery.
+  const rpc = async (fn: string, args: any) => {
+    writes.push({ table: `rpc:${fn}`, op: "rpc", payload: args?.p });
+    if (opts.error) return { data: null, error: opts.error };
+    return {
+      data: {
+        attribution_id: "row-held", attribution_inserted: args?.p?.attribution != null,
+        entries_inserted: args?.p?.entries?.length ?? 0, entries_replayed: 0,
+        audit_id: "audit-0", audit_inserted: args?.p?.audit != null,
+      },
+      error: null,
+    };
+  };
+  return { client: { from, rpc }, writes };
+}
+
+/** A persisted attribution row, as 2920 stores it, for the hold tests. */
+function persistedRow(t: (typeof CREATOR_TYPES)[number], id: string): any {
+  const a = attributionFor(t);
+  return {
+    id, creator_type: a.creatorType, subject_kind: a.subjectKind, subject_id: "11111111-2222-4333-8444-555555555555",
+    value_event: a.valueEvent, value_event_id: a.valueEventId ? "66666666-2222-4333-8444-555555555555" : null,
+    attribution_basis: a.basis, beneficiary_user_id: B, weight: a.weight, confidence: a.confidence,
+    gross_revenue_minor: 0, provisional_share_minor: 0, currency: "USD", settled_minor: 0,
+    rule_version: a.ruleVersion, fraud_hold: false, fraud_hold_reason: null, supersedes_id: null,
+    idempotency_key: a.idempotencyKey, recommendation_id: null,
+  };
 }
 
 function attributionFor(t: (typeof CREATOR_TYPES)[number]): CreatorAttribution {
@@ -453,19 +487,37 @@ describe("`07` §10 property 2 — earnings, and the seam refusal", () => {
 
 // ═══════════════════════════════════════════════════════════════════════════
 describe("`07` §10 property 4 — a fraud hold is an APPENDED row, never an edit", () => {
-  it("holding writes a NEW attribution carrying the hold and its reason", async () => {
+  // CHANGED in census-discovery §52. The hold used to be a direct INSERT whose
+  // `supersedes_id` defaulted to NULL, so a hold with no row id was an unlinked
+  // held row that held nothing. It now requires the persisted row, supersedes
+  // the HEAD of its chain, and travels with its audit row through 3387's
+  // one-transaction door — the payload below is what that door receives.
+  it("holding appends a NEW attribution carrying the hold and its reason, WITH its audit row", async () => {
+    const row = persistedRow("travel_partner", "aaaaaaaa-0000-4000-8000-000000000001");
+    const { client, writes } = fakeClient({ attributionRows: [row] });
+    const r = await holdCreatorAttribution(client, attributionFor("travel_partner"), "circular_transactions", row.id);
+    assert.equal(r.ok, true, JSON.stringify(r));
+    const calls = writes.filter((w) => w.table === "rpc:creator_ledger_append");
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].payload.attribution.fraud_hold, true);
+    assert.equal(calls[0].payload.attribution.fraud_hold_reason, "circular_transactions");
+    assert.equal(calls[0].payload.attribution.supersedes_id, row.id, "the hold must supersede the row it holds");
+    assert.equal(calls[0].payload.audit.action, "hold_placed");
+    assert.equal(calls[0].payload.audit.reason, "circular_transactions");
+    assert.equal(writes.filter((w) => w.table === "creator_attributions").length, 0,
+      "a hold must not bypass the audited door with a bare insert");
+  });
+
+  it("a hold that names no persisted row is refused and writes nothing — it would hold nothing", async () => {
     const { client, writes } = fakeClient();
     const r = await holdCreatorAttribution(client, attributionFor("travel_partner"), "circular_transactions");
-    assert.equal(r.ok, true, JSON.stringify(r));
-    const inserts = writes.filter((w) => w.table === "creator_attributions");
-    assert.equal(inserts.length, 1);
-    assert.equal(inserts[0].payload.fraud_hold, true);
-    assert.equal(inserts[0].payload.fraud_hold_reason, "circular_transactions");
-    assert.equal(inserts[0].op, "insert", "a hold must not be an update");
+    assert.equal(r.ok, false);
+    assert.deepEqual(writes, []);
   });
 
   it("no service call ever issues an update or a delete", async () => {
-    const { client, writes } = fakeClient();
+    const row = persistedRow("local_expert", "aaaaaaaa-0000-4000-8000-000000000002");
+    const { client, writes } = fakeClient({ attributionRows: [row] });
     await recordCreatorAttribution(client, {
       creatorType: "travel_partner", subjectId: "s", valueEventId: "e", beneficiaryUserId: B,
       weight: 1, confidence: 1, grossRevenueMinor: 0, provisionalShareMinor: 0,
@@ -474,9 +526,9 @@ describe("`07` §10 property 4 — a fraud hold is an APPENDED row, never an edi
     await recordCreatorEarning(client, "row-1", attributionFor("travel_partner"), {
       grossRevenueMinor: 10, creatorShareMinor: 10, platformFeeMinor: 0,
     });
-    await holdCreatorAttribution(client, attributionFor("local_expert"), "synthetic_accounts");
+    await holdCreatorAttribution(client, attributionFor("local_expert"), "synthetic_accounts", row.id);
     assert.ok(writes.length > 0, "the fixture exercised nothing");
-    for (const w of writes) assert.ok(["insert", "upsert"].includes(w.op), `${w.table}: ${w.op}`);
+    for (const w of writes) assert.ok(["insert", "upsert", "rpc"].includes(w.op), `${w.table}: ${w.op}`);
   });
 
   it("an unexplained hold is refused before any read", async () => {

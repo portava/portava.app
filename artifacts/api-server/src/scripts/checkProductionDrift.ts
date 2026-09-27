@@ -863,6 +863,21 @@ export const KNOWN_PRODUCTION_GAPS: Record<string, Gap> = {
       "change that applies 3376 to PRODUCTION and refreshes the two production " +
       "snapshots.",
   },
+  // ── Added 2026-09-27 by census-discovery §52 (P10 creator ledger) ──────────
+  creator_ledger_audit_events: {
+    classification: "unapplied",
+    note:
+      "Migration 3387 (`11` §8 creator fraud holds / ledger audit, `11` §10 admin " +
+      "actions audited): one append-only row per hold, release, recomputation or " +
+      "reversal of a creator-ledger record, written in the same transaction as the " +
+      "change by public.creator_ledger_append. Depends on 2920/2921/3386, none of " +
+      "which is in production (see creator_attributions above). Rehearsed on the " +
+      "local PostgreSQL harness only (apply, idempotent re-apply, rollback that " +
+      "refuses while populated). Its only writer, services/creators/CreatorLedgerOperations.ts, " +
+      "is gated on creator_attribution_enabled (2922, seeded FALSE), so it stays " +
+      "empty after the merge. Strike it off in the change that applies 2920-2922, " +
+      "2930 and 3385-3387 to PRODUCTION.",
+  },
 };
 
 /**
