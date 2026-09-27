@@ -8126,6 +8126,252 @@ The eleven rows still N are:
 - `DV-19`, `DV-34`, `DV-41` and `DSV2-12` (lane P6, running);
 - `DV-61` and `DV-62` (commercial rules the owner has not set).
 
+## §53 — People privacy adapters (lane P5x): Invisible reaches every Discovery people surface, the buddy resolver reads the marketplace, the community byline obeys picture privacy, and two silent empties now say they failed
+
+*Written 2026-09-27 by the Discovery P5x lane (search and people privacy adapters) on `disc-p5x-privacy`, branched from `2a59dfe3d` (the tip of `wave8-integration`). Commits: `9d78e9503` (code and tests), `3593054e5` (a read-shape fix the full suite asked for, below) and the docs commits that add this section. Nothing here is merged, deployed or flag-enabled; no migration is added and no flag is read that was not read before. **`head_commit` is NOT re-declared** and **the headline is not restated**: the integrator does both. §53.10 names the counted files this lane changed.*
+
+These are privacy and correctness repairs. None of them adds ranking machinery: nothing here scores, orders or re-orders a candidate. Every change REMOVES a person or a field from a response, or turns a silent empty into a named refusal.
+
+### 53.1 Row moves
+
+| id | was | now | evidence |
+|---|---|---|---|
+| A24 | N | **C** | **Built and tested on this branch only; not merged, not deployed.** The Invisible state this row said did not exist does exist: `lib/invisibleMode.ts` (Telegraph's, consumed and not edited) is the one definition — location off, sharing paused, or discovery visibility `nobody`, and an unreadable row engages it. Discovery now consumes it on every surface that projects a person to someone else. The people search, which feeds `type=travelers`, `type=buddies`, both people buckets of `type=all`, the suggest Travelers and Buddies groups, and the input-assistance gateway's user and buddy entities (they all reach `searchTravelers` through `dispatchSearch`), withholds an invisible candidate at `artifacts/api-server/src/routes/discoverySearch.ts:614#const visible = rows.filter((p: any) => !noDiscSet.has(p.id as string) && !peopleGate.withheld.has(p.id as string));`, from the read at `artifacts/api-server/src/routes/discoverySearch.ts:612#const peopleGate = await readDiscoveryPeopleGate(sc, ids, userId, isBuddy ? buddyAskFrom(ctx) : null);`. The reader uses the same table and select list as Telegraph's reachable-people query and hands each row to the resolver: `artifacts/api-server/src/lib/discoveryPeoplePrivacy.ts:121#const state = resolveInvisibleMode({ prefs: byId.get(id) ?? null, prefsError: null });`. The Discovery person card the rows open applies the same gate on top of the shared Passport gate, with the viewer exempt: `artifacts/api-server/src/routes/discoverySearch.ts:3090#const gate = await withDiscoveryInvisibleGate(sc, userId, user.id, await allowDiscoveryPersonCard(sc, userId));`. **Promptly:** nothing is cached, so a change reaches the very next request in both directions. **Fail-closed and not silent:** an unreadable state withholds everyone it covered and is reported. A single-type search refuses (`coverage: "nothing"`); `type=all` and suggest answer `partial`, naming `travelers` and `buddies`; the card answers a retryable 503 and never a 404. **Tests:** `artifacts/api-server/src/test/discoveryPeopleInvisible.test.ts`, 23 tests covering both viewers, each of the three reasons, revocation both ways, retries, a resolved and a rejected read failure, recovery, the self-exemption and the card. Every test was seen red (§53.8). |
+| B03 | W | W | **Four of the five legs are built; payment is absent, so W stands.** The buddy arm now reads the marketplace row (`artifacts/api-server/src/lib/discoveryPeopleBuddy.ts:290#export async function readBuddyEligibility(`) and applies the owning domain's rules (`artifacts/api-server/src/lib/discoveryPeopleBuddy.ts:237#export function buddyEligibility(`). **Safety:** `status` and `admin_status` both `active`, no `risk_hold`, `risk_review_status` not `suspended` or `under_review`, and no `rent_buddy_disabled` or `buddy_disabled` limit. **Category:** only APPROVED categories count (`artifacts/api-server/src/lib/discoveryPeopleBuddy.ts:206#export function approvedBuddyCategories(`). That means the booking gate's per-category approvals for nightlife and group, the nightlife admin sign-off, high-risk verification, and `nightlife_disabled`. A buddy approved for nothing is not a Buddy suggestion, and an ASKED category (`intentCategory`, when it names a buddy service) must be approved. **Availability:** applied against the ASKED window (the time intent the search already parses) using the windows the buddy SET, meaning explicit `is_available = false` rows and `buddy_availability_exceptions` ranges. An unset date counts as bookable, because that is how the booking path reads it (§53.3). **Launch:** unchanged, still behind 2360 (FALSE). **Payment:** NOT BUILT; there is no processor to be eligible with (§53.3). All four reads fail closed and are reported. **Tests:** `artifacts/api-server/src/test/discoveryPeopleBuddy.test.ts`, 18 tests, including a drift guard on the domain source lines the rule mirrors. Every test was seen red. |
+| A08 | W | W | **Re-graded from code. The row's measured sentence is false at this tree, and W stands on a different ground.** *"The client runs it on every keystroke in parallel with the gateway"* is stale. The legacy typeahead now runs only until the gateway has answered once on a mount, and again while the gateway reports itself unavailable: `travel-buddy-standalone/src/hooks/useGlobalSearchSuggestions.ts:150#const legacyEnabled = enabled && (!gatewayProven`. Seven client tests pin this, in `travel-buddy-standalone/src/hooks/__tests__/useGlobalSearchSuggestions.singleSystem.component.test.tsx`. W stands for three reasons (§53.4). (1) The shared layer's candidate generation IS Discovery's route module: the gateway imports `dispatchSearch` from `routes/discoverySearch.ts` (`artifacts/api-server/src/lib/inputAssistance/gateway.ts:30#dispatchSearch,`), so the platform layer depends on Discovery, and GII `:8` says the opposite ("This is not owned by Discovery"). This lane's own B03 work, a GII BuddyResolver leg built in a Discovery route file, is the proof. (2) Both requests still fire per keystroke in the proving window, and for as long as the gateway returns no rows on a mount. (3) The Map's search sheet runs its own debounced per-keystroke search against `/discovery/search`, off the gateway. That is a fifth engine the G6 list does not name, and it is the Map's (§53.4). |
+
+### 53.2 `A24`: what was built, and the negative paths
+
+**Which surfaces are "Discovery availability projections".** They are every Discovery response that shows a PERSON to someone else:
+
+- the people search, in each type and fan-out that reaches it;
+- suggest's Travelers and Buddies groups;
+- the input-assistance gateway's user and buddy entities, which call the same `dispatchSearch`;
+- the Discovery person card (`GET /discovery/people/:userId/passport`). This is the most literal target: its variant carries *"availability, Open to Plans"* (§21 TABLE 22).
+
+Four things were considered and left out, each for a stated reason:
+
+- **The community byline.** It attributes authorship of a place. It is not presence or availability.
+- **`searchCities` / `searchCountries`.** They return a place name aggregated from `profiles.home_city`. That is not a person, and not a location-consent signal.
+- **The gateway's `@mention` and recipient resolvers** (`lib/inputAssistance/socialIdentity.ts`). They are GII's, not Discovery's.
+- **The Compass person card.** It is census-compass's (`CTG-04`).
+
+**The viewer is never hidden from themself, and that rule lives in one place.** The reader drops the viewer's id before it reads (`artifacts/api-server/src/lib/discoveryPeoplePrivacy.ts:95#export async function readDiscoveryInvisiblePeople(`), and the card relies on the same rule. A second self-exemption in the card gate was an **equivalent mutant**: deleting it turned nothing red, because the reader already exempts the viewer. It was removed instead of being kept as a check nothing could observe. The people SEARCH never lists the viewer at all (`.neq("id", userId)`, unchanged), so "the user still sees themself where the surface normally allows it" is proved on the card: the subject gets their own card while invisible (C2), even when the consent table is unreadable (C4).
+
+**A consequence the owner should see before this deploys.** `lib/invisibleMode.ts` derives Invisible from location consent. **A user who has only turned location sharing off, or paused it, now disappears from Discovery people search by name**, not only from Nearby. That is the module's definition applied faithfully. The instruction for this lane was to consume `resolveInvisibleMode`, and this lane may not edit the module. If the owner intends only `discovery_visibility = nobody` to remove a person from name search, the change belongs in `lib/invisibleMode.ts` (a per-surface reason set), not in a Discovery re-spelling. §53.9 gives the count query.
+
+### 53.3 `B03`: each leg graded, with the predicate's source in the owning domain
+
+The rule is a MIRROR of Rent-a-Buddy's own predicates, which live inline in `routes/rentABuddy.ts` and are not exported as pure functions. The drift guard (`discoveryPeopleBuddy.test.ts` D1–D3) fails if the mirrored source lines change.
+
+| leg | built | predicate, and where the owning domain states it |
+|---|---|---|
+| service category | **yes** | approved-only: `nightlife` and `group` need `category_approvals[c]` (enforceBookingCreationGates `if (!approvals[category])`); nightlife needs `nightlife_admin_approved`; a HIGH-risk category (`lib/rentaBuddyScanner.ts` `CATEGORY_RISK_LEVELS`) needs `verification_status = 'verified'` or `id_verified && phone_verified`; the buddy's `nightlife_disabled` limit removes nightlife. An asked category comes from `intentCategory` when it names a buddy service; `beach` constrains nothing |
+| availability | **yes, against an asked window** | a date is closed by an explicit `rent_buddy_availability.is_available = false` row or a `buddy_availability_exceptions` range, using `findBlockingAvailabilityException`'s own coverage rule. The buddy resolves if ANY day of the asked window is open. With no asked window there is no availability question, and none is invented |
+| launch | yes (unchanged) | 2360's gate, **FALSE**, so production is unchanged |
+| safety | **yes, from what exists** | listing standing (`status`/`admin_status` active, as the marketplace's own search and the Wall loader read them), `risk_hold`, `risk_review_status ∈ {suspended, under_review}` (the eligibility check's `account_suspended` / `account_under_review`), and the admin limits `rent_buddy_disabled` / `buddy_disabled` |
+| payment | **NO** | `docs/specs/discovery-v1/09_Payment_Architecture.md` §1 defers *"real payouts"*, and no column records that a buddy can be paid. Building this leg needs a per-buddy payout-readiness state written by a processor integration (for example a connected-account status), plus the ledger lane's earnings entries. Anything built today would be invented |
+
+**Why an unset date is available.** Booking creation and rebook refuse a date only on an explicit `is_available = false` row or an exception range (`routes/rentABuddy.ts`, the rebook availability check and `findBlockingAvailabilityException`). The marketplace's own search filters on availability only when a date is asked. If Discovery required a declared window, it would refuse buddies the booking path accepts.
+
+**No flag, and why that is safe to argue but must be confirmed.** The safety, category and availability legs are not behind a flag. 2360's migration measured **0 buddy-verified profiles in production (2026-09-07)**. On that count, today's served output is byte-identical, and every leg only removes a buddy. §53.9 asks for the count to be re-read. If it is non-zero, the owner may prefer to fold these legs under 2360's gate, whose description already names G71. That is a one-line change at `routes/discoverySearch.ts:612`.
+
+**What changes for other suites.** A buddy with no marketplace row now offers nothing, so it is not a buddy suggestion. Two existing fixtures gave their buddies an eligible marketplace row (§53.7).
+
+### 53.4 `A08`: re-graded from code
+
+- **Stale, and now false:** A08's *"on every keystroke in parallel with the gateway … Two requests per keystroke"*. The hook gates the legacy path on `legacyEnabled`. The 7-test client suite pins both halves: before the gateway answers, each keystroke fetches the legacy route, and after it answers, none does. It also pins that the legacy path resumes on `unavailable`. That suite was read and not re-run here: the client is lane P4's, and this lane may not edit it.
+- **Still open, reason 1 (ownership direction).** GII `:8` reads *"This is not owned by Discovery … Those surfaces consume it through a shared platform layer."* In the code, the platform layer (`lib/inputAssistance/gateway.ts`) imports its per-type candidate generator from Discovery's route module, and GII §40's resolvers (UserResolver, BuddyResolver…) are functions in `routes/discoverySearch.ts`. This section itself had to build a BuddyResolver leg inside a Discovery file. Closing it means moving the resolvers into a platform-owned module that both the gateway and Discovery import. That touches the ~100 anchored citations on `discoverySearch.ts` across four censuses, so it is a planned move, not a repair.
+- **Still open, reason 2 (the proving window).** Until the gateway returns at least one suggestion on a mount, both requests fire per keystroke. A mount whose queries never match keeps both running. That is bounded, and deliberate under §38, but it is a second request.
+- **A finding, not a row: a fifth keystroke engine.** `travel-buddy-standalone/src/components/map/MapSearchSheet.tsx` runs a 300 ms debounced `GET /discovery/search` per keystroke, off the gateway. census-input-intelligence G6 lists four engines and does not name this one. It is the Map lane's surface. It is recorded here because it consumes a Discovery route as a typeahead.
+
+### 53.5 Residual §47.7: the `/community` byline avatar
+
+`GET /discovery/community` now selects `is_private` and `show_profile_picture_publicly` in the byline embed (`artifacts/api-server/src/routes/discovery.ts:2979#profiles:submitted_by!left ( id, name, avatar_url, username, account_status, is_private, show_profile_picture_publicly )`). Production has both columns (integrator read, §49.4). The avatar is gated at `artifacts/api-server/src/routes/discovery.ts:3097#avatarUrl:   communityBylineAvatar(profile, selfSubmitterId, followedSubmitters),` by `artifacts/api-server/src/lib/discoveryPeoplePrivacy.ts:206#export function communityBylineAvatar(`. That gate is `lib/mediaFeedItem.ts`'s term for term: own item, OR the viewer follows the submitter, OR (not private AND not opted out). Absent columns read as the defaults, `false` and `true`.
+
+- **Parity is tested, not asserted.** P1 runs the Discovery gate and BOTH media hydrators (`hydrateGemFeedItem`, `hydrateMediaFeedItem`) over 36 cases: private true/false/absent, opt-out true/false/absent/null, and own/follower/stranger. It requires all three to agree.
+- **The follower edge is read only when it matters.** `artifacts/api-server/src/routes/discovery.ts:3070#const followedSubmitters = await readBylineFollowEdges(sc, selfSubmitterId, rows.map(bylineProfileOf));` issues a `user_follows` read only when some byline on the page is private or opted out, has an avatar, and is not the viewer's own. An all-public page makes no extra round trip (V5). An unreadable edge fails CLOSED: a follower sees what a stranger sees. It is logged and not refused, because every item is still real and whole apart from a withheld picture (F1).
+- **The name is untouched** (C19). N1 pins that a private or opted-out submitter's `name`, `displayName` and `handle` are exactly what a public submitter's are.
+- **Cache B cannot resurrect a stale avatar**, for two reasons that are tested separately. First, no ranked `GET /discovery` page carries a submitter avatar at all, fresh or replayed, before or after an opt-out (K1). The mutation that puts one there turns K1 red. Second, P2's `withCurrentRows` replaces a stored `db/` row with the current read, so a byline on a stored copy could not ride the replay (K2). The mutation that replays the stored copy turns K2 red.
+- **`/community` keeps no server cache.** An opt-out, opt-in, going private or unfollowing reaches the very next request (R1–R3).
+- **`is_private` and the other byline fields.** `name`/`handle` stay as they were: the C19 and display-name rules govern them, and nothing in this residual asks for a change.
+
+### 53.6 Residual: the opt-out read's silent `[]`, and `lib/discoveryRefusal.ts`'s header
+
+`artifacts/api-server/src/routes/discoverySearch.ts:611#if (noDiscErr) throw new DiscoverySearchReadError("profile_privacy_settings", noDiscErr);` replaces `if (noDiscErr) return [];`. The fail-closed direction is unchanged. What changes is that it now uses the refusal envelope the route uses everywhere else, through the same named error P1's cities and countries opt-out reads use:
+
+- `type=travelers` and `type=buddies` answer `transient_db` / `search_failed` / `coverage: "nothing"`, where they used to answer `200 { results: [] }`, which read as "nobody matches";
+- `type=all` and suggest name `travelers` and `buddies` in `failedSources` under `partial`;
+- O3 is the control: a readable opt-out table that excludes someone carries no refusal.
+
+The header of `lib/discoveryRefusal.ts` said `feature_disabled` had no reachable Discovery site. That has been false since §46: suggest's `canonical_fold_unavailable` is one. The header is corrected in place, line-neutrally, and the full note is appended at the end of that file so none of the census's anchors into it move.
+
+### 53.7 Existing tests changed on purpose
+
+- **`src/test/discoverySearch.test.ts`, the launch-gate suite.** Its buddy now carries an eligible marketplace row, through a hoisted helper appended at the end of the file so census-trips' anchor into it does not move. That suite pins the LAUNCH leg, and without the row the new category leg withheld its buddy for a different reason.
+- **`src/test/discoverySearchSafetyContracts.test.ts` (P1's).** Every cast member gets an eligible marketplace row, so each buddy denial stays attributable to the rule it names.
+
+### 53.8 Tests, and every one seen red (P24)
+
+**57 new tests**, all registered on the `test` line:
+
+- `discoveryPeopleInvisible.test.ts` — 23
+- `discoveryPeopleBuddy.test.ts` — 18
+- `discoveryCommunityAvatar.test.ts` — 16
+
+The **56 mutations** were each applied, run and reverted by a harness that compared sha256 before and after. Every run reported `restored-identical`. Every test above went red under at least one of them.
+
+*Invisible (`discoveryPeopleInvisible.test.ts`):*
+
+| mutation | red |
+|---|---|
+| the route ignores the people gate | I1, I3, I4, F5 |
+| a resolved consent error fails open | F1, F2, F3, F5, C4 |
+| a rejected consent read fails open | F4 |
+| the viewer is read and withheld (the one self-exemption removed) | S1, S2, S3, C2, C4 |
+| the card ignores Invisible | C1, C3, C6 |
+| card `check_failed` is answered as 404 | C4, C5 |
+| the opt-out error goes back to `return []` | O1, O2 |
+| the consent result is cached | I2, I3, I4, F1–F6, C3, C4 |
+| the select list drops `discovery_visibility` | I1, I2, F5, C1, C6 |
+| the result is non-deterministic across calls | I1, I3, I4, I5, C1 |
+| a failure is negatively cached | F5, F6, O3, S1, C1, C3, C6 |
+| the gate always refuses | I1, I3, I4, F5, F6, O3 |
+| the opt-out set is not applied | O3 |
+| a repeated card request is answered differently | C3, C4, C6 |
+
+*Buddy (`discoveryPeopleBuddy.test.ts`):*
+
+| mutation | red |
+|---|---|
+| each safety predicate removed (status, admin status, risk hold, risk review, limits) | E1, plus R1, R3, R4 and R6 where a route fixture carries that restriction |
+| each category predicate removed (approvals, sign-off, high-risk verification, `nightlife_disabled`, none-approved admitted, asked category ignored) | E2, plus R1, R3 and R4 where reachable |
+| the asked window ignored | E3, R5 |
+| any closed day withholds | E3 |
+| a single-day exception covers later days | E3 |
+| an unset date reads as closed | E3, E5, R5 |
+| any intent is treated as a category ask | E4, R4 |
+| the window end is not half-open | E4 |
+| a marketplace read fails open | E5, X1, X2 |
+| a rejected read settles as empty | E5 |
+| the route never passes the ask | R1, R3–R6, X1, X2 |
+| the buddy rule is applied to travelers | R2, R3, X2 |
+| the marketplace is read with no candidate | X3 |
+| eligibility is cached | R4, R5, R6 |
+| the result flip-flops | R1, R3, R4, R6, R7 |
+| each mirrored domain line is respelled | D1, D2, D3 |
+
+The first draft of D3 SURVIVED its mutation: the regex matched another listing in the file. It now slices the marketplace search handler and requires both of its reads.
+
+*Avatar (`discoveryCommunityAvatar.test.ts`):*
+
+| mutation | red |
+|---|---|
+| the route serves the raw avatar | V1, V3, R1, R2, R3, F1 |
+| the self term is removed | P1, V3 |
+| the follower term is removed | P1, V2, R2, R3, F1 |
+| the private flag is ignored | P1, P2, V1, V3, R2, R3, F1 |
+| the opt-out is ignored | P1, V1, V3, R1, F1 |
+| absent is read as opted out | P1, P2, V1, V2, V4 |
+| the embed drops the two columns | V6 |
+| the follow graph is read on every page | V5 |
+| an unreadable edge fails open | F1 |
+| the gate leaks into the name | N1 |
+| the avatar decision is cached | P1, P2, R1, R2, R3, F1 |
+| the result flip-flops | P1, V1–V4, R1, R2, R4, F1 |
+| anonymous is treated as the submitter | P2, V1 |
+| a ranked page carries the avatar | K1 |
+| the replay serves the stored copy | K2 |
+
+**Two mutants SURVIVED the first draft, and each changed something:**
+
+- **The card-level self-exemption was an equivalent mutant.** It was removed (§53.2).
+- **A per-add flip-flop left I5 green.** Each surface pass made an even number of calls, so the flip-flop repeated the same result. The mutation was replaced by a per-call counter modulo 7, and I5 went red.
+
+**The full suite caught one shape defect.** `check-unchecked-supabase-reads` could not follow the consent read's first shape (a result assigned to a `let` declared outside the `try`), and flagged it as discarding `.error`. Behaviour was already fail-closed. The read is now bound as `{ data, error }` (`3593054e5`), and the 14 Invisible mutations were re-run against the new shape with identical reds.
+
+### 53.9 Production: read-only SQL for the integrator (none was run here)
+
+```sql
+-- A24: how many people Invisible will remove from Discovery people search, by reason.
+select count(*) filter (where location_mode = 'off')                   as location_off,
+       count(*) filter (where sharing_paused)                          as paused,
+       count(*) filter (where discovery_visibility = 'nobody')         as visibility_nobody,
+       count(*) filter (where location_mode = 'off' or sharing_paused
+                          or discovery_visibility = 'nobody')          as invisible_total
+from public.location_preferences;
+
+-- B03: is 2360's "0 buddy-verified profiles" still true, and how many would the new legs withhold?
+select count(*) as buddy_verified,
+       count(*) filter (where rbp.id is null)                                         as no_marketplace_row,
+       count(*) filter (where rbp.status <> 'active' or rbp.admin_status <> 'active'
+                          or rbp.risk_hold or rbp.risk_review_status in ('suspended','under_review')) as restricted,
+       count(*) filter (where rbp.id is not null and coalesce(array_length(rbp.categories, 1), 0) = 0) as no_categories
+from public.profiles p
+left join public.rent_buddy_profiles rbp on rbp.user_id = p.id
+where p.buddy_verified_at is not null;
+
+-- Residual 1: how many community bylines the avatar gate now withholds from a stranger.
+select count(*) as withheld_bylines
+from public.discovery_places dp join public.profiles pr on pr.id = dp.submitted_by
+where dp.status = 'active' and pr.avatar_url is not null
+  and (pr.is_private or pr.show_profile_picture_publicly = false);
+```
+
+### 53.10 Freshness and scope
+
+The counted files this lane changed are argued in the report, and the freshness ledger is the integrator's to write. `CENSUS_SCOPE` gains the two new modules and the three new suites; every §53 verdict row cites them. Files cited here only for context are declared NOT-GRADED below.
+
+### 53.11 What would turn this red
+
+- **A24:** any Discovery surface that shows a person to someone else without passing `readDiscoveryInvisiblePeople`. A cache in front of it. A failed read that serves, or that goes silent. A self-view that depends on the viewer's own consent row.
+- **B03 → C:** only a payment-eligibility leg with a real producer. Separately, B03 would go RED if a mirrored domain predicate changed (D1–D3), or if `status`/`admin_status` stopped being the listing rule.
+- **Residual 1:** a byline avatar served where `lib/mediaFeedItem.ts` would withhold it (P1 fails first). The embed losing either column (V6).
+- **A08 → C:** the resolvers moving to a platform-owned module that Discovery imports, and the proving-window duplicate retired.
+
+- NOT-GRADED: artifacts/api-server/src/routes/rentABuddy.ts — cited as the source of the Rent-a-Buddy predicates B03 mirrors. The mirror is graded through discoveryPeopleBuddy.test.ts D1–D3, and the file was not changed.
+- NOT-GRADED: artifacts/api-server/src/lib/rentaBuddyScanner.ts — cited only as the risk-level table the category leg consumes.
+
+
+### 53.12 Integrator: P5x merged, §53.9's production reads run, one owner question, headline restated
+
+*Integrator addendum, 2026-09-27, at the merge of `disc-p5x-privacy` (`9148640b7`, based on `2a59dfe3d`) into `wave8-integration`.* Conflicts were unions only (the `test` line, `CENSUS_SCOPE`, this census with §53 after §52.12). `routes/discovery.ts` and `routes/discoverySearch.ts` merged without conflict. At the merged tree:
+
+- `check:doc-citations` is clean.
+- The offline reproduction of `check:write-path-columns`' unresolvable-site ledger shows none new and none stale; all six new read sites resolve.
+- Every Discovery unit suite passes: 1,895 of 1,895.
+- The live-DB `discoveryPlaceWriteBoundary` suite refuses without CI credentials, by design. It is registered only under `test:discovery-place-boundary`.
+- `typecheck` passes, and `typecheck:tests` is at its baseline.
+
+**§53.9's read-only production queries, run by the integrator 2026-09-27:**
+
+- **Invisible.** `profiles` has 58 rows; `location_preferences` has 9. Of those 9, **0** have location off, **0** are paused, and **0** have discovery visibility `nobody` or `no_location`. A person with no preferences row reads as visible, because `resolveInvisibleMode` treats a null row as no reason. So A24's gate withholds **nobody** in production today.
+- **Buddies.** **0** buddy-verified profiles and 6 `rent_buddy_profiles` rows. B03's unflagged eligibility legs therefore change no production result today.
+- **Community bylines.** **1** active-or-not `discovery_places` row has a submitter who is private or has opted out of showing their photo, and who has an avatar. **The `/community` avatar leak §47.7 found is therefore live in production for at least one person**, and stays so until a build carrying §53.5 ships. The fix is implementation-complete on this branch only.
+
+**One owner question, verbatim.**
+
+The spec's words are Telegraph v1.1 `:621`: *"Unavailable or Invisible revokes Nearby, Discovery, and Compass availability projections promptly."* `lib/invisibleMode.ts` derives Invisible from location consent (location off, sharing paused, or discovery visibility nobody). §53 applies it to every Discovery people surface, name search included.
+
+> **Should Invisible hide a person from Discovery NAME search, or only from Discovery's availability projections — the person card's availability and "Open to Plans"?**
+
+- The code errs to the privacy-conservative side, so A24's criterion holds either way.
+- The narrower reading is a one-line change at `routes/discoverySearch.ts:612`: gate on `discovery_visibility` alone there, and keep the full Invisible state on the card.
+- No production user is affected today (above).
+
+**Headline:**
+
+| bucket | count |
+|---|---|
+| BUILT-AND-CORRECT | **94** |
+| BUILT-BUT-WRONG | **81** |
+| NOT-BUILT | **10** |
+| CANNOT-VERIFY | **3** |
+
+- The only move since §52.12 is `A24`, N → C.
+- CONSTRUCTED 175 / 188 = **93.1 %**; CORRECT 94 / 188 = **50.0 %**. The four buckets sum to 188.
+- `A24` is an implementation verdict on this branch. Nothing in it is merged to `main` or deployed, and production evidence (an invisible person absent from a real served response) is owed.
+
 ## Cited, not graded (check:census-scope-coverage)
 
 - NOT-GRADED: artifacts/api-server/src/compass/CompassExplanationEngine.ts — §13.7 item 3 names Compass's HMAC recommendation-token signer as a refactor this lane declined to make in another lane's file. Discovery's recommendation id is minted by lib/discoveryRecommendationId.ts, and no Discovery verdict rests on the signer.

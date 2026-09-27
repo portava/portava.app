@@ -608,10 +608,10 @@ async function searchTravelers(
       .select("user_id")
       .in("user_id", ids)
       .eq("allow_profile_discovery", false);
-    if (noDiscErr) return [];
-
+    if (noDiscErr) throw new DiscoverySearchReadError("profile_privacy_settings", noDiscErr); // census-discovery §53 — fail-closed stays; the silent `[]` that read as "nobody matches" goes
+    const peopleGate = await readDiscoveryPeopleGate(sc, ids, userId, isBuddy ? buddyAskFrom(ctx) : null); if (!peopleGate.ok) throw new DiscoverySearchReadError(peopleGate.relation, peopleGate.error); // §53 A24 Invisible (lib/invisibleMode.ts) + B03 buddy eligibility — an unreadable state withholds everyone AND says so
     const noDiscSet = new Set<string>((noDisc ?? []).map((r: any) => r.user_id as string));
-    const visible = rows.filter((p: any) => !noDiscSet.has(p.id as string));
+    const visible = rows.filter((p: any) => !noDiscSet.has(p.id as string) && !peopleGate.withheld.has(p.id as string));
     if (visible.length === 0) return [];
 
     // Universal display-name rule: batch-resolve which subjects opted in to
@@ -3087,8 +3087,8 @@ router.get("/discovery/people/:userId/passport", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
-  const gate = await allowDiscoveryPersonCard(sc, userId);
-  if (!gate.allowed) { sendError(res, "not_found", "User not found"); return; }
+  const gate = await withDiscoveryInvisibleGate(sc, userId, user.id, await allowDiscoveryPersonCard(sc, userId)); // §53 A24 — the shared gate, then Invisible for every viewer but the subject (lib/discoveryPeoplePrivacy.ts)
+  if (!gate.allowed) { if (gate.reason === "check_failed") sendError(res, "degraded_unavailable", "Could not establish whether this person is discoverable. Please try again."); else sendError(res, "not_found", "User not found"); return; }
 
   try {
     const passport = await buildConsumerProjection(sc, "discovery_card", userId, user.id);
@@ -3167,3 +3167,21 @@ import {
 import { protectSearchPage, protectSearchResults, protectSuggestGroups } from "../lib/discoverySearchProtection.js";
 import { mintServeExposure, stampServedRecommendations } from "../lib/discoveryRecommendationRecord.js";
 import { stampSuggestGroupsServed } from "../lib/discoverySearchExposure.js";
+
+// ─────────────────────────────────────────────────────────────────────────────
+// census-discovery §53 — the people surfaces' privacy and eligibility gates.
+//
+// Imported here, at the end of the file, for the reason the §46 block above
+// gives: the anchored citations on this file must not move. Each call site is
+// an in-place edit of an existing line (searchTravelers' opt-out read and the
+// line after it, and the person card's gate).
+//
+//   A24 — Invisible mode (lib/invisibleMode.ts) withholds a person from every
+//         Discovery people surface for every other viewer, uncached, and a
+//         failed state read withholds everyone AND is reported.
+//   B03 — Buddy eligibility: the marketplace's own safety, approved-category
+//         and set-availability rules (lib/discoveryPeopleBuddy.ts).
+//   D11 — the opt-out read no longer answers an outage with a silent `[]`.
+// ─────────────────────────────────────────────────────────────────────────────
+import { readDiscoveryPeopleGate, withDiscoveryInvisibleGate } from "../lib/discoveryPeoplePrivacy.js";
+import { buddyAskFrom } from "../lib/discoveryPeopleBuddy.js";

@@ -3888,6 +3888,19 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/test/db/creatorLedgerLifecycle.db.test.ts",
     "artifacts/api-server/src/test/db/creatorLedgerRoutes.db.test.ts",
     "artifacts/api-server/src/test/db/creatorLedgerPsqlClient.ts",
+    // WIDENED 2026-09-27 by census-discovery §53 (people privacy adapters, lane P5x): A24 moves
+    // N -> C on the Invisible gate for every Discovery people surface; B03 stays W with four of
+    // its five legs built on the marketplace reader; the /community byline avatar gate and the
+    // opt-out refusal are §53's residual repairs. Each verdict row cites these, so each is watched.
+    "artifacts/api-server/src/lib/discoveryPeoplePrivacy.ts",
+    "artifacts/api-server/src/lib/discoveryPeopleBuddy.ts",
+    "artifacts/api-server/src/test/discoveryPeopleInvisible.test.ts",
+    "artifacts/api-server/src/test/discoveryPeopleBuddy.test.ts",
+    "artifacts/api-server/src/test/discoveryCommunityAvatar.test.ts",
+    // A24's row rests on the one definition of Invisible it consumes, and A08's on the
+    // client suite that pins the legacy-typeahead latch; both are graded, so both are watched.
+    "artifacts/api-server/src/lib/invisibleMode.ts",
+    "travel-buddy-standalone/src/hooks/__tests__/useGlobalSearchSuggestions.singleSystem.component.test.tsx",
   ],
   // ── ADDED 2026-09-15: census-passport joins the CHECKABLE set ──────────────
   //
