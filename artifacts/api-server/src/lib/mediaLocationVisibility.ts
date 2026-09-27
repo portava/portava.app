@@ -444,6 +444,19 @@ export interface MediaPlaceDisclosureOpts extends CoarsenOpts {
   locationPrivacyMode?: PostLocationPrivacyMode | string | null;
   /** `posts.post_status` — only read to resolve the delayed-publish modes. */
   postStatus?: string | null;
+  /**
+   * §11 `locationDisclosureExpiresAt` (census-media §36, MD79 — decision-
+   * independent plumbing). When present and not after `nowMs`, a non-owner's
+   * disclosure is capped at `afterLocationDisclosureExpiry`, whose default is
+   * 'hidden', the MORE private tier. An unparseable value counts as expired.
+   * ABSENT ⇒ NO EFFECT, and no caller supplies one today: when a place stops
+   * being shown, and what it falls to, is the owner's open product decision.
+   */
+  locationDisclosureExpiresAt?: string | null;
+  /** The tier an expired disclosure falls to. Default 'hidden'. */
+  afterLocationDisclosureExpiry?: LocationVisibilityTier;
+  /** The clock for the expiry test. Default: now. */
+  nowMs?: number;
 }
 
 export interface MediaPlaceDisclosure extends MediaLocationDisclosure {
@@ -483,13 +496,31 @@ export function resolveMediaPlaceDisclosure(
   const ownTier = normalizeTier(opts.locationVisibility);
   const modeCeiling = locationPrivacyModeToCeiling(opts.locationPrivacyMode, opts.postStatus);
   const withMode = modeCeiling == null ? ownTier : stricterTier(ownTier, modeCeiling);
+  // §11 location-disclosure lifetime (census-media §36, MD79): inert unless a
+  // caller supplies an expiry, which none does yet.
+  const withExpiry = locationDisclosureExpired(opts.locationDisclosureExpiresAt, opts.nowMs)
+    ? stricterTier(withMode, opts.afterLocationDisclosureExpiry ?? "hidden")
+    : withMode;
 
   const d = resolveMediaLocationWithGemProtection(input, {
     ...opts,
     isOwner: false,
-    locationVisibility: withMode,
+    locationVisibility: withExpiry,
   });
   return { ...d, mayDisclosePlaceId: d.visibility === "place" };
+}
+
+/**
+ * Has a §11 location disclosure ended at `nowMs`? Absent (null / undefined /
+ * "") ⇒ false: nothing ends. Present but unparseable ⇒ TRUE — a lifetime that
+ * was set but cannot be read is treated as over, never as "forever". A time
+ * equal to now has ended.
+ */
+export function locationDisclosureExpired(expiresAt: string | null | undefined, nowMs: number = Date.now()): boolean {
+  if (expiresAt == null || expiresAt === "") return false;
+  const t = Date.parse(expiresAt);
+  if (!Number.isFinite(t)) return true;
+  return t <= nowMs;
 }
 
 // ── Gem cross-check (DB + pure) ────────────────────────────────────────────────
