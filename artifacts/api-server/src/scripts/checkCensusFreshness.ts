@@ -3773,6 +3773,29 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     // WIDENED 2026-09-27 by the coverage-guard fix (census-media §32.14): evidence for keeping a verdict — A14 stays W on the layover travel-time provider (provenance row, §39.6), and §41.1 corrects DV-44's evidence with mediaFeed's live watch_feed writer.
     "artifacts/api-server/src/services/airport/LayoverTravelTime.ts",
     "artifacts/api-server/src/routes/mediaFeed.ts",
+    // WIDENED 2026-09-27 by census-discovery §46 (search safety, lane P1): B01 moves W -> C on
+    // the stored-fold reader and 2220's generated column; B04 stays W on the search adapter,
+    // the one protected_zones reader it consumes, 2217's table and 3366's FALSE seed; B02 is
+    // pinned by its own suite; serve points 8 and 9 consume P3's served-recommendation
+    // contract. Each verdict row in §46 cites these, so each is graded and watched.
+    "artifacts/api-server/src/lib/discoverySearchCanonical.ts",
+    "artifacts/api-server/src/lib/discoverySearchProtection.ts",
+    "artifacts/api-server/src/lib/discoverySearchExposure.ts",
+    "artifacts/api-server/src/lib/protectedZoneStore.ts",
+    "artifacts/api-server/src/lib/discoveryRecommendationRecord.ts",
+    "artifacts/api-server/src/migrations/2217_protected_locations.sql",
+    "artifacts/api-server/src/migrations/2220_canonical_locations_search_key.sql",
+    "artifacts/api-server/src/migrations/3366_discovery_search_protected_zones_flag.sql",
+    "db/rollback/2026-09-27-3366-discovery-search-protected-zones-flag-rollback.sql",
+    "artifacts/api-server/src/test/discoverySearchSafetyContracts.test.ts",
+    "artifacts/api-server/src/test/discoverySearchProtection.test.ts",
+    "artifacts/api-server/src/test/discoverySearchCanonicalFold.test.ts",
+    "artifacts/api-server/src/test/discoverySearchExposure.test.ts",
+    "artifacts/api-server/src/test/discoverySearchQueryPolicy.test.ts",
+    "artifacts/api-server/src/test/discoverySearchTestKit.ts",
+    "artifacts/api-server/src/test/db/discoverySearchCanonicalFold.db.test.ts",
+    "artifacts/api-server/src/test/db/discoverySearchProtection.db.test.ts",
+    "artifacts/api-server/src/test/db/discoverySearchPsqlClient.ts",
   ],
   // ── ADDED 2026-09-15: census-passport joins the CHECKABLE set ──────────────
   //
