@@ -73,6 +73,10 @@ const ROLLBACKS = resolve(HERE, "../../../../db/rollback");
 const BRIDGE_MIGRATION = "3310_intel_consent_contributor_bridge.sql";
 const BRIDGE_ROLLBACK = "2026-09-25-3310-intel-consent-contributor-bridge-rollback.sql";
 
+// Section F drives attachMediaEvidence to a successful write, and that path seals
+// the stored reference (census-map §45) and refuses with no key configured.
+process.env.INTEL_EVIDENCE_REFERENCE_KEY ??= "consent-bridge-suite-key-0123456789abcdef";
+
 // ═══════════════════════════════════════════════════════════════════════════
 // A. THE MIGRATION — the bridge may only ever hand back a subset of its input
 // ═══════════════════════════════════════════════════════════════════════════

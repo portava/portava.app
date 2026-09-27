@@ -2412,6 +2412,8 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/test/mapSearchSavedItems.test.ts",
     // WIDENED 2026-09-27 by the coverage-guard fix (census-media §32.14): the PLACE-lane defect §41.3–§41.4 name as M123's blocker and re-execute for M42 before 2963 repointed the lane.
     "artifacts/api-server/src/migrations/2191_memory_projector_content_and_support.sql",
+    // WIDENED 2026-09-27 by lane X (census-map §45): M154's executed evidence that the stored evidence reference names no account.
+    "artifacts/api-server/src/test/intelEvidenceReference.test.ts",
   ],
   "census-sensing.md": [
     // ADDED 2026-09-14 on the Sensing lane's standing request. The scope covered

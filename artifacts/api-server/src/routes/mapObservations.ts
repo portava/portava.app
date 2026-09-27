@@ -592,7 +592,7 @@ const REASON_CODE: Readonly<Record<string, ApiErrorCode>> = {
   evidence_requires_observation: "invalid_payload",
   unsupported_media_kind: "invalid_payload",
   invalid_media_reference: "invalid_payload",
-  media_not_owned: "forbidden",
+  media_not_owned: "forbidden", reference_key_unavailable: "server_not_configured", // the second: INTEL_EVIDENCE_REFERENCE_KEY unset, so the key cannot be sealed (lib/intelEvidenceCapture) and nothing is stored
   // Not `not_found`: distinguishing "no such observation" from "not yours"
   // would make this an oracle for other people's contributions.
   unknown_observation: "not_found",

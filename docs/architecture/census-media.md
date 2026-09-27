@@ -8973,3 +8973,29 @@ pass owns them. No verdict moves on any of them.
 census-wall each cite
 `artifacts/api-server/src/scripts/checkCensusFreshness.ts:1520#ADDED 2026-09-20 by census-wall §13`.
 The widened scope arrays above it moved it from line 1406.
+
+## 39. Pointer: §35.7 item 1 is fixed on branch, recorded in census-map §45 (lane X) — 2026-09-27
+
+§35.7 item 1 recorded this defect. The map evidence path stored
+`intel_evidence.reference` as a storage key whose first segment is the
+uploader's account id, beside a contributor id 3002 tokenises.
+
+Branch `lane-x-evidence` now stores that reference sealed to its observation,
+under a server key, so it names no account in any encoding. The reference
+opens only through two readers:
+
+- the contributor's own reader, through the byte gate;
+- account deletion, which now also reads under the account's 3002 tokens.
+
+Remediation for any pre-seal row is prepared (3360, a script, 3361) and applied
+to no database. The full record, its mutations, and the owner's consent
+question (§35.7 item 2) are in census-map §45.
+
+For Media's rows:
+
+- the seam writer, `lib/media/mediaEvidenceLink.ts`, no longer copies the
+  storage path into `reference`;
+- its `media_asset_id` still joins to an owner; that is §35.4 MD65 Question 3,
+  left to the owner.
+
+No MD row moves.

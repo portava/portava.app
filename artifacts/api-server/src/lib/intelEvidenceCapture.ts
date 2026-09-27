@@ -49,10 +49,10 @@
  *   2. `ownerFromPath(...) === actorId` — proves the bytes are THEIRS.
  *      appStorageUrlInfo says whose HOST, never whose OBJECT.
  *
- * What is persisted is the resulting `<bucket>/<path>` STORAGE KEY, which is
- * exactly what `intel_evidence.reference` is documented to hold ("A storage key
- * or external reference"), what `lib/dataRights` classifies it as, and what
- * `lib/storagePath` can resolve for deletion. No URL, no origin, no token.
+ * What is persisted is NOT that `<bucket>/<path>` key: its first segment is the
+ * uploader's ACCOUNT id, and 3002 tokenises every contributor id in this table.
+ * The key is SEALED to its observation (see "THE SEALED REFERENCE" at the end of
+ * this file). No URL, no origin, no token, and no account id, in any encoding.
  *
  * The object itself is one the contributor uploaded through POST
  * /api/media/upload, which strips EXIF/GPS before writing the bytes — so this
@@ -85,9 +85,9 @@
  *     (`lib/mediaAccess`), unchanged by this row — a reference does not widen
  *     access to an object.
  *
- * A read path for evidence therefore may not be added without a moderation
- * decision first. `test/mapMediaEvidence.test.ts` pins the "nothing reads it"
- * half of that so the assumption cannot rot silently.
+ * A read path serving evidence to anyone but its OWN contributor therefore may not
+ * be added without a moderation decision first. `test/mapMediaEvidence.test.ts`
+ * pins "no route reads it" and "nothing but this file selects `reference`".
  */
 import { isFlagEnabled } from "./featureFlags.js";
 import { clampObservedAt } from "./intelContracts.js";
@@ -152,7 +152,7 @@ export type EvidenceRejection =
   | "unknown_observation"
   /** The observation is about a different subject than the contribution named. */
   | "observation_subject_mismatch"
-  | "db_error";
+  | "db_error" | "reference_key_unavailable"; // the last: INTEL_EVIDENCE_REFERENCE_KEY unset or short, so the key cannot be sealed and nothing is stored
 
 export type EvidenceResult =
   | { ok: true; evidence: any; deduped: boolean }
@@ -167,7 +167,7 @@ function reject(reason: EvidenceRejection, detail?: string): EvidenceResult {
  *
  * Exported because it is the security decision of this module and deserves to
  * be testable on its own, without a database. Returns the bucket-qualified key
- * to persist, or the reason it was refused.
+ * (which is SEALED before anything stores it — see the end of this file), or the reason it was refused.
  */
 export function resolveOwnedMediaReference(
   mediaUri: string,
@@ -220,8 +220,8 @@ export async function attachMediaEvidence(
   const clamped = clampObservedAt(input.observedAt);
   if (!clamped) return reject("invalid_observed_at");
 
-  // Gate 5 — the untrusted reference.
-  const resolved = resolveOwnedMediaReference(input.mediaUri, actorId);
+  // Gate 5 — the untrusted reference: proved ours, proved theirs, then SEALED (end of file).
+  const resolved = resolveAndSealOwnedMediaReference(input.mediaUri, actorId, input.observationId); // the key names the ACCOUNT; only the sealed form is ever stored
   if (!resolved.ok) return reject(resolved.reason);
 
   // Gate 6a — WHICH STORED VALUES ARE THIS ACTOR'S.
@@ -280,7 +280,7 @@ export async function attachMediaEvidence(
     observation_id: input.observationId,
     actor_id: actorId,
     evidence_kind: evidenceKind,
-    reference: resolved.reference,
+    reference: resolved.reference, // `ievr1.…` — sealed to this observation; carries no account id
     detail: { source: EVIDENCE_SOURCE_MAP_CONTRIBUTION },
     expires_at: expiresAt,
   };
@@ -314,4 +314,440 @@ export async function attachMediaEvidence(
   // NOTE WHAT DOES NOT HAPPEN HERE: no claim, no confidence, no snapshot, no
   // reward, and no change to the observation — which is append-only anyway.
   return { ok: true, evidence: data, deduped: false };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// THE SEALED REFERENCE (census-map §45; found by lane I, census-media §35.7)
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// WHAT WAS WRONG. `intel_evidence.reference` used to hold the storage key that
+// resolveOwnedMediaReference proves, as is. Every key POST /api/media/upload
+// mints is `post-media/<ACCOUNT uuid>/<ms>.<ext>` (routes/posts.ts builds it from
+// `user.id`), and that first segment is exactly what `ownerFromPath(...) ===
+// actorId` relies on. Migration 3002 replaces `actor_id` on this table with a
+// rotating contributor token so that no stored contribution names an account;
+// the key put the account back one column over. A row therefore resolved its
+// observation to its author and, through the shared weekly token, every other
+// observation that author made that week.
+//
+// WHY NOT `media_assets.id`. It is neither guaranteed nor opaque. The upload
+// route writes the canonical row fire-and-forget and only while
+// `media_canonical_enabled` is on, so at capture time it may not exist; and
+// `media_assets.owner_user_id` is one join away for anything that can read this
+// table, which is the same re-identification, derivable instead of direct.
+//
+// WHAT IS STORED NOW: `ievr1.` + base64url(iv ‖ ciphertext ‖ tag). The key is
+// zero-padded to a multiple of 64 bytes and encrypted with AES-256-GCM under a
+// key derived (HKDF-SHA256) from INTEL_EVIDENCE_REFERENCE_KEY, a server secret
+// that is not in the database, let alone in the row. Three properties, each
+// pinned by test/intelEvidenceReference.test.ts:
+//
+//   • NO ACCOUNT ID, in any substring or encoding. The ciphertext is
+//     pseudo-random, the padding hides the key's length, and nothing else this
+//     path writes is derived from the key.
+//   • BOUND TO ITS OBSERVATION. The observation id is the GCM additional data,
+//     so a reference copied onto another row does not open.
+//   • DETERMINISTIC PER (observation, object), UNLINKABLE ACROSS observations.
+//     The IV is an HMAC of (observation, padded key) under a second derived key
+//     (a synthetic IV, the SIV construction). A double-tap therefore replays to
+//     the same value and 2223's unique (observation_id, reference) index still
+//     dedupes it, while the same photo attached to two observations, in two
+//     weeks under two tokens, yields two unrelated references. A reference
+//     derived from the key alone would have re-linked the weekly tokens it sits
+//     beside.
+//
+// WHO CAN OPEN IT. Code holding the key, through the two readers below and
+// nothing else: resolveEvidenceMediaForContributor (the contributor's own
+// object, through the byte gate) and collectOwnEvidenceObjectKeys (account
+// deletion's search for the bytes). A third, rekeyLegacyEvidenceReferences,
+// reads only pre-seal plaintext rows, in order to seal them. No route calls
+// any of the three.
+//
+// THE RESIDUAL, STATED. The application holds the key, so the application can
+// open any reference. That is the same class of residual 3002 records for its
+// pepper, and it is why the key is a dedicated secret: a database reader (a SQL
+// console, a replica, a dump, a leaked service-role key) cannot open a
+// reference, and cannot join one to an account.
+//
+// NO FALLBACK KEY, for the reason lib/envValidation gives for
+// SENSING_CONTRIBUTOR_PEPPER. A reference sealed under SESSION_SECRET would stop
+// opening on a routine session-secret rotation, and a reference that does not
+// open is an object account deletion cannot find. Unset, or shorter than 32
+// characters, means capture refuses (`reference_key_unavailable`) and stores
+// nothing. Treat the key as stable: rotating it needs every row re-sealed under
+// the new key first, and no tool for that exists yet.
+import { createCipheriv, createDecipheriv, createHmac, hkdfSync, timingSafeEqual } from "node:crypto";
+import { authorizeMediaAccess } from "./mediaAccess.js";
+
+/** Version prefix of a sealed reference. A value without it is a pre-3360 plaintext key. */
+export const EVIDENCE_REFERENCE_PREFIX = "ievr1.";
+/** Minimum length of INTEL_EVIDENCE_REFERENCE_KEY. Enforced, not advisory. */
+export const EVIDENCE_REFERENCE_KEY_MIN_LENGTH = 32;
+
+/** Versioned context (house idiom: lib/intelGroupKey GROUP_KEY_CONTEXT). */
+const EVIDENCE_REFERENCE_CONTEXT = "intel-evidence-reference/v1";
+const EVIDENCE_REFERENCE_IV_BYTES = 12;
+const EVIDENCE_REFERENCE_TAG_BYTES = 16;
+/** Padding block. Every storage key the upload route mints fits one block. */
+const EVIDENCE_REFERENCE_PAD_BYTES = 64;
+
+interface EvidenceReferenceKeys {
+  enc: Buffer;
+  siv: Buffer;
+}
+
+/** The two derived keys, or null when the secret is unset or too short. Read per call. */
+function evidenceReferenceKeys(): EvidenceReferenceKeys | null {
+  const secret = process.env.INTEL_EVIDENCE_REFERENCE_KEY;
+  if (typeof secret !== "string" || secret.trim().length < EVIDENCE_REFERENCE_KEY_MIN_LENGTH) return null;
+  const ikm = Buffer.from(secret, "utf8");
+  const salt = Buffer.from(EVIDENCE_REFERENCE_CONTEXT, "utf8");
+  return {
+    enc: Buffer.from(hkdfSync("sha256", ikm, salt, "enc", 32)),
+    siv: Buffer.from(hkdfSync("sha256", ikm, salt, "siv", 32)),
+  };
+}
+
+/** Uuid case variants of one observation id must seal and open identically. */
+function referenceAad(observationId: string): Buffer {
+  return Buffer.from(`${EVIDENCE_REFERENCE_CONTEXT}|${observationId.trim().toLowerCase()}`, "utf8");
+}
+
+function syntheticIv(keys: EvidenceReferenceKeys, aad: Buffer, padded: Buffer): Buffer {
+  return createHmac("sha256", keys.siv)
+    .update(aad)
+    .update(Buffer.from([0]))
+    .update(padded)
+    .digest()
+    .subarray(0, EVIDENCE_REFERENCE_IV_BYTES);
+}
+
+/** Is this stored value a sealed reference (as opposed to a legacy plaintext key)? */
+export function isSealedEvidenceReference(value: unknown): value is string {
+  return typeof value === "string" && value.startsWith(EVIDENCE_REFERENCE_PREFIX);
+}
+
+export type SealEvidenceReferenceResult =
+  | { ok: true; reference: string }
+  | { ok: false; reason: "reference_key_unavailable" | "invalid_media_reference" };
+
+/**
+ * Seal a storage key to the observation it supports. Pure apart from reading
+ * the key from the environment. It proves NOTHING about ownership: callers
+ * seal only a key resolveOwnedMediaReference has already proved.
+ */
+export function sealEvidenceReference(storageKey: string, observationId: string): SealEvidenceReferenceResult {
+  if (typeof storageKey !== "string" || storageKey.length === 0 || storageKey.includes("\0")) {
+    return { ok: false, reason: "invalid_media_reference" };
+  }
+  if (typeof observationId !== "string" || observationId.trim().length === 0) {
+    return { ok: false, reason: "invalid_media_reference" };
+  }
+  const keys = evidenceReferenceKeys();
+  if (!keys) return { ok: false, reason: "reference_key_unavailable" };
+
+  const plain = Buffer.from(storageKey, "utf8");
+  // At least one zero byte, so the length is visible only to the nearest block.
+  const padded = Buffer.alloc(Math.ceil((plain.length + 1) / EVIDENCE_REFERENCE_PAD_BYTES) * EVIDENCE_REFERENCE_PAD_BYTES);
+  plain.copy(padded);
+  const aad = referenceAad(observationId);
+  const iv = syntheticIv(keys, aad, padded);
+  const cipher = createCipheriv("aes-256-gcm", keys.enc, iv);
+  cipher.setAAD(aad);
+  const ciphertext = Buffer.concat([cipher.update(padded), cipher.final()]);
+  const tag = cipher.getAuthTag();
+  return { ok: true, reference: EVIDENCE_REFERENCE_PREFIX + Buffer.concat([iv, ciphertext, tag]).toString("base64url") };
+}
+
+export type OpenEvidenceReferenceResult =
+  | { ok: true; storageKey: string }
+  | { ok: false; reason: "not_sealed" | "reference_key_unavailable" | "unopenable" };
+
+/**
+ * Open a sealed reference for the observation its row names. Anything that does
+ * not authenticate — another observation's reference, a truncated or edited
+ * value, a different key — is `unopenable`, never a guess.
+ */
+export function openEvidenceReference(reference: unknown, observationId: unknown): OpenEvidenceReferenceResult {
+  if (!isSealedEvidenceReference(reference)) return { ok: false, reason: "not_sealed" };
+  if (typeof observationId !== "string" || observationId.trim().length === 0) return { ok: false, reason: "unopenable" };
+  const keys = evidenceReferenceKeys();
+  if (!keys) return { ok: false, reason: "reference_key_unavailable" };
+
+  const body = reference.slice(EVIDENCE_REFERENCE_PREFIX.length);
+  if (!/^[A-Za-z0-9_-]+$/.test(body)) return { ok: false, reason: "unopenable" };
+  const raw = Buffer.from(body, "base64url");
+  const cipherLength = raw.length - EVIDENCE_REFERENCE_IV_BYTES - EVIDENCE_REFERENCE_TAG_BYTES;
+  if (cipherLength < EVIDENCE_REFERENCE_PAD_BYTES || cipherLength % EVIDENCE_REFERENCE_PAD_BYTES !== 0) {
+    return { ok: false, reason: "unopenable" };
+  }
+  const iv = raw.subarray(0, EVIDENCE_REFERENCE_IV_BYTES);
+  const ciphertext = raw.subarray(EVIDENCE_REFERENCE_IV_BYTES, EVIDENCE_REFERENCE_IV_BYTES + cipherLength);
+  const tag = raw.subarray(EVIDENCE_REFERENCE_IV_BYTES + cipherLength);
+  const aad = referenceAad(observationId);
+
+  let padded: Buffer;
+  try {
+    const decipher = createDecipheriv("aes-256-gcm", keys.enc, iv);
+    decipher.setAAD(aad);
+    decipher.setAuthTag(tag);
+    padded = Buffer.concat([decipher.update(ciphertext), decipher.final()]);
+  } catch {
+    return { ok: false, reason: "unopenable" };
+  }
+  // The IV must be the one this plaintext and this observation produce.
+  if (!timingSafeEqual(iv, syntheticIv(keys, aad, padded))) return { ok: false, reason: "unopenable" };
+  const end = padded.indexOf(0);
+  if (end <= 0) return { ok: false, reason: "unopenable" };
+  for (let i = end; i < padded.length; i += 1) {
+    if (padded[i] !== 0) return { ok: false, reason: "unopenable" };
+  }
+  return { ok: true, storageKey: padded.subarray(0, end).toString("utf8") };
+}
+
+/**
+ * Gate 5 as attachMediaEvidence calls it: the same ownership proof as before,
+ * then the seal. The refusal reasons are resolveOwnedMediaReference's, plus
+ * `reference_key_unavailable`. Refusing here, before the identity and
+ * observation reads, keeps the refusal independent of any observation id.
+ */
+export function resolveAndSealOwnedMediaReference(
+  mediaUri: string,
+  actorId: string,
+  observationId: string | null | undefined,
+): { ok: true; reference: string } | { ok: false; reason: EvidenceRejection } {
+  const resolved = resolveOwnedMediaReference(mediaUri, actorId);
+  if (!resolved.ok) return resolved;
+  const sealed = sealEvidenceReference(resolved.reference, String(observationId ?? ""));
+  if (!sealed.ok) return { ok: false, reason: sealed.reason };
+  return { ok: true, reference: sealed.reference };
+}
+
+// ── Reader 1: the contributor's own evidence, through the byte gate ─────────
+
+export type EvidenceMediaRefusal =
+  | "invalid_input"
+  /** No such evidence, or not this viewer's. The two are not distinguished. */
+  | "not_found"
+  /** The row references no stored object (text_note, sensor, the media seam). */
+  | "no_media"
+  | "unopenable"
+  | "reference_key_unavailable"
+  /** The byte gate (lib/mediaAccess) refuses this viewer the object. */
+  | "not_authorized"
+  | "db_error";
+
+export type EvidenceMediaResolution =
+  | { ok: true; bucket: string; path: string }
+  | { ok: false; reason: EvidenceMediaRefusal; detail?: string };
+
+/**
+ * Map one evidence row back to its object, for the one viewer entitled to know
+ * which object it is: the contributor who attached it.
+ *
+ * TWO AUTHORIZATIONS, AND BOTH ARE NEEDED.
+ *   1. The row must be THIS viewer's: its `actor_id` must be one of the values
+ *      3310's bridge derives from the viewer's own account (the account id, and
+ *      each epoch's token). This is not the byte gate's question. The byte gate
+ *      asks "may this viewer see these bytes?", and for a photo that is also a
+ *      public post, or an avatar on a public profile, the answer for a stranger
+ *      is yes. Telling that stranger "this photo backs observation O" would
+ *      still re-identify O's contributor, so a stranger is refused before the
+ *      byte gate is asked.
+ *   2. The byte gate itself (`authorizeMediaAccess`), so a contributor is never
+ *      handed an object their own row does not entitle them to: a story they
+ *      deleted, or a row whose key names someone else's object ("a row is not
+ *      a promise").
+ *
+ * A missing row and another person's row get the same answer, as in the
+ * capture path. Serving evidence to anyone else (a moderator, another
+ * traveller) is the moderation and visibility decision this module's header
+ * reserves, and is not built here. No route calls this function.
+ */
+export async function resolveEvidenceMediaForContributor(
+  sc: any,
+  viewerId: string,
+  evidenceId: string,
+): Promise<EvidenceMediaResolution> {
+  if (!sc || !viewerId || !evidenceId) return { ok: false, reason: "invalid_input" };
+
+  // Identities first, for the reason Gate 6a gives: a failure here must not be
+  // an oracle for which evidence ids exist.
+  const identities = await readOwnContributorIdentities(sc, viewerId);
+  if (!identities.ok) return { ok: false, reason: "db_error", detail: `contributor identity lookup: ${identities.detail}` };
+
+  const { data: row, error } = await sc
+    .from("intel_evidence")
+    .select("id, observation_id, actor_id, reference")
+    .eq("id", evidenceId)
+    .maybeSingle();
+  if (error) return { ok: false, reason: "db_error", detail: "evidence lookup" };
+  if (!row || !row.actor_id || !new Set(identities.identities).has(String(row.actor_id))) {
+    return { ok: false, reason: "not_found" };
+  }
+
+  const stored = typeof row.reference === "string" ? row.reference.trim() : "";
+  if (!stored) return { ok: false, reason: "no_media" };
+  let storageKey: string;
+  if (isSealedEvidenceReference(stored)) {
+    const opened = openEvidenceReference(stored, row.observation_id);
+    if (!opened.ok) return { ok: false, reason: opened.reason === "reference_key_unavailable" ? opened.reason : "unopenable" };
+    storageKey = opened.storageKey;
+  } else {
+    // LEGACY: a row written before the seal. Its value is the key itself; it
+    // passes the same validator and the same byte gate as an opened one.
+    storageKey = stored;
+  }
+  const ref = appStorageUrlInfo(storageKey);
+  if (!ref) return { ok: false, reason: "unopenable" };
+  if (!(await authorizeMediaAccess(sc, viewerId, ref.bucket, ref.path))) {
+    return { ok: false, reason: "not_authorized" };
+  }
+  return { ok: true, bucket: ref.bucket, path: ref.path };
+}
+
+// ── Reader 2: account deletion's search for the bytes ───────────────────────
+
+/** The paged reader AccountDeletionService hands its collection steps. */
+export type EvidencePagedRead = (build: () => any, consume: (rows: any[]) => number) => Promise<number>;
+
+/**
+ * Every storage key referenced by THIS ACCOUNT's own evidence rows, for
+ * account deletion to remove before erase_intel_for_actor deletes the rows.
+ *
+ * The rows are read under EVERY value `actor_id` may hold for the account (the
+ * account id and each live epoch's 3002 token). Reading `.eq("actor_id",
+ * accountId)` alone matched nothing once 3002 tokenised the column, so the
+ * bytes of every post-3002 evidence row would have survived the deletion.
+ *
+ * Returns the opened keys UNVALIDATED: the caller applies its own guard (an
+ * allowed bucket, no `..`, and ownerFromPath === the account). A legacy
+ * plaintext value is returned as stored, for the same guard. A sealed value
+ * that does not open is counted in `unopenable`, and the caller must report it:
+ * it is an object this deletion cannot find. Throws when the account's
+ * identities cannot be read, because ownership is then unknown, not empty.
+ */
+export async function collectOwnEvidenceObjectKeys(
+  sc: any,
+  accountId: string,
+  readAll: EvidencePagedRead,
+): Promise<{ keys: string[]; unopenable: number }> {
+  if (!accountId) throw new Error("evidence object collection: account id is required");
+  const identities = await readOwnContributorIdentities(sc, accountId);
+  if (!identities.ok) {
+    throw new Error(`evidence object collection: contributor identities unreadable (${identities.reason}): ${identities.detail}`);
+  }
+  const keys: string[] = [];
+  let unopenable = 0;
+  for (const identity of identities.identities) {
+    await readAll(
+      () =>
+        sc
+          .from("intel_evidence")
+          .select("observation_id, reference")
+          .eq("actor_id", identity)
+          .order("id", { ascending: true }),
+      (rows) => {
+        let n = 0;
+        for (const row of rows) {
+          // NULL by design for 'text_note' and 'sensor' evidence and for the
+          // media seam: those reference no stored object here.
+          const stored = typeof row?.reference === "string" ? row.reference.trim() : "";
+          if (!stored) continue;
+          if (!isSealedEvidenceReference(stored)) {
+            keys.push(stored);
+            n += 1;
+            continue;
+          }
+          const opened = openEvidenceReference(stored, row?.observation_id);
+          if (opened.ok) {
+            keys.push(opened.storageKey);
+            n += 1;
+          } else {
+            unopenable += 1;
+          }
+        }
+        return n;
+      },
+    );
+  }
+  return { keys, unopenable };
+}
+
+// ── Reader 3: the remediation for rows written before the seal ──────────────
+
+/** The SECURITY DEFINER function migration 3360 adds and 3361 drops. */
+export const EVIDENCE_REKEY_RPC = "intel_evidence_rekey_reference";
+
+export interface LegacyEvidenceRekeyOutcome {
+  apply: boolean;
+  /** photo/video rows whose reference is not sealed. */
+  legacy: number;
+  /** Re-sealed by this run (always 0 on a dry run). */
+  rekeyed: number;
+  /** Not a key in our own storage, so nothing can be sealed. Needs a person. */
+  refused: number;
+  /** The RPC failed or found the row changed underneath it. Safe to re-run. */
+  failed: number;
+}
+
+/**
+ * Re-seal every photo/video evidence row that still holds a plaintext key.
+ *
+ * DRY RUN unless `apply` is true: it then only counts. It never returns or logs
+ * a reference, since every legacy value names an account. It READS EVERYTHING
+ * FIRST and then writes, because each re-sealed row leaves the filtered set and
+ * offset paging would otherwise skip rows. Each write goes through 3360's
+ * function, which changes exactly one row, from exactly the value read, to a
+ * sealed value. Throws before any write when the key is unavailable.
+ *
+ * NOT RUN against any database by the lane that wrote it.
+ */
+export async function rekeyLegacyEvidenceReferences(
+  sc: any,
+  opts: { apply: boolean; pageSize?: number },
+): Promise<LegacyEvidenceRekeyOutcome> {
+  const pageSize = Math.max(1, Math.min(opts.pageSize ?? 500, 900));
+  const legacyRows: Array<{ id: string; observation_id: string; reference: string }> = [];
+  for (let from = 0; ; from += pageSize) {
+    const { data, error } = await sc
+      .from("intel_evidence")
+      .select("id, observation_id, reference")
+      .in("evidence_kind", ["photo", "video"])
+      .not("reference", "is", null)
+      .not("reference", "like", `${EVIDENCE_REFERENCE_PREFIX}%`)
+      .order("id", { ascending: true })
+      .range(from, from + pageSize - 1);
+    if (error) throw new Error(`legacy evidence read failed: ${String(error.message ?? error)}`);
+    const rows = (data as any[]) ?? [];
+    for (const r of rows) {
+      if (typeof r?.reference === "string" && !isSealedEvidenceReference(r.reference)) {
+        legacyRows.push({ id: String(r.id), observation_id: String(r.observation_id ?? ""), reference: r.reference });
+      }
+    }
+    if (rows.length < pageSize) break;
+  }
+
+  const outcome: LegacyEvidenceRekeyOutcome = { apply: opts.apply, legacy: legacyRows.length, rekeyed: 0, refused: 0, failed: 0 };
+  if (!opts.apply || legacyRows.length === 0) return outcome;
+  if (!evidenceReferenceKeys()) {
+    throw new Error("INTEL_EVIDENCE_REFERENCE_KEY is unset or shorter than 32 characters; nothing was re-sealed");
+  }
+
+  for (const row of legacyRows) {
+    const ref = appStorageUrlInfo(row.reference);
+    const sealed = ref ? sealEvidenceReference(`${ref.bucket}/${ref.path}`, row.observation_id) : null;
+    if (!sealed || !sealed.ok) {
+      outcome.refused += 1;
+      continue;
+    }
+    const { data, error } = await sc.rpc(EVIDENCE_REKEY_RPC, {
+      p_evidence_id: row.id,
+      p_legacy_reference: row.reference,
+      p_sealed_reference: sealed.reference,
+    });
+    if (error || data !== true) outcome.failed += 1;
+    else outcome.rekeyed += 1;
+  }
+  return outcome;
 }

@@ -633,8 +633,8 @@ export async function executeAccountDeletion(
   );
 
   // ── IG-02 evidence media (map contributions) ──────────────────────────────
-  // intel_evidence.reference holds a `<bucket>/<path>` STORAGE KEY for a photo
-  // or video a contributor attached to an observation (lib/intelEvidenceCapture).
+  // intel_evidence.reference holds a SEALED `<bucket>/<path>` key (census-map §45; a pre-3360 row may hold it plain) for a photo
+  // or video a contributor attached to an observation (lib/intelEvidenceCapture, which alone opens it).
   // The ROWS were already erased — intel_evidence is in ERASED_BY_CASCADE and
   // erase_intel_for_actor deletes the actor's rows — so check:deletion-coverage
   // was green. The BYTES were not, and nothing checked them:
@@ -660,26 +660,26 @@ export async function executeAccountDeletion(
     warnings,
     { name: "collect_intel_evidence_paths", subject: "intel evidence media", noun: "references" },
     (readAll) =>
-      readAll(
-        () =>
-          sc
-            .from("intel_evidence")
-            .select("reference")
-            .eq("actor_id", userId)
-            .order("id", { ascending: true }),
-        (rows) => {
-          let found = 0;
-          for (const row of rows) {
-            // NULL by design for 'text_note' and 'sensor' evidence — those reference
-            // no stored object at all, so skipping is correct, not a miss. Defence in
-            // depth: the producer validated bucket + owner on write
-            // (appStorageUrlInfo + ownerFromPath), but a row is not a promise, so the
-            // shared guard re-checks both here.
-            if (collectOwnedReference(row?.reference, userId, storageTargets)) found += 1;
-          }
-          return found;
-        },
-      ),
+      // The reference is SEALED and names no account, so this step no longer parses
+      // it: lib/intelEvidenceCapture, the one module that writes a reference, opens
+      // it. It reads this account's rows under EVERY stored identity (the account id
+      // and each 3002 token); `.eq("actor_id", userId)` alone matched nothing once
+      // 3002 tokenised the column, and every post-3002 object would have survived.
+      // The step still counts only what passes the guard below.
+      collectOwnEvidenceObjectKeys(sc, userId, readAll).then(({ keys, unopenable }) => {
+        let found = 0;
+        for (const key of keys) {
+          // Defence in depth: the producer validated bucket + owner on write
+          // (appStorageUrlInfo + ownerFromPath), but a row is not a promise, so the
+          // shared guard re-checks both on the OPENED key (or a legacy plain one).
+          if (collectOwnedReference(key, userId, storageTargets)) found += 1;
+        }
+        // A sealed reference that does not open is an object this deletion cannot
+        // find. Everything that did open is already collected above; the failure is
+        // then recorded (the step fails, the receipt warns), never a silent zero.
+        if (unopenable > 0) throw new Error(`${unopenable} sealed evidence reference(s) could not be opened (INTEL_EVIDENCE_REFERENCE_KEY unset or changed)`);
+        return found;
+      }),
   );
 
   // ── Story media ───────────────────────────────────────────────────────────
@@ -1528,3 +1528,6 @@ export async function executeAccountDeletion(
 
   return { ok, userId, executedAt, steps, warnings, deletedCounts, tombstonedCounts };
 }
+
+// census-map §45: the one module that writes an evidence reference is the one that opens it.
+import { collectOwnEvidenceObjectKeys } from "../../lib/intelEvidenceCapture.js";
