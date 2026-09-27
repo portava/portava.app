@@ -176,7 +176,7 @@ const outcomeBodySchema = z.object({
   item_id:    z.string().min(1).max(200),
   surface:    z.enum(SURFACE_VALUES),
   outcome:    z.enum(OUTCOME_VALUES),
-  session_id: z.string().regex(UUID_RE, "session_id must be a valid UUID").optional(),  recommendation_id: z.string().regex(RECOMMENDATION_ID_SHAPE, "recommendation_id is not a served exposure id").optional(), schema_version: z.unknown().optional(),  // §48 DV-46 / DV-38
+  session_id: z.string().regex(UUID_RE, "session_id must be a valid UUID").optional(),  recommendation_id: z.string().regex(RECOMMENDATION_ID_SHAPE, "recommendation_id is not a served exposure id").optional(), schema_version: z.unknown().optional(), client_event_id: directEventSchema.shape.client_event_id,  // §48 DV-46 / DV-38; §62 DV-37 — the key, validated exactly as POST /rank-events validates it
 });
 
 router.post("/rank-events/outcome", asyncHandler(async (req, res) => {
@@ -189,7 +189,7 @@ router.post("/rank-events/outcome", asyncHandler(async (req, res) => {
     sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid payload");
     return;
   }
-  const { item_id, surface, outcome, session_id, recommendation_id: claimedId } = parsed.data; if (!acceptsEventVersion(res, parsed.data.schema_version)) return;  // §48 — DV-38: an unknown version is refused; DV-46: a served id, when the client echoes one, is BOUND below
+  const { item_id, surface, outcome, session_id, recommendation_id: claimedId, client_event_id: clientEventId } = parsed.data; if (!acceptsEventVersion(res, parsed.data.schema_version)) return;  // §48 — DV-38: an unknown version is refused; DV-46: a served id, when the client echoes one, is BOUND below
 
   const sc = getServiceClient();
   if (!sc) {
@@ -213,14 +213,14 @@ router.post("/rank-events/outcome", asyncHandler(async (req, res) => {
     query = query.eq("session_id", session_id);
   }
 
-  const picked = claimedId ? await readClaimedExposure(sc, user.id, claimedId, req.log) : await readUpgradableExposure(sc, query, {
+  const receipt = await readOutcomeReceipt(sc, user.id, clientEventId, req.log); const picked = receipt.error || receipt.hit ? receipt : claimedId ? await readClaimedExposure(sc, user.id, claimedId, req.log) : await readUpgradableExposure(sc, query, {
     userId: user.id, itemId: item_id, surface, outcome, sessionId: session_id,
   }, req.log);
   if (picked.error) {
     req.log.error({ err: picked.error }, "rank-events/outcome: select failed");
     sendError(res, "db_error", picked.error.message); return;
   }
-  const row = picked.row;
+  const row = picked.row; if (receipt.hit) { await answerKeyedReplay(sc, res, receipt.hit, { userId: user.id, itemId: item_id, surface, outcome, sessionId: session_id ?? null }, req.log); return; }  // §62 DV-37
   if (!row) {
     sendError(res, "not_found", "No matching impression row found for this item");
     return;
@@ -228,10 +228,10 @@ router.post("/rank-events/outcome", asyncHandler(async (req, res) => {
   const binding = claimedId ? bindOutcomeToExposure({ callerUserId: user.id, body: { item_id, surface, outcome }, row, upgradable: upgradableOutcomesFor(outcome) }) : null; if (binding && refuseUnboundOutcome(res, binding)) return; const cas = newOutcomeCas(outcome, binding); const recommendationId = claimedId ?? exposureTokenFor(row, user.id, item_id, surface);  // `04` §10.6; §48 DV-37/46 — bind a claimed id to THIS viewer, then compare-and-set
   const { error: updateErr } = await compareAndSetClient(sc
     .from("rank_events")
-    .update({ outcome, outcome_at: new Date().toISOString(), ...(canStampExposureToken(recommendationId) ? { recommendation_id: recommendationId } : {}) })
+    .update({ outcome, outcome_at: new Date().toISOString(), ...(canStampExposureToken(recommendationId) ? { recommendation_id: recommendationId } : {}), ...(clientEventId && canStampOutcomeKey() ? { outcome_client_event_id: clientEventId } : {}) })
     .eq("id", row.id), cas);
 
-  const settled = await settleOutcomeUpdate(sc, row.id, outcome, recommendationId, updateErr, req.log, cas);
+  const settled = await settleKeyedOutcomeUpdate(sc, row.id, outcome, recommendationId, updateErr, req.log, cas, clientEventId);  // §62 DV-37 — a key that already landed elsewhere is a duplicate
   if (!settled.ok) {
     sendError(res, settled.notFound ? "not_found" : "db_error", settled.message);
     return;
@@ -268,7 +268,7 @@ router.post("/rank-events/outcome", asyncHandler(async (req, res) => {
   // analytics pipelines can filter by the canonical event_type name.
   // Backward compatibility: the existing `outcome` field on the row is
   // already updated above — this is an additive analytics insert only.
-  const analyticsEventType = OUTCOME_TO_ANALYTICS_EVENT[outcome];
+  const analyticsEventType = settled.keyedCollision ? undefined : OUTCOME_TO_ANALYTICS_EVENT[outcome];  // §62 DV-37
   if (analyticsEventType) {
     // DV-46: `recommendation_id` makes this row part of the SAME exposure as the
     // impression it follows, and migration 2891's UNIQUE (recommendation_id,
@@ -453,7 +453,7 @@ const RANK_EVENTS_WRITER = "routes/rankEvents.ts";
  * to the tests rather than to the thing under test.
  */
 export function _resetRecommendationIdSchemaLatch(): void {
-  _resetSharedRecommendationIdLatch();
+  _resetSharedRecommendationIdLatch(); _resetOutcomeKeyLatch();   // §62: and the 3420 latch
 }
 
 /**
@@ -1192,3 +1192,194 @@ router.post("/rank-events/dwell", asyncHandler(async (req, res) => {
   if (!auth) return;
   await acceptDiscoveryDwell(getServiceClient(), req, res, auth.user.id);
 }));
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// census-discovery §62 — DV-37: a KEYED outcome lands once (migration 3420)
+// ═══════════════════════════════════════════════════════════════════════════════
+//
+// APPENDED HERE, below every cited line, and reached from the outcome handler by
+// hoisted declaration (the handler's edits are each on a line it already had).
+//
+// THE DEFECT (§59.1, db/discoveryVerifyChain V7). An outcome with no
+// recommendation_id moves "the most recent upgradable row for (viewer, item,
+// surface)". A sequential retry, after the item was served twice, found the
+// SECOND exposure and moved it too: one "Not interested", two dismisses, two
+// negative signals, and the retry answered as a new outcome. The server cannot
+// tell a retry from a second action without an identity for the action.
+//
+// THE IDENTITY is `client_event_id`, exactly as POST /rank-events takes it: the
+// same validator (directEventSchema's field, reused at the schema), minted once
+// per user action by the client and re-sent on every retry of that action. And
+// the same kind of mechanism: a unique key the database arbitrates. An outcome
+// UPDATEs an exposure whose recommendation_id is the SERVED id, so the key gets
+// its own arbiter (3420): the UPDATE writes `outcome_client_event_id`, and a
+// trigger records the landing in `rank_event_outcome_receipts`, PRIMARY KEY
+// (user_id, client_event_id), in the same statement.
+//
+//   1. A key that already landed is FOUND first (readOutcomeReceipt) and
+//      answered 200 `{ duplicate: true }`: no row moves, no Compass link, no
+//      negative signal. If its exposure still holds this outcome, the analytics
+//      row is re-driven (an upsert on its own key), so a first attempt that died
+//      after the update converges exactly as the recommendation_id path does.
+//      A key re-used for a different item, surface or outcome is a client bug
+//      and is refused 409, never silently merged.
+//   2. Two copies racing past the lookup: if both pick the same exposure,
+//      compare-and-set moves it once and the other is `duplicate` (unchanged
+//      §48 behaviour); if the second picks ANOTHER exposure, its UPDATE collides
+//      on the receipt's key, the database rolls it back (23505), and it is
+//      answered `duplicate` with no side effect — not even an analytics row for
+//      the exposure it did not move.
+//
+// A KEYLESS OUTCOME IS UNCHANGED: it sends no key, reads no receipt, fires no
+// trigger. A genuine second dismissal still counts. Refusing keyless outcomes
+// would stop every client build shipped before the client half of §62 from
+// recording anything; that is a rollout decision (census-discovery §62.7), so
+// until the owner takes it a keyless retry after a second serve still
+// double-counts.
+//
+// WITHOUT 3420 (production, 2026-09-27) the route degrades the way it does for
+// 2891: the first refusal naming the missing table or column is said ONCE per
+// process, latched, and the outcome is recorded keyless — never a 500 on an
+// endpoint whose job is to record a signal. The key's own failures (a receipt
+// read that errors for any other reason) are a 500, because answering them
+// keyless could double-count the very retry the key exists to recognise, and
+// the client will retry with the same key.
+
+/** Where the process believes 3420 stands. `unknown` = not disproved. */
+let _outcomeKeySchema: "unknown" | "absent" = "unknown";
+
+/** Test seam — forget what this process learned about 3420. */
+export function _resetOutcomeKeyLatch(): void {
+  _outcomeKeySchema = "unknown";
+}
+
+/** May the keyed UPDATE name `outcome_client_event_id`? False once 3420 is known absent here. */
+export function canStampOutcomeKey(): boolean {
+  return _outcomeKeySchema !== "absent";
+}
+
+/**
+ * Is this error "3420 is not applied here"? The four shapes PostgREST and
+ * PostgreSQL give a missing table or column, and ONLY when they name 3420's
+ * objects: `isMissingRecommendationIdSchema` answers true for ANY 42703 /
+ * PGRST204, so the handler must ask this first or a missing key column would
+ * be misread as a missing 2891 and latch the wrong migration absent.
+ */
+export function isMissingOutcomeKeySchema(err: unknown): boolean {
+  const e = err as { code?: unknown; message?: unknown; details?: unknown } | null | undefined;
+  const code = String(e?.code ?? "");
+  if (!["42703", "PGRST204", "42P01", "PGRST205"].includes(code)) return false;
+  const text = `${String(e?.message ?? "")} ${String(e?.details ?? "")}`;
+  return text.includes("outcome_client_event_id") || text.includes("rank_event_outcome_receipts");
+}
+
+/** Is this the receipt's key refusing a second landing of one client event? */
+export function isOutcomeReceiptCollision(err: unknown): boolean {
+  const e = err as { code?: unknown; message?: unknown; details?: unknown } | null | undefined;
+  if (String(e?.code ?? "") !== "23505") return false;
+  return `${String(e?.message ?? "")} ${String(e?.details ?? "")}`.includes("rank_event_outcome_receipts");
+}
+
+function noteOutcomeKeyUnavailable(err: unknown, log: RouteLog | undefined, where: string): void {
+  if (_outcomeKeySchema === "absent") return;   // one line per process, not one per request
+  _outcomeKeySchema = "absent";
+  warnOn(log, { err, where, migration: "3420_rank_events_outcome_receipts.sql" },
+    "rank-events/outcome: 3420 is not applied — keyed outcomes are recorded KEYLESS, so a retry after a second serve can move a second exposure until it is");
+}
+
+/** A key that already landed, as its receipt recorded it. */
+export interface OutcomeReceiptHit {
+  rankEventId: string;
+  itemId:      string;
+  surface:     string;
+  outcome:     string;
+  /** The exposure the key moved, as it is NOW; null if it could not be read or no longer exists. */
+  exposure:    Record<string, unknown> | null;
+}
+
+/**
+ * The receipt of this viewer's key, if the key already landed. `hit: null` with
+ * no error when there is no key, no receipt, or no 3420 (latched). The shape is
+ * the handler's `picked` shape, so one line can fold it in.
+ */
+async function readOutcomeReceipt(
+  sc: any, userId: string, clientEventId: string | undefined, log: RouteLog | undefined,
+): Promise<{ row: any | null; error: any | null; hit: OutcomeReceiptHit | null }> {
+  const none = { row: null, error: null, hit: null };
+  if (!clientEventId || !canStampOutcomeKey()) return none;
+  const r = await sc.from("rank_event_outcome_receipts")
+    .select("rank_event_id, item_id, surface, outcome")
+    .eq("user_id", userId).eq("client_event_id", clientEventId)
+    .maybeSingle();
+  if (r?.error) {
+    if (isMissingOutcomeKeySchema(r.error)) { noteOutcomeKeyUnavailable(r.error, log, "receipt read"); return none; }
+    return { row: null, error: r.error, hit: null };
+  }
+  if (!r?.data) return none;
+  const d = r.data as { rank_event_id: string; item_id: string; surface: string; outcome: string };
+  // The exposure is read only to re-drive its analytics row; a failed read here
+  // loses that convergence, not the answer, so it is warned and not a 500.
+  const ex = recommendationIdSchemaAbsent()
+    ? await sc.from("rank_events").select(CLAIMED_EXPOSURE_COLUMNS_LEGACY).eq("id", d.rank_event_id).eq("user_id", userId).maybeSingle()
+    : await sc.from("rank_events").select(CLAIMED_EXPOSURE_COLUMNS).eq("id", d.rank_event_id).eq("user_id", userId).maybeSingle();
+  if (ex?.error) warnOn(log, { err: ex.error, where: "keyed replay exposure read" }, "rank-events/outcome: a landed key's exposure could not be read — answered duplicate without re-driving its analytics row");
+  const exposure = ex?.error ? null : ((ex?.data as Record<string, unknown> | null) ?? null);
+  const hit: OutcomeReceiptHit = { rankEventId: d.rank_event_id, itemId: d.item_id, surface: d.surface, outcome: d.outcome, exposure };
+  return { row: exposure ?? { id: d.rank_event_id }, error: null, hit };
+}
+
+/**
+ * Answer a key that already landed: 200 `{ ok, duplicate }`, or 409 when the
+ * key names a different event. Moves no row and no counter.
+ */
+async function answerKeyedReplay(
+  sc: any, res: any, hit: OutcomeReceiptHit,
+  q: { userId: string; itemId: string; surface: string; outcome: OutcomeValue; sessionId: string | null },
+  log: RouteLog | undefined,
+): Promise<void> {
+  if (hit.itemId !== q.itemId || hit.surface !== q.surface || hit.outcome !== q.outcome) {
+    const field = hit.itemId !== q.itemId ? "item" : hit.surface !== q.surface ? "surface" : "outcome";
+    sendError(res, "conflict", `client_event_id already names an outcome with a different ${field}`);
+    return;
+  }
+  // Convergence, as the recommendation_id replay has it: while the exposure
+  // still holds this outcome, re-drive its analytics row (an upsert on its own
+  // key, so a repeat is an upgrade of one row). Once a stronger outcome has
+  // moved it, that outcome owns the analytics row and nothing is re-driven.
+  const analyticsEventType = OUTCOME_TO_ANALYTICS_EVENT[q.outcome];
+  if (analyticsEventType && hit.exposure && hit.exposure["outcome"] === q.outcome) {
+    void writeOutcomeAnalyticsRow(sc, {
+      event_type: analyticsEventType, item_id: q.itemId, surface: q.surface, user_id: q.userId,
+      session_id: q.sessionId, served_at: new Date().toISOString(), outcome: "analytics",
+      recommendation_id: exposureTokenFor(hit.exposure, q.userId, q.itemId, q.surface),
+    }, log, { outcome: q.outcome, analyticsEventType });
+  }
+  res.json({ ok: true, duplicate: true });
+}
+
+/**
+ * settleOutcomeUpdate, with the key's two outcomes in front of it:
+ *   - the receipt's key refused the UPDATE (23505): this copy of a keyed
+ *     outcome picked ANOTHER exposure after its first copy landed — the row did
+ *     not move, answer `duplicate` and move nothing (`keyedCollision`);
+ *   - 3420 is missing: latch it, say so once, redo the same compare-and-set
+ *     WITHOUT the key, and settle that — the outcome is recorded keyless.
+ * Everything else is settleOutcomeUpdate's, unchanged.
+ */
+async function settleKeyedOutcomeUpdate(
+  sc: any, rowId: unknown, outcome: OutcomeValue, recommendationId: string, firstErr: any,
+  log: RouteLog | undefined, cas: OutcomeCas | undefined, clientEventId: string | undefined,
+): Promise<{ ok: true; duplicate?: boolean; notFound?: undefined; keyedCollision?: boolean } | { ok: false; message: string; notFound?: boolean }> {
+  if (clientEventId && firstErr) {
+    if (isOutcomeReceiptCollision(firstErr)) return { ok: true, duplicate: true, keyedCollision: true };
+    if (isMissingOutcomeKeySchema(firstErr)) {
+      noteOutcomeKeyUnavailable(firstErr, log, "outcome update");
+      const { error: retryErr } = await compareAndSetClient(sc
+        .from("rank_events")
+        .update({ outcome, outcome_at: new Date().toISOString(), ...(canStampExposureToken(recommendationId) ? { recommendation_id: recommendationId } : {}) })
+        .eq("id", rowId), cas);
+      return settleOutcomeUpdate(sc, rowId, outcome, recommendationId, retryErr, log, cas);
+    }
+  }
+  return settleOutcomeUpdate(sc, rowId, outcome, recommendationId, firstErr, log, cas);
+}

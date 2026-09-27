@@ -829,23 +829,23 @@ function writeSampleAsync(
   viewerId: string,
   surface: SurfaceName,
   sessionId: string | null,
-  output: RankingOutput,
+  output: RankingOutput, itemType: string,   // census-discovery §62 (DV-52): the type production's NOT NULL content_type needs
 ): void {
   // 1-in-N sampling (deterministic by item position modulo)
   if (Math.random() * SAMPLE_RATE >= 1) return;
-  const now = new Date().toISOString();
-  db.from("ranking_debug_samples")
+  const now = new Date().toISOString(); const ctx = { surface, itemId: output.itemId, itemType };   // §62 — what a refusal is logged with
+  try { db.from("ranking_debug_samples")
     .insert({
       viewer_id:       viewerId,
       item_id:         output.itemId,
-      surface,
+      surface,         content_type: itemType, content_id: sampleContentId(output.itemId),   // §62 — see sampleContentId
       session_id:      sessionId ?? null,
       final_score:     output.finalScore,
       components:      output.components,
       explanation_key: output.explanationKey,
       sampled_at:      now,
     })
-    .then(() => {}, () => {});
+    .then((res: { error?: unknown } | null) => { if (res?.error) reportSampleRefused(res.error, ctx); }, (err: unknown) => reportSampleRefused(err, ctx)); } catch (err) { reportSampleRefused(err, ctx); }   // §62 — surfaced, never thrown into the serve
 }
 
 // ── Explanation key builder ───────────────────────────────────────────────────
@@ -1255,7 +1255,7 @@ export async function rankItems(
 
     // Debug sample (fire-and-forget)
     if (experimentEnabled && db) {
-      writeSampleAsync(db, viewer.viewerId, surface, viewer.sessionId ?? null, output);
+      writeSampleAsync(db, viewer.viewerId, surface, viewer.sessionId ?? null, output, input.itemType);
     }
   }
 
@@ -1453,5 +1453,75 @@ export async function recordNegativeDistributionSignal(
     }
   } catch (err) {
     logger.warn({ err }, "distributionStats: recording a negative signal threw");
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// census-discovery §62 (DV-52) — the debug sample production accepts
+// ═══════════════════════════════════════════════════════════════════════════════
+//
+// Appended here, below every line a census cites, and reached from
+// writeSampleAsync by hoisted declaration.
+//
+// WHAT WAS WRONG (§59.1, pinned by db/discoveryVerifyExplain X1/X5). Production's
+// `ranking_debug_samples` (baseline 20260819) carries `content_type text NOT
+// NULL` and `content_id uuid NOT NULL` from the table's first definition
+// (supabase/migrations/20260801_ranking_discovery_foundation.sql); 2060 added the
+// columns this writer names and never reconciled those two. Every sample, on
+// every surface, omitted both and was refused 23502, and `.then(() => {}, () => {})`
+// discarded the refusal. The admin debug read could only ever return rows
+// somebody else wrote.
+//
+// WHAT A SAMPLE IS FOR. `05` §9: the graph is useful when "it remains explainable
+// enough for debugging"; GET /admin/ranking/debug-samples is the read, and a
+// sample exists to say HOW one item was scored (`components`, `explanation_key`)
+// for WHICH item (`item_id`, always written). `content_type`/`content_id` are the
+// older, typed identity of the same item.
+//
+// THE CHOICE: BOTH — the writer supplies what it truthfully has, and 3421 relaxes
+// the one column it cannot.
+//   * content_type: every RankingInput has an `itemType` (post | event | place …),
+//     so it is always supplied, and the column stays NOT NULL.
+//   * content_id: supplied when the item id IS a uuid (a post, an event — the
+//     content's own id). A Discovery id is `node/123` or `db/<uuid>`, and the
+//     `db/` uuid names EITHER a discovery_places row OR a public.places row
+//     (lib/placeIdBridge.ts), so extracting it would write an id whose table the
+//     row cannot state. Minting a uuid from the text would name nothing. So it is
+//     null, and migration 3421 drops the column's NOT NULL. The table's readers
+//     tolerate that: the admin read selects `*` and filters only on
+//     content_type/surface/ranking_version; purge_old_ranking_debug_samples()
+//     deletes by sampled_at; nothing else reads the table (census-discovery §62.3).
+//
+// UNTIL 3421 IS APPLIED a Discovery sample is still refused, and now says so: one
+// warn per refusal, naming the constraint's code, the surface, the item and its
+// type, with a running count, so "3421 is not applied" is a sentence somebody can
+// be told. A sample with a uuid item id lands either way. Nothing here ever
+// throws into the ranked request, and nothing awaits the write.
+
+const SAMPLE_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** The sample's `content_id`: the item id when it IS a uuid, else null (see above). */
+export function sampleContentId(itemId: string): string | null {
+  return typeof itemId === "string" && SAMPLE_UUID_RE.test(itemId) ? itemId : null;
+}
+
+let _sampleRefusals = 0;
+
+/** Test seam: the running count of refused or thrown debug-sample writes. */
+export function _debugSampleRefusalCount(): number {
+  return _sampleRefusals;
+}
+
+function reportSampleRefused(err: unknown, ctx: { surface: string; itemId: string; itemType: string }): void {
+  try {
+    _sampleRefusals += 1;
+    const code = typeof (err as { code?: unknown } | null)?.code === "string" ? (err as { code: string }).code : null;
+    logger.warn(
+      { err, code, table: "ranking_debug_samples", ...ctx, refusedCount: _sampleRefusals,
+        hint: code === "23502" ? "a NOT NULL column refused the sample; a Discovery item has no uuid content_id until migration 3421 is applied" : undefined },
+      "rankingDebugSample: insert refused",
+    );
+  } catch {
+    /* an instrument must never break the thing it instruments */
   }
 }

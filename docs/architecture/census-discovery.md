@@ -10404,8 +10404,298 @@ writes nothing: `pnpm run report:discovery-ecosystem -- --db-url <read-only prod
 - **The five rows still N:** `A18` and `DV-34` (the ranker hold), `A21` (no Telegraph action acts on a Discovery object; an owner question), and `DV-61` and `DV-62` (commercial rules the owner has not set).
 - **Production.** 3410 is applied to the harness only, and `discovery_trending_api_enabled` exists on no shared database.
 
+## §62 — Verified-defect repairs (lane P15): a keyed outcome lands once, the query-path check sees constraint indexes, the debug sample lands, a serve records its graph reading, and clients can no longer write `tags`
+
+*Written 2026-09-27 by lane P15 on `disc-p15-repairs`, branched from `838f56cb5` (the tip of `wave8-integration` after §59.13). Every row here was reopened by §59 with a harness reproduction and a test that pinned the defect; each fix flips that pin into a guard. Every verdict is about code and the local PostgreSQL 16 harness (`scripts/local-db/up.sh`, port 54560): the baseline plus the full chain, 3420–3422 replayed in order. Nothing is merged to `main`, applied to `portava-ci` or production, deployed, or flag-enabled. No flag row was written anywhere. The headline is not restated; the integrator does that.*
+
+### 62.1 Row moves
+
+| ID | was | now | evidence |
+|---|---|---|---|
+| DC-15 | W | **C** | **§59's two findings are closed, and the claim is restated so it is true as written.** The claim: one registry row for every table, and every non-primary-key index, that a migration creates on a Discovery table. A UNIQUE or EXCLUDE constraint's index now counts, whether it is declared inline in `CREATE TABLE` or added with `ALTER TABLE … ADD` (`artifacts/api-server/src/scripts/checkDiscoveryQueryPaths.ts:83#return out.concat(constraintIndexesIn(migration, text));`, `artifacts/api-server/src/scripts/checkDiscoveryQueryPaths.ts:276#export function constraintIndexesIn(`). An unnamed one fails as MALFORMED with the instruction to name it (`artifacts/api-server/src/scripts/checkDiscoveryQueryPaths.ts:129#an unnamed UNIQUE/EXCLUDE constraint creates an index this registry cannot key`). P12's probe now fails `MISSING`, in both of its spellings (`artifacts/api-server/src/test/discoveryQueryPathsConstraints.test.ts:36#it("C1. P12's probe: ALTER TABLE … ADD CONSTRAINT … UNIQUE on rank_events is MISSING`), and it failed the CLI the same way on a probe migration that was then deleted. `trails_slug_unique`, `place_momentum_place_run_key` and `discovery_place_reports_unique` have registry rows with harness plans (`docs/discovery/query-paths.md` §4 and the `§62` block of `docs/discovery/query-paths-explain.sql`). **Primary keys:** §62.2 states the reading. **Harness evidence, not production:** production evidence is owed as §54.12 already says. **What turns it back:** an owner reading of `10` §4 that requires primary-key indexes to carry their own rows (§62.7 Q4), or a code-only query path (§54's caveat, unchanged). |
+| DV-37 | W | W | **Closed for a KEYED outcome on the branch. Still open for the keyless outcomes every shipped client sends.** `POST /rank-events/outcome` accepts `client_event_id` with `POST /rank-events`' own validator (`artifacts/api-server/src/routes/rankEvents.ts:179#client_event_id: directEventSchema.shape.client_event_id`). The compare-and-set UPDATE carries it (`artifacts/api-server/src/routes/rankEvents.ts:231#outcome_client_event_id: clientEventId`). 3420's trigger writes the receipt in the same statement, and the receipt's key is the arbiter (`artifacts/api-server/src/migrations/3420_rank_events_outcome_receipts.sql:115#CONSTRAINT rank_event_outcome_receipts_pkey PRIMARY KEY (user_id, client_event_id)`). A retry is found by its receipt first and answered `duplicate` (`artifacts/api-server/src/routes/rankEvents.ts:223#if (receipt.hit) { await answerKeyedReplay(`). A racing copy that picked another exposure is refused 23505 and answered `duplicate` (`artifacts/api-server/src/routes/rankEvents.ts:1374#if (isOutcomeReceiptCollision(firstErr)) return { ok: true, duplicate: true, keyedCollision: true };`). On the harness, one keyed "Not interested" after two serves moves one exposure and sends one negative signal, and a new key still counts a genuine second dismissal (`artifacts/api-server/src/test/db/discoveryVerifyChain.db.test.ts:347#test("V7. FLIPPED (§62): a KEYED outcome retried after a second serve lands ONCE`). **Why it stays W**, by §11.2 rule 1, since one criterion fails: a KEYLESS outcome retried after a second serve still moves a second exposure (`artifacts/api-server/src/test/db/discoveryVerifyChain.db.test.ts:408#test("V7d. STILL PINNED (§62, owner decision): a KEYLESS outcome retried after a second serve still moves a SECOND exposure`). No client sends a key yet; the client hunk is §62.7 H1. 3420 is applied nowhere but the harness. **What turns it C:** H1 shipped as the floor build, an owner decision on keyless outcomes (§62.7 Q1), and 3420 applied. |
+| DV-52 | W | W | **Both §59 defects are fixed in code and tests. The row is W on §17.3's ceiling alone.** (a) The debug sample now lands. It supplies `content_type` on every sample and `content_id` where the item id is a uuid (`artifacts/api-server/src/services/ranking/DiscoveryRankingService.ts:841#content_type: itemType, content_id: sampleContentId(output.itemId)`). 3421 lets a Discovery sample carry none (`artifacts/api-server/src/migrations/3421_ranking_debug_samples_content_id_nullable.sql:79#ALTER TABLE public.ranking_debug_samples ALTER COLUMN content_id DROP NOT NULL;`). A refusal is logged with its context and counted, never thrown into the serve (`artifacts/api-server/src/services/ranking/DiscoveryRankingService.ts:848#.then((res: { error?: unknown } | null) => { if (res?.error) reportSampleRefused(`). X1 flipped: every sample lands and the admin read returns it (`artifacts/api-server/src/test/db/discoveryVerifyExplain.db.test.ts:137#test("X1. FLIPPED (§62): the DRS debug sample carries content_type`). (b) With the modifiers on, `stages` carries the city-confidence reading they consumed (`artifacts/api-server/src/lib/discoveryPde.ts:558#if (modifiers.enabled) stages.graphReading = graphReadingOf(modifiers);`). A golden captured on the pre-change engine pins the order, the feature bytes and the flags-off `stages` bytes (`artifacts/api-server/src/test/discoveryPdeGraphReading.test.ts:67#it("G1. modifiers OFF: the order, the stages bytes and the feature bytes are the pre-§62 golden`). **The rule:** §57.2 quotes §31.2, *"A requirement whose feature is disabled is not satisfied"*, and applies §17.3's four-part ceiling: *"unapplied migrations, zero rows anywhere, a FALSE-seeded flag, an unmerged branch"*. Three of the four hold here. The sampler runs only under `RANKING_EXPERIMENT_ENABLED` (seeded FALSE, 2084). The graph reaches a decision only under 2289 (FALSE). 3421 is unapplied. **Also still open:** a serve in engine mode `pde` records no `stages` at all, so only a shadow serve's `pde_stages` carries the reading (§62.5, hunk H3). **What turns it C:** 3421 applied, H3, and one of the two flags on in a deployment the owner chooses. |
+| DV-76 | W | W | **Phase 0 #1's database door is closed on the branch, and the ROUTE has the same hole.** No server path writes `tags` with a user-scoped client, and no client tree writes it (§62.4). 3422 revokes client DML (`artifacts/api-server/src/migrations/3422_tags_client_write_boundary.sql:159#REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER`). It keeps the parties-only reads and every policy exactly as they were, and asserts that. P1 flipped: a client's direct INSERT, UPDATE and DELETE are each refused 42501 and nothing lands, while the service role still writes (`artifacts/api-server/src/test/db/discoveryVerifyPhase03.db.test.ts:47#test("P1. a direct client insert, update or delete of a tag is REFUSED (3422)`). P3 drives the real `POST /api/tags` on the harness. **Why it stays W:** (1) the route itself tags a user whose `tag_permission` is `nobody`, approved (`artifacts/api-server/src/test/db/discoveryVerifyPhase03.db.test.ts:176#test("P4. DEFECT, pinned (§62): the ROUTE tags a user whose tag_permission is 'nobody'`). The permission engine does not know the profile enum, and it allows by default (`artifacts/api-server/src/services/interactionPermissions.ts:817#default:                    canTag = true;`). Hunk H2 in §62.7 fixes it. (2) Phase 0 #5, #6 and #7 exist in no artifact (§62.4), so "other catalogued findings" cannot be counted complete. (3) 3422 is applied nowhere. **What turns it C:** H2, 3422 applied, and the owner's answer to Q2. |
+
+This section moves ONE row: `DC-15` W → C. The other three are restated at W with their new evidence.
+
+### 62.2 DC-15 — what the check sees now, and the primary-key reading
+
+- **Seen now:** a UNIQUE or EXCLUDE constraint's index, named or not, inline or added. A string literal is blanked before matching, so `CHECK (x IN ('unique'))` is not a constraint (C5). DDL inside a comment is not seen (C6).
+- **Not registered: PRIMARY KEY indexes, and this is a READING of `10` §4, stated so it can be contested.**
+  - `10` §4 asks each *query path* for "expected cardinality, index rationale, EXPLAIN". A primary key is not chosen to serve a path. It is the table's row identity, each table has exactly one, and its rationale is the table's own, which the table's registry row already carries and the check already requires.
+  - Where a path uses a primary key, the path's section names it: QP-01, QP-02, QP-06, QP-15, and now QP-25.
+  - A UNIQUE constraint is the opposite case. It is an optional design choice with a write cost on every insert, so it needs a reason of its own.
+  - `idx_discovery_cache_dest_cat` is created only by the baseline, so no migration creates it and the check cannot key it. It is recorded, not registered, as §3's baseline duplicates are.
+- **Found while registering, and not fixed:**
+  - `place_momentum_place_run_key` duplicates `place_momentum_place_computed_idx` (the same two columns). With the latter dropped inside the explain script's transaction, QP-22 uses the constraint's index, 1 row.
+  - `discovery_place_reports_unique` leads with the column `discovery_place_reports_place_idx` indexes.
+  - Both are recorded in `query-paths.md` §3. Dropping an index is the table owner's decision.
+- **3420's new table is registered** (QP-25, harness `Index Scan using rank_event_outcome_receipts_pkey`, 1 row of 20,000). `rank_event_outcome_receipts` joins `DISCOVERY_TABLES`, so its next index cannot go unregistered.
+
+### 62.3 DV-52 (a) — the debug sample, and every reader of `ranking_debug_samples`
+
+- **What the sample is for.** `05` §9 says the graph must stay "explainable enough for debugging". `GET /admin/ranking/debug-samples` is the admin-only read of how one item was scored, and X2–X4 already hold for it.
+- **Why both options, not one.**
+  - The writer supplies what it truthfully has. Every ranked item has a type, so `content_type` stays NOT NULL and is always written. `content_id` is written when the item id IS a uuid (`artifacts/api-server/src/services/ranking/DiscoveryRankingService.ts:1504#export function sampleContentId(itemId: string): string | null {`).
+  - A Discovery id is `node/…` or `db/<uuid>`, and the `db/` uuid names EITHER a `discovery_places` row or a `places` row (`lib/placeIdBridge.ts`). Writing it would state a table the id does not name. Minting a uuid would name nothing.
+  - So 3421 relaxes `content_id` alone, and `item_id` remains every sample's identity.
+- **Every reader tolerates NULL.**
+  - The admin read selects `*` and filters on `surface`, `content_type` and `ranking_version`, never on `content_id`.
+  - `purge_old_ranking_debug_samples()` deletes by `sampled_at`.
+  - On the harness, no view, materialized view or other function reads the table, and no client does.
+- **Until 3421 is applied**, a Discovery sample is still refused. It is now logged each time, with the code, surface, item, type and a running count, and the 23502 hint names 3421. Samples with a uuid item id land either way.
+
+### 62.4 DV-76 — who writes `tags`, the revoke, and Phase 0 #5–#7
+
+- **No server path writes `tags` with a user-scoped client.**
+  - Writers: `routes/tags.ts` (INSERT, suppress UPDATE, admin DELETE, on `getServiceClient()` or `requireAdmin`'s client). `TaggingService.processTagging`'s upsert, reached from `routes/posts.ts` three times, `routes/messaging.ts` and `routes/postcards.ts`. Every one of those callers passes `getServiceClient()`, or `requireUser`'s client, which IS the service client (`lib/http.ts`).
+  - The server constructs no other client: `lib/supabase.ts` is its only `createClient` outside `src/scripts`, and no script writes `tags`.
+  - On the harness, no function body, trigger or view writes it.
+- **No client writes it.** `git grep` for `.from('tags')` over every tree finds only server files. The client's tagging service calls `/api/tags` only.
+- **3422** revokes INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES and TRIGGER from anon, authenticated and PUBLIC.
+  - SELECT, the parties-only policies and every other policy are unchanged, and asserted unchanged inside the transaction.
+  - It records the prior ACL for its rollback (3364's mechanism).
+  - On the harness: apply, a byte-identical rollback of the ACL and the comment, re-apply, and both double-runs refused by precondition.
+- **Phase 0 #5, #6 and #7, item by item.** The catalogue P12 cites is `docs/security/phase0-tagging-privacy-state.md`. It says the numbered list "is not a repo artifact".
+
+| item | does it exist? | whose |
+|---|---|---|
+| #5 | **No.** No text in the catalogue, in `tagging.test.ts`'s section headers (which enumerate #1–#4 and #8), in `docs/design/tagging-directions.md`, or in any commit message on any branch. Searched with `git log --all -i` for "phase 0" and for `#5` with "tag". | Nobody's until the owner supplies it (Q2). It cannot be built from here, by Discovery or by another census. |
+| #6 | **No**, same search. `tagging-directions.md` §6 item 6 (co-presence privacy review) is a different list: a Direction C product decision, not a Phase 0 enforcement defect. | Same. §6 item 6 is the tagging product owner's, not Discovery's. |
+| #7 | **No**, same search. | Same. |
+
+- **New, and routed rather than fixed here (P4, hunk H2).**
+  - `resolveInteractionPermissions` switches on `who_can_tag ?? profiles.tag_permission` over `{everyone, friends, friends_only, followers, no_one, approval_required}`, with `default: canTag = true`.
+  - `profiles.tag_permission` is the enum `{anyone, interacted, friends_only, nobody}`, and nothing writes `user_privacy_settings.who_can_tag`.
+  - So `nobody` and `interacted` both fall to the default and ALLOW. `approval_required` is unreachable from the route, so Phase 0 #2's `pending` gate never engages there.
+  - The inline @mention path (`TaggingService`) does honour `nobody`.
+
+### 62.5 DV-52 (b) — the graph reading, and what records it
+
+- **What is carried.** `PdeStages.graphReading = { city, depthScore, tier, source, sourceReason, computedAt, momentumScale, explorationBudgetPct }`: the fields `lib/discoveryModifiers.ts` actually computes from. The aggregate `signals` are not copied (G2).
+- **When.** The key is ASSIGNED only when the modifiers ran. It is never assigned `undefined`, so the OFF `stages` serialise to the same bytes as before (G1). An absent confidence record is recorded as absent, beside the thin scale and budget it produced (G3). Two serves either side of a rebuild record two readings (G5). It reads nothing and copies only (G4).
+- **Provenance only.** No weight, term or threshold moved. The golden pins the order and every feature byte with the modifiers on and off, and one mutation that nudged the governor budget turned it red (52k). That is what the 2026-08-15 ranker hold permits.
+- **What records it today.** `routes/discovery.ts` hands `outcome.stages` whole to `logDiscoveryShadowServe`, so a shadow serve's `pde_stages` carries the reading with no writer change. A serve in engine mode `pde` records no `stages` at all. Its per-item features go through DV-39's allowlist, which classifies no graph key. Hunk H3 closes that. It is outside this lane's files.
+
+### 62.6 3420–3422 on the harness, and the production approval step
+
+- **Rehearsed on the harness.**
+  - Each file was applied, rolled back and re-applied, and each refuses a second apply by precondition.
+  - 3420's probe was run on a database holding a `rank_events` row. A keyed UPDATE writes one receipt. The same key on the same row after a second key is refused by `rank_event_outcome_receipts_pkey`. Everything was rolled back, and the postconditions found no residue.
+  - 3421's rollback reports and deletes the samples that have no `content_id`, then restores NOT NULL.
+  - 3422's rollback restores the ACL text byte for byte.
+  - A fresh `up.sh` replays all three in order (§62.10).
+- **The approval step for production, 3422 in particular.** It changes what a signed-in client can write.
+  1. **Order.** Any order among the three; none depends on another. 3420 before the client hunk H1 ships, so that a keyed client meets the key. Without 3420 the route latches it absent and records keyless (K8, K9).
+  2. **Verification before.** §62.11's `tags` privilege query must show `INSERT, UPDATE, DELETE` for `authenticated`. That is the defect 3422's precondition asserts. Production held zero `tags` rows on 2026-08-08 (`docs/design/tagging-directions.md` §8a), so a non-zero count now is worth reading before the revoke.
+  3. **Verification after.** The same query shows SELECT only. A `POST /api/tags` from a real account on its own post answers 201.
+  4. **Recovery.** Run `db/rollback/2026-09-27-3422-tags-client-write-boundary-rollback.sql`. It re-opens the defect, and says so in its header.
+
+### 62.7 Hunks and owner questions
+
+**H1 — client (the client lane; DV-37).** `travel-buddy-standalone/src/hooks/useRankOutcome.ts`, with the minting helper that already exists at `travel-buddy-standalone/src/services/discoveryDwell.ts:177#export function newClientEventId(): string {`. Line numbers are at `838f56cb5`.
+- `:17`, after the `invalidateDiscoveryCaches` import: `import { newClientEventId } from '../services/discoveryDwell.ts';`
+- `:108-120` `outcomeBody`: add a parameter `clientEventId?: string | null`, and after `:118` add `if (clientEventId) body.client_event_id = clientEventId;`.
+- `:139` `fireRankOutcome`: `const body = outcomeBody(itemId, surface, outcome, sessionId, recommendationId, newClientEventId());`. This is one key per call. The hook's per-mount dedup already makes one call per user action.
+- `:176`, beside `sent`: `const dismissKeys = useRef(new Map<string, string>());`.
+- `:231` `reportDismiss`: `const key = dismissKeys.current.get(itemId) ?? newClientEventId(); dismissKeys.current.set(itemId, key);`, then pass `key` as `outcomeBody`'s sixth argument. At `:243`: `if (res.ok) { dismissKeys.current.delete(itemId); invalidateDiscoveryCaches(); }`. The person's retry after a failure then carries the SAME key, so a first attempt that landed is answered `duplicate`, which is `res.ok`, and the card goes once.
+- `travel-buddy-standalone/src/services/rankEvents.ts:43#export async function recordOutcome(`: after the line that sets `session_id`, add `body.client_event_id = newClientEventId();`.
+- The call sites these cover: `PlaceCard.tsx:80` and `:531` (tap, save, dismiss), `PlaceDetailSheet.tsx:56`, `DiscoveryEventPostsRail.tsx:61`, `LivePulseCard.tsx:230`, `PlanPickerController.tsx:133`, `SaveButton.tsx:120` and `:165`, `useEventRsvp.ts:112` and `:195`.
+
+**H2 — permission engine (census-trust's file; DV-76 P4).** `artifacts/api-server/src/services/interactionPermissions.ts:810-818`, replacing the `switch (whoCanTag)` body:
+```ts
+    case "everyone":
+    case "anyone":              canTag = true; break;
+    case "friends":
+    case "friends_only":        canTag = isFriend; break;
+    case "followers":           canTag = viewerFollowsTarget; break;
+    case "interacted":          canTag = viewerFollowsTarget || targetFollowsViewer; break;
+    case "no_one":
+    case "nobody":              canTag = false; break;
+    case "approval_required":   canTagPending = true; canTag = false; break;
+    default:                    canTag = false;   // an unknown value fails closed
+```
+P4 turns red when it lands; flip it to expect 403 and no row. This `interacted` is narrower than `TaggingService`'s, which also accepts a shared message thread, so it fails toward refusing.
+
+**H3 — the served path records its graph reading (the integrator; DV-52 b).**
+- `routes/discovery.ts:1863`: keep `outcome.stages` from the served `rankForViewer` call. At the `logImpression` context (`:1922-1925`), add `graphDepth`, `graphTier`, `graphSource`, `graphComputedAt`, `momentumScale` and `explorationBudgetPct` from `stages.graphReading`, or `null` when it is absent.
+- `lib/discoveryRecommendationRecord.ts` `DISCOVERY_FEATURE_KEY_CLASSES`: classify those six keys as `derived_ranking_signal`. Without that, DV-39's screen refuses them by name.
+
+**Owner questions, verbatim.**
+- **Q1 (DV-37).** *"Client builds shipped before §62's client half send outcomes with no client_event_id, and the server cannot tell their retry from a second action. Should POST /rank-events/outcome keep accepting keyless outcomes (today: a retry after a second serve double-counts), refuse them for surface 'discovery' once a keyed build is the floor, or refuse them now and lose every signal from older builds?"*
+- **Q2 (DV-76).** *"Tagging Phase 0 items #5, #6 and #7 appear in no document, test or commit. What were they? If the list exists outside the repo, can it be committed; if they were folded into #1–#4 or #8, which?"*
+- **Q3 (DV-76).** *"profiles.tag_permission has no 'approval_required' value, and nothing writes user_privacy_settings.who_can_tag, so POST /api/tags never writes a pending tag. Should approval_required be added to the enum and the settings UI, or is the pending path to be removed?"*
+- **Q4 (DC-15).** *"Should primary-key indexes on Discovery tables carry their own rows in docs/discovery/query-paths.md, or is the table's row their rationale (§62.2's reading)?"*
+
+### 62.8 DV-37 end to end — the negative paths
+
+- **Keyless** is unchanged: no receipt read, no key written (K2), and a genuine second dismissal still counts.
+- **The key** is validated exactly as `POST /rank-events` validates it (K1).
+- **A key that already landed** answers 200 `duplicate` and moves no row, even with another upgradable exposure present. No negative signal is sent (K4).
+- **Convergence.** While the key's exposure still holds the outcome, the analytics row is re-driven. Once a stronger outcome has moved the row, it is not re-driven, so a retried tap never downgrades a save's analytics row (K5).
+- **A key reused** for a different item, surface or outcome is refused 409 and moves nothing (K6).
+- **A racing copy** refused by the receipt's key answers `duplicate`, with no signal and no analytics row for the exposure it did not move (K7). On the harness, the database refuses the key's second landing even from the service role (V7c).
+- **Without 3420**, the first refusal naming 3420's table or column is said once and latched, and the outcome is recorded keyless (K8 at the read, K9 at the UPDATE). 2891's latch is not tripped by it. `isMissingRecommendationIdSchema` answers true for ANY 42703 or PGRST204, so the key's check runs first (`artifacts/api-server/src/routes/rankEvents.ts:1268#export function isMissingOutcomeKeySchema(err: unknown): boolean {`).
+- **A receipt read that fails** for any other reason is a 500 and moves nothing (K10). The client retries with the same key.
+- **The receipt, not the row's column, is the memory** (V7b). A retried tap after the same row was saved finds its receipt, although the save overwrote the row's key.
+
+### 62.9 Tests, and every one seen RED (P24)
+
+| suite | cases | runs on |
+|---|---:|---|
+| `discoveryQueryPathsConstraints.test.ts` | 6 (C1–C6) | unit, in `npm test` |
+| `discoveryDebugSample.test.ts` | 6 (D1–D6) | unit, in `npm test` |
+| `discoveryPdeGraphReading.test.ts` (+ `.fixture.ts`) | 5 (G1–G5) | unit, in `npm test` |
+| `discoveryKeyedOutcome.test.ts` | 11 (K1–K11) | the real route over `fakeDiscoveryTelemetryDb`, in `npm test` |
+| `db/discoveryVerifyChain` | V7 flipped; V7b, V7c, V7d added; V0 adjusted | harness |
+| `db/discoveryVerifyExplain` | X1 flipped; X5 and X0 re-pointed | harness |
+| `db/discoveryVerifyPhase03` | P1 flipped; P2 re-pointed; P3a, P3b and P4 added | harness |
+
+- Every other assertion of P12's suites is kept.
+- §59's cited lines hold the pinned test's former title as a comment, so its citations still resolve. `check:doc-citations` is clean.
+
+**34 mutations, one at a time; all 34 killed.** Each file was restored and checked identical by sha256. Each database mutation was restored and fingerprint-checked: the ACLs of `tags`, `rank_events` and the receipts table, the `rank_events` triggers, `content_id`'s nullability and `tags`' comment.
+
+- **DC-15.**
+  - The constraint scan removed → C1–C3.
+  - Unnamed treated as nothing → C4.
+  - Literals not blanked → C5.
+  - The `ALTER TABLE` scan removed → C1, C2.
+  - A registry row renamed → C3, K1.
+  - Comments not stripped → C6.
+- **DV-76.**
+  - 3422 rolled back → P1, P2.
+  - service_role's INSERT revoked → P1, P3a.
+  - The engine taught `nobody` → P4.
+  - The route's source check removed → P3b.
+- **DV-52 (a).**
+  - `content_type` dropped → D2, X1, X5, X0.
+  - `content_id` always the item id → D1, D2, X1.
+  - The refusal swallowed again → D3, D4.
+  - The try removed → D5.
+  - The flag gate removed → D6.
+  - 3421 rolled back → X1, X5, X0.
+- **DV-52 (b).**
+  - The key assigned `undefined` with the modifiers off → G1.
+  - `computedAt` dropped → G2, G5.
+  - `signals` and momentum copied → G2, G4.
+  - A thin reading written as 0 → G3.
+  - The governor budget nudged → G2.
+- **DV-37.**
+  - The receipt lookup skipped → K4, K5, K6, V7b.
+  - The key dropped from the UPDATE → K3, V7.
+  - The collision not treated as a duplicate → K7.
+  - Analytics written on a collision → K7.
+  - The schema predicate always false → K8, K9, K11.
+  - The latch not set → K8.
+  - The mismatch check removed → K6, V7b.
+  - Analytics re-driven after a stronger outcome → K5.
+  - A failed read treated as none → K10.
+  - 3420's trigger dropped → V7, V7c.
+  - The validator loosened → K1.
+  - Keyless outcomes reading receipts → K2.
+  - Every keyless outcome given one fixed key → V7d.
+- **Survived, by design.** V7 survived one mutation: with the route's receipt lookup skipped (37a), the retry's UPDATE still collides on 3420's key, and the route answers `duplicate`. That is defence in depth, as §59's MC1a was. K4 kills the same mutation.
+
+### 62.10 Checks and runs at this tree
+
+- **`npm test`, once:** the counts are in the lane report.
+- **Harness, fresh `up.sh`:** the full chain, including 3420–3422 in order, then `run-tests.sh`. The counts are in the lane report.
+- **Clean:**
+  - `typecheck` and `typecheck:tests` (863 diagnostics across 115 files, at baseline).
+  - `check:test-registration`, `check:discovery-query-paths`, `check:doc-citations`, `check:citation-targets`, `check:citation-symbols`.
+  - `check:guard-coverage`, `check:route-auth-gate`, `check:flag-polarity`, `check:migration-prefixes`, `check:writerless-reads`.
+  - `check:not-null-writes`, `check:schema-references`, `check:enum-literals`, `check:async-handlers`, `check:security-definer-oracles`.
+  - `check:census-scope-coverage`, `check:census-row-move-labels`, `check:census-policy-citations`.
+  - The offline column ledger shows `problems=0`.
+  - `check:production-drift`, after `rank_event_outcome_receipts` was recorded in `KNOWN_PRODUCTION_GAPS` as `unapplied`, with its reason. The remaining offline checks in `run-all-checks.sh` are clean too, `check:telegraph-inventory` among them.
+- **Regenerated:** `docs/architecture/telegraph-phase0-inventory.md` (637 → 640 migration files).
+- **Exits 1 by design:** `check:census-integrity`, until the integrator restates the headline. The rows now count C 95, W 86, N 6, X 1. `check:census-freshness` names the twelve files §62.12 argues.
+- **Live-only, not run:** `check:write-path-columns`, and `check:authorization-contract` if it reads the live schema. **A new column in a write payload:** `rank_events.outcome_client_event_id`, written by the keyed UPDATE. **A new table read:** `rank_event_outcome_receipts`. The live-DB job reports both missing until 3420 is applied.
+
+### 62.11 Read-only production SQL that would turn harness evidence into production evidence
+
+```sql
+-- DV-76: before and after 3422 — may a client write tags?
+SELECT grantee, string_agg(privilege_type, ',' ORDER BY privilege_type) FROM information_schema.role_table_grants
+ WHERE table_schema = 'public' AND table_name = 'tags' AND grantee IN ('anon','authenticated') GROUP BY 1;
+SELECT count(*), count(*) FILTER (WHERE status = 'approved') FROM public.tags;
+SELECT tag_permission, count(*) FROM public.profiles GROUP BY 1;                       -- Q3: who chose 'nobody' / 'interacted'
+SELECT count(*) FROM public.user_privacy_settings WHERE who_can_tag IS NOT NULL;       -- expected 0: nothing writes it
+-- DV-52: the sampler's target, and whether it has ever held a Discovery row
+SELECT column_name, is_nullable FROM information_schema.columns
+ WHERE table_schema = 'public' AND table_name = 'ranking_debug_samples' AND column_name IN ('content_type','content_id');
+SELECT surface, count(*), max(sampled_at) FROM public.ranking_debug_samples GROUP BY 1;
+SELECT flag, enabled FROM public.feature_flags WHERE flag IN ('RANKING_EXPERIMENT_ENABLED','discovery_ranking_modifiers_enabled');
+-- DV-37: keyless double dismisses that already happened, and whether 3420 is there
+SELECT user_id, item_id, count(*) FROM public.rank_events WHERE surface = 'discovery' AND outcome = 'dismiss'
+ GROUP BY 1, 2 HAVING count(*) > 1 LIMIT 20;
+SELECT to_regclass('public.rank_event_outcome_receipts'),
+       (SELECT count(*) FROM information_schema.columns WHERE table_name = 'rank_events' AND column_name = 'outcome_client_event_id');
+-- DC-15: the constraint-backed indexes as production has them
+SELECT c.conrelid::regclass, c.conname, c.contype FROM pg_constraint c
+ WHERE c.contype IN ('u','x') AND c.conrelid::regclass::text IN ('trails','place_momentum','discovery_place_reports','rank_events','recommendations');
+```
+
+### 62.12 Freshness and scope
+
+This section adds to census-discovery's scope 3420–3422 and their rollbacks, its four suites and the fixture, `routes/tags.ts`, and `services/interactionPermissions.ts`, which DV-76 now grades from. Writing the ledger is the integrator's job, so each file is argued here:
+
+- **census-discovery.** `check:census-freshness` names twelve files. Eleven are this section's own evidence and are graded above: 3420–3422, their three rollbacks, and the four suites with the fixture. The twelfth is `services/interactionPermissions.ts`. It changed before this lane, which did not edit it, and it joins the scope now; §62 grades it as it stands at this tree (P4 pins that behaviour), so the change is what was measured. The other files §62 changed are already named in the ledger, and their changes are graded above: `routes/rankEvents.ts`, `lib/discoveryPde.ts`, `services/ranking/DiscoveryRankingService.ts`, `scripts/checkDiscoveryQueryPaths.ts`, `docs/discovery/query-paths.md` with `query-paths-explain.sql`, P12's three `discoveryVerify*` suites, and the `test` line.
+- **census-media** (scopes `DiscoveryRankingService.ts`). Only the debug sampler changed. It is gated on `RANKING_EXPERIMENT_ENABLED`, it writes `ranking_debug_samples`, and it affects no ranked order and no media verdict (D3, D5 pin the output byte-identical under refusal and throw).
+- **census-sensing and census-passport** (scope `lib/discoveryPde.ts`). The change assigns one key to `stages`, only with the modifiers on. G1 and G2 pin the order and every feature byte either way, so no Sensing or Passport verdict can move.
+- **census-trips** (counts every harness suite). The three `discoveryVerify*` suites create and remove only Discovery, tag, post, debug-sample and receipt rows. They read no `trip_*` object.
+- **census-telegraph** (scopes the inventory). `telegraph-phase0-inventory.md` changed only in its migration count, 637 → 640. None of 3420–3422 touches a messaging table.
+- **census-trust, census-compass** (scope `interactionPermissions.ts`). NOT changed. §62.4 and H2 report a defect in it for its owner.
+
+### 62.13 What would turn this red
+
+- K4, V7 or V7b going red: a keyed retry moves a second exposure again. V7d going red: someone changed the keyless path, and Q1's answer must be recorded.
+- P1 going red: a client can write `tags` again. P4 going red: H2 landed, so flip it.
+- X1, D2 or D3 going red: the sample is refused or swallowed again. G1 or G2 going red: provenance moved an order or a byte.
+- C1 going red: a constraint-backed index can again pass unregistered.
+
+### 62.14 Integrator: P15 merged, headline restated, the three hunks routed to a new lane
+
+*Integrator addendum, 2026-09-27, at the merge of `disc-p15-repairs` (`fa7eb70ae`, based on `838f56cb5`) into `wave8-integration` at `75278df7b`.*
+
+- **The merge.** Conflicts were unions only: the `test` line, `CENSUS_SCOPE`, and this census, with §62 after §58.14. The telegraph inventory was regenerated for 3420–3422.
+  - `check:discovery-query-paths` runs P15's widened scanner over P8's 3410 as well, and is clean at 60 of 60.
+- **The freshness ledger is written.**
+  - census-discovery: §62's twelve files.
+  - Arguments for census-media (the debug sampler), census-sensing and census-passport (`PdeStages.graphReading`), and census-trips (the flipped harness suites).
+- **§62.7's three hunks go to lane P16 (§63).** None is applied here.
+  - **H2, the privacy defect, first.** The tag route lets a viewer tag a user whose setting is `nobody`, and the tag lands `approved`. P4 pins it.
+  - **H1.** The client sends `client_event_id` on outcomes and reuses it across a retry.
+  - **H3.** The served path records its graph reading.
+- **Expected on the live-DB CI jobs until 3420 is applied:** the column `rank_events.outcome_client_event_id` and the table `rank_event_outcome_receipts`. P15 records both in `check:production-drift`'s KNOWN_PRODUCTION_GAPS.
+- **§62.7's four owner questions join the consolidated request:**
+  - keyless outcomes from shipped builds;
+  - tagging Phase 0 items #5–#7;
+  - `approval_required` for tags;
+  - primary-key registry rows.
+
+**Headline** (§62's move: `DC-15` W → C):
+
+| bucket | count |
+|---|---|
+| BUILT-AND-CORRECT | **96** |
+| BUILT-BUT-WRONG | **86** |
+| NOT-BUILT | **5** |
+| CANNOT-VERIFY | **1** |
+
+- CONSTRUCTED 182 / 188 = **96.8 %**; CORRECT 96 / 188 = **51.1 %**. The four buckets sum to 188.
+- **Production.** 3420, 3421 and 3422 are applied to the harness only. 3422's revoke closes a live hole on every database it reaches, and it is applied to none.
+
 ## Cited, not graded (check:census-scope-coverage)
 
 - NOT-GRADED: artifacts/api-server/src/compass/CompassExplanationEngine.ts — §13.7 item 3 names Compass's HMAC recommendation-token signer as a refactor this lane declined to make in another lane's file. Discovery's recommendation id is minted by lib/discoveryRecommendationId.ts, and no Discovery verdict rests on the signer.
 - NOT-GRADED: artifacts/api-server/src/routes/plan.ts — §39.1 names its add-to-trip-plan route as the server-side trip add, and §39.4 assigns that add to the Trips lane. The trip_add signal DV-79 and DC-09 grade is written by the client's PlanPickerController (§41.6), not by this route.
 - NOT-GRADED: artifacts/api-server/src/compass/CompassLiveConstraints.ts — §57.4 cites its environment gate to show the Compass serve points' only safety is Compass's own; census-compass and census-sensing S66 grade it, and no §57 verdict rests on it.
+- NOT-GRADED: travel-buddy-standalone/src/services/rankEvents.ts — §62.7 H1 names it as a place the client lane adds `client_event_id`; no §62 verdict rests on it, and nothing in the tree calls `recordOutcome` today.
+- NOT-GRADED: travel-buddy-standalone/src/components/PlanPickerController.tsx — §62.7 H1 lists it as an outcome call site the client hunk covers; DV-79 and DC-09 grade its trip_add report, and §62 grades nothing in it.
+- NOT-GRADED: travel-buddy-standalone/src/components/SaveButton.tsx — §62.7 H1 lists it as a Pulse outcome call site the client hunk covers; no Discovery verdict rests on it.
+- NOT-GRADED: artifacts/api-server/src/lib/placeIdBridge.ts — §62.3 cites it only to show that a `db/` uuid names one of two tables, which is why the debug sample writes no `content_id` for it; no verdict rests on the bridge.
+- NOT-GRADED: artifacts/api-server/src/routes/messaging.ts — §62.4 names it as one of five callers of `processTagging`, each passing the service client; the finding is about `tags`' writers, and census-telegraph grades this route.
+- NOT-GRADED: travel-buddy-standalone/src/hooks/useEventRsvp.ts — §62.7 H1 lists its rsvp and join reports as outcome call sites the client hunk covers; they report on the events surface, and no Discovery verdict rests on them.

@@ -6,7 +6,7 @@
 
 To reproduce, run `docs/discovery/query-paths-explain.sql` against the harness. It seeds the rows, analyzes, explains, and then rolls everything back. It must never be pointed at `portava-ci` or production.
 
-`pnpm run check:discovery-query-paths` keeps §4 complete. It fails when any migration creates a table or an index on a Discovery table without a registry row here, and when a row names an object that no migration creates.
+`pnpm run check:discovery-query-paths` keeps §4 complete. It fails when any migration creates a table or an index on a Discovery table without a registry row here, and when a row names an object that no migration creates. Since census-discovery §62 an "index" includes one a UNIQUE or EXCLUDE constraint creates, inline in `CREATE TABLE` or through `ALTER TABLE … ADD`, and an unnamed one fails until it is named.
 
 ## 1. Cardinality
 
@@ -22,6 +22,7 @@ To reproduce, run `docs/discovery/query-paths-explain.sql` against the harness. 
 | `rank_events` | 250,000 (50,000 `discovery`, 2,000 dismisses) | 234,224, of which 13 `discovery` | §5; §49.4 (2026-09-27: all rows `schema_version` 1, newest 2026-08-27) |
 | `recommendations` | 20,000 | table absent (3376 unapplied) | §49.4 |
 | `place_momentum` | 20,000 | table absent (2892 unapplied) | §47.1 |
+| `rank_event_outcome_receipts` | 20,000 (10 per viewer) | table absent (3420 unapplied) | §62 |
 | `trails` / `content_trails` / `trail_edges` / `trail_follows` / `trail_reports` / `trail_health_snapshots` | 2,000 / 50,000 / 4,000 / 10,000 / 500 / 20,000 | `trails` 0 (2910 applied 2026-09-20); the rest not read | §47.1 |
 
 **Expected production growth, where anything states it.** `recommendations` gets one row per served Discovery request while `discovery_serve_log_enabled` is on, which is its value in production (3376's header). `rank_events` gets one `discovery` row per served item per signed-in serve. No document states an expected corpus size for `discovery_places` or `trails`. The synthetic figures are chosen so a plan has something to choose between. They are not a forecast.
@@ -124,17 +125,35 @@ The Trail-affinity input. **Index:** `idx_trail_follows_user`. Harness: Index Sc
 
 ### QP-24 Discovery's writes to `rank_events`
 
-`lib/discoveryServeLog.ts` and `lib/rankLog.ts` insert one row per served item. `routes/rankEvents.ts` updates or inserts outcomes. An `INSERT` plan says nothing useful. The cost is **index maintenance**: every Discovery row maintains `rank_events_pkey`, `rank_events_user_served_at`, `rank_events_user_item`, `rank_events_features_gin` (a GIN index over the whole `features` jsonb, the most expensive of them), `rank_events_recommendation_idempotency_idx`, and, when it applies, the two partial Discovery indexes (2995, 3391) and `rank_events_event_type`. 3391 adds one partial index that only `surface = 'discovery'` rows pay for. Production writes nothing to `rank_events` today (newest row 2026-08-27, §49.4).
+`lib/discoveryServeLog.ts` and `lib/rankLog.ts` insert one row per served item. `routes/rankEvents.ts` updates or inserts outcomes. An `INSERT` plan says nothing useful. The cost is **index maintenance**: every Discovery row maintains `rank_events_pkey`, `rank_events_user_served_at`, `rank_events_user_item`, `rank_events_features_gin` (a GIN index over the whole `features` jsonb, the most expensive of them), `rank_events_recommendation_idempotency_idx`, and, when it applies, the two partial Discovery indexes (2995, 3391) and `rank_events_event_type`. 3391 adds one partial index that only `surface = 'discovery'` rows pay for. 3420 (§62) adds no index to `rank_events`. A nullable column and a row trigger fire only for an UPDATE that sets `outcome_client_event_id`, which costs one primary-key insert into `rank_event_outcome_receipts`. Production writes nothing to `rank_events` today (newest row 2026-08-27, §49.4).
+
+### QP-25 A keyed outcome's receipt (census-discovery §62, 3420)
+
+`routes/rankEvents.ts` (`readOutcomeReceipt`): `rank_event_outcome_receipts` by `(user_id, client_event_id)`, once per outcome report that carries a `client_event_id`, before any other read. **Index:** the table's primary key, which is also the idempotency arbiter. Harness: Index Scan using `rank_event_outcome_receipts_pkey`, 1 row of 20,000. Expected cardinality: one row per keyed outcome, so at most `rank_events`' outcome count for the client builds that send a key (production: 13 `discovery` rows ever, and no build sends a key yet). The write side is the trigger `rank_events_outcome_receipt`, which fires only on an UPDATE that names `rank_events.outcome_client_event_id`. Only the keyed outcome route does that, so no other `rank_events` write pays for it (QP-24).
 
 ## 3. Findings this document does not fix
 
 - **Duplicate indexes in the baseline**, which no migration in this tree creates, so §4 does not register them. The 2026-08-19 baseline carries `discovery_cache_expires_idx` and `idx_discovery_cache_expires_at` (the same column), `discovery_geocode_cache_expires_idx` and `idx_discovery_geocode_cache_expires_at`, `discovery_places_type_idx` and `discovery_places_place_type_idx`, and `discovery_places_osm_id_idx` (unique) beside `idx_discovery_places_osm_id`. Each pair doubles the write cost for no read. Dropping an index in production is an operator decision, and this lane made none.
 - **`discovery_place_saves`** exists only in the baseline, with `discovery_place_saves_pkey (user_id, place_id)` and `discovery_place_saves_user_idx (user_id)`. The second is a prefix of the first.
 - **QP-03, QP-04 and QP-12 have no usable index**, which is correct at 184 rows. The spec's "unapplied geo indexes can leave production on sequential scans" is the same class of fact: the plan is right for today's corpus and wrong for a large one.
+- **Two indexes duplicated by a constraint (§62).** Both come from migrations in this tree, and both were invisible to the check until §62.
+  - `place_momentum_place_run_key` is `UNIQUE (place_id, computed_at)`, and `place_momentum_place_computed_idx` is `(place_id, computed_at DESC)`: the same two columns. A btree scans either way. With the plain index dropped inside the script's transaction, QP-22 is an `Index Scan Backward using place_momentum_place_run_key`, 1 row (QP-22-without-place_momentum_place_computed_idx). Every row a rebuild writes maintains both. 2892 is applied to no production database, so this costs nothing yet.
+  - `discovery_place_reports_unique` is `UNIQUE (place_id, reporter_id)`, and `discovery_place_reports_place_idx` is `(place_id)`, its leading column. The planner chose the single-column index for the by-place count. Either index serves that read.
+  - Dropping either index is a schema decision for the owner of that table's migration, and §62 made none.
 
 ## 4. Index and table registry (checked by `check:discovery-query-paths`)
 
 One row per table or index that a migration in `artifacts/api-server/src/migrations/` creates on a Discovery table. Columns: kind, name, table, the migration(s) that create it, the query path it serves (or "not a hot path" with the reason), and the rationale.
+
+**What counts as an index (§62).** A `CREATE [UNIQUE] INDEX` counts. So does the index a UNIQUE or EXCLUDE constraint builds, inline or added later: it costs the same on every write and the planner can choose it the same way. **A PRIMARY KEY has no row of its own. This is a reading of `10` §4, stated here so it can be contested.** `10` §4 asks each *query path* for an "index rationale". A primary key is not chosen to serve a path. It is the table's row identity, a table has exactly one, and its rationale is the table's own, which the table's row already carries. Where a path uses a primary key, the path's section names it (QP-01, QP-02, QP-06, QP-15). A UNIQUE constraint is an optional design choice with a write cost, so it needs its own reason. The same reading covers `idx_discovery_cache_dest_cat`, which only the baseline creates: no migration makes it, so the check cannot key it, and like §3's duplicates it is recorded rather than registered.
+
+**Harness evidence for the three §62 rows** (`query-paths-explain.sql`, the `§62` block, at the §1 cardinality). None of the three is read on a hot path. Each is an insert-time arbiter. So the meaningful plan is the arbiter itself (`EXPLAIN` of the `INSERT … ON CONFLICT`, without `ANALYZE`, because `ANALYZE` would write), plus the reads that could use the index but do not:
+
+| constraint-backed index | what the harness shows |
+|---|---|
+| `trails_slug_unique` | A slug-equality probe is an `Index Scan using trails_slug_unique`, 1 row of 2,000. `proposeTrail`'s peer read (`destination = x OR destination IS NULL OR slug ILIKE %x%`) is a `Seq Scan` that keeps 30 rows and removes 1,970. A btree cannot serve a leading-wildcard `ILIKE`, so the constraint gives that read nothing. |
+| `place_momentum_place_run_key` | `Conflict Arbiter Indexes: place_momentum_place_run_key` on the rebuild's `ON CONFLICT (place_id, computed_at) DO UPDATE`. QP-22 uses `place_momentum_place_computed_idx` while that index exists, and this one when it does not (§3). |
+| `discovery_place_reports_unique` | `Conflict Arbiter Indexes: discovery_place_reports_unique` on `ON CONFLICT (place_id, reporter_id) DO NOTHING`. The by-place count (`routes/admin.ts`) is an `Index Only Scan using discovery_place_reports_place_idx` (§3). |
 
 | kind | name | table | migration | path | rationale |
 |---|---|---|---|---|---|
@@ -146,6 +165,7 @@ One row per table or index that a migration in `artifacts/api-server/src/migrati
 | table | `discovery_place_reports` | `discovery_place_reports` | 0061 | not a hot path: written on report, read only by moderation | 0 rows in production |
 | index | `discovery_place_reports_place_idx` | `discovery_place_reports` | 0061 | not a hot path: moderation by place | FK-side index on `place_id` (ON DELETE CASCADE from discovery_places) |
 | index | `discovery_place_reports_reporter_idx` | `discovery_place_reports` | 0061 | not a hot path: the reporter's own-row policy and account erasure | FK-side index on `reporter_id` |
+| index | `discovery_place_reports_unique` | `discovery_place_reports` | 0061 | not a hot path: the one-report-per-(place, reporter) arbiter, probed once per report insert; no writer in this tree, 0 rows in production | `CONSTRAINT … UNIQUE (place_id, reporter_id)`, 0061's "upsert on conflict"; harness: the conflict arbiter (§4 note, §62). Its leading column duplicates `discovery_place_reports_place_idx` (§3) |
 | index | `discovery_places_primary_category_idx` | `discovery_places` | 0083 | not a hot path: the tab filter runs in TypeScript after QP-03 | category browse outside the serve path |
 | index | `discovery_places_city_category_idx` | `discovery_places` | 0083 | not a hot path: exact-city equality only, and the serve path uses `ILIKE` | Compass / seed tooling reads |
 | index | `discovery_places_osm_id_idx` | `discovery_places` | 0086 | QP-05 | uniqueness of an OSM place's row; the baseline adds a non-unique twin (§3) |
@@ -173,6 +193,7 @@ One row per table or index that a migration in `artifacts/api-server/src/migrati
 | index | `place_momentum_place_computed_idx` | `place_momentum` | 2892 | QP-22 | latest snapshot per place |
 | index | `place_momentum_computed_idx` | `place_momentum` | 2892 | QP-22 | per-run reads and retention; the trend API's newest-run read (census-discovery §58) |
 | index | `place_momentum_live_state_idx` | `place_momentum` | 2892 | not a hot path: "what is trending" listing; no reader yet | partial on classified rows |
+| index | `place_momentum_place_run_key` | `place_momentum` | 2892 | not a hot path: `rebuild_place_momentum`'s `ON CONFLICT (place_id, computed_at)` arbiter, one probe per row a rebuild writes; QP-22 reads `place_momentum_place_computed_idx` | `CONSTRAINT … UNIQUE (place_id, computed_at)`: one reading per place per run, which makes a rebuild idempotent; harness: the conflict arbiter (§4 note, §62). Same two columns as `place_momentum_place_computed_idx` (§3) |
 | table | `trails` | `trails` | 2910 | QP-13 | 0 Trails in production |
 | table | `content_trails` | `content_trails` | 2910 | QP-14 | Trail membership |
 | table | `trail_edges` | `trail_edges` | 2910 | QP-15 | declared Trail relations |
@@ -181,6 +202,7 @@ One row per table or index that a migration in `artifacts/api-server/src/migrati
 | table | `trail_reports` | `trail_reports` | 2910 | QP-16 | moderation input to Trail health |
 | index | `idx_trails_destination_lifecycle` | `trails` | 2910 | QP-13 | Trails for a destination, by lifecycle |
 | index | `idx_trails_parent` | `trails` | 2910 | not a hot path: parent walk on a merge or split | partial on `parent_trail_id IS NOT NULL` |
+| index | `trails_slug_unique` | `trails` | 2910 | not a hot path: the uniqueness arbiter probed once per Trail proposal insert (a 23505 is a concurrent duplicate); no read filters `slug` by equality, and the proposal's peer read is `slug ILIKE %token%`, which a btree cannot serve | `CONSTRAINT … UNIQUE (slug)`: `02` §18's canonical handle: one slug is one Trail. Whether two spellings of a theme reach the same slug is the canonicaliser's job (DV-20), not this index's; harness: an equality probe is an Index Scan on it, the peer read a Seq Scan (§4 note, §62) |
 | index | `uq_content_trails_label` | `content_trails` | 2910 | not a hot path: a uniqueness constraint (one label per member), probed on insert | enforces `02` §4's one label per (trail, source, relationship, signal) |
 | index | `idx_content_trails_trail` | `content_trails` | 2910 | QP-14 | members of a Trail, newest first |
 | index | `idx_content_trails_source` | `content_trails` | 2910 | not a hot path: "which Trails is this place in" and the label-cap trigger | (source_type, source_id) |
@@ -194,6 +216,7 @@ One row per table or index that a migration in `artifacts/api-server/src/migrati
 | index | `recommendations_user_served_at` | `recommendations` | 3376 | not a hot path: account erasure and per-viewer audits | partial on signed-in rows |
 | index | `recommendations_served_at` | `recommendations` | 3376 | QP-21 | the per-window denominator |
 | index | `rank_events_discovery_served_at` | `rank_events` | 3391 | QP-19, QP-09 | Discovery exposures in a window, without scanning other surfaces |
+| table | `rank_event_outcome_receipts` | `rank_event_outcome_receipts` | 3420 | QP-25 | one row per keyed outcome that landed. Its primary key `(user_id, client_event_id)` is the only index: the idempotency arbiter, the lookup, and account erasure's cascade (§62) |
 
 ## 5. What would turn this red
 

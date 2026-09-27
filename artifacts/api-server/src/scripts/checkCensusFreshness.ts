@@ -4017,6 +4017,22 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/test/discoveryEcosystemGovernor.test.ts",
     "artifacts/api-server/src/test/db/discoveryTrendSnapshotParity.db.test.ts",
     "artifacts/api-server/src/test/db/discoveryEcosystemReport.db.test.ts",
+    // census-discovery §62 (P15): migrations 3420–3422 and their rollbacks, its
+    // suites, and the two files DV-76 now grades from — the tagging route P3
+    // drives and the permission engine whose 'nobody' gap P4 pins.
+    "artifacts/api-server/src/migrations/3420_rank_events_outcome_receipts.sql",
+    "artifacts/api-server/src/migrations/3421_ranking_debug_samples_content_id_nullable.sql",
+    "artifacts/api-server/src/migrations/3422_tags_client_write_boundary.sql",
+    "db/rollback/2026-09-27-3420-rank-events-outcome-receipts-rollback.sql",
+    "db/rollback/2026-09-27-3421-ranking-debug-samples-content-id-nullable-rollback.sql",
+    "db/rollback/2026-09-27-3422-tags-client-write-boundary-rollback.sql",
+    "artifacts/api-server/src/test/discoveryKeyedOutcome.test.ts",
+    "artifacts/api-server/src/test/discoveryDebugSample.test.ts",
+    "artifacts/api-server/src/test/discoveryPdeGraphReading.test.ts",
+    "artifacts/api-server/src/test/discoveryPdeGraphReading.fixture.ts",
+    "artifacts/api-server/src/test/discoveryQueryPathsConstraints.test.ts",
+    "artifacts/api-server/src/routes/tags.ts",
+    "artifacts/api-server/src/services/interactionPermissions.ts",
   ],
   // ── ADDED 2026-09-15: census-passport joins the CHECKABLE set ──────────────
   //
