@@ -6254,7 +6254,7 @@ edited in place:
 
 | id | was | now | evidence |
 |---|---|---|---|
-| B01 | W | **C** | **Built, tested on PostgreSQL 16, and deployed.** Discovery's two readers of the canonical registry now match the STORED fold rather than the legacy key. The suggest Cities group reads `artifacts/api-server/src/lib/discoverySearchCanonical.ts:128#export async function readCanonicalCitySuggestions(` at `artifacts/api-server/src/routes/discoverySearch.ts:2993#: readCanonicalCitySuggestions(sc, q, 4),` — before this it read `normalized_name`, where "Łódź" is stored as `odz` and a typed "lodz" could never reach it. The map centroid of a city or country result is widened by `artifacts/api-server/src/lib/discoverySearchCanonical.ts:200#export async function withStoredFoldCentroids(` at `artifacts/api-server/src/routes/discoverySearch.ts:2062#const centroids = await withStoredFoldCentroids(`, legacy placements first and unchanged. The query side folds with `searchKey()`, the TypeScript mirror of the SQL in `artifacts/api-server/src/migrations/2220_canonical_locations_search_key.sql`; the display spelling is never rewritten. **On the harness with 2220 replayed** (`artifacts/api-server/src/test/db/discoverySearchCanonicalFold.db.test.ts`, 11 tests): "zurich" → Zürich, "sao paulo" → São Paulo, "lodz" → Łódź, "da nang" → Thành phố Đà Nẵng, and a non-matching control reaches nothing; the legacy reader over the same rows cannot reach Łódź (K3, the control that makes K2 mean something). **Production (§46.1):** the column is present and populated for 31 of 31 rows. The degrade for an ABSENT column is defence in depth, not production's state: §46.3. |
+| B01 | W | **C** | **Built and tested on PostgreSQL 16, on this branch only: not merged, not deployed** (integrator correction; the first draft said "deployed", which is true of 2220 and false of these readers). Discovery's two readers of the canonical registry now match the STORED fold rather than the legacy key. The suggest Cities group reads `artifacts/api-server/src/lib/discoverySearchCanonical.ts:128#export async function readCanonicalCitySuggestions(` at `artifacts/api-server/src/routes/discoverySearch.ts:2993#: readCanonicalCitySuggestions(sc, q, 4),` — before this it read `normalized_name`, where "Łódź" is stored as `odz` and a typed "lodz" could never reach it. The map centroid of a city or country result is widened by `artifacts/api-server/src/lib/discoverySearchCanonical.ts:200#export async function withStoredFoldCentroids(` at `artifacts/api-server/src/routes/discoverySearch.ts:2062#const centroids = await withStoredFoldCentroids(`, legacy placements first and unchanged. The query side folds with `searchKey()`, the TypeScript mirror of the SQL in `artifacts/api-server/src/migrations/2220_canonical_locations_search_key.sql`; the display spelling is never rewritten. **On the harness with 2220 replayed** (`artifacts/api-server/src/test/db/discoverySearchCanonicalFold.db.test.ts`, 11 tests): "zurich" → Zürich, "sao paulo" → São Paulo, "lodz" → Łódź, "da nang" → Thành phố Đà Nẵng, and a non-matching control reaches nothing; the legacy reader over the same rows cannot reach Łódź (K3, the control that makes K2 mean something). **Production (§46.1):** the column is present and populated for 31 of 31 rows. The degrade for an ABSENT column is defence in depth, not production's state: §46.3. |
 | B04 | W | W | **Construction complete; HELD on an owner flip.** The search adapter over `artifacts/api-server/src/lib/protectedLocations.ts` is `artifacts/api-server/src/lib/discoverySearchProtection.ts:156#export function applySearchProtection<T extends ProtectableSearchRow>(` — every served position becomes a one-object probe handed to the contract's own `applyProtection`, with the zones read by the one reader of `protected_zones`, `artifacts/api-server/src/lib/protectedZoneStore.ts`. It is the last gate before serialization on all three serve paths: `artifacts/api-server/src/routes/discoverySearch.ts:2712#await protectSearchPage(sc, await searchAll(` (type=all), `artifacts/api-server/src/routes/discoverySearch.ts:2742#const results = await protectSearchResults(sc, raw.slice(0, limit));` (one type) and `artifacts/api-server/src/routes/discoverySearch.ts:3014#const servedGroups = orderSuggestGroups(await protectSuggestGroups(sc, groups), q)` (suggest). It runs behind `artifacts/api-server/src/lib/discoverySearchProtection.ts:74#export const DISCOVERY_SEARCH_PROTECTION_FLAG` — migration `artifacts/api-server/src/migrations/3366_discovery_search_protected_zones_flag.sql`, **seeded FALSE**, applied to no database by this lane. **W and not C** on this census's own rule (§43.7: *"a flag seeded FALSE lands the row in §18.3's bucket (b) — still W"*): on every deployment the pass does not run. The three flag-ON cases and every partial failure are pinned by `artifacts/api-server/src/test/discoverySearchProtection.test.ts` (23) and `artifacts/api-server/src/test/db/discoverySearchProtection.db.test.ts` (5, against the real 2217 table). What turns it `C`: the owner turns the flag on in production, or rules the flag unnecessary (§46.4) and it is retired. |
 | B02 | W | W | **Pinned, not changed — owner decision D5 stands.** `artifacts/api-server/src/routes/discoverySearch.ts:154#export function sanitizeQuery` strips only `(`, `)` and `,`; an emoji reaches the `ilike` pattern (`artifacts/api-server/src/test/discoverySearchQueryPolicy.test.ts`, 15 tests: "🔥 bar" does not find "Sky Bar" and does find a row whose name carries the emoji; "🔥" alone is searched, not refused). The decision this row waits for, with the consequence of each option, is §46.5. |
 
@@ -7039,6 +7039,198 @@ SELECT date_trunc('day', served_at) AS day, surface, count(*) FROM public.rank_e
   should send `client_event_id` on direct impressions in the same change.
 
 - NOT-GRADED: artifacts/api-server/src/test/helpers/fakeDiscoveryTelemetryDb.ts — test machinery for the E2E suite; no verdict rests on the fake itself, only on the routes it runs.
+
+## §49 — Integration of lanes P1–P3 (2026-09-27): the headline restated from the rows, contradiction (c) resolved, production read, and every open row owned
+
+*Integrator section. Measured on `wave8-integration` after merging `disc-p2-ranking` (merge `02a83a0dd`), `disc-p3-telemetry` (`a984d923e`) and `disc-p1-search` (`c32d5bd02`). Nothing in this section is merged to `main`, deployed, or flag-enabled; the four are different facts and each is stated separately below.*
+
+### 49.1 What was integrated, and what was re-run at the merged tree
+
+| lane | section | rows moved | re-run by the integrator at the merged tree |
+|---|---|---|---|
+| P1 search safety | §46 | `B01` W → C | 272 / 272 across P1's five unit suites, the two response-shape suites it edited, and P2's and P3's suites together |
+| P2 ranking and cache correctness | §47 | `DC-25` W → C | 185 / 185 on P2's six suites (legacy golden replay included) |
+| P3 telemetry foundations | §48 | `DV-37` N → C; `DV-38`, `DV-39`, `DV-45` W → C | 120 / 120 on the P2 + P3 unit suites; P3's two database suites were run by P3 on PostgreSQL 16 and were not re-run here |
+
+Conflicts were unions only: the `test` script line, the census-discovery `CENSUS_SCOPE` block (P1 and P3 both added the contract module; it is listed once), and these sections (§46 before §47 and §48). The contract module takes P3's final version; P1 had checked out P3's first commit of it, which is a strict subset (30 lines shorter, no line changed). The telegraph inventory was regenerated at 628 migrations.
+
+**One integrator correction inside §46.** P1's `B01` row first said *"Built, tested on PostgreSQL 16, and deployed."* "Deployed" is true of migration 2220 and false of the two readers, which exist only on this branch. The row now says so. The verdict stays `C` on implementation; production realization of `B01` needs the merge, a deploy, and a read of `/discovery/suggest` for a folded name.
+
+**Reviewed and accepted: `DC-25` → C.** `12` Phase 2's deliverable is a design note documenting five named things; `docs/discovery/cache-architecture-design-note.md` exists and documents all five against code. The personalization-boundary crossing it records is graded once, at `DV-03` (still `W`), per §11.2 rule 2. What would turn it back: an owner reading that DC-25 requires the boundary to hold in the shipping default.
+
+**Reviewed and accepted: `B01` → C, on its own row's scope.** The row reads *"G57 — diacritic-insensitive matching, the **stored** side"*, which is the canonical registry's stored fold. P1 recorded that free-text `ILIKE` matching of venue, event, trip, circle and post names, and of `profiles.home_city`, is still accent-sensitive. No row in this census's 188 states that requirement and none of the `discovery-v1` specs mention diacritics, so it is recorded here as a **finding, not a row**; the denominator is unchanged.
+
+### 49.2 Headline, restated as a block so the last statement is the current one
+
+| bucket | count |
+|---|---|
+| BUILT-AND-CORRECT | **88** |
+| BUILT-BUT-WRONG | **77** |
+| NOT-BUILT | **20** |
+| CANNOT-VERIFY | **3** |
+
+CONSTRUCTED 165 / 188 = **87.8 %** (from 164 / 188 = 87.2 % at §43.5; `DV-37` left NOT-BUILT). CORRECT 88 / 188 = **46.8 %** (from 82 / 188 = 43.6 %). The four buckets sum to 188. The six moves are `B01`, `DC-25`, `DV-37`, `DV-38`, `DV-39` and `DV-45`; no other row changed verdict, and the integrator moved none. These are **implementation** verdicts on this branch. Production verification is separate and, for every one of the six, still owed: none of the code is merged or deployed, 3375 and 3376 are applied to the local harness only, and no surface has written a `rank_events` row since 2026-08-27 (49.4).
+
+### 49.3 Contradiction (c): a creator ledger "built behind migration 2930" vs a ledger "described as nonexistent"
+
+Contradictions (a) and (b) are resolved from code in §47.3 and §47.4 and are not restated here. In one line each: (a) three independent orderings serve Discovery (the PDE pipeline, Compass's per-user rank, and the live-rank layer), the shared ranking service is an order-neutral stage inside PDE rather than a fourth ranker, and Cache A hits are served unranked in legacy mode; (b) the "context-bound" cache and the cache with no viewer term are two different caches, the user-independent candidate cache and the per-user final page, and the second was over-graded until P2's `40249b0ba`.
+
+**(c) Both sentences are true of different objects.** Read from the migrations, not from the census:
+
+- **The ledger exists in the repository and on `origin/main`:** `creator_attributions` (2920), `creator_earning_entries` (2921), the attribution flag (2922), and the `creator_share_ledger` view (2930), with `CreatorAttributionService` over them. "Nonexistent" (§11.5's preamble, the ground `DV-65`/`DV-66`/`DV-67` still rest on per §28.3) is false of the code.
+- **It does not exist in production.** Integrator read, 2026-09-27: neither table is present, and the 2922 flag row is absent. 2920/2921/2930 are applied to `portava-ci` only (§17.3). "Nonexistent" is true of production.
+- **It is not one ledger.** The 2930 view unions `intel_reward_ledger` (twice) and `rent_buddy_earnings_entries`; it does **not** read `creator_earning_entries`. So "the share is computable from the same ledger" (`DV-64`) is false today, which is a defect, not a deployment gap. It is assigned to the ledger lane (49.5).
+- Only tests import the service and the share reader, so even after a production apply, no request path would write the ledger. That is `DV-56`…`DV-60`'s shared blocker, also in the ledger lane.
+
+One stale sentence this makes visible: §17.3 says production carries none of 2910, 2920, 2921 and 2930. **2910 has been applied to production since 2026-09-20** (0 trails); the other three are still absent.
+
+### 49.4 Production, read-only, integrator 2026-09-27
+
+Each lane asked for these reads; the answers are recorded as read, and nothing was written.
+
+| read | result | what it settles |
+|---|---|---|
+| `profiles.is_private`, `profiles.show_profile_picture_publicly` | both present | P2's `/discovery/community` avatar residual (§47.7) is buildable against production's schema; queued for the next server lane |
+| `user_mutes` rows | 0 | the mute filter P2 added has no production effect yet; correct, not evidence |
+| `compass_city_models` with a non-empty `monthly` | 57 | `DV-18`'s `season_match` has real input on the Compass `for_you` path |
+| `ACTIVITY_DISCOVERY_BOOST_ENABLED` | false | as P2 assumed |
+| `discovery_search_protected_zones_enabled` (3366) | absent | 3366 is unapplied, as expected; `B04` stays `W` |
+| `protected_zones` active rows | 0 | with the flag on, `B04`'s pass would be the identity P1 proved |
+| `canonical_locations.search_key` NULL | 0 of 31 | 2220 is fully populated |
+| rows where `normalized_name` ≠ `search_key` | 1 | the one row `B01`'s new reader reaches that the old one could not |
+| `rank_events.schema_version` | 234,224 rows, all `1` | 3375's precondition (exactly one value) holds |
+| `rank_events` on the seven writer-less surfaces | none | 2893's precondition holds |
+| duplicate `(recommendation_id, outcome)` | none | `DV-37`'s invariant holds on production's data |
+| newest `rank_events.served_at`, any surface | 2026-08-27 10:05:50 UTC | the write stop is on every surface, not Discovery's alone (§48.2 found Discovery's cause: the client sends no token) |
+| `public.recommendations` | absent | 3376 is unapplied |
+
+### 49.5 Every open row, owned: the regenerated blocker breakdown
+
+The breakdown this section replaces counted 111 open rows; it was stale by five before these lanes and by eleven after them. **100 rows are open** (77 W, 20 N, 3 X), and each is assigned to exactly one package. The class is the FIRST thing that stands in the row's way, re-derived from code at `709b7b800` and updated for the rows P1–P3 re-graded. A class is not a verdict. `HOLD-RANKER` means the 2026-08-15 owner ruling in `ROADMAP.md` ("No optimising ranking machinery over an empty corpus") blocks the missing piece; `HOLD-FLAG/MIGRATION` means code exists and a flip, apply or deploy is what remains; `GRADE` means the row's current verdict rests on a stale sentence and needs re-grading against code; `CROSS-BUILDABLE` means buildable now in another lane's files; `SELF` means a defect in the package's own files.
+
+| class | rows |
+|---|---|
+| GRADE | 23 |
+| HOLD-RANKER | 23 |
+| CROSS-BUILDABLE | 14 |
+| HOLD-FLAG/MIGRATION | 13 |
+| SELF | 10 |
+| OWNER-DECISION | 7 |
+| PROD-EVIDENCE | 6 |
+| ABSENT-CAPABILITY | 4 |
+| **total** | **100** |
+
+The table deliberately carries no verdict column: the verdicts are the rows' own, counted in 49.2, and a verdict column here would be read as a later statement of each row. `DV-26` moved from the outcome package (P6) to the ledger package (P10), because the missing `recommendation_id` belongs on the ledger's own attribution relation. Running at this section's writing: P4 (client), P7 (Trails), and the P10/P11 ledger-and-monetization lane. P1, P2 and P3 are finished, and their remaining rows carry the named residual in their own sections.
+
+| package | status | row | first blocker class | requirement (census wording, abridged) |
+|---|---|---|---|---|
+| P1 Search safety | done (§46) | B02 | OWNER-DECISION | G62 — punctuation/emoji handling appropriate to field |
+| P1 Search safety | done (§46) | B04 | HOLD-FLAG/MIGRATION | G190 — sensitive-location and protected-place rules before projection |
+| P2 Ranking & cache correctness | done (§47) | DC-11 | HOLD-RANKER | `06` §1 — the ten-stage pipeline |
+| P2 Ranking & cache correctness | done (§47) | DC-13 | HOLD-RANKER | (spec line) + §3's ele |
+| P2 Ranking & cache correctness | done (§47) | DC-14 | HOLD-FLAG/MIGRATION | `06` §10 — compute old · compute PDE · compare overlap · compare offline utility · `docs/specs/discovery-v1/06 |
+| P2 Ranking & cache correctness | done (§47) | DC-24 | HOLD-RANKER | (spec line) + `10` |
+| P2 Ranking & cache correctness | done (§47) | DC-32 | OWNER-DECISION | (spec line) — reuse approved wei |
+| P2 Ranking & cache correctness | done (§47) | DV-03 | HOLD-FLAG/MIGRATION | §1.2 / `01` §7 Cache A — must never bypass personalization/ranking |
+| P2 Ranking & cache correctness | done (§47) | DV-09 | HOLD-RANKER | §9 surface-specific objectives: Pulse · Discovery · Trail · Trip Planning · Trending |
+| P2 Ranking & cache correctness | done (§47) | DV-12 | CROSS-BUILDABLE | §10 — never reward abusive engagement |
+| P2 Ranking & cache correctness | done (§47) | DV-18 | HOLD-RANKER | §11 nine internal reason codes + plain-language explanations — SPLIT off A03 |
+| P2 Ranking & cache correctness | done (§47) | DV-53 | HOLD-RANKER | §7/§11 exploration is **explicit**: reserved inventory for new creators, low-exposure content, emerging places |
+| P2 Ranking & cache correctness | done (§47) | DV-54 | OWNER-DECISION | §6/§11 diversity **enforced** across creator · place · Trail · content type · geography · repeated-recommendat |
+| P2 Ranking & cache correctness | done (§47) | DV-55 | HOLD-RANKER | §9 cold start — new user · new creator · new Trail/place |
+| P3 Telemetry foundations | done (§48) | DC-22 | HOLD-FLAG/MIGRATION | `11` §5 — Recommendation API outputs: recommendation_id · items · reason labels · cursor · model/version inter |
+| P3 Telemetry foundations | done (§48) | DV-02 | PROD-EVIDENCE | §1.1 *"`discovery` is permitted as a surface but has zero rows"* |
+| P3 Telemetry foundations | done (§48) | DV-06 | HOLD-FLAG/MIGRATION | §6 *"recommendation exposures carry denominators"* |
+| P3 Telemetry foundations | done (§48) | DV-40 | HOLD-FLAG/MIGRATION | §5 *"Every served item must have a `recommendation_id`"* + the nine-field minimum record |
+| P3 Telemetry foundations | done (§48) | DV-44 | HOLD-FLAG/MIGRATION | §10.2 prove ≥1 intentional writer per surface, **or retire it** |
+| P3 Telemetry foundations | done (§48) | DV-46 | CROSS-BUILDABLE | §10.6 test `recommendation_id` propagation |
+| P3 Telemetry foundations | done (§48) | DV-47 | PROD-EVIDENCE | §10.7 verify discovery events exist **once the ranking path executes** |
+| P3 Telemetry foundations | done (§48) | DV-78 | OWNER-DECISION | Phase 5 behaviour expansion: dwell · replay · place open · Trail open · send/share · trip add · itinerary add  |
+| P4 Client correctness | running | C19 | SELF | Display-name redaction shape (`.agents/memory/display-name-privacy.md`: null name + separate handle) |
+| P4 Client correctness | running | DSV2-04 | GRADE | **SPLIT** |
+| P4 Client correctness | running | DV-83 | OWNER-DECISION | `11` §9 / owner ruling D11, the CONSUMER leg — *"A distinguishable response body alone is insufficient if cons |
+| P5a Sensing: ExperienceState, intent, safety | queued | A01 | HOLD-RANKER | Sensing §8 `:133` — *"Rank using live ExperienceState, forecast, travel time, friction, compatibility, freshne |
+| P5a Sensing: ExperienceState, intent, safety | queued | A03 | HOLD-FLAG/MIGRATION | Sensing §8 `:135` — *"server-built DiscoveryCandidate / projection with why-now, why-for-user, confidence, fre |
+| P5a Sensing: ExperienceState, intent, safety | queued | A05 | HOLD-RANKER | Sensing §8 `:137` — intent modes *"Right Now, Tonight, Explore, Quiet, Social, High Energy, Nearby, Trip"* on  |
+| P5a Sensing: ExperienceState, intent, safety | queued | A07 | HOLD-FLAG/MIGRATION | Sensing `:129` — *"Safety constraints outrank opportunity/vibe. A dangerous place must never simultaneously be |
+| P5a Sensing: ExperienceState, intent, safety | queued | A18 | HOLD-RANKER | Passport `:94` — *"Compass and Discovery should weight explicit current intent more heavily than generic inter |
+| P5a Sensing: ExperienceState, intent, safety | queued | DV-42 | HOLD-RANKER | §9/§13 current intent and long-term preference are **distinct representations** — SPLIT off A18 |
+| P5b Trips | queued | A10 | HOLD-FLAG/MIGRATION | Trips `:25`, `:488` — *"Map, Compass, Discovery… consume explicit Trip projections/contracts rather than dupli |
+| P5b Trips | queued | A11 | HOLD-FLAG/MIGRATION | Trips `:185` — *"Discovery, Compass, Saved Ideas, and Buddy matching consume these [Temporal Freedom] windows  |
+| P5c Layover | queued | A13 | SELF | Layover `:66` — *"All surfaces consume the same certified LayoverSnapshot / RecommendationContract; no duplica |
+| P5c Layover | queued | A14 | HOLD-FLAG/MIGRATION | Layover §25 `:754` — *"Discovery: Only show experiences from certified action universe in Layover mode"* |
+| P5d Map | queued | A25 | HOLD-FLAG/MIGRATION | Map `:11`, §20 `:202-203` — Discovery owns *"Candidate relevance"*; the Map consumes projections from each own |
+| P5e Buddy | queued | B03 | CROSS-BUILDABLE | G71 / G283 — Buddy: *"service category, availability, launch/safety/payment eligibility"* |
+| P5f Telegraph | queued | A21 | SELF | Telegraph `:607` — each source domain registers *"authorize, preview, execute, and optional compensate"* |
+| P5f Telegraph | queued | A24 | CROSS-BUILDABLE | Telegraph `:621` — *"…or Invisible revokes… Discovery… availability projections"* |
+| P5g Media ingest | queued | DV-77 | SELF | Phase 0.4 canonicalize media ingest so no unstripped original persists because a completion handler never ran |
+| P5h Shared input engines (GII) | queued | A08 | GRADE | GII `:8` — *"This is not owned by Discovery… Those surfaces consume it through a shared platform layer"*; `:7` |
+| P5i Candidate sources & output contracts | queued | DC-01 | HOLD-RANKER | (spec line) — ten output kinds |
+| P5i Candidate sources & output contracts | queued | DC-12 | HOLD-RANKER | `06` §2 — eleven candidate sources |
+| P5i Candidate sources & output contracts | queued | DV-49 | HOLD-RANKER | Improves candidate generation |
+| P5i Candidate sources & output contracts | queued | DV-51 | CROSS-BUILDABLE | Can decay stale relationships |
+| P6 Outcome measurement | queued | DSV2-12 | GRADE | **SPLIT** |
+| P6 Outcome measurement | queued | DV-19 | ABSENT-CAPABILITY | §12 success on useful saves, itinerary adds, place opens, completed visits, event attendance, low regret, crea |
+| P6 Outcome measurement | queued | DV-34 | HOLD-RANKER | Independent convergence (`03` §6; also `05` §4 and `05` §9 — **counted once, here**) |
+| P6 Outcome measurement | queued | DV-41 | CROSS-BUILDABLE | §7 distinguish active / passive-foreground / idle dwell |
+| P7 Trails | running | DC-02 | GRADE | (spec line) |
+| P7 Trails | running | DC-03 | GRADE | (spec line) — four checks |
+| P7 Trails | running | DC-04 | GRADE | `02` §7 — Trail lifecycle (5 states) and in-Trail content lifecycle (6 states) |
+| P7 Trails | running | DC-05 | GRADE | (spec line) — nine metrics |
+| P7 Trails | running | DC-20 | GRADE | `11` §3 — Trails API, nine actions |
+| P7 Trails | running | DV-13 | GRADE | §10 — never let one creator permanently dominate a Trail |
+| P7 Trails | running | DV-20 | GRADE | Trails are canonical objects, not strings |
+| P7 Trails | running | DV-21 | GRADE | Trail ranking is modular rather than chronological-only |
+| P7 Trails | running | DV-22 | SELF | New content receives fair opportunity |
+| P7 Trails | running | DV-23 | GRADE | Duplicate saturation is controlled |
+| P7 Trails | running | DV-24 | OWNER-DECISION | Trail relationships are navigable |
+| P7 Trails | running | DV-25 | SELF | User behaviour can influence Trail momentum |
+| P8 Trending & ecosystem | queued | DC-06 | HOLD-RANKER | (spec line) — exposure · creator baseli |
+| P8 Trending & ecosystem | queued | DC-07 | SELF | (spec line) + §13's five preferred sto |
+| P8 Trending & ecosystem | queued | DC-21 | HOLD-RANKER | `11` §4 — Trending API, five actions |
+| P8 Trending & ecosystem | queued | DV-28 | HOLD-RANKER | Distinguishes emerging vs established |
+| P8 Trending & ecosystem | queued | DV-29 | HOLD-RANKER | Is geographic and temporal |
+| P8 Trending & ecosystem | queued | DV-31 | HOLD-RANKER | Can decay and rediscover |
+| P8 Trending & ecosystem | queued | DV-32 | HOLD-RANKER | Resistant to single-metric manipulation |
+| P8 Trending & ecosystem | queued | DV-33 | HOLD-RANKER | Can explain major trend reasons |
+| P8 Trending & ecosystem | queued | DV-80 | HOLD-RANKER | Phase 13 Ecosystem Governor — concentration · new-creator success · stale content · repeated recommendations · |
+| P9 Database & rollout | queued | DC-15 | SELF | (spec line) + expected c |
+| P9 Database & rollout | queued | DC-17 | GRADE | (spec line) — source event window  |
+| P9 Database & rollout | queued | DC-18 | PROD-EVIDENCE | (spec line) + new migr |
+| P9 Database & rollout | queued | DC-26 | CROSS-BUILDABLE | `12` Required test classes — 5 unit · 5 integration · 3 database · 3 shadow diagnostics |
+| P9 Database & rollout | queued | DC-27 | PROD-EVIDENCE | `12` Deployment rules — rehearse → verdict checks → shadow → cohort → observe → expand |
+| P9 Database & rollout | queued | DC-33 | CROSS-BUILDABLE | (spec line) — cache hits · expiry · pe |
+| P9 Database & rollout | queued | DV-70 | PROD-EVIDENCE | `10` §10/§8 migration-to-live drift understood; terminal condition *"zero unexplained drift"* |
+| P9 Database & rollout | queued | DV-71 | SELF | `10` §5 every user-visible table explicitly defines **read · insert · update · delete** policies — SPLIT off C |
+| P9 Database & rollout | queued | DV-72 | GRADE | `10` §10 derived tables are rebuildable |
+| P9 Database & rollout | queued | DV-74 | CROSS-BUILDABLE | `11` §10 admin actions are audited |
+| P9 Database & rollout | queued | DV-75 | PROD-EVIDENCE | Phase 0.2 finish CI: `ci-verdict` · `live-db-verdict` · `unwired-verdict` |
+| P9 Database & rollout | queued | DV-82 | OWNER-DECISION | Stop conditions — halt rollout if event rejection rises · logging gaps appear · creator concentration spikes · |
+| P10 Creator ledger | running | DV-26 | GRADE | Trail attribution is recordable (trail_id + recommendation_id + contributors + confidence) |
+| P10 Creator ledger | running | DV-56 | CROSS-BUILDABLE | `07` §10 value can be attributed |
+| P10 Creator ledger | running | DV-57 | CROSS-BUILDABLE | `07` §10 earnings recordable without paying |
+| P10 Creator ledger | running | DV-58 | CROSS-BUILDABLE | `07` §10 rules are versioned |
+| P10 Creator ledger | running | DV-59 | CROSS-BUILDABLE | `07` §10 fraud holds exist |
+| P10 Creator ledger | running | DV-60 | CROSS-BUILDABLE | `07` §10 historical recalculation possible |
+| P10 Creator ledger | running | DV-64 | SELF | `08` §7 creator share computable from the same ledger |
+| P10 Creator ledger | running | DV-65 | GRADE | `09` §11 every earning can be reconstructed |
+| P10 Creator ledger | running | DV-66 | GRADE | `09` §11 no balance depends on mutable totals |
+| P10 Creator ledger | running | DV-67 | GRADE | `09` §11 attribution is linked |
+| P10 Creator ledger | running | DV-68 | GRADE | `09` §11 reversals are possible |
+| P11 Monetization | running | DC-23 | ABSENT-CAPABILITY | `11` §6 — creator-economy API reads, and *"No client-side earning calculation"* |
+| P11 Monetization | running | DV-61 | ABSENT-CAPABILITY | `08` §7 revenue aligns with traveler value |
+| P11 Monetization | running | DV-62 | ABSENT-CAPABILITY | `08` §7 sponsored and organic systems are distinct |
+| P11 Monetization | running | DV-63 | GRADE | `08` §7 attribution is auditable |
+| P11 Monetization | running | DV-69 | GRADE | `09` §11 provider can be swapped later |
+| P12 Independent verification | queued | DV-52 | GRADE | Remains explainable enough for debugging |
+| P12 Independent verification | queued | DV-76 | GRADE | Phase 0.3 complete privacy/tagging Phase 0 |
+
+### 49.6 What would turn this red
+
+- A later section moving any row without restating this block: `check:census-integrity` compares the block with the rows.
+- Any of the six moved rows found to depend on a flag or a production object its section did not name: the verdict is implementation-only by construction, and production evidence is owed for all six.
+- An open row found in two packages, or in none: the table above was generated from the package map and checked against the row dump (100 open, 0 unassigned, 0 doubly assigned).
+- A `GRADE` row whose re-grade finds the code wrong: then it is `SELF`, and the owning lane fixes it rather than re-grading.
 
 ## Cited, not graded (check:census-scope-coverage)
 

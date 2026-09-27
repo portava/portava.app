@@ -572,7 +572,12 @@ import {
  * THE CEILING", and the ceiling was not lowered with it. Measured at
  * 123ce774e (165), at the media lane B merge's second parent (the lane's own
  * tip, cut before 123ce774e: 166) and at every head since: 165. */
-export const MAX_DEAD_TARGETS = 165;
+/* RATCHETED 2026-09-27 165 -> 164. Measured at the Discovery P2 merge
+ * (02a83a0dd): 165, at the ceiling. At the P3 telemetry merge (a984d923e) the
+ * guard printed "164 < 165 — LOWER THE CEILING"; the merge brought census
+ * §48's re-anchored citations, and which one retired the dead target was not
+ * isolated. Same rule as above. */
+export const MAX_DEAD_TARGETS = 164;
 
 /** Pinned to a commit by its own declaration; its lines must not track HEAD. */
 const PINNED_DOCS = new Set(['docs/architecture/mobile-reachability-ledger.md']);
