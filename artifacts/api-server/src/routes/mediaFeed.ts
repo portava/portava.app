@@ -76,8 +76,8 @@ import {
   buildPlaceAffinities,
   storeRankingSnapshots,
   type MediaFeedItem as RankingMediaFeedItem,
-  type MediaSessionState,
-} from "../services/ranking/MediaFeedRankingService.js";
+  type MediaSessionState, type MediaRankedItem,
+} from "../services/ranking/MediaFeedRankingService.js"; import { isWatchStage24RankingEnabled, orderWatchCandidatesByStage24 } from "../services/media/WatchStage24Ranking.js";
 import { recordMediaEvent } from "../lib/mediaAnalytics.js";
 import { resolveGemCoords, type GemCoordContext } from "../services/hiddenGems/HiddenGemPrivacyGuard.js";
 
@@ -1442,7 +1442,7 @@ router.get("/media/feed", asyncHandler(async (req, res) => {
   } catch { /* non-fatal */ }
 
   // ── Load media ranking flags + signals ────────────────────────────────────
-  const [mediaFlags, mediaSignalsMap, creatorSignalsMap, placeAffinities] = await Promise.all([
+  const watchStage24Read = isWatchStage24RankingEnabled(sc); const [mediaFlags, mediaSignalsMap, creatorSignalsMap, placeAffinities] = await Promise.all([
     loadMediaRankingFlags(sc),
     loadMediaSignals(sc, eligible.map((c) => c.id)),
     loadCreatorSignals(sc, [...new Set(eligible.map((c) => c.author_id).filter(Boolean))]),
@@ -1552,7 +1552,7 @@ router.get("/media/feed", asyncHandler(async (req, res) => {
   const mediaSession: MediaSessionState = { creatorImpressions };
 
   // ── Rank via MediaFeedRankingService ───────────────────────────────────────
-  const rankedResults = rankMediaFeed({
+  const watchStage24 = await watchStage24Read; const stage24Features = new Map<string, Record<string, number>>(); const rankedResults: MediaRankedItem<RankingMediaFeedItem>[] = watchStage24 ? [] : rankMediaFeed({ // census-media §34 (F2): ON = the §24 stage orders the page below; OFF (the seed) = exactly today
     candidates: rankCandidates,
     viewer: {
       userId:       user.id,
@@ -1569,7 +1569,7 @@ router.get("/media/feed", asyncHandler(async (req, res) => {
 
   // Map ranked IDs back to candidate rows
   const candidateById = new Map(eligible.map((c) => [c.id, c]));
-  const capped = rankedResults
+  const capped = watchStage24 ? await orderWatchCandidatesByStage24(sc, { viewerId: user.id, viewerCountry, followedCreatorIds, viewerTripIds: watchViewerTripIds }, eligible, nowMs, stage24Features) : rankedResults
     .map((r) => candidateById.get(r.item.id))
     .filter((c): c is MediaCandidate => c !== undefined);
 
@@ -1745,7 +1745,7 @@ router.get("/media/feed", asyncHandler(async (req, res) => {
           item_id:    item.id,
           item_kind:  "post",
           position:   idx,
-          features:   rankedItem?.features ?? {},
+          features:   rankedItem?.features ?? stage24Features.get(item.id) ?? {},
           outcome:    "impression",
           served_at:  servedAt,
           surface:    "watch_feed",
@@ -1765,7 +1765,7 @@ router.get("/media/feed", asyncHandler(async (req, res) => {
       }
 
       // Store ranking snapshots for "Why This?" (fire-and-forget with warning on failure)
-      if (mediaFlags.rankingEnabled) {
+      if (mediaFlags.rankingEnabled && !watchStage24) {
         const pageRanked = page.map((c) => rankedById.get(c.id)).filter(
           (r): r is NonNullable<typeof r> => r !== undefined,
         );

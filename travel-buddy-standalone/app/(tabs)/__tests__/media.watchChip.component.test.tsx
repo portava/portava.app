@@ -54,7 +54,7 @@ jest.mock('../../../src/lib/mediaEvents.ts', () => ({
 // this test only needs every mode flag enabled.
 jest.mock('../../../src/context/FeatureFlagsContext.tsx', () => ({
   useFeatureFlags: () => ({
-    isEnabled: () => true,
+    isEnabled: (key: string) => key !== 'MEDIA_TAB_WORLD_DEFAULT_ENABLED', // every flag but F1 (census-media §34): with F1 on the tab opens on World by design, not on the persisted mode — media.worldDefault*.component.test.tsx
     loading: false,
   }),
 }));

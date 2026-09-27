@@ -1521,3 +1521,23 @@ test('census-media §31.13: no pair is pinned, and every StampButton on a Media 
   const unlisted = shipped.filter((f) => /<StampButton\b/.test(source(f)) && !callers.includes(f));
   assert.deepEqual(unlisted, [], 'a new StampButton on a Media surface must be measured and given the tone its ground needs');
 });
+
+// ═══ census-media §34 — the flag-ON Watch surfaces (owner decision F2) ═══════
+// Appended at the TAIL so no line cited above moves. MEDIA_WATCH_CONTEXT_OVERLAY_ENABLED
+// (3341) and MEDIA_WATCH_TAP_TO_PLAY_ENABLED (3342) paint seven new things over a
+// frame; each is measured, under the same rules, on the backing it sits on. Both
+// flags are seeded OFF, so none of these is on a surface anyone sees until an
+// owner flips it — which is why they are measured now, before that decision.
+// The tap-to-play mark sits on a 0.71 ink badge over the frame: the same layers
+// as `videoFailurePhoto`, so that surface is reused rather than duplicated.
+const CTX_DISC: Needle = [FT.watchOverlay, "compassDisc: { width: avatar.s52, height: avatar.s52, borderRadius: avatar.s52 / 2, alignItems: 'center', justifyContent: 'center', backgroundColor: color.onInk },"];
+const TAP_BADGE: Needle = [FT.feedList, "paddingVertical: 12, borderRadius: radius.md, backgroundColor: 'rgba(17,17,15,0.71)' },"];
+add({ id: 'watch.context.compass.icon', fg: color.ink, on: 'selected', kind: 'ui', at: [CTX_DISC, [FT.watchOverlay, '<Compass size={26} color={color.ink} strokeWidth={2.2} />']] });
+add({ id: 'watch.context.compass.disc.photoFloor', fg: color.onInk, on: 'watchRailPhoto', kind: 'ui', at: [WATCH_RAIL, CTX_DISC] });
+add({ id: 'watch.context.compass.label.photoFloor', fg: color.onInk, on: 'watchRailPhoto', kind: 'text', at: [WATCH_RAIL, [FT.watchOverlay, "compassLabel: { ...t.stamp, color: color.onInk, fontWeight: '700' },"]] });
+add({ id: 'watch.context.placeName.photoFloor', fg: color.onInk, on: 'watchLeftPhoto', kind: 'text', at: [WATCH_LEFT, [FT.watchOverlay, 'placeName: { ...t.bodyStrong, color: color.onInk },']] });
+add({ id: 'watch.context.placeHint.photoFloor', fg: color.onInkMute, on: 'watchLeftPhoto', kind: 'text', at: [WATCH_LEFT, [FT.watchOverlay, 'placeHint: { ...t.stamp, color: color.onInkMute },']] });
+add({ id: 'watch.context.placePin', fg: color.onInk, on: 'watchLeftPhoto', kind: 'decor', at: [[FT.watchOverlay, '<MapPin size={14} color={color.onInk} />']] });
+add({ id: 'watch.tapToPlay.label.photoFloor', fg: WHITE, on: 'videoFailurePhoto', kind: 'text', at: [TAP_BADGE, [FT.feedList, "label: { fontSize: 13, fontWeight: '700', color: '#fff' },"]] });
+add({ id: 'watch.tapToPlay.icon.photoFloor', fg: WHITE, on: 'videoFailurePhoto', kind: 'ui', at: [TAP_BADGE, [FT.feedList, '<Play size={26} color="#fff" fill="#fff" />']] });
+MEASURED.push(...PAIRS.slice(MEASURED.length).map(measurePair));

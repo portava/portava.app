@@ -55,7 +55,7 @@ import {
   Camera,
   Zap,
 } from 'lucide-react-native';
-import { color, space, type as t, radius } from '../../theme/tokens.ts';
+import { color, space, type as t, radius, avatar } from '../../theme/tokens.ts';
 import { VerifiedStamp } from '../ui/VerifiedStamp.tsx';
 import { FeaturedBadge } from '../FeaturedBadge.tsx';
 import { useFollow } from '../../hooks/useFollow.ts';
@@ -64,7 +64,7 @@ import { StampIcon } from '../stamps/StampIcon.tsx';
 import { VerifiedLocationStamp } from './VerifiedLocationStamp.tsx';
 import { PlaceQuickActions } from '../PlaceQuickActions.tsx';
 import { formatLocationLabel } from '../../lib/formatPlaceLabel.ts';
-import { PortavaShareIcon } from '../icons/PortavaShareIcon.tsx';
+import { PortavaShareIcon } from '../icons/PortavaShareIcon.tsx'; import { useMediaSurfaceDecisions } from '../../features/media/hooks/useMediaSurfaceDecisions.ts'; import { openPlaceByIdPerspectives } from '../../features/media/services/perspectiveOpeners.ts'; import { ASK_COMPASS_DEFAULT_PROMPT } from '../../features/media/services/mediaActions.ts'; import type { MediaProjection } from '../../features/media/types/media.ts';
 
 const { width: SCREEN_W } = Dimensions.get('window');
 
@@ -176,7 +176,7 @@ export function WatchItemOverlay({
   stampButtonStyle,
   onStampPress,
 }: WatchItemOverlayProps) {
-  const insets = useSafeAreaInsets();
+  const insets = useSafeAreaInsets(); const contextFirst = useMediaSurfaceDecisions().contextOverlay; // census-media §34 (F2): false — the seed, and any unread flag — renders exactly today's overlay
   const [captionExpanded, setCaptionExpanded] = useState(false);
   const [sendSheetVisible, setSendSheetVisible] = useState(false);
 
@@ -270,7 +270,7 @@ export function WatchItemOverlay({
       <View style={[s.bottom, { paddingBottom: bottomPad }]} pointerEvents="box-none">
 
         {/* ── Left column ─────────────────────────────────────────────── */}
-        <View style={s.leftCol} pointerEvents="box-none">
+        <View style={s.leftCol} pointerEvents="box-none">{contextFirst ? <ContextPlaceHeader item={item} /> : null}
 
           {/* Creator row */}
           <View style={s.creatorRow} pointerEvents="box-none">
@@ -343,7 +343,7 @@ export function WatchItemOverlay({
           {/* Place chip — tappable only when a canonical place ID is available.
               Location-label-only items (name/city/country without a place record)
               render as plain non-interactive text to avoid /place/undefined routes. */}
-          {item.place ? (
+          {item.place && !contextFirst ? (
             item.place.id ? (
               <Pressable onPress={goPlace} style={s.chip} hitSlop={4} accessibilityRole="link" accessibilityLabel={`Go to ${item.place.name}`}>
                 <MapPin size={11} color="rgba(255,255,255,0.85)" />
@@ -398,19 +398,19 @@ export function WatchItemOverlay({
         </View>
 
         {/* ── Right action column ──────────────────────────────────────── */}
-        <View style={s.rightCol} pointerEvents="box-none">
+        <View style={s.rightCol} pointerEvents="box-none">{contextFirst ? <ContextCompassButton item={item} /> : null}
           {/* Stamp button — traveling ink overlay launched from this position */}
           <View ref={stampGroupRef} style={s.heartGroup}>
             <Animated.View style={stampButtonStyle as any}>
               <ActionBtn
                 icon={<StampIcon size={28} active={stampVisualIsStamped} color={stampVisualIsStamped ? color.signal : '#fff'} />}
-                count={stampVisualCount}
+                count={contextFirst ? undefined : stampVisualCount}
                 onPress={onStampPress}
                 label={stampVisualIsStamped ? 'Unstamp' : 'Stamp'}
               />
             </Animated.View>
             {/* Stamp-it count — shown when at least one viewer has Stamp It'd */}
-            {(item.stampItCount ?? 0) > 0 ? (
+            {!contextFirst && (item.stampItCount ?? 0) > 0 ? (
               <View style={s.stampRow} pointerEvents="none">
                 <Zap size={9} color="rgba(255,220,80,0.9)" fill="rgba(255,220,80,0.9)" />
                 <Text style={s.stampCount}>{formatCompactCount(item.stampItCount!)}</Text>
@@ -420,7 +420,7 @@ export function WatchItemOverlay({
 
           <ActionBtn
             icon={<MessageCircle size={28} color="#fff" strokeWidth={1.8} />}
-            count={item.commentCount}
+            count={contextFirst ? undefined : item.commentCount}
             onPress={onComment}
             label="Comment"
           />
@@ -434,7 +434,7 @@ export function WatchItemOverlay({
                 strokeWidth={isSaved ? 0 : 1.8}
               />
             }
-            count={item.saveCount}
+            count={contextFirst ? undefined : item.saveCount}
             onPress={onSave}
             label={isSaved ? 'Unsave' : 'Save'}
           />
@@ -652,4 +652,99 @@ const s = StyleSheet.create({
     textShadowOffset: { width: 0, height: 1 },
     textShadowRadius: 2,
   },
+});
+
+// ── census-media §34 (owner decision F2) — the context-first overlay ─────────
+//
+// Appended at the TAIL so no line the census cites moves. Rendered only while
+// MEDIA_WATCH_CONTEXT_OVERLAY_ENABLED is on (seeded OFF by migration 3341,
+// read through features/media/state/mediaSurfaceFlags.ts); off, the component
+// above draws exactly today's rail and neither of these is mounted.
+//
+// ON, three things change and nothing else does:
+//   1. Ask Compass LEADS the rail — the first control and the largest, handing
+//      the media id to Compass exactly as the §15 action rail does (§32).
+//   2. Stamp, comment and save keep their controls and lose their counts, and
+//      the Stamp It count under the Stamp is not drawn (§46 minimal vanity
+//      metrics; the counts stop dominating, MD215/MD408/MD424).
+//   3. The left column opens on the PLACE, which opens that place's other
+//      perspectives through the §14 entry context — the contextual viewer —
+//      and falls back to the place screen when there is nothing to stage
+//      (MD87: a Watch open routed through an entry context). The creator row
+//      follows it, where it was.
+
+function ContextCompassButton({ item }: { item: MediaFeedItem }) {
+  const ask = () => {
+    emitMediaNorthStar(mediaSignalRecorder, 'ask_compass', { mediaId: item.id, placeId: item.place?.id ?? null, entityKind: item.place?.id ? 'place' : 'media', surface: 'watch_overlay' });
+    router.push({ pathname: '/(tabs)/ai', params: { mediaId: item.id, prefillMessage: ASK_COMPASS_DEFAULT_PROMPT } } as never);
+  };
+  return (
+    <Pressable
+      onPress={ask}
+      style={ctx.compassBtn}
+      accessibilityRole="button"
+      accessibilityLabel="Ask Compass about this"
+      hitSlop={6}
+      testID="watch-context-compass"
+    >
+      <View style={ctx.compassDisc}>
+        <Compass size={26} color={color.ink} strokeWidth={2.2} />
+      </View>
+      <Text style={ctx.compassLabel}>Compass</Text>
+    </Pressable>
+  );
+}
+
+function ContextPlaceHeader({ item }: { item: MediaFeedItem }) {
+  const place = item.place;
+  if (!place) return null;
+  const label = formatLocationLabel(place.name, place.city, ' · ');
+  const placeId = place.id;
+  const open = () => {
+    if (!placeId) return;
+    emitMediaSignal(mediaSignalRecorder, 'place_open', { mediaId: item.id, placeId, surface: 'watch_overlay' });
+    emitMediaNorthStar(mediaSignalRecorder, 'show_on_map', { mediaId: item.id, placeId, entityKind: 'place', surface: 'watch_overlay' });
+    const fallback = () => router.push(`/place/${placeId}` as never);
+    // Only the tapped media's id is read (perspectiveOpeners → placeHandoff), so
+    // the viewer opens on THIS perspective when the place's collection holds it.
+    void openPlaceByIdPerspectives(placeId, { id: item.id } as unknown as MediaProjection)
+      .then((opened) => { if (!opened) fallback(); })
+      .catch(fallback);
+  };
+  const body = (
+    <>
+      <MapPin size={14} color={color.onInk} />
+      <View style={ctx.placeText}>
+        <Text style={ctx.placeName} numberOfLines={1}>{label}</Text>
+        {placeId ? <Text style={ctx.placeHint} numberOfLines={1}>See this place's perspectives</Text> : null}
+      </View>
+    </>
+  );
+  return placeId ? (
+    <Pressable
+      onPress={open}
+      style={ctx.placeHeader}
+      accessibilityRole="link"
+      accessibilityLabel={`See ${place.name}'s perspectives`}
+      hitSlop={4}
+      testID="watch-context-place"
+    >
+      {body}
+    </Pressable>
+  ) : (
+    <View style={ctx.placeHeader} testID="watch-context-place">{body}</View>
+  );
+}
+
+const ctx = StyleSheet.create({
+  // Sits first in the rail, on the rail's own 0.80 ink backing.
+  compassBtn: { alignItems: 'center', justifyContent: 'center', minWidth: 52, minHeight: 52, gap: 4 },
+  // An opaque onInk disc under an ink glyph: its contrast does not depend on the frame.
+  compassDisc: { width: avatar.s52, height: avatar.s52, borderRadius: avatar.s52 / 2, alignItems: 'center', justifyContent: 'center', backgroundColor: color.onInk },
+  compassLabel: { ...t.stamp, color: color.onInk, fontWeight: '700' },
+  // First in the left column, on the column's own 0.71 ink backing.
+  placeHeader: { flexDirection: 'row', alignItems: 'center', gap: 6, minHeight: 44 },
+  placeText: { flexShrink: 1 },
+  placeName: { ...t.bodyStrong, color: color.onInk },
+  placeHint: { ...t.stamp, color: color.onInkMute },
 });
