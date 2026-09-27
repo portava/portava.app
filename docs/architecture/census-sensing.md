@@ -6070,3 +6070,15 @@ None.
 | S19 · S97 · S111 · S118 | W | **W** | §27.4 — the cutover is prepared and reconciled, and is not executed. |
 | S49 · S92 · S26 · S66 | W | **W** | §27.5 — controlled forms run; each real-world form is a flag, a launch or a ruling. |
 | S17 | X | **X** | §27.5 — unobservable from this environment. |
+
+## Cited, not graded (check:census-scope-coverage)
+
+Declared 2026-09-27 by the coverage-guard fix (census-media §32.14). Each line names a file this census cites and does not grade, and says why. The guard refuses a declaration for any file a verdict row cites.
+
+- NOT-GRADED: artifacts/api-server/src/routes/admin.ts — the pre-existing moderation reviewer route §5 names as serving the queue a safety candidate is filed into, and as a file §5 left untouched; S103's C rests on the candidate row shape, 2803's CHECK preconditions and the watched db suite, and §5.2 says this census cannot tell whether a specialist reads that queue.
+- NOT-GRADED: artifacts/api-server/src/routes/moderation.ts — named in §5.1 only as a file the safety-candidate stage did not change; no sensing verdict rests on it.
+- NOT-GRADED: artifacts/api-server/src/routes/telegraphChat.ts — census-telegraph's route, named in §4.1 only as a file the live-reference work did not change.
+- NOT-GRADED: artifacts/api-server/src/routes/meetups.ts — named in §4.2 for an observation about meetup card writes that is recorded for the Telegraph lane and that the section itself says grades nothing here.
+- NOT-GRADED: artifacts/api-server/src/migrations/2402_telegraph_membership_rls_recursion.sql — Telegraph's frozen migration, named in §4.1 as where the msg_select policy the watched telegraphLiveReferences db suite exercises was last defined; S87/S88 rest on that suite and on lib/liveReference.ts, and a later redefinition would land in a new migration, not in this file.
+- NOT-GRADED: artifacts/api-server/baseline/20260819_baseline_structure.sql — the frozen 2026-08-19 schema snapshot, cited in §4 for msg_insert WITH CHECK (false) to explain why a share is written by the service client; the live fact is pinned by the watched telegraphLiveReferences db suite, and S87/S88 rest on lib/liveReference.ts.
+- NOT-GRADED: artifacts/api-server/src/lib/envValidation.ts — named in §9.1's referrer enumeration because its optional-env list names the sensing pepper in a comment; §9 moved no verdict, and its "no route imports the stack" finding was superseded by §26's ingest route, which is watched.
