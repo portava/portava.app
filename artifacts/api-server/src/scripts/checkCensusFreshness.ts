@@ -2405,6 +2405,8 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "migrations/APPLY_THESE_IN_ORDER.sql",
     // WIDENED 2026-09-27 by the coverage-guard fix (census-media §32.14): the bare spelling forty T-row citations write; this checker resolves it to the root app/ mock, so it is listed beside the travel-buddy-standalone/app/messages/ prefix above, which holds the screen they grade.
     "app/messages/[id].tsx",
+    // WIDENED 2026-09-27 at the merge of main (#529) into the Discovery integration branch: §31.5 cites the executed unsend probe as the evidence that the receipt lock is observed; on main this census's floor predates 1.0.
+    "artifacts/api-server/src/test/db/telegraphUnsend.db.test.ts",
   ],
   // census-map.md, census-sensing.md, census-compass.md and
   // census-input-intelligence.md — declared 2026-09-11 on the same basis as
