@@ -6220,6 +6220,268 @@ Totals unchanged. A03 stays `W` on the flags, not on absence — and the
 distinction matters, because it is the difference between a row waiting for a
 build and a row waiting for a deployment.
 
+## §47 — Ranking and cache correctness (lane P2): the serve paths mapped, cache B made revocable, and one row moves
+
+*Written 2026-09-27 by the Discovery ranking-and-cache lane on `disc-p2-ranking`, branched from `709b7b800`. Commits: `40249b0ba`, `cd51b04e6`, `5d7319644`, `9fdef8a56`, and the docs commit that adds this section. **`head_commit` is NOT re-declared.** `check:census-freshness` names two counted files this lane changed that the acknowledgement does not cover; §47.9 argues each one. The headline is not restated here; the integrator does that.*
+
+**THE HOLD, READ EXACTLY.** `docs/discovery/ROADMAP.md`'s owner ruling of 2026-08-15 reads *"RANKER WORK GOES ON EXPLICIT HOLD … No optimising ranking machinery over an empty corpus."* The later passages in the same file read the hold as governing the flip and not an inert build. That reading is not an owner ruling, and the owner has been asked. So this lane built only correctness and privacy repairs. Every ranking-machinery gap it found is designed and left unbuilt in `docs/discovery/ranker-hold-designs.md`.
+
+### 47.1 Production facts the integrator read (read-only, 2026-09-27), recorded as given
+
+**Flags:**
+
+- `COMPASS_V1_RULE_BASED_ENABLED` = **TRUE**.
+- `DISCOVERY_ENGINE_MODE` = `enabled=false`, `metadata.mode='legacy'`.
+- `disable_discovery_pde` = false (polarity stop, engages on read error).
+- `DISCOVERY_DIVERSITY_ENABLED` = false.
+- `discovery_candidate_projection_enabled` = false.
+- `layover_discovery_mode_enabled` = false.
+- `discovery_serve_log_enabled` = **TRUE**.
+
+**Data and schema:**
+
+- `rank_events` with `surface='discovery'` has 13 rows, the latest at 2026-08-15 08:13 UTC. All 13 are `GET /discovery/suggest`, from one viewer.
+- `rank_events` has had no write on ANY surface since 2026-08-27.
+- **2910 (Trails) IS applied to production** (ledger `manual`, 2026-09-20), with 0 rows. **§17.3's "portava-ci only" is stale for 2910.**
+- 2920, 2921 and 2930 are not applied.
+- `profiles.account_status` exists on production, with the single value `active`.
+- `user_mutes(muter_id, muted_id)` exists on production and on `portava-ci`.
+
+**Found in code, and it explains the serve-log silence without any serve-log defect.** The shipping client calls `GET /discovery` with **no bearer token** (`travel-buddy-standalone/src/services/discovery.ts:697#const res = await fetch(`; the integrator confirms the same for `/community` and `/counts`). The route sets `callerUserId` only from a token (`artifacts/api-server/src/routes/discovery.ts:1597#callerUserId = authData.user.id;`), and every Stage-0 serve-log write is conditional on a viewer. So on production every `GET /discovery` is anonymous. Two consequences follow:
+
+- The serve log has no row to write.
+- The Compass / cache-B branch (`artifacts/api-server/src/routes/discovery.ts:2106#if (category === "for_you" && callerUserId) {`) is unreachable from the shipping client, despite its flag being TRUE.
+
+The client fix belongs to the client lane. §47.4's cache-B repairs are the server half it lands on.
+
+### 47.2 The serve-path matrix
+
+Every path that orders or serves a Discovery item, at this tree. "Re-applied per viewer" means re-applied on the request itself, including a cache hit.
+
+| path | orderer(s) | cache and key | re-applied per viewer on every serve | flags that gate it | legacy / shadow / pde |
+|---|---|---|---|---|---|
+| `GET /discovery`, serve points 1/2/3 — Cache A hit (L1, L2 fresh, L2 stale) | **none** in legacy and shadow: the cached Overpass order, community rows interleaved every 4th (`mergeAndDedup`), then a user-chosen `sortBy`; the live-rank head window if 2850 is on | Cache A `cacheKey(dest,cat,radius)` — OSM rows only, no viewer term | community half re-read with blocks both ways, mutes and standing; dismissals; Layover; age gate (`applyFilters`); anything unreadable fails closed except dismissals (reported) | `DISCOVERY_ENGINE_MODE` (legacy), 2850 | legacy: unranked. shadow: unranked served, and PDE ranks the same candidates **after** the response and writes only `discovery_shadow_serves`. pde + in-cohort: `rankForViewer` (portavaRank → DRS → modifiers) orders the page. pde + cohort closed: legacy |
+| serve point 4 — Cache B hit | the stored Compass order (`rankItemsForDiscovery`), replayed | Cache B `(userId, dest, radius, sortBy)` + authorized context + rank version + TTL + **row revocation** | as above; the stored ORDER is replayed with the CURRENT row content | `COMPASS_V1_RULE_BASED_ENABLED` (TRUE), signed-in, `for_you`, Cache A **miss** | identical in every mode |
+| serve point 5 — Compass fresh rank | `rankItemsForDiscovery` (Compass pipeline; `allocateFeedSlots` inside it if `DISCOVERY_DIVERSITY_ENABLED`) | writes Cache B (not for `nearest`) | as above | as serve point 4 | identical in every mode |
+| serve point 6 — cold fetch, signed in | `rankForViewer` in **every** mode (`artifacts/api-server/src/routes/discovery.ts:2280#const outcome   = await rankForViewer(places`), then live rank | writes Cache A (OSM only) and L2 | as above | none for ranking; 2289 for the modifiers | identical in every mode |
+| serve point 6 — cold fetch, anonymous | **none**: the merge order (`artifacts/api-server/src/routes/discovery.ts:2285#ranked = discoveryCtx ? scoreWithContext`; see §47.3 on why `scoreWithContext` never runs) | writes Cache A and L2 | standing, age gate; nobody to block, mute or dismiss | none | identical |
+| `GET /discovery/feed` (serve point 7) | none: merge order | none (reads through `queryDbPlaces`) | blocks and mutes (places), standing, Layover; event posts keep the block set alone | none | n/a |
+| `GET /discovery/community` (serve point 10) | none: SQL `ORDER BY` created_at, rating or saved_count | none on the server; the client keeps a module cache | blocks both ways, mutes, standing (pick AND byline), real-name opt-out, Layover, age columns | `layover_discovery_mode_enabled` | n/a |
+| `GET /discovery/counts` | none | writes Cache A | none — the route resolves no caller and returns totals only | none | n/a |
+| `/discovery/search`, `/discovery/suggest` (P1's file) | lexical match tier only (`rankByMatchTier`), no personal ranker | none | graded in P1's lane | — | n/a |
+
+**Cross-viewer isolation is proved, not asserted.** `src/test/discoveryServePathIsolation.test.ts` I6–I8 show three things. Neither the L1 entry nor the persisted L2 row carries anything a viewer's request contributed: device position, mutes, dismissals or community rows. One viewer's rules never reach another's page. The shared entry is OSM-only, so a community row that becomes ineligible cannot ride it. `src/test/discoveryCacheRevocation.test.ts` R5 shows that B's first request is B's own rank, never A's page.
+
+### 47.3 Contradiction (a): "one ranking pipeline" (C32) vs "three parallel rankers" (DC-24) — both are half right
+
+**C32's evidence holds and its title does not.** That was already recorded at §14.2 and is not re-litigated.
+
+**DC-24's count of three is right, but its third member is wrong.** Its evidence names portavaRank via `rankForViewer`, Compass, and *"the shared ranking service that declares a `discovery` surface and has no Discovery caller (X3)"*. That third clause is **false at HEAD**. `DiscoveryRankingService.rankItems` IS called on Discovery, as a stage *inside* the PDE pipeline (`artifacts/api-server/src/lib/discoveryPde.ts:705#const drsResults = await drsRankItems(`), after portavaRank. It is not a parallel ranker. On production it also reorders nothing: `ACTIVITY_DISCOVERY_BOOST_ENABLED` is false there (the integrator's analysis), and with it false DRS is in shadow mode (`artifacts/api-server/src/services/ranking/DiscoveryRankingService.ts:1031#const shadowMode = !flags["ACTIVITY_DISCOVERY_BOOST_ENABLED"];`) and returns eligible items in input order (`:1265`).
+
+The ordering implementations that can reach a served `GET /discovery` page are these:
+
+1. **The PDE pipeline**, `rankForViewer`: portavaRank `rankCandidates` (`artifacts/api-server/src/lib/discoveryPde.ts:610#const scored = modifiers.enabled`), then DRS (order-neutral in production), then the governor behind 2289. It serves signed-in cold fetches in every mode, and Cache A hits only in `pde` + cohort.
+2. **Compass `rankItemsForDiscovery`**, value-imported by the route (`artifacts/api-server/src/routes/discovery.ts:36#import { rankItemsForDiscovery } from "../`). It serves signed-in `for_you` cache misses while `COMPASS_V1_RULE_BASED_ENABLED` is on. This is the genuinely parallel ranker.
+3. **The live-rank layer**, `withDiscoveryLiveRank`, a head-window re-order behind 2850 (seeded FALSE). It runs on serve paths 1 and 6 only, not on the Compass paths.
+
+`scoreWithContext` is a fourth implementation in the route, and it is **unreachable**. It runs only when `callerUserId` is null and `discoveryCtx` is set (`artifacts/api-server/src/routes/discovery.ts:2285#ranked = discoveryCtx ? scoreWithContext`), but `discoveryCtx` is assigned only inside the branch that has just assigned `callerUserId` (`artifacts/api-server/src/routes/discovery.ts:1614#discoveryCtx = await buildDiscoveryContext({`). **Anonymous cold requests are served unranked**, which corrects the integrator's preliminary reading that they use `scoreWithContext`.
+
+**On production today no ranker orders any served Discovery page.** Every request is anonymous (§47.1), so every request is served unranked: a Cache A hit (`artifacts/api-server/src/routes/discovery.ts:1852#let servedFiltered = filtered;`) or an anonymous cold fetch.
+
+**DC-24 stays `W`**: implementation 2 is a real parallel system. The §41.4 HAZARD is respected. Consolidation changes `for_you` order with no flag in front of it, so it is designed to ride Phase F gate 2 (`docs/discovery/ranker-hold-designs.md` §6), not built.
+
+### 47.4 Contradiction (b): DSV2-06 `C` vs DV-03 `W` — two different caches, and DSV2-06's `C` was over-graded until `40249b0ba`
+
+The integrator's reading is confirmed. **Cache A** is a user-independent CANDIDATE cache, served as the final order in legacy mode, and that is DV-03's subject. **Cache B** is the per-user FINAL-ORDER cache, and that is DSV2-06's. The L2 table `discovery_cache` is Cache A's second tier and holds the same OSM-only rows.
+
+DSV2-06 reads *"changes in permission, trip context or evidence validity invalidate/revalidate affected results"*. Before this lane, cache B bound only the VIEWER's context: block set, model version and TTL. A row whose **evidence** changed inside the TTL was replayed for up to ten minutes:
+
+- a row deactivated by a moderator;
+- a submitter whose account left `active`;
+- a row whose image was replaced (`routes/adminPlaceImages.ts` evicts Cache A, which holds no community row, and never touched Cache B);
+- a muted submitter.
+
+DSV2-06's `C` at §12.2 rested on version binding, and was therefore wrong on its evidence-validity clause at HEAD. It is **right now**:
+
+- row revocation (`artifacts/api-server/src/lib/discoveryCacheEligibility.ts:248#export function pageHasRevokedRow(`);
+- current-content replay (`artifacts/api-server/src/lib/discoveryCacheEligibility.ts:272#export function withCurrentRows`);
+- an authorized-context key that folds in mutes and unread sources (`artifacts/api-server/src/lib/discoveryCacheEligibility.ts:296#export function authorizedContextKey(`).
+
+No verdict moves, since it is `C` → `C`. The finding is recorded so the old `C` is not quoted as having been sound.
+
+### 47.5 What was built, and the proof
+
+**The repairs:**
+
+- **Cache B revocation**, `40249b0ba` and `9fdef8a56`. `cacheBEntryUsable` gains `row_revoked`: a stored `db/` row this request's own read no longer returns re-ranks the page. A hit replays the stored order with the current row content. The key is `authorizedContextKey(exclusions, failedSources)`, so a page ranked during an outage is reused during it and missed on recovery.
+- **The author policy on every `discovery_places` reader**, `40249b0ba`. Mutes join blocks in one fail-closed exclusion set: `GET /discovery` (`artifacts/api-server/src/routes/discovery.ts:1722#viewerBlockedIds = blockSc ? await fetchBlockedSet(`), `/feed` for places only, and `/community`. Submitter standing (`account_status` other than `active`; the complement of an allowlist, so future statuses are covered) is enforced at `artifacts/api-server/src/routes/discovery.ts:1076#if (!submitterIsVisible(row.submitted_by, blockedIds) ||`. On `/community` the standing is read from the byline embed and withholds pick and byline together. An unreadable standing read reports the curated source as unreadable (D11 `partial`) rather than serving authored rows unchecked.
+- **The age gate was a no-op on real rows**, `40249b0ba`. It compared `ADULT_OSM_VENUE_TYPES` against `category`, and on this route `category` is always the requested TAB: `mapOsmElementToPlace` stamps it, and Portava rows carry a canonical tab. So a real Overpass bar, `{category: "for_you", type: "bar"}`, was served to a verified minor. The gate's only test (`src/test/verifiedMinorGateReach.test.ts`) injected a fixture spelled `category: "bar"`, a shape the route never produces. It now reads the venue `type` (`artifacts/api-server/src/lib/discoveryCacheEligibility.ts:459#export function isAdultOnlyVenue(`).
+  - **The failing test:** `src/test/discoveryServePathIsolation.test.ts` I4 and `src/test/discoveryCacheRevocation.test.ts` R8. Both are red with the old comparison (mutations M8 and MM2 below) and green now.
+- **DC-14's instrument compared unlike pages**, `cd51b04e6`. The shadow's PDE page skipped the post-rank layers the served page passes (live rank, "Not interested", Layover). The row therefore recorded a DISMISSED place as a page PDE would serve, and booked filtering's divergence to ranking. `legacy_total` also counted the pre-dismissal list. Both are fixed, and only shadow data changes.
+- **DV-18's `season_match`**, `5d7319644`, approved by the integrator. Compass's CPH-15 season addend was already in `finalScore`, but `CompassPipeline` reported only `city_rhythm`, so a season-driven rank was never explained. The factor is now reported and mapped. `src/test/discoverySeasonReason.test.ts` S1 stays green with the hunk removed, which is the proof that order and scores are byte-identical.
+  - **Blast radius, stated:** Compass feed items carry the extra factor (no client reads `rankingFactors`). The stored snapshot keeps the first 8 factors, so the season factor can push a kernel or live factor past position 8 in the stored record. `buildWhyThisText` keeps the top 3 by weight, so a heavier season factor displaces the third sentence part. That is user-visible on the Compass tool surface, and S6 pins it.
+  - census-compass CPH-07 (*"every recommendation explains itself"*, `C`) grades that snapshot and becomes more true, not less.
+  - **Dropped factor found and NOT reported:** `wm.eventFactor` (CPH-15's event addend) is summed into the score and dropped from the factors the same way. It is left for DV-18's successor or for Compass, because DV-18 has no event code.
+
+**Existing tests changed on purpose, each with its reason in the commit:**
+
+- `discoveryCuratedSourceRefusal` 2/4 pinned the replay of a healthy page THROUGH a curated outage. It now pins the replay of the page ranked during the outage.
+- `discoveryCandidate` I4 and `discoveryTrailModifier` WIRING 1 pinned `season_match` as producerless. Their stated reason (*"No seasonality signal exists under any name"*) is false at this tree.
+
+**Tests: 45 new**, all registered on the `test` line:
+
+- `src/test/discoveryCacheRevocation.test.ts`: 23 — R0–R10, U1–U9, G1–G3.
+- `src/test/discoveryServePathIsolation.test.ts`: 16 — L0 golden, I1–I8, M1×2, M2–M4, C1–C2.
+- `src/test/discoverySeasonReason.test.ts`: 6 — S1–S6.
+
+**The golden and the regression runs:**
+
+- The golden `src/test/fixtures/discoveryLegacyGolden.json` was captured by running `src/test/helpers/discoveryLegacyScenarios.ts` against `709b7b800`'s `routes/discovery.ts` and `lib/discoveryCacheEligibility.ts`. It holds eleven requests covering all four `GET /discovery` serve paths, `/feed` and `/community`, anonymous and signed in. The working tree reproduces it byte-for-byte, so **legacy is byte-identical**.
+- All Discovery and Compass suites: 3,341 of 3,343 pass. The two failures are `discoveryPlaceWriteBoundary` and `compassMemoryClientBoundary`, live-DB suites that `ciSupabaseGuard` refuses without CI credentials, as they do at the parent.
+- The 30 other suites that import a changed module (Wall, Map, Trips, age gate, admin image eviction and others): 509 of 509 pass.
+- `typecheck`: 0 errors. `typecheck:tests`: 863 / 863 baseline.
+
+**P24 — every mutation was watched red, and every file was restored byte-identically (`cmp`).**
+
+*Row revocation:*
+
+| mutation | what went red |
+|---|---|
+| M1 — the route drops `eligibleDbIds` | R1, R2, G1 |
+| M7 — revocation ignores the `db/` scope | U1 |
+| M11 — every page reads as revoked | R0, R6, R7, R8, R9, U1 (over-invalidation) |
+| M12 — the hit replays stored content | R10, G1 |
+| M13 — `withCurrentRows` ignores the read | R10 |
+
+*Authorized-context key:*
+
+| mutation | what went red |
+|---|---|
+| M2 — the key ignores unread sources | R7, G1 |
+
+*Mutes:*
+
+| mutation | what went red |
+|---|---|
+| M3 — mutes not unioned | R4, R5, U6 |
+| M4 — a mute read fails open | R6, U6 |
+| M10 — `/discovery` without mutes | R4, R5, R6, G2 |
+| MM9 — `/community` ignores mutes | C2 |
+
+*Submitter standing:*
+
+| mutation | what went red |
+|---|---|
+| M5 — standing never withholds | R2, R3, U8 |
+| M6 — a standing read failure is treated as all-active | R7, U7 |
+| M9 — `queryDbPlaces` drops the standing predicate | R2, R3, G2 |
+| MM8 — `/community` ignores standing | C1 |
+
+*Age gate:*
+
+| mutation | what went red |
+|---|---|
+| M8 / MM2 — the age gate compares the tab | R8, U9 / I4 |
+
+*Modes and shadow:*
+
+| mutation | what went red |
+|---|---|
+| MM1 — the shadow skips post-rank layers | M4 |
+| MM3 — the shadow run is trusted to write | M3 |
+| MM4 — pde ignores the cohort | M1 |
+| MM11b — legacy runs the shadow observation | M3 |
+
+*Shared caches and the golden:*
+
+| mutation | what went red |
+|---|---|
+| MM5 — L2 persists the device-measured list | I6 |
+| MM6 — L1 persists the merged community-bearing list | I8 |
+| MM7 — any legacy change (the interleave moved) | L0 |
+| MM10 — dismissals read for the wrong viewer | I3, I7 |
+
+*Season reason:*
+
+| mutation | what went red |
+|---|---|
+| MS1 / MS2 — the season spread removed | S4 / S2; **S1 stayed green in both** — the "with and without" |
+| MS3 — the mapping removed | S2 |
+| MS4 — the season factor re-scored | S1 |
+
+**Two mutants SURVIVED the first draft, and each bought an assertion:**
+
+- **MM6** survived, because a community row re-added by the next viewer's read masked the leak. I8 was added.
+- **MM11** survived as an *equivalent* mutant, because legacy's cohort is forced to nobody. The legacy-writes-no-shadow-row assertion in M3 was added, and MM11b is the non-equivalent form.
+
+### 47.6 Row moves
+
+| ID | was | now | evidence |
+|---|---|---|---|
+| DC-25 | W | **C** | `12` Phase 2 names ONE deliverable, *"a design note documenting candidate cache key · ranking cache key · invalidation · model/version handling · personalization boundary"*. It exists at `docs/discovery/cache-architecture-design-note.md` and documents all five against code, with file:line (`artifacts/api-server/src/lib/discoveryCacheEligibility.ts:149#export function cacheBEntryUsable(`, `artifacts/api-server/src/routes/discovery.ts:299#function cacheKey(dest: string, cat: strin`). The row's second ground, *"personalization boundary: documented and crossed"*, is DV-03's subject (the Cache A ranking bypass, §11.4's SPLIT) and is still graded there, still `W`. Under §11.2 rule 2 one failure is counted once. The note states the crossing where it happens (§5 of the note) and names the owner's gate that closes it. **What would turn this back to `W`:** an owner reading of DC-25 that requires the boundary to HOLD in the shipping default, and not merely be documented; the row then shares DV-03's ground and blocker. |
+
+**Rows re-read and left where they are, with the reason:**
+
+- **DV-03 `W`.** The shipping default still serves Cache A unranked, and the ranked path is built behind Phase F gate 2, which is the owner's decision. What changed is that every privacy and eligibility rule on that unranked path is now tested per viewer (§47.2, I1–I8). The hold is not relabelled.
+- **DV-09 `W`, 1 of 5.** The Discovery leg rests on the Compass `for_you` branch, which on production is unreachable from the shipping client (§47.1): real code, dark in practice. Design 5.
+- **DV-12 `W`.** **Correction:** the census reads *"one direction"* as an existing defence. On Discovery it defends nothing. `authorTrustScore` is set on no Discovery candidate (`artifacts/api-server/src/lib/discoveryPde.ts:590#const candidates: PlaceCandidate<T>[] = places.map((p) => ({`), so the trust factor is the constant 0.6 on every row (`artifacts/api-server/src/lib/portavaRank.ts:314#const trustFactor = c.authorTrustScore != null`). Design 4.
+- **DV-18 `W`.** It is now **8 of 9** grounded (`season_match` has its producer, §47.5). `trip_match` needs a trip-fit term (under the hold, design 7), and reason labels ride 2361, seeded FALSE.
+- **DV-53 `W`.** **Correction:** *"`allocateFeedSlots` has no production caller"* is false. It is called on the Compass `for_you` path (`artifacts/api-server/src/compass/CompassFeedBuilder.ts:642#finalPool = allocateFeedSlots(finalPool, shares, { surface: "discovery"`) behind `DISCOVERY_DIVERSITY_ENABLED`, which is false on production. Two further facts:
+  - With 2289 off, portavaRank's exploration slot draws at random from the tail (`artifacts/api-server/src/lib/portavaRank.ts:497#export function injectExploration`), where `06` §7 asks for *"relevant, not random"*.
+  - Compass fair exposure is inert on Discovery rows, which carry no `authorId`.
+
+  Design 1.
+- **DV-54 `W`, 3 of 6.** Unchanged (§42). Design 2.
+- **DV-55 `W`.** The onboarding answers exist (`profiles.interests`, `travel_style`) and reach no ranker. Design 3.
+- **DC-11 `W`, 7 of 10.** The integrity stage's one down-weight is itself the constant above.
+- **DC-13 `W`.** The §41.4 HAZARD is respected: nothing imports `rankingConfig.ts`. Design 5.
+- **DC-14 `W`.** Its instrument defect is fixed (§47.5), and it still has 0 production rows in legacy. Gate 1 is the owner's.
+- **DC-24 `W`.** See §47.3.
+- **DC-32 `W`, 2 of 5.** The correctness half is §47.8's inventory. The sentence *"`protectedLocations.ts` is consulted by nothing in Discovery"* is stale: `lib/discoveryCandidate.ts` calls `classifyAgainstProtected` for the projection's `coverage` bucket (§45), behind 2361 (FALSE). The served rows themselves are still not filtered by it, which is B04's subject.
+- **DSV2-05 and DSV2-06 `C`.** Both are strengthened, and §47.4 records that DSV2-06 was over-graded until `40249b0ba`.
+
+### 47.7 Residuals, named by owner
+
+- **Client (P4).** Send the bearer token on `/discovery`, `/community` and `/counts`. Key the 4-minute device cache by viewer, or clear it on sign-out and account switch, and invalidate it on block, mute or dismiss. The server now answers each of those on the very next request.
+- **`GET /discovery/community`, this lane's file, left unfixed deliberately.** The byline's `avatarUrl` is served whatever `profiles.show_profile_picture_publicly` and `is_private` say. `lib/mediaFeedItem.ts` gates the same field. The fix is two embed columns and one predicate. It was not taken because a column missing from production's PostgREST schema would turn a live route's single read into a refusal. **Read-only production check requested:** `select column_name from information_schema.columns where table_schema='public' and table_name='profiles' and column_name in ('show_profile_picture_publicly','is_private');`
+- **Cache A's key omits the Overpass centre** (design note §1). A caller that breaks the destination contract for `lat/lng` would pin its own centre into a shared entry for 2 h. Either fix changes legacy cache behaviour.
+- **`evictCacheEntriesForEntity` is a no-op for `db/` ids**, because Cache A holds none. It is harmless now that Cache B revalidates.
+
+### 47.8 DC-32 — silent production defaults, named (the correctness half; the rulings are the owner's)
+
+These values shape what a user is served and carry no ruling in code or docs. **Ruled, and not listed:** the exploration budget 15–25 %, `LOCAL_MOMENTUM_MAX_CONTRIBUTION`, and `TRAIL_AFFINITY_MAX_CONTRIBUTION`.
+
+| value | where | what it decides |
+|---|---|---|
+| `CACHE_B_TTL_MS` 10 min | `artifacts/api-server/src/lib/discoveryCacheEligibility.ts:94#export const CACHE_B_TTL_MS` | how long a ranked page is replayed |
+| `CACHE_TTL_MS` 2 h | `artifacts/api-server/src/routes/discovery.ts:115#const CACHE_TTL_MS` | how long one fetch's candidate set serves everyone |
+| `SEEN_WINDOW_MS` 24 h; seen penalty −0.6 | `lib/discoveryPde.ts`, `lib/portavaRank.ts` | how long a shown place is demoted |
+| `MIN_TOTAL_CATEGORY_OBSERVATIONS` 3 | `lib/discoveryPde.ts` | when learned taste starts to count |
+| `EVENT_REJECTION_RATE_THRESHOLD` 0.05, `LOGGING_GAP_THRESHOLD` 0.10, `STOP_MIN_SAMPLE` 20 | `lib/discoveryStopConditions.ts` | when PDE is halted (§12.5: *"this lane's proposals"*) |
+| `TREND_MIN_RATE` 3, growth ×1.5, decline ×0.6 | `lib/discoveryTrendState.ts` | what is called rising or cooling |
+| `TRAVEL_HORIZON_MINUTES` 45, queue tolerance 30, `LIVE_RANK_MAX_POSITIONS` 15 | `lib/discoveryLiveRank.ts` | the live head window |
+| authorPenalty 0.35, kindPenalty 0.15 | `lib/portavaRank.ts` | creator and type diversity (§42: *"v1 hand-tuned, no recorded derivation"*) |
+
+The repair this row asks for is to *ask*. The question for the owner: rule each value, or mark it PROVISIONAL with a review date. No value was changed here.
+
+### 47.9 Freshness — the counted files this section changed, argued
+
+`check:census-freshness` names seven files for this census:
+
+- **`lib/discoveryCacheEligibility.ts`.** Re-measured here: §47.4 and §47.5. DSV2-05 and DSV2-06 are re-read and stay `C`, strengthened.
+- **`lib/discoveryReasonCodes.ts`.** Re-measured here: DV-18 stays `W` at 8 of 9.
+- **Five files new in this pass, which §47 itself added to `CENSUS_SCOPE`:** `src/test/discoveryCacheRevocation.test.ts`, `src/test/discoveryServePathIsolation.test.ts`, `src/test/discoverySeasonReason.test.ts`, `src/test/fixtures/discoveryLegacyGolden.json` and `src/test/helpers/discoveryLegacyScenarios.ts`. They did not exist at `head_commit`, and they are §47's own evidence (§47.5). They are watched so that a later weakening ages this census. Their being "changed" moves no verdict other than §47.6's.
+
+`routes/discovery.ts` is already covered by the acknowledgement. Every hunk in it is in place and line-neutral, and the census's 78 anchored citations were re-checked clean.
+
+`census-layover` counts `routes/discovery.ts`. The only change to a Layover call is that the shadow's PDE page now ALSO passes `layoverGatedPlaces`, which affects shadow data only. The served path's gate is untouched, so no A14 verdict can move.
+
+The freshness ledger JSON is the integrator's to write.
+
+- NOT-GRADED: artifacts/api-server/src/routes/adminPlaceImages.ts — cited in §47.4 only as the moderation writer whose evictions reach Cache A; the fix and every verdict it bears on live in routes/discovery.ts and lib/discoveryCacheEligibility.ts.
+- NOT-GRADED: artifacts/api-server/src/test/verifiedMinorGateReach.test.ts — cited in §47.5 only as the suite whose fixture shape masked the age-gate defect; the gate is graded through discoveryServePathIsolation I4 and discoveryCacheRevocation R8.
+- NOT-GRADED: artifacts/api-server/src/lib/mediaFeedItem.ts — cited in §47.7 only as the reference avatar gate on the media surfaces; the Discovery residual it is compared with is named, not graded, here.
+
 ## Cited, not graded (check:census-scope-coverage)
 
 - NOT-GRADED: artifacts/api-server/src/compass/CompassExplanationEngine.ts — §13.7 item 3 names Compass's HMAC recommendation-token signer as a refactor this lane declined to make in another lane's file. Discovery's recommendation id is minted by lib/discoveryRecommendationId.ts, and no Discovery verdict rests on the signer.

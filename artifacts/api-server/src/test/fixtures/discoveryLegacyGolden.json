@@ -1,0 +1,1637 @@
+{
+ "S1 anonymous cache-A hit, for_you": {
+  "status": 200,
+  "body": {
+   "places": [
+    {
+     "id": "node/1",
+     "name": "Cafe Uno",
+     "category": "for_you",
+     "type": "cafe",
+     "description": null,
+     "distanceKm": 0.1,
+     "lat": 25.771,
+     "lng": -80.19,
+     "tags": [
+      "cafe"
+     ],
+     "address": null,
+     "neighborhood": null,
+     "website": null,
+     "phone": null,
+     "openingHours": null,
+     "rating": 4.5,
+     "isOpenNow": null,
+     "savedCount": 2
+    },
+    {
+     "id": "node/2",
+     "name": "Harbour Walk",
+     "category": "for_you",
+     "type": "attraction",
+     "description": null,
+     "distanceKm": 0.2,
+     "lat": 25.772,
+     "lng": -80.19,
+     "tags": [
+      "attraction"
+     ],
+     "address": null,
+     "neighborhood": null,
+     "website": null,
+     "phone": null,
+     "openingHours": null,
+     "rating": null,
+     "isOpenNow": null,
+     "savedCount": 9
+    },
+    {
+     "id": "node/3",
+     "name": "Night Owl",
+     "category": "for_you",
+     "type": "bar",
+     "description": null,
+     "distanceKm": 0.3,
+     "lat": 25.773,
+     "lng": -80.19,
+     "tags": [
+      "bar"
+     ],
+     "address": null,
+     "neighborhood": null,
+     "website": null,
+     "phone": null,
+     "openingHours": null,
+     "rating": 3.9,
+     "isOpenNow": null,
+     "savedCount": 0
+    },
+    {
+     "id": "node/4",
+     "name": "Museo",
+     "category": "for_you",
+     "type": "museum",
+     "description": null,
+     "distanceKm": 0.4,
+     "lat": 25.774,
+     "lng": -80.19,
+     "tags": [
+      "museum"
+     ],
+     "address": null,
+     "neighborhood": null,
+     "website": null,
+     "phone": null,
+     "openingHours": null,
+     "rating": 4.8,
+     "isOpenNow": null,
+     "savedCount": 5
+    },
+    {
+     "id": "db/p1",
+     "name": "pick p1",
+     "category": "food",
+     "type": "traveler_pick",
+     "description": "blurb p1",
+     "distanceKm": 0,
+     "lat": 25.77,
+     "lng": -80.19,
+     "tags": [
+      "food"
+     ],
+     "address": null,
+     "neighborhood": null,
+     "website": null,
+     "phone": null,
+     "openingHours": null,
+     "rating": 4.2,
+     "isOpenNow": null,
+     "savedCount": 7,
+     "headerImageUrl": null,
+     "headerImageSource": null,
+     "imageSourceType": null,
+     "accuracyStatus": null,
+     "disclaimerRequired": false,
+     "disclaimerText": null,
+     "attribution": null
+    },
+    {
+     "id": "db/p2",
+     "name": "pick p2",
+     "category": "food",
+     "type": "traveler_pick",
+     "description": "blurb p2",
+     "distanceKm": 0,
+     "lat": 25.77,
+     "lng": -80.19,
+     "tags": [
+      "food"
+     ],
+     "address": null,
+     "neighborhood": null,
+     "website": null,
+     "phone": null,
+     "openingHours": null,
+     "rating": 4.2,
+     "isOpenNow": null,
+     "savedCount": 1,
+     "headerImageUrl": null,
+     "headerImageSource": null,
+     "imageSourceType": null,
+     "accuracyStatus": null,
+     "disclaimerRequired": false,
+     "disclaimerText": null,
+     "attribution": null
+    },
+    {
+     "id": "db/p3",
+     "name": "pick p3",
+     "category": "food",
+     "type": "traveler_pick",
+     "description": "blurb p3",
+     "distanceKm": 0,
+     "lat": 25.77,
+     "lng": -80.19,
+     "tags": [
+      "food"
+     ],
+     "address": null,
+     "neighborhood": null,
+     "website": null,
+     "phone": null,
+     "openingHours": null,
+     "rating": 4.9,
+     "isOpenNow": null,
+     "savedCount": 12,
+     "headerImageUrl": null,
+     "headerImageSource": null,
+     "imageSourceType": null,
+     "accuracyStatus": null,
+     "disclaimerRequired": false,
+     "disclaimerText": null,
+     "attribution": null
+    }
+   ],
+   "total": 7,
+   "destination": "Miami",
+   "context": null,
+   "cached": true,
+   "ageFilterMeta": {
+    "ageFilter": "any",
+    "callerDobMissing": false,
+    "callerAgeState": null,
+    "bounds": null
+   },
+   "sourceSummary": {
+    "seededDbCount": 3,
+    "osmCount": 4,
+    "userCreatedCount": 0
+   },
+   "meta": {
+    "cacheLevel": "L1"
+   },
+   "cursor": null
+  }
+ },
+ "S2 signed-in cache-A hit, for_you": {
+  "status": 200,
+  "body": {
+   "places": [
+    {
+     "id": "node/1",
+     "name": "Cafe Uno",
+     "category": "for_you",
+     "type": "cafe",
+     "description": null,
+     "distanceKm": 0.1,
+     "lat": 25.771,
+     "lng": -80.19,
+     "tags": [
+      "cafe"
+     ],
+     "address": null,
+     "neighborhood": null,
+     "website": null,
+     "phone": null,
+     "openingHours": null,
+     "rating": 4.5,
+     "isOpenNow": null,
+     "savedCount": 2
+    },
+    {
+     "id": "node/2",
+     "name": "Harbour Walk",
+     "category": "for_you",
+     "type": "attraction",
+     "description": null,
+     "distanceKm": 0.2,
+     "lat": 25.772,
+     "lng": -80.19,
+     "tags": [
+      "attraction"
+     ],
+     "address": null,
+     "neighborhood": null,
+     "website": null,
+     "phone": null,
+     "openingHours": null,
+     "rating": null,
+     "isOpenNow": null,
+     "savedCount": 9
+    },
+    {
+     "id": "node/3",
+     "name": "Night Owl",
+     "category": "for_you",
+     "type": "bar",
+     "description": null,
+     "distanceKm": 0.3,
+     "lat": 25.773,
+     "lng": -80.19,
+     "tags": [
+      "bar"
+     ],
+     "address": null,
+     "neighborhood": null,
+     "website": null,
+     "phone": null,
+     "openingHours": null,
+     "rating": 3.9,
+     "isOpenNow": null,
+     "savedCount": 0
+    },
+    {
+     "id": "node/4",
+     "name": "Museo",
+     "category": "for_you",
+     "type": "museum",
+     "description": null,
+     "distanceKm": 0.4,
+     "lat": 25.774,
+     "lng": -80.19,
+     "tags": [
+      "museum"
+     ],
+     "address": null,
+     "neighborhood": null,
+     "website": null,
+     "phone": null,
+     "openingHours": null,
+     "rating": 4.8,
+     "isOpenNow": null,
+     "savedCount": 5
+    },
+    {
+     "id": "db/p1",
+     "name": "pick p1",
+     "category": "food",
+     "type": "traveler_pick",
+     "description": "blurb p1",
+     "distanceKm": 0,
+     "lat": 25.77,
+     "lng": -80.19,
+     "tags": [
+      "food"
+     ],
+     "address": null,
+     "neighborhood": null,
+     "website": null,
+     "phone": null,
+     "openingHours": null,
+     "rating": 4.2,
+     "isOpenNow": null,
+     "savedCount": 7,
+     "headerImageUrl": null,
+     "headerImageSource": null,
+     "imageSourceType": null,
+     "accuracyStatus": null,
+     "disclaimerRequired": false,
+     "disclaimerText": null,
+     "attribution": null
+    },
+    {
+     "id": "db/p2",
+     "name": "pick p2",
+     "category": "food",
+     "type": "traveler_pick",
+     "description": "blurb p2",
+     "distanceKm": 0,
+     "lat": 25.77,
+     "lng": -80.19,
+     "tags": [
+      "food"
+     ],
+     "address": null,
+     "neighborhood": null,
+     "website": null,
+     "phone": null,
+     "openingHours": null,
+     "rating": 4.2,
+     "isOpenNow": null,
+     "savedCount": 1,
+     "headerImageUrl": null,
+     "headerImageSource": null,
+     "imageSourceType": null,
+     "accuracyStatus": null,
+     "disclaimerRequired": false,
+     "disclaimerText": null,
+     "attribution": null
+    },
+    {
+     "id": "db/p3",
+     "name": "pick p3",
+     "category": "food",
+     "type": "traveler_pick",
+     "description": "blurb p3",
+     "distanceKm": 0,
+     "lat": 25.77,
+     "lng": -80.19,
+     "tags": [
+      "food"
+     ],
+     "address": null,
+     "neighborhood": null,
+     "website": null,
+     "phone": null,
+     "openingHours": null,
+     "rating": 4.9,
+     "isOpenNow": null,
+     "savedCount": 12,
+     "headerImageUrl": null,
+     "headerImageSource": null,
+     "imageSourceType": null,
+     "accuracyStatus": null,
+     "disclaimerRequired": false,
+     "disclaimerText": null,
+     "attribution": null
+    }
+   ],
+   "total": 7,
+   "destination": "Miami",
+   "context": "In this city",
+   "cached": true,
+   "ageFilterMeta": {
+    "ageFilter": "any",
+    "callerDobMissing": false,
+    "callerAgeState": null,
+    "bounds": null
+   },
+   "sourceSummary": {
+    "seededDbCount": 3,
+    "osmCount": 4,
+    "userCreatedCount": 0
+   },
+   "meta": {
+    "cacheLevel": "L1"
+   },
+   "cursor": null
+  }
+ },
+ "S3 signed-in cache-A hit, popular + openNow": {
+  "status": 200,
+  "body": {
+   "places": [
+    {
+     "id": "db/p3",
+     "name": "pick p3",
+     "category": "food",
+     "type": "traveler_pick",
+     "description": "blurb p3",
+     "distanceKm": 0,
+     "lat": 25.77,
+     "lng": -80.19,
+     "tags": [
+      "food"
+     ],
+     "address": null,
+     "neighborhood": null,
+     "website": null,
+     "phone": null,
+     "openingHours": null,
+     "rating": 4.9,
+     "isOpenNow": null,
+     "savedCount": 12,
+     "headerImageUrl": null,
+     "headerImageSource": null,
+     "imageSourceType": null,
+     "accuracyStatus": null,
+     "disclaimerRequired": false,
+     "disclaimerText": null,
+     "attribution": null
+    },
+    {
+     "id": "node/2",
+     "name": "Harbour Walk",
+     "category": "for_you",
+     "type": "attraction",
+     "description": null,
+     "distanceKm": 0.2,
+     "lat": 25.772,
+     "lng": -80.19,
+     "tags": [
+      "attraction"
+     ],
+     "address": null,
+     "neighborhood": null,
+     "website": null,
+     "phone": null,
+     "openingHours": null,
+     "rating": null,
+     "isOpenNow": null,
+     "savedCount": 9
+    },
+    {
+     "id": "db/p1",
+     "name": "pick p1",
+     "category": "food",
+     "type": "traveler_pick",
+     "description": "blurb p1",
+     "distanceKm": 0,
+     "lat": 25.77,
+     "lng": -80.19,
+     "tags": [
+      "food"
+     ],
+     "address": null,
+     "neighborhood": null,
+     "website": null,
+     "phone": null,
+     "openingHours": null,
+     "rating": 4.2,
+     "isOpenNow": null,
+     "savedCount": 7,
+     "headerImageUrl": null,
+     "headerImageSource": null,
+     "imageSourceType": null,
+     "accuracyStatus": null,
+     "disclaimerRequired": false,
+     "disclaimerText": null,
+     "attribution": null
+    },
+    {
+     "id": "node/4",
+     "name": "Museo",
+     "category": "for_you",
+     "type": "museum",
+     "description": null,
+     "distanceKm": 0.4,
+     "lat": 25.774,
+     "lng": -80.19,
+     "tags": [
+      "museum"
+     ],
+     "address": null,
+     "neighborhood": null,
+     "website": null,
+     "phone": null,
+     "openingHours": null,
+     "rating": 4.8,
+     "isOpenNow": null,
+     "savedCount": 5
+    },
+    {
+     "id": "node/1",
+     "name": "Cafe Uno",
+     "category": "for_you",
+     "type": "cafe",
+     "description": null,
+     "distanceKm": 0.1,
+     "lat": 25.771,
+     "lng": -80.19,
+     "tags": [
+      "cafe"
+     ],
+     "address": null,
+     "neighborhood": null,
+     "website": null,
+     "phone": null,
+     "openingHours": null,
+     "rating": 4.5,
+     "isOpenNow": null,
+     "savedCount": 2
+    },
+    {
+     "id": "db/p2",
+     "name": "pick p2",
+     "category": "food",
+     "type": "traveler_pick",
+     "description": "blurb p2",
+     "distanceKm": 0,
+     "lat": 25.77,
+     "lng": -80.19,
+     "tags": [
+      "food"
+     ],
+     "address": null,
+     "neighborhood": null,
+     "website": null,
+     "phone": null,
+     "openingHours": null,
+     "rating": 4.2,
+     "isOpenNow": null,
+     "savedCount": 1,
+     "headerImageUrl": null,
+     "headerImageSource": null,
+     "imageSourceType": null,
+     "accuracyStatus": null,
+     "disclaimerRequired": false,
+     "disclaimerText": null,
+     "attribution": null
+    },
+    {
+     "id": "node/3",
+     "name": "Night Owl",
+     "category": "for_you",
+     "type": "bar",
+     "description": null,
+     "distanceKm": 0.3,
+     "lat": 25.773,
+     "lng": -80.19,
+     "tags": [
+      "bar"
+     ],
+     "address": null,
+     "neighborhood": null,
+     "website": null,
+     "phone": null,
+     "openingHours": null,
+     "rating": 3.9,
+     "isOpenNow": null,
+     "savedCount": 0
+    }
+   ],
+   "total": 7,
+   "destination": "Miami",
+   "context": "In this city",
+   "cached": true,
+   "ageFilterMeta": {
+    "ageFilter": "any",
+    "callerDobMissing": false,
+    "callerAgeState": null,
+    "bounds": null
+   },
+   "sourceSummary": {
+    "seededDbCount": 3,
+    "osmCount": 4,
+    "userCreatedCount": 0
+   },
+   "meta": {
+    "cacheLevel": "L1"
+   },
+   "cursor": null
+  }
+ },
+ "S4 signed-in cache-A hit, adult with open_to_me": {
+  "status": 200,
+  "body": {
+   "places": [
+    {
+     "id": "node/1",
+     "name": "Cafe Uno",
+     "category": "for_you",
+     "type": "cafe",
+     "description": null,
+     "distanceKm": 0.1,
+     "lat": 25.771,
+     "lng": -80.19,
+     "tags": [
+      "cafe"
+     ],
+     "address": null,
+     "neighborhood": null,
+     "website": null,
+     "phone": null,
+     "openingHours": null,
+     "rating": 4.5,
+     "isOpenNow": null,
+     "savedCount": 2
+    },
+    {
+     "id": "node/2",
+     "name": "Harbour Walk",
+     "category": "for_you",
+     "type": "attraction",
+     "description": null,
+     "distanceKm": 0.2,
+     "lat": 25.772,
+     "lng": -80.19,
+     "tags": [
+      "attraction"
+     ],
+     "address": null,
+     "neighborhood": null,
+     "website": null,
+     "phone": null,
+     "openingHours": null,
+     "rating": null,
+     "isOpenNow": null,
+     "savedCount": 9
+    },
+    {
+     "id": "node/3",
+     "name": "Night Owl",
+     "category": "for_you",
+     "type": "bar",
+     "description": null,
+     "distanceKm": 0.3,
+     "lat": 25.773,
+     "lng": -80.19,
+     "tags": [
+      "bar"
+     ],
+     "address": null,
+     "neighborhood": null,
+     "website": null,
+     "phone": null,
+     "openingHours": null,
+     "rating": 3.9,
+     "isOpenNow": null,
+     "savedCount": 0
+    },
+    {
+     "id": "node/4",
+     "name": "Museo",
+     "category": "for_you",
+     "type": "museum",
+     "description": null,
+     "distanceKm": 0.4,
+     "lat": 25.774,
+     "lng": -80.19,
+     "tags": [
+      "museum"
+     ],
+     "address": null,
+     "neighborhood": null,
+     "website": null,
+     "phone": null,
+     "openingHours": null,
+     "rating": 4.8,
+     "isOpenNow": null,
+     "savedCount": 5
+    },
+    {
+     "id": "db/p1",
+     "name": "pick p1",
+     "category": "food",
+     "type": "traveler_pick",
+     "description": "blurb p1",
+     "distanceKm": 0,
+     "lat": 25.77,
+     "lng": -80.19,
+     "tags": [
+      "food"
+     ],
+     "address": null,
+     "neighborhood": null,
+     "website": null,
+     "phone": null,
+     "openingHours": null,
+     "rating": 4.2,
+     "isOpenNow": null,
+     "savedCount": 7,
+     "headerImageUrl": null,
+     "headerImageSource": null,
+     "imageSourceType": null,
+     "accuracyStatus": null,
+     "disclaimerRequired": false,
+     "disclaimerText": null,
+     "attribution": null
+    },
+    {
+     "id": "db/p2",
+     "name": "pick p2",
+     "category": "food",
+     "type": "traveler_pick",
+     "description": "blurb p2",
+     "distanceKm": 0,
+     "lat": 25.77,
+     "lng": -80.19,
+     "tags": [
+      "food"
+     ],
+     "address": null,
+     "neighborhood": null,
+     "website": null,
+     "phone": null,
+     "openingHours": null,
+     "rating": 4.2,
+     "isOpenNow": null,
+     "savedCount": 1,
+     "headerImageUrl": null,
+     "headerImageSource": null,
+     "imageSourceType": null,
+     "accuracyStatus": null,
+     "disclaimerRequired": false,
+     "disclaimerText": null,
+     "attribution": null
+    },
+    {
+     "id": "db/p3",
+     "name": "pick p3",
+     "category": "food",
+     "type": "traveler_pick",
+     "description": "blurb p3",
+     "distanceKm": 0,
+     "lat": 25.77,
+     "lng": -80.19,
+     "tags": [
+      "food"
+     ],
+     "address": null,
+     "neighborhood": null,
+     "website": null,
+     "phone": null,
+     "openingHours": null,
+     "rating": 4.9,
+     "isOpenNow": null,
+     "savedCount": 12,
+     "headerImageUrl": null,
+     "headerImageSource": null,
+     "imageSourceType": null,
+     "accuracyStatus": null,
+     "disclaimerRequired": false,
+     "disclaimerText": null,
+     "attribution": null
+    }
+   ],
+   "total": 7,
+   "destination": "Miami",
+   "context": "In this city",
+   "cached": true,
+   "ageFilterMeta": {
+    "ageFilter": "open_to_me",
+    "callerDobMissing": false,
+    "callerAgeState": "ok",
+    "bounds": {
+     "min": 36,
+     "max": 36
+    }
+   },
+   "sourceSummary": {
+    "seededDbCount": 3,
+    "osmCount": 4,
+    "userCreatedCount": 0
+   },
+   "meta": {
+    "cacheLevel": "L1"
+   },
+   "cursor": null
+  }
+ },
+ "S5 anonymous cold fetch, food": {
+  "status": 200,
+  "body": {
+   "places": [
+    {
+     "id": "node/11",
+     "name": "Taco Stand",
+     "category": "food",
+     "type": "fast food",
+     "description": null,
+     "distanceKm": 0.1,
+     "lat": 25.771,
+     "lng": -80.191,
+     "tags": [
+      "fast food"
+     ],
+     "address": null,
+     "neighborhood": null,
+     "wikidataId": null,
+     "osmImageUrl": null,
+     "website": null,
+     "phone": null,
+     "openingHours": null,
+     "rating": null,
+     "isOpenNow": null
+    },
+    {
+     "id": "node/12",
+     "name": "Bistro Doce",
+     "category": "food",
+     "type": "restaurant",
+     "description": null,
+     "distanceKm": 0.6,
+     "lat": 25.775,
+     "lng": -80.191,
+     "tags": [
+      "restaurant"
+     ],
+     "address": null,
+     "neighborhood": null,
+     "wikidataId": null,
+     "osmImageUrl": null,
+     "website": null,
+     "phone": null,
+     "openingHours": null,
+     "rating": null,
+     "isOpenNow": null
+    },
+    {
+     "id": "node/13",
+     "name": "Corner Bar",
+     "category": "food",
+     "type": "bar",
+     "description": null,
+     "distanceKm": 1.1,
+     "lat": 25.78,
+     "lng": -80.191,
+     "tags": [
+      "bar"
+     ],
+     "address": null,
+     "neighborhood": null,
+     "wikidataId": null,
+     "osmImageUrl": null,
+     "website": null,
+     "phone": null,
+     "openingHours": null,
+     "rating": null,
+     "isOpenNow": null
+    },
+    {
+     "id": "db/p1",
+     "name": "pick p1",
+     "category": "food",
+     "type": "traveler_pick",
+     "description": "blurb p1",
+     "distanceKm": 0,
+     "lat": 25.77,
+     "lng": -80.19,
+     "tags": [
+      "food"
+     ],
+     "address": null,
+     "neighborhood": null,
+     "website": null,
+     "phone": null,
+     "openingHours": null,
+     "rating": 4.2,
+     "isOpenNow": null,
+     "savedCount": 7,
+     "headerImageUrl": null,
+     "headerImageSource": null,
+     "imageSourceType": null,
+     "accuracyStatus": null,
+     "disclaimerRequired": false,
+     "disclaimerText": null,
+     "attribution": null
+    },
+    {
+     "id": "db/p2",
+     "name": "pick p2",
+     "category": "food",
+     "type": "traveler_pick",
+     "description": "blurb p2",
+     "distanceKm": 0,
+     "lat": 25.77,
+     "lng": -80.19,
+     "tags": [
+      "food"
+     ],
+     "address": null,
+     "neighborhood": null,
+     "website": null,
+     "phone": null,
+     "openingHours": null,
+     "rating": 4.2,
+     "isOpenNow": null,
+     "savedCount": 1,
+     "headerImageUrl": null,
+     "headerImageSource": null,
+     "imageSourceType": null,
+     "accuracyStatus": null,
+     "disclaimerRequired": false,
+     "disclaimerText": null,
+     "attribution": null
+    },
+    {
+     "id": "db/p3",
+     "name": "pick p3",
+     "category": "food",
+     "type": "traveler_pick",
+     "description": "blurb p3",
+     "distanceKm": 0,
+     "lat": 25.77,
+     "lng": -80.19,
+     "tags": [
+      "food"
+     ],
+     "address": null,
+     "neighborhood": null,
+     "website": null,
+     "phone": null,
+     "openingHours": null,
+     "rating": 4.9,
+     "isOpenNow": null,
+     "savedCount": 12,
+     "headerImageUrl": null,
+     "headerImageSource": null,
+     "imageSourceType": null,
+     "accuracyStatus": null,
+     "disclaimerRequired": false,
+     "disclaimerText": null,
+     "attribution": null
+    }
+   ],
+   "total": 6,
+   "destination": "Miami",
+   "context": null,
+   "cached": false,
+   "ageFilterMeta": {
+    "ageFilter": "any",
+    "callerDobMissing": false,
+    "callerAgeState": null,
+    "bounds": null
+   },
+   "sourceSummary": {
+    "seededDbCount": 3,
+    "osmCount": 3,
+    "userCreatedCount": 0
+   },
+   "meta": {
+    "cacheLevel": "miss"
+   },
+   "cursor": null
+  }
+ },
+ "S6 signed-in cold fetch, food (PDE-ranked in every mode)": {
+  "status": 200,
+  "body": {
+   "places": [
+    {
+     "id": "db/p3",
+     "name": "pick p3",
+     "category": "food",
+     "type": "traveler_pick",
+     "description": "blurb p3",
+     "distanceKm": 0,
+     "lat": 25.77,
+     "lng": -80.19,
+     "tags": [
+      "food"
+     ],
+     "address": null,
+     "neighborhood": null,
+     "website": null,
+     "phone": null,
+     "openingHours": null,
+     "rating": 4.9,
+     "isOpenNow": null,
+     "savedCount": 12,
+     "headerImageUrl": null,
+     "headerImageSource": null,
+     "imageSourceType": null,
+     "accuracyStatus": null,
+     "disclaimerRequired": false,
+     "disclaimerText": null,
+     "attribution": null
+    },
+    {
+     "id": "db/p1",
+     "name": "pick p1",
+     "category": "food",
+     "type": "traveler_pick",
+     "description": "blurb p1",
+     "distanceKm": 0,
+     "lat": 25.77,
+     "lng": -80.19,
+     "tags": [
+      "food"
+     ],
+     "address": null,
+     "neighborhood": null,
+     "website": null,
+     "phone": null,
+     "openingHours": null,
+     "rating": 4.2,
+     "isOpenNow": null,
+     "savedCount": 7,
+     "headerImageUrl": null,
+     "headerImageSource": null,
+     "imageSourceType": null,
+     "accuracyStatus": null,
+     "disclaimerRequired": false,
+     "disclaimerText": null,
+     "attribution": null
+    },
+    {
+     "id": "node/11",
+     "name": "Taco Stand",
+     "category": "food",
+     "type": "fast food",
+     "description": null,
+     "distanceKm": 0.1,
+     "lat": 25.771,
+     "lng": -80.191,
+     "tags": [
+      "fast food"
+     ],
+     "address": null,
+     "neighborhood": null,
+     "wikidataId": null,
+     "osmImageUrl": null,
+     "website": null,
+     "phone": null,
+     "openingHours": null,
+     "rating": null,
+     "isOpenNow": null
+    },
+    {
+     "id": "db/p2",
+     "name": "pick p2",
+     "category": "food",
+     "type": "traveler_pick",
+     "description": "blurb p2",
+     "distanceKm": 0,
+     "lat": 25.77,
+     "lng": -80.19,
+     "tags": [
+      "food"
+     ],
+     "address": null,
+     "neighborhood": null,
+     "website": null,
+     "phone": null,
+     "openingHours": null,
+     "rating": 4.2,
+     "isOpenNow": null,
+     "savedCount": 1,
+     "headerImageUrl": null,
+     "headerImageSource": null,
+     "imageSourceType": null,
+     "accuracyStatus": null,
+     "disclaimerRequired": false,
+     "disclaimerText": null,
+     "attribution": null
+    },
+    {
+     "id": "node/12",
+     "name": "Bistro Doce",
+     "category": "food",
+     "type": "restaurant",
+     "description": null,
+     "distanceKm": 0.6,
+     "lat": 25.775,
+     "lng": -80.191,
+     "tags": [
+      "restaurant"
+     ],
+     "address": null,
+     "neighborhood": null,
+     "wikidataId": null,
+     "osmImageUrl": null,
+     "website": null,
+     "phone": null,
+     "openingHours": null,
+     "rating": null,
+     "isOpenNow": null
+    },
+    {
+     "id": "node/13",
+     "name": "Corner Bar",
+     "category": "food",
+     "type": "bar",
+     "description": null,
+     "distanceKm": 1.1,
+     "lat": 25.78,
+     "lng": -80.191,
+     "tags": [
+      "bar"
+     ],
+     "address": null,
+     "neighborhood": null,
+     "wikidataId": null,
+     "osmImageUrl": null,
+     "website": null,
+     "phone": null,
+     "openingHours": null,
+     "rating": null,
+     "isOpenNow": null
+    }
+   ],
+   "total": 6,
+   "destination": "Miami",
+   "context": "In this city",
+   "cached": false,
+   "ageFilterMeta": {
+    "ageFilter": "any",
+    "callerDobMissing": false,
+    "callerAgeState": null,
+    "bounds": null
+   },
+   "sourceSummary": {
+    "seededDbCount": 3,
+    "osmCount": 3,
+    "userCreatedCount": 0
+   },
+   "meta": {
+    "cacheLevel": "miss"
+   },
+   "cursor": null
+  }
+ },
+ "S7 signed-in Compass fresh rank, for_you": {
+  "status": 200,
+  "body": {
+   "places": [
+    {
+     "id": "db/p3",
+     "name": "pick p3",
+     "category": "food",
+     "type": "traveler_pick",
+     "description": "blurb p3",
+     "distanceKm": 0,
+     "lat": 25.77,
+     "lng": -80.19,
+     "tags": [
+      "food"
+     ],
+     "address": null,
+     "neighborhood": null,
+     "website": null,
+     "phone": null,
+     "openingHours": null,
+     "rating": 4.9,
+     "isOpenNow": null,
+     "savedCount": 12,
+     "headerImageUrl": null,
+     "headerImageSource": null,
+     "imageSourceType": null,
+     "accuracyStatus": null,
+     "disclaimerRequired": false,
+     "disclaimerText": null,
+     "attribution": null
+    },
+    {
+     "id": "db/p1",
+     "name": "pick p1",
+     "category": "food",
+     "type": "traveler_pick",
+     "description": "blurb p1",
+     "distanceKm": 0,
+     "lat": 25.77,
+     "lng": -80.19,
+     "tags": [
+      "food"
+     ],
+     "address": null,
+     "neighborhood": null,
+     "website": null,
+     "phone": null,
+     "openingHours": null,
+     "rating": 4.2,
+     "isOpenNow": null,
+     "savedCount": 7,
+     "headerImageUrl": null,
+     "headerImageSource": null,
+     "imageSourceType": null,
+     "accuracyStatus": null,
+     "disclaimerRequired": false,
+     "disclaimerText": null,
+     "attribution": null
+    },
+    {
+     "id": "db/p2",
+     "name": "pick p2",
+     "category": "food",
+     "type": "traveler_pick",
+     "description": "blurb p2",
+     "distanceKm": 0,
+     "lat": 25.77,
+     "lng": -80.19,
+     "tags": [
+      "food"
+     ],
+     "address": null,
+     "neighborhood": null,
+     "website": null,
+     "phone": null,
+     "openingHours": null,
+     "rating": 4.2,
+     "isOpenNow": null,
+     "savedCount": 1,
+     "headerImageUrl": null,
+     "headerImageSource": null,
+     "imageSourceType": null,
+     "accuracyStatus": null,
+     "disclaimerRequired": false,
+     "disclaimerText": null,
+     "attribution": null
+    }
+   ],
+   "total": 3,
+   "destination": "Miami",
+   "context": "In this city",
+   "cached": false,
+   "ageFilterMeta": {
+    "ageFilter": "any",
+    "callerDobMissing": false,
+    "callerAgeState": null,
+    "bounds": null
+   },
+   "sourceSummary": {
+    "seededDbCount": 3,
+    "osmCount": 0,
+    "userCreatedCount": 0
+   },
+   "cursor": null
+  }
+ },
+ "S8 signed-in Compass cache-B hit, for_you": {
+  "status": 200,
+  "body": {
+   "places": [
+    {
+     "id": "db/p3",
+     "name": "pick p3",
+     "category": "food",
+     "type": "traveler_pick",
+     "description": "blurb p3",
+     "distanceKm": 0,
+     "lat": 25.77,
+     "lng": -80.19,
+     "tags": [
+      "food"
+     ],
+     "address": null,
+     "neighborhood": null,
+     "website": null,
+     "phone": null,
+     "openingHours": null,
+     "rating": 4.9,
+     "isOpenNow": null,
+     "savedCount": 12,
+     "headerImageUrl": null,
+     "headerImageSource": null,
+     "imageSourceType": null,
+     "accuracyStatus": null,
+     "disclaimerRequired": false,
+     "disclaimerText": null,
+     "attribution": null
+    },
+    {
+     "id": "db/p1",
+     "name": "pick p1",
+     "category": "food",
+     "type": "traveler_pick",
+     "description": "blurb p1",
+     "distanceKm": 0,
+     "lat": 25.77,
+     "lng": -80.19,
+     "tags": [
+      "food"
+     ],
+     "address": null,
+     "neighborhood": null,
+     "website": null,
+     "phone": null,
+     "openingHours": null,
+     "rating": 4.2,
+     "isOpenNow": null,
+     "savedCount": 7,
+     "headerImageUrl": null,
+     "headerImageSource": null,
+     "imageSourceType": null,
+     "accuracyStatus": null,
+     "disclaimerRequired": false,
+     "disclaimerText": null,
+     "attribution": null
+    },
+    {
+     "id": "db/p2",
+     "name": "pick p2",
+     "category": "food",
+     "type": "traveler_pick",
+     "description": "blurb p2",
+     "distanceKm": 0,
+     "lat": 25.77,
+     "lng": -80.19,
+     "tags": [
+      "food"
+     ],
+     "address": null,
+     "neighborhood": null,
+     "website": null,
+     "phone": null,
+     "openingHours": null,
+     "rating": 4.2,
+     "isOpenNow": null,
+     "savedCount": 1,
+     "headerImageUrl": null,
+     "headerImageSource": null,
+     "imageSourceType": null,
+     "accuracyStatus": null,
+     "disclaimerRequired": false,
+     "disclaimerText": null,
+     "attribution": null
+    }
+   ],
+   "total": 3,
+   "destination": "Miami",
+   "context": "In this city",
+   "cached": true,
+   "ageFilterMeta": {
+    "ageFilter": "any",
+    "callerDobMissing": false,
+    "callerAgeState": null,
+    "bounds": null
+   },
+   "sourceSummary": {
+    "seededDbCount": 3,
+    "osmCount": 0,
+    "userCreatedCount": 0
+   },
+   "cursor": null
+  }
+ },
+ "S9 anonymous community": {
+  "status": 200,
+  "body": {
+   "items": [
+    {
+     "id": "p1",
+     "city": "Miami",
+     "name": "pick p1",
+     "placeType": "traveler_pick",
+     "category": "food",
+     "neighborhood": null,
+     "blurb": "blurb p1",
+     "imageUrl": null,
+     "submittedBy": null,
+     "savedCount": 7,
+     "tag": null,
+     "note": null,
+     "rating": 4.2,
+     "source": "traveler",
+     "status": "active",
+     "verified": false,
+     "createdAt": "2026-01-01T00:00:00.000Z",
+     "lat": 25.77,
+     "lng": -80.19,
+     "isSaved": false
+    },
+    {
+     "id": "p2",
+     "city": "Miami",
+     "name": "pick p2",
+     "placeType": "traveler_pick",
+     "category": "food",
+     "neighborhood": null,
+     "blurb": "blurb p2",
+     "imageUrl": null,
+     "submittedBy": {
+      "id": "55550000-0000-4000-8000-000000000005",
+      "name": "@h5555",
+      "displayName": null,
+      "avatarUrl": null,
+      "handle": "h5555"
+     },
+     "savedCount": 1,
+     "tag": null,
+     "note": null,
+     "rating": 4.2,
+     "source": "traveler",
+     "status": "active",
+     "verified": false,
+     "createdAt": "2026-01-01T00:00:00.000Z",
+     "lat": 25.77,
+     "lng": -80.19,
+     "isSaved": false
+    },
+    {
+     "id": "p3",
+     "city": "Miami",
+     "name": "pick p3",
+     "placeType": "traveler_pick",
+     "category": "food",
+     "neighborhood": null,
+     "blurb": "blurb p3",
+     "imageUrl": null,
+     "submittedBy": {
+      "id": "77770000-0000-4000-8000-000000000007",
+      "name": "@h7777",
+      "displayName": null,
+      "avatarUrl": null,
+      "handle": "h7777"
+     },
+     "savedCount": 12,
+     "tag": null,
+     "note": null,
+     "rating": 4.9,
+     "source": "traveler",
+     "status": "active",
+     "verified": false,
+     "createdAt": "2026-01-01T00:00:00.000Z",
+     "lat": 25.77,
+     "lng": -80.19,
+     "isSaved": false
+    }
+   ],
+   "city": "Miami",
+   "total": 3,
+   "ageFilterMeta": {
+    "ageFilter": "any",
+    "callerDobMissing": false,
+    "callerAgeState": null,
+    "bounds": null
+   }
+  }
+ },
+ "S10 signed-in community": {
+  "status": 200,
+  "body": {
+   "items": [
+    {
+     "id": "p1",
+     "city": "Miami",
+     "name": "pick p1",
+     "placeType": "traveler_pick",
+     "category": "food",
+     "neighborhood": null,
+     "blurb": "blurb p1",
+     "imageUrl": null,
+     "submittedBy": null,
+     "savedCount": 7,
+     "tag": null,
+     "note": null,
+     "rating": 4.2,
+     "source": "traveler",
+     "status": "active",
+     "verified": false,
+     "createdAt": "2026-01-01T00:00:00.000Z",
+     "lat": 25.77,
+     "lng": -80.19,
+     "isSaved": false
+    },
+    {
+     "id": "p2",
+     "city": "Miami",
+     "name": "pick p2",
+     "placeType": "traveler_pick",
+     "category": "food",
+     "neighborhood": null,
+     "blurb": "blurb p2",
+     "imageUrl": null,
+     "submittedBy": {
+      "id": "55550000-0000-4000-8000-000000000005",
+      "name": "@h5555",
+      "displayName": null,
+      "avatarUrl": null,
+      "handle": "h5555"
+     },
+     "savedCount": 1,
+     "tag": null,
+     "note": null,
+     "rating": 4.2,
+     "source": "traveler",
+     "status": "active",
+     "verified": false,
+     "createdAt": "2026-01-01T00:00:00.000Z",
+     "lat": 25.77,
+     "lng": -80.19,
+     "isSaved": false
+    },
+    {
+     "id": "p3",
+     "city": "Miami",
+     "name": "pick p3",
+     "placeType": "traveler_pick",
+     "category": "food",
+     "neighborhood": null,
+     "blurb": "blurb p3",
+     "imageUrl": null,
+     "submittedBy": {
+      "id": "77770000-0000-4000-8000-000000000007",
+      "name": "@h7777",
+      "displayName": null,
+      "avatarUrl": null,
+      "handle": "h7777"
+     },
+     "savedCount": 12,
+     "tag": null,
+     "note": null,
+     "rating": 4.9,
+     "source": "traveler",
+     "status": "active",
+     "verified": false,
+     "createdAt": "2026-01-01T00:00:00.000Z",
+     "lat": 25.77,
+     "lng": -80.19,
+     "isSaved": false
+    }
+   ],
+   "city": "Miami",
+   "total": 3,
+   "ageFilterMeta": {
+    "ageFilter": "any",
+    "callerDobMissing": false,
+    "callerAgeState": null,
+    "bounds": null
+   }
+  }
+ },
+ "S11 signed-in feed": {
+  "status": 200,
+  "body": {
+   "places": [
+    {
+     "id": "db/p1",
+     "name": "pick p1",
+     "category": "food",
+     "type": "traveler_pick",
+     "description": "blurb p1",
+     "distanceKm": 0,
+     "lat": 25.77,
+     "lng": -80.19,
+     "tags": [
+      "food"
+     ],
+     "address": null,
+     "neighborhood": null,
+     "website": null,
+     "phone": null,
+     "openingHours": null,
+     "rating": 4.2,
+     "isOpenNow": null,
+     "savedCount": 7,
+     "headerImageUrl": null,
+     "headerImageSource": null,
+     "imageSourceType": null,
+     "accuracyStatus": null,
+     "disclaimerRequired": false,
+     "disclaimerText": null,
+     "attribution": null
+    },
+    {
+     "id": "db/p2",
+     "name": "pick p2",
+     "category": "food",
+     "type": "traveler_pick",
+     "description": "blurb p2",
+     "distanceKm": 0,
+     "lat": 25.77,
+     "lng": -80.19,
+     "tags": [
+      "food"
+     ],
+     "address": null,
+     "neighborhood": null,
+     "website": null,
+     "phone": null,
+     "openingHours": null,
+     "rating": 4.2,
+     "isOpenNow": null,
+     "savedCount": 1,
+     "headerImageUrl": null,
+     "headerImageSource": null,
+     "imageSourceType": null,
+     "accuracyStatus": null,
+     "disclaimerRequired": false,
+     "disclaimerText": null,
+     "attribution": null
+    },
+    {
+     "id": "db/p3",
+     "name": "pick p3",
+     "category": "food",
+     "type": "traveler_pick",
+     "description": "blurb p3",
+     "distanceKm": 0,
+     "lat": 25.77,
+     "lng": -80.19,
+     "tags": [
+      "food"
+     ],
+     "address": null,
+     "neighborhood": null,
+     "website": null,
+     "phone": null,
+     "openingHours": null,
+     "rating": 4.9,
+     "isOpenNow": null,
+     "savedCount": 12,
+     "headerImageUrl": null,
+     "headerImageSource": null,
+     "imageSourceType": null,
+     "accuracyStatus": null,
+     "disclaimerRequired": false,
+     "disclaimerText": null,
+     "attribution": null
+    }
+   ],
+   "events": [],
+   "posts": [],
+   "memories": [],
+   "sections": [],
+   "nextCursor": null,
+   "total": 3,
+   "destination": "Miami",
+   "context": null,
+   "sourceSummary": {
+    "seededDbCount": 3,
+    "osmCount": 0,
+    "userCreatedCount": 0
+   }
+  }
+ }
+}

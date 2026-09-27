@@ -3604,6 +3604,17 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/test/discoveryShadow.test.ts",
     "artifacts/api-server/src/test/discoveryNegativeSignalWriter.test.ts",
     "artifacts/api-server/src/test/discoveryLocalMomentum.test.ts",
+    // ADDED by census-discovery §47. The suites §47's findings rest on — cache-B
+    // revocation, per-viewer isolation of the shared caches, the legacy golden
+    // and the season reason — plus the golden fixture and the scenario module
+    // that produced it. A weakened golden or a loosened revocation assertion
+    // must age this census, or DSV2-05/06's strengthened `C` and DC-25's move
+    // stand on evidence nothing watches.
+    "artifacts/api-server/src/test/discoveryCacheRevocation.test.ts",
+    "artifacts/api-server/src/test/discoveryServePathIsolation.test.ts",
+    "artifacts/api-server/src/test/discoverySeasonReason.test.ts",
+    "artifacts/api-server/src/test/fixtures/discoveryLegacyGolden.json",
+    "artifacts/api-server/src/test/helpers/discoveryLegacyScenarios.ts",
     // Cited once by a cross-surface row; the Layover lane owns the file, this
     // census only grades what it reads from it.
     "artifacts/api-server/src/services/airport/__tests__/layoverPresenceDegraded.test.ts",
