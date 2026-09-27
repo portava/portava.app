@@ -15657,3 +15657,257 @@ them.
 - NOT-GRADED: artifacts/api-server/src/services/wall/WallRankingService.ts — cited in §43.3 for the For You rank numbers that keep a gap where a withheld insertion was dropped; census-wall's ranker, no MD verdict rests on it.
 - NOT-GRADED: artifacts/api-server/src/routes/places.ts — cited in §43.5 (4) for the near-duplicate groups endpoint that can carry a withheld post's media; a Places route, recorded, not fixed, no MD verdict rests on it.
 - NOT-GRADED: artifacts/api-server/src/test/placeLiving.test.ts — the Live Places living-page suite, cited in §43.4 for the two cached-payload fixtures that now model a mode-aware cache row; its assertions are unchanged and no MD verdict rests on it.
+
+## 41. Wave-8 integration — the 49 non-C rows, each split into implementation, activation and external verification — 2026-09-27
+
+Integration owner's section. It records what the wave-8 lanes merged, restates
+every one of the 49 rows that are not C with the split the owner asked for, and
+takes the one row no lane owned (MD2). It moves no row by itself; where a lane
+moved one, the lane's section is the evidence and is named.
+
+The owner's instruction, verbatim: "Resume the remaining 49 requirements. For
+each, distinguish unfinished implementation from activation approval or
+external verification. Complete all accessible code, integration, native-build
+preparation, and tests. Attempt available builds and device runs; where
+blocked, identify the exact missing access, vendor capability, or device."
+
+### 41.1 What was merged
+
+| Lane | Section | What it did | Rows moved |
+|---|---|---|---|
+| E | §38 | Six stale census statements and one lagging sentence corrected; the citation guards made to read Expo route-group paths; eleven short-path citations repointed; TR128, TR267, TR341 and TR412 reclassified NEITHER → BOTH (census-trips §76) | none |
+| I | §35 | The media → intelligence boundary: every media_assets writer states its source; contributor reputation served to its subject only; the owner's questions written out | none |
+| T | §33, §33.13 | H7, ruled yes: the four shared sheets, CreationAssist's "See all" and every sheet they open, fixed through two role tokens and ten shared components; 0 consumer pairs worse | none (MD403 stays W on verification) |
+| F | §34 | F1 and F2 built as four flags seeded off (3340–3343) | none (15 rows stay W on activation) |
+| P | §36 | Four product rows built behind flags seeded off (3350–3352); Media reads honour the owner's post location mode | MD82, MD83, MD84, MD85, MD444, MD101, MD262 → C |
+| V | §37, §37.8–§37.10 | Vendor and device seams fail-closed behind 3355–3358; held files never count; moderation refreshes the postcard; 3359 lets a cover be empty | none |
+| R | §40 | Layout defects the renders exposed: rails clear of the tab button, captions above the tab bar, dots and discs in their own slots | none |
+| X | §39, census-map §45 | Evidence references sealed (3360/3361); deletion finds every evidence photo; photo evidence refused until consent words name photos, and the client stops offering the step | none |
+| Q | §42 | Pulse, Discovery event posts and the trip feed honour the owner's location mode for non-owners | none |
+| G1 | §44 | 3362: the client roles lose the private and per-post place columns of `posts`. 3363: they lose the place columns of `pulse_geo_tags`, `passport_postcards` and `post_media`. 3364: they lose every write on `pulse_geo_tags`, where a stranger could attach a forged venue to another author's post. 3365: `post_media`'s write boundary as a narrowing, replacing 2158, which production's ledger lists but which never took effect and must never be run. All four were rehearsed on a local PostgreSQL 16 harness only | none (no MD row) |
+| G2 | §43 | Compass, Wall v2, place pages and postcards honour the owner's location mode for non-owners | none |
+
+### 41.2 The 49 rows
+
+How to read a row:
+- **IMPLEMENTATION** is code that can still be written on this branch. "done"
+  means none is left; "not built, on purpose" means a decision must come first,
+  and the section named says which.
+- **ACTIVATION** is what an owner or operator must approve or switch: a flag, a
+  migration on production, a policy value, a product definition.
+- **EXTERNAL** is what only the world outside this environment can show: a
+  vendor, a device, a production read after a flip.
+- **BLOCKER** is the one thing that keeps the row from C today.
+
+The denominator is 450 and does not change. No row is removed, and no
+requirement or verdict definition is changed. A row moves only where its own
+RED WHEN is met on this branch.
+
+| Row | Was → now | IMPLEMENTATION | ACTIVATION | EXTERNAL | BLOCKER | § |
+|---|---|---|---|---|---|---|
+| MD1 | W → W | done: the World shell as the tab's first mode | F1: `MEDIA_TAB_ENABLED`, `MEDIA_WORLD_SHELL_ENABLED` (2300), `MEDIA_TAB_WORLD_DEFAULT_ENABLED` (3340) | device run of the tab; a reachability-ledger entry | owner decision F1 | §34 |
+| MD2 | W → W | done: F1 as MD1; the legacy creator boosts are seeded and read `false` | as MD1 | device run | owner decision F1 | §41.4 |
+| MD3 | W → W | done: the default surface has no infinite feed | as MD1 | device run | owner decision F1 | §34 |
+| MD11 | W → W | done: outcome-ranked shell as default; §24 stage for Watch | F1; for Watch, `MEDIA_WATCH_STAGE24_RANKING_ENABLED` (3343) | a production `rank_events` read after the flip | owner decisions F1, F2 | §34 |
+| MD29 | W → W | done: the dashboard is the tab's opening page | as MD1 | device run | owner decision F1 | §34 |
+| MD87 | W → W | done: every shell open is an entry context, and so is Watch's place open | F1, and `MEDIA_WATCH_CONTEXT_OVERLAY_ENABLED` (3341) | device run | owner decisions F1, F2 | §34 |
+| MD215 | W → W | done: watch multipliers replaced by §24; count rail demoted | 3343 and 3341 | device run and a production read | owner decision F2 | §34 |
+| MD286 | W → W | done: the default can be something other than Watch | F1, or `MEDIA_VIEW_MODE_FULLSCREEN_ENABLED` = `false` | device run | owner decisions F1/F2 | §34 |
+| MD402 | W → W | done: the default optimises none of the three; Watch can drop all three | F1; for Watch, 3343 and `MEDIA_WATCH_TAP_TO_PLAY_ENABLED` (3342) | device run (expo-av) and a production read | owner decisions F1/F2 | §34 |
+| MD408 | W → W | done: no counts on the overlay | 3341, or F1 | device run | owner decision F2 | §34 |
+| MD412 | W → W | done: Compass first and largest | 3341, or F1 | device run (touch targets) | owner decision F2 | §34 |
+| MD419 | W → W | done | F1; the strict reading is `MEDIA_VIEW_MODE_FULLSCREEN_ENABLED` = `false` (no code) | device run | owner decisions F1/F2 | §34 |
+| MD424 | W → W | done: Stamp neither first nor largest, and no count | 3341 | device run | owner decision F2 | §34 |
+| MD425 | W → W | done: tap-to-play; the shell never autoplays | 3342, or F1 | device run (pause/resume, AppState, gestures) | owner decision F2 | §34 |
+| MD427 | W → W | done: the tab opens context-first even over a persisted Watch | F1 | device cold start while the flag fetch is in flight | owner decision F1 | §34 |
+| MD435 | W → W | done: with 3343 on, `rankMediaFeed` has no request path; deleting it follows activation | 3343 | production latency and a `rank_events` read | owner decision F2, and the §42-vs-§48 ruling | §34 |
+| MD37 | W → W | done: every writer states its source; an AST guard and a pinned inventory; the value at 5 sites waits | owner approves the §6 source vocabulary (§35.4 MD37) | a production write reaching `media_assets` | owner decision | §35 |
+| MD53 | W → W | nothing decision-free remains; the `linkMediaEvidence` seam has no caller | MD65's answer, then `media_evidence_enabled` | a production evidence row | owner decision MD65 Q3/Q5 | §35 |
+| MD58 | W → W | nothing decision-free remains | MD65 Q5 | as MD53 | owner decision MD65 Q5 | §35 |
+| MD65 | W → W | nothing decision-free remains; the fail-closed gate that refuses photo evidence until consent words name photos is built (§39, census-map §45) | owner safety decision (Q1–Q4), consent words that name photos, then flags | a production observation carrying media | owner decision MD65 | §35, §39 |
+| MD66 | W → W | follows MD65 | MD65 Q4/Q5 | as MD65 | owner decision MD65 | §35 |
+| MD71 | W → W | not built, on purpose: `live` cannot be defined without a claim | spec concession (a), or MD65 (b) | none for (a) | owner decision | §35 |
+| MD162 | N → N | not built, on purpose: the zone model is the Map gateway's | a Map-owner decision to publish zone names and place-to-zone ids | a publishable production flow above the signal floor | Map owner decision, plus production data | §35 |
+| MD197 | W → W | the boundary is enforced (reputation is self-only); the ranker term is not built, on purpose | owner answer to §35.4 MD197 | none | owner decision | §35 |
+| MD370 | W → W | not built, on purpose | MD65 Q1 | as MD65 | owner decision MD65 | §35 |
+| MD445 | W → W | qualification done; the second half follows MD65 | MD65 | as MD65 | owner decision MD65 | §35 |
+| MD63 | N → N | done up to the vendor: `deriveVisualEvidenceCandidates`, refusing default | `media_vision_provider_enabled` (3355) and `MEDIA_VISION_PROVIDER` | a vision vendor with per-image confidence | no vision vendor chosen | §37 |
+| MD269 | W → W | mostly done: the decider holds every non-answer; (b) held files never count; (c) the canonical row is born held; (a) waits on a rule | 3356 | a classifier vendor, or staffed review | the MD269 (a) owner rule (§37.8.5); no classifier or staffing decision | §37, §37.8 |
+| MD277 | N → N | done up to the vendor: submission at upload and the ladder rules; playback not built, on purpose | 3357 | a transcoder whose playback keeps private video private; a device run of a rung switch | no transcoder chosen or funded | §37 |
+| MD280 | N → N | done up to the source: ASR seam, strict WebVTT parser, non-overwriting storage; serving not built, on purpose | 3358 | an ASR vendor with a data-processing agreement, or an authored-WebVTT decision | the caption source is undecided | §37 |
+| MD282 | N → N | done up to the native module: `compressVideoForUpload` at all four upload paths | client `DEFAULT_ENABLED`, flipped in the build that adds the module | a native encoder module, a native build, the device matrix | no native module; no build access (§H-build) | §37 |
+| MD283 | W → W | done up to the vendor: video rules; a frame-only classifier can never approve | 3356 | a classifier with async video moderation | no classifier; MD269 (a) | §37 |
+| MD284 | W → W | JS half done: every part handed to the OS at once; staged parts swept | client `DEFAULT_ENABLED` (unchanged) | an iOS device run while suspended; an Android foreground-service module; the device matrix | no iOS build path, no Android SDK, no device (§H-build) | §37, §37.8 |
+| MD289 | W → W | done: `looksSocial` applied or refused by name, never dropped | 3355, and the owner ratifies the threshold | a vision provider | no provider; threshold unratified | §37 |
+| MD293 | N → N | done up to the vendor: seed gated, every proposal re-checked | 3355 | an image-embedding model and a vector index with deletion | no visual index chosen | §37 |
+| MD77 | N → N | nothing; one option needs no plumbing | — | — | owner decision: social expiry (§36.4) | §36 |
+| MD79 | W → W | the inert expiry cap every option needs; the producer waits | — | — | owner decision: the expiry policy and its fallback tier | §36 |
+| MD82 | N → **C** | done: the `perspective_vantage` column with a CHECK over §12's lists, the write, the grouping, the sheet | 3352 and `media_perspective_vantage_enabled`; F1 for reachability | device run of the sheet | — (activation only) | §36 |
+| MD83 | N → **C** | as MD82 | as MD82 | as MD82 | — | §36 |
+| MD84 | N → **C** | as MD82 | as MD82 | as MD82 | — | §36 |
+| MD85 | N → **C** | as MD82 | as MD82 | as MD82 | — | §36 |
+| MD444 | W → **C** | done: Phase 4's perspective groups are MD82–MD85 | as MD82 | as MD82 | — | §36 |
+| MD101 | W → **C** | done: the `busier` axis on `crowd.level`, the `find_busier` rail action, the client | 3351 and `media_find_busier_enabled`, with Compass on | device rail run; a permitted `crowd.level` claim in production | — (activation only; the §32 reading can be overruled) | §36 |
+| MD175 | N → N | nothing | — | — | owner decision: what Remix is | §36 |
+| MD255 | W → W | the following feed refuses an audience it does not know | — | — | owner decision: where the audience lives, then the post-reader audit | §36 |
+| MD262 | W → **C** | done: the `neighborhood_only` mode, both writes gated, composer and sheet; Media reads honour the owner's mode | 3350 and `media_neighborhood_only_mode_enabled` | device run; a production read after deploy | — (activation only; the design choice can be overruled) | §36 |
+| MD385 | W → W | nothing, so no column was added | — | — | owner decision: whose media may become a Memory | §36 |
+| MD446 | W → W | nothing | — | — | owner decision: what "Show Me Now" is | §36 |
+| MD403 | W → W | done: every Media-flow surface reachable from the five sheets is measured and passes; none pinned | none | the owner's visual review (H8) and a device review | verification only | §33, §33.13 |
+
+**Totals.** Of the 49 rows, 7 move to C on this branch: MD82, MD83, MD84, MD85,
+MD444, MD101 and MD262. Each is a construction verdict behind a flag seeded
+off. The other 42 each wait on exactly one kind of thing:
+- **Activation of flags built here (F1, F2): 16.** MD1, MD2, MD3, MD11, MD29,
+  MD87, MD215, MD286, MD402, MD408, MD412, MD419, MD424, MD425, MD427 and
+  MD435. MD435 also needs the §42-versus-§48 ruling.
+- **A vendor, a native module, a build or a device: 9.** MD63, MD269, MD277,
+  MD280, MD282, MD283, MD284, MD289 and MD293. Each seam is built and fails
+  closed. MD269 also needs the (a) rule, and MD289 needs its threshold ratified.
+- **An owner decision on a product definition or a policy: 16.** MD77, MD79,
+  MD175, MD255, MD385 and MD446 (§36.4); MD37, MD53, MD58, MD65, MD66, MD71,
+  MD162, MD197, MD370 and MD445 (§35.4). Plumbing that every option needs is
+  built where it exists; nothing that decides the question is.
+- **Verification only: 1.** MD403 (H8 and a device review).
+
+No row has code left that can be written on this branch without a decision.
+
+### 41.3 Statements corrected in place
+
+- Lane E corrected six stale statements and one lagging sentence (§38.1–§38.6),
+  then four more and the route-group citation hole (§38.7–§38.10), then eleven
+  short-path citations that pointed at the wrong line or at a repo-root mock
+  (§38.11). It reclassified TR128, TR267, TR341 and TR412 from NEITHER to BOTH
+  by census-trips' own §68.1 rule (§38.12, census-trips §76). No letter moved.
+- **census-compass CG-01, lines 128 and 882–884.** Lane E stopped on these, and
+  they are corrected here. Both said the Compass screen calls a client
+  `buildCompassStarters`. e0d858f28 removed that builder, and the screen now
+  renders the server's starters
+  (`travel-buddy-standalone/app/(tabs)/ai.tsx:413#starters={startersFromSuggestions(starterAssist.suggestions)}`).
+  Neither line carries CG-01's last statement, which is §26.13, so no verdict
+  moves. Each line now carries a dated note, and both edits are line-neutral.
+
+### 41.4 MD2 — the row no wave-8 lane owned
+
+MD2 ("World-first, not creator-first", spec §2) was Lane C's row in wave 5, and
+§34.1 records that lane F did not grade it. It is taken here.
+
+**Read on production (read-only), 2026-09-27:**
+- `MEDIA_RANKING_ENABLED` is `false`, so `rankMediaFeed` returns
+  chronological order with no scoring.
+- `MEDIA_ACTIVE_CREATOR_BOOST_ENABLED`, `MEDIA_NEW_CREATOR_BOOST_ENABLED`,
+  `MEDIA_RETURNING_CREATOR_BOOST_ENABLED`, `MEDIA_UNDEREXPOSED_BOOST_ENABLED`
+  and `MEDIA_CREATOR_FATIGUE_ENABLED` are all `false`.
+- `MEDIA_TAB_ENABLED` is `false`, so the Media tab is not in production's nav
+  bar at all.
+- `MEDIA_WORLD_SHELL_ENABLED`, `PORTAVA_PUBLISHER_BOOST_ENABLED` and
+  `PORTAVA_FEATURED_BOOST_ENABLED` have no row.
+
+So on production no ordering carries a creator-identity boost today. That is
+the first half of §19.6's closing condition for MD2. It is not enough for the
+requirement: the principle is about what a person opens, and with the tab
+enabled, the tab opens on Watch, a vertical feed of individual posts (§46.2's
+"creator-first stacked posts"). The second half is F1, and lane F built it
+(§34): `MEDIA_TAB_WORLD_DEFAULT_ENABLED` (3340) opens the tab on the World
+shell. The §24 stage that can order Watch instead (3343) has a `follow` term
+and an `authorTrust` term. Both are §24's own inputs and are weighted at
+most 0.12 like every term. Neither is a creator-identity boost in the legacy
+sense.
+
+MD2 | W → W | IMPLEMENTATION: done (§34's F1 flag; the legacy boosts are
+seeded and read `false`) | ACTIVATION: `MEDIA_TAB_ENABLED`,
+`MEDIA_WORLD_SHELL_ENABLED` and `MEDIA_TAB_WORLD_DEFAULT_ENABLED` all `true`
+(F1) | EXTERNAL: a device run of the tab opening on World | BLOCKER: owner
+decision F1.
+
+### 41.5 Production facts read on 2026-09-27 (read-only)
+
+Read-only, by the integrator:
+- `MEDIA_TAB_ENABLED` false; `MEDIA_RANKING_ENABLED` false; the four creator boosts and creator fatigue false; `MEDIA_VIEW_MODE_FULLSCREEN_ENABLED` true; `MEDIA_WORLD_SHELL_ENABLED` no row, and 2300, which seeds it, is not in the ledger.
+- `map_contributions_enabled` and `media_evidence_enabled` no row; `intel_capture_quick_signal` and `intel_trail_followup` true; `intel_evidence` 0 rows.
+- `posts`: 9 rows (8 published with mode `none` and no place name; 1 published `delayed_until_time` whose original and public coordinates are identical). `pulse_geo_tags` venue names 1, `passport_postcards` venue names 1, `post_media.canonical_place_id` 0.
+- `posts` grants: anon and authenticated hold table-level SELECT and no column grants; `posts_select` admits `can_see_post(id)` for every role. 73 columns; `tombstoned_at` absent although 2141 carries a `backfill` ledger row (already recorded in `docs/ops/production-ledger-verification.md` §4).
+- The API gateway, last 24 hours (the tool's maximum window): 1,358 requests to `/rest/v1/posts`, all with the secret key.
+- Server version 17.6.
+- For 3363 (census-media §44.15.1): `pulse_geo_tags`, `passport_postcards` and `post_media` have exactly 17, 29 and 25 columns, and no client role holds column SELECT on any of them. Nothing outside the three depends on those columns. Over 24 hours they had 178 requests, all GETs with the secret key, and none of them touched `pulse_geo_tags`.
+- `2158_post_media_write_boundary.sql` is ledgered `backfill`, but its grants are not in force. anon and authenticated hold table-level INSERT and DELETE on `post_media`, so an owner's insert can arrive `ready` and set server-owned columns. The same holds for `2160` (`portava_featured`), which is inert: RLS is on, no policy exists, and the table holds 0 rows. Recorded in `docs/ops/production-ledger-verification.md` §7; the owner step is approval H14. No verdict here rests on 2158 being in force in production.
+
+### 41.6 Headline
+
+Restated from `check:census-integrity`, which counts every row's last
+statement. The previous stated headline is §30's (after lane J), and no wave-8
+lane restated it. A per-row diff of `CENSUS_INTEGRITY_DUMP=C,W,N,X` between
+PR #528's pre-wave-8 head (`e9e0b0404`) and this head shows exactly seven
+verdicts changed, all 450 rows present in both.
+
+> | Measure | §30 (after lane J) | Now, after wave 8 |
+> | --- | --- | --- |
+> | Denominator (testable requirements) | 450 | **450** |
+> | BUILT-AND-CORRECT | 401 | **408** |
+> | BUILT-BUT-WRONG | 37 | **34** |
+> | NOT-BUILT | 12 | **8** |
+> | CANNOT-VERIFY | 0 | **0** |
+> | **CONSTRUCTED%** = (C+W)/450 | 97.3 % | **442 / 450 = 98.2 %** |
+> | **CORRECT%** (raw) = C/450 | 89.1 % | **408 / 450 = 90.7 %** |
+>
+> The seven moves are lane P's (§36): MD82, MD83, MD84 and MD85 N → C, and
+> MD444, MD101 and MD262 W → C. Each is a construction verdict behind a flag
+> seeded off, on a branch that is not merged. Nothing here is deployed, and no
+> flag is on in any database.
+
+**Implementation against verification.** Of the 42 rows that are not C, none
+has code left that can be written on this branch without a decision (§41.2).
+That is an implementation statement, not a 100 %: 16 wait on activating flags
+built here, 9 on a vendor, a native module, a build or a device, 16 on an
+owner decision, and MD403 on the owner's visual review. The CORRECT% above is
+the honest figure, and it rises only when those happen.
+
+### 41.7 Freshness acknowledgements written
+
+`CENSUS_STALENESS_ACKNOWLEDGED.json` gained entries for eleven censuses, and
+`since` and `acknowledgedAt` are unchanged in every one. Each entry names its
+files, says why no verdict moves, and says what would turn it red. The files
+named since PR #528's pre-wave-8 head `e9e0b0404`, per census (142 in all): census-media 108, census-map 8,
+census-passport 4, census-trips 6, census-input-intelligence 3,
+census-trust 3, census-wall 3, census-discovery 2, census-sensing 2,
+census-highlights-memories 2 and census-compass 1.
+
+Every entry was checked against the diff it describes rather than the lane's
+account of it. For example, CompassFeedBuilder's header at 4–9 (CX-11) is
+byte-identical. P61's contributor-stamp line in the places collections worker
+is unchanged, and the stamp count does not read the location mode. The Wall's
+social-presence edits only remove posts from a count whose k ≥ 2 floor is
+unchanged. `check:census-freshness` named these files stale before their
+entries were written, and it passes after.
+
+### 41.8 Checks on the integrated head
+
+Run on `709b7b800`, the integrated head before this section. This section and
+its commit change only `census-media.md`.
+- **Type checks.** `typecheck` passes. `typecheck:tests` passes at its
+  baseline: 863 diagnostics across 115 files, none above baseline.
+- **api-server `check:all`.** 39 checks pass and 6 fail:
+  - `check:census-integrity` fails on this census's headline, which §41.6
+    restates.
+  - The other five read a live database and refuse to run without the
+    production project reference: write-path-columns, missing-live-columns,
+    authorization-contract, media-objects and rank-events-surfaces.
+- **api-server suite (`npm test`).** 26,903 tests: 26,897 pass, 1 fails and
+  5 are cancelled. The failure (`censusIdGrammar`'s real-corpus run) and the
+  five cancellations (`censusIntegrityQualifiedVerdicts`, cancelled when its
+  parent failed) all come from the same headline mismatch.
+- **travel-buddy-standalone `check:all`.** All checks pass: 662 jest suites
+  (4,185 tests), 4 more jest suites (12 tests) and 7,118 node tests, none
+  failing.
+- **Harness only, not run in the suite above.** The database suites for
+  3359–3365 ran on the lanes' local PostgreSQL 16 clusters: 167 of 167 at
+  lane G1's last run (census-media §44.18.4). They skip without a database.
+  None of these migrations is applied to any shared database.
+
+### 41.9 What needs the owner
+
+Nothing in this section changes production. Every activation, production
+migration and owner decision these rows wait on is listed in one place:
+`docs/ops/sensing-production-approval-request.md`, section H (H1–H16), with its
+"Decisions the flags cannot take" list and the H-build section on the builds
+and devices this environment cannot reach.
