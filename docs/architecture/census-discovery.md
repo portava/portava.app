@@ -7394,6 +7394,178 @@ The only move since §49.2 is `DSV2-04` N → W (§50.4). CONSTRUCTED 166 / 188 
 
 CONSTRUCTED 166 / 188 = **88.3 %**; CORRECT 90 / 188 = **47.9 %**. The four buckets sum to 188. The eight Discovery moves since §43.5 are `B01`, `DC-25`, `DV-37`, `DV-38`, `DV-39`, `DV-45`, `DSV2-04` and `DV-46`, all implementation verdicts on this branch with production evidence owed for each.
 
+## §54 — Database and rollout (lane P9): all four client operations explicit on the sixteen Discovery tables, seven stop conditions produced and no threshold invented, hot paths explained on the harness, and what the production rows still lack
+
+*Written 2026-09-27 by the Discovery database and rollout lane on `disc-p9-rollout`, branched from `e4d8048d5`. Every verdict here is about code and the local PostgreSQL 16 harness on this branch. Nothing is merged to `main`, applied to `portava-ci` or production, deployed, or flag-enabled. The headline is not restated; the integrator does that. `head_commit` is not re-declared.*
+
+**One merge was not made.** The integrator asked this lane to merge P7 (`a2772fb92`) to grade `DV-74`'s Trail half. The merge was refused by this session's permission layer and was not retried. `DV-74` is therefore graded at `e4d8048d5` only, and §54.9 says what that leaves ungraded.
+
+### 54.1 Row moves
+
+| ID | was | now | evidence |
+|---|---|---|---|
+| DV-71 | W | **C** | Re-derived from the migrations, the user-visible Discovery tables are sixteen: the seven `discovery_*` tables, plus `place_momentum` (2892), the six Trail tables (2910), `recommendations` (3376) and `rank_events`. On each one, 3390 spells every operation for both client roles. An operation is either a kept permissive policy, unchanged, whose privilege is held, or an explicit RESTRICTIVE `false` policy whose privilege is revoked (`artifacts/api-server/src/migrations/3390_discovery_rls_explicit_policies.sql:222#'CREATE POLICY %I ON public.%I AS RESTRICTIVE FOR %s TO %s %s',`). TRUNCATE, REFERENCES and TRIGGER are revoked from both client roles, since RLS does not police them (`artifacts/api-server/src/migrations/3390_discovery_rls_explicit_policies.sql:238#REVOKE TRUNCATE, REFERENCES, TRIGGER ON public.%I FROM anon, authenticated`). The momentum rebuild stops being client-executable (`:242`). No policy is dropped and no service_role privilege changes; the migration's own postconditions refuse either. On the harness, `artifacts/api-server/src/test/db/discoveryRlsExplicitPolicies.db.test.ts:179#it("R0. the catalogue: each operation is a kept path or an explicit restrictive deny, for both client roles"` reads the catalogue for all 16 × 4 × 2. R1a–R1d check cross-user denial per operation on the four own-row tables, with the owner's own read and insert still working. R2–R4 check anon, the eight service-only tables and the public Trail reads. R5 checks that a re-GRANT no longer reopens the §6 D6 forge (`artifacts/api-server/src/test/db/discoveryRlsExplicitPolicies.db.test.ts:295#it("R5. a re-GRANT does not reopen a write: the restrictive policy refuses it on its own"`). R6 checks that service_role still performs every operation it holds, and R7 that the rollback restores the pre-3390 posture and re-applies to an identical catalogue. The suite passes 11/11. **Production evidence owed:** 3390 is unapplied everywhere but the harness. The production catalogue read in §54.12 will return 63 restrictive policies once 3390 is applied (fewer where 2892 or 3376 are absent). **What turns it back:** a Discovery table with an operation that neither a kept policy nor a deny spells, or a client privilege outside the posture. Both turn R0 red, and the same deviation is what `rls_leak` measures (§54.4). |
+| DC-15 | W | **C** | All three criteria now hold for Discovery's hot paths. **Expected cardinality:** `docs/discovery/query-paths.md` §1 gives each table's production count where the census read one, with the date, and says where no document states one. **Index rationale:** §4 of the same document has one registry row for each of the 55 tables and indexes that migrations create on Discovery tables, each tied to a query path or named "not a hot path" with the reason. **EXPLAIN:** 23 query paths (the §47.2 serve paths, search, Trails, `rank_events` reads and writes, the stop measurements) were captured on the harness at a stated synthetic cardinality. They are reproducible with `docs/discovery/query-paths-explain.sql`, and the document says in its first paragraph that a harness plan is not a production plan. **Enforced forward:** `check:discovery-query-paths` fails when any migration creates a Discovery table or index without a registry row, or when a row goes stale (`artifacts/api-server/src/scripts/checkDiscoveryQueryPaths.ts:114#export function checkRegistry(`; `artifacts/api-server/src/test/discoveryQueryPathsCheck.test.ts:36#it("K2. a NEW migration adding a Discovery table without a row fails as MISSING"`). It is wired into `check:all` and into CI's local-db job. No applied migration was edited (`10` §7). **Production evidence owed:** the cardinality counts in §54.12. **What turns it back:** a new Discovery query path that only code adds, with no migration. The check cannot see it (the document's §5 says so), so an owner reading of `10` §4 that requires code-only paths to be caught mechanically would put this row back to `W`. |
+
+### 54.2 Rows re-graded and left where they are
+
+- **DV-82 `W`. All seven now have a producer; two have a threshold, and neither threshold is ratified.** The registry is `artifacts/api-server/src/lib/discoveryStopConditions.ts:296#function stopConditionProducers()`. For each condition it names the function that records the evidence, the file that must call it, and whether that call is still a hunk. `artifacts/api-server/src/test/discoveryStopSevenConditions.test.ts:86#it("A1. every condition has a producer or a named reason, and nothing else is registered"` fails when any of the seven has neither. A3 fails when a registry entry claims or denies a call that the named file does or does not make. The five new conditions have no ruling (`artifacts/api-server/src/lib/discoveryStopConditions.ts:276#creator_concentration: null,`). Each reports its measured value with state `unruled`, is named in `unenforced`, and cannot trip, which B-each and B-resolver pin. Given a ruling, which the tests inject, each trips above it, clears at or below it, and refuses a thin sample (C, 18 tests). On the harness, controlled data trips and does not trip each database-measured condition: `artifacts/api-server/src/test/db/discoveryStopMeasurements.db.test.ts:149#it("M3. STORM is measured exactly: 0.82 HHI, 7 of 20 hidden or reported, one live double count; another surface ignored"` through M10. **Why not `C`:** (1) no owner threshold exists for five of the seven (§54.13 has the question, verbatim); (2) the values 5 %, 10 %, a 20-attempt floor and a 10-minute window are enforced and UNRATIFIED, labelled `unratified_proposal` on every reading; (3) the input hooks for five producers are hunks in files this lane does not own (§54.11). Until those hunks land, the four database conditions and cache bypass read `no_evidence` in a running server.
+- **DV-72 `W`. One of the five `10` §3 projections exists, and it is proven rebuildable.** `place_momentum` (2892): drop its derived rows, run `rebuild_place_momentum(p_now)`, and the result is identical in every column. A second run changes nothing and adds no row (`artifacts/api-server/src/test/db/discoveryDerivedRebuild.db.test.ts:93#it("P1. place_momentum: drop the derived rows, rebuild, identical"`, P2). `trail_health_snapshots` (2910) has no rebuild routine. A snapshot is `computeTrailHealth` over two reads that are still in the database, so recomputing at the same instant reproduces it (T1, T2). It is **not rebuildable once a source changes**, because `content_trails.content_state` and `trail_reports.resolution` are updated in place (`artifacts/api-server/src/test/db/discoveryDerivedRebuild.db.test.ts:166#it("T3. LIMIT, pinned: a past snapshot stops being rebuildable once a source row changes in place"`). The Compass graph (`compass_graph_*`, `compass_city_*`) is rebuilt daily by an idempotent upsert on natural keys. That was graded from code only: its supabase-js pipeline issues more query shapes than the harness adapters model, so it was not run on the harness. **Absent, and not built:** `traveler_affinities`, `place_cooccurrence`, `trail_relations` and `circle_momentum`. `10` §3 gives each a name and nothing else: no signal, no window, no decay. Building any of them would mean inventing those rules. `trail_edges` is declared canonical relations, not a derived projection.
+- **DC-17 `W`, re-graded, and the grounds are sharper than "one field".** (a) The momentum store's provenance now reaches a consumer: `routes/trails.ts` serialises it as `readingProvenance`. §38.6's "reaches nobody" is stale for that half. The trend reading's provenance still reaches nobody. (b) The in-process stores carry all four fields, but the versions they stamp are the RANKER's. `derivedStoreProvenance` fills `modelVersion` from `DISCOVERY_MODEL_VERSION` (`artifacts/api-server/src/lib/discoveryRankProvenance.ts:139#modelVersion:   DISCOVERY_MODEL_VERSION,`), so a trend reading computed in TypeScript says `compass-discovery-2026-09`. The same computation in SQL says `discovery-trend-state-v1` (`artifacts/api-server/src/migrations/2892_place_momentum.sql:438#c_model      CONSTANT text := 'discovery-trend-state-v1';`). A change to the trend thresholds bumps neither. (c) Persisted rows: `place_momentum` stores the window, model version and computation time, and the feature definition verbatim (weights, thresholds), but no feature-version field, so it meets 3 of 4 by field. `trail_health_snapshots` stores model version and computation time only, so 2 of 4: no source window, no feature version. The fix touches files this lane does not own and is routed as hunks H3–H4 (§54.11).
+- **DV-70 `W`.** `check:production-drift` passes offline against the 2026-09-22 snapshot, with 36 tables on the ratchet, all unapplied. The Discovery ones are `place_momentum`, `recommendations` and the three `creator_*` tables. Production still has no `schema_migration_ledger`, so "zero unexplained objects" cannot be established from the repository. **Who:** an operator with production access. What is needed is a drift run against a live read, after 2254's ledger is applied there.
+- **DC-18 `W`. A harness rehearsal was run and is recorded as a harness rehearsal.** Starting from a fresh chain (baseline plus 338 files in order, 12 known-unreplayable, none of them Discovery), every Discovery migration that ships a rollback was rolled back newest first: 3391, 3390, 3376, 3375, 3366, 2850, 2550, 2361, 2360, all 9 OK. They were then re-applied oldest first, all 9 OK. The Discovery catalogue (columns, indexes, policies, ACLs, the four functions, the Discovery flags) hashed `229245cc…` before and `229245cc…` after. **Finding:** 16 of 25 Discovery migrations ship no rollback file (2090–2095, 2153, 2289, 2297, 2890–2894, 2910, 2995). **Missing, and who:** applied-body checksums against the repository (production has no ledger to hold them, so an operator is needed), and `portava-ci` rehearsal records for 3375, 3376, 3390 and 3391 (the `live-db` workflow on a branch that carries them).
+- **DV-75 `W`. The row's "0 of 3 by name" is stale.** All three verdict jobs exist: `ci-verdict` ("CI · verdict (skipped or cancelled is not a pass)"), `live-db-verdict` ("live DB · verdict (cancelled or skipped is not a pass)") and `unwired-verdict` ("unwired · verdict (skipped or cancelled is not a pass)"). What the row needs is `main`'s branch protection listing all three as required. That is a repository-admin setting, and it cannot be read from the tree. This session has no `gh` and no admin token. **Who:** a repository admin (§54.13).
+- **DC-27 `X`.** No rollout has begun. `DISCOVERY_ENGINE_MODE` is `enabled=false, mode=legacy` (§47.1), and nothing has been shadowed, activated for a cohort, observed or expanded. The one step that can be taken off production, "rehearse", was taken on the harness (DC-18 above). It is not the `portava-ci` rehearsal `12` names. **Who:** the integration owner and the operator, with a rollout record in the order rehearse → verdicts → shadow → cohort → observe → expand.
+
+### 54.3 DV-71 — what a client keeps, and why nothing it uses is lost
+
+Measured before 3390 was written: no client in the repository reaches any of the sixteen through PostgREST. The travel-buddy client's `.from(...)` targets are profiles, message threads, follows, trips, trip members, event RSVPs, circles and two Rent-a-Buddy tables. No realtime channel subscribes to a Discovery table, no view selects from one, and every server read and write uses `getServiceClient()`, which is BYPASSRLS. So 3390 keeps every existing permissive client policy exactly as written: public active places; a user's own saves and reports (read and insert); a user's own `rank_events` (read); non-archived Trails, their members and edges; a user's own follows. Everything else becomes an explicit deny. The four decorative `discovery_places` write policies stay, and dropping them is still the owner's §6 D6. The restrictive deny closes D6's *hazard* (R5), but not by dropping them. **Out of scope, with the reason:** `creator_attributions`, `creator_rule_versions` and `creator_earning_entries` belong to the ledger lane (§52), and the same pattern is offered there. Compass and Layover tables belong to their own surfaces.
+
+### 54.4 DV-82 — the seven, as built
+
+| condition | producer | measured value | ruling | input hook |
+|---|---|---|---|---|
+| `event_rejection_rate` | `recordServeLogOutcome` | refused or thrown serve-log inserts / attempts | 5 %, **unratified** | in place (`lib/discoveryServeLog.ts`) |
+| `recommendation_logging_gap` | `recordServeLogOutcome` | served items with no row / served items | 10 %, **unratified** | in place |
+| `creator_concentration` | `refreshDiscoveryStopMeasurements` → 3391 | HHI of Discovery exposures across `discovery_places.submitted_by`, coverage beside it | none | H1 |
+| `reports_hides` | same | (dismisses + place reports + Trail reports) / exposures | none | H1 |
+| `cache_bypass` | `recordRankObligation` | serves owed a rank (pde path, viewer in cohort) served unranked / serves owed | none | H2 |
+| `rls_leak` | same as H1 | catalogue deviations from 3390's posture on the sixteen tables | none | H1 |
+| `attribution_double_count` | same as H1 | groups of LIVE (not superseded) recorded attributions crediting one beneficiary twice for one value event | none | H1 |
+
+- **Cache B was considered for `cache_bypass` and rejected.** Serve point 4 replays a ranker's stored order, and P2's `row_revoked` refusal re-ranks. That refusal is the guard working, so counting it would trip the condition on moderation activity. The measure is the one `01` §7 names: a user-independent candidate cache served past the ranker for a viewer who was owed a rank (`artifacts/api-server/src/lib/discoveryStopConditions.ts:415#export function recordRankObligation(`).
+- **`attribution_double_count` measures what 2920's key cannot see.** `ca_idempotency_key_once` makes a same-key replay impossible. A double count is two keys for one outcome, both live; a superseded row and its successor count as one (M1).
+- **Failure is a reading, never a zero.** A missing function (3391 unapplied), a rejected call or a malformed body reads `unreadable`. An absent `creator_attributions` reads `input_absent`. A measurement older than the window reads `stale`. None of these trips, and none reads as clear (D1–D4, M8). Whether an unreadable measurement should halt is asked, not decided (§54.13).
+- **3391's index changes an existing plan.** `rank_events_discovery_served_at` exists for the window scan. Local momentum's query (behind 2289) also switches to it, from a parallel sequential scan of all of `rank_events`. The query-path document records both plans (QP-09).
+
+### 54.5 Tests and P24
+
+**Five new suites, 78 tests, all green:**
+
+| suite | tests |
+|---|---:|
+| `discoveryStopSevenConditions.test.ts` | 43 |
+| `discoveryQueryPathsCheck.test.ts` | 8 |
+| `db/discoveryRlsExplicitPolicies.db.test.ts` | 11 |
+| `db/discoveryStopMeasurements.db.test.ts` | 10 |
+| `db/discoveryDerivedRebuild.db.test.ts` | 6 |
+
+`discoveryEngineMode.test.ts` N1 and N8 were changed because the contract changed. The producerless list is now empty, and the five that cannot trip are the five with no ruling. The full database set passes 233 of 233 on a fresh harness with 3390 and 3391 in the chain; it now counts 37 files.
+
+**Mutation matrix.** There were 71 mutations, and each was seen red. Every file mutation was restored byte-identical (sha256 checked), and every database-state mutation was restored and the suite re-run green. Every new test went red under at least one mutation.
+
+- **Evaluator and producers (MS1–MS30).**
+  - Registry: a producer entry deleted (A1); a hook claimed as landed (A3); a wrong function name (A2); a typed rather than derived producerless list (A4, N1).
+  - Rulings: a silent default ruling (A5, B, N8); the lane proposals relabelled as owner rulings (A5, C-existing).
+  - Judgement: unruled read as clear (B); unruled trips the resolver (B-resolver); no sample floor (C thin); at-threshold trips (C clears, zero-threshold cases); nothing trips (C trips); any non-zero value trips (C clears).
+  - Cache-bypass evidence: owed and not-owed confused (C not-owed); ranked and bypassed swapped (B- and C-cache_bypass); evidence that never ages out (C-window).
+  - Evidence states: staleness ignored (D2); unreadable judged (D3); never-measured read as clear (D1); input_absent judged (D4); an eighth condition recordable (D5).
+  - Parser and reader: concentration 0 on no resolution (E2); reports dropped (E1); one bad part blanking the rest (E3); input_absent unrecognised (E4); a non-object body treated as data (E5); function_absent unnamed (F1); a throwing client escaping (F2); the wrong window (F3); no single-flight (F4). The resolver ignoring the evaluator turns O1 and O2 red.
+- **The check (MQ1–MQ9).** Prefix matching off (K2, K3); stale rows unreported (K4); comments parsed as DDL (K7); the creating migration unchecked (K6); cited paths not verified (K5); a registry row deleted from the document (K1); index ownership read from the index name (K1, K3); table rows dropped by the parser (K1, K8); the rationale unenforced (K5).
+- **RLS (MR1–MR15).** A deny dropped; a revoked privilege re-granted; 3390 applied without a kept path; a kept policy widened; TRUNCATE granted; service_role losing INSERT; the rollback restoring TRUNCATE, leaving the denies, or forgetting a grant. Six single-table re-grants and a dropped public-read policy cover R1b, R1c, R1d, R2, R3 and R4 individually.
+- **Measurements (MM1–MM11).** HHI unsquared; exposures across every surface; supersession ignored; each deviation class unreported (R, K, D); input_absent reported as 0; a client able to call the function; and three evaluator or parser mutations run against database data (M4, M5, M10).
+- **Rebuilds (MD1–MD6).** The wall clock instead of `p_now` (P1, P2); a non-idempotent conflict target (P2, P3); analytics counted (P1); the stored window not the one used (P3); trail health depending on a call counter (T1–T3); trail health blind to `content_state` and reports (T3).
+
+**One mutation damaged the harness, and it is recorded.** MR3 applied a 3390 without a kept path, so it revoked a SELECT that the rollback correctly does not restore. The restore now re-grants it. The finding is that 3390's postcondition does not assert that a kept path still holds its privilege. It cannot grant one without breaking "gain nothing", so R0 is where that is caught.
+
+### 54.6 Checks run at this tree
+
+- **Exit 0:**
+  - `typecheck`.
+  - `typecheck:tests`: 863 / 863 baseline.
+  - `check:doc-citations`: `RESULT clean`.
+  - `check:citation-targets`: 164 / 164.
+  - `check:discovery-query-paths`: `RESULT clean`.
+  - `check:migration-prefixes`: 630 files.
+  - `check:production-drift`.
+  - `check:test-registration`.
+  - `check:schema-references`, `check:enum-literals`, `check:writerless-reads`, `check:security-definer-oracles`, `check:silent-supabase-writes`, `check:unissued-supabase-writes`, `check:not-null-writes`, `check:frozen-dir` and `check:telegraph-inventory`. The inventory was regenerated at 630 migrations.
+  - `check:guard-reachability` and `check:guard-coverage`. The new checker is declared in `guardRegistry.ts`, reached by `check:all`.
+- **Exit 1, by design until the integrator restates the headline:** `check:census-integrity`. The rows now count C 92 / W 74 / N 19 / X 3 against the stated 90 / 76 / 19 / 3. Restated in a scratch copy, the check and its two dependent suites pass (18 / 18); the copy was then restored byte-identical.
+- **The full api-server suite, run once:** 27,158 tests; 27,151 pass, 2 fail, 5 cancelled, 0 skipped. Every failure and cancellation comes from one of two causes. The first is the unrestated headline: `censusIdGrammar`'s real-corpus control fails, and `censusIntegrityQualifiedVerdicts` fails with five tests cancelled. The second is the guard registry, whose entry was missing when the run started and was added after it; `guardReachability` has since passed 25 / 25.
+- **Offline column extraction:** `extractSchemaReferences` over the new modules finds no site and no unresolvable one. The new reader calls one RPC with a literal name and issues no `.from()`.
+- **The live-database checks were not run** (no credentials). 3391's function and index, and 3390's policies, are absent from `portava-ci`, so a live check that looks for them is red by design until those migrations are applied there. No allowlist entry was added.
+
+### 54.7 Freshness — the counted files this section changed, each argued
+
+`check:census-freshness` names these files. Writing the freshness ledger JSON is the integrator's job.
+
+- **census-discovery:**
+  - `lib/discoveryStopConditions.ts`: DV-82 was re-measured here (§54.2) and stays `W`. The census's three anchors into it (`:101`, `:121`, `:197`) are unmoved: the header edits are line-neutral, and the new code is appended.
+  - `test/discoveryEngineMode.test.ts`: N1 and N8 were restated for the new contract. No verdict rests on the old wording.
+  - The files §54 adds to `CENSUS_SCOPE`: new in this pass, and §54's own evidence.
+- **census-trips:** `test/db/discoveryRlsExplicitPolicies.db.test.ts`, `test/db/discoveryStopMeasurements.db.test.ts` and `test/db/discoveryDerivedRebuild.db.test.ts`. census-trips counts every harness suite. These three create and remove only Discovery rows and read no `trip_*` object, so no trip verdict can move.
+
+### 54.8 DC-15 — findings the document records and does not fix
+
+Three paths have no usable index: the curated city read, `/community` and free-text search. Each uses case-insensitive or leading-wildcard `ILIKE`, which is the right plan at production's 184 places. The baseline also carries four duplicate index pairs that double write cost for no read. Dropping an index in production is an operator's decision, so neither is changed here.
+
+### 54.9 Dependent rows — graded at this tree, finished when their dependency merges
+
+- **DV-74 `W`.** At `e4d8048d5`, `routes/trails.ts` has no merge or archive admin action and nothing audits one. Creator fraud holds have no admin surface on this tree. Of `11` §8's six actions, drift diagnostics still passes. **Not graded:** P7's Trail admin paths (the `a2772fb92` merge was refused, §54 preamble) and P10's creator-ledger audit (3387, `routes/adminCreatorLedger.ts`), whose SHA had not been sent.
+- **DC-26 `W`, 10 of 16 at this tree.** The RLS integration class now passes: a database suite that runs in CI's local-db job, where a skip fails the job (§54.1 DV-71). Trail lifecycle and Trail visibility are P7's and were not graded here. Ledger math, attribution rule versioning and recommendation → behaviour → attribution need P10's attribution ↔ `recommendation_id` link. The skeleton of that last test is specified in §54.11 (H5) and was not written as a file: a file of `todo` tests fails CI's unaccounted-test assertion, and a skipped suite would carry nothing.
+- **DC-33 `W`, 6 of 7 at this tree.** Retry is now built: P3's retry-safe outcomes (§48, DV-37 `C`). The client leg is still missing. `travel-buddy-standalone/src/services/discovery.ts` imports the React Native Supabase client at module load, so a route → client test in the server package would need a seam in P4's file. That test is specified in §54.11 (H6) rather than forced.
+
+### 54.10 What would turn this red
+
+- A migration that adds a Discovery table or index with no registry row: `check:discovery-query-paths` fails.
+- A client privilege or permissive policy outside 3390's posture: R0 fails, and `rls_leak` measures it.
+- Any of the seven losing both its producer and a named reason, or a registry entry drifting from the calls the code makes: A1 or A3 fails.
+- A threshold appearing for any of the five without an owner ruling recorded in `STOP_CONDITION_RULINGS`: A5 and B fail.
+
+### 54.11 Hunks for the integrator (exact, line-neutral where the census cites the line)
+
+- **H1 — the four database conditions (`lib/discoveryEngineMode.ts`, not this lane's file).** Line 65: append ` import { refreshDiscoveryStopMeasurements } from "./discoveryStopMeasurements.js";` after the existing import. Line 320, whose anchor is cited: prefix it as `void refreshDiscoveryStopMeasurements(sc); const stop = evaluateStopConditions();`. That is off the response path, never awaited and never throws, and it runs only on the uncached, non-legacy resolution. Then set `hookPending: false` for `creator_concentration`, `reports_hides`, `rls_leak` and `attribution_double_count` in `STOP_CONDITION_PRODUCERS`. A3 fails until that flag and the call agree.
+- **H2 — cache bypass (`routes/discovery.ts`, lane P5x's file).** Line 58: append ` import { recordRankObligation } from "../lib/discoveryStopConditions.js";`. Line 1874, the `}` that closes the Cache A pde block: append ` recordRankObligation({ owed: pdeCohort?.included === true, ranked: pdeScoredById !== null });  // \`12\` "cache bypass reappears" (census-discovery §54)`. Then flip `cache_bypass` to `hookPending: false`.
+- **H3 — DC-17, versions (`lib/discoveryRankProvenance.ts` and its callers).** Give `derivedStoreProvenance` an optional `{ modelVersion, featureVersion }`. Pass `discovery-trend-state-v1` and a trend feature version from `lib/discoveryTrendState.ts`, and the momentum store's own pair from `lib/discoveryLocalMomentum.ts`, so a derived store stops stamping the ranker's versions.
+- **H4 — DC-17, persisted lineage.** A migration in 3392–3394 adds `feature_version text` and `source_window jsonb` to `trail_health_snapshots`, and `feature_version text` to `place_momentum`. `rebuild_place_momentum` is replaced to write the latter. `TrailService.recordTrailHealthSnapshot` (P7's file) writes both, with a column-absent latch like the serve log's. It is not built here: replacing 2892's function body in a second file creates the two-copies drift hazard that 2892's header warns about, and it should land with H3's version constants.
+- **H5 — DC-26 skeleton (after P10).** On the harness: serve (a `rank_events` impression with a `recommendation_id`) → outcome (a `save`, bound through `bindOutcomeToExposure` to the same id) → attribution (a `creator_attributions` row carrying that id). Assert one chain, and assert that an outcome for another viewer's id is refused, with no attribution.
+- **H6 — DC-33 (P4's file).** Move `supabase` behind a lazily-imported accessor in `travel-buddy-standalone/src/services/discovery.ts` so the service loads under Node. Then mount `routes/discovery.ts` in-process and drive `fetchDiscoveryPlaces` against it.
+
+### 54.12 Read-only production SQL that would turn harness evidence into production evidence
+
+```sql
+-- DV-71: posture of the sixteen (policies, then client and service privileges).
+SELECT c.relname, c.relrowsecurity, p.polname, p.polcmd, p.polpermissive,
+       array_to_string(p.polroles::regrole[], ',') AS roles
+  FROM pg_class c LEFT JOIN pg_policy p ON p.polrelid = c.oid
+ WHERE c.relnamespace = 'public'::regnamespace
+   AND c.relname IN ('discovery_places','discovery_place_saves','discovery_place_reports','discovery_cache',
+     'discovery_geocode_cache','discovery_shadow_serves','discovery_place_photos','place_momentum','trails',
+     'content_trails','trail_edges','trail_follows','trail_reports','trail_health_snapshots','recommendations','rank_events')
+ ORDER BY 1, 3;
+SELECT table_name, grantee, string_agg(privilege_type, ',' ORDER BY privilege_type)
+  FROM information_schema.role_table_grants
+ WHERE table_schema = 'public' AND grantee IN ('anon','authenticated','service_role')
+   AND table_name IN ('discovery_places','discovery_place_saves','discovery_place_reports','discovery_cache',
+     'discovery_geocode_cache','discovery_shadow_serves','discovery_place_photos','place_momentum','trails',
+     'content_trails','trail_edges','trail_follows','trail_reports','trail_health_snapshots','recommendations','rank_events')
+ GROUP BY 1, 2 ORDER BY 1, 2;
+-- DC-15: cardinality, no EXPLAIN.
+SELECT (SELECT count(*) FROM discovery_places) AS places, (SELECT count(*) FROM discovery_places WHERE status = 'active') AS active,
+       (SELECT count(DISTINCT city) FROM discovery_places) AS cities, (SELECT count(*) FROM discovery_cache) AS cache_a_l2,
+       (SELECT count(*) FROM discovery_place_photos) AS photos, (SELECT count(*) FROM rank_events) AS events,
+       (SELECT count(*) FROM rank_events WHERE surface = 'discovery') AS discovery_events,
+       (SELECT count(*) FROM rank_events WHERE surface = 'discovery' AND outcome = 'dismiss') AS dismisses,
+       (SELECT count(*) FROM trails) AS trails, (SELECT count(*) FROM content_trails) AS trail_members;
+SELECT indexrelid::regclass, pg_get_indexdef(indexrelid) FROM pg_index
+ WHERE indrelid::regclass::text IN ('discovery_places','discovery_cache','discovery_geocode_cache','rank_events','trails','content_trails');
+-- DV-70 / DC-18: does the ledger exist yet?
+SELECT to_regclass('public.schema_migration_ledger');
+```
+
+### 54.13 Owner questions, verbatim
+
+1. *"`12` says stop the rollout when creator concentration *spikes*, reports/hides *increase materially*, cache bypass *reappears*, RLS leaks *occur* and attribution *double-counts*. For each, what value halts the rollout, over what window, and on how much evidence? Concretely:*
+   - *(a) creator concentration: the HHI of Discovery exposures above ___ with at least ___ resolved exposures in the window, or ___× its trailing ___ baseline?*
+   - *(b) reports/hides per exposure: above ___, or ___× baseline?*
+   - *(c) cache bypass: is a single bypass a halt (threshold 0), or a share above ___?*
+   - *(d) RLS: is any posture deviation a halt?*
+   - *(e) attribution: is any live double count a halt?"*
+2. *"Do you ratify the enforced values — a 5 % event-rejection rate, a 10 % logging gap, a 20-attempt floor and a 10-minute window — or replace them?"*
+3. *"When a stop measurement cannot be read (3391 unapplied, or the database refuses), should the rollout halt, or report `unreadable` and continue as it does today?"*
+4. *"Repository admin: will you mark the three jobs 'CI · verdict (skipped or cancelled is not a pass)', 'live DB · verdict (cancelled or skipped is not a pass)' and 'unwired · verdict (skipped or cancelled is not a pass)' as required status checks on `main`, and paste the branch-protection settings afterwards?"*
+
 ## Cited, not graded (check:census-scope-coverage)
 
 - NOT-GRADED: artifacts/api-server/src/compass/CompassExplanationEngine.ts — §13.7 item 3 names Compass's HMAC recommendation-token signer as a refactor this lane declined to make in another lane's file. Discovery's recommendation id is minted by lib/discoveryRecommendationId.ts, and no Discovery verdict rests on the signer.

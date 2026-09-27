@@ -3840,6 +3840,23 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "travel-buddy-standalone/src/hooks/__tests__/useCommunityDiscovery.viewerScope.component.test.tsx",
     "travel-buddy-standalone/src/hooks/__tests__/useRankOutcome.recommendationId.component.test.ts",
     "travel-buddy-standalone/src/context/__tests__/SessionContext.discoveryViewer.component.test.tsx",
+    // WIDENED 2026-09-27 by §54 (lane P9, database and rollout): DV-71 and DC-15 move W -> C on 3390, the
+    // query-path document and its check; DV-82's seven producers; DV-72's rebuild proofs. Each file below is a
+    // verdict's evidence, so a weakened migration, test or registry must age this census.
+    "artifacts/api-server/src/lib/discoveryStopMeasurements.ts",
+    "artifacts/api-server/src/migrations/3390_discovery_rls_explicit_policies.sql",
+    "artifacts/api-server/src/migrations/3391_discovery_stop_condition_measurements.sql",
+    "db/rollback/2026-09-27-3390-discovery-rls-explicit-policies-rollback.sql",
+    "db/rollback/2026-09-27-3391-discovery-stop-condition-measurements-rollback.sql",
+    "artifacts/api-server/src/scripts/checkDiscoveryQueryPaths.ts",
+    "artifacts/api-server/src/test/discoveryStopSevenConditions.test.ts",
+    "artifacts/api-server/src/test/discoveryQueryPathsCheck.test.ts",
+    "artifacts/api-server/src/test/db/discoveryRlsExplicitPolicies.db.test.ts",
+    "artifacts/api-server/src/test/db/discoveryStopMeasurements.db.test.ts",
+    "artifacts/api-server/src/test/db/discoveryDerivedRebuild.db.test.ts",
+    "artifacts/api-server/src/lib/discoveryTrailHealth.ts",
+    "docs/discovery/query-paths.md",
+    "docs/discovery/query-paths-explain.sql",
   ],
   // ── ADDED 2026-09-15: census-passport joins the CHECKABLE set ──────────────
   //
