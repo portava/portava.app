@@ -341,7 +341,8 @@ describe("REVOCATION — content removed or hidden after it was attached is no l
       trails: [trail(T)], content_trails: [member("m-e", { source_type: "event", source_id: EVENT })], events,
     });
     assert.deepEqual(await served(seed([])), []);
-    assert.deepEqual(await served(seed([{ id: EVENT, host_id: AUTHOR }])), ["m-e"]);
+    // An events row as production stores it (§64 reads its visibility, state and viewer gates; all three are NOT NULL or defaulted).
+    assert.deepEqual(await served(seed([{ id: EVENT, host_id: AUTHOR, visibility: "public", state: "open", verified_only: false, trust_score_min: null, age_min: null, age_max: null }])), ["m-e"]);
   });
 
   it("a community place submitted by a blocked user is withheld", async () => {

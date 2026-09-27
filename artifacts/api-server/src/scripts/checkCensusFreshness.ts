@@ -4063,6 +4063,10 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "travel-buddy-standalone/src/hooks/__tests__/useRankOutcome.component.test.ts",
     // census-discovery §66 (re-verification lane P20): DV-30, C32, DC-26 and B01 move C -> W on this suite.
     "artifacts/api-server/src/test/discoveryVerifyAudit2.test.ts",
+    // WIDENED 2026-09-27 by census-discovery §64 (P17, Trail member visibility): DC-20's re-grade
+    // cites the two suites that were seen red on the event and route rules and on the counts.
+    "artifacts/api-server/src/test/discoveryTrailMemberVisibility.test.ts",
+    "artifacts/api-server/src/test/db/trailsMemberVisibility.db.test.ts",
   ],
   // ── ADDED 2026-09-15: census-passport joins the CHECKABLE set ──────────────
   //

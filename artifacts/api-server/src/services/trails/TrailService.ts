@@ -62,9 +62,9 @@ import {
   type TrailHealth,
 } from "../../lib/discoveryTrailHealth.js";
 import { trailAffinityMap, trailMomentumFromRankEvents, type TrailMembershipRow } from "../../lib/discoveryTrailAffinity.js";
-// census-discovery §61: DC-03's serialised creation decision, and DC-20's check that attached content exists.
-import { commitTrailProposal } from "./trailProposal.js";
-import { verifyAttachSources, type AttachSourceRefusal } from "./trailAttachIntegrity.js";
+import { commitTrailProposal } from "./trailProposal.js"; // census-discovery §61: DC-03's serialised creation decision
+import { verifyAttachSources, type AttachSourceRefusal } from "./trailAttachIntegrity.js"; // §61: DC-20's check that attached content exists
+import { requireTripMember, TripAccessUnavailableError } from "../../lib/http.js"; // §64: a trip route's crew, as 2334's RLS and GET /route-plans/:id decide it
 import { logger as rootLogger } from "../../lib/logger.js";
 import { fetchBlockedSet, submitterIsVisible } from "../../lib/blocks.js";
 import { decidePostReadable, isPostPublished } from "../../lib/postVisibility.js";
@@ -173,11 +173,11 @@ export interface TrailDetail {
   refusal: TrailRefusal;
   trail: TrailRow | null;
   health: TrailHealth | null;
-  /** §12's user-facing word. Never a number — §12 forbids opaque quality scores. */
+  /** §12's user-facing word, over the members THIS viewer may be served (§64). Never a number — §12 forbids opaque quality scores. */
   status: string | null;
   /** The bounded ranking multiplier §11 permits, floored so it cannot erase. */
   healthScale: number;
-  memberCount: number;
+  memberCount: number; // §64: the members THIS viewer may be served — never one withheld from them; `health` stays the whole Trail's
 }
 
 /**
@@ -261,20 +261,20 @@ export interface ServableMember extends MemberRow {
 }
 
 /**
- * The members a Trail may SERVE, to one viewer. Three rules, each the one the
+ * The members a Trail may SERVE, to one viewer. Four rules, each the one the
  * rest of the product already applies, none invented here:
  *
  *  REVOCATION   A member whose source was removed or hidden after it was
- *               attached is not served. `content_trails.source_id` has no
- *               foreign key (it is polymorphic), so a deleted, tombstoned,
- *               unpublished, not-yet-due or non-public post, and an event or
- *               route whose row is gone, stayed in every module for ever. The
- *               post rules are lib/postVisibility.ts's (`decidePostReadable`,
- *               `isPostPublished`) plus the status / deleted / tombstoned /
- *               publish_at gates lib/mediaEligibility.ts applies; a Trail is a
- *               public space, so trip-only and followers-only posts are served
- *               to their author and to no one else (the fail-closed default of
- *               `decidePostReadable` when membership is not resolved).
+ *               attached is not served (`source_id` has no foreign key). Posts:
+ *               lib/postVisibility.ts (`decidePostReadable`, `isPostPublished`)
+ *               plus lib/mediaEligibility.ts's status / deleted / tombstoned /
+ *               publish_at gates; a Trail is a public space, so trip-only and
+ *               followers-only posts are served to their author alone.
+ *  EVENTS AND   (§64) An event is served to everyone only when 2033's
+ *  ROUTES       `events_public_read` admits it, the viewer is not banned and no
+ *               age/trust/verified gate applies; else to its host only. A route
+ *               plan: its owner, and its trip's accepted crew once active or
+ *               completed (`requireTripMember`); no one else. `memberAccessFor`.
  *  BLOCKS       lib/blocks.ts's symmetric rule (`submitterIsVisible`): a member
  *               contributed OR created by someone the viewer blocked, or who
  *               blocked the viewer, is not served to them; an unreadable block
@@ -308,11 +308,11 @@ export async function servableMembers(
 
   const [posts, events, routes, places] = await Promise.all([
     readRows("posts", (ids) => sc.from("posts").select("id, author_id, visibility, status, post_status, deleted_at, tombstoned_at, publish_at, trip_id, canonical_place_id, location_place_id").in("id", ids), idsOf("post")),
-    readRows("events", (ids) => sc.from("events").select("id, host_id").in("id", ids), idsOf("event")),
-    readRows("route_plans", (ids) => sc.from("route_plans").select("id, owner_user_id").in("id", ids), idsOf("route")),
+    readRows("events", (ids) => sc.from("events").select("id, host_id, visibility, state, verified_only, trust_score_min, age_min, age_max").in("id", ids), idsOf("event")),
+    readRows("route_plans", (ids) => sc.from("route_plans").select("id, owner_user_id, trip_id, status").in("id", ids), idsOf("route")),
     readRows("discovery_places", (ids) => sc.from("discovery_places").select("id, submitted_by").in("id", ids), idsOf("place")),
   ]);
-
+  const access = await memberAccessFor(sc, events, routes, viewerId, unread); // §64: the ban and trip-crew reads, once per call, fail closed
   const resolved: ServableMember[] = [];
   for (const m of members) {
     let creatorId: string | null = null;
@@ -328,11 +328,11 @@ export async function servableMembers(
       clusterPlaceId = (p.canonical_place_id ?? p.location_place_id ?? null) as string | null;
     } else if (m.source_type === "event") {
       const e = events?.get(m.source_id);
-      if (!e) continue;
+      if (!e || !access.event(e)) continue;              // §64: 2033's public-read rule, else its host only
       creatorId = typeof e.host_id === "string" ? e.host_id : null;
     } else if (m.source_type === "route") {
       const r = routes?.get(m.source_id);
-      if (!r) continue;
+      if (!r || !access.route(r)) continue;              // §64: its owner, or its trip's accepted crew once active
       creatorId = typeof r.owner_user_id === "string" ? r.owner_user_id : null;
     } else if (m.source_type === "place") {
       if (!places) continue;
@@ -388,7 +388,7 @@ function distinctReportCount(rows: ReadonlyArray<{ id?: unknown; reported_by?: u
 }
 
 /** `11` §3 action 2 — get Trail, with §11 health and §12 status. */
-export async function getTrail(sc: any, trailId: string, nowMs = Date.now()): Promise<TrailDetail> {
+export async function getTrail(sc: any, trailId: string, nowMs = Date.now(), opts: { viewerId?: string | null } = {}): Promise<TrailDetail> {
   const empty: TrailDetail = { refusal: null, trail: null, health: null, status: null, healthScale: 1, memberCount: 0 };
   if (!sc) return { ...empty, refusal: "no_service_client" };
 
@@ -406,14 +406,14 @@ export async function getTrail(sc: any, trailId: string, nowMs = Date.now()): Pr
     reportCount: await readOpenReportCount(sc, trailId),
     nowMs,
   });
-
+  const view = await servedTrailView(sc, m.members, opts.viewerId ?? null, nowMs); // §64: what GET …/:id SHOWS counts only what this viewer is served
   return {
     refusal: null,
     trail: t.trail,
     health,
-    status: trailStatusLabel(t.trail.lifecycle_status, health),
+    status: trailStatusLabel(t.trail.lifecycle_status, view),
     healthScale: trailHealthScale(health),
-    memberCount: health.memberCount,
+    memberCount: view.memberCount,
   };
 }
 
@@ -944,10 +944,10 @@ export async function trailTrending(
   const m = await readMembers(sc, trailId);
   if (m.refusal) return none(m.refusal);
 
-  const itemIds = m.members.map((r) => r.source_id);
-  // No members ⇒ no reading was taken, so there is no window to report. A
-  // provenance here would describe a computation that never ran (DC-17).
-  if (itemIds.length === 0) return none(null);
+  const servable = await servableMembers(sc, m.members, opts.viewerId ?? null, nowMs); // §64: every reading below is over what THIS viewer may be served
+  // Nothing this viewer may be served ⇒ no reading was taken (DC-17), exactly
+  // as for an EMPTY Trail, so a withheld member is not told apart from none (§64).
+  if (servable.length === 0) return none(null);
 
   // Per-item ORDER: the discovery-surface rows the momentum loader reads, in
   // both served id spaces, through the shipping kernel. Trail MOMENTUM: the
@@ -957,7 +957,7 @@ export async function trailTrending(
   // other a corpus chosen for a different member set.
   let perItem: Record<string, number> = {};
   let momentumProvenance: DerivedStoreProvenance | null = null;
-  const itemRead = await readMemberEvents(sc, m.members, nowMs, "discovery");
+  const itemRead = await readMemberEvents(sc, servable, nowMs, "discovery");
   if (itemRead) {
     const reading = computeLocalMomentum(itemRead.rows, nowMs);
     perItem = { ...reading.values };
@@ -967,9 +967,9 @@ export async function trailTrending(
   }
 
   let trailMomentum: number | null = null;
-  const trailRead = await readMemberEvents(sc, m.members, nowMs, null);
+  const trailRead = await readMemberEvents(sc, servable, nowMs, null);
   if (trailRead) {
-    trailMomentum = trailMomentumFromRankEvents(trailRead.rows, m.members, nowMs)[trailId] ?? 0; // H-P8-1 (§58.4, §61): the read SUCCEEDED, so no entry is a measured 0; only a failed read leaves null
+    trailMomentum = trailMomentumFromRankEvents(trailRead.rows, servable, nowMs)[trailId] ?? 0; // H-P8-1 (§58.4, §61): the read SUCCEEDED, so no entry is a measured 0; only a failed read leaves null
   } else {
     logger.warn({ trailId }, "trail trending event read failed");
   }
@@ -978,8 +978,8 @@ export async function trailTrending(
   // content, and it passes through §10's creator and place caps like every
   // module does — a momentum-ordered list is exactly where one creator's
   // surge would otherwise fill all twenty places (DV-13). The boolean above is
-  // the Trail's and is measured over every member.
-  const servable = await servableMembers(sc, m.members, opts.viewerId ?? null, nowMs);
+  // measured over the same servable members (§64): a withheld member's
+  // activity must not make a Trail "trending" to a viewer it is withheld from.
   const seen = new Set<string>();
   const ranked = servable
     .filter((r) => (perItem[r.source_id] ?? 0) > 0)
@@ -1624,3 +1624,134 @@ export async function moveTrailLifecycle(
 
 /** Exported for the route layer's validation, so the vocabulary has one home. */
 export { TRAIL_EDGE_TYPES };
+
+// ── census-discovery §64: who an EVENT or a ROUTE member may be served to ────
+//
+// `servableMembers` served an event or a route plan to every viewer whenever
+// its row existed (§61.4). A Trail is a public space, and until the owner says
+// otherwise (§61.12 question 4) it may serve such content only as the product
+// already would. None of the rules below is new; each is quoted from where it
+// is enforced today.
+//
+// EVENTS. Anyone may read an event the database's own public policy admits:
+//   `events_public_read` (2033_rls_hardening.sql:266, baseline :28027):
+//     visibility = 'public' AND state IN ('open','full','waitlist','started',
+//     'completed') AND NOT viewer_is_blocked(host_id)
+// The block leg is `servableMembers`' own (the host is the member's creator).
+// Two rules of the API are STRICTER than that policy, and both are applied:
+//   - a viewer the host BANNED may not read it (routes/events.ts
+//     checkEventEligibility, which GET /events/:id runs after canViewEvent;
+//     the /events feed drops `bannedEvents`);
+//   - an event that gates its viewers by age, trust or verification 404s to an
+//     ineligible viewer (GET /events/:id), and a Trail does not resolve a
+//     viewer's eligibility, so such an event is its host's only. That is the
+//     fail-closed default posts already get when membership is not resolved.
+// Everything else — friends-only, invite-only, the API's circle/trip values, a
+// draft, cancelled or archived event — is served to its HOST only, the posts'
+// author exception. Friends, invitees, RSVP holders and co-hosts may read such
+// an event elsewhere (canViewEvent), and 2033's `events_participant_read`
+// admits participants but not friends: the two surfaces disagree, and in a
+// public space neither relationship is resolved, as a post's followers and
+// trip members are not. A public event's `circle_id` / `trip_id` scope nothing
+// in the product (every surface above reads `visibility` alone, and
+// POST /events/:id/link-circle keeps an event public unless the host asks), so
+// they scope nothing here either.
+//
+// ROUTES. A route plan has no public concept. It is readable by its owner, and
+// — when it belongs to a trip — by that trip's ACCEPTED crew: migration 2334's
+// `route_plans_member_select` (authz.is_trip_crew), GET /route-plans/:id and
+// lib/trailLiveIntel.ts all delegate to lib/http.ts `requireTripMember`, which
+// this reuses as it is. A draft or cancelled plan is its owner's alone
+// (stricter than those three, which admit the crew to a draft). No product
+// rule shares a route plan with a circle, so `circle_id` admits no one.
+//
+// FAIL CLOSED. The ban read and each trip's membership read are resolved once
+// per call; one that cannot be read withholds every member it would have
+// vouched for and is named in `unread` (attach answers 503). The host, the
+// owner and an anonymous viewer need neither read.
+
+/** `events_public_read`'s state allowlist (2033_rls_hardening.sql:266): the states in which anyone may read a public event. */
+export const EVENT_PUBLIC_READ_STATES: ReadonlySet<string> = new Set(["open", "full", "waitlist", "started", "completed"]);
+/** The route-plan statuses a trip's accepted crew is served; a draft or a cancelled plan is its owner's alone. */
+export const ROUTE_CREW_STATUSES: ReadonlySet<string> = new Set(["active", "completed"]);
+
+/** checkEventEligibility's viewer gates (verified, trust, age), which a Trail does not resolve per viewer. */
+function eventGatesItsViewers(e: any): boolean {
+  return e?.verified_only === true || e?.trust_score_min != null || e?.age_min != null || e?.age_max != null;
+}
+
+/** Public, in a public-read state, gating no viewer: servable to every viewer the host has not banned. */
+function eventIsPubliclyReadable(e: any): boolean {
+  return e?.visibility === "public" && EVENT_PUBLIC_READ_STATES.has(String(e?.state)) && !eventGatesItsViewers(e);
+}
+
+interface MemberAccess {
+  event(row: any): boolean;
+  route(row: any): boolean;
+}
+
+async function memberAccessFor(
+  sc: any, events: Map<string, any> | null, routes: Map<string, any> | null,
+  viewerId: string | null, unread?: Set<string>,
+): Promise<MemberAccess> {
+  // Bans: only for the events this viewer could otherwise be served, and never for their own.
+  let banned: Set<string> | null = new Set();
+  const banCandidates = viewerId
+    ? [...(events?.values() ?? [])].filter((e) => e.host_id !== viewerId && eventIsPubliclyReadable(e)).map((e) => String(e.id))
+    : [];
+  if (banCandidates.length > 0) {
+    const { data, error } = await sc.from("event_roles").select("event_id")
+      .eq("user_id", viewerId).eq("role", "banned").in("event_id", banCandidates);
+    if (error || !Array.isArray(data)) {
+      unread?.add("event_roles");
+      logger.warn({ code: error?.code, message: error?.message }, "trail event bans unread — public events withheld from this viewer");
+      banned = null;
+    } else {
+      banned = new Set((data as any[]).map((r) => String(r.event_id)));
+    }
+  }
+
+  // Trip crew: one requireTripMember per trip that could admit this viewer.
+  const crewTrips = viewerId
+    ? [...new Set([...(routes?.values() ?? [])]
+      .filter((r) => r.owner_user_id !== viewerId && typeof r.trip_id === "string" && ROUTE_CREW_STATUSES.has(String(r.status)))
+      .map((r) => r.trip_id as string))]
+    : [];
+  const crewOf = new Map<string, boolean>(); // absent ⇒ unread ⇒ not crew
+  await Promise.all(crewTrips.map(async (tripId) => {
+    try {
+      crewOf.set(tripId, (await requireTripMember(sc, tripId, viewerId!)) !== null);
+    } catch (err) {
+      unread?.add(err instanceof TripAccessUnavailableError ? err.input : "trip_members");
+      logger.warn({ tripId, err: (err as Error)?.message }, "trail route crew unread — the trip's routes withheld from this viewer");
+    }
+  }));
+
+  return {
+    event: (e) => (viewerId !== null && e.host_id === viewerId)
+      || (eventIsPubliclyReadable(e) && (viewerId === null || (banned !== null && !banned.has(String(e.id))))),
+    route: (r) => (viewerId !== null && r.owner_user_id === viewerId)
+      || (viewerId !== null && typeof r.trip_id === "string" && ROUTE_CREW_STATUSES.has(String(r.status)) && crewOf.get(r.trip_id) === true),
+  };
+}
+
+/**
+ * The §12 word and the member count GET …/:id SHOWS, over the members this
+ * viewer may be served (§64). Counted over every member, a friends-only event
+ * or another traveller's route raised `memberCount` for everyone — the count
+ * disclosed a member that was withheld — and one attached today could turn a
+ * stranger's "Quiet right now" into "Fresh today". The whole-Trail `health`
+ * (the ranking multiplier, the hourly snapshot) is unchanged and never served.
+ * When every member is servable to the viewer, the two are the same numbers.
+ */
+async function servedTrailView(sc: any, members: readonly MemberRow[], viewerId: string | null, nowMs: number): Promise<TrailHealth> {
+  const served = await servableMembers(sc, members, viewerId, nowMs);
+  return computeTrailHealth({
+    members: served.map((r) => ({
+      source_id: r.source_id, contributor_id: r.contributor_id,
+      confidence: Number(r.confidence), content_state: r.content_state, created_at: r.created_at,
+    })),
+    reportCount: null, // the view feeds §12's word and the count only; `report_rate` stays the whole Trail's
+    nowMs,
+  });
+}

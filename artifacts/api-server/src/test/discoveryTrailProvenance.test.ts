@@ -468,7 +468,7 @@ describe("DC-17 — `readingProvenance` reaches the wire at both Trail URLs", ()
     servedDb({ trails: [trail(T_A)], content_trails: [] });
     const r = await get(`/v1/discovery/trails/${T_A}/trending`);
     assert.equal(r.status, 200);
-    assert.equal(r.body.trending, false);
+    assert.equal(r.body.trending, false); // §64.13: DC-17's contract, kept by §61.17 — an EMPTY Trail (or one whose every member is withheld from this viewer) is a measured false; only a FAILED read is null
     assert.equal(
       r.body.readingProvenance, null,
       "`trending:false` with no provenance is the unmeasured case and must be visible as such",

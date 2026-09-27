@@ -211,7 +211,7 @@ router.get("/v1/discovery/trails/:id", asyncHandler(async (req: Request, res: Re
   const id = uuid.safeParse(req.params.id);
   if (!id.success) return sendError(res, "invalid_payload", "trail id must be a uuid");
 
-  const r = await getTrail(getServiceClient(), id.data);
+  const r = await getTrail(getServiceClient(), id.data, Date.now(), { viewerId: auth.user.id }); // §64: memberCount and status count only what this viewer is served
   if (r.refusal) return sendTrailRefusal(res, r.refusal);
   if (!r.trail) return sendError(res, "not_found", "trail not found");
   res.json({
