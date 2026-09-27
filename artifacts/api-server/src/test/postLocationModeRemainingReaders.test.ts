@@ -358,6 +358,25 @@ describe("A. Compass feed page — the owner's location mode", () => {
     assert.ok(wire.includes(PL(1)) && wire.includes(PL(4)), "the disclosed ones are");
   });
 
+  it("A2n. [both ways] a none-mode and a released delayed item are the pre-§43 FeedItems, WHOLE", async () => {
+    const items = await hydrate(compassPosts());
+    const fixed = await buildFeed(items, compassProfile(CV), compassContext(), null, null, { ...OVERRIDES, placeAffinities: {} });
+    const before = await buildFeed(unmarked(items), compassProfile(CV), compassContext(), null, null, { ...OVERRIDES, placeAffinities: {} });
+    const pick = (p: FeedPage) => allFeedItems(p).filter(({ i }) => i.item.id === P_NONE || i.item.id === P_RELEASED)
+      .map(({ section, i }) => [section, JSON.parse(JSON.stringify(i))]);
+    assert.ok(pick(fixed).length >= 2);
+    assert.deepStrictEqual(pick(fixed), pick(before));
+    for (const [, i] of pick(fixed)) assert.ok(i.item.placeId === PL(1) || i.item.placeId === PL(4));
+  });
+
+  it("A3o. [both ways] the owner's own withheld post keeps its placeId on their page", async () => {
+    const items = await hydrate(compassPosts());
+    const page = await buildFeed(items, compassProfile(CB), compassContext(), null, null, { ...OVERRIDES, placeAffinities: {} });
+    const mine = allFeedItems(page).filter(({ i }) => i.item.id === P_CITY);
+    assert.ok(mine.length > 0);
+    for (const { i } of mine) assert.equal(i.item.placeId, PL(2));
+  });
+
   it("A3. the owner's own page keeps their withheld post's placeId; another author's stays withheld", async () => {
     const items = await hydrate(compassPosts());
     const page = await buildFeed(items, compassProfile(CB), compassContext(), null, null, { ...OVERRIDES, placeAffinities: {} });
@@ -546,6 +565,42 @@ describe("B. The Wall — the owner's location mode at the response", () => {
     for (const s of ["Secret Bar", "place-secret", "Mystery Spot", "place-myst"]) assert.ok(!wire.includes(s), `${s} is not on the wire`);
   });
 
+  it("B1n. [both ways] Following: the none-mode item is WHOLE — pinned field by field", async () => {
+    use(wallWorld({ posts: followingPosts() }));
+    const res = await h.request("GET", "/api/wall?mode=following", "tok-v");
+    const item = (res.json.items as any[]).find((i) => i.canonicalObjectId === "post-open");
+    assert.deepStrictEqual(item, {
+      projectionId: "wall_social_update_post-open", canonicalObjectId: "post-open",
+      actor: { userId: "wa", displayName: "Ana", handle: "ana", avatarUrl: null },
+      publishedAt: minutesAgo(5), visibility: "public", text: "Post post-open",
+      place: { placeId: "place-open", name: "Open Cafe", city: "Da Nang", country: "VN" },
+      viewerSaved: false,
+      actions: [
+        { type: "open_object", label: "Open", targetType: "social_update", targetId: "post-open" },
+        { type: "save", label: "Save", targetType: "post", targetId: "post-open", params: { saved: false } },
+        { type: "see_place", label: "See place", targetType: "place", targetId: "place-open" },
+      ],
+      objectType: "social_update",
+      contextThread: item.contextThread,
+    });
+    assert.equal(item.contextThread.label, "Open Cafe · see it on the map");
+  });
+
+  it("B2o. [both ways] the owner's own withheld post is WHOLE on their For You page", async () => {
+    const posts = [
+      wpost("post-a1", "wa", "place-open", "none", 1),
+      wpost("post-c1", "wc", "place-open", "none", 2),
+      wpost("post-a2", "wa", "place-myst", "none", 3),
+      wpost("post-secret", "wb", "place-secret", "city_only", 30),
+    ];
+    use(wallWorld({ posts, flags: { wall_discovery_insertions_enabled: true, wall_context_threads_enabled: false }, follows: [["wb", "wa"], ["wb", "wc"]] }));
+    const own = await h.request("GET", "/api/wall?mode=for_you", "tok-b");
+    const mine = (own.json.items as any[]).find((i) => i.canonicalObjectId === "post-secret");
+    assert.ok(mine);
+    assert.deepEqual(mine.place, { placeId: "place-secret", name: "Secret Bar", city: "Da Nang", country: "VN" });
+    assert.deepEqual(mine.actions.map((a: any) => a.type), ["open_object", "save", "see_place", "follow"], "as the pre-§43 discovery projection builds it");
+  });
+
   it("B2. the owner sees their own withheld post whole (For You discovery path, where the Wall shows a viewer their own posts)", async () => {
     // For You shows a viewer's own post only as a discovery insertion, and the
     // diversity controller admits a discovery insertion only after social
@@ -657,6 +712,16 @@ describe("B. The Wall — the owner's location mode at the response", () => {
     assert.equal(postPlaceMarkedWithheldFrom(loaded.placeByObject.get("post-secret"), "wv"), true);
     assert.equal(byId.get("post-open")!.place, loaded.placeByObject.get("post-open"));
     assert.equal(Object.getOwnPropertySymbols(byId.get("post-open")!.place!).length, 0, "a none-mode ref carries no mark");
+  });
+
+  it("B8n. [both ways] a followed author's none-mode postcard is WHOLE", async () => {
+    const cards = [{ id: "pc-open", post_id: "post-open", user_id: "wa", status: "active", deleted_at: null, created_at: minutesAgo(5) }];
+    use({ ...wallWorld({ posts: followingPosts() }), passport_postcards: cards });
+    const res = await h.request("GET", "/api/wall?mode=following", "tok-v");
+    const item = (res.json.items as any[]).find((i) => i.canonicalObjectId === "post-open");
+    assert.equal(item.objectType, "postcard");
+    assert.deepEqual(item.place, { placeId: "place-open", name: "Open Cafe", city: "Da Nang", country: "VN" });
+    assert.deepEqual(item.actions.map((a: any) => a.type), ["open_object", "save", "see_place"]);
   });
 
   it("B5. a place a disclosed post also points at stays in the strip; the owner keeps their own; the mark never serialises", () => {
@@ -820,6 +885,26 @@ describe("C. Place pages — a post whose owner withheld its place is not listed
     assert.match(log.selects.find((s) => s.table === "posts" && s.cols.includes("post_buckets"))!.cols, /\blocation_privacy_mode\b/);
   });
 
+  it("C1n. [both ways] the living page's none-mode entries are WHOLE", async () => {
+    use(livingWorld(livingPosts()));
+    const res = await h.request("GET", `/api/places/${LPLACE}/living`, null);
+    const n = (list: any[]) => list.filter((p) => ["n1", "n2", "n3"].includes(p.id));
+    assert.deepStrictEqual(n(res.json.timeline.posts), livingPosts().filter((p) => ["n1", "n2", "n3"].includes(p.id)).map((p) => ({
+      id: p.id, mediaUrl: `https://cdn.example/${p.id}.jpg`, thumbnailUrl: null, caption: `caption ${p.id}`,
+      authorId: p.author_id, createdAt: p.created_at, like_count: 1,
+    })));
+    assert.deepStrictEqual(n(res.json.buckets[0].posts), ["n1", "n2", "n3"].map((id) => ({
+      id, mediaUrl: `https://cdn.example/${id}.jpg`, thumbnailUrl: null, caption: `caption ${id}`,
+    })));
+  });
+
+  it("C2o. [both ways] the owner gets their own withheld post back on the living page", async () => {
+    use(livingWorld(livingPosts()));
+    const res = await h.request("GET", `/api/places/${LPLACE}/living`, "tok-aw");
+    assert.ok(res.json.timeline.posts.some((p: any) => p.id === "w"));
+    assert.ok(res.json.buckets[0].posts.some((p: any) => p.id === "w"));
+  });
+
   it("C2. the owner gets their own withheld post back — from a fresh build and from the cache — and nobody else's", async () => {
     use(livingWorld(livingPosts()));
     const fresh = await h.request("GET", `/api/places/${LPLACE}/living`, "tok-aw");
@@ -833,6 +918,12 @@ describe("C. Place pages — a post whose owner withheld its place is not listed
     assert.ok(!JSON.stringify(hitOwner.json).includes("_placeWithheldAuthorId"));
     const hitOther = await h.request("GET", `/api/places/${LPLACE}/living`, "tok-v");
     assert.deepEqual(hitOther.json.timeline.posts.map((p: any) => p.id), ["n1", "n2", "n3"]);
+    // A stale row is served before it is rebuilt: the same shaping applies.
+    use(livingWorld(livingPosts(), { place_living_cache: [{ ...cacheRow, cached_at: new Date(NOW0 - 3 * 86_400_000).toISOString() }] }));
+    const stale = await h.request("GET", `/api/places/${LPLACE}/living`, null);
+    assert.equal(stale.headers.get("x-cache"), "STALE");
+    assert.deepEqual(stale.json.timeline.posts.map((p: any) => p.id), ["n1", "n2", "n3"]);
+    assert.ok(!JSON.stringify(stale.json).includes("_placeWithheldAuthorId"));
   });
 
   it("C3. a payload cached before §43 cannot say which entries to withhold, so it is rebuilt, not served", async () => {
@@ -953,6 +1044,18 @@ describe("C. Place pages — a post whose owner withheld its place is not listed
     return ids;
   };
 
+  it("C5n. [both ways] the living timeline: none-mode entries WHOLE, and the owner keeps their own", async () => {
+    use(livingWorld(livingPosts()));
+    const anon = await h.request("GET", `/api/places/${LPLACE}/living/timeline?slice=today`, null);
+    const n1 = livingPosts()[0]!;
+    assert.deepStrictEqual(anon.json.posts.find((p: any) => p.id === "n1"), {
+      id: "n1", mediaUrl: "https://cdn.example/n1.jpg", thumbnailUrl: null, caption: "caption n1", authorId: "a1",
+      createdAt: n1.created_at, mediaType: "image", buckets: ["food"], like_count: 1,
+    });
+    const owner = await h.request("GET", `/api/places/${LPLACE}/living/timeline?slice=today`, "tok-aw");
+    assert.ok(owner.json.posts.some((p: any) => p.id === "w"));
+  });
+
   it("C6. the Place Day feed: the sequence a non-owner can page through is the old sequence minus withheld posts; the owner's is unchanged", async () => {
     use(dayWorld(asNone(dayPosts())));
     assert.deepEqual(await walk("tok-v"), ["n1", "w", "n2", "u", "n3"], "before");
@@ -969,6 +1072,17 @@ describe("C. Place pages — a post whose owner withheld its place is not listed
     }, "a none-mode item is WHOLE");
   });
 
+  it("C6n. [both ways] the Place Day feed: a none-mode item is WHOLE, and the owner's sequence keeps their post", async () => {
+    use(dayWorld(dayPosts()));
+    const first = await h.request("GET", `/api/places/${LPLACE}/place-days/${DATE}/feed?limit=5`, "tok-v");
+    assert.deepStrictEqual(first.json.items.find((i: any) => i.id === UID.n1), {
+      id: UID.n1, authorId: "a1", caption: "caption n1", mediaUrl: "https://cdn.example/n1.jpg",
+      thumbnailUrl: null, mediaType: "image", createdAt: `${DATE}T15:00:00.000Z`,
+    });
+    use(dayWorld(dayPosts()));
+    assert.ok((await walk("tok-aw")).includes("w"));
+  });
+
   it("C7. a Place Day recap never copies another author's withheld post; the recap owner's own withheld post is still theirs to recap", async () => {
     const rpost = (id: string, author: string, mode: string | null, hh: string) => ({ ...dpost(id, author, mode, hh) });
     const posts = [rpost("mine", "rv", "city_only", "10"), rpost("n1", "a1", "none", "11"), rpost("w", "aw", "hidden", "12"), rpost("u", "au", UNKNOWN_MODE, "13")];
@@ -982,6 +1096,16 @@ describe("C. Place pages — a post whose owner withheld its place is not listed
     const sources = log.rpcs.find((r) => r.fn === "create_live_place_recap")!.args.p_sources;
     assert.deepEqual(sources.map((s: any) => NAME[s.postId] ?? s.postId), ["mine", "n1"]);
     assert.match(log.selects.find((s) => s.table === "posts")!.cols, /\blocation_privacy_mode\b/);
+  });
+
+  it("C7o. [both ways] the recap owner's own withheld post, and a none-mode post, are recapped", async () => {
+    const posts = [dpost("mine", "rv", "city_only", "10"), dpost("n1", "a1", "none", "11"), dpost("w", "aw", "hidden", "12")];
+    use({ ...dayWorld(posts), place_days: [{ id: "c1000000-0000-4000-a000-000000000001", place_id: LPLACE, local_date: DATE, timezone: "Europe/London", status: "closing" }] },
+      { rpc: () => ({ data: { recap: { id: "r1" }, version: { id: "v1" } }, error: null }) });
+    const res = await h.request("POST", "/api/place-recaps", "tok-rv", { placeDayId: "c1000000-0000-4000-a000-000000000001" });
+    assert.equal(res.status, 201);
+    const ids = log.rpcs.find((r) => r.fn === "create_live_place_recap")!.args.p_sources.map((x: any) => NAME[x.postId] ?? x.postId);
+    assert.ok(ids.includes("mine") && ids.includes("n1"), JSON.stringify(ids));
   });
 });
 
@@ -1030,6 +1154,20 @@ describe("D. The public postcard wall — a postcard's copied venue follows its 
     }
     assert.deepEqual(venues(before), { "pc-n": "Hidden Courtyard", "pc-w": "Hidden Courtyard", "pc-u": "Hidden Courtyard", "pc-r": "Hidden Courtyard", "pc-o": "Hidden Courtyard" }, "the pre-§43 wall served every copy");
     assert.match(log.selects.find((s) => s.table === "posts")!.cols, /\blocation_privacy_mode\b/);
+  });
+
+  it("D1n. [both ways] the none-mode and released postcards are WHOLE", async () => {
+    use(world(POSTS()));
+    const res = await h.request("GET", "/api/users/target/passport/postcards", null);
+    const byId = new Map((res.json.postcards as any[]).map((c) => [c.id, c]));
+    for (const [id, minutes] of [["pc-n", 1], ["pc-r", 4]] as const) {
+      const c = card(id, id === "pc-n" ? "p-n" : "p-r", minutes);
+      assert.deepStrictEqual(byId.get(id), {
+        id, postId: c.post_id, mediaUrl: c.media_url, caption: c.caption, locationName: "Hidden Courtyard",
+        locationCity: "Lisbon", locationCountry: "Portugal", locationVerified: true, stampEligible: false,
+        visibility: "public", status: "active", pinnedAt: null, note: null, createdAt: c.created_at, media: [],
+      });
+    }
   });
 
   it("D2. the owner's own wall is unchanged (and costs no extra read)", async () => {
