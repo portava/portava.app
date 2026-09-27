@@ -377,7 +377,7 @@ NOT-BUILT · **?** = CANNOT-VERIFY. Backend paths are relative to
 | id | Requirement | V | Evidence |
 | --- | --- | --- | --- |
 | W117 | Follow relationship ← Social Graph | C | `routes/wall.ts:214-222` reads `user_follows`; the Wall never writes it. |
-| W118 | Post/video/Postcard media ← canonical media/content systems | C | `WallCandidateLoaders.loadVideoMediaCandidates` delegates to `services/media/MediaProjectionService` (imported `:41-45`). |
+| W118 | Post/video/Postcard media ← canonical media/content systems | C | `WallCandidateLoaders.loadVideoMediaCandidates` delegates to `services/media/MediaProjectionService` (imported `:41-45`; corrected 2026-09-27, verdict unmoved: the block is at `artifacts/api-server/src/services/wall/WallCandidateLoaders.ts:42-46#import {` and closes at `artifacts/api-server/src/services/wall/WallCandidateLoaders.ts:46#} from "../media/MediaProjectionService.js";`, where it already was at 42aeac38e, the earliest commit this row exists at). |
 | W119 | Place identity/state ← Places + Live Intelligence | C | `routes/wall.ts:468-488` reads `places`; state via `lib/liveClaimRead` only. |
 | W120 | Trip membership/saves ← Trips | C | `routes/wall.ts:223-234` reads `trip_members`; `:284-297` reads `trips`. |
 | W121 | Hidden Gem qualification ← Hidden Gem system | C | `routes/wall.ts:709#.from("hidden_gems")` reads `hidden_gems` (the earlier `:494-509` had rotted 177 lines onto `buildForYouRankViewer`; an UNANCHORED range cannot fail when the code moves, so it is anchored now); `ContextThreadService` uses `deriveGemProjection` from `services/hiddenGems/`. |

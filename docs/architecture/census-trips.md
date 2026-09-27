@@ -7477,12 +7477,12 @@ that is 99.1 % constructed has run out of work it can do by itself.
 
 **Three facts the classification rests on, each read rather than assumed:**
 
-1. **Production carries 2420 and nothing after it in the kernel chain.**
+1. **Production carries 2420 and nothing after it in the kernel chain.** **SUPERSEDED 2026-09-16, corrected 2026-09-27:** true when measured; the same file now records 2450, 2500 and 2590 as applied (end of this fact).
    `artifacts/api-server/src/lib/capability/production-applied-migrations.json:47#2420_trip_kernel_foundation`
    records the apply on 2026-09-08. 2450, 2500 and 2590 are absent, which is why
    production's `trip_kernel_execute` is the plan-family-only one. So `trips.version`,
    `trip_events`, `trip_outbox` and `trip_command_receipts` ARE deployed, and the
-   thirteen rows that rest only on them are gated by a FLAG, not by a migration.
+   thirteen rows that rest only on them are gated by a FLAG, not by a migration. **Corrected 2026-09-27 against the same file:** 2450, 2500 and 2590 are no longer absent. `artifacts/api-server/src/lib/capability/production-applied-migrations.json:291#2450_trip_kernel_trip_and_participant_families`, `:295#2500_trip_kernel_join_via_link_and_host` and `:299#2590_trip_kernel_add_plan_attachment_columns` record them applied on 2026-09-16 (versions 20260916202751, 20260916203101 and 20260916203224, ledger instants in UTC), the same evening as 2760–2795, with the 2796 repair at 2026-09-17 03:10. So "plan-family-only" no longer follows from this file. The thirteen rows are still gated by `trip_kernel_enabled`, which fact 2 and §75.1 record as FALSE; no verdict moves.
 2. **2760–2795 were in portava-ci or in no database at all when this was
    measured; SUPERSEDED 2026-09-17 — they are now in PRODUCTION.** The clause is
    corrected in place rather than appended because its citation pointed at a
@@ -7775,13 +7775,13 @@ ledger** and **13 are 2420 itself, which IS applied** — and those thirteen row
 TR407) name `trip_kernel_enabled` in the same cell, which is §68's own fact 1
 restated by the data rather than by a sentence. Two flags carry the rest:
 `trip_kernel_enabled` (14 rows) and `trip_operational_projections_enabled`
-(13 rows).
+(13 rows). **Corrected 2026-09-27; true when measured on 2026-09-15:** the 168 are no longer absent. Re-run today over the same 181 references (distinct migration numbers per §68.2 row, range endpoints included: the rule that reproduces 181 and 13 exactly), all 168 are recorded as applied. They name 24 migrations, from `artifacts/api-server/src/lib/capability/production-applied-migrations.json:307#2760_trip_stages` to `:443#2794_trip_meeting_checkpoints`, stamped 2026-09-16 between 20:14 and 21:01 UTC. The rows they sit on stay `W` on the two flags, both FALSE per §68.1 fact 2 and §75.1.
 
 **So §68's headline claim is TRUE and is now reproducible rather than asserted.**
 The derivation is a directory listing plus set membership over the census's own
 table; anyone can re-derive the three numbers (181 / 168 / 13) from
 `docs/architecture/census-trips.md` §68.2, `artifacts/api-server/src/migrations/`
-and that JSON ledger, with no judgement anywhere in the loop.
+and that JSON ledger, with no judgement anywhere in the loop. (Re-run on 2026-09-27, the same loop yields 181 / 0 / 13; see the correction above.)
 
 **The 18, by reading.** These are the only rows where a mis-classification can
 hide, because they are the only ones whose blocker is a human sentence:
@@ -8580,7 +8580,7 @@ is the production ledger; parsed in full it carries **34** migrations at or abov
 too, exactly as §68's fact 1 states. So every `W` row whose last statement rests on
 a table from 2760-2795 — the overwhelming majority — is blocked on an apply this
 branch may not perform, and the §68/§69 distribution stands as re-derived:
-**OWNER 102 · BOTH 20 · BRANCH 0 · NEITHER 5 · unclassified 1 (TR174)**.
+**OWNER 102 · BOTH 20 · BRANCH 0 · NEITHER 5 · unclassified 1 (TR174)**. **Corrected 2026-09-27; true when written on 2026-09-15:** parsed in full today, the same file carries **101** migrations at or above 2410, and **every one of 2760–2795 is among them**, stamped 2026-09-16 between 20:14 and 21:01 UTC (`artifacts/api-server/src/lib/capability/production-applied-migrations.json:307#2760_trip_stages` to `:447#2795_trip_kernel_write_guards`). 2450, 2500 and 2590 were applied the same evening, and the 2796 repair at 2026-09-17 03:10 (`:451#2796_trip_reservation_history_security_definer`). The apply this paragraph says the branch may not perform has been performed; those rows now wait on the two flags, both FALSE per §68.1 fact 2 and §75.1. This correction moves no verdict and re-derives no class.
 
 **The 37 rows whose last statement names no migration and no flag were re-read
 one at a time**, because a prose blocker is where a misclassification hides — the
@@ -8833,7 +8833,7 @@ is mechanical: `artifacts/api-server/src/lib/capability/production-applied-migra
 is the production ledger, and **not one of 2760-2795 appears in it**. So the
 OWNER/BOTH classification of the `W` column is not a judgement call for the
 majority of those rows — it is a fact about what is deployed. **§73's refusal to
-claim any closure is confirmed**, and this reviewer reached it independently.
+claim any closure is confirmed**, and this reviewer reached it independently. **Corrected 2026-09-27; true at `a97bfdac0`:** every one of 2760–2795 now appears in that file, stamped 2026-09-16 between 20:14 and 21:01 UTC, and 2796 at 2026-09-17 03:10; §73.1's correction cites the lines. The deploy half is done, and the two flags, both FALSE per §68.1 fact 2 and §75.1, are what the `W` rows wait on. No verdict moves.
 
 ### §74.2 The injected clock — a real defect closed, and no row rests on the defect
 

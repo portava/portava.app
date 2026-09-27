@@ -8973,3 +8973,118 @@ pass owns them. No verdict moves on any of them.
 census-wall each cite
 `artifacts/api-server/src/scripts/checkCensusFreshness.ts:1520#ADDED 2026-09-20 by census-wall §13`.
 The widened scope arrays above it moved it from line 1406.
+
+## 38. Lane E — six stale census statements and one lagging sentence, corrected in place — 2026-09-27
+
+The owner's instruction, verbatim: "Fix the six stale census statements against
+current evidence. Preserve the 100% coverage floors, and do not narrow
+requirements or change verdict definitions to reach 100%."
+
+§32.15 listed six statements under "Found, not fixed". Its P45 paragraph named a
+seventh sentence that lags its own row. This section corrects all seven where
+they stand. Each was read against the current file or JSON first, and each
+correction says what was found, with the line.
+
+**What did not change.**
+- No verdict letter, requirement wording or RED WHEN was touched, and no row
+  moved. The `CENSUS_INTEGRITY_DUMP=ALL` listing of all 3,518 verdict rows is
+  byte-identical before and after: same id, same letter, same line.
+- No headline is restated. No floor was lowered, no file was added to any
+  `CENSUS_SCOPE`, and the staleness ledger was not edited.
+- Every edit is line-neutral. Each corrected census has the same line count,
+  the old words and every old anchor are still on their lines, and each
+  correction is dated.
+- No correction needed a verdict to move, so this lane stopped on nothing.
+
+### 38.1 How to read the table
+
+Each correction is appended to the line it corrects, so a reader of the old
+sentence meets the correction on the same line. In the old-text and new-text
+columns a citation is written as "file line N", not in citation form, so this
+record is not a second copy of the citation it corrects. The evidence column
+carries the checkable anchors.
+
+### 38.2 The corrections
+
+| census | location | old text | new text (appended; the old words stay) | evidence |
+| --- | --- | --- | --- | --- |
+| census-trips | §68.1 fact 1, lines 7480 and 7485 | "Production carries 2420 and nothing after it in the kernel chain. … 2450, 2500 and 2590 are absent, which is why production's trip_kernel_execute is the plan-family-only one." Written 2026-09-15; true then. | Line 7480: "SUPERSEDED 2026-09-16, corrected 2026-09-27: true when measured; the same file now records 2450, 2500 and 2590 as applied (end of this fact)." Line 7485: the three are recorded as applied on 2026-09-16 (versions 20260916202751, 20260916203101 and 20260916203224), the same evening as 2760–2795, with the 2796 repair at 2026-09-17 03:10. "Plan-family-only" no longer follows from the file. The thirteen rows are still gated by trip_kernel_enabled, which fact 2 and §75.1 record as FALSE. | `artifacts/api-server/src/lib/capability/production-applied-migrations.json:291#2450_trip_kernel_trip_and_participant_families`, `:295#2500_trip_kernel_join_via_link_and_host`, `:299#2590_trip_kernel_add_plan_attachment_columns`. The file at a97bfdac0 holds none of the three; 8b0bb1f09 (2026-09-17) added them. |
+| census-trips | §69.1, lines 7778 and 7784 | "Of the 181, 168 are absent from [the ledger] and 13 are 2420 itself, which IS applied", and "anyone can re-derive the three numbers (181 / 168 / 13)". Measured 2026-09-15; true then. | Line 7778: the 168 are no longer absent. Re-run over the same 181 references, all 168 are recorded as applied. They name 24 migrations, 2760 to 2794, stamped 2026-09-16 between 20:14 and 21:01 UTC. The rows stay W on the two flags. Line 7784: "Re-run on 2026-09-27, the same loop yields 181 / 0 / 13." | Re-derived here from §68.2's table. Taking the distinct migration numbers in each row, range endpoints included, gives exactly 181 references and exactly 13 of 2420, so that is the rule §69.1 used. None of the other 168 is absent today. `artifacts/api-server/src/lib/capability/production-applied-migrations.json:307#2760_trip_stages` (version 20260916201420) to `:443#2794_trip_meeting_checkpoints` (20260916210038). |
+| census-trips | §73.1, line 8583 | "parsed in full it carries 34 migrations at or above 2410, and not one of 2760-2795 is among them. 2450, 2500 and 2590 are absent too". Written 2026-09-15; true then. | Today the file carries 101 migrations at or above 2410, including every one of 2760–2795, stamped 2026-09-16 between 20:14 and 21:01 UTC. 2450, 2500 and 2590 were applied the same evening, and the 2796 repair at 2026-09-17 03:10. The apply that the paragraph says the branch may not perform has been performed, and those rows now wait on the two flags. No verdict moves and no class is re-derived. | Counted: at d7bab3f6e, the commit that wrote the sentence, the file has 51 entries, 34 of them at or above 2410; at HEAD it has 129 and 101. `artifacts/api-server/src/lib/capability/production-applied-migrations.json:447#2795_trip_kernel_write_guards` (20260916210136), `:451#2796_trip_reservation_history_security_definer` (20260917031001). |
+| census-trips | §74.1, line 8836 | "not one of 2760-2795 appears in it". Written 2026-09-16 at a97bfdac0; true there. | "true at a97bfdac0: every one of 2760–2795 now appears in that file, stamped 2026-09-16 between 20:14 and 21:01 UTC, and 2796 at 2026-09-17 03:10 … the two flags, both FALSE …, are what the W rows wait on. No verdict moves." | The file at a97bfdac0 holds none of 2760–2796, and none of 2450, 2500 or 2590. At HEAD all 37 of 2760–2796 are present. |
+| census-input-intelligence | G359, line 1055, in §52's table. G359's last statement is line 3057 (W), which was not edited. | "the one new duplicate inside the platform is still there: compassPrompt.ts re-implements the Compass starter set client-side under the same name as the server's buildCompassStarters (projection.ts line 258), and app/(tabs)/ai.tsx line 399 calls the client one." | A dated correction after that sentence, in italics. The clause was true when first written, on 2026-09-09. It has been false since e0d858f28 (2026-09-20, census-compass CG-01), and was already false when 2c95647f1 re-verified it on 2026-09-21. The client module keeps only an adapter over the server's rows. The screen feeds CompassStarters from the gateway at ai.tsx line 413, and line 399 is a closing bracket. The server's builder is now at projection.ts line 346. The W never rested on the duplicate alone: the unmigrated engines G6 names and the missing ratchet both still hold. | `travel-buddy-standalone/src/platform/input-assistance/compass/compassPrompt.ts:33#export function startersFromSuggestions` is the module's first function, and the module has no builder; its own suite asserts that the source does not contain buildCompassStarters. The call site is `travel-buddy-standalone/app/(tabs)/ai.tsx:413#starters={startersFromSuggestions(starterAssist.suggestions)}`. At 42aeac38e, ai.tsx line 399 read starters={buildCompassStarters(…)}. For the W: useGooglePlacesAutocomplete, usePlaceSearch and MentionInput still exist outside the platform, and no check in the server's or the client's scripts fails on a new engine (the two input scripts there measure and report). |
+| census-sensing | §22.1 (S92), line 4835 | "the scheduler is started from [index.ts line 58, anchor 'import']". Right when written on 2026-09-26 at d7312709d. | The citation now reads index.ts line 59, anchored on startMemoryProjectionScheduler (its import), and adds the call at line 185. The old anchor stays in a "was" note, which says that dbf804b9f added a line above it the same day, and that line 58 is now registerScopedTrustApplier's import. | `artifacts/api-server/src/index.ts:59#startMemoryProjectionScheduler`, `:185#startMemoryProjectionScheduler();`. At d7312709d the import was at line 58; at dbf804b9f it is at 59. See §38.3 for why the anchor names the import. |
+| census-discovery | §37.1 (the travel term's provenance), lines 4908 and 4913 | "landsideLeg is the port; LAYOVER_TRAVEL_TIME_PROVIDER is noRoutedProvider, so every answer is { minutes: null, source: "unmeasured", reason: "NO_ROUTED_PROVIDER" } at zero I/O cost." Written 2026-09-15; true then. | Line 4908 marks the clause "true when written; corrected 2026-09-27 at the end of this paragraph". Line 4913: since 74890f906 (2026-09-22) the constant is corridorTravelTimeProvider(googleRoutesCorridorProvider). The corridor provider refuses before it builds any request unless LAYOVER_ROUTED_CORRIDOR_ENABLED is affirmative and GOOGLE_MAPS_API_KEY is present. The adapter reports that refusal as NO_ROUTED_PROVIDER, so with either switch unset every answer is still the unmeasured one, plus a detail field. This correction read the code, not any deployment's environment. | `artifacts/api-server/src/services/airport/LayoverTravelTime.ts:83#export const LAYOVER_TRAVEL_TIME_PROVIDER: TravelTimeProvider = corridorTravelTimeProvider(googleRoutesCorridorProvider);`. The two gates come in this order, before the request body: `artifacts/api-server/src/lib/providers/googleRoutesCorridorProvider.ts:259#const notEnabled` then `:261#noKey`. The refusal's mapping is at `artifacts/api-server/src/lib/providers/corridorTravelTimeAdapter.ts:128#PROVIDER_NOT_ENABLED: "NO_ROUTED_PROVIDER",`. landsideLeg passes the reason and detail through unchanged. |
+| census-discovery | A14 row, line 4966, A14's last statement (W) | "because LAYOVER_TRAVEL_TIME_PROVIDER is noRoutedProvider and no dwell source exists for a place nobody has planned." Written 2026-09-15; true then. | A dated correction after that sentence, in italics, verdict unmoved. Since 74890f906 the constant is the corridor adapter. It answers NO_ROUTED_PROVIDER unless both switches are set, so with either unset the admitted set is unchanged. And with no dwell source either way, a place nobody has planned still cannot be admitted. | `artifacts/api-server/src/services/airport/LayoverTravelTime.ts:83#export const LAYOVER_TRAVEL_TIME_PROVIDER`. The dwell half was re-checked: §37.1's grep for typicalDuration, visit_duration, dwell_minutes and expectedDuration still finds nothing under the server's src. The clause's conclusion, that unplanned places are not admitted, holds on the dwell source alone. |
+| census-passport | P87 row, line 348 | "app/(tabs)/ai.tsx lines 98-104 consumes prefillMessage and sends it." Right at 42aeac38e. | "(corrected 2026-09-27, verdict unmoved: 98–104 was right at 42aeac38e; e0d858f28 moved the effect 14 lines down, to [ai.tsx lines 112-118])" | `travel-buddy-standalone/app/(tabs)/ai.tsx:112-118#if (!prefillMessage`. Line 112 is the guard and line 118 is the send. At 42aeac38e the same two lines were 98 and 104. |
+| census-passport | P168 row, line 516 | "Compass (SharedContextScreen.tsx line 217 → app/(tabs)/ai.tsx line 104)" | "…, now [ai.tsx line 118] after e0d858f28 moved it 14 lines down; corrected 2026-09-27, verdict unmoved" | `travel-buddy-standalone/app/(tabs)/ai.tsx:118#send(prefillMessage,`. |
+| census-wall | W118 row, line 380 | "(imported 41-45)" | "; corrected 2026-09-27, verdict unmoved: the block is at [WallCandidateLoaders.ts lines 42-46] and closes at [line 46], where it already was at 42aeac38e, the earliest commit this row exists at" | `artifacts/api-server/src/services/wall/WallCandidateLoaders.ts:42-46#import {` and `artifacts/api-server/src/services/wall/WallCandidateLoaders.ts:46#} from "../media/MediaProjectionService.js";`. So 41–45 was one line off at every commit this row can be read at; it did not drift. loadVideoMediaCandidates (line 538) still calls resolveViewer, loadEligibleCandidates and projectCandidatesProtected, so the C holds. |
+| census-passport | §19.3, line 1887 | "Whether the ruling moves P45 from W is a re-measurement, and a re-measurement is not what a correction section may do." Wrong when written: §16.1 had recorded C since 2026-09-14. | "(Corrected 2026-09-27, no letter moved: this sentence lags its own census. P45's last statement is §16.1's row, which records C, moved W → C on 2026-09-14 and corrected in place on 2026-09-22 with the verdict unmoved, so the ruling had no W to move P45 from. It made P45's explainability clause stricter; P50 and P154 stay W on the band.)" | census-passport line 1406 is P45's last statement. The integrity dump reads it as C there, and reads P50 (line 1447) and P154 (line 1454) as W. §32.15's P45 paragraph says the same. The 2026-09-22 passport ledger note lags in the same way; the ledger was not edited. |
+
+### 38.3 Every new anchor, seen red
+
+Each new anchor was moved by one line and `check:doc-citations` was run. The
+file was then restored, and its sha256 was compared with the original; all
+matched.
+
+| mutation | result |
+| --- | --- |
+| the eight census-trips anchors into the JSON (three on line 7485, two on 7778, three on 8583), full and inherited, each +1 | **RED**, each |
+| compassPrompt.ts 33 → 34; projection.ts 346 → 347 | **RED**, each |
+| LayoverTravelTime.ts 83 → 84, on line 4913 and on line 4966 | **RED**, each |
+| WallCandidateLoaders.ts 42-46 → 43-46; 46 → 47 | **RED**, each |
+| WallCandidateLoaders.ts 42-46 → 41-46 | green: line 41 also holds "import {". The line-46 anchor is what pins the block. |
+| index.ts 59 → 60, first version | **green**. The anchor was first the whole import line. Its first word, "import", is on line 60 too, and the whole-anchor pass skips this path, because a snapshot copy under files/ ends in the same path. The anchor was changed to name the import. |
+| index.ts 59 → 60, final version; 185 → 186 | **RED**, each |
+| ai.tsx 413 → 414; 112-118 → 113-118; 118 → 119 | **green**, each. See §38.4 item 1. |
+
+### 38.4 Found while doing it — recorded, not fixed
+
+1. **The citation guards cannot see an Expo route-group path.**
+   - The shared citation grammar (CITATION_RE in check-doc-citations.mjs,
+     which check:citation-targets and check:citation-symbols also use) allows
+     no parenthesis in a path segment. So a citation into (tabs) is matched by
+     no pass: it is not counted, not checked and not reported.
+   - Scope coverage does resolve it, because its CITE_RE admits parentheses.
+     But it checks an anchor only when there are several candidate files, and
+     a full standalone path has one.
+   - Before this lane, docs/architecture held 37 backticked citations of that
+     shape, 14 of them anchored. This lane adds six, all anchored. None of them
+     is verified by any check; the three green mutations above show it.
+   - The fix belongs to the owner of check-doc-citations.mjs: admit "(" and ")"
+     in a path segment, then re-measure the floors.
+2. **census-trips §69.1's TR128 bullet** says the TravelTimeProvider port has
+   "no second implementation". A Google Routes adapter for that port now exists
+   in the Trips contracts directory (GoogleRoutesTravelTimeProvider). Its own
+   header says "PREPARED, NOT WIRED", and the Trips seams still bind the
+   straight-line provider. The same header's list of seams also still says the
+   Layover constant is noRoutedProvider. The NEITHER class that §68.2 gives
+   TR128, TR267, TR341 and TR412 ("a subsystem nobody has written") may need
+   re-reading. No verdict is implied here.
+3. **census-discovery states the same stale fact in two more places.** §37.5
+   item 1 (line 4970) names the one line to change, and it has changed.
+   §39.6 (line 5290) says the constant is "unchanged and still the
+   no-routed-provider one". Both were right on 2026-09-15. Neither was on this
+   lane's list, so both stay byte-identical.
+4. **census-input-intelligence G359** also says "Four pre-existing engines
+   remain unmigrated and live (G6)". G6's own row now counts three that are
+   live and ungated; the fourth runs only as a gated fallback. Not edited.
+
+### 38.5 Checks
+
+Run from `artifacts/api-server` on this branch, after the edits:
+- `check:doc-citations`: RESULT clean.
+- `check:citation-targets`: 165 / 165, at the ceiling and not above it.
+- `check:census-integrity`: PASSED, every headline unchanged.
+- `check:census-scope-coverage`: PASSED, all thirteen at 100 %.
+- `check:census-freshness`: PASSED, 0 STALE; this lane changed no watched file.
+- `check:census-row-move-labels`: PASSED.
+
+### 38.6 Cited, not graded (check:census-scope-coverage)
+
+- NOT-GRADED: artifacts/api-server/src/lib/capability/production-applied-migrations.json — cited in §38.2 only as evidence for four corrections to census-trips' prose (§68.1, §69.1, §73.1, §74.1); census-trips watches it and grades on it, and no MD row rests on what production has applied for the Trips chain.
+- NOT-GRADED: travel-buddy-standalone/app/(tabs)/ai.tsx — the Compass screen, cited in §38.2 only as evidence for the line corrections to census-input-intelligence G359 and census-passport P87 and P168; those censuses watch it, and no MD row grades the Compass tab.
+- NOT-GRADED: travel-buddy-standalone/src/platform/input-assistance/compass/compassPrompt.ts — cited in §38.2 only to show that the client starter builder G359 described is gone; census-input-intelligence watches and grades it, and no MD row does.
+- NOT-GRADED: artifacts/api-server/src/services/airport/LayoverTravelTime.ts — the Layover travel-time constant, cited in §38.2 only as evidence for census-discovery's A14 and §37.1 corrections; census-discovery watches it, and no MD row grades landside travel time.
+- NOT-GRADED: artifacts/api-server/src/lib/providers/googleRoutesCorridorProvider.ts — cited in §38.2 only for the order of its two refusal gates, as evidence for the census-discovery correction; no MD row grades a routing provider.
+- NOT-GRADED: artifacts/api-server/src/lib/providers/corridorTravelTimeAdapter.ts — cited in §38.2 only for how a corridor refusal becomes NO_ROUTED_PROVIDER, as evidence for the census-discovery correction; no MD row grades a routing adapter.
