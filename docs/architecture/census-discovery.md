@@ -10046,7 +10046,9 @@ P4 turns red when it lands; flip it to expect 403 and no row. This `interacted` 
   - `check:not-null-writes`, `check:schema-references`, `check:enum-literals`, `check:async-handlers`, `check:security-definer-oracles`.
   - `check:census-scope-coverage`, `check:census-row-move-labels`, `check:census-policy-citations`.
   - The offline column ledger shows `problems=0`.
+  - `check:production-drift`, after `rank_event_outcome_receipts` was recorded in `KNOWN_PRODUCTION_GAPS` as `unapplied`, with its reason. The remaining offline checks in `run-all-checks.sh` are clean too, `check:telegraph-inventory` among them.
 - **Regenerated:** `docs/architecture/telegraph-phase0-inventory.md` (637 → 640 migration files).
+- **Exits 1 by design:** `check:census-integrity`, until the integrator restates the headline. The rows now count C 95, W 86, N 6, X 1. `check:census-freshness` names the twelve files §62.12 argues.
 - **Live-only, not run:** `check:write-path-columns`, and `check:authorization-contract` if it reads the live schema. **A new column in a write payload:** `rank_events.outcome_client_event_id`, written by the keyed UPDATE. **A new table read:** `rank_event_outcome_receipts`. The live-DB job reports both missing until 3420 is applied.
 
 ### 62.11 Read-only production SQL that would turn harness evidence into production evidence
