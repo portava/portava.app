@@ -74,7 +74,7 @@ import {
   buildMyWorldProjection,
   loadPlaceNeighborhoods,
   loadTaggedPostIds,
-  neighborhoodForRow,
+  neighborhoodForRow, projectCandidatesProtected,
 } from "../services/media/MediaProjectionService.js";
 import type { MediaCandidateRow } from "../lib/media/mediaProjection.js";
 
@@ -305,8 +305,13 @@ describe("MD47 — the neighborhood label has a producer", () => {
       ],
     }));
     const viewer = await resolveViewer(sc, VIEWER, {});
+    // census-media §36: the PLACE page no longer lists an item whose place the
+    // choke point withheld — listing it there is the disclosure (the page is the
+    // place). So the label is observed at the choke point itself, which every
+    // World read goes through, and the place page is asserted to drop it.
     const place = await buildPlaceProjection(sc, viewer, PLACE_1, Date.now());
-    const items = place.perspectives.groups.flatMap((g) => g.media);
+    assert.equal(place.perspectives.groups.flatMap((g) => g.media).length, 0, "a gem-ceilinged item is not listed ON its place's page");
+    const items = await projectCandidatesProtected(sc, viewer, [makePost() as MediaCandidateRow], Date.now());
     assert.ok(items.length > 0, "fixture must produce at least one projected item");
     assert.equal(items[0].neighborhood, null, "a gem-ceilinged item must not name its neighborhood");
     assert.equal(items[0].placeLabel, null, "…and must not name its venue either");

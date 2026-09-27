@@ -26,7 +26,7 @@ import { uploadMedia } from '../../../services/media.ts';
 import { createPost } from '../../../services/posts.ts';
 import { KeyboardSafeScrollView } from '../../../components/ui/KeyboardSafeView.tsx';
 import { LensStateView } from '../components/LensStateView.tsx';
-import { MediaContributionSheet } from '../components/MediaContributionSheet.tsx';
+import { MediaContributionSheet } from '../components/MediaContributionSheet.tsx'; import { useFeatureFlags } from '../../../context/FeatureFlagsContext.tsx'; import { NEIGHBORHOOD_ONLY_MODE_FLAG } from '../../../services/media/mediaPrivacy.ts'; import { PERSPECTIVE_VANTAGE_FLAG } from '../state/mediaContribution.ts';
 import {
   INITIAL_CONTRIBUTION_DRAFT,
   contributionBlocker,
@@ -53,7 +53,7 @@ type PlaceState = { status: 'loading' } | { status: 'ready'; place: Contribution
 export function MediaContributionScreen({ placeId, deviceGps = null, pickMedia, onDone }: MediaContributionScreenProps) {
   const [placeState, setPlaceState] = useState<PlaceState>({ status: 'loading' });
   const [draft, dispatch] = useReducer(contributionReducer, INITIAL_CONTRIBUTION_DRAFT);
-  const [phase, setPhase] = useState<ContributionPhase>({ kind: 'editing' });
+  const [phase, setPhase] = useState<ContributionPhase>({ kind: 'editing' }); const { isEnabled } = useFeatureFlags(); // census-media §36
 
   useEffect(() => {
     let cancelled = false;
@@ -152,7 +152,7 @@ export function MediaContributionScreen({ placeId, deviceGps = null, pickMedia, 
         onPickMedia={() => void onPick()}
         onSubmit={() => void submit()}
         blocker={blocker}
-        busy={busy}
+        busy={busy} neighborhoodOffered={isEnabled(NEIGHBORHOOD_ONLY_MODE_FLAG)} vantageOffered={isEnabled(PERSPECTIVE_VANTAGE_FLAG)}
       />
     </KeyboardSafeScrollView>
   );

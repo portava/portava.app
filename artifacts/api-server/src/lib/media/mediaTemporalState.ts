@@ -54,7 +54,7 @@ export interface MediaTemporalInput {
    * served from a legacy store, which carries no provenance and so has no
    * operational intelligence value to expire.
    */
-  eligibility: Pick<IntelligenceEligibility, "eligible" | "expiresAt"> | null;
+  eligibility: Pick<IntelligenceEligibility, "eligible" | "expiresAt"> | null; /** §11 location-disclosure end, when a producer has one (census-media §36, MD79). NONE does yet; absent ⇒ the member is omitted, as before. */ locationDisclosureExpiresAt?: string | null;
 }
 
 function validIso(v: unknown): string | undefined {
@@ -75,6 +75,11 @@ export function resolveMediaTemporalState(input: MediaTemporalInput): MediaTempo
     const at = validIso(e.expiresAt);
     if (at) out.intelligenceExpiresAt = at;
   }
+  // §11 locationDisclosureExpiresAt — served only when a producer supplies a
+  // valid instant (census-media §36). The disclosure itself is capped at the
+  // choke point (mediaLocationVisibility.resolveMediaPlaceDisclosure), not here.
+  const disclosureEnds = validIso(input.locationDisclosureExpiresAt);
+  if (disclosureEnds) out.locationDisclosureExpiresAt = disclosureEnds;
   return out;
 }
 

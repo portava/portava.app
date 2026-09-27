@@ -281,12 +281,13 @@ describe("locationPrivacyModeToCeiling — one policy with mapPublicPost", () =>
     }
   });
 
-  it("is never LOOSER than mapPublicPost, and fails closed where mapPublicPost does not", () => {
-    // mapPublicPost's fallthrough returns an unknown mode unchanged once the
-    // post is published (the DB enum makes that unreachable today). The tier
-    // table must not inherit that: an unrecognised mode coarsens regardless.
+  it("is never LOOSER than mapPublicPost, and BOTH fail closed on a mode they do not know", () => {
+    // mapPublicPost's fallthrough used to return an unknown mode unchanged once
+    // the post was published — a fail-open that became reachable the moment the
+    // enum gained a value (neighborhood_only, 3350). census-media §36 closed it:
+    // only the two delayed modes release the venue. The tier table always failed closed.
     const published = { id: "p", location_name: VENUE, location_privacy_mode: "some_future_mode", post_status: "published" };
-    assert.equal(mapPublicPost({ ...published }).location_name, VENUE, "documents mapPublicPost's actual behaviour");
+    assert.equal(mapPublicPost({ ...published }).location_name, null, "an unknown mode withholds the venue");
     assert.equal(locationPrivacyModeToCeiling("some_future_mode", "published"), "city", "the tier table fails closed");
   });
 

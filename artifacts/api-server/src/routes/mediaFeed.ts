@@ -56,7 +56,7 @@ import { nameVisibilitySet } from "../lib/publicIdentity.js";
 import {
   loadRestrictiveGems,
   gemCeilingForItem,
-  resolveMediaLocationWithGemProtection,
+  resolveMediaPlaceDisclosure, // was resolveMediaLocationWithGemProtection: the place-disclosure resolver runs that same gem step AND the owner mode (census-media §36)
   type RestrictiveGem,
 } from "../lib/mediaLocationVisibility.js";
 import {
@@ -127,7 +127,7 @@ const GRID_POST_COLUMNS =
   "location_name, location_city, location_country, location_verified, " +
   "location_lat, location_lng, " +
   "created_at, category, " +
-  "status, post_status, visibility";
+  "status, post_status, visibility, location_privacy_mode"; // the OWNER's §34 choice — the grid label honours it (census-media §36)
 
 /**
  * Grid-mode post_media columns — includes relay fields so posterUrl and
@@ -151,7 +151,7 @@ const GRID_MEDIA_COLUMNS =
 const FEED_POST_COLUMNS =
   "id, author_id, trip_id, content, visibility, status, post_status, " +
   "created_at, category, " +
-  "location_name, location_city, location_country, location_source, location_verified, " +
+  "location_name, location_city, location_country, location_source, location_verified, location_privacy_mode, " + // location_privacy_mode: census-media §36
   "location_lat, location_lng, " +
   "save_count, like_count, comment_count, " +
   "canonical_place_id, post_buckets";
@@ -215,7 +215,7 @@ function protectedMediaLocation(
   const ceiling = ctx.determined
     ? gemCeilingForItem(ctx.gems, { placeId, lat, lng })
     : null;
-  return resolveMediaLocationWithGemProtection(
+  return resolveMediaPlaceDisclosure( // census-media §36: the Watch feed, grid and single read now fold in the owner's location_privacy_mode, as every World read already did
     {
       name: (row as any).location_name ?? null,
       city: (row as any).location_city ?? null,
@@ -227,7 +227,7 @@ function protectedMediaLocation(
       // Legacy posts have no independent tier column → default 'place' (keep the
       // current place-level label). A real media_assets tier flows through here
       // unchanged once the canonical read path is enabled.
-      locationVisibility: (row as any).location_visibility ?? "place",
+      locationVisibility: (row as any).location_visibility ?? "place", locationPrivacyMode: (row as any).location_privacy_mode ?? null, postStatus: (row as any).post_status ?? null,
       isOwner: (row as any).author_id === viewerUserId,
       coarsenSeed: (row as any).id ?? null,
       emitCoarseCoords: false,
