@@ -8973,3 +8973,410 @@ pass owns them. No verdict moves on any of them.
 census-wall each cite
 `artifacts/api-server/src/scripts/checkCensusFreshness.ts:1520#ADDED 2026-09-20 by census-wall §13`.
 The widened scope arrays above it moved it from line 1406.
+
+## 36. Lane P — the rows that waited on a product definition: four built behind flags, six questions for the owner — 2026-09-27
+
+Branch `lane-p-product`, from `claude/sensing-completion-20260925` at
+`e9e0b0404`. Thirteen rows: MD77, MD79, MD82–MD85, MD444, MD101, MD175, MD255,
+MD262, MD385, MD446. §28.9 listed them under "an owner definition or product
+rule" (MD77, MD79, MD101, MD175, MD255, MD262, MD385, MD446) and "where a
+perspective's vantage is stored" (MD82–MD85, MD444).
+
+The owner's instruction was to tell unfinished implementation apart from
+activation and external verification, and to build everything reachable while
+existing production approval boundaries remain. So each row was read against
+the spec text first. **Where the spec defines enough to build, it was built,
+behind a flag seeded OFF.** Where it gives only a word, nothing was invented:
+§36.4 puts the question to the owner, and only plumbing that every option needs
+and that changes nothing anyone sees was built.
+
+BUILT ON BRANCH IS NOT MERGED. MERGED IS NOT DEPLOYED. DEPLOYED IS NOT FLAG
+ENABLED. FLAG ENABLED IS NOT PRODUCTION REALIZED. Migrations 3350, 3351 and 3352
+are applied to no database, and no flag is enabled anywhere. Every verdict below
+is a construction verdict, like every other in this census.
+
+### 36.1 Row moves
+
+| ID | Was | Now | Evidence |
+| --- | --- | --- | --- |
+| MD262 | **W** | **C** | §34 lists five choices, and "Show neighborhood only" is one of them (`docs/specs/Portava_Media_Engineering_Architecture_and_Design_Spec.txt:313#Show neighborhood only`). It is now a post location mode: migration 3350 adds the value (`artifacts/api-server/src/migrations/3350_media_neighborhood_only_location_mode.sql:54#ALTER TYPE public.post_location_privacy_mode ADD VALUE IF NOT EXISTS 'neighborhood_only';`). Its ceiling is §33 neighborhood (`artifacts/api-server/src/lib/mediaLocationVisibility.ts:416#if (mode === "neighborhood_only") return "neighborhood";`). **The RED WHEN's second half needed privacy fixes, and they are in.** The Watch feed, the grid and `GET /media/:id` never read the owner's mode. They now select it and resolve through the place-disclosure choke point (`artifacts/api-server/src/routes/mediaFeed.ts:154#location_verified, location_privacy_mode, " +`, `artifacts/api-server/src/routes/mediaFeed.ts:218#return resolveMediaPlaceDisclosure(`). A place page and a place-scoped timeline no longer list a post whose place the choke point withheld (`artifacts/api-server/src/services/media/MediaProjectionService.ts:933#const media = keepDisclosedAtPlace(await rankAndProject(sc, viewer, candidates, nowMs), placeId);`). mapPublicPost withholds the venue for this mode and for any mode it does not know (`artifacts/api-server/src/lib/postSchemas.ts:184#&& row.post_status === "published") return row;`). **The choice is gated:** both writes refuse it until `media_neighborhood_only_mode_enabled` (`artifacts/api-server/src/routes/posts.ts:576#neighborhoodOnlyModePermitted(flagSc, reqPrivacyMode)`, `artifacts/api-server/src/routes/posts.ts:2035#neighborhoodOnlyModePermitted(getServiceClient(), newMode)`). The composer offers it only then (`travel-buddy-standalone/src/components/PulseCreate.tsx:215#locationChoices({ neighborhoodOnly: isEnabled(NEIGHBORHOOD_ONLY_MODE_FLAG) })`), and so does the Media Contribution sheet (`travel-buddy-standalone/src/features/media/screens/MediaContributionScreen.tsx:155#neighborhoodOffered={isEnabled(NEIGHBORHOOD_ONLY_MODE_FLAG)}`). **TESTED:** `artifacts/api-server/src/test/mediaNeighborhoodOnlyMode.test.ts:230#describe("C. a non-owner sees no more than before` checks every mode × status × gem state. The other suites are D (the three Watch routes), E (place pages), F (the writes), plus the client composer and sheet suites. **RED WHEN** is met on the branch. Activation is §36.7. |
+| MD101 | **W** | **C** | §15 lists "Find Similar / Cheaper / Quieter / Busier" (`docs/specs/Portava_Media_Engineering_Architecture_and_Design_Spec.txt:170#Find Similar / Cheaper / Quieter / Busier`). §32's "Find a quieter or cheaper version." (`docs/specs/Portava_Media_Engineering_Architecture_and_Design_Spec.txt:303#Find a quieter or cheaper version.`) is one of nine example Compass questions, not a limit on §15's actions, so the two sections do not conflict. The busy-ness signal already existed: Quieter compares on `crowd.level`, and Busier is the other direction of that reading (`artifacts/api-server/src/compass/CompassMediaContext.ts:83#busier: "crowd.level",`). The Compass context reports the axis only while `media_find_busier_enabled` (`artifacts/api-server/src/compass/CompassMediaContext.ts:314#await comparatorAxesFor(sc)`). The rail offers Find Busier right after Find Cheaper, under Find Quieter's own conditions plus the flag (`artifacts/api-server/src/services/media/MediaActionResolver.ts:1246#if (!compassOn` — Compass on and a disclosable place). The client dispatches it to Compass (`travel-buddy-standalone/src/features/media/services/mediaActions.ts:372#case 'find_cheaper': case 'find_busier': {`). **TESTED:** `artifacts/api-server/src/test/mediaFindBusier.test.ts:145#describe("C. the rail offers Find Busier only with the flag, Compass, and a disclosable place"`. With the flag off, the context is exactly §32's two axes (`artifacts/api-server/src/test/mediaFindBusier.test.ts:132#describe("B. flag OFF: §32's two axes, exactly as before"`). **RED WHEN** ("a busier comparator axis in COMPARATOR_AXIS_CLAIM and a Find Busier rail action") is met on the branch. |
+| MD82–MD85 | **N** ×4 | **C** ×4 | §12 gives four vocabularies word for word (`docs/specs/Portava_Media_Engineering_Architecture_and_Design_Spec.txt:138#Entrance · Queue · Street · Main Room`, `docs/specs/Portava_Media_Engineering_Architecture_and_Design_Spec.txt:140#Main Gate · Stage A · Stage B`, `docs/specs/Portava_Media_Engineering_Architecture_and_Design_Spec.txt:142#Water · Crowd · Weather`, `docs/specs/Portava_Media_Engineering_Architecture_and_Design_Spec.txt:144#Exterior · Entrance · Seating`). A test reads them back out of the spec file (`artifacts/api-server/src/test/mediaPerspectiveVantage.test.ts:61#describe("A. the vocabularies are §12's own words"`). **Each part of the RED WHEN:** (1) a migration adds a column with a CHECK over their union (`artifacts/api-server/src/migrations/3352_media_perspective_vantage.sql:58#ALTER TABLE public.posts ADD CONSTRAINT posts_perspective_vantage_check CHECK (`); (2) the post write accepts it (`artifacts/api-server/src/routes/posts.ts:649#perspective_vantage: vantageDecision.write,`); (3) MediaPerspectiveService groups by it (`artifacts/api-server/src/services/media/MediaPerspectiveService.ts:156#const k = perspectiveGroupKey(m);`); (4) the sheet offers it (`travel-buddy-standalone/src/features/media/components/MediaContributionSheet.tsx:81#{contributionVantages(draft.category, { offered: vantageOffered }).length > 0 ? (`). All of it sits behind `media_perspective_vantage_enabled`, seeded OFF. A vantage rides the place: it is attached only when the choke point kept the place id (`artifacts/api-server/src/lib/media/perspectiveVantage.ts:188#if (!v`). **TESTED:** `artifacts/api-server/src/test/mediaPerspectiveVantage.test.ts:309#describe("D. a vantage rides the place"`. Three choices the spec does not make are in §36.3.3, for the owner to overrule. |
+| MD444 | **W** | **C** | Phase 4's fourth part, perspective GROUPS, is MD82–MD85 above. The other three were already delivered (mosaics, current picture, freshness). |
+
+**The headline is not restated here.** The integrator restates it once, from
+the merged rows.
+
+### 36.2 Rows that stay open
+
+| Row | V | RED WHEN (unchanged) | Built here | What remains |
+| --- | --- | --- | --- | --- |
+| MD77 | **N** | a §6.1 media item can carry a social expiry that takes it off social surfaces and keeps it for its owner | nothing; one option needs no plumbing (§36.4) | owner decision (§36.4) |
+| MD79 | **W** | a published item's location disclosure can END: a non-owner stops seeing the place after `locationDisclosureExpiresAt` | the cap every option needs, inert with no producer (`artifacts/api-server/src/lib/mediaLocationVisibility.ts:479#const withExpiry = locationDisclosureExpired(opts.locationDisclosureExpiresAt, opts.nowMs)`) and the §11 member's pass-through (`artifacts/api-server/src/lib/media/mediaTemporalState.ts:82#if (disclosureEnds) out.locationDisclosureExpiresAt = disclosureEnds;`) | owner decision, then a producer: one timestamp handed to the choke point |
+| MD175 | **N** | a defined Remix of an experience chain | nothing | owner decision (§36.4) |
+| MD255 | **W** | a user can publish media to `following` or `shared_moment` through the reachable composer | the Media following feed refuses an audience it does not know (`artifacts/api-server/src/lib/mediaEligibility.ts:421#if (!FOLLOWING_FEED_ADMITTED_VISIBILITIES.has(visibility)) return false;`). §20.6 named this as the first thing any option must close. | owner decision (§36.4), then the post-reader audit |
+| MD385 | **W** | a Memory created FROM a media item records the signal | nothing; one option needs no plumbing (§36.4) | owner decision (§36.4) |
+| MD446 | **W** | "Show Me Now" exists under some name | nothing | owner decision (§36.4) |
+
+### 36.3 What the spec defines, row by row, and what was built
+
+#### 36.3.1 MD262: §34 "Show neighborhood only"
+
+**The spec.** §34 lists exactly five choices: "Publish now", "Publish after I
+leave" (`docs/specs/Portava_Media_Engineering_Architecture_and_Design_Spec.txt:311#Publish after I leave`),
+"Hide exact place", "Show neighborhood only" and "Show city only". That is an
+enumeration, not a word. Four already had a value in
+`post_location_privacy_mode`; the fifth is `neighborhood_only`.
+
+**What it discloses.** To anyone but its author, no finer than §33
+`neighborhood`:
+- **No venue name.** mapPublicPost withholds it, as for city_only.
+- **A city/country public label, never the venue.** See
+  `artifacts/api-server/src/lib/postSchemas.ts:163#// census-media §36: neighborhood_only has no neighbourhood label at write time`.
+- **No canonical place id** (a place-level identifier).
+- **Not listed on the place's own page.**
+- **The neighbourhood's name where the World views know it** (`places.neighborhood`).
+  Everywhere else, the city.
+
+The mode is not delayed: it binds from creation, and the post is published at once.
+
+**The read side is not gated. The write side is.** Every reader holds a stored
+`neighborhood_only` post at neighborhood whether or not the flag is on, so turning
+the flag off never widens a post. Both writes refuse the value while the flag is off, absent or
+unreadable, which also keeps the label off a database 3350 has not reached
+(`artifacts/api-server/src/lib/media/neighborhoodOnlyMode.ts:38#export async function neighborhoodOnlyModePermitted(`).
+
+**The rollback, stated rather than implied.** PostgreSQL cannot drop an enum
+label. The rollback refuses while the flag is on or any post carries the value,
+then removes the flag. Code from before 3350 would have served such a post's
+venue (the mapPublicPost fall-through below).
+
+#### 36.3.2 MD101: §15 "Find … Busier"
+
+§15's list names the four comparators. §32 says only what Compass may be asked.
+Busier grounds on the same crowd reading as Quieter. It is provenance only
+(band, source class, time, conflict state), never a value, and "cannot compare"
+when nothing permitted is there.
+
+With the flag off (the seed), buildComparatorBaselines' default and the context
+are §32's two axes. The pinned test `compassCensusClosure.test.ts` B1 is
+untouched and still green.
+
+#### 36.3.3 MD82–MD85, MD444: §12 perspective groups
+
+**The spec.** "Perspective is a permitted visual contribution showing an aspect
+of a place or experience" (`docs/specs/Portava_Media_Engineering_Architecture_and_Design_Spec.txt:133#Perspective is a permitted visual contribution`),
+and four lists (Nightclub, Festival, Beach, Restaurant). The stored values are
+the union of those words. A word shared by two lists (Entrance, Queue, Food) is
+one value.
+
+**Three choices the spec does not make, taken here and open to the owner.**
+Each is the narrowest reading, and each is behind the flag.
+1. **The contributor names the vantage** when they contribute. §12 calls a
+   perspective a contribution, and §4 has a Media Contribution screen. No
+   classifier infers one: that would be MD63's vendor question, and a model's
+   guess at where a photo was taken is the "visual inference" §9 forbids
+   presenting as fact.
+2. **The category the contributor says the media shows picks the list:**
+   nightlife → Nightclub, festival → Festival, beach → Beach, food → Restaurant
+   (`artifacts/api-server/src/lib/media/perspectiveVantage.ts:91#export const VANTAGE_ENTITY_TYPE_BY_CATEGORY`).
+   The canonical place has no §12 entity type. Inventing a place-type
+   classifier to supply one would be a second product. Every other category
+   gets no vantage, and its perspectives stay in the category buckets.
+3. **One vantage per post,** stored on `posts`. A contribution is one photo or
+   clip at one place.
+
+**Where it shows.** Only the place page's groups, because the World's FOR YOU
+NOW buckets stay category-only, as §4.1 draws them. The Event experience page
+renders no perspective groups today, so Festival groups appear on a festival
+venue's place page and nowhere else.
+
+**Privacy.** A vantage is a sub-place detail, so it is served only where the
+viewer may be told the place (§36.1).
+
+#### 36.3.4 MD255: the plumbing every option needs
+
+Past the follow check, the Media following feed refused only `private`, and it
+admitted every other value to every follower (`artifacts/api-server/src/lib/mediaEligibility.ts:404#if (visibility === "private") return false;`).
+It now admits only the four audiences it knows.
+
+Every value `post_visibility` holds today is decided exactly as before. That is
+tested against the pre-change branch, restated in
+`artifacts/api-server/src/test/mediaProductDecisionPlumbing.test.ts:100#describe("A. MD255 — the following feed refuses an audience it does not know"`.
+
+#### 36.3.5 MD79: the plumbing every option needs
+
+`resolveMediaPlaceDisclosure` takes an optional expiry and a fallback tier. The
+fallback defaults to `hidden`, the more private tier. The cap never widens,
+never binds the owner, and treats an unreadable expiry as ended
+(`artifacts/api-server/src/lib/mediaLocationVisibility.ts:657#export function locationDisclosureExpired(`).
+
+No caller supplies an expiry. The suite restates the pre-cap resolver and
+proves the output is identical over every tier × mode × gem × viewer. A test
+fails the moment a producer appears
+(`artifacts/api-server/src/test/mediaProductDecisionPlumbing.test.ts:145#describe("B. MD79 — the §11 location-disclosure cap, inert until a producer exists"`).
+After §36.1, every Media read resolves through this one function (World views,
+action rail, Compass, and now the Watch feed). So a producer is one timestamp at
+two call sites, plus mapPublicPost for the Wall.
+
+### 36.4 Questions for the owner: the spec gives a word, and a word is not a product
+
+Each question names its options, what each does to a real person, and where it
+would be built. None was built. Plumbing was added only where every option needs
+it (MD79, MD255, §36.3).
+
+**MD77. Should media ever stop being shown socially?** §11 gives the field and
+no rule (`docs/specs/Portava_Media_Engineering_Architecture_and_Design_Spec.txt:129#interface MediaTemporalState`).
+Its one sentence is about the opposite case, social content outliving its
+intelligence value (`docs/specs/Portava_Media_Engineering_Architecture_and_Design_Spec.txt:130#A media item can remain social or memorial content`).
+- *(a) Disappearing posts the author chooses* ("show for 24 h / 7 days").
+  - **To a real person:** a new choice at post time. Afterwards, others stop
+    seeing the post in Media, the Wall, Pulse and search. The author keeps it in
+    My World.
+  - **Cost:** a `posts.social_expires_at` column behind a flag. The composer and
+    contribution-sheet control. An expiry gate in every post reader: Media has
+    one for stories in `lib/mediaEligibility.ts`, and 47 server files read
+    `posts` and name `visibility`. The §11 member.
+  - **Size:** medium–large.
+- *(b) A lifetime per surface* (for example, the NOW lens shows only the last N
+  hours).
+  - **To a real person:** everyone's old posts leave that surface. There is no
+    per-post choice.
+  - **Cost:** small, a filter in the projection. It overlaps §17 freshness,
+    which already exists.
+- *(c) No social expiry.* `socialExpiresAt` is optional in §11 and Portava
+  keeps posts until deleted.
+  - **To a real person:** nothing changes.
+  - **Cost:** none. The row then closes on the owner's ruling, not on a build.
+  - Because (c) needs nothing, **no plumbing was built** for MD77.
+
+**MD79. When does a post's place stop being shown, and what does it fall to?**
+§11 gives only `locationDisclosureExpiresAt?`.
+- *(a) The author chooses* ("show the place for 24 h, then the city").
+  - **To a real person:** a new composer choice. Others see the place for the
+    window, then less.
+  - **Cost:** a `posts.location_disclosure_expires_at` column (plus a fallback
+    column, or one fixed tier) behind a flag. The composer control. The two call
+    sites (`disclosureForRow`, the Watch feed's `protectedMediaLocation`),
+    mapPublicPost, and the §11 member.
+  - **Size:** small–medium. The cap is built.
+- *(b) A default window for everyone* (place shown 7 days, then city).
+  - **To a real person:** every existing post coarsens over time. That is more
+    private, but visible across every profile and history.
+  - **Cost:** no column (`published_at` + window), the same call sites.
+- *(c) Only for "Publish after I leave"*, N hours after release.
+  - **To a real person:** only delayed posts change.
+  - **Cost:** small.
+- **The fallback tier is a second choice:** city (today's "Hide exact place"),
+  neighbourhood, or hidden (the cap's default).
+
+**MD175. What is Remix?** §23.1 gives the word between two actions that already
+exist (`docs/specs/Portava_Media_Engineering_Architecture_and_Design_Spec.txt:228#Actions: Follow This Night, Save Route, Add to Trip, Remix, Ask Compass.`).
+Remix has to differ from Save Route (`artifacts/api-server/src/services/media/MediaActionResolver.ts:670#id: "save_route",`)
+and from Ask Compass.
+- *(a) An editable copy.*
+  - **To a real person:** the chain's stops open as the viewer's own draft route
+    (swap, reorder, drop), saved through the route plan. Nothing reaches the
+    author.
+  - **Cost:** medium, mostly client. Save Route plus an editor for the draft.
+- *(b) A Compass variation* ("a night like this, elsewhere").
+  - **To a real person:** proposed alternative stops.
+  - **How:** a Compass ask carrying the chain's place ids, built like Find
+    Quieter. Compass stays propose-only.
+  - **Cost:** small (one action, one prompt, the client dispatch).
+- *(c) Both:* copy, then "vary it with Compass".
+
+**MD255. Where does the audience live for `following` and `shared_moment`?**
+§33 lists six audiences (`docs/specs/Portava_Media_Engineering_Architecture_and_Design_Spec.txt:307#type MediaVisibility`).
+The post level has four; the §6.1 attachment override has all six (`docs/specs/Portava_Media_Engineering_Architecture_and_Design_Spec.txt:102#interface MediaAttachment`).
+- *(a) Extend `post_visibility` with both.*
+  - **To a real person:** a post and its caption, place and media reach only
+    the accounts the author follows, or the members of a Moment it was approved
+    into.
+  - **Cost, large:**
+    - The enum value is irreversible without a type swap.
+    - 47 server files read `posts` and name `visibility`, and each must refuse
+      or correctly admit the new values. The Media following feed now refuses
+      them (§36.3.4).
+    - `decidePostReadable`'s cases (`artifacts/api-server/src/lib/postVisibility.ts:44#export const READABLE_VISIBILITIES`)
+      and the posts RLS policies.
+    - The composer and types. For `shared_moment`, a composer route into the
+      Moment contribution flow.
+- *(b) Let the composer's picker set the attachment override.*
+  - **This widens disclosure.** An override only narrows its parent
+    (`artifacts/api-server/src/lib/mediaVisibility.ts:81#export async function mayViewUnderOverride(`).
+    To contain "people I follow", the post itself would have to be `public`.
+    Its caption and place would then reach everyone.
+  - **So (b) is only safe with a new rule** that post readers honour the
+    attachment. That is option (a)'s audit again.
+- *(c) Rule that the six are an attachment-level vocabulary.* The composer keeps
+  four, and the row closes on a re-reading of §33.
+
+**MD385. May a person make a Memory from a media item, and whose?** §44 names
+the signal (`docs/specs/Portava_Media_Engineering_Architecture_and_Design_Spec.txt:385#Memory / Postcard created`).
+§31 names a kind of Memory it could be (`docs/specs/Portava_Media_Engineering_Architecture_and_Design_Spec.txt:286#Saved visual inspiration`).
+No action makes one. A Memory item is added by URL (`travel-buddy-standalone/src/services/memories.ts:529#export async function addMemoryItemFromUrl(`).
+- *(a) From the viewer's own media.*
+  - **To a real person:** "Save to a Memory" on one's own posts.
+  - **Cost, medium:**
+    - `memory_items.source_post_id` (the Memory lane's table).
+    - `POST /memories/:id/items` verifying the viewer owns the source.
+    - The action, and the §44 producer (like
+      `artifacts/api-server/src/lib/mediaAnalytics.ts:396#export function recordPostcardCreatedSignal(`).
+- *(b) From any media the viewer can see.*
+  - **To a real person:** someone else's photo lives in your Memory.
+  - **This needs decisions first:** consent, credit, and what happens when the
+    author deletes the post or narrows its audience. It has to be a live
+    reference, not a copied URL.
+  - **Cost:** large, and it is a privacy decision.
+- *(c) Count only Postcards.* The Postcard half is built (§21, V28).
+  - This is a narrowing of §44, which is the owner's to make.
+  - Because (c) needs nothing, **no column was added** to the Memory lane's
+    table.
+
+**MD446. What is "Show Me Now"?** The Phase 6 list gives the phrase only
+(`docs/specs/Portava_Media_Engineering_Architecture_and_Design_Spec.txt:461#Show Me Now, Why This, Find Similar`).
+- *(a) The NOW lens itself,* its "FOR YOU NOW" strip.
+  - **To a real person:** nothing new.
+  - **Cost:** trivial. It waits on the World shell shipping (F1).
+- *(b) "Show me this place now":* a §19 Request a View to opted-in contributors
+  near a place (`docs/specs/Portava_Media_Engineering_Architecture_and_Design_Spec.txt:213#Future: Request a View`).
+  - **To a real person:** a contributor may be asked for a current photo.
+  - **Cost:** small. The mission and its throttling exist (`routes/mediaViewRequest.ts`).
+- *(c) "What is happening around me now":* the NOW lens at the viewer's live
+  position, through §38's radius search.
+  - **To a real person:** asks for location permission.
+  - **Cost:** medium.
+- *(d) Compass's "Is this worth going to now?"*
+  - **Cost:** small. It overlaps Ask Compass.
+
+### 36.4.1 Design choices the owner may want to revisit
+
+- **MD262.**
+  - The chip reads "Neighbourhood".
+  - The neighbourhood's name shows only on World views. Wall, Watch and Pulse
+    have no neighbourhood label, so they show the city: less, never more.
+  - The enum label cannot be rolled back.
+- **MD101.** Busier and Quieter share `crowd.level`. A distinct "busy" signal
+  would need a new claim type.
+- **MD82–MD85.** The three choices in §36.3.3.
+
+### 36.5 What changes on deploy WITHOUT a flag — each is a narrowing, and each is tested
+
+These are privacy fixes, not surfaces, so they are not flag-gated. Each takes
+the more private default. On deploy (which is the owner's call), a non-owner
+sees less than today in exactly these places:
+
+1. **The Watch feed, the grid and `GET /media/:id`** now honour the owner's
+   mode. A `city_only`, `hidden` or `trusted_circle_only` post's venue name had
+   been served there, contradicting what the composer tells the author ("Only
+   your city and country are shared, never the place").
+2. **mapPublicPost no longer serves the venue of a published row whose mode it
+   does not know.** It always did for any value outside its list, which became
+   reachable the moment the enum gained one.
+3. **The public label of a `trusted_circle_only` post is its city, not its
+   venue**, both at write (safeLocationLabel) and at read (mapPublicPost
+   rebuilds it). Before, a post with a venue name and no high-sensitivity match
+   stored the venue as its label. An admin `city_only` post with no city could
+   carry the venue too.
+4. **A place page and a place-scoped timeline** no longer list a post whose
+   place the choke point withheld (owner mode, gem ceiling, unreleased delayed
+   post). The World shell is dark in production (F1), so no production user
+   sees this change yet.
+5. **The Media following feed** refuses an audience it does not know (§36.3.4).
+   No value that exists today is affected.
+
+Proof that a non-owner sees no more than before: `mediaNeighborhoodOnlyMode.test.ts`
+C restates the Watch resolver and mapPublicPost from `e9e0b0404`. It asserts,
+for every mode × status × gem state, that each field is what it was or
+withheld, and that something does narrow. `mediaProductDecisionPlumbing.test.ts`
+A does the same for the following feed. Two existing tests changed with the
+behaviour, and both now assert the tighter outcome:
+- `mediaGemAndPrivacyDisclosure.test.ts` documented the mapPublicPost
+  fall-through as "actual behaviour".
+- `mediaProjectionGaps.test.ts` observed a gem-ceilinged item on its own place
+  page. It now observes the item at the choke point, and asserts the place page
+  drops it.
+
+### 36.6 Mutations: each seen red on the final tree, each file restored byte-identical
+
+Runner: a scratch script that applies one mutation, runs the named suite,
+records the exit, restores the file and compares SHA-256.
+
+| Set | Count | What each removed or broke |
+| --- | --- | --- |
+| Neighbourhood-only, server | 15, all red | the ceiling case; mapPublicPost's two-mode release; the rebuilt label; the mode column in the Watch and grid SELECTs; the mode passed to the resolver; the place-page and timeline filters; the filter itself; the create and PATCH gates; PATCH publishing the mode; the city label at write; the gate answering true; 3350 seeded on |
+| Neighbourhood-only, client | 8, all red | the choices ignoring the flag, both ways; the composer always and never offering it; the sheet always offering it; the precision mapping to city; the client table's tier and place-name claims (red in the server parity suite) |
+| Find Busier | 10 server + 4 client, all red | busier grounded on price; the default axes including busier; the context ignoring the flag; the rail ignoring the flag, the place, Compass; the rail not wired; appending at the end instead of after Find Cheaper (this one SURVIVED the first run, because the fixture's rail ended at Find Cheaper, so a unit case with actions after it was added and it went red); 3351 seeded on; the client id, dispatch, north-star and icon |
+| Following-feed and expiry plumbing | 7, all red | the allow-list removed; followers_only dropped from it; the cap always applied (SURVIVED the first run: the "no effect" case compared the function with itself, so it now compares with the pre-cap resolver restated, and it went red); the default fallback set to city; the cap able to widen; an unreadable expiry read as "forever"; the §11 member dropped |
+| Vantage | 13 server + 5 client, all red | a vantage without its place; the read ignoring the flag; the write ignoring the flag, the category; the insert dropping it; the refusal ignored; grouping ignoring it; the label not the spec's; the World buckets grouping by it; an invented vantage; the CHECK missing a value; 3352 seeded on; the client list drifting (red in the server parity case); the client offer ignoring the flag; the reducer keeping a mismatched vantage; the input dropping it; the screen always and the sheet never offering it |
+
+### 36.7 Per row: implementation, activation, external verification
+
+- **MD262: W → C.**
+  - IMPLEMENTATION: done (server, client, tests).
+  - ACTIVATION: migration 3350 applied, then `media_neighborhood_only_mode_enabled` ON (owner).
+  - EXTERNAL VERIFICATION: a device run of the composer and sheet; a production read after deploy.
+- **MD101: W → C.**
+  - IMPLEMENTATION: done.
+  - ACTIVATION: 3351 applied, then `media_find_busier_enabled` ON; Compass on in production.
+  - EXTERNAL VERIFICATION: the rail on a device; a permitted `crowd.level` claim in production for "busier" to be grounded rather than "cannot compare".
+- **MD82–MD85, MD444: N/W → C.**
+  - IMPLEMENTATION: done.
+  - ACTIVATION: 3352 applied, then `media_perspective_vantage_enabled` ON. The World shell ON (F1) for the place page to be reachable at all.
+  - EXTERNAL VERIFICATION: a device run of the sheet.
+- **MD79: W, unchanged.**
+  - IMPLEMENTATION: plumbing done; the producer waits on the decision.
+  - DECISION: §36.4.
+  - ACTIVATION / EXTERNAL VERIFICATION: none yet.
+- **MD255: W, unchanged.**
+  - IMPLEMENTATION: plumbing done; the audit and composer wait on the decision.
+  - DECISION: §36.4.
+- **MD77: N, MD175: N, MD385: W, MD446: W, all unchanged.**
+  - IMPLEMENTATION: none. Nothing can be built without inventing the product.
+  - DECISION: §36.4.
+
+### 36.8 Production: nothing here is deployed
+
+- No SQL was run against any database.
+- 3350, 3351 and 3352 are applied nowhere, and their three flags exist nowhere.
+- Absent reads as off, so the branch deployed as-is would refuse
+  `neighborhood_only` and a vantage, offer no Find Busier, and apply the §36.5
+  narrowings.
+
+### 36.9 Found while doing it: recorded, not fixed
+
+- **Pulse serves the venue whatever the owner chose**
+  (`artifacts/api-server/src/routes/pulse.ts:353#locationName:    row.location_name ?? null,`).
+  - Every venue-withholding mode is ignored there, including the new one.
+  - It is not a Media read, and it is Pulse's to fix.
+  - The fix: select `location_privacy_mode` and run the row through mapPublicPost.
+- **`lib/eventPostsDiscovery.ts`** uses a post's `location_name` as the venue
+  when the event has none. It does not read the mode. Not traced end to end.
+- **47 server files read `posts` and name `visibility`.** That is the size of
+  MD255's option (a) audit. It is counted here, not performed.
+
+### 36.10 Files, scope and checks
+
+- **New:**
+  - `lib/media/neighborhoodOnlyMode.ts`, `lib/media/perspectiveVantage.ts`.
+  - Migrations 3350–3352, with rollbacks under `db/rollback/2026-09-27-335{0,1,2}-…`.
+  - Four server suites: `mediaNeighborhoodOnlyMode`, `mediaFindBusier`,
+    `mediaProductDecisionPlumbing`, `mediaPerspectiveVantage`, all registered.
+  - Four client suites: the composer and two sheet component suites, and `mediaFindBusier`.
+- **Changed:**
+  - Server: `lib/mediaLocationVisibility.ts`, `lib/postSchemas.ts`,
+    `lib/mediaEligibility.ts`, `lib/media/mediaTemporalState.ts`,
+    `lib/media/mediaProjection.ts`, `routes/mediaFeed.ts`, `routes/posts.ts`,
+    `services/media/MediaProjectionService.ts`, `MediaPerspectiveService.ts`,
+    `MediaActionResolver.ts`, `compass/CompassMediaContext.ts`, and two
+    existing suites (§36.5).
+  - Client: `services/media/mediaPrivacy.ts`, `services/posts.ts`,
+    `components/PulseCreate.tsx`, and the Media contribution state, sheet and
+    screen, action types, panels, dispatch and telemetry.
+- **Every cited-line edit above a census citation is line-neutral.** New code
+  sits at the files' tails.
+
+**Cited, not graded (check:census-scope-coverage), declared for this section:**
+
+- NOT-GRADED: artifacts/api-server/src/lib/eventPostsDiscovery.ts — named once in §36.9 as a finding outside Media (a post reader that ignores the owner's location mode); no MD verdict rests on it, and it is Discovery's reader, not Media's.

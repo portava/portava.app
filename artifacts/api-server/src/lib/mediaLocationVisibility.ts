@@ -413,14 +413,8 @@ export function locationPrivacyModeToCeiling(
   mode: PostLocationPrivacyMode | string | null | undefined,
   postStatus?: string | null,
 ): LocationVisibilityTier | null {
-  if (mode == null || mode === "" || mode === "none") return null;
+  if (mode == null || mode === "" || mode === "none") return null; if (mode === "neighborhood_only") return "neighborhood"; // §34 "Show neighborhood only" (3350, census-media §36): the owner's explicit tier between city and place. Not delayed, so it binds from creation; like every restrictive mode it withholds the venue and, through resolveMediaPlaceDisclosure, the canonical place id.
   switch (mode) {
-    // §34 "Show neighborhood only" (3350, census-media §36). The owner's
-    // explicit choice of the tier between city and place. Not delayed, so it
-    // binds from creation; like every restrictive mode it withholds the venue
-    // and — through resolveMediaPlaceDisclosure — the canonical place id.
-    case "neighborhood_only":
-      return "neighborhood";
     case "hidden":
     case "city_only":
     case "trusted_circle_only":
@@ -443,20 +437,7 @@ export interface MediaPlaceDisclosureOpts extends CoarsenOpts {
   /** The owner's `posts.location_privacy_mode`. */
   locationPrivacyMode?: PostLocationPrivacyMode | string | null;
   /** `posts.post_status` — only read to resolve the delayed-publish modes. */
-  postStatus?: string | null;
-  /**
-   * §11 `locationDisclosureExpiresAt` (census-media §36, MD79 — decision-
-   * independent plumbing). When present and not after `nowMs`, a non-owner's
-   * disclosure is capped at `afterLocationDisclosureExpiry`, whose default is
-   * 'hidden', the MORE private tier. An unparseable value counts as expired.
-   * ABSENT ⇒ NO EFFECT, and no caller supplies one today: when a place stops
-   * being shown, and what it falls to, is the owner's open product decision.
-   */
-  locationDisclosureExpiresAt?: string | null;
-  /** The tier an expired disclosure falls to. Default 'hidden'. */
-  afterLocationDisclosureExpiry?: LocationVisibilityTier;
-  /** The clock for the expiry test. Default: now. */
-  nowMs?: number;
+  postStatus?: string | null; /** §11 `locationDisclosureExpiresAt` (census-media §36, MD79 — decision-independent plumbing): when present and not after `nowMs`, a non-owner's disclosure is capped at `afterLocationDisclosureExpiry` (default 'hidden', the MORE private tier); an unparseable value counts as expired. ABSENT ⇒ NO EFFECT, and no caller supplies one today — when a place stops being shown, and what it falls to, is the owner's open product decision. */ locationDisclosureExpiresAt?: string | null; afterLocationDisclosureExpiry?: LocationVisibilityTier; nowMs?: number;
 }
 
 export interface MediaPlaceDisclosure extends MediaLocationDisclosure {
@@ -495,12 +476,7 @@ export function resolveMediaPlaceDisclosure(
 
   const ownTier = normalizeTier(opts.locationVisibility);
   const modeCeiling = locationPrivacyModeToCeiling(opts.locationPrivacyMode, opts.postStatus);
-  const withMode = modeCeiling == null ? ownTier : stricterTier(ownTier, modeCeiling);
-  // §11 location-disclosure lifetime (census-media §36, MD79): inert unless a
-  // caller supplies an expiry, which none does yet.
-  const withExpiry = locationDisclosureExpired(opts.locationDisclosureExpiresAt, opts.nowMs)
-    ? stricterTier(withMode, opts.afterLocationDisclosureExpiry ?? "hidden")
-    : withMode;
+  const withMode = modeCeiling == null ? ownTier : stricterTier(ownTier, modeCeiling); const withExpiry = locationDisclosureExpired(opts.locationDisclosureExpiresAt, opts.nowMs) ? stricterTier(withMode, opts.afterLocationDisclosureExpiry ?? "hidden") : withMode; // §11 location-disclosure lifetime (census-media §36, MD79): inert unless a caller supplies an expiry, which none does yet
 
   const d = resolveMediaLocationWithGemProtection(input, {
     ...opts,
@@ -508,19 +484,6 @@ export function resolveMediaPlaceDisclosure(
     locationVisibility: withExpiry,
   });
   return { ...d, mayDisclosePlaceId: d.visibility === "place" };
-}
-
-/**
- * Has a §11 location disclosure ended at `nowMs`? Absent (null / undefined /
- * "") ⇒ false: nothing ends. Present but unparseable ⇒ TRUE — a lifetime that
- * was set but cannot be read is treated as over, never as "forever". A time
- * equal to now has ended.
- */
-export function locationDisclosureExpired(expiresAt: string | null | undefined, nowMs: number = Date.now()): boolean {
-  if (expiresAt == null || expiresAt === "") return false;
-  const t = Date.parse(expiresAt);
-  if (!Number.isFinite(t)) return true;
-  return t <= nowMs;
 }
 
 // ── Gem cross-check (DB + pure) ────────────────────────────────────────────────
@@ -680,4 +643,20 @@ export function toGemProtection(
   determined: boolean,
 ): GemProtection {
   return { ceiling, determined };
+}
+
+// ── §11 location-disclosure lifetime (census-media §36, MD79) ───────────────
+// Appended at the tail so no cited line above moves; function declarations
+// hoist, so resolveMediaPlaceDisclosure above can call it.
+/**
+ * Has a §11 location disclosure ended at `nowMs`? Absent (null / undefined /
+ * "") ⇒ false: nothing ends. Present but unparseable ⇒ TRUE — a lifetime that
+ * was set but cannot be read is treated as over, never as "forever". A time
+ * equal to now has ended.
+ */
+export function locationDisclosureExpired(expiresAt: string | null | undefined, nowMs: number = Date.now()): boolean {
+  if (expiresAt == null || expiresAt === "") return false;
+  const t = Date.parse(expiresAt);
+  if (!Number.isFinite(t)) return true;
+  return t <= nowMs;
 }

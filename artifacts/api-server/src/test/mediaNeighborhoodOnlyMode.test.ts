@@ -437,8 +437,11 @@ describe("D. the Watch feed routes read the owner's mode and honour it", () => {
     try {
       for (const mode of WITHHOLDING) {
         // The Watch feed is video-only (`.eq("has_video", true)`).
-        const video = feedPost(mode, { has_video: true, primary_media_type: "video" });
-        video.post_media = [{ ...video.post_media[0], media_type: "video", public_url: "https://example.com/a.mp4", duration_seconds: 8 }];
+        const still = feedPost(mode).post_media[0]!;
+        const video = feedPost(mode, {
+          has_video: true, primary_media_type: "video",
+          post_media: [{ ...still, media_type: "video", public_url: "https://example.com/a.mp4", duration_seconds: 8 }],
+        });
         _setTestClient(feedClient([video], ["MEDIA_FOR_YOU_ENABLED"]), true);
         const { status, body } = await getJson(s.base, `/media/feed?mode=fullscreen`);
         assert.equal(status, 200, mode);
