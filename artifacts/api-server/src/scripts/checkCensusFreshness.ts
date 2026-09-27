@@ -1998,6 +1998,9 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "travel-buddy-standalone/src/utils/destinationGrouping.ts",
     "travel-buddy-standalone/app/destinations/[city].tsx",
     "travel-buddy-standalone/src/services/profile.ts",
+    // WIDENED 2026-09-27 by census-media §37.10 (integration): MD269's activation now names 3359 (a postcard with no countable file gets a null cover), so the migration and its rollback are graded.
+    "artifacts/api-server/src/migrations/3359_passport_postcard_cover_nullable.sql",
+    "db/rollback/2026-09-27-3359-passport-postcard-cover-nullable-rollback.sql",
   ],
   // census-telegraph.md — declared 2026-09-11 on the same basis as Media above:
   // 451 requirements out of CANNOT BE CHECKED, a clock started rather than a

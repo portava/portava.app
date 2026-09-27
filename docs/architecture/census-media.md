@@ -13176,5 +13176,4 @@ again here:
 - NOT-GRADED: artifacts/api-server/src/routes/placeRecaps.ts — place recaps, cited in §42.6 (3) as a listing outside Media that ignores the owner's mode; Live Places' reader, recorded, not fixed.
 - NOT-GRADED: artifacts/api-server/src/services/wall/ContextThreadService.ts — the Wall's context thread, cited in §42.6 (3) for counting followed authors' posts at a place without the mode; census-wall's, recorded, not fixed.
 - NOT-GRADED: artifacts/api-server/src/lib/places/placeDays.ts — isEligiblePlaceDayPost, cited in §42.6 (3) as the shared predicate that reads no mode; Live Places machinery, recorded, not fixed.
-- NOT-GRADED: artifacts/api-server/src/routes/passport.ts — the passport postcard reader, cited in §42.6 (4) for serving the copied venue; census-passport's surface, recorded, not fixed.
 - NOT-GRADED: artifacts/api-server/src/migrations/2148_posts_write_boundary.sql — cited in §42.6 (5) for the table-level SELECT grant on posts; a database boundary finding, not a Media verdict, and it needs a migration this lane does not have.
