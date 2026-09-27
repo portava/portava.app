@@ -14028,9 +14028,10 @@ this reader as a row. It is restated here with its new state:
 
 ## 43. Lane G2 — a post's location mode, honoured by the remaining server readers (§42.6, items 1–4, 7 and 8) — 2026-09-27
 
-Branch `lane-g2-readers`, cut from `wave8-integration` at `11eec994d` and
-rebased onto `wave8-integration` at `0957d8176` before this section was
-written. No row IDs, no migration numbers, no flag. §42.6 recorded the readers
+Branch `lane-g2-readers`, cut from `wave8-integration` at `11eec994d`, measured
+on it rebased to `0957d8176`, and rebased again to `12a33d596` (lane G1's §44
+merged) before commit. None of the reader files below changed between those two
+bases, so every measurement here holds at `12a33d596`. No row IDs, no migration numbers, no flag. §42.6 recorded the readers
 lane Q did not fix. This lane fixed items 1–4 (Compass, the Wall, place pages,
 passport postcards), records item 7 (the Hidden-Gem gate) as not reusable, and
 records item 8 (ranking) as unchanged on purpose.
@@ -14510,8 +14511,9 @@ Each is the same class of disclosure, recorded with the reason.
    (`artifacts/api-server/src/routes/placeRecaps.ts:45#const rows = ((data ?? []) as any[]).filter((row) => !blocked.has(row.contributor_id)`).
    - Not changed: a contribution is its author's explicit act of sharing into
      a Shared Moment, not a listing chosen by place.
-8. **§42.6 (5) and (6)** are unchanged: direct PostgREST reads (a migration,
-   and lane G1's), and Pulse's own geo-tag visibility.
+8. **§42.6 (5) and (6)** are not this lane's. Direct PostgREST reads are lane
+   G1's §44 (migration 3362, applied to no shared database). Pulse's own
+   geo-tag visibility is unchanged.
 9. **Other readers keyed on a canonical place were not traced here**: the
    Hidden Gem services, `mapProjection` and memories. The census has no
    finding about them either way.
@@ -14574,7 +14576,7 @@ cite the changed regions were re-read:
 
 **check:census-freshness.** This lane does not edit the ledger. Of the entries
 it reports, these come from this branch; the others were stale on the base
-(`0957d8176`) already. Each is argued:
+(`12a33d596`) already. Each is argued:
 - **census-compass and census-discovery, the Compass feed builder.**
   - CX-11 cites its header comment (lines 4–9), which is unchanged; CX-02
     names its section names, which are unchanged.
