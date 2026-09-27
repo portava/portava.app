@@ -150,7 +150,12 @@ add({ id: 'comments.author', fg: color.ink, on: 'sheetPaperRaised', kind: 'text'
 add({ id: 'comments.time', fg: color.mute, was: color.faint, on: 'sheetPaperRaised', kind: 'text', list: true, at: [CS_SHEET, [CS, 'commentTime: { fontSize: 11, color: color.mute },']] });
 add({ id: 'comments.edited', fg: color.mute, was: color.faint, on: 'sheetPaperRaised', kind: 'text', list: true, at: [CS_SHEET, [CS, "editedLabel: { fontSize: 10, color: color.mute, fontStyle: 'italic' },"]] });
 add({ id: 'comments.body', fg: color.ink, on: 'sheetPaperRaised', kind: 'text', list: true, at: [CS_SHEET, [CS, 'commentText: { fontSize: 14, color: color.ink, lineHeight: 20 },']] });
-const MENTION: Needle[] = [[CS, 'style={s.commentText} mentionColor={color.signalStrong}'], [SF.richText, 'style={[_s.mention, mentionColor ? { color: mentionColor } : null]}']];
+// One needle per call site — a comment's body and a reply's — so reverting either one is caught.
+const MENTION: Needle[] = [
+  [CS, /content=\{commentTx\.translated(?:(?!\/>)[\s\S])*?style=\{s\.commentText\} mentionColor=\{color\.signalStrong\}\n\s*\/>/],
+  [CS, /content=\{reply\.body\}(?:(?!\/>)[\s\S])*?style=\{s\.commentText\} mentionColor=\{color\.signalStrong\}\n\s*\/>/],
+  [SF.richText, 'style={[_s.mention, mentionColor ? { color: mentionColor } : null]}'],
+];
 add({ id: 'comments.mention', fg: color.signalStrong, was: color.signal, on: 'sheetPaperRaised', kind: 'text', list: true, at: [CS_SHEET, ...MENTION] });
 add({ id: 'comments.hashtag', fg: color.deep, on: 'sheetPaperRaised', kind: 'text', list: true, at: [CS_SHEET, [SF.richText, "hashtag: { color: color.deep,   fontWeight: '600' },"]] });
 const TX: Needle = [CS, '<TranslationToggle tx={commentTx} />'];
@@ -182,10 +187,11 @@ add({ id: 'comments.inlineSave.spinner', fg: color.onInk, on: 'sheetSignalStrong
 add({ id: 'comments.disabledBanner', fg: color.muteStrong, was: color.mute, on: 'sheetHaze', kind: 'text', at: [[CS, /disabledBanner: \{\s*backgroundColor: color\.haze,/], [CS, "disabledText: { fontSize: 13, color: color.muteStrong, fontStyle: 'italic' },"]] });
 const REPLY_CTX: Needle = [CS, /replyContext: \{[^}]*backgroundColor: color\.paper,/];
 add({ id: 'comments.replyContext.text', fg: color.mute, was: color.faint, on: 'sheetPaper', kind: 'text', at: [REPLY_CTX, [CS, "replyContextText: { fontSize: 12, color: color.mute, fontStyle: 'italic', flex: 1, marginRight: space.sm },"]] });
-add({ id: 'comments.replyContext.close', fg: color.mute, was: color.faint, on: 'sheetPaper', kind: 'ui', at: [REPLY_CTX, [CS, '<X size={14} color={color.mute} />']] });
+// The sheet's own JSX (CommentsSection repeats it one indent deeper; the guard anchors that copy separately).
+add({ id: 'comments.replyContext.close', fg: color.mute, was: color.faint, on: 'sheetPaper', kind: 'ui', at: [REPLY_CTX, [CS, '\n              <Pressable onPress={() => setReplyingTo(null)} hitSlop={8}>\n                <X size={14} color={color.mute} />']] });
 const INPUT: Needle = [CS, /input: \{[^}]*color: color\.ink,\s*backgroundColor: color\.paper,/];
 add({ id: 'comments.input.text', fg: color.ink, on: 'sheetPaper', kind: 'text', at: [INPUT] });
-add({ id: 'comments.input.placeholder', fg: color.mute, was: color.faint, on: 'sheetPaper', kind: 'text', at: [INPUT, [CS, 'placeholder={inputPlaceholder}\n                placeholderTextColor={color.mute}']] });
+add({ id: 'comments.input.placeholder', fg: color.mute, was: color.faint, on: 'sheetPaper', kind: 'text', at: [INPUT, [CS, '\n                placeholder={inputPlaceholder}\n                placeholderTextColor={color.mute}']] });
 add({ id: 'comments.input.outline', fg: color.haze, on: 'sheetPaper', kind: 'decor', at: [INPUT, [CS, /input: \{[^}]*borderColor: color\.haze,/]] }); // its placeholder names it
 add({ id: 'comments.capWarning', fg: color.signalStrong, was: color.signal, on: 'sheetPaperRaised', kind: 'text', list: true, at: [[CS, '<MentionInput'], [SF.mentionInput, /capWarning: \{\s*\.\.\.t\.small,\s*color: color\.signalStrong,/]] });
 const SEND: Needle = [CS, "sendBtn: { width: avatar.s40, height: avatar.s40, borderRadius: avatar.s40 / 2, backgroundColor: color.signal, alignItems: 'center', justifyContent: 'center' },"];

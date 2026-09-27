@@ -242,6 +242,9 @@ const CONSUMER_PAIRS: ConsumerPair[] = [
   })),
   { id: 'commentsSection.empty', fg: color.mute, was: color.faint, on: 'sheetPaper', kind: 'text', at: [...POST, [SF.comments, "empty: { fontSize: 14, color: color.mute, textAlign: 'center' },"]], component: SF.comments, consumer: 'app/post/[id].tsx' },
   { id: 'commentsSection.loading', fg: color.signal, on: 'sheetPaper', kind: 'ui', at: [...POST, [SF.comments, '<ActivityIndicator color={color.signal} />']], component: SF.comments, consumer: 'app/post/[id].tsx' },
+  // CommentsSection repeats the sheet's reply-context close and input as its own JSX, one indent deeper; each copy is anchored on its own.
+  { id: 'commentsSection.replyContext.close', fg: color.mute, was: color.faint, on: 'sheetPaper', kind: 'ui', at: [...POST, [SF.comments, '\n                <Pressable onPress={() => setReplyingTo(null)} hitSlop={8}>\n                  <X size={14} color={color.mute} />']], component: SF.comments, consumer: 'app/post/[id].tsx' },
+  { id: 'commentsSection.input.placeholder', fg: color.mute, was: color.faint, on: 'sheetPaper', kind: 'text', at: [...POST, [SF.comments, '\n                  placeholder={inputPlaceholder}\n                  placeholderTextColor={color.mute}']], component: SF.comments, consumer: 'app/post/[id].tsx' },
   // MentionInput's hashtag-cap warning sits on whatever holds the input.
   ...([
     ['app/messages/[id].tsx', 'sheetPaperRaised', /compose: \{[^}]*backgroundColor: color\.paperRaised,/],
@@ -331,7 +334,7 @@ test('the counts: consumers, pairs, improved, unchanged, worse', () => {
   };
   assert.equal(counts.improved + counts.unchanged + counts.worse, counts.pairs);
   // Recorded in census-media §33. A change to any of these is a change to what §33 claims.
-  assert.deepEqual(counts, { changedComponents: 10, consumers: 54, pairs: 203, asserted: 158, improved: 72, unchanged: 131, worse: 0, failingBefore: 63, failingAfter: 0 });
+  assert.deepEqual(counts, { changedComponents: 10, consumers: 54, pairs: 205, asserted: 160, improved: 74, unchanged: 131, worse: 0, failingBefore: 65, failingAfter: 0 });
 });
 
 test('print the before/after table when SHEET_CONTRAST_TABLE=1', () => {
