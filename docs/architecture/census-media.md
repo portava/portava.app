@@ -986,7 +986,7 @@ and this line dropped every one of them … the funnel simply read zero."*
 
 | id | Requirement | V | Evidence |
 | --- | --- | --- | --- |
-| MD414 | Gem icon or geometric discovery marker | **C** | `Gem` icon used in `app/(tabs)/media.tsx:26`; `components/media/GemsItemOverlay.tsx`. |
+| MD414 | Gem icon or geometric discovery marker | **C** | `Gem` icon used in `travel-buddy-standalone/app/(tabs)/media.tsx:178#<Gem size={22}` (corrected 2026-09-27, verdict unmoved: line 26 was the expo-router import at every recoverable commit; the icon is imported at 27 and rendered at 178); `components/media/GemsItemOverlay.tsx`. |
 | MD415 | Subtle edge glow or contour treatment | **N** | No glow/contour treatment in the gem components; `GemsItemOverlay.tsx` is a standard overlay. |
 | MD416 | Map discovery contour / approximate zone treatment | **N** | No map contour rendering. The *data* supports it — `mediaLocationVisibility.ts:98` yields a `neighborhood`-tier disclosure for approximate gems — and no client draws a zone. |
 | MD417 | Recently Confirmed / Worth the Detour / Still Hidden / Seasonal labels | **C** | `src/lib/gems/gemStateDisplay.ts` maps the ten `hiddenGemState` values (`lib/hiddenGemState.ts:37-50`) to display labels. |
@@ -9252,6 +9252,120 @@ lane did not make it.
 | docs/architecture/census-discovery.md | lines 4971 and 5294 |
 | docs/architecture/census-input-intelligence.md | line 1055 (a second correction on the same row) |
 | docs/architecture/census-media.md | §38.4's four items marked closed or corrected (line-neutral), and §38.7 to §38.10 |
+
+### 38.11 Second follow-up: the short route-group citations that pointed at the wrong line or the mock
+
+§38.7 left 24 newly read citations that use a short path such as
+app/(tabs)/ai.tsx. Each one also matches a small mock copy at the repo root, so
+the guards checked it only loosely. The integrator asked for each one to be:
+- spelled with the full travel-buddy-standalone path, so the guard resolves one
+  file and checks it;
+- pointed at the line that carries the claim today, with a whole anchor;
+- line-neutral, with every verdict unmoved.
+
+Each was read against the file first. In the table, a citation is written as
+"file line N". Each correction on its own line carries the anchor, and each
+anchor was moved by one line and went **RED**.
+
+| document | line (row) | old | new | why |
+| --- | --- | --- | --- | --- |
+| census-compass | 129 (CG-02, C) | ai.tsx 398–410 | ai.tsx 412–424, anchored on `<CompassStarters` | e0d858f28 moved the block 14 lines down (M30) |
+| census-compass | 131 (CG-04, C) | ai.tsx 98–104 | ai.tsx 112–118, anchored on the prefill guard | the same move (M31) |
+| census-compass | 171 (CP-04, C) | ai.tsx 98–104 | ai.tsx 112–118 | the same move (M32) |
+| census-input-intelligence | 1065 (G364, C) | ai.tsx 60 and 398–410 | ai.tsx 61 (`useAiWritingAssist`) and 412–424 | the same commit (M33, M34) |
+| census-input-intelligence | 635 (G147, C) | the short onboarding path, line 275 | the same line, path spelled out | the line was right; the path could name the mock (M35) |
+| census-media | 989 (MD414, C) | media.tsx 26 | media.tsx 178, where `<Gem size={22}` renders | 26 was the expo-router import at every recoverable commit; the icon is imported at 27 (M36) |
+| census-passport | 183 (P2, C) | passport.tsx 719, 52, 53 | 723 (`<PassportIdentityCard`); 52 and 53 kept and anchored | the identity card moved; the two imports did not (M37–M39) |
+| census-passport | 348 (P87) and 516 (P168) | the superseded ai.tsx pointers | now plain text | §38.2's anchored corrections already follow them on the same lines |
+| census-wall | 137 (W10, C) | the short layout path, 471–472 | the same lines, path spelled out, anchored on `name="wall"` | the lines were right; the path could name the mock (M40) |
+| passport-certification | 53 (row 1, PARTIAL) | passport.tsx 709, 727, 642, 730, 824 | 723, 742, 656, 746, 847, each anchored | right at 5f08c3b2a; the chip is now the §5 traveler-state chip (M41–M45) |
+| wall-certification | 328 and 561 | layout 423 | layout 471–472 | 423 held the hidden Wall tab at a739137a9; its `href` now follows `wall_enabled` (M46, M47) |
+
+**The scope, widened once.** census-wall had watched only the repo-root mock of
+the layout file, because the guard used to resolve W10's short path there. W10
+now names the standalone screen. So that file is appended to census-wall's
+`CENSUS_SCOPE` with a `WIDENED` comment, and no other scope changed. It has not
+changed since census-wall's baseline, so no census became stale.
+
+**Stopped on two lines, and left four, each with its reason.**
+- **census-compass lines 128 and 883 — STOPPED, not edited.** Both say the
+  client calls its own buildCompassStarters at ai.tsx line 399. That claim no
+  longer holds at all: e0d858f28 removed the client builder, and the screen now
+  feeds `CompassStarters` from the gateway at ai.tsx line 413.
+  - Line 128 is CG-01's original row, and line 883 is §12.2's re-execution of it.
+  - CG-01's last statement is line 3333, C (§26.13). So no verdict rests on
+    either line, and nothing needs regrading.
+  - Proposed, for the integrator: a dated note on each, as census-media 8959
+    allows.
+- census-input-intelligence 1055 and census-media 8959 quote the stale G359
+  clause as history. Line 1055 already carries §38.2's dated correction. Both
+  are left as they are.
+- mobile-reachability-ledger 207 is pinned to a commit by that document's own
+  declaration. Its lines must not track HEAD, so it is left.
+
+### 38.12 Second follow-up: TR128, TR267, TR341 and TR412 move from NEITHER to BOTH
+
+census-trips §76 records this in full. In short:
+- **The rule is the census's own (§68.1, applied again in §69.2 and §73.1).**
+  NEITHER means "a subsystem nobody has written". The routed provider is now
+  written and prepared, but not wired. Closing the four rows needs a branch
+  change (binding it at the Trips seams) and an owner step (enabling the Routes
+  API, setting the key and accepting the per-call spend). That is BOTH.
+- **The tie-break was asked, and does not keep them in NEITHER.** The rows'
+  blocker names only the routed provider.
+- **Every letter stays `W`.** This is a blocker class, not a verdict. Every id
+  and letter in the `CENSUS_INTEGRITY_DUMP=ALL` listing is unchanged.
+
+The recount comes from the rows, by a stated rule. It takes §68.2's class cell,
+applies §69.2's overrides, and counts only the rows whose last statement is `W`:
+
+| | OWNER | BOTH | BRANCH | NEITHER | unclassified | rows |
+| --- | --- | --- | --- | --- | --- | --- |
+| before | 102 | 20 | 0 | 5 | 1 | 128 |
+| after | **102** | **24** | **0** | **1** (TR427) | **1** (TR174) | **128** |
+
+The "before" row reproduces what §69.2 and §73.1 state. TR229 keeps its BOTH
+label: §70.5 argued BOTH → OWNER, but no section moved the label.
+
+census-trips states the distribution in ten places, and each is restated
+line-neutrally with its old numbers kept. The lines are 403, 7472, 7511, 7743,
+7822, 7946, 8525, 8583, 8944 and 9157. §68.2's four rows carry the new class and
+name the old one.
+
+### 38.13 Checks and files, second follow-up
+
+- A merge commit brought in `wave8-integration`; the merged tree is identical to
+  it.
+- check:doc-citations: RESULT clean.
+  - Citations 13,830 → 13,830. The anchored count rose from 7,442 to
+    7,461, and the unanchored count fell from 6,388 to 6,369
+    (ceiling 6,434).
+  - Every mutation M30–M49 went **RED** (M48 and M49 are §76's two anchors), and every file was restored and its
+    sha256 compared.
+- check:citation-targets: 165 / 165, with the judged count 2,888 → 2,887.
+- check:citation-symbols: PASSED.
+- check:census-integrity: PASSED, with output identical to before, headlines
+  included. In the `CENSUS_INTEGRITY_DUMP=ALL` listing every id and letter is
+  unchanged. The only difference is line numbers: §35's rows moved down 114
+  lines, because §38.11–§38.13 now sit above §35 as the integrator directed.
+- check:census-scope-coverage: PASSED, all thirteen at 100 %.
+- check:census-row-move-labels: PASSED.
+- The doc-citations suite passes.
+- check:census-freshness reports three censuses STALE. That was already true of
+  `wave8-integration` before this lane's changes, and none of the files is one
+  this lane touched:
+  - census-highlights-memories and census-passport, over
+    PassportMemoryService;
+  - census-media, over twelve files that other lanes changed on
+    `wave8-integration`.
+
+  The integrator writes those acknowledgements.
+
+Files: `artifacts/api-server/src/scripts/checkCensusFreshness.ts` (census-wall's
+scope, two lines appended) and seven documents. The documents are
+census-compass, census-input-intelligence, census-media, census-passport,
+census-wall and census-trips (§76 and the ten restatements), plus
+passport-certification and wall-certification.
 
 ## 35. Lane I — the media → intelligence boundary: what was unbuilt, what waits on a decision, and the questions that decide it — 2026-09-27
 

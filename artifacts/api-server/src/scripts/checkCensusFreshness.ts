@@ -1587,6 +1587,8 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     // WIDENED 2026-09-27 by the coverage-guard fix (census-media §32.14): W72 — §17's postcard-link writer and the Quick Media suite that proves the fix.
     "artifacts/api-server/src/routes/postcards.ts",
     "artifacts/api-server/src/test/wallQuickMedia.test.ts",
+    // WIDENED 2026-09-27 by lane E (census-media §38.11): W10 now spells its tab-registration citation as the standalone screen, so the guard checks the file the row means rather than the repo-root mock above.
+    "travel-buddy-standalone/app/(tabs)/_layout.tsx",
   ],
   // Discovery has NO SPEC. Its 67 rows are 25 inbound obligations from other
   // surfaces' specs, 9 rows shared with the Global Input Intelligence census,
