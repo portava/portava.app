@@ -678,7 +678,7 @@ router.post("/admin/media/:id/moderate", asyncHandler(async (req, res) => {
    * lookup refuses before any bytes are removed (see that branch).
    */
   type AuditOutcome = "recorded" | "skipped_no_owner" | "skipped_owner_lookup_failed" | "not_applicable";
-  let auditOutcome: AuditOutcome = "not_applicable"; let canonicalOutcome: CanonicalModerationOutcome | null = null;
+  let auditOutcome: AuditOutcome = "not_applicable"; let canonicalOutcome: CanonicalModerationOutcome | null = null; let postcardSync: PostcardModerationSync | null = null; // census-media §37.9
 
   /**
    * Resolve the owner and say, out loud, which of the four outcomes happened.
@@ -753,7 +753,7 @@ router.post("/admin/media/:id/moderate", asyncHandler(async (req, res) => {
     // despite already selecting storage_path/storage_bucket for its listings.
     const { data: row, error: readErr } = await sc
       .from("post_media")
-      .select("id, user_id, storage_path, storage_bucket, thumbnail_storage_path")
+      .select("id, user_id, storage_path, storage_bucket, thumbnail_storage_path, post_id, processing_status, moderation_status, public_url") // census-media §37.9: the file as it was, for the postcard step (was: .select("id, user_id, storage_path, storage_bucket, thumbnail_storage_path"))
       .eq("id", id)
       .maybeSingle();
 
@@ -837,8 +837,8 @@ router.post("/admin/media/:id/moderate", asyncHandler(async (req, res) => {
 
     const { error: delErr } = await sc.from("post_media").delete().eq("id", id);
     if (delErr) { sendError(res, "db_error", delErr.message); return; }
-
-    res.json({ ok: true, id, action, target, deleted: true, objectsRemoved: paths.length, canonical: await applyCanonicalModerationDecision(sc, { bucket, path: ref.kind === "path" ? ref.path : null, decision: "remove" }) });
+    const postcardDel = await syncPostcardAfterModeration(sc, { postId: (row as any).post_id, ownerUserId: (row as any).user_id ?? ownerId, before: row as any, after: null }, req); // census-media §37.9: a removed file that counted leaves the count, and the passport cover
+    res.json({ ok: true, id, action, target, deleted: true, objectsRemoved: paths.length, postcard: postcardDel, canonical: await applyCanonicalModerationDecision(sc, { bucket, path: ref.kind === "path" ? ref.path : null, decision: "remove" }) });
     return;
 
   } else if (target === "post_media") {
@@ -846,19 +846,19 @@ router.post("/admin/media/:id/moderate", asyncHandler(async (req, res) => {
       action === "approve" ? "approved" :
       action === "reject"  ? "rejected" :
       "flagged";
-
+    const priorPm = await readPostMediaBeforeModeration(sc, id); // census-media §37.9: the file as it was, so a decision that changes whether it counts re-runs the postcard step
     const { data: updated, error } = await sc
       .from("post_media")
       .update({ moderation_status: newStatus })
       .eq("id", id)
-      .select("id, storage_bucket, storage_path");
+      .select("id, storage_bucket, storage_path, post_id, user_id"); // census-media §37.9: the post and uploader for the postcard step (was: .select("id, storage_bucket, storage_path");)
 
     if (error) { sendError(res, "db_error", error.message); return; }
     if (!updated || (updated as any[]).length === 0) {
       res.status(404).json({ error: "not_found", message: "Media item not found" });
       return;
     }
-
+    const pmAfter = (updated as any[])[0] ?? {}; postcardSync = await syncPostcardAfterModeration(sc, { postId: pmAfter.post_id ?? priorPm?.post_id, ownerUserId: pmAfter.user_id ?? priorPm?.user_id, before: priorPm, after: newStatus }, req); // census-media §37.9: releasing a held file counts it (and may create the passport postcard); holding a counted one uncounts it — the same step /complete runs
     // Audit against the media OWNER (fail-closed), same as the delete branch.
     const { ownerId } = await resolveOwnerLoudly("post_media");
     if (ownerId) {
@@ -983,7 +983,29 @@ router.post("/admin/media/:id/moderate", asyncHandler(async (req, res) => {
   // `audit` is additive and is the whole point of the change above: an operator
   // who moderates content is told whether the action left an accountable record,
   // instead of getting an unqualified `ok: true` for an action with no audit row.
-  res.json({ ok: true, id, action, target, audit: auditOutcome, ...(canonicalOutcome ? { canonical: canonicalOutcome } : {}) });
+  res.json({ ok: true, id, action, target, audit: auditOutcome, ...(canonicalOutcome ? { canonical: canonicalOutcome } : {}), ...(postcardSync ? { postcard: postcardSync } : {}) }); // census-media §37.9: `postcard` says whether the decision re-ran the postcard step
 }));
 
 export default router;
+
+// ── census-media §37.9: a moderation decision re-runs the postcard step ──────
+//
+// The post_media branches of POST /admin/media/:id/moderate are the only paths
+// that change a post_media row's moderation_status after /complete wrote it
+// (MediaModerationService moves media_assets, the canonical store, not
+// post_media; the vendor stages decide the /complete value before it is
+// written). They now hand the file's before-state and its new status to
+// syncPostcardAfterModeration (routes/postcards.ts), which re-runs the one
+// postcard step /complete runs when — and only when — the file's countability
+// changed. The count rule stays in refreshMediaCounts alone.
+
+/** The post_media row as it was before a decision; null when it could not be read (the step then runs, because a recount converges whatever the prior state). */
+async function readPostMediaBeforeModeration(sc: any, id: string): Promise<{ post_id?: string | null; user_id?: string | null; processing_status?: unknown; moderation_status?: unknown; public_url?: unknown } | null> {
+  try {
+    const { data, error } = await sc.from("post_media").select("post_id, user_id, processing_status, moderation_status, public_url").eq("id", id).maybeSingle();
+    return error || !data ? null : (data as any);
+  } catch {
+    return null;
+  }
+}
+import { syncPostcardAfterModeration, type PostcardModerationSync } from "./postcards.js";

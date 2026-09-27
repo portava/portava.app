@@ -185,13 +185,13 @@ async function refreshMediaCounts(sc: any, postId: string): Promise<{
   mediaCount: number;
   hasVideo: boolean;
   primaryMediaType: string;
-  firstReadyUrl: string | null;
+  firstReadyUrl: string | null; /** census-media §37.9: the public_url of every READY file that does NOT count (held, flagged, rejected…), and whether the read could not run (nothing is written then). */ uncountedUrls: string[]; unread?: true;
 }> {
-  const { data: mediaRows } = await sc
+  const { data: mediaRows, error: mediaReadErr } = await sc
     .from('post_media')
     .select('media_type, processing_status, public_url, sort_order, moderation_status') // census-media §37.8: moderation read so a held file neither counts nor becomes the cover
     .eq('post_id', postId);
-
+  if (mediaReadErr) return { mediaCount: 0, hasVideo: false, primaryMediaType: 'none', firstReadyUrl: null, uncountedUrls: [], unread: true }; // §37.9: a read that could not run is not "no files" — write no zeros
   const ready = ((mediaRows ?? []) as any[])
     .filter((r: any) => r.processing_status === 'ready')
     .filter((r: any) => countsTowardPostcard(r)).sort((a: any, b: any) => (a.sort_order ?? 0) - (b.sort_order ?? 0)); // §37.8: ready AND distributable (was: .sort((a: any, b: any) => (a.sort_order ?? 0) - (b.sort_order ?? 0));)
@@ -213,7 +213,7 @@ async function refreshMediaCounts(sc: any, postId: string): Promise<{
     .eq('post_id', postId)
     .then(undefined, () => {});
 
-  return { mediaCount, hasVideo, primaryMediaType, firstReadyUrl };
+  return { mediaCount, hasVideo, primaryMediaType, firstReadyUrl, uncountedUrls: ((mediaRows ?? []) as any[]).filter((r: any) => r.processing_status === 'ready' && !countsTowardPostcard(r)).map((r: any) => String(r.public_url ?? '')).filter(Boolean) };
 }
 
 /* ============================================================================
@@ -1069,8 +1069,8 @@ router.post('/postcards/:id/media/:mediaId/complete', async (req, res) => {
     sendError(res, "db_error", "We couldn't finish your upload. Please try again.", { exposeDetail: true });
     return;
   }
-
-  // Refresh parent counts and get first-ready URL for postcard creation
+  const counts = await syncPostcardAfterMediaChange(sc, postId, user, req); res.status(200).json({ ok: true, mediaCount: counts.mediaCount, hasVideo: counts.hasVideo, ...(p.stampOverlay ? (overlay ? { stampOverlayApplied: true } : { stampOverlayApplied: false, stampOverlayError: overlayError ?? 'stamp_unavailable' }) : {}) }); }); // census-media §37.9: the step below is shared with admin moderation; the response is unchanged
+export async function syncPostcardAfterMediaChange(sc: any, postId: string, user: { id: string }, req: { log: { warn: (...args: any[]) => void } }): Promise<PostcardMediaCounts> { // Refresh parent counts and get first-ready URL for postcard creation (census-media §37.9: /complete and POST /admin/media/:id/moderate)
   const counts = await refreshMediaCounts(sc, postId);
 
   // Lazily create passport_postcard on the first ready media when add_to_passport=true.
@@ -1132,18 +1132,18 @@ router.post('/postcards/:id/media/:mediaId/complete', async (req, res) => {
       }
     }
   }
-
-  res.status(200).json({
-    ok: true,
-    mediaCount: counts.mediaCount,
-    hasVideo:   counts.hasVideo,
-    ...(p.stampOverlay
-      ? overlay
-        ? { stampOverlayApplied: true }
-        : { stampOverlayApplied: false, stampOverlayError: overlayError ?? 'stamp_unavailable' }
-      : {}),
-  });
-});
+  // census-media §37.9: the cover repoint after a moderation decision is syncPostcardAfterModeration's (file tail); /complete's behaviour is unchanged
+  return counts;
+}
+// ── census-media §37.9 ────────────────────────────────────────────────────────────
+// The /complete handler above used to end here: its 200 response (mediaCount, hasVideo and the
+// stamp-overlay flags) is now sent on the line before this function, unchanged in content. The
+// recount and the lazy passport postcard moved into syncPostcardAfterMediaChange IN PLACE — every
+// line census-media cites inside it (the insert, the canonical cover, the created signal) kept its
+// number and its text — so POST /admin/media/:id/moderate runs the same step when a moderator
+// releases a held file or holds a counted one (routes/adminMedia.ts).
+// (was: res.status(200).json({ ok: true, mediaCount: counts.mediaCount, hasVideo: counts.hasVideo,
+// …stampOverlay… }); }); — the end of the /complete handler)
 
 /* ============================================================================
  * DELETE /api/postcards/:id/media/:mediaId — owner-only removal
@@ -1609,3 +1609,110 @@ export function countsTowardPostcard(row: { moderation_status?: unknown }): bool
   return !NON_DISTRIBUTABLE_MEDIA_MODERATION_STATES.has(String(row?.moderation_status ?? ''));
 }
 import { NON_DISTRIBUTABLE_MEDIA_MODERATION_STATES } from '../lib/mediaEligibility.js';
+
+// ── census-media §37.9: a moderation decision re-runs the postcard step ──────
+//
+// §37.8 made the count and the cover read only files that are READY and
+// distributable, but only the upload path (/complete) and the owner's delete
+// ever re-derived them. POST /admin/media/:id/moderate flips a post_media
+// row's moderation_status (and its `delete` removes the row) without either, so:
+//   • a moderator RELEASING a held file left the postcard at media_count 0 and
+//     with no passport postcard, for good (§37.8.7 item 1);
+//   • a moderator FLAGGING or REJECTING a counted file left it counted, and left
+//     it as the passport cover.
+// The admin route now calls `syncPostcardAfterModeration`, which decides from
+// the SAME two predicates refreshMediaCounts applies (ready, and
+// countsTowardPostcard) whether the file's countability changed, and if it did
+// runs `syncPostcardAfterMediaChange` — the one step /complete runs. The count
+// rule lives in refreshMediaCounts alone.
+
+export type PostcardMediaCounts = Awaited<ReturnType<typeof refreshMediaCounts>>;
+
+/** Does this post_media row count toward its postcard? The two filters refreshMediaCounts applies, composed. */
+export function isCountedPostcardFile(row: { processing_status?: unknown; moderation_status?: unknown }): boolean {
+  return row?.processing_status === 'ready' && countsTowardPostcard(row);
+}
+
+export type PassportCoverOutcome = 'kept' | 'repointed' | 'no_postcard' | 'no_countable_file' | 'failed';
+
+/**
+ * A passport postcard whose cover is a file of this post that NO LONGER counts
+ * (held, flagged, rejected — or removed, passed in `alsoGone`) moves to the
+ * first file that does. A cover that is not one of this post's uncounted files
+ * is left alone: this never rewrites a cover it cannot prove is stale. With no
+ * file left that counts, the cover is left too (mediaAccess already denies the
+ * held file's bytes) and the case is logged. NEVER throws.
+ */
+async function repointPassportCover(
+  sc: any,
+  postId: string,
+  counts: PostcardMediaCounts,
+  req: { log: { warn: (...args: any[]) => void } },
+  alsoGone: readonly string[] = [],
+): Promise<PassportCoverOutcome> {
+  try {
+    const { data, error } = await sc.from('passport_postcards').select('id, media_url').eq('post_id', postId).maybeSingle();
+    if (error) return 'failed';
+    if (!data) return 'no_postcard';
+    const cover = String((data as any).media_url ?? '');
+    if (!cover || !(counts.uncountedUrls.includes(cover) || alsoGone.includes(cover))) return 'kept';
+    if (!counts.firstReadyUrl) {
+      req.log.warn({ postId }, 'postcards: the passport cover no longer counts and no file of the post does — cover left in place');
+      return 'no_countable_file';
+    }
+    const { error: upErr } = await sc.from('passport_postcards').update({ media_url: counts.firstReadyUrl }).eq('id', (data as any).id);
+    return upErr ? 'failed' : 'repointed';
+  } catch {
+    return 'failed';
+  }
+}
+
+export type PostcardModerationSync =
+  /** The file counted before and after (or neither): nothing to re-derive. */
+  | { state: 'unchanged' }
+  /** Countability changed (or the prior state was unknown): the postcard step ran. */
+  | { state: 'synced'; mediaCount: number; cover: PassportCoverOutcome }
+  /** The step could not run (no post id, the recount's read failed — nothing was written — or it threw). */
+  | { state: 'failed' };
+
+/**
+ * After a moderator changed (or deleted) one post_media row: re-run the
+ * postcard step when the file's countability changed. `before` is the row as it
+ * was (null when it could not be read — then the step runs, because a recount
+ * converges on the rule whatever the prior state was); `after` is its new
+ * moderation_status, or null when the row was deleted. NEVER throws.
+ */
+export async function syncPostcardAfterModeration(
+  sc: any,
+  input: {
+    postId: string | null | undefined;
+    ownerUserId: string | null | undefined;
+    before: { processing_status?: unknown; moderation_status?: unknown; public_url?: unknown } | null;
+    after: string | null;
+  },
+  req: { log: { warn: (...args: any[]) => void } },
+): Promise<PostcardModerationSync> {
+  const postId = typeof input.postId === 'string' && input.postId ? input.postId : null;
+  if (!postId) return { state: 'failed' };
+  const wasCounted = input.before ? isCountedPostcardFile(input.before) : null;
+  const isCounted = input.after === null || !input.before
+    ? false
+    : isCountedPostcardFile({ processing_status: input.before.processing_status, moderation_status: input.after });
+  if (wasCounted !== null && wasCounted === isCounted) return { state: 'unchanged' };
+  try {
+    const owner = typeof input.ownerUserId === 'string' && input.ownerUserId ? input.ownerUserId : null;
+    const counts = owner
+      ? await syncPostcardAfterMediaChange(sc, postId, { id: owner }, req)
+      : await refreshMediaCounts(sc, postId);
+    if (counts.unread) {
+      req.log.warn({ postId }, 'postcards: the post_media read for the recount could not run after a moderation decision — counts left as they were');
+      return { state: 'failed' };
+    }
+    const gone = input.after === null && typeof input.before?.public_url === 'string' ? [input.before.public_url] : [];
+    const cover = await repointPassportCover(sc, postId, counts, req, gone);
+    return { state: 'synced', mediaCount: counts.mediaCount, cover };
+  } catch (err) {
+    req.log.warn({ err, postId }, 'postcards: re-deriving the postcard after a moderation decision failed');
+    return { state: 'failed' };
+  }
+}

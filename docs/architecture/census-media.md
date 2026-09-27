@@ -10373,6 +10373,225 @@ blind spot) are the ones §37.8.9 lists as changed.
 
 Headline: not restated. No row moved.
 
+### 37.9 Follow-up 2 — a moderator's decision now refreshes the postcard (§37.8.7 item 1) — 2026-09-27
+
+At the integrator's request, lane V merged `wave8-integration` (whose head,
+`5956c6233`, carries §37.8) into `lane-v-vendor` as a merge commit, then fixed
+§37.8.7 item 1. That defect blocked 3356: with the stage on, every postcard file
+is born held, so releasing one is the only way a postcard is ever counted, and
+releasing one re-derived nothing. The same rules apply as for §37: every edit is
+line-neutral or at a file's tail, no flag is enabled, and no database is
+touched. **No verdict moves** (§37.9.6).
+
+#### 37.9.1 Every path that changes a post_media row's moderation state
+
+| Path | What it writes | Before §37.9 | Now |
+| --- | --- | --- | --- |
+| the upload slot (`artifacts/api-server/src/routes/postcards.ts:481#moderation_status: 'pending',`) | `pending` | a pending file is not ready, so it never counts | unchanged |
+| `/complete` (`artifacts/api-server/src/routes/postcards.ts:978#preDistributionPostMediaStatus(sc,`) | the §36 value: `approved`, or held | recount, then the lazy passport postcard | unchanged: the same step, now a named function (§37.9.2) |
+| `POST /admin/media/:id/moderate`, approve / reject / flag on `post_media` (`artifacts/api-server/src/routes/adminMedia.ts:852#.update({ moderation_status: newStatus })`) | `approved`, `rejected`, `flagged` | **nothing re-derived** | the step re-runs when the file's countability changed |
+| the same route, `delete` on `post_media` (`artifacts/api-server/src/routes/adminMedia.ts:838#.delete().eq("id", id)`) | removes the row | **nothing re-derived** | the same |
+| the owner's `DELETE /postcards/:id/media/:mediaId` (`artifacts/api-server/src/routes/postcards.ts:1227#const counts = await refreshMediaCounts(sc, postId);`) | removes the row | recount | unchanged (§37.9.5 item 1) |
+| MediaModerationService (`artifacts/api-server/src/services/media/MediaModerationService.ts:150#moderation_status: to,`) and the §36 vendor stages | `media_assets`, the canonical store | — | not a post_media writer; the count does not read it |
+
+No other writer of `post_media.moderation_status` exists in the api-server tree
+or its migrations (a search for updates of the column, 2026-09-27; the seed
+scripts only insert).
+
+#### 37.9.2 The fix — one step, reused
+
+**The `/complete` handler was split in place.** Its 200 response is now sent on
+the line where the step used to begin
+(`artifacts/api-server/src/routes/postcards.ts:1072#const counts = await syncPostcardAfterMediaChange(sc, postId, user, req);`).
+The step itself, the recount followed by the lazy passport postcard, is now
+`artifacts/api-server/src/routes/postcards.ts:1073#export async function syncPostcardAfterMediaChange(`.
+Every line census-media cites inside the step kept its number and its text:
+the insert, the canonical cover and the created signal. The response's content
+is unchanged.
+
+**The admin route re-runs that step**, through
+`artifacts/api-server/src/routes/postcards.ts:1685#export async function syncPostcardAfterModeration(`:
+- It asks whether the file counted before and whether it counts after, using
+  `artifacts/api-server/src/routes/postcards.ts:1632#export function isCountedPostcardFile(`.
+  That function is the two filters `refreshMediaCounts` applies (ready, and
+  `countsTowardPostcard`), composed; no rule is restated.
+- **The answer changed, or the prior state could not be read:** it runs
+  `syncPostcardAfterMediaChange` for the file's uploader. That is the recount,
+  plus the passport postcard the upload path would have made.
+- **The answer did not change:** nothing is written
+  (`artifacts/api-server/src/routes/postcards.ts:1701#if (wasCounted !== null && wasCounted === isCounted) return { state: 'unchanged' };`).
+  So approving an approved file, or flagging one still processing, never
+  rewrites a post's counts.
+- **Release:** a held file that is approved is counted, and the postcard gains
+  its passport postcard if it had none.
+- **Hold, reject or delete:** a counted file that is flagged, rejected or deleted
+  stops counting.
+
+**A passport cover that no longer counts is moved**
+(`artifacts/api-server/src/routes/postcards.ts:1646#async function repointPassportCover(`).
+The cover moves to the first file that still counts when it is one of the
+post's files that no longer counts
+(`artifacts/api-server/src/routes/postcards.ts:216#uncountedUrls:`), or the file
+just deleted. A cover the function cannot prove stale is left alone. When no
+file still counts, the cover is left and the case is logged
+(`no_countable_file`).
+
+**A recount that could not read writes nothing.** Before, a failed post_media
+read counted as "no files" and wrote zeros, at `/complete` too
+(`artifacts/api-server/src/routes/postcards.ts:194#if (mediaReadErr) return`).
+The admin response then says `failed`.
+
+**Where the admin route is wired:**
+- **Status flip.** The file's before-state is read first
+  (`artifacts/api-server/src/routes/adminMedia.ts:849#readPostMediaBeforeModeration(sc, id)`),
+  and the update now also returns `post_id` and `user_id`. The step then runs
+  before the audit
+  (`artifacts/api-server/src/routes/adminMedia.ts:861#postcardSync = await syncPostcardAfterModeration(sc,`).
+  The status has already committed by then, and a failed audit write must not
+  leave the counts behind it.
+- **Delete.** The row read now names the file's state
+  (`artifacts/api-server/src/routes/adminMedia.ts:756#post_id, processing_status, moderation_status, public_url`),
+  and the step runs after the row is gone
+  (`artifacts/api-server/src/routes/adminMedia.ts:840#const postcardDel = await syncPostcardAfterModeration(sc,`).
+- **Response.** Both responses gain an additive `postcard` field: `unchanged`;
+  `synced` with `mediaCount` and the cover outcome; or `failed`
+  (`artifacts/api-server/src/routes/adminMedia.ts:986#postcard: postcardSync`).
+- **No rule of its own.** `routes/adminMedia.ts` names no count, no deny-set and
+  no passport table; a test pins that.
+
+While 3356 is off nothing is born held, so a release only happens after a
+moderator's own flag. The added `flag`, `reject` and `delete` behaviour is live
+whatever 3356 says, and it is the §37.8.1 rule applied when a decision is made,
+instead of at the post's next upload.
+
+#### 37.9.3 Another lane's pinned inventory: one label changed, count and site unchanged
+
+`artifacts/api-server/src/test/mediaAssetSourceDeclared.test.ts:215#syncPostcardAfterMediaChange`
+is census-media §35's MD37 inventory. It keys each undeclared writer by
+`file · enclosing function · callee`. The postcard cover's
+`artifacts/api-server/src/routes/postcards.ts:1122#void recordEntityMedia(sc, {`
+is the same call on the same line, with the same sentinel. Its enclosing function
+now has a name, so the key reads
+`routes/postcards.ts · syncPostcardAfterMediaChange · recordEntityMedia` where
+it read `routes/postcards.ts · <module> · recordEntityMedia`.
+
+The count is still 1, and §35's five sites are unchanged. The old key is kept in
+a trailing `(was: …)` comment.
+
+#### 37.9.4 Tests and mutations — each seen red, every file restored byte-identical
+
+There are eight cases in `artifacts/api-server/src/test/postcards.test.ts`,
+under "census-media §37.9 — a moderation decision on a postcard file refreshes
+its counts and passport postcard". They drive the full app, with an admin
+token.
+
+**The eight cases:**
+- **RELEASE (§37.8.7):** a file is held at `/complete` with 3356 ON, then
+  approved. It is counted, the passport postcard is made for the uploader (not
+  the moderator), and the file is the cover.
+- **FLAG a counted cover:** the count drops, and the cover moves to the next
+  file that counts.
+- **REJECT the only counted file:** the count goes to 0 and `primary_media_type`
+  to `none`. The cover is left, with the outcome `no_countable_file`.
+- **A decision that changes nothing:** approving an approved file, and flagging
+  one still processing, leave a seeded count of 5 untouched.
+- **DELETE a counted cover:** the count drops and the cover moves off the
+  removed file. Deleting a file that did not count changes nothing.
+- **A failed read:** a recount whose read fails writes no zeros, both from
+  moderation and from `/complete`.
+- **Named columns:** the before-state read, the update and the delete read name
+  the columns the decision needs. This fake returns every column whatever a
+  select names, so without this case such a mutation would survive.
+- **No restated rule:** `routes/adminMedia.ts` calls the shared step twice and
+  mentions no count rule.
+
+**Results.** The case-scoped suites all pass: postcards 84/84, and 435/435
+across sixteen media and admin suites. No test file is new, so there is nothing
+to register.
+
+**Mutations.** There were eighteen, run one at a time by the §37.5 harness,
+with each file restored byte-exact. All eighteen went red, and none survived.
+The tree's diff hash was the same before and after the run.
+
+| Id | Mutation | Red in |
+| --- | --- | --- |
+| G1 · G1b | the status flip does not run the step | RELEASE "the released file is counted"; FLAG "a held file is no longer counted" |
+| G2 | the delete does not run the step | DELETE "a removed file is no longer counted" |
+| G3 | no `unchanged` short-circuit | "approving an approved file did not recount" |
+| G4 | "counts after" is read from the old status | RELEASE "the released file is counted" |
+| G5 | a plain recount instead of the shared step | RELEASE "the passport postcard … is made now" |
+| G6 | the failed-read guard is removed | "an unread recount is not 'no files'" |
+| G7 | an unread recount is reported as synced | "the response says the step did not run" |
+| G8 · G13 | the cover is never rewritten / the uncounted set is always empty | FLAG "the cover is no longer the held file" |
+| G9 | the deleted file is not treated as gone | DELETE "the cover is no longer the removed file" |
+| G10 · G11 · G12 | the before-state read, the delete read, or the update's returning columns drop a needed column | "NAME their columns" |
+| G14 | the response drops `postcard` | FLAG (response) |
+| G15 | the passport postcard is made for the moderator | RELEASE "made for the uploader, not the moderator" |
+| G16 | the admin route writes a count itself | "the count rule is not restated" |
+| G17 | `/complete` stops running the shared step | §37.8 "approved behaviour is unchanged" |
+
+#### 37.9.5 Found while doing it — recorded, not fixed
+
+1. **The owner's delete recounts but never moves the cover.** When the owner
+   deletes the file that is the passport cover
+   (`artifacts/api-server/src/routes/postcards.ts:1227#const counts = await refreshMediaCounts(sc, postId);`),
+   `passport_postcards.media_url` keeps pointing at a removed object. This
+   predates §37.9. The admin paths now move the cover; the owner path was not
+   in this follow-up's scope.
+2. **The canonical cover is not moved.** The postcard's canonical cover
+   attachment (`media_attachments`, entity `postcard`, written once by the
+   lazy creation) is not moved when the legacy cover moves. The admin route
+   already carries the decision to the canonical asset (§20). Attaching the new
+   cover on the canonical side is not built.
+3. **A postcard with no countable file keeps its old cover.** Its
+   `passport_postcards.media_url` stays on the held or rejected file, with
+   `media_count` 0 and `status` still `active`. No reader of that row was
+   re-measured here, and whether one should hide the postcard is not decided.
+4. **A skip can be stale under a race.** The before-state read and the update
+   are two statements. Two moderators deciding the same file at once can make
+   the skip decision stale. A run is always correct, because the recount reads
+   the rows as they are then; only a skip can be wrong.
+5. **With no uploader id, only the recount runs.** When `post_media.user_id` is
+   null the passport postcard is not created, because it needs an owner.
+
+#### 37.9.6 Rows restated
+
+| ID | Was | Now | Evidence |
+| --- | --- | --- | --- |
+| MD269 | W | **W** | §37.8.7 item 1 is fixed. A moderator's decision on a postcard file re-runs the upload path's count-and-passport step whenever the file's countability changes: a release counts it, and a hold, rejection or delete uncounts it and moves the cover (§37.9.2). With 3356 on, a held postcard file therefore reaches its postcard when it is released. Still W because of (a), the owner question in §37.8.5, and because no classifier exists. ACTIVATION: 3356. EXTERNAL: a classifier vendor or staffed review. BLOCKER: the (a) owner rule. |
+
+MD63, MD277, MD280, MD282, MD283, MD284, MD289 and MD293 are unchanged from
+§37.8.6 and §37.1.
+
+#### 37.9.7 Files, scope and checks
+
+**Changed:**
+- server: `routes/postcards.ts` and `routes/adminMedia.ts`;
+- tests: `postcards.test.ts`, with a block appended at its tail, and
+  `mediaAssetSourceDeclared.test.ts`, with the one key in §37.9.3, changed
+  line-neutrally.
+
+Every edit above a cited line is line-neutral. Old anchors stay alive in
+trailing `(was: …)` comments where a line's text changed.
+
+**Freshness.** `check:census-freshness` reports census-media STALE on 75 files.
+The acknowledgement is the integrator's to write. Two of them are this
+follow-up's:
+- `postcards.test.ts`, listed since §37.8. It gains §37.9.4's block, and MD269
+  stays W.
+- `mediaAssetSourceDeclared.test.ts`, which arrived stale with lane I. It gains
+  §37.9.3's one key. MD37's count and site are unchanged, and MD37 stays W.
+
+`routes/postcards.ts` and `routes/adminMedia.ts` changed as well. The checker
+does not report them, because an older acknowledgement (since `1fe72289b`)
+names both: the §20.8 item 3 blind spot that §37.8.9 names. §37.9 re-measures
+both for MD269, and no verdict moved.
+
+The rest are the files §37.8.9 lists, plus those that arrived with this merge of
+`wave8-integration`. This lane did not touch or re-measure the merged ones.
+
+Headline: not restated. No row moved.
+
 ## 33. Lane T — the shared sheets Media opens, fixed through the design system (H7) — 2026-09-27
 
 Lane T owns one row, **MD403**, for one owner ruling, **H7**. The work is on

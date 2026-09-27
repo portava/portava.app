@@ -1705,3 +1705,184 @@ describe('census-media §37.8 — postcard counts and the passport cover read on
     assert.match(countQuery!, /\bmoderation_status\b/);
   });
 });
+
+// ── census-media §37.9: a moderator's decision re-runs the postcard step ────────
+// POST /admin/media/:id/moderate is the only path that changes a post_media
+// row's moderation_status after /complete wrote it. Releasing a held file must
+// count it (and make the passport postcard the upload path would have made);
+// holding, rejecting or deleting a counted file must uncount it and move a
+// passport cover off it. The count rule is refreshMediaCounts', reused.
+describe('census-media §37.9 — a moderation decision on a postcard file refreshes its counts and passport postcard', () => {
+  const ADMIN_ID = '00000000-0000-0000-0000-000000000c0a';
+  const TOKEN_ADMIN = 'fake-pc-admin';
+  const A_ID = '20000000-0000-0000-0000-000000000ca1';
+  const B_ID = '20000000-0000-0000-0000-000000000cb2';
+  const url = (id: string) => `https://cdn.test/${id}.jpg`;
+
+  beforeEach(() => {
+    __flagRows = [];
+    allProfiles.push({ id: ADMIN_ID, role: 'admin', username: 'moderator', handle: 'moderator', account_status: 'active' });
+    _setTestClient(buildFakeClient({ [TOKEN_OWNER]: OWNER_ID, [TOKEN_OTHER]: OTHER_ID, [TOKEN_ADMIN]: ADMIN_ID }), true);
+  });
+
+  function seedFile(id: string, sortOrder: number, moderation = 'approved', processing = 'ready') {
+    allPostMedia.push({
+      id, post_id: POST_ID, user_id: OWNER_ID, media_type: 'image', storage_bucket: 'post-media',
+      storage_path: `post-media/${OWNER_ID}/${POST_ID}/${id}.jpg`, thumbnail_storage_path: null, public_url: url(id), // bucket-qualified: the admin delete refuses a path it cannot resolve
+      mime_type: 'image/jpeg', file_size_bytes: 500_000, processing_status: processing, moderation_status: moderation, sort_order: sortOrder,
+    });
+  }
+  function seedPassport(coverId: string, mediaCount: number) {
+    allPostcards.push({ id: 'pc-37-9', post_id: POST_ID, user_id: OWNER_ID, media_url: url(coverId), media_count: mediaCount, has_video: false, primary_media_type: 'image' });
+    posts[POST_ID].media_count = mediaCount; posts[POST_ID].primary_media_type = 'image';
+  }
+  const moderate = (id: string, action: string) =>
+    apiReq('POST', `/admin/media/${id}/moderate`, { action, target: 'post_media' }, TOKEN_ADMIN);
+
+  it('RELEASE (§37.8.7): a file held at /complete under 3356, then approved, is counted and makes the passport postcard', async () => {
+    __flagRows = [{ flag: 'media_moderation_classifier_enabled', enabled: true }];
+    allPostMedia.push({
+      id: MEDIA_ID, post_id: POST_ID, user_id: OWNER_ID, media_type: 'image', storage_bucket: 'post-media',
+      storage_path: `${OWNER_ID}/${POST_ID}/${MEDIA_ID}.jpg`, public_url: '', mime_type: 'image/jpeg',
+      file_size_bytes: 500_000, processing_status: 'pending', moderation_status: 'pending', sort_order: 0,
+    });
+    const done = await apiReq('POST', `/postcards/${POST_ID}/media/${MEDIA_ID}/complete`, { mimeType: 'image/jpeg', fileSizeBytes: 500_000 }, TOKEN_OWNER);
+    assert.equal(done.status, 200, JSON.stringify(done.body));
+    const held = allPostMedia.find((m) => m.id === MEDIA_ID)!;
+    assert.equal(held.moderation_status, 'flagged', 'precondition: held at /complete');
+    assert.equal(posts[POST_ID].media_count, 0, 'precondition: not counted');
+    assert.equal(allPostcards.length, 0, 'precondition: no passport postcard');
+
+    const { status, body } = await moderate(MEDIA_ID, 'approve');
+    assert.equal(status, 200, JSON.stringify(body));
+    const row = allPostMedia.find((m) => m.id === MEDIA_ID)!;
+    assert.equal(row.moderation_status, 'approved');
+    assert.equal(posts[POST_ID].media_count, 1, 'the released file is counted');
+    assert.equal(posts[POST_ID].primary_media_type, 'image');
+    assert.equal(allPostcards.length, 1, 'the passport postcard the upload path would have made is made now');
+    assert.ok(row.public_url, 'the cover comparison is not vacuous');
+    assert.equal(allPostcards[0].media_url, row.public_url);
+    assert.equal(allPostcards[0].user_id, OWNER_ID, 'made for the uploader, not the moderator');
+    assert.equal(allPostcards[0].media_count, 1);
+    assert.deepEqual(body.postcard, { state: 'synced', mediaCount: 1, cover: 'kept' });
+  });
+
+  it('FLAG a counted cover: the count drops and the passport cover moves to the next file that counts', async () => {
+    seedFile(A_ID, 0); seedFile(B_ID, 1); seedPassport(A_ID, 2);
+    const { status, body } = await moderate(A_ID, 'flag');
+    assert.equal(status, 200, JSON.stringify(body));
+    assert.equal(posts[POST_ID].media_count, 1, 'a held file is no longer counted');
+    assert.equal(allPostcards[0].media_count, 1);
+    assert.equal(allPostcards[0].media_url, url(B_ID), 'the cover is no longer the held file');
+    assert.deepEqual(body.postcard, { state: 'synced', mediaCount: 1, cover: 'repointed' });
+  });
+
+  it('REJECT the only counted file: the count goes to 0; with no file left that counts the cover is left and says so', async () => {
+    seedFile(A_ID, 0); seedPassport(A_ID, 1);
+    const { status, body } = await moderate(A_ID, 'reject');
+    assert.equal(status, 200, JSON.stringify(body));
+    assert.equal(posts[POST_ID].media_count, 0, 'a rejected file is no longer counted');
+    assert.equal(posts[POST_ID].primary_media_type, 'none');
+    assert.equal(allPostcards[0].media_count, 0);
+    assert.deepEqual(body.postcard, { state: 'synced', mediaCount: 0, cover: 'no_countable_file' });
+  });
+
+  it('a decision that does not change whether the file counts does not recount (approve an approved file; flag a file still processing)', async () => {
+    seedFile(A_ID, 0); seedFile(B_ID, 1, 'pending', 'pending');
+    posts[POST_ID].media_count = 5; // a value the postcard rule would not write: untouched unless countability changed
+    const a = await moderate(A_ID, 'approve');
+    assert.equal(a.status, 200, JSON.stringify(a.body));
+    assert.equal(posts[POST_ID].media_count, 5, 'approving an approved file did not recount');
+    const b = await moderate(B_ID, 'flag');
+    assert.equal(b.status, 200, JSON.stringify(b.body));
+    assert.equal(posts[POST_ID].media_count, 5, 'flagging a file still processing did not recount');
+    assert.deepEqual(a.body.postcard, { state: 'unchanged' });
+    assert.deepEqual(b.body.postcard, { state: 'unchanged' });
+  });
+
+  it('DELETE a counted cover: the count drops and the cover moves off the removed file; deleting an uncounted file changes nothing', async () => {
+    seedFile(A_ID, 0); seedFile(B_ID, 1); seedPassport(A_ID, 2);
+    const { status, body } = await moderate(A_ID, 'delete');
+    assert.equal(status, 200, JSON.stringify(body));
+    assert.equal(body.deleted, true);
+    assert.equal(posts[POST_ID].media_count, 1, 'a removed file is no longer counted');
+    assert.equal(allPostcards[0].media_url, url(B_ID), 'the cover is no longer the removed file');
+    assert.deepEqual(body.postcard, { state: 'synced', mediaCount: 1, cover: 'repointed' });
+    const HELD = '20000000-0000-0000-0000-000000000cc3';
+    seedFile(HELD, 2, 'flagged');
+    const d = await moderate(HELD, 'delete');
+    assert.equal(d.status, 200, JSON.stringify(d.body));
+    assert.deepEqual(d.body.postcard, { state: 'unchanged' });
+  });
+
+  it('a recount whose post_media read could not run writes NO zeros (moderation and /complete)', async () => {
+    const client = buildFakeClient({ [TOKEN_OWNER]: OWNER_ID, [TOKEN_OTHER]: OTHER_ID, [TOKEN_ADMIN]: ADMIN_ID });
+    const from = client.from.bind(client);
+    (client as any).from = (table: string) => {
+      const b = from(table);
+      if (table === 'post_media') {
+        const select = b.select;
+        b.select = (cols?: string, opts?: unknown) => {
+          if (/\bsort_order\b/.test(String(cols ?? ''))) {
+            const failing: any = { eq: () => failing, then: (ok: any) => Promise.resolve({ data: null, error: { message: 'read failed' } }).then(ok) };
+            return failing;
+          }
+          return select(cols, opts);
+        };
+      }
+      return b;
+    };
+    _setTestClient(client, true);
+    seedFile(A_ID, 0); seedPassport(A_ID, 1);
+    const { status, body } = await moderate(A_ID, 'flag');
+    assert.equal(status, 200, JSON.stringify(body));
+    assert.equal(posts[POST_ID].media_count, 1, 'an unread recount is not "no files"');
+    assert.equal(allPostcards[0].media_count, 1);
+    assert.deepEqual(body.postcard, { state: 'failed' }, 'and the response says the step did not run');
+
+    allPostMedia.push({
+      id: MEDIA_ID, post_id: POST_ID, user_id: OWNER_ID, media_type: 'image', storage_bucket: 'post-media',
+      storage_path: `${OWNER_ID}/${POST_ID}/${MEDIA_ID}.jpg`, public_url: '', mime_type: 'image/jpeg',
+      file_size_bytes: 500_000, processing_status: 'pending', moderation_status: 'pending', sort_order: 3,
+    });
+    posts[POST_ID].media_count = 4;
+    const done = await apiReq('POST', `/postcards/${POST_ID}/media/${MEDIA_ID}/complete`, { mimeType: 'image/jpeg', fileSizeBytes: 500_000 }, TOKEN_OWNER);
+    assert.equal(done.status, 200, JSON.stringify(done.body));
+    assert.equal(posts[POST_ID].media_count, 4, '/complete writes no zeros either');
+  });
+
+  it('the reads the decision is made from NAME their columns — a real database returns only what a select names', async () => {
+    const selects: string[] = [];
+    const client = buildFakeClient({ [TOKEN_OWNER]: OWNER_ID, [TOKEN_OTHER]: OTHER_ID, [TOKEN_ADMIN]: ADMIN_ID });
+    const from = client.from.bind(client);
+    (client as any).from = (table: string) => {
+      const b = from(table);
+      if (table === 'post_media') {
+        const select = b.select;
+        b.select = (cols?: string, opts?: unknown) => { selects.push(String(cols ?? '')); return select(cols, opts); };
+      }
+      return b;
+    };
+    _setTestClient(client, true);
+    seedFile(A_ID, 0); seedFile(B_ID, 1);
+    assert.equal((await moderate(A_ID, 'flag')).status, 200);
+    assert.equal((await moderate(B_ID, 'delete')).status, 200);
+    const names = (c: string, cols: string[]) => cols.every((k) => new RegExp(`\\b${k}\\b`).test(c));
+    const before = selects.find((c) => !/storage_bucket|sort_order/.test(c) && /\bmoderation_status\b/.test(c));
+    assert.ok(before, `the before-state read ran (selects: ${JSON.stringify(selects)})`);
+    assert.ok(names(before!, ['post_id', 'user_id', 'processing_status', 'moderation_status']), before);
+    const upd = selects.find((c) => /storage_bucket/.test(c) && !/thumbnail_storage_path/.test(c));
+    assert.ok(upd && names(upd, ['post_id', 'user_id']), `the status update returns the post and uploader: ${upd}`);
+    const del = selects.find((c) => /thumbnail_storage_path/.test(c));
+    assert.ok(del && names(del, ['post_id', 'processing_status', 'moderation_status', 'public_url']), `the delete read names the file's state: ${del}`);
+  });
+
+  it('the count rule is not restated in the admin route: it calls the shared step, twice, and writes no count itself', async () => {
+    const { readFileSync } = await import('node:fs');
+    const src = readFileSync(new URL('../routes/adminMedia.ts', import.meta.url), 'utf8');
+    assert.equal((src.match(/await syncPostcardAfterModeration\(/g) ?? []).length, 2, 'the status flip and the delete');
+    for (const restated of ['media_count', 'countsTowardPostcard', 'NON_DISTRIBUTABLE_MEDIA_MODERATION_STATES', 'primary_media_type', 'passport_postcards']) {
+      assert.ok(!src.includes(restated), `routes/adminMedia.ts mentions ${restated} — the rule belongs to routes/postcards.ts`);
+    }
+  });
+});
