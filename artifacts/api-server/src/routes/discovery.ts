@@ -100,8 +100,8 @@ import { reasonCodesByIdFromProvenance } from "../lib/discoveryReasonCodes.js";
 // having read no claim — so the served order and JSON are byte-identical.
 import { parseIntentMode, withDiscoveryLiveRank } from "../lib/discoveryLiveRankRead.js";
 import {
-  blockFingerprint,
-  cacheBEntryUsable,
+  blockFingerprint, authorizedContextKey, eligibleDbIdSet, withMutedAuthors, withCurrentRows,  // census-discovery §47 — the author policy (mutes, standing) and cache-B row revocation
+  cacheBEntryUsable, inactiveSubmitterIds, submitterInGoodStanding, inactiveSubmittersFromEmbed, isAdultOnlyVenue,
   rankVersionKey,
   CACHE_B_TTL_MS,
 } from "../lib/discoveryCacheEligibility.js";
@@ -1065,7 +1065,7 @@ async function queryDbPlaces(
       );
       return null;
     }
-    if (!data) return [];
+    if (!data) return []; const inactiveSubmitters = await inactiveSubmitterIds(sc, (data as any[]).map((r: any) => r.submitted_by)); if (inactiveSubmitters === null) { logger.warn({ code: "submitter_standing_unreadable", city: cityBase, category }, "discovery: submitter standing unreadable — this request serves external results only"); return null; }  // census-discovery §47: a submitter whose account is not `active` is not distributed (lib/mediaEligibility.ts step 3's rule). UNREADABLE standing is reported exactly as an unreadable table (D11 `null`), because `profiles` down is already an outage for every signed-in request (lib/http.ts) and a partial answer that SAYS so beats authored rows silently missing.
 
     const dbPlaces = (data as any[])
       .filter((row: any) => {
@@ -1073,7 +1073,7 @@ async function queryDbPlaces(
         // SQL predicate for the same reason the category filter below is: the
         // set is per-viewer, and folding it into the query would make the
         // statement (and its plan) viewer-specific for a table this small.
-        if (!submitterIsVisible(row.submitted_by, blockedIds)) return false;
+        if (!submitterIsVisible(row.submitted_by, blockedIds) || !submitterInGoodStanding(row.submitted_by, inactiveSubmitters)) return false;
         // In-memory safety net alongside the DB predicate: exclude demo/QA fixture
         // rows even if the DB filter was not applied (e.g. a test override, a schema
         // change, or a future query refactor).  null source passes — it is a legitimate
@@ -1719,7 +1719,7 @@ router.get("/discovery", async (req, res) => {
   let viewerBlockedIds: Set<string> | null = new Set<string>();
   if (callerUserId) {
     const blockSc = getServiceClient();
-    viewerBlockedIds = blockSc ? await fetchBlockedSet(blockSc, callerUserId) : null;
+    viewerBlockedIds = blockSc ? await fetchBlockedSet(blockSc, callerUserId).then((b) => withMutedAuthors(blockSc, callerUserId!, b)) : null;  // census-discovery §47: blocks both ways PLUS the viewer's mutes — one author-exclusion set, fail-closed (null) if either read fails, and the set cache B fingerprints.
   }
 
   const key    = cacheKey(destination, category, radiusKm);
@@ -1775,12 +1775,12 @@ router.get("/discovery", async (req, res) => {
       // come out. This is deliberately OUTSIDE the `ageBounds !== null` branch:
       // there are no bounds to compute when there is no trustworthy age, which
       // is precisely when the filter matters most.
-      list = list.filter((p) => !ADULT_OSM_VENUE_TYPES.has((p.category ?? "").toLowerCase()));
+      list = list.filter((p) => !isAdultOnlyVenue(p, ADULT_OSM_VENUE_TYPES));  // census-discovery §47: the venue TYPE, not the tab — see isAdultOnlyVenue
     }
     if (ageBounds !== null) {
       const effectiveMin = ageBounds.min ?? (ageBounds.max !== null && ageBounds.max < 18 ? ageBounds.max : null);
       if (effectiveMin !== null && effectiveMin < 18) {
-        list = list.filter((p) => !ADULT_OSM_VENUE_TYPES.has((p.category ?? "").toLowerCase()));
+        list = list.filter((p) => !isAdultOnlyVenue(p, ADULT_OSM_VENUE_TYPES));
       }
     }
     if (sortBy === "rating") {
@@ -1972,7 +1972,7 @@ router.get("/discovery", async (req, res) => {
             // Same filters, same page window. Comparing a ranked full list
             // against a filtered page would report divergence that filtering
             // caused and ranking did not.
-            const pdeFiltered = applyFilters(outcome.ranked);
+            const pdeLive = await withDiscoveryLiveRank(shadowSc, applyFilters(outcome.ranked), { mode: parseIntentMode(req.query.intentMode) }); const pdeGate = await layoverGatedPlaces(callerUserId, (await dismissGatedPlaces(callerUserId, pdeLive.places, [])).places, "GET /discovery"); const pdeFiltered = pdeGate.ok ? pdeGate.places : [];  // census-discovery §47 (DC-14): the PDE page passes the SAME post-rank layers the served legacy page did — live rank, "Not interested", Layover — or the row records divergence that a dismissal caused and ranking did not, and persists a place the viewer dismissed as a page PDE "would have served".
             const pdeSlice    = pdeFiltered.slice(offset, offset + PAGE_SIZE);
             await logDiscoveryShadowServe(shadowSc, {
               userId: callerUserId,
@@ -1983,7 +1983,7 @@ router.get("/discovery", async (req, res) => {
               // computed from the PAGES, and both pages are in hand right here.
               // Passing ids alone is what made five of the six axes unanswerable.
               legacyItems: slice,
-              legacyTotal: filtered.length,
+              legacyTotal: gateA.ok ? gateA.places.length : 0,  // §47: the SERVED total — the quantity pdeTotal counts — not the pre-dismissal list
               legacyMs:    totalMs,
               pdeIds:      pdeSlice.map((p) => p.id),
               pdeItems:    pdeSlice,
@@ -2115,7 +2115,7 @@ router.get("/discovery", async (req, res) => {
             // return stale ordering with incorrect distances.
             const cCacheKey = compassCandidateCacheKey(callerUserId, destination, radiusKm, sortBy);
             const skipCache = sortBy === "nearest";
-            const cBlockKey = blockFingerprint(viewerBlockedIds);
+            const cBlockKey = authorizedContextKey(viewerBlockedIds, dbFailedSources);  // census-discovery §47: the author-exclusion fingerprint PLUS any source this request could not read, so a page ranked during an outage is never replayed after it.
             const cStored   = skipCache ? undefined : _compassCandidateCache.get(cCacheKey);
             // A page ranked under a DIFFERENT block set, or by a DIFFERENT
             // model/feature version, is not this request's to reuse; either
@@ -2126,11 +2126,11 @@ router.get("/discovery", async (req, res) => {
               nowMs: Date.now(),
               blockKey: cBlockKey,
               rankVersion: CURRENT_RANK_VERSION,
-              ttlMs: COMPASS_CANDIDATE_CACHE_TTL_MS,
+              ttlMs: COMPASS_CANDIDATE_CACHE_TTL_MS, eligibleDbIds: eligibleDbIdSet(dbPlaces),  // §47: a stored community/canonical row THIS request's read no longer returns (moderated, submitter no longer active, muted, merged) is revoked, and the page is re-ranked rather than replayed.
             });
             const cCacheHit = cAcceptance.usable ? cStored : undefined;
             if (cCacheHit) {
-              const cFiltered = applyFilters(cCacheHit.places);
+              const cFiltered = applyFilters(cCacheHit.places && withCurrentRows(cCacheHit.places, dbPlaces));  // census-discovery §47: the stored ORDER, the CURRENT row content — a moderated image or blurb is not replayed from the stored copy
               const dismB = await dismissGatedPlaces(callerUserId, cFiltered, dbFailedSources);  // "Not interested" — serve path 2 of 4.
               const gateB = await layoverGatedPlaces(callerUserId, dismB.places, "GET /discovery"); if (!gateB.ok) { sendDiscoveryRefusal(res, emptyDiscoveryPlacesEnvelope(destination ?? null, ctxLabel ?? null), gateB.refusal); return; } const cSlice = gateB.places.slice(offset, offset + PAGE_SIZE).map(toPublic);  // A14 — see serve path 1.
               req.log.info({ destination, cacheLevel: "compass_candidate_hit" }, "discovery: compass candidate cache hit");
@@ -2645,14 +2645,14 @@ router.get("/discovery/feed", async (req, res) => {
           //    it must stay observable — hence the warn.
           //  - community places fail CLOSED: `placeBlockedIds` stays null and
           //    submitterIsVisible withholds every authored row.
-          placeBlockedIds = await fetchBlockedSet(sc, viewerId);
-          if (placeBlockedIds === null) {
+          const viewerBlocks = await fetchBlockedSet(sc, viewerId); placeBlockedIds = await withMutedAuthors(sc, viewerId, viewerBlocks);  // census-discovery §47: places also exclude the viewer's mutes (fail-closed); event posts keep the BLOCK set alone and their documented posture.
+          if (viewerBlocks === null) {
             req.log.warn(
               { userId: viewerId },
               "discovery/feed: block-state read failed — blocked users are NOT being filtered from event posts",
             );
           } else {
-            for (const id of placeBlockedIds) blockedIds.add(id);
+            for (const id of viewerBlocks) blockedIds.add(id);
           }
         }
       }
@@ -2976,7 +2976,7 @@ router.get("/discovery/community", async (req, res) => {
         created_at,
         lat,
         lng,
-        profiles:submitted_by!left ( id, name, avatar_url, username )
+        profiles:submitted_by!left ( id, name, avatar_url, username, account_status )
       `)
       .ilike("city", city.trim())
       .eq("status", "active")
@@ -3045,8 +3045,8 @@ router.get("/discovery/community", async (req, res) => {
     let rows = rawRows;
     if (rawRows.length > 0) {
       const viewerId = await resolveCommunityViewer();
-      const blocked  = viewerId ? await fetchBlockedSet(sc, viewerId) : new Set<string>();
-      rows = rawRows.filter((row: any) => submitterIsVisible(row.submitted_by, blocked));
+      const blocked  = viewerId ? await withMutedAuthors(sc, viewerId, await fetchBlockedSet(sc, viewerId)) : new Set<string>(); const inactive = inactiveSubmittersFromEmbed(rawRows);  // census-discovery §47: mutes join blocks (fail-closed), and a submitter whose account is not `active` loses both the pick and the byline — the standing is read from the byline embed above, no second round trip.
+      rows = rawRows.filter((row: any) => submitterIsVisible(row.submitted_by, blocked) && submitterInGoodStanding(row.submitted_by, inactive));
     }
 
     // Universal display-name rule: submitter names show @handle unless opted in.
