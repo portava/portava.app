@@ -2392,8 +2392,9 @@ production.** No flag was touched.
   17.6 (the integrator's read). Nothing rehearsed here depends on the
   difference; §45.11.3 says what 3350 needs from both.
 - up.sh's own line, on the final tree:
-  `local-db: ready (booted): postgresql://postgres@127.0.0.1:54371/portava_local — baseline 388 tables; chain from 2093: 328 applied in order, 12 known-unreplayable of 340, 2 of those applied on retry`.
-  3350–3352 (in their reshaped form) and 3360–3361 are not among the skipped.
+  `local-db: ready (booted): postgresql://postgres@127.0.0.1:54371/portava_local — baseline 388 tables; chain from 2093: 329 applied in order, 12 known-unreplayable of 341, 2 of those applied on retry`.
+  3350–3352 (in their reshaped form), 3359 and 3360–3361 are not among the
+  skipped.
 - run-tests.sh's own lines:
 
   ```
@@ -2551,6 +2552,58 @@ table was left in the wrong shape. The suite's `before` resets that shape
 without reading the migration files, so a mutated file cannot leave the next
 run stuck.
 
+#### §45.11.5 Lane V's 3359, applied the way the runner applies it, and its rollback both ways
+
+At the coordinator's request, after merging `wave8-integration` at
+`1a5164fc3`, which carries lane V's 3359 (`passport_postcards.media_url` loses
+NOT NULL). 3359 and its rollback were not changed by this lane.
+
+- **The chain, stopped before 3359** (`LOCAL_DB_TO=3359`):
+  `local-db: ready (booted): postgresql://postgres@127.0.0.1:54371/portava_local — baseline 388 tables; chain from 2093 to before 3359: 326 applied in order, 12 known-unreplayable of 338, 2 of those applied on retry`.
+- **Then** one throwaway account and three posts were seeded, 3359 was applied
+  through the runner's own `classifyMigration`, `buildApplyStatement` and
+  `runPlan` (one query string, body and ledger row in one transaction), and
+  the rollback was run with `psql -f`, first with a NULL cover present and
+  then with none. The "resolve" step stands in for the operator's deliberate
+  resolution that the rollback's message asks for: it deletes the one NULL-cover
+  row. The script's output, verbatim except that each `DETAIL: Failing row
+  contains (…)` line and the worktree prefix of the rollback's path are
+  shortened here:
+
+  ```
+  server_version 16.13 (Ubuntu 16.13-0ubuntu0.24.04.1)
+    [state before] media_url is_nullable=NO | null covers=0 | ledger 3359=none
+    [NULL cover BEFORE 3359 exit 1] ERROR:  null value in column "media_url" of relation "passport_postcards" violates not-null constraint
+    [NULL cover BEFORE 3359 exit 1] DETAIL:  Failing row contains (…).
+    [non-NULL cover BEFORE 3359 (control) exit 0] (no output)
+  classify 3359_passport_postcard_cover_nullable.sql: unwrapped, postconditions none (inside the transaction)
+    [3359 apply exit 0] (no output)
+  outcome 3359_passport_postcard_cover_nullable.sql: applied
+  ledger checksum matches file bytes: t
+    [state after 3359] media_url is_nullable=YES | null covers=0 | ledger 3359=manual
+    [NULL cover AFTER 3359 exit 0] (no output)
+    [state with a NULL cover] media_url is_nullable=YES | null covers=1 | ledger 3359=manual
+    [rollback WITH a NULL cover exit 3] psql:…/db/rollback/2026-09-27-3359-passport-postcard-cover-nullable-rollback.sql:30: ERROR:  ROLLBACK REFUSED: 1 passport_postcards row(s) have no cover (media_url IS NULL). Restoring NOT NULL would need a value, and the only one available is a held or removed file. Resolve those rows deliberately first, then re-run this file.
+    [rollback WITH a NULL cover exit 3] CONTEXT:  PL/pgSQL function inline_code_block line 6 at RAISE
+    [state after the refused rollback] media_url is_nullable=YES | null covers=1 | ledger 3359=manual
+    [resolve: delete the NULL-cover row exit 0] (no output)
+    [rollback with NO NULL cover exit 0] (no output)
+    [state after the rollback] media_url is_nullable=NO | null covers=0 | ledger 3359=manual
+    [NULL cover AFTER the rollback exit 1] ERROR:  null value in column "media_url" of relation "passport_postcards" violates not-null constraint
+    [NULL cover AFTER the rollback exit 1] DETAIL:  Failing row contains (…).
+    [cleanup exit 0] (no output)
+  ```
+
+- **What it shows.**
+  - Before 3359 a NULL cover is refused by the column (a non-NULL one, the
+    control, is written). After it, a NULL cover is written.
+  - With a NULL cover present, the rollback refuses (psql exit 3) and changes
+    nothing: the column stays nullable and the row stays.
+  - With none, it restores NOT NULL, and a NULL cover is refused again.
+- **Recorded for lane V, not changed here.** Like lane P's three (§45.11.3),
+  3359's rollback leaves its ledger row (`applied_by` manual). After that
+  rollback the runner would never apply 3359 again.
+
 ### §45.12 The server says whether a photo would be kept, and the map offers the photo step only then
 
 This supersedes §45.9 item 5 and the client clause in §45.5's option D.
@@ -2639,3 +2692,88 @@ Every mutated file was restored and compared byte for byte (`filecmp`, then
 - NOT-GRADED: scripts/src/apply-migrations.ts — the migration runner, cited in §45.11 for the statement the rehearsal reuses so that each file and its ledger row are one transaction; no Map row grades how migrations are applied.
 - NOT-GRADED: db/rollback/2026-09-27-3360-intel-evidence-sealed-reference-rollback.sql — the remediation's first rollback, run only on the local harness, cited in §45.11 for its ledger-row removal; no verdict rests on it.
 - NOT-GRADED: db/rollback/2026-09-27-3361-intel-evidence-sealed-reference-validate-rollback.sql — the remediation's second rollback, run only on the local harness, cited in §45.11 for its ledger-row removal; no verdict rests on it.
+
+### §45.14 Checks for §45.11–§45.13, and the stale files this round leaves
+
+Everything was run on Node 24 at the lane's final tree, after merging
+`wave8-integration` at `1a5164fc3`.
+
+**Passing:**
+
+- **Server.** `typecheck` is clean. `typecheck:tests` has 863 diagnostics
+  across 115 files, the baseline.
+- **Client.** `typecheck` (with the import-extension check) is clean.
+  `typecheck:tests` has 173 across 60, the baseline. eslint reports 0 errors
+  on the seven touched client files; its 59 warnings are unused
+  eslint-disable directives already in `app/map/index.tsx`. Every `lint:*`
+  script and `check:route-registry` pass.
+- `check:doc-citations` is clean. The UNANCHORED count is 6372 (ceiling 6434).
+  §45.11–§45.13 add 18 anchored citations and no unanchored one.
+- `check:citation-targets` is at its ceiling, 165 / 165.
+- `check:census-scope-coverage` passes. census-map cites 127 files and watches
+  127 (100%), with 20 declared NOT-GRADED.
+- These pass: `check:census-row-move-labels`, `check:test-registration` (1491
+  registered), `check:security-definer-oracles`, `check:schema-references`,
+  `check:writerless-reads`, `check:enum-literals`.
+- **The harness:** 143/143, skipped 0 (§45.11).
+- **The client suites:** jest 5 suites, 51/51; the predicate's node suite, 4/4.
+
+**Failing, and not this lane's:**
+
+- **The touched and adjacent server suites:** 53 files, 1196 tests, 1195 pass.
+  The one failure is a date bomb in
+  `accountDeletionSensingRevocationReach` ("one reference removed (P2)",
+  2 !== 1).
+  - Its fixture pins NOW to 2026-09-26T07:00Z, and its "standing" snapshot
+    expires at NOW + 24 h, so it has read as withdrawn since 07:00 UTC today.
+  - With the clock moved back one day (`CLOCK_OFFSET_DAYS=-1` through
+    the repo's clock-offset preload) the same suite is 14/14.
+  - Recorded, not fixed: the file is not this lane's.
+- **`check:all`** fails on the five live-database checks (write-path-columns,
+  missing-live-columns, authorization-contract, media-objects,
+  rank-events-surfaces), on `check:census-freshness`, and on
+  `check:census-integrity`.
+  - The integrity failure is census-media's stated headline (C 401 / W 37 /
+    N 12) against its rows (C 408 / W 34 / N 8).
+  - It is inherited. Putting `wave8-integration`'s census-media at
+    `2a60f9c3b` into this tree gives the same error, and this lane's only
+    census-media change is one prose line.
+
+**Stale files.** `check:census-freshness` names these of this lane's files. The
+acknowledgement ledger is the integrator's, so each is listed with its
+argument:
+
+- **census-map:** the rehearsal suite, the hook, `photoEvidenceCoverage.ts`
+  and its test, the screen's coverage test, the sheet's test, and
+  `intelEvidenceReference.test.ts`. §45.11 and §45.12 are this census's own
+  reading of every one of them. M154 is unchanged: the evidence path it grades
+  now also withholds the photo step the server would refuse.
+- **census-media, `lib/intelEvidenceCapture.ts`.** Two exports are appended at
+  the end of the file: the predicate and the decorator. Gate 2b's condition
+  line now calls the predicate, with the same logic it had inline. No MD row
+  moves (census-media §39's new line).
+- **census-trips, the rehearsal suite.** census-trips watches `src/test/db/`.
+  The suite touches only `intel_evidence`, its two migrations and the ledger;
+  no trip table or function. `lib/http.ts` was argued in §45.8.
+- **census-trust.** `lib/envValidation.ts` and `lib/http.ts`, as argued in
+  §45.8, are unchanged since.
+
+**Changed, but already named by an existing acknowledgement.** The check
+cannot tell this lane's change from the acknowledged one:
+
+- `app/map/index.tsx` (census-map, census-discovery). Three line-neutral
+  edits; the sheet gets its picker only on the server's yes. No Discovery
+  surface is touched.
+- `routes/intel.ts` (census-sensing, census-highlights-memories). The consent
+  read and write gain one derived boolean. Stamping, versioning and scopes are
+  unchanged.
+
+The others are not watched by any census: `services/intelConsent.ts` on the
+client, and the two rollbacks. The api package manifest and the freshness
+script are machinery.
+
+The other stale entries (MentionInput, tokens, ReportSheet,
+PassportMemoryService, mediaLocationVisibility, eventPostsDiscovery, and
+census-media's other 87) arrived with the merges and are not this lane's.
+
+This section does not restate any census headline, because no row moved.
