@@ -100,19 +100,20 @@ export async function readDiscoveryInvisiblePeople(
   const others = [...new Set(candidateIds)].filter((id) => Boolean(id) && id !== viewerId);
   if (others.length === 0) return { ok: true, hidden: new Set() };
 
-  let res: { data: unknown; error: unknown };
+  let rows: unknown;
   try {
-    res = await sc
+    const { data, error } = await sc
       .from("location_preferences")
       .select("user_id, location_mode, sharing_paused, discovery_visibility")
       .in("user_id", others);
+    if (error) return { ok: false, relation: "location_preferences", error };
+    rows = data;
   } catch (error) {
     return { ok: false, relation: "location_preferences", error: error ?? new Error("read rejected") };
   }
-  if (res.error) return { ok: false, relation: "location_preferences", error: res.error };
 
   const byId = new Map<string, LocationConsentRow>();
-  for (const r of (Array.isArray(res.data) ? res.data : []) as LocationConsentRow[]) {
+  for (const r of (Array.isArray(rows) ? rows : []) as LocationConsentRow[]) {
     if (r && typeof r.user_id === "string") byId.set(r.user_id, r);
   }
   const hidden = new Set<string>();
