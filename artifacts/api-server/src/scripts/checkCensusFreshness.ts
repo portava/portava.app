@@ -3773,6 +3773,23 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     // WIDENED 2026-09-27 by the coverage-guard fix (census-media §32.14): evidence for keeping a verdict — A14 stays W on the layover travel-time provider (provenance row, §39.6), and §41.1 corrects DV-44's evidence with mediaFeed's live watch_feed writer.
     "artifacts/api-server/src/services/airport/LayoverTravelTime.ts",
     "artifacts/api-server/src/routes/mediaFeed.ts",
+    // WIDENED 2026-09-27 by census-discovery §48 (P3 telemetry): DV-37/38/39/45 moved to C on the contract module, 3375/3376 and their rollbacks, and six suites; DV-40/46/78/44 stay W on the map-search stamp, the client echo, the dismiss writer/reader and the writer-proof suite.
+    "artifacts/api-server/src/lib/discoveryRecommendationRecord.ts",
+    "artifacts/api-server/src/routes/mapSearch.ts",
+    "artifacts/api-server/src/lib/discoveryDismissed.ts",
+    "artifacts/api-server/src/migrations/3375_rank_events_schema_version_admitted.sql",
+    "artifacts/api-server/src/migrations/3376_discovery_recommendations_per_request.sql",
+    "db/rollback/2026-09-27-3375-rank-events-schema-version-admitted-rollback.sql",
+    "db/rollback/2026-09-27-3376-discovery-recommendations-per-request-rollback.sql",
+    "artifacts/api-server/src/test/discoveryRecommendationRecord.test.ts",
+    "artifacts/api-server/src/test/discoveryRecommendationPropagationE2E.test.ts",
+    "artifacts/api-server/src/test/discoveryTelemetryWriters.test.ts",
+    "artifacts/api-server/src/test/discoverySurfaceWriterProof.test.ts",
+    "artifacts/api-server/src/test/discoveryServeExposureCursor.test.ts",
+    "artifacts/api-server/src/test/db/discoveryTelemetryConstraints.db.test.ts",
+    "artifacts/api-server/src/test/db/discoveryTelemetryIdempotency.db.test.ts",
+    "travel-buddy-standalone/src/hooks/useRankOutcome.ts",
+    "travel-buddy-standalone/src/components/discovery/PlaceCard.tsx",
   ],
   // ── ADDED 2026-09-15: census-passport joins the CHECKABLE set ──────────────
   //

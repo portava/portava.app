@@ -6220,6 +6220,241 @@ Totals unchanged. A03 stays `W` on the flags, not on absence — and the
 distinction matters, because it is the difference between a row waiting for a
 build and a row waiting for a deployment.
 
+## §48 — Telemetry foundations (P3): one served-recommendation contract, every serve path stamped, outcomes bound and retry-safe, and why production has written nothing
+
+*Written 2026-09-27 by the Discovery P3 lane (telemetry foundations) on branch
+`disc-p3-telemetry`, off `709b7b800` (the `wave8-integration` tip). Commits
+`ef7fa4435` (the contract), `8c821145d` (writers, routes, migrations 3375/3376,
+database suites), `bf1f71bd4` (writer and surface-proof suites) and the commit
+carrying this section. Every OLD verdict below was read from
+`CENSUS_INTEGRITY_DUMP=ALL`, not from prose (§16.6). This section does not
+restate the headline; the integrating lane does.*
+
+### §48.1 Production, read by the integrating lane on 2026-09-27 (read-only)
+
+These are the integrator's reads, recorded as such. This lane read no production.
+
+| fact | value |
+| --- | --- |
+| `rank_events` rows with `surface='discovery'`, ever | **13**, latest **2026-08-15 08:13 UTC** |
+| … of which by serve point | **all 13 are serve point 9** (`GET /discovery/suggest`), written 2026-08-15 03:12–08:13, by **one** viewer, **0** carrying a `recommendation_id` |
+| `GET /discovery` rows, ever | **none** |
+| `discovery_serve_log_enabled` | **TRUE** (metadata: ruling D8=A, `starts_writes_when_enabled: true`) |
+| last 45 days, per surface | compass 10,862 (latest 2026-08-27 10:05) · pulse 7,671 (2026-08-27 10:03) · live_pulse 608 (2026-08-21) · discovery 13 (2026-08-15) · events 7 (2026-08-15) |
+| **every surface** | **no `rank_events` row of any kind since 2026-08-27** |
+| `2894_rank_events_trip_add_outcome` | applied (ledger `manual`, 2026-09-16) |
+| `2890` / `2891` | applied 2026-09-14 (`docs/architecture/production-deployment-2026-09-14.md:13#2890_rank_events_behavior_engine_columns.sql`, `:14#2891_rank_events_recommendation_id.sql`) |
+
+**A FALSE CENSUS SENTENCE, CORRECTED.** §32.4 says *"2891 is applied to no
+production database"*. It was applied to production on 2026-09-14, the same day
+as 2890 (rows 3 and 4 of that deployment record), and the serve-log writer's own
+comment has said so since. §32.4's conclusion (DV-46 stays open) survives for a
+different reason (§48.5).
+
+### §48.2 Why `GET /discovery` has never written a row — found in code, not a write failure
+
+The shipping client calls `GET /api/discovery` **with no Authorization header**
+(`travel-buddy-standalone/src/services/discovery.ts:697#const res = await fetch(`),
+and `/community` and `/counts` the same way. The route sets `callerUserId` only
+from a Bearer token, and every serve-log branch on it is gated on
+`callerUserId`, so every production request is anonymous and writes nothing — by
+design, since `rank_events.user_id` is NOT NULL. It follows that the Compass /
+`for_you` path (which requires `callerUserId`) has **never engaged** from the
+shipping client whatever `COMPASS_V1_RULE_BASED_ENABLED` says, and that
+**no per-viewer ranking has ever run for a real user**. No candidate silent
+rejection was found for a signed-in row: 2891's column, shape CHECK and index,
+the `gem`/`place` kinds and `discovery` in the surface CHECK all admit the
+serve-log row. The fix is the client's (the integrating lane has assigned it to
+the client lane); this lane did not touch the client.
+
+The **month-long stop on every surface** since 2026-08-27 is not explained by
+anything in this tree and is not inferred into a writer defect here: it is a
+deployment- or traffic-level fact. Both causes together mean **no production
+evidence for DV-02 or DV-47 exists or can be obtained today** (§48.6).
+
+### §48.3 The contract — `lib/discoveryRecommendationRecord.ts`
+
+One pure module owns the served-recommendation record, and every writer and serve
+path consumes it:
+
+- **The id on every served item.** `artifacts/api-server/src/lib/discoveryRecommendationRecord.ts:213#export function stampServedRecommendations<`
+  stamps each item at its served position from ONE exposure minted per request.
+  For a signed-in viewer the id is byte-identical to `recommendationIdFor`, so no
+  id already handed out changes. An anonymous item is stamped under
+  `ANONYMOUS_VIEWER_KEY` (not a UUID, so never a viewer) with a fresh
+  per-request session, so two anonymous serves cannot be linked.
+- **The per-request id** — `10` §3's `recommendations.id` —
+  `artifacts/api-server/src/lib/discoveryRecommendationRecord.ts:192#export function serveIdFor(`.
+- **The propagation rules as data**, served item → response → store → client
+  outcome event → binding → store:
+  `artifacts/api-server/src/lib/discoveryRecommendationRecord.ts:359#export const RECOMMENDATION_PROPAGATION_RULES = [`.
+- **The binding**: an outcome carrying an id is credited to (signed-in caller, id)
+  and to nothing else — another viewer's, an anonymous, an unknown or a stale id
+  binds nothing (404); an id naming a different item or surface is refused (409):
+  `artifacts/api-server/src/lib/discoveryRecommendationRecord.ts:392#export function bindOutcomeToExposure(`.
+- **Versioning** and the **field-level privacy registry with its storage screen**:
+  `artifacts/api-server/src/lib/discoveryRecommendationRecord.ts:462#export function checkEventSchemaVersion(`,
+  `artifacts/api-server/src/lib/discoveryRecommendationRecord.ts:497#export const RANK_EVENTS_COLUMN_CLASSES`,
+  `artifacts/api-server/src/lib/discoveryRecommendationRecord.ts:622#export function screenFeaturesForStorage<`.
+
+**How an anonymous exposure is recorded, and how it is not.** `04` §5 requires an
+id on every served item, and every anonymous item now carries one on the wire.
+It gets **no** `rank_events` row — an exposure attributable to nobody must not be
+written against somebody — and instead ONE per-request row in
+`public.recommendations` (migration 3376), `user_id` NULL, holding the ordered
+item ids from which every item's nine-field record (with `user_id` null) is
+re-derived: `artifacts/api-server/src/lib/discoveryRecommendationRecord.ts:330#export function recommendationRecordsFromServeRequest(`.
+An anonymous id can never be credited with an outcome, because the outcome route
+requires a signed-in caller and binds by (caller, id). This reverses §34.2's
+*"emit nothing for anonymous"*, whose premise — that such an id names no record —
+no longer holds.
+
+### §48.4 What was built
+
+| change | where |
+| --- | --- |
+| Serve point 6 (cold fetch) and the cache-A PDE cohort log with the ROUTE's exposure and served positions; before, `logImpression` minted its own session and clock and the id on the response **joined to no row** | `artifacts/api-server/src/routes/discovery.ts:1922#void logImpression(servedScored, callerUserId, "discovery", exposure.sessionId`, `artifacts/api-server/src/routes/discovery.ts:2306#void logImpression(servedScored, callerUserId, "discovery", exposure.sessionId`, `artifacts/api-server/src/lib/rankLog.ts:104#positions = servedPositions(scored, served?.servedIds)` |
+| The anonymous cache-A and cold serves, and a signed-in cold serve whose ranker scored nothing (which wrote NOTHING before), are logged | `artifacts/api-server/src/routes/discovery.ts:2004#} else { void logDiscoveryServe(getServiceClient(), { userId: ""`, `artifacts/api-server/src/routes/discovery.ts:2316#} else { void logDiscoveryServe(getServiceClient(), { userId: callerUserId ?? ""` |
+| Feed, community, hidden gems and map search responses carry the ids their serve-log rows do | `artifacts/api-server/src/routes/discovery.ts:2734#places: stampServedRecommendations(feedAnnotated`, `artifacts/api-server/src/routes/discovery.ts:3153#items: stampServedRecommendations(servedItems`, `artifacts/api-server/src/routes/hiddenGems.ts:547#stampServedRecommendations(enriched3`, `artifacts/api-server/src/routes/mapSearch.ts:263#results: stampServedRecommendations(` |
+| Writers WRITE `schema_version` and `privacy_class` (2890's columns, live in production) and every exposure carries its request's id and size | `artifacts/api-server/src/lib/discoveryServeLog.ts:408#schema_version: DISCOVERY_EVENT_SCHEMA_VERSION, privacy_class` |
+| A replayed serve batch is refused whole by 2891's index and read as a DUPLICATE, not a lost write, moving no denominator twice | `artifacts/api-server/src/lib/discoveryServeLog.ts:449#: settleReplay(error);` |
+| The per-request row, anonymous and empty serves included; latches off where 3376 is absent | `artifacts/api-server/src/lib/discoveryServeLog.ts:698#export async function logDiscoveryServeRequest(` |
+| Outcome: optional `recommendation_id` (shape-checked) and `schema_version`; bound to the caller; the funnel update is COMPARE-AND-SET, so a replayed or concurrent report is answered 200 `{duplicate:true}` and moves no counter | `artifacts/api-server/src/routes/rankEvents.ts:179#recommendation_id: z.string().regex(RECOMMENDATION_ID_SHAPE`, `artifacts/api-server/src/routes/rankEvents.ts:228#const binding = claimedId ? bindOutcomeToExposure(`, `artifacts/api-server/src/routes/rankEvents.ts:1083#export function compareAndSetClient(` |
+| Direct impressions accept `client_event_id`, giving a clock-independent token; a keyed batch replay lands nothing and says so | `artifacts/api-server/src/routes/rankEvents.ts:1138#async function handleKeyedDirectBatch(` |
+| 3375: the database refuses an unknown `schema_version` | `artifacts/api-server/src/migrations/3375_rank_events_schema_version_admitted.sql:76#ADD CONSTRAINT rank_events_schema_version_check CHECK (schema_version IN (1));` |
+| 3376: `public.recommendations` + its idempotent door | `artifacts/api-server/src/migrations/3376_discovery_recommendations_per_request.sql:101#CREATE TABLE IF NOT EXISTS public.recommendations (`, `artifacts/api-server/src/migrations/3376_discovery_recommendations_per_request.sql:184#CREATE OR REPLACE FUNCTION public.record_discovery_serve_request(p_row jsonb)` |
+
+**WHY THE SERVE LOG KEEPS A PLAIN INSERT AND NOT `ON CONFLICT DO NOTHING`.** The
+outcome route updates the impression row in place (impression → tap), freeing
+the pair (id, `impression`). A replay under DO NOTHING would re-insert the tapped
+item's impression — a second exposure for one serve. The plain multi-row insert
+is one statement, so the untouched rows' collisions refuse the whole replay.
+Measured, not argued: `artifacts/api-server/src/test/db/discoveryTelemetryIdempotency.db.test.ts`
+I2 shows DO NOTHING returning exactly the tapped item's row.
+
+**3375 and 3376 are rehearsed on the local PostgreSQL harness only** — applied,
+re-applied idempotently, rolled back (3376's rollback refuses while the table
+holds rows), and rehearsed again on a clone restored to production's pre-2893
+fifteen-label surface CHECK with populated rows, where 3375's precondition
+refused a planted `schema_version = 2` row and applied once it was gone. They are
+applied to no Supabase project. Rollbacks:
+`db/rollback/2026-09-27-3375-rank-events-schema-version-admitted-rollback.sql`,
+`db/rollback/2026-09-27-3376-discovery-recommendations-per-request-rollback.sql`.
+**Because `discovery_serve_log_enabled` is TRUE in production, applying 3376
+STARTS WRITES** — one row per Discovery request, anonymous ones included — on the
+first deploy that carries this code. That is recorded in the production-drift
+ratchet entry for the table (`recommendations` in `KNOWN_PRODUCTION_GAPS`,
+`artifacts/api-server/src/scripts/checkProductionDrift.ts`).
+
+### §48.5 Row moves
+
+| id | was | now | evidence |
+| --- | --- | --- | --- |
+| DV-37 | N | **C** | Every Discovery event write is idempotent where retried, on a natural key plus a unique constraint, and each of the three cases asked for is proved. SERVE BATCHES: the plain insert collides WHOLE on 2891's `(recommendation_id, outcome)` index (applied in production 2026-09-14) and the writer reads that as a duplicate — `artifacts/api-server/src/lib/discoveryServeLog.ts:449#: settleReplay(error);` — with rankLog's Discovery rows the same; on a real database a replay, a racing replay and a half-failed-then-retried batch each land exactly once (`artifacts/api-server/src/test/db/discoveryTelemetryIdempotency.db.test.ts` I1, I3, I4, and I2 for why not DO NOTHING). OUTCOMES: compare-and-set on the row's current outcome — `artifacts/api-server/src/routes/rankEvents.ts:1083#export function compareAndSetClient(` — so a duplicate retry answers 200 duplicate and counts once, two concurrent reports move the row once, and a retry after a lost analytics row completes it (`artifacts/api-server/src/test/discoveryRecommendationPropagationE2E.test.ts` O7, O8, O8b, O9, O10; I5 races the same UPDATE on Postgres). PER-REQUEST ROWS: `ON CONFLICT (id) DO NOTHING` (I7, raced). The one write NOT deduplicated is an unkeyed `POST /rank-events` direct impression — the `living_page` surface, not Discovery's — and no server can deduplicate a retry that carries no identity; it now accepts `client_event_id` (D1, D2), and D1 pins the unkeyed boundary so it is not forgotten. |
+| DV-38 | W | **C** | `rank_events.schema_version` exists in production (2890, `docs/architecture/production-deployment-2026-09-14.md:13#2890_rank_events_behavior_engine_columns.sql`), every existing row reads 1, and the Discovery writers now WRITE it rather than inherit the default — `artifacts/api-server/src/lib/discoveryServeLog.ts:408#schema_version: DISCOVERY_EVENT_SCHEMA_VERSION, privacy_class` — so a bumped constant lands on the row. Unknown versions are refused at ingestion (`artifacts/api-server/src/lib/discoveryRecommendationRecord.ts:462#export function checkEventSchemaVersion(`; E2E O6b, D3) and, once 3375 is applied, at the database (`artifacts/api-server/src/migrations/3375_rank_events_schema_version_admitted.sql:76#ADD CONSTRAINT rank_events_schema_version_check`). The census sentence *"needs a migration"* (§16.1, §28.3) is stale: 2890 is live. |
+| DV-39 | W | **C** | The row's missing LABEL exists and is written: `privacy_class` / `retention_tier` (2890, live) on every row, written explicitly by the Discovery writers. Each FIELD is classified: every column production holds (`artifacts/api-server/src/lib/discoveryRecommendationRecord.ts:497#export const RANK_EVENTS_COLUMN_CLASSES`) and every `features` key a Discovery writer stores, including the ranker's whole feature vector; an unclassified or precise-location key is REFUSED before insert and named on the row — `artifacts/api-server/src/lib/discoveryRecommendationRecord.ts:622#export function screenFeaturesForStorage<` — pinned by K11 (every production column), K12 (every key `portavaRank` can emit) and W1/W7 (the writers refuse). Retention HORIZONS remain `04` §11's privacy/legal decision; `retention_tier` labels the layer and enforces nothing, by that clause's own instruction. |
+| DV-45 | W | **C** | The standing finding — *"no test exercises a real CHECK rejection"* — is answered on a real PostgreSQL: every CHECK on `rank_events` and on 3376's `recommendations` is exercised to ADMIT and to REFUSE, the refusal must name the expected constraint, NOT NULL / FK / the unique arbiter are included, and a completeness case fails if any CHECK on either table goes unexercised: `artifacts/api-server/src/test/db/discoveryTelemetryConstraints.db.test.ts`. It found one real subtlety (a negative `served_count` can never be refused by its own CHECK alone). The surface CHECK is asserted in whichever state the database is in — eight labels where 2893 is applied, fifteen where it is not (production). |
+
+### §48.6 Rows examined and NOT moved, each with what stands in front of it
+
+| id | verdict | why it stays |
+| --- | --- | --- |
+| DV-40 | W | **Code-complete on every Discovery serve path this lane owns**, anonymous included (§48.4), and the prior residual *"2 of 6 serve points mint nothing"* is closed (E2E S6-1 and S1-PDE were RED before this change). It stays `W` on two things outside code: (1) the anonymous record is 3376, applied to no database but the harness; (2) `GET /discovery/search` and `/suggest` responses (serve points 8, 9, `routes/discoverySearch.ts`) are the search lane's to stamp — their rows already carry ids. `recommendation_items` is deliberately not created: `rank_events` is that table for signed-in serves (`10` §3 "prefer extending rank_events"). |
+| DV-06 | W | Per-request denominators now exist: every signed-in exposure carries `serveId` + `servedCount`, and 3376 holds one row per request with `served_count`, zero included. `W` because the anonymous and empty-serve halves live only in 3376, which is unapplied. |
+| DV-46 | W | Propagation is built and tested end to end on the server — served → response → client outcome event → the SAME `rank_events` row, on cache-A, cold (serve point 6), PDE cohort, anonymous, and across viewers (E2E O1–O6). It stays `W` on ONE named dependency: the client does not echo the id — `travel-buddy-standalone/src/hooks/useRankOutcome.ts:95#const body: Record<string, string> = { item_id: itemId, surface, outcome };` sends item, surface, outcome and session only. The server accepts the field optionally and behaves as before without it. |
+| DV-44 | W | Proved executably: of the fifteen labels production admits, exactly 2893's eight have a located writer and exactly its seven have none, and the code's own write vocabulary (`PERSISTED_RANK_SURFACES`) is the eight, so the retirement is in force in CODE today: `artifacts/api-server/src/test/discoverySurfaceWriterProof.test.ts`. §41.1 stands and is guarded — `living_page` and `watch_feed` are in the writer-backed set. The DATABASE retirement is 2893, owner-deferred and unapplied; that is the remaining leg. |
+| DV-02 | W | Production evidence only, and none is obtainable now: the shipping client is unauthenticated on this route (§48.2) and nothing has written to `rank_events` on any surface since 2026-08-27 (§48.1). The 13 existing rows are serve point 9 (suggest), not the route this row is about. |
+| DV-47 | W | Same two reasons. The code side is ready: every ranked serve now records `rankedInRequest` and the model that ordered the page (`portava-rank-pde-2026-09` on the PDE rows). |
+| DV-78 | W | 5 of 8, and one FAIL cell was stale. **Negative feedback is PARTIAL, not absent**: `not_interested` has a Discovery writer and reader — the card's "Not interested" control (`travel-buddy-standalone/src/components/discovery/PlaceCard.tsx:545#accessibilityLabel={`) sends `dismiss` on surface `discovery`, and `artifacts/api-server/src/lib/discoveryDismissed.ts:118#export async function loadDismissedPlaceIds(` reads it back on every serve path. The other five of `04` §4's six are NOT built, and not invented here: `report`/`mute`/`block` are safety controls `04` §4 requires to stay separate from ranking; `hide` vs `not_interested` and the threshold for `immediate_skip` are not defined by the spec — owner input. **Dwell**: 2890's columns are live, but no client emits a dwell measurement and the spec does not say how repeated dwell episodes on one exposure combine — not decision-free. **Trail open**: no surface or kind is defined for it, and recording it as a Discovery impression would put a non-recommendation into the exposure denominator — not decision-free. |
+| DC-22 | W | 4 of 5, unchanged in count; leg 1 (`recommendation_id`) is now carried on every Discovery serve path this lane owns, anonymous included. The fifth (reason labels) is still §35.4's merge → deploy → flip → runtime check, plus the owner's confidence priors. No flag was touched. |
+
+### §48.7 Tests, and every one seen RED
+
+Six new suites, registered, and two existing ones changed with the argument
+attached:
+
+| suite | tests | runs on |
+| --- | ---: | --- |
+| `discoveryRecommendationRecord.test.ts` (K) | 22 | unit |
+| `discoveryRecommendationPropagationE2E.test.ts` (S, A, O, D) | 22 | real routes + an enforcing fake (`test/helpers/fakeDiscoveryTelemetryDb.ts`) |
+| `discoveryTelemetryWriters.test.ts` (W) | 10 | writers |
+| `discoverySurfaceWriterProof.test.ts` (P) | 4 | the tree |
+| `db/discoveryTelemetryConstraints.db.test.ts` | 14 | local PostgreSQL 16 |
+| `db/discoveryTelemetryIdempotency.db.test.ts` (I) | 8 | local PostgreSQL 16, two racing sessions |
+
+- **`discoveryRouteRecommendationPropagation.test.ts` G1/G2 INVERTED**, as that
+  file's own header instructed, the moment `rankLog` gained the mint: G1 now
+  asserts each PDE row's id IS the response's id at that position.
+- **`discoveryServeExposureCursor.test.ts` R3 INVERTED**: it asserted an
+  anonymous serve carries no id because no record exists to bind it to. The
+  record now exists, so R3 demands the anonymous ids join to the request row the
+  same serve wrote — the property the old wording protected.
+
+**P24.** 51 code mutations and 6 database mutations were applied one at a time
+(the database ones on throwaway clones of the harness), and each suite was
+re-run; one further code mutation was malformed (its search text matched twice)
+and was re-run with a narrower one, counted once. Every new test went RED under
+at least one; each code file was restored and sha256-checked identical. Three
+mutants survived alone and are recorded: dropping the caller filter from the
+claimed-id lookup survives because `bindOutcomeToExposure`'s owner check refuses
+the row anyway (defence in depth — removing both turns the E2E suite red);
+canonicalising the instant in `recommendationRecordsFromServeRequest` is
+redundant, because the id derivation canonicalises again (an equivalent mutant);
+and renaming ONE of `mediaFeed`'s two `watch_feed` writers keeps P1 green,
+correctly — the other writer still exists — and renaming both turns it red.
+
+### §48.8 The production SQL that would settle what code cannot (read-only)
+
+```sql
+-- 2890/2891 as live (DV-38/39/37 rest on them):
+SELECT column_name, data_type, is_nullable, column_default FROM information_schema.columns
+ WHERE table_schema='public' AND table_name='rank_events'
+   AND column_name IN ('schema_version','privacy_class','retention_tier','dwell_ms','dwell_kind','recommendation_id') ORDER BY 1;
+SELECT conname, pg_get_constraintdef(oid) FROM pg_constraint WHERE conrelid='public.rank_events'::regclass ORDER BY 1;
+SELECT indexname, indexdef FROM pg_indexes WHERE schemaname='public' AND tablename='rank_events' ORDER BY 1;
+-- 3375's precondition, before applying it (must be exactly one row: 1 | N):
+SELECT schema_version, count(*) FROM public.rank_events GROUP BY 1;
+-- DV-44 / 2893's precondition (must return no rows for 2893 to apply):
+SELECT surface, count(*), max(served_at) FROM public.rank_events
+ WHERE surface IN ('search','nearby','story','event','trip','profile','explore') GROUP BY 1;
+-- DV-02 / DV-47, once an authenticated client is deployed and writes resume:
+SELECT features->>'servePoint' AS serve_point, (features->>'rankedInRequest')::boolean AS ranked,
+       features->>'modelVersion' AS model, count(*), count(DISTINCT user_id) AS viewers,
+       count(recommendation_id) AS with_id, max(served_at)
+  FROM public.rank_events
+ WHERE surface='discovery' AND outcome='impression' AND served_at > now() - interval '7 days'
+ GROUP BY 1,2,3 ORDER BY 1;
+--   DV-02 passes on any row at serve points 1-6; DV-47 on any row with ranked = true at 1-3 or 5-6.
+-- DV-06 / DV-40 anonymous half, once 3376 is applied:
+SELECT serve_point, viewer_class, count(*) AS requests, sum(served_count) AS items, max(served_at)
+  FROM public.recommendations WHERE served_at > now() - interval '7 days' GROUP BY 1,2 ORDER BY 1,2;
+-- DV-37 in production (must be empty — the index guarantees it):
+SELECT recommendation_id, outcome, count(*) FROM public.rank_events
+ WHERE recommendation_id IS NOT NULL GROUP BY 1,2 HAVING count(*) > 1 LIMIT 20;
+-- DV-46, once the client echoes the id:
+SELECT count(*) FILTER (WHERE recommendation_id IS NOT NULL) AS bound, count(*) AS all_outcomes
+  FROM public.rank_events
+ WHERE surface='discovery' AND outcome NOT IN ('impression','analytics') AND outcome_at > now() - interval '7 days';
+-- The month-long stop on every surface (not a Discovery question; for diagnosis):
+SELECT date_trunc('day', served_at) AS day, surface, count(*) FROM public.rank_events
+ WHERE served_at >= '2026-08-20' GROUP BY 1,2 ORDER BY 1,2;
+```
+
+### §48.9 What would turn this red
+
+- **3376 applied without a deploy, or a deploy without 3376.** Either order is
+  safe by construction (the writer latches; the table accepts nothing else), but
+  applying it starts writes immediately under the live serve-log flag.
+- **A new ranker feature or context key.** It is refused from storage until it
+  is classified; K12 names any ranker key that is not.
+- **A schema bump.** `DISCOVERY_EVENT_SCHEMA_VERSION`, `SUPPORTED_EVENT_SCHEMA_VERSIONS`
+  and 3375's CHECK must move together; K10 compares the constant with the
+  migration text.
+- **The client echoing ids.** It would close DV-46's named dependency, and it
+  should send `client_event_id` on direct impressions in the same change.
+
+- NOT-GRADED: artifacts/api-server/src/test/helpers/fakeDiscoveryTelemetryDb.ts — test machinery for the E2E suite; no verdict rests on the fake itself, only on the routes it runs.
+
 ## Cited, not graded (check:census-scope-coverage)
 
 - NOT-GRADED: artifacts/api-server/src/compass/CompassExplanationEngine.ts — §13.7 item 3 names Compass's HMAC recommendation-token signer as a refactor this lane declined to make in another lane's file. Discovery's recommendation id is minted by lib/discoveryRecommendationId.ts, and no Discovery verdict rests on the signer.
