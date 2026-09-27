@@ -11023,6 +11023,250 @@ The fix is two line-neutral edits:
 
 **A visible consequence.** A Trail with no members also answers `trending: null` now, where it answered `false`. The service already returned no reading for it (`none(null)`, with a null provenance). `null` is the answer the route's own comment gives for "no reading was taken". The client type is not this lane's file (P13), and `null` is falsy wherever a boolean was tested.
 
+## §66 — Re-verification of four C rows (lane P20): DV-30, C32, DC-26 and B01 do not hold on their own criteria
+
+*Written 2026-09-27 by the re-verification lane on `disc-p20-reverify`, branched from `9af90c0ee` (the merge of §61). The row audit flagged these four C rows as contradicted by their own evidence. This lane wrote none of the code it grades and changed none. It adds one suite, `artifacts/api-server/src/test/discoveryVerifyAudit2.test.ts` (11 cases), registers it on the `test` line, and adds it to CENSUS_SCOPE. Every verdict is about code at this tree. Nothing here is merged to `main`, applied to `portava-ci` or production, deployed or flag-enabled. The headline is not restated; the integrator does that. `head_commit` is not re-declared.*
+
+**Method, per row.** First, every statement of the row was read, and the last one by position is the verdict being tested (all four are `C`). Second, the criterion is quoted in the spec's words, beside the reading the `C` used. Third, a negative input is run against the code. Each move below changes the verdict, not the criterion: no criterion is narrowed to keep a `C` or widened to make a `W`.
+
+### 66.1 Row moves
+
+| ID | was | now | evidence |
+|---|---|---|---|
+| DV-30 | C | **W** | **Graded on a computation the criterion does not name.** `03` §14 is Trending's list: *"Trending is complete when: … it normalizes for exposure"* (`docs/specs/discovery-v1/03_Trending.md:189#- it normalizes for exposure,`). §7 says what is normalised: *"Trend velocity must be normalized by: exposure"* (`docs/specs/discovery-v1/03_Trending.md:106#Trend velocity must be normalized by:`). The `C` rests on the ranker's underexposure denominator (`artifacts/api-server/src/services/ranking/DiscoveryRankingService.ts:1292#the underexposure classification divides by`), which no trend computation reads. Trend velocity does the reverse of normalising. Every served row adds its impression as one unit of ACTIVITY, and nothing divides by exposure: `artifacts/api-server/src/lib/discoveryTrendState.ts:217#bucket(r.item_id, r.served_at, TREND_EVENT_WEIGHTS.impression);`, the kernel at `artifacts/api-server/src/lib/discoveryLocalMomentum.ts:174#bucket(r.item_id, r.served_at, MOMENTUM_EVENT_WEIGHTS.impression);`, and the stored twin at `artifacts/api-server/src/migrations/3417_place_momentum_dismiss_excluded.sql:107#SELECT item_id AS place_id, user_id, served_at AS at, c_w_impression AS w FROM base`. §5's positive signals include *"qualified impression conversion"* (`docs/specs/discovery-v1/03_Trending.md:67#- qualified impression conversion,`), not the impression itself. **Probe.** Three impressions and no engagement read `emerging`, carry a public reason, and score momentum 0.5, both in the place kernel and in the Trail fold (`artifacts/api-server/src/test/discoveryVerifyAudit2.test.ts:68#it("T1. DEFECT (DV-30): three impressions and no engagement`). With one save each, the place served ten times as often has 5.5× the velocity (T2). §11.5's re-verification of the #365 denominator still holds; it is a different criterion. |
+| C32 | C | **W** | **The row's sentence is its criterion, and its first clause is false at this tree.** The row reads *"One ranking pipeline in the tree — the route no longer imports the ranker directly"*. The route states the same rule as its own contract: *"there must be exactly one ranking pipeline in the tree"* (`artifacts/api-server/src/routes/discovery.ts:2261#there must be exactly one ranking`). §11.2 rule 1 applies: a parent is `C` only if every criterion inside it passes. The second clause passes (R2). The first does not. The route value-imports Compass's ranker (`artifacts/api-server/src/routes/discovery.ts:36#import { rankItemsForDiscovery } from "../compass/CompassFeedBuilder";`) and orders signed-in `for_you` pages with it (`artifacts/api-server/src/routes/discovery.ts:2175#const scored = await rankItemsForDiscovery(`). Every other signed-in cold fetch is ordered by `rankForViewer` (`artifacts/api-server/src/routes/discovery.ts:2280#const outcome   = await rankForViewer(places, pdeViewer, { sc: rankSc, served: true });`). The served projection names both rankers (`artifacts/api-server/src/lib/discoveryCandidate.ts:148#export type DiscoveryRankedBy = "pde" | "compass" | "none";`). **Probe, through the real route.** One viewer, one deployment: `for_you` is served `rankedBy: "compass"` and `food` is served `rankedBy: "pde"` (`artifacts/api-server/src/test/discoveryVerifyAudit2.test.ts:216#it("R1. DEFECT (C32): one viewer, one route, two rankers`). The gate is `COMPASS_V1_RULE_BASED_ENABLED`, TRUE in production (§47.1), so this is not a flag-held path. §14.2 kept `C` because *"a row is graded on its evidence, and its evidence is true"*. That grades the evidence in place of the criterion. The same defect is DC-24's (`W`); the two rows reach it from the contract and from `10` §1. |
+| DC-26 | C | **W** | **15 of 16. The CI rehearsal class is credited to a proxy, and the rehearsal has not passed at this tree.** `12` names the class (`docs/specs/discovery-v1/12_Claude_Code_Implementation.md:189#- CI rehearsal`). The package says what a CI rehearsal is: `10` §7's *"rehearse on `portava-ci`"*, then *"production rollout only after CI rehearsal"* (`docs/specs/discovery-v1/10_Database_Architecture.md:98#- production rollout only after CI rehearsal.`). §59.1's own bar is *"a suite that passes at this tree"*. The credited suite is, in its own words, *"mostly a YAML contract test"* of the live-DB workflow's concurrency and verdict wiring (`artifacts/api-server/src/test/ciWorkflowArchitecture.test.ts:42#This is mostly a YAML contract test`). Neither `db:apply-migrations` nor `certify:migrations` occurs in it. The rehearsal itself is the `schema-drift` job, which applies and certifies only on `refs/heads/main` (`.github/workflows/live-db.yml:764#THE APPLY. Default branch only`; D1). The credited suite also says what that job does on a branch that creates objects: *"schema-drift legitimately FAILS whenever a PR creates an object"* (`artifacts/api-server/src/test/ciWorkflowArchitecture.test.ts:234#own migration is never applied to the CI project, so schema-drift legitimately`). This tree creates Discovery objects (3375 through 3422). So no CI rehearsal has passed here, and none can before merge. §59.3's own cell says the `portava-ci` runs are *"still owed"*. §54.2 says the harness rehearsal *"is not the `portava-ci` rehearsal `12` names"*. The other fifteen classes hold as §59.3 lists them. |
+| B01 | C | **W** | **The fold is diacritic-insensitive for 495 of 497 letters, and the criterion states no exception.** G57 reads *"Diacritic-insensitive matching while preserving display spelling"* (`docs/specs/Portava_Global_Input_Intelligence_Architecture_Developer_Spec.txt:106#Diacritic-insensitive matching while preserving display spelling.`). The probe takes every precomposed Latin letter whose canonical decomposition is a letter plus combining marks. That is the definition the fold itself applies: NFD, then strip U+0300–U+036F. Each letter is compared with its undecorated letter. All 488 built on an ASCII letter fold to it (B2), seven more fold exactly as their undecorated letter does, and the stroke table folds its fourteen. **Ǿ and ǿ (ø with an acute) do not.** The stroke table runs BEFORE NFD (`artifacts/api-server/src/lib/canonicalLocations.ts:151#return normalizeLocationName(strokeFold(name));`), so the Ø inside Ǿ appears only after the table has run, and it is deleted. "Øresund" keys `oresund` and "Ǿresund" keys `resund` (`artifacts/api-server/src/test/discoveryVerifyAudit2.test.ts:307#it("B1. DEFECT (B01): Ǿ/ǿ`). 2220 uses the same order (`artifacts/api-server/src/migrations/2220_canonical_locations_search_key.sql:82#v := translate(p_name,`), so the stored key agrees with the query key, and both lose the letter. **Materiality, stated.** This lane knows no place name spelled with Ǿ. The `W` is on the criterion's words, and 66.9 asks the owner which population G57 is graded over. |
+
+### 66.2 DV-30 — which list `03` §14 is, and what trend velocity counts
+
+**Every statement read.** The DV-30 statements are:
+- §11.4, the Completion-definition duplicate;
+- §11.5, the row: `C`, *"The normaliser divides by exposures, not conversions"*;
+- §14.5's DC-06 cell, which credits *"exposure PASS (DV-30's denominator)"*;
+- §58.4's DC-06 re-grade (exposure FAIL for trend velocity);
+- §58.6 #5, which offered the row for re-grading and did not move it.
+
+The last verdict is §11.5's `C`.
+
+**Trending's requirement, not ranking's.** §14's subject is *"Trending is complete when"*. Its bullets sit beside *"it can distinguish emerging vs established"* and *"it can decay and rediscover"*, and DV-28 and DV-31 grade those on the trend classifier. §7 gives the object: *"Trend velocity must be normalized by: exposure, …"*, followed by *"Avoid simply ranking absolute counts."* (`docs/specs/discovery-v1/03_Trending.md:114#Avoid simply ranking absolute counts.`).
+
+**What the spec lists as activity.** §5's positive signals are:
+- conversions of an impression: *"qualified impression conversion"*;
+- behaviour after one: dwell, completion, saves, add-to-trip, opens, joins, visits.
+
+A served impression is not on the list. In a normalised velocity it is the exposure that the activity is divided by. The code counts it as activity. The dismiss exclusion (§61, §61.14 H1) removed one wrong numerator term. It did not add a denominator.
+
+**Every trend reader inherits the count.** Four readers use the same numerator:
+- the in-process trend states, which DV-28, DV-31 and DV-33 grade;
+- the stored snapshot, which 3410/3417 rebuild and whose parity with the TypeScript is pinned by `db/discoveryTrendSnapshotParity` S1;
+- the momentum scalar, behind 2289 and held;
+- the Trail fold behind `trending_now` and `GET …/trails/:id/trending`.
+
+The Trail routes carry no flag, although 2910 is unapplied in production. The explanation API is behind `discovery_trending_api_enabled`, which is seeded FALSE. For the flag-held readers, §31.2 is a second ground: *"A requirement whose feature is disabled is not satisfied."*
+
+**Consistency.** DC-06 is `W` on the same axis (§58.4). Before this section, the census held DV-30 `C` and DC-06 `W` for the same velocity against the same spec sentence.
+
+**The change that would restore `C` (not built here).** The change applies in three places:
+- `lib/discoveryTrendState.ts`, in `computeTrendStates`;
+- `lib/discoveryLocalMomentum.ts`, in `computeLocalMomentum`;
+- a NEW migration that replaces 3417's `rebuild_place_momentum`, because the momentum SQL is applied nowhere but the harness and 3417's body is the current one.
+
+In all three, a served row stops adding activity and is counted as the window's exposure. The outcome arm stays the activity. The rate compared across windows becomes activity per exposure. The parity suites (`placeMomentumSqlParity`, S1) move with it.
+
+**Owners.** `lib/discoveryTrendState.ts` and the SQL store belong to the trending lane (§58, P8). `lib/discoveryLocalMomentum.ts` belongs to the ranking lane. The kernel half moves the held 2289 scalar, so it waits on the ROADMAP ranker hold. A rate also needs a minimum exposure below which it is not a reading, and no ruling gives that number (question 1).
+
+### 66.3 C32 — what "one ranking pipeline" requires, traced at this tree
+
+**Every statement read.** The C32 statements are:
+- §2c's row;
+- §14.2, *"verdict survives and its contract SENTENCE does not"*;
+- `docs/discovery/compliance-v1.md` §2.3, the same;
+- §47.3, *"C32's evidence holds and its title does not"*;
+- §49.3's resolution.
+
+The last verdict is `C`.
+
+**The requirement.** The route states it in its own header, *"the route no longer imports them directly, which is what keeps "one ranking pipeline in the tree" checkable rather than aspirational"*, and again at the PDE call: *"there must be exactly one ranking pipeline in the tree, or the shadow comparison this engine exists to feed would be measuring drift between two implementations rather than the reach of one."* It is a property of the orderings that serve a Discovery page, not of an import line. An import is how it was checked, not what it means.
+
+**The serve paths at `9af90c0ee`.** §49.3's resolution still holds unchanged: *"three independent orderings serve Discovery (the PDE pipeline, Compass's per-user rank, and the live-rank layer)"*.
+
+| path | orders the page | reached when |
+|---|---|---|
+| serve point 5, `compass_fresh_rank` | `rankItemsForDiscovery` (a value import, called in-request) | signed in, `for_you`, `COMPASS_V1_RULE_BASED_ENABLED` on (TRUE in production), Cache A miss |
+| serve point 4, `compass_candidate_hit` | the stored Compass order, replayed | the same, within the Cache B TTL |
+| cold signed-in fetch, every other category | `rankForViewer` (portavaRank, DRS order-neutral, governor held) | signed in |
+| Cache A hit | `rankForViewer` only in `pde` + cohort; otherwise unranked | — |
+
+R1 drives the first and third rows through the real route. R1c shows the flag chooses between them for one request. The shipping client on this branch sends the viewer's token (`travel-buddy-standalone/src/services/discovery.ts:695#const lease = openDiscoveryLease(await freshToken());`). So on merge, the Compass path is on a real user's path, where §47.1 found it never engaged.
+
+**The change that would restore `C` (not built here).** Remove the second ordering from `routes/discovery.ts`:
+1. Take the `for_you` branch that opens at `artifacts/api-server/src/routes/discovery.ts:2106#if (category === "for_you" && callerUserId) {`, which covers serve points 4 and 5. Either retire it, so `for_you` is ordered by `rankForViewer` like every other category, or make Compass's scoring a stage inside `rankForViewer`.
+2. Remove the value import.
+
+`routes/discovery.ts` is lane P5x's file (§54.11 H2). The change reorders `for_you` for signed-in viewers with no flag in front of it. That is the §41.4 hazard, and §47.3 designed it to ride Phase F gate 2 (`docs/discovery/ranker-hold-designs.md` §6). It is an owner decision (question 2), and DC-24 closes with it.
+
+### 66.4 DC-26 — the "CI rehearsal" class, and what the static test is
+
+**Every statement read.** The DC-26 statements are:
+- §14.5's row, `W`, which already listed *"CI rehearsal"* as PASS;
+- §54.9, `W`, 10 of 16;
+- §54.14's restatement, `W`;
+- §59.1, `W → C`;
+- §59.3's class table.
+
+The last verdict is `C`.
+
+**What the class demands.** `12` lists *"Database: migrations from current canonical baseline · CI rehearsal · schema drift"*. The first is already its own class: CI's local-db job replays baseline plus chain on a disposable PostgreSQL. So "CI rehearsal" must name something else. The package's own sentences say what: *"rehearse on `portava-ci`"* in `10` §7 and in `12`'s deployment rule 1, and *"production rollout only after CI rehearsal"*. A class of this kind is shown when a rehearsal has run on `portava-ci` over the migrations it certifies.
+
+**The static test is a proxy.** `ciWorkflowArchitecture.test.ts` guards the live-DB workflow's shape:
+- one certification per SHA;
+- per-PR concurrency;
+- the slot proof;
+- verdict classification.
+
+Its header says it *"cannot prove"* scheduler behaviour and that those *"need GitHub-hosted certification"*. It passes (45/45). It does not test that migrations are rehearsed, and it would not notice if they stopped being rehearsed: no assertion names the apply or certify step.
+
+**P24 note.** This lane tried to execute that last point: delete both steps and run the suite. This session's permission layer refused the edit to `.github/workflows/live-db.yml`, so that mutation was **not run**. The statement rests on reading the suite. D1c instead shows, in memory and without writing a file, that this lane's own reading of the job rejects the edited text.
+
+**Why it cannot pass at this tree.** The apply is main-only (D1), and a PR's `schema-drift` run fails whenever the PR creates an object. Both statements come from the repository's own files, cited in 66.1. The rehearsal records for the Discovery migrations (3375, 3376, 3380, 3381, 3385–3387, 3390, 3391, 3395, 3410, 3415–3417, 3420–3422) exist only as a harness rehearsal (§59.4). The census has twice said that is not this rehearsal (§54.2 DC-27, §59.3).
+
+**What does hold.** *"recommendation → behavior → attribution"* was suspected of existing *"only on the harness"*. It is a PostgreSQL integration suite, and CI's local-db job runs it on every push (`.github/workflows/ci.yml:682#api-server-local-db:`), where a skip fails the job. It is a real test of that class.
+
+**What would restore `C`.** First, an EVENT, not a code change: a green `schema-drift` run (apply, then certify) on `portava-ci` over a tree that carries these migrations. The workflow produces one on the push to `main` after merge. Second, optionally, a code change so that the suite credited for the class can see the rehearsal. That is a pin in `ciWorkflowArchitecture.test.ts` that the apply and certify steps exist, so that removing them turns it red. Whether a rehearsal must run BEFORE merge is question 3. The workflow is the CI owner's file (§49.5 assigns DC-26 to P9, Database & rollout).
+
+### 66.5 B01 — "diacritics", decided from the text
+
+**Every statement read.** The B01 statements are:
+- §2b, `W — deployment`;
+- §9.4 and §11.6, `W`, re-read in production;
+- §46.2, `W → C`, *"on this branch only: not merged, not deployed"*;
+- §49.1, accepted *"on its own row's scope"*;
+- §59.2, *"holds, with a caveat"*;
+- §61.3 and §61.11 H2, which found and routed the ß/æ/œ/þ/ŋ gap.
+
+The last verdict is `C`.
+
+**The criterion is diacritics, and it is universal.** §10 of the Input Intelligence spec lists these as separate lines:
+- *"Unicode normalization and safe whitespace folding"* (G55);
+- *"Case-insensitive matching"* (G56);
+- *"Diacritic-insensitive matching while preserving display spelling"* (G57);
+- *"Transliteration where supported"* (G61).
+
+B01 is G57's stored side. The spec says *"where supported"* of transliteration and says nothing of the kind of diacritics.
+
+**The §59.2 caveat, decided: outside B01.** Each letter in the caveat is outside G57's words:
+- ß, æ and œ are letters and ligatures, not a letter carrying a mark. Making ss, ae and oe of them is transliteration (G61).
+- þ and ŋ are letters of their own. Under the root collation they do not share a primary weight with any ASCII letter, so even an accent-insensitive collation does not merge them with "th" or "ng".
+- Fullwidth `Ｔｏｋｙｏ` is a width form. Width is a compatibility difference, which the spec's Unicode-normalization line covers, not a diacritic.
+
+B3 pins all of them as a LIMIT, so a fix turns it red. B3 also shows that a fullwidth query folds to an empty key and is refused before any read. It never becomes an `ilike '%%'` that matches every city (`artifacts/api-server/src/lib/discoverySearchCanonical.ts:134#if (!key || key.length < 2) return marked([], "stored");`). That is a no-match, not a leak.
+
+**The strongest reading against this decision.** The Unicode Collation Algorithm's root collation (ICU 78, measured here) puts ß/ss, æ/ae and œ/oe apart only at its second level, the level UTS #10 calls *accents*. A reader who takes G57 to mean "insensitive at the accent level of the collation standard" would put those three in scope. This lane does not take that reading: the spec's word is *diacritic*, and it lists transliteration separately. The reading is recorded here so the owner can overrule it.
+
+**What fails inside the criterion.** The stroke table cannot see a stroke letter that also carries an accent, because the table runs before decomposition. In the Latin blocks scanned (U+00C0–U+024F, U+1E00–U+1EFF), only Ǿ and ǿ are such a letter. B2 is the control over the other 495, and the fourteen stroke letters fold.
+
+**The change that would restore `C` (not built here).** The change has three parts:
+1. Add `"Ǿ": "o"` and `"ǿ": "o"` to `STROKE_FOLD` in `lib/canonicalLocations.ts`, or run the table again after the mark strip.
+2. Make the same two-letter change in the SQL, in a NEW migration, because 2220 is applied to production. That migration replaces `input_normalize_city_key` and recomputes `search_key`. The column is `GENERATED ALWAYS … STORED`, so replacing the function does not rewrite stored values; the column must be dropped and re-added with its index.
+3. Extend the TS/SQL parity case to the two letters.
+
+**Owner.** `lib/canonicalLocations.ts` is the canonical-locations module, the owner §61.11 H2 already routes to. `lib/discoveryTrailFold` reuses the table, so DV-20's slug would inherit the fix (66.6).
+
+### 66.6 Findings on rows outside these four — recorded, not graded
+
+1. **DV-20 (`C`, §61.7).** Its evidence sentence reads *"The slug folds every Latin letter NFKD cannot decompose"*. Measured at this tree, it is not true:
+   - 106 letters in U+00C0–U+024F that NFKD leaves whole are deleted by `canonicalTrailSlug`. Most are in Latin Extended-B: hooked, barred and stroked letters, and letters of their own such as ĸ, Ə and Ɛ.
+   - "Ǿresund cycling" slugs `resund-cycling` beside "Øresund cycling"'s `oresund-cycling`. That is §59's two-Trails defect for one more letter, with the same cause as B01's.
+
+   DV-20 is not this lane's row. Its verdict is not moved here, and the finding is offered for re-grading, as §58.6 #5 did for DV-30.
+2. **census-input-intelligence G57 (`C`).** Same fold, same Ǿ/ǿ. If B01 is `W` on this ground, G57 is too.
+3. **census-input-intelligence G55 (`C`, "Unicode normalization and safe whitespace folding").** It is graded on `normalizeLocationName`'s NFD. NFD does not fold compatibility forms, so the following are deleted instead of folded:
+   - fullwidth Latin, which a CJK keyboard in fullwidth mode types, folds to an empty key;
+   - `ﬁnland` keys as `nland`.
+
+   Whether "safe" folding covers width is that census's to grade.
+
+### 66.7 Tests, and every one seen RED (P24)
+
+`artifacts/api-server/src/test/discoveryVerifyAudit2.test.ts`, 11 cases, 11 pass at this tree. Every mutation was one exact-string edit. After each run the file was copied back, and its sha256 was checked equal to the original.
+
+| mutation | file | red |
+|---|---|---|
+| M1 `TREND_EVENT_WEIGHTS.impression` 1 → 0 | `lib/discoveryTrendState.ts` | T1, T2 |
+| M2 `MOMENTUM_EVENT_WEIGHTS.impression` 1 → 0 | `lib/discoveryLocalMomentum.ts` | T1 |
+| M3 `TREND_MIN_RATE` 3 → 2 | `lib/discoveryTrendState.ts` | T1c |
+| M4 the `for_you` Compass branch made unreachable | `routes/discovery.ts` | R1 |
+| M5 the Compass branch ignores its flag | `routes/discovery.ts` | R1c |
+| M6 `portavaRank` imported as a value | `routes/discovery.ts` | R2 |
+| M7 Ǿ ǿ → o added to `STROKE_FOLD` (the B01 fix) | `lib/canonicalLocations.ts` | B1 |
+| M8 the combining-mark strip disabled | `lib/canonicalLocations.ts` | B1, B2 |
+| M9 NFD → NFKD | `lib/canonicalLocations.ts` | B3 |
+| M10 the empty-key refusal removed | `lib/discoverySearchCanonical.ts` | B3 |
+| — the main-only clause removed from the apply step | `.github/workflows/live-db.yml` | **not run**: this session's permission layer refused the edit to the CI workflow. D1c runs the same edit in memory, and its reading rejects the edited text. |
+
+A DEFECT or LIMIT case here passes today and is written to go red when its row is fixed. M7 is that fix for B1, and it goes red as designed. When a fix lands, flip the case the way §61.14 flipped A1 and A2, and restate the row.
+
+### 66.8 Checks run at this tree
+
+- **The suite:** 11/11. `typecheck` passes, and `typecheck:tests` is at its baseline (863 diagnostics across 115 files, none in the new suite).
+- **Checks that pass:** `check:doc-citations` (RESULT clean), `check:citation-targets` (164/164, at the ceiling), `check:census-scope-coverage` (census-discovery 350 cited, 350 watched), `check:test-registration`, `check:guard-coverage`, `check:route-auth-gate`, `check:flag-polarity`, `check:migration-prefixes`, `check:writerless-reads` and `check:discovery-query-paths`. The column-checker diff prints `problems=0`.
+- **`check:census-integrity` exits 1, by design.** At `9af90c0ee` the rows already counted C 99 / W 83 against a stated C 96 / W 86, because §61's three moves were not yet restated. With §66 they count C 95 / W 87 / N 5 / X 1. The headline is the integrator's.
+- **`check:census-freshness`:** census-discovery is STALE on one file, this section's own suite (66.11).
+- **The full api-server `npm test`:** 27,557 tests, 27,549 pass, 3 fail and 5 are cancelled. None of these is caused by this lane, which changed no code:
+  - `censusIdGrammar` and `censusIntegrityQualifiedVerdicts` fail on the headline mismatch above; the 5 cancelled cases are that suite's children.
+  - `discoveryTrailProvenance` *"GET /trending distinguishes `not trending` from `never measured`"* fails deterministically at `9af90c0ee`. §61.16 made a Trail with no members answer `trending: null`, where the suite still expects `false`. It is routed to §61's owner.
+  - `guardReachability`'s 180-second control timed out under concurrent load, and it passes 25/25 alone.
+
+### 66.9 Owner questions, verbatim
+
+1. **DV-30.** *"`03` §7 says trend velocity must be normalized by exposure. Should a served impression count as trend activity at all, or only as the exposure that activity is divided by? And below how many exposures is a place's rate not a trend reading?"*
+2. **C32 / DC-24.** *"Signed-in `for_you` pages are ordered by Compass's ranker and every other category by the PDE pipeline. Is `for_you` to be consolidated into the PDE pipeline under Phase F gate 2, which changes its order with no flag in front of it, or retired now?"*
+3. **DC-26.** *"Is a `portava-ci` rehearsal that runs only after merge to `main` what `12`'s 'CI rehearsal' test class and `10` §7's 'production rollout only after CI rehearsal' mean, or must the rehearsal run before merge?"*
+4. **B01.** *"Is G57's 'diacritic-insensitive matching' graded over every Latin letter with a diacritic, in which case B01 is `W` until Ǿ/ǿ fold, or over the letters of place names in Portava's markets, in which case Ǿ/ǿ is a recorded limit and B01 is `C`? And does it cover ß, æ and œ, which the collation standard treats as accent-level differences?"*
+
+### 66.10 Read-only production SQL that would turn this into production evidence
+
+Not run. This lane ran no SQL against production or `portava-ci`.
+
+```sql
+-- B01 / G57: the stored fold of Ǿ in production, and whether any row uses it.
+SELECT public.input_normalize_city_key('Ǿresund') AS acute, public.input_normalize_city_key('Øresund') AS plain;
+SELECT count(*) FROM public.canonical_locations WHERE name ~ '[Ǿǿ]';
+-- DV-30: places the code would call "emerging" on exposure alone (≥ 3 serves, no outcome, 48 h).
+SELECT item_id, count(*) AS serves
+  FROM public.rank_events
+ WHERE surface = 'discovery' AND outcome <> 'analytics' AND served_at >= now() - interval '48 hours'
+ GROUP BY item_id
+HAVING count(*) FILTER (WHERE outcome <> 'impression') = 0 AND count(*) >= 3;
+-- C32: the flag that selects the second ranker.
+SELECT flag, enabled FROM public.feature_flags WHERE flag IN ('COMPASS_V1_RULE_BASED_ENABLED', 'DISCOVERY_ENGINE_MODE');
+-- DC-26 (portava-ci, read-only): which Discovery migrations the CI rehearsal has applied.
+SELECT filename, applied_by, applied_at FROM public.schema_migration_ledger
+ WHERE filename ~ '^(3375|3376|3380|3381|3385|3386|3387|3390|3391|3395|3410|3415|3416|3417|3420|3421|3422)_'
+ ORDER BY filename;
+```
+
+### 66.11 Freshness and scope
+
+This section changed:
+- the `test` line, with one suite appended;
+- census-discovery's CENSUS_SCOPE, with the new suite (every other file this section cites was already watched: 350 cited, 350 watched);
+- this census.
+
+`check:census-freshness` reports census-discovery STALE on exactly one file, `artifacts/api-server/src/test/discoveryVerifyAudit2.test.ts`. The argument for the ledger: it is this section's own evidence suite, it is new, and it changes no code. Verdicts DO move on it: DV-30, C32, DC-26 and B01 go from C to W. No other census is made stale.
+
+It changed no code file, no migration and no other census's verdict table. The rows in other censuses that this section reaches are in 66.6.
+
+### 66.12 What would turn this red
+
+- **DV-30.** A velocity whose served impressions are exposure, not activity: T1 and T2 go red, and the row can be re-graded.
+- **C32.** The route ordering `for_you` through `rankForViewer`, or Compass's scoring moved inside it: R1 goes red.
+- **DC-26.** Two things turn this red:
+  - a green `portava-ci` rehearsal over these migrations, which is evidence, not a test;
+  - a workflow change that rehearses branch migrations before merge, which turns D1 red.
+- **B01.** Ǿ/ǿ folded, on both sides: B1 goes red, as M7 shows. A fold for ß/æ/œ/þ/ŋ or for fullwidth input turns B3 red, and that is not a B01 move.
+
 ## Cited, not graded (check:census-scope-coverage)
 
 - NOT-GRADED: artifacts/api-server/src/compass/CompassExplanationEngine.ts — §13.7 item 3 names Compass's HMAC recommendation-token signer as a refactor this lane declined to make in another lane's file. Discovery's recommendation id is minted by lib/discoveryRecommendationId.ts, and no Discovery verdict rests on the signer.

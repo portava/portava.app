@@ -4052,6 +4052,8 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/migrations/3417_place_momentum_dismiss_excluded.sql",
     "db/rollback/2026-09-27-3417-place-momentum-dismiss-excluded-rollback.sql",
     "artifacts/api-server/src/test/db/placeMomentumDismiss.db.test.ts",
+    // census-discovery §66 (re-verification lane P20): DV-30, C32, DC-26 and B01 move C -> W on this suite.
+    "artifacts/api-server/src/test/discoveryVerifyAudit2.test.ts",
   ],
   // ── ADDED 2026-09-15: census-passport joins the CHECKABLE set ──────────────
   //
