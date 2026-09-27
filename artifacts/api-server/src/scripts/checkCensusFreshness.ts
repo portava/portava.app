@@ -3979,6 +3979,24 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/test/discoveryTripReadInventory.test.ts",
     // §56.14 (integrator): the snapshot entry fix's suite; A13 and A14 are restated on it.
     "artifacts/api-server/src/test/layoverSnapshotEntry.test.ts",
+    // census-discovery §59 (verification lane P12): its own suites and bridge.
+    "artifacts/api-server/src/test/db/discoveryVerifyBridge.ts",
+    "artifacts/api-server/src/test/db/discoveryVerifyChain.db.test.ts",
+    "artifacts/api-server/src/test/db/discoveryVerifyExplain.db.test.ts",
+    "artifacts/api-server/src/test/db/discoveryVerifyPhase03.db.test.ts",
+    "artifacts/api-server/src/test/discoveryVerifyAudit.test.ts",
+    // §59's graded evidence outside Discovery's own files: DC-26's class suites
+    // and DV-76's tagging code, test and the production baseline it reads.
+    "artifacts/api-server/baseline/20260819_baseline_structure.sql",
+    "artifacts/api-server/src/lib/enrichSpans.ts",
+    "artifacts/api-server/src/services/tagging/TaggingService.ts",
+    "artifacts/api-server/src/test/tagging.test.ts",
+    "artifacts/api-server/src/test/portavaRank.test.ts",
+    "artifacts/api-server/src/test/discoveryPde.test.ts",
+    "artifacts/api-server/src/test/placeMomentumSqlParity.test.ts",
+    "artifacts/api-server/src/test/creatorLedgerProperties.test.ts",
+    "artifacts/api-server/src/test/ciWorkflowArchitecture.test.ts",
+    "artifacts/api-server/src/test/discoveryDivergenceReport.test.ts",
   ],
   // ── ADDED 2026-09-15: census-passport joins the CHECKABLE set ──────────────
   //
