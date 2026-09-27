@@ -42,8 +42,8 @@
  *   V6  LIMIT, pinned: the database checks EXISTENCE, not ownership (3386's
  *       header says so) — a writer that bypasses the service CAN link another
  *       viewer's id; only the service's binding stops it
- *   V7  DEFECT, pinned (DV-37): the KEYLESS outcome path, retried after the
- *       same item was served twice, moves the second exposure as well
+ *   V7  FLIPPED at §62 (3420): a KEYED outcome's retry lands once (V7–V7c);
+ *       the KEYLESS path still moves a second exposure, pinned as V7d
  *   V0  the flag rows were never touched
  *
  * The rule version is a clearly named TEST FIXTURE, published in before() and
@@ -86,7 +86,7 @@ const FLAGS = {
 const KEY = "lisbon:for_you:10";
 const Q = "destination=Lisbon&lat=38.72&lng=-9.14";
 
-let alice = "", bob = "", creator = "";
+let alice = "", bob = "", creator = "", carol = "";   // carol: §62's keyed-outcome viewer
 const users: string[] = [];
 const placeIds = [randomUUID(), randomUUID(), randomUUID()];
 let server: Server | null = null;
@@ -169,11 +169,11 @@ describe("DC-26 — recommendation → behaviour → attribution, across lanes, 
   let servedA: { ids: string[]; items: string[] } = { ids: [], items: [] };
 
   before(async () => {
-    alice = seedUser("p12alice"); bob = seedUser("p12bob"); creator = seedUser("p12creator");
-    users.push(alice, bob, creator);
+    alice = seedUser("p12alice"); bob = seedUser("p12bob"); creator = seedUser("p12creator"); carol = seedUser("p15carol");
+    users.push(alice, bob, creator, carol);
     flagRowsBefore = scalar(`SELECT COALESCE(json_agg(t ORDER BY flag), '[]'::json)::text FROM (SELECT flag, enabled, metadata FROM public.feature_flags WHERE flag IN ('discovery_serve_log_enabled','creator_attribution_enabled','DISCOVERY_ENGINE_MODE')) t`) ?? "";
     exec(`INSERT INTO public.creator_rule_versions (creator_type, rule_version, params, effective_from, note) VALUES ('discovery_creator', ${lit(RULE_VERSION)}, '{}'::jsonb, now() - interval '1 second', ${lit(RULE_NOTE)});`);
-    b = bridge({ flags: FLAGS, tokens: { "alice-token": alice, "bob-token": bob } });
+    b = bridge({ flags: FLAGS, tokens: { "alice-token": alice, "bob-token": bob, "carol-token": carol } });
     _setTestClient(b.client, true);
     _setTestServiceClient(b.client);
     const app = express();
@@ -343,12 +343,73 @@ describe("DC-26 — recommendation → behaviour → attribution, across lanes, 
     assert.equal(attributionsFor(subject).length, 1);
   });
 
-  test("V7. DEFECT, pinned (DV-37): a KEYLESS outcome retried after a second serve of the same item moves a SECOND exposure", async () => {
-    // The legacy path — no recommendation_id, no session_id — picks "the most
-    // recent upgradable row for (viewer, item, surface)". Compare-and-set makes
-    // two racing reports move ONE row (E2E O8b), but a sequential retry finds
-    // the NEXT upgradable exposure of the same item and moves it too: one tap of
-    // "not interested", two dismisses, two negative signals.
+  // §59 pinned DV-37 here as test("V7. DEFECT, pinned (DV-37): a KEYLESS outcome retried after a second serve of the same item moves a SECOND exposure"). §62 closed it for KEYED outcomes (3420) and keeps the keyless half pinned, below:
+  test("V7. FLIPPED (§62): a KEYED outcome retried after a second serve lands ONCE and the retry is `duplicate`; one 'Not interested' is one negative signal", async () => {
+    await twoServes(carol);
+    const item = carolItems[0]!;
+    assert.deepEqual(ofItem(carol, item).map((x) => x.outcome), ["impression", "impression"], "precondition: two exposures of one item");
+    const k1 = randomUUID();
+    const signalsBefore = negativeSignalCalls();
+    const first = await outcome("carol-token", { item_id: item, surface: "discovery", outcome: "dismiss", client_event_id: k1 });
+    assert.deepEqual(first.body, { ok: true }, JSON.stringify(first.body));
+    const retry = await outcome("carol-token", { item_id: item, surface: "discovery", outcome: "dismiss", client_event_id: k1 });
+    assert.equal(retry.status, 200);
+    assert.deepEqual(retry.body, { ok: true, duplicate: true }, "the retry is answered as the duplicate it is (was: a NEW outcome)");
+    await settle();
+    const after = ofItem(carol, item);
+    assert.deepEqual(after.map((x) => x.outcome), ["impression", "dismiss"], "ONE exposure moved — the newer one — for one user action (was: both)");
+    assert.equal(after[1]!.outcome_client_event_id, k1);
+    assert.deepEqual(receiptsOf(carol).map((r) => [r.client_event_id, r.rank_event_id, r.outcome]), [[k1, after[1]!.id, "dismiss"]], "and 3420's receipt names that row");
+    assert.equal(negativeSignalCalls() - signalsBefore, 1, "one negative signal (was: two)");
+
+    // Not lossy: a GENUINE second dismissal of the same item — a new action, a new key — still counts.
+    const k2 = randomUUID();
+    const second = await outcome("carol-token", { item_id: item, surface: "discovery", outcome: "dismiss", client_event_id: k2 });
+    assert.deepEqual(second.body, { ok: true });
+    await settle();
+    assert.deepEqual(ofItem(carol, item).map((x) => x.outcome), ["dismiss", "dismiss"]);
+    assert.equal(negativeSignalCalls() - signalsBefore, 2);
+  });
+
+  test("V7b. (§62) the receipt, not the row's column, is the memory: a retried tap after the same row was saved moves no older exposure", async () => {
+    const item = carolItems[1]!;
+    const kTap = randomUUID(), kSave = randomUUID();
+    assert.deepEqual((await outcome("carol-token", { item_id: item, surface: "discovery", outcome: "tap", client_event_id: kTap })).body, { ok: true });
+    assert.deepEqual((await outcome("carol-token", { item_id: item, surface: "discovery", outcome: "save", client_event_id: kSave })).body, { ok: true });
+    const moved = ofItem(carol, item);
+    assert.deepEqual(moved.map((x) => [x.outcome, x.outcome_client_event_id]), [["impression", null], ["save", kSave]], "the save overwrote the row's key");
+    const late = await outcome("carol-token", { item_id: item, surface: "discovery", outcome: "tap", client_event_id: kTap });
+    assert.deepEqual(late.body, { ok: true, duplicate: true }, "the tap's receipt still recognises its retry");
+    await settle();
+    assert.deepEqual(ofItem(carol, item).map((x) => x.outcome), ["impression", "save"], "the older exposure did NOT take the retried tap");
+    const reused = await outcome("carol-token", { item_id: carolItems[2], surface: "discovery", outcome: "tap", client_event_id: kTap });
+    assert.equal(reused.status, 409, "a key re-used for another item is refused, never merged");
+  });
+
+  test("V7c. (§62) two copies of one keyed outcome AT ONCE: exactly one exposure moves and exactly one copy is the duplicate", async () => {
+    const item = carolItems[2]!;
+    const k = randomUUID();
+    const body = { item_id: item, surface: "discovery", outcome: "dismiss", client_event_id: k };
+    const [a, c] = await Promise.all([outcome("carol-token", body), outcome("carol-token", body)]);
+    assert.deepEqual([a.status, c.status], [200, 200], JSON.stringify([a.body, c.body]));
+    assert.equal([a.body, c.body].filter((x) => x?.duplicate === true).length, 1, JSON.stringify([a.body, c.body]));
+    await settle();
+    assert.deepEqual(ofItem(carol, item).map((x) => x.outcome).sort(), ["dismiss", "impression"]);
+    assert.equal(receiptsOf(carol).filter((r) => r.client_event_id === k).length, 1);
+    // Whichever way the two interleaved, the database is the arbiter: the key
+    // that landed cannot land on the OTHER exposure, even from the service role.
+    const still = ofItem(carol, item).find((x) => x.outcome === "impression")!;
+    const forced = await b.client.from("rank_events").update({ outcome: "dismiss", outcome_client_event_id: k }).eq("id", still.id).select("id");
+    assert.equal(forced.error?.code, "23505", JSON.stringify(forced.error));
+    assert.match(String(forced.error?.message), /rank_event_outcome_receipts_pkey/);
+    assert.equal(ofItem(carol, item).find((x) => x.id === still.id)!.outcome, "impression", "and the refused UPDATE moved nothing");
+  });
+
+  test("V7d. STILL PINNED (§62, owner decision): a KEYLESS outcome retried after a second serve still moves a SECOND exposure", async () => {
+    // Every client build shipped before §62's client half sends outcomes with no
+    // key. The server cannot tell their retry from a second action, and refusing
+    // keyless outcomes would drop every one of their signals — a rollout decision
+    // (census-discovery §62.7). Until it is taken, this is the behaviour.
     const item = servedA.items[1]!;
     const again = await serve("alice-token");
     assert.equal(again.status, 200);
@@ -360,9 +421,10 @@ describe("DC-26 — recommendation → behaviour → attribution, across lanes, 
     assert.equal(first.status, 200, JSON.stringify(first.body));
     const retry = await outcome("alice-token", body);
     assert.equal(retry.status, 200, JSON.stringify(retry.body));
-    assert.deepEqual(retry.body, { ok: true }, "the retry is answered as a NEW outcome, not a duplicate");
+    assert.deepEqual(retry.body, { ok: true }, "the keyless retry is answered as a NEW outcome, not a duplicate");
     assert.deepEqual(exposuresOfItem().map((x) => x.outcome).sort(), ["dismiss", "dismiss"],
-      "two exposures moved for one user action — the keyless outcome path is not idempotent where retried");
+      "two exposures moved for one user action — the keyless path is not idempotent where retried");
+    assert.equal(receiptsOf(alice).length, 0, "and it wrote no receipt: no key, no memory");
   });
 
   test("V0. the flag rows were never written, every request was modelled, and the only refusals were the provoked ones", () => {
@@ -370,8 +432,44 @@ describe("DC-26 — recommendation → behaviour → attribution, across lanes, 
     assert.equal(after, flagRowsBefore);
     assert.deepEqual(b.unmodelled, [], `every request the suite issued was modelled:\n${b.unmodelled.join("\n")}`);
     // The database refused exactly what V3, V4 and V5 provoked, and nothing on
-    // the serve, outcome or attribution path failed silently behind a 200.
-    assert.deepEqual(b.failed.map((f) => /:: (\S+)/.exec(f)?.[1]), ["23503", "23503", "23505"], b.failed.join("\n"));
+    // the serve, outcome or attribution path failed silently behind a 200. §62:
+    // plus 3420's receipt key refusing V7c's forced second landing, and at most
+    // once more V7c's racing copy, if it picked the OTHER exposure (whether it
+    // does depends on interleaving; either way it was answered `duplicate`).
+    const receiptKey = b.failed.filter((f) => /rank_event_outcome_receipts_pkey/.test(f));
+    assert.ok(receiptKey.length >= 1 && receiptKey.length <= 2 && receiptKey.every((f) => /:: 23505 /.test(f)), receiptKey.join("\n"));
+    assert.deepEqual(b.failed.filter((f) => !receiptKey.includes(f)).map((f) => /:: (\S+)/.exec(f)?.[1]), ["23503", "23503", "23505"], b.failed.join("\n"));
     assert.ok(!b.log.some((l) => l.path.startsWith("/rest/v1/feature_flags") && l.method !== "GET" && l.method !== "HEAD"));
   });
 });
+
+// ── §62 helpers (below the suite, so the lines §59 cites keep their place) ──
+
+/** carol's served items, in serve order, set by twoServes(). */
+let carolItems: string[] = [];
+
+/** Serve the viewer twice, so every served item has two exposures (served_at apart). */
+async function twoServes(viewer: string): Promise<void> {
+  for (let i = 1; i <= 2; i++) {
+    const r = await serve("carol-token");
+    assert.equal(r.status, 200);
+    carolItems = r.items;
+    await until(() => rows(`SELECT id FROM public.rank_events WHERE user_id = '${viewer}' AND surface = 'discovery' AND outcome <> 'analytics'`).length, (n) => n >= 3 * i);
+    await new Promise((res) => setTimeout(res, 20));   // distinct served_at
+  }
+}
+
+function ofItem(user: string, item: string) {
+  return rows<{ id: string; outcome: string; outcome_client_event_id: string | null; served_at: string }>(
+    `SELECT id, outcome, outcome_client_event_id, served_at FROM public.rank_events WHERE user_id = '${user}' AND item_id = ${lit(item)} AND surface = 'discovery' AND outcome <> 'analytics' ORDER BY served_at, id`);
+}
+
+function receiptsOf(user: string) {
+  return rows<{ client_event_id: string; rank_event_id: string; outcome: string }>(
+    `SELECT client_event_id, rank_event_id, outcome FROM public.rank_event_outcome_receipts WHERE user_id = '${user}' ORDER BY recorded_at`);
+}
+
+/** record_distribution_negative_signal calls the route has made so far (it is fire-and-forget; settle() first). */
+function negativeSignalCalls(): number {
+  return b.log.filter((l) => l.method === "POST" && l.path.startsWith("/rest/v1/rpc/record_distribution_negative_signal")).length;
+}

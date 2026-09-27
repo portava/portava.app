@@ -22,6 +22,7 @@ To reproduce, run `docs/discovery/query-paths-explain.sql` against the harness. 
 | `rank_events` | 250,000 (50,000 `discovery`, 2,000 dismisses) | 234,224, of which 13 `discovery` | §5; §49.4 (2026-09-27: all rows `schema_version` 1, newest 2026-08-27) |
 | `recommendations` | 20,000 | table absent (3376 unapplied) | §49.4 |
 | `place_momentum` | 20,000 | table absent (2892 unapplied) | §47.1 |
+| `rank_event_outcome_receipts` | 20,000 (10 per viewer) | table absent (3420 unapplied) | §62 |
 | `trails` / `content_trails` / `trail_edges` / `trail_follows` / `trail_reports` / `trail_health_snapshots` | 2,000 / 50,000 / 4,000 / 10,000 / 500 / 20,000 | `trails` 0 (2910 applied 2026-09-20); the rest not read | §47.1 |
 
 **Expected production growth, where anything states it.** `recommendations` gets one row per served Discovery request while `discovery_serve_log_enabled` is on, which is its value in production (3376's header). `rank_events` gets one `discovery` row per served item per signed-in serve. No document states an expected corpus size for `discovery_places` or `trails`. The synthetic figures are chosen so a plan has something to choose between. They are not a forecast.
@@ -124,7 +125,11 @@ The Trail-affinity input. **Index:** `idx_trail_follows_user`. Harness: Index Sc
 
 ### QP-24 Discovery's writes to `rank_events`
 
-`lib/discoveryServeLog.ts` and `lib/rankLog.ts` insert one row per served item. `routes/rankEvents.ts` updates or inserts outcomes. An `INSERT` plan says nothing useful. The cost is **index maintenance**: every Discovery row maintains `rank_events_pkey`, `rank_events_user_served_at`, `rank_events_user_item`, `rank_events_features_gin` (a GIN index over the whole `features` jsonb, the most expensive of them), `rank_events_recommendation_idempotency_idx`, and, when it applies, the two partial Discovery indexes (2995, 3391) and `rank_events_event_type`. 3391 adds one partial index that only `surface = 'discovery'` rows pay for. Production writes nothing to `rank_events` today (newest row 2026-08-27, §49.4).
+`lib/discoveryServeLog.ts` and `lib/rankLog.ts` insert one row per served item. `routes/rankEvents.ts` updates or inserts outcomes. An `INSERT` plan says nothing useful. The cost is **index maintenance**: every Discovery row maintains `rank_events_pkey`, `rank_events_user_served_at`, `rank_events_user_item`, `rank_events_features_gin` (a GIN index over the whole `features` jsonb, the most expensive of them), `rank_events_recommendation_idempotency_idx`, and, when it applies, the two partial Discovery indexes (2995, 3391) and `rank_events_event_type`. 3391 adds one partial index that only `surface = 'discovery'` rows pay for. 3420 (§62) adds no index to `rank_events`. A nullable column and a row trigger fire only for an UPDATE that sets `outcome_client_event_id`, which costs one primary-key insert into `rank_event_outcome_receipts`. Production writes nothing to `rank_events` today (newest row 2026-08-27, §49.4).
+
+### QP-25 A keyed outcome's receipt (census-discovery §62, 3420)
+
+`routes/rankEvents.ts` (`readOutcomeReceipt`): `rank_event_outcome_receipts` by `(user_id, client_event_id)`, once per outcome report that carries a `client_event_id`, before any other read. **Index:** the table's primary key, which is also the idempotency arbiter. Harness: Index Scan using `rank_event_outcome_receipts_pkey`, 1 row of 20,000. Expected cardinality: one row per keyed outcome, so at most `rank_events`' outcome count for the client builds that send a key (production: 13 `discovery` rows ever, and no build sends a key yet). The write side is the trigger `rank_events_outcome_receipt`, which fires only on an UPDATE that names `rank_events.outcome_client_event_id`. Only the keyed outcome route does that, so no other `rank_events` write pays for it (QP-24).
 
 ## 3. Findings this document does not fix
 
@@ -211,6 +216,7 @@ One row per table or index that a migration in `artifacts/api-server/src/migrati
 | index | `recommendations_user_served_at` | `recommendations` | 3376 | not a hot path: account erasure and per-viewer audits | partial on signed-in rows |
 | index | `recommendations_served_at` | `recommendations` | 3376 | QP-21 | the per-window denominator |
 | index | `rank_events_discovery_served_at` | `rank_events` | 3391 | QP-19, QP-09 | Discovery exposures in a window, without scanning other surfaces |
+| table | `rank_event_outcome_receipts` | `rank_event_outcome_receipts` | 3420 | QP-25 | one row per keyed outcome that landed. Its primary key `(user_id, client_event_id)` is the only index: the idempotency arbiter, the lookup, and account erasure's cascade (§62) |
 
 ## 5. What would turn this red
 
