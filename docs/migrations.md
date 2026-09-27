@@ -3660,3 +3660,27 @@ files' objects as missing:
 - the PR merges and the `main` job applies them.
 
 Both were rehearsed on the local PostgreSQL 16 harness only (census-media §36, census-map §45).
+
+**3352 also turns two live column checks red** in `api-server · check:all + live_pulse gate` on the same
+head:
+- `check:write-path-columns` flags the insert at `routes/posts.ts` that names `posts.perspective_vantage`;
+- `check:missing-live-columns` flags the column itself.
+
+In behaviour, nothing is broken. That insert passes `vantageDecision.write`, which is `undefined` unless
+`media_perspective_vantage_enabled` is on and a vantage was chosen, and supabase-js drops an undefined key.
+So no request names the column while the flag (seeded `false` by 3352 itself) is off. The checks stay red
+until 3352 is applied or the PR merges. No allowlist entry was added.
+
+**The 3350 hand-apply goes against this repo's recorded rule, stated here so it is not repeated.** The
+`checkMissingLiveColumns.ts` entries for 2745, 2810 and 2813 record the rule. Hand-applying an unmerged
+branch's migrations to `portava-ci` is recorded as the root cause of `CI (live DB)` going red on main's own
+sha. The workflow comment in `live-db.yml` gives the reason: the database is then ahead of `main` with no
+merged commit accounting for it. 3350 was applied before that was read.
+
+What it leaves:
+- `portava-ci` carries the `neighborhood_only` label and a `false` flag row that `main` does not declare.
+  `main`'s audits check presence of claimed objects only, so this does not turn `main` red.
+- On merge, the runner treats 3350 as proven applied, so its bytes must not change before then. A changed
+  checksum is reported as a mismatch.
+- If the PR does not merge, the owner can run `db/rollback/` for 3350. It removes the flag row and the
+  ledger row and leaves the label inert, because PostgreSQL cannot drop an enum value.
