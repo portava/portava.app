@@ -206,13 +206,19 @@ function makeDb(
         return d;
       },
       update(patch: Row) {
+        // `.select()` after an update is PostgREST's return=representation: the
+        // rows the UPDATE actually matched. The lifecycle writer is a
+        // compare-and-set and reads that count, so the fake has to return it.
+        let representation = false;
         const u: any = {
           eq(c: string, v: any) { filters.push((r) => r[c] === v); return u; },
+          select() { representation = true; return u; },
           then(res: any) {
             if (broken()) return Promise.resolve(err()).then(res);
-            for (const r of rows()) Object.assign(r, patch);
+            const hit = rows();
+            for (const r of hit) Object.assign(r, patch);
             writes.push({ table, op: "update", rows: patch });
-            return Promise.resolve({ data: null, error: null }).then(res);
+            return Promise.resolve({ data: representation ? hit.map((r) => ({ ...r })) : null, error: null }).then(res);
           },
         };
         return u;

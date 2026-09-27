@@ -49,7 +49,7 @@ import {
 } from "../../lib/discoveryLocalMomentum.js";
 import type { DerivedStoreProvenance } from "../../lib/discoveryRankProvenance.js";
 import {
-  canonicaliseTrailProposal, capTrailLabels,
+  canonicaliseTrailProposal, canonicalTrailSlug, capTrailLabels, DUPLICATE_TITLE_SIMILARITY,
   isTrailLifecycleState, isTrailLifecycleTransitionAllowed,
   TRAIL_EDGE_TYPES, TRAIL_SOURCE_TYPES, TRAIL_RELATIONSHIPS,
   type ExistingTrail, type TrailCreationRefusal, type TrailLabel,
@@ -66,6 +66,9 @@ import {
   type TrailMembershipRow,
 } from "../../lib/discoveryTrailAffinity.js";
 import { logger as rootLogger } from "../../lib/logger.js";
+import { fetchBlockedSet, submitterIsVisible } from "../../lib/blocks.js";
+import { decidePostReadable, isPostPublished } from "../../lib/postVisibility.js";
+import { NON_ACTIVE_ACCOUNT_STATUSES } from "../../lib/mediaEligibility.js";
 
 const logger = rootLogger.child({ mod: "trailService" });
 
@@ -83,6 +86,17 @@ const TRAIL_COLUMNS =
 /** Columns read from `content_trails`. */
 const MEMBER_COLUMNS =
   "id, trail_id, source_type, source_id, relationship, signal, source, confidence, contributor_id, content_state, created_at";
+/** Trails read as one proposal's comparison set; a full read is logged as truncated. */
+const MAX_PROPOSAL_PEERS = 1000;
+
+/**
+ * A value for a PostgREST logical filter (`or=(…)`), double-quoted with `"` and
+ * `\` escaped — PostgREST's own quoting rule for reserved characters. Unquoted,
+ * a comma or parenthesis in user text rewrites the filter it is spliced into.
+ */
+function postgrestQuoted(value: string): string {
+  return `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+}
 
 export interface TrailRow {
   id: string;
@@ -166,10 +180,30 @@ export interface TrailDetail {
   memberCount: number;
 }
 
-async function readTrail(sc: any, trailId: string): Promise<{ refusal: TrailRefusal; trail: TrailRow | null }> {
+/**
+ * One Trail by id.
+ *
+ * AN ARCHIVED TRAIL IS NOT VISIBLE (census-discovery §51). 2910's RLS policy
+ * `trails_public_select` hides it from every signed-in client
+ * (`USING (lifecycle_status <> 'archived')`) and `listTrails` already drops
+ * it, but every read in this file runs on the SERVICE client, which bypasses
+ * RLS — so GET …/:id, …/modules, …/trending, follow, attach, suggest and report
+ * all served and wrote to a Trail the database says no client may see. The
+ * predicate is restated here, where the policy cannot reach, for the same
+ * reason `loadViewerTrailModifier` restates `trail_follows_own_select`: an
+ * archived Trail is `unknown_trail` to every viewer-facing caller. Only the
+ * lifecycle writer passes `includeArchived`, so §7's terminal state refuses a
+ * move instead of pretending the Trail is not there.
+ */
+async function readTrail(
+  sc: any, trailId: string, opts: { includeArchived?: boolean } = {},
+): Promise<{ refusal: TrailRefusal; trail: TrailRow | null }> {
   const { data, error } = await sc.from("trails").select(TRAIL_COLUMNS).eq("id", trailId).maybeSingle();
   if (error) return { refusal: refusalFor(error, "readTrail"), trail: null };
   if (!data) return { refusal: "unknown_trail", trail: null };
+  if (!opts.includeArchived && (data as TrailRow).lifecycle_status === "archived") {
+    return { refusal: "unknown_trail", trail: null };
+  }
   return { refusal: null, trail: data as TrailRow };
 }
 
@@ -195,12 +229,162 @@ async function readMembers(sc: any, trailId: string): Promise<{ refusal: TrailRe
  * which `computeTrailHealth` records as unmeasured rather than as clean.
  */
 async function readOpenReportCount(sc: any, trailId: string): Promise<number | null> {
-  const { data, error } = await sc.from("trail_reports").select("id").eq("trail_id", trailId).is("resolution", null);
+  const { data, error } = await sc.from("trail_reports").select("id, reported_by, content_trail_id")
+    .eq("trail_id", trailId).is("resolution", null);
   if (error) {
     logger.warn({ trailId, code: error?.code, message: error?.message }, "trail report count unread");
     return null;
   }
-  return (data ?? []).length;
+  return distinctReportCount((data ?? []) as any[]);
+}
+
+// ── What a viewer may be SERVED of a Trail (census-discovery §51) ───────────
+
+/** A member the viewer may be served, with the two identities §10 needs. */
+export interface ServableMember extends MemberRow {
+  /**
+   * The person the CONTENT belongs to — a post's author, an event's host, a
+   * route's owner, a community place's submitter — or null where the source
+   * type has no author column (a canonical `places` row, an itinerary). §10's
+   * "diversify creators" and DV-13's "one creator" mean THIS person, not the
+   * contributor who attached the row: an author whose posts were suggested by
+   * ten different users is one creator, and was ten under a contributor cap.
+   */
+  creatorId: string | null;
+  /**
+   * §10's "cluster by place": a place member's own id; a post's canonical place
+   * (or, failing that, its location place); otherwise null. Posts carried NO
+   * place here before, so §10's own case — "many near-duplicate POSTS" about
+   * one place — was never clustered at all.
+   */
+  clusterPlaceId: string | null;
+}
+
+/**
+ * The members a Trail may SERVE, to one viewer. Three rules, each the one the
+ * rest of the product already applies, none invented here:
+ *
+ *  REVOCATION   A member whose source was removed or hidden after it was
+ *               attached is not served. `content_trails.source_id` has no
+ *               foreign key (it is polymorphic), so a deleted, tombstoned,
+ *               unpublished, not-yet-due or non-public post, and an event or
+ *               route whose row is gone, stayed in every module for ever. The
+ *               post rules are lib/postVisibility.ts's (`decidePostReadable`,
+ *               `isPostPublished`) plus the status / deleted / tombstoned /
+ *               publish_at gates lib/mediaEligibility.ts applies; a Trail is a
+ *               public space, so trip-only and followers-only posts are served
+ *               to their author and to no one else (the fail-closed default of
+ *               `decidePostReadable` when membership is not resolved).
+ *  BLOCKS       lib/blocks.ts's symmetric rule (`submitterIsVisible`): a member
+ *               contributed OR created by someone the viewer blocked, or who
+ *               blocked the viewer, is not served to them; an unreadable block
+ *               list withholds every member that carries a person.
+ *  STANDING     A creator whose account is not `active` is not distributed —
+ *               the rule GET /discovery/community and the media feeds apply
+ *               (NON_ACTIVE_ACCOUNT_STATUSES); unreadable standing withholds
+ *               every member that has a creator.
+ *
+ * FAIL CLOSED on every read: a source table that cannot be read withholds the
+ * members it would have vouched for, because serving an unverified member is
+ * the leak these rules exist to prevent. A `place` id may name a
+ * `discovery_places` row or a canonical `places` row — 2910 does not say which,
+ * and attach does not check — so a place absent from `discovery_places` is
+ * served as an authorless venue fact rather than treated as removed; an
+ * `itinerary` has no table at all. Both are named in §51 as residuals.
+ */
+async function servableMembers(
+  sc: any, members: readonly MemberRow[], viewerId: string | null, nowMs: number = Date.now(),
+): Promise<ServableMember[]> {
+  const idsOf = (type: string) => [...new Set(members.filter((m) => m.source_type === type).map((m) => m.source_id))];
+  const readRows = async (table: string, cols: string, ids: string[]): Promise<Map<string, any> | null> => {
+    if (ids.length === 0) return new Map();
+    const { data, error } = await sc.from(table).select(cols).in("id", ids);
+    if (error || !Array.isArray(data)) {
+      logger.warn({ table, code: error?.code, message: error?.message }, "trail member sources unread — withheld");
+      return null;
+    }
+    return new Map((data as any[]).map((r) => [String(r.id), r]));
+  };
+
+  const [posts, events, routes, places] = await Promise.all([
+    readRows("posts", "id, author_id, visibility, status, post_status, deleted_at, tombstoned_at, publish_at, trip_id, canonical_place_id, location_place_id", idsOf("post")),
+    readRows("events", "id, host_id", idsOf("event")),
+    readRows("route_plans", "id, owner_user_id", idsOf("route")),
+    readRows("discovery_places", "id, submitted_by", idsOf("place")),
+  ]);
+
+  const resolved: ServableMember[] = [];
+  for (const m of members) {
+    let creatorId: string | null = null;
+    let clusterPlaceId: string | null = null;
+    if (m.source_type === "post") {
+      const p = posts?.get(m.source_id);
+      if (!p) continue;                                   // unread (null map) or removed
+      if (p.deleted_at || p.tombstoned_at) continue;
+      if ((p.status ?? "active") !== "active" || !isPostPublished(p)) continue;
+      if (p.publish_at && Date.parse(p.publish_at) > nowMs) continue;
+      if (!decidePostReadable({ author_id: p.author_id, visibility: p.visibility, trip_id: p.trip_id }, viewerId ?? "", false, false).readable) continue;
+      creatorId = typeof p.author_id === "string" ? p.author_id : null;
+      clusterPlaceId = (p.canonical_place_id ?? p.location_place_id ?? null) as string | null;
+    } else if (m.source_type === "event") {
+      const e = events?.get(m.source_id);
+      if (!e) continue;
+      creatorId = typeof e.host_id === "string" ? e.host_id : null;
+    } else if (m.source_type === "route") {
+      const r = routes?.get(m.source_id);
+      if (!r) continue;
+      creatorId = typeof r.owner_user_id === "string" ? r.owner_user_id : null;
+    } else if (m.source_type === "place") {
+      if (!places) continue;
+      const d = places.get(m.source_id);
+      creatorId = d && typeof d.submitted_by === "string" ? d.submitted_by : null;
+      clusterPlaceId = m.source_id;
+    }
+    resolved.push({ ...m, creatorId, clusterPlaceId });
+  }
+
+  const creatorIds = [...new Set(resolved.map((m) => m.creatorId).filter((c): c is string => typeof c === "string"))];
+  let inactive: Set<string> | null = new Set();
+  if (creatorIds.length > 0) {
+    const { data, error } = await sc.from("profiles").select("id, account_status")
+      .in("id", creatorIds).in("account_status", [...NON_ACTIVE_ACCOUNT_STATUSES]);
+    if (error) {
+      logger.warn({ code: error?.code, message: error?.message }, "trail creator standing unread — creator-attributed members withheld");
+      inactive = null;
+    } else {
+      inactive = new Set(((data ?? []) as any[]).map((r) => String(r.id)));
+    }
+  }
+  const blocked = viewerId ? await fetchBlockedSet(sc, viewerId) : new Set<string>();
+
+  return resolved.filter((m) => {
+    if (m.creatorId && (inactive === null || inactive.has(m.creatorId))) return false;
+    return submitterIsVisible(m.contributor_id, blocked) && submitterIsVisible(m.creatorId, blocked);
+  });
+}
+
+/**
+ * Open reports as §11's `report_rate` numerator: ONE per reporter per target.
+ *
+ * `POST …/reports` is a retry-prone mutation (`11` §1 "idempotency for
+ * retries"), and a row per request made the numerator a count of REQUESTS: one
+ * signed-in user re-submitting the same report drove `report_rate` to 1 and
+ * the Trail's health multiplier to its floor, on their own. The write now
+ * refuses an identical open report (`reportTrail`), and this count is the
+ * guarantee that does not depend on that check winning a race: the same
+ * reporter reporting the same target — the Trail itself, or one membership row
+ * — counts once whatever the reason. A report whose reporter's profile is gone
+ * (`reported_by` NULL, ON DELETE SET NULL) cannot be attributed and counts on
+ * its own.
+ */
+function distinctReportCount(rows: ReadonlyArray<{ id?: unknown; reported_by?: unknown; content_trail_id?: unknown }>): number {
+  const seen = new Set<string>();
+  for (const r of rows) {
+    seen.add(typeof r?.reported_by === "string"
+      ? `${r.reported_by}|${typeof r.content_trail_id === "string" ? r.content_trail_id : ""}`
+      : `row|${String(r?.id)}`);
+  }
+  return seen.size;
 }
 
 /** `11` §3 action 2 — get Trail, with §11 health and §12 status. */
@@ -479,7 +663,7 @@ function exposureCountsFrom(
  * bounded exploration slots (DV-22).
  */
 export async function getTrailModules(
-  sc: any, trailId: string, opts: { pageSize?: number; nowMs?: number } = {},
+  sc: any, trailId: string, opts: { pageSize?: number; nowMs?: number; viewerId?: string | null } = {},
 ): Promise<TrailModulesResult> {
   if (!sc) return { refusal: "no_service_client", modules: [], health: null, momentumProvenance: null };
   const nowMs = opts.nowMs ?? Date.now();
@@ -490,6 +674,8 @@ export async function getTrailModules(
   const m = await readMembers(sc, trailId);
   if (m.refusal) return { refusal: m.refusal, modules: [], health: null, momentumProvenance: null };
 
+  // §11 health is a property of the WHOLE Trail and is measured over every
+  // member; what is SERVED is the viewer's view of it (`servableMembers`).
   const health = computeTrailHealth({
     members: m.members.map((r) => ({
       source_id: r.source_id, contributor_id: r.contributor_id,
@@ -498,16 +684,17 @@ export async function getTrailModules(
     reportCount: await readOpenReportCount(sc, trailId),
     nowMs,
   });
+  const served = await servableMembers(sc, m.members, opts.viewerId ?? null, nowMs);
 
   // ONE `rank_events` read serves both of this function's readings: §9's
   // exposure denominators for the exploration candidates and `trending_now`'s
   // momentum for the place members. Both are read in BOTH served id spaces
   // (`readMemberEvents`), on the surface the momentum loader reads.
-  const byNewest = [...m.members].sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at));
+  const byNewest = [...served].sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at));
   const explorationCandidates = byNewest.filter(
     (r) => r.content_state === "just_arrived" || r.content_state === "rediscovered",
   );
-  const placeMembers = m.members.filter((r) => r.source_type === "place");
+  const placeMembers = served.filter((r) => r.source_type === "place");
   const events: MemberEventRead | undefined = placeMembers.length + explorationCandidates.length > 0
     ? await readMemberEvents(sc, [...placeMembers, ...explorationCandidates], nowMs, "discovery")
     : { rows: [], truncated: false };
@@ -535,17 +722,20 @@ export async function getTrailModules(
   const toItem = (r: MemberRow) => ({
     id: r.id, sourceType: r.source_type, sourceId: r.source_id, contentState: r.content_state,
   });
-  const saturationItem = (r: MemberRow) => ({
+  // §10's two identities (see ServableMember): the CREATOR where the source has
+  // one, else the contributor who attached it; and the place a post is ABOUT,
+  // not only a place member's own id.
+  const saturationItem = (r: ServableMember) => ({
     id: r.id,
-    placeId: r.source_type === "place" ? r.source_id : null,
-    contributorId: r.contributor_id,
+    placeId: r.clusterPlaceId,
+    contributorId: r.creatorId ?? r.contributor_id,
   });
 
   const build = (
     key: TrailModule["key"],
     objective: TrailModule["objective"],
     horizonMs: number | null,
-    rows: MemberRow[],
+    rows: ServableMember[],
     /**
      * §9's reserved ids, considered FIRST so the page bound cannot drop them.
      *
@@ -559,17 +749,30 @@ export async function getTrailModules(
      */
     reserved?: ReadonlySet<string>,
   ): TrailModule => {
-    const considered = reserved && reserved.size > 0
+    const ordered = reserved && reserved.size > 0
       ? [...rows.filter((r) => reserved.has(r.id)), ...rows.filter((r) => !reserved.has(r.id))]
       : rows;
+    // ONE CONTENT, ONE SLOT. A place attached as primary AND as two Signals is
+    // three membership rows for one thing; the place cap used to let two of
+    // them onto the same page, which is §10's saturation in its purest form.
+    // The first row in the module's own order stands for the content; the
+    // others are the same item, not a remainder, so they are not counted in
+    // "more from this place".
+    const seen = new Set<string>();
+    const considered = ordered.filter((r) => {
+      const key = `${r.source_type}:${r.source_id}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
     const d = diversifyTrailPage(considered.map(saturationItem), { pageSize });
     const kept = new Set(d.page.map((i) => i.id));
     const items = rows.filter((r) => kept.has(r.id)).map(toItem);
     return { key, objective, horizonMs, items, moreFromThisPlace: d.moreFromThisPlace, explorationSlots: null };
   };
 
-  const byConfidence = [...m.members].sort((a, b) => Number(b.confidence) - Number(a.confidence));
-  const byMomentum = [...m.members].sort(
+  const byConfidence = [...served].sort((a, b) => Number(b.confidence) - Number(a.confidence));
+  const byMomentum = [...served].sort(
     (a, b) => (momentum[b.source_id] ?? 0) - (momentum[a.source_id] ?? 0),
   ).filter((r) => (momentum[r.source_id] ?? 0) > 0);
 
@@ -647,16 +850,40 @@ export async function relatedTrails(sc: any, trailId: string): Promise<RelatedTr
   const inc = await sc.from("trail_edges").select("from_trail_id, to_trail_id, edge_type, strength").eq("to_trail_id", trailId);
   if (inc.error) return { refusal: refusalFor(inc.error, "relatedTrails.in"), edges: [] };
 
+  // §18's `trails.parent_trail_id` IS the parent/child relationship; the
+  // `child` edge proposeTrail writes beside it is the same fact in graph form.
+  // That edge insert is deliberately non-fatal (a Trail that was created is not
+  // undone to report a missing edge), so a failed edge write used to leave a
+  // sub-Trail whose pointer names its parent and which navigation could not
+  // reach in either direction. The pointer is read here too, in both
+  // directions, and a pair the edge table already carries is not listed twice.
+  const kids = await sc.from("trails").select("id").eq("parent_trail_id", trailId);
+  if (kids.error) return { refusal: refusalFor(kids.error, "relatedTrails.children"), edges: [] };
+
+  const listed = new Set<string>();
   const rows = [
     ...((out.data ?? []) as any[]).map((e) => ({ other: e.to_trail_id, edgeType: e.edge_type, strength: Number(e.strength), direction: "out" as const })),
     ...((inc.data ?? []) as any[]).map((e) => ({ other: e.from_trail_id, edgeType: e.edge_type, strength: Number(e.strength), direction: "in" as const })),
-  ];
+    ...(t.trail.parent_trail_id
+      ? [{ other: t.trail.parent_trail_id, edgeType: "child", strength: 1, direction: "in" as const }] : []),
+    ...((kids.data ?? []) as any[]).map((k) => ({ other: k.id as string, edgeType: "child", strength: 1, direction: "out" as const })),
+  ].filter((r) => {
+    const key = `${r.other}|${r.edgeType}|${r.direction}`;
+    if (listed.has(key)) return false;
+    listed.add(key);
+    return true;
+  });
   const ids = [...new Set(rows.map((r) => r.other))];
   if (ids.length === 0) return { refusal: null, edges: [] };
 
   const { data, error } = await sc.from("trails").select(TRAIL_COLUMNS).in("id", ids);
   if (error) return { refusal: refusalFor(error, "relatedTrails.trails"), edges: [] };
-  const byId = new Map<string, TrailRow>((data ?? []).map((r: any) => [r.id as string, r as TrailRow]));
+  // An ARCHIVED neighbour is not navigable to: GET …/:id answers 404 for it
+  // (readTrail), so listing it would hand the client a link that is dead on
+  // arrival. Dropped here for the same reason readTrail hides it.
+  const byId = new Map<string, TrailRow>(((data ?? []) as any[])
+    .filter((r) => r.lifecycle_status !== "archived")
+    .map((r) => [r.id as string, r as TrailRow]));
 
   return {
     refusal: null,
@@ -700,7 +927,12 @@ export interface TrailTrendingResult {
  * route to decide whether to say anything at all; per-item momentum is used for
  * ORDER and is never serialised. See routes/trails.ts.
  */
-export async function trailTrending(sc: any, trailId: string, nowMs = Date.now()): Promise<TrailTrendingResult> {
+/** Items GET …/trending lists — the bound it has always had (`.slice(0, 20)`). */
+export const TRAIL_TRENDING_PAGE_SIZE = 20;
+
+export async function trailTrending(
+  sc: any, trailId: string, nowMs = Date.now(), opts: { viewerId?: string | null } = {},
+): Promise<TrailTrendingResult> {
   // A FUNCTION, not a shared object. Every refusal path used to build its own
   // literal; spreading one constant instead would hand every one of them the
   // same `items` array, which is mutable on the published type.
@@ -742,10 +974,27 @@ export async function trailTrending(sc: any, trailId: string, nowMs = Date.now()
     logger.warn({ trailId }, "trail trending event read failed");
   }
 
-  const items = [...m.members]
+  // The list is what this VIEWER may be served (`servableMembers`), one row per
+  // content, and it passes through §10's creator and place caps like every
+  // module does — a momentum-ordered list is exactly where one creator's
+  // surge would otherwise fill all twenty places (DV-13). The boolean above is
+  // the Trail's and is measured over every member.
+  const servable = await servableMembers(sc, m.members, opts.viewerId ?? null, nowMs);
+  const seen = new Set<string>();
+  const ranked = servable
     .filter((r) => (perItem[r.source_id] ?? 0) > 0)
     .sort((a, b) => (perItem[b.source_id] ?? 0) - (perItem[a.source_id] ?? 0))
-    .slice(0, 20)
+    .filter((r) => {
+      const key = `${r.source_type}:${r.source_id}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  const capped = new Set(diversifyTrailPage(ranked.map((r) => ({
+    id: r.id, placeId: r.clusterPlaceId, contributorId: r.creatorId ?? r.contributor_id,
+  })), { pageSize: TRAIL_TRENDING_PAGE_SIZE }).page.map((i) => i.id));
+  const items = ranked
+    .filter((r) => capped.has(r.id))
     .map((r) => ({ id: r.id, sourceType: r.source_type, sourceId: r.source_id }));
 
   return { refusal: null, momentum: trailMomentum, items, momentumProvenance };
@@ -792,15 +1041,22 @@ async function readOpenReportCounts(
   sc: any, trailIds: readonly string[],
 ): Promise<Record<string, number> | undefined> {
   const out: Record<string, number> = {};
-  const { data, error } = await sc.from("trail_reports").select("id, trail_id")
+  const { data, error } = await sc.from("trail_reports").select("id, trail_id, reported_by, content_trail_id")
     .in("trail_id", trailIds).is("resolution", null);
   if (error) {
     logger.warn({ code: error?.code, message: error?.message }, "trail report counts unread");
     return undefined;
   }
+  // Grouped per Trail, then counted one per reporter per target — the same
+  // numerator `readOpenReportCount` uses, so the ranker's health input and the
+  // Trail page's cannot disagree about one Trail.
+  const byTrail = new Map<string, any[]>();
   for (const r of (data ?? []) as any[]) {
-    if (typeof r?.trail_id === "string") out[r.trail_id] = (out[r.trail_id] ?? 0) + 1;
+    if (typeof r?.trail_id !== "string") continue;
+    const list = byTrail.get(r.trail_id);
+    if (list) list.push(r); else byTrail.set(r.trail_id, [r]);
   }
+  for (const [trailId, rows] of byTrail) out[trailId] = distinctReportCount(rows);
   return out;
 }
 
@@ -927,12 +1183,19 @@ export interface ProposeTrailResult {
 /**
  * `11` §3 action 7 — propose Trail. `02` §5's four canonicalization checks run
  * BEFORE the insert, against the Trails that already exist for the proposal's
- * destination plus any Trail whose slug already collides.
+ * destination plus every Trail that could be a CHECK 1 duplicate from any
+ * destination (see the comparison-set note in the body).
  *
  * The comparison set is deliberately NOT "all Trails": §5's checks 2, 3 and 4
- * are destination-scoped, and check 1 is caught by the UNIQUE slug constraint
- * even when the comparison set misses it. Reading every Trail to compare would
+ * are destination-scoped, and CHECK 1's candidates are bounded by a token
+ * pigeonhole rather than found by scanning. Reading every Trail to compare would
  * be an unbounded scan that gets slower exactly as the catalogue succeeds.
+ *
+ * NOT SERIALISED, stated rather than implied: two proposals racing each other
+ * each run the checks against a catalogue that does not yet hold the other, so
+ * two near-duplicates with DIFFERENT slugs can both be admitted. An identical
+ * slug cannot (UNIQUE). Closing that needs the checks inside the database,
+ * under a lock — census-discovery §51 names it as DC-03's residual.
  */
 export async function proposeTrail(
   sc: any,
@@ -958,10 +1221,39 @@ export async function proposeTrail(
   if (!sc) return { ...none, refusal: "no_service_client" };
 
   const destination = typeof input?.destination === "string" ? input.destination.trim().toLowerCase() : null;
+  // THE COMPARISON SET, and why it is wider than the destination (§51).
+  //
+  // CHECK 1 (duplicate title similarity) is destination-INDEPENDENT by its own
+  // definition in lib/discoveryTrailObject.ts — "two Trails called 'Bangkok
+  // After Dark' are one Trail even if someone files the second under Phuket" —
+  // but the set it ran over was read by destination, so it was not: "After Dark
+  // Bangkok" filed under Phuket shares every token with "Bangkok After Dark",
+  // slugs differently, and was admitted as a second canonical Trail. The UNIQUE
+  // slug catches only an identical slug.
+  //
+  // The set is widened without a full scan by the pigeonhole bound: a Trail at
+  // similarity ≥ DUPLICATE_TITLE_SIMILARITY shares at least
+  // ceil(DUPLICATE_TITLE_SIMILARITY·|T|) of this title's |T| tokens, so it
+  // contains at least one of ANY |T| − ceil(DUPLICATE_TITLE_SIMILARITY·|T|) + 1
+  // of them. The longest are read, as `slug ILIKE %token%` — a superset, never
+  // a miss. Tokens are [a-z0-9]+ by construction and cannot alter the filter;
+  // the destination is user text and is double-quoted as PostgREST requires,
+  // where it used to be interpolated bare (a comma in it rewrote the filter).
+  const tokens = [...new Set((canonicalTrailSlug(input?.title) ?? "").split("-").filter(Boolean))]
+    .sort((a, b) => b.length - a.length || (a < b ? -1 : 1));
+  const needed = tokens.length - Math.ceil(DUPLICATE_TITLE_SIMILARITY * tokens.length) + 1;
+  const peerFilter = [
+    destination ? `destination.eq.${postgrestQuoted(destination)}` : null,
+    "destination.is.null",
+    ...tokens.slice(0, Math.max(0, needed)).map((tok) => `slug.ilike.*${tok}*`),
+  ].filter((x): x is string => x !== null).join(",");
   const peers = await sc.from("trails").select("id, slug, title, destination")
-    .or(destination ? `destination.eq.${destination},destination.is.null` : "destination.is.null")
-    .limit(500);
+    .or(peerFilter)
+    .limit(MAX_PROPOSAL_PEERS);
   if (peers.error) return { ...none, refusal: refusalFor(peers.error, "proposeTrail.peers") };
+  if (((peers.data ?? []) as any[]).length >= MAX_PROPOSAL_PEERS) {
+    logger.warn({ destination, peerLimit: MAX_PROPOSAL_PEERS }, "trail proposal comparison set reached its bound — canonicalisation ran over a truncated catalogue");
+  }
 
   const existing = ((peers.data ?? []) as any[]).map((r): ExistingTrail => ({
     id: r.id, slug: r.slug, title: r.title, destination: r.destination,
@@ -970,7 +1262,18 @@ export async function proposeTrail(
 
   const parentId = typeof input?.parentTrailId === "string" && input.parentTrailId.length > 0
     ? input.parentTrailId : null;
-  const parentExists = parentId !== null && existing.some((e) => e.id === parentId);
+  // The declared parent is read BY ID, not looked for in the comparison set:
+  // §6's "geographic sub-Trail" (Bangkok → Thonglor) has a different
+  // destination from its parent by definition, and a parent outside the set was
+  // answered "does not exist". Read through `readTrail`, so an ARCHIVED parent
+  // is refused like a missing one — a sub-Trail under a Trail no client may
+  // open would be navigable to a 404.
+  let parentExists = false;
+  if (parentId !== null) {
+    const parent = await readTrail(sc, parentId);
+    if (parent.refusal && parent.refusal !== "unknown_trail") return { ...none, refusal: parent.refusal };
+    parentExists = parent.trail !== null;
+  }
   const WAIVED_BY_PARENT = new Set(["existing_parent_child", "destination_overlap", "semantic_overlap"]);
   const refusals = parentExists
     ? check.refusals.filter((r) => !(WAIVED_BY_PARENT.has(r.check) && r.conflictsWith === parentId))
@@ -1091,19 +1394,41 @@ export async function attachContentToTrail(
   // §4's budgets are per CONTENT, not per Trail, so the held labels are read
   // across every Trail this content already belongs to.
   const sourceIds = [...new Set(labels.map((l) => l.sourceId))];
-  const held = await sc.from("content_trails").select("trail_id, relationship, signal, source_id")
+  const held = await sc.from("content_trails").select("trail_id, relationship, signal, source_type, source_id")
     .in("source_id", sourceIds);
   if (held.error) return { refusal: refusalFor(held.error, "attach.held"), attached: 0, capRefusals: [] };
 
-  const existingLabels: TrailLabel[] = ((held.data ?? []) as any[]).map((r) => ({
-    relationship: r.relationship, trailId: r.trail_id, signal: r.signal ?? null,
-  }));
   const proposed: TrailLabel[] = labels.map((l) => ({
     relationship: l.relationship as TrailRelationship,
     trailId,
     signal: l.relationship === "signal" ? (l.signal ?? null) : null,
   }));
-  const capped = capTrailLabels(existingLabels, proposed);
+
+  // §4's budgets are PER CONTENT, so they are judged per content — the key the
+  // 2910/3380 trigger counts on, (source_type, source_id). This used to hand
+  // ONE `capTrailLabels` call every held label of every content in the batch
+  // and every proposed label of the batch, as if they were one content's: two
+  // different posts attached as `primary` in one request collided as a
+  // "duplicate" (their labels differ only by the content, which the label key
+  // does not carry), and one content's full budget refused another's label.
+  const contentKey = (sourceType: string, sourceId: string) => `${sourceType}:${sourceId}`;
+  const groups = new Map<string, TrailLabel[]>();
+  labels.forEach((l, i) => {
+    const key = contentKey(l.sourceType, l.sourceId);
+    const list = groups.get(key);
+    if (list) list.push(proposed[i]!); else groups.set(key, [proposed[i]!]);
+  });
+  const accepted: TrailLabel[] = [];
+  const refused: LabelRefusal[] = [];
+  for (const [key, group] of groups) {
+    const existingLabels: TrailLabel[] = ((held.data ?? []) as any[])
+      .filter((r) => contentKey(r.source_type, r.source_id) === key)
+      .map((r) => ({ relationship: r.relationship, trailId: r.trail_id, signal: r.signal ?? null }));
+    const judged = capTrailLabels(existingLabels, group);
+    accepted.push(...judged.accepted);
+    refused.push(...judged.refusals);
+  }
+  const capped = { accepted, refusals: refused };
   if (capped.accepted.length === 0) {
     return { refusal: null, attached: 0, capRefusals: capped.refusals };
   }
@@ -1215,14 +1540,39 @@ export async function reportTrail(
   trailId: string,
   input: { reason: string; contentTrailId?: string | null },
   reporterId: string,
-): Promise<{ refusal: TrailRefusal; reported: boolean }> {
+): Promise<{ refusal: TrailRefusal; reported: boolean; duplicate?: boolean }> {
   if (!sc) return { refusal: "no_service_client", reported: false };
   const t = await readTrail(sc, trailId);
   if (t.refusal || !t.trail) return { refusal: t.refusal, reported: false };
 
+  const contentTrailId = typeof input?.contentTrailId === "string" && input.contentTrailId.length > 0
+    ? input.contentTrailId : null;
+  // A membership report names a row OF THIS TRAIL. The foreign key only proves
+  // the row exists somewhere, so without this read a report filed against Trail
+  // A could name a membership of Trail B and be counted in A's `report_rate`.
+  // Unknown and elsewhere are the same answer, as for detach.
+  if (contentTrailId) {
+    const row = await sc.from("content_trails").select("id")
+      .eq("id", contentTrailId).eq("trail_id", trailId).maybeSingle();
+    if (row.error) return { refusal: refusalFor(row.error, "reportTrail.content"), reported: false };
+    if (!row.data) return { refusal: "unknown_trail", reported: false };
+  }
+
+  // `11` §1 "idempotency for retries": the same reporter re-submitting the same
+  // open report is a retry, answered as reported and written once. Racing
+  // duplicates can still both land — there is no unique index to arbitrate —
+  // and that is harmless: `distinctReportCount` counts one per reporter per
+  // target whatever the table holds.
+  let open = sc.from("trail_reports").select("id")
+    .eq("trail_id", trailId).eq("reported_by", reporterId).eq("reason", input?.reason).is("resolution", null);
+  open = contentTrailId ? open.eq("content_trail_id", contentTrailId) : open.is("content_trail_id", null);
+  const prior = await open.limit(1);
+  if (prior.error) return { refusal: refusalFor(prior.error, "reportTrail.prior"), reported: false };
+  if (((prior.data ?? []) as any[]).length > 0) return { refusal: null, reported: true, duplicate: true };
+
   const { error } = await sc.from("trail_reports").insert({
     trail_id: trailId,
-    content_trail_id: input?.contentTrailId ?? null,
+    content_trail_id: contentTrailId,
     reported_by: reporterId,
     reason: input?.reason,
     // `resolution` is deliberately NOT written: §15 makes resolving an admin
@@ -1246,16 +1596,29 @@ export async function moveTrailLifecycle(
 ): Promise<{ refusal: TrailRefusal; moved: boolean; from: TrailLifecycleState | null }> {
   if (!sc) return { refusal: "no_service_client", moved: false, from: null };
   if (!isTrailLifecycleState(to)) return { refusal: "invalid_request", moved: false, from: null };
-  const t = await readTrail(sc, trailId);
+  const t = await readTrail(sc, trailId, { includeArchived: true });
   if (t.refusal || !t.trail) return { refusal: t.refusal, moved: false, from: null };
   const from = t.trail.lifecycle_status;
   if (!isTrailLifecycleTransitionAllowed(from, to)) {
     return { refusal: "invalid_request", moved: false, from };
   }
-  const { error } = await sc.from("trails")
+  // COMPARE-AND-SET on the state the decision above was made on. Without it
+  // this was read → compare → write: a Trail that moved between the read and
+  // the write (another request archived it, or took it proposed → active →
+  // stale) was overwritten on the strength of a state it no longer had, and the
+  // caller was told `moved: true`. Zero rows matched means the premise is gone,
+  // and that is reported, not papered over. Migration 3381 refuses an illegal
+  // move at the database too (23514); that arrives here as the same refusal.
+  const { data, error } = await sc.from("trails")
     .update({ lifecycle_status: to, updated_at: new Date().toISOString() })
-    .eq("id", trailId);
-  if (error) return { refusal: refusalFor(error, "moveTrailLifecycle"), moved: false, from };
+    .eq("id", trailId)
+    .eq("lifecycle_status", from)
+    .select("id");
+  if (error) {
+    if (String(error.code) === "23514") return { refusal: "invalid_request", moved: false, from };
+    return { refusal: refusalFor(error, "moveTrailLifecycle"), moved: false, from };
+  }
+  if (!Array.isArray(data) || data.length === 0) return { refusal: "invalid_request", moved: false, from };
   return { refusal: null, moved: true, from };
 }
 

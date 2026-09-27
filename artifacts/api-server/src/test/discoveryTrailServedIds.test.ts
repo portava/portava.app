@@ -287,6 +287,9 @@ describe("stale corpus — one Trail's two momentum reads no longer share a cach
         member("m-place", { source_id: P_HOT }),
         member("m-post", { source_type: "post", source_id: POST, contributor_id: OTHER }),
       ],
+      // The post exists and is public: a Trail serves only what its source
+      // still lets a stranger read (TrailService.servableMembers).
+      posts: [{ id: POST, author_id: OTHER, visibility: "public", status: "active", post_status: "published" }],
       rank_events: served(POST, 8, "save"),
     });
     // The modules read first (it used to cache a PLACE-ONLY corpus under `trail:<id>`)…
