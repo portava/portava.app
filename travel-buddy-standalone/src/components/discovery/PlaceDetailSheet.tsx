@@ -213,7 +213,7 @@ export function PlaceDetailSheet({ place, visible, onClose, onAddToPlan, city, r
 
   const openDirections = () => {
     if (!hasRealCoords) return;
-    reportTap(place.id);
+    reportTap(place.id, place.recommendationId);
     if (Platform.OS === 'web') {
       // Open in a new tab on web — navigating the current tab to
       // maps.google.com blanks the PWA instead of just launching directions.
@@ -238,7 +238,7 @@ export function PlaceDetailSheet({ place, visible, onClose, onAddToPlan, city, r
   const handleAlreadyKnown = () => {
     if (!place || known) return;
     setKnown(true);
-    reportTap(place.id);
+    reportTap(place.id, place.recommendationId);
     recordAlreadyKnown(place.id).catch(() => {});
   };
 
@@ -340,7 +340,7 @@ export function PlaceDetailSheet({ place, visible, onClose, onAddToPlan, city, r
                 .then((nowSaved) => {
                   setSaved(nowSaved);
                   // Outcomes follow the API, not the tap: only a CONFIRMED save.
-                  if (next && nowSaved) reportSave(place.id);
+                  if (next && nowSaved) reportSave(place.id, place.recommendationId);
                 })
                 .catch(() => setSaved((s) => !s));
             }}
@@ -543,7 +543,7 @@ export function PlaceDetailSheet({ place, visible, onClose, onAddToPlan, city, r
             accessibilityLabel="Open the full place page with live signals"
             style={styles.openPlaceBtn}
             onPress={() => {
-              reportTap(place.id);
+              reportTap(place.id, place.recommendationId);
               closeThenNavigate(onClose, `/place/${place.canonicalPlaceId}`);
             }}
           >
@@ -581,7 +581,7 @@ export function PlaceDetailSheet({ place, visible, onClose, onAddToPlan, city, r
         onSaved={() => {
           setPickerVisible(false);
           // The picker only calls onSaved after the API accepted the add.
-          reportSave(place.id);
+          reportSave(place.id, place.recommendationId);
         }}
       />
 

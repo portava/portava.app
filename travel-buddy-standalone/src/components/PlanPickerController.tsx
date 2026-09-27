@@ -54,6 +54,8 @@ export interface PlanPickerSource {
   rankSurface?: RankSurface | null;
   /** Session UUID from the originating feed response, when that feed returns one. */
   rankSessionId?: string | null;
+  /** DV-46: the served item's own `recommendationId`, echoed on the trip_add report when present. */
+  rankRecommendationId?: string | null;
 }
 
 // ── Context ───────────────────────────────────────────────────────────────────
@@ -242,7 +244,7 @@ export function PlanPickerControllerProvider({ children }: { children: React.Rea
       // the item was already in the trip, so nothing was added and the intent it
       // would record was recorded the first time. Reporting there would count
       // one commitment twice on a table whose other outcomes are counted once.
-      reportTripAdd(source.id);
+      reportTripAdd(source.id, source.rankRecommendationId);
 
       setAddedSourceIds((prev) => {
         const next = new Set(prev);

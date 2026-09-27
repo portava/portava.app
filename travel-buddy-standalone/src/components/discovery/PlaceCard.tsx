@@ -181,7 +181,7 @@ export function PlaceCard({ place, onPress, onAddToPlan, onAddToRoute, showDista
   // the matching fix.
   const openDirections = () => {
     if (place.lat == null || place.lng == null) return;
-    reportTap(place.id);
+    reportTap(place.id, place.recommendationId);
     // Pin the exact coordinate as the destination — never a name/query search.
     // A name search (e.g. "maps/search/?query=Cebu+Zoo") can return a list of
     // similarly-named results instead of navigating to this specific place.
@@ -204,7 +204,7 @@ export function PlaceCard({ place, onPress, onAddToPlan, onAddToRoute, showDista
   return (
     <Pressable
       style={({ pressed }) => [styles.card, pressed && { opacity: layout.pressedOpacity }]}
-      onPress={() => { reportTap(place.id); onPress(); }}
+      onPress={() => { reportTap(place.id, place.recommendationId); onPress(); }}
       // The whole card opens the place. Without the role it announced as a
       // group of text a reader could walk but not obviously act on. NO
       // accessibilityLabel on purpose: `accessible` already derives the name
@@ -283,7 +283,7 @@ export function PlaceCard({ place, onPress, onAddToPlan, onAddToRoute, showDista
               .then((ok) => {
                 if (!ok) { setSaved(!next); return; }
                 // Outcomes follow the API, not the tap: only a CONFIRMED save.
-                if (next) reportSave(place.id);
+                if (next) reportSave(place.id, place.recommendationId);
               })
               .catch(() => setSaved(!next));
           }}
@@ -486,7 +486,7 @@ export function PlaceCard({ place, onPress, onAddToPlan, onAddToRoute, showDista
                   .then((ok) => {
                     if (!ok) { setSaved(!next); return; }
                     // Outcomes follow the API, not the tap: only a CONFIRMED save.
-                    if (next) reportSave(place.id);
+                    if (next) reportSave(place.id, place.recommendationId);
                   })
                   .catch(() => setSaved(!next));
               }}
@@ -528,7 +528,7 @@ export function PlaceCard({ place, onPress, onAddToPlan, onAddToRoute, showDista
                   if (dismissing) return;
                   setDismissing(true);
                   setDismissFailed(false);
-                  void reportDismiss(place.id)
+                  void reportDismiss(place.id, place.recommendationId)
                     .then((ok) => {
                       setDismissing(false);
                       if (ok) onDismissed(place.id);
@@ -582,7 +582,7 @@ export function PlaceCard({ place, onPress, onAddToPlan, onAddToRoute, showDista
           setSavedCount((c) => c + 1);
           setPickerVisible(false);
           // The picker only calls onSaved after the API accepted the add.
-          reportSave(place.id);
+          reportSave(place.id, place.recommendationId);
         }}
       />
     </Pressable>

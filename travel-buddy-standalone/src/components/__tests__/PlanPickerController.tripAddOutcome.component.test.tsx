@@ -127,6 +127,8 @@ const DISCOVERY_SOURCE: PlanPickerSource = {
   title:       'Test Ramen Shop',
   category:    'food',
   rankSurface: 'discovery',
+  // DV-46: the served item's exposure id, carried to the trip_add report.
+  rankRecommendationId: 'rec_PlanPicker_trip_01',
 };
 
 /** Opens the picker on mount so the test needs no press to reach step 1. */
@@ -167,7 +169,7 @@ it('a committed add reports trip_add for the source id, on the served surface', 
   await addToTrip(DISCOVERY_SOURCE);
 
   await waitFor(() => expect(mockReportTripAdd).toHaveBeenCalledTimes(1));
-  expect(mockReportTripAdd).toHaveBeenCalledWith('node/12345');
+  expect(mockReportTripAdd).toHaveBeenCalledWith('node/12345', 'rec_PlanPicker_trip_01');
   expect(lastHookArgs().surface).toBe('discovery');
   // GET /discovery returns no session_id; the key must be absent, not invented.
   expect(lastHookArgs().sessionId).toBeNull();

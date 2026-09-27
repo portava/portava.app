@@ -3823,6 +3823,21 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/test/db/discoverySearchCanonicalFold.db.test.ts",
     "artifacts/api-server/src/test/db/discoverySearchProtection.db.test.ts",
     "artifacts/api-server/src/test/db/discoverySearchPsqlClient.ts",
+    // WIDENED 2026-09-27 by §50 (lane P4, client correctness): DSV2-04's client leg (the chips, the reader and its
+    // device-clock expiry, the card that mounts them), C19's byline resolver, the served-id echo, the viewer scope that
+    // governs both device caches, and the suites that are §50's evidence.
+    "travel-buddy-standalone/src/services/discoveryViewerScope.ts",
+    "travel-buddy-standalone/src/features/discovery/candidateProjection.ts",
+    "travel-buddy-standalone/src/components/discovery/DiscoveryCandidateChips.tsx",
+    "travel-buddy-standalone/src/features/discovery/communityByline.ts",
+    "travel-buddy-standalone/src/features/discovery/__tests__/candidateProjection.expiry.component.test.ts",
+    "travel-buddy-standalone/src/features/discovery/__tests__/candidateProjection.component.test.ts",
+    "travel-buddy-standalone/src/components/discovery/__tests__/PlaceCard.candidateProjection.component.test.tsx",
+    "travel-buddy-standalone/src/components/discovery/__tests__/PlaceCard.whyNowExpiry.component.test.tsx",
+    "travel-buddy-standalone/src/services/__tests__/discovery.viewerScope.component.test.ts",
+    "travel-buddy-standalone/src/hooks/__tests__/useCommunityDiscovery.viewerScope.component.test.tsx",
+    "travel-buddy-standalone/src/hooks/__tests__/useRankOutcome.recommendationId.component.test.ts",
+    "travel-buddy-standalone/src/context/__tests__/SessionContext.discoveryViewer.component.test.tsx",
   ],
   // ── ADDED 2026-09-15: census-passport joins the CHECKABLE set ──────────────
   //
