@@ -6482,6 +6482,131 @@ The freshness ledger JSON is the integrator's to write.
 - NOT-GRADED: artifacts/api-server/src/test/verifiedMinorGateReach.test.ts — cited in §47.5 only as the suite whose fixture shape masked the age-gate defect; the gate is graded through discoveryServePathIsolation I4 and discoveryCacheRevocation R8.
 - NOT-GRADED: artifacts/api-server/src/lib/mediaFeedItem.ts — cited in §47.7 only as the reference avatar gate on the media surfaces; the Discovery residual it is compared with is named, not graded, here.
 
+## §50 — Client correctness (lane P4): the three Discovery reads are sent as the viewer, the device caches are per viewer, the served id comes back, and why-now expires on the phone's clock
+
+Branch `disc-p4-client`: `74ae5cead` plus P2 (`1a13e01ea`) and P3 (`ef7fa4435`), both merged clean; the client change is `9d19e5288`. No server runtime file was changed (the one server-tree edit is §50.6's `CENSUS_SCOPE` widening). Nothing here is deployed, so every statement below is about code and tests at this tree, not about production.
+
+### 50.1 Three census statements a read-only pre-read called stale, verified from code
+
+| statement | verdict at this tree, and evidence |
+|---|---|
+| DSV2-04 **N**: *"No Discovery client renders the observed/predicted distinction"* (§15.2, from §11.4) | **STALE, half.** The first criterion was already built: `travel-buddy-standalone/src/components/discovery/PlaceCard.tsx:361#<DiscoveryCandidateChips candidate={place.candidate} />` mounts a chip whose family is a separate node, `travel-buddy-standalone/src/components/discovery/DiscoveryCandidateChips.tsx:88#candidate-truth-${presentation.kind}`, and `PlaceCard.candidateProjection.component.test.tsx` pins all seven §5.1 classes to distinct labels and families. **The second criterion was not.** A why-now claim became stale only when the SERVE said so. The module said *"this module invents no clock of its own"*, so a claim that was fresh when served stayed "current" on a card left open, and on every repaint from the 4-minute device cache. Fixed in §50.3. |
+| C19: *"Stays W until then"* — until the client resolves the byline through `displayIdentity(displayName, handle)` — and §18.3's *"C19 (the client byline, §6 D2)"* | **STALE in its reason; the verdict stands.** The client half is done. `travel-buddy-standalone/src/features/discovery/communityByline.ts:59#export function communityBylineText(` reads `(displayName, handle)` only, and every client byline goes through it: `travel-buddy-standalone/src/components/DiscoveryWall.tsx:411#By {communityBylineText(gem.submittedBy)}`, `:520`, and `travel-buddy-standalone/src/hooks/useCommunityDiscovery.ts:49#communityBylineText(by),`. No client reader of `submittedBy.name` remains (grep of `src/` and `app/`). What still fails is the server's shape: `artifacts/api-server/src/routes/discovery.ts:3095#: (profile.username ?` still bakes `@username` into `name`. |
+| DV-83's two named consumers (§28.1) are fixed | **TRUE, and already recorded.** §29.1 closed both, and the code agrees: `travel-buddy-standalone/src/components/discovery/DiscoveryEventPostsRail.tsx:105#if (refused) {` returns before the empty check, and `ForYouTab` renders `community.refused`. Under the last-statement rule §28.1's cell is superseded by §29, not newly stale. DV-83 stays `W` on §29.2's grounds 2 (the `partial` policy is the owner's) and 3 (no static guard). |
+
+### 50.2 Defects found this session and fixed (integrator-verified before the lane started)
+
+**1. The three reads went out anonymous.** `GET /api/discovery`, `/community` and `/counts` were fetched with no Authorization header. Search, suggest and feed in the same file each sent one. Every production serve was therefore anonymous, and the viewer's blocks (both directions), mutes, dismissals, age bounds and Layover gating never applied, and no serve telemetry was written (§47.1 found the same thing from the server side). **Now** each read resolves the token through the same `freshToken()` refresh-first helper and builds the same `Authorization: Bearer` header, via one lease: `travel-buddy-standalone/src/services/discovery.ts:697#const res = await fetch(`, `:423`, `:806`. The header is omitted, not blanked, when signed out: `travel-buddy-standalone/src/services/discoveryViewerScope.ts:172#init: token ? { headers: { Authorization:`. The edit to `services/discovery.ts` is line-neutral through `:1131` (the hunks are `-N +N`, and the new code sits at the foot of the file), so the census's anchors at `:697` and `:1131` still hold.
+
+**2. The device caches were not per viewer.** Once the token is sent, the answer is per viewer in CONTENT (P2, `40249b0ba`), and each item carries a `recommendationId` minted for that viewer's exposure. The 4-minute page cache was keyed `(dest, cat, radius, page)`, and the community hook's module cache `(city, sort)`. Neither had a viewer term, and nothing invalidated them. **Now** both are governed by one scope, (viewer, epoch), in `travel-buddy-standalone/src/services/discoveryViewerScope.ts`:
+
+- **Tagged and cleared.** Every entry carries the scope it was written in. Every scope change clears both caches (`travel-buddy-standalone/src/services/discovery.ts:1267#onDiscoveryScopeChange(() => _CLIENT_CACHE.clear());`).
+- **What moves the scope.** The auth event, inside SessionContext's callback and before any screen re-renders, which is what protects a synchronous read at mount. Every request's own token. A successful block, unblock, mute, unmute or "Not interested".
+- **A response fetched for another viewer is discarded**, not returned: `travel-buddy-standalone/src/services/discovery.ts:703#if (!isLeaseViewerCurrent(lease)) return { ok: false, error: VIEWER_CHANGED_ERROR };`.
+- **A response whose epoch moved mid-flight** is shown but never written: `travel-buddy-standalone/src/services/discovery.ts:709#if (!refusedEverything(refusal) && isCurrentDiscoveryScope(lease.scope)) {`.
+- **Refused and failed bodies are still never cached**, now also per viewer. This is DV-83's cache criterion, re-verified.
+- **A mounted community hook** drops the previous viewer's gems on an account switch and re-fetches.
+
+**3. The served id never came back (DV-46's client leg).** Hop 3 of the P3 contract (`artifacts/api-server/src/lib/discoveryRecommendationRecord.ts:335#rule: "the client echoes the item's`) was unimplemented. The outcome body was `{ item_id, surface, outcome, session_id? }`. **Now** tap, save, dismissal and trip_add send the served item's own id: `travel-buddy-standalone/src/hooks/useRankOutcome.ts:118#if (rid) body.recommendation_id = rid;`. The key is omitted when the item carried none, and omitted when the id is not 2891's 22-character shape. PlaceCard, PlaceDetailSheet and the plan picker pass `place.recommendationId` straight through. A dismissal the server accepted invalidates the Discovery caches (`travel-buddy-standalone/src/hooks/useRankOutcome.ts:243#if (res.ok) invalidateDiscoveryCaches();`). **At this head the route's zod schema strips the key** (`artifacts/api-server/src/routes/rankEvents.ts` `outcomeBodySchema` has no `recommendation_id` member), so hop 4's binding is the server lane's to wire. Sending the key today is harmless. **DV-46 is not moved.**
+
+**4. Why-now expiry — DSV2-04's second criterion**, fixed as §50.3.
+
+### 50.3 DSV2-04: why-now expires at the device clock
+
+The rule, `travel-buddy-standalone/src/features/discovery/candidateProjection.ts:286#export function whyNowPresentation(`, has three outcomes:
+
+- **Explicitly stale when the serve said so.** This needs no clock.
+- **Gone when the projection carries no validity** (`travel-buddy-standalone/src/features/discovery/candidateProjection.ts:298#if (expiresAtMs === null) return { claims: [], stale: false, expiresAtMs: null };`). Nothing establishes that the claim is current, and nothing says it expired.
+- **Explicitly stale at `now >= horizon`**, and current strictly before it (`travel-buddy-standalone/src/features/discovery/candidateProjection.ts:299#if (nowMs >= expiresAtMs) return { claims, stale: true, expiresAtMs: null };`).
+
+**How the horizon is built.** It is the device's receipt instant (`travel-buddy-standalone/src/features/discovery/candidateProjection.ts:226#export function stampCandidateReceipt<T extends { places?: unknown }>(data: T, receivedAtMs: number): T {`, called at `travel-buddy-standalone/src/services/discovery.ts:700`) plus a server DURATION, so a skewed phone clock cannot move it. The card re-renders itself at the horizon: `travel-buddy-standalone/src/components/discovery/DiscoveryCandidateChips.tsx:65#const timer = setTimeout(() => setNowMs((prev) => Math.max(Date.now(), prev + 1)), wait);`.
+
+**The server does not yet send that duration.** `DiscoveryCandidate` carries no validity, although the horizon exists server-side as `DiscoveryLiveRank.interception.horizonAt`, the earliest of min(validUntil, observedAt + TTL) over the qualified claims (`artifacts/api-server/src/lib/compassDecision.ts:304#horizonAt: Number.isFinite(horizonMs) ? new Date(horizonMs).toISOString() : null,`). So at this tree the client DROPS every why-now: the fail-closed branch.
+
+**The exact server hunk for the integrator to route.** It is line-neutral through `discoveryCandidate.ts:438`, and was typechecked against this tree and reverted byte-identical:
+
+- a `whyNowValidForMs: number | null` member on line 158;
+- `whyNowValidForMs: whyNowValidForMsOf(row.id, ctx, nowMs)` on line 430;
+- and, at the foot of the file, `whyNowValidForMsOf(id, ctx, nowMs)`. It returns null when `whyNowOf` is null or the grade has no finite `interception.horizonAt`; otherwise `max(0, horizonMs − nowMs)`.
+
+The field is additive and flag-gated with the rest of the projection (2361).
+
+### 50.4 Row moves
+
+| ID | was | now | evidence |
+|---|---|---|---|
+| DSV2-04 | N | **W** | Criterion 1 passes in code and tests: `travel-buddy-standalone/src/components/discovery/DiscoveryCandidateChips.tsx:88#candidate-truth-${presentation.kind}`, and all seven classes in `PlaceCard.candidateProjection.component.test.tsx`. Criterion 2 passes on the client at the device clock (`travel-buddy-standalone/src/features/discovery/candidateProjection.ts:299#if (nowMs >= expiresAtMs) return { claims, stale: true, expiresAtMs: null };`). `candidateProjection.expiry.component.test.ts` (15 tests) and `PlaceCard.whyNowExpiry.component.test.tsx` (3) cover the boundary: one ms before, at, and after the horizon; the on-screen flip with nothing else re-rendering the card; a cache repaint past the horizon; and no validity. **Why not `C`:** the server sends no validity (§50.3), so today the client's "current" branch is unreachable and every why-now disappears. That satisfies "disappear" only vacuously, and fails the row's own *"preserve why-now … through API and client"*. **What turns this `C`:** the §50.3 hunk plus a server test that `whyNowValidForMs` equals the grade's horizon minus the serve instant. No further client change is needed; the client tests already drive the current branch with the field present. It stays dark on production behind 2361 (absent there, §31) either way. |
+
+**Rows re-read and left where they are:**
+
+- **C19 `W`.** The client half is done (§50.1). The remaining ground is the server's legacy `name`, which still carries `@username`. **The hunk, for the integrator to route:** at `artifacts/api-server/src/routes/discovery.ts:3093#name:        (nameAllowed`, emit `name` in the canonical shape: the real name iff `nameAllowed`, else null. Do it ONLY once the oldest supported app build contains `features/discovery/communityByline.ts`, because an older build renders `name` raw and would show a blank byline. That gate is a rollout decision, not code.
+- **DV-83 `W`.** §29.2's grounds 2 and 3 are unchanged. The cache criterion is now proved per viewer as well (§50.2 item 2).
+- **DV-46 `W`.** The client leg (hop 3) is built and tested. The route does not read the field yet (§50.2 item 3).
+- **DV-09 `W`.** §47.6 says the Compass `for_you` branch is *"unreachable from the shipping client"*. At this tree that is no longer true of the code: the client sends the token. It stays true of production until the client ships. No verdict moves on an undeployed client.
+
+### 50.5 Tests and mutations (P24)
+
+**Six new suites, 66 tests, all green.**
+
+| suite | tests |
+|---|---:|
+| `discovery.viewerScope.component.test.ts` | 23 |
+| `useCommunityDiscovery.viewerScope.component.test.tsx` | 6 |
+| `useRankOutcome.recommendationId.component.test.ts` | 14 |
+| `SessionContext.discoveryViewer.component.test.tsx` | 5 |
+| `candidateProjection.expiry.component.test.ts` | 15 |
+| `PlaceCard.whyNowExpiry.component.test.tsx` | 3 |
+
+The token chain in the service suite is the REAL `apiToken.ts`, behind its `_setTestSupabase` seam, so refresh-before-expiry is the production logic.
+
+Seven existing suites were updated, because the contract changed and not to make them pass:
+
+- **`PlaceCard.rankOutcome`, `PlaceCard.notInterested`, `PlaceDetailSheet.rankOutcome`, `PlaceDetailSheet.alreadyKnown` and `PlanPickerController.tripAddOutcome`** now assert that the served id is threaded.
+- **`PlaceCard.candidateProjection` and `candidateProjection`**: a "fresh" why-now now needs a validity window.
+
+**The mutation matrix.** Fifty-six targeted mutations were run, each restored and hash-checked byte-identical, and the `git diff` hash was identical before and after the whole matrix. **Every one of the 66 new tests went red under at least one.**
+
+| mutation | what went red |
+|---|---|
+| M1 — `/discovery` sent without the header (the original defect) | 4 |
+| M2a / M2b — `/community` / `/counts` without it | 1 each |
+| M3 — a header sent when signed out | 2 |
+| M4 — the viewer keyed by token string, not the JWT subject | the refresh control |
+| M5 — both page-cache isolation layers off | the 9 isolation and invalidation tests |
+| M6 — clear-on-change alone | the "not even held in memory" test |
+| M7 — a request does not name its viewer | 2 |
+| M8 / M8b — cross-viewer in-flight answers returned | 1 each |
+| M9a–d — block / unblock / mute / unmute do not invalidate | 1–3 each |
+| M10 — a failed block invalidates | its control |
+| M11 — no write-time check | "does not evict the fresh page" |
+| M12 / M13 — a refused body / an HTTP failure cached | 1 each |
+| M14 — no receipt stamp | the cache-repaint expiry test |
+| M15–M20 | the six community-hook tests |
+| M-R1–R8 | the recommendation-id and dismissal-invalidation tests |
+| M-S1–S4, plus M-S2e (scope moved in an effect after render instead of in the callback) | the SessionContext tests |
+| M-C1, M-C2, M-C3, M-C5 … M-C12 (boundary as current, server-clock anchor, no validity treated as current, stamp not overwriting, …) | the expiry tests |
+| M-P1 / M-P3 / M-P4 | the on-screen flip, the no-clock card, and the PlaceCard threading |
+| M-P5 / M-P6 — PlaceDetailSheet / the plan picker report without the served id | 4 / 1 |
+
+**Two findings from the matrix:**
+
+- **One mutant SURVIVED the first draft and bought an assertion.** M-C2 anchored the window on a server `servedAt`. The test only checked a server clock AHEAD of the device, which lengthens the window. It now checks both directions.
+- **One mutant survives by design: M5r**, the page cache's read-time scope check removed ALONE. Clear-on-change plus the write-time check already make a stale entry unreachable, so this line is a redundant privacy layer. It is recorded, not deleted. M5, which removes it together with clear-on-change, turns nine tests red.
+
+### 50.6 Freshness, and the stale files this section found
+
+**`CENSUS_SCOPE` is widened** by the files §50.4 grades on: the new scope module, `candidateProjection.ts`, `DiscoveryCandidateChips.tsx`, `PlaceCard.tsx`, `communityByline.ts`, `useRankOutcome.ts`, and the evidence suites. The already-watched `services/discovery.ts`, `hooks/useCommunityDiscovery.ts` and `app/(tabs)/discovery.tsx` changed in place and line-neutrally where they are cited. The freshness ledger JSON is the integrator's to write.
+
+**Stale at this tree, each true of production until the client ships:**
+
+- §47.1, *"The shipping client calls `GET /discovery` with no bearer token"*.
+- `docs/discovery/cache-architecture-design-note.md` line 18, the same sentence.
+- `artifacts/api-server/src/lib/discoveryRecommendationRecord.ts` line 36, *"The shipping client calls … without an Authorization header"*.
+- §47.7's *"Client (P4)"* residual, now discharged in code.
+
+- NOT-GRADED: artifacts/api-server/src/lib/discoveryRecommendationRecord.ts — cited in §50.2 and §50.6 as P3's contract (hop 3) and for a stale sentence; DV-46 is P3's and the server lane's to move.
+- NOT-GRADED: travel-buddy-standalone/src/services/apiToken.ts — cited in §50.5 only as the refresh-first token helper the service suite drives through its test seam; no verdict rests on it, and its signed-out-vs-unreadable ambiguity is the blocker ledger's (API_TOKEN_SIGNED_OUT_VS_UNREADABLE).
+
 ## Cited, not graded (check:census-scope-coverage)
 
 - NOT-GRADED: artifacts/api-server/src/compass/CompassExplanationEngine.ts — §13.7 item 3 names Compass's HMAC recommendation-token signer as a refactor this lane declined to make in another lane's file. Discovery's recommendation id is minted by lib/discoveryRecommendationId.ts, and no Discovery verdict rests on the signer.

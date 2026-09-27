@@ -3784,6 +3784,23 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     // WIDENED 2026-09-27 by the coverage-guard fix (census-media §32.14): evidence for keeping a verdict — A14 stays W on the layover travel-time provider (provenance row, §39.6), and §41.1 corrects DV-44's evidence with mediaFeed's live watch_feed writer.
     "artifacts/api-server/src/services/airport/LayoverTravelTime.ts",
     "artifacts/api-server/src/routes/mediaFeed.ts",
+    // WIDENED 2026-09-27 by §50 (lane P4, client correctness): DSV2-04's client leg (the chips, the reader and its
+    // device-clock expiry, the card that mounts them), C19's byline resolver, the served-id echo, the viewer scope that
+    // governs both device caches, and the suites that are §50's evidence.
+    "travel-buddy-standalone/src/services/discoveryViewerScope.ts",
+    "travel-buddy-standalone/src/features/discovery/candidateProjection.ts",
+    "travel-buddy-standalone/src/components/discovery/DiscoveryCandidateChips.tsx",
+    "travel-buddy-standalone/src/components/discovery/PlaceCard.tsx",
+    "travel-buddy-standalone/src/features/discovery/communityByline.ts",
+    "travel-buddy-standalone/src/hooks/useRankOutcome.ts",
+    "travel-buddy-standalone/src/features/discovery/__tests__/candidateProjection.expiry.component.test.ts",
+    "travel-buddy-standalone/src/features/discovery/__tests__/candidateProjection.component.test.ts",
+    "travel-buddy-standalone/src/components/discovery/__tests__/PlaceCard.candidateProjection.component.test.tsx",
+    "travel-buddy-standalone/src/components/discovery/__tests__/PlaceCard.whyNowExpiry.component.test.tsx",
+    "travel-buddy-standalone/src/services/__tests__/discovery.viewerScope.component.test.ts",
+    "travel-buddy-standalone/src/hooks/__tests__/useCommunityDiscovery.viewerScope.component.test.tsx",
+    "travel-buddy-standalone/src/hooks/__tests__/useRankOutcome.recommendationId.component.test.ts",
+    "travel-buddy-standalone/src/context/__tests__/SessionContext.discoveryViewer.component.test.tsx",
   ],
   // ── ADDED 2026-09-15: census-passport joins the CHECKABLE set ──────────────
   //
