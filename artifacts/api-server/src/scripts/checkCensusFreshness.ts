@@ -2007,6 +2007,9 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/migrations/3362_posts_client_column_grants.sql",
     "db/rollback/2026-09-27-3362-posts-client-column-grants-rollback.sql",
     "artifacts/api-server/src/test/db/postsClientColumnGrants.db.test.ts",
+    // WIDENED 2026-09-27 by census-media §43 (lane G2): the owner-aware form of mapPublicPost's place rule that §43's five readers share, and the suite §43 cites as its evidence (including its both-ways cases).
+    "artifacts/api-server/src/lib/postPlaceDisclosure.ts",
+    "artifacts/api-server/src/test/postLocationModeRemainingReaders.test.ts",
     // WIDENED 2026-09-27 by census-media §44.11 (lane G1 follow-up): migration 3363 (the client roles' column grants on the three tables holding a copy of a post's place), its rollback, and the database suite that proves both.
     "artifacts/api-server/src/migrations/3363_place_copies_client_column_grants.sql",
     "db/rollback/2026-09-27-3363-place-copies-client-column-grants-rollback.sql",

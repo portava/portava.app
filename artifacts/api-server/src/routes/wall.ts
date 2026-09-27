@@ -135,7 +135,7 @@ const CANDIDATE_FETCH = 150;
 const POST_COLUMNS =
   "id, author_id, trip_id, content, visibility, status, post_status, created_at, published_at, " +
   "canonical_place_id, has_video, media_count, category, location_city, location_country, " +
-  "like_count, comment_count, save_count";
+  "like_count, comment_count, save_count, location_privacy_mode"; // census-media §43: the owner's mode, read with the row so a withheld place can be marked (lib/postPlaceDisclosure)
 
 /**
  * Turn a PostgREST `{ data, error }` envelope into a throw.
@@ -781,7 +781,7 @@ export async function loadCandidates(
       tripId: r.trip_id ?? null,
       publishedAt: String(r.published_at ?? r.created_at),
       text: r.content ?? null,
-      place: placeRef,
+      place: withPostPlaceMark(placeRef, r), // census-media §43: the same ref, marked (never serialised) when mapPublicPost withholds this post's place; wallItemsForViewer strips it for a non-owner at the response
       actor,
       authorAccountStatus: prof?.account_status ?? "active",
       isDeleted: false,
@@ -795,7 +795,7 @@ export async function loadCandidates(
       saveCount: Number(r.save_count ?? 0),
       isFirstImpression: true,
     });
-    if (placeRef) placeByObject.set(id, placeRef);
+    if (placeRef) placeByObject.set(id, withPostPlaceMark(placeRef, r)!); // census-media §43: marked as above, so the Live strip can tell a withheld post's place from a disclosed one
   }
 
   return { candidates, signals, placeByObject, followingReachedEnd };
@@ -1244,8 +1244,8 @@ router.get(
     const body: WallResponse = {
       mode,
       sessionIntent,
-      liveForYou,
-      items,
+      liveForYou: wallLiveStripForViewer(liveForYou, items.map((it) => it.place ?? merged.placeByObject.get(it.canonicalObjectId)), user.id), // census-media §43: built as before, then a strip item about a place ONLY withheld posts on this page point at is dropped
+      items: wallItemsForViewer(items, user.id), // census-media §43: ranked, diversified and threaded as before; only then does a non-owner lose a withheld post's place, its place actions and its place-anchored thread
       nextCursor,
       caughtUp,
       // Omitted entirely when nothing failed — see WallResponse.degraded.
@@ -1286,7 +1286,7 @@ router.get(
     // ON. The strip IS this route's entire response, so with the flag off the
     // route must cost nothing beyond the flag reads themselves — not the viewer
     // context, not the followed-content window, not the producers.
-    const liveStrip = await buildLiveStrip(
+    const liveRefs: PublicPlaceRef[] = []; const liveStrip = await buildLiveStrip( // census-media §43: liveRefs collects every ref the strip is built from, marks included
       sc,
       liveEnabled,
       async () => {
@@ -1304,7 +1304,7 @@ router.get(
         }
         const seen = new Set<string>();
         const placeRefs: PublicPlaceRef[] = [];
-        for (const [, placeRef] of loaded.placeByObject) {
+        for (const [, placeRef] of loaded.placeByObject) { liveRefs.push(placeRef);
           if (seen.has(placeRef.placeId)) continue;
           seen.add(placeRef.placeId);
           placeRefs.push(placeRef);
@@ -1318,7 +1318,7 @@ router.get(
     // the same empty array is the worst possible place for the two to be
     // indistinguishable. `degraded` is omitted when nothing failed (§34).
     res.status(200).json({
-      liveForYou: liveStrip.items,
+      liveForYou: wallLiveStripForViewer(liveStrip.items, liveRefs, user.id), // census-media §43: as on GET /wall
       degraded: liveStrip.failed ? (["live"] satisfies WallLane[]) : undefined,
       generatedAt: new Date().toISOString(),
     });
@@ -1683,3 +1683,72 @@ router.post(
 );
 
 export default router;
+
+// ── census-media §43: a post's location mode, at the Wall's response ──────────
+// Appended at the tail so no cited line above moves; ESM hoists imports and
+// function declarations, and the constant below is read only at request time.
+import { withPostPlaceMark, postPlaceMarkedWithheldFrom } from "../lib/postPlaceDisclosure.js";
+
+/**
+ * The reason explainDiscovery gives when the ONLY thing that explains an
+ * outside-graph post is that its place is a disclosure-permitted Hidden Gem.
+ * Derived from explainDiscovery itself (a candidate that matches no earlier
+ * rung), so it cannot drift from the string the ladder writes.
+ */
+const WALL_GEM_DISCOVERY_REASON: string | null =
+  explainDiscovery({ authorId: "", isPermittedHiddenGem: true }, {})?.reason ?? null;
+
+/**
+ * The Wall page as a viewer may receive it. Every item is handed back as the
+ * very same object, EXCEPT one whose place ref carries the withheld mark
+ * (loadCandidates / loadPostcardCandidates set it from the owner's
+ * location_privacy_mode) when the viewer is not its author. That item:
+ *   - loses `place` (the ref's id, venue name and city);
+ *   - loses every action that targets that place (See place, Ask Compass);
+ *   - loses its context thread — every thread kind is anchored on the item's
+ *     place (ContextThreadService.gatherContextThread), so a thread on a
+ *     withheld place describes it;
+ *   - is DROPPED when it is a discovery insertion whose only explanation was
+ *     its place being a Hidden Gem: that reason describes the withheld place,
+ *     and §13 does not show an unexplained outside-graph object.
+ * Runs after ranking, diversity, the Live strip and context threads, so every
+ * other item is exactly what it was, in the same order.
+ */
+export function wallItemsForViewer(items: WallProjection[], viewerId: string): WallProjection[] {
+  const out: WallProjection[] = [];
+  for (const item of items) {
+    const place = item.place;
+    if (!place || !postPlaceMarkedWithheldFrom(place, viewerId)) { out.push(item); continue; }
+    if (item.objectType === "discovery" && WALL_GEM_DISCOVERY_REASON !== null && (item as { discoveryReason?: string }).discoveryReason === WALL_GEM_DISCOVERY_REASON) continue;
+    const { contextThread: _thread, ...rest } = item as WallProjection & { contextThread?: unknown };
+    out.push({
+      ...rest,
+      place: undefined,
+      actions: (item.actions ?? []).filter((a) => !(a.targetType === "place" && a.targetId === place.placeId)),
+    } as WallProjection);
+  }
+  return out;
+}
+
+/**
+ * The Live For You strip as a viewer may receive it. The strip is BUILT exactly
+ * as before, from every place the page points at; then an item is dropped when
+ * its subject is a place that only withheld posts (of authors other than the
+ * viewer) point at. A place that any disclosed post on the page also points at
+ * was already disclosed by that post, so its strip items stay. Nothing is
+ * added: the strip is the old strip minus entries.
+ */
+export function wallLiveStripForViewer(
+  strip: LiveForYouItem[],
+  refs: Iterable<PublicPlaceRef | null | undefined>,
+  viewerId: string,
+): LiveForYouItem[] {
+  const disclosed = new Set<string>();
+  const withheld = new Set<string>();
+  for (const ref of refs) {
+    if (!ref || !ref.placeId) continue;
+    (postPlaceMarkedWithheldFrom(ref, viewerId) ? withheld : disclosed).add(ref.placeId);
+  }
+  if (withheld.size === 0) return strip;
+  return strip.filter((i) => !(withheld.has(i.subjectId) && !disclosed.has(i.subjectId)));
+}

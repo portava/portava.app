@@ -563,9 +563,9 @@ router.get("/users/:username/passport/postcards", async (req, res) => {
     } catch { /* fail-open: missing media is better than a 500 */ }
   }
 
-  res.status(200).json({
+  const placeWithheldPostIds = isMe ? new Set<string>() : await postcardPostIdsWithPlaceWithheld(sc, postIds, viewerId); res.status(200).json({ // census-media §43: the postcard's venue is a copy made at create; whether a non-owner may see it is decided NOW, from its post's current mode
     postcards: (postcards ?? []).map((r) => ({
-      ...mapPostcard(r, false),
+      ...(isMe ? mapPostcard(r, false) : postcardForViewer(mapPostcard(r, false), placeWithheldPostIds)),
       media: buildMediaArray(publicMediaByPostId[r.post_id] ?? []),
     })),
   });
@@ -2000,3 +2000,62 @@ router.get("/passport/event-passport/:token", async (req, res) => {
 });
 
 export default router;
+
+// ── census-media §43: a postcard's copied venue, decided at read time ────────
+// Appended at the tail so no cited line above moves; ESM hoists imports and
+// function declarations.
+import { postPlaceWithheldFrom } from "../lib/postPlaceDisclosure.js";
+
+/**
+ * Which of these postcards' posts withhold their place from this viewer?
+ *
+ * A passport postcard's `location_name` is a COPY of its post's venue, written
+ * when the postcard is created (routes/posts.ts, routes/postcards.ts) whatever
+ * the post's location_privacy_mode. The copy is left alone — it is the owner's
+ * record and GET /me/passport/postcards serves it back to them — and the
+ * decision is taken here, at READ time, from the post's CURRENT mode through
+ * mapPublicPost's own rule. That makes it reversible: an owner who later sets
+ * the mode to `none` shows the venue again, and one who restricts it hides it
+ * on every postcard already written.
+ *
+ * FAIL CLOSED: an unreadable posts read withholds every postcard's venue, and
+ * a postcard whose post row is missing is withheld (its mode is unknown).
+ */
+export async function postcardPostIdsWithPlaceWithheld(
+  sc: any,
+  postIds: readonly string[],
+  viewerId: string | null,
+): Promise<Set<string>> {
+  const ids = [...new Set(postIds.filter((id) => typeof id === "string" && id.length > 0))];
+  if (ids.length === 0) return new Set();
+  try {
+    const { data, error } = await sc
+      .from("posts")
+      .select("id, author_id, location_privacy_mode, post_status")
+      .in("id", ids);
+    if (error) return new Set(ids);
+    const byId = new Map<string, any>(((data as any[]) ?? []).map((row: any) => [String(row.id), row]));
+    return new Set(ids.filter((id) => {
+      const row = byId.get(id);
+      return row === undefined || postPlaceWithheldFrom(row, viewerId);
+    }));
+  } catch {
+    return new Set(ids);
+  }
+}
+
+/**
+ * One mapped postcard as the viewer may receive it: the same object, or — when
+ * its post's place is withheld from this viewer, or it names no post — a copy
+ * whose `locationName` (the venue) is null. City and country stay, as
+ * mapPublicPost keeps them for every mode.
+ */
+export function postcardForViewer(
+  card: Record<string, unknown>,
+  withheldPostIds: ReadonlySet<string>,
+): Record<string, unknown> {
+  const postId = card.postId == null ? null : String(card.postId);
+  if (postId !== null && !withheldPostIds.has(postId)) return card;
+  if (card.locationName == null) return card;
+  return { ...card, locationName: null };
+}

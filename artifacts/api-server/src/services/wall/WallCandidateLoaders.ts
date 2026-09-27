@@ -314,7 +314,7 @@ function readyMediaToDisplay(rows: any[]): DisplayMedia[] {
 const POSTCARD_COLUMNS =
   "id, author_id, trip_id, content, visibility, status, post_status, created_at, published_at, " +
   "canonical_place_id, has_video, media_count, category, " +
-  "location_city, location_country, save_count";
+  "location_city, location_country, save_count, location_privacy_mode"; // census-media §43: the owner's mode, so a postcard whose place mapPublicPost withholds carries the mark routes/wall.ts strips at the response
 
 /**
  * Is this `passport_postcards` row a LIVE postcard? The same predicate the
@@ -501,7 +501,7 @@ export async function loadPostcardCandidates(
       // instant it was captured carries one clock, not two (spec §16).
       experienceAt: capturedAt && capturedAt !== publishedAt ? capturedAt : undefined,
       text: r.content ?? null,
-      place: placeRef,
+      place: withPostPlaceMark(placeRef, r), // census-media §43: the same ref, marked (never serialised) when the owner's mode withholds the place
       actor: actorFrom(prof, authorId),
       media: media.length > 0 ? media : undefined,
       authorAccountStatus: prof?.accountStatus ?? "active",
@@ -514,7 +514,7 @@ export async function loadPostcardCandidates(
       saveCount: Number(r.save_count ?? 0),
       isFirstImpression: true,
     });
-    if (placeRef) out.placeByObject.set(id, placeRef);
+    if (placeRef) out.placeByObject.set(id, withPostPlaceMark(placeRef, r)!); // census-media §43: marked as above
   }
   return out;
 }
@@ -1456,3 +1456,6 @@ async function resolvePostcardLinksToPosts(
     logger.warn({ err }, "quick media: passport_postcards read failed — postcard-linked assets fall back to post_media paths");
   }
 }
+
+// census-media §43 — appended at the tail so no cited line above moves; ESM hoists imports.
+import { withPostPlaceMark } from "../../lib/postPlaceDisclosure.js";
