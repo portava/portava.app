@@ -133,12 +133,12 @@ export async function runMediaVendorIngest(
     ]);
 
     if (moderationOn) {
-      // HOLD FIRST, then decide. The canonical row is born `processing`
-      // (lib/mediaAssets writes it, and `processing` is distributable), and a
-      // classifier may take up to VENDOR_CALL_TIMEOUT_MS. Holding before the
-      // call shrinks the undecided window from the classifier's latency to one
-      // round trip after the insert; the final decision then moves the row
-      // limited → active / rejected, both allowed by the §36 table.
+      // HOLD FIRST, then decide. With the stage on at upload, the canonical row
+      // is BORN `limited` (canonicalModerationAtBirth, census-media §37.8), so
+      // this is a no-op read. It still matters when the stage was switched on
+      // between the insert and this run: the row was born `processing`, which
+      // is distributable. A classifier may take up to VENDOR_CALL_TIMEOUT_MS; the
+      // final decision moves the row limited → active / rejected (§36 table).
       let recorded: CanonicalModerationOutcome | "skipped_no_asset" = "skipped_no_asset";
       if (subject.assetId) {
         recorded = await applyCanonicalModerationDecision(sc as any, { bucket: subject.bucket, path: subject.path, decision: "flag" });
@@ -294,4 +294,18 @@ export async function moderateVideoOnFrame(
     logger.warn({ err, path: subject.path }, "video frame moderation threw — nothing applied");
     return { state: "off" };
   }
+}
+
+/**
+ * census-media §37.8 (MD269 (c)): the canonical row of a `/media/upload` is
+ * BORN HELD while the §36 stage is on — one insert carrying `limited`, which
+ * no canonical reader distributes — instead of born `processing` (which they
+ * do) and held one round trip later. The decider then moves it on.
+ *
+ * Stage off, absent or unreadable: `{}`. Spread into the recordMediaAsset
+ * input it adds nothing, so the insert payload is byte-identical to before.
+ * NEVER throws (isFlagEnabled reads false on any error).
+ */
+export async function canonicalModerationAtBirth(sc: unknown): Promise<{ moderationStatus?: "limited" }> {
+  return (await isMediaModerationStageEnabled(sc)) ? { moderationStatus: "limited" } : {};
 }

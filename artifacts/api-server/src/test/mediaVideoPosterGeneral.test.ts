@@ -256,7 +256,7 @@ function makeClient() {
       if (table === "media_assets" && upserted) {
         const row = { id: `asset-${state.assets.length + 1}`, ...upserted };
         state.assets.push(row);
-        state.upserts.push(row);
+        state.upserts.push({ ...row }); // the INSERT as sent (census-media §37.8); later updates land on state.assets
         return { data: { id: row.id }, error: null };
       }
       return { data: [], error: null };
@@ -530,5 +530,37 @@ describe("§37 on the wire — POST /media/upload and /media/upload/poster reach
     assert.equal(poster.status, 201, JSON.stringify(poster.body));
     await settle();
     assert.deepEqual(calls, [`classify:frame:${up.body.path}.poster.jpg`]);
+  });
+});
+
+// ── census-media §37.8 (MD269 (c)): the canonical row is BORN held while the stage is on ──
+describe("§37.8 on the wire — POST /media/upload's canonical row is born held while 3356 is on", () => {
+  /** Every key the canonical insert carried before §37.8 — the flag-off payload must be exactly these. */
+  const KEYS_BEFORE = [
+    "owner_user_id", "uploader_user_id", "storage_bucket", "storage_path", "public_url", "media_type", "mime_type",
+    "size_bytes", "width", "height", "thumbnail_path", "thumbnail_url", "source_type", "captured_at", "provenance",
+    "intelligence_eligibility", "processing_status",
+  ].sort();
+
+  it("stage OFF (the seed): the one insert carries no moderation_status — the payload keys are exactly the pre-§37.8 set", async () => {
+    state.flags.media_canonical_enabled = true;
+    const up = await req("POST", "/api/media/upload", PLAIN_MP4, "video/mp4");
+    assert.equal(up.status, 201, JSON.stringify(up.body));
+    await settle();
+    assert.equal(state.upserts.length, 1);
+    const { id: _id, ...row } = state.upserts[0];
+    assert.deepEqual(Object.keys(row).sort(), KEYS_BEFORE);
+  });
+
+  it("stage ON: the SAME single insert carries moderation_status 'limited' — never born distributable", async () => {
+    state.flags.media_canonical_enabled = true;
+    state.flags.media_moderation_classifier_enabled = true;
+    const up = await req("POST", "/api/media/upload", PLAIN_MP4, "video/mp4");
+    assert.equal(up.status, 201, JSON.stringify(up.body));
+    await settle();
+    assert.equal(state.upserts.length, 1, "one write");
+    assert.equal(state.upserts[0].moderation_status, "limited");
+    const { id: _id, moderation_status: _m, ...rest } = state.upserts[0];
+    assert.deepEqual(Object.keys(rest).sort(), KEYS_BEFORE, "nothing else about the insert changes");
   });
 });

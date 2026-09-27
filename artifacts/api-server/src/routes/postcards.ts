@@ -189,12 +189,12 @@ async function refreshMediaCounts(sc: any, postId: string): Promise<{
 }> {
   const { data: mediaRows } = await sc
     .from('post_media')
-    .select('media_type, processing_status, public_url, sort_order')
+    .select('media_type, processing_status, public_url, sort_order, moderation_status') // census-media §37.8: moderation read so a held file neither counts nor becomes the cover
     .eq('post_id', postId);
 
   const ready = ((mediaRows ?? []) as any[])
     .filter((r: any) => r.processing_status === 'ready')
-    .sort((a: any, b: any) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
+    .filter((r: any) => countsTowardPostcard(r)).sort((a: any, b: any) => (a.sort_order ?? 0) - (b.sort_order ?? 0)); // §37.8: ready AND distributable (was: .sort((a: any, b: any) => (a.sort_order ?? 0) - (b.sort_order ?? 0));)
 
   const mediaCount = ready.length;
   const hasVideo = ready.some((r: any) => r.media_type === 'video');
@@ -788,33 +788,33 @@ router.post('/postcards/:id/media/:mediaId/complete', async (req, res) => {
       return;
     }
   } else {
-    // VIDEO — dimensions first, then bytes. ORDER IS LOAD-BEARING.
+    // VIDEO — the bytes first, then the dimensions (census-media §37.8).
     //
     // For video, measuredWidth/measuredHeight are never set: the processing
-    // block above is gated on media_type === 'image'. So the dimension guard
-    // further down resolves to p.width/p.height — values that arrived in the
-    // request body and are knowable here for free.
+    // block above is gated on media_type === 'image'. The dimension guard
+    // further down resolves to the size the CONTAINER states (probed below,
+    // from the verified bytes) and only then to p.width/p.height.
     //
-    // Running the storage round-trip first meant a request we could reject
-    // locally instead bought a signed URL and a range read, and then failed in
-    // the catch below with the generic 'Video could not be verified' — so on a
-    // dimensionless payload the specific message clients branch on was
-    // unreachable whenever the store was slow or down, and the guard that
-    // exists to report exactly this was dead for its own failure mode. It was
-    // reachable only when verification happened to succeed first.
+    // This used to refuse a payload without p.width/p.height HERE, before any
+    // storage read, so the specific message stayed reachable with the store
+    // down. That was right while the client's figure was the only source. It
+    // stopped being right once census-media §22 began probing the stored
+    // container: a client that sent no dimensions for a video whose container
+    // states them was refused for a size the server reads itself. So the
+    // payload is no longer refused on its face. The guard below refuses only
+    // when NEITHER source states a size; with the store down the answer is the
+    // storage failure (retryable), because the size is then genuinely unknown.
     //
-    // Images are deliberately NOT reordered this way: their dimensions ARE the
-    // storage read (processImage measures them), so there is nothing local to
-    // check first, and their guard is satisfied by construction or rejected.
+    // Images are unaffected: their dimensions ARE the storage read (processImage
+    // measures them), and their guard is satisfied by construction or rejected.
     //
-    // Fail-closed on storage is unchanged and still correct — nothing below is
-    // relaxed. This only stops us paying a network call to deliver a worse
-    // error for a request that was already invalid on its face.
+    // Fail-closed on storage is unchanged — nothing below is relaxed.
+    //
     if (p.width == null || p.height == null) {
-      req.log.warn({ mediaId, mediaType: 'video' }, 'postcards: complete rejected — width/height required (pre-verification)');
-      sendError(res, 'invalid_payload', DIMENSIONS_REQUIRED_MESSAGE);
-      return;
+      req.log.info({ mediaId, mediaType: 'video' }, 'postcards: complete without client dimensions — the container probe decides');
     }
+    // (was: a pre-verification refusal — sendError(res, 'invalid_payload', DIMENSIONS_REQUIRED_MESSAGE); return;)
+    //
 
     // Verify the stored bytes are really a video, and really within the
     // ceiling.
@@ -1594,3 +1594,18 @@ import { removeTransportArtifacts } from '../lib/postcardMediaTransport.js';
 // census-media §37 (MD269/MD283): the §36 safety-moderation stage decides the value /complete
 // writes. Off (the seed), it is 'approved', as before. Imported at the TAIL, like the block above.
 import { preDistributionPostMediaStatus } from '../lib/media/vendors/mediaVendorStages.js';
+
+// ── census-media §37.8: what counts toward a postcard, and what may be its cover ──
+// A file counts — in media_count, has_video and primary_media_type, and as the
+// passport cover (`firstReadyUrl`) — only when it is READY and DISTRIBUTABLE.
+// The moderation half is the same deny-set every post_media distribution reader
+// applies (lib/mediaEligibility NON_DISTRIBUTABLE_MEDIA_MODERATION_STATES:
+// flagged, limited, rejected, removed, owner_deleted). Before this, a file an
+// admin flagged or rejected, and — once 3356 is on — a file the §36 stage HOLDS
+// (`flagged`), still counted, and could be copied into
+// `passport_postcards.media_url`. Declared at the tail so no cited line moves;
+// a function declaration is hoisted.
+export function countsTowardPostcard(row: { moderation_status?: unknown }): boolean {
+  return !NON_DISTRIBUTABLE_MEDIA_MODERATION_STATES.has(String(row?.moderation_status ?? ''));
+}
+import { NON_DISTRIBUTABLE_MEDIA_MODERATION_STATES } from '../lib/mediaEligibility.js';

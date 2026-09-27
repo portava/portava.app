@@ -608,3 +608,41 @@ describe("§37 on the wire — POST /postcards/:id/media/:mediaId/complete takes
     }
   });
 });
+
+// ── census-media §37.8: /complete takes a video's size from its container when the client sends none ──
+describe("§37.8 on the wire — /complete uses the PROBED size when the client sends no width/height", () => {
+  it("no client dimensions, a container that states 48×64 → completed ready at 48×64", async () => {
+    state.objects.set(`post-media/${SLOT_PATH}`, Buffer.from(PORTRAIT_MP4));
+    const r = await json("POST", `/api/postcards/${POST}/media/${MEDIA}/complete`, {
+      mimeType: "video/mp4", fileSizeBytes: PORTRAIT_MP4.length,
+    });
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    const write = state.updates.find((u) => u.table === "post_media" && u.patch.processing_status === "ready");
+    assert.ok(write, "the ready write happened");
+    assert.equal(write.patch.width, 48);
+    assert.equal(write.patch.height, 64);
+  });
+
+  it("no client dimensions and a container that states none → refused with the dimension message; nothing marked ready", async () => {
+    state.objects.set(`post-media/${SLOT_PATH}`, Buffer.from(AUDIO_ONLY_M4A));
+    const r = await json("POST", `/api/postcards/${POST}/media/${MEDIA}/complete`, {
+      mimeType: "video/mp4", fileSizeBytes: AUDIO_ONLY_M4A.length,
+    });
+    assert.equal(r.status, 400, JSON.stringify(r.body));
+    assert.equal(r.body.error, "invalid_payload");
+    assert.match(String(r.body.message), /width and height are required/);
+    assert.equal(state.updates.some((u) => u.table === "post_media" && u.patch.processing_status === "ready"), false);
+    assert.equal(state.postMedia[0].processing_status, "pending");
+  });
+
+  it("client dimensions and a silent container → the client's figure is still used (unchanged)", async () => {
+    state.objects.set(`post-media/${SLOT_PATH}`, Buffer.from(AUDIO_ONLY_M4A));
+    const r = await json("POST", `/api/postcards/${POST}/media/${MEDIA}/complete`, {
+      mimeType: "video/mp4", fileSizeBytes: AUDIO_ONLY_M4A.length, width: 720, height: 1280,
+    });
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    const write = state.updates.find((u) => u.table === "post_media" && u.patch.processing_status === "ready");
+    assert.equal(write?.patch.width, 720);
+    assert.equal(write?.patch.height, 1280);
+  });
+});

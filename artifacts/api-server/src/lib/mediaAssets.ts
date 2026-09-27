@@ -139,7 +139,7 @@ export interface RecordAssetInput {
   /** §6 capturedAt (may precede uploadedAt); feeds provenance + eligibility. */
   capturedAt?: string | null;
   /** True when the asset carries a trustworthy location binding (§10). */
-  hasLocation?: boolean;
+  hasLocation?: boolean; /** census-media §37.8 (MD269): `limited` = born HELD, set only while the §36 stage (3356) is on. Absent ⇒ the column default, and the insert payload is byte-identical to before. */ moderationStatus?: "limited";
 }
 
 // ── Schema skew: the §6 columns that are NOT everywhere ──────────────────────
@@ -386,7 +386,7 @@ export async function recordMediaAssetDetailed(
       source_type: input.sourceType ?? MEDIA_SOURCE_UNDECLARED,
       captured_at: input.capturedAt ?? null,
       provenance,
-      intelligence_eligibility: intelligenceEligibility,
+      intelligence_eligibility: intelligenceEligibility, ...(input.moderationStatus ? { moderation_status: input.moderationStatus } : {}), // §37.8: one write, born held; no key at all when absent
       // Default to 'processing' (not 'ready') when dimensions are absent —
       // a video upload has null width/height at upload time, and the DB
       // constraint (2089) rejects ready rows with null dimensions. Callers
@@ -458,7 +458,7 @@ async function writeDegraded(
   input: RecordAssetInput,
   schemaState: CanonicalSchemaState,
 ): Promise<RecordAssetResult> {
-  const dropped: string[] = [];
+  const dropped: string[] = []; if ("moderation_status" in row) { delete row.moderation_status; dropped.push("moderation_status"); } // §37.8: a pre-2250 CHECK admits no §36 hold, and MediaModerationService refuses that schema too
   for (const col of CANONICAL_ASSET_COLUMNS_ADDED_BY_2250) {
     if (col in row) {
       delete row[col];

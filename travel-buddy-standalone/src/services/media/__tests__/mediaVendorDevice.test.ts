@@ -294,3 +294,168 @@ describe('MD282 — the compression seam: the native module only when present, t
     assert.equal(!r.compressed && r.reason, 'module_absent');
   });
 });
+
+// ── census-media §37.8: staged part copies carry their owner, and are swept ────
+import {
+  parseStagedPartName,
+  stagedPartUri,
+  sweepStagedParts,
+  STAGED_UNATTRIBUTED_MAX_AGE_MS,
+} from '../backgroundTransfer.ts';
+import { slotOwnerKey } from '../resumableUpload.ts';
+import { liveUploadOwners, queueKey as queueKeyFor, type QueueStorage } from '../postcardUploadQueue.ts';
+
+const LIVE = slotOwnerKey('post-live', 'media-live');
+const DEAD = slotOwnerKey('post-done', 'media-done');
+const NOW = 1_800_000_000_000;
+
+/** A cache directory double: names in it, and every delete recorded. */
+function dirFs(names: string[], opts: { listing?: 'absent' | 'throws'; order?: string[] } = {}) {
+  const files = new Set(names);
+  const deleted: string[] = [];
+  const fs: FsLike = {
+    cacheDirectory: 'file:///cache/',
+    sessionBackground: 1,
+    uploadBinary: 0,
+    async getInfoAsync() { return { exists: true, size: 1 }; },
+    async readAsStringAsync() { return ''; },
+    async writeAsStringAsync() {},
+    async deleteAsync(uri) { deleted.push(uri); files.delete(uri.replace('file:///cache/', '')); },
+    createUploadTask() { throw new Error('not used'); },
+  };
+  if (opts.listing !== 'absent') {
+    fs.readDirectoryAsync = async (uri) => {
+      opts.order?.push('list');
+      assert.equal(uri, 'file:///cache/');
+      if (opts.listing === 'throws') throw new Error('EACCES');
+      return [...files];
+    };
+  }
+  return { fs, deleted, files };
+}
+const owned = (owner: string, ageMs: number, n = 1) => `media-upload-part.${owner}.${NOW - ageMs}.${n}.bin`;
+const unowned = (ageMs: number, n = 1) => `media-upload-part-${NOW - ageMs}-${n}.bin`;
+
+describe('§37.8 — staged part names carry the slot that owns them', () => {
+  it('an owned name round-trips; an unowned (legacy) name parses with owner null; any other file is not a staged part', () => {
+    const uri = stagedPartUri('file:///cache/', LIVE);
+    const name = uri.replace('file:///cache/', '');
+    assert.equal(parseStagedPartName(name)?.owner, LIVE);
+    assert.equal(parseStagedPartName(unowned(5))?.owner, null);
+    for (const other of ['photo.jpg', 'media-upload-part.bad owner.1.1.bin', 'media-upload-part-x-1.bin', 'media-upload-part.a~b.1.1.bin.tmp']) {
+      assert.equal(parseStagedPartName(other), null, other);
+    }
+    assert.equal(slotOwnerKey('../etc', 'a/b'), '___etc~a_b', 'only [A-Za-z0-9-] survive');
+  });
+
+  it('putPartsInBackground names every staged copy after the slot the uploader passes', async () => {
+    const bytes = bytesOf(CHUNK * 2);
+    const g = gatedFs(bytes);
+    const writes: string[] = [];
+    const write = g.fs.writeAsStringAsync;
+    g.fs.writeAsStringAsync = async (uri, c, o) => { writes.push(uri); return write(uri, c, o); };
+    const file = await backgroundFile('file:///video.mp4', g.fs);
+    const parts = [0, 1].map((i) => ({ url: `https://storage.test/part/${i}`, part: file.slice(i * CHUNK, (i + 1) * CHUNK) }));
+    const pending = putPartsInBackground(g.fs, parts, 'video/mp4', undefined, LIVE);
+    for (let i = 0; i < 50 && g.started.length < 2; i++) await new Promise((r) => setImmediate(r));
+    g.release.forEach((f) => f());
+    await pending;
+    assert.equal(writes.length, 2);
+    for (const w of writes) assert.equal(parseStagedPartName(w.replace('file:///cache/', ''))?.owner, LIVE, w);
+  });
+
+  it('the uploader passes its own slot to the batch AND to the one-at-a-time path', async () => {
+    const bytes = bytesOf(CHUNK * 3);
+    const srv = fakeServer(bytes.length);
+    srv.batchScript.set(2, 503);
+    const owners: Array<string | undefined> = [];
+    const batch = srv.transport.putParts!;
+    const single = srv.transport.putPart;
+    const t: ResumableTransport = {
+      api: srv.transport.api,
+      putParts: (parts, ct, onSent, owner) => { owners.push(owner); return batch(parts, ct, onSent, owner); },
+      putPart: (url, part, ct, onSent, owner) => { owners.push(owner); return single(url, part, ct, onSent, owner); },
+    };
+    const r = await uploadSlotResumable({ postId: 'post-live', mediaId: 'media-live' }, new FakeFile(bytes), 'video/mp4', t, env);
+    assert.equal(r.ok, true);
+    assert.deepEqual(owners, [LIVE, LIVE], 'the batch, then the straggler, each named by the slot');
+  });
+});
+
+describe('§37.8 — the sweep deletes orphaned copies and never a resumable job\'s', () => {
+  it('deletes a copy whose slot is no longer resumable; keeps a live slot\'s copy however old; leaves every other file alone', async () => {
+    const d = dirFs([owned(LIVE, 3 * STAGED_UNATTRIBUTED_MAX_AGE_MS), owned(DEAD, 1000), 'photo.jpg', 'ImagePicker']);
+    const r = await sweepStagedParts(d.fs, async () => new Set([LIVE]), NOW);
+    assert.deepEqual(r.deleted, [owned(DEAD, 1000)]);
+    assert.equal(r.keptLive, 1);
+    assert.ok(d.files.has(owned(LIVE, 3 * STAGED_UNATTRIBUTED_MAX_AGE_MS)), 'a resumable job\'s copy is never deleted');
+    assert.ok(d.files.has('photo.jpg') && d.files.has('ImagePicker'));
+  });
+
+  it('an unowned copy goes only once its signed URL must have expired', async () => {
+    const d = dirFs([unowned(STAGED_UNATTRIBUTED_MAX_AGE_MS - 1), unowned(STAGED_UNATTRIBUTED_MAX_AGE_MS, 2)]);
+    const r = await sweepStagedParts(d.fs, async () => new Set(), NOW);
+    assert.deepEqual(r.deleted, [unowned(STAGED_UNATTRIBUTED_MAX_AGE_MS, 2)]);
+    assert.equal(r.keptYoung, 1);
+  });
+
+  it('when the live jobs cannot be read, NO owned copy is deleted (old unowned ones still go)', async () => {
+    const d = dirFs([owned(DEAD, 5), owned(LIVE, 5), unowned(2 * STAGED_UNATTRIBUTED_MAX_AGE_MS)]);
+    const nullLive = await sweepStagedParts(d.fs, async () => null, NOW);
+    assert.deepEqual(nullLive.deleted, [unowned(2 * STAGED_UNATTRIBUTED_MAX_AGE_MS)]);
+    assert.equal(nullLive.keptUnknown, 2);
+    const d2 = dirFs([owned(DEAD, 5)]);
+    const throwing = await sweepStagedParts(d2.fs, async () => { throw new Error('storage'); }, NOW);
+    assert.deepEqual(throwing.deleted, []);
+  });
+
+  it('lists the directory BEFORE reading the live jobs', async () => {
+    const order: string[] = [];
+    const d = dirFs([owned(DEAD, 5)], { order });
+    await sweepStagedParts(d.fs, async () => { order.push('live'); return new Set(); }, NOW);
+    assert.deepEqual(order, ['list', 'live']);
+  });
+
+  it('is bounded: at most maxDeletes per run; the rest are deferred to the next', async () => {
+    const d = dirFs([1, 2, 3, 4, 5].map((n) => owned(DEAD, 5, n)));
+    const r = await sweepStagedParts(d.fs, async () => new Set(), NOW, 3);
+    assert.equal(r.deleted.length, 3);
+    assert.equal(r.deferred, 2);
+    assert.equal(d.files.size, 2);
+  });
+
+  it('with no directory listing, or a listing that fails, it refuses and deletes nothing', async () => {
+    const absent = dirFs([owned(DEAD, 5)], { listing: 'absent' });
+    assert.equal((await sweepStagedParts(absent.fs, async () => new Set(), NOW)).refused, 'no_directory_listing');
+    const failing = dirFs([owned(DEAD, 5)], { listing: 'throws' });
+    assert.equal((await sweepStagedParts(failing.fs, async () => new Set(), NOW)).refused, 'listing_failed');
+    assert.deepEqual([...absent.deleted, ...failing.deleted], []);
+  });
+});
+
+describe('§37.8 — the live set is every RESUMABLE job, under every account on the device', () => {
+  const job = (stage: string, postId?: string, mediaId?: string) => ({ id: `j-${stage}-${postId}`, stage, postId, mediaId, accountId: 'x' });
+  function storageOf(entries: Record<string, string>, allKeys = true): QueueStorage {
+    const s: QueueStorage = {
+      async getItem(k) { return entries[k] ?? null; },
+      async setItem() {},
+    };
+    if (allKeys) s.allKeys = async () => Object.keys(entries);
+    return s;
+  }
+
+  it('includes a live job of ANOTHER account; excludes done / failed / cancelled and jobs with no slot yet', async () => {
+    const owners = await liveUploadOwners(storageOf({
+      [queueKeyFor('acct-a')]: JSON.stringify([job('bytes', 'post-live', 'media-live'), job('done', 'post-done', 'media-done')]),
+      [queueKeyFor('acct-b')]: JSON.stringify([job('complete', 'post-b', 'media-b'), job('failed', 'p', 'm'), job('cancelled', 'q', 'n'), job('shell', 'post-s')]),
+      'unrelated:key': 'not json at all',
+    }));
+    assert.deepEqual([...(owners ?? [])].sort(), [LIVE, slotOwnerKey('post-b', 'media-b')].sort());
+  });
+
+  it('is UNKNOWN (null) without key enumeration, or when a queue entry does not parse', async () => {
+    assert.equal(await liveUploadOwners(storageOf({ [queueKeyFor('a')]: '[]' }, false)), null);
+    assert.equal(await liveUploadOwners(storageOf({ [queueKeyFor('a')]: '{not json' })), null);
+    assert.equal(await liveUploadOwners(storageOf({ [queueKeyFor('a')]: JSON.stringify([{ id: 'x' }]) })), null);
+  });
+});
