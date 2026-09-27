@@ -592,7 +592,7 @@ const REASON_CODE: Readonly<Record<string, ApiErrorCode>> = {
   evidence_requires_observation: "invalid_payload",
   unsupported_media_kind: "invalid_payload",
   invalid_media_reference: "invalid_payload",
-  media_not_owned: "forbidden", reference_key_unavailable: "server_not_configured", // the second: INTEL_EVIDENCE_REFERENCE_KEY unset, so the key cannot be sealed (lib/intelEvidenceCapture) and nothing is stored
+  media_not_owned: "forbidden", reference_key_unavailable: "server_not_configured", consent_does_not_cover_photos: "consent_does_not_cover_photos", // the second: INTEL_EVIDENCE_REFERENCE_KEY unset (the key cannot be sealed); the third: 409, the recorded consent names no photos (Gate 2b). Both store nothing
   // Not `not_found`: distinguishing "no such observation" from "not yours"
   // would make this an oracle for other people's contributions.
   unknown_observation: "not_found",

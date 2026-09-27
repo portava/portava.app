@@ -152,7 +152,7 @@ export type EvidenceRejection =
   | "unknown_observation"
   /** The observation is about a different subject than the contribution named. */
   | "observation_subject_mismatch"
-  | "db_error" | "reference_key_unavailable"; // the last: INTEL_EVIDENCE_REFERENCE_KEY unset or short, so the key cannot be sealed and nothing is stored
+  | "db_error" | "reference_key_unavailable" | "consent_does_not_cover_photos"; // the last two: INTEL_EVIDENCE_REFERENCE_KEY unset or short (the key cannot be sealed), and a recorded disclosure whose words name no photos (Gate 2b). Both store nothing
 
 export type EvidenceResult =
   | { ok: true; evidence: any; deduped: boolean }
@@ -208,7 +208,7 @@ export async function attachMediaEvidence(
   // is a contribution under the consent-based `intel_claim` purpose just as much
   // as the observation it supports. Fail-closed.
   if (!(await hasValidIntelConsent(sc, actorId))) return reject("consent_required");
-
+  const photos = await consentCoversPhotoEvidence(sc, actorId); if (!photos.covered) return reject(photos.reason, photos.detail); // Gate 2b — the words agreed to must name photos (end of file)
   // Gate 3 — evidence cannot precede the observation it supports (§21).
   if (!input.observationId) return reject("evidence_requires_observation");
 
@@ -750,4 +750,77 @@ export async function rekeyLegacyEvidenceReferences(
     else outcome.rekeyed += 1;
   }
   return outcome;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// GATE 2b — WHOSE WORDS MAY KEEP A PHOTO (census-media §39; census-map §45.5)
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// Gate 2 accepts any valid Intelligence Contributions consent, and consent is
+// only as wide as its words. The one disclosure in force,
+// `intel_contributions_v1`, names Quick Signals and nothing else. The prepared
+// `sensing_contributions_v2` (docs/contracts/sensing-consent-disclosure-v2.md)
+// is not owner-approved, and its words do not name photos or videos either
+// (read 2026-09-27). Keeping a person's photo under words that never mention
+// one would record a consent nobody gave.
+//
+// So a photo or video is kept as evidence only when the contributor's RECORDED
+// `consent_version` is listed below, and the list is EMPTY. Today every media
+// contribution is refused with `consent_does_not_cover_photos` (HTTP 409), and
+// the refusal writes nothing. The request that carries the photo only ever
+// attaches evidence to an observation that already exists: it creates no
+// observation, and it is refused before any row is read or written. The tap
+// the photo would have supported is a separate request on the observation
+// arrow, never reaches this gate, and stands on its own.
+//
+// WHAT TURNS IT ON. An owner step, not a code decision. The owner approves
+// disclosure words that name photos and videos kept as evidence. Then ONE
+// release ships three things together: that version as the server's
+// INTEL_CONSENT_DISCLOSURE_VERSION, its words on the client, and its string in
+// this list. No existing version may be added here: none of them says photos.
+//
+// NOT COVERED HERE: lib/media/mediaEvidenceLink, the media seam's writer, has no
+// consent check of any kind. It has no caller and waits on census-media §35.4
+// MD65, and it must pass this same gate the day one is wired.
+import { getIntelConsentState } from "./intelConsent.js";
+
+/** Disclosure versions whose words name photos and videos kept as evidence. EMPTY: none in force does. */
+export const PHOTO_EVIDENCE_CONSENT_VERSIONS: readonly string[] = Object.freeze([] as string[]);
+
+let photoEvidenceConsentVersionsForTests: ReadonlySet<string> | null = null;
+
+/**
+ * TEST SEAM ONLY. It lets a suite prove that the gate reads the RECORDED version
+ * (rather than refusing everything), by naming a fictional covering version.
+ * Product code never calls it; test/intelEvidenceReference.test.ts pins that.
+ * Pass null to restore the shipped list.
+ */
+export function _setPhotoEvidenceConsentVersionsForTests(versions: readonly string[] | null): void {
+  photoEvidenceConsentVersionsForTests = versions === null ? null : new Set(versions);
+}
+
+export type PhotoEvidenceConsentAnswer =
+  | { covered: true }
+  | { covered: false; reason: "consent_does_not_cover_photos" | "db_error"; detail: string };
+
+const PHOTO_CONSENT_REFUSAL =
+  "The consent you gave covers reports, not photos or videos, so this was not kept. Your report itself is unaffected; send it without the photo.";
+
+/**
+ * Does this contributor's recorded disclosure name photos? Fail-closed: no row,
+ * no version, a withdrawn or disabled grant, or a version not on the list all
+ * answer no. An unreadable consent row answers `db_error` (retryable), because
+ * coverage is then unknown rather than refused.
+ */
+export async function consentCoversPhotoEvidence(sc: any, actorId: string): Promise<PhotoEvidenceConsentAnswer> {
+  const allowed = photoEvidenceConsentVersionsForTests ?? new Set(PHOTO_EVIDENCE_CONSENT_VERSIONS);
+  // No version names photos, so no recorded version can: refuse without a read.
+  if (allowed.size === 0) return { covered: false, reason: "consent_does_not_cover_photos", detail: PHOTO_CONSENT_REFUSAL };
+  const read = await getIntelConsentState(sc, actorId);
+  if (!read.ok) return { covered: false, reason: "db_error", detail: "consent version lookup" };
+  const state = read.state;
+  if (state.enabled !== true || state.withdrawnAt || !state.consentVersion || !allowed.has(state.consentVersion)) {
+    return { covered: false, reason: "consent_does_not_cover_photos", detail: PHOTO_CONSENT_REFUSAL };
+  }
+  return { covered: true };
 }

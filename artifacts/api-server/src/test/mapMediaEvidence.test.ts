@@ -39,6 +39,7 @@ import {
 import {
   EVIDENCE_SOURCE_MAP_CONTRIBUTION,
   MEDIA_EVIDENCE_KIND,
+  _setPhotoEvidenceConsentVersionsForTests,
   attachMediaEvidence,
   openEvidenceReference,
   resolveOwnedMediaReference,
@@ -69,6 +70,12 @@ const OTHER_MEDIA = `post-media/${ACTOR_B}/1756600000000.jpg`;
 // The evidence path SEALS the key it stores (census-map §45) and refuses when no
 // key is configured, so this suite configures one, as a deployment must.
 process.env.INTEL_EVIDENCE_REFERENCE_KEY ??= "map-media-evidence-suite-key-0123456789abcdef";
+// Gate 2b keeps a photo only under a recorded disclosure whose words name photos,
+// and NO real version does (the shipped list is empty; intelEvidenceReference.test.ts
+// pins that refusal). This suite tests everything AFTER that gate, so its
+// consenting actors hold a fictional covering version.
+const PHOTO_TEST_VERSION = "test_only_disclosure_naming_photos";
+_setPhotoEvidenceConsentVersionsForTests([PHOTO_TEST_VERSION]);
 /** The storage key a stored row's sealed reference opens to, or null. */
 const openedKey = (row: any): string | null => {
   const o = openEvidenceReference(row?.reference, row?.observation_id);
@@ -94,6 +101,7 @@ function makeDb(flags: Record<string, boolean>, opts: FakeOpts = {}) {
     intel_contribution_consent: Object.entries(opts.consent ?? {}).map(([user_id, state]) => ({
       user_id,
       enabled: state !== false,
+      consent_version: PHOTO_TEST_VERSION,
       withdrawn_at: state === "withdrawn" ? new Date().toISOString() : null,
     })),
     freshness_policies: CLAIM_TYPES.map((c) => ({

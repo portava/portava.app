@@ -39,6 +39,8 @@ import { fileURLToPath } from "node:url";
 
 import {
   EVIDENCE_REFERENCE_PREFIX,
+  PHOTO_EVIDENCE_CONSENT_VERSIONS,
+  _setPhotoEvidenceConsentVersionsForTests,
   attachMediaEvidence,
   openEvidenceReference,
   rekeyLegacyEvidenceReferences,
@@ -61,16 +63,26 @@ const SRC_ROOT = resolve(HERE, "..");
 const KEY = "intel-evidence-reference-suite-key-0123456789abcdef";
 const OTHER_KEY = "a-different-server-key-that-must-not-open-it-0123";
 
+/**
+ * A FICTIONAL disclosure version whose words name photos. Gate 2b keeps a photo
+ * only under such a version and no real one exists (section F pins the shipped,
+ * empty list), so sections B–E, which test what happens AFTER that gate, give
+ * their contributors this one.
+ */
+const PHOTO_TEST_VERSION = "test_only_disclosure_naming_photos";
+
 let savedKey: string | undefined;
 beforeEach(() => {
   savedKey = process.env.INTEL_EVIDENCE_REFERENCE_KEY;
   process.env.INTEL_EVIDENCE_REFERENCE_KEY = KEY;
+  _setPhotoEvidenceConsentVersionsForTests([PHOTO_TEST_VERSION]);
   resetContributorIdentityShapeMemo();
   _clearMediaAccessCache();
 });
 afterEach(() => {
   if (savedKey === undefined) delete process.env.INTEL_EVIDENCE_REFERENCE_KEY;
   else process.env.INTEL_EVIDENCE_REFERENCE_KEY = savedKey;
+  _setPhotoEvidenceConsentVersionsForTests(null);
 });
 
 const OBS_1 = "44444444-4444-4444-8444-000000000001";
@@ -175,14 +187,14 @@ describe("A. a sealed reference", () => {
 // ═══════════════════════════════════════════════════════════════════════════
 
 /** The capture fake: mapMediaEvidence.test.ts's shape, with 2223's unique index. */
-function captureDb(accounts: string[]) {
+function captureDb(accounts: string[], consentVersion: string = PHOTO_TEST_VERSION) {
   const tables: Record<string, any[]> = {
     feature_flags: [
       { flag: "map_contributions_enabled", enabled: true },
       { flag: "intel_capture_quick_signal", enabled: true },
     ],
     places: [{ id: PLACE }],
-    intel_contribution_consent: accounts.map((user_id) => ({ user_id, enabled: true, withdrawn_at: null })),
+    intel_contribution_consent: accounts.map((user_id) => ({ user_id, enabled: true, withdrawn_at: null, consent_version: consentVersion })),
     intel_observations: [],
     intel_evidence: [],
   };
@@ -622,5 +634,130 @@ describe("E. legacy rows, and who may read `reference`", () => {
     assert.deepEqual(offenders, [],
       "a reader of intel_evidence.reference outside the module that seals it: open it through " +
         "resolveEvidenceMediaForContributor or collectOwnEvidenceObjectKeys, never by parsing the stored value");
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// F. Gate 2b — a photo is kept only under words that name photos
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// Requested by the coordinator after the integrator's read-only production read
+// (2026-09-27): map_contributions_enabled and media_evidence_enabled have no
+// row, intel_evidence has 0 rows, intel_capture_quick_signal is true. Nothing has
+// been kept; the gap would open the day the map flag is turned on.
+
+describe("F. a photo is refused under a consent whose words do not name photos", () => {
+  const V1 = "intel_contributions_v1";
+  const V2 = "sensing_contributions_v2";
+
+  it("ships an EMPTY list: no version in force, and not the unapproved v2, names photos", () => {
+    _setPhotoEvidenceConsentVersionsForTests(null);
+    assert.deepEqual([...PHOTO_EVIDENCE_CONSENT_VERSIONS], []);
+    assert.equal(PHOTO_EVIDENCE_CONSENT_VERSIONS.includes(V1), false);
+    assert.equal(PHOTO_EVIDENCE_CONSENT_VERSIONS.includes(V2), false);
+  });
+
+  it("under v1: the tap is recorded, the photo is refused with 409 consent_does_not_cover_photos, and nothing else is written", async () => {
+    _setPhotoEvidenceConsentVersionsForTests(null); // the SHIPPED list
+    const account = randomUUID();
+    const db = captureDb([account], V1);
+
+    // A contribution WITHOUT a photo: unaffected.
+    const tap = await ingestMapContribution(db, account, {
+      objectId: PLACE, objectKind: "place", kind: "crowd_level", value: "busy", observedAt: OBSERVED,
+    });
+    assert.equal(tap.ok, true, `the tap-only path must be unchanged: ${JSON.stringify(tap)}`);
+    assert.equal(db._tables.intel_observations.length, 1);
+    const before = JSON.stringify(db._tables);
+
+    // The photo for it: refused, and the refusal leaves every table exactly as it was.
+    const photo = await ingestMapContribution(db, account, {
+      objectId: PLACE, objectKind: "place", kind: "media", value: "photo",
+      mediaUri: `post-media/${account}/1756600000000.jpg`, observedAt: OBSERVED,
+      observationId: (tap as any).observation.id,
+    });
+    assert.equal(photo.ok, false, "a photo was kept under words that never mention one");
+    assert.equal((photo as any).reason, "consent_does_not_cover_photos");
+    assert.equal((photo as any).code, "consent_does_not_cover_photos");
+    assert.equal(db._tables.intel_evidence.length, 0);
+    assert.equal(db._tables.intel_observations.length, 1, "no observation is created or removed by the refusal");
+    assert.equal(JSON.stringify(db._tables), before, "the refusal wrote nothing, anywhere");
+
+    // A video is the same artifact class and is refused the same way.
+    const video = await attachMediaEvidence(db, account, {
+      observationId: (tap as any).observation.id, subjectId: PLACE,
+      mediaUri: `post-media/${account}/1756600000001.mp4`, mediaKind: "video", observedAt: OBSERVED,
+    });
+    assert.equal(!video.ok && video.reason, "consent_does_not_cover_photos");
+  });
+
+  it("the route answers it as HTTP 409 with a stable code", async () => {
+    const { sendError } = await import("../lib/http.js");
+    let status = 0;
+    let body: any = null;
+    const res: any = { status(n: number) { status = n; return res; }, json(b: any) { body = b; return res; } };
+    sendError(res, "consent_does_not_cover_photos", "not kept");
+    assert.equal(status, 409);
+    assert.equal(body.error, "consent_does_not_cover_photos");
+    assert.equal(body.retryable, undefined, "retrying the same photo cannot succeed");
+  });
+
+  it("reads the RECORDED version: with a covering version listed, v1 is still refused and only that version keeps a photo", async () => {
+    _setPhotoEvidenceConsentVersionsForTests([PHOTO_TEST_VERSION]);
+    for (const [version, keeps] of [[V1, false], [V2, false], [PHOTO_TEST_VERSION, true]] as const) {
+      const account = randomUUID();
+      const db = captureDb([account], version);
+      const tap = await ingestMapContribution(db, account, {
+        objectId: PLACE, objectKind: "place", kind: "crowd_level", value: "busy", observedAt: OBSERVED,
+      });
+      assert.equal(tap.ok, true, version);
+      const photo = await attachMediaEvidence(db, account, {
+        observationId: (tap as any).observation.id, subjectId: PLACE,
+        mediaUri: `post-media/${account}/1756600000000.jpg`, mediaKind: "photo", observedAt: OBSERVED,
+      });
+      assert.equal(photo.ok, keeps, `${version}: ${JSON.stringify(photo)}`);
+      assert.equal(db._tables.intel_evidence.length, keeps ? 1 : 0, version);
+    }
+  });
+
+  it("no consent version recorded, or a withdrawn grant, keeps nothing either", async () => {
+    _setPhotoEvidenceConsentVersionsForTests([PHOTO_TEST_VERSION]);
+    const account = randomUUID();
+    const db = captureDb([account], PHOTO_TEST_VERSION);
+    const tap = await ingestMapContribution(db, account, {
+      objectId: PLACE, objectKind: "place", kind: "crowd_level", value: "busy", observedAt: OBSERVED,
+    });
+    delete db._tables.intel_contribution_consent[0].consent_version;
+    const unversioned = await attachMediaEvidence(db, account, {
+      observationId: (tap as any).observation.id, subjectId: PLACE,
+      mediaUri: `post-media/${account}/1756600000000.jpg`, mediaKind: "photo", observedAt: OBSERVED,
+    });
+    assert.equal(!unversioned.ok && unversioned.reason, "consent_does_not_cover_photos");
+    db._tables.intel_contribution_consent[0].withdrawn_at = new Date().toISOString();
+    db._tables.intel_contribution_consent[0].consent_version = PHOTO_TEST_VERSION;
+    const withdrawn = await attachMediaEvidence(db, account, {
+      observationId: (tap as any).observation.id, subjectId: PLACE,
+      mediaUri: `post-media/${account}/1756600000000.jpg`, mediaKind: "photo", observedAt: OBSERVED,
+    });
+    assert.equal(!withdrawn.ok && withdrawn.reason, "consent_required", "Gate 2 still answers a withdrawal first");
+    assert.equal(db._tables.intel_evidence.length, 0);
+  });
+
+  it("no product code widens the list through the test seam", () => {
+    const files: string[] = [];
+    const walk = (dir: string) => {
+      for (const e of readdirSync(dir, { withFileTypes: true })) {
+        const p = join(dir, e.name);
+        if (e.isDirectory()) {
+          if (e.name !== "test" && e.name !== "node_modules") walk(p);
+        } else if (e.name.endsWith(".ts") && !e.name.endsWith(".test.ts")) files.push(p);
+      }
+    };
+    walk(SRC_ROOT);
+    const definer = join(SRC_ROOT, "lib", "intelEvidenceCapture.ts");
+    const callers = files
+      .filter((f) => f !== definer && readFileSync(f, "utf8").includes("_setPhotoEvidenceConsentVersionsForTests"))
+      .map((f) => f.slice(SRC_ROOT.length + 1));
+    assert.deepEqual(callers, [], "a product file calls the test seam that widens which consent keeps photos");
   });
 });

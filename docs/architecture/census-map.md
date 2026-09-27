@@ -2039,7 +2039,7 @@ What that gives, each property pinned by a test in §45.7:
 
 Every existing gate is unchanged and still comes first: both flags, consent,
 the observed-at clamp, the ownership proof, the owned-observation and subject
-check, and retention.
+check, and retention. One gate was added after consent, Gate 2b (§45.5).
 
 **B. The contributor's reader, through the byte gate.**
 `` `artifacts/api-server/src/lib/intelEvidenceCapture.ts:567#export async function resolveEvidenceMediaForContributor(` ``
@@ -2145,43 +2145,84 @@ selects `reference` from `intel_evidence`. The old rule never saw
   TRIGGER` inside a SECURITY DEFINER function. It is 3002 §5's pattern, moved
   into a function, and only a rehearsal can prove it.
 
-### §45.5 The owner question this lane may not answer: photos under a consent that names Quick Signals
+### §45.5 Photos under a consent that names Quick Signals: a fail-closed gate, and the owner question it waits on
 
-**Facts:**
+**Facts, on the base tree:**
 
-- The evidence path accepts any valid intelligence consent. The gate reads
-  only `enabled` and `withdrawn_at`
+- The evidence path accepted any valid intelligence consent. Gate 2 reads only
+  `enabled` and `withdrawn_at`
   (`` `artifacts/api-server/src/lib/intelConsent.ts:61#.select("enabled, withdrawn_at")` ``).
 - The only version the server stamps is v1
   (`` `artifacts/api-server/src/lib/intelConsent.ts:26#export const INTEL_CONSENT_DISCLOSURE_VERSION = "intel_contributions_v1";` ``).
 - v1's words name Quick Signals and nothing else
   (`` `travel-buddy-standalone/src/lib/sensing/consentDisclosure.ts:60#Your Quick Signals can be combined` ``).
-- The v2 text, not in force, does not mention photos either.
+- The v2 text is not owner-approved and not in force, and its words
+  (`docs/contracts/sensing-consent-disclosure-v2.md`, read 2026-09-27) do not
+  name photos or videos either.
 - The photo step on the map sheet says only "Answer one of these, then you can
   add a photo to it."
-- This lane changed no consent text and no consent gate.
+- **Production, read-only, by the integrator on 2026-09-27:**
+  - `map_contributions_enabled` and `media_evidence_enabled` have no row;
+  - `intel_evidence` has 0 rows;
+  - `intel_capture_quick_signal` is true.
+
+  Nothing has been kept. The gap was latent, and would have opened the day the
+  map flag was turned on.
+
+**Built on this branch, at the coordinator's request: Gate 2b, fail-closed and
+decision-free.**
+
+- **The rule.** A photo or video is kept as evidence only when the
+  contributor's RECORDED `consent_version` is in an explicit list of versions
+  whose words name photos:
+  `` `artifacts/api-server/src/lib/intelEvidenceCapture.ts:211#const photos = await consentCoversPhotoEvidence(sc, actorId);` ``.
+- **The list is EMPTY**
+  (`` `artifacts/api-server/src/lib/intelEvidenceCapture.ts:788#export const PHOTO_EVIDENCE_CONSENT_VERSIONS` ``).
+  No version in force names photos. v2 was read and does not name them either,
+  and it is not approved, so it is left out.
+- **The refusal.** Every media contribution is refused with
+  `consent_does_not_cover_photos`, HTTP 409
+  (`` `artifacts/api-server/src/lib/http.ts:108#consent_does_not_cover_photos: 409,` ``).
+  It is decided before any row is read or written, so nothing is stored: no
+  evidence, and no observation.
+- **The tap is unaffected.** It is a separate request on the observation arrow
+  and never reaches this gate. The test asserts both halves:
+  `` `artifacts/api-server/src/test/intelEvidenceReference.test.ts:660#it("under v1: the tap is recorded` ``.
+- **What stayed unchanged.** No consent word, no consent version, no granted
+  scope. `SENSING_ANON_GRANTED_SCOPES` is untouched.
+- **A test seam.** It names a fictional covering version, so suites can still
+  exercise the path after the gate. A test pins that no product file calls it.
+
+**RED WHEN** a contributor holding only v1 (or v2, or no recorded version)
+gets a photo or video kept, or a tap stops being recorded because of this gate.
+
+**The owner step it waits on.** Approve disclosure words that name photos and
+videos kept as evidence. Then ship, in ONE release:
+
+- that version as `INTEL_CONSENT_DISCLOSURE_VERSION`;
+- its words on the client;
+- its string in `PHOTO_EVIDENCE_CONSENT_VERSIONS`.
 
 **The question, exactly.** *May the map evidence path keep a person's photo or
 video, attached to their own report, under an Intelligence Contributions
 consent whose words do not mention photos? If not, which of these should the
-product do?*
+product do?* Each answer now maps onto the gate:
 
 | Option | What it permits | What it costs, and where |
 | --- | --- | --- |
-| **A. A disclosure version that names photos.** Draft words for the owner to edit: *"If you add a photo or video to a report, Portava keeps it with that report as evidence. It is not shown to other people, is kept for up to 180 days, and is deleted with your account."* | Photos are stored only for people whose recorded `consent_version` carries those words. Everyone on v1 is refused photo evidence until they re-consent; their taps are unaffected. | Owner-approved copy. The server version constant and the client text ship in one release, as `sensing_contributions_v2` was prepared. A per-version "covers photos" entry beside `lib/sensingConsentScopes.ts`'s table, checked at Gate 2 of `attachMediaEvidence`, with tests. The client's existing `needsReconsent` prompts the re-consent. |
-| **B. A per-photo notice on the photo step,** on top of the standing consent. The same words are shown before upload. | Anyone with valid consent, v1 included, may attach a photo after seeing words that name photos, once per photo. No re-consent campaign is needed. | Owner-approved sheet copy. A strict-schema field on the media payload of `POST /api/map/observations` saying which notice was shown. A server constant recorded in `intel_evidence.detail`, never free text. A gate in `attachMediaEvidence` and tests. |
-| **C. Rule that v1 already covers it.** Read *"Portava uses your contribution"* as including an attached photo. | Today's behaviour. | No code. The owner accepts that the words people agreed to name Quick Signals only. Lane I and this lane both flag this as the gap. |
-| **D. Store no photo until A or B exists.** | Nothing is stored. The map's photo step answers "not available". | One refusal in `attachMediaEvidence` and client copy for it. |
+| **A. A disclosure version that names photos.** Draft words for the owner to edit: *"If you add a photo or video to a report, Portava keeps it with that report as evidence. It is not shown to other people, is kept for up to 180 days, and is deleted with your account."* | Photos are stored only for people whose recorded `consent_version` carries those words. Everyone on v1 is refused photo evidence until they re-consent (the gate's current answer); their taps are unaffected. | Owner-approved copy, then the one release above. The client's existing `needsReconsent` prompts the re-consent. |
+| **B. A per-photo notice on the photo step,** on top of the standing consent. The same words are shown before upload. | Anyone with valid consent, v1 included, may attach a photo after seeing words that name photos, once per photo. No re-consent campaign is needed. | Owner-approved sheet copy. A strict-schema field on the media payload of `POST /api/map/observations` saying which notice was shown, with the notice version recorded in `intel_evidence.detail`. Gate 2b would accept that field in place of a listed consent version. Not built. |
+| **C. Rule that v1 already covers it.** Read *"Portava uses your contribution"* as including an attached photo. | Photos kept under v1. | One string, `intel_contributions_v1`, added to the list, as the owner's recorded ruling. Lane I and this lane both flag the words as not covering it. |
+| **D. Store no photo until A or B exists.** | Nothing is stored. | None: this is the gate's behaviour today. The client still offers the photo step (§45.9 item 5). |
 
-**Live effect of each today: none.** The path is behind a flag whose row is
-absent in production, and it now also needs `INTEL_EVIDENCE_REFERENCE_KEY`.
-The answer is owed before either is provided, not after.
+Nothing is live today. The path is behind a flag whose row is absent in
+production, and it also needs `INTEL_EVIDENCE_REFERENCE_KEY`.
 
 ### §45.6 Rows
 
 | id | was | now | why |
 | --- | --- | --- | --- |
-| M154 | C | **C** | Re-evidenced; does not move. The Evidence stage still attaches only to an existing, owned observation. It now stores a reference that names no account: `` `artifacts/api-server/src/lib/intelEvidenceCapture.ts:224#const resolved = resolveAndSealOwnedMediaReference(` ``, pinned by `` `artifacts/api-server/src/test/intelEvidenceReference.test.ts:229#it("no stored reference, for forty accounts, contains any account id in any substring or encoding"` ``. Before this section the C never asked whose identity the stored row carries, and from 3002 on the row carried the account (§45.1), the same gap the port's cache note found for M203–M210. Under §21's stated convention (code that is correct and would run), activation is not graded. Activation now needs `INTEL_EVIDENCE_REFERENCE_KEY` as well as both flags and consent. |
+| M154 | C | **C** | Re-evidenced; does not move. The Evidence stage still attaches only to an existing, owned observation. It now stores a reference that names no account: `` `artifacts/api-server/src/lib/intelEvidenceCapture.ts:224#const resolved = resolveAndSealOwnedMediaReference(` ``, pinned by `` `artifacts/api-server/src/test/intelEvidenceReference.test.ts:241#it("no stored reference, for forty accounts, contains any account id in any substring or encoding"` ``. Before this section the C never asked whose identity the stored row carries, and from 3002 on the row carried the account (§45.1), the same gap the port's cache note found for M203–M210. Under §21's stated convention (code that is correct and would run), activation is not graded. Activation now needs `INTEL_EVIDENCE_REFERENCE_KEY` as well as both flags and consent, and, for a photo to be kept at all, an owner-approved disclosure version in Gate 2b's list (§45.5). |
 
 **For census-sensing's integrator, not restated here, because the rows are not
 this census's.** census-sensing §27.5 grades S118 ("the stored side cannot be
@@ -2202,7 +2243,7 @@ Neither verdict moves: both wait on the production cutover.
 
 Each mutation was applied to the final tree, the named suites were run, and the
 file was restored and compared byte for byte (`filecmp`, then `sha256sum -c`
-over all three mutated files).
+over all five mutated files).
 
 | # | Mutation | File | Went red |
 | --- | --- | --- | --- |
@@ -2217,13 +2258,19 @@ over all three mutated files).
 | mutation X9 | a second reader selects `reference` | `lib/media/mediaEvidenceLink.ts` | 2: this lane's one-module scan and mapMediaEvidence's existing "no route and no serving library" scan |
 | mutation X10 | seam writer mirrors the storage path again | same | the seam writer stores no storage key |
 | mutation X11 | padding no longer hides the key's length | `lib/intelEvidenceCapture.ts` | 5: length hidden; forty-accounts no-uuid; round trip; both reader cases that open a reference |
+| mutation G1 | GATE 2b OUT: the consent-coverage line removed | `lib/intelEvidenceCapture.ts` | 3: under v1 the photo is refused and the tap recorded; the recorded version is what decides; no version or a withdrawn grant keeps nothing |
+| mutation G2 | v1 added to the shipped list | same | 2: the shipped list is empty; under v1 the photo is refused |
+| mutation G3 | the gate ignores the recorded version | same | 2: the recorded version is what decides; no version keeps nothing |
+| mutation G4 | the refusal is not a 409 | `lib/http.ts` | the route answers it as HTTP 409 |
+| mutation G5 | a product file calls the test seam | `routes/mapObservations.ts` | no product code widens the list through the test seam |
 
 The suite is `artifacts/api-server/src/test/intelEvidenceReference.test.ts`
-(20 cases, registered on the `test` line). The existing `mapMediaEvidence`,
+(26 cases, registered on the `test` line). The existing `mapMediaEvidence`,
 `intelContributorConsentBridge`, `accountDeletionEvidenceMedia`,
 `accountDeletionPagination`, `mediaEvidenceSeam`, `mapObservations` and
 `dataRights` suites stay green. The two that drive a successful capture now
-configure a key, as a deployment must.
+configure a key, as a deployment must, and give their consenting contributors
+the fictional covering version, because they test what happens after Gate 2b.
 
 ### §45.8 Checks, and the stale files this lane leaves for the integrator
 
@@ -2234,14 +2281,16 @@ Everything was run on Node 24 at the lane's final tree.
 - `typecheck` is clean. `typecheck:tests` has 863 diagnostics across 115 files,
   which is the baseline and not above it.
 - `check:doc-citations` is clean. The UNANCHORED count is 6356 (ceiling 6434);
-  this section adds 27 anchored citations and no unanchored one.
+  this section adds 31 anchored citations and no unanchored one.
 - `check:citation-targets` is at its ceiling, 165 / 165.
 - These pass: `check:census-integrity`, `check:census-row-move-labels`,
   `check:test-registration`, `check:security-definer-oracles`,
   `check:schema-references`, `check:writerless-reads`, `check:enum-literals`.
 - `check:census-scope-coverage` passes. census-map cites 120 files and watches
   120, which is 100%.
-- The touched and adjacent suites pass: 49 files, 1066 tests.
+- The touched and adjacent suites pass: 49 files, 1072 tests. Seven
+  error-envelope suites also pass (122 tests), for the new 409 code in
+  `lib/http.ts`.
 
 **Failing, as expected:**
 
@@ -2249,14 +2298,19 @@ Everything was run on Node 24 at the lane's final tree.
   missing-live-columns, authorization-contract, media-objects,
   rank-events-surfaces) and on `check:census-freshness`.
 
-**Stale files.** `check:census-freshness` names two. The acknowledgement
-ledger is the integrator's, so each is listed with its argument:
+**Stale files.** `check:census-freshness` names three censuses and three
+files. The acknowledgement ledger is the integrator's, so each is listed with
+its argument:
 
 - census-map, `artifacts/api-server/src/test/intelEvidenceReference.test.ts`.
   The file is new, and this lane added it to census-map's scope as M154's
   evidence. §45.6 re-reads M154 against it.
 - census-trust, `lib/envValidation.ts`. One OPTIONAL key is appended to line 44.
   No required key, boot exit or trust verdict changes.
+- census-trips and census-trust, `lib/http.ts`. One error code,
+  `consent_does_not_cover_photos` (409), is appended on two existing lines
+  (the union and the status map). No existing code, status, retryable set or
+  sanitised set changes, and no trips or trust route emits it.
 
 **Changed but already named by an existing acknowledgement.** The check
 cannot tell this lane's change from the one that was acknowledged, so each is
@@ -2292,6 +2346,18 @@ This section does not restate the census headline, because no row moved.
    Whichever option the owner picks decides this copy.
 4. **3360's function has not been rehearsed** (§45.4). Rehearse it on
    portava-ci before any database it is applied to holds a plaintext row.
+5. **The client does not know about Gate 2b.** Once the map flag is on and
+   while the list is empty, the sheet still offers the photo step. It uploads
+   the bytes through `POST /api/media/upload` before the attach is refused, and
+   after the 409 it offers "Try attaching it again", which is refused again.
+   - The uploaded object is the person's own, referenced by nothing. Like any
+     abandoned upload, account deletion does not find it (see the
+     AccountDeletionService header).
+   - Before the map flag is turned on, the client should not offer the step
+     while the person's consent does not cover photos. That needs a coverage
+     bit on the consent state and a client change. Neither is built here.
+6. **The media seam's writer has no consent check of any kind.** It has no
+   caller, and it must pass Gate 2b the day one is wired (MD65).
 
 ### §45.10 Cited, not graded (check:census-scope-coverage)
 
@@ -2300,9 +2366,9 @@ This section does not restate the census headline, because no row moved.
 - NOT-GRADED: artifacts/api-server/src/lib/mediaAccess.ts — the byte gate, cited in §45.2 for its read of media_assets.owner_user_id and in §45.3 as the second authorization of the contributor reader; census-media grades it, and M154 rests on the capture module and its test, not on the gate.
 - NOT-GRADED: artifacts/api-server/src/services/accountDeletion/AccountDeletionService.ts — account deletion's evidence collection step, cited in §45.1 and §45.3 as the reader this lane repaired; the deletion service is graded by census-trust and the other censuses that watch it, and no Map row grades erasure.
 - NOT-GRADED: artifacts/api-server/src/lib/media/mediaEvidenceLink.ts — Media's callerless evidence seam, cited in §45.1, §45.3 and §45.6 for its reference column; census-media grades it (MD53, MD65), and no Map row does.
+- NOT-GRADED: artifacts/api-server/src/lib/http.ts — the shared error envelope, cited in §45.5 and §45.7 only for the 409 status of the new consent_does_not_cover_photos code; census-trips and census-trust watch it, and no Map row grades the envelope.
 - NOT-GRADED: artifacts/api-server/src/lib/intelConsent.ts — cited in §45.5 for which consent columns the gate reads and which version the server stamps; census-sensing grades consent, and §45.5 is an owner question, not a verdict.
 - NOT-GRADED: travel-buddy-standalone/src/lib/sensing/consentDisclosure.ts — cited in §45.5 for the words of consent v1; census-sensing grades the disclosure, and §45.5 moves no row.
-- NOT-GRADED: artifacts/api-server/src/lib/sensingConsentScopes.ts — named in §45.5 only as the existing pattern option A would follow; no verdict rests on it.
 - NOT-GRADED: artifacts/api-server/src/migrations/3360_intel_evidence_sealed_reference.sql — the remediation migration, applied to no database, cited in §45.4 as prepared work; M154 rests on the application's seal, which it does not depend on.
 - NOT-GRADED: artifacts/api-server/src/migrations/3361_intel_evidence_sealed_reference_validate.sql — the remediation's closing migration, applied to no database, cited in §45.4 only.
 - NOT-GRADED: artifacts/api-server/src/scripts/rekeyIntelEvidenceReferences.ts — the remediation script, not run, cited in §45.4 only.
