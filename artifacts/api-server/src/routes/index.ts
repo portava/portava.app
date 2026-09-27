@@ -435,4 +435,5 @@ router.use(postcardMediaTransportRouter);
 import mediaVideoPosterRouter from "./mediaVideoPoster.js";
 router.use(mediaVideoPosterRouter);
 
+import discoveryTrendingRouter from "./discoveryTrending.js"; router.use(discoveryTrendingRouter); // census-discovery §58 (DC-21): `11` §4 trend explanation, read-only, behind discovery_trending_api_enabled. Tail-registered on one line so no cited line above moves.
 export default router;
