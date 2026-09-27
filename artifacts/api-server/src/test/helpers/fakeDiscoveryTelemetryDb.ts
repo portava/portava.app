@@ -19,6 +19,33 @@
  * Every table not modelled answers empty and accepts writes (captured), so the
  * whole Discovery route runs against it. Failures can be injected per table and
  * per operation to model a partial failure.
+ *
+ * ── CHECKED AGAINST THE REAL CLIENT ─────────────────────────────────────────
+ * `src/test/supabaseContract.test.ts` runs this double and the REAL installed
+ * supabase-js client through the same scenarios every CI run and fails if they
+ * disagree anywhere not listed below (registered by census-discovery §49, when
+ * the helpers scan found it unregistered). Do not "improve" this file by making
+ * a scenario pass more loosely; change the scenario, or declare a gap here.
+ *
+ * MODELLED EXACTLY (measured, not assumed): thenable execution; `.single()` /
+ * `.maybeSingle()` cardinality including the RESOLVED PGRST116; failures
+ * arriving RESOLVED as `{ data: null, error }` (`failReads` / `failWrites`, and
+ * a dead transport through them); a write with no chained `.select()`
+ * returning `data: null`; DELETE removing the matched rows; `count` null unless
+ * requested; an rpc this double does not know resolving PGRST202 — it answers
+ * only `record_discovery_serve_request`, the two distribution counters the
+ * telemetry path calls, and whatever `opts.rpc` names.
+ *
+ * NOT MODELLED — every entry below is enforced by the contract suite:
+ *
+ *   insert/unique-violation-23505 — only 2891's (recommendation_id, outcome)
+ *     arbiter on rank_events is modelled. Any other table appends a duplicate.
+ *     Stage the error with `failInserts` if a test needs that shape elsewhere.
+ *   error/unknown-column-42703 — no schema knowledge. An unknown column reads
+ *     as `undefined` instead of failing the statement (use schemaStrictSupabase).
+ *   rls/denied-read-yields-zero-rows, rls/denied-write-yields-42501 — one table
+ *     set, no service-vs-user distinction and no policies; a denied read cannot
+ *     be told from an empty one. The Discovery writers run as the service role.
  */
 export interface FakeTelemetryDbOptions {
   flags?: Record<string, { enabled: boolean; metadata?: Record<string, unknown> }>;
@@ -36,6 +63,36 @@ export interface FakeTelemetryDbOptions {
    * concurrent requests to both read the row before either writes it.
    */
   beforeRankEventsRead?: () => Promise<void>;
+  /** table → an error EVERY read of it resolves with (the contract's failReads). */
+  failReads?: Record<string, unknown>;
+  /** table → an error EVERY write to it resolves with (the contract's failWrites). */
+  failWrites?: Record<string, unknown>;
+  /** Further rpc functions by name. Any name nobody answers resolves PGRST202. */
+  rpc?: Record<string, (args: any) => { data: unknown; error: unknown }>;
+}
+
+/** The two distribution counters the telemetry path calls (rankLog / DiscoveryRankingService). */
+const KNOWN_VOID_RPCS = new Set(["increment_creator_fatigue_batch", "record_distribution_negative_signal"]);
+
+/** PostgREST's answer when `application/vnd.pgrst.object+json` sees != 1 row. */
+function pgrst116(n: number) {
+  return {
+    data: null,
+    error: {
+      code: "PGRST116",
+      details: `Results contain ${n} rows, application/vnd.pgrst.object+json requires 1 row`,
+      hint: null,
+      message: "JSON object requested, multiple (or no) rows returned",
+    },
+  };
+}
+
+function cardinality(r: any, strict: boolean): any {
+  if (r.error) return { data: null, error: r.error };
+  const rows = Array.isArray(r.data) ? r.data : r.data == null ? [] : [r.data];
+  if (rows.length > 1) return pgrst116(rows.length);
+  if (rows.length === 0) return strict ? pgrst116(0) : { data: null, error: null };
+  return { data: rows[0], error: null };
 }
 
 const ARBITER = "rank_events_recommendation_idempotency_idx";
@@ -89,7 +146,8 @@ export function makeTelemetryDb(opts: FakeTelemetryDbOptions = {}) {
 
   function from(table: string) {
     const preds: Array<(r: any) => boolean> = [];
-    let op: "select" | "insert" | "update" | "upsert" = "select";
+    let op: "select" | "insert" | "update" | "upsert" | "delete" = "select";
+    let countMode: string | null = null;
     let payload: any[] = [];
     let patch: Record<string, unknown> = {};
     let upsertOpts: { onConflict?: string; ignoreDuplicates?: boolean } = {};
@@ -104,11 +162,11 @@ export function makeTelemetryDb(opts: FakeTelemetryDbOptions = {}) {
     };
 
     const b: any = {
-      select(_cols?: string) { if (op !== "select") wantRows = true; return b; },
+      select(_cols?: string, o?: { count?: string }) { if (o?.count) countMode = String(o.count); if (op !== "select") wantRows = true; return b; },
       insert(p: any) { op = "insert"; payload = Array.isArray(p) ? p : [p]; return b; },
       upsert(p: any, o?: any) { op = "upsert"; payload = Array.isArray(p) ? p : [p]; upsertOpts = o ?? {}; return b; },
       update(p: any) { op = "update"; patch = p; return b; },
-      delete() { return b; },
+      delete() { op = "delete"; return b; },
       eq(col: string, val: any) { preds.push((r) => colOf(r, col) === val); return b; },
       neq(col: string, val: any) { preds.push((r) => colOf(r, col) !== val); return b; },
       in(col: string, vals: any[]) { preds.push((r) => vals.includes(colOf(r, col))); return b; },
@@ -125,8 +183,8 @@ export function makeTelemetryDb(opts: FakeTelemetryDbOptions = {}) {
       contains() { return b; }, overlaps() { return b; }, range() { return b; },
       order(col: string, o?: { ascending?: boolean }) { orderCol = col; orderAsc = o?.ascending !== false; return b; },
       limit(n: number) { limitN = n; return b; },
-      maybeSingle() { return run().then((r: any) => ({ data: (r.data ?? [])[0] ?? null, error: r.error })); },
-      single() { return run().then((r: any) => ({ data: (r.data ?? [])[0] ?? null, error: r.error })); },
+      maybeSingle() { return run().then((r: any) => cardinality(r, false)); },
+      single() { return run().then((r: any) => cardinality(r, true)); },
       then(onF: any, onR: any) { return run().then(onF, onR); },
     };
 
@@ -145,8 +203,21 @@ export function makeTelemetryDb(opts: FakeTelemetryDbOptions = {}) {
         tables["feature_flags"] = rows;
       }
       if (op === "select") {
+        if (opts.failReads?.[table]) return { data: null, error: opts.failReads[table], count: null };
         if (table === "rank_events" && opts.beforeRankEventsRead) await opts.beforeRankEventsRead();
-        return { data: matching(), error: null };
+        const rows = matching();
+        return { data: rows, error: null, count: countMode ? rows.length : null };
+      }
+      if (opts.failWrites?.[table]) {
+        captured.push({ table, op, payload: op === "update" ? patch : payload });
+        return { data: null, error: opts.failWrites[table] };
+      }
+      if (op === "delete") {
+        captured.push({ table, op, payload: null });
+        const current = tables[table] ?? [];
+        const gone = current.filter((r) => preds.every((p) => p(r)));
+        for (const r of gone) current.splice(current.indexOf(r), 1);
+        return { data: wantRows ? gone : null, error: null };
       }
       if (op === "insert") {
         captured.push({ table, op, payload });
@@ -216,7 +287,10 @@ export function makeTelemetryDb(opts: FakeTelemetryDbOptions = {}) {
         tables["recommendations"]!.push({ ...row, served_at: pgrstInstant(row.served_at) });
         return { data: "written", error: null };
       }
-      return { data: null, error: null };
+      const custom = opts.rpc?.[name];
+      if (custom) return custom(params);
+      if (KNOWN_VOID_RPCS.has(name)) return { data: null, error: null };
+      return { data: null, error: { code: "PGRST202", message: `Could not find the function public.${name} in the schema cache` } };
     },
   };
 

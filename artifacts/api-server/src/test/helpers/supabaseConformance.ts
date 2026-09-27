@@ -53,6 +53,7 @@ import { makeFailClosedClient } from "./failClosedSupabase.js";
 import { makeFakeMapDb } from "./fakeMapDb.js";
 import { makeSchemaStrictClient } from "./schemaStrictSupabase.js";
 import { makeEnumAwareClient } from "./enumAwareSupabase.js";
+import { makeTelemetryDb } from "./fakeDiscoveryTelemetryDb.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
@@ -434,6 +435,39 @@ export function enumAwareSubject(): Subject {
   };
 }
 
+/**
+ * census-discovery §48's telemetry double. It models rank_events' 2891 arbiter
+ * and 3376's per-request RPC; every other table is a plain in-memory array, so
+ * the contract's generic `t` / `audit_events` scenarios run against it as-is.
+ * Registered by the integrator (census-discovery §49) when the helpers scan
+ * found it unregistered.
+ */
+export function telemetrySubject(): Subject {
+  return {
+    name: "fakeDiscoveryTelemetryDb",
+    sourceFile: join(HERE, "fakeDiscoveryTelemetryDb.ts"),
+    gaps: {
+      "insert/unique-violation-23505": {
+        mode: "divergent",
+        why: "only 2891's (recommendation_id, outcome) arbiter on rank_events is modelled; any other table appends a duplicate",
+      },
+      "error/unknown-column-42703": {
+        mode: "divergent",
+        why: "no schema knowledge; an unknown column reads as undefined instead of failing the statement (use schemaStrictSupabase for that question)",
+      },
+      "rls/denied-read-yields-zero-rows": { mode: "divergent", why: "no service-vs-user distinction; there is one seed and no policies" },
+      "rls/denied-write-yields-42501": { mode: "divergent", why: "no service-vs-user distinction; there is one seed and no policies" },
+    },
+    build(w) {
+      const world = forFake(w);
+      const sizes = seedSizes(world.tables);
+      const db = makeTelemetryDb({ failReads: world.failReads, failWrites: world.failWrites, rpc: world.rpc as any });
+      for (const [t, rows] of Object.entries(world.tables)) db.tables[t] = rows;
+      return { client: db.client, writes: (t) => (db.tables[t]?.length ?? 0) - (sizes[t] ?? 0) };
+    },
+  };
+}
+
 export function allFakeSubjects(): Subject[] {
   return [
     layoverSubject(),
@@ -442,6 +476,7 @@ export function allFakeSubjects(): Subject[] {
     mapSubject(),
     schemaStrictSubject(),
     enumAwareSubject(),
+    telemetrySubject(),
   ];
 }
 
