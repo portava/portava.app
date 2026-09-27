@@ -119,6 +119,7 @@ const PLACE: DiscoveryPlace = {
   openingHours: null,
   rating:       null,
   isOpenNow:    null,
+  recommendationId: 'rec_DetailSheet_akn_01',  // DV-46: the served exposure id every report must carry
 };
 
 async function mountSheet(props: Partial<React.ComponentProps<typeof PlaceDetailSheet>> = {}) {
@@ -150,7 +151,7 @@ describe('PlaceDetailSheet — "Already know it"', () => {
     fireEvent.press(getByTestId('place-sheet-already-known'));
 
     expect(mockRecordAlreadyKnown).toHaveBeenCalledWith(PLACE.id);
-    expect(mockReportTap).toHaveBeenCalledWith(PLACE.id);
+    expect(mockReportTap).toHaveBeenCalledWith(PLACE.id, PLACE.recommendationId);
   });
 
   it('is idempotent in the UI — a second press re-fires nothing', async () => {

@@ -138,6 +138,7 @@ const PLACE: DiscoveryPlace = {
   openingHours: null,
   rating:       null,
   isOpenNow:    null,
+  recommendationId: 'rec_DetailSheet_tap_01',  // DV-46: the served exposure id every report must carry
 };
 
 async function mountSheet(props: Partial<React.ComponentProps<typeof PlaceDetailSheet>> = {}) {
@@ -184,7 +185,7 @@ describe('PlaceDetailSheet — rank outcome wiring', () => {
 
     fireEvent.press(getByTestId('place-sheet-directions'));
 
-    expect(mockReportTap).toHaveBeenCalledWith(PLACE.id);
+    expect(mockReportTap).toHaveBeenCalledWith(PLACE.id, PLACE.recommendationId);
     expect(openURLSpy).toHaveBeenCalledWith(expect.stringContaining('48.8566,2.3522'));
   });
 
@@ -194,7 +195,7 @@ describe('PlaceDetailSheet — rank outcome wiring', () => {
     fireEvent.press(getByTestId('place-sheet-save'));
 
     expect(mockReportSave).not.toHaveBeenCalled(); // not on the tap…
-    await waitFor(() => expect(mockReportSave).toHaveBeenCalledWith(PLACE.id)); // …on the confirmation
+    await waitFor(() => expect(mockReportSave).toHaveBeenCalledWith(PLACE.id, PLACE.recommendationId)); // …on the confirmation
     expect(mockToggleSave).toHaveBeenCalledWith('place', PLACE.id, false);
   });
 
@@ -214,7 +215,7 @@ describe('PlaceDetailSheet — rank outcome wiring', () => {
 
     fireEvent.press(getByTestId('wishlist-stub-save'));
 
-    expect(mockReportSave).toHaveBeenCalledWith(PLACE.id);
+    expect(mockReportSave).toHaveBeenCalledWith(PLACE.id, PLACE.recommendationId);
   });
 
   it('Plan reports nothing — intent, not an outcome', async () => {

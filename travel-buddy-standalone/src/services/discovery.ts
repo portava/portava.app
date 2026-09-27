@@ -1,10 +1,10 @@
-/**
- * Discovery service — fetches place data from /api/discovery.
- * Destination-scoped, category-filtered, no auth required.
- */
+/** Discovery service — fetches place data from /api/discovery. Destination-scoped, category-filtered. Anonymous
+ *  when signed out; sent WITH the viewer's token when signed in, and device-cached per viewer (VIEWER SCOPE, foot of file). */
 import { supabase } from '../lib/supabase.ts';
 import { freshToken as freshApiToken } from './apiToken.ts';
 import type { DiscoveryEventPost } from '../types/discovery.ts';
+import { openDiscoveryLease, isCurrentDiscoveryScope, isLeaseViewerCurrent, onDiscoveryScopeChange, VIEWER_CHANGED_ERROR, type DiscoveryLease, type DiscoveryScope } from './discoveryViewerScope.ts';
+import { stampCandidateReceipt } from '../features/discovery/candidateProjection.ts';
 
 const apiBase = () => process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
 
@@ -189,15 +189,15 @@ export interface DiscoveryPlace {
   /**
    * Server-built DiscoveryCandidate projection (Sensing §8): truth class,
    * confidence, freshness, the grounded why-now and `01` §11's reason labels.
-   *
-   * Typed `unknown` on purpose. It is ADDITIVE and flag-gated
-   * (`discovery_candidate_projection_enabled`, migration 2361, seeded FALSE),
-   * so on most serves it is absent; and `getDiscoveryPlaces` casts the response
-   * body rather than validating it, so a declared shape here would be a promise
-   * this layer does not keep. `features/discovery/candidateProjection.ts`
-   * parses it defensively and is the only thing that should read it.
+   * Typed `unknown` on purpose: it is ADDITIVE and flag-gated (migration 2361,
+   * seeded FALSE), and `getDiscoveryPlaces` casts rather than validates the body.
+   * `features/discovery/candidateProjection.ts` parses it defensively and is the
+   * only thing that should read it (`getDiscoveryPlaces` stamps `receivedAtMs`).
    */
   candidate?: unknown;
+  /** DV-46: THIS viewer's exposure id (signed-in serves only). Echoed as `recommendation_id` on
+   *  POST /rank-events/outcome, and never shown or cached across viewers (VIEWER SCOPE). */
+  recommendationId?: string;
   /**
    * Raw OSM `image` tag value, kept only when it is an absolute http(s) URL.
    * Used as the lowest-priority header image candidate — only shown when no
@@ -412,17 +412,17 @@ export async function getCommunityPlaces(
   type: 'hidden_gem' | 'traveler_pick' | 'all' = 'all',
   limit = 20,
   sortBy?: string | null,
-): Promise<{ ok: true; data: CommunityDiscoveryResult } | { ok: false; error: string }> {
+): Promise<{ ok: true; data: CommunityDiscoveryResult; scope?: DiscoveryScope } | { ok: false; error: string }> {
   const base = apiBase();
   if (!base) return { ok: false, error: 'API not configured' };
 
   const params = new URLSearchParams({ city, type, limit: String(limit) });
   if (sortBy) params.set('sortBy', sortBy);
-
+  const lease = openDiscoveryLease(await freshToken());  // bylines, blocks and mutes are per viewer — VIEWER SCOPE, foot of file
   try {
-    const res = await fetch(`${base}/api/discovery/community?${params}`);
+    const res = await fetch(`${base}/api/discovery/community?${params}`, lease.init);
     if (!res.ok) return { ok: false, error: `HTTP ${res.status}` };
-    return { ok: true, data: withParsedRefusal<CommunityDiscoveryResult>(await res.json()) };
+    return communityForLease(lease, withParsedRefusal<CommunityDiscoveryResult>(await res.json()));
   } catch {
     return { ok: false, error: 'Network error — check your connection' };
   }
@@ -605,10 +605,10 @@ export type DiscoveryAgeFilter =
   | 'custom';
 
 // ── Client-side stale-while-revalidate cache for discovery results ─────────────
-// Keyed by destination:category:radiusKm:page. Serves previously-fetched data
-// instantly when the user returns to the Explore tab, then lets the caller
-// decide whether to refresh in the background.
-const _CLIENT_CACHE = new Map<string, { data: DiscoveryResult; at: number }>();
+// Keyed by destination:category:radiusKm:page; each entry carries the VIEWER + epoch it was written in
+// and is readable only in that scope (VIEWER SCOPE, foot of file). Serves previously-fetched data instantly
+// when the user returns to the Explore tab, then lets the caller decide whether to refresh in the background.
+const _CLIENT_CACHE = new Map<string, { data: DiscoveryResult; at: number; scope: DiscoveryScope }>();
 const CLIENT_CACHE_TTL = 4 * 60 * 1_000; // 4 minutes
 
 function _discoveryCacheKey(dest: string, cat: string, radiusKm: number, page: number): string {
@@ -631,7 +631,7 @@ export function getCachedDiscoveryPlaces(
   radiusKm: number,
   page = 1,
 ): DiscoveryResult | null {
-  return _CLIENT_CACHE.get(_discoveryCacheKey(destination, category, radiusKm, page))?.data ?? null;
+  return _liveCacheEntry(_discoveryCacheKey(destination, category, radiusKm, page))?.data ?? null;
 }
 
 /**
@@ -643,7 +643,7 @@ export function isDiscoveryCacheFresh(
   radiusKm: number,
   page = 1,
 ): boolean {
-  const e = _CLIENT_CACHE.get(_discoveryCacheKey(destination, category, radiusKm, page));
+  const e = _liveCacheEntry(_discoveryCacheKey(destination, category, radiusKm, page));
   return !!e && Date.now() - e.at < CLIENT_CACHE_TTL;
 }
 
@@ -692,22 +692,22 @@ export async function getDiscoveryPlaces(
     ...(userLat != null ? { userLat: String(userLat) } : {}),
     ...(userLng != null ? { userLng: String(userLng) } : {}),
   });
-
+  const lease = openDiscoveryLease(await freshToken());  // the viewer this page is fetched AS — VIEWER SCOPE, foot of file
   try {
-    const res = await fetch(`${base}/api/discovery?${params}`);
+    const res = await fetch(`${base}/api/discovery?${params}`, lease.init);
     if (!res.ok) return { ok: false, error: `HTTP ${res.status}` };
     const body = (await res.json()) as unknown;
-    const data = withParsedRefusal<DiscoveryResult>(body);
+    const data = stampCandidateReceipt(withParsedRefusal<DiscoveryResult>(body), Date.now());  // DSV2-04: why-now expiry runs on THIS device's clock
     const refusal = data.refusal;
-    // Populate client cache so the next mount of the same tab is instant —
-    // UNLESS the server refused. This cache is a 4-minute SWR store that
-    // `getCachedDiscoveryPlaces` paints straight onto the screen, so writing a
-    // refused body into it re-commits the exact defect the ruling names, one
-    // tier down: the outage would go on being served from the DEVICE for four
-    // minutes after it ended, with no network call left to notice the recovery.
-    // A `coverage: "partial"` body IS cached: the items in it are real.
-    if (!refusedEverything(refusal)) {
-      _CLIENT_CACHE.set(_discoveryCacheKey(destination, category, filters.radiusKm, page), { data, at: Date.now() });
+    // A page fetched AS one viewer is never handed to another: the account switched mid-flight.
+    if (!isLeaseViewerCurrent(lease)) return { ok: false, error: VIEWER_CHANGED_ERROR };
+    // Populate client cache so the next mount of the same tab is instant — UNLESS the server
+    // refused (this 4-minute SWR store paints straight onto the screen, so a refused body would
+    // replay the outage from the DEVICE after it ended, with no network call left to notice the
+    // recovery; a `coverage: "partial"` body IS cached, its items are real) or the scope moved
+    // while this was in flight (a block or dismissal the page may predate).
+    if (!refusedEverything(refusal) && isCurrentDiscoveryScope(lease.scope)) {
+      _CLIENT_CACHE.set(_discoveryCacheKey(destination, category, filters.radiusKm, page), { data, at: Date.now(), scope: lease.scope });
     }
     // Signal search intent to Compass so category_weights reflect browsing.
     // Only fires when the caller opts in (emitSignal=true) AND this is page 1
@@ -803,7 +803,7 @@ export async function getDiscoveryCategoryCountsBatch(
   if (lat != null) params.set('lat', String(lat));
   if (lng != null) params.set('lng', String(lng));
   try {
-    const res = await fetch(`${base}/api/discovery/counts?${params}`);
+    const res = await fetch(`${base}/api/discovery/counts?${params}`, openDiscoveryLease(await freshToken()).init);  // per viewer, like the page
     if (!res.ok) return { counts: {} };
     const body = (await res.json()) as { counts?: Record<string, number> };
     const refusal = parseRefusal(body);
@@ -1242,4 +1242,54 @@ export async function clearSearchHistory(id?: string): Promise<void> {
   } catch {
     // non-fatal
   }
+}
+
+// ── VIEWER SCOPE ───────────────────────────────────────────────────────────────
+//
+// GET /api/discovery, /community and /counts are sent WITH the viewer's token
+// when signed in (and with no Authorization header at all when signed out, which
+// those routes support). Until 2026-09-27 they were sent with none, so every
+// production serve was anonymous: the viewer's blocks (both directions), mutes,
+// "Not interested" dismissals, age bounds and Layover gating never applied, no
+// per-viewer ranking ran, and no serve telemetry was written for anybody.
+//
+// Sending the token makes the answer per viewer IN CONTENT, which is why the two
+// device caches that hold these answers — `_CLIENT_CACHE` above and the
+// community hook's module cache — are scoped by `./discoveryViewerScope.ts`:
+// every entry carries the viewer + epoch it was written in and is readable only
+// in that scope; both caches are cleared on a viewer change and on a block /
+// mute / dismissal; and neither is written from a response whose scope moved
+// while it was in flight. The rules, and why each one is there, are in that
+// module's header.
+
+// Every scope change empties the page cache: a previous viewer's pages must not
+// sit in memory, and pages that predate a block or dismissal must not be painted.
+onDiscoveryScopeChange(() => _CLIENT_CACHE.clear());
+
+/** Test seam: how many pages the device holds — a previous viewer's must not even sit in memory. */
+export function _discoveryClientCacheSizeForTests(): number {
+  return _CLIENT_CACHE.size;
+}
+
+/** A cached page, only if it was written in the CURRENT scope; anything else is dropped on sight. */
+function _liveCacheEntry(key: string): { data: DiscoveryResult; at: number; scope: DiscoveryScope } | undefined {
+  const entry = _CLIENT_CACHE.get(key);
+  if (!entry) return undefined;
+  if (isCurrentDiscoveryScope(entry.scope)) return entry;
+  _CLIENT_CACHE.delete(key);
+  return undefined;
+}
+
+/**
+ * The community answer for the lease it was fetched under. Bylines, blocks and
+ * mutes are all per viewer, so an answer fetched for a viewer who is no longer
+ * the viewer is DISCARDED; otherwise its scope rides along so the hook's cache
+ * can refuse it if a block or dismissal landed while it was in flight.
+ */
+function communityForLease(
+  lease: DiscoveryLease,
+  data: CommunityDiscoveryResult,
+): { ok: true; data: CommunityDiscoveryResult; scope: DiscoveryScope } | { ok: false; error: string } {
+  if (!isLeaseViewerCurrent(lease)) return { ok: false, error: VIEWER_CHANGED_ERROR };
+  return { ok: true, data, scope: lease.scope };
 }

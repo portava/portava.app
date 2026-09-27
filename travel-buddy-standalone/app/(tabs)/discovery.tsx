@@ -644,7 +644,7 @@ function DiscoveryHubScreen() {
   // Map toggle is shown on all native tabs (category tabs + for_you).
   const showMapToggle = Platform.OS !== 'web';
 
-  const handleAddToPlan = useCallback((place: { id: string; name: string; category: string; address?: string | null }) => {
+  const handleAddToPlan = useCallback((place: { id: string; name: string; category: string; address?: string | null; recommendationId?: string | null }) => {
     setDetailVisible(false);
     openPlanPicker({
       id:           place.id,
@@ -661,12 +661,12 @@ function DiscoveryHubScreen() {
       //
       // GET /discovery returns no session_id, so no rankSessionId is passed —
       // absent, not null, exactly as the tap/save reports from this screen.
-      rankSurface:  'discovery',
+      rankSurface:  'discovery', rankRecommendationId: place.recommendationId ?? null,  // DV-46: the served item's exposure id
     });
   }, [openPlanPicker]);
 
   const handleAddToPlanFromPlace = useCallback((place: DiscoveryPlace) => {
-    handleAddToPlan({ id: place.id, name: place.name, category: place.category, address: place.address });
+    handleAddToPlan({ id: place.id, name: place.name, category: place.category, address: place.address, recommendationId: place.recommendationId });
   }, [handleAddToPlan]);
 
   const handleSelectPlace = (place: DiscoveryPlace) => {
