@@ -186,7 +186,10 @@ a non-owner sees no more than before:
 | H10 | **Vendor stages.** 3355 `media_vision_provider_enabled` with `MEDIA_VISION_PROVIDER`; 3356 `media_moderation_classifier_enabled`; 3357 `media_transcoder_enabled`; 3358 `media_captions_enabled` | each `true` only after its vendor exists | a vendor per stage (§37.4), each an owner cost and data-protection decision; for 3356, a classifier OR a decision to staff a hold, plus the MD269 (a) rule (§37.8.5) | census-media §37.1 per row | set `false`; every stage fails closed with its flag off |
 | H11 | Apply 3359 (a postcard with no countable file may have an empty cover) | — | B1 | `passport_postcards.media_url` is nullable; no row is null until a postcard loses its last countable file | its rollback refuses while any cover is null; then delete its ledger row |
 | H12 | Apply 3360, run `rekeyIntelEvidenceReferences.ts` (a dry run first; `--apply` re-seals), then apply 3361; provision `INTEL_EVIDENCE_REFERENCE_KEY` (at least 32 characters, stable: there is no rotation tool) | — | B1 | the dry run prints 0 legacy rows (production has 0 `intel_evidence` rows); 3361's postconditions validate the CHECK and drop the function | each has a rollback that deletes its own ledger row; the key must not change while any sealed row exists |
-| H13 | Apply 3362 (the client roles lose the private and per-post place columns of `posts`) | — | none (2148 applied; read 2026-09-27) | census-media §44.9: anon and authenticated can read 40 columns and service_role all 73; over HTTP with the public key `select=id` answers 200, and `select=original_lat`, `select=*` and `original_lat=gt.0` each answer 42501 | grant a missing non-location column in a new migration; only if that cannot wait, the rollback, which restores 2148 exactly and reopens the gap |
+| H13 | Apply 3362 (the client roles lose the private and per-post place columns of `posts`) | — | none: every pre-flight condition read on production on 2026-09-27 holds (census-media §44.9.1; 2148 in force, no client-key reader of `posts` in 24 hours) | census-media §44.9: on production anon and authenticated can read **39** columns (`tombstoned_at` and `perspective_vantage` are absent there; 40 once 3352 is applied) and service_role all 73; over HTTP with the public key `select=id` answers 200, and `select=original_lat`, `select=*` and `original_lat=gt.0` each answer 42501 | grant a missing non-location column in a new migration; only if that cannot wait, the rollback, which restores 2148 exactly and reopens the gap |
+| H14 | Apply 3363 (the client roles lose the place columns of `pulse_geo_tags`, `passport_postcards` and `post_media`) | — | H13. Every pre-flight condition read on production on 2026-09-27 holds (census-media §44.15.1): the columns are exactly 17, 29 and 25; no client role holds column SELECT; nothing else depends on the columns; the 178 requests to the three tables in 24 hours all used the secret key | census-media §44.15: readable 4 of 17, 20 of 29 and 23 of 25 for anon and authenticated, service_role all; the anon-key probes answer 42501 on a withheld column | its rollback restores the prior SELECT grants and deletes its ledger row; it reopens the copies |
+| H15 | Apply 3364 (no client role may write `pulse_geo_tags`: today any signed-in user can attach a forged venue to another author's untagged post, and Pulse serves it) | — | H14 is not required (3364 touches no SELECT). The only writer is the API's service client (census-media §44.18.1); §44.18.5's pre-flight and a gateway read of POST/PATCH/DELETE on `/rest/v1/pulse_geo_tags` (none in 24 hours on 2026-09-27) | §44.18.5: every client write privilege on the table is false; a signed-in `POST /rest/v1/pulse_geo_tags` answers 42501; a post created through the app still gets its geo tag | name the writer from the gateway's 42501s; only if that cannot wait, the rollback, which restores exactly the ACL 3364 recorded (on production `arwd`, never GRANT ALL) and deletes its ledger row |
+| H16 | Apply 3365 (the `post_media` write boundary 2158 intended, as a narrowing only). Production's ledger says 2158 ran; its grants are absent, so an owner can insert media already `ready` with any `canonical_place_id` or `stamp_overlay` (`docs/ops/production-ledger-verification.md` §7). **Never run 2158 itself**: after 3363 it would re-grant table-level SELECT and 12 UPDATE columns (§44.18.3) | — | §44.18.5's pre-flight; no client code writes the `post_media` table (§44.12) | §44.18.5: authenticated holds INSERT on 14 columns, UPDATE on 0, no DELETE; anon holds no write; a signed-in insert carrying `processing_status` answers 42501; a post created through the app still gets its media | as H15, in reverse order: 3365's rollback before 3364's, 3364's before 3363's |
 
 **Decisions the flags cannot take (census-media §34.6, §35.4, §36.4, §37.8.5):**
 - **MD419, strict reading:** `MEDIA_VIEW_MODE_FULLSCREEN_ENABLED` = `false`
@@ -219,6 +222,17 @@ a non-owner sees no more than before:
   - MD37: the §6 source of an ordinary upload.
   - MD71: whether a photo may be labelled `live`.
   - MD162: whether the Map gateway publishes zone names.
+- **Direct client reads of posts and its copies (census-media §44.7, §44.16):**
+  - §44.7 question 1, which rows a client role may see: (i) leave the rows as
+    they are, (ii) add the API's publication gate to the posts row policies
+    for non-authors, or (iii) take the client roles off `posts` and give
+    post_media's policies a definer helper. After H13 and H14 no client role
+    reads a location or state column, but a pending, draft or private post's
+    row, `content` and `media_urls` stay readable.
+  - §44.16 item 2: whether the `stamp_overlay` label the API serves discloses
+    a withheld post's place. 3363 closes only the direct path.
+  - §44.16 item 3: `passport_postcards.stamp_revoked_by`, which names a
+    moderator, stays readable by client roles.
 - **Do not turn on `map_contributions_enabled` before photo-naming consent
   words are approved.** v1's words name Quick Signals only. The branch now
   refuses a photo (409 `consent_does_not_cover_photos`) unless the
@@ -264,8 +278,9 @@ These are measured in census-media §37.3, not assumed:
 | S26 S66 | real use | real contributions meet the gates |
 | S17 | G1, G2 | the headers are read |
 
-For Media, census-media §41.2 lists all 49 rows that are not C, each with what
-activates it and what only the outside world can verify. H5, H6 and H9–H13
+For Media, census-media §41.2 lists all 49 rows that were not C when wave 8
+began (42 still are), each with what activates it and what only the outside
+world can verify. H5, H6 and H9–H16
 move none of them to "production realised" by themselves: each still needs the
 device run or production read named there.
 
