@@ -754,6 +754,14 @@ jobs:
           set -euo pipefail
           pnpm install --frozen-lockfile
 
+      # census-discovery DC-15, placed in this job (after the install, and below every
+      # line this workflow is cited at): a migration that creates a Discovery table or
+      # index must register it in docs/discovery/query-paths.md — cardinality, index
+      # rationale, EXPLAIN (`10` §4). Static; it reads files and needs no database.
+      - name: 'check:discovery-query-paths'
+        shell: bash
+        run: bash .github/scripts/pnpm-run.sh artifacts/api-server @workspace/api-server check:discovery-query-paths
+
       - name: Restore baseline, replay the chain, run the database suites
         shell: bash
         env:

@@ -55,7 +55,7 @@ import { resolveDiscoveryEngineMode } from "../lib/discoveryEngineMode.js";
 import { loadPdeViewer, rankForViewer } from "../lib/discoveryPde.js";
 import { loadDismissedPlaceIds, withoutDismissed } from "../lib/discoveryDismissed.js";
 import { logDiscoveryShadowServe } from "../lib/discoveryShadow.js";
-import { isInDiscoveryCohort } from "../lib/discoveryCohort.js";
+import { isInDiscoveryCohort } from "../lib/discoveryCohort.js"; import { recordRankObligation } from "../lib/discoveryStopConditions.js";
 import { fetchBlockedSet, submitterIsVisible } from "../lib/blocks.js";
 import { pruneAndBound } from "../lib/boundedMapCache.js";
 import { createInflightDedup } from "../lib/inflightDedup.js";
@@ -1871,7 +1871,7 @@ router.get("/discovery", async (req, res) => {
         servedFiltered = filtered;
         pdeScoredById  = null;
       }
-    }
+    } recordRankObligation({ owed: pdeCohort?.included === true, ranked: pdeScoredById !== null }); // census-discovery §54 H2: cache_bypass producer, in-process only
 
     // Sensing §8 — the live ranking layer, over the FULL filtered list's head
     // window and BEFORE the page slice, so it decides what page 1 contains

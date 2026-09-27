@@ -1,0 +1,201 @@
+# Discovery query paths: cardinality, index rationale, EXPLAIN
+
+*census-discovery DC-15, §54. Written 2026-09-27 by the Discovery database and rollout lane. It answers `docs/specs/discovery-v1/10_Database_Architecture.md` §4 for Discovery's hot reads and writes: "Every new query path must have: expected cardinality, index rationale, EXPLAIN verification where meaningful."*
+
+**Read this first: every plan below is a HARNESS plan, not a production plan.** It was captured on the local PostgreSQL 16 harness (`artifacts/api-server/scripts/local-db`), over synthetic rows at the cardinality in §1, after `ANALYZE`. Production runs PostgreSQL 17.6 over different row counts and a different distribution, and nobody has run `EXPLAIN` there for this document. A harness plan shows that an index is usable by its predicate and what the planner does at the stated scale. It does not show what production does today. The production cardinality column is copied from reads the census recorded, with the date of each read.
+
+To reproduce, run `docs/discovery/query-paths-explain.sql` against the harness. It seeds the rows, analyzes, explains, and then rolls everything back. It must never be pointed at `portava-ci` or production.
+
+`pnpm run check:discovery-query-paths` keeps §4 complete. It fails when any migration creates a table or an index on a Discovery table without a registry row here, and when a row names an object that no migration creates.
+
+## 1. Cardinality
+
+| table | synthetic (harness) | production, as last read | source of the production figure |
+|---|---:|---:|---|
+| `discovery_places` | 20,000 (100 cities × 200, 90 % active) | 184 | census-discovery §5, 2026-09-07 |
+| `discovery_place_saves` | 20,000 | 0 | §5 |
+| `discovery_place_reports` | 1,000 | 0 | §5 |
+| `discovery_cache` | 5,000 | 76 | §5 |
+| `discovery_geocode_cache` | 2,000 | 20 | §5 |
+| `discovery_place_photos` | 20,000 | 15 | §5 |
+| `discovery_shadow_serves` | 10,000 | 0 | §5 |
+| `rank_events` | 250,000 (50,000 `discovery`, 2,000 dismisses) | 234,224, of which 13 `discovery` | §5; §49.4 (2026-09-27: all rows `schema_version` 1, newest 2026-08-27) |
+| `recommendations` | 20,000 | table absent (3376 unapplied) | §49.4 |
+| `place_momentum` | 20,000 | table absent (2892 unapplied) | §47.1 |
+| `trails` / `content_trails` / `trail_edges` / `trail_follows` / `trail_reports` / `trail_health_snapshots` | 2,000 / 50,000 / 4,000 / 10,000 / 500 / 20,000 | `trails` 0 (2910 applied 2026-09-20); the rest not read | §47.1 |
+
+**Expected production growth, where anything states it.** `recommendations` gets one row per served Discovery request while `discovery_serve_log_enabled` is on, which is its value in production (3376's header). `rank_events` gets one `discovery` row per served item per signed-in serve. No document states an expected corpus size for `discovery_places` or `trails`. The synthetic figures are chosen so a plan has something to choose between. They are not a forecast.
+
+## 2. The paths
+
+The serve paths are the ones §47.2 of the census maps. "Rows examined" is the harness's `actual rows` at the scan node, plus `Rows Removed by Filter` where the scan filtered.
+
+### QP-01 Cache A L2 read
+
+`lib/discoveryPersistentCache.ts`: `discovery_cache` by `cache_key`, on every Cache A L1 miss. **Index:** `discovery_cache_pkey`. Harness: Index Scan, 1 row. Production: 76 rows. One lookup per L1 miss.
+
+### QP-02 Geocode cache read
+
+`lib/discoveryPersistentCache.ts`: `discovery_geocode_cache` by `location_key`. **Index:** `discovery_geocode_cache_pkey`. Harness: Index Scan, 1 row. Production: 20 rows.
+
+### QP-03 Curated community rows for a city
+
+`routes/discovery.ts` (`loadCuratedAndCanonicalPlaces`): `city ILIKE x OR city ILIKE x%`, `status = 'active'`, source not a fixture, `ORDER BY saved_count DESC LIMIT 200`. It runs on every `GET /discovery`, cache hit or miss (§47.2). **Index: none usable.** Case-insensitive `ILIKE` cannot use the btree on `city`. Harness: Seq Scan, 200 rows kept of 20,000 (19,800 removed), then Sort. **At production's 184 rows a sequential scan is the right plan, and no index is proposed.** If the corpus grows by two orders of magnitude, the index this path needs is an expression index on `lower(city)` with `text_pattern_ops`, plus a change of predicate to match it. That changes the served rows' matching, so it is not built here.
+
+### QP-04 `GET /discovery/community`
+
+`routes/discovery.ts`: `city ILIKE x`, `status = 'active'`, ordered by `created_at` / `rating` / `saved_count`, with a limit. **Index: none usable** (same reason as QP-03). Harness: Seq Scan, then top-N heapsort. Production: 184 rows.
+
+### QP-05 Saved counts for served OSM ids
+
+`routes/discovery.ts:1331`: `osm_id IN (…)`. **Index:** `idx_discovery_places_osm_id` (partial, `osm_id IS NOT NULL`). Harness: Index Scan, 5 rows. The unique twin `discovery_places_osm_id_idx` exists as well (§3).
+
+### QP-06 Resolved photo for a card
+
+`lib/discoveryPlacePhotoStore.ts`: `discovery_place_photos` by `place_key`. **Index:** `discovery_place_photos_pkey`. Harness: Index Scan, 1 row. Production: 15 rows.
+
+### QP-07 The viewer's "Not interested" set
+
+`lib/discoveryDismissed.ts`: `rank_events` for this viewer's `discovery` dismisses, newest 500. **Index:** `rank_events_discovery_dismissed` (2995, partial). Harness: Index Only Scan, 125 rows.
+
+### QP-08 The viewer's recently-seen set (the PDE seen penalty)
+
+`lib/discoveryPde.ts`: this viewer's `discovery` rows (not analytics) from the last 24 h. **Index:** `rank_events_user_served_at`. Harness: Index Scan on (user, time), with surface and outcome as filters, 3 rows.
+
+### QP-09 Local momentum over candidate ids
+
+`lib/discoveryLocalMomentum.ts` (behind 2289): `discovery` rows for a candidate id set in a time window, paged. **Index:** `rank_events_discovery_served_at` (3391). Harness: Index Scan Backward over the Discovery rows in the window, filtered by id. **Without 3391's index the same query was a Parallel Seq Scan over all 250,000 rows** (QP-09-before-3391 in the script). 3391 was written for QP-19, and it changes this existing path's plan too. The change is stated here because a new index moving an existing plan is exactly what §4 asks to be verified.
+
+### QP-10 An outcome bound to its exposure by recommendation id
+
+`routes/rankEvents.ts` (§48's binding): `recommendation_id = x AND outcome = 'impression'`. **Index:** `rank_events_recommendation_idempotency_idx` (2891, unique). Harness: Index Scan.
+
+### QP-11 Latest exposure for (viewer, item, surface)
+
+`routes/rankEvents.ts` fallback: `ORDER BY served_at DESC LIMIT 1`. **Index:** `rank_events_user_item`. Harness: Index Scan, with surface as a filter, 1 row.
+
+### QP-12 Search: places by free text
+
+`routes/discoverySearch.ts`: `name / city / blurb ILIKE %q%`, `status = 'active'`. **Index: none usable.** A leading-wildcard `ILIKE` needs a trigram index (`pg_trgm` is installed on the harness and on Supabase), and none exists. Harness: Seq Scan, 1,000 kept of 20,000. Production: 184 rows, where a trigram index would cost more than it saves. The same applies to the two sibling queries in that file (`:1448`, `:1901`).
+
+### QP-13 Trails for a destination
+
+`services/trails/TrailService.ts`: `destination = x AND lifecycle_status = 'active'`. **Index:** `idx_trails_destination_lifecycle`. Harness: Bitmap Index Scan, 6 rows. Production: 0 Trails.
+
+### QP-14 A Trail's members, newest 500
+
+`TrailService.readMembers`. **Index:** `idx_content_trails_trail` (trail_id, created_at DESC). Harness: Bitmap Index Scan, 10 rows, then Sort. Well under 500 per Trail at this cardinality.
+
+### QP-15 A Trail's edges, both directions
+
+`TrailService` related-Trail walk. **Index:** `trail_edges_pkey` (out-edges) and `idx_trail_edges_to` (in-edges). Harness: Index Scan each way.
+
+### QP-16 A Trail's open reports
+
+`TrailService.readOpenReportCount`. **Index:** `idx_trail_reports_open` (partial, `resolution IS NULL`). Harness: Index Scan.
+
+### QP-17 The hourly health-snapshot guard
+
+`TrailService.recordTrailHealthSnapshot`: one snapshot per Trail per hour. **Index:** `idx_trail_health_recent`. Harness: Index Scan, 1 row.
+
+### QP-18 A viewer's followed Trails
+
+The Trail-affinity input. **Index:** `idx_trail_follows_user`. Harness: Index Scan.
+
+### QP-19 Stop measurement: Discovery exposures in the window
+
+`discovery_stop_measurements()` (3391), at most once per resolver refresh (30 s) per API instance, and only while the engine mode is non-legacy. **Index:** `rank_events_discovery_served_at` (3391, partial `surface = 'discovery'`). Harness: Index Scan over the window. Without it, the planner used `rank_events_user_served_at` as a whole-index scan filtered by surface (QP-19-before-3391), which reads every surface's rows. Production has 13 `discovery` rows, so today the index is nearly free to keep. It exists for the rollout, when it will not be.
+
+### QP-20 Stop measurement: dismisses in the window
+
+3391. **Index:** `rank_events_discovery_dismissed` (2995), used as a scan of every Discovery dismiss, because `outcome_at` is not indexed. Harness: 2,000 rows read for 0 in the window. It is linear in all-time Discovery dismisses, which is 0 in production. If dismisses reach the tens of thousands, an index on `(outcome_at) WHERE outcome = 'dismiss' AND surface = 'discovery'` is the fix. It is not built now.
+
+### QP-21 Per-request serve record window
+
+3376's reports: `recommendations` by `served_at`. **Index:** `recommendations_served_at`. Harness: Index Scan, 120 rows.
+
+### QP-22 Latest momentum for a place
+
+2892's table (no reader yet): `place_id = x ORDER BY computed_at DESC LIMIT 1`. **Index:** `place_momentum_place_computed_idx`. Harness: Index Scan, 1 row.
+
+### QP-23 Shadow divergence report window
+
+`lib/discoveryDivergenceReport.ts`: `discovery_shadow_serves` by serve point and time. **Index:** `discovery_shadow_serves_serve_point_observed_at`. Harness: Bitmap Index Scan, 482 rows.
+
+### QP-24 Discovery's writes to `rank_events`
+
+`lib/discoveryServeLog.ts` and `lib/rankLog.ts` insert one row per served item. `routes/rankEvents.ts` updates or inserts outcomes. An `INSERT` plan says nothing useful. The cost is **index maintenance**: every Discovery row maintains `rank_events_pkey`, `rank_events_user_served_at`, `rank_events_user_item`, `rank_events_features_gin` (a GIN index over the whole `features` jsonb, the most expensive of them), `rank_events_recommendation_idempotency_idx`, and, when it applies, the two partial Discovery indexes (2995, 3391) and `rank_events_event_type`. 3391 adds one partial index that only `surface = 'discovery'` rows pay for. Production writes nothing to `rank_events` today (newest row 2026-08-27, §49.4).
+
+## 3. Findings this document does not fix
+
+- **Duplicate indexes in the baseline**, which no migration in this tree creates, so §4 does not register them. The 2026-08-19 baseline carries `discovery_cache_expires_idx` and `idx_discovery_cache_expires_at` (the same column), `discovery_geocode_cache_expires_idx` and `idx_discovery_geocode_cache_expires_at`, `discovery_places_type_idx` and `discovery_places_place_type_idx`, and `discovery_places_osm_id_idx` (unique) beside `idx_discovery_places_osm_id`. Each pair doubles the write cost for no read. Dropping an index in production is an operator decision, and this lane made none.
+- **`discovery_place_saves`** exists only in the baseline, with `discovery_place_saves_pkey (user_id, place_id)` and `discovery_place_saves_user_idx (user_id)`. The second is a prefix of the first.
+- **QP-03, QP-04 and QP-12 have no usable index**, which is correct at 184 rows. The spec's "unapplied geo indexes can leave production on sequential scans" is the same class of fact: the plan is right for today's corpus and wrong for a large one.
+
+## 4. Index and table registry (checked by `check:discovery-query-paths`)
+
+One row per table or index that a migration in `artifacts/api-server/src/migrations/` creates on a Discovery table. Columns: kind, name, table, the migration(s) that create it, the query path it serves (or "not a hot path" with the reason), and the rationale.
+
+| kind | name | table | migration | path | rationale |
+|---|---|---|---|---|---|
+| table | `discovery_places` | `discovery_places` | 0029 | QP-03, QP-04, QP-05, QP-12 | the community / curated corpus: 184 rows in production |
+| index | `discovery_places_city_idx` | `discovery_places` | 0029 | not a hot path: every city read is case-insensitive `ILIKE`, which a plain btree cannot serve (QP-03) | kept for exact-match callers; unused by the serve path |
+| index | `discovery_places_type_idx` | `discovery_places` | 0029 | not a hot path: duplicated by the baseline's `discovery_places_place_type_idx` (§3) | place-type filter on `/community`, which applies after the city filter |
+| index | `discovery_places_created_at_idx` | `discovery_places` | 0029 | QP-04 | newest-first `/community`; at 184 rows the planner sorts instead |
+| index | `discovery_places_has_coords_idx` | `discovery_places` | 0060 | not a hot path: map-coordinate filter, no Discovery serve path reads it | partial on rows with coordinates |
+| table | `discovery_place_reports` | `discovery_place_reports` | 0061 | not a hot path: written on report, read only by moderation | 0 rows in production |
+| index | `discovery_place_reports_place_idx` | `discovery_place_reports` | 0061 | not a hot path: moderation by place | FK-side index on `place_id` (ON DELETE CASCADE from discovery_places) |
+| index | `discovery_place_reports_reporter_idx` | `discovery_place_reports` | 0061 | not a hot path: the reporter's own-row policy and account erasure | FK-side index on `reporter_id` |
+| index | `discovery_places_primary_category_idx` | `discovery_places` | 0083 | not a hot path: the tab filter runs in TypeScript after QP-03 | category browse outside the serve path |
+| index | `discovery_places_city_category_idx` | `discovery_places` | 0083 | not a hot path: exact-city equality only, and the serve path uses `ILIKE` | Compass / seed tooling reads |
+| index | `discovery_places_osm_id_idx` | `discovery_places` | 0086 | QP-05 | uniqueness of an OSM place's row; the baseline adds a non-unique twin (§3) |
+| index | `discovery_places_compass_city_idx` | `discovery_places` | 0105 | not a hot path: Compass candidate reads (Compass's paths, not Discovery's) | (city, category, status) |
+| index | `discovery_places_compass_category_idx` | `discovery_places` | 0105 | not a hot path: Compass candidate reads | (category, status) |
+| table | `rank_events` | `rank_events` | 0153 | QP-07, QP-08, QP-09, QP-10, QP-11, QP-19, QP-20, QP-24 | the behaviour store (`10` §3): 234,224 rows in production |
+| index | `rank_events_features_gin` | `rank_events` | 0153 | not a hot path: no Discovery read filters on `features`, and every write pays for it (QP-24) | general jsonb containment for analytics |
+| index | `rank_events_user_served_at` | `rank_events` | 0153 | QP-08 | a viewer's history by time |
+| index | `rank_events_user_item` | `rank_events` | 0153 | QP-11 | a viewer's exposures of one item, newest first |
+| table | `discovery_cache` | `discovery_cache` | 0168 | QP-01 | Cache A's L2: 76 rows in production |
+| table | `discovery_geocode_cache` | `discovery_geocode_cache` | 0168 | QP-02 | 20 rows in production |
+| index | `discovery_cache_expires_idx` | `discovery_cache` | 0168 | not a hot path: the expiry sweep (`lib/discoveryCacheCleanup.ts`) | range delete on `expires_at`; the baseline duplicates it (§3) |
+| index | `discovery_geocode_cache_expires_idx` | `discovery_geocode_cache` | 0168 | not a hot path: the expiry sweep | range delete on `expires_at`; duplicated in the baseline (§3) |
+| index | `rank_events_event_type` | `rank_events` | 0197 | not a hot path: analytics `event_type` rows, which Discovery neither writes nor reads | partial on `event_type IS NOT NULL` |
+| index | `discovery_places_canonical_location_idx` | `discovery_places` | 2053 | not a hot path: the canonical-location bridge (`lib/placeIdBridge.ts`) | partial on linked rows |
+| table | `discovery_shadow_serves` | `discovery_shadow_serves` | 2092 | QP-23 | one row per shadow observation; 0 in production (never in shadow) |
+| index | `discovery_shadow_serves_key_observed_at` | `discovery_shadow_serves` | 2092 | not a hot path: per-request-key divergence drill-down in the report script | (destination, category, radius, time) |
+| index | `discovery_shadow_serves_serve_point_observed_at` | `discovery_shadow_serves` | 2092 | QP-23 | the divergence report's window |
+| index | `discovery_shadow_serves_user_id` | `discovery_shadow_serves` | 2092 | not a hot path: account erasure (ON DELETE CASCADE from auth.users) | FK-side index |
+| table | `discovery_place_photos` | `discovery_place_photos` | 2095 | QP-06 | 15 rows in production |
+| index | `discovery_place_photos_expires_at_idx` | `discovery_place_photos` | 2095 | not a hot path: the expired / invalid sweep | range scan on `expires_at` |
+| index | `discovery_places_source_id` | `discovery_places` | 2121 | not a hot path: source-registry joins (`sources`) | FK-side index on `source_id` |
+| index | `rank_events_recommendation_idempotency_idx` | `rank_events` | 2891 | QP-10 | the idempotency arbiter for (recommendation_id, outcome), and the binding lookup |
+| table | `place_momentum` | `place_momentum` | 2892 | QP-22 | derived, rebuildable (DV-72); absent from production |
+| index | `place_momentum_place_computed_idx` | `place_momentum` | 2892 | QP-22 | latest snapshot per place |
+| index | `place_momentum_computed_idx` | `place_momentum` | 2892 | not a hot path: a run's rows by time; nothing reads it yet | per-run reads and retention |
+| index | `place_momentum_live_state_idx` | `place_momentum` | 2892 | not a hot path: "what is trending" listing; no reader yet | partial on classified rows |
+| table | `trails` | `trails` | 2910 | QP-13 | 0 Trails in production |
+| table | `content_trails` | `content_trails` | 2910 | QP-14 | Trail membership |
+| table | `trail_edges` | `trail_edges` | 2910 | QP-15 | declared Trail relations |
+| table | `trail_health_snapshots` | `trail_health_snapshots` | 2910 | QP-17 | at most one row per Trail per hour |
+| table | `trail_follows` | `trail_follows` | 2910 | QP-18 | a viewer's follows |
+| table | `trail_reports` | `trail_reports` | 2910 | QP-16 | moderation input to Trail health |
+| index | `idx_trails_destination_lifecycle` | `trails` | 2910 | QP-13 | Trails for a destination, by lifecycle |
+| index | `idx_trails_parent` | `trails` | 2910 | not a hot path: parent walk on a merge or split | partial on `parent_trail_id IS NOT NULL` |
+| index | `uq_content_trails_label` | `content_trails` | 2910 | not a hot path: a uniqueness constraint (one label per member), probed on insert | enforces `02` §4's one label per (trail, source, relationship, signal) |
+| index | `idx_content_trails_trail` | `content_trails` | 2910 | QP-14 | members of a Trail, newest first |
+| index | `idx_content_trails_source` | `content_trails` | 2910 | not a hot path: "which Trails is this place in" and the label-cap trigger | (source_type, source_id) |
+| index | `uq_content_trails_one_primary` | `content_trails` | 3380 | not a hot path: a partial uniqueness constraint (at most one `primary` label per source), probed on insert under 3380's serialised label-cap trigger | enforces `02` §4's one primary Trail per piece of content under concurrency (census-discovery §51.3); added to this registry by the integrator at the P9 merge (§54 addendum), because P9 was cut before 3380 existed |
+| index | `idx_trail_edges_to` | `trail_edges` | 2910 | QP-15 | in-edges; out-edges use the primary key |
+| index | `idx_trail_health_recent` | `trail_health_snapshots` | 2910 | QP-17 | the hourly guard and the latest snapshot |
+| index | `idx_trail_follows_user` | `trail_follows` | 2910 | QP-18 | a viewer's follows |
+| index | `idx_trail_reports_open` | `trail_reports` | 2910 | QP-16 | open reports per Trail |
+| index | `rank_events_discovery_dismissed` | `rank_events` | 2995 | QP-07, QP-20 | a viewer's Discovery dismisses (partial) |
+| table | `recommendations` | `recommendations` | 3376 | QP-21 | one row per served request; absent from production |
+| index | `recommendations_user_served_at` | `recommendations` | 3376 | not a hot path: account erasure and per-viewer audits | partial on signed-in rows |
+| index | `recommendations_served_at` | `recommendations` | 3376 | QP-21 | the per-window denominator |
+| index | `rank_events_discovery_served_at` | `rank_events` | 3391 | QP-19, QP-09 | Discovery exposures in a window, without scanning other surfaces |
+
+## 5. What would turn this red
+
+- A migration that creates a Discovery table or index with no row in §4: `check:discovery-query-paths` fails.
+- A plan here that production contradicts. Running `docs/discovery/query-paths-explain.sql` shows only the harness. The production check is an `EXPLAIN` (no `ANALYZE`) of QP-03, QP-07, QP-08, QP-11 and QP-19 by an operator with read access, with the result recorded here beside the harness plan.

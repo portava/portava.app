@@ -296,7 +296,7 @@ describe("modes: shadow observes, pde-with-a-closed-cohort is legacy", () => {
     assert.ok(landed, "precondition: the shadow observation ran and wrote its row");
     await waitFor(() => false, 150);
     const shadowTables = shadow.world.writes.map((x) => x.table).sort();
-    const extra = [...shadowTables];
+    const extra = [...shadowTables].filter((t) => t !== "rpc:discovery_stop_measurements"); // census-discovery §54 H1: 3391's STABLE stop-condition measurement is a READ the shadow/pde resolver now makes; a STABLE function cannot write, and every other rpc or table still fails here
     for (const t of legacyTables) { const i = extra.indexOf(t); if (i > -1) extra.splice(i, 1); }
     assert.deepEqual(extra, ["discovery_shadow_serves"], `the shadow run wrote beyond its own table: ${JSON.stringify(extra)}`);
   });
