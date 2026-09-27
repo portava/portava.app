@@ -36,7 +36,7 @@
  *         private columns reach them only through the API's role, which reads
  *         every column.
  *   G1-5  the rollback restores 2148's grants exactly, and 3362 re-applies to
- *         the identical state.
+ *         the identical state. The rollback deletes 3362's ledger row (§44.11).
  */
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
@@ -347,5 +347,17 @@ describe("census-media §44 — 3362: the columns of posts a client role may rea
     assert.deepEqual(reapplied, now, "3362 after the rollback is the state 3362 left");
     // The DB is untouched by this test (it ran in a rolled-back transaction).
     assert.deepEqual(JSON.parse(exec(SNAPSHOT)[0]!), now);
+    // The rollback deletes 3362's ledger row, which the runner writes in 3362's
+    // own transaction, so a later runner pass re-applies 3362 (census-media §44.11).
+    const led = exec(`BEGIN;
+      INSERT INTO public.schema_migration_ledger (filename, checksum, applied_by, notes)
+        VALUES ('3362_posts_client_column_grants.sql', 'test', 'manual', 'postsClientColumnGrants.db.test.ts')
+        ON CONFLICT (filename) DO NOTHING;
+      SELECT 'ledger-before=' || count(*) FROM public.schema_migration_ledger WHERE filename = '3362_posts_client_column_grants.sql';
+      ${unwrapped(ROLLBACK)}
+      SELECT 'ledger-after=' || count(*) FROM public.schema_migration_ledger WHERE filename = '3362_posts_client_column_grants.sql';
+      ROLLBACK;`);
+    assert.ok(led.includes("ledger-before=1"), "anti-vacuity: the ledger row is there before the rollback");
+    assert.ok(led.includes("ledger-after=0"), "the rollback deletes 3362's ledger row");
   });
 });

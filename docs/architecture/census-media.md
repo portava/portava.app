@@ -13994,6 +13994,35 @@ Then, over HTTP, with the public anon key only:
   its postcondition proves that, and it re-opens the defect. Re-apply 3362 when
   the reader is fixed.
 
+#### 44.9.1 The pre-flight, as read on production by the integrator — 2026-09-27
+
+**Who read it.** The integrator ran these reads, read-only, on production
+(`ajrurzioarfkagpuxfnb`) on 2026-09-27. This lane ran no SQL there and did not
+see production. The results below are the integrator's, as reported to this lane.
+
+| # | Read | Production result | What it means for 3362 |
+| --- | --- | --- | --- |
+| 1 | posts ACL and column ACLs | anon:SELECT and authenticated:SELECT only; 0 column ACLs | 3362's start-state precondition holds. |
+| 2 | posts columns | 73, every one in 3362's lists. `tombstoned_at` is absent: 2141 carries a `backfill` ledger row but never ran, which `docs/ops/production-ledger-verification.md` §4 already records. `perspective_vantage` is absent because 3352 is unapplied. | Both are optional in 3362. In production 3362 grants 39 columns, so the verification query expects 39 for anon and authenticated, and 73 for service_role. |
+| 3 | Policies that read posts | `posts.posts_select_policy` and post_media's `post_media_owner_insert`, `post_media_owner_update` and `post_media_public_select`. `posts_select` did not match the regex, because it names only `can_see_post(id)`. | The same set as §44.2. |
+| 4 | Views over posts | none | As in the tree. |
+| 5 | Functions matching `posts` that a client role may EXECUTE | `can_see_post(uuid)` and `can_see_postcard(uuid)`, both SECURITY DEFINER and returning a boolean. Also `post_media_path_is_owned(text,uuid)`, an invoker function authenticated may execute; its body reads no table, and it matched on the word posts.ts in a comment. | No client-role path reads posts' columns through a function. The harness showed the same third match; §44.2 left it out because it reads nothing. |
+| 6 | Realtime publication | posts is in none | Nothing to narrow there. |
+| 7 | Ledger | 2141, 2148 and 2158 present; 2337 and 3352 absent | Without 2337, production's posts and post_media policies are the baseline texts, not 2337's. This lane read those texts. They read the same five posts columns: `id`, `author_id`, `status`, `visibility` and `trip_id` (`artifacts/api-server/baseline/20260819_baseline_structure.sql:30210#CREATE POLICY post_media_public_select ON public.post_media FOR SELECT USING`). Their trip branches read `trip_members`, which 3362 does not touch. So 3362 keeps them working in production as well. |
+| 8 | The size of §44.7 | Public active posts: 8 published with mode none, and 1 published with mode delayed_until_time. Geo-tag venues 1, postcard venues 1, post_media canonical_place_id 0. | §44.7 item 1's row gap is empty in production today: no public active post is pending. Item 2 has one venue in each of two copy tables. Whether those two copies belong to the one released post was not read; query 9 in §44.15 answers that. |
+
+**The gateway log.** Over the last 24 hours, the longest window the
+integrator's tool can read, there were 1,358 requests to `/rest/v1/posts`. Every
+one used the `sb_secret_` key. None used a publishable key or a user JWT.
+- So no client-key reader of posts appeared in 24 hours.
+- The 30-day read §44.9 asked for is not possible through that tool, so a
+  reader that runs less often than daily is not excluded.
+- §44.9's recovery covers that case: the gateway log names any `42501` on
+  `/rest/v1/posts` after the apply.
+
+**Result.** Every pre-flight condition holds in production, and 3362 applies
+there as written. Applying it is still the owner's approval.
+
 ### 44.10 Rows, censuses, freshness, files
 
 **No MD row moves, and the headline is not restated.** §42.2's table carried
@@ -14025,6 +14054,469 @@ this reader as a row. It is restated here with its new state:
 - NOT-GRADED: artifacts/api-server/src/test/postLocationVerificationBoundary.test.ts — cited in §44.2 as the one client-role read of posts in the suites (a live-DB anon feed read); the 2148 write-boundary suite, not a Media verdict.
 - NOT-GRADED: artifacts/api-server/src/routes/location.ts — cited in §44.4 for publish_eligible_at being the geofence exit time plus a window; the location route, cited to classify a column, not graded here.
 - NOT-GRADED: artifacts/api-server/scripts/local-db/shim.sql — cited in §44.5 for the harness's auth.uid() model; test infrastructure, the thing the rehearsal ran on, not a Media surface.
+
+### 44.11 Follow-up: the place copies (3363), and the 3362 rollback's ledger row — 2026-09-27
+
+Branch `lane-g1-grants`. The coordinator asked for this after 3362 merged
+(`f28da6f23`). Before any of it, `wave8-integration` at `50ee6a65e` was merged
+into the branch as a merge commit; the merged tree is identical to
+`wave8-integration`'s.
+
+BUILT ON BRANCH IS NOT MERGED. MERGED IS NOT DEPLOYED. 3363 is applied to no
+shared database. It was rehearsed only on this lane's local PostgreSQL 16
+cluster. 3364 is unused. Question 1 of §44.7 (row visibility) stays the owner's,
+and no row policy was changed.
+
+**What the follow-up covers.** §44.7 item 2 found that three tables hold a copy
+of a post's place, and that the client roles read them in full:
+- `pulse_geo_tags`. Both SELECT policies are `true` for every role
+  (`artifacts/api-server/src/migrations/0036_pulse_geo_tags.sql:27#CREATE POLICY "pulse_geo_tags_public_read" ON pulse_geo_tags`),
+  so every row is readable. The one writer stores:
+  - the venue, district, city and country;
+  - the owner's Pulse visibility
+    (`artifacts/api-server/src/services/location/PulseGeoTagService.ts:144#location_visibility: visibility,`);
+  - `hotel_blur_applied`, which is true when the post was made within about
+    200 m of where its author is staying
+    (`artifacts/api-server/src/services/location/PulseGeoTagService.ts:130#hotelBlurApplied = true;`).
+- `passport_postcards`, which `can_see_postcard` admits. It holds the venue,
+  city and country, and the verification verdict, including
+  `verified_distance_meters`.
+- `post_media`, which `post_media_public_select` admits. It holds
+  `canonical_place_id` and `stamp_overlay`. A stamp overlay carries a label, a
+  city and a country
+  (`travel-buddy-standalone/src/lib/stampOverlay.ts:22#label: string;`).
+
+**The rule applied, as the coordinator set it.** For each column, inventory
+every client-role reader. If no client role reads the column, withhold it with
+a column grant. If one does, stop for that column and write the exact question.
+The inventory (§44.12) found no client-role reader of any column this lane
+withholds, so no column is left as a question.
+
+**The 3362 rollback now deletes its ledger row.** The runner writes a file's
+`schema_migration_ledger` row inside that file's own transaction. The 3362
+rollback previously left that row in place, so a later runner pass would have
+taken 3362 as still applied and never re-applied it. The rollback now deletes
+the row, as lane X's rollbacks do. The DELETE took the blank line before its
+COMMIT, and its postcondition was added after every cited line, so every §44.4
+citation into that file still holds. G1-5 now asserts the deletion, and
+mutation M12 (§44.14) shows it red.
+
+### 44.12 Every reader of the three tables that runs as a client role
+
+The search was the one §44.2 ran for posts, repeated for `pulse_geo_tags`,
+`passport_postcards` and `post_media`:
+- every tracked TypeScript and JavaScript file outside the migrations, and
+  `git log -G` over `travel-buddy-standalone`, `app` and `src`, for `.from()`,
+  a realtime `table:`, `rest/v1/` and an embedded resource on each table;
+- the harness catalog, for:
+  - policies on any table whose expressions depend on a column of the three
+    (through `pg_depend`, not a regex);
+  - views, and functions whose body or dependencies name the three;
+  - triggers on the three, and publications;
+  - storage policies.
+
+| Reader | Runs as | Columns of the three it reads | Reads a withheld column? | After 3363 |
+| --- | --- | --- | --- | --- |
+| The app (`travel-buddy-standalone`) and the legacy root app | anon or authenticated | **None.** The three names appear only in comments and types. There is no `.from()`, no embed, no RPC and no channel, now or in history. `.storage.from('post-media')` is the storage bucket, not the table. | no | unaffected |
+| The API: Pulse's embedded `pulse_geo_tags(…)`, passport, postcards, the Wall, media | service_role | all, including `stamp_overlay` (`artifacts/api-server/src/routes/pulse.ts:110#stamp_overlay:     m.stamp_overlay ?? null,`) | yes, and it keeps them | unaffected (G3-4) |
+| Scripts that hold the anon key | anon | none. `auditPostMediaPublicRead` probes the storage bucket over `/storage/v1`; the others sign in or call the API. | no | unaffected |
+| `scripts/src/backfill-stamps.ts` (it reads postcards' `location_city` and `location_country`), and the archived copies under `files/` and `passport-backend/` | service_role | as service_role, not as a client role | not as a client role | unaffected |
+| The live-DB suites' client-role statements: postMediaModerationBoundary, passportPostcardLocationVerification, passportPostcardStatusModeration | authenticated, anon | UPDATEs and INSERTs filtered on `id`. One owner INSERT reads back `id`, `moderation_status` and `processing_status` (`artifacts/api-server/src/test/postMediaModerationBoundary.test.ts:117#const { data, error } = await uc.from(TABLE).insert`). | no; all are granted | readable. G3-3 runs that exact read-back. |
+| The three tables' own policies (`pgt_*`, `postcards_*`, `post_media_*`) | anon, authenticated | their own columns | — | A policy on its own table needs no column privilege. The rows are unchanged (G3-2). |
+| Policies on other tables | — | **None** depends on a column of the three. Storage's four policies name only buckets. | — | — |
+| Functions a client role may EXECUTE | — | `can_see_postcard(uuid)` is SECURITY DEFINER and returns a boolean. `post_media_path_is_owned` reads no table. | no | unaffected |
+| Views, publications | — | **None** | — | — |
+| Triggers | — | `trg_postcards_updated` (set_updated_at, which reads nothing). `trg_post_media_record_moderation_verdict` is SECURITY DEFINER. | no | unaffected |
+
+**Result: no client-role reader of any withheld column.** Nothing reads a
+withheld column through PostgREST. The only client-role reads in the tree are
+three live suites' filters and one read-back, and all of them use granted
+columns. What the tree cannot see is production-only objects, and requests from
+builds older than the history; §44.15's pre-flight reads both.
+
+### 44.13 What 3363 withholds, column by column, and what was built
+
+**`artifacts/api-server/src/migrations/3363_place_copies_client_column_grants.sql`.**
+It is one BEGIN…COMMIT followed by a postcondition DO block. The real applier
+classifies it `unwrapped`, with its postconditions accepted.
+
+1. **Precondition, per table.**
+   - The table exists and has RLS enabled.
+   - Every column is classified once. An unclassified column refuses the apply
+     (`artifacts/api-server/src/migrations/3363_place_copies_client_column_grants.sql:121#has column(s) this migration does not classify`).
+   - anon and authenticated hold table-level SELECT, and PUBLIC holds no SELECT.
+   - No client role holds a column-level SELECT
+     (`artifacts/api-server/src/migrations/3363_place_copies_client_column_grants.sql:146#already carries column-level SELECT for a client role`).
+     Column INSERT and UPDATE may exist and are left alone.
+2. **The change.** For each table, the table-level SELECT is revoked and the
+   granted columns are given SELECT:
+   - `artifacts/api-server/src/migrations/3363_place_copies_client_column_grants.sql:152#REVOKE SELECT ON TABLE public.pulse_geo_tags FROM anon, authenticated;`
+   - `artifacts/api-server/src/migrations/3363_place_copies_client_column_grants.sql:157#REVOKE SELECT ON TABLE public.passport_postcards FROM anon, authenticated;`
+   - `artifacts/api-server/src/migrations/3363_place_copies_client_column_grants.sql:167#REVOKE SELECT ON TABLE public.post_media FROM anon, authenticated;`
+3. **Postconditions, read from the catalog** with `has_column_privilege` by
+   attnum.
+   - No place column is readable by a client role
+     (`artifacts/api-server/src/migrations/3363_place_copies_client_column_grants.sql:217#a client role can still read a place column`).
+   - No withheld column is readable
+     (`artifacts/api-server/src/migrations/3363_place_copies_client_column_grants.sql:227#a client role can read a withheld column`).
+   - No granted column is lost
+     (`artifacts/api-server/src/migrations/3363_place_copies_client_column_grants.sql:235#a client role lost a column`).
+   - No table-level SELECT remains for a client role or PUBLIC.
+   - service_role reads every column
+     (`artifacts/api-server/src/migrations/3363_place_copies_client_column_grants.sql:249#service_role cannot read column`).
+
+It changes no INSERT, UPDATE, DELETE or other write privilege, and no policy or
+row. A column added later is readable by no client role until it is granted.
+
+**Withheld (24), by 3362's classes.**
+
+| Table | Class | Columns | Why |
+| --- | --- | --- | --- |
+| pulse_geo_tags | The place | `venue_name`, `display_label`, `district`, `geo_zone_id` | The venue, its label, and the sub-city district. A geo zone is a place, with a readable centre. |
+| pulse_geo_tags | City and country | `city`, `country`, `country_code` | Every tag is readable, including the tag of a post the API does not serve, such as a delayed post still pending. |
+| pulse_geo_tags | Privacy state | `location_visibility`, `tag_type` | The owner's Pulse setting, and whether the tag is a venue, a neighbourhood or a city. |
+| pulse_geo_tags | Presence evidence | `hotel_blur_applied`, `approx_distance_label`, `source`, `confidence_score` | "Posted within about 200 m of where they sleep"; a distance; GPS or manual; how sure. |
+| passport_postcards | The place | `location_name`, `location_city`, `location_country` | A copy of the post's venue, made whatever the mode (§42.6 item 4). |
+| passport_postcards | Location verification | `location_verified`, `verification_method`, `verified_distance_meters`, `verified_at`, `stamp_eligible`, `stamp_reason` | That, how, how close and when the author's GPS matched the place. `verified_distance_meters` is the counterpart of posts' `location_distance_meters`. |
+| post_media | The place | `canonical_place_id`, `stamp_overlay` | The canonical place id, and a stamp's label, city and country. |
+
+**Granted.** Every other column:
+- pulse_geo_tags: 4 — `id`, `post_id`, `user_id`, `created_at`;
+- passport_postcards: 20 — content, audience, stamp style and revocation, media
+  counts and timestamps;
+- post_media: 23 — the file, its variants, and its processing and moderation
+  state.
+
+**`db/rollback/2026-09-27-3363-place-copies-client-column-grants-rollback.sql`.**
+- It refuses any state that is not 3363's
+  (`db/rollback/2026-09-27-3363-place-copies-client-column-grants-rollback.sql:58#this is not the state 3363 left.`).
+- Per table, one REVOKE removes 3363's column SELECTs and leaves every column
+  INSERT and UPDATE (2151, 2152, 2158) as it is. The table-level SELECT is then
+  granted again
+  (`db/rollback/2026-09-27-3363-place-copies-client-column-grants-rollback.sql:67#REVOKE SELECT ON TABLE public.pulse_geo_tags FROM anon, authenticated;`).
+- It deletes 3363's ledger row
+  (`db/rollback/2026-09-27-3363-place-copies-client-column-grants-rollback.sql:79#DELETE FROM public.schema_migration_ledger`),
+  and its postcondition refuses if the row is still there
+  (`db/rollback/2026-09-27-3363-place-copies-client-column-grants-rollback.sql:108#the ledger still records 3363 as applied.`).
+- It says what it re-opens
+  (`db/rollback/2026-09-27-3363-place-copies-client-column-grants-rollback.sql:29#IT RE-OPENS THE DEFECT 3363 CLOSED`).
+- The ACL order may change. On the harness the restored ACLs are byte-identical.
+  Where a client role held only SELECT and its entry was not last, the
+  re-granted entry is appended at the end: the same privileges in a different
+  order.
+
+### 44.14 The rehearsal, the tests and the mutations
+
+**Where.** This lane's own cluster, as in §44.5:
+`LOCAL_DB_DIR=/tmp/portava-local-db-laneg1 LOCAL_DB_PORT=54381 LOCAL_DB_WORK=/tmp/portava-local-db-work-laneg1`.
+It was rebuilt from the merged tree.
+- `up.sh`, through 3362:
+  `chain from 2093: 330 applied in order, 12 known-unreplayable of 342, 2 of those applied on retry`.
+- With 3363: `331 applied in order, 12 known-unreplayable of 343`.
+
+**Apply, second apply, rollback, second rollback, re-apply.** These ran on a
+copy of the pre-3363 database, through `psql -v ON_ERROR_STOP=1 -f`. The output
+below is actual. The per-column `attacl` lines are omitted here; they are
+inside the diff.
+
+```
+== a. pre-3363 state (chain through 3362)
+relacl passport_postcards {postgres=arwdDxt/postgres,service_role=arwdDxt/postgres,anon=r/postgres,authenticated=r/postgres}
+relacl post_media {postgres=arwdDxt/postgres,service_role=arwdDxt/postgres,anon=r/postgres,authenticated=r/postgres}
+relacl pulse_geo_tags {postgres=arwdDxt/postgres,anon=arwdDxt/postgres,authenticated=arwdDxt/postgres,service_role=arwdDxt/postgres}
+readable passport_postcards anon=29 authenticated=29 service_role=29 of 29
+readable post_media anon=25 authenticated=25 service_role=25 of 25
+readable pulse_geo_tags anon=17 authenticated=17 service_role=17 of 17
+writable authenticated passport_postcards insert=10 update=8
+writable authenticated post_media insert=14 update=12
+writable authenticated pulse_geo_tags insert=17 update=17
+policies c873af40d745a2e6715bf05880e76f10 n=14
+== b. apply 3363 (psql -v ON_ERROR_STOP=1 -f)
+BEGIN DO REVOKE GRANT REVOKE GRANT REVOKE GRANT COMMIT DO exit=0
+== c. post-3363 state
+relacl passport_postcards {postgres=arwdDxt/postgres,service_role=arwdDxt/postgres}
+relacl post_media {postgres=arwdDxt/postgres,service_role=arwdDxt/postgres}
+relacl pulse_geo_tags {postgres=arwdDxt/postgres,anon=awdDxt/postgres,authenticated=awdDxt/postgres,service_role=arwdDxt/postgres}
+readable passport_postcards anon=20 authenticated=20 service_role=29 of 29
+readable post_media anon=23 authenticated=23 service_role=25 of 25
+readable pulse_geo_tags anon=4 authenticated=4 service_role=17 of 17
+writable authenticated passport_postcards insert=10 update=8
+writable authenticated post_media insert=14 update=12
+writable authenticated pulse_geo_tags insert=17 update=17
+policies c873af40d745a2e6715bf05880e76f10 n=14
+== d. apply 3363 a second time
+ERROR:  PRECONDITION FAILED (3363): anon and authenticated do not both hold table-level SELECT (without grant option) on post_media.
+exit=3
+== e. a ledger row for 3363, as the runner would write it, then the rollback
+ledger-3363 before rollback 1
+BEGIN DO REVOKE GRANT GRANT REVOKE GRANT GRANT REVOKE GRANT GRANT DELETE 1 COMMIT DO exit=0
+== f. rolled-back state
+(identical to a., and ledger-3363 0)
+== f'. diff pre vs rolled back (empty = identical)
+IDENTICAL
+== g. rollback a second time
+ERROR:  PRECONDITION FAILED (3363 rollback): client roles already hold table-level SELECT on pulse_geo_tags (anon:SELECT, authenticated:SELECT); this is not the state 3363 left.
+exit=3
+== h. re-apply 3363 after the rollback
+BEGIN DO REVOKE GRANT REVOKE GRANT REVOKE GRANT COMMIT DO exit=0
+re-applied state IDENTICAL to first apply
+```
+
+Four things follow:
+- The write-privilege counts are the same in every state, and so are the
+  policy fingerprint (14 policies across the three tables) and posts' 3362
+  state.
+- The rolled-back ACLs, every column ACL included, are byte-identical to the
+  pre-3363 ones.
+- The rollback deleted the ledger row.
+- A second apply and a second rollback each refuse and change nothing.
+
+**The suite:** `artifacts/api-server/src/test/db/placeCopiesClientColumnGrants.db.test.ts`,
+6 tests, registered on the api-server `test` line. Without a database it skips,
+and `run-tests.sh` refuses a run with any skip.
+- `artifacts/api-server/src/test/db/placeCopiesClientColumnGrants.db.test.ts:240#it("G3-0`
+  3363 is in force on all three tables, and every column is classified once.
+- `artifacts/api-server/src/test/db/placeCopiesClientColumnGrants.db.test.ts:253#it("G3-1`
+  anon, a stranger and the owner are each refused exactly the withheld columns
+  of each table:
+  - selected one statement per column;
+  - as a filter;
+  - through `SELECT *`;
+  - through a filter oracle (`venue_name`, `verified_distance_meters`,
+    `canonical_place_id`).
+
+  Service-role reads show the refused values are really there.
+- `artifacts/api-server/src/test/db/placeCopiesClientColumnGrants.db.test.ts:271#it("G3-2`
+  Exactly the granted columns stay readable, in one statement too. The rows
+  are unchanged:
+  - every role sees the geo tag;
+  - the public postcard reaches everyone, and the private one only its owner;
+  - the ready media of a public post reaches everyone, through
+    post_media_public_select, which also reads posts under 3362's grants.
+- `artifacts/api-server/src/test/db/placeCopiesClientColumnGrants.db.test.ts:289#it("G3-3`
+  No write path moved.
+  - The client roles' write privileges are exactly 2151/2152's, 2158's and
+    the baseline's.
+  - The rollback moves none.
+  - The owner updates their own postcard's note, while a stranger's identical
+    UPDATE matches no row.
+  - The owner attaches media and reads back `id`, `moderation_status` and
+    `processing_status`, as the live suite does.
+- `artifacts/api-server/src/test/db/placeCopiesClientColumnGrants.db.test.ts:329#it("G3-4`
+  service_role reads every column of the three.
+- `artifacts/api-server/src/test/db/placeCopiesClientColumnGrants.db.test.ts:343#it("G3-5`
+  With a ledger row present, the rollback:
+  - restores exactly the pre-3363 privilege set, defined as today's minus every
+    client-role column SELECT, plus table-level SELECT for the two roles;
+  - deletes the ledger row;
+  - changes no policy.
+
+  3363 then re-applies to byte-identical ACLs, and the database is left
+  untouched.
+
+**Mutations: 13, each seen red.** For each one, the runner:
+1. mutated the file in place;
+2. created a fresh copy of the pre-3363 database;
+3. applied the mutated file there, and where 3363's own postconditions refused
+   it, recorded that and applied the file again with them stripped;
+4. ran both G1 suites;
+5. restored the file and compared its SHA-256.
+
+All three files were restored byte-identical: 3363 `dcfacb7cfadaed80…`, its
+rollback `25730bdec63983c8…`, the 3362 rollback `3e10519196c6cc21…`.
+
+| Mutation | 3363's own postconditions | Tests red |
+| --- | --- | --- |
+| M1 3363 not applied | — | G3-0, G3-1, G3-2, G3-3, G3-5 |
+| M2 pulse_geo_tags' REVOKE removed | refused: "a client role can still read a place column of pulse_geo_tags" | G3-0, G3-1, G3-2, G3-3, G3-5 |
+| M3 `venue_name` granted | refused, the same message | G3-1, G3-2, G3-5 |
+| M4 postcards' `location_name` granted | refused, the same message | G3-1, G3-2, G3-5 |
+| M5 `canonical_place_id` granted | refused, the same message | G3-1, G3-2, G3-5 |
+| M6 `id` dropped from post_media's grant | refused: "a client role lost a column of post_media it must keep" | G1-2, G3-1, G3-2, G3-3, G3-5 |
+| M7 3363 also revokes authenticated's column INSERT (storage_path) on post_media | not caught; they read SELECT | G1-2, G3-3 |
+| M7b 3363 also revokes authenticated's table UPDATE on pulse_geo_tags | not caught | G3-3 |
+| M8 a row policy dropped (postcards_select) | not caught | G3-2, G3-3, G3-5 |
+| M9 service_role revoked on postcards | refused: "service_role cannot read column(s)" | G3-4, G3-5 |
+| M10 3363's rollback forgets authenticated on postcards | its own postcondition refuses | G3-3, G3-5 |
+| M11 3363's rollback keeps its ledger row | its own postcondition refuses | G3-5 |
+| M12 3362's rollback keeps its ledger row | its own postcondition refuses | G1-5 |
+
+**The whole harness, full chain with 3362 and 3363:** `run-tests.sh` reported
+`local-db tests: pass=155 fail=0 skipped=0 (exit 0)` over 29 suites, both G1
+suites included.
+
+### 44.15 The production approval step for 3363
+
+The integrator runs these read-only. This lane ran none.
+
+**Pre-flight.** Each must hold before applying.
+
+```sql
+-- 1. Start state per table: client roles hold table-level SELECT without grant option; PUBLIC holds no SELECT;
+--    0 column-level SELECT for a client role. (Column INSERT/UPDATE from 2151/2152/2158 are expected and untouched.)
+SELECT c.relname, CASE WHEN a.grantee = 0 THEN 'PUBLIC' ELSE a.grantee::regrole::text END AS grantee, a.privilege_type, a.is_grantable
+  FROM pg_class c, LATERAL aclexplode(c.relacl) a
+ WHERE c.oid IN ('public.pulse_geo_tags'::regclass, 'public.passport_postcards'::regclass, 'public.post_media'::regclass)
+ ORDER BY 1, 2, 3;
+SELECT c.relname, a.attname, x.grantee::regrole::text, x.privilege_type
+  FROM pg_class c JOIN pg_attribute a ON a.attrelid = c.oid, LATERAL aclexplode(a.attacl) x
+ WHERE c.oid IN ('public.pulse_geo_tags'::regclass, 'public.passport_postcards'::regclass, 'public.post_media'::regclass) AND a.attnum > 0
+ ORDER BY 1, 2, 3, 4;   -- expect only authenticated INSERT/UPDATE rows; any SELECT row refuses 3363
+-- 2. Columns: expect exactly 17, 29 and 25, every one in 3363's lists; and RLS on.
+SELECT c.relname, c.relrowsecurity, count(*), string_agg(a.attname, ',' ORDER BY a.attnum)
+  FROM pg_class c JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped
+ WHERE c.oid IN ('public.pulse_geo_tags'::regclass, 'public.passport_postcards'::regclass, 'public.post_media'::regclass) GROUP BY 1, 2;
+-- 3. Policies on ANY table whose expressions depend on a column of the three (expect none outside their own tables),
+--    and the same for posts, which also catches posts_select's can_see_post(id).
+SELECT DISTINCT p.polrelid::regclass::text AS policy_table, p.polname, d.refobjid::regclass::text AS reads, a.attname
+  FROM pg_policy p JOIN pg_depend d ON d.classid = 'pg_policy'::regclass AND d.objid = p.oid
+  JOIN pg_attribute a ON a.attrelid = d.refobjid AND a.attnum = d.refobjsubid
+ WHERE d.refobjid IN ('public.pulse_geo_tags'::regclass, 'public.passport_postcards'::regclass, 'public.post_media'::regclass, 'public.posts'::regclass)
+ ORDER BY 1, 2, 3, 4;
+-- 4. Views and functions over the three; publications.
+SELECT DISTINCT v.oid::regclass::text, d.refobjid::regclass::text FROM pg_depend d JOIN pg_rewrite r ON r.oid = d.objid JOIN pg_class v ON v.oid = r.ev_class
+ WHERE d.refobjid IN ('public.pulse_geo_tags'::regclass, 'public.passport_postcards'::regclass, 'public.post_media'::regclass) AND v.oid <> d.refobjid;
+SELECT p.oid::regprocedure::text, p.prosecdef, has_function_privilege('anon', p.oid, 'EXECUTE') AS anon_x,
+       has_function_privilege('authenticated', p.oid, 'EXECUTE') AS auth_x, pg_get_function_result(p.oid)
+  FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+ WHERE n.nspname NOT IN ('pg_catalog', 'information_schema') AND p.prosrc ~* '\m(pulse_geo_tags|passport_postcards|post_media)\M';
+SELECT pubname, tablename FROM pg_publication_tables WHERE schemaname = 'public' AND tablename IN ('pulse_geo_tags', 'passport_postcards', 'post_media');
+-- 5. Storage policies naming the three: expect none.
+SELECT policyname FROM pg_policies WHERE schemaname = 'storage'
+   AND (coalesce(qual, '') || coalesce(with_check, '')) ~ '(pulse_geo_tags|passport_postcards|post_media)';
+-- 6. Ledger: the files that shaped these grants.
+SELECT filename, applied_by FROM public.schema_migration_ledger WHERE filename ~ '^(0036|2151|2152|2158|3359|3362|3363)_' ORDER BY 1;
+-- 7. What 3363 would withhold today, in rows.
+SELECT (SELECT count(*) FROM public.pulse_geo_tags WHERE venue_name IS NOT NULL OR district IS NOT NULL) AS tag_places,
+       (SELECT count(*) FROM public.pulse_geo_tags WHERE hotel_blur_applied) AS tag_hotel_blur,
+       (SELECT count(*) FROM public.passport_postcards WHERE verified_distance_meters IS NOT NULL) AS postcard_distances,
+       (SELECT count(*) FROM public.post_media WHERE stamp_overlay IS NOT NULL) AS media_stamp_overlays;
+-- 8. The write gap of §44.16: geo tags written under a user id other than the post's author (expect 0).
+SELECT count(*) FROM public.pulse_geo_tags g JOIN public.posts p ON p.id = g.post_id WHERE g.user_id IS DISTINCT FROM p.author_id;
+-- 9. Whose post the one geo-tag venue and the one postcard venue belong to (§44.9.1, item 8).
+SELECT 'geo_tag' AS copy, p.location_privacy_mode, p.post_status, p.visibility, p.status FROM public.pulse_geo_tags g JOIN public.posts p ON p.id = g.post_id WHERE g.venue_name IS NOT NULL
+UNION ALL
+SELECT 'postcard', p.location_privacy_mode, p.post_status, p.visibility, p.status FROM public.passport_postcards pc JOIN public.posts p ON p.id = pc.post_id WHERE pc.location_name IS NOT NULL;
+```
+
+**Logs.** The gateway's requests to `/rest/v1/pulse_geo_tags`,
+`/rest/v1/passport_postcards` and `/rest/v1/post_media`, over the longest window
+the tool reads, grouped by key type. A request not made with the `sb_secret_`
+key is a reader §44.12 could not see, and it must be named before applying.
+
+**Apply.**
+- Apply 3363 alone, through the ledgered applier.
+- It does not depend on 2151, 2152 or 2158: it touches only SELECT, and
+  whatever write grants production holds stay as they are (§44.15 query 1 shows
+  them). It does not need 3362 either, but 3362 first is the natural order.
+- Enforcement needs no PostgREST reload.
+
+**Verify (read-only).**
+
+```sql
+SELECT c.relname, r,
+       count(*) FILTER (WHERE has_column_privilege(r, c.oid, a.attnum, 'SELECT')) AS readable, count(*) AS cols
+  FROM pg_class c JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped,
+       unnest(ARRAY['anon', 'authenticated', 'service_role']) r
+ WHERE c.oid IN ('public.pulse_geo_tags'::regclass, 'public.passport_postcards'::regclass, 'public.post_media'::regclass)
+ GROUP BY 1, 2 ORDER BY 1, 2;
+-- expect pulse_geo_tags 4/17, passport_postcards 20/29, post_media 23/25 for anon and authenticated; service_role all
+```
+
+Then, over HTTP with the anon key only:
+- `GET /rest/v1/pulse_geo_tags?select=id&limit=1` should return 200;
+- `?select=venue_name`, `?select=*` and `?select=id&hotel_blur_applied=is.true`
+  should each return `42501`;
+- the same pattern holds for `passport_postcards` (`location_name`) and
+  `post_media` (`canonical_place_id`).
+
+**Recovery.** As for 3362:
+- Name the reader from the gateway's `42501`s.
+- Grant a missing non-place column in a new migration.
+- Only if that cannot wait, apply the rollback. It restores the prior grants,
+  deletes the ledger row, and re-opens the defect.
+
+### 44.16 Found, not fixed
+
+1. **pulse_geo_tags has no write boundary.** The baseline gives anon and
+   authenticated `GRANT ALL` on it, and its insert and update policies check only
+   `auth.uid() = user_id`, not that the post is the caller's. On the harness,
+   with 3363 applied (it changes no write), a signed-in stranger attached a geo
+   tag to another author's post:
+
+   ```
+   a stranger attached a geo tag to another author's post: Forged Venue by true
+   ```
+
+   - **Who can do it.** A stranger can do this for any post that has no tag yet
+     (`pgt_post_uniq` allows one per post). An author can also rewrite their own
+     tag's venue, visibility and `hotel_blur_applied`.
+   - **Where it shows.** Pulse serves the tag's `venueName`.
+   - **Whether it has happened.** §44.15 query 8 counts such rows in production.
+   - **The fix.** It is 2148's class: the one writer is service_role
+     (`artifacts/api-server/src/services/location/PulseGeoTagService.ts:94#const { error: stubError } = await db.from("pulse_geo_tags").insert({`),
+     and no client code writes the table, so revoking the client roles' writes
+     is decision-free.
+   - **Why not built.** It is a write boundary, outside this follow-up's scope
+     (the read side). G3-3 pins today's write privileges, so the fix would have
+     to update G3-3 on purpose. Migration number 3364 is free for it.
+2. **The API serves a stamp overlay whatever the mode**
+   (`artifacts/api-server/src/routes/pulse.ts:110#stamp_overlay:     m.stamp_overlay ?? null,`).
+   The author places the stamp on their own photo, and its label is drawn on the
+   image. Whether a withheld post's overlay label counts as disclosing the place
+   is §42.6's class and the owner's call. 3363 closes only the direct path.
+3. **`passport_postcards.stamp_revoked_by` names a moderator**, and it stays
+   readable by the client roles. It is not a place, so it is outside this
+   follow-up. It is recorded, not decided.
+4. **§44.7 item 1, the rows, is unchanged.** Every tag stays readable as a row:
+   `id`, `post_id`, `user_id` and `created_at`. That shows that a post was
+   tagged, and when. It does not show where.
+
+### 44.17 P24, rows, checks, freshness and files
+
+**What would turn this red (P24).**
+- **A table-level SELECT given back on any of the three, or a withheld column
+  granted.** G3-0 and G3-1 go red on the harness; in production only §44.15's
+  verification query shows it.
+- **A new column on any of the three.** It is closed by default. G3-0 goes red
+  until it is classified.
+- **A reader nobody inventoried.** It gets `42501` on a withheld column.
+- **A write-privilege change to the three.** G3-3 goes red. The §44.16 item 1
+  fix is meant to do exactly that, and must update G3-3.
+- **A definer function or owner-rights view over a withheld column.** Nothing
+  here catches it; §44.15 query 4 reads production for one.
+
+**Rows.** No MD row moves, and the headline is not restated. §44.10's restated
+§42.2 row now reads:
+
+| Reader | What it serves of a post's place | Honoured the mode before | Now |
+| --- | --- | --- | --- |
+| Direct PostgREST reads of `posts` | every column of every row the policies admit | no | **posts columns: fixed on branch by 3362, merged at `f28da6f23`, not deployed. The copies in pulse_geo_tags, passport_postcards and post_media: fixed on branch by 3363, not merged, not deployed (§44.13). Rows: not fixed (§44.7, 1). pulse_geo_tags writes: not fixed (§44.16, 1).** |
+
+**Files.**
+- New:
+  - `artifacts/api-server/src/migrations/3363_place_copies_client_column_grants.sql`;
+  - `db/rollback/2026-09-27-3363-place-copies-client-column-grants-rollback.sql`;
+  - `artifacts/api-server/src/test/db/placeCopiesClientColumnGrants.db.test.ts`.
+- Changed:
+  - `db/rollback/2026-09-27-3362-posts-client-column-grants-rollback.sql`
+    (the ledger DELETE, its postcondition, and one header line; every cited
+    line is unmoved);
+  - `artifacts/api-server/src/test/db/postsClientColumnGrants.db.test.ts`
+    (G1-5's ledger assertion, appended inside G1-5, and one header line);
+  - `artifacts/api-server/package.json` (the `test` line);
+  - `artifacts/api-server/src/scripts/checkCensusFreshness.ts` (census-media's
+    scope, with a WIDENED comment);
+  - `docs/architecture/telegraph-phase0-inventory.md`, regenerated because the
+    migration count moved from 622 to 623;
+  - this section, and §44.9.1.
+
+**Cited, not graded (check:census-scope-coverage), declared for this section:**
+
+- NOT-GRADED: artifacts/api-server/src/migrations/0036_pulse_geo_tags.sql — cited in §44.11 for pulse_geo_tags' `true` SELECT policy; a frozen legacy migration quoted as evidence of the table's read surface, not a Media verdict.
+- NOT-GRADED: travel-buddy-standalone/src/lib/stampOverlay.ts — cited in §44.11 for the stamp overlay's label, city and country fields, which classify post_media.stamp_overlay as a place column; client display math, no MD verdict rests on it.
+- NOT-GRADED: artifacts/api-server/src/test/postMediaModerationBoundary.test.ts — cited in §44.12 as the one client-role read-back of post_media in the tree's suites (a live-DB owner insert); the 2158 write-boundary suite, not a Media verdict.
+- NOT-GRADED: scripts/src/backfill-stamps.ts — cited in §44.12 as a script that reads passport_postcards' city and country with the service-role key, so not a client-role reader; a one-off stamp backfill, no MD verdict rests on it.
 
 ## 43. Lane G2 — a post's location mode, honoured by the remaining server readers (§42.6, items 1–4, 7 and 8) — 2026-09-27
 

@@ -22,7 +22,7 @@
 -- Use it only to recover from a reader 3362 broke, and re-apply 3362 (with the
 -- missing column granted, if it is not a location) as soon as that is fixed.
 --
--- It changes no row.
+-- It changes no row except its own schema_migration_ledger row, which it deletes (below, census-media §44.11) so the runner re-applies 3362 later.
 
 BEGIN;
 
@@ -55,7 +55,7 @@ END $$;
 REVOKE SELECT ON TABLE public.posts FROM anon, authenticated;
 GRANT SELECT ON TABLE public.posts TO anon;
 GRANT SELECT ON TABLE public.posts TO authenticated;
-
+DELETE FROM public.schema_migration_ledger WHERE filename = '3362_posts_client_column_grants.sql';
 COMMIT;
 
 -- ── Postconditions: 2148's state, exactly ───────────────────────────────────
@@ -75,5 +75,12 @@ BEGIN
   IF EXISTS (SELECT 1 FROM pg_attribute
               WHERE attrelid = 'public.posts'::regclass AND attnum > 0 AND attacl IS NOT NULL) THEN
     RAISE EXCEPTION 'POSTCONDITION FAILED (3362 rollback): a column-level privilege survives on posts.';
+  END IF;
+  -- The runner wrote 3362's ledger row in 3362's own transaction; with it gone,
+  -- a later scripts/src/apply-migrations.ts run re-applies 3362 instead of
+  -- taking it as applied (the convention lane X's rollbacks follow).
+  IF EXISTS (SELECT 1 FROM public.schema_migration_ledger
+              WHERE filename = '3362_posts_client_column_grants.sql') THEN
+    RAISE EXCEPTION 'POSTCONDITION FAILED (3362 rollback): the ledger still records 3362 as applied.';
   END IF;
 END $post$;
