@@ -11939,3 +11939,244 @@ records the exit, restores the file and compares SHA-256.
 **Cited, not graded (check:census-scope-coverage), declared for this section:**
 
 - NOT-GRADED: artifacts/api-server/src/lib/eventPostsDiscovery.ts — named once in §36.9 as a finding outside Media (a post reader that ignores the owner's location mode); no MD verdict rests on it, and it is Discovery's reader, not Media's.
+
+## 40. Lane R — three layout defects the H8 renders exposed — 2026-09-27
+
+Lane S rendered the Media screens before and after lane K's contrast work
+(§31.8, §31.12, §31.13). The renders were real `expo export -p web` builds,
+driven by Playwright over fixtures. Three of lane K's new backings turned
+layout overlaps that had been invisible into visible defects. This section
+fixes the layout only:
+- no colour, alpha or backing changes;
+- every contrast pair still passes;
+- H8, the owner's visual review of lane K's changes, is still pending.
+
+### 40.1 Rows
+
+**No row moves.** MD403 stays where its last statement puts it. This section
+fixes geometry, and MD403 grades contrast. The contrast suite still passes
+unchanged:
+`travel-buddy-standalone/src/features/media/__tests__/mediaContrast.test.ts:835#test('every solid-ground and fallback pair meets WCAG AA`
+(14 of 14 tests).
+
+### 40.2 The three defects, and the fixes
+
+Each defect was first reproduced by a hit-test probe on a web export of the
+base, `e9e0b0404`. Geometry is in CSS px at 390×844 (§40.4).
+
+**1. Gems: the rail was dimmed and could not be tapped.**
+- **The layer.** The bottom content (place block, creator row, caption) is a
+  later sibling of the absolutely positioned rail. It carries a full-width
+  0.81 backing (§31.12). Siblings paint in tree order, so the block was drawn
+  over the rail from y 492 down. A tap at the centre of Stamp, Save, Share
+  and ⋯ landed on the block. Lane S's probe of the pre-lane-K tree
+  (`ff89a7b20`) found Stamp, Save and Share landing on the block, and ⋯ on
+  the FAB. So the untappable half predates the backing; the dimming did not.
+- **The FAB.** The rail's bottom edge, at `BOTTOM_SAFE + 120` (y 708), sat
+  inside the Media tab FAB's box (y 680–732). ⋯ overlapped the FAB.
+- **Fix, the layer.** The rail gets `zIndex: 2`:
+  `travel-buddy-standalone/src/components/media/GemsItemOverlay.tsx:368#position: 'absolute', zIndex: 2,`.
+- **Fix, the position.** The rail's bottom is now computed at render:
+  `travel-buddy-standalone/src/components/media/GemsItemOverlay.tsx:102#const railBottom = useLayoverAwareBottomInset() + RAIL_FAB_CLEARANCE;`,
+  applied at
+  `travel-buddy-standalone/src/components/media/GemsItemOverlay.tsx:142#<View style={[styles.actionColumn, { bottom: railBottom }]} testID="gems-action-rail">`.
+  - It uses the same inset hook the FAB uses
+    (`travel-buddy-standalone/app/(tabs)/media.tsx:170#{ bottom: bottomInset + 16 },`).
+  - It adds the FAB's offset, its height and a gap:
+    `travel-buddy-standalone/src/components/media/GemsItemOverlay.tsx:540#const RAIL_FAB_CLEARANCE = 16 + avatar.s52 + space.sm;`.
+  - A home-indicator inset, a three-button navigation bar and an active
+    layover pill all lift the FAB and the rail together.
+- **Why a layer, and not a narrower block.** The block's backing spans the
+  full width, and its text already stops 80 px short of the right edge. A
+  layer fixes the paint order and the taps without changing any measured
+  backing. Where the rail overlaps the block, the rail's own 0.89 backing is
+  composited over the block's 0.81. That only darkens the ground under the
+  rail's light glyphs, so every rail pair measured over a photo still holds.
+
+**2. Grid: the tile's stamp disc hid the view count.**
+- **The overlap.** The disc (§31.12, now 0.80) sat at `bottom: 4` at zIndex
+  6. The meta row is right-aligned too, is 27 px tall (12 + 11 + 4), and sits
+  at zIndex 3. The 44-px disc covered the count on every tile: "12.4K" read
+  "…K".
+- **Fix.** The disc now sits above the meta row, at the same height the
+  verified-location stamp already uses:
+  `travel-buddy-standalone/src/components/media/GridTile.tsx:283#bottom: 28,`.
+- **The slot.** The count's line box has a fixed 11-px line height. It stays
+  clear of the disc up to a font scale of about 2.2×.
+
+**3. Viewer: the page-dot pill hid a caption line.**
+- **The overlap.** The pill (§31.13, 0.87) sat at a fixed
+  `max(insets.bottom + 80, 90)`. That lands inside the left column whenever
+  the column is taller than about 70 px, which is always once a caption
+  shows. It hid "should" in the Lisbon post and "honest version" in the Porto
+  post.
+- **Fix.** The dots get a slot of their own under the columns:
+  - they sit on the columns' old baseline
+    (`travel-buddy-standalone/app/media-viewer/[id].tsx:806#bottom: overlayBaseline(insets.bottom)`);
+  - when they show, the columns rise by the pill's height plus a gap
+    (`travel-buddy-standalone/app/media-viewer/[id].tsx:224#paddingBottom: overlayBaseline(insets.bottom) + (pageDots ? PAGE_DOTS_SLOT : 0)`,
+    `travel-buddy-standalone/app/media-viewer/[id].tsx:885#const PAGE_DOTS_SLOT = 2 * 6 + dot.s5 + space.sm;`).
+- **Why a slot, and not a new fixed height.** Neither element depends on how
+  tall the left column is, so no caption, place chip or loading row can reach
+  the dots. With one item there are no dots and no slot.
+
+**Line neutrality.** No line moves in any of the three files. Edits extend
+existing lines, and the two new constants and the one helper are appended at
+the files' tails. None of the edited lines is a cited one, so every citation
+of these files still lands on its line:
+- the viewer's route file: lines 309, 389, 441, 502, 529, 568, 796, 809, 874
+  and 875 here, and 329 and 680 in the share audit;
+- the Gems overlay: lines 148, 154, 157, 161, 165, 329, 353, 372, 430 and 451;
+- the Grid tile: lines 95, 175, 186, 226 and 285.
+
+### 40.3 Tests
+
+Three new jest suites pin the layers and the slots by style. 13 tests; each
+fix was mutated out and seen red (§40.5).
+
+| Suite | What it pins |
+| --- | --- |
+| `travel-buddy-standalone/src/components/media/__tests__/GemsItemOverlay.railLayer.component.test.tsx:131#describe('GemsItemOverlay — the rail is drawn above the place block'` | The rail and the bottom content share a parent. The rail is absolute, with a zIndex above the content's. Every rail control is inside the rail, none inside the content. Both measured backings are unchanged. |
+| `travel-buddy-standalone/src/components/media/__tests__/GemsItemOverlay.railLayer.component.test.tsx:159#describe('GemsItemOverlay — the rail clears the Media tab FAB'` | The rail's bottom is at least the FAB's top plus 4, for five cases: insets 0, 34 and 48, with and without a layover pill. A source needle keeps the FAB's geometry in media.tsx what the test assumes. |
+| `travel-buddy-standalone/src/components/media/__tests__/GridTile.stampDisc.component.test.tsx:103#it.each(cases)("%s: the disc starts above the meta row"` | For a photo tile and a video tile: both are anchored to the tile's bottom. The disc's `bottom` is at least the meta row's height, computed from its padding and its tallest line. The count is in the row and not in the disc. The 0.80 backing is kept. |
+| `travel-buddy-standalone/app/media-viewer/__tests__/pageDots.layout.component.test.tsx:142#it.each([0, 34])('insets.bottom %i: the dots end below the columns, with a gap'` | The whole screen is rendered with 8 items. The dots' top edge (their `bottom`, plus the pill's height from its own padding and dots) is at least 4 px below the columns' bottom edge, for insets 0 and 34. The 0.87 backing is kept. A second case checks that one item draws no dots and reserves no slot. |
+
+### 40.4 Probe results — the web render (evidence, not a CI test)
+
+The harness is lane S's, copied to lane R's scratch folder with probe scenes
+added. It drives a real `expo export -p web` of the tree in Playwright's
+Chromium at 390×844, over the same fixtures, with nothing leaving the browser.
+Two kinds of hit test are used:
+
+- **Tap.** `document.elementFromPoint` at a point: what a tap lands on.
+- **Paint.** The same point with pointer events forced on. It walks
+  `elementsFromPoint` from the top and skips invisible layers (opacity 0) and
+  layers that paint nothing there. It reports what is drawn on top, even under
+  a `pointerEvents="none"` pill or count.
+
+Base means `e9e0b0404`; fix means `debe0746c`.
+
+| Probe | Base | Fix |
+| --- | --- | --- |
+| Gems, rail vs FAB | Rail y 468–708 intersects the FAB (y 680–732). ⋯'s box intersects the FAB. | Rail y 432–672, 8 px above the FAB. No control intersects it. |
+| Gems, taps at each control's centre (idle; saved and stamped) | Stamp, Save, Share and ⋯ all land on the place block. | All eight land on the control itself. |
+| Gems, paint at each control's four corners and centre | Stamp's lower half, and all of Save, Share and ⋯, are under the 0.81 block. | All 20 points per scene are painted by the rail or the control. |
+| Gems, paint on the rail's own backing (between controls, and 3 px above its bottom edge) | The block at all four points. | The rail at all four points. |
+| Gems, block content under the rail | none | none |
+| Grid, four tiles in view: disc vs count box | All four intersect (Lisbon: disc y 315–359, count y 348–359). | None intersect (Lisbon: disc y 291–335, count y 348–359). |
+| Grid, paint on the count's glyphs (left, middle, right) | The disc paints over the left and middle of every count. | Every point is the count's own text. |
+| Grid, tap at the Stamp's centre | the Stamp | the Stamp |
+| Viewer idle (Lisbon): pill vs left column | Pill y 737–754, inside the column (y 660–820). The caption line "the one everyone should." is under the pill. | Pill y 803–820. The column ends at 795, an 8-px gap. 13 text lines and 7 controls checked, none covered. |
+| Viewer, image error (Porto) | Pill inside the column. "Francesinha, the honest version." is under the pill. | Clear. 11 lines and 7 controls, none covered. |
+| Viewer, loading | Clear. The column is only the 52-px loading row. | Clear. |
+
+**A short screen.** At 375×667 the fix's probes all pass as well. The Gems
+rail sits at y 255–495, 9 px below the filter bar (which ends at 246), and
+8 px above the FAB.
+
+### 40.5 Mutations — each fix reverted alone, and seen red
+
+In each run, one fix was reverted, the tree was rebuilt and probed, and the
+file was then restored with `git checkout`. `git status` was clean after
+every run.
+
+| Mutation | Jest | Probe |
+| --- | --- | --- |
+| M1a: the rail's `zIndex: 2` removed | RED: "the rail is the upper layer" (zIndex undefined) | RED, 13 failures: Save, Share and ⋯ taps land on `gems-bottom-content`, and the rail's backing is under the block at 4 of 4 points |
+| M1b: the rail's bottom back to `BOTTOM_SAFE + 120` | RED: 5 of 5 FAB-clearance cases | RED: the rail box intersects the FAB, ⋯'s box intersects the FAB, and part of ⋯ is painted over |
+| M2: the disc back to `bottom: 4` | RED: 2 of 2 (expected ≥ 27, received 4) | RED, 8 failures: on all four tiles the disc intersects the count and paints over it |
+| M3a: the dots back to `max(insets.bottom + 80, 90)` | RED: 2 of 3 (the dots' top plus 4 is 111 against the columns' 49, and 135 against 75) | RED: the pill intersects the left column in idle, image-error and loading; one caption line covered in each of the first two |
+| M3b: the columns no longer rise (no slot) | RED: 3 of 3 | RED: the pill intersects the left column in all three states; two lines covered in each of the first two |
+
+### 40.6 The re-shoot
+
+The H8 set (01–11) was re-shot from the branch head's export, with the same
+harness, fixtures, viewport and steps as lane S. The shots are in the session
+scratchpad under `lane-r/shots/`, with:
+- pair composites against lane S's BEFORE;
+- composites against lane S's AFTER for the frames that changed;
+- a manifest.
+
+Pixel diff against lane S's AFTER (any channel > 8):
+
+| Frame | Differs from lane S's AFTER |
+| --- | --- |
+| 01 watch, 09 grid error, 10 header, 11 add-gem assist | 0 px (identical) |
+| 02 and 03 Gems | only the rail, x 321–378, y 432–683 |
+| 04, 05 and 07 viewer | only the bottom block, y 543–820 (columns up 25 px, dots below them) |
+| 06 viewer loading | the bottom block, and the spinner, which is captured mid-rotation |
+| 08 grid | only the stamp discs, x 153–384, y 275–685 |
+
+### 40.7 Found while doing it — recorded, not fixed
+
+None of these is one of the three defects, and no verdict moves on any of
+them.
+- **The Watch rail's ⋯ is under the FAB.** The probe at 390×844 and at
+  375×667 finds that a tap at the centre of the Watch rail's "More options"
+  lands on "Create a post" (the FAB). The Watch overlay's `bottom` row sits at
+  `max(insets.bottom + 100, 120)`, inside the FAB's box. This is the same class
+  as defect 1's FAB half. Moving the Watch rail changes that overlay's
+  two-column alignment, so it is left for the owner's call.
+- **The Gems caption sits under the floating tab pill.** The bottom content's
+  `paddingBottom` is `BOTTOM_SAFE + space.md` (28 on web), but the tab pill
+  covers the bottom 76 px. In `02` and `03` the creator's handle is half
+  hidden, and the caption is fully hidden, behind the pill. This predates
+  lane K.
+- **Page-dot width.** The pill is `10 × items + 20` px wide. With about 28 or
+  more items it becomes wider than the left column, and with about 36 or more
+  it becomes wider than the screen. The Grid can hand the viewer that many
+  items. This predates §31.13.
+- **The verified-location stamp and the Grid disc.** The verified-location
+  stamp (left 6, bottom 28, up to about 158 px wide) and the disc (right 4)
+  can meet on a 190-px tile when the place name is long.
+  - They already overlapped at bottom 4 to 48.
+  - At bottom 28 they share a 28–67 band.
+  - The disc draws on top (zIndex 6 over 4).
+  - No fixture tile is verified, so this is arithmetic, not a render.
+- **Short screens with insets.** The fix's rail clears the filter bar by 9 px
+  at 375×667 on web, where the insets are 0. On an iPhone SE, the 20-pt status
+  bar moves the filter bar down, so by arithmetic the rail's top 8-px padding
+  and about 3 px of the Stamp's box would sit under it. Before the fix, the
+  rail's bottom was inside the FAB instead. Not measured on a device.
+- **The legacy inline ⋯ menu** in `GemsItemOverlay` renders only when no
+  `onMore` is passed. It is drawn before the bottom content, so it would sit
+  under the block. GemsFeed, the only caller, passes `onMore`.
+
+### 40.8 Production — nothing here is deployed
+
+BUILT ON BRANCH IS NOT MERGED. MERGED IS NOT DEPLOYED.
+- The work is on branch `lane-r-render`.
+- Nothing is merged, built for a store, or run on a device.
+- The renders are web renders: react-native-web in Chromium, with safe-area
+  insets of 0.
+- No database or flag was touched.
+
+### 40.9 Checks
+
+| Check | Result |
+| --- | --- |
+| Client `tsc -p tsconfig.json --noEmit` | 0 errors |
+| Test typecheck baseline | 173 across 60 files, the same as the baseline |
+| eslint on the three changed sources | 0 errors, the same warning counts as at `e9e0b0404` (3, 2, 1) |
+| eslint on the new tests | 0 errors; only the `require()` warnings in jest mock factories, the house pattern |
+| lint:imports, bare-image, avatar-icon-sizing, ksv, mocks, orphan-tests, close-then-navigate, dev-proxy-not-shipped | all pass |
+| mediaContrast.test.ts | 14 of 14 |
+| jest, new suites | 13 of 13 |
+| jest, the new and related suites (all of src/components/media, the viewer's, the Media tab's three, MediaWorldShell, HiddenGemsMediaScreen, WallScreen.quickMedia) | 15 suites, 86 tests pass |
+| jest (web renderer), WatchStamp.webrender | 1 of 1 |
+| api-server typecheck; typecheck:tests | 0 errors; 863 across 115 files, the same as the baseline |
+| check:doc-citations; check:citation-targets | pass (unanchored 6355 against the 6434 ceiling); 165 of the 165 ceiling |
+| check:census-integrity, check:census-scope-coverage, check:census-row-move-labels | pass (census-media: 337 cited, 337 watched) |
+| check:census-freshness | stale: census-media, only for this section's three new suites, which are left to the integrator's acknowledgement |
+| projectionConsumers.test.ts, censusScopeCoverage.test.ts | 38 of 38 |
+| check:all | 39 pass. Six fail: census-freshness, as above, and the five live-DB checks (write-path-columns, missing-live-columns, authorization-contract, media-objects, rank-events-surfaces), which the non-production guard refused before any connection |
+
+### 40.10 Files changed
+
+| File | Change |
+| --- | --- |
+| `travel-buddy-standalone/src/components/media/GemsItemOverlay.tsx:368#zIndex: 2` | The rail's layer and its FAB-relative bottom. Line-neutral, with one constant appended. |
+| `travel-buddy-standalone/src/components/media/GridTile.tsx:283#bottom: 28,` | The disc's slot. Line-neutral. |
+| `travel-buddy-standalone/app/media-viewer/[id].tsx:885#const PAGE_DOTS_SLOT` | The dots' slot. Line-neutral, with a constant and a helper appended. |
+| the three test suites in §40.3 | new |
+| `artifacts/api-server/src/scripts/checkCensusFreshness.ts` | census-media's scope widened by one file: the viewer's new suite, which the §40.3 table cites |
