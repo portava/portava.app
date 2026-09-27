@@ -9366,3 +9366,4 @@ components.
   `components/media/`, `routes/mediaFeed.ts`, `stores/mediaStore.ts` and
   `app/(tabs)/media.tsx`.
 - NOT-GRADED: artifacts/api-server/src/lib/capability/snapshots/20260922-production-schema.json — the frozen production capture, quoted in §34.6 only for the current values of MEDIA_TAB_ENABLED and MEDIA_RANKING_ENABLED as activation prerequisites; no §34 verdict rests on it, and this lane read no database.
+- NOT-GRADED: db/rollback/2026-09-27-3340-media-tab-world-default-flag-rollback.sql — the undo script for migration 3340's flag seed, named in §34.6's Recover column as the way to remove the row once the flag is off again; the §34 rows rest on 3340 applied (watched) and on its reader, never on its reversal.
