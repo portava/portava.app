@@ -12921,3 +12921,580 @@ again here:
 - NOT-GRADED: artifacts/api-server/src/lib/places/placeDays.ts — isEligiblePlaceDayPost, cited in §42.6 (3) as the shared predicate that reads no mode; Live Places machinery, recorded, not fixed.
 - NOT-GRADED: artifacts/api-server/src/routes/passport.ts — the passport postcard reader, cited in §42.6 (4) for serving the copied venue; census-passport's surface, recorded, not fixed.
 - NOT-GRADED: artifacts/api-server/src/migrations/2148_posts_write_boundary.sql — cited in §42.6 (5) for the table-level SELECT grant on posts; a database boundary finding, not a Media verdict, and it needs a migration this lane does not have.
+
+## 44. Lane G1 — the posts columns a client role may read through PostgREST — 2026-09-27
+
+Branch `lane-g1-grants`, from `wave8-integration` at `11eec994d`. This lane was
+assigned migrations 3362–3364. It used 3362; 3363 and 3364 are unused. No MD row
+moves. This is the defect §42.6 item 5 recorded, and it sits outside any row.
+
+BUILT ON BRANCH IS NOT MERGED. MERGED IS NOT DEPLOYED. 3362 is applied to no
+shared database. That means not production (`ajrurzioarfkagpuxfnb`, which this
+lane did not read) and not portava-ci. It was rehearsed only on the repo's local
+PostgreSQL 16 harness. No flag exists, and none was enabled.
+
+### 44.1 The defect, executed
+
+- 2148 left both client roles with table-level SELECT
+  (`artifacts/api-server/src/migrations/2148_posts_write_boundary.sql:85#GRANT SELECT ON TABLE public.posts TO anon;`).
+- `posts_select` admits every public active row to every role, anon included
+  (`artifacts/api-server/baseline/20260819_baseline_structure.sql:30371#CREATE POLICY posts_select ON public.posts FOR SELECT USING (public.can_see_post(id));`).
+- `posts_select_policy` adds follower and crew rows for authenticated
+  (`artifacts/api-server/src/migrations/2337_trip_crew_rls_membership_convergence.sql:645#CREATE POLICY "posts_select_policy" ON public.posts`).
+- Nothing decides which columns of an admitted row a client role may read.
+- The integrator's read-only production read of 2026-09-27 found the same
+  grants. It found 9 posts, one with coordinates, which is public, released, and
+  has equal original and public coordinates. This lane did not repeat that read.
+  Nothing beyond the design is exposed in production today.
+
+Here is the defect run on the harness before 3362 (the chain through 3361). The
+script runs as `anon`. Its target is a public post whose delayed release is
+pending, so its author has not yet left the place:
+
+```
+anon reads: pending_location_exit | delayed_until_exit | G1 Pending Venue | 48.85663,2.35223 | gps 48.85664,2.35224
+anon range oracle original_lat > 48.8566: 1
+anon content and created_at visible: at the venue now | true
+```
+
+The public key returned three things:
+- the author's exact point and their GPS;
+- the fact that they are still there;
+- the venue.
+
+It needed no SELECT list to do it: a filter on `original_lat` is a range oracle.
+The same script after 3362:
+
+```
+ERROR:  permission denied for table posts
+ERROR:  permission denied for table posts
+anon content and created_at visible: at the venue now | true
+```
+
+A column grant cannot remove the third line. §44.7, item 1 covers it.
+
+### 44.2 Every reader of posts that runs as a client role
+
+**How the search was done.**
+- **The code.** Every tracked TypeScript and JavaScript file (ts, tsx, js,
+  jsx, mjs) outside the migrations was searched for:
+  - `.from('posts')` and `.from("posts")`;
+  - a realtime `table: 'posts'`;
+  - `rest/v1/posts`;
+  - an embedded `posts(` resource inside a `.select(`;
+  - `.rpc(`.
+- **The history.** `git log -G` ran the same patterns over
+  `travel-buddy-standalone`, `app` and `src`, across the 4,932 commits reachable
+  from HEAD.
+- **The database.** The harness catalog was searched for:
+  - every policy whose USING or WITH CHECK names posts;
+  - every view or materialized view over posts;
+  - every function whose body or dependencies name posts, with its
+    SECURITY DEFINER flag and client EXECUTE grants;
+  - every trigger on posts.
+
+| Reader | Runs as | Columns of posts it reads | Needs a withheld column? | After 3362 |
+| --- | --- | --- | --- | --- |
+| The app, `travel-buddy-standalone`, built on the public key (`travel-buddy-standalone/src/lib/supabase.ts:14#const anonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY ?? '';`) | anon, or authenticated once signed in | **None.** No `.from('posts')`, no embedded posts resource, no RPC, and no realtime channel on posts; its one channel is on `generated_visuals`. None of these appears anywhere in its git history either. It reads posts only through the API. | no | unaffected |
+| The legacy root app (`app/`, `src/`) | anon or authenticated | None. It reads profiles, trips, trip_members, map_pins, user_locations and user_location_privacy. | no | unaffected |
+| The API server: 164 call sites in 60 runtime files | service_role. The one runtime client is the service client (`artifacts/api-server/src/lib/supabase.ts:20#return createClient(supabaseUrl, serviceRoleKey, {`), and requireUser hands every route that client (`artifacts/api-server/src/lib/http.ts:293#const client = (_testClient ?? getServiceClient()!) as SupabaseClient;`). | All 75, the private ones included, for example the owner's pending list (`artifacts/api-server/src/routes/posts.ts:391#const PENDING_POST_COLUMNS =`) | yes, and it keeps them | unaffected: 3362 touches no service_role privilege (G1-4) |
+| API scripts that hold the anon key: verify-events-discovery, verify-demo-profile, verifyModerationFkE2E, auditPostMediaPublicRead, verify-buddy-live | anon | None. They sign in, or probe storage. | no | unaffected |
+| The live-DB suite's anon feed read (`artifacts/api-server/src/test/postLocationVerificationBoundary.test.ts:151#it("anon can read the public feed but cannot write"`) | anon | `id`, filtered on `status` and `visibility` | no | readable (G1-2). Its write probes still get 42501. |
+| Archived backend copies outside the pnpm workspace: posts-backend, passport-backend, portava-stamp-wave*-files, files | the service-role pattern | not deployed from this tree | no | unaffected |
+| post_media_public_select, whose subquery on posts runs as the invoking role (`artifacts/api-server/src/migrations/2337_trip_crew_rls_membership_convergence.sql:662#CREATE POLICY "post_media_public_select" ON public.post_media`) | anon and authenticated | id, status, visibility, trip_id | no | readable (G1-2) |
+| post_media_owner_insert and post_media_owner_update, WITH CHECK. authenticated holds column INSERT and UPDATE on post_media (`artifacts/api-server/src/migrations/2158_post_media_write_boundary.sql:30#GRANT INSERT (post_id, user_id, media_type,`). | authenticated | id, author_id | no | readable. The author may still attach media; a stranger is still refused by the policy (G1-2). |
+| posts' own two SELECT policies | anon and authenticated | id (read by can_see_post, which is SECURITY DEFINER), status, visibility, author_id, trip_id | no | readable. The rows are unchanged (G1-3). |
+| Functions a client role may EXECUTE that read posts: can_see_post and can_see_postcard | SECURITY DEFINER, so they read as the owner | They return a boolean. | no | unaffected |
+| Views over posts | — | **None.** The harness has 15 views and materialized views, and none names posts. No `.sql` file in the tree creates one. | — | — |
+| Triggers on posts | — | Only `trg_posts_updated`, which fires on service writes | — | unaffected |
+
+Three SECURITY DEFINER functions read posts, and no client role may EXECUTE any
+of them: `tombstone_post`, `upsert_city_stamp` and
+`validate_live_place_recap_evidence`.
+
+**What this search cannot see:**
+- objects in production that are not in the tree, such as a hand-made view,
+  function or policy;
+- requests from app builds older than this repository's history.
+
+§44.9's pre-flight reads both in production.
+
+**The result: no client code reads posts through PostgREST.** The only
+client-role readers are post_media's three policies and posts' own. Between them
+they need five columns, and none of those carries a location.
+
+### 44.3 The options, measured
+
+**(a) Column grants.**
+- **What it is:** REVOKE the table-level SELECT from anon and authenticated, and
+  GRANT SELECT on a named list.
+- **What it costs:** two statements and no row rewrite. Every column added to
+  posts later is readable by no client role until a migration grants it.
+- **What it breaks:** a client-role statement that selects a withheld column,
+  filters on one, orders by one or uses `select=*`. Each of those gets `42501`.
+  The inventory has none.
+- **What it closes:** the columns, including the filter and order oracles. A
+  view in front of a table that stayed readable would leave those oracles open.
+- **Proved by:** the rehearsal (§44.5), six properties on real PostgreSQL, eight
+  mutations, and 142 of 142 database tests across 27 suites.
+
+**(b) A security-barrier view, or a column mask that applies mapPublicPost in
+SQL.** Not built. The reasons:
+- **Nothing would read it.** There is no client read to move onto it, so it
+  would add a location surface that nothing uses.
+- **The API's rule is not one rule.**
+  - mapPublicPost (`artifacts/api-server/src/lib/postSchemas.ts:180#export function mapPublicPost(row: any): any {`)
+    decides by mode and release. That part is portable to SQL.
+  - For a non-owner, the API then applies the Hidden-Gem gate
+    (`artifacts/api-server/src/routes/posts.ts:443#function gemProtectPost(row: any, ctx: PostGemContext, viewerId: string): any {`).
+    The gate reads a second table, measures proximity, and snaps coordinates to
+    a seeded grid in TypeScript.
+  - A SQL mask would therefore either reimplement the gate, or serve a venue the
+    API withholds.
+- **A second implementation can drift.** §42 derived its predicate from
+  mapPublicPost precisely so that the two could not drift.
+- **Its only benefit is a new capability.** It would let a client read, through
+  PostgREST, locations the API already serves.
+
+**(c) Move client reads to the API.** This is already the case: zero client
+reads. It costs nothing, and there is nothing to build. 3362 turns this from a
+convention into something the database enforces.
+
+**Chosen: (a).** It is decision-free by the lane's test: every reader in §44.2
+still works, which G1-2 proves on the harness. The owner's decisions are the
+parts it does not reach, and §44.7 lists them.
+
+### 44.4 What was built
+
+**`artifacts/api-server/src/migrations/3362_posts_client_column_grants.sql`.**
+One BEGIN…COMMIT, followed by a postcondition DO block. The real applier
+classifies it `unwrapped`, with its postconditions accepted.
+
+1. **Precondition.** Every column of posts must be classified, once, as granted
+   or withheld. An unknown column refuses the apply
+   (`artifacts/api-server/src/migrations/3362_posts_client_column_grants.sql:142#posts has column(s) this migration does not classify`),
+   because an unclassified column may be a location.
+2. **Precondition: the start state must be 2148's.** The two client roles hold
+   exactly table-level SELECT, PUBLIC holds nothing, and no column carries an
+   ACL
+   (`artifacts/api-server/src/migrations/3362_posts_client_column_grants.sql:166#posts already carries column-level privileges`).
+   That is what lets the rollback restore the state exactly.
+3. **The change.**
+   - `artifacts/api-server/src/migrations/3362_posts_client_column_grants.sql:172#REVOKE SELECT ON TABLE public.posts FROM anon, authenticated;`
+   - then `artifacts/api-server/src/migrations/3362_posts_client_column_grants.sql:174#GRANT SELECT (`
+     on 39 columns;
+   - and `tombstoned_at` where 2141 created it
+     (`artifacts/api-server/src/migrations/3362_posts_client_column_grants.sql:192#EXECUTE 'GRANT SELECT (tombstoned_at) ON TABLE public.posts TO anon, authenticated';`).
+4. **Postconditions, read from the catalog** with `has_column_privilege` by
+   attnum.
+   - No private column is readable by a client role
+     (`artifacts/api-server/src/migrations/3362_posts_client_column_grants.sql:229#a client role can still read a private posts column`).
+   - No withheld column is readable
+     (`artifacts/api-server/src/migrations/3362_posts_client_column_grants.sql:242#a client role can read a withheld posts column`).
+   - No granted column is lost
+     (`artifacts/api-server/src/migrations/3362_posts_client_column_grants.sql:251#a client role lost a column it must keep`).
+   - No table-level privilege remains for a client role, and neither does a
+     column INSERT, UPDATE or REFERENCES.
+   - service_role reads all 75 columns.
+
+It changes no policy, row, function, trigger or table comment, and no
+service_role privilege.
+
+**Granted (40).** None of these is governed by a location rule. They are:
+- identity: `id`, `author_id`, `trip_id`, `created_by`, `updated_by`, `source`;
+- body and media: `content`, `media_urls`, `media_type`, `media_thumbnail_url`,
+  `primary_media_type`, `media_count`, `has_video`, `media_duration_seconds`,
+  `filter_id`, `filter_intensity`;
+- audience and settings: `visibility`, `status`, `comments_setting`,
+  `likes_hidden`, `sharing_disabled`, `reposting_disabled`, `add_to_passport`,
+  `geo_restriction` (the viewer countries allowed), `age_restriction_enabled`,
+  `age_min`, `age_max`;
+- counters: `like_count`, `comment_count`, `share_count`, `save_count`;
+- classification: `category`, `post_buckets`, `bucket_classified`,
+  `original_language`;
+- time: `created_at`, `updated_at`, `deleted_at`, `publish_at`, `tombstoned_at`.
+
+**Withheld (35), by class.**
+
+| Class | Columns | Why a client role may not read it |
+| --- | --- | --- |
+| Exact position and presence evidence: the §42.6 item 5 minimum | `user_gps_lat`, `user_gps_lng`, `original_lat`, `original_lng`, `geog`, `location_distance_meters`, `exited_geofence_at`, `delayed_location_reason` | No mode makes these public. Neither post column list the API serves (the public one, and the owner's pending list) includes any of the eight, and the first says why (`artifacts/api-server/src/routes/posts.ts:289#NEVER include original_lat/original_lng or`). |
+| The place, which the API decides row by row | `location_name`, `location_place_id`, `location_lat`, `location_lng`, `public_lat`, `public_lng`, `public_location_label`, `venue_id`, `venue_name`, `canonical_location_id`, `canonical_place_id`, `perspective_vantage` | For a non-owner, mapPublicPost withholds the venue by mode and release, and the gem gate coarsens it by a second table. A grant cannot see the row. `perspective_vantage` is served "ONLY where the viewer may be told the place" (`artifacts/api-server/src/migrations/3352_media_perspective_vantage.sql:26#a vantage is served ONLY where the viewer may be told the place.`). |
+| City and country | `location_city`, `location_country` | The API serves these only on rows it serves. RLS also admits a delayed post still pending, and there the city is where its author is now. |
+| Delayed-publication and privacy state | `location_privacy_mode`, `location_sensitivity_level`, `post_status`, `geofence_radius_meters`, `publish_after_exit`, `publish_after_time`, `publish_eligible_at`, `published_at` | They show that a place is being withheld, how, and until when. `post_status = 'pending_location_exit'` means the author has not left yet. `publish_eligible_at` is the exit time plus a fixed window (`artifacts/api-server/src/routes/location.ts:552#Sets exited_geofence_at on the post and computes publish_eligible_at =`), so it discloses the private `exited_geofence_at`. |
+| Location verification | `location_source`, `location_verified`, `location_verified_at`, `geotag_verified`, `geotag_credit_awarded` | They say the author was physically at the tagged place, which may be withheld, and when. |
+
+Two columns are optional: `tombstoned_at` (2141) and `perspective_vantage`
+(3352). Each is classified if present and skipped if absent.
+- If 3352 is applied after 3362, `perspective_vantage` arrives withheld, which
+  is correct.
+- If 2141 is applied after 3362, `tombstoned_at` arrives withheld too. That is
+  harmless, because nothing reads it through PostgREST.
+
+**`db/rollback/2026-09-27-3362-posts-client-column-grants-rollback.sql`.** It
+restores 2148's state exactly.
+- It refuses to run anywhere that is not in 3362's state.
+- Its one REVOKE also drops every column grant, and then it grants table-level
+  SELECT to both roles again
+  (`db/rollback/2026-09-27-3362-posts-client-column-grants-rollback.sql:55#REVOKE SELECT ON TABLE public.posts FROM anon, authenticated;`).
+- Its postcondition requires exactly `anon:SELECT,authenticated:SELECT` at the
+  table level and no column ACL
+  (`db/rollback/2026-09-27-3362-posts-client-column-grants-rollback.sql:73#client-role table privileges on posts are`).
+- It says in capitals what it does
+  (`db/rollback/2026-09-27-3362-posts-client-column-grants-rollback.sql:18#IT RE-OPENS THE DEFECT 3362 CLOSED.`).
+
+### 44.5 The rehearsal
+
+**Where.** Lane X was using the harness at the same time, with
+`/tmp/portava-local-db-lanex` on port 54371. This lane therefore booted its own
+cluster, with the same `up.sh`:
+`LOCAL_DB_DIR=/tmp/portava-local-db-laneg1 LOCAL_DB_PORT=54381 LOCAL_DB_WORK=/tmp/portava-local-db-work-laneg1`.
+
+**What the harness models.**
+- The three PostgREST roles.
+- `auth.uid()`, reading the `request.jwt.claim.sub` setting that PostgREST sets
+  (`artifacts/api-server/scripts/local-db/shim.sql:41#CREATE OR REPLACE FUNCTION auth.uid() RETURNS uuid`).
+- The baseline and the canonical chain's real tables, policies and grants.
+
+A statement run under `SET LOCAL ROLE anon` is checked by PostgreSQL exactly as
+PostgREST's would be, because column privileges are enforced by the executor.
+
+**What it lacks: PostgREST itself.** `select=*`, `?col=gt.x` and `order=col`
+are therefore written as the SQL PostgREST emits for them. They are not sent
+over HTTP. Nothing was mocked.
+
+**The chain replays with 3362 in it.** `up.sh`, before 3362 existed:
+
+```
+chain from 2093: 328 applied in order, 12 known-unreplayable of 340, 2 of those applied on retry
+```
+
+After:
+
+```
+chain from 2093: 329 applied in order, 12 known-unreplayable of 341, 2 of those applied on retry
+```
+
+**Apply, re-apply, rollback, re-apply.** These ran on a copy of the pre-3362
+database, and every statement ran through `psql -v ON_ERROR_STOP=1 -f`. The
+output below is actual:
+
+```
+== a. pre-3362 state (chain through 3361)
+relacl {postgres=arwdDxt/postgres,service_role=arwdDxt/postgres,anon=r/postgres,authenticated=r/postgres}
+attacl-non-null 0
+anon-readable 75/75
+authenticated-readable 75/75
+service_role-readable 75/75
+policies 73d0e14b3c6ec2a83da948ef02980310 n=5
+== b. apply 3362 (psql -v ON_ERROR_STOP=1 -f)
+BEGIN / DO / REVOKE / GRANT / DO / COMMIT / DO      exit=0
+== c. post-3362 state
+relacl {postgres=arwdDxt/postgres,service_role=arwdDxt/postgres}
+attacl-non-null 40
+anon-readable 40/75
+authenticated-readable 40/75
+service_role-readable 75/75
+policies 73d0e14b3c6ec2a83da948ef02980310 n=5
+== d. apply 3362 a second time
+ERROR:  PRECONDITION FAILED (3362): anon and authenticated do not both hold table-level SELECT on posts; this is not the state 2148 left.
+exit=3
+== e. apply the rollback
+BEGIN / DO / REVOKE / GRANT / GRANT / COMMIT / DO   exit=0
+== f. rolled-back state
+relacl {postgres=arwdDxt/postgres,service_role=arwdDxt/postgres,anon=r/postgres,authenticated=r/postgres}
+attacl-non-null 0
+anon-readable 75/75
+authenticated-readable 75/75
+service_role-readable 75/75
+policies 73d0e14b3c6ec2a83da948ef02980310 n=5
+== f'. diff pre vs rolled back (empty = identical)
+IDENTICAL
+== g. re-apply 3362 after the rollback      exit=0
+re-applied state IDENTICAL to first apply
+```
+
+Four things follow from that output:
+- The policy fingerprint (an md5 over every policy's name, command, roles,
+  USING and WITH CHECK) is identical in all four states.
+- So is the table comment's md5 (`3653c28f…`).
+- The rolled-back ACL is byte-identical to the pre-3362 ACL.
+- A second apply refuses and changes nothing. The ledgered applier would not
+  attempt it anyway.
+
+### 44.6 Tests and mutations
+
+**The suite:** `artifacts/api-server/src/test/db/postsClientColumnGrants.db.test.ts`,
+6 tests. It is registered on the api-server `test` line. Without a database it
+skips, and `run-tests.sh` refuses a run with any skip. Each property is listed
+below.
+
+- `artifacts/api-server/src/test/db/postsClientColumnGrants.db.test.ts:236#it("G1-0`
+  3362 is in force, so the refusals below cannot be vacuous. Every column of
+  posts is classified once. A new column turns this red until someone decides
+  which side it goes.
+- `artifacts/api-server/src/test/db/postsClientColumnGrants.db.test.ts:248#it("G1-1`
+  anon, a stranger and the author are each refused exactly the 35 withheld
+  columns:
+  - selected one statement per column;
+  - as a filter;
+  - through `SELECT *`, `WHERE original_lat > 48` and `ORDER BY user_gps_lat`.
+
+  The service role reads the same values, so a refusal is never "no row".
+- `artifacts/api-server/src/test/db/postsClientColumnGrants.db.test.ts:265#it("G1-2`
+  Each client role can read exactly the 40 granted columns, and the whole list
+  in one SELECT. The inventory's reads also hold:
+  - the live suite's anon feed read;
+  - post_media_public_select, as anon and as a stranger;
+  - the author's post_media INSERT, through the owner policy's WITH CHECK;
+  - a stranger's INSERT, refused by row-level security rather than by a
+    privilege.
+- `artifacts/api-server/src/test/db/postsClientColumnGrants.db.test.ts:292#it("G1-3`
+  The rows are unchanged:
+  - anon and a stranger see the public posts;
+  - a follower also sees followers_only;
+  - the author also sees their own hidden post
+    (`artifacts/api-server/src/test/db/postsClientColumnGrants.db.test.ts:297#assert.deepEqual(visible({ role: "anon" }, ids), [PUB, PEND].sort()`).
+
+  The pending delayed post is visible to all four. That is the row gap in
+  §44.7, pinned as today's behaviour. The policy catalog is byte-identical
+  across rollback and re-apply, in a rolled-back transaction.
+- `artifacts/api-server/src/test/db/postsClientColumnGrants.db.test.ts:317#it("G1-4`
+  The author reads their own hidden row's granted columns as before. Their own
+  `original_lat` is refused to their client, and reaches them through the API's
+  role, which reads all 75 columns. GET /posts/pending serves the owner
+  `location_lat`, `location_lng` and `venue_name` that way.
+- `artifacts/api-server/src/test/db/postsClientColumnGrants.db.test.ts:336#it("G1-5`
+  The rollback restores the table ACL to today's plus
+  `anon=r/<owner>,authenticated=r/<owner>`, with no column ACL. 3362 re-applied
+  on top reproduces today's catalog byte for byte. The database is left
+  untouched.
+
+**Mutations: 8, each seen red.** The runner did the following for each one:
+1. mutated the file in place;
+2. created a fresh copy of the pre-3362 database;
+3. applied the mutated file there, and where 3362's own postconditions refused
+   it first, recorded that and applied the file again with them stripped;
+4. ran the suite;
+5. restored the file and compared its SHA-256.
+
+Both files were restored byte-identical: 3362 `b071a8167304dbb3…`, the rollback
+`0734237f518d2c10…`.
+
+| Mutation | 3362's own postconditions | Tests red |
+| --- | --- | --- |
+| 3362 not applied at all | — | G1-0 to G1-5 (all six) |
+| The REVOKE removed: the table-level SELECT stays | refused: "a client role can still read a private posts column" | all six |
+| `original_lat` added to the GRANT list | refused: the same message | G1-1 to G1-5 |
+| `visibility` dropped from the GRANT list | refused: "a client role lost a column it must keep" | G1-1 to G1-5 |
+| A policy dropped alongside the grants | not caught; they read privileges, not policies | G1-3, G1-5 |
+| service_role revoked too | refused: "service_role cannot read posts column(s)" | G1-3, G1-4, G1-5 |
+| The rollback forgets `authenticated` | its own postcondition refuses | G1-3, G1-5 |
+| The rollback keeps the column grants (no REVOKE) | its own postcondition refuses | G1-3, G1-5 |
+
+G1-3 also goes red on the two rollback mutations, because its policy-catalog
+round trip runs the rollback. The post_media checks in G1-2 were also shown
+load-bearing on their own, in a rolled-back transaction on the rehearsal
+database:
+
+```
+granted as 3362 left it: anon sees post_media rows = 1
+REVOKE SELECT (visibility) … FROM anon      → ERROR:  permission denied for table posts
+REVOKE SELECT (author_id) … FROM authenticated, then the author's post_media INSERT → ERROR:  permission denied for table posts
+```
+
+**The whole harness, full chain with 3362:** `run-tests.sh` reported
+`local-db tests: pass=142 fail=0 skipped=0 (exit 0)` over 27 suites, this one
+included.
+
+### 44.7 Found, not fixed, and the questions for the owner
+
+1. **The rows.** RLS admits rows that the API never serves to a non-owner.
+   - No posts policy reads `post_status` or `publish_at`, so both of these are
+     visible:
+     - a delayed post still pending (`pending_location_exit`, `pending_delay`);
+     - a post in `pending_safety_review`, `draft`, `private`, `canceled` or
+       `expired`, or scheduled for later.
+   - Nor does any policy read blocks, age restriction or geo restriction.
+   - After 3362 a client role reads none of the location or state columns of
+     those rows. It still reads the rest, including:
+     - that the row exists;
+     - `content`, `media_urls` and `created_at`.
+
+     The content itself may name the place (§44.1, third line).
+   - **Why not fixed:** it is a row-policy change. That means a publication gate
+     for non-authors in `can_see_post` and `posts_select_policy`. The row
+     policies are also what post_media's policy subqueries see. This lane was
+     bound to leave them unchanged, and G1-3 pins that.
+   - **Owner question 1.** Choose one:
+     - (i) leave the rows as they are;
+     - (ii) add the API's publication gate to the posts row policies for
+       non-authors (`post_status = 'published'`, `publish_at` passed);
+     - (iii) take the client roles off posts altogether, and give post_media's
+       policies a SECURITY DEFINER helper instead of their subquery.
+
+     (ii) and (iii) each change what a client role can see. Each needs the same
+     harness rehearsal 3362 had.
+2. **The same venue, in tables 3362 does not touch.** A client holding the
+   public key can still read a withheld post's venue through:
+   - `pulse_geo_tags.venue_name`. Its two SELECT policies are both `USING (true)`
+     for every role. It is written at create whatever the mode
+     (`artifacts/api-server/src/services/location/PulseGeoTagService.ts:149#venue_name:          venueName        ?? null,`),
+     and it carries `post_id`.
+   - `passport_postcards.location_name`, admitted by `can_see_postcard`. It is a
+     copy made at create (§42.6, 4).
+   - `post_media.canonical_place_id`, admitted by post_media_public_select.
+     Whether any writer populates it was not established; production query 8
+     counts it.
+
+   No client code reads any of these three tables directly (§44.2's search).
+   - **Why not fixed:** each has its own readers, and pulse_geo_tags has its own
+     owner setting (§42.6, 6). None of them was inventoried to the standard
+     §44.2 holds posts to.
+   - **Owner question 2.** Should 3363 and 3364 apply the same
+     column-grant treatment to `pulse_geo_tags.venue_name` and
+     `passport_postcards.location_name`? That would come after an inventory like
+     §44.2 for each. Until then, the sentence §42.6 item 9 quotes ("Only your
+     city and country are shared, never the place") stays false on the direct
+     path, through `pulse_geo_tags`.
+3. **A definer function or owner-rights view.** Any SECURITY DEFINER function,
+   or any view without `security_invoker`, that returns posts' location columns
+   to a client role would bypass column grants entirely. There is none in the
+   tree. Production query 5 reads production for them.
+
+### 44.8 What would turn this red (P24)
+
+- **Table-level SELECT on posts given back to a client role.** This could come
+  from:
+  - a migration in 2148's pattern;
+  - `GRANT … ON ALL TABLES IN SCHEMA public`;
+  - a re-created posts table picking up Supabase's default privileges.
+
+  In the tree, G1-0 and G1-1 go red on the harness (`run-tests.sh`, the CI
+  local-db job). **In production nothing watches it.** Only §44.9's verification
+  query shows it.
+- **A GRANT of one withheld column.** G1-1 goes red.
+- **A new column on posts.** It is closed by default. G1-0 goes red until the
+  suite classifies the column, which is where its side is decided.
+- **A reader nobody inventoried**, such as an old app build or a script with
+  the anon key. It now gets `42501` on a withheld column. The tree's history has
+  none. The pre-flight log query answers this for production.
+- **A definer function or view over posts' location columns** (§44.7, 3). Nothing
+  here catches it. `check:security-definer-oracles` reads which definer
+  functions are referenced, not what columns they return.
+- **The rows, and the side tables** (§44.7, 1 and 2). 3362 was never meant to
+  close these. It is necessary, and it is not sufficient.
+
+### 44.9 The production approval step
+
+This needs the owner's approval: it changes what the public key can read from a
+live table. The integrator runs every query below read-only. This lane ran none.
+
+**Pre-flight (read-only).** Every one of these must hold before applying:
+
+```sql
+-- 1. 2148's state: expect exactly anon/SELECT and authenticated/SELECT for the client roles, no PUBLIC row, and 0 column ACLs.
+SELECT CASE WHEN a.grantee = 0 THEN 'PUBLIC' ELSE a.grantee::regrole::text END AS grantee, a.privilege_type, a.is_grantable, a.grantor::regrole::text AS grantor
+  FROM pg_class c, LATERAL aclexplode(c.relacl) a WHERE c.oid = 'public.posts'::regclass ORDER BY 1, 2;
+SELECT count(*) AS column_acls FROM pg_attribute WHERE attrelid = 'public.posts'::regclass AND attnum > 0 AND attacl IS NOT NULL;
+SELECT relowner::regrole::text, relrowsecurity FROM pg_class WHERE oid = 'public.posts'::regclass;
+-- 2. The columns 3362 must classify: expect 73 to 75, and nothing outside 3362's two lists (tombstoned_at, perspective_vantage optional).
+SELECT count(*), string_agg(attname, ',' ORDER BY attnum) FROM pg_attribute WHERE attrelid = 'public.posts'::regclass AND attnum > 0 AND NOT attisdropped;
+-- 3. Every policy that reads posts as the invoking role: expect posts' own and post_media's three, nothing else (storage included).
+SELECT polrelid::regclass::text, polname, polcmd::text, polroles::regrole[]::text FROM pg_policy
+ WHERE pg_get_expr(polqual, polrelid) ~ '\mposts\M' OR pg_get_expr(polwithcheck, polrelid) ~ '\mposts\M' ORDER BY 1, 2;
+-- 4. Views over posts: expect none.
+SELECT DISTINCT v.oid::regclass::text, v.relkind::text, v.reloptions::text FROM pg_depend d JOIN pg_rewrite r ON r.oid = d.objid
+  JOIN pg_class v ON v.oid = r.ev_class WHERE d.refobjid = 'public.posts'::regclass AND v.oid <> 'public.posts'::regclass;
+-- 5. Functions that read posts: every row a client role may EXECUTE must be SECURITY DEFINER and return no posts column.
+SELECT p.oid::regprocedure::text, p.prosecdef, has_function_privilege('anon', p.oid, 'EXECUTE') AS anon_x,
+       has_function_privilege('authenticated', p.oid, 'EXECUTE') AS auth_x, pg_get_function_result(p.oid)
+  FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+ WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
+   AND (p.prosrc ~* '\mposts\M' OR p.oid IN (SELECT objid FROM pg_depend WHERE classid = 'pg_proc'::regclass AND refobjid = 'public.posts'::regclass));
+-- 6. Realtime: whether posts is published (column grants also narrow what a subscriber sees).
+SELECT pubname FROM pg_publication_tables WHERE schemaname = 'public' AND tablename = 'posts';
+-- 7. The ledger: 2148 applied; 2141, 2158, 2337 and 3352 applied or not.
+SELECT filename FROM public.schema_migration_ledger WHERE filename ~ '^(2141|2148|2158|2337|3352|3362)_' ORDER BY 1;
+-- 8. The size of §44.7 today.
+SELECT post_status, location_privacy_mode, count(*) FROM public.posts WHERE status = 'active' AND deleted_at IS NULL AND visibility = 'public' GROUP BY 1, 2;
+SELECT (SELECT count(*) FROM public.pulse_geo_tags WHERE venue_name IS NOT NULL) AS geo_tag_venues,
+       (SELECT count(*) FROM public.passport_postcards WHERE location_name IS NOT NULL) AS postcard_venues,
+       (SELECT count(*) FROM public.post_media WHERE canonical_place_id IS NOT NULL) AS media_place_ids;
+```
+
+**One more pre-flight read, from logs:** the API gateway's requests to
+`/rest/v1/posts` over the last 30 days. Every one should come from the service
+key. A request made with the anon key or a user JWT is a reader §44.2 could not
+see, and it must be named before applying.
+
+**Apply.**
+- Apply 3362 alone, through the ledgered applier, so the body and the ledger row
+  commit together and the postconditions run after the commit.
+- It needs 2148 applied. It is independent of 3350–3361.
+- If production lacks 2141, `tombstoned_at` is simply not there. If 2141 lands
+  later, that column arrives withheld.
+- No PostgREST reload is needed for enforcement, because PostgreSQL checks column
+  privileges on every statement. `NOTIFY pgrst, 'reload schema'` only refreshes
+  the OpenAPI description.
+
+**Verify (read-only).**
+
+```sql
+SELECT r, count(*) FILTER (WHERE has_column_privilege(r, a.attrelid, a.attnum, 'SELECT')) AS readable, count(*) AS cols
+  FROM unnest(ARRAY['anon', 'authenticated', 'service_role']) r, pg_attribute a
+ WHERE a.attrelid = 'public.posts'::regclass AND a.attnum > 0 AND NOT a.attisdropped GROUP BY r ORDER BY r;
+-- expect anon and authenticated = 40 (39 without tombstoned_at), service_role = every column
+SELECT count(*) FROM pg_class c, LATERAL aclexplode(c.relacl) a
+ WHERE c.oid = 'public.posts'::regclass AND (a.grantee = 0 OR a.grantee IN ('anon'::regrole, 'authenticated'::regrole));
+-- expect 0
+```
+
+Then, over HTTP, with the public anon key only:
+- `GET /rest/v1/posts?select=id&limit=1` should return 200.
+- `GET /rest/v1/posts?select=original_lat&limit=1`,
+  `GET /rest/v1/posts?select=*&limit=1` and
+  `GET /rest/v1/posts?select=id&original_lat=gt.0` should each return an error
+  with code `42501`.
+- The app's feeds are unaffected, because they read through the API.
+
+**Recovery.**
+- If a reader breaks, first read the gateway log for `42501` on `/rest/v1/posts`
+  to name it.
+- If it needs a column that is not a location, grant that column in a new
+  migration.
+- Only if that cannot wait, apply the rollback file. It restores 2148 exactly,
+  its postcondition proves that, and it re-opens the defect. Re-apply 3362 when
+  the reader is fixed.
+
+### 44.10 Rows, censuses, freshness, files
+
+**No MD row moves, and the headline is not restated.** §42.2's table carried
+this reader as a row. It is restated here with its new state:
+
+| Reader | What it serves of a post's place | Honoured the mode before | Now |
+| --- | --- | --- | --- |
+| Direct PostgREST reads of `posts` | every column of every row the policies admit | no | **columns: fixed on branch by 3362, not deployed (§44.4). Rows: not fixed (§44.7, 1). Side tables: not fixed (§44.7, 2)** |
+
+**Files.**
+- New:
+  - `artifacts/api-server/src/migrations/3362_posts_client_column_grants.sql`;
+  - `db/rollback/2026-09-27-3362-posts-client-column-grants-rollback.sql`;
+  - `artifacts/api-server/src/test/db/postsClientColumnGrants.db.test.ts`.
+- Changed:
+  - `artifacts/api-server/package.json` (the `test` line);
+  - `artifacts/api-server/src/scripts/checkCensusFreshness.ts` (census-media's
+    scope: the three new files, appended with a WIDENED comment);
+  - `docs/architecture/telegraph-phase0-inventory.md`, regenerated because the
+    migration count moved from 620 to 621.
+
+**Cited, not graded (check:census-scope-coverage), declared for this section:**
+
+- NOT-GRADED: artifacts/api-server/src/migrations/2337_trip_crew_rls_membership_convergence.sql — cited in §44.1–§44.2 for the posts and post_media SELECT policies that read posts as the invoking role; a trip-crew RLS migration, graded by census-trips, quoted here as the inventory's evidence.
+- NOT-GRADED: artifacts/api-server/src/migrations/2158_post_media_write_boundary.sql — cited in §44.2 for authenticated's column INSERT on post_media, which makes the owner-insert policy a live client-role reader of posts; a write-boundary migration, not a Media verdict.
+- NOT-GRADED: artifacts/api-server/src/lib/supabase.ts — cited in §44.2 as the API's one runtime client, the service role; shared server plumbing, no MD verdict rests on it.
+- NOT-GRADED: artifacts/api-server/src/lib/http.ts — cited in §44.2 for requireUser handing routes the service client; shared auth plumbing, no MD verdict rests on it.
+- NOT-GRADED: travel-buddy-standalone/src/lib/supabase.ts — cited in §44.2 as the app's client built on the public key, whose absence of posts reads is the inventory's result; shared client plumbing, no MD verdict rests on it.
+- NOT-GRADED: artifacts/api-server/src/test/postLocationVerificationBoundary.test.ts — cited in §44.2 as the one client-role read of posts in the suites (a live-DB anon feed read); the 2148 write-boundary suite, not a Media verdict.
+- NOT-GRADED: artifacts/api-server/src/routes/location.ts — cited in §44.4 for publish_eligible_at being the geofence exit time plus a window; the location route, cited to classify a column, not graded here.
+- NOT-GRADED: artifacts/api-server/scripts/local-db/shim.sql — cited in §44.5 for the harness's auth.uid() model; test infrastructure, the thing the rehearsal ran on, not a Media surface.

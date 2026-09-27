@@ -1991,6 +1991,10 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "travel-buddy-standalone/app/media-viewer/__tests__/pageDots.layout.component.test.tsx",
     // WIDENED 2026-09-27 by census-media §42 (lane Q, integration): the suite that proves Pulse, Discovery event posts and the trip feed apply mapPublicPost's rule, which §42 cites as its evidence; §36's disclosure rule is graded through it outside Media.
     "artifacts/api-server/src/test/postLocationModeOutsideMedia.test.ts",
+    // WIDENED 2026-09-27 by census-media §44 (lane G1): migration 3362 (the client roles' column grants on posts), its rollback, and the database suite that proves both, which §44 cites as the fix for §42.6 item 5.
+    "artifacts/api-server/src/migrations/3362_posts_client_column_grants.sql",
+    "db/rollback/2026-09-27-3362-posts-client-column-grants-rollback.sql",
+    "artifacts/api-server/src/test/db/postsClientColumnGrants.db.test.ts",
   ],
   // census-telegraph.md — declared 2026-09-11 on the same basis as Media above:
   // 451 requirements out of CANNOT BE CHECKED, a clock started rather than a
