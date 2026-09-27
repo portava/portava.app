@@ -225,11 +225,11 @@ router.post("/rank-events/outcome", asyncHandler(async (req, res) => {
     sendError(res, "not_found", "No matching impression row found for this item");
     return;
   }
-  const binding = claimedId ? bindOutcomeToExposure({ callerUserId: user.id, body: { item_id, surface, outcome }, row, upgradable: upgradableOutcomesFor(outcome) }) : null; if (binding && refuseUnboundOutcome(res, binding)) return; const cas = newOutcomeCas(outcome, binding), scCas = compareAndSetClient(sc, cas); const recommendationId = claimedId ?? exposureTokenFor(row, user.id, item_id, surface);  // `04` §10.6; §48 DV-37/46 — bind a claimed id to THIS viewer, then compare-and-set
-  const { error: updateErr } = await scCas
+  const binding = claimedId ? bindOutcomeToExposure({ callerUserId: user.id, body: { item_id, surface, outcome }, row, upgradable: upgradableOutcomesFor(outcome) }) : null; if (binding && refuseUnboundOutcome(res, binding)) return; const cas = newOutcomeCas(outcome, binding); const recommendationId = claimedId ?? exposureTokenFor(row, user.id, item_id, surface);  // `04` §10.6; §48 DV-37/46 — bind a claimed id to THIS viewer, then compare-and-set
+  const { error: updateErr } = await compareAndSetClient(sc
     .from("rank_events")
     .update({ outcome, outcome_at: new Date().toISOString(), ...(canStampExposureToken(recommendationId) ? { recommendation_id: recommendationId } : {}) })
-    .eq("id", row.id);
+    .eq("id", row.id), cas);
 
   const settled = await settleOutcomeUpdate(sc, row.id, outcome, recommendationId, updateErr, req.log, cas);
   if (!settled.ok) {
@@ -597,12 +597,12 @@ async function settleOutcomeUpdate(
 
   if (isMissingRecommendationIdSchema(firstErr)) {
     noteRecommendationIdUnavailable(firstErr, log, "outcome update");
-    const { error: retryErr } = await (cas ? compareAndSetClient(sc, cas) : sc)
+    const { error: retryErr } = await compareAndSetClient(sc
       .from("rank_events")
       // The latch is now "absent", so canStampExposureToken is false and the
       // spread contributes nothing — the same patch the old helper produced.
       .update({ outcome, outcome_at: new Date().toISOString(), ...(canStampExposureToken(recommendationId) ? { recommendation_id: recommendationId } : {}) })
-      .eq("id", rowId);
+      .eq("id", rowId), cas);
     if (!retryErr) return cas ? settleCompareAndSet(sc, rowId, outcome, cas) : { ok: true };
     firstErr = retryErr;
   }
@@ -1071,33 +1071,33 @@ export function newOutcomeCas(outcome: OutcomeValue, binding: OutcomeBinding | n
 }
 
 /**
- * A client whose `.from(t).update(p).eq(c, v)` is COMPARE-AND-SET: the update
- * also requires the row's outcome to still be upgradable, and returns the rows
- * it moved so the caller learns whether IT moved the row.
+ * COMPARE-AND-SET over an update the caller already built:
+ * `compareAndSetClient(sc.from("rank_events").update(p).eq(c, v), cas)`. The
+ * update also requires the row's outcome to still be upgradable, and returns
+ * the rows it moved so the caller learns whether IT moved the row. The caller
+ * spells the table and payload, so check:write-path-columns reads them there.
+ * With no `cas` the built update is returned untouched (the keyless path).
+ * Real PostgREST builders are lazy, so a skipped update is never sent.
  *
- * Real PostgREST builders carry `.in` and `.select` after `.eq`, so production
- * always gets the guard. A narrower client (a test double whose `.eq` already
- * resolves) passes through unchanged with `applied: null` — "unknown", never
- * "won" — which is the pre-§48 behaviour, and the route treats it that way.
  */
-export function compareAndSetClient(sc: any, cas: OutcomeCas): any {
-  return {
-    from: (table: string) => ({
-      update: (patch: Record<string, unknown>) => ({
-        eq: (col: string, val: unknown) => {
-          if (cas.skip) { cas.applied = false; return Promise.resolve({ data: [], error: null }); }
-          const built = sc.from(table).update(patch).eq(col, val);
-          if (typeof built?.in !== "function") { cas.applied = null; return built; }
-          const narrowed = built.in("outcome", cas.upgradable);
-          const counted = typeof narrowed?.select === "function" ? narrowed.select("id") : narrowed;
-          return Promise.resolve(counted).then((r: any) => {
-            cas.applied = r?.error ? null : Array.isArray(r?.data) ? r.data.length > 0 : null;
-            return r;
-          });
-        },
-      }),
-    }),
-  };
+export function compareAndSetClient(built: any, cas?: OutcomeCas): any {
+  // Before, this wrapped the CLIENT and issued `sc.from(table).update(patch)`
+  // itself: a site whose table and payload were both variables, which the
+  // column check reported as a new blind spot on 23e976fcf. Taking the built
+  // update removes that second site; for lazy builders nothing else changes.
+  if (!cas) return built;
+  if (cas.skip) { cas.applied = false; return Promise.resolve({ data: [], error: null }); }
+  // Real builders carry `.in` and `.select` after `.eq`, so production always
+  // gets the guard. A narrower builder (a test double whose `.eq` already
+  // resolves) passes through with `applied: null` — "unknown", never "won" —
+  // which is the pre-§48 behaviour, and the route treats it that way.
+  if (typeof built?.in !== "function") { cas.applied = null; return built; }
+  const narrowed = built.in("outcome", cas.upgradable);
+  const counted = typeof narrowed?.select === "function" ? narrowed.select("id") : narrowed;
+  return Promise.resolve(counted).then((r: any) => {
+    cas.applied = r?.error ? null : Array.isArray(r?.data) ? r.data.length > 0 : null;
+    return r;
+  });
 }
 
 /**
