@@ -1718,7 +1718,7 @@ router.get("/trips/:tripId/posts", async (req, res) => {
     // public: any authenticated user; trip_only: accepted members only; private: no public engagement
     const canEngage = p.visibility === "public" || (p.visibility === "trip_only" && accepted);
     return {
-      ...p,
+      ...(p.author_id === user.id ? p : mapPublicPost(p)), // census-media §42: the Wall's redactor, applied to everyone but the author. This reader served location_name, and a public_location_label that stored the venue for trusted_circle_only posts written before §36, whatever the owner's location mode
       author: pr ? { id: pr.id, handle: pr.handle, name: pr.name, avatarUrl: pr.avatar_url ?? null, isOfficial: (pr.is_official as boolean) ?? false } : null,
       likeCount: eng.likeCount,
       commentCount: eng.commentCount,
