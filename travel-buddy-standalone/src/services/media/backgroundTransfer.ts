@@ -44,7 +44,7 @@ export interface FsLike {
   getInfoAsync(uri: string): Promise<{ exists: boolean; size?: number }>;
   readAsStringAsync(uri: string, options: { encoding: 'base64'; position: number; length: number }): Promise<string>;
   writeAsStringAsync(uri: string, contents: string, options: { encoding: 'base64' }): Promise<void>;
-  deleteAsync(uri: string, options: { idempotent: boolean }): Promise<void>;
+  deleteAsync(uri: string, options: { idempotent: boolean }): Promise<void>; /** census-media §37.8: file NAMES in a directory, for the staged-part sweep. Optional: absent ⇒ no sweep. */ readDirectoryAsync?(uri: string): Promise<string[]>;
   createUploadTask(
     url: string,
     fileUri: string,
@@ -82,11 +82,11 @@ let partCounter = 0;
  */
 export function backgroundPartTransport(api: ResumableTransport['api'], fs: FsLike): ResumableTransport {
   return {
-    api, putParts: (parts, contentType, onSent) => putPartsInBackground(fs, parts, contentType, onSent), // MD284: every missing part at once (end of file)
-    async putPart(url, part, contentType, onSent) {
+    api, putParts: (parts, contentType, onSent, owner) => putPartsInBackground(fs, parts, contentType, onSent, owner), // MD284: every missing part at once (end of file); §37.8 passes the owning slot (was: putParts: (parts, contentType, onSent) => …)
+    async putPart(url, part, contentType, onSent, owner) {
       if (!isDescriptor(part)) throw new Error('background transfer needs a file-range part');
       const dir = fs.cacheDirectory ?? '';
-      const partUri = `${dir}media-upload-part-${Date.now()}-${++partCounter}.bin`;
+      const partUri = stagedPartUri(dir, owner); // §37.8: the name carries the owning slot, so the sweep can attribute it
       try {
         const b64 = await fs.readAsStringAsync(part.uri, {
           encoding: 'base64',
@@ -129,7 +129,7 @@ export async function loadExpoFs(): Promise<FsLike | null> {
       readAsStringAsync: (uri, options) =>
         mod.readAsStringAsync(uri, { encoding: mod.EncodingType.Base64, position: options.position, length: options.length }),
       writeAsStringAsync: (uri, contents) => mod.writeAsStringAsync(uri, contents, { encoding: mod.EncodingType.Base64 }),
-      deleteAsync: (uri, options) => mod.deleteAsync(uri, options),
+      deleteAsync: (uri, options) => mod.deleteAsync(uri, options), readDirectoryAsync: (uri) => mod.readDirectoryAsync(uri), // §37.8 sweep
       // The OS session type and upload type are fixed here, from the module's own
       // enums; `options` carries them only so a test can assert what was asked for.
       createUploadTask: (url, fileUri, options, callback) =>
@@ -177,6 +177,8 @@ export async function putPartsInBackground(
   parts: Array<{ url: string; part: unknown }>,
   contentType: string,
   onSent?: (position: number, bytes: number) => void,
+  /** census-media §37.8: the owning slot (slotOwnerKey), written into every staged file's name. */
+  owner?: string,
 ): Promise<PartOutcome[]> {
   const outcomes: PartOutcome[] = parts.map(() => ({ error: 'not handed over' }));
   const staged: Array<{ position: number; url: string; uri: string }> = [];
@@ -189,7 +191,7 @@ export async function putPartsInBackground(
         outcomes[position] = { error: 'background transfer needs a file-range part' };
         continue;
       }
-      const uri = `${dir}media-upload-part-${Date.now()}-${++partCounter}.bin`;
+      const uri = stagedPartUri(dir, owner);
       try {
         const b64 = await fs.readAsStringAsync(p.part.uri, {
           encoding: 'base64',
@@ -243,4 +245,122 @@ export async function putPartsInBackground(
     await Promise.all(staged.map((s) => fs.deleteAsync(s.uri, { idempotent: true }).catch(() => {})));
   }
   return outcomes;
+}
+
+// ── census-media §37.8: staged part files, named by their owner, and swept ────
+//
+// A staged part is a COPY of one byte range of the picked file, made so the OS
+// can upload it. Both staging paths delete their copies when the transfer
+// settles, but a process killed first leaves them in the cache directory, and
+// nothing removed them (§37.6 item 3).
+//
+// WHAT A STAGED COPY IS FOR, AND WHEN DELETING ONE COSTS NOTHING. Resuming never
+// reads a staged copy: the next session lists what landed on the server and
+// re-stages what is missing FROM THE PICKED FILE. The only reader of a staged
+// copy is an OS upload task that is still sending it, and on iOS such a task
+// can outlive the process. So:
+//   • a copy whose slot belongs to a job that is still RESUMABLE (not done,
+//     failed or cancelled, under any account on this device) is NEVER deleted;
+//   • a copy whose slot belongs to no resumable job is deleted — nothing will
+//     resume it, and an OS task still sending it serves a job that has ended;
+//   • a copy with no owner in its name (made before owners were written, or by
+//     a caller that passed none) is deleted only once it is older than
+//     STAGED_UNATTRIBUTED_MAX_AGE_MS. Its signed upload URL — Supabase issues
+//     them for two hours — has expired by then, so no task can still be using it.
+// If the live-job set cannot be read, NOTHING with an owner is deleted.
+//
+// ORDER IS LOAD-BEARING: the directory is listed FIRST and the live jobs read
+// SECOND. A job persists its slot before it stages a byte (postcardUploadPipeline),
+// so any copy the listing saw belongs to a job already in storage when the live
+// set is read — a job enqueued between the two reads cannot lose its copies.
+// BOUNDED: one listing, and at most STAGED_SWEEP_MAX_DELETES deletions per run.
+
+export const STAGED_PART_PREFIX = 'media-upload-part';
+/** Three times the two-hour life of a signed upload URL. */
+export const STAGED_UNATTRIBUTED_MAX_AGE_MS = 6 * 60 * 60 * 1000;
+export const STAGED_SWEEP_MAX_DELETES = 200;
+
+const OWNED_RE = /^media-upload-part\.([A-Za-z0-9_-]{1,64}~[A-Za-z0-9_-]{1,64})\.(\d{1,16})\.(\d{1,9})\.bin$/;
+const UNOWNED_RE = /^media-upload-part-(\d{1,16})-(\d{1,9})\.bin$/;
+
+/** The cache path a staged copy is written to. With an owner, the owner is in the name. */
+export function stagedPartUri(dir: string, owner?: string): string {
+  const n = ++partCounter;
+  if (owner && /^[A-Za-z0-9_-]{1,64}~[A-Za-z0-9_-]{1,64}$/.test(owner)) {
+    return `${dir}${STAGED_PART_PREFIX}.${owner}.${Date.now()}.${n}.bin`;
+  }
+  return `${dir}${STAGED_PART_PREFIX}-${Date.now()}-${n}.bin`;
+}
+
+/** A staged copy's owner (or null when it names none) and when it was made; null for any other file. */
+export function parseStagedPartName(name: string): { owner: string | null; createdAtMs: number } | null {
+  const owned = OWNED_RE.exec(name);
+  if (owned) return { owner: owned[1]!, createdAtMs: Number(owned[2]) };
+  const unowned = UNOWNED_RE.exec(name);
+  if (unowned) return { owner: null, createdAtMs: Number(unowned[1]) };
+  return null;
+}
+
+export interface StagedSweepResult {
+  /** Why nothing was swept at all, when nothing could be. */
+  refused: 'no_directory_listing' | 'listing_failed' | null;
+  scanned: number;
+  deleted: string[];
+  keptLive: number;
+  /** Owned copies kept because the live-job set could not be read. */
+  keptUnknown: number;
+  /** Unowned copies still younger than STAGED_UNATTRIBUTED_MAX_AGE_MS. */
+  keptYoung: number;
+  /** Deletable copies left for the next run by the per-run bound. */
+  deferred: number;
+}
+
+/**
+ * Delete staged copies that belong to no resumable upload. NEVER throws.
+ * `loadLiveOwners` returns the slot keys (slotOwnerKey) of every job that can
+ * still resume, or null when that cannot be established.
+ */
+export async function sweepStagedParts(
+  fs: FsLike,
+  loadLiveOwners: () => Promise<ReadonlySet<string> | null>,
+  nowMs: number,
+  maxDeletes: number = STAGED_SWEEP_MAX_DELETES,
+): Promise<StagedSweepResult> {
+  const out: StagedSweepResult = { refused: null, scanned: 0, deleted: [], keptLive: 0, keptUnknown: 0, keptYoung: 0, deferred: 0 };
+  const dir = fs.cacheDirectory;
+  if (!dir || typeof fs.readDirectoryAsync !== 'function') return { ...out, refused: 'no_directory_listing' };
+  let names: string[];
+  try {
+    names = await fs.readDirectoryAsync(dir);
+  } catch {
+    return { ...out, refused: 'listing_failed' };
+  }
+  const staged = names
+    .map((name) => ({ name, parsed: parseStagedPartName(name) }))
+    .filter((s): s is { name: string; parsed: { owner: string | null; createdAtMs: number } } => s.parsed !== null);
+  out.scanned = staged.length;
+  if (staged.length === 0) return out;
+  let live: ReadonlySet<string> | null = null;
+  try {
+    live = await loadLiveOwners();
+  } catch {
+    live = null;
+  }
+  for (const { name, parsed } of staged) {
+    if (parsed.owner !== null) {
+      if (live === null) { out.keptUnknown++; continue; }
+      if (live.has(parsed.owner)) { out.keptLive++; continue; }
+    } else if (nowMs - parsed.createdAtMs < STAGED_UNATTRIBUTED_MAX_AGE_MS) {
+      out.keptYoung++;
+      continue;
+    }
+    if (out.deleted.length >= maxDeletes) { out.deferred++; continue; }
+    try {
+      await fs.deleteAsync(`${dir}${name}`, { idempotent: true });
+      out.deleted.push(name);
+    } catch {
+      out.deferred++;
+    }
+  }
+  return out;
 }

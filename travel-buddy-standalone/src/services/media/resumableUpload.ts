@@ -34,7 +34,7 @@ export interface ResumableTransport {
     url: string,
     part: unknown,
     contentType: string,
-    onSent?: (bytes: number) => void,
+    onSent?: (bytes: number) => void, /** census-media §37.8: the slot this part belongs to (slotOwnerKey), so a staged copy can be attributed and swept. */ owner?: string,
   ): Promise<{ status: number; retryAfter: string | null }>; /** MD284 — OPTIONAL: every part handed over AT ONCE (see PutPartsFn at the end of this file). */ putParts?: PutPartsFn;
 }
 
@@ -160,7 +160,7 @@ export async function uploadSlotResumable(
     let needFreshUrls = false;
     let pending: SessionPart[] = session.missing;
     if (transport.putParts && pending.length > 1) {
-      const batch = await putAllAtOnce(transport.putParts, session, pending, file, contentType, sent, onProgress);
+      const batch = await putAllAtOnce(transport.putParts, session, pending, file, contentType, sent, onProgress, slotOwnerKey(slot.postId, slot.mediaId));
       if (batch.kind === 'fail') return { ok: false, retryable: false, reason: batch.reason };
       sent = batch.sent;
       onProgress?.(Math.min(1, sent / session.totalBytes));
@@ -176,7 +176,7 @@ export async function uploadSlotResumable(
       const body = file.slice(start, start + part.size);
       const put = await withRetry<true>(async () => {
         const r = await transport.putPart(part.uploadUrl, body, contentType, (bytes) =>
-          onProgress?.(Math.min(1, (sent + Math.min(bytes, part.size)) / session.totalBytes)),
+          onProgress?.(Math.min(1, (sent + Math.min(bytes, part.size)) / session.totalBytes)), slotOwnerKey(slot.postId, slot.mediaId),
         );
         const c = classifyStatus(r.status, r.retryAfter);
         if (c.kind === 'ok') return { kind: 'done', value: true };
@@ -248,6 +248,8 @@ export type PutPartsFn = (
   parts: Array<{ url: string; part: unknown }>,
   contentType: string,
   onSent?: (position: number, bytes: number) => void,
+  /** census-media §37.8: the slot every part belongs to (slotOwnerKey). */
+  owner?: string,
 ) => Promise<PartOutcome[]>;
 
 type BatchResult =
@@ -262,6 +264,7 @@ async function putAllAtOnce(
   contentType: string,
   sentBefore: number,
   onProgress?: (fraction: number) => void,
+  owner?: string,
 ): Promise<BatchResult> {
   const inFlight = new Array<number>(parts.length).fill(0);
   const report = () => onProgress?.(Math.min(1, (sentBefore + inFlight.reduce((a, b) => a + b, 0)) / session.totalBytes));
@@ -279,6 +282,7 @@ async function putAllAtOnce(
         inFlight[position] = Math.min(Math.max(0, bytes), p.size);
         report();
       },
+      owner,
     );
   } catch (err) {
     outcomes = parts.map(() => ({ error: err instanceof Error ? err.message : 'batch dispatch failed' }));
@@ -313,4 +317,17 @@ async function putAllAtOnce(
     return { kind: 'fail', reason: `part ${part.index} HTTP ${o.status}` };
   }
   return { kind: 'ok', sent, stragglers, needFreshUrls, retryAfterMs };
+}
+
+/**
+ * census-media §37.8 — the one spelling of "which upload slot owns this staged
+ * part". The transport writes it into each staged file's NAME
+ * (backgroundTransfer.ts), and the queue derives the same key from every job
+ * that is still resumable (postcardUploadQueue.liveUploadOwners), so the sweep
+ * can tell a live slot's copy from an orphan's. Only [A-Za-z0-9-] survive, so
+ * the key is always a safe file-name segment; `~` separates the two ids.
+ */
+export function slotOwnerKey(postId: string, mediaId: string): string {
+  const safe = (s: string) => String(s).replace(/[^A-Za-z0-9-]/g, '_').slice(0, 64) || '_';
+  return `${safe(postId)}~${safe(mediaId)}`;
 }

@@ -33,7 +33,7 @@ import {
 
 export interface QueueStorage {
   getItem(key: string): Promise<string | null>;
-  setItem(key: string, value: string): Promise<void>;
+  setItem(key: string, value: string): Promise<void>; /** census-media §37.8: every stored key, so the staged-part sweep can see every account's jobs. Optional: absent ⇒ unknown. */ allKeys?(): Promise<readonly string[]>;
 }
 
 export interface QueueRuntime {
@@ -202,3 +202,37 @@ export async function getPostcardUploadQueue(): Promise<PostcardUploadQueue> {
   _queue = new PostcardUploadQueue(deviceQueueRuntime());
   return _queue;
 }
+
+/**
+ * census-media §37.8 — the slots of every upload that can still RESUME on this
+ * device, under ANY account: a job is stored under the account that made it and
+ * waits there while another account is signed in, so the sweep must not read
+ * one account's list as the whole truth. The key (slotOwnerKey) is the one the
+ * transport writes into each staged copy's name.
+ *
+ * Null — "unknown", so the sweep deletes nothing with an owner — when the store
+ * cannot enumerate its keys, a read fails, or a queue entry does not parse. A
+ * job that has not reserved its slot yet (no mediaId) cannot have staged a byte.
+ */
+export async function liveUploadOwners(storage: QueueStorage): Promise<Set<string> | null> {
+  if (typeof storage.allKeys !== 'function') return null;
+  try {
+    const owners = new Set<string>();
+    for (const key of await storage.allKeys()) {
+      if (!key.startsWith(KEY_PREFIX)) continue;
+      const raw = await storage.getItem(key);
+      if (raw === null) continue;
+      const parsed = JSON.parse(raw) as unknown;
+      if (!Array.isArray(parsed)) return null;
+      for (const job of parsed as Array<Partial<PostcardUploadJob> | null>) {
+        if (!job || typeof job.stage !== 'string') return null;
+        if (TERMINAL_STAGES.has(job.stage)) continue;
+        if (typeof job.postId === 'string' && typeof job.mediaId === 'string') owners.add(slotOwnerKey(job.postId, job.mediaId));
+      }
+    }
+    return owners;
+  } catch {
+    return null;
+  }
+}
+import { slotOwnerKey } from './resumableUpload.ts';
