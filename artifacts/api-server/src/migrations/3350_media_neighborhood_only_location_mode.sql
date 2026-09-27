@@ -41,19 +41,19 @@
 --
 -- NOT applied to any database by the lane that wrote it.
 
--- ALTER TYPE … ADD VALUE is issued OUTSIDE the transaction below: before
--- PostgreSQL 12 it may not run inside one, and on any version a value added in
--- a transaction cannot be used until that transaction commits.
+-- ONE transaction, the only shape scripts/src/apply-migrations.ts applies
+-- atomically with its ledger row: BEGIN first, COMMIT last, then postconditions.
+-- PostgreSQL 12+ runs ADD VALUE inside a transaction (production reads 17.6).
+BEGIN;
+-- A value added in a transaction cannot be USED before COMMIT; nothing before it compares.
 DO $$
 BEGIN
   IF to_regtype('public.post_location_privacy_mode') IS NULL THEN
     RAISE EXCEPTION 'PRECONDITION FAILED: type public.post_location_privacy_mode (0049) does not exist.';
-  END IF;
-END $$;
-
+  END IF; END $$;
 ALTER TYPE public.post_location_privacy_mode ADD VALUE IF NOT EXISTS 'neighborhood_only';
 
-BEGIN;
+-- The flag seed below is in the same transaction as the label.
 
 DO $$
 BEGIN
@@ -70,6 +70,9 @@ INSERT INTO public.feature_flags (flag, enabled, description) VALUES
   )
 ON CONFLICT (flag) DO NOTHING;
 
+COMMIT;
+
+-- Postconditions, after the COMMIT: the label is committed and usable here.
 DO $$
 DECLARE present int; on_count int; labelled int; using_value bigint;
 BEGIN
@@ -87,7 +90,7 @@ BEGIN
   END IF;
 
   SELECT count(*) INTO using_value FROM public.posts
-    WHERE location_privacy_mode = 'neighborhood_only';
+    WHERE location_privacy_mode::text = 'neighborhood_only';
   RAISE NOTICE '3350: neighborhood_only label present; % post(s) carry it on this database (0 on a first apply).', using_value;
 
   -- Seeded ON would mean this migration took the decision to offer the choice.
@@ -98,4 +101,3 @@ BEGIN
   END IF;
 END $$;
 
-COMMIT;
