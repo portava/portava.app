@@ -10459,3 +10459,291 @@ All run on this branch.
 - The change is client-only. No flag, seed, migration, database or server
   file was touched.
 - `SENSING_ANON_GRANTED_SCOPES` and the 2481 ledger entry are untouched.
+
+### 33.13 Follow-up: the nested sheets, measured and fixed — the implementation is complete
+
+The integrator sent lane T back after merging `039c7f406` into
+`wave8-integration` (`97a40abfd`). That branch was merged into `lane-t-h7` as
+a merge commit (`be3f4192e`), bringing lanes E, I and V; nothing conflicted.
+This subsection is appended after §33.12.
+
+**The integrator's reading, which this lane applies.** The owner's ruling
+says "Shared ownership does not exclude a surface users encounter in the
+Media flow". A sheet the comment sheet opens on top of the Media flow is
+encountered in that flow. So the nested sheets named in §33.8 item 1 are
+inside MD403's requirement, and measuring them is branch work, not an owner
+question.
+
+**Result.**
+- Every surface reachable from the five sheets without leaving the Media
+  flow is now measured as asserted pairs, and all of them pass. None is
+  pinned and none is unmeasured.
+- Every change was seen red when reverted, and no consumer pair got worse.
+- **The implementation is complete. MD403 stays W** on verification only
+  (§33.13.1).
+
+#### 33.13.1 Row table
+
+| ID | Was | Now | Evidence |
+| --- | --- | --- | --- |
+| MD403 | **W** | **W** | **Implementation complete; verification remaining.** §33's statement stands for the five sheets: 170 pairs, all asserted pairs pass, none pinned. It now also holds for everything they open without leaving the Media flow (§33.13.2): the four nested sheets the comment sheet opens (TagPreviewSheet, ProfilePreviewCard, EngagementUserListSheet, ReportSheet), and the photo button, source sheet and photo card ReportSheet opens for a safety report. Those add 102 pairs: 82 asserted and all passing, 20 decorative, 7 floored over the picked photo. They were measured in the shared fixture (`travel-buddy-standalone/src/theme/__tests__/sharedSheetContrast.pairs.ts:398#export const SF_NESTED`) and asserted as Media's own (`travel-buddy-standalone/src/features/media/__tests__/mediaContrast.test.ts:1595#test('census-media §33.13: the nested sheets the comment sheet opens are measured surfaces`). The whole Media file holds 864 pairs: 771 asserted, all passing, 0 pinned. **Re-measured, the nested sheets failed on 21 pairs in 18 groups.** Each was fixed with the §33 tokens or at the shared component (§33.13.4). **No consumer regressed:** the guard now covers 16 changed components on 67 consumer files, 310 pairs: 103 improved, 207 unchanged, 0 worse, 0 below AA (`travel-buddy-standalone/src/theme/__tests__/sharedSheetContrast.consumers.test.ts:337#changedComponents: 16`). **Not paired, and not app source:** OS-drawn UI — the Alert dialogs, the OS share sheet, the camera and photo library, Settings, the browser and the native date/time picker. **Out of the flow:** a navigation to another screen, such as a profile, a trip, Telegraph, a hashtag feed, Discovery or trip/new. Readings (a)–(c) of §31.13.8, and §33.8 item 3's classification of the comment sheet's pressable handle, stand as stated. **Blocker:** VERIFICATION: owner visual review (H8, extended to the §33 changes) and an on-device review; no implementation remaining. |
+
+#### 33.13.2 Every surface reachable from the five sheets
+
+Each opener was read for the modals it renders and the routes it pushes. A
+modal drawn over the flow is a surface of the flow. A route push or a Linking
+call leaves it. An OS-drawn dialog is not app source and is not paired.
+
+| From | Opens (how) | Kind | Measured |
+| --- | --- | --- | --- |
+| CommentsSheet | ProfilePreviewCard (tap an author's name) | modal sheet | §33.13, 10 pairs |
+| CommentsSheet | EngagementUserListSheet (tap a like count) | modal sheet | §33.13, 16 pairs |
+| CommentsSheet | ReportSheet (long-press a comment → the OS "Comment options" alert → Report); its three steps: category, details, confirmation | modal sheet | §33.13, 27 pairs |
+| CommentsSheet, via RichText | TagPreviewSheet (long-press an @mention or #hashtag; one card per type: user, hashtag, trip, circle, event, place) | modal sheet | §33.13, 26 pairs |
+| ReportSheet, safety concern | MediaPickerButton (the photo button) | inline control | §33.13, 2 pairs |
+| MediaPickerButton | MediaSourceSheet (Camera / Photo Library / Cancel, and the denied rows) | modal sheet | §33.13, 13 pairs |
+| ReportSheet, after a pick | MediaAttachmentTray (the one-photo card: remove, uploading, progress, cancel, retry, error line) | inline, over the photo | §33.13, 8 pairs, 7 floored |
+| MediaSourceSheet | VideoStoryTrimSheet | modal sheet | **not reachable here**: it opens only for a story video, and the safety-report policy allows one image |
+| CommentsSheet, ShareSheet, TagPreviewSheet, ReportSheet, MediaSourceSheet, RichText | Alert dialogs; the OS share sheet ("Share Post"); the camera and library; Settings; the browser (ReportSheet's emergency link) | OS-drawn | not app source; not paired |
+| PlanPickerController | DatePickerField's native date/time picker | OS-drawn | not app source; not paired |
+| ProfilePreviewCard, EngagementUserListSheet rows, TagPreviewSheet's CTA, a mention's tap, ShareSheet's "New Telegraph", PlanPickerController's "Create new trip" | another screen (profile, trip, meetup, hashtag feed, Discovery, Telegraph, trip/new) | navigation | leaves the Media flow |
+| GlobalPlacePicker, DisambiguationSheet | nothing further (the location permission is OS-drawn) | — | — |
+
+**AddToPlanSheet and PlanItemSheet are not reachable from the plan picker.**
+PlanPickerController imports neither, and its only route is "Create new
+trip". Their LockTypeSelector hint is measured as a consumer pair in §33.6,
+not as a Media-flow surface.
+
+**Profile preview actions.** ProfilePreviewCard has two: close, and "View
+full profile", which navigates away. Both are measured.
+
+#### 33.13.3 Re-measured: 21 failing pairs in 18 groups
+
+| Sheet | Pairs | Asserted | Decor | Failing before | Groups |
+| --- | --- | --- | --- | --- | --- |
+| TagPreviewSheet | 26 | 20 | 6 | 4 | 4 |
+| ProfilePreviewCard | 10 | 10 | 0 | 1 | 1 |
+| EngagementUserListSheet | 16 | 15 | 1 | 4 | 3 |
+| ReportSheet | 27 | 20 | 7 | 6 | 4 |
+| MediaPickerButton | 2 | 1 | 1 | 0 | 0 |
+| MediaSourceSheet | 13 | 9 | 4 | 4 | 4 |
+| MediaAttachmentTray | 8 | 7 | 1 | 2 | 2 |
+| **Total** | **102** | **82** | **20** | **21** | **18** |
+
+Every failing pair, before and after:
+
+| Sheet | Colour on ground (bar) | Pairs | Before → after |
+| --- | --- | --- | --- |
+| TagPreviewSheet | `faint` text on paperRaised (4.5) | the error line | 2.88 → 5.55 (`mute`) |
+| TagPreviewSheet | `faint` at the button's 0.6 opacity (4.5; 3) | "Report hashtag", and its spinner | 1.79 → 5.55 (`mute`, full opacity) |
+| TagPreviewSheet | `mute` text on `haze` (4.5) | the event card's "Close" | 4.41 → 4.55 (`muteStrong`) |
+| ProfilePreviewCard | white initials on `haze` (4.5) | the no-photo avatar | 1.26 → 11.80 (AvatarImage's own `deep` ground) |
+| EngagementUserListSheet | onInk text on `signal` (4.5) | "Follow" / "Follow back", "Retry" | 3.14 → 4.99 (fill `signalStrong`) |
+| EngagementUserListSheet | `faint` text on paper (4.5) | a liker's handle | 2.73 → 5.27 (`mute`) |
+| EngagementUserListSheet | `mute` text on `haze` (4.5) | "Follows you" | 4.41 → 4.55 (`muteStrong`) |
+| ReportSheet | `signal` text on its 0x0A tint (4.5) | the selected category's label and its ✓ | 3.15 → 5.01 (`signalStrong`) |
+| ReportSheet | onInk text on `signal` (4.5) | "Next" / "Submit report" | 3.14 → 4.99 (fill `signalStrong`) |
+| ReportSheet | `signal` text on paperRaised (4.5) | "← Back", "Also block …" | 3.31 → 5.25 (`signalStrong`) |
+| ReportSheet | `faint` text on paperRaised (4.5) | the "N/500" count | 2.88 → 5.55 (`mute`) |
+| MediaSourceSheet | `signal` spinner on its 0x18 tint (3) | the camera row loading | 2.95 → 4.68 (`signalStrong`) |
+| MediaSourceSheet | `faint` text on paperRaised (4.5) | each row's second line | 2.88 → 5.55 (`mute`) |
+| MediaSourceSheet | `mute` at the denied row's 0.7 opacity (4.5) | a denied row's label | 2.98 → 5.55 (full opacity) |
+| MediaSourceSheet | `faint` at 0.7 opacity (4.5) | a denied row's second line | 2.00 → 5.55 (`mute`, full opacity) |
+| MediaAttachmentTray | white fill on the light 0.35 track, over any photo (3) | upload progress | 2.50 → 8.64 (a dark 0.4 ink track) |
+| MediaAttachmentTray | `signal` text on paperRaised (4.5) | the upload error line | 3.31 → 5.25 (`signalStrong`) |
+
+Nothing else failed. What already cleared its bar:
+- the tray's other marks over the photo (remove, spinner, cancel and retry,
+  at 4.76–10.51);
+- the safety banner's amber text (6.37);
+- the hashtag Follow button (onInk on `deep`) and its "Following" state;
+- the report option's selected outline in `signal` (3.31, kept as the brand
+  mark).
+
+#### 33.13.4 The fixes
+
+The fix follows §33.4's rule:
+- `faint` text on a light ground takes `mute`;
+- vermilion text, and a fill under onInk text, take `signalStrong`;
+- secondary text on `haze` takes `muteStrong`.
+
+Three fixes are at the shared component, each named by what the measurement
+showed.
+
+- **Opacity no longer dims an active control.**
+  - TagPreviewSheet's report link was drawn at `opacity: 0.6`
+    (`travel-buddy-standalone/src/components/TagPreviewSheet.tsx:410#opacity: 1, // was 0.6`).
+  - MediaSourceSheet's denied rows were drawn at `opacity: 0.7`
+    (`travel-buddy-standalone/src/components/ui/MediaSourceSheet.tsx:407#opacity: 1, // was 0.7`).
+  - Both are active controls: one reports a hashtag, one opens Settings. So
+    WCAG 1.4.3's inactive-component exemption does not apply to them, and
+    the opacity took their text to 1.8–3.0:1.
+  - They now draw at full opacity. The denied state is carried by the
+    `mute` label, the "access denied — tap to open Settings" line, and the
+    Settings button.
+- **ProfilePreviewCard's avatar disc is AvatarImage's own `deep` ground**
+  (`travel-buddy-standalone/src/components/ProfilePreviewCard.tsx:166#backgroundColor: color.deep, // AvatarImage's own ground`).
+  - The card's style overrode AvatarImage's `deep` with `haze`.
+  - AvatarImage always draws white initials, so the initials read 1.26:1.
+  - Every other AvatarImage caller keeps the component's `deep` default.
+- **MediaAttachmentTray's upload track is a dark wash**
+  (`travel-buddy-standalone/src/components/ui/MediaAttachmentTray.tsx:614#rgba(17,17,15,0.4)`),
+  where it was a 0.35 white wash on the 0.55 scrim.
+  - Over a bright photo, the white progress fill read 2.50:1 on the old
+    track, and it now floors at 8.64.
+  - This is the same change §31.2 made to the World viewer's progress track.
+
+**Brand.** `#FF4D2E` is unchanged. Where the brand vermilion was a mark
+that cleared its bar, it stays, for example:
+- the report option's selected outline;
+- "Also block …"'s outline;
+- the camera icon;
+- the spinners on plain paperRaised or paper.
+
+#### 33.13.5 Every visible change in the nested sheets, for the screenshot lane
+
+All paths are under `travel-buddy-standalone/src/components/`.
+
+| Component (file) | What changes | Before → after | Where it is seen |
+| --- | --- | --- | --- |
+| TagPreviewSheet (`TagPreviewSheet.tsx`) | the error line | `#9C988F` → `#6B6862` | a mention/hashtag preview, from any RichText: comments, Pulse cards, Telegraph, meetups, the hashtag feed |
+| TagPreviewSheet | "Report hashtag": its text, flag icon and spinner | `#9C988F` at 60% opacity (reads about `#C4C1BC`) → `#6B6862` at full opacity | the hashtag preview |
+| TagPreviewSheet | the event card's "Close" label | `#6B6862` → `#696660` (not visible) | an event mention's preview |
+| ProfilePreviewCard (`ProfilePreviewCard.tsx`) | the avatar disc: the no-photo initials disc, and the placeholder behind a loading photo | `#E8E5DE` (haze) → `#0A3D4A` (deep); the white initials become readable | tap an author's name in comments |
+| EngagementUserListSheet (`EngagementUserListSheet.tsx`) | a liker's handle | `#9C988F` → `#6B6862` | "Liked by" from comments, posts (PostEngagementBar) and highlights (HighlightViewer) |
+| EngagementUserListSheet | "Follow" / "Follow back" fill; "Retry" fill | `#FF4D2E` → `#C43B23` | same |
+| EngagementUserListSheet | "Follows you" badge text | `#6B6862` → `#696660` (not visible) | same |
+| ReportSheet (`ReportSheet.tsx`) | the selected category's label and ✓ | `#FF4D2E` → `#C43B23` | every report entry: comments, posts, profiles, Telegraph, events, buddy listings, reviews, the map |
+| ReportSheet | "Next" and "Submit report" fill | `#FF4D2E` → `#C43B23` | same |
+| ReportSheet | "← Back"; "Also block …" / "Unblock …" label | `#FF4D2E` → `#C43B23` | same |
+| ReportSheet | the "N/500" count | `#9C988F` → `#6B6862` | same, on the details step |
+| MediaSourceSheet (`ui/MediaSourceSheet.tsx`) | each row's second line | `#9C988F` → `#6B6862` | the photo source sheet: the safety report, and every MediaPickerButton, profile photos, the event composer and memories |
+| MediaSourceSheet | the camera row's loading spinner | `#FF4D2E` → `#C43B23` | same, while the camera opens |
+| MediaSourceSheet | a denied row (camera or library permission refused) | the whole row at 70% opacity → full opacity | same, after a permission is refused |
+| MediaAttachmentTray (`ui/MediaAttachmentTray.tsx`) | the upload progress track under the white fill | `rgba(255,255,255,0.35)` → `rgba(17,17,15,0.4)` (a dark groove) | the picked-photo card while uploading: the safety report, submit a place, a review, the become-a-buddy application |
+| MediaAttachmentTray | the upload error line under the card | `#FF4D2E` → `#C43B23` | same, after a failed upload |
+
+These join H8's review with §33.5's list.
+
+#### 33.13.6 The regression guard, extended
+
+The guard reads the same fixture. It scans the consumers of six more changed
+components:
+
+| Component | Consumer files |
+| --- | --- |
+| TagPreviewSheet | 1, RichText |
+| ProfilePreviewCard | 1 |
+| EngagementUserListSheet | 3 |
+| ReportSheet | 11 |
+| MediaSourceSheet | 4, MediaPickerButton included |
+| MediaAttachmentTray | 4 |
+
+It measures the tray's error line on the other three consumers' own grounds,
+each of them paper. MediaPickerButton and AvatarImage did not change.
+
+Every addition is line-neutral or at the file's tail, so §33's cited lines do
+not move. A photo ground is floored over the same 16-level grid the Media
+test uses
+(`travel-buddy-standalone/src/theme/__tests__/sharedSheetContrast.consumers.test.ts:356#function measureRatio`).
+
+| | Changed components | Consumer files | Pairs | Asserted | Improved | Unchanged | Worse | Failing before | Failing after |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| §33 | 10 | 54 | 205 | 160 | 74 | 131 | 0 | 65 | 0 |
+| §33.13 | 16 | 67 | 310 | 245 | 103 | 207 | **0** | 89 | **0** |
+
+`color.signalStrong` and `color.muteStrong` are still used only in measured
+components, and that is checked by scan. No existing token changed value.
+
+#### 33.13.7 Mutations, each seen red and restored
+
+Each mutation edits one file in place and runs both suites. The file is then
+restored byte for byte, and `git status` is clean after every run.
+
+| Set | Mutations | Guard red | Media test red |
+| --- | --- | --- | --- |
+| Every changed nested-sheet line, reverted one at a time to its text at `be3f4192e` | 22 | 22 | 22 |
+| Each of the six files back to `be3f4192e` whole | 6 | 6 | 6 |
+| A new file that imports and draws ReportSheet; the same for MediaAttachmentTray | 2 | 2 | 0 (the consumer scan is the guard's) |
+| The tray track made nearly clear (`0.05`): it still passes, so only the needle catches it | 1 | 1 | 1 |
+| §33's 49 per-line and 19 named mutations, re-run on this tree | 68 | 68 | 63 (as §33.7 recorded) |
+
+#### 33.13.8 Pair counts (`mediaContrast.test.ts`)
+
+| | Pairs | Asserted | Pass | Pinned | Decorative | Floors |
+| --- | --- | --- | --- | --- | --- | --- |
+| After §33 | 762 | 689 | 689 | 0 | 73 | 166 |
+| After §33.13 | 864 | 771 | 771 | 0 | 93 | 173 |
+
+Nothing was dropped or changed; the 102 new pairs are all nested-sheet
+pairs. The nested grounds are spread into `S_TAIL` on §33's line
+(`travel-buddy-standalone/src/features/media/__tests__/mediaContrast.test.ts:1065#...NESTED_SURFACES`).
+Dynamic type: no Text in the nested sheets opts out of, or caps, OS font
+scaling
+(`travel-buddy-standalone/src/features/media/__tests__/mediaContrast.test.ts:1620#no Text in the nested sheets`).
+
+#### 33.13.9 Checks
+
+- **Contrast test and guard.** `mediaContrast.test.ts` passes 18 of 18, and
+  the guard passes 9 of 9.
+- **Jest.** `--findRelatedTests` on the six changed nested-sheet components
+  selects 137 component suites, and all pass (754 tests). No web suite is
+  related.
+- **Client static checks.**
+  - `tsc` is clean.
+  - The test typecheck is at its baseline: 173 across 60.
+  - eslint shows the same per-file counts as at `be3f4192e`, with 0 errors,
+    and none in the test files.
+  - `lint:imports` and all eight `lint:*` scripts pass.
+- **Client node:test.** `npm test` runs 869 suites and 7,079 tests, all passing.
+- **Census and API server**, run in `artifacts/api-server`:
+  - `check:doc-citations` passes, with 7,516 anchored citations and 0 off
+    their lines.
+  - `check:citation-targets` stays at 165 / 165.
+  - `check:census-integrity`, `check:census-row-move-labels` and
+    `check:test-registration` pass.
+  - `check:census-scope-coverage` passes after this subsection's widening:
+    census-media watches 373 of the 373 files it cites.
+  - `projectionConsumers.test.ts` and `censusScopeCoverage.test.ts` pass
+    38 of 38.
+  - `typecheck` is clean, and `typecheck:tests` is at its baseline (863
+    across 115 files).
+  - `check:all` fails only on `check:census-freshness` and the five live-DB
+    checks the lane rules allow.
+- **`check:census-freshness`, lane T's files only.** Other stale files come
+  from the lanes merged in through `wave8-integration` (I, V, E): the intel
+  and vendor modules, migrations 3002 and 3355–3358,
+  `PassportMemoryService.ts` and `consentDisclosure.ts`. Their
+  acknowledgements belong to the integrator's merge of those lanes. The
+  acknowledgement ledger is not edited. Each of lane T's files changes
+  colours or opacity only, or is §33's own test code:
+  - **census-media:** tokens.ts, the two §33 test files, and the fourteen
+    changed components not already in its ledger: DateTimePickerField,
+    MentionInput, MentionSuggestionList, PlanPickerController,
+    LockTypeSelector, GlobalPlacePicker, Avatar, DisambiguationSheet,
+    TagPreviewSheet, ProfilePreviewCard, EngagementUserListSheet,
+    ReportSheet, MediaSourceSheet and MediaAttachmentTray. They are §33's
+    subject, and §33 and §33.13 re-measure every one.
+  - **census-trust:** ReportSheet. TV-3a grades that every report entry
+    point opens the unified ReportSheet. The categories, steps, submit,
+    block action and safety banner are unchanged; only colours and one
+    fill moved.
+  - **census-input-intelligence:** MentionInput, GlobalPlacePicker and
+    DisambiguationSheet, as §33.10 argued. G167's lines 56–75 still hold.
+  - **census-discovery:** MentionInput, as §33.10 argued.
+  - **census-passport** and **census-wall:** tokens.ts. Lines 12 and 14 are
+    byte-identical, and no value changed.
+
+#### 33.13.10 Files changed
+
+| File | Change |
+| --- | --- |
+| `travel-buddy-standalone/src/components/TagPreviewSheet.tsx`, `ProfilePreviewCard.tsx`, `EngagementUserListSheet.tsx`, `ReportSheet.tsx`, `ui/MediaSourceSheet.tsx`, `ui/MediaAttachmentTray.tsx` | colours and the three component fixes of §33.13.4 (22 lines, in place) |
+| `travel-buddy-standalone/src/theme/__tests__/sharedSheetContrast.pairs.ts` | the nested sheets' files, grounds and 102 pairs (tail); the ground type widened (in place) |
+| `travel-buddy-standalone/src/theme/__tests__/sharedSheetContrast.consumers.test.ts` | six more changed components, the tray's consumer pairs and photo floors (tail); nine lines changed in place, the counts among them with their old anchor kept as "was" |
+| `travel-buddy-standalone/src/features/media/__tests__/mediaContrast.test.ts` | the nested grounds and import (two lines, in place); the §33.13 tests (tail) |
+| `artifacts/api-server/src/scripts/checkCensusFreshness.ts` | census-media's `CENSUS_SCOPE` widened for the three newly cited files |
+| `docs/ops/sensing-production-approval-request.md` | the H7 row records the follow-up (in place) |
+
+Nothing is merged to main, pushed or deployed. No flag, seed, migration,
+database or server logic was touched.
