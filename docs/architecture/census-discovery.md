@@ -6219,3 +6219,8 @@ above should be quoted as this census ratifying S49.
 Totals unchanged. A03 stays `W` on the flags, not on absence — and the
 distinction matters, because it is the difference between a row waiting for a
 build and a row waiting for a deployment.
+
+## Cited, not graded (check:census-scope-coverage)
+
+- NOT-GRADED: artifacts/api-server/src/compass/CompassExplanationEngine.ts — §13.7 item 3 names Compass's HMAC recommendation-token signer as a refactor this lane declined to make in another lane's file. Discovery's recommendation id is minted by lib/discoveryRecommendationId.ts, and no Discovery verdict rests on the signer.
+- NOT-GRADED: artifacts/api-server/src/routes/plan.ts — §39.1 names its add-to-trip-plan route as the server-side trip add, and §39.4 assigns that add to the Trips lane. The trip_add signal DV-79 and DC-09 grade is written by the client's PlanPickerController (§41.6), not by this route.

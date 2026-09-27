@@ -699,6 +699,21 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/test/trustEmitterWiring.test.ts",
     "artifacts/api-server/src/test/migrationDeployability.test.ts",
     "artifacts/api-server/src/migrations/2462_meetup_time_votes_write_boundary.sql",
+    // WIDENED 2026-09-27 by the coverage-guard fix (census-media §32.14): the evidence L271 (§14.1-§14.3), L19/L162 (§17.2), L56/L57/L178 (§18.1), L196 and L269 (§35) rest on.
+    "artifacts/api-server/src/test/layoverTelegraphMessage.test.ts",
+    "artifacts/api-server/src/lib/threadMessage.ts",
+    "artifacts/api-server/src/test/layoverStampOccurrence.test.ts",
+    "artifacts/api-server/src/services/memory/occurrenceGate.ts",
+    "artifacts/api-server/src/domain/trips/invariants/TripFreedomEngine.ts",
+    "artifacts/api-server/src/index.ts",
+    "travel-buddy-standalone/eas.json",
+    // WIDENED 2026-09-27 by the coverage-guard fix (census-media §32.14): §18.9's three server suites, which that section asks the integrator to scope — one is cited, two are named in prose only because citing them would have failed this check.
+    "artifacts/api-server/src/test/layoverTemporalFreedom.test.ts",
+    "artifacts/api-server/src/test/layoverEnvelope.test.ts",
+    "artifacts/api-server/src/test/layoverScenarioMatrix.test.ts",
+    // WIDENED 2026-09-27 by the coverage-guard fix (census-media §32.14): L169 and L267 cite `app/trip/[id].tsx`, which the guard resolves to the legacy repo-root mock (113 lines); the trip screen whose lines they cite is travel-buddy-standalone's, so both are watched rather than one chosen.
+    "travel-buddy-standalone/app/trip/[id].tsx",
+    "app/trip/[id].tsx",
   ],
   "census-highlights-memories.md": [
     // ── ADDED 2026-09-22 by the INTEGRATING lane. THIS HALF IS THIS PASS'S OWN
@@ -1141,6 +1156,13 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/test/memoryProfileLocationProtection.test.ts",
     "artifacts/api-server/src/test/memoryPatchConcurrency.test.ts",
     "artifacts/api-server/src/test/highlightProfilePrecisionClamp.test.ts",
+    // WIDENED 2026-09-27 by the coverage-guard fix (census-media §32.14): the evidence for §G's non-temporal endSession, §I.4's red-before-green store assertion, §N.3's presence-evidence select, §P.5's ungated Highlight surfaces and §W.3/§X.2's un-hide applier.
+    "artifacts/api-server/src/migrations/2993_highlight_command_boundary.sql",
+    "artifacts/api-server/src/services/airport/LayoverSessionService.ts",
+    "artifacts/api-server/src/test/memoriesTripMemoryDegraded.test.ts",
+    "artifacts/api-server/src/test/stampCriteriaPresenceEvidence.test.ts",
+    "artifacts/api-server/src/routes/engagement.ts",
+    "artifacts/api-server/src/routes/collections.ts",
 ],
   // Trust has NO SPEC — its 52 requirements are 20 inbound obligations from
   // other surfaces' specs plus 32 contracts its own code asserts. That makes the
@@ -1355,6 +1377,29 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/services/identityVerification/providerErasure.ts",
     "artifacts/api-server/src/test/verificationProviderErasure.test.ts",
     "artifacts/api-server/src/services/identityVerification/retention.ts",
+    // WIDENED 2026-09-27 by the coverage-guard fix (census-media §32.14): the evidence cited on rows TV-0e/TV-2c, TV-2a, TV-3a, TV-4b, TV-6c, TV-U7, TRV2-10, C18, C30 and A18/TRV2-02, and by §18.2 for keeping TV-5b at NB. This census's floor is 100 %, so every file it cites is either here or declared.
+    "artifacts/api-server/src/lib/http.ts",
+    "artifacts/api-server/src/test/trustNullableScores.test.ts",
+    "travel-buddy-standalone/app/(rent-a-buddy)/index.tsx",
+    "travel-buddy-standalone/app/u/[username].tsx",
+    "travel-buddy-standalone/app/event/[id].tsx",
+    "travel-buddy-standalone/app/(rent-a-buddy)/buddy/[id].tsx",
+    "artifacts/api-server/src/index.ts",
+    "travel-buddy-standalone/src/components/BuddyCard.tsx",
+    "travel-buddy-standalone/src/components/compass/CompassTravelerRow.tsx",
+    "travel-buddy-standalone/app/(rent-a-buddy)/offers.tsx",
+    "travel-buddy-standalone/src/components/layover/LayoverPeopleSection.tsx",
+    "artifacts/api-server/src/services/appeals/resolveAppeal.ts",
+    "artifacts/api-server/src/test/zeroRowTrustAdjudication.test.ts",
+    "artifacts/api-server/src/test/trustProfileUnreadableDowngrade.test.ts",
+    "artifacts/api-server/src/services/phoneVerification/PhoneVerificationService.ts",
+    "artifacts/api-server/src/test/sensingAnonStore.test.ts",
+    "artifacts/api-server/src/routes/rentABuddySpec.ts",
+    // WIDENED 2026-09-27 by the coverage-guard fix (census-media §32.14): §17.3's is_over_18 finding — the client surfaces the verified bit as display data and no gate reads it, which is TV-5b's subject.
+    "travel-buddy-standalone/src/services/verification.ts",
+    // WIDENED 2026-09-27 by the coverage-guard fix (census-media §32.14): TV-3a cites `app/post/[id].tsx`, which the guard resolves to the legacy repo-root mock (22 lines); the report entry point it means is travel-buddy-standalone's, so both are watched rather than one chosen.
+    "travel-buddy-standalone/app/post/[id].tsx",
+    "app/post/[id].tsx",
   ],
   // The Wall's 205 requirements are graded against a scope DELIBERATELY wider
   // than services/wall/ + features/wall/, for the reason §3 of that census
@@ -2691,6 +2736,25 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/services/airport/LayoverTravelTime.ts",
     "artifacts/api-server/src/routes/saves.ts",
     "artifacts/api-server/src/migrations/2778_trip_operational_projections_flag.sql",
+    // WIDENED 2026-09-27 by the coverage-guard fix (census-media §32.14): the evidence cited on rows CT-01, CT-09, CT-11, CX-06 and CPH-14, and §11.4's server half of CP-02.
+    "artifacts/api-server/src/test/compassCensusClosure.test.ts",
+    "artifacts/api-server/src/domain/trips/commands/tripKernel.ts",
+    "artifacts/api-server/src/routes/tripDecisions.ts",
+    "travel-buddy-standalone/src/services/compass.ts",
+    "artifacts/api-server/src/services/passport/PassportConsumerProjections.ts",
+    // WIDENED 2026-09-27 by the coverage-guard fix (census-media §32.14): the code and suites §17.1, §24.1-§24.3, §25.2-§25.3 and §27.3/§27.6/§27.7 move or keep CX-04, CL-05, CCL-03/08/09/13/14, C1-01, CTG-08, CP-02 and CPH-EVAL on.
+    "artifacts/api-server/src/test/compassCpv2Grounding.test.ts",
+    "artifacts/api-server/src/lib/compassPolicy.ts",
+    "artifacts/api-server/src/test/compassDecision.test.ts",
+    "artifacts/api-server/src/test/compassAutopilotRevalidation.test.ts",
+    "artifacts/api-server/src/lib/compassDecisionActions.ts",
+    "artifacts/api-server/src/test/compassDecisionActions.test.ts",
+    "artifacts/api-server/src/test/compassConversationPhase1Schema.test.ts",
+    "artifacts/api-server/src/services/interactionPermissions.ts",
+    "artifacts/api-server/src/test/helpers/postgrestOrFilter.ts",
+    "scripts/src/compass-eval-history.mjs",
+    // WIDENED 2026-09-27 by the coverage-guard fix (census-media §32.14): CG-01, CG-02, CG-04 and CP-04 cite `app/(tabs)/ai.tsx`, which the guard resolves to this legacy repo-root mock (113 lines); the lines they cite are travel-buddy-standalone's copy, already watched above, so both are watched rather than one chosen.
+    "app/(tabs)/ai.tsx",
   ],
   // Input Intelligence is the thinnest-citing of the six (36 of 81 backticked
   // paths resolve) and the most client-weighted: its subject is the typing
@@ -3379,6 +3443,26 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "travel-buddy-standalone/src/features/map/intent/intentModel.ts",
     "artifacts/api-server/src/lib/discoveryCacheEligibility.ts",
     "artifacts/api-server/src/test/discoveryCacheBEligibility.test.ts",
+    // WIDENED 2026-09-27 by the coverage-guard fix (census-media §32.14): the evidence cited on rows DV-03, DV-05, DV-35, DV-40, DSV2-09 and A05.
+    "artifacts/api-server/src/lib/discoveryRecommendationId.ts",
+    "artifacts/api-server/migrations/0055_compass_admin.sql",
+    "artifacts/api-server/src/lib/compassDecision.ts",
+    "artifacts/api-server/src/migrations/2091_discovery_engine_mode_flags.sql",
+    "artifacts/api-server/src/migrations/0202_rank_events_living_page_watch_feed_surfaces.sql",
+    "artifacts/api-server/src/migrations/0197_rank_events_analytics_columns.sql",
+    "artifacts/api-server/src/lib/intentModes.ts",
+    // WIDENED 2026-09-27 by the coverage-guard fix (census-media §32.14): DV-83's refusal-envelope consumers — §18.6's audited consumers, §21.2's panel fix and its two failing-first suites, and the tab screen §29.3 leaves open.
+    "travel-buddy-standalone/src/components/discovery/DiscoveryCategoryTab.tsx",
+    "travel-buddy-standalone/app/(tabs)/_layout.tsx",
+    "travel-buddy-standalone/src/components/search/SearchSuggestionsPanel.tsx",
+    "travel-buddy-standalone/src/components/search/__tests__/SearchSuggestionsPanel.refusal.component.test.tsx",
+    "travel-buddy-standalone/app/__tests__/search.refusal.component.test.tsx",
+    "travel-buddy-standalone/app/(tabs)/discovery.tsx",
+    // WIDENED 2026-09-27 by the coverage-guard fix (census-media §32.14): §29.3 cites `app/(tabs)/discovery.tsx`, which the guard resolves to the legacy repo-root mock (80 lines); the screen it means is travel-buddy-standalone's, watched just above, so both are watched rather than one chosen.
+    "app/(tabs)/discovery.tsx",
+    // WIDENED 2026-09-27 by the coverage-guard fix (census-media §32.14): evidence for keeping a verdict — A14 stays W on the layover travel-time provider (provenance row, §39.6), and §41.1 corrects DV-44's evidence with mediaFeed's live watch_feed writer.
+    "artifacts/api-server/src/services/airport/LayoverTravelTime.ts",
+    "artifacts/api-server/src/routes/mediaFeed.ts",
   ],
   // ── ADDED 2026-09-15: census-passport joins the CHECKABLE set ──────────────
   //
@@ -3554,6 +3638,32 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     // Repo-root staging copies of two stamp components. P66 cites these paths BY NAME (census-passport.md line 302) and they resolve, so they are what check:census-scope-coverage counts; §16 later re-cites the standalone copies, which are listed above. Both are watched rather than one chosen, because choosing would be this entry deciding which citation §16 superseded.
     "src/components/PassportStampCard.tsx",
     "src/components/PassportStamps.tsx",
+    // WIDENED 2026-09-27 by the coverage-guard fix (census-media §32.14): the evidence cited on rows P59, P61, P75, P126, P128, P129, P132, P138, P158/F9, P159 and P169, and §14.6's P61 pins.
+    "artifacts/api-server/src/lib/entryRequirements.ts",
+    "artifacts/api-server/src/domain/telegraph/policies/travelScamSignals.ts",
+    "artifacts/api-server/src/lib/places/placeCollectionsWorker.ts",
+    "artifacts/api-server/src/test/passportStampTypeVocabulary.test.ts",
+    "artifacts/api-server/src/test/unifiedStamps.test.ts",
+    "artifacts/api-server/src/compass/CompassGraphEngine.ts",
+    "artifacts/api-server/src/test/passportJourneyEventsRecommendations.test.ts",
+    "artifacts/api-server/src/test/passportWorldHierarchy.test.ts",
+    "travel-buddy-standalone/app/passport/country/[country].tsx",
+    "travel-buddy-standalone/src/features/telegraph/theme/telegraphTheme.ts",
+    "travel-buddy-standalone/app/(tabs)/_layout.tsx",
+    "travel-buddy-standalone/src/components/passport/PassportVerifiedSeal.tsx",
+    "travel-buddy-standalone/src/theme/tokens.ts",
+    "travel-buddy-standalone/src/lib/travelerState.ts",
+    "travel-buddy-standalone/app/passport/[username].tsx",
+    "travel-buddy-standalone/app/passport/event/[token].tsx",
+    "artifacts/api-server/src/test/passportListIdentityProjection.test.ts",
+    // WIDENED 2026-09-27 by the coverage-guard fix (census-media §32.14): P45's pin (§13.2) and the two D-WORD tripwires §19.4 names.
+    "artifacts/api-server/src/test/passportDomainTrustBasis.test.ts",
+    "artifacts/api-server/src/test/passportTrustEvidenceConfidence.test.ts",
+    // WIDENED 2026-09-27 by the coverage-guard fix (census-media §32.14): P2, P87 and P168 cite `app/(tabs)/passport.tsx` and `app/(tabs)/ai.tsx`, which the guard resolves to the legacy repo-root mocks; the lines they cite are travel-buddy-standalone's, so both copies of each are watched, as for the two stamp components above.
+    "travel-buddy-standalone/app/(tabs)/passport.tsx",
+    "travel-buddy-standalone/app/(tabs)/ai.tsx",
+    "app/(tabs)/passport.tsx",
+    "app/(tabs)/ai.tsx",
   ],
 };
 
