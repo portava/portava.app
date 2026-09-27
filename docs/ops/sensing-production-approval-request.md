@@ -1,6 +1,6 @@
 # Sensing — the one consolidated production approval request
 
-Prepared 2026-09-26 on branch `claude/sensing-completion-20260925` (PR #528).
+Prepared 2026-09-26 on branch `claude/sensing-completion-20260925` (PR #528); section H rewritten 2026-09-27.
 **Nothing below has been executed on production** (`ajrurzioarfkagpuxfnb`),
 which has only been read. Every schema step has been applied and verified on
 `portava-ci`. The step-by-step procedure is
@@ -129,29 +129,125 @@ request.
 
 ### H. Media — exact values
 
-Added 2026-09-26 for the media lanes on this branch (census-media §19–§32). H7 and H8 were added 2026-09-27.
-Production has only been read:
-- 2470's columns are present;
-- `media_canonical_enabled` reads FALSE (since 2026-09-25 15:39 UTC);
-- `media_canonical_read_enabled` has no row;
-- `MEDIA_WORLD_SHELL_ENABLED` is off;
-- 3320, 3321 and 3338 are not applied.
+Added 2026-09-26 for the media lanes (census-media §19–§32); rewritten
+2026-09-27 for wave 8 (census-media §33–§44, integration §41).
 
-3320 and 3321 are applied to `portava-ci`; 3338 is applied nowhere. The
-source for every step is census-media §20.5, §23.2, §23.8 and §30.9.
+**Production, read-only, 2026-09-27:**
+- The Media tab is not in production's nav bar: `MEDIA_TAB_ENABLED` is `false`.
+- `MEDIA_RANKING_ENABLED` is `false`, so the legacy Watch ranker returns
+  chronological order. All four creator boosts and creator fatigue are `false`.
+- `MEDIA_VIEW_MODE_FULLSCREEN_ENABLED` is `true`.
+- `MEDIA_WORLD_SHELL_ENABLED` has no row: 2300, which seeds it, is not in
+  production's ledger. 2037, 2040 and 2085 are.
+- `media_canonical_enabled` is `false` (since 2026-09-25 15:39 UTC), and
+  `media_canonical_read_enabled` has no row.
+- `map_contributions_enabled` and `media_evidence_enabled` have no row, and
+  `intel_evidence` holds 0 rows.
+- `posts` holds 9 rows: 8 with mode `none` and no place name, and 1
+  `delayed_until_time`, published.
+- None of 3320, 3321, 3338, 3340–3343, 3350–3352, 3355–3362 is applied there.
+  3320 and 3321 are applied to `portava-ci`; the rest are applied to no shared
+  database. 3350–3352 and 3359–3362 were rehearsed on a local PostgreSQL 16
+  cluster (census-map §45.11, census-media §44).
+- `posts` grants: anon and authenticated hold table-level SELECT with no column
+  restriction, and `posts_select` admits `can_see_post(id)` for every role. The
+  gateway log for the last 24 hours shows only secret-key requests to
+  `/rest/v1/posts`.
+
+**What deploying this branch (B1) changes with no flag.** Each item below
+narrows what a person sees of someone else's content, and each has a test that
+a non-owner sees no more than before:
+- Media reads (the Watch feed, the grid, `GET /media/:id`, place pages)
+  honour the owner's post location mode. Before, they served the place name
+  for `city_only`, `hidden` and `trusted_circle_only` posts. Also,
+  `mapPublicPost` withholds the place for any mode it does not know
+  (census-media §36.5).
+- Pulse, Discovery's event posts and a trip's post feed apply the same rule
+  for non-owners (§42). Compass, the Wall and the place pages follow once
+  §43 is merged.
+- The contributor-reputation route answers for the caller's own account only
+  (§35.2 B).
+- A postcard file that is held, flagged, limited, rejected or removed never
+  counts toward the postcard and never becomes the passport cover (§37.8).
+- The H7 colour changes to the shared sheets (H7) and lane K's contrast
+  changes to Media surfaces (H8) become visible on the next client build.
 
 | Step | Change | Value | Prerequisite | Verify | Recover |
 |---|---|---|---|---|---|
-| H1 | `media_canonical_enabled` (the canonical writer) | `true` | B1 (this branch deployed). An owner decision: it was turned off on production on 2026-09-25 | one upload writes one `media_assets` row (read-only count before and after) | set `false`; writes stop and the legacy stores stay authoritative |
-| H2 | Apply 3320 (canonical contract constraints) then 3321 (§36 moderation vocabulary) on production | — | H1 (3321 refuses production until the writer's schema holds, which §23.2 found it does) | each migration's own postconditions; `media_assets.moderation_status` holds only §36 values | each ships a rollback under `db/rollback/` |
-| H3 | Apply 3338, then `media_processing_worker_enabled` | `true` | H1 (assets must exist), B1 | the worker's pass logs `claimed`/`completed`; an owner's retry of a FAILED asset answers 202 and the asset reaches `ready` or `failed` | set `false`; the worker writes nothing on its next pass and the retry refuses without writing |
-| H4 | `media_canonical_read_enabled` | `true` | `lib/media/mediaCanonicalRead.ts` B1–B5: 2250's columns present (2470 on production); the writer seen landing a row (H1); a dimension sweep for the rows it creates (H3; census-media §32's sweep is merged and runs inside the same worker); coverage measured after a backfill; rollback by flag | a World projection serves a `media_assets` row; coverage figure recorded | set `false`; reads fall back to the legacy branches at once |
-| H5 | `MEDIA_WORLD_SHELL_ENABLED` | `true` | B1; an owner product decision (census-media F1) | the Media tab offers the World shell | set `false` |
-| H6 | The Media tab's default mode (`mediaStore.selectedMode`, `'watch'` today) | owner's choice | H5; an owner product decision (census-media F1/F2, §20.5, §23.8) | the tab opens on the chosen surface | revert the one line and deploy |
-| H7 | A grading ruling for MD403 (§46 "high contrast"): does it cover the four shared sheets Media opens? They are CommentsSheet, ShareSheet, GlobalPlacePicker and PlanPickerController, and the same question covers CreationAssist's "See all" sheet | **yes — RULED by the owner on 2026-09-27**: "Include comments, share, place picker, and plan picker in Media's contrast requirement … Keep MD403 open until verified" | none; the ruling is made, and the case for "no" in census-media §31.13.6 was not accepted | **Done on branch `lane-t-h7` (census-media §33 and §33.13); not merged to main, not deployed.** The five sheets failed on 43 pairs in 26 colour/ground groups when opened from Media (25 in the four sheets, against the 19 counted before). Everything they open without leaving the Media flow is now measured too, because the ruling reaches it. That is the comment sheet's four nested sheets (TagPreviewSheet, ProfilePreviewCard, EngagementUserListSheet, ReportSheet), plus the photo button, source sheet and photo card ReportSheet opens for a safety report; they failed on 21 more pairs in 18 groups. All were fixed through the design system: two role tokens, `signalStrong` #C43B23 and `muteStrong` #696660, and sixteen shared components moved onto them, onto `mute`, or fixed at the component. No existing token changed value, and `signal` #FF4D2E stays the brand fill. `mediaContrast.test.ts` asserts all 272 sheet pairs (209 asserted, all pass, none pinned). The guard `sharedSheetContrast.consumers.test.ts` measures 310 pairs on 67 consumer files before and after: 103 improved, 207 unchanged, 0 worse. **MD403 stays W. VERIFICATION: owner visual review (H8, extended to the §33 changes) and an on-device review; no implementation remaining** | revert `lane-t-h7`'s commits; `mediaContrast.test.ts` and the guard then name every pair that fails again. The readings in §31.13.8 (the stamp burst, pressed states, and an icon beside its own label) can still be overruled |
-| H8 | The visible changes made to shipped Media surfaces for contrast | accept / revise | B1. They are listed in census-media §31.8 and §31.13.15: dark backings under the Watch and Gems columns; ink backings under the Grid viewer's columns, plus a spinner badge and a page-dot pill; the gems rail's 💬 / 🔖 emoji replaced by the Watch rail's MessageCircle / Bookmark icons; a dark StampButton tone on the viewer, the rail and the tile; a darker "Try again" fill; a tinted Media tab header; a darker image-fallback ground | review on a device | revert the lines named there and deploy. `mediaContrast.test.ts` then names each pair that fails again |
+| H1 | `media_canonical_enabled` (the canonical writer) | `true` | B1. An owner decision: it was turned off on production on 2026-09-25 | one upload writes one `media_assets` row (read-only count before and after) | set `false`; writes stop and the legacy stores stay authoritative |
+| H2 | Apply 3320 (canonical contract constraints), then 3321 (§36 moderation vocabulary) | — | H1 (3321 refuses production until the writer's schema holds, which §23.2 found it does) | each migration's own postconditions; `media_assets.moderation_status` holds only §36 values | each ships a rollback under `db/rollback/` |
+| H3 | Apply 3338, then `media_processing_worker_enabled` | `true` | H1 (assets must exist), B1 | the worker's pass logs `claimed`/`completed`; an owner's retry of a FAILED asset answers 202, and the asset reaches `ready` or `failed` | set `false`; the worker writes nothing on its next pass, and the retry refuses without writing |
+| H4 | `media_canonical_read_enabled` | `true` | `lib/media/mediaCanonicalRead.ts` B1–B5: 2250's columns present (2470 on production); the writer seen landing a row (H1); the dimension sweep (H3); coverage measured after a backfill | a World projection serves a `media_assets` row; the coverage figure is recorded | set `false`; reads fall back to the legacy branches at once |
+| H5 | **F1: the Media tab opens on the World shell.** Apply 2300, then 3340. Set `MEDIA_TAB_ENABLED`, `MEDIA_WORLD_SHELL_ENABLED` and `MEDIA_TAB_WORLD_DEFAULT_ENABLED` | all `true` | B1; a client build containing this branch; a `mobile-reachability-ledger` entry for the World shell as the tab's mode | census-media §34.6 row 1: the tab opens on the World header with World · Watch · Grid · Gems under it; it still opens on World after a relaunch with Watch last chosen | set `MEDIA_TAB_WORLD_DEFAULT_ENABLED` `false`: the tab lists Watch · Grid · Gems again and the persisted mode wins. Each seed's rollback refuses while its flag is `true` |
+| H6 | **F2: the Watch surface.** Apply 3341, 3342 and 3343. Set `MEDIA_WATCH_CONTEXT_OVERLAY_ENABLED` (place first; Ask Compass first and largest; no counts), `MEDIA_WATCH_TAP_TO_PLAY_ENABLED` (nothing plays until tapped) and `MEDIA_WATCH_STAGE24_RANKING_ENABLED` (§24 ordering replaces the watch-time ranker) | each `true`, independently | B1; a client build (for the first two); a device pass of expo-av pause and resume (tap-to-play) | census-media §34.6 rows 2–4; new `rank_events` for `watch_feed` carry `s24_*` features only; watch `GET /media/feed` latency | set each `false`; today's rail, autoplay and ranker return on the next fetch or request |
+| H7 | A grading ruling for MD403 (§46 "high contrast"): does it cover the shared sheets Media opens? | **yes — RULED by the owner on 2026-09-27** ("Include comments, share, place picker, and plan picker in Media's contrast requirement … Keep MD403 open until verified") | none | **Built on PR #528's branch; not merged to main, not deployed** (census-media §33, §33.13). The five sheets, and everything they open without leaving the Media flow, are measured as asserted pairs: 272 sheet pairs, all passing, none pinned. The fixes go through two role tokens, `signalStrong` `#C43B23` and `muteStrong` `#696660`, and sixteen shared components; no existing token changed value. The consumer guard measures 310 pairs on 67 other files before and after: 103 improved, 207 unchanged, 0 worse. **MD403 stays W on verification only**: your review (H8) and a device review | revert §33's commits; `mediaContrast.test.ts` and the guard then name every pair that fails again |
+| H8 | The visible changes to shipped Media surfaces and shared sheets | accept / revise, per change | B1 | **Before-and-after screenshots: https://claude.ai/artifact/Rvc6rMoFuV2yE5VUynPc11** (private until you share it). These are web renders from fixtures, not a device; the page lists how they differ. It covers the five Media screens, the add-gem assistant, the H7 sheets and their nested sheets, lane R's layout fixes (census-media §40), and F1/F2 previews with the flags on. TagPreviewSheet cannot be opened on web, so it needs a device. Then review on a device | revert the lines census-media §31.8, §31.13.15, §33.5 and §40 name; `mediaContrast.test.ts` then names each pair that fails again |
+| H9 | **Lane P's three built surfaces.** Apply 3350, then `media_neighborhood_only_mode_enabled` ("Show neighborhood only" as a post location choice). Apply 3351, then `media_find_busier_enabled` (Find Busier on the rail and in Compass). Apply 3352, then `media_perspective_vantage_enabled` (a contributor names the vantage from §12's lists; place pages group by it) | each `true`, independently | B1; a client build; for vantage groups to be reachable, H5 | census-media §36.7, one line per row | set each `false`. 3350 adds an enum label that PostgreSQL cannot drop. Its rollback refuses while the flag is `true` or any post carries the value, and leaves the label inert |
+| H10 | **Vendor stages.** 3355 `media_vision_provider_enabled` with `MEDIA_VISION_PROVIDER`; 3356 `media_moderation_classifier_enabled`; 3357 `media_transcoder_enabled`; 3358 `media_captions_enabled` | each `true` only after its vendor exists | a vendor per stage (§37.4), each an owner cost and data-protection decision; for 3356, a classifier OR a decision to staff a hold, plus the MD269 (a) rule (§37.8.5) | census-media §37.1 per row | set `false`; every stage fails closed with its flag off |
+| H11 | Apply 3359 (a postcard with no countable file may have an empty cover) | — | B1 | `passport_postcards.media_url` is nullable; no row is null until a postcard loses its last countable file | its rollback refuses while any cover is null; then delete its ledger row |
+| H12 | Apply 3360, run `rekeyIntelEvidenceReferences.ts` (a dry run first; `--apply` re-seals), then apply 3361; provision `INTEL_EVIDENCE_REFERENCE_KEY` (at least 32 characters, stable: there is no rotation tool) | — | B1 | the dry run prints 0 legacy rows (production has 0 `intel_evidence` rows); 3361's postconditions validate the CHECK and drop the function | each has a rollback that deletes its own ledger row; the key must not change while any sealed row exists |
+| H13 | Apply 3362 (the client roles lose the private and per-post place columns of `posts`) | — | none (2148 applied; read 2026-09-27) | census-media §44.9: anon and authenticated can read 40 columns and service_role all 73; over HTTP with the public key `select=id` answers 200, and `select=original_lat`, `select=*` and `original_lat=gt.0` each answer 42501 | grant a missing non-location column in a new migration; only if that cannot wait, the rollback, which restores 2148 exactly and reopens the gap |
 
-None of H1–H8 is taken by the integration owner.
+**Decisions the flags cannot take (census-media §34.6, §35.4, §36.4, §37.8.5):**
+- **MD419, strict reading:** `MEDIA_VIEW_MODE_FULLSCREEN_ENABLED` = `false`
+  removes Watch entirely. It is an existing flag, needs no code, and is needed
+  only if "not the default" (H5) is not enough.
+- **MD435:** §42 against §48 needs an owner ruling on which ranker stays.
+- **MD289:** ratify or replace "looks social" (`busy` or `social` at
+  confidence ≥ 0.6).
+- **MD269 (a):** when the moderation stage holds a Pulse post's media, what
+  happens to the post. The four options are in §37.8.5.
+- **Lane P's choices, which you may overrule** (§36.3, §36.4.1):
+  - MD262 was built as a new post location mode, not by making Media honour
+    `pulse_geo_tags`. The row's earlier statement left that choice to you.
+  - MD101 reads §32's "a quieter or cheaper version" as one example question,
+    not a limit on §15's four comparators.
+  - MD82–MD85: the contributor names the vantage, the post's category picks
+    the list, and a post has one vantage.
+- **Product definitions (§36.4):**
+  - MD77: social expiry.
+  - MD79: when a post's place stops being shown, and what it falls back to.
+  - MD175: what Remix is.
+  - MD255: where the `following` and `shared_moment` audiences live.
+  - MD385: whose media may become a Memory.
+  - MD446: what "Show Me Now" is.
+- **Media → intelligence (§35.4):**
+  - MD65 Q1–Q5: whether a Media photo may feed Live Intelligence, under which
+    consent words, with what contributor identity, for which claim types, and
+    with what effect on confidence.
+  - MD197: whether Media may resolve another account's contributor tokens.
+  - MD37: the §6 source of an ordinary upload.
+  - MD71: whether a photo may be labelled `live`.
+  - MD162: whether the Map gateway publishes zone names.
+- **Do not turn on `map_contributions_enabled` before photo-naming consent
+  words are approved.** v1's words name Quick Signals only. The branch now
+  refuses a photo (409 `consent_does_not_cover_photos`) unless the
+  contributor's recorded consent version is in `PHOTO_EVIDENCE_CONSENT_VERSIONS`,
+  which is empty, and the app offers no photo step until the server says a
+  photo would be kept (census-map §45). To allow photos, approve words that name
+  photos and videos, then ship that version, its client text and its list entry
+  in one release.
+- **The Watch rail on short screens (F2 only).** On a 375×667 screen with 3341
+  on, the rail needs 353 px and 339 px are free. Choose fewer rail controls on
+  short screens, or a smaller Compass button (census-media §40.12).
+- **The canonical postcard cover (before H1).** Choose who owns a postcard's
+  canonical cover row (the system, the owner, or record who wrote it); whether a
+  file that stops being the cover keeps its attachment; and whether the move
+  runs while the writer flag is off (census-media §37.10.2).
+
+### H-build. Builds and device runs this environment cannot reach
+
+These are measured in census-media §37.3, not assumed:
+- **Android:** `dl.google.com` is denied by the environment's network policy,
+  and `maven.google.com` artifacts redirect there. Gradle's JDK 17 toolchain
+  auto-download (`api.foojay.io`) answers 403, and only JDK 21 is installed.
+  The remedy is to allow those hosts in the environment's network settings,
+  or to install JDK 17 and the Android SDK in its setup script.
+- **EAS:** `expo.dev` and `api.expo.dev` are denied, and no `EXPO_TOKEN`
+  secret exists.
+- **iOS:** no macOS host, so an iOS build is possible only through EAS.
+- **Devices:** there is no `/dev/kvm`, so no emulator, and no physical
+  device. MD282, MD284, F2's tap-to-play and H8 each need a device run.
 
 ---
 
@@ -167,6 +263,11 @@ None of H1–H8 is taken by the integration owner.
 | S39 S24 | A5, A7, C1, D3, E1, F3, F4 | a publication is recorded and a Compass turn reads it |
 | S26 S66 | real use | real contributions meet the gates |
 | S17 | G1, G2 | the headers are read |
+
+For Media, census-media §41.2 lists all 49 rows that are not C, each with what
+activates it and what only the outside world can verify. H5, H6 and H9–H13
+move none of them to "production realised" by themselves: each still needs the
+device run or production read named there.
 
 ## 4. Boundaries this request keeps
 
