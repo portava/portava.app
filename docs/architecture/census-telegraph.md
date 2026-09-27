@@ -8161,3 +8161,43 @@ re-measurement of the corpus. `head_commit` is unchanged at `1fe72289b`; the
 acknowledgement covering these files is in
 `artifacts/api-server/src/scripts/CENSUS_STALENESS_ACKNOWLEDGED.json` and, like
 §30's, argues that a verdict DID move rather than that none could.
+
+### 31.5 Two of §31.3's sentences have been overtaken, and by what
+
+Written 2026-09-23 by the lane that re-integrated the Case B branches, after
+#527 merged as `dc2862295`. §31.3 exists so the recensus does not over-correct.
+It now under-corrects, which is the same failure pointed the other way. **This
+subsection moves no verdict either.**
+
+* **"`3000` is applied to NO database — not production
+  (`ajrurzioarfkagpuxfnb`), not portava-ci (`hwokxgbmezheskbzskfr`)"** is false
+  of portava-ci. Merging #527 put `3000` on `main`, and `live-db.yml` applies
+  the chain to the CI project on `main`, so `2810` and `3000` are applied there.
+  It remains true of **production**, where the order is `2325 → 2810 → 3000`:
+  `3000` carries FIVE `RAISE EXCEPTION` preconditions, not four, and the fifth
+  requires `2325`'s function to already exist, because `3000` replaces its body
+  rather than introducing it. `messages.unsent_at` does not settle whether
+  `2325` ran — `2325` and `2810` each add it `IF NOT EXISTS`; only `pg_proc`
+  does.
+* **"The locks are also not executed by any test in this repository's default
+  suite"** stays true of a run without `LOCAL_DB_URL`, where
+  `artifacts/api-server/src/test/db/telegraphUnsend.db.test.ts` skips like every
+  other `*.db.test.ts`. What is new is that the locks are now **observed** and
+  not merely applied. On the throwaway database that job builds, that file reads
+  ten outcomes off the function itself, checks that every refusal left the
+  message row byte-identical, compares a retry's `unsent_at` across a SECOND
+  transaction — inside one, `now()` is frozen and the comparison is vacuous —
+  and probes `pg_locks` for `message_thread_members` holding no lock before the
+  call and `RowShareLock` after it.
+
+What that file does NOT prove, and nothing in this repository does: that a
+competing writer BLOCKS. That needs two connections in real contention and the
+harness has one. The lock is **observed**; the blocking follows from Postgres
+semantics, which is the weaker sentence and is meant to be.
+
+The file was measured rather than assumed — twelve mutations applied to the live
+function and reverted, each caught by the test that claims to be about it. One
+is worth naming here, because it is the argument for the file existing beside
+the text checks §31.1 rests on: removing the receipt `FOR UPDATE` leaves the
+words `FOR UPDATE` in the body, since the message lock uses them too. The text
+check stays green. Only the executed probe goes red.
