@@ -38,9 +38,9 @@
  * that never gets tested.
  *
  * census-discovery rows: DV-20 (canonical objects not strings), DV-24
- * (relationships navigable — the edge vocabulary), DC-02 (§4 label cap), DC-03
- * (§5 four creation checks), DC-04 (§7 both lifecycles).
+ * (relationships navigable — the edge vocabulary), DC-02 (§4 label cap), DC-03 (§5 four creation checks), DC-04 (§7 both lifecycles).
  */
+import { trailDestinationKey, trailLetterFold } from "./discoveryTrailFold.js"; // §61 (DV-20): stroke + Latin letter fold; B01's geographic key
 
 // ── §7 Trail state ───────────────────────────────────────────────────────────
 
@@ -158,7 +158,7 @@ export function isTrailContentTransitionAllowed(
  */
 export function canonicalTrailSlug(title: unknown): string | null {
   if (typeof title !== "string") return null;
-  const slug = title
+  const slug = trailLetterFold(title) // §61 (DV-20): Đ, Ø, Ł, Ħ, Ŧ, Ð, ı, ß, Æ, Œ, Þ, Ŋ have no decomposition, so NFKD alone dropped them
     .normalize("NFKD")
     .replace(/[̀-ͯ]/g, "")   // strip combining marks: Café → Cafe
     .toLowerCase()
@@ -241,7 +241,7 @@ export interface TrailCanonicalisation {
 
 function normDestination(d: unknown): string | null {
   if (typeof d !== "string") return null;
-  const n = d.trim().toLowerCase().replace(/\s+/g, " ");
+  const n = trailDestinationKey(d); // §61 (DV-20): "Đà Nẵng" and "da nang" are one destination — letters, accents, case, punctuation, "City"
   return n.length > 0 ? n : null;
 }
 

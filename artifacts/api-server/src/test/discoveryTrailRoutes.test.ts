@@ -39,6 +39,7 @@ import {
 } from "../lib/discoveryModifiers.js";
 import { scoreCandidate } from "../lib/portavaRank.js";
 import { TRAIL_AFFINITY_MAX_CONTRIBUTION } from "../lib/discoveryTrailAffinity.js";
+import { canonicalTrailSlug } from "../lib/discoveryTrailObject.js";
 
 const USER = "11111111-1111-4111-8111-111111111111";
 const OTHER = "11111111-1111-4111-8111-111111111112";
@@ -99,6 +100,10 @@ function makeDb(
     trails: [], content_trails: [], trail_edges: [], trail_follows: [],
     trail_reports: [], trail_health_snapshots: [], rank_events: [],
     feature_flags: [],
+    // census-discovery §61: attach now requires the content to EXIST. The
+    // place ids these stories attach are canonical `places` rows here, one of
+    // the two tables a place member may name.
+    places: [PLACE_A, PLACE_B, PLACE_E2E].map((id) => ({ id })),
     ...seed,
   };
   const missing = new Set(missingTables);
@@ -238,7 +243,36 @@ function makeDb(
         : { data: { user: null }, error: { message: "invalid token" } };
     },
   };
-  return { from, auth, _tables: tables, _writes: writes };
+
+  /**
+   * `public.trail_propose` (migration 3415), faked at its LAST step only: the
+   * service's TypeScript pre-check has already judged the proposal against this
+   * fake's catalogue, so the fake admits what reaches it unless the slug is
+   * taken (23505, as the UNIQUE index answers). The decision itself — the
+   * per-token lock, the checks re-run in SQL, the parent's waiver — is proven
+   * on the real schema in db/trailsProposalRace.db.test.ts and is deliberately
+   * not re-implemented here, where it could only agree with itself.
+   */
+  async function rpc(name: string, args: Row) {
+    if (name !== "trail_propose") throw new Error(`fake rpc: ${name} is not modelled`);
+    if (missing.has("rpc:trail_propose")) {
+      return { data: null, error: { code: "PGRST202", message: "Could not find the function public.trail_propose in the schema cache" } };
+    }
+    const slug = canonicalTrailSlug(args.p_title);
+    if (tables.trails!.some((t) => t.slug === slug)) {
+      return { data: null, error: { code: "23505", message: "duplicate key value violates unique constraint \"trails_slug_unique\"" } };
+    }
+    const at = new Date().toISOString();
+    const row: Row = {
+      id: generatedUuid("trails", tables.trails!.length), slug, title: args.p_title, description: args.p_description,
+      destination: args.p_destination, place_scope: null, parent_trail_id: args.p_parent_trail_id,
+      lifecycle_status: "proposed", created_by: args.p_created_by, created_at: at, updated_at: at,
+    };
+    tables.trails!.push(row);
+    writes.push({ table: "trails", op: "insert", rows: [row] });
+    return { data: { outcome: "created", trail: row }, error: null };
+  }
+  return { from, rpc, auth, _tables: tables, _writes: writes };
 }
 
 const trail = (id: string, over: Row = {}): Row => ({
@@ -1256,5 +1290,39 @@ describe("§11 — a failed trail_reports read is unmeasured health, not a clean
     const clean = await getTrail(withDb(seed()) as any, T_DARK);
     assert.ok(broken.healthScale < clean.healthScale,
       "a clean report_rate is evidence; a failed read has none and must not be scored as if it did");
+  });
+});
+
+// ── census-discovery §61: DC-03's fail-closed creation, DC-20's source check ──
+
+describe("§61 — creation fails closed without 3415, and attach names content that exists", () => {
+  it("POST /v1/discovery/trails is 503 and writes NOTHING when trail_propose is absent — never an unserialised insert", async () => {
+    const db = withDb({ ...SEED(), trails: [] }, ["rpc:trail_propose"]);
+    const r = await call("POST", "/v1/discovery/trails", USER, { title: "Kyoto Hidden Temples", destination: "Kyoto" });
+    assert.equal(r.status, 503);
+    assert.equal(r.body.error, "degraded_unavailable");
+    assert.deepEqual(db._writes, []);
+  });
+
+  it("an attach whose source cannot be READ is 503 degraded_unavailable, retryable, and writes nothing", async () => {
+    const db = withDb(SEED(), [], "postgres", ["places"]);
+    const r = await call("POST", `/v1/discovery/trails/${T_ROOF}/content`, USER, {
+      labels: [{ sourceType: "place", sourceId: PLACE_B, relationship: "supporting" }],
+    });
+    assert.equal(r.status, 503);
+    assert.equal(r.body.error, "degraded_unavailable");
+    assert.equal(r.body.retryable, true);
+    assert.equal(db._writes.filter((w) => w.table === "content_trails").length, 0);
+  });
+
+  it("an attach of content that does not exist is 409 `content_refused`, naming the label, and writes nothing", async () => {
+    const db = withDb();
+    const r = await call("POST", `/v1/discovery/trails/${T_ROOF}/suggestions`, USER, {
+      labels: [{ sourceType: "place", sourceId: MISSING, relationship: "supporting" }],
+    });
+    assert.equal(r.status, 409);
+    assert.equal(r.body.error, "content_refused");
+    assert.deepEqual(r.body.contentRefusals, [{ sourceType: "place", sourceId: MISSING, reason: "unknown_content" }]);
+    assert.equal(db._writes.filter((w) => w.table === "content_trails").length, 0);
   });
 });

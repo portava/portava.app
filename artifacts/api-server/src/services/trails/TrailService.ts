@@ -61,10 +61,10 @@ import {
   TRAIL_HEALTH_MODEL_VERSION,
   type TrailHealth,
 } from "../../lib/discoveryTrailHealth.js";
-import {
-  trailAffinityMap, trailMomentumFromRankEvents,
-  type TrailMembershipRow,
-} from "../../lib/discoveryTrailAffinity.js";
+import { trailAffinityMap, trailMomentumFromRankEvents, type TrailMembershipRow } from "../../lib/discoveryTrailAffinity.js";
+// census-discovery §61: DC-03's serialised creation decision, and DC-20's check that attached content exists.
+import { commitTrailProposal } from "./trailProposal.js";
+import { verifyAttachSources, type AttachSourceRefusal } from "./trailAttachIntegrity.js";
 import { logger as rootLogger } from "../../lib/logger.js";
 import { fetchBlockedSet, submitterIsVisible } from "../../lib/blocks.js";
 import { decidePostReadable, isPostPublished } from "../../lib/postVisibility.js";
@@ -74,11 +74,11 @@ const logger = rootLogger.child({ mod: "trailService" });
 
 export type TrailRefusal =
   | null
-  | "no_service_client"
-  | "trails_unavailable"
+  | "no_service_client" | "trails_unavailable"
   | "unknown_trail"
   | "invalid_request"
-  | "db_error";
+  | "db_error"
+  | "source_unreadable"; // attach (§61): a content source could not be read, so nothing was admitted
 
 /** Columns read from `trails`. Kept as one constant so no read drifts from another. */
 const TRAIL_COLUMNS =
@@ -288,19 +288,19 @@ export interface ServableMember extends MemberRow {
  * members it would have vouched for, because serving an unverified member is
  * the leak these rules exist to prevent. A `place` id may name a
  * `discovery_places` row or a canonical `places` row — 2910 does not say which,
- * and attach does not check — so a place absent from `discovery_places` is
- * served as an authorless venue fact rather than treated as removed; an
- * `itinerary` has no table at all. Both are named in §51 as residuals.
+ * and attach now requires one of the two (§61) — so a place absent from
+ * `discovery_places` is served as an authorless venue fact; an `itinerary` has
+ * no table and attach refuses it. `unread` (attach) names each read that failed.
  */
-async function servableMembers(
-  sc: any, members: readonly MemberRow[], viewerId: string | null, nowMs: number = Date.now(),
+export async function servableMembers(
+  sc: any, members: readonly MemberRow[], viewerId: string | null, nowMs: number = Date.now(), unread?: Set<string>,
 ): Promise<ServableMember[]> {
   const idsOf = (type: string) => [...new Set(members.filter((m) => m.source_type === type).map((m) => m.source_id))];
   const readRows = async (table: string, read: (ids: string[]) => PromiseLike<{ data: any; error: any }>, ids: string[]): Promise<Map<string, any> | null> => {
     if (ids.length === 0) return new Map();
     const { data, error } = await read(ids); // each caller spells its table and columns literally, so check:write-path-columns verifies them
     if (error || !Array.isArray(data)) {
-      logger.warn({ table, code: error?.code, message: error?.message }, "trail member sources unread — withheld");
+      unread?.add(table); logger.warn({ table, code: error?.code, message: error?.message }, "trail member sources unread — withheld");
       return null;
     }
     return new Map((data as any[]).map((r) => [String(r.id), r]));
@@ -350,12 +350,12 @@ async function servableMembers(
       .in("id", creatorIds).in("account_status", [...NON_ACTIVE_ACCOUNT_STATUSES]);
     if (error) {
       logger.warn({ code: error?.code, message: error?.message }, "trail creator standing unread — creator-attributed members withheld");
-      inactive = null;
+      inactive = null; unread?.add("profiles");
     } else {
       inactive = new Set(((data ?? []) as any[]).map((r) => String(r.id)));
     }
   }
-  const blocked = viewerId ? await fetchBlockedSet(sc, viewerId) : new Set<string>();
+  const blocked = viewerId ? await fetchBlockedSet(sc, viewerId) : new Set<string>(); if (blocked === null) unread?.add("blocks");
 
   return resolved.filter((m) => {
     if (m.creatorId && (inactive === null || inactive.has(m.creatorId))) return false;
@@ -632,10 +632,10 @@ export interface TrailExposureCount { impressions: number; positives: number }
  * apart, because §9's whole judgement — "has this item already had its bounded
  * opportunity?" — is a statement about a denominator, and a fabricated zero
  * answers it "no" for every item forever. One impression per served row; a row
- * whose outcome is not `impression` is also a positive response, which is §9
- * step 3's numerator.
+ * whose outcome is not `impression` — nor `dismiss`, which is the viewer saying
+ * NO (§61, DV-25) — is also a positive response, §9 step 3's numerator.
  */
-function exposureCountsFrom(
+export function exposureCountsFrom(
   rows: readonly MomentumRow[], memberIds: ReadonlySet<string>,
 ): Record<string, TrailExposureCount> {
   const out: Record<string, TrailExposureCount> = {};
@@ -643,7 +643,7 @@ function exposureCountsFrom(
     if (!memberIds.has(r.item_id)) continue;
     const bucket = (out[r.item_id] ??= { impressions: 0, positives: 0 });
     bucket.impressions += 1;
-    if (r.outcome !== "impression") bucket.positives += 1;
+    if (r.outcome !== "impression" && r.outcome !== "dismiss") bucket.positives += 1;
   }
   return out;
 }
@@ -1191,11 +1191,11 @@ export interface ProposeTrailResult {
  * pigeonhole rather than found by scanning. Reading every Trail to compare would
  * be an unbounded scan that gets slower exactly as the catalogue succeeds.
  *
- * NOT SERIALISED, stated rather than implied: two proposals racing each other
- * each run the checks against a catalogue that does not yet hold the other, so
- * two near-duplicates with DIFFERENT slugs can both be admitted. An identical
- * slug cannot (UNIQUE). Closing that needs the checks inside the database,
- * under a lock — census-discovery §51 names it as DC-03's residual.
+ * SERIALISED since 3415 (census-discovery §61): these checks read a catalogue
+ * a racing proposal may not be in yet, so they are the PRE-check. The decision
+ * is `trail_propose`'s, taken under a per-title-token advisory lock over the
+ * catalogue as it stands, with the insert in the same transaction; of racing
+ * near-duplicates exactly one is admitted (db/trailsProposalRace.db.test.ts).
  */
 export async function proposeTrail(
   sc: any,
@@ -1288,39 +1288,39 @@ export async function proposeTrail(
     return { refusal: null, trail: null, canonicalisation: refusals, suggestedParentTrailId: check.suggestedParentTrailId };
   }
 
-  const { data, error } = await sc.from("trails").insert({
-    slug: check.slug,
+  // DC-03 (§61): the DECISION is taken where the insert is. `trail_propose`
+  // (3415) takes a per-title-token advisory lock, re-reads this comparison set,
+  // re-runs the four checks and the parent's waiver in SQL, and inserts, so a
+  // racing near-duplicate the read above could not see is refused there. The
+  // checks above stay as the fast pre-check; on the non-racing path both agree
+  // (db/trailsProposalRace.db.test.ts). Without 3415 this FAILS CLOSED (503).
+  const committed = await commitTrailProposal(sc, {
     title: String(input.title).trim(),
-    description: typeof input?.description === "string" ? input.description.trim() : null,
     destination,
-    parent_trail_id: parentId,
-    created_by: proposerId,
-    // §5's "canonicalization metadata" — WHICH checks ran and against how many
-    // peers. A Trail that is later argued to be a duplicate can then be judged
-    // on what was known when it was admitted, not on today's catalogue.
-    canonicalization: {
-      checks: ["duplicate_title_similarity", "destination_overlap", "semantic_overlap", "existing_parent_child"],
-      comparedAgainst: existing.length,
-      origin: proposerId ? "user" : "system",
-      waivedByDeclaredParent: parentExists ? parentId : null,
-    },
-    lifecycle_status: "proposed",
-  }).select(TRAIL_COLUMNS).maybeSingle();
-
-  if (error) {
+    description: typeof input?.description === "string" ? input.description.trim() : null,
+    parentTrailId: parentId,
+    proposerId,
+  });
+  if (committed.kind === "unavailable") return { ...none, refusal: "trails_unavailable" };
+  if (committed.kind === "invalid_parent") return { ...none, refusal: "invalid_request" };
+  if (committed.kind === "refused") {
+    return { refusal: null, trail: null, canonicalisation: committed.refusals, suggestedParentTrailId: committed.suggestedParentTrailId };
+  }
+  if (committed.kind === "error") {
     // A UNIQUE slug collision is §5 check 1 arriving from the database rather
     // than from the comparison set. Reported as the same refusal, so a caller
     // cannot tell the two apart and cannot act on the difference.
-    if (String(error.code) === "23505") {
+    if (String(committed.error.code) === "23505") {
       return {
         refusal: null, trail: null, suggestedParentTrailId: null,
         canonicalisation: [{ check: "duplicate_title_similarity", conflictsWith: null, similarity: 1 }],
       };
     }
-    return { ...none, refusal: refusalFor(error, "proposeTrail.insert") };
+    return { ...none, refusal: refusalFor(committed.error, "proposeTrail.insert") };
   }
+  // §5's canonicalization metadata is written by trail_propose: it knows the catalogue the decision was taken over.
 
-  const created = (data ?? null) as TrailRow | null;
+  const created = committed.trail as unknown as TrailRow;
 
   // §6, DV-24 — the NAVIGABLE relationship. `trails.parent_trail_id` is a
   // pointer; `trail_edges` is the graph, and `relatedTrails` walks it in both
@@ -1350,10 +1350,10 @@ export async function proposeTrail(
 }
 
 export interface AttachResult {
-  refusal: TrailRefusal;
-  attached: number;
-  /** §4's cap refusals, per label. */
+  refusal: TrailRefusal; attached: number;
+  /** §4's cap refusals, per label; and (§61) labels whose content is unknown to the actor, or has no table. */
   capRefusals: LabelRefusal[];
+  sourceRefusals?: AttachSourceRefusal[];
 }
 
 /**
@@ -1390,30 +1390,30 @@ export async function attachContentToTrail(
 
   const t = await readTrail(sc, trailId);
   if (t.refusal || !t.trail) return { refusal: t.refusal, attached: 0, capRefusals: [] };
+  // §61 (DC-20's integrity leg): the content must EXIST in the table its type
+  // names and be content this actor could be served (servableMembers' rules);
+  // `itinerary` has no table and is refused as unverifiable; a source that
+  // cannot be read admits NOTHING. Unknown and unseen are one answer.
+  const verified = await verifyAttachSources(sc, labels, actor.userId, servableMembers);
+  if (verified.unreadable) return { refusal: "source_unreadable", attached: 0, capRefusals: [] };
+  const sourceRefusals = verified.refusals;
+  const admitted = labels.filter((_, i) => verified.reasons[i] === null);
+  if (admitted.length === 0) return { refusal: null, attached: 0, capRefusals: [], sourceRefusals };
 
   // §4's budgets are per CONTENT, not per Trail, so the held labels are read
   // across every Trail this content already belongs to.
-  const sourceIds = [...new Set(labels.map((l) => l.sourceId))];
+  const sourceIds = [...new Set(admitted.map((l) => l.sourceId))];
   const held = await sc.from("content_trails").select("trail_id, relationship, signal, source_type, source_id")
     .in("source_id", sourceIds);
   if (held.error) return { refusal: refusalFor(held.error, "attach.held"), attached: 0, capRefusals: [] };
-
-  const proposed: TrailLabel[] = labels.map((l) => ({
-    relationship: l.relationship as TrailRelationship,
-    trailId,
+  const proposed: TrailLabel[] = admitted.map((l) => ({
+    relationship: l.relationship as TrailRelationship, trailId,
     signal: l.relationship === "signal" ? (l.signal ?? null) : null,
   }));
-
-  // §4's budgets are PER CONTENT, so they are judged per content — the key the
-  // 2910/3380 trigger counts on, (source_type, source_id). This used to hand
-  // ONE `capTrailLabels` call every held label of every content in the batch
-  // and every proposed label of the batch, as if they were one content's: two
-  // different posts attached as `primary` in one request collided as a
-  // "duplicate" (their labels differ only by the content, which the label key
-  // does not carry), and one content's full budget refused another's label.
+  // §4's budgets are PER CONTENT, judged per (source_type, source_id) — the 2910/3380 trigger's key — never per request (§51.4).
   const contentKey = (sourceType: string, sourceId: string) => `${sourceType}:${sourceId}`;
   const groups = new Map<string, TrailLabel[]>();
-  labels.forEach((l, i) => {
+  admitted.forEach((l, i) => {
     const key = contentKey(l.sourceType, l.sourceId);
     const list = groups.get(key);
     if (list) list.push(proposed[i]!); else groups.set(key, [proposed[i]!]);
@@ -1430,7 +1430,7 @@ export async function attachContentToTrail(
   }
   const capped = { accepted, refusals: refused };
   if (capped.accepted.length === 0) {
-    return { refusal: null, attached: 0, capRefusals: capped.refusals };
+    return { refusal: null, attached: 0, capRefusals: capped.refusals, sourceRefusals };
   }
 
   const confidence = actor.mode === "attach" ? 0.8 : 0.4;
@@ -1444,7 +1444,7 @@ export async function attachContentToTrail(
   // content" in test/discoveryTrailRoutes.test.ts; do not reintroduce an index.
   const acceptedSet = new Set(capped.accepted);
   const rows = proposed
-    .map((label, i) => ({ label, source: labels[i] }))
+    .map((label, i) => ({ label, source: admitted[i] }))
     .filter(({ label }) => acceptedSet.has(label))
     .map(({ label, source }) => ({
       trail_id: trailId,
@@ -1466,7 +1466,7 @@ export async function attachContentToTrail(
     // rather than as server errors: the caller did something the rules forbid.
     if (String(error.code) === "23505" || String(error.code) === "23514") {
       return {
-        refusal: null, attached: 0,
+        refusal: null, attached: 0, sourceRefusals,
         capRefusals: [...capped.refusals, ...capped.accepted.map((label) => ({ label, reason: "duplicate" as const }))],
       };
     }
@@ -1493,7 +1493,7 @@ export async function attachContentToTrail(
     }
   }
 
-  return { refusal: null, attached: rows.length, capRefusals: capped.refusals };
+  return { refusal: null, attached: rows.length, capRefusals: capped.refusals, sourceRefusals };
 }
 
 /** `11` §3 action 6 (detach half). Only the contributor of the row may detach it. */

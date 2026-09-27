@@ -71,6 +71,8 @@ function makeDb(seed: Record<string, Row[]>, erroring: string[] = []) {
     trails: [], content_trails: [], trail_follows: [], trail_reports: [], trail_edges: [],
     trail_health_snapshots: [], rank_events: [], blocks: [], posts: [], events: [],
     route_plans: [], discovery_places: [],
+    // census-discovery §61: attach requires the content to exist; PLACE_2 is a canonical `places` row.
+    places: [{ id: PLACE_2 }],
     profiles: [VIEWER, BLOCKED, AUTHOR, C1, C2, C3].map((id) => ({ id, account_status: "active" })),
     ...seed,
   };
@@ -464,6 +466,7 @@ describe("DC-02 — §4's budget is judged per content, not per request", () => 
     const db = makeDb({
       trails: [trail(T), trail(T_OTHER)],
       content_trails: [member("m-held", { trail_id: T_OTHER, source_type: "post", source_id: POST_1 })],
+      posts: [post(POST_1), post(POST_2)],
     });
     const r = await attachContentToTrail(db, T, [
       { sourceType: "post", sourceId: POST_1, relationship: "primary" },
