@@ -155,7 +155,7 @@ export interface DiscoveryCandidate {
    * vocabulary. Null when no grade was computed or the grade found no
    * reading — never an empty array, so "absent" cannot read as "none apply".
    */
-  whyNow: string[] | null;
+  whyNow: string[] | null;  /** DSV2-04 "validity": ms from THIS serve until the earliest claim behind `whyNow` expires (whyNowValidForMsOf, foot of file). */ whyNowValidForMs: number | null;
   /** Ranker feature keys with positive contribution, strongest first, ≤ 3. */
   whyForUser: string[];
   /** Which ranker produced whyForUser; "none" ⇒ the list is empty by construction. */
@@ -427,7 +427,7 @@ export function projectDiscoveryCandidate(row: CandidateSourceRow, ctx: Candidat
   const whyForUser = signals.slice(0, WHY_FOR_USER_MAX);
   return {
     id: row.id,
-    whyNow: whyNowOf(row.id, ctx),
+    whyNow: whyNowOf(row.id, ctx), whyNowValidForMs: whyNowValidForMsOf(row.id, ctx, nowMs),
     whyForUser,
     rankedBy: ctx.rankedBy,
     confidence: CONFIDENCE_PRIOR[truthClass as keyof typeof CONFIDENCE_PRIOR] ?? CONFIDENCE_PRIOR.unknown,
@@ -578,4 +578,32 @@ export async function readDiscoveryCandidatesForViewer<T extends CandidateSource
     rankedBy: "pde",
     suppressedWrites: outcome.stages.suppressedWrites,
   };
+}
+
+/**
+ * DSV2-04 — `02-DISCOVERY-v2.md` asks that why-now travel "through API and
+ * client" WITH its validity, and that an expired claim "disappear or become
+ * explicitly stale". The client can only do that on its own clock if the wire
+ * says how long the claim is good for.
+ *
+ * The horizon is the one `lib/compassDecision#summariseLiveState` already
+ * computes for the grade: the EARLIEST of min(validUntil, observedAt + TTL) over
+ * the claims that qualified (`DiscoveryLiveRank.interception.horizonAt`). It is
+ * sent as a DURATION from this serve (`nowMs`), not as a timestamp, so a phone
+ * whose clock disagrees with the server's still expires the claim at the right
+ * moment: the client anchors it to the instant IT received the page.
+ *
+ * Null whenever `whyNow` is null (nothing to expire), and whenever the grade
+ * carries no finite horizon — the client then does not show the claim as
+ * current at all. 0 when the horizon has already passed at serve time. Pure.
+ */
+export function whyNowValidForMsOf(
+  id: string,
+  ctx: Pick<CandidateServeContext, "liveRankById">,
+  nowMs: number,
+): number | null {
+  if (whyNowOf(id, ctx) === null) return null;
+  const horizonAt = ctx.liveRankById?.get(id)?.interception?.horizonAt ?? null;
+  const horizonMs = horizonAt ? Date.parse(horizonAt) : Number.NaN;
+  return Number.isFinite(horizonMs) ? Math.max(0, horizonMs - nowMs) : null;
 }

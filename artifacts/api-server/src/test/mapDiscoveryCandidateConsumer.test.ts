@@ -127,7 +127,7 @@ function placeObject(id: string, over: Partial<MapObject> = {}): MapObject {
 function candidateFor(id: string): DiscoveryCandidate {
   return {
     id: discoveryServedIdFor(id),
-    whyNow: null,
+    whyNow: null, whyNowValidForMs: null,
     whyForUser: ["categoryAffinity"],
     rankedBy: "pde",
     // S49 — §5.1's fourth field. `unknown` is what this fixture's serve point

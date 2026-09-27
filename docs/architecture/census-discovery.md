@@ -7372,6 +7372,28 @@ Seven existing suites were updated, because the contract changed and not to make
 
 The only move since §49.2 is `DSV2-04` N → W (§50.4). CONSTRUCTED 166 / 188 = **88.3 %**; CORRECT 88 / 188 = **46.8 %**. The four buckets sum to 188. Nothing in P4 is merged to `main` or deployed; the shipping app still calls Discovery without a token until a build carrying these commits ships.
 
+### 50.10 Integrator: DSV2-04's server leg built; DV-46's one named blocker gone at the merged tree
+
+*Integrator, 2026-09-27, on `wave8-integration` after `4a948f1db`. Implementation verdicts on this branch only; nothing here is merged to `main`, deployed, or reachable in production (the why-now producer is behind 2850 and the projection behind 2361, both absent or off there, and the shipping app predates §50).*
+
+**DSV2-04's server hunk, routed from §50.3 and applied as written.** `whyNowValidForMs` rides every projected candidate: the duration from THIS serve until the live grade's own horizon, 0 once that horizon has passed, and null whenever there is no claim or no finite horizon (`artifacts/api-server/src/lib/discoveryCandidate.ts:430#whyNowValidForMs: whyNowValidForMsOf(row.id, ctx, nowMs)`, `artifacts/api-server/src/lib/discoveryCandidate.ts:600#export function whyNowValidForMsOf(`). The edit is line-neutral through `:438`. `artifacts/api-server/src/test/discoveryCandidateWhyNowValidity.test.ts` (W1–W6, 6/6) pins it with a serve clock far from the wall clock: validity equals horizon − serve instant (W1), null with no grade or a grade that observed nothing (W2, W3), 0 past the horizon (W4), null with no finite horizon while the claim itself is still sent (W5), and a later serve of the same grade is valid for less (W6). Five mutations, each seen red and restored byte-identically: dropping the `Math.max(0, …)` floor (W4), dropping the no-claim guard (W3), measuring from `Date.now()` (3 red), not setting the field on the projection (3 red), and answering 0 instead of null for a non-finite horizon (W5). The 13 suites that build candidates (P2's legacy golden replay among them) pass 261/261 with the field added.
+
+| ID | was | now | evidence |
+|---|---|---|---|
+| DSV2-04 | W | **C** | Both criteria pass in code and tests, and the one ground §50.4 left is closed. Observed and predicted render distinctly (`travel-buddy-standalone/src/components/discovery/DiscoveryCandidateChips.tsx:88#candidate-truth-${presentation.kind}`, seven classes tested). An expired claim becomes explicitly stale at the device clock (`travel-buddy-standalone/src/features/discovery/candidateProjection.ts:299#if (nowMs >= expiresAtMs) return { claims, stale: true, expiresAtMs: null };`), and the validity it expires on now travels through the API (`artifacts/api-server/src/lib/discoveryCandidate.ts:430#whyNowValidForMs: whyNowValidForMsOf(row.id, ctx, nowMs)`, W1–W6), so the client's "current" branch is reachable rather than vacuous. **Production evidence owed:** a device showing a live why-now go stale at its horizon, which needs 2850 and 2361 on and a build carrying §50. **What turns it back:** a candidate whose validity is not anchored to its own serve, or a client that shows a claim with no validity as current. |
+| DV-46 | W | **C** | §48 left this `W` on ONE named dependency: *"the client does not echo the id"*. It does at the merged tree: the outcome body carries `recommendation_id` when the served item has one of the 22-character shape (`travel-buddy-standalone/src/hooks/useRankOutcome.ts:118#if (rid) body.recommendation_id = rid;`; `useRankOutcome.recommendationId.component.test.ts`, 14 tests, sent when present, omitted when absent or malformed), the server accepts it under the same `^[A-Za-z0-9_-]{22}$` shape and binds it to (signed-in caller, id) (`artifacts/api-server/src/routes/rankEvents.ts:228#const binding = claimedId ? bindOutcomeToExposure(`), and §48's E2E O1–O6 prove served → response → outcome → the SAME `rank_events` row, another viewer's id refused. §50's *"the server strips the key"* described P4's base, not this tree (§50.9). `04` §10.6's propagation test now covers every hop on this branch; no single test spans the two packages, and the two shapes are held equal by the regex each side declares. **Production evidence owed:** §48.8's DV-46 query returning bound outcomes, which needs a build carrying §50 and a deploy. **What turns it back:** the client and server shapes diverging, or an outcome credited to an id its caller was not served. |
+
+**Headline, restated from the rows:**
+
+| bucket | count |
+|---|---|
+| BUILT-AND-CORRECT | **90** |
+| BUILT-BUT-WRONG | **76** |
+| NOT-BUILT | **19** |
+| CANNOT-VERIFY | **3** |
+
+CONSTRUCTED 166 / 188 = **88.3 %**; CORRECT 90 / 188 = **47.9 %**. The four buckets sum to 188. The eight Discovery moves since §43.5 are `B01`, `DC-25`, `DV-37`, `DV-38`, `DV-39`, `DV-45`, `DSV2-04` and `DV-46`, all implementation verdicts on this branch with production evidence owed for each.
+
 ## Cited, not graded (check:census-scope-coverage)
 
 - NOT-GRADED: artifacts/api-server/src/compass/CompassExplanationEngine.ts — §13.7 item 3 names Compass's HMAC recommendation-token signer as a refactor this lane declined to make in another lane's file. Discovery's recommendation id is minted by lib/discoveryRecommendationId.ts, and no Discovery verdict rests on the signer.

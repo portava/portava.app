@@ -3799,6 +3799,8 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/test/discoveryServeExposureCursor.test.ts",
     "artifacts/api-server/src/test/db/discoveryTelemetryConstraints.db.test.ts",
     "artifacts/api-server/src/test/db/discoveryTelemetryIdempotency.db.test.ts",
+    // WIDENED 2026-09-27 by census-discovery §50.10 (integrator): DSV2-04 moves W -> C on the server leg of why-now validity, and this suite is its evidence.
+    "artifacts/api-server/src/test/discoveryCandidateWhyNowValidity.test.ts",
     "travel-buddy-standalone/src/hooks/useRankOutcome.ts",
     "travel-buddy-standalone/src/components/discovery/PlaceCard.tsx",
     // WIDENED 2026-09-27 by census-discovery §46 (search safety, lane P1): B01 moves W -> C on
