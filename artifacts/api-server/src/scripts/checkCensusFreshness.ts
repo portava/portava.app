@@ -2003,6 +2003,10 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "db/rollback/2026-09-27-3359-passport-postcard-cover-nullable-rollback.sql",
     // WIDENED 2026-09-27 by census-media §40.12–§40.13 (lane R, round 2): the inset hook the Gems and Watch rails and the Gems bottom content now take their tab-bar and FAB clearance from; a change to useLayoverAwareBottomInset can move them under the tab button again.
     "travel-buddy-standalone/src/hooks/useBottomInset.ts",
+    // WIDENED 2026-09-27 by census-media §44 (lane G1): migration 3362 (the client roles' column grants on posts), its rollback, and the database suite that proves both, which §44 cites as the fix for §42.6 item 5.
+    "artifacts/api-server/src/migrations/3362_posts_client_column_grants.sql",
+    "db/rollback/2026-09-27-3362-posts-client-column-grants-rollback.sql",
+    "artifacts/api-server/src/test/db/postsClientColumnGrants.db.test.ts",
   ],
   // census-telegraph.md — declared 2026-09-11 on the same basis as Media above:
   // 451 requirements out of CANNOT BE CHECKED, a clock started rather than a
