@@ -4968,7 +4968,7 @@ not counted as having been shown. Both the gate and the response read the snapsh
 ### 37.5 What `A14` still needs, and none of it is more code here
 
 1. **A routed travel-time provider.** One line at `LAYOVER_TRAVEL_TIME_PROVIDER` and **zero**
-   lines in Discovery; `travelSource` already reports `"routed_port"` the moment it exists.
+   lines in Discovery; `travelSource` already reports `"routed_port"` the moment it exists. **Corrected 2026-09-27; true when written on 2026-09-15:** the one line has since been written, with zero lines in Discovery. 74890f906 (2026-09-22) set it to the corridor adapter (`artifacts/api-server/src/services/airport/LayoverTravelTime.ts:83#export const LAYOVER_TRAVEL_TIME_PROVIDER`), and a port answer still becomes `"routed_port"` at `artifacts/api-server/src/lib/discoveryLayoverTiming.ts:377-379#source: portMinutes !== null`. What item 1 now needs is not code: the adapter refuses until `LAYOVER_ROUTED_CORRIDOR_ENABLED` is affirmative and `GOOGLE_MAPS_API_KEY` is present, which is an owner's spend decision.
 2. **A dwell source with real provenance** — a duration column, or a derived figure carrying
    a source class and confidence in the `TravelAssumption` pattern. **Not a category
    average.** There is none today and none was invented.
@@ -5291,7 +5291,7 @@ that port's provider constant is **unchanged and still the no-routed-provider on
 prerequisite was built, not the routing provider, and no straight-line stand-in was
 introduced. **`A14`'s measurement gap is therefore narrowed but not closed**: the
 seam is now ready to carry a routed provenance, and there is still no routed
-provider and no dwell source.
+provider and no dwell source. **Corrected 2026-09-27; true when written on 2026-09-15:** the constant is no longer the no-routed-provider one. Since 74890f906 (2026-09-22) it is the corridor adapter over a Google Routes corridor provider (a routing provider, not a straight-line stand-in), and it refuses until both of its switches are set, so every answer is still `NO_ROUTED_PROVIDER` wherever either is unset. The gap stays narrowed but not closed: a routed figure now waits on an owner's spend decision rather than on code, and there is still no dwell source.
 
 Recorded because it is the kind of thing that otherwise goes unnoticed: adding an
 unapplied migration that touches `layover_recommendations` made

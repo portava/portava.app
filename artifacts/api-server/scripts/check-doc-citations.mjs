@@ -383,7 +383,7 @@ const EXT_ALT = CITED_EXTS.join('|');
 // `src/services/messaging.ts` (767 lines) and was reported as out of range. The
 // citation was correct; the grammar was wrong. 62 lines across
 // docs/architecture/ carry a bracketed path.
-const SEG = String.raw`[\w.@+\[\]-]`;
+const SEG = String.raw`[\w.@+\[\]-]`; const GROUP = String.raw`\(${SEG}+\)`; const DIR = String.raw`(?:${SEG}+|${GROUP})`; // a DIRECTORY segment may be an Expo ROUTE GROUP, `(tabs)`: see ROUTE GROUPS at the end of this file
 const SPEC = String.raw`\d+(?:-\d+)?(?:,\d+(?:-\d+)?)*`;
 // An anchor is everything up to the closing backtick, quote or whitespace.
 // It is a LITERAL substring to find, not a pattern: `#` in an anchor would be
@@ -392,7 +392,7 @@ const ANCHOR = String.raw`(?:#([^\s\x60"'#]+))?`;
 
 // path/to/file.ts:12  |  file.ts:12-19  |  file.ts:277,375  |  file.ts:208-216#needle
 export const CITATION_RE = new RegExp(
-  String.raw`(^|[^\w./:@-])((?:${SEG}+\/)*${SEG}+\.(?:${EXT_ALT})):(${SPEC})${ANCHOR}`,
+  String.raw`(^|[^\w./:@-])((?:${DIR}\/)*${SEG}+\.(?:${EXT_ALT})):(${SPEC})${ANCHOR}`,
   'g',
 );
 // a bare `:408` in backticks continues the most recently named file ON THE SAME LINE
@@ -403,12 +403,12 @@ export const INHERITED_RE = new RegExp(String.raw`\x60:(${SPEC})${ANCHOR}\x60`, 
 //     `routes/discovery.ts`: Cache A is checked at `:1786`
 // resolves `:1786` against whatever file was cited last, which is a guess.
 export const BARE_PATH_RE = new RegExp(
-  String.raw`\x60((?:\.{1,2}\/)*(?:${SEG}+\/)*${SEG}+\.(?:${EXT_ALT}))\x60`,
+  String.raw`\x60((?:\.{1,2}\/)*(?:${DIR}\/)*${SEG}+\.(?:${EXT_ALT}))\x60`,
   'g',
 );
 
 const FULL_ANCHOR_RE = new RegExp(
-  String.raw`\x60((?:${SEG}+\/)*${SEG}+\.(?:${EXT_ALT})):(${SPEC})#([^\x60]+)\x60`,
+  String.raw`\x60((?:${DIR}\/)*${SEG}+\.(?:${EXT_ALT})):(${SPEC})#([^\x60]+)\x60`,
   'g',
 );
 
@@ -960,3 +960,32 @@ function main() {
 
 // `node scripts/check-doc-citations.mjs` runs; `import(...)` from the test does not.
 if (process.argv[1] && path.resolve(process.argv[1]) === SCRIPT) main();
+
+// ---------------------------------------------------------------------------
+// ROUTE GROUPS — why DIR exists, appended 2026-09-27 (census-media §38.7)
+// ---------------------------------------------------------------------------
+// The client is an Expo Router app. It names route FILES `[id].tsx` (which is
+// why SEG carries square brackets) and it groups route DIRECTORIES in
+// parentheses: `app/(tabs)/ai.tsx`, `app/(auth)/onboarding.tsx`,
+// `app/(rent-a-buddy)/checkout.tsx`. SEG had no parenthesis, so until
+// 2026-09-27 a path through a group matched NOTHING: `app/(tabs)/ai.tsx:399` was
+// not counted, not checked and not reported — by this script, and by
+// check:citation-targets and check:citation-symbols, which import this grammar.
+// census-media §38.4 item 1 found it by moving three anchors into
+// `travel-buddy-standalone/app/(tabs)/ai.tsx` one line and watching all three
+// guards stay green.
+//
+// Measured when it was closed: 44 direct citations in 11 covered documents,
+// 20 of them anchored, plus 9 bare `:NNN` continuations on the same lines that
+// had been orphans (the orphan count fell from 1604 to 1595). Every one
+// resolved and every anchor held; the only failures the change produced were
+// this file's OWN line numbers, cited by two censuses, which is why the fix
+// above is written line-neutrally and this note is at the end.
+//
+// A group is admitted ONLY as a WHOLE directory segment followed by `/`
+// (GROUP), never as a character of SEG. A bare `(` in SEG would let prose such
+// as `(routes/x.ts:12)`, or a markdown link `[t](scripts/run.ts:12)`, swallow
+// the opening parenthesis into the path, and every such citation would then
+// name a file that does not exist. src/test/docCitations.test.ts pins both
+// halves: the group paths are read, and the parenthesis around an ordinary
+// path is not.
