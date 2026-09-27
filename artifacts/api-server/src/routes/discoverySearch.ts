@@ -68,7 +68,7 @@ import {
 } from "./discoverySearchHelpers.js";
 import { readTripWindows, fitInstantToWindows } from "../domain/trips/services/TripFreedomConsumers.js";
 import {
-  suggestCanonicalLocations,
+  // suggestCanonicalLocations — reached through lib/discoverySearchCanonical now (B01; imported at the tail)
   normalizeLocationName,
   type CanonicalRow,
 } from "../lib/canonicalLocations";
@@ -2059,10 +2059,10 @@ async function attachCentroids(
   sc: any, results: SearchResult[], kinds: readonly string[],
 ): Promise<void> {
   if (results.length === 0) return;
-  const centroids = await canonicalCentroids(sc, results.map((r) => r.title), kinds);
+  const centroids = await withStoredFoldCentroids(sc, results.map((r) => r.title), kinds, await canonicalCentroids(sc, results.map((r) => r.title), kinds));
   if (centroids.size === 0) return;
   for (const r of results) {
-    const hit = centroids.get(normalizeLocationName(r.title));
+    const hit = centroids.get(r.title);
     if (!hit) continue;
     r.metadata = { ...(r.metadata ?? {}), lat: hit.lat, lng: hit.lng, canonicalId: hit.id };
   }
@@ -2697,9 +2697,9 @@ router.get("/discovery/search", async (req, res) => {
     // Stage 0b — serve point 8. Search ranks nothing and logs nothing today; a
     // grep of this file for rankCandidates / rankItemsForDiscovery /
     // drsRankItems / logImpression returns nothing at all.
-    const logSearchServe = (results: SearchResult[]) => {
+    const exposure = mintServeExposure(user.id), logSearchServe = (results: SearchResult[]) => {
       logServeUnlessRefused(res, sc, {
-        userId: user.id,
+        userId: user.id, sessionId: exposure.sessionId, servedAt: exposure.servedAt,
         servePoint: DiscoveryServePoint.SEARCH,
         route: "GET /discovery/search",
         items: results.map((r) => ({ id: r.id, kind: searchTypeToItemKind(r.type) })),
@@ -2709,8 +2709,8 @@ router.get("/discovery/search", async (req, res) => {
 
     if (type === "all") {
       const { results, hasMore, nextCursor, unreadableSources } =
-        await searchAll(sc, effectiveQ, user.id, blockedSet, ageRestrictedSet, offset, limit, ctx);
-      const body = { results, nextCursor, hasMore, query: effectiveQ, type, timeLabel: ctx.timeLabel };
+        await protectSearchPage(sc, await searchAll(sc, effectiveQ, user.id, blockedSet, ageRestrictedSet, offset, limit, ctx));
+      const body = { results: stampServedRecommendations(results, exposure), nextCursor, hasMore, query: effectiveQ, type, timeLabel: ctx.timeLabel };
       if (unreadableSources.length > 0) {
         // "partial" as long as ANY source answered, even when this page happens
         // to be empty: the buckets that were read are a real result, and their
@@ -2739,9 +2739,9 @@ router.get("/discovery/search", async (req, res) => {
       const { results: raw, degradedSources } =
         await dispatchSearchWithCoverage(sc, effectiveQ, user.id, blockedSet, ageRestrictedSet, type, offset, fetchLimit, ctx);
       const hasMore = raw.length > limit;
-      const results = raw.slice(0, limit);
+      const results = await protectSearchResults(sc, raw.slice(0, limit));
       const nextCursor = hasMore ? encodeCursor(offset + limit) : null;
-      const body = { results, nextCursor, hasMore, query: effectiveQ, type, timeLabel: ctx.timeLabel };
+      const body = { results: stampServedRecommendations(results, exposure), nextCursor, hasMore, query: effectiveQ, type, timeLabel: ctx.timeLabel };
       if (degradedSources.length > 0) {
         // INTRA-TYPE PARTIAL. The `type=all` branch above has carried this since
         // 2026-09-14 for a whole bucket that failed; this is the same statement
@@ -2990,7 +2990,7 @@ router.get("/discovery/suggest", async (req, res) => {
       )),
       isHandleQuery
         ? Promise.resolve([] as CanonicalRow[])
-        : suggestCanonicalLocations(sc, q, 4),
+        : readCanonicalCitySuggestions(sc, q, 4),
     ]);
 
     // Cross-group dedupe by entity id: a profile must not appear in both
@@ -3011,9 +3011,9 @@ router.get("/discovery/suggest", async (req, res) => {
       if (items.length > 0) groups.push({ type: p.type, label: p.label, items });
     });
 
-    const servedGroups = orderSuggestGroups(groups, q).slice(0, MAX_SUGGEST_GROUPS);
+    const servedGroups = orderSuggestGroups(await protectSuggestGroups(sc, groups), q).slice(0, MAX_SUGGEST_GROUPS);
     const unreadableTypes = unreadableAt.filter((t): t is string => t !== null);
-    const body = { query: q, groups: servedGroups };
+    const exposure = mintServeExposure(user.id), body = { query: q, groups: stampSuggestGroupsServed(servedGroups, exposure) };
     if (unreadableTypes.length > 0) {
       // "partial" while ANY type answered: those groups are real, and
       // `useSearchSuggestions` renders and caches a partial for exactly that
@@ -3025,16 +3025,16 @@ router.get("/discovery/suggest", async (req, res) => {
         discoveryRefusal(
           "transient_db", "suggest_sources_unreadable", "GET /discovery/suggest",
           unreadableTypes.length === plan.length ? "nothing" : "partial",
-          unreadableTypes,
+          [...unreadableTypes, ...canonicalFoldFailures(canonicalRows)],
         ),
       );
-    } else {
+    } else if (!sendCanonicalFoldDegraded(res, body, canonicalRows)) {
       res.status(200).json(body);
     }
     // Stage 0b — serve point 9. Flattened in the order the groups are served,
     // so `position` reflects what the user actually saw top to bottom.
     logServeUnlessRefused(res, sc, {
-      userId: user.id,
+      userId: user.id, sessionId: exposure.sessionId, servedAt: exposure.servedAt,
       servePoint: DiscoveryServePoint.SUGGEST,
       route: "GET /discovery/suggest",
       items: servedGroups.flatMap((g) =>
@@ -3140,3 +3140,30 @@ export class DiscoverySearchReadError extends Error {
     this.relation = relation;
   }
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// census-discovery §46 — B01, B04 and DV-40's serve points 8 and 9.
+//
+// IMPORTED HERE, AT THE END OF THE FILE, for the reason the block above gives:
+// this file carries anchored citations from several censuses, and an import
+// added at the top would move every one of them. ES import declarations are
+// hoisted, so where they are written is a reading matter and nothing else.
+// Each call site above is an in-place edit of an existing line.
+//
+//   B01 — the stored diacritic fold (migration 2220's `search_key`) is what
+//         the suggest Cities group and the centroid lookup match on now, with a
+//         named, partial degrade where the column is absent.
+//   B04 — §24's protected-place gate runs over every served position, behind
+//         `discovery_search_protected_zones_enabled` (3366, seeded FALSE).
+//   DV-40 — one exposure per request; every served item carries the
+//         `recommendationId` the serve log writes for it.
+// ─────────────────────────────────────────────────────────────────────────────
+import {
+  canonicalFoldFailures,
+  readCanonicalCitySuggestions,
+  sendCanonicalFoldDegraded,
+  withStoredFoldCentroids,
+} from "../lib/discoverySearchCanonical.js";
+import { protectSearchPage, protectSearchResults, protectSuggestGroups } from "../lib/discoverySearchProtection.js";
+import { mintServeExposure, stampServedRecommendations } from "../lib/discoveryRecommendationRecord.js";
+import { stampSuggestGroupsServed } from "../lib/discoverySearchExposure.js";

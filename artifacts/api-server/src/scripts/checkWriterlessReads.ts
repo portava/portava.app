@@ -212,7 +212,7 @@ export const KNOWN_WRITERLESS_READS: Record<
       "as venue reference data, not personal location. Populated out of band.",
   },
   canonical_locations: {
-    readers: 5,
+    readers: 8,
     classification: "external-seed",
     note:
       "Canonical city/region reference rows, also in REFERENCE_LOCATION_TABLES. Populated out " +
@@ -233,7 +233,7 @@ export const KNOWN_WRITERLESS_READS: Record<
       "and nothing else, and it fails CLOSED: a failed read suppresses the binding entirely " +
       "rather than emitting one with a null country, because §17 prefills dependent fields " +
       "from that value and an outage rendered as `country: null` would write 'this venue is " +
-      "in no country' into a field the user can see.",
+      "in no country' into a field the user can see. EIGHT since 2026-09-27 (census-discovery §46, B01): lib/discoverySearchCanonical.ts adds THREE literal SELECT sites — the suggest Cities reader's prefix and contains reads over the stored fold `search_key`, and the centroid widening's one batched `.in('search_key', …)` — each a read of reference rows and nothing else; the suggest reads refuse on a failed read (D11) and the centroid read fails soft to an unplaced row.",
   },
 };
 

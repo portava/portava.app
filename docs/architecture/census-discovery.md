@@ -6220,6 +6220,329 @@ Totals unchanged. A03 stays `W` on the flags, not on absence — and the
 distinction matters, because it is the difference between a row waiting for a
 build and a row waiting for a deployment.
 
+## §46 — search safety (lane P1): `B01` closes on the stored fold, `B04` is built behind 3366 and held, `B02` is pinned for D5, and the negative paths the C rows never had
+
+*Written 2026-09-27 by the Discovery search-safety lane, on `disc-p1-search` from
+`709b7b800`. **One verdict moves, `B01` `W` → `C`.** `head_commit` is NOT
+re-declared, and the census headline is NOT restated here — the integrator
+restates it. Every OLD verdict below was read from `CENSUS_INTEGRITY_DUMP=ALL`
+at `709b7b800`, not from prose.*
+
+### 46.1 Production facts, integrator-read 2026-09-27 — and the sentences in this census they make false
+
+The integrator read production (`ajrurzioarfkagpuxfnb`) read-only on 2026-09-27.
+This lane made no production connection. The facts, as the integrator gave them:
+
+| object | fact on 2026-09-27 |
+|---|---|
+| migration 2220 (`search_key`) | APPLIED. Ledger row `applied_by = 'manual'`, 2026-09-21 10:52 UTC. `canonical_locations.search_key` present; 31 of 31 rows populated. |
+| migration 2217 (`protected_zones`) | APPLIED. Ledger row `applied_by = 'manual'`, 2026-09-21 11:09 UTC. `protected_zones` exists and holds **0 rows**. |
+| Discovery `rank_events` | 13 rows, all serve point 9 (`GET /discovery/suggest`), one viewer, 2026-08-15; **none** carries a `recommendation_id`. |
+
+**Census sentences these facts make FALSE**, quoted so a reader who stops early
+is not misled. This corpus is append-only, so they are corrected here and not
+edited in place:
+
+- §2b `B01`: *"Re-verified 2026-09-07: `canonical_locations.search_key` is absent from production"* — false since 2026-09-21.
+- §2b `B04`: *"`protected_zones` is absent from production (§5)"* — false since 2026-09-21.
+- §6 D7: *"Apply 2220 to production (`search_key`), or accept the degraded fold"* — done; D7 is discharged.
+- §9.4 `B01`, §10.5 (*"`protected_zones` is absent from production. Wiring Discovery straight into it with no flag would turn every production search into an empty result on the first failed read"*) and §43.7 (the same sentence) — the table exists; and §46.4 shows the premise was wrong twice, because the adapter built here never empties a search on an unreadable policy at all.
+- `DV-70`'s evidence (*"`canonical_locations.search_key` (2220) absent from production … `protected_zones` absent"*) — both false. `DV-70` is not re-graded here: its terminal condition is "zero unexplained drift" over the whole ledger, not these two objects.
+- Outside this census and not edited by this lane: `docs/ops/production-ledger-verification.md` §4 lists 2217 and 2220 among the "nine migrations that demonstrably never ran". That was true when it was measured (2026-09-15) and has been false since 2026-09-21; census-input-intelligence §14.4 and §26 recorded the 2220 apply and this census never caught up.
+
+### 46.2 Row moves
+
+| id | was | now | evidence |
+|---|---|---|---|
+| B01 | W | **C** | **Built, tested on PostgreSQL 16, and deployed.** Discovery's two readers of the canonical registry now match the STORED fold rather than the legacy key. The suggest Cities group reads `artifacts/api-server/src/lib/discoverySearchCanonical.ts:128#export async function readCanonicalCitySuggestions(` at `artifacts/api-server/src/routes/discoverySearch.ts:2993#: readCanonicalCitySuggestions(sc, q, 4),` — before this it read `normalized_name`, where "Łódź" is stored as `odz` and a typed "lodz" could never reach it. The map centroid of a city or country result is widened by `artifacts/api-server/src/lib/discoverySearchCanonical.ts:200#export async function withStoredFoldCentroids(` at `artifacts/api-server/src/routes/discoverySearch.ts:2062#const centroids = await withStoredFoldCentroids(`, legacy placements first and unchanged. The query side folds with `searchKey()`, the TypeScript mirror of the SQL in `artifacts/api-server/src/migrations/2220_canonical_locations_search_key.sql`; the display spelling is never rewritten. **On the harness with 2220 replayed** (`artifacts/api-server/src/test/db/discoverySearchCanonicalFold.db.test.ts`, 11 tests): "zurich" → Zürich, "sao paulo" → São Paulo, "lodz" → Łódź, "da nang" → Thành phố Đà Nẵng, and a non-matching control reaches nothing; the legacy reader over the same rows cannot reach Łódź (K3, the control that makes K2 mean something). **Production (§46.1):** the column is present and populated for 31 of 31 rows. The degrade for an ABSENT column is defence in depth, not production's state: §46.3. |
+| B04 | W | W | **Construction complete; HELD on an owner flip.** The search adapter over `artifacts/api-server/src/lib/protectedLocations.ts` is `artifacts/api-server/src/lib/discoverySearchProtection.ts:156#export function applySearchProtection<T extends ProtectableSearchRow>(` — every served position becomes a one-object probe handed to the contract's own `applyProtection`, with the zones read by the one reader of `protected_zones`, `artifacts/api-server/src/lib/protectedZoneStore.ts`. It is the last gate before serialization on all three serve paths: `artifacts/api-server/src/routes/discoverySearch.ts:2712#await protectSearchPage(sc, await searchAll(` (type=all), `artifacts/api-server/src/routes/discoverySearch.ts:2742#const results = await protectSearchResults(sc, raw.slice(0, limit));` (one type) and `artifacts/api-server/src/routes/discoverySearch.ts:3014#const servedGroups = orderSuggestGroups(await protectSuggestGroups(sc, groups), q)` (suggest). It runs behind `artifacts/api-server/src/lib/discoverySearchProtection.ts:74#export const DISCOVERY_SEARCH_PROTECTION_FLAG` — migration `artifacts/api-server/src/migrations/3366_discovery_search_protected_zones_flag.sql`, **seeded FALSE**, applied to no database by this lane. **W and not C** on this census's own rule (§43.7: *"a flag seeded FALSE lands the row in §18.3's bucket (b) — still W"*): on every deployment the pass does not run. The three flag-ON cases and every partial failure are pinned by `artifacts/api-server/src/test/discoverySearchProtection.test.ts` (23) and `artifacts/api-server/src/test/db/discoverySearchProtection.db.test.ts` (5, against the real 2217 table). What turns it `C`: the owner turns the flag on in production, or rules the flag unnecessary (§46.4) and it is retired. |
+| B02 | W | W | **Pinned, not changed — owner decision D5 stands.** `artifacts/api-server/src/routes/discoverySearch.ts:154#export function sanitizeQuery` strips only `(`, `)` and `,`; an emoji reaches the `ilike` pattern (`artifacts/api-server/src/test/discoverySearchQueryPolicy.test.ts`, 15 tests: "🔥 bar" does not find "Sky Bar" and does find a row whose name carries the emoji; "🔥" alone is searched, not refused). The decision this row waits for, with the consequence of each option, is §46.5. |
+
+### 46.3 `B01` — what was built, and the degrade when `search_key` is absent
+
+**Why it was `W` and why that was only half deployment.** The row said the code
+was correct and the column missing. Both halves were stale: the column has been
+in production since 2026-09-21, and Discovery's OWN readers never read it — the
+input gateway did (`suggestCanonicalLocationsFolded`), Discovery's suggest route
+and centroid lookup did not. So a production with 2220 applied still answered
+"lodz" with nothing on `GET /discovery/suggest`. That is the half built here.
+
+**The degrade, stated so it can be argued with.** Production has the column;
+the degrade exists for a database that does not — a restored backup, a fresh
+CI project, a harness built short of 2220:
+
+| state | what `GET /discovery/suggest` answers |
+|---|---|
+| `search_key` present (production) | the stored-fold match; no refusal |
+| `search_key` ABSENT (42703) | the legacy `normalized_name` match — every decomposable accent still matches ("Zürich", "São Paulo"), only stroke letters miss — **and** `refusal: { class: "feature_disabled", code: "canonical_fold_unavailable", coverage: "partial", failedSources: ["canonical_locations.search_key"] }` (`artifacts/api-server/src/lib/discoverySearchCanonical.ts:110#export function sendCanonicalFoldDegraded(`). Never a 500, and never an empty group that passes for "no such city". |
+| `canonical_locations` ABSENT (42P01) | `[]` with no refusal — the legacy reader's existing "no registry" contract, unchanged |
+| any other read error, or a rejected read | `CanonicalReadUnavailableError`, which the route already turns into `suggest_failed` (owner ruling D11, unchanged) |
+| the degrade AND a type unreadable | one `suggest_sources_unreadable` partial whose `failedSources` names both (`artifacts/api-server/src/routes/discoverySearch.ts:3028#[...unreadableTypes, ...canonicalFoldFailures(canonicalRows)],`) |
+
+`feature_disabled`, not `transient_db`, because nothing is degraded and nothing
+recovers by retrying: the database does not carry the column. That is the class
+this repository already gives an absent schema. The classifier is not trusted to
+a fixture: K4 drops the real column on PostgreSQL 16, captures PostgreSQL's own
+`42703`, shows `isMissingColumnError` recognises it, then restores the column by
+re-running 2220 (idempotent).
+
+**The centroid lookup is enrichment, never a gate**: an absent or unreadable fold
+leaves the extra names unplaced (a null position), which is what they were.
+
+**Reported, not changed — the gateway's reader has the masquerade this refuses.**
+`suggestCanonicalLocationsFolded` in `artifacts/api-server/src/lib/canonicalLocations.ts`
+skips a failed `search_key` read without a word and answers a total failure with
+`[]`, and its caller in `artifacts/api-server/src/lib/inputAssistance/geoResolver.ts` adds `.catch(() => [])`.
+Where 2220 is absent, a gateway city lookup for "lodz" therefore reads exactly like
+"no such city". That file is shared and outside this lane; it is G57's gateway leg.
+
+**WHAT `B01` DOES NOT COVER, named so that it can be argued with.** `B01` is
+G57's STORED side, and 2220 defines that side as `canonical_locations` — its own
+header defers *"venue/place folding (places id-space is separate)"*. Free-text
+columns matched with a plain `ILIKE` are accent-SENSITIVE and are NOT graded by
+this row: `profiles.home_city` in `GET /discovery/search?type=cities` (a resident
+who typed "Zürich" is not found by "zurich" — the suggest route's Cities group is,
+through the registry), and the names of places, events, trips, circles and posts.
+No stored fold exists for any of them. If the integrator reads `B01`'s criterion
+as covering them, `B01` is `W` and a new row is owed; this lane's reading is the
+one 2220 and census-input-intelligence G57 both state.
+
+### 46.4 `B04` — the three cases, the partial failures, and whether the flag is still needed
+
+With the flag ON (tests run with the flag forced on; production's is FALSE):
+
+| the policy read | what is served |
+|---|---|
+| **read, no zones** (production: 2217 applied, 0 rows) | the SAME array — identity by reference (`artifacts/api-server/src/lib/discoverySearchProtection.ts:160#if (Array.isArray(zones) && zones.length === 0) {`). R2 compares the flag-ON and flag-OFF bodies of `type=places`, `type=all` and suggest byte for byte (modulo the per-request `recommendationId`), and asserts the ON path really read the table. |
+| **read, zones registered** | per positioned row, the contract's action: allow → the same object; coarsen → the position snapped to the zone's anchor by `coarsenForZone`, `coordsPrecision: "approximate"`; suppress → the row is not served. Z2 proves it over rows in the real table. |
+| **UNREADABLE** — table absent (42P01), a read error, a rejected read | every positioned row keeps its place in the list and loses its position (`artifacts/api-server/src/lib/discoverySearchProtection.ts:174#out.push(withPosition(row, null, null,`), with `coordsPrecision: "hidden"`. This is the store's rule 1 (*"an unreadable policy is not an absent policy"*) applied to the protected FIELD only: never an empty search, and never a 500. |
+
+**Partial failures, each pinned:**
+- A zone row whose geometry cannot be parsed: the contract answers `unknown` coverage for every position, so every POSITIONED row is suppressed and unpositioned rows (travelers, hashtags) survive (A5). This is the store's rule 2 honoured literally. It is stricter than the unreadable case on purpose — the Map makes the same trade (*"an over-suppressing one is a visible, recoverable outage"*) — and an owner who prefers "withhold positions" for this case too has a one-line choice; it is reported, not taken.
+- A position that is not a coordinate: suppressed when zones exist (the contract cannot place it), untouched when none do (nothing to be inside) (A6).
+- The flag unreadable: OFF, capability polarity, the same seeded state (R1); a client whose every call throws never throws into the response (R10).
+- RETRY: a failed policy read is never cached, so the next request re-reads (R8); a successful read is reused for the store's 30 s — the Map's contract, inherited, not retuned (R9).
+
+**Why counts are not on the wire.** The Map ships a counts-only report beside a
+viewport the client chose. A search is bounded by a QUERY, and "1 suppressed"
+under the query "shelter" confirms that a place by that name exists. The report is
+logged server-side only.
+
+**Is the flag still needed? — the answer this lane was asked for.** Not for
+safety. With production's 0 zones the pass is a byte-for-byte identity, and every
+failure branch only ever TIGHTENS (positions withheld; rows suppressed only inside
+a registered zone). The one user-visible behaviour the flag gates is "positions
+withheld while `protected_zones` cannot be read" — milder than what C03 already
+does unconditionally on a blocks outage (the whole search refused). So the rule
+could be unconditional. It is shipped behind a FALSE-seeded flag because that is
+the lane's instruction and this repository's rollout rule, and because the flip
+is the owner's: **recommendation — turn it on, or rule the flag unnecessary and
+retire it; either moves `B04` to `C`.** Until then the row is `W`.
+
+**Not covered by the adapter, stated:** a row with no wire position is passed
+through untouched — including an event whose venue this viewer may not see; its
+position is already withheld and the adapter is never handed one. The input
+gateway (`POST /input-assistance/suggest`) calls `dispatchSearch`, not these
+routes, and does not inherit the pass; `InputSuggestion` carries no coordinate
+(`B09`), so the gateway discloses no position, but a suppress-class place can
+still be suggested there BY NAME. That is census-input-intelligence G190's leg.
+
+### 46.5 `B02` — the decision D5 needs, with each option's consequence
+
+Measured, not assumed: `sanitizeQuery` strips only `(`, `)` and `,`; an emoji
+survives into `name.ilike.%🔥 bar%`; a single emoji is two UTF-16 units, so it
+passes the 2-character floor and is SEARCHED. The input gateway already strips
+emoji per field context (census-input-intelligence G62,
+`artifacts/api-server/src/lib/inputAssistance/queryNormalizer.ts`); Discovery's
+own routes do not use it, and Q6 pins that they do not start to without a ruling.
+
+| option | what a user sees |
+|---|---|
+| **(a) status quo** | "🔥 bar" finds only rows whose stored text literally contains "🔥 bar"; "Sky Bar" is not found. "🔥" finds rows that contain the emoji. No 400s. |
+| **(b) strip emoji from the search key** (the gateway's picker behaviour) | "🔥 bar" finds "Sky Bar" and every other bar. An emoji-ONLY query becomes empty after the strip and is refused — `400 invalid_payload` on `/discovery/search`, a `query_too_short` refusal on `/discovery/suggest` — where today it answers 200. Rows that carry an emoji in their name can no longer be found BY the emoji. |
+| **(c) strip for place / people / geo types, keep literal for content types** (posts, events, hashtags) | "🔥 bar" finds "Sky Bar" among places while a post that says "🔥 bar" is still found by the emoji; `type=all` mixes both rules in one answer. |
+| **(d) search both forms** (literal OR stripped) | the union of (a) and (b): "🔥 bar" finds both; every emoji query costs a second pattern per type. |
+
+The owner picks one; the tests in `artifacts/api-server/src/test/discoverySearchQueryPolicy.test.ts`
+then change as the visible diff of that decision.
+
+### 46.6 The C rows, verified — the negative paths they did not have
+
+C01–C18, C33, DSV2-05, B05–B09 and A12 were re-read at this tree and **all hold**;
+no C row was found defective, so none moves. The C rows over
+`artifacts/api-server/src/routes/discovery.ts` (C16–C18, C33, DSV2-05) were verified by running their
+suites and reading their cited lines — `artifacts/api-server/src/test/discoveryBlockedSubmitter.test.ts`,
+`artifacts/api-server/src/test/discoveryCacheBEligibility.test.ts` — and nothing was edited there.
+
+What the existing suites did NOT hold, and `artifacts/api-server/src/test/discoverySearchSafetyContracts.test.ts`
+(43 tests) now does, one owner per rule over one fixture world:
+
+- **Cross-viewer denial as a matrix**: events, trips, plans, gems, posts, circles — blocked in BOTH directions, suspended, deleted, age-restricted; travelers and buddies with opt-outs and the private-account locked preview; places and activities with the submitter blocked either way; cities and countries with every contributor rule; `type=all` and suggest as wholes.
+- **Revocation between two requests** (seven revocations × `type=all` and suggest, plus every type on its own, plus the VIEWER suspended mid-session → 403): nothing in the search path caches eligibility server-side, so a block, opt-out, suspension, deletion, age restriction or visibility change reaches the very next request.
+- **A cursor carries no eligibility**: page 2, fetched after the viewer blocks the next owner, does not serve that owner.
+- **A policy read that fails fails closed and says so**: blocks (resolved error and rejected read) and age restriction → `visibility_state_unreadable` on all three paths; the opt-out read → no traveler, and cities refuse; the owner-status read failing ON ITS OWN (the caller's ban check still passing) → every owner-gated row withheld; the RSVP read → a hidden venue stays hidden for an attendee; the follow read → a followed private account collapses to a locked preview.
+- **Retry**: blocks or age restriction unreadable, then healthy — the second request serves, and still applies the rule.
+- **What is never read** (C07, A12, B06, B09): no `profiles`, `trips` or `hidden_gems` read in a `type=all` or suggest names a private column; a trip card carries only `ownerId` and `status`; a gem serves its approximate pair at most and nothing when `protected`, and the exact pair never reaches the wire.
+- **C13 on both routes**: the 31st search and the 91st suggest in a minute are 429.
+
+**One finding, reported rather than changed, because it is not a C-row defect.**
+`searchTravelers`' opt-out read answers an error with a silent `[]`
+(`if (noDiscErr) return [];`). The DIRECTION is C02's and is right — no opted-out
+person is served — but the body is byte-identical to "no traveler matched", the
+D11 masquerade `searchCities` and `searchCountries` already refuse. It belongs to
+`DV-83`'s class, not to C02's criterion; changing it alters what the input
+gateway receives from `dispatchSearch`, so it is left for that row's owner.
+
+### 46.7 `DV-40` on serve points 8 and 9 — P3's contract, consumed
+
+`GET /discovery/search` and `GET /discovery/suggest` consume the
+served-recommendation contract `artifacts/api-server/src/lib/discoveryRecommendationRecord.ts`
+(lane P3, commit `ef7fa4435`, taken into this branch as that one file). One
+exposure per request — `artifacts/api-server/src/routes/discoverySearch.ts:2700#const exposure = mintServeExposure(user.id), logSearchServe` and
+`artifacts/api-server/src/routes/discoverySearch.ts:3016#const exposure = mintServeExposure(user.id), body =` — stamps every served item, and the same
+exposure's `sessionId` and `servedAt` are handed to `logServeUnlessRefused`, so the
+id on the wire is the id in `rank_events`. Suggest's groups are stamped at their
+FLATTENED positions (`artifacts/api-server/src/lib/discoverySearchExposure.ts:25#export function stampSuggestGroupsServed`), which is how the serve log numbers
+them. A refused search or suggest stays refused with no items and no row; a
+partial one stamps and logs what it served. Both routes require a signed-in
+caller, so an anonymous request is a 401 before any serve: no id is minted and
+no user-keyed row is written (the contract's anonymous-id half has no reachable
+site here). Pinned by `artifacts/api-server/src/test/discoverySearchExposure.test.ts` (11).
+**No verdict is moved here**: `DV-40` is graded by the telemetry lane.
+
+**A consequence other suites had to absorb.** A body now differs between two
+requests by its per-exposure ids, which is the contract working. Two suites that
+compared two requests' bodies were changed to compare them modulo
+`recommendationId` and nothing else — discoveryCountryRegistry.test.ts R10
+(one line, below its cited lines) and discoveryTripProjectionConsumer.test.ts
+(three comparisons and one helper). Both exercise this lane's route.
+
+### 46.8 Every new test was seen red (P24)
+
+**138 new tests** — safety 43, protection 23, fold 30, exposure 11, query 15,
+fold-db 11, protection-db 5 — and **73 mutations**, each applied to the tree,
+run against the suites it targets, watched red, restored, and the restore
+checked by sha256 (all 73 byte-identical; the nine touched files re-checked
+against a pre-campaign checksum list afterwards). A clean run of every suite
+then went green, and a run over every leaf test against the union of red sets
+found **no test that no mutation turned red** (138 of 138).
+
+**Two findings the mutations made, not the tests' authors:**
+- **M-S20 stayed GREEN on its first run.** The "never read" patterns were
+  word-bounded, so `lodging_name` added to the trips read passed `\blodging\b` —
+  `_` is a word character. The patterns are substring patterns now, and they
+  were re-run against the corrected test: all three red (M-S19, M-S20, M-S21).
+- **M-P18 left the harness without the 3366 seed row** (a rollback that deletes an
+  ON flag, then an `after` hook that could only `UPDATE`), so the next clean run
+  of the database suite failed two tests for a reason that was not in the code.
+  The hook now re-applies 3366, which is idempotent; M-P16 to M-P18 were re-run and the
+  harness was checked afterwards: seed row present, FALSE.
+
+`safety` = discoverySearchSafetyContracts, `prot` = discoverySearchProtection,
+`fold` = discoverySearchCanonicalFold, `exp` = discoverySearchExposure, `query` =
+discoverySearchQueryPolicy, `-db` = the database suite of the same name.
+
+| id | mutation | red | what went red |
+|---|---|---:|---|
+| M-S1 | owner-status read admits every owner (fetchActiveOwnerSet fails open on error) | 1 | safety "the owner-status read fails ON ITS OWN…" |
+| M-S2 | owner-status filter dropped (suspended/deleted owners admitted) | 15 | safety "events: blocked (both directions), sus…"; safety "trips: blocked (both directions), susp…"; safety "plans: blocked (both directions), susp…"; safety "hidden_gems: blocked (both directions)…"; +11 more |
+| M-S3 | events: private visibility no longer filtered | 3 | safety "events/trips/posts/circles: private vi…"; safety "search type=all: ALICE makes her event…"; safety "suggest: ALICE makes her event, trip a…" |
+| M-S4 | plans: any trip admitted, not only public or the viewer's own | 3 | safety "plans: a private trip's plan is denied…"; safety "search type=all: ALICE makes her event…"; safety "suggest: ALICE makes her event, trip a…" |
+| M-S5 | travelers: discovery opt-outs no longer filtered | 5 | safety "travelers and buddies: blocked (both),…"; safety "type=all: no denied owner's row reache…"; safety "/discovery/suggest: no denied owner's…"; safety "search type=all: ALICE opts out of pro…"; +1 more |
+| M-S6 | places: submitter block filter dropped | 6 | safety "places and activities: a submitter blo…"; safety "/discovery/suggest: no denied owner's…"; safety "search type=all: the viewer blocks ALI…"; safety "suggest: the viewer blocks ALICE…"; +2 more |
+| M-S7 | cities: private profiles contribute | 1 | safety "cities and countries: only an active,…" |
+| M-S8 | blocks one-directional: a user who blocked the viewer is not in the set | 16 | safety "events: blocked (both directions), sus…"; safety "trips: blocked (both directions), susp…"; safety "plans: blocked (both directions), susp…"; safety "hidden_gems: blocked (both directions)…"; +12 more |
+| M-S9 | blocks ignored entirely | 19 | safety "events: blocked (both directions), sus…"; safety "trips: blocked (both directions), susp…"; safety "plans: blocked (both directions), susp…"; safety "hidden_gems: blocked (both directions)…"; +15 more |
+| M-S10 | age-restricted set read as empty | 14 | safety "events: blocked (both directions), sus…"; safety "trips: blocked (both directions), susp…"; safety "plans: blocked (both directions), susp…"; safety "hidden_gems: blocked (both directions)…"; +10 more |
+| M-S11 | a suspended caller is admitted | 1 | safety "the VIEWER suspended between two reque…" |
+| M-S12 | a cursor carries the page-1 eligibility (no block re-read past page 1) | 1 | safety "page 2, requested after the viewer blo…" |
+| M-S13 | search: unknown block/age state no longer refused (silent empty) | 5 | safety "the blocks read resolves an error: sea…"; safety "the blocks read rejects: search (singl…"; safety "the age-restriction read resolves an e…"; safety "blocks unreadable, then healthy: the s…"; +1 more |
+| M-S14 | travelers: opt-out read error fails OPEN | 1 | safety "the discovery opt-out read errors: no…" |
+| M-S15 | events: an unreadable RSVP read treats everyone as going | 1 | safety "the RSVP read errors: a hidden venue s…" |
+| M-S16 | travelers: an unreadable follow read treats everyone as followed | 1 | safety "the follow read errors: a private acco…" |
+| M-S17 | a failed block read is remembered for the process (negative cache) | 7 | safety "the RSVP read errors: a hidden venue s…"; safety "the follow read errors: a private acco…"; safety "type=all and suggest: no profiles / tr…"; safety A12; +3 more |
+| M-S18 | a failed age-restriction read is remembered for the process (negative cache) | 7 | safety "the RSVP read errors: a hidden venue s…"; safety "the follow read errors: a private acco…"; safety "type=all and suggest: no profiles / tr…"; safety A12; +3 more |
+| M-S19 | travelers read a private column (email) | 1 | safety "type=all and suggest: no profiles / tr…" |
+| M-S20 | trips read a lodging column | 1 | safety "type=all and suggest: no profiles / tr…" |
+| M-S21 | gems read and serve the exact pair | 2 | safety "type=all and suggest: no profiles / tr…"; safety B06/B09 |
+| M-S22 | a protected gem is placed at its approximate pair | 1 | safety B06/B09 |
+| M-S23 | a trip card gains a lodging field | 1 | safety A12 |
+| M-S24 | suggest's rate limit is ten times looser | 1 | safety "search refuses the 31st request in a m…" |
+| M-P1 | zero zones is not short-circuited (not an identity by reference) | 3 | prot-db Z1; prot A1; prot A6 |
+| M-P2 | an unreadable policy serves positions (treated as no zones) | 6 | prot-db Z3; prot A2; prot R7; prot R8 |
+| M-P3 | an unreadable policy empties the search (rows dropped, not positions) | 5 | prot A2; prot R7; prot R8 |
+| M-P4 | suppression ignored (the row is served anyway) | 10 | prot-db Z2; prot A3; prot A5; prot A6; +6 more |
+| M-P5 | coarsening keeps the precise point | 3 | prot-db Z2; prot A4; prot R3 |
+| M-P6 | events probe as an ambient-presence kind | 1 | prot A0 |
+| M-P7 | the flag is ignored (the pass always runs) | 4 | prot R1; prot R10 |
+| M-P8 | an emptied suggest group is still served | 1 | prot R5 |
+| M-P9 | rows with no position are dropped | 3 | prot A2; prot A5; prot R6 |
+| M-P10 | an unreadable flag engages the pass | 4 | prot R1; prot R10 |
+| M-P11 | type=all is not protected | 2 | prot R2; prot R4 |
+| M-P12 | single-type search is not protected | 7 | prot R2; prot R3; prot R7; prot R8; +1 more |
+| M-P13 | suggest is not protected | 3 | prot R2; prot R4; prot R5 |
+| M-P14 | an unreadable policy read is remembered (negative cache) / an absent table reads as no zones | 4 | prot-db Z3; prot R7; prot R8 |
+| M-P15 | the store's cache TTL is zero (every request re-reads) | 1 | prot R9 |
+| M-P16 | the flag constant names another flag | 2 | prot-db Z0; prot-db Z4 |
+| M-P17 | the rollback leaves 3366's ledger row | 1 | prot-db Z4 |
+| M-P18 | the rollback deletes an ON flag | 1 | prot-db Z4 |
+| M-C1 | the suggest reader matches normalized_name, not the stored fold | 20 | fold-db K2; fold-db K4; fold F1; fold F2; +8 more |
+| M-C2 | city-class filter inverted | 21 | fold-db K2; fold F1; fold F2; fold F3; +3 more |
+| M-C3 | the degrade is not marked | 6 | fold-db K4; fold F6; fold F7; fold S3; +2 more |
+| M-C4 | a missing column is a refusal, not a degrade | 5 | fold F6; fold F7; fold S3; fold S4; +1 more |
+| M-C5 | a missing table is a failed read | 1 | fold F8 |
+| M-C6 | any other read error is swallowed as a no-match | 2 | fold F9; fold S6 |
+| M-C7 | a rejected read is swallowed as a no-match | 1 | fold F10 |
+| M-C8 | the fallback's own failure is swallowed | 1 | fold F11 |
+| M-C9 | no dedupe by fold | 3 | fold F1; fold F3; fold F5 |
+| M-C10 | a genuine no-match is marked degraded | 2 | fold F3; fold S4 |
+| M-C11 | the query side is not folded | 4 | fold F2; fold F4 |
+| M-C12 | centroids: the legacy placement is re-read (no legacy precedence) | 1 | fold C1 |
+| M-C13 | centroids: the fold lookup keys on normalized_name | 2 | fold C2; fold S7 |
+| M-C14 | centroids: an unreadable fold is an error, not an unplaced row | 2 | fold C3; fold S8 |
+| M-C15 | centroids: half a pin is placed | 1 | fold C4 |
+| M-C16 | suggest's type-refusal does not name the degraded fold | 1 | fold S5 |
+| M-C17 | the legacy normaliser folds stroke letters (the defect's control disappears) | 3 | fold-db K1; fold-db K3; fold-db K4 |
+| M-E1 | single-type search does not stamp | 3 | exp X1/X2; exp X7; exp "the serve log flag OFF: ids are still…" |
+| M-E2 | type=all does not stamp | 2 | exp X1/X2; exp X5 |
+| M-E3 | the search serve log mints its own session and clock | 3 | exp X1/X2; exp X5 |
+| M-E4 | suggest groups are each stamped from position 0 | 2 | exp X3; exp "stampSuggestGroupsServed — offsets run…" |
+| M-E5 | the suggest serve log mints its own session and clock | 1 | exp X3 |
+| M-E6 | a refused search is stamped into items | 1 | exp X4 |
+| M-E7 | a failed search is stamped into items | 1 | exp X4b |
+| M-E8 | a refused suggest is stamped into items | 1 | exp X4 |
+| M-E9 | an anonymous caller is served as a user | 1 | exp X6 |
+| M-E10 | every request shares one exposure | 1 | exp X7 |
+| M-Q1 | sanitizeQuery strips emoji | 8 | query ""🔥 bar" → "🔥 bar"…"; query ""🔥🔥" → "🔥🔥"…"; query ""bar 🍸🔥" → "bar 🍸🔥"…"; query ""👨‍👩‍👧 family" → "👨‍👩‍👧 family"…"; +4 more |
+| M-Q2 | sanitizeQuery strips all punctuation | 4 | query ""café-bar!" → "café-bar!"…"; query ""#rooftop" → "#rooftop"…"; query ""rock'n'roll" → "rock'n'roll"…"; query ""50% off" → "50% off"…" |
+| M-Q3 | sanitizeQuery neither collapses nor strips parens | 2 | query ""(a),b" → "a b"…"; query "" rock bar " → "rock bar"…" |
+| M-Q4 | the route adopts the gateway's emoji policy | 1 | query "routes/discoverySearch.ts does not imp…" |
+
+### 46.9 Files, scope, and what this section does NOT claim
+
+**Scope, WIDENED in `artifacts/api-server/src/scripts/checkCensusFreshness.ts`**, because `B01` and `B04` now rest
+on files this census did not watch: the three new libs, `artifacts/api-server/src/lib/protectedZoneStore.ts`,
+migrations 2217, 2220 and 3366, the 3366 rollback, the seven new suites and their
+two kits, and P3's contract.
+
+**Shared files this lane touched, each as narrowly as it could be:** the
+`canonical_locations` reader ratchet in `artifacts/api-server/src/scripts/checkWriterlessReads.ts`
+(5 → 8: the three literal SELECT sites in the fold reader, recorded with their
+reason in the entry's own note; `check:writerless-reads` is what caught them);
+the two test comparisons in §46.7; and the `test` script's file list.
+
+**Not claimed:** that the adapter protects any surface other than serve points 8
+and 9; that production's flag is anything but FALSE; that the harness proves
+anything about production's data (§46.1 is the integrator's read, not this lane's);
+that `B01` covers free-text matching (§46.3).
+
+### 46.10 WHAT WOULD TURN THIS RED
+
+- **`B01`**: a reader in `artifacts/api-server/src/routes/discoverySearch.ts` matching `canonical_locations` on `normalized_name` again; the degrade stripped of its marker (F6/F7/S3/S4/K4 go red); 2220 rolled back in production without the degrade — the refusal then says so on every suggest, which is the point of it.
+- **`B04`**: the flag turned ON while `protected_zones` is unreadable in production — positions vanish from search until the read heals, by design; a second reader of `protected_zones` appearing in Discovery instead of `protectedZoneStore`; counts added to the wire.
+- **`B02`**: any edit to `sanitizeQuery` or the adoption of the gateway's emoji policy without a D5 ruling (Q1–Q6 go red).
+- **The C rows**: an eligibility cache added to the search path that a revocation cannot reach — the revocation and cursor tests are written to catch exactly that.
+
 ## §47 — Ranking and cache correctness (lane P2): the serve paths mapped, cache B made revocable, and one row moves
 
 *Written 2026-09-27 by the Discovery ranking-and-cache lane on `disc-p2-ranking`, branched from `709b7b800`. Commits: `40249b0ba`, `cd51b04e6`, `5d7319644`, `9fdef8a56`, and the docs commit that adds this section. **`head_commit` is NOT re-declared.** `check:census-freshness` names two counted files this lane changed that the acknowledgement does not cover; §47.9 argues each one. The headline is not restated here; the integrator does that.*

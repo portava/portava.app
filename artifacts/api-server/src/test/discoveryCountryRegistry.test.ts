@@ -333,7 +333,8 @@ describe("GET /discovery/search?type=countries — a country exists without a re
       profile_privacy_settings: [{ user_id: ALICE, allow_profile_discovery: false }],
     });
     const optedOut = await countries("iceland");
-    assert.deepEqual(optedOut, empty,
+    // Compared modulo `recommendationId`: DV-40 mints one per EXPOSURE, so two requests never share one (census-discovery §46).
+    assert.deepEqual(optedOut.map(({ recommendationId: _r, ...r }: any) => r), empty.map(({ recommendationId: _r, ...r }: any) => r),
       "an opted-out resident neither adds to nor subtracts from a public ISO name");
   });
 
