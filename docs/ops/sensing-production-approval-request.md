@@ -129,7 +129,7 @@ request.
 
 ### H. Media — exact values
 
-Added 2026-09-26 for the media lanes on this branch (census-media §19–§30).
+Added 2026-09-26 for the media lanes on this branch (census-media §19–§32). H7 and H8 were added 2026-09-27.
 Production has only been read:
 - 2470's columns are present;
 - `media_canonical_enabled` reads FALSE (since 2026-09-25 15:39 UTC);
@@ -145,11 +145,13 @@ source for every step is census-media §20.5, §23.2, §23.8 and §30.9.
 | H1 | `media_canonical_enabled` (the canonical writer) | `true` | B1 (this branch deployed). An owner decision: it was turned off on production on 2026-09-25 | one upload writes one `media_assets` row (read-only count before and after) | set `false`; writes stop and the legacy stores stay authoritative |
 | H2 | Apply 3320 (canonical contract constraints) then 3321 (§36 moderation vocabulary) on production | — | H1 (3321 refuses production until the writer's schema holds, which §23.2 found it does) | each migration's own postconditions; `media_assets.moderation_status` holds only §36 values | each ships a rollback under `db/rollback/` |
 | H3 | Apply 3338, then `media_processing_worker_enabled` | `true` | H1 (assets must exist), B1 | the worker's pass logs `claimed`/`completed`; an owner's retry of a FAILED asset answers 202 and the asset reaches `ready` or `failed` | set `false`; the worker writes nothing on its next pass and the retry refuses without writing |
-| H4 | `media_canonical_read_enabled` | `true` | `lib/media/mediaCanonicalRead.ts` B1–B5: 2250's columns present (2470 on production); the writer seen landing a row (H1); a dimension sweep for the rows it creates (H3, plus census-media §32 when merged); coverage measured after a backfill; rollback by flag | a World projection serves a `media_assets` row; coverage figure recorded | set `false`; reads fall back to the legacy branches at once |
+| H4 | `media_canonical_read_enabled` | `true` | `lib/media/mediaCanonicalRead.ts` B1–B5: 2250's columns present (2470 on production); the writer seen landing a row (H1); a dimension sweep for the rows it creates (H3; census-media §32's sweep is merged and runs inside the same worker); coverage measured after a backfill; rollback by flag | a World projection serves a `media_assets` row; coverage figure recorded | set `false`; reads fall back to the legacy branches at once |
 | H5 | `MEDIA_WORLD_SHELL_ENABLED` | `true` | B1; an owner product decision (census-media F1) | the Media tab offers the World shell | set `false` |
 | H6 | The Media tab's default mode (`mediaStore.selectedMode`, `'watch'` today) | owner's choice | H5; an owner product decision (census-media F1/F2, §20.5, §23.8) | the tab opens on the chosen surface | revert the one line and deploy |
+| H7 | A grading ruling for MD403 (§46 "high contrast"): does it cover the four shared sheets Media opens? They are CommentsSheet, ShareSheet, GlobalPlacePicker and PlanPickerController, and the same question covers CreationAssist's "See all" sheet | yes / no | none. The case for "no" rests on spec text (§46, §40, §48, §15, §8) and is set out in census-media §31.13.6. Its weakest part is comments and shares, which §8 gives joint ownership | **no:** MD403 meets its RED WHEN. 562 of 562 asserted pairs pass, none are pinned, and the Grid viewer is measured, so the row can move to C and the headline is restated. **yes:** 19 pair groups fail, all from app-wide tokens (`faint` and `signal` on light grounds, onInk on `signal`, `mute` on `haze`). The fix is a design-system token change, not Media's, and MD403 stays W until it lands and is measured | reverse the ruling; the row's verdict follows it. The readings in §31.13.8 (the stamp burst, pressed states, and an icon beside its own label) can be overruled the same way |
+| H8 | The visible changes made to shipped Media surfaces for contrast | accept / revise | B1. They are listed in census-media §31.8 and §31.13.15: dark backings under the Watch and Gems columns; ink backings under the Grid viewer's columns, plus a spinner badge and a page-dot pill; the gems rail's 💬 / 🔖 emoji replaced by the Watch rail's MessageCircle / Bookmark icons; a dark StampButton tone on the viewer, the rail and the tile; a darker "Try again" fill; a tinted Media tab header; a darker image-fallback ground | review on a device | revert the lines named there and deploy. `mediaContrast.test.ts` then names each pair that fails again |
 
-None of H1–H6 is taken by the integration owner.
+None of H1–H8 is taken by the integration owner.
 
 ---
 

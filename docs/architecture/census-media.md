@@ -8767,3 +8767,91 @@ under its 96 % floor, and `check:census-scope-coverage` failed.
 So it is added to `NOT_GRADED`, under the rule written there for
 `securityCheckSuite.test.ts` and `uncheckedSupabaseReads.test.ts`: naming the
 thing that measured you should not cost coverage. The floor is not lowered.
+
+### 32.14 Integration: lane K's passes 3 and 4 merged, and a hole in the scope-coverage guard
+
+**Merged.** Lane K's passes 3 and 4 (§31.13) reached this branch as a
+fast-forward to `5bef85d79`. Lane K had merged this branch's head `56e936b1e`
+into its own branch first, so no conflict was left for integration. The
+integrator re-read the code diff:
+- Each shared component (StampButton, AppHeader, EmptyState, CachedImage,
+  CreationAssist, CorrectionBanner, EntitySuggestionRow) renders its
+  original tree whenever its new prop is absent.
+- The gems rail now uses the Watch rail's MessageCircle and Bookmark icons.
+- Each new backing states, in a comment, the alpha it was measured at.
+
+**The two items pass 3 left open are closed:**
+- The gems rail's emoji are replaced by icons the test can measure.
+- CreationAssist's two `faint` marks pass on the add-gem sheet, through an
+  optional prop that only that sheet passes.
+
+**MD403 stays W** on one question: does §46 cover the shared sheets Media
+opens? MD403's own earlier rows already treat this row's scope as the
+owner's call, so neither the lane nor the integrator ruled on it. It is H7
+in `docs/ops/sensing-production-approval-request.md`, and the lane's
+spec-line case for "no" is §31.13.6. The visible changes made for contrast
+are H8 in that document, for the owner to accept or revise.
+
+**The freshness ledger.** Two acknowledgements were written.
+- census-media: 11 files.
+- census-input-intelligence: 3 files, in `src/platform/input-assistance/`.
+  - None of that census's cited lines changed text.
+  - G182 still holds: the reason line is rendered.
+  - G329 still holds: it rests on the active row's caret glyph, which is
+    untouched.
+  - No verdict moves in either census.
+
+**A hole in `check:census-scope-coverage`, measured and not yet fixed.** Lane
+K reported that the guard's citation pattern skips anchors that contain
+spaces or quotes. The integrator read the pattern:
+
+```
+/`([A-Za-z0-9_./-]+\.(?:ts|tsx|sql|mjs|js|json|yml))(?::[0-9,\-#A-Za-z_]*)?`/g
+```
+
+The hole is wider than reported, in two ways:
+- **The anchor.** A citation counts only if everything after the colon is
+  digits, commas, dashes, `#`, letters or underscores. Any anchor that
+  contains `.`, `(`, `{`, a space or a quote is not counted as a citation of
+  its file at all, and most anchored citations in these censuses contain at
+  least one of those.
+- **The path.** It cannot contain `(` or `[`. So Expo route files such as
+  `app/(tabs)/media.tsx` and `app/media-viewer/[id].tsx` are never counted
+  as cited, however they are cited.
+
+**The measurement.** The pattern was widened temporarily in the working tree
+and then restored. The widened pattern accepts `()[]` in paths and any anchor
+up to the closing backtick. Under it, 12 of the 13 censuses fall below their
+floors:
+
+| Census | Reported now | With every citation counted | Floor |
+| --- | --- | --- | --- |
+| census-media | 248 / 258 = 96 % | 291 / 342 = 85 % | 96 % |
+| census-trips | 235 / 271 = 87 % | 278 / 367 = 76 % | 86 % |
+| census-passport | 113 / 116 = 97 % | 115 / 138 = 83 % | 97 % |
+| census-wall | 88 / 92 = 96 % | 92 / 108 = 85 % | 95 % |
+| census-compass | 124 / 127 = 98 % | 149 / 170 = 88 % | 96 % |
+| census-discovery | 133 / 136 = 98 % | 138 / 155 = 89 % | 96 % |
+| census-trust | 141 / 141 = 100 % | 160 / 179 = 89 % | 100 % |
+| census-layover | 162 / 166 = 98 % | 165 / 180 = 92 % | 97 % |
+| census-highlights-memories | 152 / 155 = 98 % | 163 / 174 = 94 % | 98 % |
+| census-telegraph | 265 / 302 = 88 % | 290 / 344 = 84 % | 87 % |
+| census-map | 109 / 111 = 98 % | 115 / 121 = 95 % | 96 % |
+| census-input-intelligence | 188 / 190 = 99 % | 198 / 206 = 96 % | 98 % |
+| census-sensing | 194 / 209 = 93 % | 238 / 258 = 92 % | 90 % |
+
+Only census-sensing stays at or above its floor. census-input-intelligence
+falls from 99 % to 96 %, under its 98 % floor.
+
+**What this means for this census.** census-media's reported coverage has
+been overstated. 51 files it cites are not in its `CENSUS_SCOPE`, so a change
+to any of them does not make this census stale. No verdict here rests on the
+guard, and the guard only measures whether edits are noticed. But "every
+cited file is watched" was never true to the extent reported.
+
+**The fix is in progress, not in this section.** It is a separate change:
+- widen the pattern, with a test seen red;
+- for each census, widen its scope to the files it grades;
+- give a written reason for each file it cites without grading it.
+
+**No floor is lowered.**
