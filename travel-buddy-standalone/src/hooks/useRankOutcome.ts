@@ -15,7 +15,7 @@
 import { useCallback, useRef } from 'react';
 import { freshToken } from '../services/apiToken.ts';
 import { invalidateDiscoveryCaches } from '../services/discoveryViewerScope.ts';
-
+import { newClientEventId } from '../services/discoveryDwell.ts';  // census-discovery §63 (DV-37): the outcome's idempotency key
 /**
  * Feed surfaces that write rank_events rows we can report outcomes against.
  *
@@ -104,23 +104,23 @@ export function servedRecommendationId(v: unknown): string | null {
   return typeof v === 'string' && RECOMMENDATION_ID_SHAPE.test(v) ? v : null;
 }
 
-/** The POST /rank-events/outcome body, with `recommendation_id` only when the served item carried one. */
+/** The POST /rank-events/outcome body: `recommendation_id` only when the served item carried one; `client_event_id` (§63, DV-37) when the caller named the action. */
 function outcomeBody(
   itemId: string,
   surface: Surface,
   outcome: Outcome | NegativeOutcome,
   sessionId?: string | null,
-  recommendationId?: string | null,
+  recommendationId?: string | null, clientEventId?: string | null,
 ): Record<string, string> {
   const body: Record<string, string> = { item_id: itemId, surface, outcome };
   if (sessionId) body.session_id = sessionId;
   const rid = servedRecommendationId(recommendationId);
   if (rid) body.recommendation_id = rid;
+  if (clientEventId) body.client_event_id = clientEventId;
   return body;
 }
-
 /**
- * Module-level fire-and-forget helper.  Can be called without a React context.
+ * Module-level fire-and-forget helper; each call is ONE action and names it with ONE fresh `client_event_id` (§63).  Can be called without a React context.
  * Does nothing (silently) when the API base URL is unset or the user is signed out.
  */
 export function fireRankOutcome(
@@ -136,7 +136,7 @@ export function fireRankOutcome(
     try {
       const token = await freshToken();
       if (!token) return;
-      const body = outcomeBody(itemId, surface, outcome, sessionId, recommendationId);
+      const body = outcomeBody(itemId, surface, outcome, sessionId, recommendationId, newClientEventId());
       fetch(`${base}/api/rank-events/outcome`, {
         method: 'POST',
         headers: {
@@ -174,7 +174,7 @@ export function useRankOutcome({
 }) {
   // Per-mount dedup set: once an outcome fires for (itemId, outcome) we skip retries.
   const sent = useRef(new Set<string>());
-
+  const dismissKeys = useRef(new Map<string, string>());  // §63 (DV-37): each "Not interested" key the server has not yet ACCEPTED — see pendingDismissKey
   // `recommendationId` is the served item's own exposure id (DV-46) — pass
   // `place.recommendationId` straight through; absent is fine and is omitted.
   const report = useCallback(
@@ -228,7 +228,7 @@ export function useRankOutcome({
       try {
         const token = await freshToken();
         if (!token) return false;
-        const body = outcomeBody(itemId, surface, 'dismiss' satisfies NegativeOutcome, sessionId, recommendationId);
+        const body = outcomeBody(itemId, surface, 'dismiss' satisfies NegativeOutcome, sessionId, recommendationId, pendingDismissKey(dismissKeys.current, surface, itemId));
         const res = await fetch(`${base}/api/rank-events/outcome`, {
           method: 'POST',
           headers: {
@@ -241,6 +241,7 @@ export function useRankOutcome({
         // so no device-cached Discovery page that still holds it may be painted
         // again (services/discoveryViewerScope.ts).
         if (res.ok) invalidateDiscoveryCaches();
+        if (res.ok) dismissKeys.current.delete(dismissKeySlot(surface, itemId));  // §63 — accepted (a `duplicate` included): the next "Not interested" is a new action with a new key
         return res.ok;
       } catch {
         return false;
@@ -250,4 +251,31 @@ export function useRankOutcome({
   );
 
   return { reportTap, reportSave, reportJoin, reportRsvp, reportTripAdd, reportDismiss };
+}
+
+/**
+ * census-discovery §63 (DV-37) — the idempotency key of ONE "Not interested".
+ *
+ * `POST /rank-events/outcome` answers a key it has already recorded with
+ * `200 { duplicate: true }` and moves nothing (the receipt, migration 3420). So
+ * the key must name the ACTION, not the request: the person's retry after a
+ * failed attempt re-sends the key the first attempt carried, and a first attempt
+ * that landed without its answer reaching the phone is answered `duplicate` —
+ * which is `res.ok`, so the card goes, once, and the dismissal counts once.
+ *
+ * Minted on the first attempt, kept until an attempt is ACCEPTED, then cleared,
+ * so the next "Not interested" on the same item is a new action with a new key.
+ * Slotted by surface as well as item: the server refuses a key reused for a
+ * different surface (409), and a different surface is a different action.
+ */
+function dismissKeySlot(surface: Surface, itemId: string): string {
+  return `${surface}\u0000${itemId}`;
+}
+function pendingDismissKey(keys: Map<string, string>, surface: Surface, itemId: string): string {
+  const slot = dismissKeySlot(surface, itemId);
+  const held = keys.get(slot);
+  if (held) return held;
+  const minted = newClientEventId();
+  keys.set(slot, minted);
+  return minted;
 }
