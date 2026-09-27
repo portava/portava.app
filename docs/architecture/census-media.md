@@ -10592,6 +10592,263 @@ The rest are the files §37.8.9 lists, plus those that arrived with this merge o
 
 Headline: not restated. No row moved.
 
+### 37.10 Follow-up 3 — §37.9.5's five findings: four fixed, one waits on an owner decision — 2026-09-27
+
+At the integrator's request, lane V merged `wave8-integration` (head `f33daa305`,
+which carries §37.9) into `lane-v-vendor` as a merge commit, then took §37.9.5's
+five findings in order.
+
+Every fix reuses the three pieces §37.9 introduced: `isCountedPostcardFile`,
+`syncPostcardAfterMediaChange` and `repointPassportCover`. No second count
+rule or cover rule exists. Edits are line-neutral or at a file's tail. No flag
+is enabled, and no database is touched. **No verdict moves** (§37.10.7).
+
+#### 37.10.1 Item 1 — the owner's delete moves a cover that sat on the removed file (fixed)
+
+This was live whatever 3356 says: an owner deleting their postcard's cover file
+left `passport_postcards.media_url` on a removed object.
+- The route's read now names the file's URL
+  (`artifacts/api-server/src/routes/postcards.ts:1171#processing_status, public_url') // census-media §37.10 item 1`).
+- After its unchanged recount, the route hands that URL to the one cover rule
+  (`artifacts/api-server/src/routes/postcards.ts:1227#await repointPassportCover(sc, postId, counts, req,`).
+- The cover moves to the first file that still counts. With none left, it is
+  cleared (§37.10.3).
+- A recount whose read failed writes nothing, and that now includes the cover
+  (`artifacts/api-server/src/routes/postcards.ts:1654#if (counts.unread) return 'failed';`).
+
+#### 37.10.2 Item 2 — the canonical cover attachment: NOT built, because moving it needs an owner decision
+
+**How it is written.** Exactly once, when the passport postcard is lazily
+created: `recordEntityMedia(…, entityType: 'postcard', isCover: true)`
+(`artifacts/api-server/src/routes/postcards.ts:1122#void recordEntityMedia(sc, {`).
+- It is fire-and-forget and fail-soft.
+- It is gated by `media_canonical_enabled`, seeded FALSE
+  (`artifacts/api-server/src/migrations/0191_media_assets.sql:101#('media_canonical_enabled', FALSE,`).
+- It upserts one `media_attachments` row. That table is unique only on
+  (asset, entity type, entity)
+  (`artifacts/api-server/src/migrations/0191_media_assets.sql:54#UNIQUE (media_asset_id, entity_type, entity_id)`).
+  Its cover index is not unique, and it has no column saying who wrote a row.
+
+**Why moving it is not mechanical.** The owner can also attach their own assets
+to their own postcard, with `is_cover` and a position, through
+`POST /media/:id/attachments`
+(`artifacts/api-server/src/routes/mediaActions.ts:142#case "postcard":`,
+`artifacts/api-server/src/routes/mediaActions.ts:277#isCover: body.is_cover,`).
+So a postcard's canonical attachments are not a mirror of `media_url`, and the
+system cannot tell its own cover row from one the owner chose.
+
+**The readers.** The canonical projection lists every attachment of the entity,
+and keeps `is_cover` inert
+(`artifacts/api-server/src/lib/media/mediaCanonicalRead.ts:250#is carried for a future cover-first rule and is inert today`).
+The Wall's experience time prefers the cover, and its quick-media row reads
+every `postcard` link.
+
+**The three decisions, exactly:**
+1. **Who owns a postcard's canonical cover?**
+   - (a) The system: it mirrors `media_url`, and an owner-set cover is
+     overwritten when the legacy cover moves.
+   - (b) The owner: the system moves only a cover row whose asset is the file
+     `media_url` just left, and never marks a new one.
+   - (c) Record who wrote each row: a migration adding a writer column to
+     `media_attachments`, and then (a) for system rows only.
+2. **When the legacy cover leaves a file, what happens to that file's postcard
+   attachment?**
+   - Detach it: a `media_attachments` DELETE.
+   - Or keep it as a non-cover attachment. The projection then still lists the
+     file under the postcard; a held asset is refused there by its own
+     canonical state, but a file its owner deleted is not (§37.10.6 item 1).
+3. **Does the move run while `media_canonical_enabled` is off?** It would be
+   correcting rows written while the flag was on.
+   `recordEntityMedia` writes nothing while the flag is off. So a move that may
+   detach but not attach leaves the postcard with no canonical cover.
+
+**What this costs today.** `media_attachments` held no rows in either database
+when `lib/media/mediaCanonicalRead.ts` last recorded its counts (2026-09-07),
+and the flag is off. So no stale canonical postcard cover can exist yet. The
+decision is an activation prerequisite for `media_canonical_enabled`, and
+nothing was built.
+
+#### 37.10.3 Item 3 — a postcard with no countable file has NO cover (fixed; needs 3359 applied)
+
+**The fail-closed state is null.**
+`passport_postcards.media_url` is `text NOT NULL`
+(`artifacts/api-server/baseline/20260819_baseline_structure.sql:7801#media_url text NOT NULL,`).
+So the only value it could keep was the held or removed file's URL. The
+Postcards tab renders that URL as its last fallback
+(`travel-buddy-standalone/src/components/PostcardsTab.tsx:225#card.mediaUrl);`).
+
+**The rule.** One rule, in `repointPassportCover`, decides the cover:
+- A cover that is one of the post's files that no longer counts, or the file
+  just removed, moves to the first file that counts.
+- With no file left that counts, the cover is cleared to null
+  (`artifacts/api-server/src/routes/postcards.ts:1664#return next === null ? 'cleared' : cover ? 'repointed' : 'filled';`).
+- A null cover is filled once a file counts again
+  (`artifacts/api-server/src/routes/postcards.ts:1659#if (cover && !(counts.uncountedUrls.includes(cover) || alsoGone.includes(cover))) return 'kept';`).
+- A cover it cannot prove stale is still left alone.
+
+**`/complete` runs the rule too.** It now belongs to the shared step
+(`artifacts/api-server/src/routes/postcards.ts:1135#const cover = await repointPassportCover(sc, postId, counts, req, alsoGone);`),
+so an owner's new upload fills a cleared cover. This is the one change to
+`/complete`'s writes. Its response is unchanged.
+
+**The outcome.** `no_countable_file` is replaced by `cleared` and `filled`
+(`artifacts/api-server/src/routes/postcards.ts:1636#export type PassportCoverOutcome =`).
+§37.9's REJECT case changed its expectation to match, and names the change.
+
+**The schema.** `artifacts/api-server/src/migrations/3359_passport_postcard_cover_nullable.sql`
+drops the NOT NULL. It is lane V's band and is NOT applied.
+- Its rollback, `db/rollback/2026-09-27-3359-passport-postcard-cover-nullable-rollback.sql`,
+  refuses while any cover is null, rather than invent a value.
+- **Until 3359 is applied**, the database refuses the null. The rule logs it,
+  reports `failed`, and leaves the cover as it was, which is today's behaviour.
+  A test pins that.
+
+**Every reader of `passport_postcards.media_url`, and how it reads null:**
+
+| Reader | Null handling |
+| --- | --- |
+| `GET /users/:u/passport/postcards` (`artifacts/api-server/src/routes/passport.ts:73#mediaUrl: r.media_url ?? null,`) | `null`; pinned by a test |
+| `GET /me/passport/postcards` (`artifacts/api-server/src/routes/passport.ts:639#mediaUrl: r.media_url ?? null,`) | `null`; pinned by a test |
+| `PATCH /passport/postcards/:id` | returns the row as stored |
+| `repointPassportCover` | reads null as "no cover" and fills it |
+| client `PassportPostcard.mediaUrl` (`travel-buddy-standalone/src/types/models.ts:529#mediaUrl: string`) | typed nullable already |
+| client PostcardsTab | last fallback; `displayUri` is already null for every video without a poster |
+| client `utils/destinationGrouping.ts`, `app/destinations/[city].tsx`, `services/profile.ts` `enrichPostcard` | truthiness checks |
+| SQL | no function, view or trigger in the baseline or the migration tree reads the column |
+
+`can_see_postcard` reads status, visibility and the post. The client readers
+were read, not tested.
+
+#### 37.10.4 Item 4 — two moderators on one file (fixed)
+
+**The status write is a compare-and-set** on the status the before-state read
+saw.
+- The route: `artifacts/api-server/src/routes/adminMedia.ts:850#await withPriorModerationStatus(priorPm, sc`.
+- The narrowing: `artifacts/api-server/src/routes/adminMedia.ts:1028#function withPriorModerationStatus(`.
+
+A write that matches nothing means the status moved, or the row went, after the
+read. The row is then read again and the write retried
+(`artifacts/api-server/src/routes/adminMedia.ts:855#let priorAtWrite = priorPm, casConflict = false;`).
+- After two retries the decision is refused with a 409
+  (`artifacts/api-server/src/routes/adminMedia.ts:1061#conflict: true`).
+- So the "did countability change" decision is always made from the state the
+  write actually replaced.
+- If the re-read cannot run, the write goes through unconditionally, as it did
+  before, and the step runs from an unknown prior.
+
+**Re-read after write.** A recount reads and then writes, and a second decision
+can land between the two. So after the step, the file's status is read again.
+If it is no longer the status this decision wrote, the step re-runs from the
+rows as they are, at most twice
+(`artifacts/api-server/src/routes/postcards.ts:1710#for (let rerun = 0; input.recheckMediaId`).
+
+**The admin delete decides from the row it deleted.** The delete's RETURNING
+gives that row
+(`artifacts/api-server/src/routes/adminMedia.ts:838#const { data: deletedRows, error: delErr }`),
+not the read taken before the audit and the storage removal.
+
+The owner's delete always recounts, so there is no skip decision to go stale.
+
+#### 37.10.5 Item 5 — a file with no uploader id (fixed)
+
+**What the correct outcome is.** The passport postcard belongs to the post's
+author.
+- `/postcards/:id/media/upload-url` makes a slot only for the author
+  (`artifacts/api-server/src/routes/postcards.ts:453#if ((postRow as any).author_id !== user.id)`).
+- So `post_media.user_id` is the author, and the column is NOT NULL.
+
+**Recount-only was not correct.** It left a released file's postcard without
+the passport postcard the upload path would have made.
+
+**What the code does now.**
+- The moderation step reads the author from the post when it has no uploader
+  id (`artifacts/api-server/src/routes/postcards.ts:1754#select('author_id')`),
+  and runs the whole step.
+- Only when no author can be read either does it recount and move the cover
+  without making a passport postcard, and it logs that.
+- It cannot make one: `passport_postcards.user_id` is NOT NULL, and there is no
+  one to make it for.
+
+#### 37.10.6 Found while doing it — recorded, not fixed
+
+1. **The owner's delete of a postcard file never reaches the canonical asset.**
+   The route makes no `media_assets` call, and no trigger on `post_media`
+   does. A canonical row for that file stays `active` after its bytes are
+   removed. `MediaLifecycleService` has the `owner_deleted` transition, but
+   nothing on this path calls it. This bears on §37.10.2's second decision.
+2. **A stale step may briefly make a passport postcard.** A step overtaken by a
+   rejection (item 4) can create the passport postcard from its stale count
+   before its re-read. The re-run then clears that postcard's cover and zeroes
+   its count. The postcard row stays, with no cover, as any postcard does whose
+   files are all held.
+3. **Not re-measured here.** The migration apply-order suite reports
+   `3350_media_neighborhood_only_location_mode.sql` (lane P, arrived with this
+   merge) as a shape the applier refuses. 3359 is accepted: it classifies as
+   `unwrapped`.
+
+#### 37.10.7 Tests, mutations, rows, files
+
+**Tests.** There are eleven new cases in
+`artifacts/api-server/src/test/postcards.test.ts`, under "census-media §37.10 —…":
+- item 1 ×3: the cover moves, then clears; the read names `public_url`; an
+  unread recount leaves the cover;
+- item 3 ×3: a cleared cover is filled on release and by `/complete`; the
+  pre-3359 refusal is reported and leaves the cover; both postcard lists return
+  `mediaUrl: null`;
+- item 4 ×4, each interleaving two real requests through a gate that holds one
+  write until the other request has finished:
+  - compare-and-set: a rejection whose read went stale;
+  - re-read after write: an approval whose recount was overtaken;
+  - the delete's RETURNING;
+  - a status that keeps moving → 409 after bounded retries;
+- item 5 ×1: no uploader → the passport postcard is made for the author;
+- plus §37.9's REJECT case, updated from `no_countable_file` to `cleared`.
+
+The fake now returns the deleted rows when `delete()` is followed by
+`select()`, as PostgREST does. postcards passes 95/95, and 446/446 across
+sixteen media and admin suites.
+
+**Mutations.** There were sixteen, run one at a time by the §37.5 harness. All
+sixteen went red, and none survived. The diff hash of the tracked tree was the
+same before and after (`f40f746a…`).
+
+| Id | Mutation | Red in |
+| --- | --- | --- |
+| H1a | the owner delete does not move the cover | item 1 "the cover is not left on the removed file" |
+| H1b | its read drops `public_url` | item 1 "reads the removed file's URL by NAME" |
+| H3a · H3a2 | no clear when nothing counts | item 1 "…the cover is cleared"; §37.9 REJECT |
+| H3b | a null cover is never filled | item 3 "the released file is the cover again" |
+| H3c | the step does not run the cover rule | item 3 "precondition: cleared" |
+| H3d | a refused clear is reported as `cleared` | item 3 "before 3359…" |
+| H3e | an unread recount may clear the cover | item 1 "…could not read writes nothing to the cover" |
+| H3f | the public list maps a null cover to `''` | item 3 "the readers of a null cover" |
+| H4a | no compare-and-set | item 4 "the rejection uncounted the file the approval had counted" |
+| H4b | no retry after a failed compare-and-set | item 4 compare-and-set (404) |
+| H4c · H4d | no re-read after the step / not asked for | item 4 "the approval's stale 1 was re-derived…" |
+| H4e | the delete decides from its earlier read | item 4 "the deleted file was counted when it was deleted" |
+| H4f | exhausted retries are not a conflict | item 4 "…refused as a conflict" |
+| H5a | no author fallback | item 5 "the passport postcard is made" |
+
+**Rows.**
+
+| ID | Was | Now | Evidence |
+| --- | --- | --- | --- |
+| MD269 | W | **W** | §37.9.5's accessible findings are fixed, and the canonical cover waits on the owner (§37.10.2). The owner's delete moves the cover (§37.10.1). A postcard with no countable file has no cover once 3359 is applied (§37.10.3). Two moderators on one file cannot leave a stale count (§37.10.4). A file with no uploader id makes the author's passport postcard (§37.10.5). Still W because of (a), the owner question in §37.8.5, and because no classifier exists. ACTIVATION: 3356; and 3359 for a cleared cover. EXTERNAL: a classifier vendor or staffed review. BLOCKER: the (a) owner rule. |
+
+MD63, MD277, MD280, MD282, MD283, MD284, MD289 and MD293 are unchanged.
+
+**Files changed:**
+- server: `routes/postcards.ts` and `routes/adminMedia.ts`, line-neutral above
+  every cited line, with new code at their tails;
+- migration 3359 and its rollback, both new;
+- tests: `postcards.test.ts`, with the block appended and one fake extended;
+- `checkCensusFreshness.ts`: census-media now watches the six readers of the
+  cover that §37.10.3 rests on. They are `routes/passport.ts`,
+  `PostcardsTab.tsx`, `types/models.ts`, `utils/destinationGrouping.ts`,
+  `app/destinations/[city].tsx` and `services/profile.ts`.
+
+Headline: not restated. No row moved.
+
 ## 33. Lane T — the shared sheets Media opens, fixed through the design system (H7) — 2026-09-27
 
 Lane T owns one row, **MD403**, for one owner ruling, **H7**. The work is on

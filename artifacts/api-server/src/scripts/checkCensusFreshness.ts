@@ -1991,6 +1991,13 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "travel-buddy-standalone/app/media-viewer/__tests__/pageDots.layout.component.test.tsx",
     // WIDENED 2026-09-27 by census-media §42 (lane Q, integration): the suite that proves Pulse, Discovery event posts and the trip feed apply mapPublicPost's rule, which §42 cites as its evidence; §36's disclosure rule is graded through it outside Media.
     "artifacts/api-server/src/test/postLocationModeOutsideMedia.test.ts",
+    // WIDENED 2026-09-27 by lane V (census-media §37.10): the readers of passport_postcards.media_url that §37.10.3's null cover rests on (MD269) — a change to any of them can break "every reader handles a null cover".
+    "artifacts/api-server/src/routes/passport.ts",
+    "travel-buddy-standalone/src/components/PostcardsTab.tsx",
+    "travel-buddy-standalone/src/types/models.ts",
+    "travel-buddy-standalone/src/utils/destinationGrouping.ts",
+    "travel-buddy-standalone/app/destinations/[city].tsx",
+    "travel-buddy-standalone/src/services/profile.ts",
   ],
   // census-telegraph.md — declared 2026-09-11 on the same basis as Media above:
   // 451 requirements out of CANNOT BE CHECKED, a clock started rather than a
