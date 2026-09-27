@@ -1230,6 +1230,8 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/test/stampCriteriaPresenceEvidence.test.ts",
     "artifacts/api-server/src/routes/engagement.ts",
     "artifacts/api-server/src/routes/collections.ts",
+    // WIDENED 2026-09-27 by the coverage-guard fix (census-media §32.14), at integration: §N.1 grades the presence join in distinctStampField; counted once the checker resolved `lib/stamps/criteria/metrics.ts:96#…` by its anchor.
+    "artifacts/api-server/src/lib/stamps/criteria/metrics.ts",
 ],
   // Trust has NO SPEC — its 52 requirements are 20 inbound obligations from
   // other surfaces' specs plus 32 contracts its own code asserts. That makes the

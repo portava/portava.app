@@ -8866,3 +8866,110 @@ cited file is watched" was never true to the extent reported.
 - NOT-GRADED: artifacts/api-server/scripts/check-flag-polarity.mjs — the flag-polarity guard, listed in §21.7 among the guard machinery §21 edited when it reclassified MEDIA_WORLD_SHELL_ENABLED as a capability; it measures flag declarations and grades nothing, and the machinery pattern reaches only src/scripts/check*.ts, not scripts/*.mjs.
 - NOT-GRADED: artifacts/api-server/src/test/censusIntegrityQualifiedVerdicts.test.ts — the suite that asserts check:census-integrity exits 0, named in §21.8 to explain why it was red while the headline waited for the integrator's restatement; it tests the census tool, not Media code, and no MD verdict rests on it.
 - NOT-GRADED: artifacts/api-server/src/routes/index.ts — the API router registry, listed in §22.7 only among the files §22 edited, to say which censuses' acknowledgements already name it (highlights-memories, telegraph); the §22 and §23.8 scope notes keep it out on purpose because every feature's mount edits it, and no MD row cites it as evidence.
+
+### 32.15 The scope-coverage hole, closed: every census watches what it cites
+
+§32.14 measured the hole. This section records the fix, which landed as one
+change across all thirteen censuses.
+
+**The guard.** The measurement now lives in
+`artifacts/api-server/src/scripts/lib/censusScopeCoverage.ts`, as pure
+functions, and the checker is a loop over them. It changes three things.
+
+1. **Every citation form is counted.** That includes anchors with any text,
+   and Expo route paths.
+
+2. **A census can declare a file it cites but does not grade.** The
+   declaration sits in the census itself, at its tail:
+   `- NOT-GRADED: <path> — <reason>`. The guard refuses a declaration when:
+   - a verdict row cites the file (read conservatively as any table line
+     whose first cell opens with a requirement id);
+   - the file is not cited anywhere else in the census;
+   - the reason is under 25 characters;
+   - the file is already watched, or is machinery;
+   - the path is not an exact repo path;
+   - the file is declared twice.
+
+3. **A citation resolves to a file by the rule `check:doc-citations` uses.**
+   Coverage lanes B, C and D each found that the checker took an exact root
+   path whenever one existed. So census-telegraph's anchored citations of the
+   standalone thread screen by its short path, app/messages/[id].tsx, resolved
+   to a 44-line mock at the repo root. Now:
+   - An anchored citation goes to the one candidate whose cited line holds
+     the anchor.
+   - An unanchored one is read literally.
+   - Anything else is ambiguous, and is reported, not guessed.
+
+**Tests.** `artifacts/api-server/src/test/censusScopeCoverage.test.ts` has 16
+unit cases plus a CONTROL that runs the real checker over the real tree. Eleven
+mutations of the module were run, and each turned the suite red.
+
+**The censuses.** Four parallel lanes classified every file each census cited
+but did not watch. A file is watched when a verdict rests on it; when in
+doubt, it is watched. It is declared not graded when the census cites it only
+for contrast, history, or another census's subject. The results:
+
+| Census | Before (true count) | After | NOT-GRADED declared |
+| --- | --- | --- | --- |
+| census-media | 291 / 342 = 85 % | 334 / 334 | 8 |
+| census-wall | 92 / 108 = 85 % | 108 / 108 | 0 |
+| census-trips | 278 / 367 = 76 % | 359 / 359 | 11 |
+| census-map | 115 / 121 = 95 % | 119 / 119 | 2 |
+| census-telegraph | 290 / 344 = 84 % | 318 / 318 | 26 |
+| census-sensing | 238 / 258 = 92 % | 251 / 251 | 7 |
+| census-input-intelligence | 198 / 206 = 96 % | 206 / 206 | 0 |
+| census-compass | 149 / 170 = 88 % | 165 / 165 | 5 |
+| census-discovery | 138 / 155 = 89 % | 153 / 153 | 2 |
+| census-passport | 115 / 138 = 83 % | 136 / 136 | 2 |
+| census-trust | 160 / 179 = 89 % | 179 / 179 | 0 |
+| census-highlights-memories | 163 / 174 = 94 % | 170 / 170 | 5 |
+| census-layover | 165 / 180 = 92 % | 174 / 174 | 6 |
+
+**No floor was lowered; all thirteen were raised to 1.0.** This follows the
+precedent census-trust set. A new citation of an unwatched file now fails at
+once. It must then be watched, or declared not graded with a reason, and the
+declaration is refused if a verdict row cites the file.
+
+**The freshness ledger.** A newly watched file that had changed since its
+census's baseline was read against the rows that cite it before it was
+acknowledged. The lanes did this for 99 files across twelve censuses. The
+integrator did it for three more:
+- `routes/index.ts` for census-trips. Every trip router is still mounted.
+- The two P45 suites for census-passport.
+
+Coverage lane D stopped on the P45 suites, reading P45 as W. P45's last
+statement is in fact the §16.1 row of census-passport, which records C: it
+moved on 2026-09-14 and was corrected in place on 2026-09-22 with the verdict
+unmoved. The suites' change is exactly that census's §19.2 ruling:
+- a substituted domain now reads "Not yet rated";
+- the band is asserted unmoved.
+
+That makes P45's explainability clause stricter, and P50 and P154 stay W on the
+band. Two sentences lag the row they describe: that census's §19.3 ("whether
+the ruling moves P45 from W"), and its 2026-09-22 ledger note. Neither moves a
+letter.
+
+**Found, not fixed.** These lines stay byte-identical; each census's next
+pass owns them. No verdict moves on any of them.
+- **census-trips, four dated sentences.** §68.1 fact 1, §69.1, §73.1 and §74.1
+  call migrations 2450, 2500, 2590 and 2760–2796 unapplied. The
+  production-applied-migrations.json that census watches records them as
+  applied on 2026-09-16.
+  §68.1 fact 2 and §75.1 already say so.
+- **census-input-intelligence G359.** Its clause "app/(tabs)/ai.tsx:399 calls
+  the client one" is false at HEAD. The W holds.
+- **census-sensing §22.1.** `src/index.ts:58#import` now lands on a different
+  import. The anchor is too weak for doc-citations to notice, and the claim
+  holds.
+- **census-discovery A14 and its provenance row.** They say the travel-time
+  provider constant "is `noRoutedProvider`". It is now a corridor adapter that
+  refuses unless both of its switches are set, so the behaviour is unchanged.
+- **census-passport P87 and P168.** Their bare line numbers in `(tabs)/ai.tsx`
+  sit 14 lines low.
+- **census-wall W118.** Its import-block line hint is `:41-45`; the block is at
+  42–46.
+
+**Two citations were repointed, not moved in meaning.** census-trust and
+census-wall each cite
+`artifacts/api-server/src/scripts/checkCensusFreshness.ts:1520#ADDED 2026-09-20 by census-wall §13`.
+The widened scope arrays above it moved it from line 1406.
