@@ -4033,6 +4033,13 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/test/discoveryQueryPathsConstraints.test.ts",
     "artifacts/api-server/src/routes/tags.ts",
     "artifacts/api-server/src/services/interactionPermissions.ts",
+    // §63 (lane P16): the evidence DV-76, DV-37 and DV-52 are restated from.
+    "artifacts/api-server/src/test/tagPermissionVocabulary.test.ts",
+    "artifacts/api-server/src/test/discoveryServedGraphReading.test.ts",
+    "artifacts/api-server/src/test/fixtures/discoveryServedGraphReadingGolden.json",
+    "travel-buddy-standalone/src/hooks/__tests__/useRankOutcome.clientEventId.component.test.ts",
+    "travel-buddy-standalone/src/services/__tests__/rankEvents.clientEventId.component.test.ts",
+    "travel-buddy-standalone/src/hooks/__tests__/useRankOutcome.component.test.ts",
   ],
   // ── ADDED 2026-09-15: census-passport joins the CHECKABLE set ──────────────
   //

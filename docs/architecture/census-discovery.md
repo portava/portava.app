@@ -10688,6 +10688,184 @@ This section adds to census-discovery's scope 3420–3422 and their rollbacks, i
 - CONSTRUCTED 182 / 188 = **96.8 %**; CORRECT 96 / 188 = **51.1 %**. The four buckets sum to 188.
 - **Production.** 3420, 3421 and 3422 are applied to the harness only. 3422's revoke closes a live hole on every database it reaches, and it is applied to none.
 
+## §63 — Three routed repairs (lane P16): a user who chose "Nobody" can no longer be tagged through the route, every outcome names its action, and a served page records its graph reading
+
+*Written 2026-09-27 by lane P16 on `disc-p16-hunks`, branched from `7c083b524` (the tip of `wave8-integration` after §62.14). It applies §62.7's three hunks, H2 first, each checked against this tree before it was applied. Every verdict is about code, tests and the local PostgreSQL 16 harness (`scripts/local-db/up.sh`, port 54573: the baseline plus the chain, 3420–3422 included). Nothing is merged to `main`, applied to `portava-ci` or production, deployed or flag-enabled. A client change reaches no user until a build ships. No migration was written. The headline is not restated.*
+
+### 63.1 Row statements
+
+| ID | was | now | evidence |
+|---|---|---|---|
+| DV-76 | W | W | **The route door §62 found is closed on the branch. The row stays W on two criteria that code cannot close.** The permission engine now speaks the enum `profiles.tag_permission` is written in. `nobody` refuses (`artifacts/api-server/src/services/interactionPermissions.ts:819#case "nobody":`). `interacted` is a follow in either direction or a friendship (`artifacts/api-server/src/services/interactionPermissions.ts:816#canTag = isFriend || viewerFollowsTarget || targetFollowsViewer;`). A value the switch does not know refuses (`artifacts/api-server/src/services/interactionPermissions.ts:821#default:`). §62 cites line 817 for the old default, and that line keeps the old text as a comment. On the harness, P4 is flipped: the real `POST /api/tags` answers 403 for a user who chose `nobody`, twice, and writes no row (`artifacts/api-server/src/test/db/discoveryVerifyPhase03.db.test.ts:177#test("P4. FLIPPED (§63): the ROUTE refuses a user whose tag_permission is 'nobody'`). The tagged user's own `PATCH /api/me/tag-permission` refuses the author's next attempt, and changing it back admits again (`artifacts/api-server/src/test/db/discoveryVerifyPhase03.db.test.ts:229#test("P4d. (§63) revocation`). `nobody` also binds a viewer the user mutually follows (`artifacts/api-server/src/test/db/discoveryVerifyPhase03.db.test.ts:249#test("P4e. (§63) cross-viewer`). The unit suite covers every value against every relationship (`artifacts/api-server/src/test/tagPermissionVocabulary.test.ts:152#describe("T1 — every enum value × every relationship`) and an unknown value (`artifacts/api-server/src/test/tagPermissionVocabulary.test.ts:183#describe("T3 — a value the switch does not know REFUSES`). **Why it stays W**, by §11.2 rule 1 (*"A parent requirement takes `C` only if EVERY criterion inside it passes"*): (1) Phase 0 #5, #6 and #7 still exist in no artifact, so "other catalogued Phase 0 findings" cannot be counted complete (§62.4, Q2 unanswered). (2) 3422 is applied nowhere but the harness, so the database door P1 closed is closed only there. **What turns it C:** 3422 applied, and the owner's answer to Q2 showing #5–#7 closed or folded into #1–#4 or #8. |
+| DV-37 | W | W | **The client half is built. Every outcome now carries a key, and a retried "Not interested" re-sends its key.** `fireRankOutcome` mints one key per call, and one call is one action (`travel-buddy-standalone/src/hooks/useRankOutcome.ts:139#newClientEventId());`). `recordOutcome` does the same, but nothing calls it, so no verdict rests on it (§63.3). `reportDismiss` keeps the key of each dismissal the server has not yet accepted (`travel-buddy-standalone/src/hooks/useRankOutcome.ts:274#function pendingDismissKey(`). It clears the key only when the server accepts the dismissal, and a `duplicate` answer counts as accepted (`travel-buddy-standalone/src/hooks/useRankOutcome.ts:244#if (res.ok) dismissKeys.current.delete(dismissKeySlot(surface, itemId));`). A retry after a network failure carries the SAME key (`travel-buddy-standalone/src/hooks/__tests__/useRankOutcome.clientEventId.component.test.ts:117#it('C3. a retry after a NETWORK failure carries the SAME key`). A retry after a 5xx that is answered `duplicate` is success: the card goes, the caches are cleared and the key is spent (`travel-buddy-standalone/src/hooks/__tests__/useRankOutcome.clientEventId.component.test.ts:130#it('C4. after a 5xx, the retry is answered`). The suite reads the route's own validator, so the key's shape cannot drift from what the server accepts (`travel-buddy-standalone/src/hooks/__tests__/useRankOutcome.clientEventId.component.test.ts:83#SERVER_KEY is the route`). **Why it stays W**, by the same rule: a KEYLESS outcome retried after a second serve still moves a second exposure (`artifacts/api-server/src/test/db/discoveryVerifyChain.db.test.ts:408#test("V7d. STILL PINNED (§62, owner decision)`). Every build already shipped sends keyless outcomes, and this branch does not refuse them: whether to is the owner's Q1. Also, 3420 is applied nowhere but the harness. **What turns it C:** a build carrying H1 shipped as the floor, the owner's answer to Q1, and 3420 applied. |
+| DV-52 | W | W | **(b) is closed in code and tests: a SERVED page now records the graph reading its order was ranked under. The row is W on §17.3's ceiling alone.** Both served `rankForViewer` calls keep their `stages`: the cache-A serve in engine mode `pde` (`artifacts/api-server/src/routes/discovery.ts:1868#pdeServedStages = outcome.stages;`) and the signed-in cold fetch (`artifacts/api-server/src/routes/discovery.ts:2282#coldServedStages = outcome.stages;`). Each spreads six keys into its impression context (`artifacts/api-server/src/routes/discovery.ts:1925#...servedGraphReadingFeatures(pdeServedStages)`, `artifacts/api-server/src/routes/discovery.ts:2314#...servedGraphReadingFeatures(coldServedStages)`), built by `artifacts/api-server/src/routes/discovery.ts:4324#export function servedGraphReadingFeatures(`. DV-39's screen keeps them because they are classified (`artifacts/api-server/src/lib/discoveryRecommendationRecord.ts:584#graphDepth: "derived_ranking_signal"`). **Provenance only, proved against a golden** captured before the change, with the clock frozen. With the modifiers OFF, the order, the response, every row's features and the per-request context hash are the golden exactly, and no graph key exists (`artifacts/api-server/src/test/discoveryServedGraphReading.test.ts:230#order, response, row features and context hash are the golden, and no graph key exists`). With them ON, the order and every other byte are the golden (`artifacts/api-server/src/test/discoveryServedGraphReading.test.ts:248#it("the order, the response and every other feature byte are the pre-§63 golden"`), and every row carries the reading (`artifacts/api-server/src/test/discoveryServedGraphReading.test.ts:255#it("every served row carries the six keys`). **The rule:** §57.2 quotes §31.2, *"A requirement whose feature is disabled is not satisfied"*, and §17.3's ceiling is *"unapplied migrations, zero rows anywhere, a FALSE-seeded flag, an unmerged branch"*. Three of the four hold. The reading is recorded only under 2289, which is FALSE. The sampler of (a) runs only under `RANKING_EXPERIMENT_ENABLED`, which is FALSE. 3421 is unapplied. The branch is unmerged. **What turns it C:** 3421 applied, and one of the two flags on in a deployment the owner chooses. |
+
+This section moves NO row. All three are restated at W with their new evidence.
+
+### 63.2 H2 — the vocabulary, every caller, and which `interacted`
+
+- **What each column can hold.**
+  - `profiles.tag_permission` is the enum `tag_permission_level {anyone, interacted, friends_only, nobody}`, NOT NULL DEFAULT `anyone` (baseline). The migrations add no value.
+  - Two routes write it, and both validate with `z.enum` over exactly those four: `PATCH /api/me/tag-permission` (`routes/tags.ts`) and `PATCH /api/me/profile` (`routes/profile.ts`). The client settings UI offers the same four (`TAG_PERMISSION_OPTIONS`).
+  - `user_privacy_settings.who_can_tag` is free text with no CHECK constraint. No server or client path writes it.
+  - `authenticated` holds ALL on that table under an own-row policy. So a user can write any text into their OWN row, which affects only who may tag them. That is why the unknown-value case is a real shape and not a hypothetical: before §63 it ALLOWED, and now it refuses (T3).
+  - The switch keeps the older labels (`everyone`, `friends`, `followers`, `no_one`, `approval_required`), so a row that holds one keeps its meaning (T4).
+- **Every caller of `resolveInteractionPermissions` that reads the tag verdict.**
+  - `POST /api/tags` gates on `canTag`/`canTagPending`. It is the only caller that decides anything with them.
+  - `routes/passport.ts` copies `canTag` into `viewer.can_tag`. `GET /users/:id/interaction-context` and the admin interaction test route return the whole verdict. No client reads `can_tag` or `canTag`.
+  - `TaggingService` (the inline @mention path) does not call the engine. It applies its own reading of the same column.
+  - **No shipped client calls `POST /api/tags`.** The client's tagging service calls only suggestions, `tag-permission` and `DELETE /api/tags/:id`. So no product flow a user can reach loses anything. Each refusal H2 adds falls on a direct API call.
+- **Which `interacted`. The answer is H2's own reading plus a friendship floor, NOT TaggingService's.**
+  - The server has three readings:
+    - The picker (`GET /api/tags/suggestions`) and telegraph's AI mention filter admit a follow in either direction.
+    - TaggingService also admits a shared message thread.
+    - The engine admits a follow either way or a friendship.
+  - The friendship arm is added to §62.7's hunk. Accepting a friend request writes no follow (`routes/friends.ts` writes only `friend_requests` and `user_friendships`). Without the arm, a friend would be refused under the LOOSER `interacted` while admitted under the stricter `friends_only`. T2 pins the order of the scale: whatever a stricter setting admits, a looser one admits too.
+  - TaggingService's thread arm is not copied, for three reasons. It inspects only ONE of the author's threads (`.limit(1)` on the author's memberships), so its answer is arbitrary for any author in more than one thread. Reproducing it correctly needs a read the engine does not make, outside the switch this lane owns. And the disagreement only ever REFUSES a pair whose sole interaction is a message.
+  - That refusal contradicts the settings copy, *"Only people you've followed or messaged"*, so it is put to the owner (Q5).
+- **Found, not fixed (not this lane's).**
+  - `friends_only` means an accepted friendship in the engine, and a mutual follow in the picker, telegraph and TaggingService. The engine's reading is unchanged by §63.
+  - No path counts "circle members", which the settings copy promises (Q5).
+  - An existing tag survives the tagged user switching to `nobody`. The setting binds new attempts only, and P4d pins that (Q6).
+  - TaggingService's one-thread check is a defect in the tagging owner's file.
+
+### 63.3 H1 — the client key, and the call sites it covers
+
+- **Every client outcome passes through the two changed files.**
+  - `git grep` finds three POSTs to `/rank-events/outcome` in the client: `fireRankOutcome`, `reportDismiss` and `recordOutcome`.
+  - Every call site §62.7 lists funnels into the first two: `PlaceCard.tsx` (tap, save, dismiss), `PlaceDetailSheet.tsx`, `DiscoveryEventPostsRail.tsx`, `LivePulseCard.tsx`, `PlanPickerController.tsx`, `SaveButton.tsx` twice and `useEventRsvp.ts` twice.
+  - The third also names its outcome now (`travel-buddy-standalone/src/services/rankEvents.ts:62#body.client_event_id = newClientEventId();`). It has no caller, so it stays NOT-GRADED, as §62 listed it; R1–R2 keep a future caller from reintroducing a keyless outcome.
+- **One deviation from §62.7, for safety.** A pending dismissal key is held per (surface, item), not per item. The server refuses a key reused for another surface with 409, and a dismissal on another surface is another action (C7).
+- **Compatibility.**
+  - `main`'s outcome schema is a plain `z.object`, so a keyed body sent to a server without §62 is accepted, with the key stripped.
+  - A server with §62 but without 3420 latches the key absent and records the outcome keyless (§62.8, K8/K9).
+  - The P13 guard `discoveryRefusalConsumers.guard.test.ts` needs no entry. Neither file is a carrier of a Discovery refusal, nor a consumer of one, and the guard passes 6/6.
+  - Two existing assertions that pinned the exact old body now expect the key: `useRankOutcome.component.test.ts` and `useRankOutcome.recommendationId.component.test.ts`.
+
+### 63.4 H3 — what a served row now says, and what it still cannot
+
+- **Absent, not null, with the modifiers off.** That is the only way a flags-off row stays byte-identical, and H1 of the golden pins it.
+- **With the modifiers on:**
+  - All six keys are written. A field the reading lacks is JSON null, whether there was no confidence record or it could not be read: the loader cannot tell those apart, and both mean THIN. The thin scale and budget are written beside it, so a missing record is never stored as a confident zero (`artifacts/api-server/src/test/discoveryServedGraphReading.test.ts:281#the four record fields are null`).
+  - The cold fetch records the same way (`artifacts/api-server/src/test/discoveryServedGraphReading.test.ts:310#it("on: order, response and other bytes are the golden`).
+- **The one other byte that moves, with the modifiers ON only.** `logImpression` screens the same context into the per-request row, so `recommendations.context_hash` now covers the reading. Two serves under different readings no longer share a digest. With the modifiers off it is pinned unchanged.
+- **Classified `derived_ranking_signal`, as §62.7 said.** All six are city-level aggregates that the modifiers consumed, not a viewer's position, and the screen's position test passes each one.
+- **Found: §59's "per item, the budget" was never on a served row.** With the modifiers on, the governor stamps `governorApplied`, `governorBudgetPct`, `governorSlot` and `governor_*` on its items. DV-39 classifies none of them, so the screen refuses them by name, and every such row has recorded `privacyRefused` since before §63. The golden includes that list, and one test makes it visible (`artifacts/api-server/src/test/discoveryServedGraphReading.test.ts:334#what the screen refused before §63 it still refuses`). A served row therefore records the reading, but not which items the exploration budget promoted. Classifying those keys is a later hunk, and it is not needed for (b) as §62 stated it.
+
+### 63.5 Tests, and every one seen RED (P24)
+
+| suite | cases | runs on |
+|---|---:|---|
+| `tagPermissionVocabulary.test.ts` | 46 (T1–T9) | unit, in `npm test` |
+| `db/discoveryVerifyPhase03` | P4 flipped; P4b–P4e added | harness |
+| `useRankOutcome.clientEventId.component.test.ts` | 9 (C1–C8 + the validator drift check) | jest |
+| `rankEvents.clientEventId.component.test.ts` | 3 (R1–R3) | jest |
+| `discoveryServedGraphReading.test.ts` (+ golden fixture) | 16 (H1–H6) | unit, in `npm test` |
+
+**37 mutations, one at a time; 36 killed, 1 survived by design.** Each file was restored and checked identical by sha256.
+
+- **H2, unit.**
+  - The default back to allow → T3.
+  - `nobody` allows → T1, T2, T4, T5.
+  - The `anyone` label removed → T1, T2, T6.
+  - The friendship arm dropped → T1, T2.
+  - `interacted` allows all → T1, T5, T6, T8.
+  - The target→viewer follow dropped → T1, T6.
+  - `who_can_tag` read after the profile → T3, T4.
+  - A failed follow read counted as a follow → T8.
+  - The `allow_tagging` override removed → T9.
+  - `friends_only` widened to a mutual follow → T1, T4.
+  - The whole pre-§63 engine restored → 22 of 46.
+- **H2, harness.**
+  - The whole pre-§63 engine → P4, P4b, P4d, P4e.
+  - `nobody` allows → P4, P4d, P4e.
+  - `interacted` allows all → P4b.
+  - `friends_only` widened → P4c.
+  - The route's permission gate skipped → P4–P4e.
+  - **Survived, by design:** the default alone set back to allow. Every enum value now has its own label, so the harness, which writes only enum values, never reaches the default. T3 kills the same mutation.
+- **H1.**
+  - Fire-and-forget sends no key → C1, C2. One fixed key → C1, C2.
+  - The dismissal mints a new key per attempt → C3, C4, C6, C7, C8.
+  - The key never cleared on success → C4, C5.
+  - The key cleared on any answer → C4, C6.
+  - The slot ignores the surface → C7.
+  - The body drops the key → C1–C5, C7.
+  - A `duplicate` answer treated as failure → C4.
+  - The server's validator drifts → the drift check.
+  - `recordOutcome` sends no key → R1, R2. One fixed key → R2.
+- **H3.**
+  - The helper records nothing → H2, H3, H4, H6.
+  - Six null keys written with the modifiers off → H1, H4, H6.
+  - `graphComputedAt` left unclassified → H2, H3, H4, H5.
+  - A thin reading written as 0 → H3, H6.
+  - The cold path not wired → H4.
+  - The cache-A path not wired → H2, H3.
+  - The served order reversed → H1, H2, H3.
+  - One flags-off response byte added → H1, H2.
+  - `graphSource` copied from `sourceReason` → H2, H4, H6.
+- **Before the change, on the pre-§63 route**, the assertions on the new keys (H2–H5) failed and H1 held. That is the golden's own RED.
+
+### 63.6 Checks and runs at this tree
+
+- **Clean:**
+  - `typecheck` and `typecheck:tests` (863 diagnostics across 115 files, at baseline).
+  - `check:doc-citations`, `check:citation-targets`, `check:citation-symbols`, `check:test-registration`.
+  - `check:census-scope-coverage`, `check:guard-coverage`, `check:route-auth-gate`, `check:flag-polarity`, `check:writerless-reads`, `check:discovery-query-paths`.
+  - The offline column ledger shows `problems=0`.
+  - Client: `npm run check:all`; the counts are in the lane report.
+- **`npm test` and the harness `run-tests.sh`:** the counts are in the lane report.
+- **Line-neutral:**
+  - In `routes/discovery.ts`, seven existing lines were appended to, and the helper and its type import sit after the file's last line.
+  - `discoveryRecommendationRecord.ts` gains no line.
+  - In `useRankOutcome.ts`, the lines §48 and §50 cite (95, 115, 118, 243) hold their text.
+  - `interactionPermissions.ts:817` holds §62's anchor.
+  - `discoveryVerifyPhase03.db.test.ts:176` holds P4's former title.
+
+### 63.7 Owner questions
+
+Q1–Q4 of §62.7 stand unchanged: keyless outcomes, Phase 0 #5–#7, `approval_required`, primary-key rows. Two are new, verbatim:
+
+- **Q5 (DV-76; the tagging owner and census-trust).** *"The settings copy says 'People I've interacted with — Only people you've followed or messaged' and 'Friends & circle members — Only mutual follows and circle members'. The server reads these three ways: POST /api/tags treats friends_only as an accepted friend request and interacted as a follow in either direction or a friendship; the @-mention picker, telegraph and TaggingService treat friends_only as a mutual follow; only TaggingService counts a shared message thread, and it checks one thread. Which definitions are the product's, and should circle membership and a message thread count?"*
+- **Q6 (DV-76).** *"When a user switches to 'Nobody', tags that already exist stay approved and visible; the setting binds only new tags. Should the switch also hide or remove existing tags of that user, or is that the tagged user's per-tag DELETE /api/tags/:id?"*
+
+### 63.8 Freshness and scope
+
+Files this branch changed, by the censuses that count them. Each has a one-line argument; the ledger is the integrator's.
+
+- **census-discovery.**
+  - `services/interactionPermissions.ts`, `routes/discovery.ts`, `lib/discoveryRecommendationRecord.ts`, `db/discoveryVerifyPhase03.db.test.ts`, `travel-buddy-standalone/src/hooks/useRankOutcome.ts` and `useRankOutcome.recommendationId.component.test.ts`.
+  - All of them are this section's evidence, and §63.1 grades them.
+- **census-trust** (`interactionPermissions.ts`, `routes/discovery.ts`).
+  - Only the tag switch changed, at :810–821, plus a comment block after it.
+  - A12 and C16 grade :325–337 (`DegradedPermissionCheckError`), and TRV2-08 grades :365 (`getRestrictionState`). All three are unchanged in text and line.
+  - The `routes/discovery.ts` change is logging context only.
+- **census-telegraph** (`interactionPermissions.ts`). `canMessage`, `canSendMessageRequest` and the messaging reads (:597–632) are untouched. Telegraph's own mention filter lives in `routes/telegraph.ts` and is not changed.
+- **census-compass** (`interactionPermissions.ts`). `sharesSocialContext` reads `canViewProfile` and `context`, never `canTag`, so no Compass verdict can move.
+- **census-passport** (`interactionPermissions.ts`, `routes/discovery.ts`).
+  - `viewer.can_tag` on a passport now reads `false` for a viewer the user's `nobody` or `interacted` setting refuses, where before it read `true`. That is the passport hint agreeing with the route, and no client reads the field.
+  - The discovery change is logging context only.
+- **census-sensing and census-layover** (`routes/discovery.ts`). The live-rank layer, the Layover gate and every served byte with the modifiers off are pinned unchanged by H1 of the golden. The change adds keys only to a fire-and-forget impression context written after the response.
+- **census-trips** (`db/discoveryVerifyPhase03.db.test.ts`). The suite creates and removes only profiles, posts, tags, follows and friendships of its own seeded users, and reads no `trip_*` object.
+- **Scope.**
+  - The four new suites and the golden are this section's evidence, so all five join census-discovery's `CENSUS_SCOPE`. So does `useRankOutcome.component.test.ts`, whose body assertions §63 changed.
+  - `travel-buddy-standalone/src/services/rankEvents.ts` stays NOT-GRADED: no verdict row cites it.
+  - `routes/profile.ts`, `routes/friends.ts` and `routes/telegraph.ts` are cited only for facts, so they are listed NOT-GRADED at the foot.
+  - `check:census-freshness` now names the six files that joined the scope for census-discovery. That is the ledger entry this section argues for. The census's other changed files are already named in its entry, and §63.1 grades their changes.
+
+### 63.9 What would turn this red
+
+- **Tagging.**
+  - P4, P4d or P4e going red: a user who chose `nobody` is taggable through the route again.
+  - T2 going red: the scale lost its order.
+  - T3 going red: an unmapped label allows again.
+- **Outcome keys.**
+  - C3 or C4 going red: a retried dismissal is a new action again, and it counts twice once 3420 is applied.
+  - The drift check going red: the client's key and the server's validator disagree.
+- **Graph reading.**
+  - H1 going red: provenance moved a served byte or an order with the modifiers off.
+  - H2 going red: it moved one with them on.
+  - H5 going red: the screen refuses the reading again.
+
 ## Cited, not graded (check:census-scope-coverage)
 
 - NOT-GRADED: artifacts/api-server/src/compass/CompassExplanationEngine.ts — §13.7 item 3 names Compass's HMAC recommendation-token signer as a refactor this lane declined to make in another lane's file. Discovery's recommendation id is minted by lib/discoveryRecommendationId.ts, and no Discovery verdict rests on the signer.
@@ -10699,3 +10877,6 @@ This section adds to census-discovery's scope 3420–3422 and their rollbacks, i
 - NOT-GRADED: artifacts/api-server/src/lib/placeIdBridge.ts — §62.3 cites it only to show that a `db/` uuid names one of two tables, which is why the debug sample writes no `content_id` for it; no verdict rests on the bridge.
 - NOT-GRADED: artifacts/api-server/src/routes/messaging.ts — §62.4 names it as one of five callers of `processTagging`, each passing the service client; the finding is about `tags`' writers, and census-telegraph grades this route.
 - NOT-GRADED: travel-buddy-standalone/src/hooks/useEventRsvp.ts — §62.7 H1 lists its rsvp and join reports as outcome call sites the client hunk covers; they report on the events surface, and no Discovery verdict rests on them.
+- NOT-GRADED: artifacts/api-server/src/routes/profile.ts — §63.2 names its PATCH /me/profile as one of the two writers of `profiles.tag_permission`, validated with the same four-value `z.enum`; the fact bounds H2's vocabulary, and no Discovery verdict rests on the profile route.
+- NOT-GRADED: artifacts/api-server/src/routes/friends.ts — §63.2 cites it only for the fact that accepting a friend request writes no follow row, which is why H2's `interacted` admits a friendship; no Discovery verdict rests on the friends route.
+- NOT-GRADED: artifacts/api-server/src/routes/telegraph.ts — §63.2 names its AI @mention filter as one of the server's readings of `interacted`; census-telegraph grades this route, and no §63 verdict rests on it.
