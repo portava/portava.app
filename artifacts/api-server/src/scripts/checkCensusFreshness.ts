@@ -1517,6 +1517,27 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     //   - services/media/MediaProjectionService.ts, cited only for the
     //     extractor's blind spot;
     //   - the app config, cited for the supported-device range.
+    // WIDENED 2026-09-27 by the coverage-guard fix (census-media §32.14): verdict-row evidence — W166's brand accents, W10's tab registration, W170's video controls and the jest proof §9 ran, W152/W204's failure-vs-empty suite.
+    "travel-buddy-standalone/src/theme/tokens.ts",
+    "app/(tabs)/_layout.tsx",
+    "travel-buddy-standalone/src/components/ui/SharedVideoPlayer.tsx",
+    "travel-buddy-standalone/src/components/ui/__tests__/SharedVideoPlayer.component.test.tsx",
+    "artifacts/api-server/src/test/wallFailureVsEmpty.test.ts",
+    // WIDENED 2026-09-27 by the coverage-guard fix (census-media §32.14): W71 — the typo half's end-to-end proof and the two normalizers its row names, and the voice intake §14.2 moves the row on.
+    "artifacts/api-server/src/test/wallSessionIntent.test.ts",
+    "artifacts/api-server/src/routes/discoverySearchHelpers.ts",
+    "artifacts/api-server/src/lib/inputAssistance/queryNormalizer.ts",
+    "travel-buddy-standalone/src/platform/input-assistance/voice/voiceIntake.ts",
+    // WIDENED 2026-09-27 by the coverage-guard fix (census-media §32.14): W146 — the Wall's own live-DB suite §13.1 names as the fixture shape the benchmark follows.
+    "artifacts/api-server/src/test/wallSessionIntentLiveDb.test.ts",
+    // WIDENED 2026-09-27 by the coverage-guard fix (census-media §32.14): W151's C and W118 — server caps the client pins, the shared signing cache, the phone-only app config, and the SELECT that composes Media v2's embed (W118's row grades that delegation, so the §16.8 "left unwatched" note above no longer holds for it or for app.json).
+    "artifacts/api-server/src/lib/mediaProcessing.ts",
+    "travel-buddy-standalone/src/services/mediaUrl.ts",
+    "travel-buddy-standalone/app.json",
+    "artifacts/api-server/src/services/media/MediaProjectionService.ts",
+    // WIDENED 2026-09-27 by the coverage-guard fix (census-media §32.14): W72 — §17's postcard-link writer and the Quick Media suite that proves the fix.
+    "artifacts/api-server/src/routes/postcards.ts",
+    "artifacts/api-server/src/test/wallQuickMedia.test.ts",
   ],
   // Discovery has NO SPEC. Its 67 rows are 25 inbound obligations from other
   // surfaces' specs, 9 rows shared with the Global Input Intelligence census,
@@ -1804,6 +1825,58 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "travel-buddy-standalone/src/platform/input-assistance/creation/CreationAssist.tsx",
     "travel-buddy-standalone/src/platform/input-assistance/components/CorrectionBanner.tsx",
     "travel-buddy-standalone/src/platform/input-assistance/components/EntitySuggestionRow.tsx",
+    // WIDENED 2026-09-27 by the coverage-guard fix (census-media §32.14): §20's canonical contract — MD38, MD41, MD43, MD255, MD274·MD351 and MD369 — the audience rule, the two migrations and the proof suites §20.2 and §20.8 name.
+    "artifacts/api-server/src/lib/mediaVisibility.ts",
+    "artifacts/api-server/src/lib/postVisibility.ts",
+    "artifacts/api-server/src/migrations/3320_media_canonical_contract_constraints.sql",
+    "artifacts/api-server/src/migrations/3321_media_moderation_canonical_state.sql",
+    "artifacts/api-server/src/test/mediaCanonicalLayers.test.ts",
+    "artifacts/api-server/src/test/mediaModerationCanonical.test.ts",
+    "artifacts/api-server/src/test/db/mediaCanonicalContract.db.test.ts",
+    "artifacts/api-server/src/test/mediaEvidenceEligibility.test.ts",
+    // WIDENED 2026-09-27 by the coverage-guard fix (census-media §32.14): verdict-row evidence for MD51 (the Shared Moment edge), MD150 (the conflict state on the live-claim envelope) and MD252 (the sequencing anchor's tests).
+    "artifacts/api-server/src/migrations/2064_shared_moments_foundation.sql",
+    "artifacts/api-server/src/lib/liveClaimRead.ts",
+    "artifacts/api-server/src/test/compassCensusClosure.test.ts",
+    // WIDENED 2026-09-27 by the coverage-guard fix (census-media §32.14): the Expo routes MD25, MD26 and MD28 are reached through, and the place screens MD153 and MD262 are graded on.
+    "travel-buddy-standalone/app/media-map/index.tsx",
+    "travel-buddy-standalone/app/media-timeline/index.tsx",
+    "travel-buddy-standalone/app/media-contribute/index.tsx",
+    "travel-buddy-standalone/app/place/[id].tsx",
+    "travel-buddy-standalone/src/components/place/living/LivingDestinationPage.tsx",
+    "travel-buddy-standalone/src/components/selectors/LocationPrivacySelector.tsx",
+    // WIDENED 2026-09-27 by the coverage-guard fix (census-media §32.14): §9/§10/§12 — MD105's shared hide writer and its suite (mutation M8), MD112's duplicate detector, and the flag seeds §9.9 and §12.8 read the flag-dark ceiling from.
+    "artifacts/api-server/src/lib/postHide.ts",
+    "artifacts/api-server/src/test/postHide.test.ts",
+    "artifacts/api-server/src/lib/inputAssistance/duplicateDetection.ts",
+    "artifacts/api-server/src/migrations/2038_media_admin_flags.sql",
+    // WIDENED 2026-09-27 by the coverage-guard fix (census-media §32.14): MD227's Tagged bucket (§11.3.2, §13) — the tags table, its writer, and the schema-strict helper and live-schema suite that now back the row.
+    "artifacts/api-server/src/migrations/0044_tags_hashtags.sql",
+    "artifacts/api-server/src/services/tagging/TaggingService.ts",
+    "artifacts/api-server/src/test/helpers/schemaStrictSupabase.ts",
+    "artifacts/api-server/src/test/mediaTaggedBucketLiveSchema.test.ts",
+    // WIDENED 2026-09-27 by the coverage-guard fix (census-media §32.14): §21.1 E — the gem duplicate scan the add-gem form now shares with /gems/submit, and the gem page's visit-outcome sentence.
+    "artifacts/api-server/src/lib/inputAssistance/creation.ts",
+    "travel-buddy-standalone/app/gems/submit.tsx",
+    "travel-buddy-standalone/app/gems/[id].tsx",
+    // WIDENED 2026-09-27 by the coverage-guard fix (census-media §32.14): §23.7's client variant request, §24.3's MD288 radius and MD162's blocker (the Map's place projector, its zone model and the bypass guard), §28.7/§28.10's upload refusal proof.
+    "travel-buddy-standalone/src/components/PostcardTile.tsx",
+    "artifacts/api-server/src/lib/mapProjectPlace.ts",
+    "artifacts/api-server/src/routes/mapProjection.ts",
+    "artifacts/api-server/src/test/gatewayBypassGuard.test.ts",
+    "artifacts/api-server/src/test/mediaUploadHardening.test.ts",
+    // WIDENED 2026-09-27 by the coverage-guard fix (census-media §32.14): MD403 (§31.12.4, §31.13.3, §31.13.5) — the shared components measured inside Media's layouts, the stamp count's reachability, and the absent-prop proof suites.
+    "travel-buddy-standalone/src/components/ui/Avatar.tsx",
+    "travel-buddy-standalone/src/components/ui/DisplayMediaImage.tsx",
+    "travel-buddy-standalone/src/hooks/useStamp.ts",
+    "travel-buddy-standalone/src/components/stamps/__tests__/StampButton.tone.component.test.tsx",
+    "travel-buddy-standalone/src/components/ui/__tests__/AppHeader.overlayTint.component.test.tsx",
+    "travel-buddy-standalone/src/components/ui/__tests__/EmptyState.fill.component.test.tsx",
+    "travel-buddy-standalone/src/components/__tests__/CachedImage.fallbackBg.component.test.tsx",
+    "travel-buddy-standalone/src/platform/input-assistance/creation/__tests__/CreationAssist.quietColor.component.test.tsx",
+    // WIDENED 2026-09-27 by the coverage-guard fix (census-media §32.14): MD338 (§30, §32) — the receipt reader §32.1's privacy argument rests on, and the byte gate's fail-closed suite §30 and §32.9 ran as regression evidence.
+    "artifacts/api-server/src/services/intel/PresenceVerifier.ts",
+    "artifacts/api-server/src/test/mediaAccessFailClosed.test.ts",
   ],
   // census-telegraph.md — declared 2026-09-11 on the same basis as Media above:
   // 451 requirements out of CANNOT BE CHECKED, a clock started rather than a

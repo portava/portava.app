@@ -8855,3 +8855,14 @@ cited file is watched" was never true to the extent reported.
 - give a written reason for each file it cites without grading it.
 
 **No floor is lowered.**
+
+## Cited, not graded (check:census-scope-coverage)
+
+- NOT-GRADED: travel-buddy-standalone/scripts/run-node-tests.mjs — the client's node:test launcher, named in §19.2, §25.6, §27.1 and §31.10 only as the harness that discovers and runs the suites those sections cite; the verdicts rest on what the suites assert, and nothing here grades how the launcher picks a file or a Node flag.
+- NOT-GRADED: db/rollback/2026-09-26-3338-media-processing-worker-flag-rollback.sql — the undo script for migration 3338's worker-flag seed, named in §30.5 as the rollback path; §30.12's own file table marks it "a rollback is not graded", and MD338 rests on 3338 applied (watched), never on its reversal.
+- NOT-GRADED: artifacts/api-server/src/routes/pulse.ts — Pulse's feed route, cited in §9.1 and in §10's table only as a reader of post_hides, to show that a hide existed before Media bypassed it; §10.3 re-derives MD105's C on lib/postHide.ts, the media gate and the ranker, and no MD row grades what Pulse reads.
+- NOT-GRADED: travel-buddy-standalone/src/services/posts.ts — the client's generic post service, cited once in §10's table for hidePost, the Pulse card's call into the pre-existing hide; Media's options sheet reaches the hide through services/mediaInteractions.ts (watched), and §10.3 rests MD105 on the server writer, not on this client function.
+- NOT-GRADED: travel-buddy-standalone/src/components/PulseFeedCard.tsx — the Pulse card, cited once in §10's table as the entry point of the working hide that Media's sheet duplicated; it is Pulse's surface, shown for contrast, and no MD row grades a Pulse card.
+- NOT-GRADED: artifacts/api-server/scripts/check-flag-polarity.mjs — the flag-polarity guard, listed in §21.7 among the guard machinery §21 edited when it reclassified MEDIA_WORLD_SHELL_ENABLED as a capability; it measures flag declarations and grades nothing, and the machinery pattern reaches only src/scripts/check*.ts, not scripts/*.mjs.
+- NOT-GRADED: artifacts/api-server/src/test/censusIntegrityQualifiedVerdicts.test.ts — the suite that asserts check:census-integrity exits 0, named in §21.8 to explain why it was red while the headline waited for the integrator's restatement; it tests the census tool, not Media code, and no MD verdict rests on it.
+- NOT-GRADED: artifacts/api-server/src/routes/index.ts — the API router registry, listed in §22.7 only among the files §22 edited, to say which censuses' acknowledgements already name it (highlights-memories, telegraph); the §22 and §23.8 scope notes keep it out on purpose because every feature's mount edits it, and no MD row cites it as evidence.
