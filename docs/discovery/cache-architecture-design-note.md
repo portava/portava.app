@@ -67,7 +67,7 @@ The moderation eviction `evictCacheEntriesForEntity` targets `db/<id>`. Cache A 
 | Layover gate | `layoverGatedPlaces` | `layoverGatedPlaces` | `layoverGatedPlaces` | refuses |
 | age gate | `applyFilters` | `applyFilters` | `applyFilters` | closed (adult venues out when age is unknown) |
 
-Profile opt-outs (real name, avatar) apply only where a person's identity is served. On these routes that means only `GET /discovery/community`'s byline. There, `nameVisibilitySet` applies the real-name opt-out. The **avatar** opt-out (`profiles.show_profile_picture_publicly`, private profiles) is **not** applied; census-discovery §47 records it as a residual.
+Profile opt-outs (real name, avatar) apply only where a person's identity is served. On these routes that means only `GET /discovery/community`'s byline. There, `nameVisibilitySet` applies the real-name opt-out. The **avatar** opt-out (`profiles.show_profile_picture_publicly`, private profiles) is applied by `communityBylineAvatar` (`artifacts/api-server/src/lib/discoveryPeoplePrivacy.ts`), closing the residual census-discovery §47 recorded (§53.5; corrected by §59, which found this sentence still saying it was not applied).
 
 ## 4. Model / version handling
 
