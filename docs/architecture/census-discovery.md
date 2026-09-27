@@ -9001,6 +9001,180 @@ SELECT to_regclass('public.schema_migration_ledger');
 - CONSTRUCTED 178 / 188 = **94.7 %**; CORRECT 97 / 188 = **51.6 %**. The four buckets sum to 188.
 - **Production evidence is still owed.** 3390 and 3391 are applied to the local harness only. `DV-71` still owes the production policy catalogue (§54.12's SQL). `DC-15`'s plans are harness plans at a stated synthetic cardinality, not production plans.
 
+## §59 — Independent verification (lane P12): the cross-lane chain is built and passes, four C rows do not hold, DV-52 and DV-76 are graded, and the rollout round-trips on the harness
+
+*Written 2026-09-27 by the verification lane on `disc-p12-verify`, branched from `d7bfb15dc` (the tip of `wave8-integration` after §54.14). This lane wrote none of the code it grades. Every verdict here is about code and a local PostgreSQL 16 harness (`scripts/local-db/up.sh`: baseline plus 344 migrations in order, 12 known-unreplayable, none of them Discovery's). Nothing is merged to `main`, applied to `portava-ci` or production, deployed, or flag-enabled; no flag row was written anywhere (every suite answers `feature_flags` from memory and asserts the rows unchanged). The headline is not restated; the integrator does that. `head_commit` is not re-declared.*
+
+### 59.1 Row moves
+
+| ID | was | now | evidence |
+|---|---|---|---|
+| DC-26 | W | **C** | All sixteen of `12`'s classes (`docs/specs/discovery-v1/12_Claude_Code_Implementation.md:171#Required test classes`) have a suite that passes at this tree; §59.3 names each. The one class no lane owned, recommendation → behaviour → attribution (§54.11 H5), is built on the harness through the code that ships: `GET /discovery` signed in, then `POST /rank-events/outcome` with the served id, then `resolveServedRecommendation` and `recordCreatorAttribution` under a published test rule (`artifacts/api-server/src/test/db/discoveryVerifyChain.db.test.ts:207#test("V1. the chain: a signed-in serve's id is stored`). Another viewer's id is refused at the route and at the binding and writes nothing (`artifacts/api-server/src/test/db/discoveryVerifyChain.db.test.ts:252#test("V2. another viewer's id: the outcome is refused and moves nothing`); an unknown id is refused at all three layers (V3); an anonymous serve's ids are on the response and in no `rank_events` row, so nobody can bind them (`artifacts/api-server/src/test/db/discoveryVerifyChain.db.test.ts:288#test("V4. an anonymous serve's ids are on the response and nowhere in rank_events`); a retried save and a retried attribution each land once (`artifacts/api-server/src/test/db/discoveryVerifyChain.db.test.ts:311#test("V5. retries: a replayed save is`). **Harness evidence, not production:** 3386 is unapplied everywhere but the harness, and no production caller passes a recommendation to an attribution (`artifacts/api-server/src/services/creators/CreatorAttributionService.ts:305#export async function resolveServedRecommendation(` has no caller outside tests, as DV-67 already says). The keyless-outcome defect V7 found belongs to DV-37 below and is counted there once (§11.2 rule 2). |
+| DV-52 | ? | **W** | `docs/specs/discovery-v1/05_Graph_Engine.md:125#- it remains explainable enough for debugging.` **The graph itself passes:** typed, time-aware edges with counts, an admin-only debug read whose counts are the tables' own (`artifacts/api-server/src/test/db/discoveryVerifyExplain.db.test.ts:184#test("X3. the graph's debug read is admin-only and its counts are the tables' own`), and a non-admin read of exactly five aggregate keys (`artifacts/api-server/src/test/db/discoveryVerifyExplain.db.test.ts:210#test("X4. the graph read any signed-in user has returns five aggregate keys`). **What fails, exactly:** (1) where the graph reaches a Discovery decision, the decision does not record which graph reading made it. City confidence becomes a momentum scale and an exploration budget (`artifacts/api-server/src/lib/discoveryModifiers.ts:206#const { momentumScale, explorationBudgetPct } = cityConfidenceInputs(cityConfidence);`), but the serve keeps only the modifiers' on/off reason (`artifacts/api-server/src/lib/discoveryPde.ts:558#stages.modifiers = modifiers.reason;`) and, per item, the budget. The confidence record (depth, tier, source, computed-at) and the scale are dropped, and `compass_city_confidence` is overwritten on each daily rebuild, so a past serve's graph input cannot be recovered. (2) Discovery's one ranking-debug writer produces nothing on production's structure: every sample omits two NOT NULL columns (`artifacts/api-server/baseline/20260819_baseline_structure.sql:8799#content_type text NOT NULL,`), and the refusal is swallowed (`artifacts/api-server/src/test/db/discoveryVerifyExplain.db.test.ts:136#test("X1. DEFECT, pinned: the DRS debug sample omits production's NOT NULL content_type/content_id`; X5 shows the same refusal on a live `GET /discovery` cold fetch). The debug read is admin-only and exposes no viewer's data or score to a non-admin (X2, X5). The consumption path is behind 2289 (off, held), so (1) affects no deployment today. |
+| DV-76 | ? | **W** | `docs/specs/discovery-v1/12_Claude_Code_Implementation.md:20#0.3 Complete privacy/tagging Phase 0` names three items and "other catalogued Phase 0 findings". **The three named items are fixed at the route and service, and tested:** pending tags are not rendered (`artifacts/api-server/src/lib/enrichSpans.ts:187#.eq('status', 'approved');`); a friends-only post notifies friends, not one-way followers, and fails closed on every unreadable read (`artifacts/api-server/src/services/tagging/TaggingService.ts:174#if (visibility === 'friends' || visibility === 'friends_only') {`); `disable_tagging` engages when its own row cannot be read (`artifacts/api-server/src/lib/featureFlags.ts:55#export async function isKillSwitchEngaged(`). `tagging.test.ts` passes 35/35. **What fails, exactly:** Phase 0 #1 (unauthorized tagging) is still reachable at the database. `authenticated` holds INSERT on `tags`, and the only insert policy checks the tagger (`artifacts/api-server/baseline/20260819_baseline_structure.sql:32217#CREATE POLICY tags_insert ON public.tags FOR INSERT WITH CHECK ((tagger_id = auth.uid()));`). So a client that skips `POST /api/tags` can tag a user whose `tag_permission` is `nobody`, on a post it does not own, and the row lands `approved` by default (`artifacts/api-server/src/test/db/discoveryVerifyPhase03.db.test.ts:46#test("P1. DEFECT, pinned: a direct client insert tags a 'nobody' user on a stranger's post, and lands APPROVED`). That bypasses the permission, the approval gate #2 depends on, the hourly cap and the #3 kill switch. What the database does hold is P2. Items #5–#7 have no trace anywhere (`docs/security/phase0-tagging-privacy-state.md`), so "other catalogued findings" cannot be counted complete. No tagging census owns this row, so it is graded here. |
+| DV-20 | C | **W** | **Does not hold.** The Trail canonicaliser folds diacritics but not letters that NFKD does not decompose (`artifacts/api-server/src/lib/discoveryTrailObject.ts:162#.normalize("NFKD")`). "Đà Nẵng street food" becomes `a-nang-street-food` and "Da Nang street food" becomes `da-nang-street-food`, and CHECK 1's similarity is 0.6, below the 0.8 duplicate bar (`artifacts/api-server/src/test/discoveryVerifyAudit.test.ts:26#it("A1. DEFECT, pinned (DV-20): 'Đà Nẵng street food' and 'Da Nang street food' canonicalise to two Trails`). Through the shipping `proposeTrail` on the harness, one filed under destination "Đà Nẵng" and one under "da nang" were BOTH admitted, and no check fired. That is two canonical Trails for one theme, and `02` §2's own example city (`#danang`) is the one that breaks. Ł and Ø fail the same way (`odz-murals`, `resund-cycling`). The fold that fixes it already exists and is B01's: `searchKey` folds all three to one key (A1c). |
+| DV-25 | C | **W** | **Does not hold as a correct influence.** The shipping momentum kernel weighs every non-save outcome as positive engagement, `dismiss` included. `dismiss` is the ONE negative outcome (2297). So a place its viewers mark "Not interested" gains momentum over one they merely saw (`artifacts/api-server/src/test/discoveryVerifyAudit.test.ts:44#it("A2. DEFECT, pinned (DV-25): a dismissed place gains momentum over one that was only seen`), and the SQL twin does the same (`artifacts/api-server/src/migrations/2892_place_momentum.sql:463#CASE WHEN outcome = 'save' THEN c_w_save ELSE c_w_outcome END`). The Trail fold inherits it, and the Trail's `02` §9 exposure numerator counts a dismiss as a positive response (`artifacts/api-server/src/services/trails/TrailService.ts:646#if (r.outcome !== "impression") bucket.positives += 1;`). Behaviour does influence Trail momentum, but with the wrong sign for the one negative signal. |
+| DV-37 | C | **W** | **Does not hold for the keyless outcome path.** An outcome with no `recommendation_id` binds to "the most recent upgradable row for (viewer, item, surface)" (`artifacts/api-server/src/routes/rankEvents.ts:208#.in("outcome", upgradableOutcomesFor(outcome))`). Compare-and-set protects two RACING reports of one row (E2E O8b). A sequential RETRY, when the item was served twice, finds the next exposure and moves it too: one "Not interested", two dismisses, two negative signals, the retry answered as a new outcome (`artifacts/api-server/src/test/db/discoveryVerifyChain.db.test.ts:346#test("V7. DEFECT, pinned (DV-37): a KEYLESS outcome retried after a second serve of the same item moves a SECOND exposure`). The row's text states only the unkeyed direct impression as the unkeyed boundary. Every client build before §50 sends keyless outcomes. |
+| DC-15 | C | **W** | **Does not hold as stated.** "One registry row for each of the … indexes that migrations create on Discovery tables" is false for three constraint-backed unique indexes: `trails_slug_unique` (`artifacts/api-server/src/migrations/2910_discovery_trails.sql:160#CONSTRAINT trails_slug_unique UNIQUE (slug),`), `place_momentum_place_run_key` (2892) and `discovery_place_reports_unique` (0061). None has a row in `docs/discovery/query-paths.md` §4. The forward check cannot see such indexes, because it matches only `CREATE [UNIQUE] INDEX` (`artifacts/api-server/src/scripts/checkDiscoveryQueryPaths.ts:67#const INDEX_RE = new RegExp(`). Probed: a migration adding `ALTER TABLE public.rank_events ADD CONSTRAINT … UNIQUE (id, outcome)` leaves the check `RESULT clean`, and the same index spelled `CREATE UNIQUE INDEX` fails it `MISSING`. The probe file was deleted. Ten primary keys and the baseline-only `idx_discovery_cache_dest_cat` also have no row. |
+
+### 59.2 The adversarial audit of §46–§55's C rows
+
+Each row: its spec sentence re-read, its cited suites re-run at this tree, and one negative input or mutation the lane did not use.
+
+| row | verdict | the probe, and what it showed |
+|---|---|---|
+| B01 | **holds, with a caveat** | TS `searchKey` vs SQL `input_normalize_city_key` over 35 names the lane did not use (Đ, Ł, Ø, Þ, Ħ, İ, ß, Æ, Œ, ligatures, fullwidth, suffix and whitespace forms): 35/35 identical, so the query side and stored side cannot disagree. Caveat: letters outside diacritics fold to separators or vanish — `Straße` → `stra e`, `Gießen` → `gie en`, `Æbeltoft` → `beltoft`, `ﬁnland` → `nland`, fullwidth `Ｔｏｋｙｏ` → empty — so a typed "giessen" cannot reach Gießen. G57 says diacritics; this is recorded, not graded against it. |
+| DC-25 | **holds, with a caveat (fixed)** | The note documents the five items. One sentence was false since §53.5 ("the avatar opt-out … is not applied"); corrected in `docs/discovery/cache-architecture-design-note.md` §3 (a line-neutral edit, cited by nothing). |
+| DV-37 | **does not hold** | §59.1 (V7). |
+| DV-38 | **holds, with a caveat** | `schema_version` is checked on all three rank-events entry points (direct, outcome, each batch event) and the dwell route; `"1"` (string) and `2` are refused; the database refuses an unknown version (3375, `db/discoveryTelemetryConstraints` on the harness). Caveat: an explicit `null` is accepted as "absent → current", which is a declared version the server did not read. |
+| DV-39 | **holds, with a caveat** | The screen is an allowlist (an unclassified key is refused, `screenFeaturesForStorage`), and precise-location key names in any case/spelling are dropped. Caveat, the lane's stated bias: values are not inspected, so a coordinate inside an allowed value (a `destination` typed as "38.72,-9.14") would be stored. |
+| DV-45 | **holds** | All 24 CHECKs on `rank_events` and `recommendations` (including P6's three dwell CHECKs) are exercised by name, and a completeness test enumerates `pg_constraint`, so a new CHECK without a case fails. |
+| DSV2-04 | **holds** | Client suites 48/48. A missing, non-finite, negative or non-number validity parses to `null` and is never shown as current; the boundary instant is stale. |
+| DV-46 | **holds (strengthened)** | V1–V5 prove hop 1 → 5 across lanes on a real database for the first time; the served column reads back in `+00:00` and still binds. |
+| DV-20 | **does not hold** | §59.1 (A1, and `proposeTrail` on the harness). |
+| DV-25 | **does not hold** | §59.1 (A2). |
+| DC-02 | **holds** | A single-statement multi-row INSERT of four `supporting` labels for one content is refused at the fourth row by 3380's trigger (rows earlier in the same statement are visible to it); a label moved by UPDATE of `source_id` is covered (the trigger fires `OF relationship, source_type, source_id`). |
+| A24 | **holds** | No server-side response cache on any people surface (`discoverySearch.ts` caches only the buddy launch gate), so going Invisible reaches the next request; suites 23 + 18 + 16 pass. The lane's own owner question (location-off hides a person from name search) stands. |
+| DSV2-12 | **holds, with a caveat** | The keyed trace is exact (V1–V5). Caveat: a keyless outcome is attached by the server to the most recent upgradable exposure and counted "bound by construction", so V7's one action is traced as two bound outcomes on two exposures. Counted once, under DV-37. |
+| DV-71 | **holds** | Probed what R0 does not read: no SECURITY DEFINER function over the sixteen tables is executable by `anon` or `authenticated` (one exists, `decrement_discovery_place_saved_count`, and neither role can call it); no view or materialized view selects from any of the sixteen; the only client column INSERT or UPDATE grants are the kept own-row INSERTs on saves and reports. |
+| DC-15 | **does not hold** | §59.1. |
+
+### 59.3 DC-26 — the sixteen classes at this tree
+
+| class | suite(s), run at this tree | result |
+|---|---|---|
+| unit · scoring feature transforms | `portavaRank.test.ts`, `discoveryPde.test.ts` | 23 + 32 pass |
+| unit · Trail lifecycle | `discoveryTrailObject` (pure), `db/trailsConstraints` T1–T5, C1–C3 | pass |
+| unit · trend lifecycle | `discoveryLocalMomentum.test.ts`, `placeMomentumSqlParity.test.ts` | 32 + 6 pass |
+| unit · ledger math | `creatorLedgerPure.test.ts`, `creatorLedgerProperties.test.ts`, `db/creatorLedgerLifecycle` L1, L14 | 25 + 28 pass |
+| unit · attribution rule versioning | `db/creatorLedgerLifecycle` L5, L8 | pass |
+| integration · event write path | `discoveryTelemetryWriters`, `discoveryServeLog`, `db/discoveryTelemetryConstraints` | 10 + 41 pass |
+| integration · recommendation → behavior → attribution | `db/discoveryVerifyChain` V1–V6 | 8/8 pass (V7 pins DV-37) |
+| integration · RLS | `db/discoveryRlsExplicitPolicies` | pass |
+| integration · Trail visibility | `discoveryTrailAccess.test.ts` | 27 pass |
+| integration · feature flag OFF inertness | `discoveryEngineMode`, `discoveryServePathIsolation`, `discoveryModifiers` | 30 + 16 + 15 pass |
+| database · migrations from current canonical baseline | `scripts/local-db/up.sh` (baseline + chain), CI's local-db job | 344 in order; none of the 12 known-unreplayable is Discovery's |
+| database · CI rehearsal | `.github/workflows/live-db.yml`, pinned by `ciWorkflowArchitecture.test.ts` | 45 pass; the `portava-ci` runs for 3375/3376/3390/3391 are still owed (§54.2 DC-18) |
+| database · schema drift | `check:production-drift`, `creatorLedgerRowSchemaDrift.test.ts` | pass |
+| shadow · old vs new ranking | `discoveryShadow.test.ts`, `discoveryDivergenceReport.test.ts` | 22 + 13 pass |
+| shadow · cache-path correctness | `discoveryCacheRevocation.test.ts`, `discoveryCacheBEligibility.test.ts` | 23 + 28 pass |
+| shadow · recommendation coverage | `discoveryTraceCoverage.test.ts`, `db/discoveryOutcomeMeasurement` | 7 pass + harness |
+
+The full harness set passes 303 of 303 on a freshly built database, 0 skipped.
+
+### 59.4 Rollout rehearsal on the merged chain — harness evidence only
+
+Every Discovery and creator-ledger migration that ships a rollback file (15: 2360, 2361, 2550, 2850, 3366, 3375, 3376, 3380, 3381, 3385, 3386, 3387, 3390, 3391, 3395) was rolled back newest first, all 15 OK, then re-applied oldest first, all 15 OK. The catalogue (columns, indexes, constraints, policies, ACLs and RLS flags, triggers, the Discovery/Trail/creator functions, and the Discovery flags; 674 lines) is identical before and after: order-independent hash `e3a0d7bd5edf39378296328554756467` both sides, against a fresh build. **A correction to this lane's own first reading:** the first fingerprint aggregated without an ORDER BY on the value, so it hashed catalogue scan order and reported six classes "different"; the line-set diff showed the same objects, and the order-independent hash is the one recorded. **No rollback FILE (20):** 2090–2095, 2153, 2289, 2297, 2890–2894, 2910, 2995 (as §54.2 found) and the creator ledger's 2920, 2921, 2922, 2930. This is not a `portava-ci` or production rehearsal (DC-18, DC-27 unchanged).
+
+### 59.5 Privacy spot-checks across lanes
+
+- **3390 posture (P9).** Client privileges (table, column, EXECUTE, and every permissive policy for `anon`, `authenticated` or PUBLIC) were snapshotted with 3390 rolled back and again after re-applying it. Gained: **0**. Lost: 262 (the revocations on `discovery_cache`, `discovery_geocode_cache`, `rank_events`, and the non-kept operations on saves and reports).
+- **P6's dwell route.** `requireUser` first; with 3395 off it answers `feature_disabled` before any read; dwell rows are written as `outcome = 'analytics'` with their own tokens, and every momentum and Trail reader excludes `analytics`, so idle (like passive and active) dwell is never counted.
+- **P10's creator routes.** The three `/creator-economy/me/*` routes take the creator from `requireUser` and read no id from params, query or body; every `/admin/creator-ledger/*` route calls `requireAdmin` (RT1–RT6 on the harness).
+- **P5x.** A24 above; the `/community` avatar gate passes 16/16, and the design note's contrary sentence is corrected.
+
+### 59.6 P5-A (`d0e595b93`) and P5-B (`88884572b`), reviewed as sent, not merged here
+
+- **Suites at `88884572b`:** `discoveryLayoverGems` 27, `layoverSnapshotEntry` 6, `mediaPendingUploadSweep` 21, `discoveryLiveSafetyCompassPath` 4, `discoveryLiveSafetyPrecedence` 14, `mapDiscoveryCandidateAdapter` 17, `discoveryFreeTimeDuplicate` 4, `discoveryTripReadInventory` 3, plus the propagation E2E 22 and cache revocation 23. All pass.
+- **This lane's four suites also pass at `88884572b`, unchanged (17 + harness).** GET /discovery's cache-A and cold-fetch paths are byte-for-byte what they were: with 2850 absent, the new `discovery_live_rank_enabled` read is answered in memory, and V0/X0 find no unmodelled request and no failed statement.
+- **Compass serve points (§57.9 hunk):** with 2850 off, `withDiscoveryLiveSafety` returns the array it was given and reads no claim. A throwing flag read is off. The Compass cache stores the PRE-safety order, so the demotion is re-applied on every hit and revocation holds both ways. **Caveat for A07:** with 2850 ON and the Live-claim read unreadable, nothing is demoted and the Compass order is served as ranked. That is the same as the ranker path, and `readable: false` is reported, but it is a safety constraint that opens on an unreadable read.
+- **§56.14's claim that `resolveLayoverEntry` never answers `permitted` on a failed read:** verified from code. Every failure branch (flag off or unreadable, unknown airport country, passport read error or throw, corridor unreadable, corridor absent) returns `unresolved`.
+- **P5-A's relay refusal** denies an object with any non-`ready` `post_media` row to non-owners. `post_media.processing_status` is `NOT NULL DEFAULT 'pending'`, and every feed already shows `ready` rows only, so no served feed item loses its media.
+- **Rows touched:** A13, A14, A07 and DV-77 are left where §56.14 and §57.13 put them.
+
+### 59.7 Defects found, each routed to its owner (none fixed here unless stated)
+
+1. **DV-20 — Trail slug** (`lib/discoveryTrailObject.ts`, P7's, merged): fold strokes before NFKD, reusing the stored fold rather than a second definition: `const slug = strokeFold(title).normalize("NFKD")…`, with `strokeFold` exported from `lib/canonicalLocations.ts`, and destinations compared by `searchKey`. A1 turns red when it lands; flip it to a guard.
+2. **DV-25 — dismiss as engagement** (`lib/discoveryLocalMomentum.ts` `weightFor`, **P8's, running**): `if (outcome === "dismiss") return 0;` before the generic weight. The SQL twin needs a migration replacing 2892's `rebuild_place_momentum` with `CASE WHEN outcome = 'save' THEN c_w_save WHEN outcome = 'dismiss' THEN 0 ELSE c_w_outcome END` (parity pinned by `placeMomentumSqlParity`). In `services/trails/TrailService.ts` `exposureCountsFrom`: `if (r.outcome !== "impression" && r.outcome !== "dismiss") bucket.positives += 1;`. A2 turns red when the TS half lands.
+3. **DV-37 — keyless outcome retry** (`routes/rankEvents.ts`, P3's, merged): the server cannot tell a retry from a second action without identity. Either accept `client_event_id` on `/rank-events/outcome` as `/rank-events` already does, or refuse a keyless outcome for `surface = 'discovery'` once §50's builds are the floor. The mutation that turned V7 red (a keyless repeat of a recorded (viewer, item, surface, outcome) answers `duplicate`) is one candidate, and it is lossy for a genuine second dismissal.
+4. **DC-15 — constraint-backed indexes** (`scripts/checkDiscoveryQueryPaths.ts`, P9's, merged): extend `INDEX_RE`'s scan to `CONSTRAINT <name> UNIQUE|PRIMARY KEY` inside `CREATE TABLE` and `ALTER TABLE … ADD`, then add rows for `trails_slug_unique`, `place_momentum_place_run_key` and `discovery_place_reports_unique` (and decide whether primary keys need rows).
+5. **DV-52 — debug sampler** (`artifacts/api-server/src/services/ranking/DiscoveryRankingService.ts:839#viewer_id:       viewerId,`, no running owner): production's `ranking_debug_samples` has `content_type text NOT NULL` and `content_id uuid NOT NULL`, and a Discovery item id is not a uuid. It needs a migration relaxing both, or a writer that supplies them, plus a `.then` that reads `{ error }`. X1 and X5 turn red when it lands.
+6. **DV-52 — graph input not recorded** (`lib/discoveryPde.ts`, under the 2026-08-15 hold): when the modifiers are enabled, carry `{ depthScore, tier, source, sourceReason, computedAt, momentumScale, explorationBudgetPct }` into `PdeStages`, so `pde_stages` records the graph reading a serve used. Not built: it is recording inside held machinery.
+7. **DV-76 — direct tag insert** (a migration; tagging has no running owner): no client writes `tags` directly (the client has no `.from('tags')`), so `REVOKE INSERT, UPDATE, DELETE ON public.tags FROM anon, authenticated;` closes it, keeping the parties-only SELECT. Otherwise a restrictive INSERT policy is needed that re-states the route's rules. P1 turns red when it lands.
+
+### 59.8 Tests, and every one seen RED (P24)
+
+| suite | cases | runs on |
+|---|---:|---|
+| `db/discoveryVerifyChain.db.test.ts` | 8 (V0–V7) | the real routes and services over `db/discoveryVerifyBridge.ts` on PostgreSQL 16 |
+| `db/discoveryVerifyExplain.db.test.ts` | 6 (X0–X5) | same |
+| `db/discoveryVerifyPhase03.db.test.ts` | 2 (P1, P2) | PostgreSQL 16, as `authenticated` / `anon`, rolled back |
+| `discoveryVerifyAudit.test.ts` | 3 (A1, A1c, A2) | unit, in `npm test` |
+
+`db/discoveryVerifyBridge.ts` drives the REAL supabase-js client over an injected fetch that runs each request as one psql statement. It extends §51's bridge with rpc (typed from `pg_proc`), `on_conflict` upserts, `single()`, HEAD counts and JSON paths. It records every request it cannot model, and every statement the database refuses, so a suite can assert that nothing on its path failed silently. It is exempted in `check-guard-coverage.mjs` with its reason, as §51's bridge is.
+
+**23 mutations, one at a time; 22 killed and one survived by design.** Every file was restored and sha256-checked identical, and every database mutation was restored and fingerprint-checked (trigger function md5, `tags` ACL and policy md5). Every case above went red under at least one of them:
+
+- **Chain (MC1–MC9).**
+  - The P10 viewer filter AND owner re-check removed → V2.
+  - The P3 route's viewer filter AND binder owner check removed → V2.
+  - The stored id minted one position off → V1, V2, V5, V6, V0.
+  - The binder never recognising a duplicate → V5, V0.
+  - The bound id not written → V1, V5.
+  - 3386's trigger disabled → V3, V4, V5, V0.
+  - The trigger tightened to ownership → V1, V5, V6, V0.
+  - An anonymous serve written as items → V0.
+  - A keyless duplicate guard → V7.
+  - **Survived, by design:** the P10 read filter removed ALONE (MC1a). The binder's own re-check still refuses, which is defence in depth and not a blind spot; MC1 removes both.
+- **Explain (ME1–ME5).**
+  - The sampler fixed → X1, X5, X0.
+  - The debug-samples admin guard removed → X2.
+  - The graph-status guard removed → X3.
+  - The graph status reading an absent column → X3, X0.
+  - `signals` handed to non-admins → X4.
+  - A score on a served item → X5.
+- **Phase 0.3 (MP1–MP4).**
+  - Client INSERT revoked → P1.
+  - Read-all policy → P2.
+  - Tagger-update policy → P2.
+  - `tags_insert` widened → P2.
+- **Audit (MA1–MA3).**
+  - Slug stroke-fold → A1.
+  - Dismiss weighted 0 → A2.
+  - `searchKey` without its fold → A1c.
+
+### 59.9 Checks and runs at this tree
+
+- **`npm test` (the full api-server suite), once:** the counts are in the lane report.
+- **Harness DB set:** 303/303 on a fresh build, 0 skipped.
+- **Passing checks:** `typecheck:tests` at baseline (863 across 115 files); `check:test-registration`; `check:guard-coverage` (with the one exemption); offline column extraction `problems=0`. The remaining census checks are listed in the lane report.
+- **`check:census-integrity` exits 1 by design** until the integrator restates the headline. This section moves seven rows: DC-26 W→C; DV-52 and DV-76 ?→W; DV-20, DV-25, DV-37 and DC-15 C→W.
+
+### 59.10 Read-only production SQL that would turn harness evidence into production evidence
+
+```sql
+-- DV-76: can a client write tags directly in production?
+SELECT grantee, string_agg(privilege_type, ',' ORDER BY privilege_type) FROM information_schema.role_table_grants
+ WHERE table_schema = 'public' AND table_name = 'tags' AND grantee IN ('anon','authenticated') GROUP BY 1;
+SELECT polname, polcmd, pg_get_expr(polqual, polrelid), pg_get_expr(polwithcheck, polrelid) FROM pg_policy WHERE polrelid = 'public.tags'::regclass;
+-- DV-52: is the ranking-debug sampler's target still NOT NULL on content_type/content_id, and has it ever held a Discovery row?
+SELECT column_name, is_nullable, column_default FROM information_schema.columns
+ WHERE table_schema = 'public' AND table_name = 'ranking_debug_samples' AND column_name IN ('content_type','content_id');
+SELECT surface, count(*) FROM ranking_debug_samples GROUP BY 1;
+-- DV-25 / DV-37: how much negative behaviour exists to be mis-weighed, and do keyless double dismisses occur?
+SELECT outcome, count(*) FROM rank_events WHERE surface = 'discovery' GROUP BY 1;
+SELECT user_id, item_id, count(*) FROM rank_events WHERE surface = 'discovery' AND outcome = 'dismiss'
+ GROUP BY 1, 2 HAVING count(*) > 1 LIMIT 20;
+-- DC-15: constraint-backed indexes on the sixteen, as production has them.
+SELECT c.conrelid::regclass, c.conname, c.contype FROM pg_constraint c
+ WHERE c.contype IN ('u','p') AND c.conrelid::regclass::text IN ('trails','place_momentum','discovery_place_reports','rank_events','recommendations');
+```
+
+### 59.11 Freshness and scope
+
+This section changed `docs/discovery/cache-architecture-design-note.md` (one sentence, no verdict rests on it), `artifacts/api-server/scripts/check-guard-coverage.mjs` (one exemption) and the `test` line. It adds to census-discovery's scope its own suites and the files §59 grades from that were unwatched: the production baseline, `lib/enrichSpans.ts`, `services/tagging/TaggingService.ts`, `tagging.test.ts`, and six DC-26 class suites. `check:census-freshness` then names these files. Writing the ledger is the integrator's job, so each is argued here:
+
+- **census-discovery:**
+  - The five `discoveryVerify*` files are new, and they are §59's own evidence.
+  - `test/ciWorkflowArchitecture.test.ts` changed before this lane and joins the scope now. §59.3 grades DC-26's "CI rehearsal" class on it as it stands at this tree (45/45), so the change is what was measured.
+- **census-trips** (it counts every harness suite): `db/discoveryVerifyBridge.ts`, `db/discoveryVerifyChain`, `db/discoveryVerifyExplain` and `db/discoveryVerifyPhase03`. They create and remove only Discovery, creator, graph, debug-sample and tag rows, and they read no `trip_*` object, so no trip verdict can move.
+
+### 59.12 What would turn this red
+
+- A1, A2, P1, V7 or X1 going red: the defect it pins was fixed, and the row it grounds must be re-graded.
+- V1–V6 going red: the served id no longer survives serve → outcome → attribution, or another viewer's, an unknown or an anonymous id binds.
+- The rehearsal hash differing on a rebuilt harness: a rollback file no longer inverts its migration.
+
 ## Cited, not graded (check:census-scope-coverage)
 
 - NOT-GRADED: artifacts/api-server/src/compass/CompassExplanationEngine.ts — §13.7 item 3 names Compass's HMAC recommendation-token signer as a refactor this lane declined to make in another lane's file. Discovery's recommendation id is minted by lib/discoveryRecommendationId.ts, and no Discovery verdict rests on the signer.
