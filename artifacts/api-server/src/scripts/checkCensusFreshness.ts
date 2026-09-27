@@ -1729,6 +1729,16 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "travel-buddy-standalone/src/components/ui/EmptyState.tsx",
     "travel-buddy-standalone/app/media-viewer/[id].tsx",
     "travel-buddy-standalone/app/(tabs)/media.tsx",
+    // WIDENED 2026-09-27 by census-media §31.13 (lane K, pass 4), because
+    // check:census-scope-coverage required it (245/258, 95%, against the 96%
+    // floor). MD403's §31.13.5 evidence rests on CreationAssist's optional
+    // quietColor reaching CorrectionBanner and EntitySuggestionRow, so a change
+    // to any of the three can falsify it. census-input-intelligence watches the
+    // same files through its directory entry; watching them here as well makes
+    // an edit to them age both censuses, which is the point.
+    "travel-buddy-standalone/src/platform/input-assistance/creation/CreationAssist.tsx",
+    "travel-buddy-standalone/src/platform/input-assistance/components/CorrectionBanner.tsx",
+    "travel-buddy-standalone/src/platform/input-assistance/components/EntitySuggestionRow.tsx",
   ],
   // census-telegraph.md — declared 2026-09-11 on the same basis as Media above:
   // 451 requirements out of CANNOT BE CHECKED, a clock started rather than a

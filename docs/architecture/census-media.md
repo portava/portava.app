@@ -7666,6 +7666,17 @@ component is branch work, provided every existing caller renders
 byte-identically. Commits `888439472` and `6213a2917` hold the code, and this
 subsection is the census record.
 
+**Pass 4.** The integrator sent this lane back to close both open items.
+- Lane-k first merged the integration branch at `56e936b1e`, with lanes J, L
+  and M and census-media §32–§32.13. The merge commit is `aca55eb65`. It
+  keeps §32 unchanged and §31.13 as it was, and keeps every scope widening
+  from both sides.
+- Commit `e576003f1` then:
+  - swaps the gems rail's emoji for measured glyphs (§31.13.7);
+  - fixes CreationAssist's two quiet marks through an optional prop
+    (§31.13.5).
+- This subsection is updated in place for pass 4.
+
 This pass:
 - Gives four shared components one optional prop each: StampButton, AppHeader,
   EmptyState and CachedImage. Media passes the prop; every other caller
@@ -7676,29 +7687,28 @@ This pass:
 - Measures and fixes the shared components drawn inside Media's own layouts
   that no pass had measured. The main one is the image-error fallback, which
   drew its caption at 1.19:1 on eight Media surfaces (§31.13.5).
-- Measures the shared sheets that Media opens, and rules on them with the
-  spec text (§31.13.6).
-- Records the emoji (§31.13.7) and the readings the owner may overrule
-  (§31.13.8).
+- Measures the shared sheets that Media opens, and sets out the spec case on
+  their scope for the owner (§31.13.6).
+- Replaces the gems rail's two emoji controls with glyphs the test measures
+  (§31.13.7). Records the readings the owner may overrule (§31.13.8), and a
+  visible design change for the owner to review (§31.13.15).
 
-**MD403 stays W.** Every asserted pair passes and none is pinned, but two
-things on Media surfaces remain, and neither is excluded by a spec-based
-reason:
-1. **The gems rail's two emoji controls**, 💬 Comment and 🔖/🏷 Save. Their
-   colours come from the platform emoji font, so the source cannot be
-   measured. No visible label names them, so they are not decoration
-   (§31.13.7).
-2. **CreationAssist inside the add-gem sheet.** It draws two pairs in
-   `faint`, each at 2.88:1. The fix is an optional prop in
-   `src/platform/input-assistance/`, a directory that census-input-intelligence
-   watches and cites line by line. This lane did not edit it. It needs the
-   integrator's go (§31.13.5).
+**MD403 stays W.**
+- Every asserted pair passes, and none is pinned.
+- Both items pass 3 left open are now closed: the gems rail's emoji
+  (§31.13.7) and CreationAssist inside the add-gem sheet (§31.13.5).
+- What remains is a scope question: does §46 govern the four shared sheets
+  that Media opens? That is the owner's call, as the §31.1 row already
+  treats this row's scope ("or the owner rules that MD403 grades the World
+  shell only"). Neither this lane nor the integrator makes it.
+- §31.13.6 sets out the spec case for the reading that it does not. It is
+  offered to the owner as a case, not as a ruling.
 
 #### 31.13.1 Row table
 
 | ID | Was | Now | Evidence |
 | --- | --- | --- | --- |
-| MD403 | **W** | **W** | **Every asserted pair passes, and none is pinned.** 547 of 547 asserted pairs pass across 574 pairs (`travel-buddy-standalone/src/features/media/__tests__/mediaContrast.test.ts:835#test('every solid-ground and fallback pair meets WCAG AA`). A new guard fails if any pair is pinned, or if a StampButton on a Media surface lacks the dark tone (`travel-buddy-standalone/src/features/media/__tests__/mediaContrast.test.ts:1478#test('census-media §31.13: no pair is pinned, and every StampButton on a Media surface passes the dark tone'`). **The five pairs pinned in §31.12 now pass**, each through an optional prop that Media passes (§31.13.2). **The Grid's full-screen viewer is measured**: 29 pairs, of which 27 are asserted and all pass (§31.13.4). **Stated readings the owner may overrule** (§31.13.8): (a) the stamp-burst animation is decoration; (b) pressed states are not measured; (c) an icon beside its own label is decoration; (d) the four modal sheets Media opens are outside §46 (§31.13.6). **RED WHEN** two things hold and the owner accepts (a)–(d). First, the gems rail's two emoji controls are either measured on a device or replaced by glyphs the test measures. Second, CreationAssist's two `faint` pairs pass inside the add-gem sheet. **Blocker:** the emoji need an owner choice (§31.13.7). The CreationAssist fix touches files that census-input-intelligence watches (§31.13.5). |
+| MD403 | **W** | **W** | **Every asserted pair passes, and none is pinned.** 562 of 562 asserted pairs pass across 592 pairs (`travel-buddy-standalone/src/features/media/__tests__/mediaContrast.test.ts:835#test('every solid-ground and fallback pair meets WCAG AA`). A guard fails if any pair is pinned, or if a StampButton on a Media surface lacks the dark tone (`travel-buddy-standalone/src/features/media/__tests__/mediaContrast.test.ts:1510#test('census-media §31.13: no pair is pinned, and every StampButton on a Media surface passes the dark tone'`). **The five pairs pinned in §31.12 now pass**, each through an optional prop that Media passes (§31.13.2). **The Grid's full-screen viewer is measured**: 29 pairs, of which 27 are asserted and all pass (§31.13.4). **The gems rail's emoji are replaced** by MessageCircle and Bookmark in source colours. The three new pairs are asserted and pass; the saved bookmark in `signal` reads 5.15 (§31.13.7). **CreationAssist in the add-gem sheet passes**: its two `faint` marks now take `mute` through an optional prop (2.88 → 5.55), and its whole inline card is measured (§31.13.5). **Stated readings the owner may overrule** (§31.13.8): (a) the stamp-burst animation is decoration; (b) pressed states are not measured; (c) an icon beside its own label is decoration. **RED WHEN** the owner rules that §46 does not govern the shared sheets Media opens, or they are brought to AA. **Blocker:** the owner rules whether §46 covers the shared sheets Media opens (CommentsSheet, ShareSheet, GlobalPlacePicker, PlanPickerController: 19 failing groups, all from app-wide tokens). If it does, the fix is a design-system token change, not Media's. §31.13.6 gives the spec-line case for the reading that it does not, as the case for the owner. This row's scope is the owner's call, as the §31.1 row already treats it. |
 
 #### 31.13.2 The five pinned pairs, now asserted passes
 
@@ -7872,34 +7882,58 @@ draw. Five more had not been measured.
      Media panel, so it is measured here.
 4. **MediaGridSkeleton and VideoBlurBackdrop.** They draw no text and no
    state, so they are backdrops. They are not paired.
-5. **CreationAssist. Measured; two pairs fail; not fixed here.**
+5. **CreationAssist. Fixed in pass 4 through an optional prop.**
    - It is drawn inline in the add-gem sheet
      (`travel-buddy-standalone/src/components/media/AddGemForm.tsx:569#<CreationAssist`),
      so this census treats it like EmptyState in the Grid.
-   - As the add-gem sheet renders it, two pairs fail, each at 2.88:1 on
-     `paperRaised`:
-     - the correction banner's dismiss icon in `faint`
-       (`travel-buddy-standalone/src/platform/input-assistance/components/CorrectionBanner.tsx:67#<X size={iconToken.s16} color={color.faint} />`);
+   - **Before.** Two pairs failed, each at 2.88:1 on `paperRaised`:
+     - the correction banner's dismiss icon in `faint`;
      - a duplicate row's reason in `faint`
        (`travel-buddy-standalone/src/platform/input-assistance/components/EntitySuggestionRow.tsx:195#color: color.faint,`).
-   - The banner's accept button is not drawn, because the sheet passes no
-     accept handler.
-   - Its other pairs pass. Those are the notice's `deep` text, the `mute`
-     dismiss text, and the ink message and title.
-   - **The fix** is one optional colour prop on CreationAssist, passed down
-     to CorrectionBanner and EntitySuggestionRow. The add-gem sheet would
-     pass `mute`, which reads 5.55:1.
-   - **Why it is not done here.** All three files are under
-     `src/platform/input-assistance/`, which census-input-intelligence's
-     scope lists as a directory. That census cites EntitySuggestionRow at
-     twelve lines. Editing the files would make it stale, and this lane
-     keeps to census-media.
+   - **The fix.** CreationAssist gains an optional `quietColor`
+     (`travel-buddy-standalone/src/platform/input-assistance/creation/CreationAssist.tsx:42#quietColor?: string;`).
+     - It hands the colour to CorrectionBanner as `dismissColor`
+       (`travel-buddy-standalone/src/platform/input-assistance/creation/CreationAssist.tsx:113#{...(quietColor !== undefined ? { dismissColor: quietColor } : {})}`,
+       `travel-buddy-standalone/src/platform/input-assistance/components/CorrectionBanner.tsx:67#color={dismissColor ?? color.faint}`).
+     - It hands it to EntitySuggestionRow as `reasonColor`
+       (`travel-buddy-standalone/src/platform/input-assistance/creation/CreationAssist.tsx:132#{...(quietColor !== undefined ? { reasonColor: quietColor } : {})}`,
+       `travel-buddy-standalone/src/platform/input-assistance/components/EntitySuggestionRow.tsx:133#reasonColor === undefined ? styles.reason : [styles.reason, { color: reasonColor }]`).
+     - The add-gem sheet passes `mute`
+       (`travel-buddy-standalone/src/components/media/AddGemForm.tsx:572#onPickExisting={pickExistingGem} quietColor={color.mute}`).
+     - Both marks read 5.55:1.
+   - **Line-neutral.** Every edit to the three input-assistance files extends
+     an existing line.
+     - No line census-input-intelligence cites changed its anchor text.
+     - census-input-intelligence.md is not edited.
+   - **Measured as asserted pairs.** The card's 15 pairs are in
+     mediaContrast.test.ts, and all pass. Three are decorative:
+     - the banner's alert icon, the card's copy icon and the row's type icon,
+       each beside its text.
+     - The banner's border takes `warn` (3.08) or `signal` (3.31).
+     - The banner's accept button is not drawn here, because the sheet passes
+       no accept handler.
+   - **Other callers are unchanged.** Old and new render trees were compared
+     for the props of each caller. That covers CreationAssist's three
+     non-Media callers (trip/new, gems/submit, events/create), SuggestionList
+     and DisambiguationSheet (the other two EntitySuggestionRow callers), and
+     CreationAssist itself (CorrectionBanner's only caller).
+     - The comparison ran on host trees and on component-instance trees, so
+       that the colour given to a lucide icon is compared too. The jest
+       stand-in drops that colour from the host tree.
+     - EntitySuggestionRow: 20 prop sets. CorrectionBanner: 12. CreationAssist:
+       18. All 50 are identical. Each component also had a negative control
+       that passes the prop and must differ, and all three did.
+     - A committed test pins the defaults and each prop's effect
+       (`travel-buddy-standalone/src/platform/input-assistance/creation/__tests__/CreationAssist.quietColor.component.test.tsx:56#describe('CreationAssist quietColor'`).
+   - **The "See all" sheet** CreationAssist opens is a separate modal. It is
+     DisambiguationSheet, which still draws a row's reason in `faint`. It
+     belongs with the four sheets in §31.13.6, and is not given the colour.
 
-#### 31.13.6 The shared sheets opened from Media, and the ruling
+#### 31.13.6 The shared sheets opened from Media: the scope question, and the case for the owner
 
 **Measured as they render when opened from Media.** Pairs are grouped by
-colour and ground, using the test's formula. These readings are not asserted
-(see the ruling).
+colour and ground, using the test's formula. These readings are not asserted,
+because whether §46 governs them is the owner's question (below).
 
 | Sheet | Opened from | Pair groups | Failing | Worst failures |
 | --- | --- | --- | --- | --- |
@@ -7911,7 +7945,13 @@ colour and ground, using the test's formula. These readings are not asserted
 Every failure is an app-wide token on a light ground. That is the class
 §28.9 fixed inside Media's own files without changing a token.
 
-**The ruling.** §46 does not govern these four sheets. The spec text:
+**Whose call it is.** Whether §46 governs these four sheets is a SCOPE
+question about MD403. The §31.1 row already leaves this row's scope to the
+owner ("or the owner rules that MD403 grades the World shell only").
+Neither this lane nor the integrator rules on it. MD403 stays W until the
+owner does.
+
+**The case for the owner: that §46 does not govern them.** The spec text:
 - **What §46 governs.** It sets the requirement on Media's foundation:
   *"Dark/night-friendly primary foundation with high contrast and clear state
   labels."*
@@ -7938,7 +7978,7 @@ Every failure is an app-wide token on a light ground. That is the class
   The comment and share sheets are that joint layer's shared components.
   They render the same on every post in the app.
 
-**The line this census draws.**
+**The line this case draws.**
 - **Governed:** what a Media file lays out, including a shared component it
   places inside its own layout. Examples are StampButton, AppHeader,
   EmptyState, the image fallback, Avatar, PlaceQuickActions, GemStateBadge
@@ -7948,37 +7988,53 @@ Every failure is an app-wide token on a light ground. That is the class
   belongs to Places, PlanPickerController to Trips, and CommentsSheet and
   ShareSheet to the joint social layer.
 
-**Does MD403 depend on them?** Under this ruling, no. If the owner reads §46
-as reaching every surface Media opens, then MD403 depends on 19 failing pair
-groups in these four sheets. Their fix would be the design system's (the
-tokens, or an app-wide sheet palette), not Media branch work.
+**What each answer means for MD403.**
+- **If the owner accepts the case**, MD403 does not depend on the sheets. It
+  can then move on the evidence above, subject to readings (a)–(c).
+- **If the owner rules that §46 does cover them**, MD403 depends on 19
+  failing pair groups in the four sheets. Every one comes from an app-wide
+  token: `faint` and `signal` on light grounds, onInk on `signal`, and
+  `mute` on `haze`.
+  - The fix is a design-system token change, or an app-wide sheet palette,
+    not Media branch work.
+  - The same answer reaches the "See all" DisambiguationSheet that
+    CreationAssist opens. Its duplicate rows draw the reason in `faint`
+    (2.88).
 
-**The weakest part of the ruling** is comments and shares. §8 gives them
-joint ownership, so this is reading (d) in §31.13.8, and the owner may
-overrule it. CommentsSheet is also in census-trust's scope.
+**The weakest part of the case** is comments and shares. §8 gives them joint
+ownership with the post system. CommentsSheet is also in census-trust's
+scope.
 
 #### 31.13.7 The emoji
 
 Every emoji-capable glyph in Media's source was listed.
-- **The gems rail's 💬 (Comment) and 🔖/🏷 (Save / saved).**
+- **The gems rail's 💬 (Comment) and 🔖/🏷 (Save / saved). Replaced in pass 4.**
   (`travel-buddy-standalone/src/components/media/GemsItemOverlay.tsx:157#accessibilityLabel="Comment"`,
   `travel-buddy-standalone/src/components/media/GemsItemOverlay.tsx:165#accessibilityLabel="Save"`)
-  - **Unmeasurable.** A colour emoji is drawn by the platform's emoji font,
-    and the `color` style does not reach it. So the source holds no colour
-    to tie to a needle, and the saved state is only the swap between two
-    emoji.
-  - **Not decoration.** The sublabel beside each is a count, not a name.
-    Only `accessibilityLabel` names them, and a screen reader is not a
-    visible label.
-  - This is one of the two items MD403 still has. Either of two things
-    closes it:
-    - a device measurement of the three emoji on the rail's 0.89 backing
-      over a white frame;
-    - replacing them with source-coloured icons the test can measure. The
-      Watch rail and the Grid viewer already use MessageCircle and Bookmark
-      in onInk and `signal`.
-  - The second changes how the gems rail looks, so it is the owner's
-    choice.
+  - **Why they had to go.** A colour emoji is drawn by the platform's emoji
+    font, and the `color` style does not reach it. The source held no colour
+    to measure. No visible label named them (the text beside each is a
+    count), so they were not decoration either.
+  - **What replaced them.** The lucide MessageCircle and Bookmark, which the
+    Watch rail and the Grid viewer already use:
+    - comment and idle save in onInk
+      (`travel-buddy-standalone/src/components/media/GemsItemOverlay.tsx:154#icon={<MessageCircle size={26} color={color.onInk} strokeWidth={1.8} />}`);
+    - saved as a filled `signal` bookmark with no stroke, as on the Watch
+      rail
+      (`travel-buddy-standalone/src/components/media/GemsItemOverlay.tsx:161#fill={(isSaved ?? item.viewerState.hasSaved) ? color.signal : 'transparent'}`).
+    - The rail's ActionButton gains an optional `icon`, drawn in place of the
+      label text
+      (`travel-buddy-standalone/src/components/media/GemsItemOverlay.tsx:329#{icon ?? <Text style={[styles.actionBtnIcon, active && styles.actionBtnIconActive]}>`).
+  - **Measured.** Three asserted pairs on the rail's 0.89 black backing:
+    - comment, 16.18;
+    - idle save, 16.18;
+    - saved, 5.15.
+  - **The backing is unchanged.** No measured pair needs it to change.
+    Every pair on it would now clear from 0.74. It is kept at 0.89 because
+    pass 4 was told to change it only if a measured pair needed it.
+  - **The saved state** is the fill, the colour and `accessibilityState`,
+    as on the Watch rail. Before, it was the swap between two emoji.
+  - **This is a visible design change** on the shipped surface (§31.13.15).
 - **Category chips in the add-gem form and the gems filter** (🍜 Food,
   🌿 Nature, …). Each emoji sits beside its category's name, so it is
   decoration under the existing rule.
@@ -8004,14 +8060,16 @@ resting state, which is measured.
 required to understand the content, and the label carries the meaning. The
 Avatar monogram beside a name is read the same way.
 
-(d) **The four modal sheets are outside §46** (§31.13.6).
+The scope of MD403 over the four modal sheets is not one of these readings.
+It is the owner's call, and §31.13.6 presents it as a case for the owner.
 
 #### 31.13.9 Pair counts
 
 | | Pairs | Asserted | Pass | Pinned | Decorative | Floors |
 | --- | --- | --- | --- | --- | --- | --- |
 | Before this pass (`d92413bca`) | 519 | 496 | 491 | 5 | 23 | 138 |
-| After (`6213a2917`) | 574 | 547 | 547 | 0 | 27 | 163 |
+| After pass 3 (`6213a2917`) | 574 | 547 | 547 | 0 | 27 | 163 |
+| After pass 4 (`e576003f1`) | 592 | 562 | 562 | 0 | 30 | 166 |
 
 - **Nothing was dropped.** All 519 earlier ids are still measured. Twelve
   changed in place (§31.13.2).
@@ -8022,6 +8080,9 @@ Avatar monogram beside a name is read the same way.
   - 8 image-fallback captions and the fallback's dot (decorative);
   - 4 avatar initials;
   - 14 for GemContributeSection.
+- **Pass 4 adds 18.** Three are for the gems rail's glyphs. Fifteen are for
+  CreationAssist's inline card, of which three are decorative. None was
+  dropped or changed.
 
 #### 31.13.10 Mutations, each run on the final tree and restored
 
@@ -8052,9 +8113,18 @@ red.
 | K-M63 | CachedImage: `fallbackBg` no longer reaches MediaFallback | 7 | CachedImage.fallbackBg: 1 of 2 red |
 | K-M64 – K-M70 | one site each drops its fallback ground: the gem card, NOW card, contribution preview, perspective tile, experience mosaic, people list and Grid viewer | 1 each | — |
 | K-M71 | grid tile image drops its fallback ground | 1 | — |
+| K-M72 | gems rail: comment back to the 💬 emoji | 1 | — |
+| K-M73 | gems rail: save back to the 🔖/🏷 emoji swap | 2 | — |
+| K-M74 | gems rail: ActionButton ignores `icon` | 3 | — |
+| K-M75 | add-gem sheet: no `quietColor` | 12 | — |
+| K-M76 | CreationAssist: `quietColor` not handed to the banner | 1 | CreationAssist.quietColor: 1 of 3 red |
+| K-M77 | CreationAssist: `quietColor` not handed to the rows | 1 | 1 of 3 red |
+| K-M78 | CorrectionBanner ignores `dismissColor` | 1 | 2 of 3 red |
+| K-M79 | EntitySuggestionRow ignores `reasonColor` | 1 | 2 of 3 red |
 
-**Earlier mutations re-run on this tree.**
+**Every mutation re-run on the merged pass-4 tree.**
 - §31's K-M1 to K-M10 are red again.
+- K-M46 to K-M79 are red again.
 - §31.12's K-M11 to K-M45 are red again, except K-M35. K-M35 searches for
   the disc's old 0.95 text. That text now survives only in the "was"
   comment on that line, so the replacement edits the comment and the test
@@ -8076,6 +8146,15 @@ pass changed:
   line's trailing comment keeps the old text, so §31.12.3's anchor still
   resolves and the line records what it replaced.
 
+Two of this subsection's own anchors were repointed in pass 4:
+- The guard's line in the contrast test moved when pass 4's pairs went in
+  above it. The row table cites its new line.
+- CorrectionBanner's dismiss line now reads `dismissColor ?? color.faint`,
+  and §31.13.5 cites the new text.
+
+census-input-intelligence's anchors into the three input-assistance files
+all still resolve verbatim.
+
 Every source edit is line-neutral above its file's tail. New styles are at
 the tails. New props are on existing lines.
 
@@ -8084,60 +8163,77 @@ the tails. New props are on existing lines.
 Nothing in §31.13 is merged to main, pushed or deployed, so none of it is in
 any build a user has. The change is client-only. No flag, seed or migration
 was touched, and no database was read. No server code, theme token or ledger
-was edited. The one edit outside the client is census-media's own scope entry
-in the freshness check (§31.13.13).
+was edited, and census-input-intelligence.md is not edited. The one edit
+outside the client is census-media's own scope entry in the freshness check
+(§31.13.13).
 
 #### 31.13.13 Checks
 
-- **Contrast test.** `mediaContrast.test.ts` passes 14 / 14, with 574 pairs,
+Every check below ran on the merged pass-4 tree, lane-k at `e576003f1` plus
+this subsection and the scope widening.
+
+- **Contrast test.** `mediaContrast.test.ts` passes 14 / 14, with 592 pairs,
   0 pinned and 0 failing.
-- **Media node tests.** 19 files pass, 281 / 281 (Node 22, `--import tsx`).
+- **Node tests.**
+  - Media's pass: 19 files, 281 / 281 (Node 22, `--import tsx`).
+  - The node:test files under `src/platform/input-assistance` pass: 37 files,
+    366 / 366.
 - **Jest.**
-  - Media's component suites pass: 20 suites, 128 / 128. They cover
-    `features/media`, `components/media` and the three `app/(tabs)` media
-    suites.
-  - The non-Media callers' suites pass (§31.13.3). For StampButton,
-    AppHeader and EmptyState that is 64 suites and 276 tests. For
-    CachedImage it is 207 suites and 1,105 tests.
+  - Media's component suites pass: 20 suites, 128 / 128.
+  - `--findRelatedTests` on every shared component this lane changed and on
+    the two Media files pass 4 changed selects 253 suites, and all 1,404 tests pass. Those shared
+    components are StampButton, AppHeader, EmptyState, CachedImage,
+    CreationAssist, CorrectionBanner and EntitySuggestionRow.
+  - The related set covers each non-Media caller's own suites: Pulse,
+    Trips, Passport, events, notifications, the Wall's SmartInput, and the
+    input-assistance overlays.
+  - The pass-4 equivalence checks are in §31.13.5, and pass 3's are in
+    §31.13.3.
 - **Client.**
   - `tsc --noEmit -p .` is clean.
   - The test typecheck is at its baseline: 173 diagnostics across 60 files,
     with none above baseline.
-  - eslint on the changed files gives 0 errors and no new finding against
-    `HEAD`.
+  - eslint on every file changed in pass 4 gives 0 errors and no new finding
+    against `HEAD`.
   - `lint:imports`, `lint:bare-image`, `lint:avatar-icon-sizing`,
     `lint:mocks` and `lint:orphan-tests` pass.
 - **Census.**
   - `check:doc-citations` passes, with 0 unresolved and 0 moved anchors.
-    Anchored citations rose from 7,112 to 7,173, and unanchored ones stayed
-    at 6,355.
+    Anchored citations stand at 7,339 and unanchored ones at 6,355.
   - `check:citation-targets` stays at 165 / 165.
-  - `check:census-scope-coverage` passes after one widening.
-    - This subsection's file table cites StampButton, AppHeader and
-      EmptyState by path. That took media to 228 of 239 watched (95 %),
-      below the 96 % floor.
+  - `check:census-integrity` passes. No row moves. The merged rows read
+    media C 401 · W 37 · N 12 · X 0; MD338 moved to C in §30.
+  - `check:census-row-move-labels` passes.
+  - `check:census-scope-coverage` passes after a second widening, and no
+    floor is lowered.
+    - Pass 4 cites CreationAssist, CorrectionBanner and EntitySuggestionRow
+      by path. That took media to 245 of 258 watched (95 %).
     - census-media's `CENSUS_SCOPE` now names those three files, with a
-      `WIDENED 2026-09-26 by census-media §31.13` comment. §31.13's verdict
-      rests on their optional props.
-    - It also names the Grid's full-screen viewer and the Media tab route,
-      which this subsection measures and fixes. The coverage check cannot
-      see them, because its citation pattern skips brackets and parentheses.
-    - Media is now at 231 of 239 watched (96.7 %). No floor was lowered.
-  - `check:census-integrity` passes. MD403 does not move, so media still
-    counts C 400 · W 38 · N 12 · X 0.
-  - `check:census-freshness` reports census-media STALE, with 22 changed files
-    that its acknowledgement does not name:
-    - **from §31.12:** the ten `src/components/media` files GemsFilterBar,
-      GridFilterBar, MediaModeSelector, MediaMoreMenu, RouteItPlaceSheet,
-      VerifiedLocationStamp, WatchFeed, WatchFeedList, WatchRadialMenu and
-      WatchVideoCell, plus ContributorTrustChips;
-    - **from §31.12 and §31.13:** GemsItemOverlay, GridTile and
-      PerspectiveTile;
-    - **from §31.13:** GridFeed, ExperienceMosaic and CachedImage;
-    - **newly watched from §31.13:** StampButton, AppHeader, EmptyState, the
-      Grid viewer route and the Media tab route.
-  - The lane does not edit the acknowledgement; the integrator adds the
-    names.
+      `WIDENED 2026-09-27 by census-media §31.13 (lane K, pass 4)` comment.
+      §31.13.5's evidence rests on their optional prop.
+    - Media is now at 248 of 258 (96.1 %).
+    - census-input-intelligence, which also watches the three files, stays
+      at 188 of 190.
+  - `check:census-freshness` reports two censuses STALE. The acknowledgement
+    ledger is not edited; the integrator writes the acknowledgements.
+    - **census-media**, 11 files:
+      - `app/(tabs)/media.tsx`
+      - `app/media-viewer/[id].tsx`
+      - `src/components/CachedImage.tsx`
+      - `src/components/media/GridFeed.tsx`
+      - `src/components/stamps/StampButton.tsx`
+      - `src/components/ui/AppHeader.tsx`
+      - `src/components/ui/EmptyState.tsx`
+      - `src/features/media/components/ExperienceMosaic.tsx`
+      - `src/platform/input-assistance/components/CorrectionBanner.tsx`
+      - `src/platform/input-assistance/components/EntitySuggestionRow.tsx`
+      - `src/platform/input-assistance/creation/CreationAssist.tsx`
+    - **census-input-intelligence**, 3 files:
+      - `src/platform/input-assistance/components/CorrectionBanner.tsx`
+      - `src/platform/input-assistance/creation/CreationAssist.tsx`
+      - the new `CreationAssist.quietColor` component test, under
+        `src/platform/input-assistance/creation/__tests__/`
+    - All paths are under `travel-buddy-standalone/`.
 
 #### 31.13.14 Files changed by this pass
 
@@ -8147,14 +8243,15 @@ in the freshness check (§31.13.13).
 | --- | --- |
 | `travel-buddy-standalone/app/media-viewer/[id].tsx` | the tone; two column backings; the spinner badge; the dot pill; the fallback ground (in place; tail styles) |
 | `travel-buddy-standalone/app/(tabs)/media.tsx` | the header tint (in place) |
-| `travel-buddy-standalone/src/components/media/GemsItemOverlay.tsx` | the tone; the backing's comment (in place) |
+| `travel-buddy-standalone/src/components/media/GemsItemOverlay.tsx` | the tone; the backing's comment; the comment and save glyphs, and ActionButton's optional `icon` (pass 4) (in place) |
+| `travel-buddy-standalone/src/components/media/AddGemForm.tsx` | `quietColor` on CreationAssist (pass 4, in place) |
 | `travel-buddy-standalone/src/components/media/GridTile.tsx` | the tone; the disc at 0.80; the fallback ground (in place) |
 | `travel-buddy-standalone/src/components/media/GridFeed.tsx` | the retry fill (in place) |
 | `travel-buddy-standalone/src/features/media/screens/MediaPerspectiveViewerScreen.tsx` | the tone (in place) |
 | `travel-buddy-standalone/src/features/media/components/HiddenGemCard.tsx`, `ChangingNowCard.tsx`, `MediaContributionSheet.tsx`, `PerspectiveTile.tsx`, `ExperienceMosaic.tsx`; `travel-buddy-standalone/src/features/media/screens/MediaPeopleScreen.tsx` | the fallback ground (in place) |
-| `travel-buddy-standalone/src/features/media/__tests__/mediaContrast.test.ts` | five pairs unpinned; 55 pairs and a guard appended; 31 lines edited in place |
+| `travel-buddy-standalone/src/features/media/__tests__/mediaContrast.test.ts` | five pairs unpinned; 55 pairs and a guard appended; 31 lines edited in place; pass 4: 18 pairs added in the tail block, one line extended in place |
 | `docs/architecture/census-media.md` | this subsection |
-| `artifacts/api-server/src/scripts/checkCensusFreshness.ts` | census-media's `CENSUS_SCOPE` widened by five paths (§31.13.13) |
+| `artifacts/api-server/src/scripts/checkCensusFreshness.ts` | census-media's `CENSUS_SCOPE` widened by five paths in pass 3 and three in pass 4 (§31.13.13) |
 
 **Shared components** (an optional prop each; the default is unchanged).
 
@@ -8164,10 +8261,36 @@ in the freshness check (§31.13.13).
 | `travel-buddy-standalone/src/components/ui/AppHeader.tsx` | `overlayTint` (in place) |
 | `travel-buddy-standalone/src/components/ui/EmptyState.tsx` | `primaryAction.fill` (in place) |
 | `travel-buddy-standalone/src/components/CachedImage.tsx` | `fallbackBg` (in place) |
+| `travel-buddy-standalone/src/platform/input-assistance/creation/CreationAssist.tsx` | `quietColor` (pass 4, in place) |
+| `travel-buddy-standalone/src/platform/input-assistance/components/CorrectionBanner.tsx` | `dismissColor` (pass 4, in place) |
+| `travel-buddy-standalone/src/platform/input-assistance/components/EntitySuggestionRow.tsx` | `reasonColor` (pass 4, in place) |
 
-**New tests:** StampButton.tone, AppHeader.overlayTint, EmptyState.fill and
-CachedImage.fallbackBg, under `src/components/stamps/__tests__/`,
-`src/components/ui/__tests__/` and `src/components/__tests__/`.
+**New tests:**
+- StampButton.tone, AppHeader.overlayTint, EmptyState.fill and
+  CachedImage.fallbackBg, under `src/components/stamps/__tests__/`,
+  `src/components/ui/__tests__/` and `src/components/__tests__/`;
+- CreationAssist.quietColor (pass 4), under
+  `src/platform/input-assistance/creation/__tests__/`.
+
+#### 31.13.15 Design changes the owner may want to revisit
+
+These are in the same terms as §31.8 and §31.12.9.
+- **The gems rail's comment and save controls are now line icons, not
+  emoji.**
+  - They were 💬, and 🔖 or 🏷. They are now the MessageCircle and Bookmark
+    the Watch rail and the Grid viewer use.
+  - The rail keeps its order, its counts and its 0.89 backing. The share
+    (↑) and more (⋯) glyphs are unchanged.
+  - Saved now reads as a filled vermilion bookmark. Before, it was a
+    different emoji.
+  - The three Media rails now share one icon language. Whether the Gems lens
+    should keep a more playful emoji set, and bring the contrast question
+    back, is the owner's call.
+- **Grid tile stamp disc.** It dropped from 0.95 to 0.80 (§31.13.2), so it
+  reads lighter over bright posters.
+- **Header tint.** The Media tab's overlay header now draws a 0.58 ink tint
+  where it drew 0.28 black (§31.13.2), so the band behind "Watch" and "Gems"
+  is darker.
 
 ## 32. Lane M — the dimension sweep: entity media leaves 'processing' — 2026-09-26
 
