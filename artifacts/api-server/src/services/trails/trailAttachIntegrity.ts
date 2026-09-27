@@ -12,10 +12,10 @@
  * WHAT IS CHECKED, and where each rule comes from — none is new:
  *
  *   post, event, route  The row must exist and be one the ACTOR could be
- *                       served, by `servableMembers` — the one "may this viewer
- *                       see this content" helper the Trail read path already
- *                       applies: lib/postVisibility.ts for a post, the creator's
- *                       account standing, and lib/blocks.ts's symmetric rule.
+ *                       served, by `servableMembers` — the Trail read path's one
+ *                       "may this viewer see this content" helper: post
+ *                       visibility, an event's public-read rule or its host, a
+ *                       route's owner or trip crew (§64), standing and blocks.
  *   place               The id must name a `discovery_places` row OR a
  *                       canonical `places` row. BOTH, because existing Trail code
  *                       already treats both as place members:

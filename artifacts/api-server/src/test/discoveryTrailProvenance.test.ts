@@ -468,7 +468,7 @@ describe("DC-17 — `readingProvenance` reaches the wire at both Trail URLs", ()
     servedDb({ trails: [trail(T_A)], content_trails: [] });
     const r = await get(`/v1/discovery/trails/${T_A}/trending`);
     assert.equal(r.status, 200);
-    assert.equal(r.body.trending, false);
+    assert.equal(r.body.trending, null); // §61.16 (H-P8-1): no reading was taken, so `null`, never a measured `false`; red at 9af90c0ee until this line (§64)
     assert.equal(
       r.body.readingProvenance, null,
       "`trending:false` with no provenance is the unmeasured case and must be visible as such",
