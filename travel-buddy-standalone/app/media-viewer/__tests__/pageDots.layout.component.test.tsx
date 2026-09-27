@@ -180,3 +180,41 @@ describe('MediaViewer — page dots sit in their own slot under the columns', ()
     expect(withOne).toBeLessThan(withThree);
   });
 });
+
+// census-media §40.13 — the pill is capped at PAGE_DOTS_MAX (9) dots, so it
+// never outgrows the left column, whatever the number of pages. The left column
+// is the screen less 93 px (the web probe: 297.1 at 390, 282.1 at 375), so on
+// the narrowest phone this app supports (320) it is 227 px.
+const NARROWEST_LEFT_COLUMN = 320 - 93;
+
+describe('MediaViewer — the page-dot pill never outgrows the left column', () => {
+  const cases: Array<[number, string]> = [[8, 'm-1'], [9, 'm-9'], [10, 'm-1'], [48, 'm-1'], [48, 'm-25'], [200, 'm-100']];
+  it.each(cases)('%i items, opened on %s', async (n, id) => {
+    setViewerContext(items(n), id);
+    await render(<MediaViewer />);
+    await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+    const pill = screen.getByTestId('viewer-page-dots').children[0] as ReturnType<typeof screen.getByTestId>;
+    const ps = StyleSheet.flatten(pill.props.style);
+    const all = (pill.children as Array<typeof pill>).map((c) => StyleSheet.flatten(c.props.style));
+    expect(all).toHaveLength(n); // every page still has its dot in the tree
+    const drawn = all.filter((st) => st.display !== 'none');
+    expect(drawn).toHaveLength(Math.min(n, 9));
+    const active = drawn.filter((st) => st.backgroundColor === '#fff');
+    expect(active).toHaveLength(1); // the current page is drawn, and once
+    expect(active[0].width).toBe(14); // and keeps its 14-px width
+    const width = 2 * num(ps.paddingHorizontal) + drawn.reduce((w, st) => w + num(st.width), 0) + num(ps.gap) * (drawn.length - 1);
+    expect(width).toBeLessThanOrEqual(NARROWEST_LEFT_COLUMN);
+    // Up to 9 pages nothing changes; past 9 the drawn dots are the window of 9
+    // around the current page, and a window edge with more pages beyond it is a
+    // 3-px dot. (The page the viewer lands on is its own: under jest the pager's
+    // viewability callback can move it, so the window is checked against the
+    // active dot's actual index, not the one it was opened on.)
+    const at = all.findIndex((st) => st.backgroundColor === '#fff');
+    const start = Math.max(0, Math.min(at - 4, n - 9));
+    const drawnIdx = all.map((st, i) => (st.display !== 'none' ? i : -1)).filter((i) => i >= 0);
+    if (n > 9) expect(drawnIdx).toEqual(Array.from({ length: 9 }, (_, k) => start + k));
+    const small = drawn.filter((st) => st.width === 3);
+    if (n <= 9) expect(small).toHaveLength(0);
+    else expect(small).toHaveLength((start > 0 ? 1 : 0) + (start + 9 < n ? 1 : 0));
+  });
+});

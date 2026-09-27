@@ -98,7 +98,7 @@ export function GemsItemOverlay({
   isSaved,
 }: GemsItemOverlayProps) {
   // Legacy inline mini-menu — only used when onMore is not provided.
-  const [moreMenuOpen, setMoreMenuOpen] = useState(false);
+  const [moreMenuOpen, setMoreMenuOpen] = useState(false); const tabBarClearance = useLayoverAwareBottomInset(); // census-media §40.12: the bottom content ends above the floating tab bar
   const [captionExpanded, setCaptionExpanded] = useState(false); const railBottom = useLayoverAwareBottomInset() + RAIL_FAB_CLEARANCE; // census-media §40: the FAB's top edge, plus a gap
 
   const loc = item.location;
@@ -195,7 +195,7 @@ export function GemsItemOverlay({
       )}
 
       {/* ── Bottom content ─────────────────────────────────────────────────── */}
-      <View style={styles.bottomContent} testID="gems-bottom-content">
+      <View style={[styles.bottomContent, { paddingBottom: tabBarClearance }]} testID="gems-bottom-content">
         {/* Place block — dominant */}
         {loc && (
           <View style={styles.placeBlock}>
@@ -425,7 +425,7 @@ const styles = StyleSheet.create({
   },
   bottomContent: {
     paddingHorizontal: space.lg,
-    paddingBottom: BOTTOM_SAFE + space.md,
+    // paddingBottom: tabBarClearance, set at render (census-media §40.12); was BOTTOM_SAFE + space.md (28 on web), which left the handle and caption under the floating tab bar
     paddingRight: 80, // clear of right action column
     gap: space.sm, paddingTop: space.md, backgroundColor: 'rgba(0,0,0,0.81)', // census-media §31.12: a backing under the place block and creator row, the least alpha at which each line clears AA over a white image
   },

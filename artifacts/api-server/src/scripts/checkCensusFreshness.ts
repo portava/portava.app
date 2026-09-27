@@ -2001,6 +2001,8 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     // WIDENED 2026-09-27 by census-media §37.10 (integration): MD269's activation now names 3359 (a postcard with no countable file gets a null cover), so the migration and its rollback are graded.
     "artifacts/api-server/src/migrations/3359_passport_postcard_cover_nullable.sql",
     "db/rollback/2026-09-27-3359-passport-postcard-cover-nullable-rollback.sql",
+    // WIDENED 2026-09-27 by census-media §40.12–§40.13 (lane R, round 2): the inset hook the Gems and Watch rails and the Gems bottom content now take their tab-bar and FAB clearance from; a change to useLayoverAwareBottomInset can move them under the tab button again.
+    "travel-buddy-standalone/src/hooks/useBottomInset.ts",
   ],
   // census-telegraph.md — declared 2026-09-11 on the same basis as Media above:
   // 451 requirements out of CANNOT BE CHECKED, a clock started rather than a
