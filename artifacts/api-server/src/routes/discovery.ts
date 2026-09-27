@@ -1972,7 +1972,7 @@ router.get("/discovery", async (req, res) => {
             // Same filters, same page window. Comparing a ranked full list
             // against a filtered page would report divergence that filtering
             // caused and ranking did not.
-            const pdeFiltered = applyFilters(outcome.ranked);
+            const pdeLive = await withDiscoveryLiveRank(shadowSc, applyFilters(outcome.ranked), { mode: parseIntentMode(req.query.intentMode) }); const pdeGate = await layoverGatedPlaces(callerUserId, (await dismissGatedPlaces(callerUserId, pdeLive.places, [])).places, "GET /discovery"); const pdeFiltered = pdeGate.ok ? pdeGate.places : [];  // census-discovery §47 (DC-14): the PDE page passes the SAME post-rank layers the served legacy page did — live rank, "Not interested", Layover — or the row records divergence that a dismissal caused and ranking did not, and persists a place the viewer dismissed as a page PDE "would have served".
             const pdeSlice    = pdeFiltered.slice(offset, offset + PAGE_SIZE);
             await logDiscoveryShadowServe(shadowSc, {
               userId: callerUserId,
@@ -1983,7 +1983,7 @@ router.get("/discovery", async (req, res) => {
               // computed from the PAGES, and both pages are in hand right here.
               // Passing ids alone is what made five of the six axes unanswerable.
               legacyItems: slice,
-              legacyTotal: filtered.length,
+              legacyTotal: gateA.ok ? gateA.places.length : 0,  // §47: the SERVED total — the quantity pdeTotal counts — not the pre-dismissal list
               legacyMs:    totalMs,
               pdeIds:      pdeSlice.map((p) => p.id),
               pdeItems:    pdeSlice,

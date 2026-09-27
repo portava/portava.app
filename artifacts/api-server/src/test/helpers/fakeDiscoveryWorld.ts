@@ -110,6 +110,13 @@ export function worldClient(world: WorldState): any {
 
     function rows(): any[] {
       let out = (world.tables[table] ?? []).filter((r) => preds.every((p) => p(r)));
+      // PostgREST embed `profiles:submitted_by!left(...)`, emulated as a LEFT
+      // JOIN over the CURRENT profiles table, so a test that changes a profile
+      // sees the change through the embed exactly as it would through a read.
+      if (table === "discovery_places") {
+        const byId = new Map((world.tables.profiles ?? []).map((p) => [p.id, p]));
+        out = out.map((r) => ("profiles" in r ? r : { ...r, profiles: r.submitted_by ? (byId.get(r.submitted_by) ?? null) : null }));
+      }
       if (limitN !== null) out = out.slice(0, limitN);
       return out;
     }
