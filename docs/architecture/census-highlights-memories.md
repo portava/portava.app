@@ -6294,3 +6294,11 @@ re-measured in census-map §44. `routes/compass.ts` and
 
 Totals unchanged. Ten counted files read, zero cited by this census, and the
 one substantive finding handed to the census that owns it.
+
+## Cited, not graded (check:census-scope-coverage)
+
+- NOT-GRADED: artifacts/api-server/src/migrations/0067_reviews.sql — Cited once, in the headline's 2026-09-14 attribution restatement, to show that the migration the first headline credited to the Memories scrapbook is a cross-domain review system for trips and bookings. That paragraph moves no verdict, and no row grades reviews.
+- NOT-GRADED: artifacts/api-server/src/test/storyMediaOwnership.test.ts — §J.4 cites the Media lane's stories suite for comparison: it documents the same unchecked mediaUrl defect, already closed for POST /stories. The Memory-item defect §J.4 records is in POST /memories/:id/items (routes/memories.ts), and this suite is census-media's.
+- NOT-GRADED: 0179_stamp_criteria_engine.sql — §L.2's bare citation resolves onto this stray repo-root copy, a duplicate nobody runs (docs/stray-sql-inventory-and-disposition.md item 2). The seed it means is Passport's src/migrations/0179, named in passing for the flag that holds a latent instance off; no row here rests on that seed.
+- NOT-GRADED: artifacts/api-server/src/test/sensingConsumersRevocationReach.test.ts — §Z.2 names it as the only importer of sessionRevocationReach, to show that census-sensing's S112 is W on false evidence. S112 is a Sensing row, corrected in census-sensing §22, and no row in this census rests on the suite.
+- NOT-GRADED: artifacts/api-server/src/lib/sensingRevocationLineage.ts — §Z.2 notes that it names sessionRevocationReach only in a comment, as part of the S112 finding handed to census-sensing. It is Sensing lane code, and no row in this census grades it.

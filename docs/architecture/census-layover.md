@@ -8393,3 +8393,12 @@ Where §45 and §41–§44 disagreed about a FILE rather than a row — the risk
 for `entry_unverified`, which reached the verdict union from §45 while
 `riskBandFor` was being written here — that was resolved in code and pinned by a
 test, not by a verdict move. No row's evidence changed.
+
+## Cited, not graded (check:census-scope-coverage)
+
+- NOT-GRADED: artifacts/api-server/src/test/docCitations.test.ts — The citation guard's own suite. §27.10 names its case 9 and §30.4 names it as npm test's one failing test; both report on the guard that measured this census. It is machinery this census reports on, not a subject it grades.
+- NOT-GRADED: artifacts/api-server/src/routes/messaging.ts — §14.4 records a divergence in its message.created payloads (the text path omits the body, the media path carries it) as found and not fixed, and says the media path is census-telegraph's to answer for. L271 rests on lib/threadMessage.ts, not on this route.
+- NOT-GRADED: artifacts/api-server/src/lib/telegraphEvents.ts — §14.4 quotes its payload contract (never include message bodies or other PII) to state the same Telegraph divergence. The event contract is census-telegraph's subject, and no layover row rests on it.
+- NOT-GRADED: artifacts/api-server/src/migrations/2795_trip_kernel_write_guards.sql — §17.8 item 2 names this Trips migration only as the pattern the two unwritten layover migrations should follow: guarded preconditions, a postcondition block and a rollback. It is census-trips' subject, and no layover row rests on it.
+- NOT-GRADED: artifacts/api-server/src/test/tripOpportunityProjection.test.ts — §17.9 item 7's integration correction cites this Trips suite's frozen clock only to explain why the branch's two suite failures were absent on the merged tree. That is a count of test runs, and no layover row rests on the suite.
+- NOT-GRADED: artifacts/api-server/src/lib/capability/snapshots/current.ts — §40.2 cites it only to identify which production capture was read. Its one job is to name the current snapshot file. The finding that 2860 is applied rests on that capture and on production-applied-migrations.json, which this census watches.

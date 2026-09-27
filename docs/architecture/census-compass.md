@@ -3689,3 +3689,11 @@ over an ungranted `surface` consent scope. Nothing here ratifies that.
 
 Totals unchanged. Six counted files read, two rows re-tested against the tree,
 both holding on statements this census had already made correctly.
+
+## Cited, not graded (check:census-scope-coverage)
+
+- NOT-GRADED: artifacts/api-server/src/routes/verification.ts — §18.4 cites line 257 only to report that census-trust §14.6's TV-1a sentence is false at HEAD. The route is Trust's subject, graded in census-trust as TV-1a, and no Compass row rests on it.
+- NOT-GRADED: artifacts/api-server/src/services/wall/WallRankingService.ts — §27.6 item 1 names its For You analytics-surface constant while recording a defect that no row had asked about. The Wall's For You ranking is census-wall's subject (its §14 found the 23514), and no Compass verdict rests on this file.
+- NOT-GRADED: artifacts/api-server/src/services/ranking/DiscoveryRankingService.ts — §27.6 item 1 names PERSISTED_RANK_SURFACES as the list that turns a retired rank_events surface into a compile error, in a defect no row had asked about. Discovery ranking is census-discovery's subject, and no Compass verdict rests on it.
+- NOT-GRADED: artifacts/api-server/src/services/passport/PassportProjectionService.ts — §27.6 item 5 records a whitespace-only display-name fix in buildIdentity, again a defect no row had asked about. The identity projection is census-passport's subject; CP-02 rests on PassportConsumerProjections and the Compass call site, not on this file.
+- NOT-GRADED: artifacts/api-server/src/server/trips/readRoutes/tripProjections.ts — §28.2 names it only as the place a truncated grep's five hits came from, the method error that section records. It is a Trips read route; CT-02 rests on the Compass call site in CompassTools.ts and the raw reads in CompassTripContext.ts, not on this file.

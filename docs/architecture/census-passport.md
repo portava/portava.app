@@ -2073,3 +2073,8 @@ an anchor:
   supported: `census-trust.md` §23.4 enumerates every caller of `recalculateTrustScore` and none
   of them iterates `profiles`. The population this actually protected is narrow. It is named
   there rather than repeated here.
+
+## Cited, not graded (check:census-scope-coverage)
+
+- NOT-GRADED: artifacts/api-server/src/scripts/lib/censusHeadCommit.ts — The head_commit parser that check:census-freshness imports. §18.2 reads the declaration shape out of it and §18.6 records why it is not scoped. It is guard machinery that the NOT_GRADED pattern stops short of (it lives in src/scripts/lib/), and no Passport row grades it.
+- NOT-GRADED: travel-buddy-standalone/src/features/wall/components/__tests__/WallDesignSystem.component.test.tsx — §15.5 cites census-wall W166's token-pinning suite for contrast, to show that P129 and P132 have no equivalent test. It pins Wall surfaces only, and no Passport verdict rests on it.
