@@ -14362,11 +14362,29 @@ Several lanes restated the headline against their own base commits: §78.12 said
 |---|---:|---:|---:|---:|---:|---:|
 | §77 + §76 (`a658174a4`) | 96 | 86 | 5 | 1 | 51.1 % | 96.8 % |
 | §83, where DC-27 moves X → W (`37c0bc9c7`) | 96 | 87 | 5 | 0 | 51.1 % | 97.3 % |
-| §78, where A18 moves N → W (this merge) | **96** | **88** | **4** | **0** | **51.1 %** | **97.9 %** |
+| §78, where A18 moves N → W (`6d2b45412`) | 96 | 88 | 4 | 0 | 51.1 % | 97.9 % |
+| §79–§92: every wave-10 lane, their follow-up rounds after independent verification, and the W11-A audit (`805826140`) | **100** | **86** | **2** | **0** | **53.2 %** | **98.9 %** |
 
 **What the headline does not say.** Every C above is implementation-level evidence on this branch: controlled tests and the local PostgreSQL 16 harness. Nothing is merged to `main`, applied to `portava-ci` or production, deployed or flag-enabled. At this merge, 8 row statements carry `IMPLEMENTATION-COMPLETE; awaits:`. Those rows need only production activation or production evidence. They are counted W, as §31.2 requires.
 
-**§78's hooks H1–H3 are not yet integrated.** `lib/discoveryPde.ts` (H1), `routes/discovery.ts` (H2) and `routes/pulse.ts` (H3) belong to lanes W10-R3 and W10-R4, which are still running. The integrator applies H1–H3 after those lanes land. Until then, §78's designs are reachable only through `applyRankDesigns` in tests, as §78.9 says.
+**§78's hooks H1–H3 are integrated** (they were not at `6d2b45412`). Lane W10-I (§91) wired H1 into `rankForViewer`, H2 onto every served `rankForViewer` call and H3 into Pulse, each behind its lane's FALSE flag, with all three lanes' flag-off goldens passing unchanged.
+
+**Every C this wave claimed was re-checked by an independent adversarial verifier before it was counted.** The verifier did not write the code, ran the cited suites, probed the production path and mutated each clause.
+- DV-13 held at the first check.
+- DV-23 did not. At `de2ae1ca0` the Trail `/trending` route applied two of §10's five clauses. At `8dcbb5acc`, posts past a full page were unreachable. After fixes it held at `879333996`, where 35 of 38 mutations were killed; the three survivors are killed at `517e38b68`.
+- B02 and A08 did not hold at the first check. At `bc0ba4a94` tag-sequence flags and keycaps survived the emoji strip, and a validation refusal showed as an outage. At `5a434ec7b` a backslash reached `ilike`, and a missing policy left search dead. Both were confirmed C at `de6d2bfbc`.
+- One B02 clause is measured beyond controlled tests. The escaping was run against a real PostgREST 12.2.3 with PostgreSQL 16, through supabase-js, using the code's own patterns. "100%" matched only "100% juice", "a_b" only "a_b", `kiosk\` only the literal row, and "b\ar" nothing.
+
+**What the 86 W rows wait on, at `805826140`, counted from each row's latest statement:**
+- **50** carry only `IMPLEMENTATION-COMPLETE; awaits:`. The code is complete, and they need production activation or production evidence.
+- **17** carry both that marker and `AWAITS OWNER APPROVAL:`. The code is complete, and a decision on consent, money, retention or activation is also owed.
+- **13** carry only `AWAITS OWNER APPROVAL:`.
+- **6** carry neither and still need code: A11, C19, DV-09, DV-31, DC-17 and DV-83. They are the work of the wave-11 lanes (§93–§95).
+- Both N rows (DV-61 and DV-62) carry `AWAITS OWNER APPROVAL:`.
+
+**The four newest local-run failures are environmental, not defects of this tree.** The full api-server node:test run at `3cc027a06` passed 28,367 of 28,369 tests.
+- One failure is `discoveryClientRouteE2E` failing to load on Node 22. CI runs Node 24, where it passes 13 of 13.
+- The other is `mediaProcessingWorker.test.ts`. It hung under a load average of about 6 and was killed. Alone it passes 42 of 42 in 3.5 s. Its boot-loop case mocks `setTimeout` while bounding a wait in real time, so a pass that overruns under load can leave cleanup waiting on a mocked timer. It is a test-robustness defect in a file wave 10 did not touch, and it is recorded here rather than hidden.
 
 ## §85 — Candidate generation, pipeline stages, exploration, cold start and the graph reading (lane W10-R3): the eleven sources are built behind 3480, exploration leaves 2289, a new viewer is ranked with what they said, and the city graph states its window; no row moves to C, because every leg waits on a flag, an owner, or another lane's file
 
@@ -15703,3 +15721,4 @@ The verifier confirmed B02 and A08 `C` at `de6d2bfbc` and reported four remainin
 - NOT-GRADED: travel-buddy-standalone/src/services/tagging.ts — §81.4 names it only as the target of routed hunk R3 (the "Ask me first" option); no §81 verdict rests on the client file.
 
 - NOT-GRADED: artifacts/api-server/src/routes/pulse.ts — §78.9 H3 gives the one-line spread that lets Pulse rank on its own `01` §9 objective, and §91.2 cites that spread as integrated; DV-09's Pulse leg rests on discoveryIntegrationHooks.test.ts's served-impression case (watched), not on the route's text, and census-trips and census-trust grade the route.
+- NOT-GRADED: artifacts/api-server/src/test/mediaProcessingWorker.test.ts — §90 names it only to record a load-sensitive hang in a full local run (it passes 42 of 42 alone); census-media grades the worker, and no Discovery verdict rests on it.
