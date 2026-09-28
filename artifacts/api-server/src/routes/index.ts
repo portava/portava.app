@@ -77,7 +77,7 @@ import tagsRouter from "./tags";
 import hashtagsRouter from "./hashtags";
 import circleAgeSettingsRouter from "./circleAgeSettings";
 import rentABuddyRouter from "./rentABuddy";
-import rentABuddyMarketplaceRouter from "./rentABuddyMarketplace"; import creatorEconomyRouter from "./creatorEconomy"; import adminCreatorLedgerRouter from "./adminCreatorLedger"; // census-discovery §52 (DC-23, DV-59/DV-74): appended to this line so every line-number citation below stays true import adminTrailsRouter from "./adminTrails"; // census-discovery §86 (DV-74)
+import rentABuddyMarketplaceRouter from "./rentABuddyMarketplace"; import creatorEconomyRouter from "./creatorEconomy"; import adminCreatorLedgerRouter from "./adminCreatorLedger"; import adminTrailsRouter from "./adminTrails"; // census-discovery §52 (DC-23, DV-59/DV-74): appended to this line so every line-number citation below stays true | census-discovery §86 (DV-74)
 import rentABuddyRolloutRouter from "./rentABuddyRollout";
 import rentABuddySpecRouter from "./rentABuddySpec";
 import compassRouter from "./compass";
@@ -244,7 +244,7 @@ router.use(hashtagsRouter);
 router.use(circleAgeSettingsRouter);
 router.use(rentABuddyRouter);
 router.use(rentABuddySpecRouter);
-router.use(rentABuddyMarketplaceRouter); router.use(creatorEconomyRouter); router.use(adminCreatorLedgerRouter); // census-discovery §52 router.use(adminTrailsRouter); // §86
+router.use(rentABuddyMarketplaceRouter); router.use(creatorEconomyRouter); router.use(adminCreatorLedgerRouter); router.use(adminTrailsRouter); // census-discovery §52; §86 (adminTrailsRouter)
 router.use(rentABuddyRolloutRouter);
 router.use(compassRouter);
 router.use(compassHomeRouter);
