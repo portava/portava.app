@@ -1501,3 +1501,100 @@ Lane W10-S1, 2026-09-28, branch `disc-w10-s1-search`. Census section: census-dis
 - **Consequence of approving.** The integrity stage cannot run on data whose use the owner has not confirmed, and no output kind is served unmeasured.
 - **Consequence of declining.** Both flags can be switched on in D-W10-R3-13's original order. The integrity stage would still record `detector_off` until 3451 is on, and the kinds would be served without impressions.
 - **Recovery path.** Any flag off takes effect on the next read (30-second caches). Nothing here writes.
+
+## W11-X2 — serve path
+
+*Lane W11-X2, 2026-09-28, branch `disc-w11-x2-serve` from `3cc027a06`. Census section §94. Rows: DV-83, C19, DC-17, DC-01, A07 (the F2 limit). Work items: W11A-B8, W11A-B2, W11A-B7 and §91.7 items 1, 2 and 5. Migrations 3490 and 3491 (range 3490–3494), both applied to the local PostgreSQL 16 harness only. Every new behaviour that changes what a user is served sits behind a flag seeded FALSE; the two defect repairs (the feed's event-post read, the Live claim read) are not flagged, because each changes output only when a read fails. All evidence is controlled; none is production evidence.*
+
+### D-W11X2-1 — the feed carries a failed event-post read (DV-83, hunk §80.7)
+
+- **The question.** Census §80.7, and §92.3 W11A-B8: *"`lib/eventPostsDiscovery.ts` computes `readFailed` and drops it. `routes/discovery.ts`'s feed `.catch`es the whole fetch to `[]`."* How does the failure reach the envelope, and under which code?
+- **Options considered.**
+  - (a) Change `fetchEventPostsForDiscovery` to return `{ posts, readFailed }`. Consequence: its two other callers (the event-post unit suite and census-media's location-mode suite) and census-media's anchored citation of the route's call line all move for no behavioural reason.
+  - (b) An optional `readStatus` sink on the existing params, set where `readFailed` is computed; the route passes one and also sets it in its `.catch`. Every other caller is byte-identical.
+  - Code: (i) reuse `feed_places_read_failed` for every failure, as §80.7's "no new vocabulary" read literally; (ii) keep it when a place category failed, and use `feed_event_posts_read_failed` when only the event posts did.
+- **Decision.** (b) and (ii). `"event_posts"` joins `failedCats`, so the refusal's `failedSources` names it beside any failed category, and the existing coverage rule decides `nothing` (the body is empty because of the failure) or `partial`. A code is *"stable enough to alert on"* (`lib/discoveryRefusal.ts`); an alert on the places code raised by an event-post outage would send an operator to the wrong table. A thrown fetch is a failed read, not an empty one. A failed read is still never cached (unchanged), and a `partial` serve still logs its items.
+- **Reversibility.** Revert the five in-place lines in `routes/discovery.ts` and the two in `lib/eventPostsDiscovery.ts`. Nothing is stored.
+- **Where.** `routes/discovery.ts` (the feed), `lib/eventPostsDiscovery.ts`. Tests: `src/test/discoveryFeedEventPostsCoverage.test.ts` E1–E5, C1–C3.
+
+### D-W11X2-2 — the "Live from events" rail says when its own list is short (DV-83)
+
+- **The question.** Once the feed names `event_posts`, what does `DiscoveryEventPostsRail` render for a `partial` answer?
+- **Decision.** D-W10-S1-2's browse-list rule, with the rail's own noun: posts kept, one line "Some event posts couldn’t be loaded just now, so this list may be incomplete."; no posts is the partial-empty state ("Some event posts couldn’t be loaded just now" / "This is on our side, not your filters. Try again in a moment."), never the silence a quiet city gets. A `partial` that names only place categories does not describe this rail, which renders event posts only, and shows no notice. `coverage: "nothing"` keeps the existing refused state.
+- **Where.** `travel-buddy-standalone/src/components/discovery/DiscoveryEventPostsRail.tsx` (line-neutral above the cited `if (refused) {`); the guard entry moves from n/a to three branch fragments (`discoveryRefusalConsumers.guard.test.ts` G7, G8). Tests: `DiscoveryEventPostsRail.coverage.component.test.tsx` P1–P5.
+
+### D-W11X2-3 — the community byline's canonical shape (C19, W11A-B2)
+
+- **The question.** §92.3: *"behind a new flag seeded FALSE, emit `name` in the canonical shape (the real name iff `nameAllowed`, else null) or drop it. Which of the two is a routine product choice for the building lane."*
+- **Options considered.**
+  - (a) Drop `submittedBy.name`. A client that reads the key gets `undefined`; the object's shape changes for every consumer, including ones this census does not see.
+  - (b) Keep the key, emit the canonical value: the real name iff `nameAllowed` (self-exemption first, then opt-in), else null. The key's position and every other field are unchanged, and `name` equals `displayName`.
+- **Decision.** (b), behind `discovery_community_byline_canonical_enabled` (3490, seeded FALSE). The rule is `.agents/memory/display-name-privacy.md`'s "null name + separate handle"; the handle keeps travelling in `handle`, which the shipped resolver (`features/discovery/communityByline.ts`) reads. A submitter with no handle and no permission is null, not "Traveler". The flag is read once per request, only when a byline will be built. Flag OFF, absent or unreadable: byte-identical (golden G0/G1, captured at `3cc027a06`).
+- **Reversibility.** Flag off; the next request is the legacy shape. Nothing is stored.
+- **Where.** `routes/discovery.ts` (two in-place lines and a foot import; the `name` type is `string | null`). Tests: `src/test/discoveryCommunityBylineCanonical.test.ts` G0, G1, B1–B5.
+
+### AR-W11X2-1 — **APPROVAL REQUIRED**: turning on the canonical community byline in production (C19)
+
+- **Recommended action, exact.** Once the oldest app build the product still supports contains `features/discovery/communityByline.ts` (census §60.8 Q2's first half, a release fact): apply 3490 to production with the W10D-A1 batch, deploy the API build carrying §94, then `UPDATE public.feature_flags SET enabled = true WHERE flag = 'discovery_community_byline_canonical_enabled';`.
+- **Consequence of approving.** No served `submittedBy.name` starts with `@`. A build older than the floor that renders `name` raw prints nothing for a withheld name (it shows the handle nowhere, because it never read `handle`).
+- **Consequence of declining.** The legacy shape stays: `@username` in `name` for every caller, the one redaction shape no other surface uses. C19 stays `W`.
+- **Recovery path.** `UPDATE public.feature_flags SET enabled = false WHERE flag = 'discovery_community_byline_canonical_enabled';` takes effect on the next request. Nothing is written by the flag.
+
+### D-W11X2-4 — the platform path's graph reading records its own four facts (DC-17, W11A-B7)
+
+- **The question.** §92.3: *"the platform producer's record (§75.3 blocker 3) gains the four facts; that record is CPV2-12's owner's."* §75.3 blocker 3: a Compass producer version stamped on a platform reading *"would be false exactly when the platform answers"*.
+- **Options considered.**
+  - (a) Add `model_version` / `feature_version` / `source_window` columns to `intel_coverage_snapshots` and have the platform producer (`lib/intelCoverageScheduler.ts`) write them. Consequence: a migration and a producer change in the Intelligence Gathering domain, and still no record of how Compass FOLDS those cells into the served depth, which is the number PDE consumed.
+  - (b) Record, at read time, what is true of the served reading: its depth is computed by Compass's read-time fold (`platformCoverageDepthScore` over the unexpired cells' `coverage_state` and `current_confidence`), not stored by the platform. The model version names the fold; the feature version names what one cell contributes; the window names the cells the read admitted; the computation time is the reading's.
+  - (c) Leave `platform_producer` with no facts. DC-17 then never reaches the platform path.
+- **Decision.** (b), behind `discovery_platform_graph_provenance_enabled` (3490, seeded FALSE). Cross-lane ownership is no reason to stop, and (b) touches neither CPV2-12's store nor its producer: it re-reads the governing read verbatim and re-folds it.
+  - **The same reading or none.** Unless the re-read's newest `computed_at` and folded depth both equal the reading's, the answer is `reading_moved`.
+  - **No claim where none can be made.** The governing read is capped (2000) and unordered; when the re-read reaches the cap, the corpus is whatever subset the planner returned, so the answer stays `platform_producer` (§75.3 blocker 1's rule).
+  - **The versions cannot drift silently.** `compass-platform-coverage-fold-v1` is pinned to a digest of `platformCoverageDepthScore` and `tierForScore` over a grid; `intel-coverage-cell-state-v1` to `coverageState`'s outputs; the cap and the projection to the engine's own text (V1).
+  - A failed read is `read_failed`. Provenance only: nothing ranks on it.
+- **Reversibility.** Flag off: `platform_producer`, as before, and no re-read. To unwire, revert one line in `lib/discoveryCandidates/graphReadingProvenance.ts`.
+- **Where.** `lib/discoveryPlatformGraphProvenance.ts` (new); `lib/discoveryCandidates/graphReadingProvenance.ts` (one line in place, one foot import; outside this lane's list, stated in §94). Tests: `discoveryPlatformGraphProvenance.test.ts` P0–P6, W1, V1; `discoveryIntegrationHooks.test.ts` R2p (served rows, serve points 1 and 6).
+
+### D-W11X2-5 — the three output kinds are logged at serve point 13 (§91.7 item 1; DC-01)
+
+- **The question.** §91.7: *"a migration widening the per-request CHECK to a new serve point, and a `logDiscoveryServe` call in `routes/discoveryOutputKinds.ts`."* What is logged, under which kind?
+- **Decision.**
+  - One new serve point, `OUTPUT_KINDS = 13`, for all three kinds; the kind travels in the context as `type` (an already classified context key), so no new stored key is created. It is in `RANKED_IN_REQUEST`, because each kind is ranked by `rankForViewer` in the request.
+  - `rank_events.item_kind` gains no value. A Trail and a Shared Moment are none of 0153's six kinds, so they are logged as `trail/<id>` and `moment/<id>` (the ids the rankers rank them under) with a NULL kind, the rule search uses for a hashtag. An emerging discovery is a place and is logged as one.
+  - Every served item carries the `recommendationId` its impression row carries, from one exposure per response (DV-40). D-W10-I-4's "no id is minted" was conditional on there being no row to join; there is now.
+  - 3491 drops and re-adds `recommendations_serve_point_check` as `BETWEEN 1 AND 13`, NOT VALID then VALIDATE, with its behavioural probes inside the applying transaction (3376's rule). Its rollback refuses while any row carries 13: narrowing would delete the only record of those serves, and how long those are kept is W10D-C8's.
+  - No `unapplied` drift entry: 3491 adds no table and no column, and `recommendations` is already recorded `unapplied` (3376). 3491 refuses to run without 3376.
+- **Where.** `routes/discoveryOutputKinds.ts`, `lib/discoveryServeLog.ts` (two in-place edits: the constant and the ranked set), `lib/discoveryServePointReport.ts` (its label, in place), migration 3491 and its rollback. Tests: `discoveryOutputKindsServeLog.test.ts` L1–L6, M1; `discoveryTelemetryConstraints.db.test.ts` (13 admitted, 14 refused).
+
+### AR-W11X2-2 — **APPROVAL REQUIRED**: applying 3491 to production
+
+- **Recommended action, exact.** Apply `3491_discovery_recommendations_output_kinds_serve_point.sql` to production immediately after 3376, in the same W10D-A1 batch and only if W10D-A2 (3376) is approved. Then D-W10-I-A1 step 2 is satisfied on the code side: `discovery_output_kinds_enabled` may be turned on under D-W10-R3-13 step 8.
+- **Consequence of approving.** Each served output-kind request writes one `recommendations` row, and each served item one `rank_events` impression, while `discovery_serve_log_enabled` (TRUE in production) and 3483's flag are both on.
+- **Consequence of declining.** If 3376 is applied without 3491, a served output-kind request's per-request row is refused (23514) and reported as a rejection; the impressions still land. If neither is applied, nothing changes.
+- **Recovery path.** Turn `discovery_output_kinds_enabled` off. The 3491 rollback restores 1–12 and refuses while any 13 row exists; deciding what happens to those rows is W10D-C8.
+
+### D-W11X2-6 — the client asks for the output kinds behind the server's flag (§91.7 item 2)
+
+- **Decision.** `services/discoveryRecommendations.ts` (its own module, so the pinned carriers in `services/discovery.ts` are unchanged) calls the route with the viewer's token and keeps `11` §9's answers apart: 404 `disabled`, 401 or no token `signed_out` (no request is sent without a token), 400 `invalid`, any other failure `unavailable`, a thrown fetch `network`. `DiscoveryOutputKindsRail` reads `discovery_output_kinds_enabled` through FeatureFlagsContext, which fails soft to OFF; with it off, signed out, or emerging discoveries with no destination, it renders nothing and sends nothing. For You renders one rail per kind. An empty page renders nothing; `unavailable` renders the browse list's no-rows sentence (D-W10-S1-2), never silence.
+- **Read-only cards.** The client has no Trail screen and no emerging-place screen to open, so a card names the item and does not navigate. Building those screens is outside this lane.
+- **Copy.** Rail titles "Trails for you", "Your shared moments", "Emerging nearby"; nouns "trails", "shared moments", "emerging places". Routine product copy, changeable in one file.
+- **Where.** `travel-buddy-standalone/src/services/discoveryRecommendations.ts`, `src/components/discovery/DiscoveryOutputKindsRail.tsx`, `ForYouTab.tsx` (two in-place appends). Tests: `services/__tests__/discoveryRecommendations.test.ts` S1–S7; `DiscoveryOutputKindsRail.component.test.tsx` O1–O6.
+
+### D-W11X2-7 — the shared Live claim read marks a failed read (§79 F2, §91.7 item 5; A07)
+
+- **The question.** §79.6: *"`lib/liveClaimRead.readLiveClaims` collapses a failed read into an absence … return a failure the caller can see."*
+- **Options considered.**
+  - (a) Throw on a failed read. Every one of the read's twelve production callers (the Wall, the Map, Compass, placeLiving, Telegraph …) would have to be re-checked for an unhandled rejection; census-sensing, census-map and census-wall grade several of them.
+  - (b) Change the return type to a result union. The same twelve call sites change.
+  - (c) Keep the value every caller receives (`[]`) and MARK it: `liveClaimReadFailed(result)` is true for exactly the three failures (an unreadable promoted-scope allowlist, a snapshot read error, a throw) and false for the three real absences (gates closed, nothing promoted, nothing live). `readLiveClaimEnvelopes` carries the mark. The mark is a module-private WeakSet, the idiom `lib/discoveryRefusal.ts` uses, so it cannot be forged or leak onto the wire.
+- **Decision.** (c). Discovery's live read (`lib/discoveryLiveRankRead.ts`, one line in place and a foot import; outside this lane's list, stated in §94) reads the mark and grades the row `unreadable`, so §79's rule — the row keeps its place and loses its "now" claim, and `meta.liveSafety` says so — covers an errored read. An unreadable allowlist is no longer confused with an empty one, and is still not cached. Every other caller is unchanged byte for byte; whether each should also branch on the mark is its owner's (recorded in §94 for census-sensing).
+- **Reversibility.** Revert the in-place lines; nothing is stored.
+- **Where.** `lib/liveClaimRead.ts`, `lib/discoveryLiveRankRead.ts`. Tests: `liveClaimReadFailure.test.ts` L1–L7, D1, D2; `discoveryOnePipeline.test.ts` F2, restated.
+
+### D-W11X2-8 — existing assertions restated by the decisions above
+
+- `discoveryOnePipeline.test.ts` F2: it pinned the limit and said a fix *"turns this red and … should then be restated to the fail-closed answer"* (§79.10). It now asserts that answer: no `nearby_now`, no why-now, `meta.liveSafety: { readable: false, claimsWithheld: 3 }`.
+- `discoveryServePointReport.test.ts`: the writer's population is 1–13 (three pins), and the "unrecognised" fixture moves from 13 to 14, as its own comment prescribes.
+- `db/discoveryTelemetryConstraints.db.test.ts`: serve point 14 is refused (was 13), and 13 is admitted.
+- `discoveryRefusalExposure.test.ts`: its fake lacked `.not()`, so the positive control's event-post Path B threw into its own catch and failed. The failure was invisible until the feed reported it; the fake gains `.not()` (as D11's fake did) and every assertion stands.
+- `discoveryRefusalConsumers.guard.test.ts` G7: the n/a set loses the rail, which now has a partial branch.

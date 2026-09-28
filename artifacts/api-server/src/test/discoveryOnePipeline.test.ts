@@ -28,8 +28,8 @@
  *     F1  Compass path, 2850 ON, the live gates refuse: every row is still
  *         served in Compass's order, none says "open around now", and the
  *         envelope says the read failed.
- *     F2  LIMIT: a claim read that errors reaches Discovery as "no claim" —
- *         the shared read path (lib/liveClaimRead) swallows it. Pinned.
+ *     F2  (restated §94, W11-X2) a claim read that ERRORS fails closed too:
+ *         lib/liveClaimRead now marks it failed, so the row is `unreadable`.
  *     F3  CONTROL: gates open, read fine, nothing dangerous — `nearby_now` is
  *         kept and no degradation is reported.
  *     F4  The cold PDE path follows the same rule.
@@ -351,21 +351,21 @@ describe("§79 — one ranking pipeline for GET /discovery (controlled, in-proce
     assert.deepEqual(body.meta?.liveSafety, { readable: false, claimsWithheld: body.places.length });
   });
 
-  it("F2. LIMIT (outside this lane): a claim read that ERRORS is graded `none` by the shared read path, so Discovery cannot see it fail", async () => {
-    // lib/liveClaimRead.readLiveClaims resolves [] on a snapshot read error
-    // (its own "fail-closed" is to "unknown" as SILENCE), and withDiscoveryLiveRank
-    // then grades the row `none` — "looked, nothing there" — not `unreadable`.
-    // Sensing §20 says a failure is not an absence; the seam that collapses the
-    // two is not this lane's file (census-discovery §79.6). Pinned so that a fix
-    // there turns this red and the rule above then withholds these claims too.
+  it("F2. (restated §94) a claim read that ERRORS fails closed: rows served in Compass's order, no 'open around now', and the envelope says so", async () => {
+    // Until §94 lib/liveClaimRead.readLiveClaims resolved [] on a snapshot read
+    // error, and withDiscoveryLiveRank graded the row `none` — "looked, nothing
+    // there". Sensing §20: a failure is not an absence. The read now marks the
+    // failure (liveClaimReadFailed), the row is `unreadable`, and §79's rule
+    // withholds its claim, exactly as for the refused gates in F1 (§79.10).
     const state = world({ liveRank: true });
     state.intel_state_snapshots = { error: { message: "claim read failed" } } as any;
     const body = await page(state);
     assert.deepEqual(servedFrom(body), ["compass_fresh_rank"]);
     assert.ok(tablesRead.includes("intel_state_snapshots"), "the claim read was attempted");
     assert.equal(body.places.length, 3);
-    assert.ok(nearbyNow(body).length > 0, "the failed read reached Discovery as 'no claim', so nothing was withheld");
-    assert.equal(body.meta?.liveSafety, undefined);
+    assert.deepEqual(nearbyNow(body), [], "no row claims 'open around now' on a claim read that errored");
+    assert.deepEqual(body.meta?.liveSafety, { readable: false, claimsWithheld: body.places.length }, "every served row had a canonical subject, and every one's read failed");
+    for (const p of body.places) assert.equal(p.candidate?.whyNow, null, `${p.id}: no why-now rests on a read that failed`);
   });
 
   it("F4. the cold PDE path follows the same rule: gates refused ⇒ nearby_now withheld, rows served", async () => {

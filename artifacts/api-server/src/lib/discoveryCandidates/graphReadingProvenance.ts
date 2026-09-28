@@ -38,7 +38,7 @@ function isMissingColumn(e: unknown): boolean {
 }
 
 export async function loadGraphReadingProvenance(sc: any, reading: PdeGraphReading): Promise<GraphReadingProvenance> {
-  if (reading.source !== "compass_graph") return { status: "platform_producer" };
+  if (reading.source !== "compass_graph") return reading.source === "platform_coverage" ? await platformGraphReadingProvenance(sc, reading) : { status: "platform_producer" };  // census-discovery §94 (DC-17, W11A-B7): the platform reading's own four facts, behind 3490's FALSE flag (lib/discoveryPlatformGraphProvenance.ts); OFF ⇒ `platform_producer`, as before
   if (!sc || !reading.city || !reading.computedAt) return { status: "not_recorded" };
   try {
     const { data, error } = await sc
@@ -56,3 +56,6 @@ export async function loadGraphReadingProvenance(sc: any, reading: PdeGraphReadi
     return { status: "read_failed" };
   }
 }
+
+// census-discovery §94 (lane W11-X2): the platform path. Imported at the foot so the cited lines above do not move.
+import { platformGraphReadingProvenance } from "../discoveryPlatformGraphProvenance.js";

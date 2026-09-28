@@ -36,7 +36,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { View, Text, ScrollView, StyleSheet } from 'react-native';
 import { Radio } from 'lucide-react-native';
-import { getDiscoveryFeed } from '../../services/discovery.ts';
+import { getDiscoveryFeed } from '../../services/discovery.ts'; import { listPartialNotice, listPartialEmptyTitle, LIST_PARTIAL_EMPTY_BODY } from '../../services/discoveryCoverageNotice.ts';  // census-discovery §94 (DV-83): D-W10-S1-2's wording, one home
 import type { DiscoveryEventPost } from '../../types/discovery.ts';
 import { DiscoveryEventPostCard } from './DiscoveryEventPostCard.tsx';
 import { useRankOutcome } from '../../hooks/useRankOutcome.ts';
@@ -54,7 +54,7 @@ export function DiscoveryEventPostsRail({ destination, lat, lng, radiusKm = 25 }
   const [sessionId, setSessionId] = useState<string | null>(null);
   // True only for `coverage: "nothing"` — the server did not read the feed, so
   // the empty `posts` above is padding, not an answer.
-  const [refused, setRefused] = useState(false);
+  const [refused, setRefused] = useState(false); const [postsIncomplete, setPostsIncomplete] = useState(false);  // §94 (DV-83, hunk §80.7): PARTIAL, and the failed source is the event posts themselves
 
   // Feed posts are served under rank_events surface 'discovery' (serve point 7),
   // keyed to the returned sessionId — that pair is the served rank context.
@@ -68,7 +68,7 @@ export function DiscoveryEventPostsRail({ destination, lat, lng, radiusKm = 25 }
     if (!destination && (lat == null || lng == null)) {
       setPosts([]);
       setSessionId(null);
-      setRefused(false);
+      setRefused(false); setPostsIncomplete(false);
       return;
     }
     const myId = ++loadIdRef.current;
@@ -79,7 +79,7 @@ export function DiscoveryEventPostsRail({ destination, lat, lng, radiusKm = 25 }
         if (res.ok) {
           // `res.ok` is true for a refusal too — the difference is only in the
           // envelope, which is exactly why it has to be read here.
-          setRefused(res.data.refusal?.coverage === 'nothing');
+          setRefused(res.data.refusal?.coverage === 'nothing'); setPostsIncomplete(res.data.refusal?.coverage === 'partial' && (res.data.refusal.failedSources ?? []).includes('event_posts'));
           setPosts(res.data.posts);
           setSessionId(res.data.sessionId);
         } else {
@@ -87,12 +87,12 @@ export function DiscoveryEventPostsRail({ destination, lat, lng, radiusKm = 25 }
           // rail has never claimed anything about it.
           setPosts([]);
           setSessionId(null);
-          setRefused(false);
+          setRefused(false); setPostsIncomplete(false);
         }
       })
       .catch(() => {
         if (!cancelled && loadIdRef.current === myId) {
-          setPosts([]); setSessionId(null); setRefused(false);
+          setPosts([]); setSessionId(null); setRefused(false); setPostsIncomplete(false);
         }
       });
     return () => { cancelled = true; };
@@ -117,6 +117,23 @@ export function DiscoveryEventPostsRail({ destination, lat, lng, radiusKm = 25 }
     );
   }
 
+  // census-discovery §94 (DV-83; D-W10-S1-2): the feed answered PARTIAL and the
+  // source that failed is this rail's own. With no posts, that is never the
+  // "nothing live here" silence below: it is the browse list's partial-empty
+  // state, in the ratified words.
+  if (postsIncomplete && posts.length === 0) {
+    return (
+      <View style={styles.section} testID="discovery-event-posts-rail-partial-empty">
+        <View style={styles.header}>
+          <Radio size={14} color={color.faint} />
+          <Text style={styles.title}>Live from events</Text>
+        </View>
+        <Text style={styles.refusedText}>{listPartialEmptyTitle('event posts')}</Text>
+        <Text style={styles.refusedText}>{LIST_PARTIAL_EMPTY_BODY}</Text>
+      </View>
+    );
+  }
+
   if (posts.length === 0) return null;
 
   return (
@@ -125,6 +142,10 @@ export function DiscoveryEventPostsRail({ destination, lat, lng, radiusKm = 25 }
         <Radio size={14} color={color.signal} />
         <Text style={styles.title}>Live from events</Text>
       </View>
+      {postsIncomplete && (
+        // §94 (DV-83; D-W10-S1-2): rows kept, one line says the list may be incomplete.
+        <Text style={styles.partialText} testID="discovery-event-posts-rail-partial">{listPartialNotice('event posts')}</Text>
+      )}
       <ScrollView
         horizontal
         showsHorizontalScrollIndicator={false}
@@ -164,6 +185,14 @@ const styles = StyleSheet.create({
   },
   // Sits where the card strip would be, in the rail's own gutter. Quiet by
   // design: nothing is broken for the user, one read did not come back.
+  // §94: the partial line sits above the strip, in the same quiet register.
+  partialText: {
+    ...t.small,
+    color: color.mute,
+    paddingHorizontal: space.lg,
+    marginBottom: space.sm,
+    lineHeight: 19,
+  },
   refusedText: {
     ...t.small,
     color: color.mute,

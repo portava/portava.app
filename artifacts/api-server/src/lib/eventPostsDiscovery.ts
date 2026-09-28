@@ -63,7 +63,7 @@ export interface FetchEventPostsParams {
   radiusKm: number;
   viewerId: string | null;
   blockedIds: Set<string>;
-  seenPostIds: Set<string>;
+  seenPostIds: Set<string>; /** census-discovery §94 (DV-83, hunk §80.7): set to true when a path could not be READ, so the posts are the surviving path's alone (or none). The feed carries it onto its refusal envelope as failedSources "event_posts" instead of serving a failed read as a quiet city. A cache hit is a read that succeeded: a failed read is never cached. */ readStatus?: { readFailed: boolean };
 }
 
 // ── Haversine distance (km) ───────────────────────────────────────────────────
@@ -484,7 +484,7 @@ export async function fetchEventPostsForDiscovery(
     // but the result is NOT written to the cache, because a 5-minute-old empty
     // answer produced by a blip is served to every viewer of that city long
     // after the database has recovered, and nothing retries until it expires.
-    const readFailed = pathA === null || pathB === null;
+    const readFailed = pathA === null || pathB === null; if (readFailed && params.readStatus) params.readStatus.readFailed = true;  // §94 (DV-83): no longer dropped — the feed's envelope says so
 
     // Merge and deduplicate by post id (Path A wins on duplicates for richer metadata)
     const seenIds = new Set<string>();

@@ -15530,6 +15530,114 @@ No row changes bucket. Ten rows are restated W → W, with their evidence and th
 - CONSTRUCTED 184 / 188 = **97.9 %**. CORRECT 96 / 188 = **51.1 %**. The four buckets sum to 188; the denominator is unchanged.
 - 18 of the census's latest row statements carry `IMPLEMENTATION-COMPLETE; awaits:` (16 at `6594dd495`). DC-11 and DC-01 gained the marker here; A18, DV-12, DV-18, DC-13, DV-54 and A07 kept theirs with corrected awaits; DC-17 and DV-09 carry none, because each still waits on code. Each needs only production activation or production evidence, and is counted W, as §31.2 requires.
 
+## §94 — Serve path (lane W11-X2): the feed says when its event-post read failed and the rail says so, DV-83 moves W → C; the byline's canonical shape, the platform path's graph record, the output kinds' logging and client call, and a marked Live-claim failure are built behind FALSE flags or as fail-closed repairs
+
+*Written 2026-09-28 by lane W11-X2 on `disc-w11-x2-serve`, branched from `3cc027a06`. The owner's authorisation of 2026-09-28 applies. Decisions and approval requests are in `docs/architecture/discovery-decision-register.md`, section `## W11-X2 — serve path` (D-W11X2-1 to D-W11X2-8, AR-W11X2-1, AR-W11X2-2). Nothing is merged to `main`, applied to `portava-ci` or production, deployed or flag-enabled. Migrations 3490 and 3491 are applied to the local PostgreSQL 16 harness only. All evidence is controlled: in-process routes over in-memory databases, the harness, and client component and node suites. None of it is production evidence, and no client build carrying the client changes has shipped.*
+
+**Work items taken:** W11A-B8 (DV-83, hunk §80.7), W11A-B2 (C19), W11A-B7 (DC-17, including the platform path §92.3 assigned to CPV2-12's owner), and §91.7 items 1, 2 and 5. **Not taken:** §91.7 item 3 (DV-09's surfaces) and item 4's Compass-producer half belong to other lanes; `lib/discoveryPde.ts` and `lib/portavaRank.ts` (lane W11-X1) are untouched.
+
+### 94.1 Row statements
+
+| ID | from | **to** | evidence |
+|---|---|---|---|
+| DV-83 | W | **C** | **§80's last ground is closed: the feed no longer absorbs a failed event-post read, and the rail branches on it.** The criterion: every consumer of a Discovery envelope that can carry `refusal` branches on `coverage`, not on `ok` alone; no refused body is written to a client cache; no refused body is rendered as an empty result. §60 closed ground 3 (the static guard) and §80 closed ground 2 (`partial` is never rendered as complete, D-W10-S1-2). What §80.1 left was server-side: `lib/eventPostsDiscovery.ts` dropped `readFailed` and the route caught a thrown fetch to `[]`, so the "Live from events" rail could not branch on a failure it was never sent. **Now:** the read reports the failure (`artifacts/api-server/src/lib/eventPostsDiscovery.ts:487#if (readFailed && params.readStatus) params.readStatus.readFailed = true;`), a thrown fetch is a failed read (`artifacts/api-server/src/routes/discovery.ts:2706#eventPostsReadStatus.readFailed = true;`), and the feed names it (`artifacts/api-server/src/routes/discovery.ts:2750#if (eventPostsReadStatus.readFailed) failedCats.push("event_posts");`). Both paths failing is `coverage: "nothing"` with `failedSources: ["event_posts"]` and no exposure (`artifacts/api-server/src/test/discoveryFeedEventPostsCoverage.test.ts:152#it("E1 both event-post paths fail`); one path failing keeps and logs the surviving posts as `partial` (E2); the route's catch arm is reached and reported (`artifacts/api-server/src/test/discoveryFeedEventPostsCoverage.test.ts:199#it("E5 a THROWN event-post fetch`); a healthy read carries no refusal (C1). The rail keeps the posts under one "may be incomplete" line (`travel-buddy-standalone/src/components/discovery/__tests__/DiscoveryEventPostsRail.coverage.component.test.tsx:70#it('P1. partial, event_posts failed, posts pr`), renders the partial-empty state instead of silence (P2), and ignores a partial that names only place categories (P3). The guard now holds the rail's partial branch (`travel-buddy-standalone/src/services/__tests__/discoveryRefusalConsumers.guard.test.ts:350#it('G7. §80: every consumer that renders a list`); its n/a set is two files, both of which render no list. The rail holds no cache, and `getDiscoveryFeed` caches nothing (§60.2). **Not flag-gated:** each change alters output only when a read fails. **Branch only; no client build carrying the rail change has shipped.** |
+| C19 | W | **W** | **The server half is built; activation waits on the release floor.** Behind `discovery_community_byline_canonical_enabled` (`artifacts/api-server/src/migrations/3490_discovery_serve_path_flags.sql:53#discovery_community_byline_canonical_enabled`, seeded FALSE), `GET /discovery/community` emits `submittedBy.name` as the real name iff `nameAllowed`, else null (`artifacts/api-server/src/routes/discovery.ts:3095#...(bylineCanonical ? { name: nameAllowed ?`, D-W11X2-3). With the flag on, an opted-out submitter's name is null and the handle still travels (`artifacts/api-server/src/test/discoveryCommunityBylineCanonical.test.ts:141#it("B1 ON: an opted-out submitter's name is`), and no served name starts with `@` for any viewer (`artifacts/api-server/src/test/discoveryCommunityBylineCanonical.test.ts:159#it("B4 ON: no served name starts with '@'`). With it absent or FALSE the served body is byte-identical to the golden captured at `3cc027a06` (`artifacts/api-server/src/test/discoveryCommunityBylineCanonical.test.ts:126#it("G0 flag ABSENT: the served body is the g`; G1). `discoveryClientRouteE2E` X3 cannot load under this runner's Node 22 (§76.5); the client resolver it runs is unchanged, and B1's shape is exactly what X3 feeds it for Bob. IMPLEMENTATION-COMPLETE; awaits: the oldest supported app build carrying `features/discovery/communityByline.ts` (§60.8 Q2's first half, release state) + 3490 applied to production (W10D-A1 batch) + the API build carrying §94 deployed (W10D-A3) + flag discovery_community_byline_canonical_enabled TRUE in production (AR-W11X2-1) + one production `GET /discovery/community` response in which no `submittedBy.name` starts with "@". |
+| DC-17 | W | **W** | **The platform path now records its reading's four facts; every leg §91 left is code-complete.** Where the platform's coverage store answers (CPV2-12), the served reading is Compass's read-time fold of the platform's cells, so its record names that fold (`artifacts/api-server/src/lib/discoveryPlatformGraphProvenance.ts:60#export const PLATFORM_COVERAGE_FOLD_MODEL_VERSION`), what one cell contributes, the cells the read admitted and the reading's own clock (D-W11X2-4). It is served only for the SAME reading (`artifacts/api-server/src/lib/discoveryPlatformGraphProvenance.ts:114#if (newest !== reading.computedAt`), and makes no claim when the governing read's cap made the corpus unreproducible (`artifacts/api-server/src/lib/discoveryPlatformGraphProvenance.ts:97#if (raw.length >= PLATFORM_COVERAGE_READ_CAP)`). It is wired where the reading's provenance is loaded (`artifacts/api-server/src/lib/discoveryCandidates/graphReadingProvenance.ts:41#platformGraphReadingProvenance(sc, reading)`), behind `discovery_platform_graph_provenance_enabled` (3490, FALSE). On serve points 1 and 6, every served row on the platform path stores `graphProvenance` with all four facts (`artifacts/api-server/src/test/discoveryIntegrationHooks.test.ts:545#every served row stores all four facts of the PLATFORM reading`), and with the flag off it stores `{ status: "platform_producer" }` exactly as before. The versions are pinned to the code they name (`artifacts/api-server/src/test/discoveryPlatformGraphProvenance.test.ts:126#it("V1 the versions are pinned to`). The Compass path stands as §85/§91 built it. IMPLEMENTATION-COMPLETE; awaits: 3435, 3436, 3484 and 3490 applied to production (W10D-A1) + the API build carrying §94 deployed (W10D-A3) + flags discovery_ranking_modifiers_enabled (2289), compass_city_confidence_windowed_reads_enabled (3484), discovery_platform_graph_provenance_enabled (3490) and discovery_trend_rebuild_scheduler_enabled (3475, so 3435's windows are written) TRUE in production + one production served `rank_events` row with `features.graphProvenance.status = 'recorded'` on each producer path (`graphSource` `compass_graph` and `platform_coverage`). |
+| DC-01 | W | **W** | **§91's two stated limits are closed: the kinds are logged, and a client asks for them.** Each served page writes one impression per item at serve point 13 and one per-request row (`artifacts/api-server/src/routes/discoveryOutputKinds.ts:93#logServeUnlessRefused(res, sc, {`; `artifacts/api-server/src/test/discoveryOutputKindsServeLog.test.ts:97#it("L1 a served Trails page writes`), and each served item carries its impression's recommendation id (L2). 3491 admits serve point 13 (`artifacts/api-server/src/migrations/3491_discovery_recommendations_output_kinds_serve_point.sql:63#CHECK (serve_point BETWEEN 1 AND 13) NOT VALID`). The client asks only behind the same flag (`travel-buddy-standalone/src/components/discovery/DiscoveryOutputKindsRail.tsx:58#const active = enabled && flagOn`; `travel-buddy-standalone/src/components/discovery/__tests__/DiscoveryOutputKindsRail.component.test.tsx:41#it('O1 flag`), and a failed read is never silence (O4). The criterion ("PDE should rank or recommend") stands as §91 graded it. IMPLEMENTATION-COMPLETE; awaits: 3483 applied to production + 3376 (W10D-A2) and 3491 (AR-W11X2-2) applied to production + the API build and a client build carrying §94 shipped (W10D-A3) + flag discovery_output_kinds_enabled TRUE in production (D-W10-R3-13 step 8, amended by D-W10-I-A1) + one production 200 from the route for each of the three kinds, each with its serve point 13 `recommendations` row. |
+| A07 | W | **W** | **§79's F2 limit is closed.** `lib/liveClaimRead` no longer collapses an errored read into "no claim": it still answers `[]` to every caller, but marks it failed (`artifacts/api-server/src/lib/liveClaimRead.ts:668#export function liveClaimReadFailed(`) for an unreadable allowlist, a snapshot read error and a throw, and for none of the three real absences (`artifacts/api-server/src/test/liveClaimReadFailure.test.ts:109#it("L1 a snapshot read error`, L2–L7). Discovery's live read grades such a row `unreadable` (`artifacts/api-server/src/lib/discoveryLiveRankRead.ts:157#if (liveClaimReadFailed(envelopes))`; `artifacts/api-server/src/test/liveClaimReadFailure.test.ts:165#it("D1 an errored claim read grades`), so §79's rule withholds its "now" claim and says so on the envelope (`artifacts/api-server/src/test/discoveryOnePipeline.test.ts:354#it("F2. (restated §94) a claim read that ERRORS fails`). IMPLEMENTATION-COMPLETE; awaits: 2850 applied + flag discovery_live_rank_enabled TRUE and 2361 discovery_candidate_projection_enabled TRUE in production + one production serve of a Live unsafe_density reading from a Sensing producer (census-sensing S66), demoted. |
+
+### 94.2 Decisions and approval requests (register section "W11-X2")
+
+- **Decided here:** D-W11X2-1 (the feed's event-post failure and its code), D-W11X2-2 (the rail's partial wording), D-W11X2-3 (the byline's canonical shape: keep the key, null when withheld), D-W11X2-4 (the platform path's read-time record), D-W11X2-5 (serve point 13, NULL kinds, 3491's shape), D-W11X2-6 (the client call and its rails), D-W11X2-7 (the Live claim read's failure mark), D-W11X2-8 (the assertions restated).
+- **APPROVAL REQUIRED:** AR-W11X2-1 (turning on the canonical byline in production, after the release floor) and AR-W11X2-2 (applying 3491 with 3376).
+
+### 94.3 Tests, every one seen red first, and mutations
+
+**New suites.** Five server suites on the api-server `test` line, and three client suites.
+
+| suite | cases | red first, and how |
+|---|---:|---|
+| `liveClaimReadFailure.test.ts` | 9 | L1, L2, L3, L7, D1 red against the base `liveClaimRead.ts` (run with a stand-in for the missing export); L4–L6 and D2 green controls |
+| `discoveryFeedEventPostsCoverage.test.ts` | 8 | E1–E4 and C3 red against the base route and lib; E5 red under M10, which is the base catch arm; C1, C2 green controls |
+| `discoveryCommunityBylineCanonical.test.ts` | 7 | B1, B4 red against the base route; G0/G1's golden was captured there; B2, B3, B5 green controls |
+| `discoveryPlatformGraphProvenance.test.ts` | 9 | W1 red before the one-line wiring (the base answer); the module's own cases are new code, each killed below |
+| `discoveryOutputKindsServeLog.test.ts` | 7 | L1–L3 and M1 red against the base route; L4–L6 green controls |
+| `DiscoveryEventPostsRail.coverage.component.test.tsx` (jest) | 5 | P1, P2 red against the base rail; P3–P5 green controls |
+| `services/__tests__/discoveryRecommendations.test.ts` (node) | 7 | red: the module did not exist |
+| `DiscoveryOutputKindsRail.component.test.tsx` (jest) | 8 | red: the component did not exist; O6 red until ForYouTab was wired |
+
+Four appended cases in `discoveryIntegrationHooks.test.ts` (R2p, platform path ON and OFF on serve points 1 and 6) are red under M17, the base line.
+
+**Mutations.** Each was applied alone by a script, its suite run, and the file restored and sha256-checked byte-identical. 29 of 29 are killed; M10 survived the first round and was killed once E5 was added.
+
+| # | mutation | red |
+|---|---|---|
+| M1 | snapshot read error returns an unmarked `[]` | L1, L7, D1, F2 |
+| M2 | unreadable allowlist returns an unmarked `[]` | L2 |
+| M3 | a thrown read returns an unmarked `[]` | L3 |
+| M4 | the envelope projection drops the mark | L7, D1 |
+| M5 | Discovery ignores the mark | D1, F2 |
+| M6 | an unreadable allowlist reads as empty | L2 |
+| M7 | the feed never names `event_posts` | E1–E4, C3 |
+| M8 | the lib never reports `readFailed` | E1–E4, C3 |
+| M9 | the places code for an event-post failure | E1–E3 |
+| M10 | the route's catch does not report | E5 |
+| M11 | the rail notices any partial | P3 |
+| M12 | the partial-empty state removed | P2 |
+| M13 | the partial line removed | P1 |
+| M14 | the byline flag never read on | B1, B4 |
+| M15 | the byline flag always on | G0, G1, B5 |
+| M16 | the canonical name falls back to `@handle` | B1, B4 |
+| M17 | the platform path unwired | W1, R2p ON ×2 |
+| M18 | the 3490 gate removed | P0, W1, R2p OFF ×2 |
+| M19 | the same-reading check removed | P2, P3 |
+| M20 | the cap check removed | P4 |
+| M21 | the serve-log call removed | L1–L3 |
+| M22 | serve point 13 not ranked-in-request | L1 |
+| M23 | a Trail logged as `place` | L1, M1 |
+| M24 | a Trail's response id minted over its bare id | L2 |
+| M25 | the client rail ignores the flag | O1 |
+| M26 | `unavailable` rendered as silence | O4 |
+| M27 | the client maps 503 to an empty page | S5 |
+| M28 | the client asks with no token | S3 |
+| M29 | the For You wiring removed | O6 |
+
+**Existing assertions restated by decision (D-W11X2-8); none removed:** `discoveryOnePipeline` F2 (§79.10 prescribed it), `discoveryServePointReport` (the population is 1–13), `db/discoveryTelemetryConstraints` (14 refused, 13 admitted), `discoveryRefusalExposure`'s fake (it lacked `.not()`, so its positive control's event-post read had been failing unseen), and the guard's G7 n/a set.
+
+### 94.4 Harness (controlled evidence only)
+
+Port 55463, data under `/var/tmp/w11x2-*`, stopped and deleted afterwards.
+- `up.sh` replayed the chain: 384 applied in order, 12 known-unreplayable of 396, 2 of those applied on retry. 3490 and 3491 applied in order.
+- Both 3490 flags and `discovery_output_kinds_enabled` read FALSE; the constraint reads `CHECK (((serve_point >= 1) AND (serve_point <= 13)))`, validated.
+- Re-applying 3490 and 3491 is idempotent. 3490's postcondition refuses a flag found ON, and its rollback refuses while one is TRUE; with both FALSE it removes them, and 3490 re-applies.
+- Through `record_discovery_serve_request`: serve point 13 is written and 14 refused by `recommendations_serve_point_check`. 3491's rollback refuses while a 13 row exists; with none it restores 1–12 (13 is then refused), and 3491 re-applies.
+- `scripts/local-db/run-tests.sh`: RESULT_PLACEHOLDER.
+
+### 94.5 Checks run, and what was not run
+
+CHECKS_PLACEHOLDER
+
+### 94.6 Files outside this lane's list, changed minimally
+
+- `lib/discoveryLiveRankRead.ts`: one line in place (the mark) and a foot import; the cited import line is untouched.
+- `lib/discoveryCandidates/graphReadingProvenance.ts`: one line in place (the platform branch) and a foot import.
+- `lib/discoveryServeLog.ts`: two in-place edits (`OUTPUT_KINDS: 13` and the ranked set); `lib/discoveryServePointReport.ts`: its label, in place.
+- `scripts/checkCensusFreshness.ts`: this section's CENSUS_SCOPE entries; `docs/architecture/telegraph-phase0-inventory.md`: regenerated (674 → 676 migration files), as `check:telegraph-inventory` prescribes.
+
+### 94.7 What would turn this red
+
+- **A failed event-post read served as a quiet city again:** E1–E5 and P1–P2 go red (M7–M13).
+- **Any byte of `GET /discovery/community` moving with the byline flag off:** G0/G1 go red (M15).
+- **A platform-path record for a reading nobody served, or for an unreproducible corpus:** P2–P4 go red (M19, M20); a fold or state change without a version bump turns V1 red.
+- **An output kind served and not logged, or logged under an invented kind:** L1–L3 and M1 go red (M21–M24).
+- **The client asking with the flag off, or silent on a failure:** O1, O4 go red (M25, M26).
+- **An errored Live claim read graded `none` again:** L1–L3, D1 and F2 go red (M1–M6).
+- **DV-83's `C`:** any consumer that renders a list losing its partial branch (G7), or any new server path that turns a failed read into an empty collection without a refusal.
+
+### 94.8 Headline, restated from the rows
+
+HEADLINE_PLACEHOLDER
+
 ## Cited, not graded (check:census-scope-coverage)
 
 - NOT-GRADED: artifacts/api-server/src/test/helpers/supabaseConformance.ts — §86.13 cites it only as the file that registers `fakeTrailRulesDb` as a contract Subject; it is shared test machinery (the Supabase contract harness), and no Discovery verdict rests on it.

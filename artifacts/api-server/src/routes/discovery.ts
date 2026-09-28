@@ -2668,7 +2668,7 @@ router.get("/discovery/feed", async (req, res) => {
   }
 
   // ── Fetch places across all requested categories ───────────────────────────
-  try {
+  try { const eventPostsReadStatus = { readFailed: false };  // census-discovery §94 (DV-83, hunk §80.7): whether the event-post read FAILED — carried onto the envelope below, never served as a quiet city
     // TODO: denormalize is_event_post flag at write time to avoid per-request join
     const [categoryResults, eventPosts] = await Promise.all([
       Promise.all(
@@ -2700,10 +2700,10 @@ router.get("/discovery/feed", async (req, res) => {
             radiusKm,
             viewerId,
             blockedIds,
-            seenPostIds: new Set<string>(),
+            seenPostIds: new Set<string>(), readStatus: eventPostsReadStatus,
           }).catch((_err) => {
             req.log.warn({ _err }, "discovery/feed: event-post fetch failed (non-fatal)");
-            return [] as DiscoveryEventPost[];
+            eventPostsReadStatus.readFailed = true; return [] as DiscoveryEventPost[];  // §94: a thrown fetch is a failed read, not an empty one
           })
         : Promise.resolve([] as DiscoveryEventPost[]),
     ]);
@@ -2747,7 +2747,7 @@ router.get("/discovery/feed", async (req, res) => {
       },
       sessionId: feedSessionId, ...(gateF.summary ? { layover: gateF.summary } : {}),
     };
-    if (failedCats.length > 0) {
+    if (eventPostsReadStatus.readFailed) failedCats.push("event_posts"); if (failedCats.length > 0) {  // §94 (DV-83): the event posts are a source of this feed too
       // "nothing" only when the failure is the whole answer. If OSM or the event
       // posts produced anything, those items really were served and really are
       // exposure, so the refusal is "partial" and the serve below still logs
@@ -2756,7 +2756,7 @@ router.get("/discovery/feed", async (req, res) => {
       const coverage = feedAnnotated.length === 0 && eventPosts.length === 0 ? "nothing" : "partial";
       sendDiscoveryRefusal(
         res, feedEnvelope,
-        discoveryRefusal("transient_db", "feed_places_read_failed", "GET /discovery/feed", coverage, failedCats),
+        discoveryRefusal("transient_db", failedCats.some((c) => c !== "event_posts") ? "feed_places_read_failed" : "feed_event_posts_read_failed", "GET /discovery/feed", coverage, failedCats),  // §94 (D-W11X2-1): an event-post-only failure has its own code, so an alert on the places code is not raised by the posts
       );
     } else {
       res.json(feedEnvelope);
@@ -2826,7 +2826,7 @@ export interface CommunityDiscoveryItem {
      * is live: changing this field changes what a user sees. Retire it once the
      * client resolves the byline through displayIdentity(displayName, handle).
      */
-    name: string;
+    name: string | null;  // census-discovery §94 (C19): null only under discovery_community_byline_canonical_enabled (3490), where it is the canonical displayName
     /**
      * CANONICAL byline, .agents/memory/display-name-privacy.md shape: the real
      * name iff the submitter is the viewer or opted in via
@@ -3069,7 +3069,7 @@ router.get("/discovery/community", async (req, res) => {
     // request whose query came back empty still resolves no viewer.
     const selfSubmitterId = rows.length > 0 ? await resolveCommunityViewer() : null; const followedSubmitters = await readBylineFollowEdges(sc, selfSubmitterId, rows.map(bylineProfileOf));  // census-discovery §53 — the avatar gate's follower term; read only when a private or opted-out byline needs it
 
-    const items: CommunityDiscoveryItem[] = rows.map((row: any) => {
+    const bylineCanonical = rows.length > 0 && (await isFlagEnabled(sc, "discovery_community_byline_canonical_enabled")); const items: CommunityDiscoveryItem[] = rows.map((row: any) => {  // census-discovery §94 (C19, W11A-B2): the canonical byline, read once per request and only when a byline will be built
       const profile = Array.isArray(row.profiles) ? row.profiles[0] : row.profiles;
       return {
         id:           row.id,
@@ -3092,7 +3092,7 @@ router.get("/discovery/community", async (req, res) => {
                 id:          profile.id as string,
                 name:        (nameAllowed
                   ? (profile.name ?? "Traveler")
-                  : (profile.username ? `@${profile.username}` : "Traveler")) as string,
+                  : (profile.username ? `@${profile.username}` : "Traveler")) as string, ...(bylineCanonical ? { name: nameAllowed ? ((profile.name ?? null) as string | null) : null } : {}),  // §94 (C19): ON ⇒ the real name iff nameAllowed, else null — never a handle; OFF ⇒ the legacy shape above, byte for byte
                 displayName: nameAllowed ? ((profile.name ?? null) as string | null) : null,
                 avatarUrl:   communityBylineAvatar(profile, selfSubmitterId, followedSubmitters),  // §53 — lib/mediaFeedItem.ts's avatar gate: own / follower / public-and-not-opted-out
                 handle:      (profile.username ?? null) as string | null,
@@ -4503,3 +4503,6 @@ function withCacheARankedAdmission<D extends { included: boolean }>(
   if (!cacheARanked || decision?.included) return decision;
   return { included: true, reason: "cache_a_ranked_enabled" };
 }
+
+// census-discovery §94 (lane W11-X2): the one literal flag read C19 needs (check:flag-polarity reads call sites). At the foot so no cited line moves.
+import { isFlagEnabled } from "../lib/featureFlags.js";

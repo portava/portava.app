@@ -249,7 +249,7 @@ export function isPromotedScopeActive(row: PromotedScopeRow, nowMs: number): boo
   return true;
 }
 
-async function loadPromotedScopes(sc: any, now: Date): Promise<Set<string>> {
+async function loadPromotedScopes(sc: any, now: Date): Promise<Set<string> | null> {  // census-discovery §94 (§79 F2): null = the allowlist could NOT be read, which is not "nothing promoted"
   const t = now.getTime();
   const activeKeys = (rows: PromotedScopeRow[]) =>
     new Set(rows.filter((r) => isPromotedScopeActive(r, t)).map((r) => String(r.scope_key)));
@@ -264,7 +264,7 @@ async function loadPromotedScopes(sc: any, now: Date): Promise<Set<string>> {
       logger.warn({ err: error }, "liveClaimRead: promoted-scope expiry columns not present; reading without them");
       ({ data, error } = await sc.from("intel_live_promoted_scopes").select(PROMOTED_SCOPE_COLUMNS_PRE_2430));
     }
-    if (error || !data) return new Set(); // fail-closed; do not cache an error
+    if (error || !data) return null; // fail-closed (nothing serves) and visible to the caller; do not cache an error
     const rows = ((data as any[]) ?? []).map((r) => ({
       scope_key: String(r.scope_key),
       expires_at: r.expires_at ?? null,
@@ -273,7 +273,7 @@ async function loadPromotedScopes(sc: any, now: Date): Promise<Set<string>> {
     _promotedScopeCache = { at: t, rows };
     return activeKeys(rows);
   } catch {
-    return new Set();
+    return null;
   }
 }
 
@@ -355,7 +355,7 @@ export async function readLiveClaims(
   // intel_live_promoted_scopes. Without this the single global flag exposed every
   // scope at once (IG-09 requires per-scope promotion). Empty allowlist (or an
   // unreadable one) ⇒ nothing serves — fail-closed.
-  const promotedScopes = await loadPromotedScopes(sc, now);
+  const promotedScopesRead = await loadPromotedScopes(sc, now); if (promotedScopesRead === null) return failedLiveClaimRead(); const promotedScopes = promotedScopesRead;  // §94 (§79 F2): an unreadable allowlist is a FAILED read, marked, not an empty one
   if (promotedScopes.size === 0) return [];
 
   try {
@@ -387,7 +387,7 @@ export async function readLiveClaims(
     if (error || !data) {
       // Fail-closed: an unreadable projection means "unknown", not "assume last known".
       logger.warn({ err: error }, "liveClaimRead: snapshot read failed");
-      return [];
+      return failedLiveClaimRead();  // §94 (§79 F2): [] to every caller, as before, but marked — Sensing §20, a failure is not an absence
     }
 
     const out: LiveClaim[] = [];
@@ -437,7 +437,7 @@ export async function readLiveClaims(
     return out;
   } catch (err) {
     logger.warn({ err }, "liveClaimRead: snapshot read threw");
-    return [];
+    return failedLiveClaimRead();
   }
 }
 
@@ -479,7 +479,7 @@ export async function readLiveClaimEnvelopes(
   opts: { claimTypes?: readonly string[]; now?: Date } = {},
 ): Promise<LiveClaimEnvelope[]> {
   const claims = await readLiveClaims(sc, subjectId, opts);
-  return claims.map(toLiveClaimEnvelope);
+  return carryLiveClaimReadFailure(claims, claims.map(toLiveClaimEnvelope));  // §94 (§79 F2): a failed read stays marked through the projection
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -622,4 +622,49 @@ export async function resolvePlaceIntelState(
   const typical = await readTypicalPatterns(sc, subjectId, opts);
   if (typical.length > 0) return { state: "typical", claims: typical };
   return { state: "unknown", claims: [] };
+}
+
+// ── census-discovery §94 (lane W11-X2), §79 F2: an errored read is not "no claim" ──
+//
+// Sensing §20: "Schema/permission/infrastructure failure ≠ no activity". Before
+// this, `readLiveClaims` answered `[]` for a snapshot read error, an unreadable
+// promoted-scope allowlist and a throw, which is also its answer for a place with
+// nothing live. Every consumer then graded a failed read as `none`.
+//
+// THE VALUE DOES NOT CHANGE. Every caller still receives an empty array, so no
+// consumer that does not ask changes by one byte (the Wall, the Map, Compass,
+// placeLiving, Telegraph). What changes is that the failure is VISIBLE on it:
+// `liveClaimReadFailed(result)` is true for exactly those three cases, and false
+// for the three real absences (gates closed, nothing promoted, nothing live).
+// A WeakSet keyed on the returned array is the idiom lib/discoveryRefusal.ts
+// uses for a refused response: nothing can be read off the wire, nothing has to
+// be cleaned up, and a caller cannot forge the mark with a field of its own.
+//
+// Discovery's live read (lib/discoveryLiveRankRead.ts) reads the mark and grades
+// the row `unreadable`, so §79's rule — a failed read fails CLOSED: the row keeps
+// its place and loses its "now" claim — now covers an errored read too.
+// Appended at the foot so no cited line above moves; function declarations hoist.
+
+const _failedLiveClaimReads = new WeakSet<object>();
+
+/** An empty answer that says the read FAILED. Fresh per call, so it can never mark a real result. */
+function failedLiveClaimRead(): LiveClaim[] {
+  const out: LiveClaim[] = [];
+  _failedLiveClaimReads.add(out);
+  return out;
+}
+
+/** Carry a failed read's mark from `from` onto its projection `to`. */
+function carryLiveClaimReadFailure<T extends object>(from: object, to: T): T {
+  if (_failedLiveClaimReads.has(from)) _failedLiveClaimReads.add(to);
+  return to;
+}
+
+/**
+ * True when this answer from `readLiveClaims` / `readLiveClaimEnvelopes` is empty
+ * because the read FAILED (an unreadable allowlist, a snapshot read error, a
+ * throw), not because nothing is live. Sensing §20: a failure is not an absence.
+ */
+export function liveClaimReadFailed(result: readonly unknown[]): boolean {
+  return _failedLiveClaimReads.has(result);
 }

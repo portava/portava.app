@@ -1,0 +1,237 @@
+/**
+ * census-discovery §94 (lane W11-X2), DV-83 / W11A-B8 — hunk §80.7: a failed
+ * event-post read on GET /discovery/feed is carried on the feed's refusal
+ * envelope instead of being served as a quiet city.
+ *
+ * Before: `lib/eventPostsDiscovery.ts` computed `readFailed` and dropped it
+ * (it only skipped the cache write), and the route turned a thrown fetch into
+ * `[]`. So a feed whose event-post read failed answered 200 with `posts: []`
+ * and NO refusal — the "Live from events" rail could not branch on a failure
+ * it was never sent (§80.1 DV-83, §29.2 ground 1's shape on another route).
+ *
+ * Now: `readEventPostsForDiscovery` returns `{ posts, readFailed }`, the route
+ * pushes `"event_posts"` onto the feed's `failedSources`, and the envelope's
+ * existing coverage rule decides `nothing` (the body is empty BECAUSE of the
+ * failure) or `partial` (real posts or places were served beside the gap).
+ *
+ *   E1  both event-post paths fail, posts only → coverage "nothing", failedSources ["event_posts"], no exposure
+ *   E2  one path fails, the other serves a post → "partial", ["event_posts"], the post is kept AND logged
+ *   E3  places served, event posts failed → "partial", ["event_posts"], places kept
+ *   E4  a place category AND the event posts failed → both named, the places code
+ *   E5  a thrown event-post fetch (the route's catch arm) → coverage "nothing", ["event_posts"]
+ *   C1  CONTROL: a healthy event-post read carries no refusal
+ *   C2  CONTROL: an anonymous feed reads no event posts and carries no refusal
+ *   C3  CONTROL: a failed read is not cached — the next healthy request serves the post
+ *
+ * Run: SUPABASE_URL=http://127.0.0.1:9 SUPABASE_SERVICE_ROLE_KEY=dummy \
+ *      node --import tsx/esm --test src/test/discoveryFeedEventPostsCoverage.test.ts
+ */
+import { describe, it, before, after, beforeEach, afterEach } from "node:test";
+import assert from "node:assert/strict";
+import http from "node:http";
+import express from "express";
+import pino from "pino";
+import { _setTestClient } from "../lib/http.js";
+import { _setTestServiceClient } from "../lib/supabase.js";
+import discoveryRouter, { _setTestDbPlacesOverride } from "../routes/discovery.js";
+import { invalidateServeLogFlagCache } from "../lib/discoveryServeLog.js";
+import { _clearEventPostsCache } from "../lib/eventPostsDiscovery.js";
+
+const _originalFetch = globalThis.fetch;
+globalThis.fetch = (async (url: any, init?: any) => {
+  const s = String(typeof url === "string" ? url : (url as URL).href ?? "");
+  if (s.includes("overpass-api.de") || s.includes("nominatim.openstreetmap.org")) throw new Error("Network blocked in test environment");
+  return _originalFetch(url, init);
+}) as typeof globalThis.fetch;
+
+const TOKEN = "w11x2-viewer";
+const VIEWER = "b11b2000-0000-4000-8000-000000000001";
+const AUTHOR = "b11b2000-0000-4000-8000-0000000000a1";
+
+let inserts: Array<{ table: string; rows: any }> = [];
+
+function venuePost(id: string) {
+  return {
+    id, author_id: AUTHOR, content: `live from ${id}`, media_urls: [], location_city: "Miami",
+    location_place_id: "node/1", public_lat: 25.77, public_lng: -80.19, created_at: new Date().toISOString(),
+    like_count: 1, comment_count: 0, visibility: "public", status: "active", post_status: "published",
+    deleted_at: null, publish_eligible_at: null, location_privacy_mode: "none",
+    discovery_places: { name: "The Venue", primary_category: "events", city: "Miami", lat: 25.77, lng: -80.19 },
+  };
+}
+
+function fakeClient(opts: { errorTables?: string[]; rows?: Record<string, any[]> } = {}) {
+  const errorTables = new Set(opts.errorTables ?? []);
+  const rowsFor: Record<string, any[]> = {
+    feature_flags: [{ flag: "discovery_serve_log_enabled", enabled: true }],
+    ...(opts.rows ?? {}),
+  };
+  function from(table: string) {
+    const preds: Array<(r: any) => boolean> = [];
+    const b: any = {
+      select() { return b; },
+      insert(payload: unknown) { inserts.push({ table, rows: payload }); return b; },
+      upsert(payload: unknown) { inserts.push({ table, rows: payload }); return b; },
+      update() { return b; }, delete() { return b; },
+      eq(col: string, val: any) { preds.push((r) => r[col] === val); return b; },
+      neq() { return b; }, is() { return b; }, not() { return b; },
+      gt() { return b; }, gte() { return b; }, lt() { return b; }, lte() { return b; },
+      in() { return b; }, or() { return b; }, ilike() { return b; }, contains() { return b; }, overlaps() { return b; },
+      order() { return b; }, limit() { return b; }, range() { return b; },
+      maybeSingle: async () => errorTables.has(table) ? { data: null, error: { message: `${table} unavailable` } } : { data: rows()[0] ?? null, error: null },
+      single: async () => errorTables.has(table) ? { data: null, error: { message: `${table} unavailable` } } : { data: rows()[0] ?? null, error: null },
+      then(onF: any, onR: any) {
+        const out = errorTables.has(table) ? { data: null, error: { message: `${table} unavailable` }, count: null } : { data: rows(), error: null, count: rows().length };
+        return Promise.resolve(out).then(onF, onR);
+      },
+    };
+    const rows = () => (rowsFor[table] ?? []).filter((r) => preds.every((p) => p(r)));
+    return b;
+  }
+  return {
+    auth: { getUser: async (t: string) => t === TOKEN ? { data: { user: { id: VIEWER } }, error: null } : { data: { user: null }, error: { message: "bad token" } } },
+    from,
+    rpc: async () => ({ data: null, error: null }),
+  };
+}
+
+function setClient(opts: Parameters<typeof fakeClient>[0] = {}) {
+  const c = fakeClient(opts);
+  _setTestClient(c as any, true);
+  _setTestServiceClient(c as any);
+}
+
+let server: http.Server;
+let base = "";
+
+function get(path: string, auth = true): Promise<{ status: number; body: any }> {
+  return new Promise((resolve, reject) => {
+    const url = new URL(path, base);
+    const r = http.request({
+      hostname: url.hostname, port: Number(url.port), path: url.pathname + url.search, method: "GET",
+      headers: auth ? { authorization: `Bearer ${TOKEN}` } : {},
+    }, (res) => {
+      let raw = "";
+      res.on("data", (c) => (raw += c));
+      res.on("end", () => { let b: any; try { b = JSON.parse(raw); } catch { b = raw; } resolve({ status: res.statusCode ?? 0, body: b }); });
+    });
+    r.on("error", reject);
+    r.end();
+  });
+}
+
+const settle = () => new Promise((r) => setTimeout(r, 30));
+const rankRows = () => inserts.filter((i) => i.table === "rank_events").flatMap((i) => (Array.isArray(i.rows) ? i.rows : [i.rows]));
+
+const FEED_POSTS_ONLY = "/api/discovery/feed?city=Miami&lat=25.77&lng=-80.19&includePlaces=0&radiusKm=25";
+const FEED_WITH_PLACES = "/api/discovery/feed?city=Miami&lat=25.77&lng=-80.19&radiusKm=25";
+const DB_PLACE = { id: "db/aaaaaaaa-0000-4000-8000-000000000001", name: "Gem", lat: 25.77, lng: -80.19, category: "for_you", source: "traveler" };
+
+before(async () => {
+  const app = express();
+  app.use(express.json());
+  app.use((req, _res, next) => { (req as any).log = pino({ level: "silent" }); next(); });
+  app.use("/api", discoveryRouter);
+  server = app.listen(0, "127.0.0.1");
+  await new Promise<void>((r) => server.once("listening", r));
+  base = `http://127.0.0.1:${(server.address() as any).port}`;
+});
+
+after(() => {
+  server.close();
+  globalThis.fetch = _originalFetch;
+  _setTestClient(null as any, false);
+  _setTestServiceClient(null as any);
+  _setTestDbPlacesOverride(null);
+});
+
+beforeEach(() => { inserts = []; invalidateServeLogFlagCache(); _clearEventPostsCache(); });
+afterEach(() => { _setTestDbPlacesOverride(null); });
+
+describe("GET /discovery/feed — a failed event-post read is on the envelope (DV-83, §80.7)", () => {
+  it("E1 both event-post paths fail, posts only: coverage 'nothing', failedSources ['event_posts'], no exposure", async () => {
+    setClient({ errorTables: ["post_event_links", "posts"] });
+    const r = await get(FEED_POSTS_ONLY);
+    assert.equal(r.status, 200);
+    assert.deepEqual(r.body.posts, []);
+    assert.ok(r.body.refusal, `a failed event-post read must not read as a quiet city: ${JSON.stringify(r.body)}`);
+    assert.equal(r.body.refusal.class, "transient_db");
+    assert.equal(r.body.refusal.code, "feed_event_posts_read_failed");
+    assert.equal(r.body.refusal.coverage, "nothing");
+    assert.deepEqual(r.body.refusal.failedSources, ["event_posts"]);
+    await settle();
+    assert.equal(rankRows().length, 0, "a refused feed enters no exposure denominator");
+  });
+
+  it("E2 one path fails and the other serves a post: 'partial', the post kept and logged", async () => {
+    setClient({ errorTables: ["post_event_links"], rows: { posts: [venuePost("p-1")] } });
+    const r = await get(FEED_POSTS_ONLY);
+    assert.equal(r.status, 200);
+    assert.deepEqual(r.body.posts.map((p: any) => p.id), ["p-1"]);
+    assert.ok(r.body.refusal, "the surviving path's posts are real, but the list is incomplete and must say so");
+    assert.equal(r.body.refusal.code, "feed_event_posts_read_failed");
+    assert.equal(r.body.refusal.coverage, "partial");
+    assert.deepEqual(r.body.refusal.failedSources, ["event_posts"]);
+    await settle();
+    assert.deepEqual(rankRows().map((row: any) => row.item_id), ["p-1"], "a partial serve's items really were served and are logged");
+  });
+
+  it("E3 places served and the event posts failed: 'partial', places kept", async () => {
+    setClient({ errorTables: ["post_event_links", "posts"] });
+    _setTestDbPlacesOverride(async () => [DB_PLACE as any]);
+    const r = await get(FEED_WITH_PLACES);
+    assert.equal(r.status, 200);
+    assert.ok(r.body.places.length >= 1, `the places are real and kept: ${JSON.stringify(r.body)}`);
+    assert.equal(r.body.refusal?.coverage, "partial");
+    assert.deepEqual(r.body.refusal?.failedSources, ["event_posts"]);
+    assert.equal(r.body.refusal?.code, "feed_event_posts_read_failed");
+  });
+
+  it("E4 a place category AND the event posts failed: both named, under the places code", async () => {
+    setClient({ errorTables: ["post_event_links", "posts", "discovery_places"] });
+    const r = await get(FEED_WITH_PLACES);
+    assert.equal(r.status, 200);
+    assert.equal(r.body.refusal?.code, "feed_places_read_failed");
+    assert.deepEqual(r.body.refusal?.failedSources, ["for_you", "event_posts"]);
+    assert.equal(r.body.refusal?.coverage, "nothing");
+  });
+
+  it("E5 a THROWN event-post fetch is a failed read, not an empty one (the route's catch arm)", async () => {
+    // Both paths catch their own read errors; what reaches the route's catch is
+    // anything the pipeline throws AFTER the reads. A like count that cannot be
+    // added (a Symbol) throws inside the page-wide engagement fold.
+    setClient({ rows: { posts: [{ ...venuePost("p-x"), like_count: Symbol("not a number") }] } });
+    const r = await get(FEED_POSTS_ONLY);
+    assert.equal(r.status, 200);
+    assert.deepEqual(r.body.posts, []);
+    assert.equal(r.body.refusal?.code, "feed_event_posts_read_failed", JSON.stringify(r.body));
+    assert.equal(r.body.refusal?.coverage, "nothing");
+    assert.deepEqual(r.body.refusal?.failedSources, ["event_posts"]);
+  });
+
+  it("C1 CONTROL: a healthy event-post read carries no refusal", async () => {
+    setClient({ rows: { posts: [venuePost("p-1")] } });
+    const r = await get(FEED_POSTS_ONLY);
+    assert.equal(r.status, 200);
+    assert.deepEqual(r.body.posts.map((p: any) => p.id), ["p-1"]);
+    assert.equal(r.body.refusal, undefined);
+  });
+
+  it("C2 CONTROL: an anonymous feed reads no event posts and carries no refusal", async () => {
+    setClient({ errorTables: ["post_event_links", "posts"] });
+    const r = await get(FEED_POSTS_ONLY, false);
+    assert.equal(r.status, 200);
+    assert.deepEqual(r.body.posts, []);
+    assert.equal(r.body.refusal, undefined, "no read was owed, so none failed");
+  });
+
+  it("C3 CONTROL: a failed read is not cached — the next healthy request serves the post", async () => {
+    setClient({ errorTables: ["post_event_links", "posts"] });
+    const bad = await get(FEED_POSTS_ONLY);
+    assert.equal(bad.body.refusal?.coverage, "nothing");
+    setClient({ rows: { posts: [venuePost("p-2")] } });
+    const good = await get(FEED_POSTS_ONLY);
+    assert.deepEqual(good.body.posts.map((p: any) => p.id), ["p-2"]);
+    assert.equal(good.body.refusal, undefined);
+  });
+});

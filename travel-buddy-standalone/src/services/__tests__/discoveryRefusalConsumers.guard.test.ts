@@ -130,9 +130,9 @@ const CONSUMERS: Record<string, Consumer> = {
   'src/components/discovery/DiscoveryEventPostsRail.tsx': {
     uses: ['getDiscoveryFeed'],
     branches: ["setRefused(res.data.refusal?.coverage === 'nothing');", 'if (refused) {'],
-    proofs: [{ file: 'src/components/discovery/__tests__/DiscoveryEventPostsRail.refusal.component.test.tsx', mentions: 'discovery-event-posts-rail-refused' }],
-    partial: "n/a — the feed's partial names PLACE categories (failedCats); this rail renders only event posts, which that partial does not cover",
-    partialBranches: [],
+    proofs: [{ file: 'src/components/discovery/__tests__/DiscoveryEventPostsRail.refusal.component.test.tsx', mentions: 'discovery-event-posts-rail-refused' }, { file: 'src/components/discovery/__tests__/DiscoveryEventPostsRail.coverage.component.test.tsx', mentions: 'discovery-event-posts-rail-partial' }],
+    partial: 'census-discovery §94 (hunk §80.7): the feed names "event_posts" in failedSources when their read failed; posts kept under a "may be incomplete" line, no posts is the partial-empty state, and a partial naming only place categories does not describe this rail',
+    partialBranches: ["(res.data.refusal.failedSources ?? []).includes('event_posts')", '{postsIncomplete && (', 'if (postsIncomplete && posts.length === 0) {'],
   },
   'src/hooks/useCommunityDiscovery.ts': {
     uses: ['getCommunityPlaces'],
@@ -357,7 +357,7 @@ describe('DV-83 — every refusal-carrying Discovery read has an accounted consu
       for (const b of c.partialBranches) assert.ok(src.includes(b), `${file}: the partial branch is gone — expected to find:\n  ${b}`);
     }
     const na = Object.entries(CONSUMERS).filter(([, c]) => c.partialBranches.length === 0).map(([f]) => f).sort();
-    assert.deepEqual(na, ['app/(tabs)/_layout.tsx', 'app/(tabs)/discovery.tsx', 'src/components/discovery/DiscoveryEventPostsRail.tsx'],
+    assert.deepEqual(na, ['app/(tabs)/_layout.tsx', 'app/(tabs)/discovery.tsx'],  // §94: the rail left this set once the feed named its own failed source
       'the set of consumers the partial rule does not reach changed — say why here, and in census-discovery');
   });
 
@@ -371,7 +371,7 @@ describe('DV-83 — every refusal-carrying Discovery read has an accounted consu
     // Every rendering consumer takes its sentence from that module, not from a
     // literal of its own.
     for (const file of [
-      'src/components/discovery/ForYouTab.tsx', 'src/components/discovery/DiscoveryCategoryTab.tsx',
+      'src/components/discovery/ForYouTab.tsx', 'src/components/discovery/DiscoveryCategoryTab.tsx', 'src/components/discovery/DiscoveryEventPostsRail.tsx',
       'src/components/search/SearchSuggestionsPanel.tsx', 'src/components/map/MapSearchSheet.tsx',
       'app/search.tsx', 'app/map/index.tsx',
     ]) {
