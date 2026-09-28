@@ -48,6 +48,7 @@ export const DISCOVERY_TABLES = new Set([
   "discovery_geocode_cache", "discovery_shadow_serves", "discovery_place_photos", "place_momentum",
   "trails", "content_trails", "trail_edges", "trail_follows", "trail_reports",
   "trail_health_snapshots", "recommendations", "rank_events", "rank_event_outcome_receipts",   // §62: 3420's satellite of rank_events
+  "place_cooccurrence",   // §95 (W11-X3): 3495's Trail-derived projection — not caught by the name rule
 ]);
 
 export function isDiscoveryTable(name: string): boolean {

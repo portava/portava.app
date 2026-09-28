@@ -114,15 +114,25 @@ describe("P — visitors post afterward", () => {
     assert.equal(POST_CONVERGENCE_MIN_AUTHORS, 2);
     assert.equal(read(world(), [mem("b1", NOW - 10 * H)]).evidence.recentGroups, 2);
     assert.equal(read(world(), [mem("b1", NOW - 10 * H), mem("b1", NOW - 3 * H)]).evidence.recentGroups, 2);
+    // The floor holds in the input itself, before any window meets the classifier: one author yields no entry.
+    const single = postAfterVisitAuthors(world(), [mem("b1", NOW - 10 * H), mem("b1", NOW - 3 * H)], NOW, WINDOWS);
+    assert.equal(single.status === "ok" ? single.byKey.size : -1, 0);
     // A new author plus an existing actor: only one NEW author — still below the floor.
     assert.equal(read(world(), [mem("b1", NOW - 10 * H), mem("a1", NOW - 3 * H)]).evidence.recentGroups, 2);
   });
 
   it("P5 a post before the author's own positive outcome is not 'afterward'", () => {
-    const rows = world().map((r) => (r.user_id === "b2" ? { ...r, served_at: iso(NOW - 6 * H), outcome_at: iso(NOW - 4 * H) } : r));
-    // b2's outcome is now RECENT and after the post: b2 does not qualify, and b1 alone is below the floor.
-    const got = read(rows, [mem("b1", NOW - 10 * H), mem("b2", NOW - 5 * H)]);
+    // b1 visited in the PRIOR window and posted in MID; b2 posted in MID but its
+    // own outcome came later (RECENT). Neither is a mid activity actor, so only
+    // the "afterward" rule keeps b2 out — and b1 alone is below the floor.
+    const rows = world().map((r) => (r.user_id === "b1" ? { ...r, served_at: iso(NOW - 201 * H), outcome_at: iso(NOW - 200 * H) }
+      : r.user_id === "b2" ? { ...r, served_at: iso(NOW - 6 * H), outcome_at: iso(NOW - 4 * H) } : r));
+    const got = read(rows, [mem("b1", NOW - 60 * H), mem("b2", NOW - 55 * H)]);
     assert.deepEqual(got.evidence.postConvergence, { status: "ok", recentGroups: 0, midGroups: 0, priorGroups: 0 });
+    // Control: with b2's outcome BEFORE its post (still outside mid), b2 qualifies and mid gains a group.
+    const control = world().map((r) => (r.user_id === "b1" ? { ...r, served_at: iso(NOW - 201 * H), outcome_at: iso(NOW - 200 * H) }
+      : r.user_id === "b2" ? { ...r, served_at: iso(NOW - 191 * H), outcome_at: iso(NOW - 190 * H) } : r));
+    assert.equal((read(control, [mem("b1", NOW - 60 * H), mem("b2", NOW - 55 * H)]).evidence.postConvergence as { midGroups: number }).midGroups, 2);
   });
 
   it("P6 two new authors posting in lockstep are ONE independent group", () => {

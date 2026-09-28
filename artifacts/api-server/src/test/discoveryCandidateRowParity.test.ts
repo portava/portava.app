@@ -115,7 +115,7 @@ describe("R — a generated row is the route's row, distance and aggregates incl
     assert.ok(gen.length > 0, "generation added rows");
     for (const p of gen) {
       assert.notEqual(p.distanceKm, null, p.id);
-      assert.equal(p.distanceKm, servedDistanceKm(CENTER, p.lat, p.lng));
+      assert.equal(p.distanceKm, servedDistanceKm(CENTER, p.lat ?? null, p.lng ?? null));
     }
     for (const p of without.ranked.filter((q) => !poolIds.has(q.id))) assert.equal(p.distanceKm, null, p.id);
     // Pool rows are the caller's, untouched either way.
