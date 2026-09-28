@@ -3,7 +3,8 @@
  * verification lane P32): runnable attacks on the two C verdicts §73 (lane P27)
  * gave DV-20 and B01. Same form as §59's and §66's suites: a DEFECT or LIMIT is
  * pinned so that a fix turns it red and forces the census to be re-read, and a
- * CONTROL shows the probe can see the other outcome. This file changes no code.
+ * CONTROL shows the probe can see the other outcome. §77 (lane P35) made the
+ * fix and flipped each DEFECT to FIXED, keeping its intent and every control.
  *
  * Cases marked (harness) run only with LOCAL_DB_URL set (scripts/local-db/up.sh)
  * and skip otherwise, as every src/test/db suite does.
@@ -12,46 +13,48 @@
  *       a combining acute, O plus a combining solidus and an acute) is one slug;
  *       every letter of Latin Extended Additional slugs as its undecorated
  *       letter; every Latin letter slugs as its other case does.
- *   V2  DEFECT, pinned (DV-20): a Latin letter carrying a combining mark that
- *       Unicode classes as a Diacritic, from the three combining blocks made
- *       for Latin OUTSIDE U+0300–U+036F, is split by the slug. The ALA-LC
- *       romanisation "I︠A︡roslavl" (ligature half marks U+FE20/U+FE21) and
- *       "Iaroslavl" become two canonical Trails for one theme.
+ *   V2  FIXED by §77 (lane P35; was DEFECT, pinned, DV-20): a Latin letter
+ *       carrying a combining mark that Unicode classes as a Diacritic, from the
+ *       three combining blocks made for Latin OUTSIDE U+0300–U+036F, slugs as
+ *       its letter. The ALA-LC romanisation "I︠A︡roslavl" (ligature half marks
+ *       U+FE20/U+FE21) and "Iaroslavl" are one canonical Trail.
  *   V2c CONTROL: the same tie written as U+0361 (inside the stripped range) is
  *       one slug, and the canonicaliser refuses the second as a duplicate.
- *   V3  DEFECT, pinned (DV-20): GET /v1/discovery/trails compares the search
- *       term and the destination as STRINGS. The term is not canonicalised
- *       ("Đà Nẵng" becomes the pattern `---n-ng`), and the destination filter
- *       is raw equality, so two Trails §61 treats as one destination are
- *       listed apart and neither is found by the display spelling.
+ *   V3  FIXED by §77 (was DEFECT, pinned, DV-20): GET /v1/discovery/trails
+ *       canonicalises the search term with canonicalTrailSlug ("Đà Nẵng"
+ *       searches `da-nang`, not `---n-ng`) and filters the destination by 3441's
+ *       stored key, so the Trails §61 treats as one destination list together.
  *   V3c CONTROL: the ASCII spelling finds the Trail, and the destination key
  *       the creation checks use does equate the two destinations.
+ *   V3d the edges §77 chose: a term with no slug finds nothing; a destination
+ *       the fold deletes keeps equality; 3441 absent is 503, never a string match.
  *   B1  CONTROL (B01, confirms §73): NFC and NFD input key alike for every
  *       Latin letter; Latin Extended Additional keys as its base letter.
- *   B2  DEFECT, pinned (B01): the same Diacritic marks change the stored key
- *       and the query key alike: "I︠A︡roslavl" keys `i a roslavl`, and the
- *       Cities reader's pattern for "Iaroslavl" can never match it.
+ *   B2  FIXED by §77 (was DEFECT, pinned, B01): the same Diacritic marks leave
+ *       the key as the letter's: "I︠A︡roslavl" keys `iaroslavl`, and the Cities
+ *       reader's pattern for "Iaroslavl" matches it.
  *   B2c CONTROL: U+0361 folds; the reader's pattern matches that row.
  *   Q4  RECORD: the readings §73 states so they can be overruled (ƻ ɿ ʢ ʨ
  *       deleted; ß æ œ untouched pending owner question 4) are in its text and
  *       in the code's behaviour; the reading goes red if either changes.
- *   H1  (harness) CONTROL (B01): input_normalize_city_key equals searchKey on
- *       every ASSIGNED code point in three positions — not only the 1453
- *       letters K5 covers — and the SQL slug differs from canonicalTrailSlug
- *       on exactly 37 code points, of which only U+A7F1 (§73.7 #2) is a letter.
- *   H2  (harness) DEFECT, pinned (DV-20): through proposeTrail and
- *       trail_propose on the harness, "I︠A︡roslavl …" and "Iaroslavl …" are
- *       both admitted; the U+0361 control is refused.
- *   H3  (harness) DEFECT, pinned (DV-20): through listTrails over the real
- *       tables, the display spelling finds neither Trail and each destination
- *       spelling lists only its own; the ASCII search finds both (control).
- *   H4  (harness) DEFECT, pinned (B01): a registry row named "I︠A︡roslavl"
- *       stores `i a roslavl`, and readCanonicalCitySuggestions("Iaroslavl")
- *       does not reach it; the U+0361 row is reached (control).
- *   H5  (harness) LIMIT, pinned (recorded, not graded): 3441 does not
- *       recompute stored `trails.slug`. A Trail stored under the pre-§73 slug
- *       is outside a re-spelling's comparison set, and both are admitted; the
- *       same Trail stored under the current slug is refused (control).
+ *   H1  (harness) CONTROL (B01, DV-20): input_normalize_city_key equals
+ *       searchKey, and trail_normalised_destination equals trailDestinationKey,
+ *       on every ASSIGNED code point; the SQL slug differs from
+ *       canonicalTrailSlug on exactly the 37 code points §74.4 #1 lists
+ *       (PostgreSQL 16's older Unicode), alone and inside a word.
+ *   H2  (harness) FIXED by §77 (was DEFECT, pinned, DV-20): through proposeTrail
+ *       and trail_propose, "Iaroslavl …" is refused beside "I︠A︡roslavl …", as
+ *       the U+0361 control is.
+ *   H3  (harness) FIXED by §77 (was DEFECT, pinned, DV-20): through listTrails
+ *       over the real tables, the display spelling finds both Trails and each
+ *       destination spelling lists both; the ASCII search finds both (control).
+ *   H4  (harness) FIXED by §77 (was DEFECT, pinned, B01): a registry row named
+ *       "I︠A︡roslavl" stores `iaroslavl`, and readCanonicalCitySuggestions
+ *       ("Iaroslavl") reaches it; the U+0361 row stores the same key, and the
+ *       reader, which keeps one row per key, returns one of the two (control).
+ *   H5  (harness) FIXED by §77 (was LIMIT, pinned, §74.4 #2): 3441 recomputes
+ *       stored `trails.slug`. A Trail stored under an older fold is re-slugged
+ *       when 3441 runs, and a re-spelling is then refused.
  */
 import { describe, it, after } from "node:test";
 import assert from "node:assert/strict";
@@ -113,20 +116,22 @@ function ilike(value: string, pattern: string): boolean {
   return new RegExp(`^${re}$`, "is").test(value);
 }
 
-/** A supabase-shaped chain that records the filters listTrails sends and answers `[]`. */
-function recordingClient() {
+/** A supabase-shaped chain that records the filters listTrails sends and answers `[]` (or `answer`), noting whether it was sent. */
+function recordingClient(answer: { data: unknown; error: unknown } = { data: [], error: null }) {
   const calls: Array<{ op: string; col: string; val: string }> = [];
+  let sent = false;
   const chain: any = {
     select: () => chain, neq: () => chain, order: () => chain, limit: () => chain,
     eq: (col: string, val: string) => { calls.push({ op: "eq", col, val }); return chain; },
     ilike: (col: string, val: string) => { calls.push({ op: "ilike", col, val }); return chain; },
-    then: (res: (v: unknown) => unknown) => Promise.resolve({ data: [], error: null }).then(res),
+    then: (res: (v: unknown) => unknown) => { sent = true; return Promise.resolve(answer).then(res); },
   };
-  return { sc: { from: () => chain }, calls };
+  return { sc: { from: () => chain }, calls, sent: () => sent };
 }
 
 /** A stored Trail as proposeTrail writes it: slug from canonicalTrailSlug, destination trimmed and lowercased. */
-const stored = (title: string, destination: string) => ({ title, slug: canonicalTrailSlug(title)!, destination: destination.trim().toLowerCase() });
+const stored = (title: string, destination: string) => ({ title, slug: canonicalTrailSlug(title)!, destination: destination.trim().toLowerCase(),
+  destination_key: trailDestinationKey(destination.trim().toLowerCase()) || null }); // 3441's generated trail_normalised_destination(destination); parity: H1b
 
 /** Would listTrails' filters, as recorded, return this stored row? */
 async function listed(params: { destination?: string; query?: string }, row: { slug: string; destination: string }): Promise<boolean> {
@@ -159,19 +164,20 @@ describe("§74 DV-20 — `02` §19 'Trails are canonical objects, not strings'",
     assert.deepEqual(split, []);
   });
 
-  it("V2. DEFECT, pinned (DV-20): a Latin letter with a Diacritic mark outside U+0300–U+036F is split; 'I︠A︡roslavl' and 'Iaroslavl' are two canonical Trails", () => {
+  it("V2. FIXED (DV-20, §77): a Latin letter with a Diacritic mark outside U+0300–U+036F slugs as its letter; 'I︠A︡roslavl' and 'Iaroslavl' are one canonical Trail", () => {
     const marks = outOfRangeDiacritics();
     assert.equal(marks.length, 91, `${marks.length}: ${hex(marks.join(""))}`);
     const split = marks.filter((m) => canonicalTrailSlug(`zu${m}rich food`) !== canonicalTrailSlug("zurich food"));
-    assert.equal(split.length, marks.length, "every one of them splits the word it sits in");
-    assert.equal(canonicalTrailSlug(`${ALA_LC} street food`), "i-a-roslavl-street-food");
+    assert.deepEqual(split.map(hex), [], "none of the 91 splits the word it sits in");
+    assert.equal(canonicalTrailSlug(`${ALA_LC} street food`), "iaroslavl-street-food");
     assert.equal(canonicalTrailSlug(`${PLAIN} street food`), "iaroslavl-street-food");
     const first = { id: "t1", slug: canonicalTrailSlug(`${ALA_LC} street food`)!, title: `${ALA_LC} street food`, destination: null };
     const second = canonicaliseTrailProposal({ title: `${PLAIN} street food`, destination: null }, [first]);
-    assert.equal(second.ok, true, "the second spelling is ADMITTED: two Trails for one theme");
-    assert.deepEqual(second.refusals, []);
+    assert.equal(second.ok, false, "the second spelling is REFUSED: one Trail for one theme");
+    assert.equal(second.refusals[0]?.check, "duplicate_title_similarity");
     // Macron-acute (U+1DC4), a tone mark with no precomposed letter: the sequence is the only way to write it.
-    assert.notEqual(canonicalTrailSlug("Zu\u1DC4rich coffee"), canonicalTrailSlug("Zurich coffee"));
+    assert.equal(canonicalTrailSlug("Zu\u1DC4rich coffee"), canonicalTrailSlug("Zurich coffee"));
+    assert.equal(trailDestinationKey(ALA_LC), trailDestinationKey(PLAIN), "…and one destination");
   });
 
   it("V2c. CONTROL: the same tie as U+0361 is one slug, and the second spelling is refused as a duplicate", () => {
@@ -182,19 +188,35 @@ describe("§74 DV-20 — `02` §19 'Trails are canonical objects, not strings'",
     assert.equal(second.refusals[0]?.check, "duplicate_title_similarity");
   });
 
-  it("V3. DEFECT, pinned (DV-20): listTrails compares the term and the destination as strings", async () => {
+  it("V3. FIXED (DV-20, §77): listTrails compares the term and the destination by their canonical keys", async () => {
     const a = stored("Da Nang Coffee Crawl", "Da Nang");        // `02` §1's own example Trail
     const b = stored("Đà Nẵng Street Food", "Đà Nẵng");
-    // The term: lowercased and every non-[a-z0-9-] replaced, never canonicalised.
+    // The term: put through canonicalTrailSlug, the fold the stored slug was made by.
     const { sc, calls } = recordingClient();
     await listTrails(sc, { query: "Đà Nẵng" });
-    assert.deepEqual(calls, [{ op: "ilike", col: "slug", val: "%---n-ng%" }]);
-    assert.equal(await listed({ query: "Đà Nẵng" }, a), false, "the display spelling does not find the Da Nang Trail");
-    assert.equal(await listed({ query: "Đà Nẵng" }, b), false, "…nor the Trail whose own title it is");
-    assert.equal(await listed({ query: "Café" }, stored("Café culture", "Paris")), false, "an ordinary acute breaks it too");
-    // The destination: raw equality, although creation treats the two as one destination.
-    assert.equal(await listed({ destination: "Đà Nẵng" }, a), false);
-    assert.equal(await listed({ destination: "Da Nang" }, b), false);
+    assert.deepEqual(calls, [{ op: "ilike", col: "slug", val: "%da-nang%" }]);
+    assert.equal(await listed({ query: "Đà Nẵng" }, a), true, "the display spelling finds the Da Nang Trail");
+    assert.equal(await listed({ query: "Đà Nẵng" }, b), true, "…and the Trail whose own title it is");
+    assert.equal(await listed({ query: "Café" }, stored("Café culture", "Paris")), true, "an ordinary acute no longer breaks it");
+    assert.equal(await listed({ query: `${ALA_LC}` }, stored(`${PLAIN} street food`, "Yaroslavl")), true, "nor a half-mark tie");
+    // The destination: by 3441's stored key, the one creation compares, not by raw equality.
+    const d = recordingClient();
+    await listTrails(d.sc, { destination: "  Đà Nẵng " });
+    assert.deepEqual(d.calls, [{ op: "eq", col: "destination_key", val: "da nang" }]);
+    assert.equal(await listed({ destination: "Đà Nẵng" }, a), true);
+    assert.equal(await listed({ destination: "Da Nang" }, b), true);
+    assert.equal(await listed({ destination: "Hoi An" }, b), false, "control: another place is another destination");
+  });
+
+  it("V3d. the edges: a term with no slug-able character finds nothing and sends no request; a destination the fold deletes keeps equality; a missing key column is 503, not a string match", async () => {
+    const idle = recordingClient();
+    const r = await listTrails(idle.sc, { query: "🍜" });
+    assert.deepEqual([r.refusal, r.trails, idle.sent()], [null, [], false], "no Trail slug can contain a term that has no slug, so nothing is sent");
+    const { sc, calls } = recordingClient();
+    await listTrails(sc, { destination: "東京" });
+    assert.deepEqual(calls, [{ op: "eq", col: "destination", val: "東京" }], "no key to compare: the stored spelling, as before");
+    const missing = recordingClient({ data: null, error: { code: "42703", message: "column trails.destination_key does not exist" } });
+    assert.equal((await listTrails(missing.sc, { destination: "Da Nang" })).refusal, "trails_unavailable", "3441 absent: refuse, never fall back to the string compare");
   });
 
   it("V3c. CONTROL: the ASCII spelling finds both, each destination spelling finds its own, and the creation key equates them", async () => {
@@ -205,7 +227,7 @@ describe("§74 DV-20 — `02` §19 'Trails are canonical objects, not strings'",
     assert.equal(await listed({ destination: "Da Nang" }, a), true);
     assert.equal(await listed({ destination: "Đà Nẵng" }, b), true);
     assert.equal(trailDestinationKey(a.destination), trailDestinationKey(b.destination), "§61: one destination whatever its spelling");
-    assert.equal(canonicalTrailSlug("Đà Nẵng"), "da-nang", "the canonical form the term is never put through");
+    assert.equal(canonicalTrailSlug("Đà Nẵng"), "da-nang", "the canonical form the term is now put through");
   });
 });
 
@@ -228,18 +250,18 @@ describe("§74 B01 — G57 'Diacritic-insensitive matching while preserving disp
     for (const f of ["\u01FEresund", "\u00D8\u0301resund", "O\u0338\u0301resund", "\u01FEresund".normalize("NFD")]) assert.equal(searchKey(f), "oresund", hex(f));
   });
 
-  it("B2. DEFECT, pinned (B01): a Diacritic mark outside U+0300–U+036F changes the key; the Cities reader cannot reach 'I︠A︡roslavl' from 'Iaroslavl'", async () => {
+  it("B2. FIXED (B01, §77): a Diacritic mark outside U+0300–U+036F keys as its letter; the Cities reader reaches 'I︠A︡roslavl' from 'Iaroslavl'", async () => {
     const marks = outOfRangeDiacritics();
     const changed = marks.filter((m) => searchKey(`zu${m}rich`) !== "zurich");
-    assert.equal(changed.length, marks.length, "every one of the 91 changes the key of the word it sits in");
-    assert.equal(searchKey(ALA_LC), "i a roslavl");
-    assert.equal(searchKey("Zu\u1DC4rich"), "zu rich");
+    assert.deepEqual(changed.map(hex), [], "none of the 91 changes the key of the word it sits in");
+    assert.equal(searchKey(ALA_LC), "iaroslavl");
+    assert.equal(searchKey("Zu\u1DC4rich"), "zurich");
     // The reader's own patterns for the plain spelling, against the stored key of the marked one.
     const patterns: string[] = [];
     const sc = { from: () => { const c: any = { select: () => c, ilike: (_: string, p: string) => { patterns.push(p); return c; }, limit: () => Promise.resolve({ data: [], error: null }) }; return c; } };
     await readCanonicalCitySuggestions(sc, PLAIN, 4);
     assert.deepEqual(patterns, ["iaroslavl%", "%iaroslavl%"]);
-    assert.equal(patterns.some((p) => ilike(searchKey(ALA_LC), p)), false, "the row is unreachable by its undecorated spelling");
+    assert.equal(patterns.some((p) => ilike(searchKey(ALA_LC), p)), true, "the row is reachable by its undecorated spelling");
   });
 
   it("B2c. CONTROL: U+0361 (inside the stripped range) folds, and the reader's pattern matches that row", () => {
@@ -282,7 +304,7 @@ function bigQuery(sql: string): string[] {
 }
 
 describe("§74 on the harness (PostgreSQL 16, 3415 + 3440 + 3441 replayed)", { skip: !HAVE_DB }, () => {
-  it("H1. CONTROL (B01): SQL key = searchKey on every assigned code point; the SQL slug differs on 37 code points, one a letter (U+A7F1)", { timeout: 600_000 }, () => {
+  it("H1. CONTROL (B01, DV-20): SQL key = searchKey and SQL destination key = trailDestinationKey on every assigned code point; the SQL slug differs on exactly the 37 §74.4 #1 lists", { timeout: 600_000 }, () => {
     const ranges: Array<[number, number]> = [];
     for (let cp = 1; cp <= 0x10ffff; cp++) {
       if (cp === 0xd800) cp = 0xe000;
@@ -291,30 +313,42 @@ describe("§74 on the harness (PostgreSQL 16, 3415 + 3440 + 3441 replayed)", { s
       if (last && last[1] === cp - 1) last[1] = cp; else ranges.push([cp, cp]);
     }
     const lines = bigQuery(`SELECT cp, public.input_normalize_city_key(chr(cp)), public.input_normalize_city_key('x' || chr(cp) || 'resund'),
-                                   coalesce(public.trail_canonical_slug('x' || chr(cp) || 'resund'), '<null>')
+                                   coalesce(public.trail_canonical_slug('x' || chr(cp) || 'resund'), '<null>'),
+                                   coalesce(public.trail_canonical_slug(chr(cp)), '<null>'),
+                                   coalesce(public.trail_normalised_destination(chr(cp)), '<null>'),
+                                   coalesce(public.trail_normalised_destination('x' || chr(cp) || 'resund'), '<null>')
                               FROM jsonb_array_elements('${JSON.stringify(ranges)}'::jsonb) r,
                                    generate_series((r ->> 0)::int, (r ->> 1)::int) cp;`);
-    const keyDiff: string[] = [], slugDiff: string[] = [];
+    const keyDiff: string[] = [], slugDiff: string[] = [], slugAloneDiff: string[] = [], destDiff: string[] = [];
     for (const l of lines) {
-      const [cps, alone, inWord, slug] = l.split("\t");
+      const [cps, alone, inWord, slug, slugAlone, dest, destInWord] = l.split("\t");
       const ch = String.fromCodePoint(Number(cps));
       if (searchKey(ch) !== (alone ?? "") || searchKey(`x${ch}resund`) !== (inWord ?? "")) keyDiff.push(hex(ch));
       if ((canonicalTrailSlug(`x${ch}resund`) ?? "<null>") !== slug) slugDiff.push(ch);
+      if ((canonicalTrailSlug(ch) ?? "<null>") !== slugAlone) slugAloneDiff.push(ch);
+      if ((trailDestinationKey(ch) || "<null>") !== dest || (trailDestinationKey(`x${ch}resund`) || "<null>") !== destInWord) destDiff.push(hex(ch));
     }
     assert.equal(lines.length, 297_333, "every assigned code point in Unicode 17, U+0000 and the surrogates excluded");
     assert.deepEqual(keyDiff, [], "the stored fold and the query fold agree everywhere");
-    assert.equal(slugDiff.length, 37, hex(slugDiff.join("")));
+    assert.deepEqual(destDiff, [], "the SQL destination key (listTrails' stored destination_key) and trailDestinationKey agree everywhere");
+    // §74.4 #1, recorded exactly and not hidden: PostgreSQL 16's normalize() is Unicode 15.1, Node 22's is 17.0. U+A7F1
+    // MODIFIER LETTER CAPITAL S (Unicode 17) and U+1CCD6–U+1CCF9, OUTLINED LATIN CAPITAL LETTER A–Z and OUTLINED DIGIT
+    // 0–9 (Unicode 16), have compatibility decompositions this PostgreSQL does not know: TypeScript spells them, SQL deletes them.
+    const expected = ["\uA7F1", ...Array.from({ length: 0x1ccf9 - 0x1ccd6 + 1 }, (_, i) => String.fromCodePoint(0x1ccd6 + i))];
+    assert.deepEqual(slugDiff.map(hex), expected.map(hex), "inside a word");
+    assert.deepEqual(slugAloneDiff.map(hex), expected.map(hex), "alone");
     assert.deepEqual(slugDiff.filter((c) => /\p{L}/u.test(c)), ["\uA7F1"], "only U+A7F1 (§73.7 #2) is a letter; U+1CCD6–U+1CCF9 are outlined symbols");
   });
 
-  it("H2. DEFECT, pinned (DV-20): proposeTrail admits 'I︠A︡roslavl …' and 'Iaroslavl …' as two Trails; the U+0361 control is refused", async () => {
+  it("H2. FIXED (DV-20, §77): proposeTrail refuses 'Iaroslavl …' beside 'I︠A︡roslavl …', as it refuses the U+0361 control", async () => {
     const { makeTrailBridge } = await import("./db/trailPostgrestBridge.js");
     const sc = makeTrailBridge().client;
     const one = await proposeTrail(sc, { title: `${ALA_LC} street food ${TAG}a`, destination: null }, null);
     const two = await proposeTrail(sc, { title: `${PLAIN} street food ${TAG}a`, destination: null }, null);
     assert.ok(one.trail, JSON.stringify(one));
-    assert.ok(two.trail, "the second spelling is admitted by trail_propose: two canonical Trails for one theme");
-    assert.notEqual(one.trail!.slug, two.trail!.slug);
+    assert.equal(one.trail!.slug, `iaroslavl-street-food-${TAG}a`, "trail_propose's own slug folds the half marks");
+    assert.equal(two.trail, null, "the second spelling is refused by trail_propose: one canonical Trail for one theme");
+    assert.ok(two.canonicalisation.some((c) => c.check === "duplicate_title_similarity" && c.conflictsWith === one.trail!.id), JSON.stringify(two.canonicalisation));
     const c1 = await proposeTrail(sc, { title: `${TIE_0361} street food ${TAG}b`, destination: null }, null);
     const c2 = await proposeTrail(sc, { title: `${PLAIN} street food ${TAG}b`, destination: null }, null);
     assert.ok(c1.trail);
@@ -322,7 +356,7 @@ describe("§74 on the harness (PostgreSQL 16, 3415 + 3440 + 3441 replayed)", { s
     assert.equal(c2.canonicalisation[0]?.check, "duplicate_title_similarity");
   });
 
-  it("H3. DEFECT, pinned (DV-20): listTrails over the real tables — the display spelling finds neither; each destination spelling lists only its own", async () => {
+  it("H3. FIXED (DV-20, §77): listTrails over the real tables — the display spelling finds both; each destination spelling lists both", async () => {
     const { makeTrailBridge } = await import("./db/trailPostgrestBridge.js");
     const sc = makeTrailBridge().client;
     const a = await proposeTrail(sc, { title: `Da Nang Coffee Crawl ${TAG}c`, destination: `Da Nang ${TAG}` }, null);
@@ -334,18 +368,20 @@ describe("§74 on the harness (PostgreSQL 16, 3415 + 3440 + 3441 replayed)", { s
       return new Set(r.trails.map((t: any) => t.id));
     };
     const byDisplay = await ids({ query: "Đà Nẵng" });
-    assert.equal(byDisplay.has(a.trail!.id) || byDisplay.has(b.trail!.id), false, "the display spelling finds neither Trail");
+    assert.deepEqual([byDisplay.has(a.trail!.id), byDisplay.has(b.trail!.id)], [true, true], "the display spelling finds both Trails");
     const byDestA = await ids({ destination: `Da Nang ${TAG}` });
     const byDestB = await ids({ destination: `Đà Nẵng ${TAG}` });
-    assert.deepEqual([byDestA.has(a.trail!.id), byDestA.has(b.trail!.id)], [true, false]);
-    assert.deepEqual([byDestB.has(a.trail!.id), byDestB.has(b.trail!.id)], [false, true]);
+    assert.deepEqual([byDestA.has(a.trail!.id), byDestA.has(b.trail!.id)], [true, true]);
+    assert.deepEqual([byDestB.has(a.trail!.id), byDestB.has(b.trail!.id)], [true, true]);
+    assert.equal((await ids({ destination: `Hoi An ${TAG}` })).size, 0, "control: another place lists neither");
+    assert.equal(scalar(`SELECT destination_key FROM public.trails WHERE id = '${b.trail!.id}'`), trailDestinationKey(`đà nẵng ${TAG}`), "the stored key is the TypeScript key");
     // Control: the ASCII spelling finds both, and the database's own key equates the two destinations.
     const byAscii = await ids({ query: `da nang` });
     assert.deepEqual([byAscii.has(a.trail!.id), byAscii.has(b.trail!.id)], [true, true]);
     assert.equal(scalar(`SELECT public.trail_normalised_destination('đà nẵng ${TAG}') = public.trail_normalised_destination('da nang ${TAG}')`), "t");
   });
 
-  it("H4. DEFECT, pinned (B01): the stored key of 'I︠A︡roslavl' is `i a roslavl` and the Cities reader does not reach it; the U+0361 row is reached", async () => {
+  it("H4. FIXED (B01, §77): the stored key of 'I︠A︡roslavl' is `iaroslavl` and the Cities reader reaches it; the U+0361 row stores the same key", async () => {
     const { psqlReadClient } = await import("./db/discoverySearchPsqlClient.js");
     const q = (s: string) => `'${s.replace(/'/g, "''")}'`;
     const put = (name: string) => {
@@ -355,15 +391,18 @@ describe("§74 on the harness (PostgreSQL 16, 3415 + 3440 + 3441 replayed)", { s
             VALUES ('${id}', 'city', ${q(name)}, ${q(TAG + id.slice(0, 4))}, ${q(name)}, 'Russia', 1, 2, ARRAY[${q(TAG)}]);`);
       return id;
     };
-    const marked = put(ALA_LC), tie = put(TIE_0361);
-    assert.equal(scalar(`SELECT search_key FROM public.canonical_locations WHERE id = '${marked}'`), "i a roslavl");
+    const reach = async () => new Set((await readCanonicalCitySuggestions(psqlReadClient(), PLAIN, 10)).map((r) => r.id));
+    const marked = put(ALA_LC);
+    assert.equal(scalar(`SELECT search_key FROM public.canonical_locations WHERE id = '${marked}'`), "iaroslavl");
+    assert.equal((await reach()).has(marked), true, "reachable by the undecorated spelling");
+    // Control: the in-range tie stores the same key. The reader keeps one row per key, so the two spellings are now one city.
+    const tie = put(TIE_0361);
     assert.equal(scalar(`SELECT search_key FROM public.canonical_locations WHERE id = '${tie}'`), "iaroslavl");
-    const got = new Set((await readCanonicalCitySuggestions(psqlReadClient(), PLAIN, 10)).map((r) => r.id));
-    assert.equal(got.has(marked), false, "unreachable by the undecorated spelling");
-    assert.equal(got.has(tie), true, "control: the in-range tie is reached");
+    const both = await reach();
+    assert.equal([marked, tie].filter((id) => both.has(id)).length, 1, "one key, one suggestion");
   });
 
-  it("H5. LIMIT, pinned (recorded, not graded): 3441 recomputes no stored slug — a Trail stored under the pre-§73 slug is not compared", async () => {
+  it("H5. FIXED (DV-20, §77): 3441 recomputes stored `trails.slug` — a Trail stored under an older fold is re-slugged, and a re-spelling is then refused", async () => {
     const { makeTrailBridge } = await import("./db/trailPostgrestBridge.js");
     const sc = makeTrailBridge().client;
     const seed = (slug: string, title: string, destination: string) => {
@@ -371,14 +410,19 @@ describe("§74 on the harness (PostgreSQL 16, 3415 + 3440 + 3441 replayed)", { s
       exec(`INSERT INTO public.trails (id, slug, title, destination, lifecycle_status) VALUES ('${id}', '${slug}', '${title}', '${destination}', 'active');`);
       return id;
     };
-    // As 3415 (before 3441) slugged "Ǿresundbron …": the Ø inside Ǿ deleted.
-    seed(`resundbron${TAG}d`, `Ǿresundbron${TAG}d`, `copenhagen ${TAG}`);
-    const stale = await proposeTrail(sc, { title: `Øresundbron${TAG}d`, destination: `malmo ${TAG}` }, null);
-    assert.ok(stale.trail, "admitted: the stored slug is outside the comparison set, so no check sees the first Trail");
-    // Control: the same Trail stored under the CURRENT slug is found and refused.
-    seed(`oresundbron${TAG}e`, `Ǿresundbron${TAG}e`, `copenhagen ${TAG}`);
-    const fresh = await proposeTrail(sc, { title: `Øresundbron${TAG}e`, destination: `malmo ${TAG}` }, null);
-    assert.equal(fresh.trail, null);
-    assert.equal(scalar(`SELECT count(*) FROM public.trails WHERE slug LIKE '%${TAG}%' AND slug <> public.trail_canonical_slug(title)`), "1", "one stored slug disagrees with the current fold; nothing recomputes it");
+    const stale = () => scalar(`SELECT count(*) FROM public.trails WHERE slug LIKE '%${TAG}%' AND slug <> public.trail_canonical_slug(title)`);
+    // As 3415 (before 3441) slugged "Ǿresundbron …" (the Ø inside Ǿ deleted), and as 3441 before §77 slugged the half-mark tie.
+    const d = seed(`resundbron${TAG}d`, `Ǿresundbron${TAG}d`, `copenhagen ${TAG}`);
+    const f = seed(`i-a-roslavl-bridges${TAG}f`, `${ALA_LC} bridges${TAG}f`, `yaroslavl ${TAG}`);
+    assert.equal(stale(), "2", "control: both stored slugs disagree with the current fold before 3441 runs");
+    exec(readFileSync(resolve(HERE, "../migrations/3441_trail_letter_fold_decompose_first.sql"), "utf8"));
+    assert.equal(stale(), "0", "3441 recomputed every stored slug");
+    assert.equal(scalar(`SELECT slug FROM public.trails WHERE id = '${d}'`), `oresundbron${TAG}d`);
+    assert.equal(scalar(`SELECT slug FROM public.trails WHERE id = '${f}'`), `iaroslavl-bridges${TAG}f`);
+    for (const [title, id] of [[`Øresundbron${TAG}d`, d], [`${PLAIN} bridges${TAG}f`, f]] as const) {
+      const again = await proposeTrail(sc, { title, destination: `malmo ${TAG}` }, null);
+      assert.equal(again.trail, null, `${title} was admitted beside the re-slugged Trail`);
+      assert.ok(again.canonicalisation.some((c) => c.check === "duplicate_title_similarity" && c.conflictsWith === id), JSON.stringify(again.canonicalisation));
+    }
   });
 });

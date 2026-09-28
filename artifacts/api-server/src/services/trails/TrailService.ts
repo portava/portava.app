@@ -49,7 +49,7 @@ import {
 } from "../../lib/discoveryLocalMomentum.js";
 import type { DerivedStoreProvenance } from "../../lib/discoveryRankProvenance.js";
 import {
-  canonicaliseTrailProposal, canonicalTrailSlug, capTrailLabels, DUPLICATE_TITLE_SIMILARITY,
+  canonicaliseTrailProposal, canonicalTrailSlug, capTrailLabels, DUPLICATE_TITLE_SIMILARITY, trailDestinationKey,
   isTrailLifecycleState, isTrailLifecycleTransitionAllowed,
   TRAIL_EDGE_TYPES, TRAIL_SOURCE_TYPES, TRAIL_RELATIONSHIPS,
   type ExistingTrail, type TrailCreationRefusal, type TrailLabel,
@@ -157,15 +157,15 @@ export async function listTrails(
     .neq("lifecycle_status", "archived")
     .order("created_at", { ascending: false })
     .limit(limit);
-  const destination = typeof params?.destination === "string" ? params.destination.trim().toLowerCase() : "";
-  if (destination) q = q.eq("destination", destination);
-  const term = typeof params?.query === "string" ? params.query.trim() : "";
-  // Search runs on the SLUG, not the title: the slug is the canonical handle
-  // (DV-20), so searching it cannot return two rows for one theme.
-  if (term) q = q.ilike("slug", `%${term.toLowerCase().replace(/[^a-z0-9-]/g, "-")}%`);
+  const destination = typeof params?.destination === "string" ? params.destination.trim().toLowerCase() : "", destKey = destination ? trailDestinationKey(destination) : "";
+  if (destination) q = destKey ? q.eq("destination_key", destKey) : q.eq("destination", destination); // §77 (DV-20): 3441's stored trail_normalised_destination(destination), the key creation compares; no key (東京) → the spelling
+  const term = typeof params?.query === "string" ? params.query.trim() : "", termSlug = term ? canonicalTrailSlug(term) : null;
+  // Search runs on the SLUG, not the title: the slug is the canonical handle (DV-20), so searching it cannot return two rows for one
+  // theme — and §77: the TERM goes through the same canonicalTrailSlug, so "Đà Nẵng" searches `da-nang`, never `---n-ng`.
+  if (term) { if (!termSlug) return { refusal: null, trails: [] }; q = q.ilike("slug", `%${termSlug}%`); } // no slug-able character: no Trail slug contains it
 
   const { data, error } = await q;
-  if (error) return { refusal: refusalFor(error, "listTrails"), trails: [] };
+  if (error) return { refusal: destKey && ["42703", "PGRST204"].includes(String(error?.code)) ? "trails_unavailable" : refusalFor(error, "listTrails"), trails: [] }; // §77: no destination_key (3441 absent) is 503, never a string compare
   return { refusal: null, trails: (data ?? []) as TrailRow[] };
 }
 

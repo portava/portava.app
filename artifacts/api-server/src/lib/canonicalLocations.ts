@@ -13,7 +13,7 @@
  * unit-tested without a database.
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { logger as rootLogger } from "./logger"; import { LATIN_LETTER_FOLD } from "./latinLetterFold"; // §73: the stroke/hook/bar table
+import { logger as rootLogger } from "./logger"; import { LATIN_LETTER_FOLD, LATIN_MARKS_RE } from "./latinLetterFold"; // §73: the stroke/hook/bar table; §77: the four Latin mark blocks
 
 const logger = rootLogger.child({ lib: "canonicalLocations" });
 
@@ -90,7 +90,7 @@ const GENERIC_SUFFIX = /\s+(?:city|municipality|metro)$/;
 export function normalizeLocationName(name: string): string {
   let n = name
     .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "") // diacritics
+    .replace(LATIN_MARKS_RE, "") // diacritics: all four Latin combining blocks, U+0300–U+036F, U+1AB0–U+1AFF, U+1DC0–U+1DFF, U+FE20–U+FE2F (§77)
     .toLowerCase()
     .replace(/[^a-z0-9\s]/g, " ")    // punctuation -> space
     .replace(/\s+/g, " ")

@@ -60,3 +60,41 @@ export const LATIN_LETTER_FOLD: Readonly<Record<string, string>> = Object.freeze
   "ⱬ": "z", "Ɀ": "z", "Ᶎ": "z", "ẚ": "aʾ", "Ŀ": "l·", "ŀ": "l·", "ᵺ": "th", "Ꝥ": "Þ", "Ꝧ": "Þ", "ꝥ": "þ", "ꝧ": "þ",
   "ꬼ": "ŋ", "𝼔": "ŋ", "Ǆ": "Ǳ", "ǆ": "ǳ",
 });
+
+/**
+ * The combining marks every fold strips (census-discovery §77, lane P35: DV-20 and B01).
+ *
+ * Unicode encodes Latin's combining diacritics in FOUR blocks, and until §77 the folds stripped only
+ * the first: Combining Diacritical Marks U+0300–U+036F. §74 (lane P32) found the other three —
+ * … Extended U+1AB0–U+1AFF, … Supplement U+1DC0–U+1DFF and Combining Half Marks U+FE20–U+FE2F —
+ * left in place, where the `[^a-z0-9]` step turned each into a word break. 91 of their marks carry
+ * Unicode's Diacritic property. "I︠A︡roslavl" (ALA-LC's tie, as the half marks U+FE20/U+FE21) keyed
+ * `i a roslavl` and slugged `i-a-roslavl`; "Zu" + U+1DC4 (macron-acute, a tone mark no precomposed
+ * letter carries) + "rich" keyed `zu rich`.
+ *
+ * THE RULE: each of the four blocks is stripped WHOLE, exactly as U+0300–U+036F always was, by one
+ * code point range per block. Whole blocks rather than the Diacritic property mark by mark, because
+ * (1) U+0300–U+036F was always stripped whole, 19 marks without the property among them (the combining
+ * small letters above), and the other blocks hold the same kinds (U+1DD3 … U+1DF4, and U+1DC0's
+ * dotted grave, which lacks the property although it is an accent); (2) every assigned code point of
+ * the four blocks is a combining mark, so stripping one never deletes a letter; (3) a range needs no
+ * Unicode data, so the SQL twins, on PostgreSQL's older Unicode, strip exactly the same code points,
+ * the block's still-unassigned ones included, which Unicode reserves for more combining diacritics.
+ * In Unicode 17 that is 112 + 138 assigned marks (91 of the 138 Diacritic) in 272 code points.
+ *
+ * NOT stripped, and stated so the owner can overrule it (§77): U+20D0–U+20FF, Combining Diacritical
+ * Marks for Symbols (none has the Diacritic property); the variation selectors; and the combining
+ * marks of other scripts (U+0485 U+0486 U+0951 U+0952, whose Script_Extensions also name Latin,
+ * among them). Each stays a word break, as it was.
+ *
+ * lib/canonicalLocations.normalizeLocationName (so searchKey and trailDestinationKey) and
+ * lib/discoveryTrailObject.canonicalTrailSlug strip with LATIN_MARKS_RE; 3440's
+ * input_normalize_city_key and 3441's trail_canonical_slug and trail_normalised_destination strip
+ * the same four ranges as chr() bounds. src/test/discoveryLetterFoldCompleteness.test.ts L9 checks
+ * the rule over every code point, and L10 pins the SQL to it. The client's own fold
+ * (travel-buddy-standalone) must follow this set; census-discovery §77 routes that hunk.
+ */
+export const LATIN_MARK_BLOCKS: ReadonlyArray<readonly [number, number]> = Object.freeze([
+  [0x0300, 0x036f], [0x1ab0, 0x1aff], [0x1dc0, 0x1dff], [0xfe20, 0xfe2f],
+] as const);
+export const LATIN_MARKS_RE = /[\u0300-\u036f\u1ab0-\u1aff\u1dc0-\u1dff\ufe20-\ufe2f]/g;

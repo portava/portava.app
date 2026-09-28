@@ -40,7 +40,7 @@
  * census-discovery rows: DV-20 (canonical objects not strings), DV-24
  * (relationships navigable — the edge vocabulary), DC-02 (§4 label cap), DC-03 (§5 four creation checks), DC-04 (§7 both lifecycles).
  */
-import { trailDestinationKey, trailLetterFold } from "./discoveryTrailFold.js"; // §61 (DV-20): stroke + Latin letter fold; B01's geographic key
+import { trailDestinationKey, trailLetterFold } from "./discoveryTrailFold.js"; import { LATIN_MARKS_RE } from "./latinLetterFold.js"; export { trailDestinationKey }; // §61 (DV-20): stroke + Latin letter fold; B01's geographic key; §77: the mark blocks
 
 // ── §7 Trail state ───────────────────────────────────────────────────────────
 
@@ -160,7 +160,7 @@ export function canonicalTrailSlug(title: unknown): string | null {
   if (typeof title !== "string") return null;
   const slug = trailLetterFold(title) // §61 (DV-20): Đ, Ø, Ł, Ħ, Ŧ, Ð, ı, ß, Æ, Œ, Þ, Ŋ have no decomposition, so NFKD alone dropped them
     .normalize("NFKD")
-    .replace(/[̀-ͯ]/g, "")   // strip combining marks: Café → Cafe
+    .replace(LATIN_MARKS_RE, "") // strip combining marks: Café → Cafe, and (§77) the other three Latin mark blocks: I︠A︡roslavl → Iaroslavl
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "");

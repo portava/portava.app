@@ -12829,8 +12829,8 @@ CONSTRUCTED 182 / 188 = **96.8 %**, unchanged. CORRECT 96 / 188 = **51.1 %**, up
 
 | ID | was | now | evidence |
 |---|---|---|---|
-| DV-20 | C | **W** | **Two grounds, each on `02` §19's own words, *"Trails are canonical objects, not strings"* (`docs/specs/discovery-v1/02_Trails.md:276#Trails are canonical objects, not strings,`).** *(1) The defect class §59 and §66.11 graded W on, for another population of letters.* §73 closed every Latin letter named "X WITH …", and its probes pass here (V1: every spelling of Ǿ, all of U+1E00–U+1EFF and every case pair give one slug). But the slug strips only U+0300–U+036F (`artifacts/api-server/src/lib/discoveryTrailObject.ts:163#strip combining marks: Café → Cafe`), and 3415's SQL twin strips the same range (`artifacts/api-server/src/migrations/3415_trail_proposal_serialised.sql:154#regexp_replace(normalize(public.trail_letter_fold(p_title), NFKD),`, whose next line strips `chr(768)` to `chr(879)`). Unicode has three more combining blocks made for Latin: Diacritical Marks Extended, Diacritical Marks Supplement and Half Marks. 91 of their marks carry Unicode's own `Diacritic` property, and every one of them splits the word it sits on. One such mark is the tie in ALA-LC romanisation, which bibliographic data writes as the half marks U+FE20/U+FE21: "I︠A︡roslavl street food" slugs `i-a-roslavl-street-food`, beside "Iaroslavl street food"'s `iaroslavl-street-food`. The canonicaliser admits the second over the first (`artifacts/api-server/src/test/discoveryVerifyAudit3.test.ts:162#it("V2. DEFECT, pinned (DV-20)`). On the harness, `proposeTrail` and `trail_propose` admit BOTH, so there are two canonical Trails for one theme. The same tie written as U+0361, which is inside the stripped range, is refused as a duplicate (H2, V2c). *(2) The Trail list and search treat both handles as strings.* GET /v1/discovery/trails filters the destination by raw equality (`artifacts/api-server/src/services/trails/TrailService.ts:161#if (destination) q = q.eq("destination", destination);`). Yet the creation checks treat "Đà Nẵng" and "da nang" as one destination (`artifacts/api-server/src/lib/discoveryTrailObject.ts:244#const n = trailDestinationKey(d);`). The search term is lowercased and has every non-`[a-z0-9-]` character replaced, but it is never canonicalised (`artifacts/api-server/src/services/trails/TrailService.ts:165#if (term) q = q.ilike("slug"`), although the line above it claims DV-20 for that search. So "Đà Nẵng" becomes the pattern `%---n-ng%`, and "Café" becomes `%caf-%`. On the harness, the display spelling finds neither the Da Nang Trail (`02` §1's own example) nor the Trail whose own title it is, and each destination spelling lists only the Trails filed under it. The ASCII spelling finds both (`artifacts/api-server/src/test/discoveryVerifyAudit3.test.ts:325#it("H3. DEFECT, pinned (DV-20)`). That is `02` §2's `#danang` / `#DaNang` fragmentation, moved from creation to lookup. **What restores C.** Two changes: (a) the slug, `trailDestinationKey` and 3415/3441's `trail_canonical_slug` and `trail_normalised_destination` also strip U+1AB0–U+1AFF, U+1DC0–U+1DFF and U+FE20–U+FE2F (U+20D0–U+20FF too, if the owner reads marks made for symbols as diacritics), in a migration that also recomputes stored `trails.slug` (74.4 #2); (b) `listTrails` canonicalises the term with `canonicalTrailSlug` and filters the destination by its key, for example through a generated `trail_normalised_destination(destination)` column. V2, V3, H2 and H3 then go red and are flipped, as §73 flipped A1d. Implementation-W: no production Trail exists, and 3415 and 3441 are on the harness only. |
-| B01 | C | **W** | **G57, *"Diacritic-insensitive matching while preserving display spelling"* (`docs/specs/Portava_Global_Input_Intelligence_Architecture_Developer_Spec.txt:106#Diacritic-insensitive matching while preserving display spelling.`), fails on the same 91 marks, on BOTH sides.** §73's three parts hold, and this lane re-measured them independently. *NFC or NFD input:* all 1453 Latin letters give the same key either way, all of U+1E00–U+1EFF key as their base letter, and every spelling of Ǿ keys `oresund` (B1). *TS/SQL parity:* `input_normalize_city_key` equals `searchKey` on EVERY assigned code point Unicode 17 has, 297,333 of them (U+0000 and the surrogates excluded), alone and inside a word, with 0 differences (`artifacts/api-server/src/test/discoveryVerifyAudit3.test.ts:285#it("H1. CONTROL (B01)`). K5 had covered 1453. *The stored recompute:* K6 holds. But the diacritic strip is one range, U+0300–U+036F, in the query fold (`artifacts/api-server/src/lib/canonicalLocations.ts:93#// diacritics`) and in 3440's stored fold (`artifacts/api-server/src/migrations/3440_canonical_search_key_letter_fold.sql:83#v := regexp_replace(v, '[' || chr(768) || '-' || chr(879) || ']', '', 'g');`). So a Latin letter carrying one of the 91 `Diacritic` marks from the three Latin combining blocks is not folded. The mark becomes a word break: "I︠A︡roslavl" is stored as `i a roslavl`, and "Zu" + U+1DC4 (macron-acute, a tone mark with no precomposed letter) + "rich" keys `zu rich`. The Cities reader's own patterns for "Iaroslavl" are `iaroslavl%` and `%iaroslavl%`, and neither can match that stored key (`artifacts/api-server/src/test/discoveryVerifyAudit3.test.ts:231#it("B2. DEFECT, pinned (B01)`). On the harness, a registry row named "I︠A︡roslavl" stores `i a roslavl`, and `readCanonicalCitySuggestions("Iaroslavl")` does not return it; the U+0361 row is returned (H4). **The reading, stated so it can be overruled.** §66.5 built its population from precomposed letters, which it called "the definition the fold itself applies". This lane does not take the fold's own range as the definition of "diacritic", because the range is the thing under test. It takes Unicode's `Diacritic` property instead, restricted to the combining blocks encoded for Latin. For a mark with no precomposed letter, such as macron-acute or the ALA-LC tie, a combining sequence is the only encoding Unicode offers. This is §66's reading, *"every Latin letter with a diacritic"*, applied past the precomposed forms. Under owner question 4's other reading, *"the letters of place names in Portava's markets"*, these marks are a recorded limit and B01 is `C`. **What restores C.** Three changes: (a) `normalizeLocationName` also strips U+1AB0–U+1AFF, U+1DC0–U+1DFF and U+FE20–U+FE2F; (b) `input_normalize_city_key` does the same in SQL, with the generated `search_key` column dropped and re-added. That can be done in 3440 itself before approval item A applies it, since 3440 is in no database outside the harness, or else in a new migration; (c) H1 is kept, so that parity is measured over every code point again. B2 and H4 then go red and are flipped. Implementation-W: production still stores 2220's keys. |
+| DV-20 | C | **W** | **Two grounds, each on `02` §19's own words, *"Trails are canonical objects, not strings"* (`docs/specs/discovery-v1/02_Trails.md:276#Trails are canonical objects, not strings,`).** *(1) The defect class §59 and §66.11 graded W on, for another population of letters.* §73 closed every Latin letter named "X WITH …", and its probes pass here (V1: every spelling of Ǿ, all of U+1E00–U+1EFF and every case pair give one slug). But the slug strips only U+0300–U+036F (`artifacts/api-server/src/lib/discoveryTrailObject.ts:163#strip combining marks: Café → Cafe`), and 3415's SQL twin strips the same range (`artifacts/api-server/src/migrations/3415_trail_proposal_serialised.sql:154#regexp_replace(normalize(public.trail_letter_fold(p_title), NFKD),`, whose next line strips `chr(768)` to `chr(879)`). Unicode has three more combining blocks made for Latin: Diacritical Marks Extended, Diacritical Marks Supplement and Half Marks. 91 of their marks carry Unicode's own `Diacritic` property, and every one of them splits the word it sits on. One such mark is the tie in ALA-LC romanisation, which bibliographic data writes as the half marks U+FE20/U+FE21: "I︠A︡roslavl street food" slugs `i-a-roslavl-street-food`, beside "Iaroslavl street food"'s `iaroslavl-street-food`. The canonicaliser admits the second over the first (`artifacts/api-server/src/test/discoveryVerifyAudit3.test.ts` V2, as pinned at `e1c2d408c` (line 162; flipped to FIXED in §77)). On the harness, `proposeTrail` and `trail_propose` admit BOTH, so there are two canonical Trails for one theme. The same tie written as U+0361, which is inside the stripped range, is refused as a duplicate (H2, V2c). *(2) The Trail list and search treat both handles as strings.* GET /v1/discovery/trails filters the destination by raw equality (`artifacts/api-server/src/services/trails/TrailService.ts` line 161 at `e1c2d408c`, `if (destination) q = q.eq("destination", destination);`; replaced in §77). Yet the creation checks treat "Đà Nẵng" and "da nang" as one destination (`artifacts/api-server/src/lib/discoveryTrailObject.ts:244#const n = trailDestinationKey(d);`). The search term is lowercased and has every non-`[a-z0-9-]` character replaced, but it is never canonicalised (`artifacts/api-server/src/services/trails/TrailService.ts` line 165 at `e1c2d408c`, `if (term) q = q.ilike("slug"`; replaced in §77), although the line above it claims DV-20 for that search. So "Đà Nẵng" becomes the pattern `%---n-ng%`, and "Café" becomes `%caf-%`. On the harness, the display spelling finds neither the Da Nang Trail (`02` §1's own example) nor the Trail whose own title it is, and each destination spelling lists only the Trails filed under it. The ASCII spelling finds both (`artifacts/api-server/src/test/discoveryVerifyAudit3.test.ts` H3, as pinned at `e1c2d408c` (line 325; flipped to FIXED in §77)). That is `02` §2's `#danang` / `#DaNang` fragmentation, moved from creation to lookup. **What restores C.** Two changes: (a) the slug, `trailDestinationKey` and 3415/3441's `trail_canonical_slug` and `trail_normalised_destination` also strip U+1AB0–U+1AFF, U+1DC0–U+1DFF and U+FE20–U+FE2F (U+20D0–U+20FF too, if the owner reads marks made for symbols as diacritics), in a migration that also recomputes stored `trails.slug` (74.4 #2); (b) `listTrails` canonicalises the term with `canonicalTrailSlug` and filters the destination by its key, for example through a generated `trail_normalised_destination(destination)` column. V2, V3, H2 and H3 then go red and are flipped, as §73 flipped A1d. Implementation-W: no production Trail exists, and 3415 and 3441 are on the harness only. |
+| B01 | C | **W** | **G57, *"Diacritic-insensitive matching while preserving display spelling"* (`docs/specs/Portava_Global_Input_Intelligence_Architecture_Developer_Spec.txt:106#Diacritic-insensitive matching while preserving display spelling.`), fails on the same 91 marks, on BOTH sides.** §73's three parts hold, and this lane re-measured them independently. *NFC or NFD input:* all 1453 Latin letters give the same key either way, all of U+1E00–U+1EFF key as their base letter, and every spelling of Ǿ keys `oresund` (B1). *TS/SQL parity:* `input_normalize_city_key` equals `searchKey` on EVERY assigned code point Unicode 17 has, 297,333 of them (U+0000 and the surrogates excluded), alone and inside a word, with 0 differences (`artifacts/api-server/src/test/discoveryVerifyAudit3.test.ts:307#it("H1. CONTROL (B01, DV-20)`; §77 widened it and moved it from line 285). K5 had covered 1453. *The stored recompute:* K6 holds. But the diacritic strip is one range, U+0300–U+036F, in the query fold (`artifacts/api-server/src/lib/canonicalLocations.ts:93#// diacritics`) and in 3440's stored fold (`artifacts/api-server/src/migrations/3440_canonical_search_key_letter_fold.sql` line 83 at `e1c2d408c`, `v := regexp_replace(v, '[' || chr(768) || '-' || chr(879) || ']', '', 'g');`; §77 widened it in place). So a Latin letter carrying one of the 91 `Diacritic` marks from the three Latin combining blocks is not folded. The mark becomes a word break: "I︠A︡roslavl" is stored as `i a roslavl`, and "Zu" + U+1DC4 (macron-acute, a tone mark with no precomposed letter) + "rich" keys `zu rich`. The Cities reader's own patterns for "Iaroslavl" are `iaroslavl%` and `%iaroslavl%`, and neither can match that stored key (`artifacts/api-server/src/test/discoveryVerifyAudit3.test.ts` B2, as pinned at `e1c2d408c` (line 231; flipped to FIXED in §77)). On the harness, a registry row named "I︠A︡roslavl" stores `i a roslavl`, and `readCanonicalCitySuggestions("Iaroslavl")` does not return it; the U+0361 row is returned (H4). **The reading, stated so it can be overruled.** §66.5 built its population from precomposed letters, which it called "the definition the fold itself applies". This lane does not take the fold's own range as the definition of "diacritic", because the range is the thing under test. It takes Unicode's `Diacritic` property instead, restricted to the combining blocks encoded for Latin. For a mark with no precomposed letter, such as macron-acute or the ALA-LC tie, a combining sequence is the only encoding Unicode offers. This is §66's reading, *"every Latin letter with a diacritic"*, applied past the precomposed forms. Under owner question 4's other reading, *"the letters of place names in Portava's markets"*, these marks are a recorded limit and B01 is `C`. **What restores C.** Three changes: (a) `normalizeLocationName` also strips U+1AB0–U+1AFF, U+1DC0–U+1DFF and U+FE20–U+FE2F; (b) `input_normalize_city_key` does the same in SQL, with the generated `search_key` column dropped and re-added. That can be done in 3440 itself before approval item A applies it, since 3440 is in no database outside the harness, or else in a new migration; (c) H1 is kept, so that parity is measured over every code point again. B2 and H4 then go red and are flipped. Implementation-W: production still stores 2220's keys. |
 
 ### 74.2 What was attacked, and what held
 
@@ -12921,6 +12921,200 @@ CONSTRUCTED 182 / 188 = **96.8 %**, unchanged. CORRECT 94 / 188 = **50.0 %**, do
 - **B01.** Either of these:
   - the query fold and the stored fold stripping the 91 marks, which turns B2 and H4 red, with H1 still green;
   - the owner answering question 4 with the market-letters reading.
+
+## §77 — Every diacritic mark folds, and Trail search compares canonical keys (lane P35): DV-20 and B01 move W → C on §74's own "what restores C"
+
+*Written 2026-09-28 by lane P35 on `disc-p35-fold-marks`, branched from `e1c2d408c` (the merge of §74). This lane owns DV-20 and B01, which §74 sent back to W. Nothing here is merged to `main`, applied to `portava-ci` or production, deployed or flag-enabled. **3440 and 3441 are AMENDED IN PLACE, not superseded:** both are new in this programme and applied to no shared database, only to the local PostgreSQL 16 harness, so no 3442–3444 was needed. **Applying 3440 to production still REWRITES every row's stored `search_key`: that is approval item A (73.8, 77.8).** `head_commit` is not re-declared.*
+
+### 77.1 Row moves
+
+| ID | was | now | evidence |
+|---|---|---|---|
+| DV-20 | W | **C** | **Both halves of §74's "what restores C" are built, and every attack §74 ran passes again (77.4).** *(a) The marks.* One rule decides which combining marks every fold strips: the four blocks Unicode encodes for Latin, each WHOLE (`artifacts/api-server/src/lib/latinLetterFold.ts:97#export const LATIN_MARK_BLOCKS`), as one regular expression (`artifacts/api-server/src/lib/latinLetterFold.ts:100#export const LATIN_MARKS_RE`). The slug strips with it (`artifacts/api-server/src/lib/discoveryTrailObject.ts:163#.replace(LATIN_MARKS_RE, "") // strip combining marks`), and so does `trailDestinationKey`, through `searchKey` (`artifacts/api-server/src/lib/canonicalLocations.ts:93#.replace(LATIN_MARKS_RE, "") // diacritics`). 3441 re-creates 3415's `trail_canonical_slug` (`artifacts/api-server/src/migrations/3441_trail_letter_fold_decompose_first.sql:98#chr(768) || '-' || chr(879) || chr(6832) || '-' || chr(6911)`) and `trail_normalised_destination` (`artifacts/api-server/src/migrations/3441_trail_letter_fold_decompose_first.sql:120#v := regexp_replace(normalize(v, NFD), '[' || chr(768) || '-' || chr(879) || chr(6832)`) with the same four ranges. It also RECOMPUTES stored `trails.slug` (`artifacts/api-server/src/migrations/3441_trail_letter_fold_decompose_first.sql:152#UPDATE public.trails`), which §74.4 #2 found nothing did. If two Trails would share one slug, it stops and names them (`artifacts/api-server/src/migrations/3441_trail_letter_fold_decompose_first.sql:142#recomputing trails.slug would give two Trails one slug`). "I︠A︡roslavl street food" and "Iaroslavl street food" are now one slug, and the canonicaliser refuses the second (`artifacts/api-server/src/test/discoveryVerifyAudit3.test.ts:167#it("V2. FIXED (DV-20, §77)`). On the harness, `trail_propose` refuses it too (`artifacts/api-server/src/test/discoveryVerifyAudit3.test.ts:343#it("H2. FIXED (DV-20, §77)`). A Trail stored under an older fold is re-slugged when 3441 runs, and its re-spelling is then refused (`artifacts/api-server/src/test/discoveryVerifyAudit3.test.ts:405#it("H5. FIXED (DV-20, §77)`). *(b) The list.* `listTrails` puts the term through `canonicalTrailSlug` (`artifacts/api-server/src/services/trails/TrailService.ts:165#if (term) { if (!termSlug) return { refusal: null, trails: [] };`). It filters a destination by 3441's stored key, `destination_key`, GENERATED from `trail_normalised_destination(destination)` (`artifacts/api-server/src/migrations/3441_trail_letter_fold_decompose_first.sql:160#ADD COLUMN destination_key text`). Creation compares that same key (`artifacts/api-server/src/services/trails/TrailService.ts:161#if (destination) q = destKey ? q.eq("destination_key", destKey)`). "Đà Nẵng" now searches `da-nang`, not `---n-ng`, and a destination filter lists every Trail filed under any spelling of the place (`artifacts/api-server/src/test/discoveryVerifyAudit3.test.ts:191#it("V3. FIXED (DV-20, §77)`). On the real tables, the display spelling finds both Trails and each destination spelling lists both (`artifacts/api-server/src/test/discoveryVerifyAudit3.test.ts:359#it("H3. FIXED (DV-20, §77)`). *Parity:* the stored key is the TypeScript key on every assigned code point, 297,333 of them, and the SQL slug differs on exactly the 37 that §74.4 #1 lists, alone and inside a word (H1, 77.7 #1). **Readings the owner can overrule (77.2):** whole blocks rather than the Diacritic property; U+20D0–U+20FF not stripped; §73's ƻ ɿ ʢ ʨ still deleted. Implementation-C, as §61.7 graded it: 3415 and 3441 are on the harness only, and no production database has a `trails` table. |
+| B01 | W | **C** | **All three parts of §74's "what restores C" are built and run.** *(a)* `normalizeLocationName` strips the four Latin mark blocks, so `searchKey` does (`artifacts/api-server/src/lib/canonicalLocations.ts:93#.replace(LATIN_MARKS_RE, "") // diacritics`). *(b)* 3440 is amended IN PLACE: `input_normalize_city_key` strips the same four ranges (`artifacts/api-server/src/migrations/3440_canonical_search_key_letter_fold.sql:83#chr(6832) || '-' || chr(6911)`). The file still drops the generated `search_key` and re-adds it, unchanged (`artifacts/api-server/src/migrations/3440_canonical_search_key_letter_fold.sql:105#ADD COLUMN search_key text`), and a new postcondition pins the ALA-LC tie and macron-acute. None of the 91 marks changes the key of the word it sits in. "I︠A︡roslavl" keys `iaroslavl`, and the Cities reader's own patterns reach it (`artifacts/api-server/src/test/discoveryVerifyAudit3.test.ts:253#it("B2. FIXED (B01, §77)`). On the harness, the STORED key of a registry row named "I︠A︡roslavl" is `iaroslavl`, and `readCanonicalCitySuggestions("Iaroslavl")` returns the row (`artifacts/api-server/src/test/discoveryVerifyAudit3.test.ts:384#it("H4. FIXED (B01, §77)`). *(c)* H1 is kept, and parity is measured over every assigned code point again. `input_normalize_city_key` equals `searchKey` on all 297,333, alone and inside a word, with 0 differences (`artifacts/api-server/src/test/discoveryVerifyAudit3.test.ts:307#it("H1. CONTROL (B01, DV-20)`). The rule itself is checked over every code point, 0 to U+10FFFF: a code point vanishes inside a word, in `searchKey`, `trailDestinationKey` and the slug, EXACTLY when it is in one of the four blocks (`artifacts/api-server/src/test/discoveryLetterFoldCompleteness.test.ts:1105#it("L9. exhaustive`). The SQL ranges are pinned to that rule (`artifacts/api-server/src/test/discoveryLetterFoldCompleteness.test.ts:1132#it("L10.`). G57's second clause holds: only the derived key changes, never `name` or `display_name`. **Q4 stays open (77.8).** ß, æ and œ are still deleted by `searchKey` and by 3440, exactly as by 2220, and Q4 pins that. Under §74.4 #4's two readings of the population, the marks no longer divide them: both give `C`. If the owner answers that G57 covers ß, æ and œ, B01 returns to W. Implementation-C: production still stores 2220's keys until approval item A. |
+
+### 77.2 The mark rule, the set and its size (the integrator's question, settled from Node's Unicode data)
+
+- **The rule.** Each of the four blocks Unicode encodes for Latin combining diacritics is stripped WHOLE, by code-point range. The blocks are U+0300–U+036F, U+1AB0–U+1AFF, U+1DC0–U+1DFF and U+FE20–U+FE2F. That is exactly how U+0300–U+036F was always stripped.
+- **The set.** 272 code points: 112 + 80 + 64 + 16. In Unicode 17.0, 250 of them are assigned. Every assigned one is a combining mark (`\p{M}`), so the strip never deletes a letter. The other 22 are unassigned: U+1ADE, U+1ADF and U+1AEC–U+1AFF. Unicode reserves them for further marks of that block. L9 counts all of this from Node's own data. It also finds that NO code point outside the four blocks vanishes inside a word in any of the three folds.
+- **Why whole blocks, and not the `Diacritic` property mark by mark.**
+  - U+0300–U+036F was already stripped whole, and 19 of its marks lack the property (U+0363–U+036F, the combining small letters above, among them). The other three blocks hold the same kinds: U+1DD3–U+1DF4 are combining small letters, and U+1DC0 COMBINING DOTTED GRAVE ACCENT lacks the property although it is an accent.
+  - A range needs no Unicode tables. So PostgreSQL 16, whose `normalize()` is Unicode 15.1, strips exactly the code points Node strips. A property would make SQL parity depend on two Unicode versions.
+- **The counts, so the three numbers in circulation are reconciled.**
+  - The three blocks beyond U+036F hold 138 assigned marks.
+  - Of these, 92 carry `Diacritic`: 53 + 23 + 16.
+  - Of those 92, 91 are `Mn`. That is §74's population, and V2 and B2 still count it.
+  - The one-mark difference is U+1ABE COMBINING PARENTHESES OVERLAY. It carries `Diacritic`, but its General_Category is `Me` (an enclosing mark), not `Mn`.
+  - The whole-block rule strips all 138, and all 92 among them.
+- **The client (lane P34, `disc-p34-reason-fold`) must follow this set.** This lane read, and did not edit, P34's client fold and its parity case P3. The client strips U+0300–U+036F plus the 92 `Diacritic` marks of the other three blocks.
+  - **P3 would FAIL against this server.** Running P3's own loop against this tree's `searchKey` and P34's `stripCombiningMarks` finds 46 code points on which they differ. The server strips each of them, and the client keeps it: U+1ABF, U+1AC0, U+1ACC–U+1ACE, U+1DC0–U+1DC3 and U+1DD0–U+1DF4. These are the 46 assigned non-`Diacritic` marks of the three blocks.
+  - P3 does not test the 22 unassigned code points (U+1ADE, U+1ADF, U+1AEC–U+1AFF), which the server also strips.
+  - **The hunk for P34:** the client's mark pattern becomes the four plain ranges, `[̀-ͯ᪰-᫿᷀-᷿︠-︯]`, with no `\p{Diacritic}` lookahead. P3 then compares like with like. The server now exports `LATIN_MARKS_RE`, so P3 can also pin the pattern by value.
+- **Not stripped, stated so the owner can overrule it.** Each of the following stays a word break, as it was:
+  - U+20D0–U+20FF, Combining Diacritical Marks for Symbols. None of its 33 marks has the `Diacritic` property. §74 left this block to the owner.
+  - The variation selectors.
+  - The combining marks of other scripts. Five of them have a Script_Extensions that also names Latin: U+0485, U+0486, U+0951, U+0952 and U+20F0.
+
+### 77.3 What was changed
+
+- **`lib/latinLetterFold.ts`.** It now ends with `LATIN_MARK_BLOCKS` and `LATIN_MARKS_RE`, whose header states the rule in 77.2. The table at line 37 has not moved.
+- **`lib/canonicalLocations.ts`, line-neutral.** Line 16's import names `LATIN_MARKS_RE`, and line 93 strips with it. Every citation of this file still holds.
+- **`lib/discoveryTrailObject.ts`, line-neutral.** Line 43 imports `LATIN_MARKS_RE` and re-exports `trailDestinationKey`. Line 163 strips with the regular expression.
+- **`lib/discoveryTrailFold.ts` is unchanged.** The letter fold never stripped marks: both of its consumers do. The slug does, and `trailDestinationKey` does through `searchKey`. The SQL twin `trail_letter_fold` is likewise unchanged, and its two callers strip.
+- **`services/trails/TrailService.ts`: `listTrails` only, line-neutral.** It spans lines 150–170, as before. The one other edit adds `trailDestinationKey` to the existing `discoveryTrailObject` import on line 52, and no provenance line was touched. Its behaviour:
+  - The term goes through `canonicalTrailSlug`. A term with no slug-able character ("🍜") returns an empty list and sends no request.
+  - A destination is filtered by `destination_key`. A destination the fold deletes entirely ("東京") keeps the old equality on the stored spelling, because it has no key to compare.
+  - When `destination_key` is absent (PostgreSQL 42703 or PostgREST PGRST204, meaning 3441 has not been applied), the answer is `trails_unavailable`, which the route serves as 503. It never falls back to the string compare (V3d).
+- **3440, amended in place.** It is line-neutral up to line 137: line 83's strip covers the four ranges, and line 84, formerly blank, says so. A new postcondition requires 'I︠A︡roslavl' → `iaroslavl`, and the same for macron-acute and U+1AB0. A footer records the amendment. Every §73 citation of lines 61, 81, 105 and 135 still holds.
+- **3441, amended in place.** Lines 1–54 are line-neutral, and §73's citation of line 51 holds. After `trail_letter_fold`, it now does these steps:
+  1. drops `destination_key` if present;
+  2. re-creates `trail_canonical_slug` and `trail_normalised_destination` as 3415 wrote them, with the four ranges;
+  3. refuses to run if recomputation would give two Trails one slug, or leave one with none;
+  4. recomputes every stored slug that differs, through a unique temporary slug (`p3441-` plus the id) so that no UNIQUE check fires mid-update;
+  5. re-adds `destination_key` as a STORED generated column, with an index on `(destination_key, lifecycle_status)`;
+  6. checks postconditions for the marks, for "no stored slug disagrees with its title", and for the column and its index.
+
+  The file stays re-runnable, and H5 re-runs it. Its REVERSAL note now says to drop `destination_key` first.
+- **Tests.**
+  - `discoveryVerifyAudit3.test.ts`: §74's V2, V3, B2 and H2–H5 are flipped from DEFECT or LIMIT to FIXED. Each keeps its intent: the two spellings share one Trail, one list or one key.
+  - V3d is new. It covers 77.3's three edges.
+  - H1 now also compares `trail_normalised_destination` with `trailDestinationKey` on every assigned code point. It compares the slug alone as well as inside a word, and it pins the 37 differing code points BY VALUE, where it had pinned a count.
+  - Every control (V1, V2c, V3c, B1, B2c, Q4) is unchanged.
+  - `discoveryLetterFoldCompleteness.test.ts` gains L9 and L10 at its foot, so L1 (line 979) and L5 (line 1032) have not moved.
+- **Citations retargeted, not re-graded.** Seven anchors in §74.1 pointed at text §77 replaced. Five now cite that text as it was at `e1c2d408c`, by line, and say that §77 flipped or replaced it. The H1 anchor now cites H1 at its new line, and the claim it carries still holds there. The verdict text around them is unchanged.
+
+### 77.4 Every attack §74 ran, re-run at this tree
+
+| §74 attack | result now | case |
+|---|---|---|
+| Ǿ as NFC, as Ø + U+0301, as O + U+0338 + U+0301, as NFD | one slug and one key (`oresund`) | V1, B1 |
+| NFD input for all 1453 Latin letters | the same key as NFC for every one | B1 |
+| U+1E00–U+1EFF against each letter's NFD base | 0 differ | V1, B1 |
+| case pairs over all 1453 letters | 0 split | V1 |
+| TS vs SQL key over every assigned code point, alone and inside a word | 0 differ (PostgreSQL 16) | H1 |
+| TS vs SQL Trail slug over every assigned code point | exactly §74.4 #1's 37, alone and inside a word; recorded, 77.7 #1 | H1 |
+| TS vs SQL destination key over every assigned code point (new) | 0 differ | H1 |
+| the 91 Diacritic marks outside U+0300–U+036F | **none splits the key, the slug or the destination** | V2, B2, H2, H4, L9 |
+| the same tie as U+0361 | folds; the duplicate is refused | V2c, B2c |
+| every Trail creation path | unchanged: one path, `proposeTrail` → `trail_propose` | read |
+| the Trail list and search | **term and destination compared by canonical key** | V3, V3d, H3 |
+| stored keys after the fold changed | `search_key` is recomputed by 3440 (K6); `trails.slug` is recomputed by 3441 (H5), and `destination_key` is generated | K6, H5 |
+| §73's overrulable readings (ƻ ɿ ʢ ʨ; ß æ œ) | still stated and still hold | Q4 |
+
+### 77.5 Red, then green, and every mutation (P24)
+
+- **Red at `e1c2d408c`.** The six code and migration files were checked out from HEAD. On the harness, `destination_key` was dropped, and 3415's slug and destination functions, 3440 and 3441 were re-applied as HEAD has them. The final suites then ran: `discoveryVerifyAudit3.test.ts` and `discoveryLetterFoldCompleteness.test.ts`, harness up.
+  - 15 passed: L1–L8, V1, V2c, V3c, B1, B2c, Q4 and H1.
+  - 10 failed: L9, L10, V2, V3, V3d, B2, H2, H3, H4 and H5.
+  - All six files were restored with sha256 equal, and this tree's 3440 and 3441 were re-applied.
+- **Green.** Those two suites together with `discoveryVerifyAudit.test.ts` and `discoveryVerifyAudit2.test.ts` pass 41 of 41 with the harness.
+
+Each mutation below was one exact-string edit, or two for the S-rows marked "p". The two suites were run with the harness up, the file was copied back with sha256 checked equal, and for SQL the true file was re-applied:
+
+| mutation | file | red |
+|---|---|---|
+| T1 the mark class back to U+0300–U+036F (§74's state) | `lib/latinLetterFold.ts` | L9, V2, V3, B2, H1 |
+| T2 Half Marks U+FE20–U+FE2F dropped | `lib/latinLetterFold.ts` | L9, V2, V3, B2, H1 |
+| T3 U+1AB0–U+1AFF narrowed to U+1AB0–U+1ACE | `lib/latinLetterFold.ts` | L9, V2, B2, H1 |
+| T4 `normalizeLocationName` back to U+0300–U+036F | `lib/canonicalLocations.ts` | L9, V2, B2, H1 |
+| T5 the slug back to U+0300–U+036F | `lib/discoveryTrailObject.ts` | L9, V2, V3, H1 |
+| T6 the list term not canonicalised (the old expression) | `services/trails/TrailService.ts` | V3, H3 |
+| T7 the destination by raw equality | `services/trails/TrailService.ts` | V3, H3 |
+| T8 a missing `destination_key` reported as `db_error` | `services/trails/TrailService.ts` | V3d |
+| S1 3440's strip narrowed | 3440 | L10. On the harness the file REFUSED to apply: its new postcondition fired (`I︠A︡roslavl folds to "i a roslavl"`). |
+| S1p S1, and that postcondition removed | 3440 | L10, H1, H4 |
+| S2p the slug's strip narrowed, §77's postcondition removed | 3441 | L10, H1, H2, H5 |
+| S3p the destination key's strip narrowed, same | 3441 | L10, H1 |
+| S4p both slug UPDATEs and the stale-slug postcondition removed | 3441 | L10, H5 |
+
+T3 is red on V2, B2 and H1 as well as L9. 27 of §74's 91 marks lie above U+1ACE (U+1ACF–U+1ADD and U+1AE0–U+1AEB), all assigned in Node 22's Unicode 17.0. A range strips them on PostgreSQL 16 exactly as Node does (H1: 0 key differences), with no Unicode table on either side. A property list would have had to name each one. S2, S3 and S4 without the "p" also refused to apply, on their postconditions or, for S4, on the edited statement. Those runs only show that the file guards itself, and are not counted as evidence for any case.
+
+### 77.6 The harness (controlled evidence, not production evidence)
+
+- **The cluster.** Booted with `scripts/local-db/up.sh` under `LOCAL_DB_DIR=/var/tmp/p35-localdb`, `LOCAL_DB_WORK=/var/tmp/p35-work` and port 55447, as `portava_localdb`. The data directory was initialised beforehand with 1 MB WAL segments and `max_wal_size=32MB`, and holds 103 MB.
+- **Two replays.** The first ran from `e1c2d408c`'s files. This lane's 3440 and 3441 were then applied over them with `psql`, which is the order approval item A would follow; the red run, the mutations and the first green runs used this database. The second was a FRESH replay from this tree's final files. Each had baseline 388 tables and 355 migrations applied in order, 3440 and 3441 among them, with 12 known-unreplayable and 2 of those applied on retry.
+- **`scripts/local-db/run-tests.sh`.** 377 of 377 pass across the 54 `db/*.db.test.ts` suites, with 0 skipped. That held on both databases, after the final code. `discoveryVerifyAudit3.test.ts` is not a `db/` suite: with `LOCAL_DB_URL` set on the fresh replay, it and the three suites beside it pass 41 of 41.
+- **Cleanup.** A count after the suites read 0 Trails and 0 registry rows left by this suite. The cluster was stopped and its two directories deleted when this lane finished, and `scripts/local-db/.env.local-db` was removed, as it was absent before.
+- **Nothing else.** No SQL was run against `portava-ci` or production.
+
+### 77.7 Recorded, not graded
+
+1. **§74.4 #1, recorded by value.** The SQL Trail slug differs from `canonicalTrailSlug` on exactly 37 code points, alone and inside a word: U+A7F1 and U+1CCD6–U+1CCF9. PostgreSQL 16's `normalize()` does not know these compatibility decompositions, and Node 22's does. H1 now lists them by value, so a 38th fails it, and so does one fewer. The destination key uses NFD, not NFKD, and agrees on all 297,333 code points. The production PostgreSQL version was not read.
+2. **The legacy `normalized_name` column.** It is written from `normalizeLocationName`, so a NEW registry row carrying one of these marks is written with the folded key. Rows written before keep the word break. That is §73.7 #4's key, read by census-input-intelligence's `matchCanonical`, and no Discovery verdict rests on it. The input-assistance `query_key`s learned before §77 stay as they were, as §74.4 #3 said of §73.
+3. **Changing a stored slug.** Content references `trail_id`, never a slug (2910's own comment), so recomputing a slug orphans no member. Any link built from an old slug would change with it. No production `trails` table exists, so no production slug changes.
+4. **Re-running 2910 after 3441 refuses.** 2910's precondition compares `trails`' columns exactly. The 3441 reversal drops `destination_key` first.
+5. **The client.** 77.2 gives the hunk. This lane changed no `travel-buddy-standalone` file.
+
+### 77.8 Owner questions and approvals
+
+- **B01 question 4 (§66.9) is carried forward, not decided.** ß, æ and œ are deleted by `searchKey` and 3440 ("Straße" → `stra e`), and spelled by the Trail (`ss`, `ae`, `oe`), exactly as §73.8 measured.
+- **The readings the owner can overrule.**
+  1. Whole blocks rather than the `Diacritic` property (77.2). The narrower reading would un-strip the 46 non-Diacritic marks, and neither row's verdict would change.
+  2. U+20D0–U+20FF and the other scripts' marks are not stripped. If the owner reads marks made for symbols as diacritics, both rows return to W until they are.
+  3. §73's ƻ ɿ ʢ ʨ are deleted, unchanged.
+- **Approval item A: applying 3440 to production.** Unchanged in kind from §73.8, and now also folding the four blocks:
+  - it drops and re-adds `search_key` and rebuilds its trigram index in one transaction, under ACCESS EXCLUSIVE;
+  - it rewrites every row's stored key.
+  - The owner should first see the rows whose key changes, using §73.9's read-only SQL. §73.9's "superset" query should now exclude all four ranges: `'[^\x01-\x7F' || chr(768) || '-' || chr(879) || chr(6832) || '-' || chr(6911) || chr(7616) || '-' || chr(7679) || chr(65056) || '-' || chr(65071) || ']'`.
+- **3441 has no production target.** 3415 is in no shared database, so 3441 follows it only there. When it is applied anywhere with Trails, it rewrites every stored slug that differs from its title's slug, and it stops on a collision. A merge of two Trails is the owner's decision.
+
+### 77.9 Checks run at this tree
+
+Run in `artifacts/api-server`, after the final code edit. The census checks were run again after this section's last edit.
+
+- **Types.** `typecheck` passes. `typecheck:tests` is at its baseline: 863 diagnostics across 115 files. No `any` or `@ts-expect-error` was added.
+- **Suites.**
+  - The 20 non-DB suites that import a changed file pass 493 of 493, without a database. They include the two §77 suites, `discoveryVerifyAudit.test.ts`, `discoveryVerifyAudit2.test.ts`, `discoveryTrailRoutes.test.ts`, `discoveryTrailSchemaContract.test.ts`, the Trail-object and canonical-locations unit suites, and the input-assistance suites.
+  - The 14 `src/test/*ensus*.test.ts` suites, which read the census, pass 221 of 221.
+  - With the harness: see 77.6.
+- **Migration and schema checks, all passing:**
+  - `check:migration-prefixes`, at 647 files and no undocumented collisions;
+  - `check:schema-references`, with no new undeclared column references;
+  - `check:production-drift`, with no unrecorded drift;
+  - `check:test-registration`.
+- **Census checks, all passing:**
+  - `check:census-integrity`: census-discovery counts C 96, W 86, N 5, X 1, which matches 77.10;
+  - `check:census-freshness`: census-discovery and census-input-intelligence are ACKNOWLEDGED (all named);
+  - `check:census-scope-coverage`;
+  - `check:doc-citations`: RESULT clean, with 6434 unanchored citations at the 6434 ceiling;
+  - `check:citation-targets`: 164/164, at the ceiling;
+  - `check:citation-symbols`: 0 missing and 34 far, both at their ceilings;
+  - `check:census-row-move-labels` and `check:census-policy-citations`.
+- **Not run:** the full api-server `pnpm test`. P34's `clientLetterFoldParity.test.ts` is not in this tree, and its P3 loop was run from a scratch copy only (77.2). Nothing was run against `portava-ci` or production.
+
+### 77.10 Headline, restated from the rows
+
+With DV-20 and B01 moving W → C, `check:census-integrity` counts the rows as follows:
+
+| bucket | count |
+|---|---|
+| BUILT-AND-CORRECT | **96** |
+| BUILT-BUT-WRONG | **86** |
+| NOT-BUILT | **5** |
+| CANNOT-VERIFY | **1** |
+
+CONSTRUCTED 182 / 188 = **96.8 %**, unchanged. CORRECT 96 / 188 = **51.1 %**, up from 50.0 % (§74.7). The denominator is unchanged.
+
+### 77.11 What would turn this red
+
+- **DV-20.** Any of these:
+  - a combining mark of the four blocks that the slug or its SQL twin keeps (L9, L10, V2, H1, H2);
+  - `listTrails` comparing the term or the destination as a string again (V3, V3d, H3);
+  - 3441 no longer recomputing stored slugs (H5, L10);
+  - a 38th TS/SQL slug divergence (H1);
+  - the owner reading U+20D0–U+20FF as diacritics.
+- **B01.** Any of these:
+  - L9, B2 or H4 red;
+  - H1's key parity no longer 0;
+  - `input_normalize_city_key` changing without a migration that recomputes the stored column;
+  - the owner answering Q4 "yes" for ß, æ and œ.
+
+### 77.12 Freshness and scope
+
+- **census-discovery's CENSUS_SCOPE already watches every file this section changes or cites.** No scope entry was added.
+- **The acknowledgement ledger.** Its census-discovery entry already lists all eight changed files, and gains a §77 paragraph. Verdicts DO move on them: DV-20 and B01 go from W to C, graded here.
+- **census-input-intelligence** watches `lib/canonicalLocations.ts`. Its entry gains a paragraph saying why no verdict there moves. G57 was C and stays C, and the marks now fold on its ground too. G55 is unchanged, because the fold is still NFD, not NFKD.
+- **Nothing else.** No other census's verdict table is edited.
 
 ## Cited, not graded (check:census-scope-coverage)
 
