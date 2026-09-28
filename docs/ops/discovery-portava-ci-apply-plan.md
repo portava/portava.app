@@ -692,3 +692,28 @@ This is controlled evidence, not `portava-ci` evidence. It is recommended, not a
 10. **Merge** at once (§5.4). Do not change any of the 73 files between the apply and the merge.
 
 **The 2481 ledger entry is not touched.** It is outside the set. The applier writes only the row of the file it applies (§3), steps 1 and 8 read the row before and after, and `--apply-unproven` is not used.
+
+### 8.5 Pre-flight read against the real `portava-ci`, 2026-09-28 (integrator, read-only)
+
+Run through the Supabase connector (`execute_sql`, project `hwokxgbmezheskbzskfr`) after it became available to this session. Only SELECTs were sent: nothing was written, applied or flipped.
+
+| check (§2.1 / §8.2) | required | `portava-ci` |
+|---|---|---|
+| ledger rows for any of the 73 | 0 | **0** |
+| total ledger rows / latest file | — | 607 / `3350_media_neighborhood_only_location_mode.sql` |
+| `2481` ledger row (recorded verbatim; §8.4 step 8 compares) | untouched | `applied_by=ci`, `applied_at=2026-09-09 14:44:05.770512+00`, `checksum=56c1244782e8d2e911107c44cebb4461b378d0ca6f157e68e91a82ea084d12d1` |
+| `3350` ledger row | as recorded | `applied_by=manual`, `applied_at=2026-09-27 09:33:12.17104+00`, `checksum=9d565ca9f3a9a0c1d2c4e189c79bcc898d7476e5b6bb7a985ec9a25a04b8eec9` |
+| the 53 flags the set seeds | absent or FALSE | **none present** (so no postcondition can refuse on a TRUE row, and every rollback may delete what it seeds) |
+| flag table snapshot | recorded | 116 rows, 9 TRUE, `md5 617552850b2121aced77cdb57b88a433` (flag, enabled, description) |
+| `rank_events` rows with `schema_version <> 1` (3375) | 0 | **0** |
+| duplicate primary `content_trails` (3380) | 0 | **0** |
+| non-`ievr1.` photo/video evidence references (3361) | 0 | **0** |
+| 2951, 2930, 2920, 2901, 2892, 2910 objects | present | **all present** |
+| `rank_events`/`canonical_locations` columns | 5 | **5** |
+| encoding / `pg_trgm` | UTF8 / present | **UTF8 / present** |
+| owner of posts, pulse_geo_tags, passport_postcards, post_media, tags (3362–3365, 3422) | the applying role, RLS on | **`postgres` = `current_user`, RLS on for all five** |
+| `canonical_locations` rows (3440's rewrite) | — | 0 (the rewrite is empty) |
+
+**What this does not change.** The apply is still to be run **immediately before PR #528 merges** (§5.4: until the merge, `main`'s `schema-drift` job fails `check:migration-ledger` on ledger rows whose files are not on `main`), and **after** the last lane that adds or edits one of these files has landed and the §8.3 end-to-end rehearsal has passed. Merging is the owner's step.
+
+**How it would run through the connector.** The applier (`scripts/src/apply-migrations.ts`) talks to the Management API with `SUPABASE_PROJECT_TOKEN`, which this session does not hold. Through the connector, the equivalent is to send, per file and in §8.1's order, exactly the statement the applier's own `buildApplyStatement` produces (body + ledger row in one transaction), then the file's post-`COMMIT` tail as a second statement — via `execute_sql`, **not** `apply_migration`, because `apply_migration` also records Supabase's own `supabase_migrations` history, which this repository's ledger does not use. Steps 5–8 of §8.4 then run unchanged (dry run → `NOTHING TO DO`, certify, `audit:schema`, post-reads), the certify and audit tools needing the same token; with the connector alone their queries can be read out of the tools and sent the same way.
