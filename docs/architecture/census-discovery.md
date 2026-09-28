@@ -13364,8 +13364,44 @@ A second independent verification of `5a434ec7b` broke one clause of each `C` ro
 - a missing or stale policy that leaves the search bar without either source (missingPolicy);
 - a failing policy fetch retried on every keystroke (missingPolicy, `policyRefreshOnUse`).
 
+### 80.14 The routed helper, fixed: `safeOrIlikeValue` strips first and escapes second
+
+§80.13 routed one finding without applying it. The coordinator asked for it to be fixed on this branch, in its own commit. No row in this section is re-graded by it.
+
+**The defect.** `artifacts/api-server/src/lib/postgrestFilter.ts:58#export function safeOrIlikeValue` LIKE-escaped first and then removed the `.or()` structural characters, which include `\`. The second pass therefore removed the escapes the first had just added, so `%` and `_` in a query reached SQL `ILIKE` as wildcards. "100%" matched "1000 Lakes", "a_b" matched "axb", and a lone "%" in a people search matched every active profile.
+
+**The fix** (line-neutral) is the order §80.13 gave the duplicate scan: strip the structure first, then LIKE-escape (`artifacts/api-server/src/lib/postgrestFilter.ts:59#return escapeLikePattern(escapeOrValue(value));`). No user `\` survives to re-open a wildcard, and the only backslashes left are the helper's own escapes before `%` and `_`. PostgREST passes an unquoted `.or()` value through verbatim (only a double-quoted value treats `\` as an escape), so those escapes reach `ILIKE`. The injection guard is unchanged: `,` `.` `(` `)` `"` are still removed.
+
+**Callers whose behaviour changes:**
+- `GET /users/search` (`routes/follows.ts`);
+- `GET /tags/suggestions`, the mention picker (`routes/tags.ts`);
+- `searchAirports` (`services/airport/AirportProfileService.ts`).
+
+None of those files changed.
+
+**Proof:** `artifacts/api-server/src/test/postgrestFilterLikeEscape.test.ts`.
+- The helper, five cases: `%`, `_`, a user backslash, the structural guard, and a property check that there is no stray backslash and no unescaped wildcard.
+- Both routes over HTTP, asserting the exact `.or()` expression each builds: `/users/search?q=100%` and `/tags/suggestions?q=a_b` (`artifacts/api-server/src/test/postgrestFilterLikeEscape.test.ts:132#GET /users/search?q=100%`).
+- **Seen red first:** 6 of 7. The structural-guard case was green, as a control.
+- **Not exercised:** a live PostgREST or Postgres. The harness on port 55452 was not running. What is pinned is the expression the route sends; its meaning rests on PostgreSQL's documented LIKE escape and PostgREST's unquoted-value grammar.
+
+**Mutations,** each restored byte-identical by sha256:
+
+| id | mutation | red |
+|---|---|---|
+| F1 | the old order (escape, then strip) | helper `%`, `_`, backslash and property cases; both route cases |
+| F2 | `\` dropped from the structural class | helper backslash and property cases; Q11a |
+| F3 | `_` not escaped | helper `_` and property cases; the `/tags/suggestions` case; Q11a |
+
+**Other censuses.** census-passport (`routes/follows.ts`), census-layover (`services/airport/`) and this census (`routes/tags.ts`, `lib/postgrestFilter.ts`) each got an argued staleness acknowledgement. None of their rows is re-graded here. census-input-intelligence G340's wording is left alone; the note on it stays as §80.13 wrote it.
+
+**Headline:** unchanged, 96 C / 86 W / 5 N / 1 X, CORRECT 96 / 188 = **51.1 %**.
+
+**What would turn this red:** `postgrestFilterLikeEscape.test.ts`, or any new `.or()` ilike caller that escapes before it strips.
+
 ## Cited, not graded (check:census-scope-coverage)
 
+- NOT-GRADED: artifacts/api-server/src/services/airport/AirportProfileService.ts — §80.14 names `searchAirports` as a third caller of `safeOrIlikeValue` whose query changes with the helper; census-layover grades the airport service (with an argued acknowledgement), and no Discovery verdict rests on it.
 - NOT-GRADED: artifacts/api-server/src/compass/CompassExplanationEngine.ts — §13.7 item 3 names Compass's HMAC recommendation-token signer as a refactor this lane declined to make in another lane's file. Discovery's recommendation id is minted by lib/discoveryRecommendationId.ts, and no Discovery verdict rests on the signer.
 - NOT-GRADED: artifacts/api-server/src/routes/plan.ts — §39.1 names its add-to-trip-plan route as the server-side trip add, and §39.4 assigns that add to the Trips lane. The trip_add signal DV-79 and DC-09 grade is written by the client's PlanPickerController (§41.6), not by this route.
 - NOT-GRADED: artifacts/api-server/src/compass/CompassLiveConstraints.ts — §57.4 cites its environment gate to show the Compass serve points' only safety is Compass's own; census-compass and census-sensing S66 grade it, and no §57 verdict rests on it.

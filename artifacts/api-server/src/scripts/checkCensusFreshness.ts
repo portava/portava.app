@@ -4162,8 +4162,10 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "travel-buddy-standalone/src/platform/input-assistance/services/__tests__/policyRefreshOnUse.component.test.ts",
     "travel-buddy-standalone/src/platform/input-assistance/services/installInputPolicySync.ts",
     "travel-buddy-standalone/src/platform/input-assistance/services/policyStore.ts",
-    // §80.13 (round 3): the routed helper, cited, not changed.
+    // §80.13 (round 3): the routed helper, cited then; fixed in §80.14.
     "artifacts/api-server/src/lib/postgrestFilter.ts",
+    // §80.14: the helper's suite, which drives both route callers over HTTP.
+    "artifacts/api-server/src/test/postgrestFilterLikeEscape.test.ts",
   ],
   // ── ADDED 2026-09-15: census-passport joins the CHECKABLE set ──────────────
   //

@@ -311,7 +311,7 @@ describe("Q10 — LIKE's own metacharacters are literal in the key (round-3 veri
 });
 
 describe("Q11 — the gateway's duplicate scan keeps LIKE's escapes (round 3)", () => {
-  // `lib/postgrestFilter.safeOrIlikeValue` LIKE-escapes FIRST and then strips
+  // Until §80.14, `lib/postgrestFilter.safeOrIlikeValue` LIKE-escaped FIRST and then stripped
   // the `.or()` structural characters, backslash included — so the escape it
   // had just added was removed again and "100%" reached the pattern as a
   // wildcard. The creation-assistance duplicate scan (a gateway path) now
