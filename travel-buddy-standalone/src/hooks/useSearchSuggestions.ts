@@ -126,8 +126,8 @@ export function useSearchSuggestions(query: string, opts: UseSearchSuggestionsOp
         setGroups(res.groups);
         setLoading(false);
       } else if (!res.aborted) {
-        // Transient error: keep whatever was on screen (never flash empty)
-        setLoading(false);
+        // Transient error: keep whatever was on screen (never flash empty) — and SAY it, as the refusal arm does (§100, D-W11X2-26): no answer is not "no quick matches"
+        setLoading(false); setRefused(true); setIncomplete(false);
       }
     }, DEBOUNCE_MS);
 

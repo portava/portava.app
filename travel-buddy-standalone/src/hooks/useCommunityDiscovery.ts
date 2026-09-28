@@ -134,7 +134,7 @@ interface CommunityDiscoveryState {
    * only thing that keeps the two apart, and the cache decision below is the
    * first consumer of it.
    */
-  refused: boolean; /** census-discovery §80 (DV-83): a PARTIAL answer — the rows are real, the list may be short. Cached WITH the rows. */ incomplete: boolean;
+  refused: boolean; /** census-discovery §80 (DV-83): a PARTIAL answer — the rows are real, the list may be short. Cached WITH the rows. */ incomplete: boolean; /** census-discovery §100 (DV-83, D-W11X2-26): the last read FAILED in transport (network / non-2xx / thrown). What the state held is kept; this says it was not refreshed, so an empty state is never read as a quiet city. Never cached. */ unavailable?: boolean;
 }
 
 const EMPTY: CommunityDiscoveryState = { gems: [], picks: [], places: [], loading: false, refused: false, incomplete: false };
@@ -175,7 +175,7 @@ export function useCommunityDiscovery(city: string | null, sortBy?: string | nul
       if (ctrl.signal.aborted) return;
 
       if (!result.ok) {
-        setState((prev) => ({ ...prev, loading: false }));
+        setState((prev) => ({ ...prev, loading: false, unavailable: true }));  // §100 (D-W11X2-26): kept, and said
         return;
       }
 
@@ -220,7 +220,7 @@ export function useCommunityDiscovery(city: string | null, sortBy?: string | nul
       }
     } catch {
       if (!ctrl.signal.aborted) {
-        setState((prev) => ({ ...prev, loading: false }));
+        setState((prev) => ({ ...prev, loading: false, unavailable: true }));  // §100: a thrown read is the same failure
       }
     }
   }, [sortBy, cKey]);

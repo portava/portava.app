@@ -15,8 +15,8 @@
  * 503) is never that silence: it gets the browse list's no-rows sentence from
  * register D-W10-S1-2 ("Some trails couldn’t be loaded just now" / "This is on
  * our side, not your filters…"), the same rule DiscoveryEventPostsRail follows.
- * A transport failure, a 404 (flag off at the server) and a sign-out render
- * nothing, as the event rail's transport failure does.
+ * A 404 (flag off at the server) and a sign-out render nothing; a transport
+ * failure is a failed read and gets that sentence too (§100, D-W11X2-27).
  *
  * READ-ONLY CARDS. The client has no Trail or emerging-place screen to open, so
  * a card names the item and does not navigate (register D-W11X2-6).
@@ -69,9 +69,9 @@ export function DiscoveryOutputKindsRail({ kind, destination, enabled, refreshKe
         if (cancelled || loadIdRef.current !== myId) return;
         if (r.ok) { setItems(r.items); setFailed(false); return; }
         setItems([]);
-        setFailed(r.reason === 'unavailable');
+        setFailed(r.reason === 'unavailable' || r.reason === 'network');  // §100 (D-W11X2-27): a transport failure is a failed read too, never the empty page's silence
       })
-      .catch(() => { if (!cancelled && loadIdRef.current === myId) { setItems([]); setFailed(false); } });
+      .catch(() => { if (!cancelled && loadIdRef.current === myId) { setItems([]); setFailed(true); } });  // §100: a thrown read likewise
     return () => { cancelled = true; };
   }, [active, kind, destination, refreshKey]);
 

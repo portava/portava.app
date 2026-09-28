@@ -2756,7 +2756,7 @@ router.get("/discovery/feed", async (req, res) => {
       const coverage = feedAnnotated.length === 0 && eventPosts.length === 0 ? "nothing" : "partial";
       sendDiscoveryRefusal(
         res, feedEnvelope,
-        discoveryRefusal(failedCats.some((c) => c !== "event_posts") ? "transient_db" : viewerUnresolved ? "upstream_unavailable" : "transient_db", failedCats.some((c) => c !== "event_posts") ? "feed_places_read_failed" : viewerUnresolved ? "feed_viewer_unresolved" : "feed_event_posts_read_failed", "GET /discovery/feed", coverage, failedCats),  // §94 (D-W11X2-1): an event-post-only failure has its own code, so an alert on the places code is not raised by the posts
+        discoveryRefusal(failedCats.some((c) => c !== "event_posts") ? (failedCats.every((c) => c === DISCOVERY_OVERPASS_SOURCE || c === "event_posts") ? "upstream_unavailable" : "transient_db") : viewerUnresolved ? "upstream_unavailable" : "transient_db", failedCats.some((c) => c !== "event_posts") ? (failedCats.every((c) => c === DISCOVERY_OVERPASS_SOURCE || c === "event_posts") ? "overpass_unavailable" : "feed_places_read_failed") : viewerUnresolved ? "feed_viewer_unresolved" : "feed_event_posts_read_failed", "GET /discovery/feed", coverage, failedCats),  // §94 (D-W11X2-1): an event-post-only failure has its own code, so an alert on the places code is not raised by the posts; §100 (D-W11X2-25): an Overpass-only PLACE failure is the upstream's (upstream_unavailable / overpass_unavailable), as on GET /discovery and the counts
       );
     } else {
       res.json(feedEnvelope);

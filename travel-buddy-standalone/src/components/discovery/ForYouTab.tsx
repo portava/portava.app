@@ -16,7 +16,7 @@ import { TelegraphSendIcon } from '../icons/TelegraphSendIcon.tsx';
 import { DiscoveryShareSheet } from '../DiscoveryShareSheet.tsx';
 import type { DiscoverySharePayload } from '../DiscoveryShareSheet.tsx';
 import type { DiscoveryPlace } from '../../services/discovery.ts';
-import { getDiscoveryPlaces, getSavedPlaceIds, getCachedDiscoveryPlaces } from '../../services/discovery.ts'; import { listPartialNotice, listPartialEmptyTitle, LIST_PARTIAL_EMPTY_BODY } from '../../services/discoveryCoverageNotice.ts'; import { liveClaimsUnchecked, LIVE_UNCHECKED_NOTICE } from './liveUnchecked.ts';  // census-discovery §91 (A07)
+import { getDiscoveryPlaces, getSavedPlaceIds, getCachedDiscoveryPlaces } from '../../services/discovery.ts'; import { listPartialNotice, listPartialEmptyTitle, LIST_PARTIAL_EMPTY_BODY, listStaleNotice } from '../../services/discoveryCoverageNotice.ts'; import { liveClaimsUnchecked, LIVE_UNCHECKED_NOTICE } from './liveUnchecked.ts';  // census-discovery §91 (A07)
 import { PlaceSkeletonList } from './PlaceSkeleton.tsx';
 import PlaceCard from './PlaceCard.tsx';
 import { PlaceDetailSheet } from './PlaceDetailSheet.tsx';
@@ -112,7 +112,7 @@ export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode,
   const [source, setSource]     = useState<'compass' | 'osm' | 'none' | 'refused'>(() => ((destination ? getCachedDiscoveryPlaces(destination, 'for_you', 25, 1, intentMode)?.places.length ?? 0 : 0) > 0 ? 'osm' : 'none')); const [osmPartial, setOsmPartial] = useState(() => (destination ? getCachedDiscoveryPlaces(destination, 'for_you', 25, 1, intentMode)?.refusal?.coverage === 'partial' : false)); const [railRefreshKey, setRailRefreshKey] = useState(0); // §80 (DV-83): the OSM lane answered PARTIAL; §99: the first frame, seeded from the cache like `items` above, carries the cached page's source and coverage
   // The saved-places read is a separate surface with a separate failure: your
   // bookmarks are not the place list, and one can fail while the other works.
-  const [savedIdsUnavailable, setSavedIdsUnavailable] = useState(false); const [liveUnchecked, setLiveUnchecked] = useState(false);  // census-discovery §91 (A07): the GET /discovery page's "now" claims were withheld (meta.liveSafety)
+  const [savedIdsUnavailable, setSavedIdsUnavailable] = useState(false); const [liveUnchecked, setLiveUnchecked] = useState(false); const [loadFailed, setLoadFailed] = useState<string | null>(null);  // census-discovery §91 (A07): the GET /discovery page's "now" claims were withheld (meta.liveSafety); §100 (DV-83, D-W11X2-22): the last read FAILED in transport (network / non-2xx) — its own state, never 'none'
   const [detail, setDetail]     = useState<DiscoveryPlace | null>(null);
   const [shareItem, setShareItem] = useState<ForYouItem | null>(null);
 
@@ -264,7 +264,7 @@ export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode,
     osmPromise.then((osm) => {
       if (stale()) return;
       setLoading(false);
-      setRefreshing(false); setLiveUnchecked(osm.ok && liveClaimsUnchecked(osm.data));  // §91 (A07)
+      setRefreshing(false); setLiveUnchecked((prev) => (osm.ok ? liveClaimsUnchecked(osm.data) : prev)); setLoadFailed(osm.ok ? null : osm.error);  // §91 (A07); §100 (D-W11X2-22): a failed read says nothing about the page still on screen, so it keeps what the last good answer said
       setItems((prev) => {
         // Don't overwrite if Compass has already upgraded the feed.
         if (prev.some((i) => i.kind === 'compass')) return prev;
@@ -276,11 +276,11 @@ export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode,
         // empty city — see the `source` declaration above. A `partial` refusal
         // is NOT routed here: some of what it carries is real, and the branch
         // above has already rendered it.
-        setSource(osm.ok && osm.data.refusal?.coverage === 'nothing' ? 'refused' : 'none'); setOsmPartial(osm.ok && osm.data.refusal?.coverage === 'partial');
+        if (!osm.ok) return prev; setSource(osm.ok && osm.data.refusal?.coverage === 'nothing' ? 'refused' : 'none'); setOsmPartial(osm.ok && osm.data.refusal?.coverage === 'partial');  // §100 (DV-83, D-W11X2-22): a transport failure is NOT an answer — what is on screen (a cached page, its partial notice) stays, and `loadFailed` says the refresh failed
         return [];
       });
     }).catch(() => {
-      if (!stale()) { setLoading(false); setRefreshing(false); }
+      if (!stale()) { setLoading(false); setRefreshing(false); setLoadFailed('Network error — check your connection'); }  // §100: a rejected read is a failed read, never an empty one
     });
 
   }, [destination, isAuthed, sortBy, lat, lng, userLat, userLng, contextMode, intentMode]);
@@ -312,7 +312,7 @@ export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode,
       } else {
         setItems([]);
       }
-      setSource(cachedResult && cachedResult.places.length > 0 ? 'osm' : 'none'); setOsmPartial(cachedResult?.refusal?.coverage === 'partial');  // census-discovery §99 (DV-83): the cached page is replayed as the network served it — a partial page keeps its notice (or its partial-empty state) while the refetch loads, as DiscoveryCategoryTab's hydration does
+      setSource(cachedResult && cachedResult.places.length > 0 ? 'osm' : 'none'); setOsmPartial(cachedResult?.refusal?.coverage === 'partial'); setLoadFailed(null);  // census-discovery §99 (DV-83): the cached page is replayed as the network served it — a partial page keeps its notice (or its partial-empty state) while the refetch loads, as DiscoveryCategoryTab's hydration does
       load(cachedResult !== null); // isRefresh=true when cache hit → no skeleton
     } else {
       load(true); // keep personalized items; refresh OSM baseline without a skeleton
@@ -324,14 +324,14 @@ export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode,
     load(true);
     onRefresh?.();
   };
-
+  const loadErrorShown = source === 'none' && !osmPartial && loadFailed !== null; const staleShown = loadFailed !== null && source !== 'compass' && !items.some((i) => i.kind === 'compass') && (items.length > 0 || osmPartial);  // census-discovery §100 (DV-83, D-W11X2-22): a failed read with nothing to keep is the error state; a failed REFRESH over a kept page is a "couldn't refresh" line over it
   if (!destination) return null;
 
   if (loading && items.length === 0) {
     return <PlaceSkeletonList count={5} />;
   }
 
-  if (viewMode === 'map') {
+  if (viewMode === 'map') { const mapCoverage: ForYouMapCoverageKind = source === 'refused' ? 'refused' : loadErrorShown ? 'error' : source === 'osm' && osmPartial ? 'partial' : source === 'none' && osmPartial ? 'partial-empty' : null; const mapCommunity: ForYouMapCommunityKind = community.refused ? 'refused' : community.unavailable ? (community.places.length > 0 ? 'stale' : 'unavailable') : community.incomplete ? 'partial' : null;  // §100 (D-W11X2-24/26): the list's coverage states, both lanes, over the map
     return (
       <>
         <DiscoveryMapView
@@ -348,7 +348,7 @@ export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode,
           userLat={userLat}
           userLng={userLng}
           fallbackZoom={fallbackZoom}
-        />
+        /><ForYouMapCoverage kind={mapCoverage} community={mapCommunity} stale={staleShown} destination={destination} error={loadFailed} topInset={listTopInset ?? 0} onRetry={handleRefresh} />
         <PlaceDetailSheet
           place={detail}
           city={destination}
@@ -393,7 +393,7 @@ export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode,
             bookmark icons it explains are ON those cards. Small and quiet on
             purpose: nothing was lost, one read did not come back, and whatever
             the last good read wrote is still what the cards show. */}
-        {source === 'osm' && osmPartial && (<View style={styles.notice} testID="for-you-partial"><Text style={styles.noticeText}>{listPartialNotice('places')}</Text></View>)}{savedIdsUnavailable && (
+        {source === 'osm' && osmPartial && (<View style={styles.notice} testID="for-you-partial"><Text style={styles.noticeText}>{listPartialNotice('places')}</Text></View>)}{staleShown && (<View style={styles.notice} testID="for-you-stale"><Text style={styles.noticeText}>{`${listStaleNotice('places')} Pull to refresh.`}</Text></View>)}{savedIdsUnavailable && (
           <View style={styles.notice} testID="for-you-saved-unavailable">
             <Text style={styles.noticeText}>
               Couldn't check your saved places just now. Your saves are safe — pull to refresh.
@@ -469,7 +469,7 @@ export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode,
           );
         })}
 
-        {source === 'none' && osmPartial && (<View style={styles.empty} testID="for-you-partial-empty"><Sparkles size={28} color={color.faint} /><Text style={styles.emptyTitle}>{listPartialEmptyTitle('places')}</Text><Text style={styles.emptyDesc}>{LIST_PARTIAL_EMPTY_BODY}</Text></View>)}{source === 'none' && !osmPartial && (
+        {source === 'none' && osmPartial && (<View style={styles.empty} testID="for-you-partial-empty"><Sparkles size={28} color={color.faint} /><Text style={styles.emptyTitle}>{listPartialEmptyTitle('places')}</Text><Text style={styles.emptyDesc}>{LIST_PARTIAL_EMPTY_BODY}</Text></View>)}{loadErrorShown && (<View style={styles.empty} testID="for-you-error"><Sparkles size={28} color={color.faint} /><Text style={styles.emptyTitle}>{FOR_YOU_ERROR_TITLE}</Text><Text style={styles.emptyDesc}>{`${loadFailed}. Pull to refresh.`}</Text></View>)}{source === 'none' && !osmPartial && !loadErrorShown && (
           <View style={styles.empty}>
             <Sparkles size={28} color={color.faint} />
             <Text style={styles.emptyTitle}>No recommendations yet</Text>
@@ -542,7 +542,7 @@ export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode,
           </View>
         )}
 
-        {community.incomplete && !community.refused && (<View style={styles.notice} testID="for-you-community-partial"><Text style={styles.noticeText}>{listPartialNotice('traveler places')}</Text></View>)}{community.gems.length > 0 && (
+        {community.incomplete && !community.refused && (<View style={styles.notice} testID="for-you-community-partial"><Text style={styles.noticeText}>{listPartialNotice('traveler places')}</Text></View>)}{community.unavailable && !community.refused && (community.gems.length > 0 || community.picks.length > 0 ? (<View style={styles.notice} testID="for-you-community-stale"><Text style={styles.noticeText}>{`${listStaleNotice('traveler places')} Pull to refresh.`}</Text></View>) : (<View style={styles.communitySection}><View style={styles.empty} testID="for-you-community-unavailable"><Sparkles size={28} color={color.faint} /><Text style={styles.emptyTitle}>{COMMUNITY_UNAVAILABLE_TITLE}</Text><Text style={styles.emptyDesc}>{`We couldn't load traveler places for ${destination} just now. Pull to refresh.`}</Text></View></View>))}{/* §100 (D-W11X2-26): a failed community read is said, never the quiet city's silence */}{community.gems.length > 0 && (
           <View style={styles.communitySection}>
             <HiddenGemsSection gems={community.gems} onAddToRoute={onAddToRoute} />
           </View>
@@ -807,3 +807,89 @@ const styles = StyleSheet.create({
 });
 
 export default ForYouTab;
+
+// ── census-discovery §100 (lane W11-X2 round 4; DV-83, §99.8 findings 1 and 3) ──
+//
+// D-W11X2-22: a TRANSPORT failure (network, non-2xx) is its own state. With
+// nothing on screen it is the error state, in DiscoveryCategoryTab's words
+// ("Couldn't load places" + the failure); over a page already on screen (a
+// cached page, or the last good answer) it is one line saying the refresh
+// failed, and the page — with its partial notice, if it had one — stays.
+//
+// D-W11X2-24: map mode used to return before any of the list's coverage states,
+// so a refused, partial or failed read drew a plain map. The same states, with
+// the same testIDs, now sit in a banner over the map, below its filter row and
+// clear of its right-hand buttons, with a "Try again" (a map has no
+// pull-to-refresh).
+const FOR_YOU_ERROR_TITLE = "Couldn't load places";
+
+type ForYouMapCoverageKind = 'refused' | 'error' | 'partial' | 'partial-empty' | null;
+/** The community lane's own state (D-W11X2-26): its pins are on the same map. */
+type ForYouMapCommunityKind = 'refused' | 'unavailable' | 'stale' | 'partial' | null;
+const COMMUNITY_UNAVAILABLE_TITLE = "Traveler places aren't loading right now";
+
+function ForYouMapCoverage({ kind, community, stale, destination, error, topInset, onRetry }: {
+  kind: ForYouMapCoverageKind; community: ForYouMapCommunityKind; stale: boolean; destination: string; error: string | null; topInset: number; onRetry: () => void;
+}) {
+  if (kind === null && community === null && !stale) return null;
+  return (
+    <View style={[mapCoverageStyles.wrap, { top: topInset + 58 }]} pointerEvents="box-none">
+      <View style={mapCoverageStyles.card}>
+        {kind === 'refused' && (
+          <View testID="for-you-refused">
+            <Text style={styles.emptyTitle}>Places aren't loading right now</Text>
+            <Text style={styles.emptyDesc}>{`We couldn't load places for ${destination} just now — this is on our side, not yours.`}</Text>
+          </View>
+        )}
+        {kind === 'error' && (
+          <View testID="for-you-error">
+            <Text style={styles.emptyTitle}>{FOR_YOU_ERROR_TITLE}</Text>
+            <Text style={styles.emptyDesc}>{error}</Text>
+          </View>
+        )}
+        {kind === 'partial' && (
+          <View testID="for-you-partial"><Text style={styles.noticeText}>{listPartialNotice('places')}</Text></View>
+        )}
+        {kind === 'partial-empty' && (
+          <View testID="for-you-partial-empty">
+            <Text style={styles.emptyTitle}>{listPartialEmptyTitle('places')}</Text>
+            <Text style={styles.emptyDesc}>{LIST_PARTIAL_EMPTY_BODY}</Text>
+          </View>
+        )}
+        {stale && (
+          <View testID="for-you-stale"><Text style={styles.noticeText}>{listStaleNotice('places')}</Text></View>
+        )}
+        {community === 'refused' && (
+          <View testID="for-you-community-refused"><Text style={styles.noticeText}>{`${COMMUNITY_UNAVAILABLE_TITLE} — this is on our side, not yours.`}</Text></View>
+        )}
+        {community === 'unavailable' && (
+          <View testID="for-you-community-unavailable"><Text style={styles.noticeText}>{`${COMMUNITY_UNAVAILABLE_TITLE}.`}</Text></View>
+        )}
+        {community === 'stale' && (
+          <View testID="for-you-community-stale"><Text style={styles.noticeText}>{listStaleNotice('traveler places')}</Text></View>
+        )}
+        {community === 'partial' && (
+          <View testID="for-you-community-partial"><Text style={styles.noticeText}>{listPartialNotice('traveler places')}</Text></View>
+        )}
+        <Pressable style={mapCoverageStyles.retry} onPress={onRetry} hitSlop={6}>
+          <Text style={mapCoverageStyles.retryText}>Try again</Text>
+        </Pressable>
+      </View>
+    </View>
+  );
+}
+
+const mapCoverageStyles = StyleSheet.create({
+  wrap: { position: 'absolute', left: 14, right: 58 },
+  card: {
+    gap: space.sm,
+    paddingVertical: space.md,
+    paddingHorizontal: space.md,
+    borderRadius: radius.md,
+    backgroundColor: color.paperRaised,
+    borderWidth: 1,
+    borderColor: color.haze,
+  },
+  retry: { alignSelf: 'flex-start', paddingVertical: space.xs },
+  retryText: { ...t.bodyStrong, color: color.signalStrong },
+});

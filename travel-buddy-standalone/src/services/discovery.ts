@@ -785,8 +785,8 @@ export async function getDiscoveryPlaces(
  * Uses broad defaults (radius 25 km, no open-now, no min-rating) so the counts
  * reflect the full set of available places for the destination.
  * Skips `for_you` — the personalised feed has no stable total count.
- * Individual failures are silently dropped; only successful responses contribute
- * to the returned map.
+ * Individual failures, refusals and PARTIAL answers are dropped (§100); only a
+ * complete count contributes to the returned map — an absent key is "unknown".
  */
 const COUNTABLE_CATEGORIES: DiscoveryCategory[] = [
   'places', 'food', 'nightlife', 'activities', 'events', 'beaches', 'transport',
@@ -819,9 +819,9 @@ export async function getDiscoveryCategoryCounts(
     // warns about for the batch sibling.
     //
     // An ABSENT key is the only honest value this return type can carry for
-    // "not counted". `coverage: "partial"` is NOT this case — the total it
-    // carries is a real count over real rows, so it is reported.
-    if (refusedEverything(result.value.data.refusal)) return;
+    // "not counted". §100 (D-W11X2-23): `coverage: "partial"` is this case too —
+    // its total counts only the sources that ANSWERED, so it is not the count.
+    if (refusedEverything(result.value.data.refusal)) return; if (result.value.data.refusal?.coverage === 'partial') return;  // census-discovery §100 (DV-83, D-W11X2-23): omitted = unknown; the badge row never dims or prints an absent key
     counts[COUNTABLE_CATEGORIES[i]] = result.value.data.total;
   });
   return counts;

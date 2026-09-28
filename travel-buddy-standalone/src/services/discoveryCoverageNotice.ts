@@ -67,3 +67,14 @@ export function isPartial(refusal: CoverageLike | null | undefined): boolean {
 export function isPartialEmpty(refusal: CoverageLike | null | undefined, rows: readonly unknown[] | null | undefined): boolean {
   return isPartial(refusal) && (rows?.length ?? 0) === 0;
 }
+
+/**
+ * A browse list whose REFRESH failed in transport while the last page stays on
+ * screen (census-discovery §100, DV-83, register D-W11X2-22). The rows kept are
+ * a real earlier answer, so they stay; the person is told they may be out of
+ * date rather than shown them as a fresh, complete answer — or losing them to
+ * an empty state the failed read never established.
+ */
+export function listStaleNotice(noun: string): string {
+  return `Couldn’t refresh just now, so these ${noun} may be out of date.`;
+}

@@ -145,7 +145,7 @@ describe("§94.10 — Overpass failing is a named source, not a smaller city", (
     assert.ok(body.places.length >= 1);
     assert.equal(body.refusal?.coverage, "partial");
     assert.ok(body.refusal?.failedSources.includes("overpass"), JSON.stringify(body.refusal));
-    assert.equal(body.refusal?.code, "feed_places_read_failed");
+    assert.equal(body.refusal?.code, "overpass_unavailable"); assert.equal(body.refusal?.class, "upstream_unavailable");  // §100 (D-W11X2-25), RESTATED from "feed_places_read_failed": an Overpass-only failure is the upstream's on the feed too, as on GET /discovery (O1) and the counts (O7); O8 keeps a DB failure on the places code
   });
 
   it("O6 a failed Overpass read is never cached: the next healthy request serves the OSM rows", async () => {
@@ -368,5 +368,35 @@ describe("§99 — the counts name an Overpass-only failure as the upstream's (D
       assert.equal(body.refusal.class, "transient_db");
       assert.equal(body.refusal.code, "category_counts_partial");
     } finally { _setTestDbPlacesOverride(null); }
+  });
+});
+
+// census-discovery §100 (lane W11-X2 round 4; DV-83, §99.8 "also recorded"),
+// register D-W11X2-25. Appended at the tail so every anchored line above keeps
+// its place. O5 (restated in place) pins the Overpass-only feed failure to the
+// class and code GET /discovery (O1) and the counts (O7) give the same failure.
+//
+//   O8  CONTROL: the feed, Overpass AND a category's DB half failed — a DB failure keeps transient_db / feed_places_read_failed
+//   O9  the feed, Overpass failed AND the event posts failed — still the upstream's: both named, overpass_unavailable
+describe("§100 (D-W11X2-25): the feed classes an Overpass-only failure as GET /discovery does", () => {
+  it("O8 CONTROL: Overpass and a DB category both failed — the DB failure keeps transient_db / feed_places_read_failed", async () => {
+    use(world({ errorTables: ["discovery_places", "places"] }));
+    overpass = "throws";
+    const body = await get(FEED);
+    assert.ok(body.refusal, JSON.stringify(body));
+    assert.ok(body.refusal.failedSources.includes("overpass"), JSON.stringify(body.refusal));
+    assert.ok(body.refusal.failedSources.some((c: string) => c !== "overpass" && c !== "event_posts"), JSON.stringify(body.refusal));
+    assert.equal(body.refusal.class, "transient_db");
+    assert.equal(body.refusal.code, "feed_places_read_failed");
+  });
+
+  it("O9 Overpass-only among the PLACE sources, whatever the posts did: upstream_unavailable / overpass_unavailable", async () => {
+    use(world());
+    overpass = "429";
+    const body = await get(FEED);
+    assert.equal(body.refusal?.coverage, "partial", JSON.stringify(body.refusal));
+    assert.deepEqual(body.refusal.failedSources.filter((c: string) => c !== "event_posts"), ["overpass"]);
+    assert.equal(body.refusal.class, "upstream_unavailable");
+    assert.equal(body.refusal.code, "overpass_unavailable");
   });
 });

@@ -4,7 +4,7 @@ import {
 } from 'react-native';
 import { Search } from 'lucide-react-native';
 import type { DiscoveryCategory, DiscoveryContextMode, DiscoveryFilters, DiscoveryPlace } from '../../services/discovery.ts';
-import { getDiscoveryPlaces, getCachedDiscoveryPlaces } from '../../services/discovery.ts'; import { listPartialNotice, listPartialEmptyTitle, LIST_PARTIAL_EMPTY_BODY } from '../../services/discoveryCoverageNotice.ts'; import { liveClaimsUnchecked, LIVE_UNCHECKED_NOTICE } from './liveUnchecked.ts';  // census-discovery §91 (A07)
+import { getDiscoveryPlaces, getCachedDiscoveryPlaces } from '../../services/discovery.ts'; import { listPartialNotice, listPartialEmptyTitle, LIST_PARTIAL_EMPTY_BODY, listStaleNotice } from '../../services/discoveryCoverageNotice.ts'; import { liveClaimsUnchecked, LIVE_UNCHECKED_NOTICE } from './liveUnchecked.ts';  // census-discovery §91 (A07)
 import { color, space, radius, type as t } from '../../theme/tokens.ts';
 import PlaceCard from './PlaceCard.tsx';
 import { PlaceSkeletonList } from './PlaceSkeleton.tsx';
@@ -410,7 +410,7 @@ export function DiscoveryCategoryTab({
   const [error, setError]           = useState<string | null>(null);
   const [page, setPage]             = useState(1);
   const [total, setTotal]           = useState(0);  const [moreRefused, setMoreRefused] = useState(false); const [partial, setPartial] = useState(false);  // DV-83: page ≥ 2 was REFUSED — see load(); §80: a page came back PARTIAL
-  const [locationNudge, setLocationNudge] = useState(false); const [liveUnchecked, setLiveUnchecked] = useState(false);  // census-discovery §91 (A07): the served page's "now" claims were withheld (meta.liveSafety)
+  const [locationNudge, setLocationNudge] = useState(false); const [liveUnchecked, setLiveUnchecked] = useState(false); const [refreshFailed, setRefreshFailed] = useState(false);  // census-discovery §91 (A07): the served page's "now" claims were withheld (meta.liveSafety); §100 (DV-83, D-W11X2-22): the last PAGE-1 read failed in transport while places stayed on screen
   const loadingMore                 = useRef(false);
   const nudgeOpacity                = useRef(new Animated.Value(0)).current;
   const nudgeTimer                  = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -463,7 +463,7 @@ export function DiscoveryCategoryTab({
   const load = useCallback(async (nextPage: number, currentFilters: DiscoveryFilters, reset: boolean) => {
     if (!destination) return;
     if (reset) setLoading(true);
-    setError(null); setMoreRefused(false);
+    setError(null); setMoreRefused(false); if (nextPage === 1) setRefreshFailed(false);
 
     // Read user coords from refs so this callback stays stable across GPS updates.
     // The location-change effect is the sole handler that re-fires when the user
@@ -498,7 +498,7 @@ export function DiscoveryCategoryTab({
     loadingMore.current = false;
 
     if (!res.ok) {
-      setError(res.error);
+      setError(res.error); setRefreshFailed(nextPage === 1);  // §100 (D-W11X2-22): a failed page-1 read over places on screen is a failed REFRESH, and is said to be one
       return;
     }
 
@@ -641,9 +641,9 @@ export function DiscoveryCategoryTab({
       {loading && places.length === 0 ? (
         <PlaceSkeletonList count={6} />
       ) : viewMode === 'map' ? (
-        <DiscoveryMapView key={destination} places={places} onSelectPlace={onSelectPlace} fallbackLat={lat} fallbackLng={lng} userLat={userLat} userLng={userLng} fallbackZoom={fallbackZoom} topInset={listTopInset} />
+        <><DiscoveryMapView key={destination} places={places} onSelectPlace={onSelectPlace} fallbackLat={lat} fallbackLng={lng} userLat={userLat} userLng={userLng} fallbackZoom={fallbackZoom} topInset={listTopInset} /><CategoryMapCoverage kind={error && places.length === 0 ? 'error' : places.length === 0 && partial ? 'partial-empty' : partial ? 'partial' : null} stale={refreshFailed && places.length > 0} error={error} topInset={listTopInset} onRetry={handleRefresh} /></>
       ) : error && places.length === 0 ? (
-        <View style={styles.center}>
+        <View style={styles.center} testID="discovery-category-error">
           <Text style={styles.emptyTitle}>Couldn't load places</Text>
           <Text style={styles.emptyDesc}>{error}</Text>
           <Pressable style={styles.retryBtn} onPress={() => load(1, filters, true)}>
@@ -660,7 +660,7 @@ export function DiscoveryCategoryTab({
       ) : (
         <FlatList
           testID="main-scroll"
-          data={places} ListHeaderComponent={partial ? <Text style={styles.emptyDesc} testID="discovery-category-partial">{listPartialNotice('places')}</Text> : null}
+          data={places} ListHeaderComponent={partial ? <><Text style={styles.emptyDesc} testID="discovery-category-partial">{listPartialNotice('places')}</Text>{refreshFailed ? <Text style={styles.emptyDesc} testID="discovery-category-stale">{`${listStaleNotice('places')} Pull to refresh.`}</Text> : null}</> : refreshFailed ? <Text style={styles.emptyDesc} testID="discovery-category-stale">{`${listStaleNotice('places')} Pull to refresh.`}</Text> : null}
           keyExtractor={(item) => item.id}
           renderItem={({ item }) => (
             <PlaceCard
@@ -807,3 +807,55 @@ const nudge = StyleSheet.create({
 });
 
 export default DiscoveryCategoryTab;
+
+// ── census-discovery §100 (lane W11-X2 round 4; DV-83, §99.8 finding 3) ──────
+//
+// D-W11X2-24: the render chain tested `viewMode === 'map'` before its error,
+// partial-empty and partial branches, so in map mode a refused page, a failed
+// read and a partial page all drew a plain map. The same states, with the
+// list's testIDs and words, sit in a banner over the map — below its filter row
+// and clear of its right-hand buttons — with the list's "Try again".
+// D-W11X2-22: a failed page-1 refresh over places on screen is said to be one.
+function CategoryMapCoverage({ kind, stale, error, topInset, onRetry }: {
+  kind: 'error' | 'partial' | 'partial-empty' | null; stale: boolean; error: string | null; topInset: number; onRetry: () => void;
+}) {
+  if (kind === null && !stale) return null;
+  return (
+    <View style={[mapCoverage.wrap, { top: topInset + 58 }]} pointerEvents="box-none">
+      <View style={mapCoverage.card}>
+        {kind === 'error' && (
+          <View testID="discovery-category-error">
+            <Text style={styles.emptyTitle}>Couldn't load places</Text>
+            <Text style={styles.emptyDesc}>{error}</Text>
+          </View>
+        )}
+        {kind === 'partial-empty' && (
+          <View testID="discovery-category-partial-empty">
+            <Text style={styles.emptyTitle}>{listPartialEmptyTitle('places')}</Text>
+            <Text style={styles.emptyDesc}>{LIST_PARTIAL_EMPTY_BODY}</Text>
+          </View>
+        )}
+        {kind === 'partial' && <Text style={styles.emptyDesc} testID="discovery-category-partial">{listPartialNotice('places')}</Text>}
+        {stale && <Text style={styles.emptyDesc} testID="discovery-category-stale">{listStaleNotice('places')}</Text>}
+        <Pressable style={mapCoverage.retry} onPress={onRetry} hitSlop={6}>
+          <Text style={mapCoverage.retryText}>Try again</Text>
+        </Pressable>
+      </View>
+    </View>
+  );
+}
+
+const mapCoverage = StyleSheet.create({
+  wrap: { position: 'absolute', left: 14, right: 58 },
+  card: {
+    gap: space.sm,
+    paddingVertical: space.md,
+    paddingHorizontal: space.md,
+    borderRadius: radius.md,
+    backgroundColor: color.paperRaised,
+    borderWidth: 1,
+    borderColor: color.haze,
+  },
+  retry: { alignSelf: 'center', paddingVertical: space.xs },
+  retryText: { ...t.bodyStrong, color: color.signalStrong },
+});

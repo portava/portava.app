@@ -244,17 +244,43 @@ describe('getDiscoveryCategoryCounts (per-category fallback)', () => {
     expect('beaches' in counts).toBe(true);
   });
 
-  it('CONTROL: a PARTIAL refusal carries a real count, so it IS reported', async () => {
-    // `coverage: "partial"` means some sources answered; the total it carries is
-    // a real number about real rows. Dropping it would discard a true count.
+  // RESTATED by census-discovery §100 (lane W11-X2 round 4), register
+  // D-W11X2-23. This case used to read "CONTROL: a PARTIAL refusal carries a
+  // real count, so it IS reported" and asserted `counts.nightlife === 7`. §99.8
+  // finding 2 showed what that costs: a partial total is the count of the
+  // sources that ANSWERED, so an Overpass-only failure over an empty DB half
+  // reads 0 and the badge row dims the tab as empty, and a DB-only 7 is printed
+  // as the whole count. The badge row has one honest value for "not fully
+  // counted" — an absent key, which it renders as no count and never dims — so
+  // a partial category is omitted exactly as a refused one is.
+  it('OMITS a PARTIAL category: its total counts only the sources that answered, so it is not the count (§100)', async () => {
     serveByCategory({
       nightlife: {
         places: [{ id: 'node/9' }], total: 7, destination: 'Miami', cached: false,
         refusal: { ...COUNT_REFUSAL, coverage: 'partial' },
       },
+      places: { places: [{ id: 'node/1' }], total: 42, destination: 'Miami', cached: false },
     });
     const counts = await getDiscoveryCategoryCounts('Miami');
-    expect(counts.nightlife).toBe(7);
+    expect(counts.nightlife).toBeUndefined();
+    expect('nightlife' in counts).toBe(false);
+    expect(counts.places).toBe(42);
+  });
+
+  it('OMITS a PARTIAL zero: an Overpass-only failure over an empty DB half is never a definitive 0 (§99.8 finding 2)', async () => {
+    serveByCategory({
+      food: {
+        places: [], total: 0, destination: 'Miami', cached: false,
+        refusal: { class: 'upstream_unavailable', code: 'overpass_unavailable', route: 'GET /discovery', coverage: 'partial', failedSources: ['overpass'] },
+      },
+    });
+    const counts = await getDiscoveryCategoryCounts('Miami');
+    // app/(tabs)/discovery.tsx dims a tab whose count is exactly 0; an absent
+    // key is rendered as no count, and never dimmed.
+    expect(counts.food).toBeUndefined();
+    expect('food' in counts).toBe(false);
+    // A complete category beside it is still counted, zero included.
+    expect(counts.beaches).toBe(0);
   });
 
   it('CONTROL: every category answering gives the full set — the positive control', async () => {
