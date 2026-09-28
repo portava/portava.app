@@ -310,7 +310,7 @@ export function useInputAssistance(
 
         if (res.ok) {
           const finalized = finalizeSuggestions(res.suggestions, policy.maxSuggestions);
-          if (cacheable && !res.refusal) sharedSuggestionCache.set(cacheKey, finalized); // §80: an outage is never cached
+          if (res.refusal) { /* §80: an outage (refused or partial) is never cached */ } else if (cacheable) sharedSuggestionCache.set(cacheKey, finalized);
           setSuggestions(finalized); setRefusal(res.refusal ?? null);
           setUnavailable(false);
           setLoading(false);
