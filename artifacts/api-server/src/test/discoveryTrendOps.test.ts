@@ -168,7 +168,7 @@ describe("R — DV-31: cooled places are retested, periodically, in a bounded sl
         let flag = "";
         const b: any = {
           select() { return b; }, eq(_c: string, v: string) { flag = v; return b; }, neq() { return b; }, in() { return b; },
-          gte() { return b; }, order() { return b; }, range() { return b; },
+          gte() { return b; }, order() { return b; }, range() { return b; }, limit() { return b; },  // limit: §93 (H-W10T-1) reads trend_integrity_reviews — none recorded here
           maybeSingle() { return Promise.resolve({ data: flag in flags ? { enabled: flags[flag] } : null, error: null }); },
           then(res: (v: unknown) => unknown) { return Promise.resolve({ data: table === "rank_events" ? events : [], error: null }).then(res); },
         };

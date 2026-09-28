@@ -56,7 +56,7 @@ import { RECOMMENDATION_ID_SHAPE } from "./rankEventsProvenance.js";
 import {
   isTrendState, trendReasonFor,
   type DiscoveryTrendState, type TrendReasonCode,
-} from "./discoveryTrendState.js"; import { explainTrendReading, trendDriverCode, TREND_STATE_MODEL_VERSION_V2, type TrendDriverCode } from "./discoveryTrendState.js"; import type { TrendDriver, TrendLifecycle } from "./discoveryTrendNormalised.js";  // §84 (W10-R1)
+} from "./discoveryTrendState.js"; import { explainTrendReading, trendDriverCode, TREND_STATE_MODEL_VERSION_V2, applyPlaceTrendReviewsToRows, type TrendDriverCode } from "./discoveryTrendState.js"; import type { TrendDriver, TrendLifecycle } from "./discoveryTrendNormalised.js";  // §84 (W10-R1)
 
 /** The route's gate, seeded FALSE by 3410. Read with isFlagEnabled: fail-closed. */
 export const TREND_API_FLAG = "discovery_trending_api_enabled";
@@ -309,7 +309,7 @@ export async function readTrendSnapshot(sc: any, itemIds: readonly string[]): Pr
       .eq("computed_at", top["computed_at"])
       .in("place_id", [...new Set(itemIds)]);
     if (body?.error) return failureOf(body.error);
-    const snapRows = Array.isArray(body?.data) ? (body.data as TrendSnapshotRow[]) : []; if (run.modelVersion === TREND_STATE_MODEL_VERSION_V2) return { ok: true, run, rows: snapRows, areas: await readAreaRows(sc, top["computed_at"] as string, snapRows) }; return { ok: true, run, rows: snapRows };
+    const snapRows = await applyPlaceTrendReviewsToRows(sc, Array.isArray(body?.data) ? (body.data as TrendSnapshotRow[]) : []);  /* §93 (H-W10T-1): a suppressed place reads `unknown`; an unread review drops the row */ if (run.modelVersion === TREND_STATE_MODEL_VERSION_V2) return { ok: true, run, rows: snapRows, areas: await readAreaRows(sc, top["computed_at"] as string, snapRows) }; return { ok: true, run, rows: snapRows };
   } catch {
     // resolves-not-throws-ok: a throw is an unknown answer, stated as one.
     return { ok: false, reason: "trend_read_failed" };
@@ -455,7 +455,7 @@ export async function readLocatedRun(sc: any, destination: string, states: reado
       .select(`${SNAPSHOT_COLUMNS}, driver, lifecycle_state, cell_key, velocity`)
       .eq("source_surface", "discovery").eq("computed_at", head.run.computedAt).eq("city", destination).in("trend_state", [...states]);
     if (error) return failureOf(error);
-    return { ok: true, run: head.run, unavailable: null, rows: Array.isArray(data) ? (data as LocatedRow[]) : [] };
+    return { ok: true, run: head.run, unavailable: null, rows: await applyPlaceTrendReviewsToRows(sc, Array.isArray(data) ? (data as LocatedRow[]) : []) };  // §93 (H-W10T-1)
   } catch {
     // resolves-not-throws-ok: a throw is an unknown answer, stated as one.
     return { ok: false, reason: "trend_read_failed" };

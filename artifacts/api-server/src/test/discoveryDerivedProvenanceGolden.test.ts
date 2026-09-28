@@ -212,7 +212,7 @@ function trendDb(rows: Row[]) {
         order(_c: string, o?: { ascending?: boolean }) { desc = o?.ascending === false; return b; },
         limit(n: number) { limitN = n; return b; },
         then(res, rej) {
-          if (table !== "place_momentum") throw new Error(`trendDb: ${table}`);
+          if (table === "trend_integrity_reviews") return Promise.resolve({ data: [] as Row[], error: null as null }).then(res, rej); if (table !== "place_momentum") throw new Error(`trendDb: ${table}`);  // §93 (H-W10T-1): 3486 readable, no review recorded — the rows are served as stored
           let out = rows.filter((r) => filters.every((f) => f(r)));
           out = [...out].sort((a, z) => (String(a["computed_at"]) < String(z["computed_at"]) ? -1 : 1) * (desc ? -1 : 1));
           if (limitN !== null) out = out.slice(0, limitN);
@@ -390,7 +390,7 @@ function corpusClient(flag: "absent" | "false" | "error") {
     from(table: string) {
       let range: [number, number] = [0, rows.length - 1];
       const b: any = {
-        select() { return b; }, eq() { return b; }, neq() { return b; }, in() { return b; }, gte() { return b; }, order() { return b; },
+        select() { return b; }, eq() { return b; }, neq() { return b; }, in() { return b; }, gte() { return b; }, order() { return b; }, limit() { return b; },
         range(a: number, z: number) { range = [a, z]; return b; },
         maybeSingle() {
           if (table !== "feature_flags") throw new Error(`corpusClient: ${table}.maybeSingle`);
@@ -398,7 +398,7 @@ function corpusClient(flag: "absent" | "false" | "error") {
           return Promise.resolve({ data: flag === "false" ? { enabled: false } : null, error: null });
         },
         then(res: (v: unknown) => unknown, rej: (e: unknown) => unknown) {
-          if (table !== "rank_events") throw new Error(`corpusClient: ${table}`);
+          if (table === "trend_integrity_reviews") return Promise.resolve({ data: [], error: null }).then(res, rej); if (table !== "rank_events") throw new Error(`corpusClient: ${table}`);  // §93 (H-W10T-1): no review recorded
           return Promise.resolve({ data: rows.filter((r) => r.outcome !== "analytics").slice(range[0], range[1] + 1), error: null }).then(res, rej);
         },
       };
