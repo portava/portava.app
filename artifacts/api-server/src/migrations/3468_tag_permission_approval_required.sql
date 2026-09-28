@@ -29,7 +29,7 @@
 -- the type without the value, and REFUSES while any profile holds it.
 --
 -- Rollback: db/rollback/2026-09-28-3468-tag-permission-approval-required-rollback.sql
-
+BEGIN;
 DO $pre$
 BEGIN
   IF to_regtype('public.tag_permission_level') IS NULL THEN
@@ -41,10 +41,10 @@ BEGIN
 END
 $pre$;
 
--- Outside a transaction block, so the value is committed before anything reads it.
+-- Inside the file's one transaction (PostgreSQL 12+, as 3350 does): nothing below uses the new value before COMMIT.
 ALTER TYPE public.tag_permission_level ADD VALUE IF NOT EXISTS 'approval_required';
 
-BEGIN;
+
 
 INSERT INTO public.feature_flags (flag, enabled, description) VALUES
   (
