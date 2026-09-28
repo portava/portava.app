@@ -4067,6 +4067,18 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     // cites the two suites that were seen red on the event and route rules and on the counts.
     "artifacts/api-server/src/test/discoveryTrailMemberVisibility.test.ts",
     "artifacts/api-server/src/test/db/trailsMemberVisibility.db.test.ts",
+    // census-discovery §68 (lane P21): DC-17's store-owned versions and place_momentum.feature_version
+    // (3435, its rollback), A03's signal-grounded nearby_now sentence, and the suites both rows cite.
+    "artifacts/api-server/src/migrations/3435_place_momentum_feature_version.sql",
+    "db/rollback/2026-09-28-3435-place-momentum-feature-version-rollback.sql",
+    "artifacts/api-server/src/test/discoveryDerivedProvenance.test.ts",
+    "artifacts/api-server/src/test/discoveryDerivedProvenanceGolden.test.ts",
+    "artifacts/api-server/src/test/discoveryReasonTruth.test.ts",
+    "artifacts/api-server/src/test/db/placeMomentumFeatureVersion.db.test.ts",
+    "artifacts/api-server/src/test/discoveryDerivedStoreProvenance.test.ts",
+    "artifacts/api-server/src/test/discoveryRankProvenance.test.ts",
+    // A03's "open" is backed only by Compass's open_now factor, which fires on isOpenNow === true; §68.1 cites it.
+    "artifacts/api-server/src/compass/CompassRecommendationEngine.ts",
   ],
   // ── ADDED 2026-09-15: census-passport joins the CHECKABLE set ──────────────
   //
