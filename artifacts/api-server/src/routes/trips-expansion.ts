@@ -48,7 +48,7 @@ import {
   sendKernelRejection,
   setTripVersionHeader,
   type TripKernelResult,
-} from "../domain/trips/commands/tripKernel.js";
+} from "../domain/trips/commands/tripKernel.js"; import { tripPlanningObjectiveOrder } from "../lib/discoverySurfaceObjectiveRank.js";  // census-discovery §93 (DV-09)
 
 const router = Router();
 const UUID_RE = /^[0-9a-f-]{36}$/i;
@@ -1912,7 +1912,7 @@ router.get("/trips/:tripId/nearby-places", async (req, res) => {
     country: t.destination_country ?? null,
   }));
 
-  res.json({ places: shapedPlaces, destination: { city: t.destination_city, country: t.destination_country ?? null } });
+  res.json({ places: await tripPlanningObjectiveOrder(sc, user.id, t, shapedPlaces), destination: { city: t.destination_city, country: t.destination_country ?? null } });  // census-discovery §93 (DV-09): the Trip Planning objective, only with 3500's Trip Planning flag and 3450 on; else the same array
 });
 
 // ===========================================================================

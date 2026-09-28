@@ -32,7 +32,7 @@ import { startFxRefreshLoop } from "./lib/fxRefreshScheduler";
 import { startXXCatalogSweeper } from "./lib/stamps/xxCatalogRepair";
 import { startCorrectionSweep } from "./lib/stamps/countryGeocoder";
 import { runSchemaDriftCheck } from "./lib/schemaDriftCheck";
-import { startCreatorActivityScoreScheduler } from "./lib/creatorActivityScoreScheduler"; import { startCreatorAttributionScheduler } from "./lib/creatorAttributionScheduler"; // census-discovery §52 (DV-56) import { startDiscoveryTrendRebuildScheduler } from "./lib/discoveryTrendRebuildScheduler.js"; // census-discovery §84 (DC-07)
+import { startCreatorActivityScoreScheduler } from "./lib/creatorActivityScoreScheduler"; import { startPlaceCooccurrenceRebuildScheduler } from "./lib/discoveryPlaceCooccurrence.js"; /* census-discovery §95 (DV-72): hourly, one flag read until discovery_place_cooccurrence_enabled (3496, FALSE) */ import { startCreatorAttributionScheduler } from "./lib/creatorAttributionScheduler"; import { startDiscoveryTrendRebuildScheduler } from "./lib/discoveryTrendRebuildScheduler.js"; // census-discovery §52 (DV-56); §84 (DC-07)
 import { startRankingFatigueSweeper } from "./lib/rankingFatigueSweeper";
 import { startTrustMaintenanceScheduler } from "./lib/trustMaintenanceScheduler";
 import { startBuddyRequestSweeper } from "./lib/rentBuddyRequestSweeper";
@@ -290,7 +290,7 @@ app.listen(port, (err) => {
   // Creator Activity Score recalculation job — processes stale scores every
   // 4 hours in batches of 500, stale-first. Pure background work; never on
   // the hot path of a live feed request.
-  startCreatorActivityScoreScheduler(); startCreatorAttributionScheduler(); // census-discovery §52 (DV-56): the travel_partner attribution producer, one flag read an hour until creator_attribution_enabled (2922, seeded FALSE) startDiscoveryTrendRebuildScheduler(); // §84 (DC-07): rebuild_place_momentum every 5 min, one flag read per tick until discovery_trend_rebuild_scheduler_enabled (3475, seeded FALSE)
+  startCreatorActivityScoreScheduler(); startCreatorAttributionScheduler(); startPlaceCooccurrenceRebuildScheduler(); /* §95 */ startDiscoveryTrendRebuildScheduler(); // census-discovery §52 (DV-56): the travel_partner attribution producer, one flag read an hour until creator_attribution_enabled (2922, seeded FALSE) | §84 (DC-07): rebuild_place_momentum every 5 min, one flag read per tick until discovery_trend_rebuild_scheduler_enabled (3475, seeded FALSE)
   // Post → canonical place backfill: resolves existing posts that have a
   // canonical_location_id but no canonical_place_id to the venue-level
   // places table. Stops automatically when the backlog is exhausted.

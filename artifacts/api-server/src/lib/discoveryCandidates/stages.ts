@@ -78,7 +78,7 @@ export async function pdePreRankStages<T extends PdePlace>(
     // what the viewer receives, unless the caller says otherwise.
     if (opts.generateCandidates ?? opts.served) {
       try {
-        const g = await generateCandidates(sc, places, viewer, { nowMs, category: opts.category, circle: flags.circleCandidates });
+        const g = await generateCandidates(sc, places, viewer, { nowMs, category: opts.category, circle: flags.circleCandidates, center: opts.center ?? null });
         places = g.places; pipe.sourcesById = g.sourcesById; pipe.submitterById = g.submitterById;
         stages.candidateGeneration = g.report;
       } catch {
@@ -157,5 +157,17 @@ export async function pdePostRankStages<T extends PdePlace>(
     stages.graphReading = { ...stages.graphReading, provenance: prov };
     const rec = { ...prov } as Record<string, unknown>;
     for (const s of scoredById.values()) stampPdeItemPipeline(s, { graphReadingProvenance: rec });
+  }
+}
+
+// ── census-discovery §95 (lane W11-X3; D-W11X3-3) ────────────────────────────
+// The request's reference point reaches generation through rankForViewer's
+// options. Declared here, by module augmentation, because lib/discoveryPde.ts is
+// another lane's file; the two serve points in routes/discovery.ts pass it
+// (routed hunk R-X3-1, census §95). Absent ⇒ null ⇒ distanceKm null, as before.
+declare module "../discoveryPde.js" {
+  interface PdeRankOptions {
+    /** The route's `distRef` (userCoords ?? the request's coordinates). */
+    center?: { lat: number; lng: number } | null;
   }
 }

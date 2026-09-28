@@ -71,6 +71,8 @@ export interface GenerateOptions {
   category?: string | null;
   /** `discovery_circle_candidates_enabled` — the consent-gated source (D-W10-R3-4). */
   circle: boolean;
+  /** §95 (D-W11X3-3): the request's reference point; a generated row's distanceKm is measured from it, as the route measures its own. */
+  center?: { lat: number; lng: number } | null;
 }
 
 /**
@@ -136,7 +138,7 @@ export async function generateCandidates<T extends PdePlace>(
     };
   }
 
-  const mat = await materialiseCandidates(sc, [...wanted].sort(), { viewerId: viewer.userId, cityPrefix, admitted });
+  const mat = await materialiseCandidates(sc, [...wanted].sort(), { viewerId: viewer.userId, cityPrefix, admitted, center: opts.center ?? null });
   report.materialiseFailedReads = mat.failedReads;
   report.refused = mat.refused;
 

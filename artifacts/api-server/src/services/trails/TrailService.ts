@@ -460,9 +460,9 @@ export async function recordTrailHealthSnapshot(
 // ── §8 spotlight modules (DV-21, DV-22, DV-23, DV-13) ───────────────────────
 
 export interface TrailModule {
-  key: "just_arrived" | "trending_now" | "evergreen" | "local_picks" | "hidden_gems"; // §86: hidden_gems only behind discovery_trail_exploration_enabled
+  key: "just_arrived" | "trending_now" | "evergreen" | "local_picks" | "hidden_gems" | "personalized_picks"; // §86: hidden_gems only behind discovery_trail_exploration_enabled; §93: personalized_picks only behind 3500 + 3450
   /** §8: "Each spotlight has its own objective and time horizon." */
-  objective: "recency" | "momentum" | "durable_quality" | "curation" | "response_under_exposure";
+  objective: "recency" | "momentum" | "durable_quality" | "curation" | "response_under_exposure" | "trail_objective";
   horizonMs: number | null;
   items: Array<{ id: string; sourceType: string; sourceId: string; contentState: string }>;
   /** §10's "more from this place" remainder for anything the diversity pass held back. */
@@ -686,7 +686,7 @@ export async function getTrailModules(
   });
   const served = linkVenueClusters(await servableMembers(sc, m.members, opts.viewerId ?? null, nowMs), geo); // §86 (DV-23): a post's venue → the place member of that venue
 
-  if (flags.exploration) return trailModulesExplored(sc, trailId, m.members, served, health, { nowMs, pageSize, flags }); const demoted = flags.healthOrder ? healthDemotedRowIds(m.members, health, nowMs) : null; // §86 — ONE `rank_events` read serves both of this function's readings: §9's
+  if (flags.exploration) return trailModulesExplored(sc, trailId, m.members, served, health, { nowMs, pageSize, flags, viewerId: opts.viewerId ?? null }); const demoted = flags.healthOrder ? healthDemotedRowIds(m.members, health, nowMs) : null; // §86 — ONE `rank_events` read serves both of this function's readings: §9's
   // exposure denominators for the exploration candidates and `trending_now`'s
   // momentum for the place members. Both are read in BOTH served id spaces
   // (`readMemberEvents`), on the surface the momentum loader reads.
@@ -814,7 +814,7 @@ export async function getTrailModules(
   const justArrived = build("just_arrived", "recency", 7 * DAY, explorationCandidates, reserved);
   justArrived.explorationSlots = explorationSlots;
 
-  return boundCreatorsAcrossPage(served, {
+  const picks = await trailPersonalizedPicks(sc, served, opts.viewerId ?? null, nowMs); return boundCreatorsAcrossPage(served, {  // §93 (DV-09): `02` §8 Personalized Picks on `01` §9's Trail objective — null (no module, nothing else read) unless 3500's Trail flag and 3450 are both on
     refusal: null,
     health,
     momentumProvenance,
@@ -823,7 +823,7 @@ export async function getTrailModules(
       build("trending_now", "momentum", 2 * DAY, byMomentum),
       build("evergreen", "durable_quality", null,
         byConfidence.filter((r) => r.content_state === "evergreen" || r.content_state === "featured")),
-      build("local_picks", "curation", null, byConfidence.filter((r) => r.source === "curated")),
+      build("local_picks", "curation", null, byConfidence.filter((r) => r.source === "curated")), ...(picks ? [build("personalized_picks", "trail_objective", null, picks)] : []),
     ],
   }); // §86 (DV-13): one creator across the whole Trail page
 }
@@ -1833,7 +1833,7 @@ import {
 } from "../../lib/discoveryTrailHealth.js";
 import { isTrailContentState, TRAIL_SIGNALS } from "../../lib/discoveryTrailObject.js";
 import { normalizeLocationName, haversineKm } from "../../lib/canonicalLocations.js";
-import type { AttachSourceVerdict } from "./trailAttachIntegrity.js";
+import type { AttachSourceVerdict } from "./trailAttachIntegrity.js"; import { trailPersonalizedPicks } from "../../lib/discoverySurfaceObjectiveRank.js";  // §93 (W11-X1, DV-09)
 
 /** What serving one flag-on modules page owes the database, settled after the response (`settleTrailModulesServe`). */
 export interface TrailServeEffects {
@@ -2018,7 +2018,7 @@ function responseOrder(measured: Record<string, TrailExposureCount> | null) {
 
 async function trailModulesExplored(
   sc: any, trailId: string, members: readonly MemberRow[], served: ServableMember[], health: TrailHealth,
-  o: { nowMs: number; pageSize: number; flags: TrailRankingFlags },
+  o: { nowMs: number; pageSize: number; flags: TrailRankingFlags; viewerId?: string | null },
 ): Promise<TrailModulesResult> {
   const { nowMs, pageSize } = o;
   const demoted = o.flags.healthOrder ? healthDemotedRowIds(members, health, nowMs) : null;
@@ -2078,7 +2078,7 @@ async function trailModulesExplored(
     [...arrived, ...retest.filter((r) => reserved.has(r.id))], pageSize, reserved, demoted);
   justArrived.explorationSlots = explorationSlots;
 
-  const result = boundCreatorsAcrossPage(served, {
+  const picks = await trailPersonalizedPicks(sc, view, o.viewerId ?? null, nowMs); const result = boundCreatorsAcrossPage(served, {  // §93 (DV-09): as the default branch, over the decided states
     refusal: null, health, momentumProvenance,
     modules: [
       justArrived,
@@ -2087,7 +2087,7 @@ async function trailModulesExplored(
         [...view].filter((r) => r.content_state === "growing").sort(responseOrder(measured)), pageSize, null, demoted),
       buildTrailModule("evergreen", "durable_quality", null,
         byConfidence.filter((r) => r.content_state === "evergreen" || r.content_state === "featured"), pageSize, null, demoted),
-      buildTrailModule("local_picks", "curation", null, byConfidence.filter((r) => r.source === "curated"), pageSize, null, demoted),
+      buildTrailModule("local_picks", "curation", null, byConfidence.filter((r) => r.source === "curated"), pageSize, null, demoted), ...(picks ? [buildTrailModule("personalized_picks", "trail_objective", null, picks, pageSize, null, demoted)] : []),
     ],
   });
   return { ...result, serveEffects: { transitions, served: result.modules.flatMap((m) => m.items), nowMs } };

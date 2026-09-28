@@ -35,12 +35,16 @@ describe('kernels', () => {
     assert.equal(actionabilityScore(null, NOW), 0);
   });
 
-  it('availability fit honors explicit windows and never infers', () => {
+  // RESTATED by census-discovery §93 (W11-X1, D-W11X1-1): A11's free-time arms
+  // are deleted (D-W10S2-7), so the fit is 0 for every input, a caller that
+  // still hands the old fields included. It still never infers.
+  it('availability fit never infers, and holds no free-time arithmetic of its own (A11)', () => {
     const c: RankCandidate = { id: 'e', kind: 'event', startsAt: iso(3 * HOUR) };
-    assert.equal(availabilityFitScore(c, ctx(), NOW), 0);                              // no data → 0
-    assert.equal(availabilityFitScore(c, ctx({ availableNow: true }), NOW), 1);        // fits tonight
-    assert.equal(availabilityFitScore(c, ctx({ availableMinutes: 60 }), NOW), -0.5);   // outside layover window
-    assert.equal(availabilityFitScore(c, ctx({ availableMinutes: 300 }), NOW), 1);     // inside window
+    const legacy = (extra: Record<string, unknown>): ViewerContext => ({ ...ctx(), ...extra } as ViewerContext);
+    assert.equal(availabilityFitScore(c, ctx(), NOW), 0);                                          // no data → 0
+    assert.equal(availabilityFitScore(c, legacy({ availableNow: true }), NOW), 0);                 // was 1
+    assert.equal(availabilityFitScore(c, legacy({ availableMinutes: 60 }), NOW), 0);               // was -0.5
+    assert.equal(availabilityFitScore(c, legacy({ availableMinutes: 300 }), NOW), 0);              // was 1
   });
 
   it('social proof is log-scaled and dampened for unknown/low trust', () => {
@@ -64,7 +68,7 @@ describe('objective: realized value beats virality', () => {
       id: 'viral', kind: 'post', createdAt: iso(-1 * HOUR),
       city: 'Elsewhere', likeCount: 50_000,
     };
-    const ranked = rankCandidates([viralPost, event], ctx({ city: 'cebu city', availableNow: true }),
+    const ranked = rankCandidates([viralPost, event], ctx({ city: 'cebu city' }),  // §93: `availableNow` dropped with A11's arms (D-W11X1-1); the event still wins on actionability, capacity, city and trust
       { exploration: false, diversity: false });
     assert.equal(ranked[0].candidate.id, 'event-tonight');
   });

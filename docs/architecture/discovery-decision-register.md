@@ -1172,6 +1172,18 @@ Lane W10-S1, 2026-09-28, branch `disc-w10-s1-search`. Census section: census-dis
     - `lib/inputAssistance/searchCandidates.ts` `sanitizeQuery`;
     - pinned by `discoverySearchQueryPolicy` Q7a–Q7e (every hidden-mark class, one at a time), Q8a–Q8c and Q9.
 
+- **The backslash (round 3, independent verification of `5a434ec7b`).** In a LIKE pattern `\` is the escape character, and the search pattern escaped `%` and `_` but not `\` itself. So "kiosk\" sent `%kiosk\%`, where the trailing `\` escaped the closing wildcard, and "k\iosk" sent `%k\iosk%`, which matches "kiosk". Rule: **every user string that reaches a LIKE pattern is literal**; `\`, `%` and `_` are each escaped with `\`.
+  - `lib/inputAssistance/searchCandidates.ts` `sqlPattern` now escapes `\` as well. "kiosk\" finds only the row that literally holds it, "k\iosk" does not find "Kiosk Row", and "100%" does not match "1000 Lakes".
+  - `lib/inputAssistance/duplicateDetection.ts` spliced names into `.or()` through the shared `lib/postgrestFilter.ts#safeOrIlikeValue`, which LIKE-escapes first and then strips `\` as an `.or()` structural character, so it removes the escapes it has just added: a place named "100%" was scanned as `100<anything>`. The scan now strips the `.or()` structure first and LIKE-escapes second, so no user backslash survives and the escapes do.
+  - Every other place a user string reaches `ilike` on the search and gateway paths was checked and is safe by construction: `discoverySearchCanonical.ts` and `canonicalLocations.ts` match on `searchKey` / `normalizeLocationName` output (`[a-z0-9\s]` only), and `socialIdentity.ts` matches a hashtag slug (`[A-Za-z0-9]`).
+  - **Not changed here:** the shared helper itself. It is not this lane's file, and `routes/follows.ts` and `routes/tags.ts` use it; it is routed in census-discovery §80.13.
+  - **Then fixed (§80.14, at the coordinator's request):** the shared helper now strips first and escapes second, the same order. Its callers `routes/follows.ts` (`GET /users/search`), `routes/tags.ts` (`GET /tags/suggestions`) and `services/airport/AirportProfileService.ts` (`searchAirports`) now match `%` and `_` literally. Pinned by `src/test/postgrestFilterLikeEscape.test.ts` on the helper and over HTTP on the two routes. Those routes' census rows belong to census-passport, census-layover and census-discovery's own non-search rows; each got an argued staleness acknowledgement and none is re-graded.
+- **Uncased scripts (round 4).** The in-word rule reads CASE, so it said nothing about scripts without case, and there every emoji separated. Thai, Lao, Khmer, Myanmar, Han and kana are written without spaces between words, so a gap inserted there is never a boundary the person typed, and it breaks the substring match ("กรุง🔥เทพ" searched "กรุง เทพ", which cannot find "กรุงเทพ").
+  - **Decision:** an emoji between two letters of a script written without spaces is removed without a gap, like the lowercase case. Uncased scripts that do space their words (Arabic, Hebrew) keep the separating default, because nothing in the text says the emoji is inside a word. A change of script is a boundary ("tokyo🔥東京" → "tokyo 東京").
+  - **And the gateway strips before it transliterates.** It used to transliterate first, so an in-word emoji split the word the transliteration dictionary looks up: "моск🔥ва" keyed "moskva" while "москва" keyed "moscow". Stripping first gives the emoji-free word's key in every script.
+  - **Where:** `lib/inputAssistance/queryNormalizer.ts` (`SPACELESS` and `IN_WORD_EMOJI_RE` at the foot; the first three steps of `normalizeQuery`). Pinned by `discoverySearchQueryPolicy` Q8e; Q8d's title now says it covers cased scripts.
+  - Pinned by `discoverySearchQueryPolicy` Q10a–Q10d and Q11a. The in-word rule is also pinned for Greek and Cyrillic (Q8d: "αθ🔥ήνα" → "αθήνα", "моск🔥ва" → "москва", "Москва🔥Питер" → "Москва Питер").
+
 ### D-W10-S1-2 — partial coverage: may a consumer render `partial` as complete, and in what words (DV-83 ground 2; D-8, second half)
 
 - **Question:** census-discovery §60.8 Q1, verbatim: *"May a Discovery consumer render a `coverage: "partial"` answer as a complete result with no notice … Or must every consumer that renders a list surface `failedSources` … If the second, which wording is ratified?"*
@@ -1285,6 +1297,23 @@ Lane W10-S1, 2026-09-28, branch `disc-w10-s1-search`. Census section: census-dis
   - **Where:**
     - Code: `travel-buddy-standalone/src/platform/input-assistance/services/inputAssistance.ts` (`withBudget`).
     - Tests: `services/__tests__/requestTimeout.component.test.ts`, with fake timers.
+
+- **The missing policy (round 3, independent verification of `5a434ec7b`).** With no authoritative policy table — never fetched, the fetch failed, another account's table, past the 12 h expiry, or a newer `policyVersion` noted — `global_search` resolves to the conservative policy, whose `minChars` is unreachable. The gateway hook then returns before any request and reports `unavailable = false`, so under (c) the legacy typeahead never started either: the search bar did nothing. The table was refetched only on auth events, so a failed startup fetch stayed failed for the session, and a mounted hook never re-read the store.
+  - **Decision:** a non-authoritative `global_search` policy counts as the gateway being unavailable, and the legacy typeahead runs. The gateway still obeys the conservative policy and sends nothing. The fallback is `GET /discovery/suggest`, the same matcher (`dispatchSearch`) the gateway calls, with the server's own rules applied, so this does not widen what the viewer may see; it keeps search working while the assistance policy is missing.
+  - **Refresh on use.** While the field is used without a current table, the policy is fetched again, through the store and fetcher `installInputPolicySync` installed, at most once per 30 s (`POLICY_RETRY_MIN_GAP_MS`) and one at a time. It is not a schedule: no typing, no fetch. A failed fetch still relaxes nothing (`refreshPolicies` installs only a payload that survives `PolicyStore.install`).
+  - **A mounted screen picks the table up.** `useInputAssistance` keys its resolved policy on `policyEpoch()` (active account, held account, version, and whether the table is current), so a table that lands, expires or is superseded changes the field on the next render instead of the next mount. The search hook re-renders when a refresh installs a table, so the gateway takes over again without a keystroke.
+  - **Scope:** only `global_search` falls back to the legacy route, because only it has one. Refresh on use is wired from this hook only; the `policyEpoch()` re-read applies to every field.
+  - **Reversibility:** `legacyEnabled` and `preferGateway` in `useGlobalSearchSuggestions.ts`, the memo key in `useInputAssistance.ts`, and the `bindPolicyRefreshOnUse` call in `installInputPolicySync.ts`, each one line.
+  - **Where:**
+    - Code: `travel-buddy-standalone/src/hooks/useGlobalSearchSuggestions.ts` (`legacyEnabled`, `preferGateway`, `usePolicyRefreshOnUse`); `platform/input-assistance/hooks/useInputAssistance.ts` (the memo key and `policyAuthoritative` in the result); `platform/input-assistance/services/policyStore.ts#policyEpoch`; `platform/input-assistance/services/policyRefreshOnUse.ts` (new); `platform/input-assistance/services/installInputPolicySync.ts` (the binding).
+    - Tests: `src/hooks/__tests__/useGlobalSearchSuggestions.missingPolicy.component.test.tsx`, which runs the real gateway hook inside the real search hook with no policy seeded, and `services/__tests__/policyRefreshOnUse.component.test.ts`. The two mocked-gateway suites (`singleSystem`, `refused`) now state `policyAuthoritative: true` in their stand-in, the premise every case there already described (a healthy gateway); no assertion changed.
+
+- **The handoff (round 4).** When the table landed mid-typing, the legacy hook turned off at once and the gateway, which had not answered yet, was shown empty for about one debounce. That contradicted this hook's own rule that it never replaces a live legacy list with an empty one.
+  - **Decision:** once the screen has shown legacy rows, it keeps showing them, and keeps the legacy hook running so they stay current, until the gateway has answered the query currently typed. Then it switches, once, with no mixing.
+  - "Answered" is `useInputAssistance`'s new `answeredText`: the text of a served answer (network or an exact cache hit). A local-tier list shown while the answer is fetched is not an answer.
+  - The cost is at most one duplicate request per keystroke typed during the handoff. It ends at the gateway's first answer.
+  - **Also pinned:** the re-render when a table lands, and the shared in-flight refresh attempt that lets a second mounted field see the same landing. Neither had a test that failed without it.
+  - **Where:** `useGlobalSearchSuggestions.ts` (`handoff`, the legacy hook's `enabled`, `preferGateway`); `useInputAssistance.ts` (`answeredText`). Tests: `missingPolicy` (three round-4 cases), `policyRefreshOnUse` (the in-flight case), `useInputAssistance.answeredText`.
 
 ### D-W10-S1-5 — the Map search sheet on the gateway (A08 reason 3)
 
@@ -1501,6 +1530,156 @@ Lane W10-S1, 2026-09-28, branch `disc-w10-s1-search`. Census section: census-dis
 - **Consequence of approving.** The integrity stage cannot run on data whose use the owner has not confirmed, and no output kind is served unmeasured.
 - **Consequence of declining.** Both flags can be switched on in D-W10-R3-13's original order. The integrity stage would still record `detector_off` until 3451 is on, and the kinds would be served without impressions.
 - **Recovery path.** Any flag off takes effect on the next read (30-second caches). Nothing here writes.
+
+## W11-X3 — projections and client
+
+*Lane W11-X3, 2026-09-28, branch `disc-w11-x3-data` from `3cc027a06`. Census section §95. Every new behaviour is behind a flag seeded FALSE: two new ones in 3496, and the client legs behind the server's existing 3467 and 3468 flags. Migrations 3495–3496 are applied to the local PostgreSQL 16 harness only. Controlled data only; nothing here claims real-world effectiveness.*
+
+### D-W11X3-1 — `place_cooccurrence` is built from places that share a Trail, and only from that
+
+- **The question:** census-discovery W11A-B10 (§92.3), W10D-C5 and §61.12 Q2: *"Is place co-occurrence computed from people's itineraries, trip sequences and transitions … or only from places sharing a Trail, which needs no personal data?"* W10D-C5 recommends the Trail form and names it as the form built either way.
+- **Options considered:**
+  - (a) Itinerary / trip-sequence co-occurrence. A behavioural inference over people; it needs the owner's consent answer (W10D-C5). Not built.
+  - (b) Trail membership: two places co-occur when a non-archived Trail holds both. `content_trails` records an editorial act, as 3416's common-content relation already treats it. **Chosen.**
+  - (c) (b) plus archived Trails. Rejected: an archived Trail no longer vouches for its members, and the Trail read path withholds it.
+- **Decision and rationale:** (b). Pairs are stored once (`place_a < place_b`), counted as the number of distinct non-archived Trails that hold both; several labels on one place are one membership. A Trail holding more than 100 places contributes no pair: its n² pairs would swamp every curated Trail and say nothing about which two places belong together. No strength is computed, because `05` §6 gives no formula (§61.6); the count and its source window are the ingredients. The table's CHECK admits only basis `shared_trail`, so a people-derived basis needs a new migration and the owner's answer. One flag, `discovery_place_cooccurrence_enabled` (3496, FALSE), gates both the hourly rebuild tick and the reader. The reader answers ids with lineage, never rows; a serving surface still applies its own eligibility.
+- **Reversibility:** turn the flag off; 3495's rollback drops the table and function. The projection is derived, so a rebuild restores every row.
+- **Where it is implemented:** `src/migrations/3495_place_cooccurrence_trail_projection.sql`, `src/migrations/3496_discovery_w11x3_flags.sql`, `src/lib/discoveryPlaceCooccurrence.ts`, `src/index.ts` (one call on an existing line). Tests: `src/test/db/placeCooccurrenceRebuild.db.test.ts` R1–R6, `src/test/discoveryPlaceCooccurrence.test.ts` C1–C6, T1, M1–M3.
+
+### D-W11X3-2 — "visitors post afterward" joins the v2 classifier's convergence input
+
+- **The question:** W11A-B9 (§92.3) and AR-W11A-2: build the one `03` §6 signal that needs no new data use — posts after a visit, from PUBLISHED, PUBLIC Memories, aggregated, with at least two distinct travellers, behind a new FALSE flag — without touching the circles, crews and visits legs.
+- **Options considered:**
+  - (a) Count every public post at the place. Rejected: `03` §6 says *afterward*; a post with no visit behind it is not convergence.
+  - (b) Count authors who posted after their own positive Discovery outcome at the place, and add their independence clusters to the window's group count G. **Chosen.**
+  - (c) Add them as activity. Rejected: activity is per exposure (D-W10-R1-1); a post is not a served impression's conversion, and it would move the rate.
+- **Decision and rationale:** (b), with four rules.
+  - *Who counts:* `memories.state = 'published' AND visibility = 'public'` only, the Compass builder's rule (`isPublicWorldMemory`), restated because this module may not import the engine.
+  - *K-floor, twice:* at least 2 distinct qualifying authors per key and window, and again at least 2 among the authors NEW to the window (not already one of its activity actors). No count this leg adds rests on one person.
+  - *Independence:* the new authors are clustered by Sensing's clustering (`clusterByIndependence`), so two accounts posting in lockstep are one group.
+  - *Only adds:* G never falls. Activity, exposure and rate are unchanged. The evidence carries counts only (`postConvergence`), never an author id; an unreadable or truncated Memory read is `unread` and adds nothing.
+  - The flag `discovery_trend_post_convergence_enabled` (3496, FALSE) is read only inside the v2 branch of `loadLocalMomentum`, so with it off no Memory is read and the reading is §84's, byte for byte.
+- **What it does not reach:** the stored twin `rebuild_place_momentum_v2` (3477), which the trend API serves, is not extended. That is code still owed (census §95 open item O-1), so DV-34 does not carry `IMPLEMENTATION-COMPLETE`.
+- **Reversibility:** flag off. Nothing is stored.
+- **Where it is implemented:** `src/lib/discoveryTrendPostConvergence.ts`, the appended block of `src/lib/discoveryTrendNormalised.ts`, the pass-through in `src/lib/discoveryTrendState.ts`, and `src/lib/discoveryLocalMomentum.ts`. Tests: `src/test/discoveryTrendPostConvergence.test.ts` P0–P10, L1–L3.
+
+### D-W11X3-3 — a generated Discovery row carries the route's distance and aggregates
+
+- **The question:** D-W10-R3-1's *"two stated differences from a route-read row: `distanceKm` is null (PDE is not given the centre), and the vote/review aggregates (a route-private helper) are absent."*
+- **Options considered:**
+  - (a) Import the route's helpers. Not possible: they are private to `routes/discovery.ts`, which lanes W11-X1/X2 own.
+  - (b) Restate both helpers in a lib, pinned token for token against the route's source, and hand the reference point to generation through `rankForViewer`'s options. **Chosen.**
+- **Decision and rationale:** (b). `materialiseCandidates` measures `distanceKm` from `ctx.center` with the route's rounding, and merges `worthItCount`, `avgRating` and `reviewCount` onto curated rows exactly as `queryDbPlaces` does (canonical rows get none, as in the route; a failed read merges nothing, as in the route). `PdeRankOptions.center` is declared by module augmentation in `lib/discoveryCandidates/stages.ts`, because `lib/discoveryPde.ts` is another lane's file. The two PDE serve points in `routes/discovery.ts` must pass `center: distRef`: routed hunk R-X3-1 (census §95). Until it lands, a production generated row still has `distanceKm` null; its aggregates are already merged. Everything here runs only with 3480's flag on.
+- **Reversibility:** a code change; nothing is stored.
+- **Where it is implemented:** `src/lib/discoveryPlaceAggregates.ts`, `src/lib/discoveryCandidates/materialize.ts`, `generate.ts`, `stages.ts`. Tests: `src/test/discoveryCandidateRowParity.test.ts` R1–R5.
+
+### D-W11X3-4 — the client's Save is a Telegraph command, and "Ask me first" is offered only when the server offers it
+
+- **The question:** §81.4 routed hunks R1 (A21) and R3 (DV-76), behind the server's existing flags.
+- **Decision and rationale:**
+  - **R1:** the card's Save posts the command, then confirms its one proposed action. Only `404 feature_disabled` falls back to today's `toggleSave`, so with the flag off the person sees exactly today's behaviour. A `403` (the server's authorize said no) is shown with the server's reason, and nothing is saved by the old path: a second write path around the server's refusal would defeat `§30A.10`. A network failure is `failed`, never `fallback`, because a flag we could not read is not a flag that is off.
+  - **R3:** the server had no list of a person's pending tags, so one route is added: `GET /api/me/tags/pending`, behind the same 3468 flag, naming the tagger by @handle only. Its `feature_disabled` is the client's single capability probe. The settings list stays the four options unless the probe answers 200, or the stored choice is already `approval_required`. The inbox's Approve calls `POST /api/tags/:id/approve`; Decline calls the existing `DELETE /api/tags/:id`. A tag leaves the list only when the server accepted the answer.
+  - **Not decided here:** what `interacted` or `friends_only` mean (D-W10S2-9). `tag_permission_consent_copy_enabled` stays FALSE and owner-held; nothing here reads it.
+- **Reversibility:** a client release; with either server flag off, the client is inert.
+- **Where it is implemented:** client `src/services/discoveryCardSave.ts`, `src/components/DiscoveryCardMessage.tsx` (line-neutral), `src/services/tagging.ts`, `src/components/PendingTagInbox.tsx`, `app/profile/edit/connected.tsx`; server `src/routes/tags.ts` (appended route). Tests: the two client service suites, the two client component suites, and the server's `src/test/tagPendingInbox.test.ts`.
+
+### D-W11X3-A1 — **APPROVAL REQUIRED**: production activation of 3495–3496 and the two new flags
+
+- **Recommended action (exact), after W10D-A1's batches are applied and the API is deployed:**
+  1. Apply `3495_place_cooccurrence_trail_projection.sql`, then `3496_discovery_w11x3_flags.sql`, with the repository's applier.
+  2. `UPDATE public.feature_flags SET enabled = true WHERE flag = 'discovery_place_cooccurrence_enabled';` The hourly tick then rebuilds from Trail membership only. Verify with `SELECT count(*), max(computed_at) FROM public.place_cooccurrence;` after the next hour boundary.
+  3. `discovery_trend_post_convergence_enabled`: only after `discovery_trend_normalised_enabled` is TRUE (W10-R1's activation, D-W10-R1-17). Then `UPDATE public.feature_flags SET enabled = true WHERE flag = 'discovery_trend_post_convergence_enabled';`
+  4. The client legs follow the server's own requests: `telegraph_discovery_actions_enabled` (D-W10S2-15) and `tag_permission_approval_required_enabled` (D-W10S2-17's family), once the oldest supported client build carries this change.
+- **If approved:** the co-occurrence projection exists and is readable by a future surface; the trend classifier counts public post-after-visit convergence. Neither changes a served order at this tree: no ranker reads the projection, and the post leg only raises a group count.
+- **If declined:** nothing is read or rebuilt. DV-72 and DV-34 stay `W`.
+- **Recovery:** `UPDATE public.feature_flags SET enabled = false WHERE flag IN ('discovery_place_cooccurrence_enabled', 'discovery_trend_post_convergence_enabled');` takes effect on the next read. `db/rollback/2026-09-28-3495-…` and `…-3496-…` remove the objects; the projection is derived, so nothing is lost.
+
+W10D-C5 (the three personal projections) and AR-W11A-2 (circles, crews, visits) are unchanged and still need the owner's answer. No new consent request is written: this lane built only what those two entries already name as buildable without one.
+
+## W11-X1 — ranker core
+
+*Lane W11-X1, 2026-09-28, branch `disc-w11-x1-ranker` from `3cc027a06`. Census section §93. Items W11A-B1 (A11), W11A-B4 (DV-31), W11A-B3 (DV-09) and hunk H-W10T-1 (§86.9). Every new behaviour is behind a flag seeded FALSE, or changes nothing until an admin records a verdict. The evidence is controlled: in-process routes and libraries over in-memory databases, plus the local PostgreSQL 16 harness. None of it is production evidence, and nothing here claims real-world effectiveness.*
+
+### D-W11X1-1 — A11: the dead free-time arms are deleted, and what the golden does about it
+
+- **The question.** §81.4 hunk R2 (D-W10S2-7 decided the deletion; §92.3 W11A-B1 routed it here): delete `availableNow` and `availableMinutes` from `ViewerContext` and both arms of `availabilityFitScore`. §78's `portavaRankGolden.json` pins every flag-off byte of the ranker, and its `full`, `layover` and `noNeighbourhood` fixture viewers SET the two fields. The deletion therefore moves 30 of the golden's 40 hashes, although no production caller ever set either field (`discoveryFreeTimeRetirement` F1).
+- **Options considered.**
+  - (a) Keep the arms. Declined: D-W10S2-7 decided the deletion, and Trips `:185` forbids the independent calculation.
+  - (b) Re-capture the golden from the new ranker. Declined as stated: that is going green by fiat.
+  - (c) Remove the two fields from the fixture's viewers, and re-capture the golden with the BASE ranker (`3cc027a06`) over those viewers. Then prove that the new ranker reproduces that file byte for byte, from the stripped viewers AND from the original viewers.
+- **Decision.** (c). Transcript (§93.4): base ranker on stripped viewers = new ranker on stripped viewers = new ranker on the original viewers, sha256 `665bb6a6…` for all three. The ten `empty` hashes did not move; the 30 that moved are exactly the scenarios whose viewer set a deleted field. The deletion is line-neutral: comment lines take the places of the deleted lines, so no census citation into `portavaRank.ts` moves. The `availabilityFit` feature stays in the record as 0, so stored feature keys keep their shape (a free-time fit from Temporal Freedom windows can later land as its own term).
+- **Tests restated, none weakened:**
+  - `discoveryFreeTimeRetirement` F2 now asserts the arms are GONE (red at `3cc027a06`);
+  - `discoveryFreeTimeDuplicate` P2 was P1's control ("a timed candidate DOES move"). It now asserts the timed candidate no longer moves (red at `3cc027a06`);
+  - `portavaRank` "availability fit" asserts 0 for the old inputs (was 1, -0.5, 1). The event-beats-viral case drops `availableNow` from its context and still passes.
+- **Reversibility.** Restore from history; the golden's old file is in history too.
+- **Where.** `lib/portavaRank.ts` (`ViewerContext`, `availabilityFitScore`), `test/helpers/portavaRankGoldenScenarios.ts`, `test/fixtures/portavaRankGolden.json`.
+
+### D-W11X1-2 — DV-31: where the rediscovery retest sits on the page
+
+- **The question.** §84.5 hunk H-W10R1-1: call `planRediscoveryRetest` inside `rankForViewer`, after the exploration governor.
+- **Decision.** As §84.5 gives it, with four stated details.
+  - It runs after the governor and before §85's post-rank stages, and only with the modifiers (2289) on. The retest pool IS the momentum load's own v2 readings for the candidate key, and that load runs only with the modifiers on. With them off nothing is read, so §47's L0 and §85's pipeline golden cannot move.
+  - The key is the same expression the momentum load was given.
+  - The moved row is stamped `rediscoveryRetest: 1`. DV-39's screen classifies the key as `exposure_coordinate` ("where/when/how an item was served"), so a served row stores it. `stages.rediscoveryRetest` records `{ id, slot, fromIndex }`, only when a place moved.
+  - Never fatal: a throw leaves the governor's page.
+- **Tests.** `discoveryRediscoveryRetestServe` Q0–Q3, through signed-in GET /discovery. Q0 pins the flag-off page to a golden captured at `3cc027a06`, before the hunk. `discoveryTrendOps` R5 ("nothing on a serve path calls it") is restated to name `lib/discoveryPde.ts` as the one caller.
+- **Reversibility.** `discovery_trend_rediscovery_retest_enabled` (3475) off. To unwire it, remove the one call.
+- **Where.** `lib/discoveryPde.ts` (`pdeRediscoveryRetestStage`, appended), `lib/discoveryRecommendationRecord.ts` (one key on the registry's last line).
+
+### D-W11X1-3 — DV-09: the three new rankers each have their own flag, and need 3450 too
+
+- **The question.** W11A-B3: route Trail, Trending and Trip Planning through `surfaceObjectiveOptions`, each behind a FALSE flag, and build the smallest honest ranker where none exists.
+- **Options considered.**
+  - (a) 3450 alone. Consequence: turning on the objectives for Discovery would also turn on three new rankers at once, with no way to roll back one surface.
+  - (b) A surface flag alone, ranking on Discovery's default weights when 3450 is off. Consequence: a fourth objective nobody specified.
+  - (c) A surface flag (3500, seeded FALSE) AND 3450, read in that order. Either off ⇒ the call site's own array, untouched.
+- **Decision.** (c). Migration 3500 seeds `discovery_trail_objective_rank_enabled`, `discovery_trending_objective_rank_enabled` and `discovery_trip_planning_objective_rank_enabled` FALSE. With the surface flag off, 3450 is not read. Each ranker is portavaRank itself (`rankCandidates` with `objective`), with no exploration slot and the ranker's default diversity plus the objective's own.
+- **Reversibility.** Any of the four flags off, on the next request. Rollback file for 3500 in `db/rollback/`.
+- **Where.** `lib/discoverySurfaceObjectiveRank.ts`; `src/migrations/3500_discovery_surface_objective_rank_flags.sql`. Tests: `discoverySurfaceObjectiveRank` S0–S5.
+
+### D-W11X1-4 — DV-09: the product details of each surface's ranker
+
+- **Trail: `02` §8's "Personalized Picks" spotlight.** It is a named spotlight nobody served, and it is the one place on a Trail page where ranking for the viewer is the product.
+  - The four existing modules keep their own §8 objectives (recency, momentum, durable quality, curation). Re-ranking them would overwrite what §8 says each is for.
+  - Candidates are the members the viewer may be served (§64), minus members out of active rotation (§7). In the explored branch they are the decided states.
+  - Inputs: the creator (followed authors, from `loadPdeViewer`), the member's place (place affinity), the attach time (recency; events fresher and places evergreen come from the objective), and `trail_relevance` = the member's own membership confidence. Inside one Trail, `01` §9's "Trail relevance" and "confidence" are the same fact. It is still capped (TRAIL_AFFINITY_MAX_CONTRIBUTION).
+  - The module is appended last, so every existing module key keeps its index. It passes through the same §10 diversity and DV-13 page bound as every module. Objective label: `trail_objective`.
+- **Trending: GET …/trending/places only, inside each claimed state.** D-W10-R1-13's state order (trending, emerging, rediscovered) stays first, because a list names states that claim a gain.
+  - Inside a state the Trending objective orders by the place's freshness (`discovery_places.created_at`), velocity (normalised to the state's fastest, because the ranker clamps a momentum input to [0,1]; still under the owner's cap), verified status and saves (de-emphasised).
+  - `for-you` keeps its decided affinity-first order, and `emerging` its fold. Both are other `11` §4 actions with their own decided orders.
+  - The objective re-orders and never decides what is listed. An unread feature read leaves the decided order. No number reaches the wire.
+- **Trip Planning: GET /trips/:tripId/nearby-places.** It is the one Discovery list the product serves inside a trip.
+  - Trip fit uses §78's kernel (`tripFitMap`) with the trip being planned as the context, whatever its dates. A trip being planned is the trip in question, and a far-off start date is not a reason to rank it as no trip.
+  - Route fit ≈ distance from the trip's destination. Saves are `discovery_places.saved_count` (save/add-to-trip behaviour). The viewer's category affinity comes from `loadPdeViewer`.
+  - Rating is not a portavaRank term, so it remains the tie-break (the input order). The response shape is unchanged; only the order moves.
+- **Not claimed.** "Itinerary utility" and "budget/availability" have no input here (Trips publishes no plan-item projection, E-7). The Trip Planning objective ranks on what exists.
+
+### D-W11X1-5 — H-W10T-1: a suppressed place review reaches the trend classifier's consumers
+
+- **The question.** §86.9: `trend_integrity_reviews` records `suppressed` on a place, but nothing read it.
+- **Decision.**
+  - `lib/discoveryTrendState` asks `TrailService.readTrendReviewVerdict(sc, "place", id)` for every reading that could publish something: a claim, or a v2 reading the retest could pick. `id` is the trend store's own place key verbatim (`rank_events.item_id` = `place_momentum.place_id`), the id an admin sees in the evidence.
+  - **suppressed** → the reading stays, as no claim: `unknown`, lifecycle `inactive`, no driver. No reason code, no sentence, no list, no retest.
+  - **unread** → the reading is removed ("not computed"), following D-W10T-11's "an unreadable review answers null, never a claim".
+  - **none** → unchanged. 3486 absent reads `none`.
+  - Applied where readings are made public: `loadLocalMomentum` (the served trend states and the retest pool), and the trend API's two stored-row readers (`readTrendSnapshot`, `readLocatedRun`).
+- **Limits, stated.**
+  - The momentum SCALAR (a capped ranking modifier, never a public claim) is not changed by a verdict. Zeroing it is a separate anti-manipulation choice, left to `03` §12's owner.
+  - One indexed single-row read per claimed place; a batch read is a follow-up.
+- **Tests restated, none weakened.** Four test fakes that threw on, or could not chain, the new read now model the table as readable and empty. The goldens they hold are unchanged. `discoveryModifiers` "thin city" adds `trend_integrity_reviews` to the tables the loader reads.
+- **Where.** `lib/discoveryTrendState.ts` (appended), one line each in `lib/discoveryLocalMomentum.ts` and `lib/discoveryTrendExplanation.ts`. Tests: `discoveryTrendReviewSuppression` T1–T4.
+
+### D-W11X1-A1 — **APPROVAL REQUIRED**: production activation of DV-09's last three surfaces and of DV-31's page call
+
+- **Recommended action, exact values, in order:**
+  1. Apply 3450 and 3500 to `portava-ci`, then to production (both only seed FALSE rows).
+  2. Set `discovery_surface_objectives_enabled = true` (3450), per D-W10-R2-A1.
+  3. Then each surface on its own, one at a time (none of the three logs a served rank today, so the rollback is the only instrument): `discovery_trip_planning_objective_rank_enabled = true`, then `discovery_trail_objective_rank_enabled = true`, then `discovery_trending_objective_rank_enabled = true` (this one also needs `discovery_trending_api_enabled` and `discovery_trend_lists_enabled`, D-W10-R1-17 step 5).
+  4. D-W10-R1-17 step 6 (`discovery_trend_rediscovery_retest_enabled = true`) is now satisfiable on the code side, because H-W10R1-1 is merged here. It still needs 2289 and the v2 flag on.
+- **If approved.** Each surface ranks on its own `01` §9 objective, and a cooled place gets its periodic retest slot.
+- **If declined.** Every deployment serves exactly today's bytes on all three surfaces and on GET /discovery (S0, Q0).
+- **Recovery.** Any flag off takes effect on the next request (the §78 flag cache is 30 s). 3500's rollback deletes its three rows only while they are FALSE. Nothing these flags gate writes anything.
 
 ## W11-X2 — serve path
 

@@ -317,3 +317,17 @@ export function _seedPolicyForTests(
   store.setActiveAccount(_TEST_ACCOUNT);
   store.install(_TEST_ACCOUNT, policyVersion, table);
 }
+
+/**
+ * census-discovery §80 round 3 (register D-W10-S1-4) — a key that changes
+ * whenever what `readActive` answers can change: who is signed in, whose table
+ * is held, which version it is, and whether it is still current (expiry and a
+ * superseding `policyVersion` both show up in `needsRefresh`). A hook that
+ * memoises a resolved policy keys the memo on this, so a table that lands, ages
+ * out or is superseded while a screen is mounted is picked up on that screen's
+ * next render instead of on its next mount.
+ */
+export function policyEpoch(store: PolicyStore = sharedPolicyStore): string {
+  const account = store.activeAccount();
+  return `${account ?? ''}|${store.heldAccount() ?? ''}|${store.heldVersion() ?? ''}|${store.needsRefresh(account) ? 'stale' : 'current'}`;
+}

@@ -6,7 +6,7 @@
  * edit to lib/portavaRank.ts or services/ranking/DiscoveryRankingService.ts.
  * It holds, per scenario, the sha256 of the rows' JSON (order, score, full
  * feature record, shortest round-trip doubles), so equal hashes mean
- * bit-identical output.
+ * bit-identical output. (Re-captured once by §93, W11-X1, for A11: see the helper's header.)
  *
  *   G1  portavaRank with no §78 input: all forty scenarios hash as captured.
  *   G2  DRS on the discovery surface with the §78 flag ABSENT and PRESENT-FALSE:

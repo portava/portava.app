@@ -93,10 +93,10 @@ export interface ViewerContext {
   interestTags?: Set<string>;
   /** Category → affinity 0–1 (learned preference engine). */
   categoryAffinities?: Record<string, number>;
-  /** Viewer availability right now (explicit opt-in systems only). */
-  availableNow?: boolean;
-  /** Minutes of free window (layover mode / availability) — actionability cap. */
-  availableMinutes?: number | null;
+  // census-discovery §93 (W11-X1; D-W10S2-7, D-W11X1-1): the two free-time
+  // inputs that stood on these four lines are DELETED. Trips `:185` forbids a
+  // consumer to calculate "free time" itself; a Temporal Freedom consumer reads
+  // the trip's windows (TripFreedomConsumers.fitInstantToWindows). Line-neutral.
   /** Author ids the viewer recently engaged with (saves/likes/comments). */
   engagedAuthorIds?: Set<string>;
   /** Item ids already seen recently — fatigue. */
@@ -273,9 +273,9 @@ export function actionabilityScore(startsAt: string | null | undefined, nowMs: n
 }
 
 /**
- * Availability fit — does the item fit the viewer's actual free window?
- * Only meaningful when the viewer has explicitly shared availability;
- * absent data contributes 0 (never inferred).
+ * Availability fit — 0 for every candidate since census-discovery §93: the
+ * ranker holds no free-time input of its own (A11). Kept as a named term so a
+ * Temporal Freedom fit can land here as its own input (D-W11X1-1).
  */
 export function availabilityFitScore(
   c: RankCandidate, ctx: ViewerContext, nowMs: number,
@@ -283,15 +283,15 @@ export function availabilityFitScore(
   if (!c.startsAt) return 0;
   const startMs = new Date(c.startsAt).getTime();
   if (!Number.isFinite(startMs)) return 0;
-  if (ctx.availableMinutes != null) {
-    // Layover/limited-window mode: must start within the window.
-    const minutesUntil = (startMs - nowMs) / 60_000;
-    return minutesUntil >= 0 && minutesUntil <= ctx.availableMinutes ? 1 : -0.5;
-  }
-  if (ctx.availableNow) {
-    const dt = startMs - nowMs;
-    return dt >= 0 && dt <= 8 * HOUR ? 1 : 0;
-  }
+  // census-discovery §93 (W11-X1): the limited-window arm and the
+  // available-now arm that stood on these nine lines are DELETED (§81.4 hunk
+  // R2, D-W10S2-7). No caller ever set either input (discoveryFreeTimeRetirement
+  // F1), so no served score moves. The term stays in the feature record as 0,
+  // so the stored feature keys keep their shape (D-W11X1-1). A future free-time
+  // fit reads Temporal Freedom windows (TripFreedomConsumers.fitInstantToWindows)
+  // and arrives as its own term, never as a scalar minute budget handed to the
+  // ranker. `ctx` and `nowMs` stay in the signature: every caller passes them,
+  // and a signature change is not this deletion.
   return 0;
 }
 

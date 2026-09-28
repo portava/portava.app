@@ -92,8 +92,15 @@ function viewer(rand: () => number): ViewerContext {
   };
 }
 
-/** Every free-time value the duplicate could be handed, including nonsense. */
-const FREE_TIME: Array<Pick<ViewerContext, "availableMinutes" | "availableNow">> = [
+/**
+ * Every free-time value the duplicate could be handed, including nonsense.
+ * census-discovery §93 (W11-X1): the two fields are no longer on ViewerContext
+ * (D-W10S2-7), so they are typed here and handed over as a caller that still
+ * set them would hand them — as extra properties the ranker must ignore.
+ */
+type FreeTime = { availableMinutes?: number | null; availableNow?: boolean };
+const withFreeTime = (ctx: ViewerContext, extra: FreeTime): ViewerContext => ({ ...ctx, ...extra } as ViewerContext);
+const FREE_TIME: FreeTime[] = [
   {},
   { availableMinutes: null },
   { availableMinutes: 0 },
@@ -119,22 +126,27 @@ describe("§57 A11 — Discovery never reaches the ranker's own free-time arithm
       const ctx = viewer(rand);
       const base = fingerprint(rankCandidates(cands, ctx));
       for (const extra of FREE_TIME) {
-        const got = fingerprint(rankCandidates(cands, { ...ctx, ...extra }));
+        const got = fingerprint(rankCandidates(cands, withFreeTime(ctx, extra)));
         assert.deepEqual(got, base, `seed ${seed}: free time ${JSON.stringify(extra)} changed a Discovery ranking`);
       }
-      for (const s of rankCandidates(cands, { ...ctx, availableMinutes: 30, availableNow: true })) {
+      for (const s of rankCandidates(cands, withFreeTime(ctx, { availableMinutes: 30, availableNow: true }))) {
         assert.equal(s.features.availabilityFit, 0, `seed ${seed}: ${s.candidate.id} carried an availability fit`);
       }
     }
   });
 
-  it("P2 CONTROL: a candidate that carries a start DOES move with availableMinutes — so P1 is not vacuous", () => {
+  it("P2 RESTATED (§93, D-W11X1-1): a candidate that carries a start no longer moves with either free-time input — the arithmetic is deleted", () => {
+    // Until §93 this was P1's CONTROL: a timed candidate DID move with
+    // availableMinutes (1 inside the window, -0.5 outside). The routed deletion
+    // (§81.4 R2) removed both arms, so the same inputs now answer 0, and P1 is a
+    // statement about every candidate, not only Discovery's untimed ones.
     const timed: RankCandidate = { id: "event/1", kind: "event", startsAt: new Date(NOW + 30 * 60_000).toISOString() } as RankCandidate;
     const ctx: ViewerContext = { userId: "v", nowMs: NOW };
-    assert.equal(availabilityFitScore(timed, { ...ctx, availableMinutes: 60 }, NOW), 1);
-    assert.equal(availabilityFitScore(timed, { ...ctx, availableMinutes: 10 }, NOW), -0.5);
-    assert.equal(availabilityFitScore({ id: "db/1", kind: "gem" } as RankCandidate, { ...ctx, availableMinutes: 10 }, NOW), 0,
-      "a Discovery candidate (no start) answers 0 before either free-time field is read");
+    assert.equal(availabilityFitScore(timed, withFreeTime(ctx, { availableMinutes: 60 }), NOW), 0);
+    assert.equal(availabilityFitScore(timed, withFreeTime(ctx, { availableMinutes: 10 }), NOW), 0);
+    assert.equal(availabilityFitScore(timed, withFreeTime(ctx, { availableNow: true }), NOW), 0);
+    assert.equal(availabilityFitScore({ id: "db/1", kind: "gem" } as RankCandidate, withFreeTime(ctx, { availableMinutes: 10 }), NOW), 0,
+      "a Discovery candidate (no start) answers 0, as before");
   });
 
   it("G1 SOURCE GUARD: the ONE Discovery module that builds a ranker context is lib/discoveryPde, and its context carries neither free-time field", () => {
@@ -161,9 +173,13 @@ describe("§57 A11 — Discovery never reaches the ranker's own free-time arithm
     // MERGES the §78 design inputs onto the context discoveryPde builds, so it is
     // a second module that touches a ViewerContext. It is pinned here by name,
     // and below it is held to the same rule — it must never add a free-time field.
-    assert.deepEqual(builders, [path.join("lib", "discoveryPde.ts"), path.join("lib", "discoveryRankDesigns.ts")], `another Discovery module builds a ranker context: ${builders.join(", ")}`);
-    const designs = readFileSync(path.join(SRC, "lib", "discoveryRankDesigns.ts"), "utf8").split("\n").map((l) => l.replace(/\/\/.*$/, "").replace(/^\s*\*.*$/, "")).join("\n");
-    assert.equal(/\bavailable(Minutes|Now)\b/.test(designs), false, "the §78 design hook hands the ranker a free-time input");
+    // Restated by census-discovery §93 (lane W11-X1, D-W11X1-3): lib/discoverySurfaceObjectiveRank.ts builds the
+    // ranker contexts of DV-09's Trail, Trending and Trip Planning surfaces; pinned by name and held to the same rule.
+    assert.deepEqual(builders, [path.join("lib", "discoveryPde.ts"), path.join("lib", "discoveryRankDesigns.ts"), path.join("lib", "discoverySurfaceObjectiveRank.ts")], `another Discovery module builds a ranker context: ${builders.join(", ")}`);
+    for (const mod of ["discoveryRankDesigns.ts", "discoverySurfaceObjectiveRank.ts"]) {
+      const code = readFileSync(path.join(SRC, "lib", mod), "utf8").split("\n").map((l) => l.replace(/\/\/.*$/, "").replace(/^\s*\*.*$/, "")).join("\n");
+      assert.equal(/\bavailable(Minutes|Now)\b/.test(code), false, `${mod} hands the ranker a free-time input`);
+    }
 
     const pde = readFileSync(path.join(SRC, "lib", "discoveryPde.ts"), "utf8");
     const at = pde.indexOf("const viewerContext: ViewerContext = {");

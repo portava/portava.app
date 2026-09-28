@@ -55,7 +55,7 @@ import { onAuthChange, getSessionUserId } from '../../../services/auth.ts';
 import { sharedPolicyStore } from './policyStore.ts';
 import { sharedSuggestionCache } from './suggestionCache.ts';
 import { clearLocalRecents } from './localZeroState.ts';
-import { fetchInputPolicies } from './policyClient.ts';
+import { fetchInputPolicies } from './policyClient.ts'; import { bindPolicyRefreshOnUse } from './policyRefreshOnUse.ts';
 import {
   applyAccountChange,
   refreshPolicies,
@@ -92,7 +92,7 @@ export function installInputPolicySync(deps: PolicySyncDeps = {}): () => void {
   const cache = deps.cache ?? sharedSuggestionCache;
   const subscribe = deps.subscribeAuth ?? onAuthChange;
   const current = deps.currentUserId ?? getSessionUserId;
-  const doFetch = deps.fetchPolicies ?? fetchInputPolicies;
+  const doFetch = deps.fetchPolicies ?? fetchInputPolicies; bindPolicyRefreshOnUse(store, doFetch); // census-discovery §80 round 3 (D-W10-S1-4): a field USED without a current table may ask again, through this same store and fetcher, throttled
 
   const recents = deps.recents ?? { clear: clearLocalRecents };
 
