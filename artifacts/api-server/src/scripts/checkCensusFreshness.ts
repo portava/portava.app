@@ -4271,6 +4271,28 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/test/db/discoveryOutcomeEnrichment.db.test.ts",
     // §82.2 DV-78 grades D-W10-O-6 on its dismiss → ITEM_HIDDEN mapping (hide ≡ not_interested).
     "artifacts/api-server/src/services/ranking/rankingAnalytics.ts",
+    // census-discovery §86 (lane W10-T, Trails product rules and admin actions): DV-13, DV-23 graded C;
+    // DV-21, DV-22, DV-24, DC-04, DC-05, DV-74, DC-20 restated. The migrations, their rollbacks, the new
+    // services and admin route, and the suites the rows cite. TrailService, the health/object libs and
+    // routes/trails.ts were already watched.
+    "artifacts/api-server/src/migrations/3485_discovery_trail_exploration_flags.sql",
+    "artifacts/api-server/src/migrations/3486_trail_moderation_audit.sql",
+    "artifacts/api-server/src/migrations/3487_trail_member_exposures.sql",
+    "artifacts/api-server/src/migrations/3488_trail_content_suggestions.sql",
+    "db/rollback/2026-09-28-3485-discovery-trail-exploration-flags-rollback.sql",
+    "db/rollback/2026-09-28-3486-trail-moderation-audit-rollback.sql",
+    "db/rollback/2026-09-28-3487-trail-member-exposures-rollback.sql",
+    "db/rollback/2026-09-28-3488-trail-content-suggestions-rollback.sql",
+    "artifacts/api-server/src/services/trails/trailExploration.ts",
+    "artifacts/api-server/src/services/trails/trailAdmin.ts",
+    "artifacts/api-server/src/routes/adminTrails.ts",
+    "artifacts/api-server/src/test/discoveryTrailProductRules.test.ts",
+    "artifacts/api-server/src/test/discoveryTrailExploration.test.ts",
+    "artifacts/api-server/src/test/adminTrailsRoutes.test.ts",
+    "artifacts/api-server/src/test/helpers/fakeTrailRulesDb.ts",
+    "artifacts/api-server/src/test/db/trailsModeration.db.test.ts",
+    "docs/architecture/discovery-decision-register.md",
+    "artifacts/api-server/src/test/discoveryTrailModifier.test.ts", // §86.8: two DC-05 cases restated
   ],
   // ── ADDED 2026-09-15: census-passport joins the CHECKABLE set ──────────────
   //

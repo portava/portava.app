@@ -257,7 +257,7 @@ export interface ServableMember extends MemberRow {
    * place here before, so §10's own case — "many near-duplicate POSTS" about
    * one place — was never clustered at all.
    */
-  clusterPlaceId: string | null;
+  clusterPlaceId: string | null; /** §86 (DV-23, E-11): the member's media kind (a post's own, else its type) and a post's text, for §10's media and content-similarity clauses. Server-side only. */ mediaType?: string | null; text?: string | null;
 }
 
 /**
@@ -307,7 +307,7 @@ export async function servableMembers(
   };
 
   const [posts, events, routes, places] = await Promise.all([
-    readRows("posts", (ids) => sc.from("posts").select("id, author_id, visibility, status, post_status, deleted_at, tombstoned_at, publish_at, trip_id, canonical_place_id, location_place_id").in("id", ids), idsOf("post")),
+    readRows("posts", (ids) => sc.from("posts").select("id, author_id, visibility, status, post_status, deleted_at, tombstoned_at, publish_at, trip_id, canonical_place_id, location_place_id, primary_media_type, media_type, content").in("id", ids), idsOf("post")),
     readRows("events", (ids) => sc.from("events").select("id, host_id, visibility, state, verified_only, trust_score_min, age_min, age_max").in("id", ids), idsOf("event")),
     readRows("route_plans", (ids) => sc.from("route_plans").select("id, owner_user_id, trip_id, status").in("id", ids), idsOf("route")),
     readRows("discovery_places", (ids) => sc.from("discovery_places").select("id, submitted_by").in("id", ids), idsOf("place")),
@@ -316,7 +316,7 @@ export async function servableMembers(
   const resolved: ServableMember[] = [];
   for (const m of members) {
     let creatorId: string | null = null;
-    let clusterPlaceId: string | null = null;
+    let clusterPlaceId: string | null = null; let mediaType: string | null = null; let text: string | null = null; // §86 (DV-23)
     if (m.source_type === "post") {
       const p = posts?.get(m.source_id);
       if (!p) continue;                                   // unread (null map) or removed
@@ -325,22 +325,22 @@ export async function servableMembers(
       if (p.publish_at && Date.parse(p.publish_at) > nowMs) continue;
       if (!decidePostReadable({ author_id: p.author_id, visibility: p.visibility, trip_id: p.trip_id }, viewerId ?? "", false, false).readable) continue;
       creatorId = typeof p.author_id === "string" ? p.author_id : null;
-      clusterPlaceId = (p.canonical_place_id ?? p.location_place_id ?? null) as string | null;
+      clusterPlaceId = (p.canonical_place_id ?? p.location_place_id ?? null) as string | null; mediaType = String(p.primary_media_type ?? p.media_type ?? "text"); text = typeof p.content === "string" ? p.content : null;
     } else if (m.source_type === "event") {
       const e = events?.get(m.source_id);
       if (!e || !access.event(e)) continue;              // §64: 2033's public-read rule, else its host only
-      creatorId = typeof e.host_id === "string" ? e.host_id : null;
+      creatorId = typeof e.host_id === "string" ? e.host_id : null; mediaType = "event";
     } else if (m.source_type === "route") {
       const r = routes?.get(m.source_id);
       if (!r || !access.route(r)) continue;              // §64: its owner, or its trip's accepted crew once active
-      creatorId = typeof r.owner_user_id === "string" ? r.owner_user_id : null;
+      creatorId = typeof r.owner_user_id === "string" ? r.owner_user_id : null; mediaType = "route";
     } else if (m.source_type === "place") {
       if (!places) continue;
       const d = places.get(m.source_id);
       creatorId = d && typeof d.submitted_by === "string" ? d.submitted_by : null;
-      clusterPlaceId = m.source_id;
+      clusterPlaceId = m.source_id; mediaType = "place";
     }
-    resolved.push({ ...m, creatorId, clusterPlaceId });
+    resolved.push({ ...m, creatorId, clusterPlaceId, mediaType, text });
   }
 
   const creatorIds = [...new Set(resolved.map((m) => m.creatorId).filter((c): c is string => typeof c === "string"))];
@@ -397,13 +397,13 @@ export async function getTrail(sc: any, trailId: string, nowMs = Date.now(), opt
 
   const m = await readMembers(sc, trailId);
   if (m.refusal) return { ...empty, refusal: m.refusal };
-
+  const geo = await readMemberGeography(sc, m.members); // §86 (DC-05): the members' geographic cells, fail-soft
   const health = computeTrailHealth({
     members: m.members.map((r) => ({
       source_id: r.source_id, contributor_id: r.contributor_id,
       confidence: Number(r.confidence), content_state: r.content_state, created_at: r.created_at,
     })),
-    reportCount: await readOpenReportCount(sc, trailId),
+    reportCount: await readOpenReportCount(sc, trailId), geoCellByItem: geo.cellBySource ?? undefined, impressionsBySource: await readMemberImpressions(sc, m.members, nowMs),
     nowMs,
   });
   const view = await servedTrailView(sc, m.members, opts.viewerId ?? null, nowMs); // §64: what GET …/:id SHOWS counts only what this viewer is served
@@ -460,9 +460,9 @@ export async function recordTrailHealthSnapshot(
 // ── §8 spotlight modules (DV-21, DV-22, DV-23, DV-13) ───────────────────────
 
 export interface TrailModule {
-  key: "just_arrived" | "trending_now" | "evergreen" | "local_picks";
+  key: "just_arrived" | "trending_now" | "evergreen" | "local_picks" | "hidden_gems"; // §86: hidden_gems only behind discovery_trail_exploration_enabled
   /** §8: "Each spotlight has its own objective and time horizon." */
-  objective: "recency" | "momentum" | "durable_quality" | "curation";
+  objective: "recency" | "momentum" | "durable_quality" | "curation" | "response_under_exposure";
   horizonMs: number | null;
   items: Array<{ id: string; sourceType: string; sourceId: string; contentState: string }>;
   /** §10's "more from this place" remainder for anything the diversity pass held back. */
@@ -476,7 +476,7 @@ export interface TrailModule {
    * "§9 could not be evaluated". A module that reported `[]` for both would let
    * a failed `rank_events` read look like a Trail with no new content.
    */
-  explorationSlots: string[] | null;
+  explorationSlots: string[] | null; /** §86 (DV-23): per place, the members this module held back and counted in `moreFromThisPlace` — never serialised; GET …/places/:placeId/more returns them. */ heldBackByPlace?: Record<string, TrailModule["items"]>;
 }
 
 export interface TrailModulesResult {
@@ -506,7 +506,7 @@ export interface TrailModulesResult {
    * recorded here so the next reader does not mistake this field for a
    * stronger guarantee than it is.
    */
-  momentumProvenance: DerivedStoreProvenance | null;
+  momentumProvenance: DerivedStoreProvenance | null; /** §86: what serving this page owes the database (flag-on only; never serialised). */ serveEffects?: TrailServeEffects;
 }
 
 const DAY = 86_400_000;
@@ -674,19 +674,19 @@ export async function getTrailModules(
   const m = await readMembers(sc, trailId);
   if (m.refusal) return { refusal: m.refusal, modules: [], health: null, momentumProvenance: null };
 
-  // §11 health is a property of the WHOLE Trail and is measured over every
-  // member; what is SERVED is the viewer's view of it (`servableMembers`).
+  const flags = await readTrailRankingFlags(sc); // §86: 3485, both FALSE-seeded; §11 health is a property of the WHOLE Trail, measured over every
+  const geo = await readMemberGeography(sc, m.members); // member; what is SERVED is the viewer's view of it (`servableMembers`). §86: cells + venue links, fail-soft
   const health = computeTrailHealth({
     members: m.members.map((r) => ({
       source_id: r.source_id, contributor_id: r.contributor_id,
       confidence: Number(r.confidence), content_state: r.content_state, created_at: r.created_at,
     })),
-    reportCount: await readOpenReportCount(sc, trailId),
+    reportCount: await readOpenReportCount(sc, trailId), geoCellByItem: geo.cellBySource ?? undefined, impressionsBySource: await readMemberImpressions(sc, m.members, nowMs),
     nowMs,
   });
-  const served = await servableMembers(sc, m.members, opts.viewerId ?? null, nowMs);
+  const served = linkVenueClusters(await servableMembers(sc, m.members, opts.viewerId ?? null, nowMs), geo); // §86 (DV-23): a post's venue → the place member of that venue
 
-  // ONE `rank_events` read serves both of this function's readings: §9's
+  if (flags.exploration) return trailModulesExplored(sc, trailId, m.members, served, health, { nowMs, pageSize, flags }); const demoted = flags.healthOrder ? healthDemotedRowIds(m.members, health, nowMs) : null; // §86 — ONE `rank_events` read serves both of this function's readings: §9's
   // exposure denominators for the exploration candidates and `trending_now`'s
   // momentum for the place members. Both are read in BOTH served id spaces
   // (`readMemberEvents`), on the surface the momentum loader reads.
@@ -727,7 +727,7 @@ export async function getTrailModules(
   // not only a place member's own id.
   const saturationItem = (r: ServableMember) => ({
     id: r.id,
-    placeId: r.clusterPlaceId,
+    placeId: r.clusterPlaceId, mediaType: r.mediaType ?? null, text: r.text ?? null,
     contributorId: r.creatorId ?? r.contributor_id,
   });
 
@@ -750,8 +750,8 @@ export async function getTrailModules(
     reserved?: ReadonlySet<string>,
   ): TrailModule => {
     const ordered = reserved && reserved.size > 0
-      ? [...rows.filter((r) => reserved.has(r.id)), ...rows.filter((r) => !reserved.has(r.id))]
-      : rows;
+      ? [...rows.filter((r) => reserved.has(r.id)), ...healthOrderedIf(rows.filter((r) => !reserved.has(r.id)), demoted)]
+      : healthOrderedIf(rows, demoted); // §86 (DC-05): behind the health-order flag, what §11 counts against the Trail is considered last
     // ONE CONTENT, ONE SLOT. A place attached as primary AND as two Signals is
     // three membership rows for one thing; the place cap used to let two of
     // them onto the same page, which is §10's saturation in its purest form.
@@ -765,10 +765,10 @@ export async function getTrailModules(
       seen.add(key);
       return true;
     });
-    const d = diversifyTrailPage(considered.map(saturationItem), { pageSize });
+    const d = diversifyTrailModule(considered.map(saturationItem), { pageSize }); // §86 (DV-23): §10's five clauses
     const kept = new Set(d.page.map((i) => i.id));
-    const items = rows.filter((r) => kept.has(r.id)).map(toItem);
-    return { key, objective, horizonMs, items, moreFromThisPlace: d.moreFromThisPlace, explorationSlots: null };
+    const items = healthOrderedIf(rows, demoted).filter((r) => kept.has(r.id)).map(toItem);
+    return { key, objective, horizonMs, items, moreFromThisPlace: d.moreFromThisPlace, explorationSlots: null, ...heldBackItems(d.heldBackByPlace, rows) };
   };
 
   const byConfidence = [...served].sort((a, b) => Number(b.confidence) - Number(a.confidence));
@@ -814,7 +814,7 @@ export async function getTrailModules(
   const justArrived = build("just_arrived", "recency", 7 * DAY, explorationCandidates, reserved);
   justArrived.explorationSlots = explorationSlots;
 
-  return {
+  return boundCreatorsAcrossPage(served, {
     refusal: null,
     health,
     momentumProvenance,
@@ -825,7 +825,7 @@ export async function getTrailModules(
         byConfidence.filter((r) => r.content_state === "evergreen" || r.content_state === "featured")),
       build("local_picks", "curation", null, byConfidence.filter((r) => r.source === "curated")),
     ],
-  };
+  }); // §86 (DV-13): one creator across the whole Trail page
 }
 
 // ── `11` §3 action 9 / DV-24 — related Trails ───────────────────────────────
@@ -859,7 +859,7 @@ export async function relatedTrails(sc: any, trailId: string): Promise<RelatedTr
   // directions, and a pair the edge table already carries is not listed twice.
   const kids = await sc.from("trails").select("id").eq("parent_trail_id", trailId);
   if (kids.error) return { refusal: refusalFor(kids.error, "relatedTrails.children"), edges: [] };
-
+  const unaccepted = await readUnacceptedEdges(sc, trailId); if (unaccepted === null) return { refusal: "db_error", edges: [] }; // §86 (DV-24): only an ACCEPTED declaration is navigable
   const listed = new Set<string>();
   const rows = [
     ...((out.data ?? []) as any[]).map((e) => ({ other: e.to_trail_id, edgeType: e.edge_type, strength: Number(e.strength), direction: "out" as const })),
@@ -868,7 +868,7 @@ export async function relatedTrails(sc: any, trailId: string): Promise<RelatedTr
       ? [{ other: t.trail.parent_trail_id, edgeType: "child", strength: 1, direction: "in" as const }] : []),
     ...((kids.data ?? []) as any[]).map((k) => ({ other: k.id as string, edgeType: "child", strength: 1, direction: "out" as const })),
   ].filter((r) => {
-    const key = `${r.other}|${r.edgeType}|${r.direction}`;
+    const key = `${r.other}|${r.edgeType}|${r.direction}`; if (unaccepted.has(key)) return false;
     if (listed.has(key)) return false;
     listed.add(key);
     return true;
@@ -901,7 +901,7 @@ export async function relatedTrails(sc: any, trailId: string): Promise<RelatedTr
 export interface TrailTrendingResult {
   refusal: TrailRefusal;
   /** Trail-level momentum in [0,1] from the SHIPPING momentum kernel, or null. */
-  momentum: number | null; /** §61.17: set ONLY when the Trail-momentum read FAILED — `momentum: null` alone also means "no members", a measured empty (DC-17). */ momentumUnread?: true;
+  momentum: number | null; /** §61.17: set ONLY when the Trail-momentum read FAILED — `momentum: null` alone also means "no members", a measured empty (DC-17). */ momentumUnread?: true; /** §86 (DV-74): a trend integrity review in force suppresses this Trail's trend. */ trendSuppressed?: true;
   /** Member items with momentum, strongest first. Never a raw score to a client. */
   items: Array<{ id: string; sourceType: string; sourceId: string }>;
   /**
@@ -931,7 +931,7 @@ export interface TrailTrendingResult {
 export const TRAIL_TRENDING_PAGE_SIZE = 20;
 
 export async function trailTrending(
-  sc: any, trailId: string, nowMs = Date.now(), opts: { viewerId?: string | null } = {},
+  sc: any, trailId: string, nowMs = Date.now(), opts: { viewerId?: string | null; ignoreTrendReview?: boolean } = {}, // §86: the admin evidence reads the trend UNDER review
 ): Promise<TrailTrendingResult> {
   // A FUNCTION, not a shared object. Every refusal path used to build its own
   // literal; spreading one constant instead would hand every one of them the
@@ -996,7 +996,7 @@ export async function trailTrending(
   const items = ranked
     .filter((r) => capped.has(r.id))
     .map((r) => ({ id: r.id, sourceType: r.source_type, sourceId: r.source_id }));
-
+  const review = opts.ignoreTrendReview ? "none" : await readTrendReviewVerdict(sc, "trail", trailId); if (review !== "none") return { refusal: null, momentum: review === "suppressed" ? 0 : null, items: [], momentumProvenance, ...(review === "suppressed" ? { trendSuppressed: true as const } : { momentumUnread: true as const }) }; // §86 (DV-74): suppressed → a measured "not trending"; unreadable → unknown, never a claim
   return { refusal: null, momentum: trailMomentum, items, momentumProvenance, ...(trailRead ? {} : { momentumUnread: true as const }) }; // §61.17: the route serves `trending: null` only for THIS
 }
 
@@ -1353,7 +1353,7 @@ export interface AttachResult {
   refusal: TrailRefusal; attached: number;
   /** §4's cap refusals, per label; and (§61) labels whose content is unknown to the actor, or has no table. */
   capRefusals: LabelRefusal[];
-  sourceRefusals?: AttachSourceRefusal[];
+  sourceRefusals?: AttachSourceRefusal[]; /** §86 (DC-20): labels held as PENDING suggestions for the content's owner — not members, no §4 budget spent. */ suggested?: number;
 }
 
 /**
@@ -1396,9 +1396,9 @@ export async function attachContentToTrail(
   // cannot be read admits NOTHING. Unknown and unseen are one answer.
   const verified = await verifyAttachSources(sc, labels, actor.userId, servableMembers);
   if (verified.unreadable) return { refusal: "source_unreadable", attached: 0, capRefusals: [] };
-  const sourceRefusals = verified.refusals;
-  const admitted = labels.filter((_, i) => verified.reasons[i] === null);
-  if (admitted.length === 0) return { refusal: null, attached: 0, capRefusals: [], sourceRefusals };
+  const ownership = await routeLabelsByOwnership(sc, t.trail, labels, verified, actor); if (ownership.refusal) return { refusal: ownership.refusal, attached: 0, capRefusals: [] }; // §86 (DC-20): who may attach, and a stranger's suggestion waits for the owner
+  const sourceRefusals = [...verified.refusals, ...ownership.refusals]; const admitted = ownership.owned; const suggested = ownership.suggested > 0 ? { suggested: ownership.suggested } : {};
+  if (admitted.length === 0) return { refusal: null, attached: 0, capRefusals: [], sourceRefusals, ...suggested };
 
   // §4's budgets are per CONTENT, not per Trail, so the held labels are read
   // across every Trail this content already belongs to.
@@ -1430,7 +1430,7 @@ export async function attachContentToTrail(
   }
   const capped = { accepted, refusals: refused };
   if (capped.accepted.length === 0) {
-    return { refusal: null, attached: 0, capRefusals: capped.refusals, sourceRefusals };
+    return { refusal: null, attached: 0, capRefusals: capped.refusals, sourceRefusals, ...suggested };
   }
 
   const confidence = actor.mode === "attach" ? 0.8 : 0.4;
@@ -1493,7 +1493,7 @@ export async function attachContentToTrail(
     }
   }
 
-  return { refusal: null, attached: rows.length, capRefusals: capped.refusals, sourceRefusals };
+  return { refusal: null, attached: rows.length, capRefusals: capped.refusals, sourceRefusals, ...suggested };
 }
 
 /** `11` §3 action 6 (detach half). Only the contributor of the row may detach it. */
@@ -1814,4 +1814,462 @@ async function insertTrailHealthSnapshotRow(sc: any, health: TrailHealth, row: T
     member_count: row.member_count, captured_at: row.captured_at,
   });
   return { error: legacy?.error ?? null };
+}
+
+// ── census-discovery §86 (lane W10-T): Trails product rules, machinery and moderation ─
+//
+// Declared at the foot, with their imports (ES imports are hoisted), so no cited
+// line above moves. Each rule names its decision in
+// docs/architecture/discovery-decision-register.md, section W10-T.
+
+import {
+  readTrailRankingFlags, decideContentTransition, insideJustArrivedHorizon, rotateExplorationSlots, exposureVerdict,
+  readTrailOwnExposures, readStateChangedAt, persistContentTransitions, recordTrailModuleExposures, stateSinceMs,
+  TRAIL_RETEST_INTERVAL_MS, JUST_ARRIVED_HORIZON_MS,
+  type TrailRankingFlags, type ContentTransition, type MeasuredExposure, type RotationCandidate,
+} from "./trailExploration.js";
+import {
+  diversifyTrailModule, healthDemotedRowIds, healthOrdered, creatorPageBoundRemovals, trailGeoCell,
+} from "../../lib/discoveryTrailHealth.js";
+import { isTrailContentState, TRAIL_SIGNALS } from "../../lib/discoveryTrailObject.js";
+import { normalizeLocationName, haversineKm } from "../../lib/canonicalLocations.js";
+import type { AttachSourceVerdict } from "./trailAttachIntegrity.js";
+
+/** What serving one flag-on modules page owes the database, settled after the response (`settleTrailModulesServe`). */
+export interface TrailServeEffects {
+  transitions: ContentTransition[];
+  served: Array<{ sourceType: string; sourceId: string }>;
+  nowMs: number;
+}
+
+function healthOrderedIf<T extends { id: string }>(rows: readonly T[], demoted: ReadonlySet<string> | null): T[] {
+  return demoted ? healthOrdered(rows, demoted) : [...rows];
+}
+
+/** `{ heldBackByPlace }` when this module held anything back for a place, else `{}` — so a module that held nothing back is byte-identical to before §86. */
+function heldBackItems(held: Record<string, string[]>, rows: readonly ServableMember[]): { heldBackByPlace?: Record<string, TrailModule["items"]> } {
+  const byId = new Map(rows.map((r) => [r.id, r]));
+  const out: Record<string, TrailModule["items"]> = {};
+  for (const [place, ids] of Object.entries(held)) {
+    out[place] = ids.map((id) => byId.get(id)).filter((r): r is ServableMember => r !== undefined)
+      .map((r) => ({ id: r.id, sourceType: r.source_type, sourceId: r.source_id, contentState: r.content_state }));
+  }
+  return Object.keys(out).length > 0 ? { heldBackByPlace: out } : {};
+}
+
+// ── DC-05 / DV-23: where members are, and which place members are one venue ───
+
+export interface MemberGeography {
+  /** source_id → §11 geographic cell (D-W10T-7); `null` when a source read failed, so the metric is unmeasured rather than skewed. */
+  cellBySource: Record<string, string> | null;
+  /** A canonical `places` id → the `discovery_places` MEMBER of the same venue (D-W10T-4). */
+  venueOf: Map<string, string>;
+}
+
+/** matchCanonical's venue rule (lib/canonicalLocations.ts: same normalised name, within VENUE_MATCH_KM = 1.5 km). */
+export const TRAIL_VENUE_MATCH_KM = 1.5;
+
+/**
+ * One read per source table, fail-soft: coordinates come from a PLACE (a place
+ * member's own row; a post's canonical place; an event's own venue), never from
+ * a post author's GPS. A route has no single location and gets no cell.
+ */
+export async function readMemberGeography(sc: any, members: readonly MemberRow[]): Promise<MemberGeography> {
+  const ids = (type: string) => [...new Set(members.filter((m) => m.source_type === type).map((m) => m.source_id))];
+  const read = async (q: () => PromiseLike<{ data: any; error: any }>, n: number): Promise<any[] | null> => {
+    if (n === 0) return [];
+    try {
+      const { data, error } = await q();
+      return error || !Array.isArray(data) ? null : data;
+    } catch { return null; }
+  };
+  const postIds = ids("post"), placeIds = ids("place"), eventIds = ids("event");
+  const posts = await read(() => sc.from("posts").select("id, canonical_place_id").in("id", postIds), postIds.length);
+  const canonicalOfPost = new Map<string, string>((posts ?? []).filter((p) => typeof p?.canonical_place_id === "string").map((p) => [String(p.id), String(p.canonical_place_id)]));
+  const canonicalIds = [...new Set([...placeIds, ...canonicalOfPost.values()])];
+  const [community, canonical, events] = await Promise.all([
+    read(() => sc.from("discovery_places").select("id, name, lat, lng").in("id", placeIds), placeIds.length),
+    read(() => sc.from("places").select("id, name, latitude, longitude").in("id", canonicalIds), canonicalIds.length),
+    read(() => sc.from("events").select("id, location_lat, location_lng").in("id", eventIds), eventIds.length),
+  ]);
+  const at = new Map<string, { name: string; lat: unknown; lng: unknown }>();
+  for (const c of canonical ?? []) at.set(String(c.id), { name: String(c.name ?? ""), lat: c.latitude, lng: c.longitude });
+  for (const d of community ?? []) at.set(String(d.id), { name: String(d.name ?? ""), lat: d.lat, lng: d.lng });
+
+  const venueOf = new Map<string, string>();
+  for (const c of canonical ?? []) {
+    const cid = String(c.id), cn = normalizeLocationName(String(c.name ?? ""));
+    const cla = Number(c.latitude), clo = Number(c.longitude);
+    if (!cn || c.latitude == null || c.longitude == null || !Number.isFinite(cla) || !Number.isFinite(clo)) continue;
+    for (const d of community ?? []) {
+      if (d.lat == null || d.lng == null || String(d.id) === cid) continue;
+      if (normalizeLocationName(String(d.name ?? "")) !== cn) continue;
+      if (haversineKm(cla, clo, Number(d.lat), Number(d.lng)) <= TRAIL_VENUE_MATCH_KM) { venueOf.set(cid, String(d.id)); break; }
+    }
+  }
+
+  let cellBySource: Record<string, string> | null = {};
+  if (posts === null || community === null || canonical === null || events === null) cellBySource = null;
+  else {
+    for (const m of members) {
+      let cell: string | null = null;
+      if (m.source_type === "place") { const g = at.get(m.source_id); cell = g ? trailGeoCell(g.lat, g.lng) : null; }
+      else if (m.source_type === "post") { const cp = canonicalOfPost.get(m.source_id); const g = cp ? at.get(cp) : undefined; cell = g ? trailGeoCell(g.lat, g.lng) : null; }
+      else if (m.source_type === "event") { const e = (events ?? []).find((x) => String(x.id) === m.source_id); cell = e ? trailGeoCell(e.location_lat, e.location_lng) : null; }
+      if (cell) cellBySource[m.source_id] = cell;
+    }
+  }
+  return { cellBySource, venueOf };
+}
+
+/** DV-23: a member clustered at a canonical venue is clustered at the place MEMBER of that venue. */
+export function linkVenueClusters(served: ServableMember[], geo: MemberGeography): ServableMember[] {
+  if (geo.venueOf.size === 0) return served;
+  return served.map((r) => {
+    const linked = r.clusterPlaceId ? geo.venueOf.get(r.clusterPlaceId) : undefined;
+    return linked ? { ...r, clusterPlaceId: linked } : r;
+  });
+}
+
+/** DC-05: impressions per member over the window, every surface, both id spaces; `null` when unread or cut. */
+export async function readMemberImpressions(sc: any, members: readonly MemberRow[], nowMs: number): Promise<Record<string, number> | null> {
+  if (members.length === 0) return {};
+  const read = await readMemberEvents(sc, members, nowMs, null);
+  if (!read || read.truncated) return null;
+  const out: Record<string, number> = {};
+  for (const r of read.rows) out[r.item_id] = (out[r.item_id] ?? 0) + 1;
+  return out;
+}
+
+// ── DV-13: one creator across the whole Trail page ────────────────────────────
+
+function boundCreatorsAcrossPage(served: readonly ServableMember[], r: TrailModulesResult): TrailModulesResult {
+  const creatorOf = new Map(served.map((s) => [s.id, s.creatorId ?? s.contributor_id ?? null]));
+  const removed = creatorPageBoundRemovals(r.modules, (id) => creatorOf.get(id) ?? null);
+  if (removed.size === 0) return r;
+  return { ...r, modules: r.modules.map((m) => ({ ...m, items: m.items.filter((i) => !removed.has(i.id)) })) };
+}
+
+// ── DV-22 / DV-21 / DC-04: the modules behind discovery_trail_exploration_enabled ─
+
+function buildTrailModule(
+  key: TrailModule["key"], objective: TrailModule["objective"], horizonMs: number | null,
+  rows: readonly ServableMember[], pageSize: number, reserved: ReadonlySet<string> | null, demoted: ReadonlySet<string> | null,
+): TrailModule {
+  const base = healthOrderedIf(rows, demoted);
+  const ordered = reserved && reserved.size > 0 ? [...base.filter((r) => reserved.has(r.id)), ...base.filter((r) => !reserved.has(r.id))] : base;
+  const seen = new Set<string>();
+  const considered = ordered.filter((r) => {
+    const k = `${r.source_type}:${r.source_id}`;
+    if (seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
+  const d = diversifyTrailModule(considered.map((r) => ({
+    id: r.id, placeId: r.clusterPlaceId, contributorId: r.creatorId ?? r.contributor_id, mediaType: r.mediaType ?? null, text: r.text ?? null,
+  })), { pageSize });
+  const kept = new Set(d.page.map((i) => i.id));
+  const items = base.filter((r) => kept.has(r.id)).map((r) => ({ id: r.id, sourceType: r.source_type, sourceId: r.source_id, contentState: r.content_state }));
+  return { key, objective, horizonMs, items, moreFromThisPlace: d.moreFromThisPlace, explorationSlots: null, ...heldBackItems(d.heldBackByPlace, rows) };
+}
+
+/** Normalised response on measured rows for hidden_gems' order: judged items by rate, then the least-exposed. */
+function responseOrder(measured: Record<string, TrailExposureCount> | null) {
+  return (a: ServableMember, b: ServableMember): number => {
+    const ea = measured?.[a.source_id] ?? null, eb = measured?.[b.source_id] ?? null;
+    const va = exposureVerdict(ea), vb = exposureVerdict(eb);
+    const judged = (v: string) => v === "expand" || v === "taper";
+    if (judged(va) !== judged(vb)) return judged(va) ? -1 : 1;
+    if (judged(va)) {
+      const ra = ea!.positives / ea!.impressions, rb = eb!.positives / eb!.impressions;
+      if (ra !== rb) return rb - ra;
+    } else {
+      const ia = ea?.impressions ?? 0, ib = eb?.impressions ?? 0;
+      if (ia !== ib) return ia - ib;
+    }
+    return Date.parse(b.created_at) - Date.parse(a.created_at);
+  };
+}
+
+async function trailModulesExplored(
+  sc: any, trailId: string, members: readonly MemberRow[], served: ServableMember[], health: TrailHealth,
+  o: { nowMs: number; pageSize: number; flags: TrailRankingFlags },
+): Promise<TrailModulesResult> {
+  const { nowMs, pageSize } = o;
+  const demoted = o.flags.healthOrder ? healthDemotedRowIds(members, health, nowMs) : null;
+  // §9 step 3 on MEASURED rows: the Discovery surface, both id spaces, for every served member.
+  const events: MemberEventRead | undefined = served.length > 0 ? await readMemberEvents(sc, served, nowMs, "discovery") : { rows: [], truncated: false };
+  const measured = events && !events.truncated ? exposureCountsFrom(events.rows, new Set(served.map((r) => r.source_id))) : null;
+  const measuredOf = (r: ServableMember): MeasuredExposure | null => (measured ? (measured[r.source_id] ?? { impressions: 0, positives: 0 }) : null);
+
+  let momentum: Record<string, number> = {};
+  let momentumProvenance: DerivedStoreProvenance | null = null;
+  const placeMembers = served.filter((r) => r.source_type === "place");
+  if (placeMembers.length > 0 && events) {
+    const placeIds = new Set(placeMembers.map((r) => r.source_id));
+    const reading = computeLocalMomentum(events.rows.filter((e) => placeIds.has(e.item_id)), nowMs);
+    momentum = { ...reading.values };
+    momentumProvenance = reading.provenance;
+  }
+
+  // §7: the move each member is owed now, decided BEFORE the page is built so
+  // the page is served from the decided states; persisted after the response.
+  const stamps = await readStateChangedAt(sc, served.map((r) => r.id));
+  const stampOf = (r: ServableMember) => (stamps ? (stamps.has(r.id) ? stamps.get(r.id)! : null) : undefined);
+  const transitions: ContentTransition[] = [];
+  const view: ServableMember[] = [];
+  const sinceById = new Map<string, number | null>();
+  for (const r of served) {
+    const createdAtMs = Date.parse(r.created_at);
+    const to = decideContentTransition({ state: r.content_state, createdAtMs, stateChangedAtMs: stampOf(r), measured: measuredOf(r), nowMs });
+    if (to && isTrailContentState(r.content_state)) transitions.push({ rowId: r.id, from: r.content_state, to });
+    sinceById.set(r.id, to ? nowMs : stateSinceMs({ state: r.content_state, createdAtMs, stateChangedAtMs: stampOf(r) }));
+    view.push(to ? { ...r, content_state: to } : r);
+  }
+  const since = (r: ServableMember) => sinceById.get(r.id) ?? null;
+
+  const byNewest = [...view].sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at));
+  const arrived = byNewest.filter((r) => (r.content_state === "just_arrived" || r.content_state === "rediscovered")
+    && insideJustArrivedHorizon({ state: r.content_state, createdAtMs: Date.parse(r.created_at), stateChangedAtMs: since(r), nowMs }));
+  const retest = byNewest.filter((r) => r.content_state === "archived_from_active_rotation" && since(r) !== null && nowMs - since(r)! >= TRAIL_RETEST_INTERVAL_MS);
+
+  // §9 steps 1, 2, 5: rotation through the backlog by denominator. Unmeasured → no reservation (as before: `null`, never `[]`).
+  const own = await readTrailOwnExposures(sc, trailId, nowMs);
+  let explorationSlots: string[] | null = null;
+  if (own && measured) {
+    const cands: RotationCandidate[] = [...arrived, ...retest].map((r) => ({
+      id: r.id, state: r.content_state, queuedAtMs: since(r) ?? Date.parse(r.created_at),
+      trailImpressions: own[`${r.source_type}:${r.source_id}`] ?? 0, measured: measuredOf(r),
+      retestDue: r.content_state === "archived_from_active_rotation",
+    }));
+    explorationSlots = rotateExplorationSlots(cands, pageSize);
+  }
+  const reserved = new Set(explorationSlots ?? []);
+
+  const byConfidence = [...view].sort((a, b) => Number(b.confidence) - Number(a.confidence));
+  const byMomentum = [...view].sort((a, b) => (momentum[b.source_id] ?? 0) - (momentum[a.source_id] ?? 0))
+    .filter((r) => (momentum[r.source_id] ?? 0) > 0 && r.content_state !== "archived_from_active_rotation"); // out of rotation means out of every module but a retest slot
+  const justArrived = buildTrailModule("just_arrived", "recency", JUST_ARRIVED_HORIZON_MS,
+    [...arrived, ...retest.filter((r) => reserved.has(r.id))], pageSize, reserved, demoted);
+  justArrived.explorationSlots = explorationSlots;
+
+  const result = boundCreatorsAcrossPage(served, {
+    refusal: null, health, momentumProvenance,
+    modules: [
+      justArrived,
+      buildTrailModule("trending_now", "momentum", 2 * DAY, byMomentum, pageSize, null, demoted),
+      buildTrailModule("hidden_gems", "response_under_exposure", MOMENTUM_BASELINE_WINDOW_MS,
+        [...view].filter((r) => r.content_state === "growing").sort(responseOrder(measured)), pageSize, null, demoted),
+      buildTrailModule("evergreen", "durable_quality", null,
+        byConfidence.filter((r) => r.content_state === "evergreen" || r.content_state === "featured"), pageSize, null, demoted),
+      buildTrailModule("local_picks", "curation", null, byConfidence.filter((r) => r.source === "curated"), pageSize, null, demoted),
+    ],
+  });
+  return { ...result, serveEffects: { transitions, served: result.modules.flatMap((m) => m.items), nowMs } };
+}
+
+/** After the response: persist the decided §7 moves (compare-and-set, 3381) and count the page's serves (3487). */
+export async function settleTrailModulesServe(sc: any, trailId: string, r: TrailModulesResult): Promise<void> {
+  const e = r?.serveEffects;
+  if (!e) return;
+  try {
+    if (e.transitions.length > 0) await persistContentTransitions(sc, e.transitions);
+    await recordTrailModuleExposures(sc, trailId, e.served, e.nowMs);
+  } catch (err) {
+    logger.warn({ trailId, err: (err as Error)?.message }, "trail module serve effects not settled");
+  }
+}
+
+// ── DV-23: "preserve access through more from this place" ─────────────────────
+
+export interface MoreFromPlaceResult {
+  refusal: TrailRefusal;
+  placeId: string;
+  /** Per module, exactly the members that module counted in `moreFromThisPlace[placeId]`. */
+  modules: Array<{ key: TrailModule["key"]; items: TrailModule["items"] }>;
+}
+
+export async function moreFromThisPlace(
+  sc: any, trailId: string, placeId: string, opts: { viewerId?: string | null; nowMs?: number } = {},
+): Promise<MoreFromPlaceResult> {
+  const r = await getTrailModules(sc, trailId, { viewerId: opts.viewerId ?? null, nowMs: opts.nowMs });
+  if (r.refusal) return { refusal: r.refusal, placeId, modules: [] };
+  return {
+    refusal: null, placeId,
+    modules: r.modules
+      .map((m) => ({ key: m.key, items: m.heldBackByPlace?.[placeId] ?? [] }))
+      .filter((m) => m.items.length > 0),
+  };
+}
+
+// ── DV-74: a trend integrity review in force ──────────────────────────────────
+
+/** The newest review's effect for one subject: `suppressed`, `none`, or `unread` (fail closed: never a claim). */
+export async function readTrendReviewVerdict(sc: any, subjectKind: "trail" | "place", subjectId: string): Promise<"suppressed" | "none" | "unread"> {
+  try {
+    const { data, error } = await sc.from("trend_integrity_reviews").select("verdict, created_at")
+      .eq("subject_kind", subjectKind).eq("subject_id", subjectId)
+      .order("created_at", { ascending: false }).limit(1);
+    if (error) return isMissingRelation(error) ? "none" : "unread"; // 3486 absent ⇒ no review can have been recorded
+    const latest = Array.isArray(data) ? data[0] : null;
+    return latest?.verdict === "suppressed" ? "suppressed" : "none";
+  } catch {
+    return "unread";
+  }
+}
+
+// ── DV-24: declared relationships ─────────────────────────────────────────────
+
+/** 3486's pending/rejected edges touching this Trail, keyed as `relatedTrails` keys a row; `null` = unreadable. */
+async function readUnacceptedEdges(sc: any, trailId: string): Promise<Set<string> | null> {
+  const out = new Set<string>();
+  for (const [col, direction] of [["from_trail_id", "out"], ["to_trail_id", "in"]] as const) {
+    const { data, error } = await sc.from("trail_edges").select("from_trail_id, to_trail_id, edge_type, review_state")
+      .eq(col, trailId).in("review_state", ["pending", "rejected"]);
+    if (error) {
+      if (isMissingRelation(error) || ["42703", "PGRST204"].includes(String(error.code))) return out; // pre-3486: every edge is a proposal's own `child`
+      return null;
+    }
+    for (const e of (data ?? []) as any[]) out.add(`${direction === "out" ? e.to_trail_id : e.from_trail_id}|${e.edge_type}|${direction}`);
+  }
+  return out;
+}
+
+/** §6's kinds a person may declare after creation; `child` is declared by the proposal that names its parent. */
+export const DECLARABLE_TRAIL_EDGE_TYPES = ["parent", "related", "seasonal_variant", "geographic_sub", "experience_branch"] as const;
+
+export interface DeclareRelationResult { refusal: TrailRefusal | "not_trail_owner"; reviewState: "accepted" | "pending" | null; duplicate?: true }
+
+/**
+ * DV-24 (D-W10T-8, §51.10 Q1): the creator of EITHER Trail may declare one of
+ * the five kinds. Declared by the creator of BOTH, it is navigable at once
+ * (`accepted`) — the same standing as the proposer's own `child` edge. Declared
+ * by the creator of one, it is `pending` and navigable only once moderation
+ * accepts it (`trail_admin_review_edge`, audited): nobody can attach their
+ * Trail to someone else's without review. Anyone else is refused.
+ */
+export async function declareTrailRelation(
+  sc: any, fromId: string, toId: string, edgeType: string, actorId: string,
+): Promise<DeclareRelationResult> {
+  if (!sc) return { refusal: "no_service_client", reviewState: null };
+  if (fromId === toId || !(DECLARABLE_TRAIL_EDGE_TYPES as readonly string[]).includes(edgeType)) return { refusal: "invalid_request", reviewState: null };
+  const [from, to] = [await readTrail(sc, fromId), await readTrail(sc, toId)];
+  if (from.refusal || !from.trail) return { refusal: from.refusal ?? "unknown_trail", reviewState: null };
+  if (to.refusal || !to.trail) return { refusal: to.refusal === "unknown_trail" || !to.refusal ? "invalid_request" : to.refusal, reviewState: null };
+  const ownsFrom = from.trail.created_by === actorId, ownsTo = to.trail.created_by === actorId;
+  if (!ownsFrom && !ownsTo) return { refusal: "not_trail_owner", reviewState: null };
+  const reviewState = ownsFrom && ownsTo ? "accepted" : "pending";
+  const { error } = await sc.from("trail_edges").insert({
+    from_trail_id: fromId, to_trail_id: toId, edge_type: edgeType, strength: 0.5, review_state: reviewState, declared_by: actorId,
+  });
+  if (error) {
+    if (String(error.code) === "23505") return { refusal: null, reviewState: null, duplicate: true };
+    if (["42703", "PGRST204"].includes(String(error.code))) return { refusal: "trails_unavailable", reviewState: null }; // 3486 absent: no review column to hold "pending"
+    return { refusal: refusalFor(error, "declareTrailRelation"), reviewState: null };
+  }
+  return { refusal: null, reviewState };
+}
+
+// ── DC-20 (D-W10T-9): who may attach, and a stranger's suggestion waits ──────
+
+interface OwnershipRouting {
+  refusal: TrailRefusal;
+  owned: Array<{ sourceType: string; sourceId: string; relationship: string; signal?: string | null }>;
+  refusals: AttachSourceRefusal[];
+  suggested: number;
+}
+
+/**
+ * `11` §10 "every mutation is authorized", ruled (§51.10 Q5):
+ *   ATTACH (the author's-statement confidence) — only the content's OWNER: the
+ *     post's author, the event's host, the route's owner, the community place's
+ *     submitter; for authorless content (a canonical place), the Trail's creator.
+ *     Anyone else is refused `not_content_owner` and may suggest instead.
+ *   SUGGEST — by the owner, a membership at the suggestion confidence (their own
+ *     §4 budget); by anyone else, a PENDING row in 3488 that spends no budget and
+ *     is served by nothing until the owner accepts it.
+ */
+async function routeLabelsByOwnership(
+  sc: any, trail: TrailRow,
+  labels: ReadonlyArray<{ sourceType: string; sourceId: string; relationship: string; signal?: string | null }>,
+  verified: AttachSourceVerdict, actor: { userId: string | null; mode: "attach" | "suggest" },
+): Promise<OwnershipRouting> {
+  const out: OwnershipRouting = { refusal: null, owned: [], refusals: [], suggested: 0 };
+  const pending: Array<{ label: (typeof labels)[number]; owner: string | null }> = [];
+  labels.forEach((l, i) => {
+    if (verified.reasons[i] !== null) return;
+    const owner = verified.ownerIds?.[i] ?? trail.created_by ?? null;
+    if (actor.userId !== null && owner === actor.userId) out.owned.push(l);
+    else if (actor.mode === "attach") out.refusals.push({ sourceType: l.sourceType, sourceId: l.sourceId, relationship: l.relationship, signal: l.signal ?? null, reason: "not_content_owner" });
+    else pending.push({ label: l, owner });
+  });
+  for (const { label, owner } of pending) {
+    const signal = label.relationship === "signal" ? (label.signal ?? null) : null;
+    if (label.relationship === "signal" && !(TRAIL_SIGNALS as readonly string[]).includes(signal ?? "")) {
+      out.refusals.push({ sourceType: label.sourceType, sourceId: label.sourceId, relationship: label.relationship, signal, reason: "invalid_label" });
+      continue;
+    }
+    const { error } = await sc.from("trail_content_suggestions").insert({
+      trail_id: trail.id, source_type: label.sourceType, source_id: label.sourceId, relationship: label.relationship, signal,
+      suggested_by: actor.userId, owner_id: owner, state: "pending",
+    });
+    if (!error || String(error.code) === "23505") { out.suggested += 1; continue; } // 23505: the same open suggestion already waits — a retry
+    if (isMissingRelation(error)) return { ...out, refusal: "trails_unavailable" }; // 3488 absent: never fall back to spending the owner's budget
+    if (String(error.code) === "23514") { out.refusals.push({ sourceType: label.sourceType, sourceId: label.sourceId, relationship: label.relationship, signal, reason: "invalid_label" }); continue; }
+    return { ...out, refusal: refusalFor(error, "suggest.pending") };
+  }
+  return out;
+}
+
+export interface PendingSuggestion {
+  id: string; trailId: string; sourceType: string; sourceId: string; relationship: string; signal: string | null; createdAt: string;
+}
+
+/** The owner's open suggestions. The suggester is not disclosed (`02` §15: moderation facts stay on the server). */
+export async function listPendingSuggestions(sc: any, ownerId: string): Promise<{ refusal: TrailRefusal; suggestions: PendingSuggestion[] }> {
+  if (!sc) return { refusal: "no_service_client", suggestions: [] };
+  const { data, error } = await sc.from("trail_content_suggestions")
+    .select("id, trail_id, source_type, source_id, relationship, signal, created_at")
+    .eq("owner_id", ownerId).eq("state", "pending").order("created_at", { ascending: false }).limit(50);
+  if (error) return { refusal: refusalFor(error, "listPendingSuggestions"), suggestions: [] };
+  return {
+    refusal: null,
+    suggestions: ((data ?? []) as any[]).map((r) => ({
+      id: r.id, trailId: r.trail_id, sourceType: r.source_type, sourceId: r.source_id, relationship: r.relationship, signal: r.signal ?? null, createdAt: r.created_at,
+    })),
+  };
+}
+
+export interface DecideSuggestionResult { refusal: TrailRefusal; state: "accepted" | "declined" | null; attach?: AttachResult }
+
+/**
+ * The owner accepts (the label is attached through `attachContentToTrail` AS THE
+ * OWNER, so existence, visibility, §4's cap and the promotion all run exactly as
+ * for their own suggestion) or declines. Unknown and not-yours are one answer.
+ */
+export async function decideSuggestion(
+  sc: any, suggestionId: string, ownerId: string, decision: "accept" | "decline",
+): Promise<DecideSuggestionResult> {
+  if (!sc) return { refusal: "no_service_client", state: null };
+  const { data, error } = await sc.from("trail_content_suggestions")
+    .select("id, trail_id, source_type, source_id, relationship, signal, owner_id, state").eq("id", suggestionId).maybeSingle();
+  if (error) return { refusal: refusalFor(error, "decideSuggestion.read"), state: null };
+  if (!data || data.owner_id !== ownerId) return { refusal: "unknown_trail", state: null };
+  if (data.state !== "pending") {
+    return data.state === (decision === "accept" ? "accepted" : "declined")
+      ? { refusal: null, state: data.state } : { refusal: "invalid_request", state: null };
+  }
+  let attach: AttachResult | undefined;
+  if (decision === "accept") {
+    attach = await attachContentToTrail(sc, data.trail_id, [{
+      sourceType: data.source_type, sourceId: data.source_id, relationship: data.relationship, signal: data.signal ?? null,
+    }], { userId: ownerId, mode: "suggest" });
+    if (attach.refusal) return { refusal: attach.refusal, state: null, attach };
+    if (attach.attached === 0) return { refusal: null, state: null, attach }; // refused (cap, gone, no longer theirs): stays pending
+  }
+  const upd = await sc.from("trail_content_suggestions")
+    .update({ state: decision === "accept" ? "accepted" : "declined", decided_at: new Date().toISOString() })
+    .eq("id", suggestionId).eq("state", "pending").select("id");
+  if (upd.error) return { refusal: refusalFor(upd.error, "decideSuggestion.update"), state: null, attach };
+  return { refusal: null, state: decision === "accept" ? "accepted" : "declined", ...(attach ? { attach } : {}) };
 }

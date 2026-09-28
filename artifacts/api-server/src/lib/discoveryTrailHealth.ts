@@ -64,7 +64,7 @@ export type TrailHealthMetric = (typeof TRAIL_HEALTH_METRICS)[number];
  * compared across a definition change, which is the only thing a snapshot is
  * for.
  */
-export const TRAIL_HEALTH_MODEL_VERSION = "trail-health-v1";
+export const TRAIL_HEALTH_MODEL_VERSION = "trail-health-v2"; // §86 (DC-05): v2 — new_creator_exposure is an EXPOSURE share, geographic_diversity is measured over located members, an evergreen/featured member is not stale by age
 
 /** Content newer than this counts as fresh for `content_freshness`. */
 export const TRAIL_FRESH_WINDOW_MS = 7 * 24 * 3_600_000;
@@ -112,7 +112,7 @@ export interface TrailHealthInput {
    * and inventing one from the place id would be a join this module does not
    * do. The caller supplies it when it has the places in hand.
    */
-  geoCellByItem?: Record<string, string>;
+  geoCellByItem?: Record<string, string>; /** §86 (DC-05): source_id → impressions over MOMENTUM_BASELINE_WINDOW_MS (rank_events, every surface); `null`/absent = unread, so new_creator_exposure is unmeasured. */ impressionsBySource?: Record<string, number> | null;
 }
 
 export interface TrailHealth {
@@ -182,9 +182,9 @@ export function computeTrailHealth(input: TrailHealthInput): TrailHealth {
   }
   if (attributed > 0) {
     metrics.contributor_concentration = share(Math.max(...byContributor.values()), attributed);
-    let fromNew = 0;
-    for (const c of byContributor.values()) if (c === 1) fromNew += c;
-    metrics.new_creator_exposure = share(fromNew, attributed);
+    // §86 (DC-05): an EXPOSURE share — impressions on members from contributors NEW to this Trail over impressions on
+    // every attributed member — not the membership share it was (census §51.6). Unmeasured without exposures.
+    metrics.new_creator_exposure = newCreatorExposureShare(members, input?.impressionsBySource ?? null, nowMs);
   }
 
   // Freshness / staleness
@@ -194,7 +194,7 @@ export function computeTrailHealth(input: TrailHealthInput): TrailHealth {
     const age = Number.isFinite(at) ? nowMs - at : Number.POSITIVE_INFINITY;
     if (age <= TRAIL_FRESH_WINDOW_MS) fresh += 1;
     if (age <= 24 * 3_600_000) freshToday += 1;
-    if (age >= TRAIL_STALE_WINDOW_MS || m.content_state === "archived_from_active_rotation") stale += 1;
+    if (isTrailStaleObject(m, nowMs)) stale += 1; // §86 (E-11): archived from rotation, or old AND not evergreen/featured
   }
   metrics.content_freshness = share(fresh, n);
   metrics.stale_object_ratio = share(stale, n);
@@ -218,7 +218,7 @@ export function computeTrailHealth(input: TrailHealthInput): TrailHealth {
   const cells = input?.geoCellByItem;
   if (cells && typeof cells === "object") {
     const known = members.map((m) => cells[m.source_id]).filter((c) => typeof c === "string" && c.length > 0);
-    if (known.length === n) metrics.geographic_diversity = share(new Set(known).size, n);
+    if (known.length > 0) metrics.geographic_diversity = share(new Set(known).size, known.length); // §86 (DC-05): over the members that HAVE a cell (a route has none)
   }
 
   // Quality
@@ -327,7 +327,7 @@ export interface SaturationItem {
   mediaType?: string | null;
 }
 
-export type SuppressionReason = "contributor_cap" | "place_cap" | "media_cap";
+export type SuppressionReason = "contributor_cap" | "place_cap" | "media_cap" | "viewpoint_cap" | "near_duplicate"; // §86 (DV-23): the last two
 
 export interface SaturationResult<T extends SaturationItem> {
   page: T[];
@@ -502,7 +502,7 @@ export function fairExposureSlots(
  * a metric reads a new member field or counts a row differently. The ARITHMETIC
  * over those rows is `TRAIL_HEALTH_MODEL_VERSION`'s.
  */
-export const TRAIL_HEALTH_FEATURE_VERSION = "trail-member-rows-v1";
+export const TRAIL_HEALTH_FEATURE_VERSION = "trail-member-rows-v2"; // §86: v2 reads each member's impressions and geographic cell as well
 
 /** The three facts `computeTrailHealth` stamps beside its model version. */
 export interface TrailHealthProvenance {
@@ -529,3 +529,293 @@ export function trailHealthProvenance(nowMs: number): TrailHealthProvenance {
 }
 
 import type { DerivedStoreWindow } from "./discoveryRankProvenance.js";
+
+// ── census-discovery §86 (lane W10-T): the Trail's own §10 and §11 rules ─────
+//
+// Declared at the foot, with their import, so no cited line above moves. Every
+// constant below is a decision recorded in docs/architecture/discovery-decision-
+// register.md (section "W10-T — Trails product rules and admin actions"), with
+// the spec clause it implements; none is tuned on data (there is no production
+// Trail to tune it on, §51.1).
+
+import { titleSimilarity, DUPLICATE_TITLE_SIMILARITY } from "./discoveryTrailObject.js";
+
+/**
+ * E-11 (D-W10T-5): what "stale" means for a Trail member. A member that left
+ * active rotation is stale; an OLD member is stale unless §7 already says it
+ * lasts — `evergreen` is `03` §3's "persistent usefulness over long periods" and
+ * `featured` is on its way there, so age alone cannot make either stale. Read by
+ * §11's `stale_object_ratio` and by the health order below, so the metric and
+ * the order it drives can never disagree.
+ */
+export function isTrailStaleObject(m: { content_state: string; created_at: string }, nowMs: number): boolean {
+  if (m.content_state === "archived_from_active_rotation") return true;
+  if (m.content_state === "evergreen" || m.content_state === "featured") return false;
+  const at = Date.parse(m.created_at ?? "");
+  const age = Number.isFinite(at) ? nowMs - at : Number.POSITIVE_INFINITY;
+  return age >= TRAIL_STALE_WINDOW_MS;
+}
+
+/**
+ * DC-05 (D-W10T-7): a contributor is NEW to a Trail while their first member in
+ * it is younger than this — the same 30-day window the exposure denominator is
+ * read over (`lib/discoveryLocalMomentum.MOMENTUM_BASELINE_WINDOW_MS`), so "new"
+ * and "exposed" are measured over one period. `06` §9's "exploration window" for
+ * a new creator, scoped to the Trail.
+ */
+export const TRAIL_NEW_CREATOR_WINDOW_MS = 30 * 24 * 3_600_000;
+
+/**
+ * §11 `new_creator_exposure` as an EXPOSURE: impressions on the members of new
+ * contributors over impressions on every attributed member. `null` when the
+ * impressions were not read, or when no attributed member was ever shown (a
+ * share of nothing is not a measurement).
+ */
+export function newCreatorExposureShare(
+  members: readonly TrailMemberForHealth[], impressionsBySource: Record<string, number> | null, nowMs: number,
+): number | null {
+  if (!impressionsBySource) return null;
+  const firstSeen = new Map<string, number>();
+  for (const m of members) {
+    if (typeof m.contributor_id !== "string" || m.contributor_id.length === 0) continue;
+    const at = Date.parse(m.created_at ?? "");
+    if (!Number.isFinite(at)) continue;
+    firstSeen.set(m.contributor_id, Math.min(firstSeen.get(m.contributor_id) ?? Number.POSITIVE_INFINITY, at));
+  }
+  let all = 0, fromNew = 0;
+  const counted = new Set<string>();
+  for (const m of members) {
+    if (typeof m.contributor_id !== "string" || m.contributor_id.length === 0) continue;
+    if (counted.has(m.source_id)) continue; // one content counts its impressions once, however many labels it holds
+    counted.add(m.source_id);
+    const n = Math.max(0, Number(impressionsBySource[m.source_id] ?? 0) || 0);
+    all += n;
+    if (nowMs - (firstSeen.get(m.contributor_id) ?? Number.NEGATIVE_INFINITY) < TRAIL_NEW_CREATOR_WINDOW_MS) fromNew += n;
+  }
+  return all > 0 ? round3(fromNew / all) : null;
+}
+
+/**
+ * DC-05 (D-W10T-7): §11's geographic cell. The Map's degree grid
+ * (`lib/mapAggregation.cellFor`: edge 360 / 2^zoom degrees, anchored at
+ * -180/-90) continued to zoom 14, an edge of 0.02197° (about 2.4 km at the
+ * equator). A Trail is usually scoped to one destination, so a city-sized cell
+ * (the Map's coarsest aggregating zoom, 11, ~19.5 km) would put every member in
+ * one cell and measure nothing; neighbourhood scale is what "geographic
+ * diversity" can distinguish inside a Trail. Server-side only: no cell is ever
+ * serialised, and a member's cell is derived from its PLACE's public
+ * coordinates, never a post author's GPS.
+ */
+export const TRAIL_GEO_CELL_ZOOM = 14;
+
+export function trailGeoCell(lat: unknown, lng: unknown): string | null {
+  const la = Number(lat), lo = Number(lng);
+  if (lat === null || lng === null || lat === undefined || lng === undefined) return null;
+  if (!Number.isFinite(la) || !Number.isFinite(lo) || la < -90 || la > 90) return null;
+  const size = 360 / 2 ** TRAIL_GEO_CELL_ZOOM;
+  const nl = ((((lo + 180) % 360) + 360) % 360) - 180;
+  const x = Math.floor((nl + 180) / size);
+  const y = Math.floor((Math.min(la, 90 - 1e-9) + 90) / size);
+  return `${TRAIL_GEO_CELL_ZOOM}/${x}/${y}`;
+}
+
+// ── DV-13 (D-W10T-2): one creator across the whole Trail page ────────────────
+
+/**
+ * A single creator may hold at most this share of the DISTINCT items on one
+ * Trail page (the union of every module's served items), and never fewer than
+ * MAX_PER_CONTRIBUTOR_PER_PAGE — so a small Trail is not emptied. One third: at
+ * the bound, two thirds of the page is somebody else's, which is what "never
+ * let one creator … dominate" (`02` §10, DV-13) needs at minimum. The
+ * per-module cap of MAX_PER_CONTRIBUTOR_PER_PAGE stays, per spotlight.
+ */
+export const TRAIL_PAGE_CREATOR_SHARE = 1 / 3;
+
+export interface PageBoundModule { key: string; items: ReadonlyArray<{ id: string; sourceType: string; sourceId: string }> }
+
+/**
+ * Trim, from the tail, the items that put a creator over the page-wide bound.
+ * The page is processed in the modules' own order, so a creator keeps the items
+ * the earliest modules chose. Removal is iterated to a fixed point because
+ * every removal shrinks the page, and with it the bound. Returns the membership
+ * row ids removed; an item whose content is already on the page from an earlier
+ * module is the same item and costs nothing. A creator-less item is never
+ * trimmed (an unknown is not a cap hit, the rule `diversifyTrailPage` keeps).
+ */
+export function creatorPageBoundRemovals(
+  modules: readonly PageBoundModule[], creatorOfRow: (rowId: string) => string | null,
+): Set<string> {
+  const removed = new Set<string>();
+  for (;;) {
+    const seenContent = new Set<string>();
+    const byCreator = new Map<string, Array<{ rowId: string; content: string }>>();
+    for (const mod of modules) {
+      for (const it of mod.items) {
+        if (removed.has(it.id)) continue;
+        const content = `${it.sourceType}:${it.sourceId}`;
+        if (seenContent.has(content)) continue;
+        seenContent.add(content);
+        const c = creatorOfRow(it.id);
+        if (!c) continue;
+        const list = byCreator.get(c);
+        if (list) list.push({ rowId: it.id, content }); else byCreator.set(c, [{ rowId: it.id, content }]);
+      }
+    }
+    const bound = Math.max(MAX_PER_CONTRIBUTOR_PER_PAGE, Math.floor(seenContent.size * TRAIL_PAGE_CREATOR_SHARE));
+    let worst: string | null = null, worstCount = 0;
+    for (const [c, list] of byCreator) {
+      if (list.length <= bound) continue;
+      if (list.length > worstCount || (list.length === worstCount && worst !== null && c < worst)) { worst = c; worstCount = list.length; }
+    }
+    if (worst === null) return removed;
+    const tail = byCreator.get(worst)!.at(-1)!;
+    // Remove EVERY row of that content from the page (it may sit in several modules).
+    for (const mod of modules) for (const it of mod.items) if (`${it.sourceType}:${it.sourceId}` === tail.content) removed.add(it.id);
+  }
+}
+
+// ── DV-23 (D-W10T-4, E-11): §10's five clauses on one module ─────────────────
+
+export interface ModuleSaturationItem extends SaturationItem {
+  /** A post's text, for §10's "content similarity"; null for other members. */
+  text?: string | null;
+}
+
+/**
+ * Posts whose text is at least this similar (token-set, `titleSimilarity`, the
+ * same measure and threshold as `02` §5 CHECK 1's duplicate title) are one
+ * content on a page. Short texts are too thin to call duplicates.
+ */
+export const TRAIL_NEAR_DUPLICATE_MIN_TOKENS = 3;
+
+/** E-11 (D-W10T-5): one media type may hold at most this share of a module page while another type is waiting. */
+export const TRAIL_MEDIA_SHARE_PER_PAGE = 1 / 2;
+
+/**
+ * `02` §10 on one module, in the module's own order:
+ *
+ *   cluster by place/content similarity  places via `placeId` (a post's venue is
+ *                                        linked to the place member of the same
+ *                                        venue by the caller); posts whose text is
+ *                                        a near-duplicate of a post already on the
+ *                                        page are held back (`near_duplicate`)
+ *   diversify creators                   MAX_PER_CONTRIBUTOR_PER_PAGE, as before
+ *   diversify media                      at most ceil(page × TRAIL_MEDIA_SHARE_PER_PAGE)
+ *                                        of one media type while items of another
+ *                                        type remain; WORK-CONSERVING: a page that
+ *                                        would otherwise stay short is refilled
+ *                                        from the media-held items, in order
+ *   reduce repeated viewpoints           one item per (creator, place): the same
+ *                                        person's second take on the same place
+ *                                        is held back (`viewpoint_cap`)
+ *   preserve "more from this place"      every item held back FOR A PLACE (place
+ *                                        cap, viewpoint, near-duplicate with a
+ *                                        place) is counted AND listed per place
+ *
+ * Nothing is deleted: every held item is returned with its reason.
+ */
+export function diversifyTrailModule<T extends ModuleSaturationItem>(
+  items: readonly T[], opts: { pageSize: number },
+): SaturationResult<T> & { heldBackByPlace: Record<string, string[]> } {
+  const pageSize = Math.max(0, opts?.pageSize ?? 0);
+  const mediaTypes = new Set(items.map((i) => i?.mediaType).filter((m): m is string => typeof m === "string" && m.length > 0));
+  const maxMedia = mediaTypes.size >= 2 ? Math.max(1, Math.ceil(pageSize * TRAIL_MEDIA_SHARE_PER_PAGE)) : null;
+
+  const page: T[] = [];
+  const suppressed: Array<{ id: string; reason: SuppressionReason }> = [];
+  const moreFromThisPlace: Record<string, number> = {};
+  const heldBackByPlace: Record<string, string[]> = {};
+  const byContributor = new Map<string, number>();
+  const byPlace = new Map<string, number>();
+  const byMedia = new Map<string, number>();
+  const viewpoints = new Set<string>();
+  const texts: string[] = [];
+  const mediaHeld: T[] = [];
+
+  const holdForPlace = (item: T, reason: SuppressionReason) => {
+    suppressed.push({ id: item.id, reason });
+    const p = item.placeId;
+    if (typeof p === "string" && p) {
+      moreFromThisPlace[p] = (moreFromThisPlace[p] ?? 0) + 1;
+      (heldBackByPlace[p] ??= []).push(item.id);
+    }
+  };
+  const nearDuplicate = (item: T): boolean => {
+    const t = typeof item.text === "string" ? item.text : "";
+    if (t.split(/\s+/).filter(Boolean).length < TRAIL_NEAR_DUPLICATE_MIN_TOKENS) return false;
+    return texts.some((o) => titleSimilarity(o, t) >= DUPLICATE_TITLE_SIMILARITY);
+  };
+  const admit = (item: T) => {
+    const c = item.contributorId, p = item.placeId, md = item.mediaType;
+    if (typeof c === "string" && c) byContributor.set(c, (byContributor.get(c) ?? 0) + 1);
+    if (typeof p === "string" && p) byPlace.set(p, (byPlace.get(p) ?? 0) + 1);
+    if (typeof md === "string" && md) byMedia.set(md, (byMedia.get(md) ?? 0) + 1);
+    if (typeof c === "string" && c && typeof p === "string" && p) viewpoints.add(`${c}|${p}`);
+    if (typeof item.text === "string" && item.text) texts.push(item.text);
+    page.push(item);
+  };
+  /** The caps that hold regardless of media; `null` = admissible. */
+  const blocked = (item: T): SuppressionReason | null => {
+    const c = item.contributorId, p = item.placeId;
+    if (typeof c === "string" && c && (byContributor.get(c) ?? 0) >= MAX_PER_CONTRIBUTOR_PER_PAGE) return "contributor_cap";
+    if (typeof c === "string" && c && typeof p === "string" && p && viewpoints.has(`${c}|${p}`)) return "viewpoint_cap";
+    if (typeof p === "string" && p && (byPlace.get(p) ?? 0) >= MAX_PER_PLACE_PER_PAGE) return "place_cap";
+    if (nearDuplicate(item)) return "near_duplicate";
+    return null;
+  };
+
+  for (const item of items ?? []) {
+    if (!item || typeof item.id !== "string") continue;
+    if (page.length >= pageSize) continue; // beyond the page is pagination, not suppression
+    const why = blocked(item);
+    if (why === "contributor_cap") { suppressed.push({ id: item.id, reason: why }); continue; }
+    if (why) { holdForPlace(item, why); continue; }
+    const md = item.mediaType;
+    if (maxMedia !== null && typeof md === "string" && md && (byMedia.get(md) ?? 0) >= maxMedia) { mediaHeld.push(item); continue; }
+    admit(item);
+  }
+  // Work-conserving: media diversity reorders what fills the page, it never leaves it short.
+  for (const item of mediaHeld) {
+    if (page.length >= pageSize) { suppressed.push({ id: item.id, reason: "media_cap" }); continue; }
+    const why = blocked(item);
+    if (why === "contributor_cap") { suppressed.push({ id: item.id, reason: why }); continue; }
+    if (why) { holdForPlace(item, why); continue; }
+    admit(item);
+  }
+  return { page, suppressed, moreFromThisPlace, heldBackByPlace };
+}
+
+// ── DC-05 (D-W10T-7): health orders the Trail's own modules ──────────────────
+
+/** contributor_concentration above this marks the Trail's dominant contributor for the health order. */
+export const TRAIL_HEALTH_ORDER_CONCENTRATION = 1 / 3;
+
+/**
+ * The member rows §11's own predicates count AGAINST this Trail: a stale object
+ * (`isTrailStaleObject`, the `stale_object_ratio` predicate) and, while
+ * `contributor_concentration` exceeds TRAIL_HEALTH_ORDER_CONCENTRATION, the
+ * members of the contributor(s) that concentration measures. Behind
+ * discovery_trail_health_order_enabled (3485, FALSE) the modules serve these
+ * AFTER the others, each partition in the module's own order. Never removed.
+ */
+export function healthDemotedRowIds(
+  members: ReadonlyArray<{ id: string; contributor_id: string | null; content_state: string; created_at: string }>,
+  health: TrailHealth, nowMs: number,
+): Set<string> {
+  const out = new Set<string>();
+  const counts = new Map<string, number>();
+  for (const m of members) if (typeof m.contributor_id === "string" && m.contributor_id) counts.set(m.contributor_id, (counts.get(m.contributor_id) ?? 0) + 1);
+  const max = Math.max(0, ...counts.values());
+  const concentrated = (health.metrics.contributor_concentration ?? 0) > TRAIL_HEALTH_ORDER_CONCENTRATION;
+  for (const m of members) {
+    if (isTrailStaleObject(m, nowMs)) out.add(m.id);
+    else if (concentrated && typeof m.contributor_id === "string" && counts.get(m.contributor_id) === max) out.add(m.id);
+  }
+  return out;
+}
+
+/** Stable partition: the ids not in `demoted` first, then the demoted ones, each in their given order. */
+export function healthOrdered<T extends { id: string }>(items: readonly T[], demoted: ReadonlySet<string>): T[] {
+  return [...items.filter((i) => !demoted.has(i.id)), ...items.filter((i) => demoted.has(i.id))];
+}
+

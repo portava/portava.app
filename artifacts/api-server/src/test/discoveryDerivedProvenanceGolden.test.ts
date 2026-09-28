@@ -343,8 +343,21 @@ describe("§75 DC-17 (lane P33) — provenance-only: every value its hunks touch
     assert.ok(v.scored.some((s) => (s.features["localMomentum"] ?? 0) > 0), "precondition: momentum reached the ranker");
     const h = sha(v); if (show) console.log("pde", h); assert.equal(h, GOLDEN_P33.pde);
   });
+  // RESTATED by census-discovery §86 (lane W10-T). D-W10T-7 makes `new_creator_exposure` an EXPOSURE
+  // share (null without impressions) and moves the model version to `trail-health-v2`, which also moves
+  // the multiplier. §75's claim is kept, narrowed to what §86 did NOT decide to change: every other
+  // metric, the unmeasured list (without that one metric), freshTodayShare and memberCount hash exactly
+  // as ed9ab3ca0 / a658174a4 computed them (the projection hash below was captured by running
+  // a658174a4's lib/discoveryTrailHealth.ts, whose full hash is GOLDEN_P33.health). The full values
+  // are pinned at §86's tree.
   it("G8. Trail health: the nine metrics, the unmeasured list and the multiplier", () => {
-    const h = sha(healthValues()); if (show) console.log("health", h); assert.equal(h, GOLDEN_P33.health);
+    const vs = healthValues() as Array<{ metrics: Record<string, unknown>; unmeasured: string[]; freshTodayShare: unknown; memberCount: unknown }>;
+    const projection = vs.map((v) => {
+      const { new_creator_exposure: _changedByDecision, ...metrics } = v.metrics;
+      return { metrics, unmeasured: v.unmeasured.filter((k) => k !== "new_creator_exposure"), freshTodayShare: v.freshTodayShare, memberCount: v.memberCount };
+    });
+    assert.equal(sha(projection), "f2c59310f3fa4fa2f2b78a26dcc43c12e8b3ca8d73a62ae6ef9be3e94724a3ec", "§75's values, less the one metric §86 redefined, are byte-identical");
+    const h = sha(vs); if (show) console.log("health", h); assert.equal(h, "6b843617f0943989e023cd980c8669e47c25e8a70a91e86fb888781e26aff543");
   });
   it("G9. Trail trending: momentum, the unread mark and items, under all four read outcomes and the empty Trail", async () => {
     const v = await trendingValues() as Record<string, { momentum: number | null; momentumUnread: boolean | null }>;

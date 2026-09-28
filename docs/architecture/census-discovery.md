@@ -7577,7 +7577,7 @@ average.
 | DV-24 | W | §40.5 stands. `trail_edges` has one writer, and it writes only `child` (`artifacts/api-server/src/services/trails/TrailService.ts:1335#edge_type: "child",`). Five of §6's six kinds cannot exist. The read side is now correct for what can exist: both directions, the pointer honoured on a partial failure, archived neighbours dropped. Who may declare the other kinds is the owner question in §51.10. |
 | DC-03 | W | The four checks run, CHECK 1 across destinations, over input that cannot rewrite the filter (§51.4). **Not serialised.** Two proposals racing each other each check a catalogue that does not yet hold the other. Near-duplicates with different slugs can both be admitted; the UNIQUE slug refuses only an identical one. Closing it needs the checks inside the database under a lock, a larger migration than this lane wrote. |
 | DC-04 | W | Both relations are enforced at the database (3381) and the TypeScript writer is a compare-and-set, as §51.3 records. **Reachability:** only `proposed → active` has a writer. `needs_update`, `stale` and `archived` are §15 moderation moves and `11` §8's "Trail archive", and none is built. No code moves in-Trail content out of `just_arrived`. What should move it is not specified. |
-| DC-05 | W | Nine keys are computed, and the floor keeps health from erasing content. But: `geographic_diversity` is always null, because no caller supplies a geographic cell (`artifacts/api-server/src/lib/discoveryTrailHealth.ts:219#if (cells && typeof cells === "object") {`) and the cell is undefined. `new_creator_exposure` is a membership share, not an exposure (`artifacts/api-server/src/lib/discoveryTrailHealth.ts:187#metrics.new_creator_exposure = share(fromNew, attributed);`). Health influences ranking only through the held flag-2289 term; inside the Trail's own modules it orders nothing. Corrected here: one reporter's retries no longer inflate `report_rate`. |
+| DC-05 | W | Nine keys are computed, and the floor keeps health from erasing content. But: `geographic_diversity` is always null, because no caller supplies a geographic cell (`artifacts/api-server/src/lib/discoveryTrailHealth.ts:219#if (cells && typeof cells === "object") {`) and the cell is undefined. `new_creator_exposure` is a membership share, not an exposure (de-pointered by §86.10: `artifacts/api-server/src/lib/discoveryTrailHealth.ts`, line 187 at `a658174a4`, read `metrics.new_creator_exposure = share(fromNew, attributed);`). Health influences ranking only through the held flag-2289 term; inside the Trail's own modules it orders nothing. Corrected here: one reporter's retries no longer inflate `report_rate`. |
 | DC-20 | W | All nine actions are reachable. §51.4's nine defects are closed and tested. **`11` §10 *"every mutation is authorized"* still fails for attach.** Any signed-in user may `attach` any content id of any type at the author's-statement confidence (`artifacts/api-server/src/services/trails/TrailService.ts:1436#const confidence = actor.mode === "attach" ? 0.8 : 0.4;`). A third party's `suggest` consumes the content's §4 budget, so a stranger can take a post's single primary slot. Neither the source's existence nor its type is checked at attach. `place` may name either of two tables, and `itinerary` has no table, so neither can be revoked. |
 
 ### 51.7 Must the Trail routes log exposures of their own? Decided from code: not required, not decision-free
@@ -14455,6 +14455,174 @@ SELECT outcome, count(*) FILTER (WHERE outcome_client_event_id IS NULL) AS unkey
 - **A reader projecting a user id**, or folding an unobserved item into 0: E2, J2, J6.
 - **A ranker reading `immediate_skip`**, a report table, or the block or mute set as a score: S4, N2, N4, N5.
 - **A ruled value drifting from its register entry**: R1–R3.
+
+## §86 — Trails product rules and admin actions (lane W10-T): one creator bounded across the page, §10's five clauses served, §7 moved by §9 behind a FALSE flag, and `11` §8's Trail merge, archive and trend review built and audited
+
+*Written 2026-09-28 by lane W10-T on `disc-w10-t-trails`, cut from `a658174a4`. The OLD verdicts are the last statements at that tree: DV-13, DV-21, DV-22, DV-23, DV-24 and DC-04, DC-05 `W` (§51.6); DV-74 `W` (§54, restated in §69.2's classification); DC-20 `W` (§64.6). The owner lifted the ranker hold on 2026-09-28 and delegated routine product decisions; every decision below is in `docs/architecture/discovery-decision-register.md`, section "W10-T — Trails product rules and admin actions" (D-W10T-1 … D-W10T-14). Migrations 3485–3488 are applied to the local PostgreSQL 16 harness (port 55457) only — not to `portava-ci`, not to production. No flag is on anywhere. No Trail exists in production (§51.1). Every `C` below is an implementation verdict on this branch under §51.1's rule; every other move stays `W` with its marker.*
+
+### 86.1 Row statements
+
+| ID | from | **to** | evidence |
+|---|---|---|---|
+| DV-13 | W | **C** | **D-1 Q3 is decided (D-W10T-2): the bound is per spotlight module AND across the whole Trail page.** The per-module cap of two stays. Across the union of a page's modules one creator may hold at most max(2, ⌊⅓ × distinct items⌋) (`artifacts/api-server/src/lib/discoveryTrailHealth.ts:632#export const TRAIL_PAGE_CREATOR_SHARE = 1 / 3;`), trimmed from the tail to a fixed point, the same content in two modules counting once, a creator-less item never trimmed (`artifacts/api-server/src/lib/discoveryTrailHealth.ts:645#export function creatorPageBoundRemovals(`). Every modules page passes through it (`artifacts/api-server/src/services/trails/TrailService.ts:1946#function boundCreatorsAcrossPage(`), flag on or off. Controlled data: one author with eight posts against two others holds at most the bound and both others are served (`artifacts/api-server/src/test/discoveryTrailProductRules.test.ts:263#it("one author with eight posts, two others with one each`); the tail rule, the fixed point and the creator-less exemption (`artifacts/api-server/src/test/discoveryTrailProductRules.test.ts:118#it("a creator holding more than max(2, ⌊page/3⌋) distinct items is trimmed`). §51.4's H2 (per module, on every request) still passes on the harness. The bound holds on every page by construction, so no creator can dominate a Trail page at any time. Implementation-C: no flag or migration is involved, and no production Trail exists. |
+| DV-23 | W | **C** | **All five of §10's clauses now hold (D-W10T-4, D-W10T-5).** *Cluster by place/content similarity:* a post's canonical venue is linked to the `discovery_places` member of the same venue by `matchCanonical`'s venue rule (`artifacts/api-server/src/services/trails/TrailService.ts:1926#export function linkVenueClusters(`; `artifacts/api-server/src/test/discoveryTrailProductRules.test.ts:176#it("S1 a post's canonical venue is linked`), and a post whose text is ≥ 0.8 token-set similar to one on the page is held back (`artifacts/api-server/src/test/discoveryTrailProductRules.test.ts:160#it("R7 near-duplicate TEXT is one content`). *Diversify creators:* DV-13. *Diversify media:* a media type is supplied for every member and one type may hold at most half of a page while another waits, work-conserving (`artifacts/api-server/src/lib/discoveryTrailHealth.ts:717#export function diversifyTrailModule`; `artifacts/api-server/src/test/discoveryTrailProductRules.test.ts:142#it("R5 media diversity is work-conserving`). *Reduce repeated viewpoints:* one item per (creator, place) per module (`artifacts/api-server/src/test/discoveryTrailProductRules.test.ts:150#it("R6 one viewpoint per (creator, place)`). *Preserve access through "more from this place":* a route returns, per module, exactly the items that module counted (`artifacts/api-server/src/routes/trails.ts:493#router.get("/v1/discovery/trails/:id/places/:placeId/more"`; `artifacts/api-server/src/test/discoveryTrailProductRules.test.ts:234#it("per module, the list length IS moreFromThisPlace[placeId]`). Implementation-C: no flag or migration. |
+| DV-21 | W | W | IMPLEMENTATION-COMPLETE; awaits: flag discovery_trail_exploration_enabled TRUE in production + 3485 and 3486 applied to production + one production Trail serving its modules. **All five modules now fill on their own objective and horizon.** With the flag on, `just_arrived` applies its 7-day horizon and a member past it graduates rather than vanishing (`artifacts/api-server/src/services/trails/trailExploration.ts:111#export function decideContentTransition(`). `hidden_gems` serves the `growing` members by normalised response under exposure. `evergreen` fills from §7 moves. `local_picks` fills from `source = 'curated'`, whose one writer is an audited admin curate over public content (`artifacts/api-server/src/services/trails/trailAdmin.ts:94#export async function curateTrailContentAsAdmin(`). No member in an active-rotation state is left in no module (`artifacts/api-server/src/test/discoveryTrailExploration.test.ts:161#it("a just_arrived member past 7 days leaves just_arrived for hidden_gems`); on the real schema, W8 and W10 in `db/trailsModeration.db.test.ts`. With the flag OFF, the four modules are served byte for byte as before (`artifacts/api-server/src/test/discoveryTrailExploration.test.ts:75#it("absent flags and FALSE flags serve the same bytes`). |
+| DV-22 | W | W | IMPLEMENTATION-COMPLETE; awaits: flag discovery_trail_exploration_enabled TRUE in production + 3485, 3486 and 3487 applied to production + trail_member_exposures rows in production. **§51.6's three grounds are closed behind the flag.** (1) The reserved slots rotate through the WHOLE backlog, least-exposed first (`artifacts/api-server/src/services/trails/trailExploration.ts:171#export function rotateExplorationSlots(`). The Trail's own module serves are counted per member per day with no viewer id (3487, D-W10T-6; `artifacts/api-server/src/services/trails/trailExploration.ts:247#export async function recordTrailModuleExposures(`), so its grant moves its own denominator: four pages reach four backlog members (`artifacts/api-server/src/test/discoveryTrailExploration.test.ts:143#it("through the service: each served page is counted`). (2) "New" changes: §7's writer moves members out of `just_arrived` (DC-04). (3) Steps 3–5 drive what is served: taper leaves rotation, expand graduates, a rested cooled member that responds is rediscovered and retested (`artifacts/api-server/src/test/discoveryTrailExploration.test.ts:188#it("taper leaves rotation; expand at the ceiling graduates`). Real-world effectiveness is not claimed. |
+| DC-04 | W | W | IMPLEMENTATION-COMPLETE; awaits: flag discovery_trail_exploration_enabled TRUE in production + 3485 and 3486 applied to production + one production content_trails row moved by the writer. **Every transition in both §7 relations now has a writer (D-W10T-3).** Trail: `proposed → active` on first content (as built), and every other move (needs_update, stale, reactivation, archive, a proposal's rejection) through one audited admin function (`artifacts/api-server/src/services/trails/trailAdmin.ts:65#export function moveTrailLifecycleAsAdmin(`), refused where 3381 refuses (W2). In-Trail content: §9's verdicts and §8's horizon decide every move of CONTENT_TRANSITIONS, and the table is checked exhaustively against that relation (`artifacts/api-server/src/test/discoveryTrailExploration.test.ts:124#it("exhaustively: no state × verdict × duration yields a move outside CONTENT_TRANSITIONS"`). Moves are persisted by a compare-and-set under 3381 (`artifacts/api-server/src/services/trails/trailExploration.ts:231#export async function persistContentTransitions(`), and 3486 stamps `content_state_changed_at` on every move. |
+| DC-05 | W | W | IMPLEMENTATION-COMPLETE; awaits: flag discovery_trail_health_order_enabled TRUE in production + 3485 applied to production. **The nine metrics are computed as defined, and health orders the Trail's own modules behind the flag (D-W10T-7).** `geographic_diversity` is computed from the members' PLACE coordinates on the Map's grid at zoom 14 (`artifacts/api-server/src/lib/discoveryTrailHealth.ts:611#export function trailGeoCell(`), over the located members (`artifacts/api-server/src/lib/discoveryTrailHealth.ts:221#if (known.length > 0) metrics.geographic_diversity`). `new_creator_exposure` is an exposure share (`artifacts/api-server/src/lib/discoveryTrailHealth.ts:187#metrics.new_creator_exposure = newCreatorExposureShare(`). Both are measured through the service (`artifacts/api-server/src/test/discoveryTrailProductRules.test.ts:193#it("S2 geographic_diversity is computed from the members' places`). With the flag on, what §11 counts against the Trail is served last in each module, and nothing is removed (`artifacts/api-server/src/lib/discoveryTrailHealth.ts:801#export function healthDemotedRowIds(`; `artifacts/api-server/src/test/discoveryTrailExploration.test.ts:250#it("contributor_concentration 3/5 > 1/3`). The snapshot carries `trail-health-v2`. |
+| DV-24 | W | W | IMPLEMENTATION-COMPLETE; awaits: 3486 applied to production + one accepted declared relation in production. **D-1 Q1 is decided (D-W10T-8), and all six kinds have writers.** `child` is written by the proposal that names a parent, as before. The other five are declared by the creator of either Trail (`artifacts/api-server/src/services/trails/TrailService.ts:2151#export async function declareTrailRelation(`; `artifacts/api-server/src/routes/trails.ts:509#router.post("/v1/discovery/trails/:id/relations"`): by the creator of both, navigable at once; by the creator of one, `pending` until moderation accepts it (audited). Only an accepted declaration is navigable (`artifacts/api-server/src/services/trails/TrailService.ts:862#const unaccepted = await readUnacceptedEdges(sc, trailId);`; `artifacts/api-server/src/test/discoveryTrailProductRules.test.ts:289#it("the creator of BOTH declares it navigable`; W5). Without 3486 a declaration answers 503: there is no column to hold `pending`. |
+| DV-74 | W | W | IMPLEMENTATION-COMPLETE; awaits: 3486 applied to production + §52's 3387 applied and creator_attribution_enabled TRUE in production + one production audit row for each of `11` §8's six actions. **All six are built and audited.** Drift diagnostics, creator fraud holds and ledger audit were already built (§52). This section adds Trail merge (`artifacts/api-server/src/services/trails/trailAdmin.ts:72#export function mergeTrailsAsAdmin(`), Trail archive, and trend integrity review (`artifacts/api-server/src/services/trails/trailAdmin.ts:109#export function recordTrendIntegrityReview(`), behind `requireAdmin` (`artifacts/api-server/src/test/adminTrailsRoutes.test.ts:67#it("a signed-in non-admin is 403 on every action`). Each is one 3486 function that makes the change and appends its `discovery_admin_audit_events` row in the same transaction, with the reason and an idempotency key. The merge re-homes members, followers, relationships, children and open reports, and archives the source pointing at the target (`artifacts/api-server/src/test/db/trailsModeration.db.test.ts:131#test("members, followers, relationships, children and open reports move to the target`). A suppressing review reaches GET …/trending (`artifacts/api-server/src/services/trails/TrailService.ts:999#const review = opts.ignoreTrendReview`; W6). |
+| DC-20 | W | W | IMPLEMENTATION-COMPLETE; awaits: 3488 applied to production. **`11` §10's "every mutation is authorized" now rests on a ruled rule (D-1 Q5, D-W10T-9).** Attach at the statement confidence is the content OWNER's alone — or, for authorless content, the Trail creator's. A stranger's suggestion is a pending row that spends no §4 budget and is served by nothing until the owner accepts it (`artifacts/api-server/src/services/trails/TrailService.ts:2192#async function routeLabelsByOwnership(`; `artifacts/api-server/src/services/trails/TrailService.ts:2250#export async function decideSuggestion(`). Tested with controlled data: `artifacts/api-server/src/test/discoveryTrailProductRules.test.ts:315#it("attach: the author may; the Trail's creator may for authorless content`, `artifacts/api-server/src/test/discoveryTrailProductRules.test.ts:332#it("suggest: a stranger's suggestion is PENDING for the author (202)`, and on the harness W9: the stranger no longer takes a post's single primary slot. Without 3488 a stranger's suggestion fails closed (503). **Read visibility (B-5):** the conservative rule is decided — a Trail serves only what the viewer could already see and never widens it, which §64's fail-closed rule meets. Widening Trails to resolve friends, invitees, followers or crew is a consent question and is NOT part of this row's criterion; it is D-W10T-12, APPROVAL REQUIRED, and stays fail-closed. |
+
+### 86.2 Decisions
+
+D-W10T-1 (what is flagged) through D-W10T-11 are decided and implemented. D-W10T-12 (B-5, consent), D-W10T-13 (production activation) and D-W10T-14 (retention of the three new stores) are **APPROVAL REQUIRED**, each with its recommended action, both consequences and its recovery path in the register. The earlier lane's `MAX_PER_CONTRIBUTOR_PER_PAGE = 2` is kept as the per-module rule and recorded as decided (D-W10T-2). §51.10's seven questions are answered by D-W10T-8 (Q1), D-W10T-6 (Q2), D-W10T-2 (Q3), D-W10T-3 (Q4), D-W10T-9 (Q5), D-W10T-7 (Q6) and D-W10T-4 (Q7). E-5 is answered by D-W10T-10, and E-11 by D-W10T-5.
+
+### 86.3 What was built
+
+- **3485.** Two flags, both seeded FALSE, with a postcondition that refuses either ON.
+- **3486.** The audited admin door: `discovery_admin_audit_events` (append-only, clients denied), `trend_integrity_reviews`, and the functions `trail_admin_move_lifecycle`, `trail_admin_merge`, `trail_admin_review_edge`, `trail_admin_curate` and `trend_integrity_review_record`. Each is SECURITY INVOKER, service_role only, and uses one replay rule. It also adds `trails.merged_into_trail_id`, `content_trails.content_state_changed_at` with its stamp trigger, and `trail_edges.review_state` / `declared_by`.
+- **3487.** `trail_member_exposures` and its counter: counts, no viewer id.
+- **3488.** `trail_content_suggestions`: pending suggestions, with one open row per label.
+- **Code.** `services/trails/trailExploration.ts` (new); `services/trails/trailAdmin.ts` (new); `routes/adminTrails.ts` (new, registered in `routes/index.ts` line-neutrally); foot additions to `services/trails/TrailService.ts`, `lib/discoveryTrailHealth.ts` and `routes/trails.ts`; line-neutral edits above them; and `services/trails/trailAttachIntegrity.ts`, which now reports each label's owner.
+- **Every census-cited line in those files keeps its literal on its line**, with one exception: line 187 of `lib/discoveryTrailHealth.ts`, which §51.6 quoted as the membership-share defect. It changed in place, and §51.6's quotation is de-pointered (86.10).
+
+### 86.4 Tests seen red, and mutations (P24)
+
+| suite | cases | seen red before the code (run against `a658174a4`'s tree, extracted to a scratch copy with the new suites added) |
+|---|---:|---|
+| `discoveryTrailProductRules.test.ts` (new) | 20 | 19 red. The pure R-cases are red by absence (the rules did not exist). The service and HTTP cases are red by behaviour: S1 (no venue link), S2 (geographic null, membership share), S4 (404, no route), S5 (the author held more than the bound), S6 (404), S7a/b/d (a stranger attached; a suggestion became a membership; 201 without 3488), S8 (a suppressed Trail still trending). S7c, "the author's own suggestion is a membership at once, as before", passes at base as the control. |
+| `discoveryTrailExploration.test.ts` (new) | 10 | 9 red. G0 passes at base: it is the equality control, which the flag-gate mutation M13 kills. |
+| `adminTrailsRoutes.test.ts` (new) | 8 | 8 red (no admin route existed) |
+| `db/trailsModeration.db.test.ts` (new) | 11 | 11 red with 3485–3488 rolled back on a clone of the harness (the precondition refuses) |
+
+**Seventeen code mutations, each applied alone.** Each was driven by a script that applies one edit, runs the named suite, records the red cases, and restores the file. The restore was sha256-checked: all 17 files are byte-identical.
+
+- M01 page-wide bound off → R4, S5.
+- M02 viewpoint rule off → R6.
+- M03 content similarity off → R7.
+- M04 media diversity off → R5.
+- M05 venue link off → S1.
+- M06 anyone may attach → S7a, S7b, S7d.
+- M07 pending edges navigable → S6.
+- M08 trend review ignored → S8.
+- M09 stale by age alone → R1 (both).
+- M10 membership share restored → R2b, S2.
+- M11 horizon not applied → L1, L3.
+- M12 rotation ignores the denominator → L2 (service).
+- M13 flag gate removed → G0.
+- M14 health order ignored → L6.
+- M15 archived members kept in trending_now → L4.
+- M16 retest never granted → L2 (pure).
+- M17 an unread count reserves anyway → L7.
+
+**Two SQL mutations on a harness clone,** each applied as a replaced function and then restored by re-applying 3486, whose file hash was checked unchanged:
+
+- D1, the merge that stops dropping duplicates, turns W3 red.
+- D2, the lifecycle move with no audit row, turns W2 red.
+
+**Existing tests restated because a recorded decision changed what they pin (86.8):**
+
+- `discoveryTrailModifier.test.ts`: two cases (D-W10T-7).
+- `discoveryDerivedProvenanceGolden.test.ts` G8 (D-W10T-7). §75's golden hash covered `new_creator_exposure` and the model version, both changed by decision. G8 now asserts two things:
+  - a projection without that one metric hashes to `f2c59310…`, computed by running `a658174a4`'s own module, whose full hash is §75's `8c7a2b95…`, so the rest is proven byte-identical;
+  - the new full values hash to `6b843617…`.
+- `db/trailsAttachIntegrity.db.test.ts` I3 and I9, and `db/trailsService.db.test.ts` H2, H3b and H6 (D-W10T-9):
+  - the Trails that attach authorless places now have their creator as the attacher;
+  - I9 asserts that a stranger's suggestion is held (202, no member) and the author's own is a member;
+  - H2 seeds its third-party contributors directly, the shape of any membership written before §86, and asserts that a stranger's new suggestion is held.
+
+### 86.5 The harness (controlled evidence, not production evidence)
+
+Controlled evidence only. Nothing was run against `portava-ci` or production.
+
+- **Fresh chain.** `up.sh` into a new database on this lane's cluster (port 55457). 360 files applied in order, 12 of 372 known-unreplayable, 3485–3488 among the applied. Each of the four was also applied twice more, idempotently.
+- **Rollback rehearsal, on a clone.**
+  - 3488's and 3487's rollbacks applied.
+  - 3486's rollback REFUSED, because the audit held admin records, which is its designed refusal.
+  - After the audit rows were cleared (harness only, triggers disabled for that), 3486's and 3485's rollbacks applied, and every object was gone.
+  - `trailsModeration.db.test.ts` then went red: 11 of 11 cancelled by its precondition.
+  - Re-applied twice, it was green again: 11 of 11. D1 and D2 ran there.
+- **`run-tests.sh`, every harness suite.**
+  - The first run failed 6 of 391. Five were the tests restated in 86.4 (I3, I9, H2, H3b, H6).
+  - The sixth was `trailsMemberVisibility` TV6's `fetch failed`. That failure is environmental, not this lane's. The same HTTP-layer `fetch failed` hits TV6 and H4 on `a658174a4`'s own tree, run against the same harness, twice each: it is undici's keep-alive race on a box at load average 30–160. Each case passes alone: TV6, H2 and H4.
+  - The second run, after the restatements, passed 390 of 391 across 75 suites, with none skipped. The one failure is TV6's environmental `fetch failed` again, the failure that also occurs on the base tree.
+
+### 86.6 Checks run at this tree
+
+Run in `artifacts/api-server` at this tree.
+
+- **Types.** `typecheck` passes. `typecheck:tests` is at its baseline: 863 diagnostics across 115 files, with no file above its baseline. No `@ts-expect-error` was added. `any` appears only where the Trails service and its suites already use it (the untyped Supabase client and fake rows).
+- **Suites.** The 57 non-database suites that import a changed file (every `src/test` file importing `services/trails/*`, the Trail libs, `routes/trails.ts`, `routes/adminTrails.ts`, `routes/index.ts` or the drift script) pass 1,356 of 1,357 on the first run. The one failure is G8, restated in 86.4, and G8's file then passes 10 of 10. The three new suites pass 20, 10 and 8. After the census edits, the 14 `src/test/*ensus*.test.ts` suites, `productionDriftExtraction`, `discoveryTrailIntegrity` and `discoveryRowAudit29` pass 273 / 273.
+- **Migration and schema checks, all passing:**
+  - `check:migration-prefixes`: 652 files, no undocumented collision;
+  - `check:schema-references`;
+  - `check:writerless-reads`;
+  - `check:enum-literals`;
+  - `check:production-drift`: the four new tables are recorded `unapplied`;
+  - `check:discovery-query-paths`: 70 of 70. It needed registry rows for this lane's tables and indexes. It also needed one for §77's `idx_trails_destination_key`, which it found unregistered; `docs/discovery/query-paths.md` gained those rows. That file is not in this lane's ownership list, and the edit is table rows only.
+  - `check:route-auth-gate`, `check:guard-coverage`, `check:flag-polarity` and `check:test-registration`.
+- **Census checks:** all pass after this section's last edit.
+  - `check:census-integrity`: census-discovery counts C 98, W 84, N 5, X 1 (86.7).
+  - `check:census-freshness`: every census ACKNOWLEDGED, none stale.
+  - `check:census-scope-coverage`: census-discovery at 407 / 407.
+  - `check:doc-citations`: RESULT clean, with 6,434 unanchored citations at the 6,434 ceiling.
+  - `check:citation-targets`: 164 / 164, at the ceiling.
+  - `check:citation-symbols`: 0 missing and 34 far, at their ceilings.
+  - `check:census-row-move-labels`, `check:census-policy-citations` and `check:production-drift`.
+- **Not run:**
+  - The full api-server `pnpm test`.
+  - `check:write-path-columns`, which needs live credentials. Reasoned from its extractor instead: every new read and write spells its table and columns literally at the call site. The new columns are `posts.primary_media_type`, `media_type` and `content`; `discovery_places.name`, `lat` and `lng`; `places.name`, `latitude` and `longitude`; and `events.location_lat` and `location_lng`. All are baseline columns. 3486's `trail_edges.review_state` and `declared_by`, and 3487's and 3488's tables, are declared by migrations in the tree and absent from production, like every unapplied column the check already lists.
+  - Any client check: no client file changed.
+
+### 86.7 Headline, restated from the rows
+
+With DV-13 and DV-23 moving W → C, `check:census-integrity` counts the rows as follows:
+
+| bucket | count |
+|---|---|
+| BUILT-AND-CORRECT | **98** |
+| BUILT-BUT-WRONG | **84** |
+| NOT-BUILT | **5** |
+| CANNOT-VERIFY | **1** |
+
+- CONSTRUCTED 182 / 188 = **96.8 %**, unchanged.
+- CORRECT 98 / 188 = **52.1 %**, up from 51.1 % (§77.10).
+- Seven rows are restated `W` with `IMPLEMENTATION-COMPLETE; awaits:` markers (86.1): DV-21, DV-22, DV-24, DC-04, DC-05, DV-74 and DC-20.
+- Other wave-10 lanes move rows in parallel; the integrator restates the merged count.
+
+### 86.8 Tests restated because a recorded decision changed what they pin
+
+- `discoveryTrailModifier.test.ts` "PARTIAL geo cells …": it pinned *partial cells are unmeasured*. D-W10T-7 defines the metric over the located members, so the case now asserts that value, and that no cell at all is still null.
+- `discoveryTrailModifier.test.ts` "one contributor owning the whole Trail …": it pinned `new_creator_exposure = 0` as a membership share. D-W10T-7 makes the metric an exposure share, so the case now asserts null without impressions and 0 when every impression went to a contributor who is not new.
+
+No assertion was deleted or weakened; both cases assert strictly more than before.
+
+### 86.9 Routed hunk (NOT applied; outside this lane's files)
+
+**H-W10T-1 — place trend suppression, `lib/discoveryTrendState.ts` (the trending lane's).** `trend_integrity_reviews` already records a `suppressed` verdict on a `place`. For the trend classifier to honour it, the lane that owns the file adds one read. After computing a place's state, it asks `readTrendReviewVerdict(sc, "place", placeId)` (exported from `services/trails/TrailService.ts`), and publishes `inactive` with no reason code when the answer is `suppressed`, or no reading when it is `unread`. No line of that file is touched here.
+
+### 86.10 Other sections' text this section edited, without touching a verdict
+
+§51.6's DC-05 row quoted line 187 of `lib/discoveryTrailHealth.ts` (`metrics.new_creator_exposure = share(fromNew, attributed);`), the membership-share defect this section fixes in place. Following §19.2's precedent, the quotation is de-pointered: the text stays as the record of what the code said at `a658174a4`, and the parseable `path:line#` form is removed.
+
+### 86.11 What would turn this red
+
+- **DV-13.** `boundCreatorsAcrossPage` removed from any modules return; R4 or S5 red.
+- **DV-23.** Any of R5–R7, S1 or S4 red; a module that serves `heldBackByPlace` items it also counts.
+- **DC-20.** An attach path that writes `content_trails` for a non-owner; a suggestion that falls back to a membership when 3488 is absent.
+- **The flagged rows.** Output with the flags OFF differing from the prior output (G0); a §7 move outside 3381's relation (L1).
+- **DV-74.** An admin write that changes Trails data without its audit row in the same transaction; any grant of the 3486 functions to a client role (W4).
+
+### 86.12 Freshness and scope
+
+- **CENSUS_SCOPE** (census-discovery) gains the four migrations, their rollbacks, `services/trails/trailExploration.ts`, `services/trails/trailAdmin.ts`, `routes/adminTrails.ts`, the four new suites, their fake, `discoveryTrailModifier.test.ts` and the decision register. `TrailService.ts`, `trailAttachIntegrity.ts`, `lib/discoveryTrailHealth.ts`, `lib/discoveryTrailObject.ts` and `routes/trails.ts` were already watched.
+- **The acknowledgement ledger.** Its census-discovery entry names every file this section changed, with a §86 paragraph. Verdicts DO move, and they are graded here. census-trips' entry gains `db/trailsModeration.db.test.ts`, a Trails suite under the counted `src/test/db/` prefix that touches no trip object. No Trips verdict moves.
+- **Edited outside this lane's list, minimally, and said so:**
+  - `routes/index.ts`: the admin router's import and `use`, appended to the two lines that already carry §52's;
+  - `scripts/checkProductionDrift.ts`: four `unapplied` entries, on one existing line;
+  - `docs/discovery/query-paths.md`: seven registry rows, plus one for §77's unregistered index;
+  - the Trails harness suites and `discoveryDerivedProvenanceGolden.test.ts` (86.8).
 
 ## Cited, not graded (check:census-scope-coverage)
 

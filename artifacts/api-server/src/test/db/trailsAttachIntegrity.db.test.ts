@@ -44,9 +44,9 @@ function user(label: string, accountStatus = "active"): string {
   return id;
 }
 
-function trail(): string {
+function trail(createdBy?: string): string {
   const id = randomUUID();
-  exec(`INSERT INTO public.trails (id, slug, title, lifecycle_status) VALUES ('${id}', '${TAG}-${id.slice(0, 8)}', '${TAG} ${id.slice(0, 8)}', 'active');`);
+  exec(`INSERT INTO public.trails (id, slug, title, lifecycle_status, created_by) VALUES ('${id}', '${TAG}-${id.slice(0, 8)}', '${TAG} ${id.slice(0, 8)}', 'active', ${createdBy ? `'${createdBy}'` : "NULL"});`);
   return id;
 }
 
@@ -162,7 +162,8 @@ describe("I — DC-20: attach and suggest name real content the actor may see", 
 
   test("I3. every verifiable type is admitted when it exists — including BOTH place tables", async () => {
     useBridge();
-    const [u, t] = [user("i3"), trail()];
+    const u = user("i3");
+    const t = trail(u); // §86 (D-W10T-9): the canonical place below is authorless, so its owner is the Trail's creator
     const labels = [
       one("post", post(u)), one("event", event(u)), one("route", route(u)),
       one("place", communityPlace(u)), one("place", canonicalPlace()),
@@ -277,7 +278,13 @@ describe("I — DC-20: attach and suggest name real content the actor may see", 
     const r = await attach(t, u, [one("post", post(author, "private"))], "suggestions");
     assert.equal(r.status, 409);
     assert.equal(r.body.contentRefusals[0].reason, "unknown_content");
-    assert.equal((await attach(t, u, [one("post", post(author))], "suggestions")).status, 201);
+    // RESTATED by census-discovery §86 (D-W10T-9): a stranger's suggestion of a post they CAN see is held,
+    // pending, for its author (202) — it is no longer a membership and spends none of the post's §4 budget.
+    const held = await attach(t, u, [one("post", post(author))], "suggestions");
+    assert.equal(held.status, 202);
+    assert.equal(held.body.suggested, 1);
+    assert.equal(members(t), 0);
+    assert.equal((await attach(t, author, [one("post", post(author))], "suggestions")).status, 201, "the author's own suggestion is a membership");
     assert.equal(members(t), 1);
   });
 });
