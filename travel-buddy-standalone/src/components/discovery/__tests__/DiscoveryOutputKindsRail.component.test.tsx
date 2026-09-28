@@ -10,8 +10,7 @@
  *   O4  a failed read (503 → unavailable) is never silence: the browse list's
  *       no-rows sentence (register D-W10-S1-2)
  *   O5  an empty page, a 404 and a transport failure render nothing
- *   O6  ForYouTab renders the rail for all three kinds (wiring), with the tab's refreshKey
- *   O7  (§97) a new refreshKey refetches a failed rail; the same key does not
+ *   O6  ForYouTab renders the rail for all three kinds (wiring), with the tab's refreshKey; O7 (§97) a new key refetches a failed rail
  *
  * Run with: pnpm test:component
  */

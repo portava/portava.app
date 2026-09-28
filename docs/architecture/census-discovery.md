@@ -16232,6 +16232,125 @@ An independent verifier checked §94.1's C claim at `3fd11f858` and confirmed ev
 |---|---|---|---|
 | DV-83 | C | **W** | §94.1's claim is not yet supported. A failed viewer resolution still hides the event-post read (verifier, §94.10), and the refused rail cannot be refreshed. Everything else §94.1 lists holds under mutation. |
 
+## §97 — DV-83's two remaining paths (lane W11-X2, second round): an unresolved viewer's event-post read is a failed read, and a pull refetches the rails; DV-83 moves W → C after three rounds of independent verification
+
+*Written 2026-09-28 on `claude/sensing-completion-20260925`, from `756af1f12` through `fec5f11ff` (on top of `532227796`, the media test fix and the Node runtime pin). It closes the two paths §94.10's verifier found. The decisions are D-W11X2-10 and D-W11X2-11, in `docs/architecture/discovery-decision-register.md` section `## W11-X2, second round`. No migration, no flag, and nothing was applied to `portava-ci` or production. Every edit to a cited file is line-neutral, except one helper appended at the foot of `routes/discovery.ts`. All evidence was measured on Node 24.21.0, CI's pin.*
+
+### 97.1 Row statement
+
+| ID | from | **to** | evidence |
+|---|---|---|---|
+| DV-83 | W | **C** | **§94.10's two paths are closed, and an independent verifier confirmed both after three rounds.** (1) `GET /discovery/feed` now tells an anonymous request from one whose viewer could not be resolved (`artifacts/api-server/src/routes/discovery.ts:2619#let viewerUnresolved = false;`). A presented token whose resolution threw (`artifacts/api-server/src/routes/discovery.ts:2667#if (viewerId === null && req.headers.authorization?.startsWith("Bearer ")) viewerUnresolved = true;`), that had no client to resolve it (`artifacts/api-server/src/routes/discovery.ts:2659#} else if (req.headers.authorization?.startsWith("Bearer ")) viewerUnresolved = true;`), or whose auth service did not answer (`artifacts/api-server/src/routes/discovery.ts:2633#authServiceUnreachable(userError)) viewerUnresolved = true;`; the rule is `artifacts/api-server/src/routes/discovery.ts:4539#function authServiceUnreachable(error: unknown): boolean {`) starts the event-post read as failed (`artifacts/api-server/src/routes/discovery.ts:2671#{ readFailed: viewerUnresolved }`). §94's own path then names `event_posts`, under `upstream_unavailable` / `feed_viewer_unresolved` (`artifacts/api-server/src/routes/discovery.ts:2759#viewerUnresolved ? "feed_viewer_unresolved"`). The refusal carries coverage `nothing` and writes no exposure and no per-request serve row (`artifacts/api-server/src/test/discoveryFeedEventPostsCoverage.test.ts:276#it("V1 getUser THROWS`). A code-less 4xx never evaluated the token (`artifacts/api-server/src/test/discoveryFeedEventPostsCoverage.test.ts:378#it("V9 a 4xx with no Auth error code`); Auth's coded verdicts stay anonymous (`artifacts/api-server/src/test/discoveryFeedEventPostsCoverage.test.ts:361#it("C7 CONTROL`), as does no client with no token (`artifacts/api-server/src/test/discoveryFeedNoServiceClient.test.ts:85#it("N1 a Bearer token and no client`). (2) Every pull bumps the rails' key (`travel-buddy-standalone/src/components/discovery/ForYouTab.tsx:324#setRailRefreshKey((k) => k + 1);`), and the rail refetches on it (`travel-buddy-standalone/src/components/discovery/DiscoveryEventPostsRail.tsx:99#}, [destination, lat, lng, radiusKm, refreshKey]);`; `travel-buddy-standalone/src/components/discovery/__tests__/DiscoveryEventPostsRail.refresh.component.test.tsx:71#it('R1 a new refreshKey`). §94.1's other clauses hold unchanged under mutation (§94.10). |
+
+### 97.2 What was built, and what the verifier changed
+
+**Path 1 (D-W11X2-10).** The event-post read is owed whenever a Bearer token is presented. When no viewer can be resolved from it, the read cannot happen, and that is a failed read, not an anonymous request's empty one. `authServiceUnreachable` separates "Auth did not answer" from "Auth rejected the token":
+
+- **Unresolved:** a throw; no service client; `AuthRetryableFetchError` or `AuthUnknownError`; status 0, 408, 429 or ≥ 500; any other 4xx that carries no Auth error code.
+- **Rejection:** a 4xx with a code (`bad_jwt`, `session_not_found`, `user_not_found`, …); `AuthSessionMissingError` and `AuthInvalidJwtError` by name; an error with no status and no known name.
+
+A rejection is anonymous and owes no read, which is C2's posture. If a place category also failed, D-W11X2-1's places code and class stand, with both sources named.
+
+**Path 2 (D-W11X2-11).** `ForYouTab` bumps `refreshKey` on every pull and passes it to `DiscoveryEventPostsRail` and to each `DiscoveryOutputKindsRail`. Both rails refetch on it.
+
+**Three rounds of independent verification** (a separate agent; it read the code, probed with a real auth-js 2.108.2 client against a fake auth server, and mutated only a scratch mirror):
+
+1. **Round 1 (at `35062c636`): path 1 NOT CONFIRMED; path 2 CONFIRMED.** It found:
+   - 429 and 408 classed as rejections, so a real `AuthApiError(429)` `over_request_rate_limit` answered 200 with no posts and no refusal;
+   - the no-client case still silent, which the first round had wrongly called unreachable;
+   - V1 blind to the per-request serve row (mutant S6);
+   - `756af1f12` breaking `DiscoveryOutputKindsRail` O6, which its checks never ran;
+   - no test of a second pull, or of the output-kind rails.
+
+   All were fixed in `13bc80889`.
+2. **Round 2 (at `13bc80889`): path 2 CONFIRMED; path 1 NOT CONFIRMED** on one residual. The API gateway refusing this server's own key answers 401 "Invalid API key" with no code, and was read as a rejection. It also found that nothing pinned a 403 `bad_jwt`, and that O7 tested only one pull. Fixed in `fec5f11ff`.
+3. **Round 3 (at `fec5f11ff`): both paths CONFIRMED.** Every shape lands where the register says. That includes a 403 HTML page from a web firewall (unresolved) and the legacy `{"code":403,"error_code":"bad_jwt"}` body (anonymous). Current GoTrue always codes a token rejection for requests carrying the version header auth-js sends. The rule's limit (a pre-2024 self-hosted GoTrue, or a proxy stripping that header, would over-refuse an expired token) is stated in the register. The one cheap survivor it listed, a code-less 400, is pinned by V9 in the final commit.
+
+### 97.3 Tests, seen red first, and mutations
+
+| suite | cases | red first |
+|---|---:|---|
+| `discoveryFeedEventPostsCoverage.test.ts` (appended below the anchored cases, so E1 and E5 keep their lines) | V1–V9, C4–C8 | V1–V9 and C6 red against the route at `756af1f12`. C4, C5, C7 and C8 are controls, green both ways. |
+| `discoveryFeedNoServiceClient.test.ts` (new, registered) | N1, N2 | N1 red without the no-client arm. N2 is a control, and it kills a mutant that ignores the Bearer header. |
+| `DiscoveryEventPostsRail.refresh.component.test.tsx` (new, jest) | R1, R2 | R1 red against the previous rail. R2 is a control. |
+| `ForYouTab.pullToRefresh.component.test.tsx` (jest) | third case, two pulls | red against the previous ForYouTab |
+| `DiscoveryOutputKindsRail.component.test.tsx` (jest) | O6 restated; O7 new, two pulls | O7 red against the previous rail |
+
+The refresh cases have their own file. The coverage suite's P5 unmounts a root by hand, which under this RNTL stops the next test's effects from flushing; bisection showed P5 followed by any case goes red, and any other order stays green. P5 is unchanged.
+
+**Mutations**, each applied alone, run, and restored byte-identical (sha256):
+
+- **Server**, all killed:
+  - the classifier always false (V2, V3, V6);
+  - every error unreachable (C4, C5);
+  - the catch arm not marked (V1, V4, V5, C6);
+  - the read not started failed (V1–V5, C6);
+  - the class or code unchanged (V1–V4);
+  - a `getUser` error never marked (V2, V3);
+  - 5xx, 408 or 429 dropped (V3, V8, V7);
+  - the name check dropped (V6);
+  - the no-client arm dropped (N1);
+  - a 403, or every 4xx above 401, counted unreachable (C7);
+  - a code-less 4xx counted a rejection (V9);
+  - `>= 400` changed to `> 400` (V9);
+  - `AuthSessionMissingError` not matched by name (C8);
+  - the code ignored (C4, C7);
+  - the refused branch logging past `logServeUnlessRefused` (V1).
+- **Client**, all killed:
+  - a constant key, or a boolean dependency (ForYouTab's two pulls);
+  - the output-kind rails not given the key (O6);
+  - the key dropped from their dependencies, or a boolean there (O7);
+  - the refused state stuck (R1, ForYouTab).
+- **Survived, and changing nothing in practice** (per the verifier): an empty-string code or any truthy code read as a verdict, since auth-js only sets `code` from string fields; and a status-less, name-less error read as unreachable, since every error `getUser` returns has a status or a handled name.
+
+### 97.4 Found, routed, not decided
+
+- **An unresolved viewer is served community places as an anonymous request is.** Their own blocks and mutes cannot be known, so they cannot be applied. Failing those rows closed would silently withhold places, which is a product choice; D-W11X2-10 routes it.
+- **The client's two silent paths**, which the verifier judged outside the literal criterion:
+  - a transport failure (`ok: false`) makes the rail render nothing, which is deliberate and tested;
+  - a signed-in client whose token refresh fails sends no Authorization header, so the server's anonymous answer is accurate for the request it received.
+
+  Both show the same "nothing live" silence as path 1, and both are the client auth state's to fix.
+
+### 97.5 Checks run, and what was not run
+
+On Node 24.21.0:
+
+- the api-server full suite on `13bc80889`: 28,517 / 28,526. The 9 failures were two defects of this round, both fixed before the row moved:
+  - `docCitations` failed because a header line added to `DiscoveryOutputKindsRail.component.test.tsx` moved O1 off its anchored line 41;
+  - `check:guard-coverage` failed, and with it `guardCoverageReachability` and `securityCheckSuite`, because the new no-client suite names the credential variables it deletes; it now carries an exemption with a reason, as `authSignupStatusNoClient.test.ts` does.
+  After the fixes, those three suites pass alone (59/59, 8/8 and 17/17). The final head's full run is CI's;
+- `discoveryFeedEventPostsCoverage` 22/22, `discoveryFeedNoServiceClient` 2/2, and `discoveryFeed` passing, on the final tree;
+- the nine rail and ForYouTab jest suites 59/59;
+- standalone `check:all`: passing on `fec5f11ff` (node 7,204 / 7,204; jest 693 suites, 4,412 tests; web jest 12 / 12);
+- `discoveryRefusalConsumers.guard` 8/8;
+- `typecheck`, standalone `tsc`, and both `typecheck:tests` at baseline;
+- eslint at its baseline;
+- `check:test-registration`, `check:doc-citations`, `check:citation-targets`, `check:census-integrity`, `check:census-freshness`, `check:census-scope-coverage` and `check:census-row-move-labels`.
+
+CI on `35062c636` was red on standalone `check:all` for exactly O6 (1 of 4,411), which `13bc80889` fixes. **Not run:** anything against `portava-ci` or production.
+
+### 97.6 What would turn this red
+
+- **An unresolved viewer served as a quiet city again:** V1–V9 or N1 go red.
+- **An Auth verdict refused:** C4, C5, C7 or C8 go red.
+- **A pull that no longer reaches a rail, or reaches it only once:** R1, ForYouTab's two pulls, or O6/O7 go red.
+
+### 97.7 Headline, restated from the rows
+
+DV-83 moves W → C, and no other row changes bucket. `check:census-integrity` at this tree counts the discovery census's latest row statements as:
+
+| bucket | count |
+|---|---|
+| BUILT-AND-CORRECT | **101** |
+| BUILT-BUT-WRONG | **85** |
+| NOT-BUILT | **2** |
+| CANNOT-VERIFY | **0** |
+
+- CONSTRUCTED 186 / 188 = **98.9 %**. CORRECT 101 / 188 = **53.7 %**. The denominator is unchanged.
+- These counts equal §94.8's, because §94.10's hold is lifted and nothing else moved.
+
+
 ## Cited, not graded (check:census-scope-coverage)
 
 - NOT-GRADED: artifacts/api-server/src/lib/capability/prerequisitesCore.ts — §93.8 names its function-granular gate boundary as why the Compass KNOWN entry was struck; it is the prerequisite checker's own machinery, and no Discovery verdict rests on it.

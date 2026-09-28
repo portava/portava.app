@@ -4404,6 +4404,10 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "travel-buddy-standalone/src/services/__tests__/discoveryRecommendations.test.ts",
     "travel-buddy-standalone/src/components/discovery/DiscoveryOutputKindsRail.tsx",
     "travel-buddy-standalone/src/components/discovery/__tests__/DiscoveryOutputKindsRail.component.test.tsx",
+    // census-discovery §97 (DV-83's second round): the suites its C rests on.
+    "artifacts/api-server/src/test/discoveryFeedNoServiceClient.test.ts",
+    "travel-buddy-standalone/src/components/discovery/__tests__/DiscoveryEventPostsRail.refresh.component.test.tsx",
+    "travel-buddy-standalone/src/components/discovery/__tests__/ForYouTab.pullToRefresh.component.test.tsx",
   ],
   // ── ADDED 2026-09-15: census-passport joins the CHECKABLE set ──────────────
   //

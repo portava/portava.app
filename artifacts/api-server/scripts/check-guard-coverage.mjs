@@ -1048,6 +1048,22 @@ const EXEMPT = [
   },
 
   {
+    file: 'src/test/discoveryFeedNoServiceClient.test.ts',
+    pinnedTestEnv: true,
+    reason:
+      'Registered unit test for GET /discovery/feed on the NO-SERVICE-CLIENT path (census-discovery §97, DV-83): '
+      + 'a presented Bearer token with no client to resolve it must be refused as an unresolved viewer, not served '
+      + 'as an anonymous empty feed. Same shape as authSignupStatusNoClient.test.ts: it names SUPABASE_URL and '
+      + 'SUPABASE_SERVICE_ROLE_KEY only to `delete` them from process.env before a dynamic import() of '
+      + 'src/lib/supabase.js, because isServiceClientReady is a load-time const and the runner\'s credentials would '
+      + 'otherwise pin it true. The detector is NAME-BASED and cannot tell that deletion from a read. The file '
+      + 'constructs no client, calls createClient nowhere, and asserts in before() that getServiceClient() is null, '
+      + 'so nothing in it can dial a database. Every other network call goes through a fetch override that refuses '
+      + 'the only upstreams the route calls. EXEMPTION MEANS UNGUARDED, NOT SAFE — if this file ever stops deleting '
+      + 'those variables, or ever constructs a client, the exemption is void and it must import the guard.',
+  },
+
+  {
     file: 'src/test/wallSessionIntentLiveDbStatus.test.ts',
     pinnedTestEnv: true,
     reason:
