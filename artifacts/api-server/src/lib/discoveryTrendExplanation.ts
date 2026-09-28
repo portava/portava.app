@@ -327,7 +327,7 @@ import { applyProtection } from "./protectedLocations.js";
 import { toCanonicalCategory } from "./placeCategories.js";
 import { normaliseCategoryAffinities } from "./discoveryPde.js";
 import { trailTrendStatesFromRankEvents } from "./discoveryTrailAffinity.js";
-import { MOMENTUM_BASELINE_WINDOW_MS, MOMENTUM_PAGE_SIZE, MOMENTUM_ROW_LIMIT } from "./discoveryLocalMomentum.js";
+import { MOMENTUM_BASELINE_WINDOW_MS, MOMENTUM_PAGE_SIZE, MOMENTUM_ROW_LIMIT } from "./discoveryLocalMomentum.js"; import { trendingObjectiveOrder } from "./discoverySurfaceObjectiveRank.js";  // §93 (W11-X1, DV-09)
 import type { TrendRowV2 } from "./discoveryTrendNormalised.js";
 import type { MapObject } from "./mapObjects.js";
 
@@ -542,7 +542,7 @@ export async function trendingByLocation(sc: any, viewerId: string, destination:
   if (read.unavailable) return { ok: true, body: { destination, items: [], unavailable: read.unavailable, readingProvenance: prov } };
   const eligible = await eligibleListPlaces(sc, viewerId, read.rows.map((r) => r.place_id));
   if (eligible === null) return { ok: false, reason: "eligibility_read_failed" };
-  const items = orderLocated(read.rows, eligible).map(listItem).filter((x): x is TrendListItem => x !== null).slice(0, TREND_LIST_MAX);
+  const items = (await trendingObjectiveOrder(sc, orderLocated(read.rows, eligible), nowMs)).map(listItem).filter((x): x is TrendListItem => x !== null).slice(0, TREND_LIST_MAX);  // §93 (DV-09): the Trending objective inside each state, only with 3500's Trending flag and 3450 on; else the same array
   return { ok: true, body: { destination, items, unavailable: null, readingProvenance: prov } };
 }
 
