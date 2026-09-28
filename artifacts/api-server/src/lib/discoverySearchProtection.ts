@@ -259,18 +259,18 @@ function logIfChanged(report: SearchProtectionReport, route: string): void {
  * after ranking, after pagination (protectedLocations' own placement rule).
  * Flag OFF ⇒ `rows` itself, nothing read.
  */
-export async function protectSearchResults<T extends ProtectableSearchRow>(sc: any, rows: T[]): Promise<T[]> {
+export async function protectSearchResults<T extends ProtectableSearchRow>(sc: any, rows: T[], route = "GET /discovery/search"): Promise<T[]> { // §80: the gateway names itself in the log
   if (!Array.isArray(rows) || rows.length === 0) return rows;
   const policy = await resolvePolicy(sc);
   if (policy === null) return rows;
   const { results, report } = applySearchProtection(rows, policy.zones);
-  logIfChanged(report, "GET /discovery/search");
+  logIfChanged(report, route);
   return results;
 }
 
 /** `protectSearchResults` over a page object's `results`, keeping every other field. */
-export async function protectSearchPage<P extends { results: ProtectableSearchRow[] }>(sc: any, page: P): Promise<P> {
-  const results = await protectSearchResults(sc, page.results);
+export async function protectSearchPage<P extends { results: ProtectableSearchRow[] }>(sc: any, page: P, route = "GET /discovery/search"): Promise<P> {
+  const results = await protectSearchResults(sc, page.results, route);
   return results === page.results ? page : { ...page, results };
 }
 

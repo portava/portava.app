@@ -72,11 +72,15 @@ describe("B04 through the flag (census-discovery §80): 3460, and the pass on th
     clearProtectedZoneCache();
     invalidateSearchProtectionFlagCache();
     if (zoneIds.length) exec(`DELETE FROM public.protected_zones WHERE id IN (${zoneIds.map((i) => `'${i}'`).join(", ")});`);
-    // Leave the harness as the chain replay left it: the flag FALSE.
+    // Leave the harness as the chain replay left it: the flag FALSE, 3460's wording.
     setFlag(false);
+    exec(readFileSync(M3460, "utf8"));
   });
 
   it("W0 — 3460 names the gateway, leaves the flag FALSE, and on re-run with the flag ON leaves it ON", () => {
+    // Applied here rather than assumed from the chain replay: the §46 suite's Z4
+    // rolls 3366 back and re-applies it, which restores 3366's own wording.
+    exec(readFileSync(M3460, "utf8"));
     const d = scalar(`SELECT description FROM public.feature_flags WHERE flag = '${DISCOVERY_SEARCH_PROTECTION_FLAG}'`) ?? "";
     assert.match(d, /\/input-assistance\/suggest/);
     assert.match(d, /map\.search/);

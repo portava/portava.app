@@ -250,6 +250,7 @@ export async function generateMapSearchPage(
         const page = await protectSearchPage(
           sc,
           await searchAll(sc, effectiveQ, p.userId, blockedSet, ageRestrictedSet, 0, MAP_SEARCH_PAGE_LIMIT, ctx),
+          GATEWAY_ROUTE,
         );
         const refusal = page.unreadableSources.length > 0
           ? discoveryRefusal(
@@ -269,7 +270,7 @@ export async function generateMapSearchPage(
         const { results: raw, degradedSources } = await dispatchSearchWithCoverage(
           sc, effectiveQ, p.userId, blockedSet, ageRestrictedSet, "saved", 0, MAP_SEARCH_PAGE_LIMIT + 1, ctx,
         );
-        const rows = await protectSearchResults(sc, raw.slice(0, MAP_SEARCH_PAGE_LIMIT));
+        const rows = await protectSearchResults(sc, raw.slice(0, MAP_SEARCH_PAGE_LIMIT), GATEWAY_ROUTE);
         const refusal = degradedSources.length > 0
           ? discoveryRefusal("transient_db", "search_sources_unreadable", GATEWAY_ROUTE, "partial", degradedSources)
           : null;

@@ -1035,7 +1035,7 @@ export async function protectGatewayCandidates(
 ): Promise<[SearchResult[][], SearchResult[]]> {
   const flat = [...perType.flat(), ...extra];
   if (flat.length === 0) return [perType, extra];
-  const kept = await protectSearchResults(sc, flat);
+  const kept = await protectSearchResults(sc, flat, GATEWAY_ROUTE);
   if (kept === flat) return [perType, extra];
   const key = (r: SearchResult) => `${r.type}\u0000${r.id}`;
   const byKey = new Map(kept.map((r) => [key(r), r] as const));

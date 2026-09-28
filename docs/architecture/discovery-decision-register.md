@@ -22,3 +22,161 @@ Each lane appends its own `## <lane> — <topic>` section and never edits anothe
 - **Where it is implemented:** file references, plus the tests that pin it.
 
 An entry that needs owner approval is marked **APPROVAL REQUIRED**. It gives the recommended action with exact values, the consequence of approving, the consequence of declining, and the recovery path.
+
+## W10-S1 — search safety and search product decisions
+
+Lane W10-S1, 2026-09-28, branch `disc-w10-s1-search`. Census section: census-discovery §80. Rows: B02, DV-83, B04, A08. Owner items from §69.1: D-8 (both halves), A-3, E-9.
+
+### D-W10-S1-1 — emoji in search (B02; D-8, first half)
+
+- **Question:** census-discovery §6 D5, re-keyed D-8 in §69.1: *"Emoji in queries. Stripping them changes which results a query returns."* The options are §46.5's.
+- **Options considered:**
+  - **(a) status quo.** "🔥 bar" finds only rows whose text literally holds "🔥 bar", so "Sky Bar" is missed. No 400s.
+  - **(b) strip emoji from the search key**, using the platform's rule. "🔥 bar" finds "Sky Bar" and the emoji-named row both, because the key is "bar". An emoji-only query has no searchable characters: `400 invalid_payload` on `/discovery/search` (the answer "((" has always had) and a `query_too_short` refusal on `/discovery/suggest`. A row can no longer be found by its emoji alone.
+  - **(c) strip for place, people and geo types; keep literal for content types.** `type=all` would mix two rules in one answer, and no spec clause names a split by type.
+  - **(d) search both forms.** Every emoji query costs a second pattern per type. It is also a policy no other platform field uses.
+- **Decision: (b).** Discovery's search key takes the shared input platform's field-context rule: `stripsEmoji("global_search")` is true, and the strip applies to the key only, never to the text the person sees. Grounds:
+  - GII §10: *"Punctuation and emoji handling appropriate to field context"*.
+  - GII §2: *"One platform layer."*
+  - census-input-intelligence G62 is `C` on this exact function.
+  - A Discovery search box is a lookup field, not prose.
+  - It also keeps the Map sheet's gateway page (D-W10-S1-5) identical to `/discovery/search`, which it could not be under (a), (c) or (d).
+- **Reversibility:** revert the two edited lines in `routes/discoverySearch.ts`. Nothing is stored, so nothing is lost.
+- **Where it is implemented:**
+  - Code: `artifacts/api-server/src/routes/discoverySearch.ts:140#let q = applyAliases(stripEmoji(qAfterHandle));` and `artifacts/api-server/src/routes/discoverySearch.ts:414#const q = sanitizeQuery(applyAliases(stripEmoji(`, which apply `stripEmoji` from `lib/inputAssistance/queryNormalizer.ts`. `lib/inputAssistance/searchPage.ts` `prepareSearchQuery` does the same.
+  - Tests: `src/test/discoverySearchQueryPolicy.test.ts` Q2–Q6, restated as the visible diff §46.5 said they would be; `src/test/inputAssistanceMapSearchPage.test.ts` "E: an emoji in the query".
+
+### D-W10-S1-2 — partial coverage: may a consumer render `partial` as complete, and in what words (DV-83 ground 2; D-8, second half)
+
+- **Question:** census-discovery §60.8 Q1, verbatim: *"May a Discovery consumer render a `coverage: "partial"` answer as a complete result with no notice … Or must every consumer that renders a list surface `failedSources` … If the second, which wording is ratified?"*
+- **Options considered:**
+  - **(i) Partial may render as complete.** DV-83's criterion stays met by 8 of 11 consumers as they are. A person reading a short list cannot tell it is short: the `11` §9 masquerade with rows in front of it.
+  - **(ii) Every list-rendering consumer says the list is incomplete.** Each consumer gains one notice, and a partial with no rows can no longer read as "nothing found".
+- **Decision: (ii).** Grounds:
+  - `02-DISCOVERY-v2` "Privacy, degradation and integration": *"retain permitted baseline retrieval and recommendations with honest limitations"*.
+  - `11` §9: *"A failure must not masquerade as success."*
+  - The owner's D11 ruling: *"A distinguishable response body alone is insufficient if consumers still treat it as successful empty data."*
+- **The rule:**
+  - Rows are kept: they are real and they were served.
+  - One notice says the list may be incomplete.
+  - A partial with no rows is never the "nothing found" state.
+  - `failedSources` holds table and bucket names. They are for logs and alerts, so they are not printed. "Surfacing" them means stating that something is missing.
+- **The wording:** taken from sentences the app already ships, with one home in `travel-buddy-standalone/src/services/discoveryCoverageNotice.ts`.
+  - **Search surfaces** (the search screen, its suggestions panel, the Map search sheet):
+    - rows present: "These results are incomplete — part of the search couldn’t be run." (already verbatim in `MapSearchSheet` and `app/search.tsx`);
+    - no rows: "Some of this search could not run." with "Part of the search failed, so this is not a statement about what exists. Try again in a moment."
+  - **Browse lists** (Discovery tabs and sections, the Map's places layer):
+    - rows present: "Some {noun} couldn’t be loaded just now, so this list may be incomplete." This is the Telegraph search screen's shape;
+    - no rows: "Some {noun} couldn’t be loaded just now" with "This is on our side, not your filters. Try again in a moment." (the category tab's own phrase).
+- **On the server:**
+  - The input gateway's envelope now carries coverage in the same refusal vocabulary (`refusal`, and `laneRefusals.saved` for the Map page). Its typeahead used to answer a failed read with the body of an empty one.
+  - A serve that throws carries `suggest_failed`.
+  - Before this, E-9 (D-W10-S1-4) would have made the global typeahead lose the partial and refused notices the legacy route carried.
+- **Reversibility:** remove the notices. The rows never change, so nothing is lost.
+- **Where it is implemented:**
+  - Server: `artifacts/api-server/src/lib/inputAssistance/gateway.ts` (coverage sink, `generateSuggestionsWithCoverage`, `gatewayFailureRefusal`), `artifacts/api-server/src/routes/inputAssistance.ts` (lines 36, 263, 297, 320, each edited in place) and `artifacts/api-server/src/lib/inputAssistance/types.ts`.
+  - Client transport: `platform/input-assistance/services/suggestResponse.ts`, `services/inputAssistance.ts` and `hooks/useInputAssistance.ts` (exposes `refusal`, never caches a refused or partial serve).
+  - Client consumers: `hooks/useSearchSuggestions.ts`, `hooks/useGlobalSearchSuggestions.ts`, `hooks/useCommunityDiscovery.ts`, `components/search/SearchSuggestionsPanel.tsx`, `app/search.tsx`, `components/discovery/ForYouTab.tsx`, `components/discovery/DiscoveryCategoryTab.tsx`, `components/map/MapSearchSheet.tsx`, `app/map/index.tsx`.
+  - Static pin: `src/services/__tests__/discoveryRefusalConsumers.guard.test.ts` G7 and G8.
+  - Tests: listed in census-discovery §80.4.
+
+### D-W10-S1-3 — what the protected-zone search pass does (B04; A-3, semantics)
+
+- **Question:** census-discovery §69.1 A-3: *"a ruling on 3366's protected-zone pass (B04)"*, and §46.4: *"Is the flag still needed?"*
+- **Decision: the semantics, and that they are correct.**
+  - **What it decides:** each search CANDIDATE, by its stored position, before projection. This happens on every serve that reaches the Discovery searchers:
+    - `GET /discovery/search` (all three branches);
+    - `GET /discovery/suggest`;
+    - since §80, the input gateway: the typeahead's and the pickers' candidates, and the Map search sheet's `map.search` page.
+  - **Actions:**
+    - zones read and none registered: identity, the same array;
+    - allow: the same object;
+    - coarsen: the position is snapped to the zone anchor, with `coordsPrecision: "approximate"`;
+    - suppress: the row is not served, and **not suggested by name** either (§46.4's reported gap, closed);
+    - policy unreadable: positions withheld (`coordsPrecision: "hidden"`), rows kept;
+    - a malformed zone: `unknown` coverage, so every positioned row is suppressed.
+  - **What it never does:** put counts on the wire; empty a search because the policy is unreadable; loosen anything. Every failure branch tightens.
+  - **Why it is correct:** it applies Map spec §24 through the one reader of `protected_zones` (`lib/protectedZoneStore.ts`) and the contract's own `applyProtection`. The same row is judged the same way on every serve point, so a place hidden from search is not findable by name in the typeahead.
+  - **Is the flag still needed:** not for safety. With production's 0 zones it is the identity. It stays because turning it on is production activation (AR-W10-S1-1).
+- **Reversibility:** flag OFF restores byte-identical bodies. This is pinned by §46's R2 and by `inputAssistanceMapSearchPage` Z4 and I2.
+- **Where it is implemented:**
+  - Code: `lib/discoverySearchProtection.ts` (unchanged); `lib/inputAssistance/gateway.ts` `protectGatewayCandidates`; `lib/inputAssistance/searchPage.ts`; migration `3460_discovery_search_protection_scope.sql`, which updates the flag's description only and never its state.
+  - Tests: `src/test/inputAssistanceMapSearchPage.test.ts` Z1–Z5 and `src/test/db/discoverySearchProtectionGateway.db.test.ts` W0–W3 (harness).
+
+### AR-W10-S1-1 — APPROVAL REQUIRED: turn the protected-zone search pass on in production (B04, A-3 activation)
+
+- **Recommended action, exact:**
+  1. Apply `artifacts/api-server/src/migrations/3366_discovery_search_protected_zones_flag.sql`, then `3460_discovery_search_protection_scope.sql`, to production through the ledgered path. 3366 seeds the row FALSE; 3460 rewrites the description only.
+  2. Then set it on:
+
+     ```sql
+     UPDATE public.feature_flags SET enabled = true WHERE flag = 'discovery_search_protected_zones_enabled';
+     ```
+
+  - Reader: `lib/discoverySearchProtection.ts` `searchProtectionEnabled`, which caches for 30 s per process.
+- **Prerequisites:**
+  - `protected_zones` exists (2217, applied 2026-09-21, §46.1). It holds **0 rows** as last read (2026-09-27), so the flip is a byte-identity until zones are registered.
+  - 3366 and 3460 are both unapplied in production.
+  - The server build carrying §80 is deployed; without it the gateway leg does not exist.
+  - Registering zones is a separate act of policy, not asked here.
+- **Monitoring:**
+  - The server log line "discovery search: §24 protection pass changed what was served" (`lib/discoverySearchProtection.ts`). It carries counts only: evaluated, coarsened, suppressed, withheld, and `policy: read|unreadable`. Since §80 its `route` names `POST /input-assistance/suggest` for the gateway.
+  - The rate of `policy: "unreadable"`. Each such serve withholds every position until the read heals.
+  - `protected_zones` row count, and the 30 s cache TTL.
+  - No count is on the wire, by design.
+- **If approved:**
+  - Every search serve reads the flag and, while zones exist, `protected_zones`, at most once per 30 s per process.
+  - With 0 zones, nothing changes on screen.
+  - Once zones are registered: shelters and similar places vanish from search, suggest, the typeahead and the Map sheet; clinics are coarsened.
+  - If the table becomes unreadable, positions are withheld from search results until it heals.
+- **If declined:** B04 stays `W`. A zone registered later has no effect on any search serve, while the Map already honours it.
+- **Recovery:**
+
+  ```sql
+  UPDATE public.feature_flags SET enabled = false WHERE flag = 'discovery_search_protected_zones_enabled';
+  ```
+
+  This takes effect within 30 s and restores byte-identical bodies. Nothing is stored by the pass, so nothing needs repair. 3366's rollback (`db/rollback/2026-09-27-3366-discovery-search-protected-zones-flag-rollback.sql`) refuses while the flag is ON, by design.
+
+### D-W10-S1-4 — the legacy typeahead (A08 reason 2; E-9)
+
+- **Question:** census-discovery §69.1 E-9, *"the legacy typeahead"*; §53.4 reason 2: *"Until the gateway returns at least one suggestion on a mount, both requests fire per keystroke."*
+- **Options considered:**
+  - **(a) Keep the proving window.** Two requests on every first keystroke, and on every keystroke of a mount whose queries never match.
+  - **(b) Retire it once the gateway has answered at all.** The first keystroke still doubles.
+  - **(c) Run the legacy typeahead only while the gateway reports `unavailable`.**
+  - **(d) Delete it.** GII §38 requires a failure ladder, so no.
+- **Decision: (c).** A gateway that has not answered yet has not failed. GII §38's signal is `unavailable` (404/405/501, offline, no token, an unreadable schema). The fallback is one keystroke away when that fires, and `GET /discovery/suggest` stays as that fallback. A transient 5xx keeps what is on screen, which is GII §38's *"Provider failure must not collapse the input UI"*.
+- **Reversibility:** one line (`legacyEnabled`).
+- **Where it is implemented:**
+  - Code: `travel-buddy-standalone/src/hooks/useGlobalSearchSuggestions.ts`.
+  - Tests: `useGlobalSearchSuggestions.singleSystem.component.test.tsx`. The first case is restated from "every keystroke still fetches the legacy typeahead" to "no keystroke fetches it", because this decision changed it. A control and a never-matching-mount case were added.
+
+### D-W10-S1-5 — the Map search sheet on the gateway (A08 reason 3)
+
+- **Question:** census-discovery §70.3: *"Moving it would change what a person sees … it carries none of the `refusal.coverage` notices the sheet renders."*
+- **Decision:** the sheet is the `map.search` FIELD of the `global_search` context. GII §13 phase 3 names Map among Global Search's consumers, and GII §2 says *"The field owns behavior"*.
+  - The gateway serves this field as a **search page** (`lib/inputAssistance/searchPage.ts`):
+    - the same platform searchers (`searchAll` plus `saved`, limit 20, as the sheet always asked);
+    - the same eligibility reads;
+    - the same §24 pass;
+    - the same query preparation.
+  - Projection: the §42 suggestion plus `mapResult`, which carries the wire type, the display fields, and from `metadata` only `lat`, `lng`, `coordsPrecision`, `savedKind` and `bounds`.
+  - Coverage: each lane's coverage on the envelope.
+  - One request per settled keystroke instead of two.
+- **Visible behaviour:** the same rows and the same notices. `inputAssistanceMapSearchPage` E compares the route and the gateway over eleven query shapes, healthy and degraded. The sheet's twelve cases are restated onto the new transport.
+- **Known differences, none visible on a healthy search:**
+  - A 429 now carries the gateway's text ("Too many suggestion requests. Please wait.") instead of the route's. The bucket is `input_assist_suggest`, 90/min, shared with the global typeahead, instead of 30/min for two requests per keystroke.
+  - The Map sheet's searches no longer write Discovery serve-point-8 rows (`rank_events`). They were typeahead traffic counted as search exposures, two per keystroke. The gateway logs its serve (`input-assistance/suggest served`).
+  - The Compass search signal is sent once per answered query instead of twice.
+- **Reversibility:** restore the sheet's `run` (git). The server page is additive.
+- **Where it is implemented:**
+  - Code: `lib/inputAssistance/searchPage.ts`, `lib/inputAssistance/gateway.ts`, `routes/inputAssistance.ts`, `travel-buddy-standalone/src/platform/input-assistance/search/mapSearch.ts`, `services/inputAssistance.ts` `requestMapSearchPage`, and `components/map/MapSearchSheet.tsx`.
+  - Tests: `inputAssistanceMapSearchPage.test.ts`, `mapSearch.test.ts` and `MapSearchSheet.refusal.component.test.tsx`.
+
+### D-W10-S1-6 — the search helpers join the platform module (A08, the residual §70 named)
+
+- **Question:** census-discovery §70.8: *"`routes/discoverySearchHelpers.ts` into the platform layer."*
+- **Decision:** move it verbatim to `lib/inputAssistance/searchQueryHelpers.ts`, keeping the same lines. The six `lib/` importers now import it there. `routes/discoverySearchHelpers.ts` becomes a one-line re-export, so no Discovery caller changes.
+- **Reversibility:** `git mv` back.
+- **Where it is implemented:** `searchPlatformBoundary.test.ts`. B5 is now an empty list and B6 pins the re-export.
