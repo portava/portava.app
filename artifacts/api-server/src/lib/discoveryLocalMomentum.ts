@@ -59,7 +59,7 @@ import { logger as rootLogger } from "./logger.js";
 // already pages in. Separate module, separate function, and the scalar above is
 // not touched: a number the ranker consumes must not move because a diagnostic
 // was added beside it.
-import { computeTrendStates, type TrendReading } from "./discoveryTrendState.js";
+import { computeTrendStates, applyPlaceTrendReviews, type TrendReading } from "./discoveryTrendState.js";
 // census-discovery DC-17's four facts, and the version constants `06` §5's rank
 // provenance already uses. Imported rather than redeclared: a momentum reading
 // and a ranked page must never claim different versions of the same pipeline.
@@ -287,7 +287,7 @@ export async function loadLocalMomentum(
       // Same rows, second pass. Cheap relative to the read that produced them,
       // and computed here rather than at the call site so the two can never be
       // derived from different corpora and then compared.
-      if (v2) trends = computeTrendStates(rows, nowMs, { model: "v2", context, ...(await postConvergenceOption(sc, rows, ids, since, nowMs)) }); else trends = computeTrendStates(rows, nowMs);  // §95 (DV-34): the post leg only under its own flag
+      if (v2) trends = computeTrendStates(rows, nowMs, { model: "v2", context, ...(await postConvergenceOption(sc, rows, ids, since, nowMs)) }); else trends = computeTrendStates(rows, nowMs);  trends = await applyPlaceTrendReviews(sc, trends);  // §95 (DV-34): the post leg only under its own flag | census-discovery §93 (H-W10T-1): a place under a `suppressed` review is no claim and no retest pick; an unread review drops the reading
     }
   } catch {
     // resolves-not-throws-ok: a momentum read failure degrades to "no surge",

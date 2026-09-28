@@ -789,7 +789,7 @@ export async function rankForViewer<T extends PdePlace>(
       stages.governor = "skipped";
     }
   }
-  await pdePostRankStages(pipe, sc, ranked, scoredById, viewer, modifiers, stages, nowMs, opts);  // §85: the reserved inventory (DV-53), the integrity stage (DC-11), and each row's record — nothing with every §85 flag off
+  await pdeRediscoveryRetestStage(sc, opts, viewer, places, ranked, scoredById, modifiers, stages, nowMs); await pdePostRankStages(pipe, sc, ranked, scoredById, viewer, modifiers, stages, nowMs, opts);  // §93 (DV-31, H-W10R1-1): the retest, after the governor, only with the modifiers on and 3475's retest flag on; §85: the reserved inventory (DV-53), the integrity stage (DC-11), and each row's record — nothing with every §85 flag off
   return {
     ranked,
     scoredById,
@@ -1208,3 +1208,42 @@ export interface PdeStages {
 import { registerEngagementIntegrityDetector } from "./discoveryCandidates/integrity.js";
 import { engagementIntegrityStageDetector } from "./discoveryRankIntegrity.js";
 registerEngagementIntegrityDetector(engagementIntegrityStageDetector);
+
+// ── census-discovery §93 (lane W11-X1): DV-31's page consumer, hunk H-W10R1-1 (§84.5) ──
+// `02` §9.5 "periodically retest promising items": after the exploration
+// governor has placed its picks, lib/discoveryTrendRediscovery moves at most one
+// cooled place (a v2 reading) to the middle of the page and the served row is
+// stamped `rediscoveryRetest: 1`, so the retest reaches rank_events as an
+// exposure like any other (D-W10-R1-14). Appended here so no cited line moves.
+//
+// Behind the modifiers (2289): the retest pool IS the momentum load's own v2
+// readings for this candidate key, and that load runs only with the modifiers
+// on. With them off nothing below runs and nothing is read — L0 and the §85
+// pipeline golden stay byte-identical. With them on and
+// `discovery_trend_rediscovery_retest_enabled` (3475) FALSE, absent or
+// unreadable, it reads one cached flag and changes nothing (D-W11X1-2).
+// Never fatal: a throw leaves the page as the governor left it.
+import { planRediscoveryRetest } from "./discoveryTrendRediscovery.js";
+
+export interface PdeStages {
+  /** §93 (DV-31): present ONLY when a retest moved a place; which, to which slot, from where. */
+  rediscoveryRetest?: { id: string; slot: number; fromIndex: number };
+}
+
+async function pdeRediscoveryRetestStage<T extends PdePlace>(
+  sc: any, opts: PdeRankOptions, viewer: PdeViewer, places: readonly T[], ranked: T[],
+  scoredById: Map<string, ScoredCandidate<RankCandidate>>, modifiers: DiscoveryModifiers, stages: PdeStages, nowMs: number,
+): Promise<void> {
+  if (!modifiers.enabled) return;
+  try {
+    // The SAME key expression the momentum load was given above, so the pool is that load's own.
+    const key = opts.candidateKey ?? deriveCandidateKey(viewer.city, places.map((p) => p.id));
+    const plan = await planRediscoveryRetest(sc, key, ranked.map((p) => p.id), nowMs);
+    if (!plan.retest) return;
+    const pos = new Map(plan.order.map((id, i) => [id, i]));
+    ranked.sort((a, b) => (pos.get(a.id) ?? ranked.length) - (pos.get(b.id) ?? ranked.length));
+    const s = scoredById.get(plan.retest.id);
+    if (s) s.features.rediscoveryRetest = 1;
+    stages.rediscoveryRetest = plan.retest;
+  } catch { /* non-fatal — the governor's page stands */ }
+}

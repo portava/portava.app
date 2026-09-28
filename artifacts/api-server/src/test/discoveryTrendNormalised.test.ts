@@ -354,7 +354,7 @@ describe("F — v1 unless v2 is asked for; the loader asks only when the flag is
         let selected = "";
         const b: any = {
           select(s: string) { selected = s; log.push(`${table}:${s}`); return b; },
-          eq() { return b; }, neq() { return b; }, in() { return b; }, gte() { return b; }, order() { return b; }, range() { return b; },
+          eq() { return b; }, neq() { return b; }, in() { return b; }, gte() { return b; }, order() { return b; }, range() { return b; }, limit() { return b; },  // limit: §93 (H-W10T-1) reads trend_integrity_reviews — none recorded here
           maybeSingle() {
             if (flagOn === "error") return Promise.resolve({ data: null, error: { message: "boom" } });
             return Promise.resolve({ data: { enabled: flagOn }, error: null });

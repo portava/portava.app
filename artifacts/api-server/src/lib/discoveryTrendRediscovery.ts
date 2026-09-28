@@ -33,10 +33,10 @@
  * the v2 model: the pool is lib/discoveryLocalMomentum `readRetestReadings`,
  * which is empty unless `discovery_trend_normalised_enabled` computed v2.
  *
- * THE CONSUMER IS NOT IN THIS LANE. Page order is decided in lib/discoveryPde.ts
- * (another lane's file). The three-line hunk that calls `planRediscoveryRetest`
- * after the exploration governor is recorded in census-discovery §84 (H-W10R1-1);
- * until it is applied nothing calls this module on a serve path.
+ * THE CONSUMER. Page order is decided in lib/discoveryPde.ts. The hunk that
+ * calls `planRediscoveryRetest` after the exploration governor (§84.5,
+ * H-W10R1-1) landed in census-discovery §93 (lane W11-X1): `rankForViewer`'s
+ * retest stage, only with the modifiers on (discoveryRediscoveryRetestServe).
  */
 import { isFlagEnabled } from "./featureFlags.js";
 import { readRetestReadings } from "./discoveryLocalMomentum.js";

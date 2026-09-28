@@ -415,3 +415,94 @@ export function trendDriverCode(driver: TrendDriver | null | undefined): TrendDr
   return driver === "trip_adds" ? "trend_driver_trip_adds" : driver === "saves" ? "trend_driver_saves"
     : driver === "independent_groups" ? "trend_driver_independent_groups" : null;
 }
+
+// ── census-discovery §93 (lane W11-X1): H-W10T-1 — a suppressed PLACE is not a trend claim ──
+//
+// `11` §8's trend integrity review (3486, D-W10T-11) records a verdict per
+// subject; the newest is in force. A Trail's `suppressed` already reached
+// GET …/trending (§86). A PLACE's did not reach the classifier. It does now:
+// every reading that could publish something — a claim (any state but
+// `unknown`), or a v2 reading the rediscovery retest could pick — asks
+// services/trails/TrailService.readTrendReviewVerdict(sc, "place", id), where
+// `id` is the trend store's own place key (rank_events.item_id =
+// place_momentum.place_id, e.g. `db/<uuid>`, `node/<n>`), verbatim (D-W11X1-5).
+//
+//   suppressed  the reading is kept, as NO CLAIM: `unknown`, lifecycle
+//               `inactive`, no driver — so trendReasonFor answers null (no
+//               reason code, no sentence), no list names it, and the retest
+//               never picks it (isRetestCandidate refuses `inactive`)
+//   unread      FAIL CLOSED: the reading is removed — "not computed", never a
+//               claim the review might have withdrawn (D-W10T-11: "an
+//               unreadable review answers null, never a claim")
+//   none        unchanged; when every answer is `none` the SAME object returns
+//
+// 3486 absent is `none` inside readTrendReviewVerdict (no review can exist).
+// The reader is imported on call, not at the top: TrailService imports
+// lib/discoveryLocalMomentum, which imports this module, so a static import
+// would close a module cycle (see the note on the imports above).
+
+export type PlaceTrendReviewVerdict = "suppressed" | "none" | "unread";
+export type PlaceTrendReviewReader = (sc: any, subjectKind: "place", subjectId: string) => Promise<PlaceTrendReviewVerdict>;
+
+async function defaultPlaceReviewReader(): Promise<PlaceTrendReviewReader> {
+  const m = await import("../services/trails/TrailService.js");
+  return m.readTrendReviewVerdict;
+}
+
+/** The newest review's effect for each id; any throw from the reader reads `unread`. */
+export async function readPlaceTrendReviews(
+  sc: any, placeIds: readonly string[], read?: PlaceTrendReviewReader,
+): Promise<Map<string, PlaceTrendReviewVerdict>> {
+  const out = new Map<string, PlaceTrendReviewVerdict>();
+  const ids = [...new Set(placeIds)];
+  if (ids.length === 0) return out;
+  let reader: PlaceTrendReviewReader;
+  try { reader = read ?? (await defaultPlaceReviewReader()); } catch { for (const id of ids) out.set(id, "unread"); return out; }
+  await Promise.all(ids.map(async (id) => {
+    let v: PlaceTrendReviewVerdict;
+    try { v = sc ? await reader(sc, "place", id) : "unread"; } catch { v = "unread"; }
+    out.set(id, v === "suppressed" || v === "none" ? v : "unread");
+  }));
+  return out;
+}
+
+/** Could this reading publish anything — a claim, or a retest pick? */
+function readingMayPublish(r: TrendReading): boolean {
+  return r.state !== "unknown" || (r.lifecycle !== undefined && r.lifecycle !== "inactive");
+}
+
+/** H-W10T-1 on computed readings (the served modifiers and the retest pool). */
+export async function applyPlaceTrendReviews(
+  sc: any, readings: Record<string, TrendReading>, read?: PlaceTrendReviewReader,
+): Promise<Record<string, TrendReading>> {
+  const ids = Object.keys(readings).filter((id) => readingMayPublish(readings[id]!));
+  if (ids.length === 0) return readings;
+  const verdicts = await readPlaceTrendReviews(sc, ids, read);
+  if ([...verdicts.values()].every((v) => v === "none")) return readings;
+  const out: Record<string, TrendReading> = { ...readings };
+  for (const [id, v] of verdicts) {
+    if (v === "unread") delete out[id];
+    else if (v === "suppressed") out[id] = { ...readings[id]!, state: "unknown", lifecycle: "inactive", driver: null };
+  }
+  return out;
+}
+
+/** The stored-row shape the trend API reads (`place_momentum`), as far as a review touches it. */
+export interface ReviewablePlaceTrendRow { place_id: string; trend_state: string; lifecycle_state?: string | null; driver?: string | null }
+
+/** H-W10T-1 on STORED rows (the trend API's explanations and lists), with the same three answers. */
+export async function applyPlaceTrendReviewsToRows<R extends ReviewablePlaceTrendRow>(
+  sc: any, rows: readonly R[], read?: PlaceTrendReviewReader,
+): Promise<R[]> {
+  const ids = rows.filter((r) => r.trend_state !== "unknown").map((r) => r.place_id);
+  if (ids.length === 0) return [...rows];
+  const verdicts = await readPlaceTrendReviews(sc, ids, read);
+  const out: R[] = [];
+  for (const r of rows) {
+    const v = verdicts.get(r.place_id);
+    if (v === "unread") continue;
+    if (v === "suppressed") out.push({ ...r, trend_state: "unknown", ...("lifecycle_state" in r ? { lifecycle_state: "inactive" } : {}), ...("driver" in r ? { driver: null } : {}) });
+    else out.push(r);
+  }
+  return out;
+}

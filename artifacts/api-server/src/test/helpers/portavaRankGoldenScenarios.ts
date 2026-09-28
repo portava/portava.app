@@ -14,6 +14,15 @@
  * is in census-discovery §78.7). `src/test/portavaRankDesignGolden.test.ts`
  * replays it. A §78 flag that is off must leave that string unchanged.
  *
+ * RE-CAPTURED ONCE, by census-discovery §93 (lane W11-X1, D-W11X1-1), and only
+ * because A11's dead free-time arms were deleted (D-W10S2-7): the `full`,
+ * `layover` and `noNeighbourhood` viewers set the two deleted fields, which no
+ * production caller ever set. The file was re-captured with the BASE ranker
+ * (3cc027a06) over viewers without those fields, and the deleted-arms ranker
+ * reproduces it byte for byte, from both the stripped viewers and the original
+ * ones (sha256 665bb6a6…; the transcript is in §93). The ten `empty` hashes did
+ * not move.
+ *
  * The fixture is deliberately wide rather than realistic: every feature kernel
  * fires somewhere (recency, the three author terms, interest, category
  * affinity, city and neighbourhood, distance, actionability, both availability
@@ -75,7 +84,6 @@ export function goldenViewers(): Record<string, ViewerContext> {
     mutualIds: new Set(["author-a"]),
     interestTags: new Set(["rooftop"]),
     categoryAffinities: { food: 0.8, nightlife: 0.3, culture: 1.4, beaches: -0.2 },
-    availableNow: true,
     engagedAuthorIds: new Set(["author-4"]),
     seenIds: new Set(["node/1001", "node/1005", "db/0000000008-aaaa-4000-8000-000000000000"]),
     nowMs: GOLDEN_NOW_MS,
@@ -86,7 +94,7 @@ export function goldenViewers(): Record<string, ViewerContext> {
   return {
     empty: { userId: "viewer-empty", nowMs: GOLDEN_NOW_MS },
     full,
-    layover: { ...full, userId: "viewer-layover", availableNow: false, availableMinutes: 240 },
+    layover: { ...full, userId: "viewer-layover" },  // census-discovery §93 (W11-X1): its two free-time inputs were A11's dead arms, deleted (D-W10S2-7, D-W11X1-1)
     noNeighbourhood: { ...full, userId: "viewer-nonbhd", neighborhood: null },
   };
 }

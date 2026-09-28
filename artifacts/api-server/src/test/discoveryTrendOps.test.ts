@@ -168,7 +168,7 @@ describe("R — DV-31: cooled places are retested, periodically, in a bounded sl
         let flag = "";
         const b: any = {
           select() { return b; }, eq(_c: string, v: string) { flag = v; return b; }, neq() { return b; }, in() { return b; },
-          gte() { return b; }, order() { return b; }, range() { return b; },
+          gte() { return b; }, order() { return b; }, range() { return b; }, limit() { return b; },  // limit: §93 (H-W10T-1) reads trend_integrity_reviews — none recorded here
           maybeSingle() { return Promise.resolve({ data: flag in flags ? { enabled: flags[flag] } : null, error: null }); },
           then(res: (v: unknown) => unknown) { return Promise.resolve({ data: table === "rank_events" ? events : [], error: null }).then(res); },
         };
@@ -194,10 +194,10 @@ describe("R — DV-31: cooled places are retested, periodically, in a bounded sl
     assert.equal((await planRediscoveryRetest(v1, "retest-v1", page, NOW)).retest, null, "no v2 model, no pool");
   });
 
-  it("R5. nothing on a serve path calls it yet (H-W10R1-1 is the integrator's hunk)", () => {
+  it("R5. RESTATED by §93 (W11-X1, D-W11X1-2): H-W10R1-1 landed — lib/discoveryPde.ts is the ONE serve-path caller", () => {
     const callers = ["lib", "routes"].flatMap((d) => readdirSync(join(SRC, d)).filter((f) => f.endsWith(".ts")).map((f) => `${d}/${f}`))
       .filter((f) => f !== "lib/discoveryTrendRediscovery.ts" && /discoveryTrendRediscovery\.js/.test(readFileSync(join(SRC, f), "utf8")));
-    assert.deepEqual(callers, []);
+    assert.deepEqual(callers, ["lib/discoveryPde.ts"]);  // was []: the page consumer is src/test/discoveryRediscoveryRetestServe.test.ts's subject
   });
 });
 
