@@ -73,7 +73,7 @@
 import type { MomentumRow } from "./discoveryLocalMomentum.js";
 // NOT type-only, and safe: lib/discoveryRankProvenance imports nothing, so it
 // cannot close a cycle back through either of the two modules that use it.
-import { derivedStoreProvenance, type DerivedStoreProvenance, type DerivedStoreVersions } from "./discoveryRankProvenance.js"; import { computeTrendStatesV2, type TrendContext, type TrendDriver, type TrendLifecycle } from "./discoveryTrendNormalised.js";  // §84 (W10-R1): v2, behind discovery_trend_normalised_enabled
+import { derivedStoreProvenance, type DerivedStoreProvenance, type DerivedStoreVersions } from "./discoveryRankProvenance.js"; import { computeTrendStatesV2, type TrendContext, type TrendDriver, type TrendLifecycle } from "./discoveryTrendNormalised.js"; import type { PostAfterVisitInput } from "./discoveryTrendPostConvergence.js";  // §84 (W10-R1): v2, behind discovery_trend_normalised_enabled
 
 /** `03` §9's stages, in the specification's own order. */
 export const TREND_STATES = [
@@ -189,7 +189,7 @@ function weightFor(outcome: string): number {
 export function computeTrendStates(
   rows: readonly MomentumRow[],
   nowMs: number, opts: TrendModelOptions = {},  // §84: absent ⇒ v1, byte for byte (golden G2, G10)
-): Record<string, TrendReading> { if (opts.model === "v2") return computeTrendStatesNormalised(rows, nowMs, opts.context ?? {});
+): Record<string, TrendReading> { if (opts.model === "v2") return computeTrendStatesNormalised(rows, nowMs, opts.context ?? {}, opts.postAfterVisit);
   const recentSince = nowMs - TREND_RECENT_MS;
   const midSince    = nowMs - TREND_MID_MS;
   const priorSince  = nowMs - TREND_PRIOR_MS;
@@ -344,7 +344,7 @@ const TREND_STATE_VERSIONS: DerivedStoreVersions = {
 export interface TrendModelOptions {
   model?: "v1" | "v2";
   /** v2 only: place context (creator, cell, Trails, age, content class). */
-  context?: TrendContext;
+  context?: TrendContext; /** §95 (DV-34): the post-after-visit leg, passed only under discovery_trend_post_convergence_enabled. */ postAfterVisit?: PostAfterVisitInput;
 }
 
 /** v2's model: exposure-normalised, independence-capped, six normalisers. MUST equal 3477's `c_model`. */
@@ -364,12 +364,12 @@ const TREND_STATE_VERSIONS_V2: DerivedStoreVersions = {
 };
 
 function computeTrendStatesNormalised(
-  rows: readonly MomentumRow[], nowMs: number, context: TrendContext,
+  rows: readonly MomentumRow[], nowMs: number, context: TrendContext, postAfterVisit?: PostAfterVisitInput,
 ): Record<string, TrendReading> {
   const priorSince = nowMs - TREND_PRIOR_MS;
   const provenance = derivedStoreProvenance({ kind: "bounded", startMs: priorSince, endMs: nowMs }, nowMs, TREND_STATE_VERSIONS_V2);
   const out: Record<string, TrendReading> = {};
-  for (const [id, r] of Object.entries(computeTrendStatesV2(rows, nowMs, { context }))) {
+  for (const [id, r] of Object.entries(computeTrendStatesV2(rows, nowMs, postAfterVisit ? { context, postAfterVisit } : { context }))) {
     out[id] = { state: r.state, evidence: r.evidence, provenance, lifecycle: r.lifecycle, driver: r.driver };
   }
   return out;
