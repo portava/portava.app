@@ -155,7 +155,7 @@ How the 87 open rows split:
   - DV-70 still needs the production apply and a live read;
   - DC-27 still needs its rollout record.
 - **Stop:** any `REFUSED`, any drift line, any file failing its postcondition, or 2481's row changing. The applier stops at the failing file, and the files before it stay applied and recorded.
-- **Recovery:** that file's rollback (apply plan §3 and §8.1), newest first. 3440 and 3441 have no rollback file; their reversal is the footer SQL (apply plan §3).
+- **Recovery:** that file's rollback (apply plan §3 and §8.1), newest first. Since §97 (W11-S) 3440 and 3441 have rollback files too, their footers as files; run 3441's before 3415's (apply plan §8.5).
 
 ---
 
@@ -238,8 +238,8 @@ Every flag SQL below runs on production (`ajrurzioarfkagpuxfnb`). Flag reads are
   - `check:production-drift` against a refreshed snapshot.
 - **Stop:** any file failing its transaction, which rolls itself back. Stop the batch there. The files before it stay applied and recorded.
 - **Recovery:**
-  - each file's rollback in `db/rollback/`, newest first. Every P1 file has one except 3440 and 3441, whose recovery is the footer reversal in the file (apply plan §3);
-  - P0 has no `db/rollback/` files. 2289's and 2892's reversals are the manual notes in the files, and 2297, 2894 and 2995 carry ROLLBACK blocks (rollout plan §7). The gap is the file form, not the method;
+  - each file's rollback in `db/rollback/`, newest first. Every P1 file has one; 3440's and 3441's were added by §97 (W11-S) and are their footers as files (apply plan §8.5);
+  - P0: since §97 (W11-S) each file has a `db/rollback/` file (2289, 2297, 2892, 2894, 2995), guarded: 2297 and 2894 refuse while a `dismiss` or `trip_add` row exists instead of deleting it, and 2892 refuses while `place_momentum` holds a row or a later file builds on it (apply plan §8.5);
   - the worst case is the restore point.
 - **If approved:** production gains the schema the branch's code needs.
 - **If declined:** action 4 cannot ship the branch's API, because its writes would name objects that do not exist. Every production row stays W.
@@ -372,7 +372,7 @@ None of these changes the ranked order of the Discovery feed. Turn them on one a
   - `pnpm run report:discovery-outcomes`, by arm (an insufficient sample is never reported as 0 %);
   - `report:discovery-trace-coverage` and `report:discovery-ecosystem`;
   - the stop measurements.
-- **Stop conditions, and a gap found here.** A tripped stop resolves the engine mode to legacy automatically. **It does not turn off 3455 or 3456.** `lib/discoveryOnePipeline.ts` reads only those two flags, not the stop state. So on any tripped stop, the operator runs `UPDATE public.feature_flags SET enabled = false WHERE flag IN ('discovery_for_you_pde_enabled', 'discovery_cache_a_ranked_enabled', 'discovery_live_rank_enabled');`, then the steps of rollout plan §6.
+- **Stop conditions (gap closed by §97, W11-S).** A tripped stop, or `disable_discovery_pde` TRUE, resolves the engine mode to legacy **and reads 3455, 3456, §78's and §85's flags OFF** at their readers (`lib/discoveryStopGate.ts`, register D-W11S-1), so both pages return to their flag-off order within the flag caches' 30 s, with no flag flipped. The 3455/3456 readers also refresh the database stop measurements in `legacy` mode. `discovery_live_rank_enabled` is not gated (a safety demotion); flip it with the SQL below if the stop calls for it: `UPDATE public.feature_flags SET enabled = false WHERE flag IN ('discovery_for_you_pde_enabled', 'discovery_cache_a_ranked_enabled', 'discovery_live_rank_enabled');`, then the steps of rollout plan §6.
 - **Recovery:** the SQL above, with `disable_discovery_pde` TRUE and `DISCOVERY_ENGINE_MODE.enabled = false`. The old behaviour returns within 30 s. Impression rows already written are measurements. Removing them is a retention question (11), not a rollback.
 - **If approved:**
   - every signed-in viewer's `for_you` page and Cache A hits are ordered by the PDE pipeline;
@@ -506,7 +506,7 @@ None of these changes the ranked order of the Discovery feed. Turn them on one a
   2. Apply `2893_rank_events_retire_writerless_surfaces.sql` as written, with its ledger row, after everything else.
 - **Unblocks:** DV-44, `C`-gradable on a read-back.
 - **Stop:** the file aborts by itself if any row carries a retired label.
-- **Recovery:** the REVERSAL in 2893's header. There is no `db/rollback/` file, a gap in file form. The reversal restores the fifteen labels; writes refused in between are lost.
+- **Recovery:** `db/rollback/2026-09-28-2893-rank-events-retire-writerless-surfaces-rollback.sql` (§97, W11-S): its header's reversal as a guarded file. It restores the fifteen labels; writes refused in between are lost.
 - **If approved:** a write on a retired label is refused with 23514.
 - **If declined:** the seven labels stay admitted and writerless.
 - **Recommendation:** approve, last.
@@ -530,7 +530,7 @@ None of these changes the ranked order of the Discovery feed. Turn them on one a
 - **Unblocks:** it is a precondition of 15 rows: DC-23, DV-26, DV-56–DV-60, DV-63–DV-68, DV-70 and DV-74. None moves on the apply alone; most then need a producer or a published rule (§7).
 - **Recovery:**
   - `db/rollback/2026-09-27-338{5,6,7}-…`, newest first. 3387's refuses while its audit table holds rows, and 3386's while 3387 is applied;
-  - **2901, 2921 and 2930 have no rollback file and no in-file reversal note** (a gap). 2920 and 2922 carry manual REVERSAL notes;
+  - 2901, 2921 and 2930 have rollback files since §97 (W11-S). **2901's and 2921's refuse while their ledgers hold any row** (a true rollback would destroy financial records: question C-11), and 2930's while 3385 is applied or `creator_attribution_enabled` is TRUE. 2920 and 2922 carry manual REVERSAL notes;
   - every table ships empty.
 - **Recommendation:** approve, once 22(a) is answered.
 
@@ -641,8 +641,8 @@ This page does not answer these. Each gives a recommended answer and what follow
 
 None of these is a new decision.
 1. A tripped stop does not turn off 3455 or 3456 (action 8), or any flag of action 10. Their recovery is a manual flag flip.
-2. No `db/rollback/` file exists for 3440, 3441, the P0 files 2289, 2297, 2892, 2894 and 2995, or 2893. Each has an in-file reversal.
-3. P2's 2901, 2921 and 2930 have neither a rollback file nor an in-file reversal note.
+2. Closed by §97 (W11-S): 3440, 3441, 2289, 2297, 2892, 2894, 2995 and 2893 each have a guarded `db/rollback/` file, rehearsed (apply plan §8.5).
+3. Closed by §97 (W11-S): 2901, 2921 and 2930 have rollback files; 2901's and 2921's refuse while any ledger row exists (apply plan §8.5).
 4. The C-11 fix migration will not exist until question 22(a) is answered.
 5. The 33 files added since §87 have not been through the applier from the modelled `portava-ci` baseline (apply plan §8.3).
 

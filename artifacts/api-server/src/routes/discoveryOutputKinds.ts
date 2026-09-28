@@ -59,9 +59,9 @@ router.get("/v1/discovery/recommendations/:kind", asyncHandler(async (req: Reque
   if (!sc) return sendError(res, "degraded_unavailable", "recommendations are not available in this deployment", { reason: "no_service_client" });
 
   // Literal at the read site (check:flag-polarity reads call sites).
-  if (!(await unlessDiscoveryStopped(sc, await isFlagEnabled(sc, "discovery_output_kinds_enabled")))) {  // census-discovery §97: a stopped rollout answers the flag-off 404
+  if (!(await isFlagEnabled(sc, "discovery_output_kinds_enabled"))) {
     return sendError(res, "feature_disabled", "these recommendations are not enabled");
-  }
+  } if (!(await unlessDiscoveryStopped(sc, true))) return sendError(res, "feature_disabled", "these recommendations are not enabled");  // census-discovery §97: flag ON but the Discovery stop engaged ⇒ exactly the flag-off 404
 
   const kind = String(req.params["kind"] ?? "");
   if (!isServedKind(kind)) return sendError(res, "feature_disabled", `no recommendations of kind "${kind}"`);

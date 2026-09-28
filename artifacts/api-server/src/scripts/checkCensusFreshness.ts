@@ -4404,6 +4404,21 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "travel-buddy-standalone/src/services/__tests__/discoveryRecommendations.test.ts",
     "travel-buddy-standalone/src/components/discovery/DiscoveryOutputKindsRail.tsx",
     "travel-buddy-standalone/src/components/discovery/__tests__/DiscoveryOutputKindsRail.component.test.tsx",
+    // census-discovery §97 (lane W11-S, safety and recovery): DV-82 and DC-32 are graded on the stop gate, its
+    // readers and its suite; DC-18 on the eleven rollback files §97 wrote (rehearsed on the harness).
+    "artifacts/api-server/src/lib/discoveryStopGate.ts",
+    "artifacts/api-server/src/test/discoveryStopGate.test.ts",
+    "db/rollback/2026-09-28-2289-discovery-ranking-modifiers-flag-rollback.sql",
+    "db/rollback/2026-09-28-2297-rank-events-dismiss-outcome-rollback.sql",
+    "db/rollback/2026-09-28-2892-place-momentum-rollback.sql",
+    "db/rollback/2026-09-28-2893-rank-events-retire-writerless-surfaces-rollback.sql",
+    "db/rollback/2026-09-28-2894-rank-events-trip-add-outcome-rollback.sql",
+    "db/rollback/2026-09-28-2901-rent-buddy-earnings-entries-rollback.sql",
+    "db/rollback/2026-09-28-2921-creator-earning-entries-rollback.sql",
+    "db/rollback/2026-09-28-2930-creator-share-canonical-view-rollback.sql",
+    "db/rollback/2026-09-28-2995-rank-events-discovery-dismissed-index-rollback.sql",
+    "db/rollback/2026-09-28-3440-canonical-search-key-letter-fold-rollback.sql",
+    "db/rollback/2026-09-28-3441-trail-letter-fold-decompose-first-rollback.sql",
   ],
   // ── ADDED 2026-09-15: census-passport joins the CHECKABLE set ──────────────
   //

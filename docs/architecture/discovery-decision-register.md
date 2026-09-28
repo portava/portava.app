@@ -1839,3 +1839,63 @@ W10D-C5 (the three personal projections) and AR-W11A-2 (circles, crews, visits) 
 - So with gate 2 on, a trip does not return `for_you` or Cache A to their pre-§79 order.
 - The document states the manual recovery: action 8's SQL, also added to rollout plan §9.3.
 - Making those reads honour a trip is a routine engineering change for the serve-path owner. This lane does not build it.
+
+## W11-S — safety and recovery
+
+*Lane W11-S, 2026-09-28, branch `disc-w11-safety` at integration head `532227796`. Census section §97. Rows restated: DV-82, DC-32, DC-18, DC-27. Work items: the three gaps lane W11-P routed (approval request §4 action 8 and §3; apply plan §8.3). No migration added. One unapplied migration corrected (3460). Eleven rollback files written, one rollback file corrected (3385). Harness: PostgreSQL 16 on port 55465, data under `/var/tmp/w11s-*`, deleted afterwards. All evidence is controlled; none is production evidence, and nothing was applied to `portava-ci` or production.*
+
+### D-W11S-1 — a stopped Discovery reads every rollout flag OFF, at the flag's own reader
+
+- **The question.** W11-P, register "Finding, routed and not decided": *"`lib/discoveryOnePipeline.ts` reads only `discovery_for_you_pde_enabled` and `discovery_cache_a_ranked_enabled`, and not the stop state. Neither does the §78 flag reader. So with gate 2 on, a trip does not return `for_you` or Cache A to their pre-§79 order."* `12` "Stop conditions": *"Stop rollout if: event rejection rises, recommendation logging gaps appear, creator concentration spikes …"*.
+- **Options considered.**
+  - (a) Keep the manual flag flip (approval request action 8). Consequence: the automatic half of the stop protects only `DISCOVERY_ENGINE_MODE`; 3455 and 3456 serve PDE in every mode, and serve point 6 runs §78's designs and §85's stages for every signed-in viewer in `legacy` too, so a trip leaves most of the rollout serving.
+  - (b) Check the stop at each serve point in `routes/discovery.ts`. Consequence: four call sites in the route plus every other caller of `rankForViewer` (the output-kinds route, the Map reader, Pulse's objective), each a place to forget.
+  - (c) Check it at the readers: `forYouPdeEnabled`, `cacheARankedEnabled`, `loadRankDesignFlags` (§78's six), `loadPipelineFlags` (§85's eight) and the output-kinds route's own flag read. A stopped Discovery reads each of those flags OFF, which is exactly what the manual recovery does.
+  - (d) As (c), but latched until a human clears it. Consequence: the engine mode is not latched (a cleared condition returns the configured mode on the next resolution), so a latch here would make the two halves disagree.
+- **Decision.** (c), not latched, through one module, `lib/discoveryStopGate.ts`.
+  - **What halts:** a tripped `12` condition (`evaluateStopConditions`, the verdict the resolver takes, in-process), or the manual stop `disable_discovery_pde` TRUE, read fail-closed through `isKillSwitchEngaged` and cached 30 s per client. Every gated path is PDE serving, so the switch named "disable PDE" disables it on each of them; the resolver already reads it for `pde` (D3=B).
+  - **Only when the flag reads ON.** A reader whose flag is OFF never reaches the gate, so flag-off reads and bytes are unchanged, pinned by B0/B1 and by the untouched goldens (§79 Z0, §85 P1–P3, §78 G1–G3).
+  - **The gate also measures.** The resolver refreshes 3391's four database conditions only for a non-legacy mode, and 3455/3456 serve in `legacy`. So the 3455 and 3456 readers run the same single-flight refresh, at most once per 30 s per client (G6). The §78/§85 readers do not: they are handed a write-suppressed client on shadow runs, whose `rpc` answers inertly, and a refresh through it would record four false `unreadable` readings that halt once armed (M8 proves the difference). Action 10 activates those flags in `pde` cohorts, where the resolver measures.
+  - **Scope.** 3455, 3456, 3450–3454 (including Pulse's objective, which shares 3450 and so returns to its flag-off order too), 3480–3484's pipeline reads (including the output kinds and 3484's served graph-provenance leg). **Not** gated, each with its reason: `discovery_live_rank_enabled` (2850) is Sensing's safety demotion, and turning a demotion of dangerous places off automatically is not a safe fall-back; 3500's objective ranks (Trail, Trending, Trip Planning), 3485's Trail exploration, 3490, 3496 and 2361's projection serve surfaces the stop does not measure or change no order. Their recovery stays the flag flip in the approval request.
+- **Reversibility.** Revert the five one-line hunks (`discoveryOnePipeline.ts` ×2 plus its import line, `discoveryRankFlags.ts`, `pipelineFlags.ts`, `routes/discoveryOutputKinds.ts`) and delete the module. Nothing is stored.
+- **Where.** `artifacts/api-server/src/lib/discoveryStopGate.ts`; the readers above. Tests: `src/test/discoveryStopGate.test.ts` B0, B1, G1–G6 and controls C1–C4c; mutations M1–M11 (census §97.4).
+
+### D-W11S-2 — a rollback file for every file that had none, and what each refuses
+
+- **The question.** Approval request §3 and §4: *"2901, 2921 and 2930 have no rollback file and no in-file reversal note"*; *"No `db/rollback/` file exists for 3440, 3441, the P0 files 2289, 2297, 2892, 2894 and 2995, or 2893."*
+- **Options considered.** (a) Leave the in-file notes (the gap is "the file form, not the method"). Consequence: 2297's and 2894's notes DELETE user rows, 2892's drops a table under later files that build on it, and 2901/2921/2930 have nothing. (b) Files in the style of W10-F's: guarded, deleting their own ledger row, with postconditions, refusing where data or an ON flag would be lost.
+- **Decision.** (b), eleven files, each rehearsed (census §97.5).
+  - **Refuse, never delete, where user or financial data would be lost:** 2297 while a `dismiss` row exists; 2894 while a `trip_add` row exists; 2901 and 2921 while their ledgers hold any row (the owner's retention question, W10D-B0 / C-11). **For 2901 and 2921 a true rollback is unsafe once a row exists, so those files are the refusing kind.**
+  - **Refuse where an ON flag would be lost:** 2289 while its flag is TRUE (and keep a row 2289 did not write); 2921 and 2930 while `creator_attribution_enabled` is TRUE.
+  - **Refuse while a later file builds on it** (newest first): 2297 under 2894 or 2995; 2892 under 3410, 3435 or 3476 (a column outside its fifteen), 3476 or 3477; 2901 under 2930 or 3387; 2921 under 3385 or 3387; 2930 under 3385; 2893 unless the CHECK is exactly its eight.
+  - **2892 refuses while `place_momentum` holds any row.** The rows are derived, but whether their `rank_events` source still exists is a retention fact the file cannot check; the operator deletes them deliberately and re-runs.
+  - **3440 and 3441 are their footers as files,** with 2220's and 3415's function bodies copied byte for byte by script. 3441's stored slugs are not rewritten back, and its file says so with a NOTICE count.
+- **Reversibility.** Each file is run only as the recovery for a named failure; re-applying the forward file restores the catalogue exactly (0 of 12,320 lines differ, §97.5).
+- **Where.** `db/rollback/2026-09-28-{2289,2297,2892,2893,2894,2901,2921,2930,2995,3440,3441}-…-rollback.sql`.
+
+### D-W11S-3 — 3460's postcondition is re-runnable after COMMIT
+
+- **Found by the rehearsal.** Certify stage 4 re-runs every assertion-only non-`$pre$` block after commit. 3460's `$post$` reads `_3460_before`, a `TEMP … ON COMMIT DROP` table, so the re-run fails with `relation "_3460_before" does not exist`: W10-F's F4 defect in a file that landed after F4.
+- **Options.** (a) Retag the block `$pre$`: the description check would never be re-run. (b) When the temp table is absent (after commit), re-check only what the committed database can answer, the description; inside the applying transaction, the state check runs as before.
+- **Decision.** (b), line-neutral (two lines added at the top of the block's body; no statement changed). 3460 is applied nowhere (apply plan §8.1, its own header), so this is not an edit of an applied migration.
+- **Where.** `artifacts/api-server/src/migrations/3460_discovery_search_protection_scope.sql`. Controls: after commit, a description without the gateway fails; inside a transaction, a changed state still fails (census §97.6).
+
+### D-W11S-4 — a `+post` flag file records its ledger row before it can refuse a TRUE flag
+
+- **Found by the rehearsal's negative control.** With `discovery_for_you_pde_enabled` pre-set TRUE, the apply stopped at 3455 (`POSTCONDITION FAILED (3455): … is ON`), and the flag kept its TRUE value, as the plan requires. But 3455 **was recorded** in the ledger: its "ships OFF" check sits in the post-`COMMIT` tail, which the applier runs after the body and its ledger row commit. Apply plan §3 says a file *"is never recorded"* in that case; that is true of 3351 (W10-D's control, an in-transaction check) and false of the 26 flag-seeding files whose only TRUE check is after COMMIT: 3366, 3395, 3400, 3410, 3450–3456, 3465, 3467–3470, 3475, 3480–3485, 3490, 3496, 3500.
+- **Options.** (a) Move the TRUE check into each file's transaction: 26 files rewritten for a case the pre-flight already excludes. (b) Correct the plan: the pre-flight reads (§2.1 (b), §8.2 (b')) require every one of these flags ABSENT or FALSE before the apply, and the operator stops if one is not; state the recovery if it happens anyway.
+- **Decision.** (b). No value is overwritten either way, and certify stage 4 re-runs the same `$post$` block, so a TRUE flag under a recorded file is never silent. Recovery: turning the flag off is a production decision; until then the file stays recorded and its rollback refuses while the flag is TRUE.
+- **Where.** Apply plan §8.5.
+
+### D-W11S-5 — 3385's rollback restores 2930's view comment; the seven tighter privilege lines stay
+
+- **The question.** Apply plan §4.4 and §7.4: after every rollback, eight catalogue lines differ from the baseline, all tighter or equal.
+- **Decision.** The one cosmetic line (3385's comment left on the restored view) is fixed: the rollback now sets 2930's comment, verbatim. The other seven are privileges 3390's and 3410's rollbacks do not re-grant to `anon` and `authenticated`. Re-granting them would widen client access to restore a state the rollout itself judged wrong, so they stay, stated.
+- **Where.** `db/rollback/2026-09-27-3385-creator-share-ledger-includes-creator-entries-rollback.sql`.
+
+### D-W11S-6 — the rehearsal driver rehearses the current set
+
+- **Decision.** `rehearse-pending-apply.ts` gains `PENDING_AT_3FD11F858` (apply plan §8.1's 73, with §8.1's `+post` shapes), used by `plan`, `postconditions`, `rollback` and `emit-rollback-rehearsal`. `REHEARSE_SET=84318d1b2` selects the historical 40. Line 71, which the census cites, did not move. The zero-persistence file now covers all 73 (step 3 of the apply plan's §8.4).
+- **Where.** `artifacts/api-server/scripts/local-db/rehearse-pending-apply.ts`.
+
+No APPROVAL REQUIRED entry is added. Arming the stop (D-W10-O-3) and gate 2 (D-W10R4-2) remain the owner's; D-W11S-1 changes only what happens after either trips.

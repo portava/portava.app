@@ -16232,6 +16232,117 @@ An independent verifier checked §94.1's C claim at `3fd11f858` and confirmed ev
 |---|---|---|---|
 | DV-83 | C | **W** | §94.1's claim is not yet supported. A failed viewer resolution still hides the event-post read (verifier, §94.10), and the refused rail cannot be refreshed. Everything else §94.1 lists holds under mutation. |
 
+## §97 — Safety and recovery (lane W11-S)
+
+*Written 2026-09-28 by lane W11-S on `disc-w11-safety`, from integration head `532227796`. It closes the three engineering gaps lane W11-P routed (§96): a tripped stop did not reach the gate-2 and design flags, eleven files had no rollback file, and the pending set had not been rehearsed end to end. Decisions are in `docs/architecture/discovery-decision-register.md`, section "W11-S", D-W11S-1 … D-W11S-6. **No row changes bucket**, so the headline is not restated. Nothing was merged to `main`, applied to `portava-ci` or production, deployed or flag-enabled. All evidence is controlled (in-process routes over in-memory databases, and the local PostgreSQL 16 harness); none of it is production evidence.*
+
+### 97.1 A stopped Discovery reads every rollout flag OFF (D-W11S-1)
+
+- **Before.** A tripped `12` condition resolved `DISCOVERY_ENGINE_MODE` to legacy and nothing else. 3455 and 3456 serve PDE in every mode, and serve point 6 runs §78's designs and §85's stages for every signed-in viewer in `legacy` too. Their readers never read the stop, so recovery was a manual flip (approval request action 8).
+- **Now.** `artifacts/api-server/src/lib/discoveryStopGate.ts:72#export async function discoveryStopHalt(` answers whether the stop is engaged: a tripped condition, as the resolver evaluates it, or `disable_discovery_pde` TRUE, read fail-closed and cached 30 s. The gate is consulted only by a reader whose flag reads ON, so a flag-off serve reads and serves exactly what it did. The readers:
+  - 3455: `artifacts/api-server/src/lib/discoveryOnePipeline.ts:56#return unlessDiscoveryStopped(sc, await cachedFlag(DISCOVERY_FOR_YOU_PDE_FLAG` (and 3456 on line 62);
+  - §78's six: `artifacts/api-server/src/lib/discoveryRankFlags.ts:99#return anyRankDesignEnabled(flags) && (await discoveryStopHalt(sc)) !== null`, which also covers DRS's negative-feedback input, DV-12's detector and Pulse's objective;
+  - §85's eight: `artifacts/api-server/src/lib/discoveryCandidates/pipelineFlags.ts:114#return Object.values(flags).some(Boolean) && (await discoveryStopHalt(sc)) !== null`;
+  - the output-kinds route, after its unchanged flag check: `artifacts/api-server/src/routes/discoveryOutputKinds.ts:64#} if (!(await unlessDiscoveryStopped(sc, true))) return sendError(res, "feature_disabled"`.
+- **The gate also measures.** The resolver refreshes 3391's four database conditions only for a non-legacy mode. The 3455/3456 readers now run the same refresh, at most once per 30 s (`artifacts/api-server/src/lib/discoveryStopGate.ts:75#if (opts.measure === true && sc && nowMs - s.refreshedAt >= TTL_MS)`), so an armed RLS deviation halts 3456 in `legacy` mode. The §78/§85 readers do not refresh, because shadow runs hand them a write-suppressed client whose `rpc` answers inertly.
+- **Not a latch**, as the engine mode is not: when the stop clears, the flags read as set.
+- **Not gated, each with its reason** (register): `discovery_live_rank_enabled` (a safety demotion), 3500, 3485, 3490, 3496 and 2361.
+
+### 97.2 Row statements
+
+| ID | from | **to** | evidence |
+|---|---|---|---|
+| DV-82 | W | **W** | **The halt now reaches every path the rollout turns on, not only the engine mode.** A tripped stop, or `disable_discovery_pde` TRUE, reads 3455, 3456, §78's six and §85's eight flags OFF at their readers (`artifacts/api-server/src/lib/discoveryStopGate.ts:72#export async function discoveryStopHalt(`). Through the real router, with the stop tripped: the 3455 `for_you` page is byte-identical to its flag-off page at serve points 5 and 4 (`artifacts/api-server/src/test/discoveryStopGate.test.ts:244#it("G1. 3455 ON + stop TRIPPED`); a signed-in Cache A hit in legacy mode is the unranked flag-off page (`artifacts/api-server/src/test/discoveryStopGate.test.ts:260#it("G2. 3456 ON + stop TRIPPED`); `rankForViewer` scores exactly as with no design flag (`artifacts/api-server/src/test/discoveryStopGate.test.ts:331#it("G3a. rankForViewer with 3450 + 3453 ON and the stop TRIPPED`) and no pipeline flag (`artifacts/api-server/src/test/discoveryStopGate.test.ts:385#it("G4b. rankForViewer with 3480 + 3483 ON and the stop TRIPPED`); the output-kinds route answers its flag-off 404. The manual stop does the same (`artifacts/api-server/src/test/discoveryStopGate.test.ts:277#it("G5. the manual stop`). In legacy mode the 3456 reader measures 3391's conditions itself, so an armed RLS deviation halts it (`artifacts/api-server/src/test/discoveryStopGate.test.ts:291#it("G6. legacy mode, 3456 ON, stop ARMED`). With every flag OFF, a tripped serve is byte-identical and reads nothing new (`artifacts/api-server/src/test/discoveryStopGate.test.ts:223#it("B0. BYTE-IDENTITY`). §82's evidence for the seven values stands. IMPLEMENTATION-COMPLETE; awaits: 3390, 3391 and 3470 applied in production + `discovery_stop_enforcement_enabled` TRUE with `metadata.values_version = "stop-values-2026-09-28.1"` (APPROVAL REQUIRED D-W10-O-3) + a non-legacy `DISCOVERY_ENGINE_MODE` or 3455/3456 on, under which one production stop evaluation reads all seven ruled. |
+| DC-32 | W | **W** | **The thresholds leg now halts what it protects.** The seven values (D-W10-O-1) are unchanged, and once armed a trip returns every rollout flag to its flag-off output, not only the engine mode (`artifacts/api-server/src/test/discoveryStopGate.test.ts:291#it("G6. legacy mode, 3456 ON, stop ARMED`, and DV-82 above). The other four legs are as §82 graded them. Sensitive-location policy still waits on 3366 (A-3, B04). IMPLEMENTATION-COMPLETE; awaits: 3366 applied and on in production (A-3, B04) + the stop values armed in production (APPROVAL REQUIRED D-W10-O-3). |
+| DC-18 | W | **W** | **Every file in the set, and every P0, P2 and P3 file, now has a guarded rollback file, and the whole pending set is rehearsed end to end.** Eleven were missing (2289, 2297, 2892, 2893, 2894, 2901, 2921, 2930, 2995, 3440, 3441); each now deletes its ledger row and refuses where user or financial rows or an ON flag would be lost. 2901's and 2921's refuse while their ledgers hold any row, because a true rollback would destroy financial records (`docs/ops/discovery-portava-ci-apply-plan.md:726#### 8.6 Rollback files for the files that had none`). On the harness, from the modelled `portava-ci` baseline, all **73** applied (51 tails), stage 4 re-ran 115 blocks, all 73 rolled back with every ledger row removed and the data identical, and re-apply matched to 0 lines (`docs/ops/discovery-portava-ci-apply-plan.md:712#| rollback, all 73, newest first |`). The nine older rollbacks matched a no-apply baseline to 0 of 12,190 catalogue lines, and re-apply to 0 of 12,320 (`docs/ops/discovery-portava-ci-apply-plan.md:744#**Rehearsal (final bytes).**`). `certify:migrations` itself passes stages 1–4 over the 73. The rehearsal found one defect, 3460's post-commit block, fixed before any apply (D-W11S-3). *Never edit an applied migration* still needs a live checksum comparison; 3460 was applied nowhere. IMPLEMENTATION-COMPLETE; awaits: the `portava-ci` apply and its green `schema drift` run (the rehearsal record) + an operator read of production's applied-body checksums against the repository. |
+| DC-27 | W | **W** | **AWAITS OWNER APPROVAL: W10D-A5 (Phase F gates 1 and 2, E-2); awaits: a filled rollout record showing rehearse, verdict checks, shadow, cohort, observe, expand, in that order.** The record template stands (`docs/ops/discovery-production-rollout.md:291#8. DC-27`). Two facts in §83's statement are stale. First, the seven stop values are decided (§82, D-W10-O-1), not `null`. Second, the "observe" step's stop is now automatic for gate 2 as well: a trip returns 3455, 3456 and the design flags to their flag-off output without an operator (DV-82 above). The sequence has not begun, so the row stays W. |
+
+### 97.3 Files outside this lane, each edit minimal
+
+- `lib/discoveryOnePipeline.ts`, `lib/discoveryRankFlags.ts`, `lib/discoveryCandidates/pipelineFlags.ts` and `routes/discoveryOutputKinds.ts`. Each import rides an existing line, or sits at the file's foot below the cited line 89 (`pipelineFlags.ts`). Each gated return is edited in place. The route's cited flag check (line 62, §91) is unchanged; the stop check rides line 64's closing brace. `discoveryRankFlags.ts` gains a four-line helper after `loadRankDesignFlags`, below its cited line 78. No cited line moved.
+- `migrations/3460_discovery_search_protection_scope.sql`: two lines added inside its `$post$` block, and no statement changed. It is applied nowhere.
+- `db/rollback/…3385…`: 2930's comment is restored before the REVOKEs.
+- `scripts/local-db/rehearse-pending-apply.ts`: the list is inserted after line 71's cited constant.
+- Line-neutral pointers in the approval request (lines 158, 241, 242, 375, 509, 533, 644 and 645) and the rollout plan's §7 table. The apply plan gains 8.5 and 8.6, and three of its 8.1 rows are updated in place.
+
+### 97.4 Tests, seen red, and mutations
+
+- **`discoveryStopGate.test.ts`** has 17 cases and is registered on the `test` line.
+  - Against the tree before the fix, **ten were red**: G1, G2, G5, G6, G3a, G3b, G3c, G4a, G4b and G4c.
+  - B0 and the controls C1, C2, C3a, C3c and C4c were green, as they must be. B1 was added after the fix; M10 turns it red.
+  - While building, G3a caught a real defect: the §78 reader refreshed the measurements through a shadow run's write-suppressed client, which counted a suppressed write and would record false `unreadable` readings. The refresh moved to the 3455/3456 readers only.
+- **Mutations.** Each was applied alone, the suite run, and the file restored byte-identical (sha256 checked). All eleven went red:
+
+| # | mutation | red |
+|---|---|---|
+| M1 | 3455 reader ignores the stop | G1, G5 |
+| M2 | 3456 reader ignores the stop | G2, G5, G6 |
+| M3 | §78 reader ignores the stop | G3a, G3b, G3c |
+| M4 | §85 reader ignores the stop | G4a, G4b |
+| M5 | output-kinds route ignores the stop | G4c |
+| M6 | manual stop ignored | G5 |
+| M7 | the 3455/3456 readers do not measure | G6 |
+| M8 | every reader measures (shadow clients too) | G3a |
+| M9 | the gate always halts | C1, C2, C3a, G3b, C3c, G4a, C4c |
+| M10 | the gate is consulted with the flag off | B1 |
+| M11 | a tripped condition is not a halt | G1, G2, G6, G3a, G3b, G3c, G4a, G4b, G4c |
+
+- **Harness controls for 3460** (97.5): the pre-§97 bytes fail the post-commit re-run. The fixed block fails on a description without the gateway, and on a changed state inside the transaction.
+- **Existing tests.** No assertion was changed. Every test file that imports a changed file was run with the suites around them (169 files, `discovery*`, `pulse*`, `portava*` and entry wiring): 2,774 tests, 2,771 pass. The three failures are pre-existing and unrelated:
+  - `discoveryClientRouteE2E`: the Node 22 load failure, §76.5;
+  - `discoveryPlaceWriteBoundary` and `portavaFeaturedWriteBoundary`: the CI Supabase guard refuses them without live credentials.
+- The run also covered `creatorLedgerMigrationShape3385`, `migrationApplyOrder` and `entryWiringNotCommentedOut`: 69 of 69 pass.
+
+### 97.5 Harness results (port 55465; data deleted afterwards)
+
+- **The pending set** (apply plan 8.5), from the modelled `portava-ci` baseline:
+  - plan: 73, identical to 8.1;
+  - apply: 73, with 51 tails;
+  - stage 4: 115 blocks pass, 32 `$pre$` held back;
+  - objects: 57 of 58 present, 1 absent by design;
+  - the 92 pre-existing flags are identical, and 52 new flags are all FALSE;
+  - the apply is idempotent;
+  - rollback: 73 of 73, every ledger row removed, data identical, catalogue 7 lines tighter (8 before D-W11S-5);
+  - re-apply: 0 lines differ;
+  - the zero-persistence file holds for all 73 and leaves the catalogue unchanged.
+- **The tools**, run through the fetch preload against a fake ref:
+  - `certify:migrations`: stages 1–4 pass (680 ledger files, 59 objects, 115 blocks, 32 `$pre$`), and stage 5 stops on `audit:schema`;
+  - `audit:schema`: 37 findings after the apply, 0 of them absent from the pre-apply baseline's 156, all in the eleven unreplayable harness files;
+  - `check:missing-live-columns`: the same 4 harness columns.
+- **Negative control:** with 3455's flag pre-set TRUE, the apply stops at 3455 and the flag stays TRUE. But 3455 is recorded, because its check is post-commit (D-W11S-4; the apply plan's §3 claim is corrected in 8.5).
+- **The eleven rollbacks** (apply plan 8.6):
+  - the nine older ones match a no-apply baseline to 0 lines, and re-apply to 0 lines;
+  - 3440 and 3441 round-trip inside the 73;
+  - 16 refusal controls, each exit 3 with nothing changed.
+- **`scripts/local-db/run-tests.sh`** on a fresh full chain (388 applied, 12 known-unreplayable, 2 on retry): **427 / 427 pass, 0 skipped**.
+
+### 97.6 Checks
+
+Run in `artifacts/api-server` after the last edit, all clean:
+- `tsc -p tsconfig.json --noEmit`;
+- `check-test-typecheck`: 863 against a baseline of 863;
+- `check:test-registration`, `check:migration-prefixes`, `check:schema-references`, `check:writerless-reads`, `check:enum-literals`, `check:production-drift` and `check:flag-polarity`. The gate reads `disable_discovery_pde` through `isKillSwitchEngaged`, already seeded and read;
+- `check:telegraph-inventory`: passed with no regeneration needed;
+- `node --import tsx/esm src/scripts/checkFlagSchemaPrerequisites.ts`: OK, 2 unguarded, all known;
+- `check:census-integrity`, `check:doc-citations`, `check:citation-targets`, `check:citation-symbols`, `check:census-freshness`, `check:census-scope-coverage` and `check:census-row-move-labels`.
+
+`pnpm run typecheck`'s first half (`tsc -b ../../lib/api-zod ../../lib/db`) cannot run in this worktree: `lib/db` has no `node_modules` link (`drizzle-orm`, `pg`), and that is untouched. Its second half, the package typecheck, is the `tsc` line above.
+
+**Not run:**
+- `check:write-path-columns`, which needs live credentials. Reasoned instead: the only new read is `isKillSwitchEngaged`'s existing `feature_flags` select, and no write payload changed;
+- the full api-server `pnpm test`;
+- the client `check:all` (no client file changed);
+- anything against `portava-ci` or production.
+
+### 97.7 What would turn this red
+
+- A gated reader stops consulting the gate, or the gate stops treating a trip or the manual stop as a halt: M1–M6 and M11.
+- The gate is consulted with a flag off, or a flag-off serve's bytes move: B0, B1, and §79's Z0, §85's P1–P3 and §78's G1–G3.
+- The shadow client refreshes the measurements: M8.
+- A rollback file stops deleting its ledger row, or stops refusing over user or financial rows or an ON flag: the harness controls in apply plan 8.6.
+- A migration in the set changing bytes before the apply: re-run 8.5.
+- A `+post` flag file applied over a TRUE row, if the pre-flight is skipped: D-W11S-4.
+
 ## Cited, not graded (check:census-scope-coverage)
 
 - NOT-GRADED: artifacts/api-server/src/lib/capability/prerequisitesCore.ts — §93.8 names its function-granular gate boundary as why the Compass KNOWN entry was struck; it is the prerequisite checker's own machinery, and no Discovery verdict rests on it.
