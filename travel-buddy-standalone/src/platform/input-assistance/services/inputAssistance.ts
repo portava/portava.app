@@ -125,6 +125,8 @@ export async function requestSuggestions(
       // did not send it — see suggestResponse.ts.
       serverMs: parsed.serverMs,
       schemaVersion: parsed.schemaVersion ?? undefined,
+      // census-discovery §80 — coverage, when the serve did not read everything.
+      ...(parsed.refusal ? { refusal: parsed.refusal } : {}),
     };
   } catch (e) {
     const aborted = e instanceof Error && e.name === 'AbortError';
@@ -133,3 +135,45 @@ export async function requestSuggestions(
     return { ok: false, aborted, unavailable: !aborted, error: 'Network error' };
   }
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// census-discovery §80 (A08 reason 3) — the Map search sheet's field.
+//
+// The same endpoint, token and base as `requestSuggestions`; a different
+// PROJECTION, because the `map.search` field is served as a search page (see
+// `search/mapSearch.ts`). Never throws. The error strings are the ones
+// `services/discovery.ts` `searchUnified` gave the sheet before, so the sheet's
+// error line reads as it always did.
+// ─────────────────────────────────────────────────────────────────────────────
+export async function requestMapSearchPage(
+  query: string,
+  opts: MapSearchOpts = {},
+  signal?: AbortSignal,
+): Promise<MapSearchPageResult> {
+  const base = apiBase();
+  if (!base) return { ok: false, error: 'API not configured' };
+  const token = await freshToken();
+  if (!token) return { ok: false, error: 'Not signed in' };
+  try {
+    const res = await fetch(`${base}/input-assistance/suggest`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify(buildMapSearchBody(query, opts)),
+      signal,
+    });
+    if (!res.ok) {
+      const body = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+      return { ok: false, error: (body.message as string) ?? `HTTP ${res.status}` };
+    }
+    return { ok: true, ...parseMapSearchEnvelope(await res.json()) };
+  } catch {
+    return { ok: false, error: 'Network error — check your connection' };
+  }
+}
+
+import {
+  buildMapSearchBody,
+  parseMapSearchEnvelope,
+  type MapSearchOpts,
+  type MapSearchPageResult,
+} from '../search/mapSearch.ts';

@@ -51,6 +51,9 @@ jest.mock('react-native-safe-area-context', () => ({
 }));
 
 const NO_MATCHES = 'No quick matches yet';
+// census-discovery §80 — the ratified wording lives in one module; the literal
+// is spelled out here so the suite fails if that module's text changes.
+const SEARCH_PARTIAL_NOTICE = 'These results are incomplete — part of the search couldn’t be run.';
 const REFUSED_LINE = 'Suggestions are unavailable';
 
 function create(el: React.ReactElement) {
@@ -131,5 +134,29 @@ describe('SearchSuggestionsPanel — a refusal is not an empty corpus', () => {
 
     expect(text).not.toContain(NO_MATCHES);
     expect(text).not.toContain(REFUSED_LINE);
+  });
+
+  // ── census-discovery §80 (DV-83, register D-W10-S1-2) ─────────────────────
+  // A PARTIAL answer carries real groups and some sources unread. It is shown,
+  // and the person is told — in the sentence the two search surfaces already
+  // share — that the list is incomplete. With no groups it is never "no quick
+  // matches": that would be a claim about the corpus the partial cannot make.
+
+  it('§80 PARTIAL with groups: the groups render AND the incomplete notice is stated', () => {
+    const text = textOf(create(panel({ incomplete: true, groups: STALE_GROUPS })));
+    expect(text).toContain('Traveler One');
+    expect(text).toContain(SEARCH_PARTIAL_NOTICE);
+    expect(text).not.toContain(REFUSED_LINE);
+  });
+
+  it('§80 PARTIAL with no groups: never "No quick matches yet"', () => {
+    const text = textOf(create(panel({ incomplete: true })));
+    expect(text).not.toContain(NO_MATCHES);
+    expect(text).toContain(SEARCH_PARTIAL_NOTICE);
+  });
+
+  it('§80 CONTROL: a complete answer states no incomplete notice', () => {
+    const text = textOf(create(panel({ incomplete: false, groups: STALE_GROUPS })));
+    expect(text).not.toContain(SEARCH_PARTIAL_NOTICE);
   });
 });

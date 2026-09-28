@@ -24,7 +24,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { InputContext } from '../types/inputContext.ts';
 import type { InputFieldPolicy } from '../types/fieldPolicy.ts';
-import type { InputSuggestion, InputSessionContext, WritingDraft } from '../types/inputSuggestion.ts';
+import type { InputSuggestion, InputSessionContext, WritingDraft, SuggestRefusal } from '../types/inputSuggestion.ts';
 import { resolveFieldPolicy } from '../contexts/fieldRegistry.ts';
 import { getContextDescriptor } from '../contexts/inputContexts.ts';
 import { offlineSurfaceAllowed } from '../contexts/policyFallback.ts';
@@ -92,7 +92,7 @@ export interface UseInputAssistanceResult {
    * back, so an impression still cannot be joined to the selection that
    * followed it." Returning it is the hook's half of closing that.
    */
-  requestId: string | null;
+  requestId: string | null; /** census-discovery §80 — the serve's coverage (DV-83); null when it read everything. */ refusal: SuggestRefusal | null;
 }
 
 export function useInputAssistance(
@@ -113,7 +113,7 @@ export function useInputAssistance(
   // impression could never be joined to the selection that followed it. It is
   // now state: SmartInput puts it on the field's TelemetryField and every event
   // the field emits names the serve it belongs to.
-  const [requestId, setRequestId] = useState<string | null>(null);
+  const [requestId, setRequestId] = useState<string | null>(null); const [refusal, setRefusal] = useState<SuggestRefusal | null>(null); // §80
 
   // §48 — the capability signature is part of the cache identity. Two surfaces
   // sharing a fieldId but declaring different capabilities receive DIFFERENT
@@ -159,7 +159,7 @@ export function useInputAssistance(
       abortRef.current?.abort();
       abortRef.current = null;
       guardRef.current.invalidate();
-      setSuggestions([]);
+      setSuggestions([]); setRefusal(null);
       setLoading(false);
       return;
     }
@@ -191,7 +191,7 @@ export function useInputAssistance(
       abortRef.current?.abort();
       abortRef.current = null;
       guardRef.current.invalidate();
-      setSuggestions([]);
+      setSuggestions([]); setRefusal(null);
       setLoading(false);
       setUnavailable(false);
       return;
@@ -212,7 +212,7 @@ export function useInputAssistance(
     const cached = cacheable ? sharedSuggestionCache.get(cacheKey) : null;
     if (cached) {
       guardRef.current.invalidate();
-      setSuggestions(cached);
+      setSuggestions(cached); setRefusal(null);
       setLoading(false);
       setUnavailable(false);
       return;
@@ -272,7 +272,7 @@ export function useInputAssistance(
           })()
         : null);
     if (local) {
-      setSuggestions(local);
+      setSuggestions(local); setRefusal(null);
       setUnavailable(false);
     }
 
@@ -310,8 +310,8 @@ export function useInputAssistance(
 
         if (res.ok) {
           const finalized = finalizeSuggestions(res.suggestions, policy.maxSuggestions);
-          if (cacheable) sharedSuggestionCache.set(cacheKey, finalized);
-          setSuggestions(finalized);
+          if (cacheable && !res.refusal) sharedSuggestionCache.set(cacheKey, finalized); // §80: an outage is never cached
+          setSuggestions(finalized); setRefusal(res.refusal ?? null);
           setUnavailable(false);
           setLoading(false);
           setRequestId(res.requestId || null);
@@ -396,7 +396,7 @@ export function useInputAssistance(
           const mayRetain = offlineSurfaceAllowed(policy.offlinePolicy);
           const degradedRows = mayRetain ? offlineLocalRows(policy, trimmed, local ?? []) : [];
           setUnavailable(true);
-          setSuggestions(degradedRows);
+          setSuggestions(degradedRows); setRefusal(null);
           setLoading(false);
 
           // ── §44 / §57 — THE DEGRADED SERVE, RECORDED (census G373) ───────
@@ -477,5 +477,5 @@ export function useInputAssistance(
   // Abort any in-flight request on unmount.
   useEffect(() => () => { abortRef.current?.abort(); }, []);
 
-  return { suggestions, loading, unavailable, policy, requestId };
+  return { suggestions, loading, unavailable, policy, requestId, refusal };
 }

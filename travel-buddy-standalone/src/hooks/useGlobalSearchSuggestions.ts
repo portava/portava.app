@@ -9,8 +9,8 @@
  * Contract (identical return shape to `useSearchSuggestions`, so the search
  * screen swaps one hook for another):
  *   - The legacy hook is the FALLBACK, and it runs exactly while it is needed:
- *     until the gateway has answered once on this mount, and again from the
- *     moment the gateway reports itself `unavailable`. See A08 below.
+ *     while the gateway reports itself `unavailable` (E-9, census-discovery
+ *     §80 — the proving window is retired). See A08 below.
  *   - The gateway hook and, when the legacy hook is running, the legacy hook
  *     both produce grouped rows; the gateway's are shown whenever it actually
  *     has rows (mapped to the same `SuggestGroup` shape the panel renders).
@@ -28,13 +28,13 @@
  * legacy hook when the gateway is `available`"*.
  *
  * The legacy typeahead is now gated on `legacyEnabled` rather than left
- * permanently on. It runs:
- *   - before the gateway has produced a single suggestion on this mount (the
- *     PROVING window — a gateway that has never answered is not yet a
- *     fallback-free path), and
- *   - whenever the gateway reports `unavailable` (§38's own signal: 404 or
- *     offline), at which point the latch releases and the proven typeahead is
- *     back on the very next keystroke.
+ * permanently on. It runs ONLY while the gateway reports `unavailable` (§38's
+ * own signal: 404 or offline), and the proven typeahead is then back on the
+ * very next keystroke. Until census-discovery §80 it also ran through a
+ * PROVING window — until the gateway had produced a suggestion on the mount —
+ * which kept two requests per keystroke alive on every first keystroke and on
+ * every mount whose queries never matched (§53.4 reason 2). E-9 retired it
+ * (register D-W10-S1-4): a gateway that has not answered yet has not failed.
  *
  * Why retiring the duplicate request is not retiring a second opinion: A08
  * measured that `/discovery/suggest` *"is not a parallel matcher — it calls the
@@ -51,7 +51,7 @@
  * This hook is the reversible seam: to disable the gateway wiring, the search
  * screen imports `useSearchSuggestions` again — nothing else changes.
  */
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useMemo } from 'react';
 import { useSearchSuggestions, type UseSearchSuggestionsOpts } from './useSearchSuggestions.ts';
 import type { SuggestGroup } from '../services/discovery.ts';
 import { useInputAssistance } from '../platform/input-assistance/hooks/useInputAssistance.ts';
@@ -93,6 +93,13 @@ export interface GlobalSearchSuggestionsResult {
    * legacy refusal is never what the gateway is showing.
    */
   refused: boolean;
+  /**
+   * census-discovery §80 (DV-83, D-W10-S1-2) — the SHOWN source answered with a
+   * `coverage: "partial"` refusal: its groups are real, and some sources were not
+   * read, so the list may be missing things. The panel says so; it never renders
+   * such an answer as a complete one.
+   */
+  incomplete: boolean;
   /**
    * §35 — record an EXPLICIT pick of a shown row as selection memory. Call it
    * from the screen's suggestion-pick handler. Fire-and-forget, fail-soft, and a
@@ -137,17 +144,17 @@ export function useGlobalSearchSuggestions(
     enabled,
   });
 
-  // A08 — has the gateway ever answered on this mount? A latch, not a snapshot:
-  // one answer retires the duplicate request, and `unavailable` releases it
-  // again so §38's fallback is one keystroke away, not a reload away.
-  const [gatewayProven, setGatewayProven] = useState(false);
-  useEffect(() => {
-    if (gateway.unavailable) { setGatewayProven(false); return; }
-    if (gateway.suggestions.length > 0) setGatewayProven(true);
-  }, [gateway.unavailable, gateway.suggestions]);
+  // A08 / E-9 (census-discovery §80, register D-W10-S1-4) — the PROVING WINDOW
+  // is retired. Until §80 a latch here kept the legacy typeahead running until
+  // the gateway had produced a row on the mount, so a first keystroke — and a
+  // mount whose queries never matched — cost two requests (§53.4 reason 2). A
+  // gateway that has not answered YET has not failed; §38's failure signal is
+  // `unavailable` (404/405/501, offline, no token, an unreadable schema), and
+  // only that turns the legacy typeahead on. It turns off again on the next
+  // successful serve, because `unavailable` clears there.
 
   // The fallback runs exactly while it is the fallback for something.
-  const legacyEnabled = enabled && (!gatewayProven || gateway.unavailable);
+  const legacyEnabled = enabled && gateway.unavailable;
 
   // Proven path — the fallback. `enabled: false` stops its fetching entirely
   // (useSearchSuggestions.ts:49), which is the whole of the A08 consolidation.
@@ -195,7 +202,7 @@ export function useGlobalSearchSuggestions(
     actionSuggestions: preferGateway ? gatewayActions : [],
     loading: preferGateway ? gateway.loading : legacy.loading,
     source: preferGateway ? 'gateway' : 'legacy',
-    refused: preferGateway ? false : legacy.refused,
+    refused: preferGateway ? gateway.refusal?.coverage === 'nothing' : legacy.refused, incomplete: preferGateway ? gateway.refusal?.coverage === 'partial' : legacy.incomplete,
     recordPick,
   };
 }
