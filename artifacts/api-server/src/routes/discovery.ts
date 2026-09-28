@@ -2865,7 +2865,7 @@ router.get("/discovery/community", async (req, res) => {
   }
 
   if (!getServiceClient()) {
-    res.json({ items: [], city, total: 0 });
+    sendDiscoveryRefusal(res, { items: [], city, total: 0 }, discoveryRefusal("upstream_unavailable", "community_service_unavailable", "GET /discovery/community"));  // census-discovery §101 (DV-83, D-W11X2-31): was `res.json({ items: [], city, total: 0 });` — a quiet city for a table nobody read. Refused like the feed's no-client arm (§98), with the read-failure arm's padding; the hook never caches a refusal
     return;
   }
 

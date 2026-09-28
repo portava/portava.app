@@ -4,7 +4,7 @@ import {
 } from 'react-native';
 import { Search } from 'lucide-react-native';
 import type { DiscoveryCategory, DiscoveryContextMode, DiscoveryFilters, DiscoveryPlace } from '../../services/discovery.ts';
-import { getDiscoveryPlaces, getCachedDiscoveryPlaces } from '../../services/discovery.ts'; import { listPartialNotice, listPartialEmptyTitle, LIST_PARTIAL_EMPTY_BODY, listStaleNotice } from '../../services/discoveryCoverageNotice.ts'; import { liveClaimsUnchecked, LIVE_UNCHECKED_NOTICE } from './liveUnchecked.ts';  // census-discovery §91 (A07)
+import { getDiscoveryPlaces, getCachedDiscoveryPlaces } from '../../services/discovery.ts'; import { listPartialNotice, listPartialEmptyTitle, LIST_PARTIAL_EMPTY_BODY, listStaleNotice, listMoreFailedNotice } from '../../services/discoveryCoverageNotice.ts'; import { liveClaimsUnchecked, LIVE_UNCHECKED_NOTICE } from './liveUnchecked.ts';  // census-discovery §91 (A07)
 import { color, space, radius, type as t } from '../../theme/tokens.ts';
 import PlaceCard from './PlaceCard.tsx';
 import { PlaceSkeletonList } from './PlaceSkeleton.tsx';
@@ -410,7 +410,7 @@ export function DiscoveryCategoryTab({
   const [error, setError]           = useState<string | null>(null);
   const [page, setPage]             = useState(1);
   const [total, setTotal]           = useState(0);  const [moreRefused, setMoreRefused] = useState(false); const [partial, setPartial] = useState(false);  // DV-83: page ≥ 2 was REFUSED — see load(); §80: a page came back PARTIAL
-  const [locationNudge, setLocationNudge] = useState(false); const [liveUnchecked, setLiveUnchecked] = useState(false); const [refreshFailed, setRefreshFailed] = useState(false);  // census-discovery §91 (A07): the served page's "now" claims were withheld (meta.liveSafety); §100 (DV-83, D-W11X2-22): the last PAGE-1 read failed in transport while places stayed on screen
+  const [locationNudge, setLocationNudge] = useState(false); const [liveUnchecked, setLiveUnchecked] = useState(false); const [refreshFailed, setRefreshFailed] = useState(false); const [moreFailed, setMoreFailed] = useState(false);  // census-discovery §91 (A07): the served page's "now" claims were withheld (meta.liveSafety); §100 (DV-83, D-W11X2-22): the last PAGE-1 read failed in transport while places stayed on screen; §101 (DV-83, D-W11X2-30): the last LOAD-MORE (page ≥ 2) failed in transport, and the footer says so
   const loadingMore                 = useRef(false);
   const nudgeOpacity                = useRef(new Animated.Value(0)).current;
   const nudgeTimer                  = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -463,7 +463,7 @@ export function DiscoveryCategoryTab({
   const load = useCallback(async (nextPage: number, currentFilters: DiscoveryFilters, reset: boolean) => {
     if (!destination) return;
     if (reset) setLoading(true);
-    setError(null); setMoreRefused(false); if (nextPage === 1) setRefreshFailed(false);
+    setError(null); setMoreRefused(false); setMoreFailed(false); if (nextPage === 1) setRefreshFailed(false);
 
     // Read user coords from refs so this callback stays stable across GPS updates.
     // The location-change effect is the sole handler that re-fires when the user
@@ -498,7 +498,7 @@ export function DiscoveryCategoryTab({
     loadingMore.current = false;
 
     if (!res.ok) {
-      setError(res.error); setRefreshFailed(nextPage === 1);  // §100 (D-W11X2-22): a failed page-1 read over places on screen is a failed REFRESH, and is said to be one
+      setError(res.error); setRefreshFailed(nextPage === 1); setMoreFailed(nextPage > 1);  // §100 (D-W11X2-22): a failed page-1 read over places on screen is a failed REFRESH, and is said to be one; §101 (D-W11X2-30): a failed page ≥ 2 is a failed LOAD-MORE, said in the footer
       return;
     }
 
@@ -555,10 +555,10 @@ export function DiscoveryCategoryTab({
       ? getCachedDiscoveryPlaces(destination, category, filters.radiusKm, 1, intentMode)
       : null;
     if (cachedResult) {
-      setPlaces(cachedResult.places); setPartial(cachedResult.refusal?.coverage === 'partial');
+      setPlaces(cachedResult.places); setPartial(cachedResult.refusal?.coverage === 'partial'); setTotal(cachedResult.total);  // §101 (D-W11X2-29): the cached page's own total, so a failed refresh over it neither calls it the whole set nor blocks load-more
       setLoading(false);
     } else {
-      setPlaces([]);
+      setPlaces([]); setTotal(0);
     }
     setPage(1);
     load(1, filters, cachedResult === null); // reset=true (skeleton) only on miss
@@ -713,7 +713,7 @@ export function DiscoveryCategoryTab({
                   <Text style={styles.retryText}>Try again</Text>
                 </Pressable>
               </View>
-            ) : places.length >= total && places.length > 0 ? (
+            ) : moreFailed ? (<View style={styles.moreRefused} testID="discovery-category-more-failed"><Text style={styles.emptyDesc}>{listMoreFailedNotice('places')}</Text><Pressable style={styles.retryBtn} onPress={handleLoadMore}><Text style={styles.retryText}>Try again</Text></Pressable></View>) : !error && !partial && total > 0 && places.length >= total && places.length > 0 ? (  // §101 (D-W11X2-29): the end claim only after a read that did not fail, beside no partial page, with a known total
               <Text style={styles.endText}>{places.length} places found</Text>
             ) : null
           }

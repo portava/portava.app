@@ -78,3 +78,14 @@ export function isPartialEmpty(refusal: CoverageLike | null | undefined, rows: r
 export function listStaleNotice(noun: string): string {
   return `Couldn’t refresh just now, so these ${noun} may be out of date.`;
 }
+
+/**
+ * A browse or search list whose NEXT page (page ≥ 2) could not be read — a
+ * transport failure, a thrown read, or a `nothing` refusal (census-discovery
+ * §101, DV-83, register D-W11X2-30). The rows already on screen are real and
+ * stay; this says the rest of the list was not read, instead of the list
+ * stopping without a word. The caller adds its own retry affordance.
+ */
+export function listMoreFailedNotice(noun: string): string {
+  return `Couldn’t load more ${noun} just now.`;
+}

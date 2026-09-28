@@ -20,7 +20,7 @@ import type { CompassRecommendation } from '../src/services/compass';
 import { CompassTravelerRow } from '../src/components/compass/CompassTravelerRow';
 import { useActiveLocation } from '../src/hooks/useActiveLocation';
 import { parseSearchIntent, intentSummary } from '../src/lib/compassIntent';
-import { SearchSuggestionsPanel } from '../src/components/search/SearchSuggestionsPanel'; import { SEARCH_PARTIAL_NOTICE } from '../src/services/discoveryCoverageNotice';
+import { SearchSuggestionsPanel } from '../src/components/search/SearchSuggestionsPanel'; import { SEARCH_PARTIAL_NOTICE, listMoreFailedNotice } from '../src/services/discoveryCoverageNotice';
 import { useGlobalSearchSuggestions } from '../src/hooks/useGlobalSearchSuggestions';
 import { getSubmitQuery } from '../src/platform/input-assistance/search/globalSearch';
 import { getAddToTripTarget, getOpenCompassTarget } from '../src/platform/input-assistance/search/smartActions';
@@ -110,7 +110,7 @@ export default function SearchScreen() {
   const [results, setResults] = useState<UnifiedSearchResult[]>([]);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  const [loadingMore, setLoadingMore] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false); const [moreFailed, setMoreFailed] = useState(false);  // census-discovery §101 (DV-83, D-W11X2-30): the last cursor page (page ≥ 2) was not read — transport, a throw, or a `nothing` refusal. Said in the footer, with its retry; the cursor is kept
   const [searched, setSearched] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // `refusal.coverage === 'partial'` on the last first-page response: some of
@@ -202,7 +202,7 @@ export default function SearchScreen() {
 
     if (isFirstPage) {
       setLoading(true);
-      setError(null);
+      setError(null); setMoreFailed(false);
       setPartialSources(null);
       setTimeLabel(null);
       setSearched(true);
@@ -210,7 +210,7 @@ export default function SearchScreen() {
       activeQueryRef.current = trimmed;
       activeTabRef.current = tab;
     } else {
-      setLoadingMore(true);
+      setLoadingMore(true); setMoreFailed(false);
     }
 
     try {
@@ -230,7 +230,7 @@ export default function SearchScreen() {
       if (trimmed !== activeQueryRef.current || tab !== activeTabRef.current) return;
 
       if (!res.ok) {
-        if (isFirstPage) setError(res.error);
+        if (isFirstPage) setError(res.error); else setMoreFailed(true);  // §101 (D-W11X2-30): a failed cursor page is said, not silent
         return;
       }
 
@@ -252,7 +252,7 @@ export default function SearchScreen() {
       if (res.data.refusal?.coverage === 'nothing') {
         if (isFirstPage) {
           setError('Search is unavailable right now — nothing was searched, so this is not a statement about what exists.');
-        }
+        } else setMoreFailed(true);  // §101 (D-W11X2-30): a refused cursor page is said; page 1's rows stay, and the cursor is kept for the retry
         return;
       }
 
@@ -307,7 +307,7 @@ export default function SearchScreen() {
             setCompassFallbackLoading(false);
           });
         }
-      } else {
+      } else { if (res.data.refusal?.coverage === 'partial') { const more = res.data.refusal.failedSources ?? []; setPartialSources((prev) => [...new Set([...(prev ?? []), ...more])]); }  // §101 (D-W11X2-28): a PARTIAL cursor page makes the list incomplete, as a partial page 1 does — the notice is set from ANY page's coverage
         setResults((prev) => {
           const seen = new Set(prev.map((r) => `${r.type}:${r.id}`));
           return [...prev, ...newRows.filter((r) => !seen.has(`${r.type}:${r.id}`))];
@@ -315,7 +315,7 @@ export default function SearchScreen() {
       }
       setNextCursor(newCursor);
     } catch {
-      if (isFirstPage) setError('Something went wrong. Tap to retry.');
+      if (isFirstPage) setError('Something went wrong. Tap to retry.'); else setMoreFailed(true);  // §101: a thrown cursor read is the same failure
     } finally {
       if (isFirstPage) setLoading(false);
       else setLoadingMore(false);
@@ -925,7 +925,7 @@ export default function SearchScreen() {
               <View style={styles.loadingMore}>
                 <ActivityIndicator size="small" color={color.signal} />
               </View>
-            ) : results.length > 0 ? (
+            ) : moreFailed ? (<Pressable style={styles.loadingMore} onPress={handleLoadMore} testID="search-more-failed"><Text style={styles.errorText}>{listMoreFailedNotice('results')}</Text><Text style={styles.retryHint}>Tap to retry</Text></Pressable>) : results.length > 0 ? (
               /* Follow-up filter chips — re-query backend when toggled */
               <View style={styles.followUpSection}>
                 <Text style={styles.followUpLabel}>Refine results</Text>

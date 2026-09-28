@@ -161,14 +161,14 @@ export function useCommunityDiscovery(city: string | null, sortBy?: string | nul
     if (city) return { gems: [], picks: [], places: [], loading: true, refused: false, incomplete: false };
     return EMPTY;
   });
-  const abortRef = useRef<AbortController | null>(null);
+  const abortRef = useRef<AbortController | null>(null); const heldCityRef = useRef<string | null>(cachedEntry && city ? commCityOf(city) : null);  // census-discovery §101 (DV-83, D-W11X2-32): the city whose rows the state holds — rows are kept across a failed read only for that city
 
   const load = useCallback(async (c: string) => {
     abortRef.current?.abort();
     const ctrl = new AbortController();
     abortRef.current = ctrl;
 
-    setState((prev) => ({ ...prev, loading: true }));
+    const sameCity = heldCityRef.current === commCityOf(c); if (!sameCity) heldCityRef.current = null; setState((prev) => (sameCity ? { ...prev, loading: true } : { ...EMPTY, loading: true }));  // §101 (D-W11X2-32): another city's rows are never presented while this one loads, nor kept when its read fails
 
     try {
       const result = await getCommunityPlaces(c, 'all', 20, sortBy);
@@ -196,7 +196,7 @@ export function useCommunityDiscovery(city: string | null, sortBy?: string | nul
       // arrays above are padding, not a result.
       const refused = result.data.refusal?.coverage === 'nothing';
       const fresh: CommunityDiscoveryState = { gems, picks, places, loading: false, refused, incomplete: result.data.refusal?.coverage === 'partial' };
-      setState(fresh);
+      setState(fresh); heldCityRef.current = commCityOf(c);
       // Update the module cache for the next mount — BUT NEVER WITH A REFUSAL.
       //
       // Owner ruling, 2026-09-14: "Do not cache rate limits or outages as 'this
@@ -227,13 +227,13 @@ export function useCommunityDiscovery(city: string | null, sortBy?: string | nul
 
   useEffect(() => {
     if (!city) {
-      setState(EMPTY);
+      setState(EMPTY); heldCityRef.current = null;
       return;
     }
     // Skip the network call if the cache is still fresh
     const hit = cKey ? liveCommEntry(cKey) : null;
     if (hit && Date.now() - hit.at < COMM_CACHE_TTL) {
-      setState({ ...hit.state, loading: false });
+      setState({ ...hit.state, loading: false }); heldCityRef.current = commCityOf(city);
       return;
     }
     load(city);
@@ -253,7 +253,7 @@ export function useCommunityDiscovery(city: string | null, sortBy?: string | nul
       const switched = viewer !== undefined;
       viewer = next;
       if (!switched || !city) return;
-      setState({ gems: [], picks: [], places: [], loading: true, refused: false, incomplete: false });
+      setState({ gems: [], picks: [], places: [], loading: true, refused: false, incomplete: false }); heldCityRef.current = null;
       void load(city);
     });
   }, [city, load]);
@@ -284,4 +284,9 @@ function liveCommEntry(key: string): CommCacheEntry | null {
   if (isCurrentDiscoveryScope(entry.scope)) return entry;
   _communityCache.delete(key);
   return null;
+}
+
+/** census-discovery §101 (D-W11X2-32): the city identity rows are held under — the cache key's city half, without the sort. */
+function commCityOf(city: string): string {
+  return city.toLowerCase().trim();
 }
